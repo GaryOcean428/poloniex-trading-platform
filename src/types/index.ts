@@ -1,29 +1,43 @@
 export enum StrategyType {
-  MA_CROSSOVER = 'MA_CROSSOVER',
+  MOVING_AVERAGE_CROSSOVER = 'MovingAverageCrossover',
   RSI = 'RSI',
-  BREAKOUT = 'BREAKOUT'
+  MACD = 'MACD',
+  BOLLINGER_BANDS = 'BollingerBands',
+  CUSTOM = 'Custom'
 }
 
-export interface StrategyParameters {
-  [key: string]: any;
+export interface BaseStrategyParameters {
   pair: string;
+  timeframe: string;
 }
 
-export interface MACrossoverParameters extends StrategyParameters {
-  shortPeriod: number;
-  longPeriod: number;
+export interface MovingAverageCrossoverParameters extends BaseStrategyParameters {
+  fastPeriod: number;
+  slowPeriod: number;
 }
 
-export interface RSIParameters extends StrategyParameters {
+export interface RSIParameters extends BaseStrategyParameters {
   period: number;
   overbought: number;
   oversold: number;
 }
 
-export interface BreakoutParameters extends StrategyParameters {
-  lookbackPeriod: number;
-  breakoutThreshold: number;
+export interface MACDParameters extends BaseStrategyParameters {
+  fastPeriod: number;
+  slowPeriod: number;
+  signalPeriod: number;
 }
+
+export interface BollingerBandsParameters extends BaseStrategyParameters {
+  period: number;
+  stdDev: number;
+}
+
+export type StrategyParameters = 
+  | MovingAverageCrossoverParameters 
+  | RSIParameters 
+  | MACDParameters 
+  | BollingerBandsParameters;
 
 export interface StrategyPerformance {
   totalPnL: number;
@@ -34,9 +48,10 @@ export interface StrategyPerformance {
 export interface Strategy {
   id: string;
   name: string;
-  type: StrategyType;
+  type: string;
   parameters: StrategyParameters;
-  created: string;
+  createdAt: string;
+  updatedAt: string;
   performance?: StrategyPerformance;
 }
 
@@ -62,8 +77,37 @@ export interface Trade {
   status: 'PENDING' | 'COMPLETED' | 'FAILED';
 }
 
+export interface Position {
+  id: string;
+  pair: string;
+  side: 'LONG' | 'SHORT';
+  entryPrice: number;
+  size: number;
+  leverage: number;
+  marginMode: 'ISOLATED' | 'CROSS';
+  liquidationPrice: number;
+  unrealizedPnL: number;
+  marginRatio: number;
+  timestamp: number;
+}
+
+export interface FuturesOrder {
+  id: string;
+  pair: string;
+  side: 'BUY' | 'SELL';
+  type: 'LIMIT' | 'MARKET' | 'POST_ONLY' | 'FOK' | 'IOC';
+  price?: number;
+  size: number;
+  value: number;
+  leverage: number;
+  marginMode: 'ISOLATED' | 'CROSS';
+  positionSide: 'LONG' | 'SHORT' | 'BOTH';
+  status: 'NEW' | 'PARTIALLY_FILLED' | 'FILLED' | 'CANCELED' | 'REJECTED';
+  timestamp: number;
+}
+
 export interface ExchangeService {
-  placeOrder: (pair: string, side: 'buy' | 'sell', type: 'limit' | 'market', quantity: number, price?: number) => Promise<any>;
+  placeOrder: (pair: string, side: 'BUY' | 'SELL', type: 'LIMIT' | 'MARKET', quantity: number, price?: number) => Promise<any>;
   errors: string[];
   addError: (error: string) => void;
   clearErrors: () => void;

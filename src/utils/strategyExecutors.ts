@@ -1,13 +1,5 @@
-import { Strategy, MarketData, StrategyParameters as BaseStrategyParameters } from '@/types';
+import { Strategy, MarketData, StrategyType, StrategyParameters } from '@/types';
 import { logger } from '@/utils/logger';
-
-// Strategy types
-export type StrategyType = 'MovingAverageCrossover' | 'RSI' | 'MACD' | 'BollingerBands' | 'Custom';
-
-// Strategy parameters
-export interface StrategyParameters extends BaseStrategyParameters {
-  timeframe: string;
-}
 
 // Strategy result
 export interface StrategyResult {
@@ -22,12 +14,12 @@ export interface StrategyResult {
 export function executeStrategy(strategy: Strategy, marketData: MarketData[]): StrategyResult {
   try {
     // Add timeframe from strategy if not in parameters
-    const parameters: StrategyParameters = {
+    const parameters = {
       ...strategy.parameters,
       timeframe: strategy.parameters.timeframe || '5m'
     };
 
-    switch (strategy.type as StrategyType) {
+    switch (strategy.type) {
       case 'MovingAverageCrossover':
         return executeMovingAverageCrossover(parameters, marketData);
       case 'RSI':
@@ -59,7 +51,7 @@ function executeMovingAverageCrossover(
   parameters: StrategyParameters,
   marketData: MarketData[]
 ): StrategyResult {
-  const { fastPeriod = 9, slowPeriod = 21 } = parameters;
+  const { fastPeriod = 9, slowPeriod = 21 } = parameters as any;
   
   if (marketData.length < slowPeriod + 2) {
     return { 
@@ -121,7 +113,7 @@ function executeRSI(
   parameters: StrategyParameters,
   marketData: MarketData[]
 ): StrategyResult {
-  const { period = 14, overbought = 70, oversold = 30 } = parameters;
+  const { period = 14, overbought = 70, oversold = 30 } = parameters as any;
   
   if (marketData.length < period + 1) {
     return { 
@@ -182,7 +174,7 @@ function executeMACD(
   parameters: StrategyParameters,
   marketData: MarketData[]
 ): StrategyResult {
-  const { fastPeriod = 12, slowPeriod = 26, signalPeriod = 9 } = parameters;
+  const { fastPeriod = 12, slowPeriod = 26, signalPeriod = 9 } = parameters as any;
   
   if (marketData.length < slowPeriod + signalPeriod) {
     return { 
@@ -239,7 +231,7 @@ function executeBollingerBands(
   parameters: StrategyParameters,
   marketData: MarketData[]
 ): StrategyResult {
-  const { period = 20, stdDev = 2 } = parameters;
+  const { period = 20, stdDev = 2 } = parameters as any;
   
   if (marketData.length < period) {
     return { 

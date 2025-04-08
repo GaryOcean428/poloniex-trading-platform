@@ -3,7 +3,57 @@ import { useSettings } from '@/context/SettingsContext';
 import { Strategy, MarketData } from '@/types';
 import { executeStrategy } from '@/utils/strategyExecutors';
 import { poloniexApi } from '@/services/poloniexAPI';
-import { Card, CardHeader, CardBody, CardFooter, Button, Select, Input, Label, Alert } from '@/components/ui';
+import { Card } from '@/components/ui/Card';
+import { Button } from '@/components/ui/Button';
+import { Select, SelectOption } from '@/components/ui/Select';
+import { Input } from '@/components/ui/Input';
+import { Label } from '@/components/ui/Label';
+import { chromeStorage, isChromeExtension } from '@/utils/chromeExtension';
+
+// Strategy types
+export type StrategyType = 'MovingAverageCrossover' | 'RSI' | 'MACD' | 'BollingerBands' | 'Custom';
+
+// Strategy parameters interfaces
+interface BaseParameters {
+  pair: string;
+  timeframe: string;
+}
+
+interface MovingAverageCrossoverParameters extends BaseParameters {
+  fastPeriod: number;
+  slowPeriod: number;
+}
+
+interface RSIParameters extends BaseParameters {
+  period: number;
+  overbought: number;
+  oversold: number;
+}
+
+interface MACDParameters extends BaseParameters {
+  fastPeriod: number;
+  slowPeriod: number;
+  signalPeriod: number;
+}
+
+interface BollingerBandsParameters extends BaseParameters {
+  period: number;
+  stdDev: number;
+}
+
+// Union type for all parameter types
+export type StrategyParameters = 
+  | MovingAverageCrossoverParameters 
+  | RSIParameters 
+  | MACDParameters 
+  | BollingerBandsParameters;
+
+// Test result interface
+interface TestResult {
+  signal: 'BUY' | 'SELL' | null;
+  reason: string;
+  confidence: number;
+}
 
 const StrategyBuilder: React.FC = () => {
   const { defaultPair, timeframe } = useSettings();
@@ -19,29 +69,52 @@ const StrategyBuilder: React.FC = () => {
       timeframe: timeframe,
       fastPeriod: 9,
       slowPeriod: 21
-    }
+    } as StrategyParameters
   });
   const [marketData, setMarketData] = useState<MarketData[]>([]);
-  const [testResult, setTestResult] = useState<{ signal: string | null, reason: string, confidence: number } | null>(null);
+  const [testResult, setTestResult] = useState<TestResult | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
-  // Load saved strategies from localStorage
+  // Load saved strategies from storage
   useEffect(() => {
-    const savedStrategies = localStorage.getItem('trading_strategies');
-    if (savedStrategies) {
+    const loadStrategies = async () => {
       try {
-        setStrategies(JSON.parse(savedStrategies));
+        if (isChromeExtension()) {
+          // Load from Chrome storage if in extension
+          const data = await chromeStorage.get('trading_strategies');
+          if (data.trading_strategies) {
+            setStrategies(data.trading_strategies);
+          }
+        } else {
+          // Load from localStorage if in browser
+          const savedStrategies = localStorage.getItem('trading_strategies');
+          if (savedStrategies) {
+            setStrategies(JSON.parse(savedStrategies));
+          }
+        }
       } catch (err) {
-        console.error('Failed to parse saved strategies:', err);
+        console.error('Failed to load saved strategies:', err);
       }
-    }
+    };
+    
+    loadStrategies();
   }, []);
   
-  // Save strategies to localStorage when they change
+  // Save strategies to storage when they change
   useEffect(() => {
     if (strategies.length > 0) {
-      localStorage.setItem('trading_strategies', JSON.stringify(strategies));
+      try {
+        if (isChromeExtension()) {
+          // Save to Chrome storage if in extension
+          chromeStorage.set({ trading_strategies: strategies });
+        } else {
+          // Save to localStorage if in browser
+          localStorage.setItem('trading_strategies', JSON.stringify(strategies));
+        }
+      } catch (err) {
+        console.error('Failed to save strategies:', err);
+      }
     }
   }, [strategies]);
   
@@ -124,44 +197,72 @@ const StrategyBuilder: React.FC = () => {
         timeframe: timeframe,
         fastPeriod: 9,
         slowPeriod: 21
-      }
+      } as StrategyParameters
     });
     setSelectedStrategy(null);
   };
   
   // Update strategy parameters based on type
-  const updateStrategyType = (type: string) => {
-    let parameters = { pair: defaultPair, timeframe };
+  const updateStrategyType = (type: StrategyType) => {
+    let parameters: StrategyParameters;
     
     switch (type) {
       case 'MovingAverageCrossover':
-        parameters = { ...parameters, fastPeriod: 9, slowPeriod: 21 };
+        parameters = { 
+          pair: defaultPair, 
+          timeframe, 
+          fastPeriod: 9, 
+          slowPeriod: 21 
+        } as MovingAverageCrossoverParameters;
         break;
       case 'RSI':
-        parameters = { ...parameters, period: 14, overbought: 70, oversold: 30 };
+        parameters = { 
+          pair: defaultPair, 
+          timeframe, 
+          period: 14, 
+          overbought: 70, 
+          oversold: 30 
+        } as RSIParameters;
         break;
       case 'MACD':
-        parameters = { ...parameters, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9 };
+        parameters = { 
+          pair: defaultPair, 
+          timeframe, 
+          fastPeriod: 12, 
+          slowPeriod: 26, 
+          signalPeriod: 9 
+        } as MACDParameters;
         break;
       case 'BollingerBands':
-        parameters = { ...parameters, period: 20, stdDev: 2 };
+        parameters = { 
+          pair: defaultPair, 
+          timeframe, 
+          period: 20, 
+          stdDev: 2 
+        } as BollingerBandsParameters;
         break;
+      default:
+        parameters = { 
+          pair: defaultPair, 
+          timeframe 
+        } as BaseParameters;
     }
     
     setNewStrategy({
       ...newStrategy,
-      type: type as any,
+      type,
       parameters
     });
   };
   
   // Render parameter inputs based on strategy type
   const renderParameterInputs = () => {
-    const type = newStrategy.type;
+    const type = newStrategy.type as StrategyType;
     const parameters = newStrategy.parameters || {};
     
     switch (type) {
-      case 'MovingAverageCrossover':
+      case 'MovingAverageCrossover': {
+        const params = parameters as MovingAverageCrossoverParameters;
         return (
           <>
             <div className="mb-4">
@@ -169,10 +270,13 @@ const StrategyBuilder: React.FC = () => {
               <Input
                 id="fastPeriod"
                 type="number"
-                value={parameters.fastPeriod || 9}
+                value={params.fastPeriod || 9}
                 onChange={(e) => setNewStrategy({
                   ...newStrategy,
-                  parameters: { ...parameters, fastPeriod: parseInt(e.target.value) }
+                  parameters: { 
+                    ...parameters, 
+                    fastPeriod: parseInt(e.target.value) 
+                  } as MovingAverageCrossoverParameters
                 })}
                 min="2"
                 max="50"
@@ -183,10 +287,13 @@ const StrategyBuilder: React.FC = () => {
               <Input
                 id="slowPeriod"
                 type="number"
-                value={parameters.slowPeriod || 21}
+                value={params.slowPeriod || 21}
                 onChange={(e) => setNewStrategy({
                   ...newStrategy,
-                  parameters: { ...parameters, slowPeriod: parseInt(e.target.value) }
+                  parameters: { 
+                    ...parameters, 
+                    slowPeriod: parseInt(e.target.value) 
+                  } as MovingAverageCrossoverParameters
                 })}
                 min="5"
                 max="200"
@@ -194,8 +301,10 @@ const StrategyBuilder: React.FC = () => {
             </div>
           </>
         );
+      }
         
-      case 'RSI':
+      case 'RSI': {
+        const params = parameters as RSIParameters;
         return (
           <>
             <div className="mb-4">
@@ -203,10 +312,13 @@ const StrategyBuilder: React.FC = () => {
               <Input
                 id="period"
                 type="number"
-                value={parameters.period || 14}
+                value={params.period || 14}
                 onChange={(e) => setNewStrategy({
                   ...newStrategy,
-                  parameters: { ...parameters, period: parseInt(e.target.value) }
+                  parameters: { 
+                    ...parameters, 
+                    period: parseInt(e.target.value) 
+                  } as RSIParameters
                 })}
                 min="2"
                 max="50"
@@ -217,10 +329,13 @@ const StrategyBuilder: React.FC = () => {
               <Input
                 id="overbought"
                 type="number"
-                value={parameters.overbought || 70}
+                value={params.overbought || 70}
                 onChange={(e) => setNewStrategy({
                   ...newStrategy,
-                  parameters: { ...parameters, overbought: parseInt(e.target.value) }
+                  parameters: { 
+                    ...parameters, 
+                    overbought: parseInt(e.target.value) 
+                  } as RSIParameters
                 })}
                 min="50"
                 max="90"
@@ -231,10 +346,13 @@ const StrategyBuilder: React.FC = () => {
               <Input
                 id="oversold"
                 type="number"
-                value={parameters.oversold || 30}
+                value={params.oversold || 30}
                 onChange={(e) => setNewStrategy({
                   ...newStrategy,
-                  parameters: { ...parameters, oversold: parseInt(e.target.value) }
+                  parameters: { 
+                    ...parameters, 
+                    oversold: parseInt(e.target.value) 
+                  } as RSIParameters
                 })}
                 min="10"
                 max="50"
@@ -242,8 +360,10 @@ const StrategyBuilder: React.FC = () => {
             </div>
           </>
         );
+      }
         
-      case 'MACD':
+      case 'MACD': {
+        const params = parameters as MACDParameters;
         return (
           <>
             <div className="mb-4">
@@ -251,10 +371,13 @@ const StrategyBuilder: React.FC = () => {
               <Input
                 id="fastPeriod"
                 type="number"
-                value={parameters.fastPeriod || 12}
+                value={params.fastPeriod || 12}
                 onChange={(e) => setNewStrategy({
                   ...newStrategy,
-                  parameters: { ...parameters, fastPeriod: parseInt(e.target.value) }
+                  parameters: { 
+                    ...parameters, 
+                    fastPeriod: parseInt(e.target.value) 
+                  } as MACDParameters
                 })}
                 min="2"
                 max="50"
@@ -265,10 +388,13 @@ const StrategyBuilder: React.FC = () => {
               <Input
                 id="slowPeriod"
                 type="number"
-                value={parameters.slowPeriod || 26}
+                value={params.slowPeriod || 26}
                 onChange={(e) => setNewStrategy({
                   ...newStrategy,
-                  parameters: { ...parameters, slowPeriod: parseInt(e.target.value) }
+                  parameters: { 
+                    ...parameters, 
+                    slowPeriod: parseInt(e.target.value) 
+                  } as MACDParameters
                 })}
                 min="5"
                 max="100"
@@ -279,10 +405,13 @@ const StrategyBuilder: React.FC = () => {
               <Input
                 id="signalPeriod"
                 type="number"
-                value={parameters.signalPeriod || 9}
+                value={params.signalPeriod || 9}
                 onChange={(e) => setNewStrategy({
                   ...newStrategy,
-                  parameters: { ...parameters, signalPeriod: parseInt(e.target.value) }
+                  parameters: { 
+                    ...parameters, 
+                    signalPeriod: parseInt(e.target.value) 
+                  } as MACDParameters
                 })}
                 min="2"
                 max="50"
@@ -290,8 +419,10 @@ const StrategyBuilder: React.FC = () => {
             </div>
           </>
         );
+      }
         
-      case 'BollingerBands':
+      case 'BollingerBands': {
+        const params = parameters as BollingerBandsParameters;
         return (
           <>
             <div className="mb-4">
@@ -299,10 +430,13 @@ const StrategyBuilder: React.FC = () => {
               <Input
                 id="period"
                 type="number"
-                value={parameters.period || 20}
+                value={params.period || 20}
                 onChange={(e) => setNewStrategy({
                   ...newStrategy,
-                  parameters: { ...parameters, period: parseInt(e.target.value) }
+                  parameters: { 
+                    ...parameters, 
+                    period: parseInt(e.target.value) 
+                  } as BollingerBandsParameters
                 })}
                 min="5"
                 max="100"
@@ -313,10 +447,13 @@ const StrategyBuilder: React.FC = () => {
               <Input
                 id="stdDev"
                 type="number"
-                value={parameters.stdDev || 2}
+                value={params.stdDev || 2}
                 onChange={(e) => setNewStrategy({
                   ...newStrategy,
-                  parameters: { ...parameters, stdDev: parseFloat(e.target.value) }
+                  parameters: { 
+                    ...parameters, 
+                    stdDev: parseFloat(e.target.value) 
+                  } as BollingerBandsParameters
                 })}
                 min="0.5"
                 max="4"
@@ -325,6 +462,7 @@ const StrategyBuilder: React.FC = () => {
             </div>
           </>
         );
+      }
         
       default:
         return null;
@@ -334,14 +472,14 @@ const StrategyBuilder: React.FC = () => {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
       <Card className="w-full">
-        <CardHeader>
+        <div className="p-4 border-b">
           <h3 className="text-lg font-medium">Strategy Builder</h3>
-        </CardHeader>
-        <CardBody>
+        </div>
+        <div className="p-4">
           {error && (
-            <Alert variant="error" className="mb-4">
+            <div className="p-4 mb-4 text-sm text-red-700 bg-red-100 rounded-lg">
               {error}
-            </Alert>
+            </div>
           )}
           
           <div className="space-y-4">
@@ -371,13 +509,13 @@ const StrategyBuilder: React.FC = () => {
               <Select
                 id="strategyType"
                 value={newStrategy.type || 'MovingAverageCrossover'}
-                onChange={(e) => updateStrategyType(e.target.value)}
+                onChange={(e) => updateStrategyType(e.target.value as StrategyType)}
               >
-                <option value="MovingAverageCrossover">Moving Average Crossover</option>
-                <option value="RSI">Relative Strength Index (RSI)</option>
-                <option value="MACD">MACD</option>
-                <option value="BollingerBands">Bollinger Bands</option>
-                <option value="Custom">Custom</option>
+                <SelectOption value="MovingAverageCrossover">Moving Average Crossover</SelectOption>
+                <SelectOption value="RSI">Relative Strength Index (RSI)</SelectOption>
+                <SelectOption value="MACD">MACD</SelectOption>
+                <SelectOption value="BollingerBands">Bollinger Bands</SelectOption>
+                <SelectOption value="Custom">Custom</SelectOption>
               </Select>
             </div>
             
@@ -388,7 +526,7 @@ const StrategyBuilder: React.FC = () => {
                 value={newStrategy.parameters?.pair || defaultPair}
                 onChange={(e) => setNewStrategy({
                   ...newStrategy,
-                  parameters: { ...newStrategy.parameters, pair: e.target.value }
+                  parameters: { ...newStrategy.parameters, pair: e.target.value } as StrategyParameters
                 })}
                 placeholder="BTC-USDT"
               />
@@ -401,36 +539,36 @@ const StrategyBuilder: React.FC = () => {
                 value={newStrategy.parameters?.timeframe || timeframe}
                 onChange={(e) => setNewStrategy({
                   ...newStrategy,
-                  parameters: { ...newStrategy.parameters, timeframe: e.target.value }
+                  parameters: { ...newStrategy.parameters, timeframe: e.target.value } as StrategyParameters
                 })}
               >
-                <option value="1m">1 minute</option>
-                <option value="5m">5 minutes</option>
-                <option value="15m">15 minutes</option>
-                <option value="1h">1 hour</option>
-                <option value="4h">4 hours</option>
-                <option value="1d">1 day</option>
+                <SelectOption value="1m">1 minute</SelectOption>
+                <SelectOption value="5m">5 minutes</SelectOption>
+                <SelectOption value="15m">15 minutes</SelectOption>
+                <SelectOption value="1h">1 hour</SelectOption>
+                <SelectOption value="4h">4 hours</SelectOption>
+                <SelectOption value="1d">1 day</SelectOption>
               </Select>
             </div>
             
             {renderParameterInputs()}
           </div>
-        </CardBody>
-        <CardFooter className="flex justify-between">
+        </div>
+        <div className="p-4 border-t flex justify-between">
           <Button variant="outline" onClick={resetNewStrategy}>
             {selectedStrategy ? 'Cancel' : 'Reset'}
           </Button>
           <Button onClick={saveStrategy} disabled={isLoading}>
             {selectedStrategy ? 'Update Strategy' : 'Save Strategy'}
           </Button>
-        </CardFooter>
+        </div>
       </Card>
       
       <Card className="w-full">
-        <CardHeader>
+        <div className="p-4 border-b">
           <h3 className="text-lg font-medium">Test & Manage Strategies</h3>
-        </CardHeader>
-        <CardBody>
+        </div>
+        <div className="p-4">
           <div className="space-y-4">
             <div className="flex space-x-2">
               <Button onClick={loadMarketData} disabled={isLoading} className="flex-1">
@@ -476,7 +614,7 @@ const StrategyBuilder: React.FC = () => {
               )}
             </div>
           </div>
-        </CardBody>
+        </div>
       </Card>
     </div>
   );
