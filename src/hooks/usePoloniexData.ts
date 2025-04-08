@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
-import { poloniexApi } from '../services/poloniexAPI';
-import { MarketData, Trade } from '../types';
-import { webSocketService } from '../services/websocketService';
-import { mockMarketData, mockTrades } from '../data/mockData';
-import { useSettings } from '../context/SettingsContext';
+import { poloniexApi } from '@/services/poloniexAPI';
+import { MarketData, Trade } from '@/types';
+import { webSocketService } from '@/services/websocketService';
+import { mockMarketData, mockTrades } from '@/data/mockData';
+import { useSettings } from '@/context/SettingsContext';
 
 // Check if we're running in a WebContainer environment
 const IS_WEBCONTAINER = typeof window !== 'undefined' && window.location && window.location.hostname.includes('webcontainer-api.io');

@@ -1,7 +1,7 @@
-import { Strategy, MarketData, Trade } from '../types';
-import { BacktestResult, BacktestTrade, BacktestOptions, OptimizationResult } from '../types/backtest';
-import { executeStrategy } from '../utils/strategyExecutors';
-import { poloniexApi } from './poloniexAPI';
+import { Strategy, MarketData, Trade } from '@/types';
+import { BacktestResult, BacktestTrade, BacktestOptions, OptimizationResult } from '@/types/backtest';
+import { executeStrategy } from '@/utils/strategyExecutors';
+import { poloniexApi } from '@/services/poloniexAPI';
 
 export class BacktestService {
   private static instance: BacktestService;

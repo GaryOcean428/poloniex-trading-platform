@@ -1,5 +1,5 @@
 import { io, Socket } from 'socket.io-client';
-import { MarketData, Trade } from '../types';
+import { MarketData, Trade } from '@/types';
 
 // Socket.io events
 const EVENTS = {

@@ -1,7 +1,7 @@
-import { Strategy, MarketData, Trade } from '../types';
-import { executeStrategy } from '../utils/strategyExecutors';
-import { poloniexApi } from './poloniexAPI';
-import { logger } from '../utils/logger';
+import { Strategy, MarketData, Trade } from '@/types';
+import { executeStrategy } from '@/utils/strategyExecutors';
+import { poloniexApi } from '@/services/poloniexAPI';
+import { logger } from '@/utils/logger';
 
 interface AutomatedTradingConfig {
   maxPositions: number;

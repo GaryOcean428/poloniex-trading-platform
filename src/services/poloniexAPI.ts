@@ -1,6 +1,7 @@
 import axios from 'axios';
 import CryptoJS from 'crypto-js';
-import { getStorageItem, STORAGE_KEYS } from '../utils/storage';
+import { getStorageItem, STORAGE_KEYS } from '@/utils/storage';
+import { MarketData } from '@/types';
 
 // Base URLs for Poloniex APIs
 const FUTURES_BASE_URL = 'https://futures-api.poloniex.com/v3';
@@ -10,7 +11,7 @@ const SPOT_BASE_URL = 'https://api.poloniex.com/v3';
 const FUTURES_WS_URL = 'wss://futures-ws.poloniex.com/ws/public';
 const FUTURES_PRIVATE_WS_URL = 'wss://futures-ws.poloniex.com/ws/private';
 
-import { IS_WEBCONTAINER, IS_LOCAL_DEV } from '../utils/environment';
+import { IS_WEBCONTAINER, IS_LOCAL_DEV } from '@/utils/environment';
 
 // Add rate limiting configuration
 const RATE_LIMITS = {
