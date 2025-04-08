@@ -1,5 +1,21 @@
-import { Strategy, MarketData, Trade } from '@/types';
+import { Strategy, MarketData } from '@/types';
 import { BacktestResult, BacktestTrade, BacktestOptions, OptimizationResult } from '@/types/backtest';
+
+// Define BacktestMetrics interface
+interface BacktestMetrics {
+  dailyReturns: number[];
+  monthlyReturns: number[];
+  volatility: number;
+  profitFactor: number;
+  recoveryFactor: number;
+  averageWin: number;
+  averageLoss: number;
+  largestWin: number;
+  largestLoss: number;
+  averageHoldingPeriod: number;
+  bestMonth: number;
+  worstMonth: number;
+}
 import { executeStrategy } from '@/utils/strategyExecutors';
 import { poloniexApi } from '@/services/poloniexAPI';
 
@@ -33,7 +49,8 @@ export class BacktestService {
       
       // Initialize backtest state
       let balance = options.initialBalance;
-      let position = 0;
+      // Position tracking variable (not currently used but kept for future implementation)
+      // let position = 0;
       const trades: BacktestTrade[] = [];
       
       // Run strategy on each candle
@@ -59,7 +76,8 @@ export class BacktestService {
           // Update state
           trades.push(trade);
           balance = trade.balance;
-          position = signal.signal === 'BUY' ? amount : 0;
+          // Update position tracking (commented out as variable is not used)
+          // position = signal.signal === 'BUY' ? amount : 0;
         }
       }
       

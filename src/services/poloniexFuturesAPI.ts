@@ -1,4 +1,4 @@
-import { getEnvironmentVariable } from '@/utils/environment';
+import { getEnvVariable } from '@/utils/environment';
 
 // Poloniex Futures API endpoints
 const BASE_URL = 'https://futures-api.poloniex.com';
@@ -134,10 +134,10 @@ export interface FuturesOrder {
 // Generate HMAC-SHA256 signature for API authentication
 const generateSignature = (timestamp: string, method: string, requestPath: string, body: string = '') => {
   const crypto = require('crypto');
-  const apiSecret = getEnvironmentVariable('POLONIEX_API_SECRET');
+  const apiSecret = getEnvVariable('VITE_POLONIEX_API_SECRET');
   
   if (!apiSecret) {
-    throw new Error('POLONIEX_API_SECRET is not defined in environment variables');
+    throw new Error('VITE_POLONIEX_API_SECRET is not defined in environment variables');
   }
   
   const message = timestamp + method + requestPath + body;
@@ -146,11 +146,11 @@ const generateSignature = (timestamp: string, method: string, requestPath: strin
 
 // Create headers for authenticated requests
 const createAuthHeaders = (method: string, endpoint: string, body: string = '') => {
-  const apiKey = getEnvironmentVariable('POLONIEX_API_KEY');
-  const passphrase = getEnvironmentVariable('POLONIEX_PASSPHRASE');
+  const apiKey = getEnvVariable('VITE_POLONIEX_API_KEY');
+  const passphrase = getEnvVariable('VITE_POLONIEX_PASSPHRASE');
   
   if (!apiKey || !passphrase) {
-    throw new Error('POLONIEX_API_KEY or POLONIEX_PASSPHRASE is not defined in environment variables');
+    throw new Error('VITE_POLONIEX_API_KEY or VITE_POLONIEX_PASSPHRASE is not defined in environment variables');
   }
   
   const timestamp = Date.now().toString();

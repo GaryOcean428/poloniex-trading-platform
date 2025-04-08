@@ -1,8 +1,10 @@
 export enum StrategyType {
   MOVING_AVERAGE_CROSSOVER = 'MovingAverageCrossover',
+  MA_CROSSOVER = 'MovingAverageCrossover', // Alias for backward compatibility
   RSI = 'RSI',
   MACD = 'MACD',
   BOLLINGER_BANDS = 'BollingerBands',
+  BREAKOUT = 'Breakout',
   CUSTOM = 'Custom'
 }
 
@@ -14,6 +16,9 @@ export interface BaseStrategyParameters {
 export interface MovingAverageCrossoverParameters extends BaseStrategyParameters {
   fastPeriod: number;
   slowPeriod: number;
+  // For backward compatibility
+  shortPeriod?: number;
+  longPeriod?: number;
 }
 
 export interface RSIParameters extends BaseStrategyParameters {
@@ -33,11 +38,17 @@ export interface BollingerBandsParameters extends BaseStrategyParameters {
   stdDev: number;
 }
 
+export interface BreakoutParameters extends BaseStrategyParameters {
+  lookbackPeriod: number;
+  breakoutThreshold: number;
+}
+
 export type StrategyParameters = 
   | MovingAverageCrossoverParameters 
   | RSIParameters 
   | MACDParameters 
-  | BollingerBandsParameters;
+  | BollingerBandsParameters
+  | BreakoutParameters;
 
 export interface StrategyPerformance {
   totalPnL: number;

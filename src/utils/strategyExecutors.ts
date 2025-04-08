@@ -1,4 +1,4 @@
-import { Strategy, MarketData, StrategyType, StrategyParameters } from '@/types';
+import { Strategy, MarketData, StrategyParameters } from '@/types';
 import { logger } from '@/utils/logger';
 
 // Strategy result
@@ -29,7 +29,7 @@ export function executeStrategy(strategy: Strategy, marketData: MarketData[]): S
       case 'BollingerBands':
         return executeBollingerBands(parameters, marketData);
       case 'Custom':
-        return executeCustomStrategy(parameters, marketData);
+        return executeCustomStrategy();
       default:
         logger.error(`Unknown strategy type: ${strategy.type}`);
         return { signal: null, reason: 'Unknown strategy type', confidence: 0 };
@@ -249,7 +249,7 @@ function executeBollingerBands(
   
   const currentUpper = bands.upper[bands.upper.length - 1];
   const currentLower = bands.lower[bands.lower.length - 1];
-  const currentMiddle = bands.middle[bands.middle.length - 1];
+  // Middle band value not used in this function
   
   // Calculate confidence based on position within bands
   let confidence = 0;
@@ -291,8 +291,7 @@ function executeBollingerBands(
  * This is a placeholder for user-defined strategies
  */
 function executeCustomStrategy(
-  parameters: StrategyParameters,
-  marketData: MarketData[]
+  // Remove unused parameters to fix type errors
 ): StrategyResult {
   // This is where users can implement their own strategy logic
   return {

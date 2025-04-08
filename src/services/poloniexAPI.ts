@@ -8,8 +8,9 @@ const FUTURES_BASE_URL = 'https://futures-api.poloniex.com/v3';
 const SPOT_BASE_URL = 'https://api.poloniex.com/v3';
 
 // Add WebSocket endpoints
-const FUTURES_WS_URL = 'wss://futures-ws.poloniex.com/ws/public';
-const FUTURES_PRIVATE_WS_URL = 'wss://futures-ws.poloniex.com/ws/private';
+// WebSocket endpoints - commented out as they're not currently used
+// const FUTURES_WS_URL = 'wss://futures-ws.poloniex.com/ws/public';
+// const FUTURES_PRIVATE_WS_URL = 'wss://futures-ws.poloniex.com/ws/private';
 
 import { IS_WEBCONTAINER, IS_LOCAL_DEV } from '@/utils/environment';
 
@@ -640,7 +641,7 @@ class PoloniexApiClient {
   /**
    * Generate mock trades data
    */
-  private generateMockTrades(pair: string, limit: number) {
+  private generateMockTrades(_pair: string, limit: number) {
     // Create an array of trades with guaranteed unique IDs
     return Array.from({ length: limit }, (_, i) => {
       const basePrice = 51000 + (Math.random() - 0.5) * 1000;

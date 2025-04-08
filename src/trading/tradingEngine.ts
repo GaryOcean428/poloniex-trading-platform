@@ -1,7 +1,7 @@
-import { EventEmitter } from 'events';
+// Import required modules
 import { poloniexApi } from '@/services/poloniexAPI';
 import { logger } from '@/utils/logger';
-import { useSettings } from '@/context/SettingsContext';
+import { MarketData } from '@/types';
 import { TradingModeManager } from './TradingModeManager';
 
 interface Activity {
@@ -79,11 +79,12 @@ class TradingEngine {
     
     this.tradingLoop = setInterval(async () => {
       try {
-        const settings = useSettings();
-        if (settings.autoTradingEnabled) {
-          for (const pair of [settings.defaultPair]) {
-            await this.analyzeMarket(pair);
-          }
+        // Get settings from localStorage instead of using hook
+        const autoTradingEnabled = localStorage.getItem('poloniex_auto_trading_enabled') === 'true';
+        const defaultPair = localStorage.getItem('poloniex_default_pair') || 'BTC-USDT';
+        
+        if (autoTradingEnabled) {
+          await this.analyzeMarket(defaultPair);
         }
       } catch (error) {
         logger.error('Error in trading loop:', error);
@@ -144,7 +145,7 @@ class TradingEngine {
       }
 
       // Simple market analysis based on recent price movements
-      const prices = marketData.map((candle) => candle.close);
+      const prices = marketData.map((candle: MarketData) => candle.close);
       const lastPrice = prices[prices.length - 1];
       const prevPrice = prices[prices.length - 2];
       
@@ -166,8 +167,8 @@ class TradingEngine {
       this.setCurrentActivity(`Analysis complete for ${symbol}: ${direction} (${Math.round(probability * 100)}% confidence)`);
       
       // Execute trade if auto-trading is enabled
-      const settings = useSettings();
-      if (settings.autoTradingEnabled && this.status.marketAnalysis.confidence > this.confidenceThreshold) {
+      const autoTradingEnabled = localStorage.getItem('poloniex_auto_trading_enabled') === 'true';
+      if (autoTradingEnabled && this.status.marketAnalysis.confidence > this.confidenceThreshold) {
         await this.executeTrade(symbol, direction as 'up' | 'down');
       }
     } catch (error) {
@@ -179,7 +180,9 @@ class TradingEngine {
 
   async executeTrade(symbol: string, direction: 'up' | 'down') {
     try {
-      const settings = useSettings();
+      // Get settings from localStorage instead of using hook
+      const riskPerTrade = parseFloat(localStorage.getItem('poloniex_risk_per_trade') || '2');
+      const leverage = parseFloat(localStorage.getItem('poloniex_leverage') || '1');
       
       // Don't trade if we already have a position
       const paperEngine = this.modeManager.getPaperEngine();
@@ -196,7 +199,7 @@ class TradingEngine {
         ? await poloniexApi.getAccountBalance() 
         : paperEngine.getBalance();
       
-      const riskAmount = (balance * settings.riskPerTrade) / 100;
+      const riskAmount = (balance * riskPerTrade) / 100;
       const size = riskAmount / lastPrice;
       
       // Place order
@@ -206,8 +209,7 @@ class TradingEngine {
           side,
           'market',
           size,
-          undefined,
-          settings.leverage
+          undefined // price is undefined for market orders
         );
       } else {
         await paperEngine.placeOrder({
@@ -215,12 +217,12 @@ class TradingEngine {
           side,
           type: 'market',
           size,
-          leverage: settings.leverage
+          leverage: leverage
         });
       }
       
       this.addActivity('success', `Executed ${side} order for ${symbol}`, 
-        `Size: ${size.toFixed(6)}, Price: ${lastPrice}, Leverage: ${settings.leverage}x`);
+        `Size: ${size.toFixed(6)}, Price: ${lastPrice}, Leverage: ${leverage}x`);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       this.addActivity('error', `Failed to execute trade for ${symbol}`, errorMessage);

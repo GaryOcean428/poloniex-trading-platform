@@ -110,7 +110,7 @@ class AutomatedTradingService {
         const marketData = await poloniexApi.getMarketData(strategy.parameters.pair);
         
         // Execute strategy
-        const { signal, reason } = executeStrategy(strategy, marketData);
+        const { signal } = executeStrategy(strategy, marketData);
         
         if (signal) {
           await this.executeTrade(strategy, signal, balance.availableAmount);
@@ -139,7 +139,7 @@ class AutomatedTradingService {
       const quantity = riskAmount / lastPrice;
 
       // Place main order
-      const order = await poloniexApi.placeOrder(
+      await poloniexApi.placeOrder(
         pair,
         signal.toLowerCase() as 'buy' | 'sell',
         'market',

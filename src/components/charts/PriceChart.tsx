@@ -16,8 +16,9 @@ import {
   LineController
 } from 'chart.js';
 import { Line } from 'react-chartjs-2';
-import { MarketData } from '../../types';
+import { MarketData } from '@/types';
 
+// Register all chart components to avoid type errors
 ChartJS.register(
   CategoryScale,
   LinearScale,
@@ -48,6 +49,7 @@ const PriceChart: React.FC<PriceChartProps> = ({ data, pair }) => {
     return date.toLocaleTimeString();
   });
   
+  // Define chart data with proper typing
   const chartData = {
     labels,
     datasets: [
@@ -58,14 +60,16 @@ const PriceChart: React.FC<PriceChartProps> = ({ data, pair }) => {
         borderColor: 'rgb(59, 130, 246)',
         backgroundColor: 'rgba(59, 130, 246, 0.5)',
         tension: 0.2,
+        type: 'line' as const,
+        yAxisID: 'price' as const,
       },
       {
         label: 'Volume',
         data: filteredData.map(item => item.volume),
-        type: 'bar',
+        type: 'bar' as const,
         backgroundColor: 'rgba(59, 130, 246, 0.2)',
         borderColor: 'rgba(59, 130, 246, 0.2)',
-        yAxisID: 'volume'
+        yAxisID: 'volume' as const,
       },
     ],
   };
@@ -95,15 +99,17 @@ const PriceChart: React.FC<PriceChartProps> = ({ data, pair }) => {
       }
     },
     scales: {
-      y: {
+      price: {
+        type: 'linear' as const,
         beginAtZero: false,
-        position: 'left',
+        position: 'left' as const,
         grid: {
           display: true
         }
       },
       volume: {
-        position: 'right',
+        type: 'linear' as const,
+        position: 'right' as const,
         grid: {
           display: false
         }

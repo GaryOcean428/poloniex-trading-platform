@@ -1,6 +1,4 @@
 import { EventEmitter } from 'events';
-import { useSettings } from '@/context/SettingsContext';
-import { poloniexApi } from '@/services/poloniexAPI';
 import { logger } from '@/utils/logger';
 
 export interface PaperTradingConfig {
