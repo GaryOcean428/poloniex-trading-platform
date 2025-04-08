@@ -11,7 +11,9 @@ import {
   Legend,
   TimeScale,
   Filler,
-  ChartOptions
+  ChartOptions,
+  BarController,
+  LineController
 } from 'chart.js';
 import { Line } from 'react-chartjs-2';
 import { MarketData } from '../../types';
@@ -21,6 +23,8 @@ ChartJS.register(
   LinearScale,
   PointElement,
   BarElement,
+  BarController,
+  LineController,
   Filler,
   LineElement,
   Title,
