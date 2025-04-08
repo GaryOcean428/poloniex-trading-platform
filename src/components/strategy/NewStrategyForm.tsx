@@ -61,7 +61,8 @@ const NewStrategyForm: React.FC<NewStrategyFormProps> = ({ onClose }) => {
       name,
       type,
       parameters,
-      created: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
       performance: {
         totalPnL: 0,
         winRate: 0,

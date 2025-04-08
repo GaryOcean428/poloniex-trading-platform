@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Strategy, StrategyType } from '../../types';
 import { BacktestResult } from '../../types/backtest';
 import PriceChart from '../charts/PriceChart';
@@ -22,7 +22,7 @@ const StrategyDetails: React.FC<StrategyDetailsProps> = ({
   const [timeframe, setTimeframe] = useState<'1h' | '4h' | '1d'>('1h');
   const [chartType, setChartType] = useState<'candlestick' | 'line'>('candlestick');
   
-  const getStrategyTypeIcon = (type: StrategyType) => {
+  const getStrategyTypeIcon = (type: string) => {
     switch (type) {
       case StrategyType.MA_CROSSOVER:
         return <Zap className="h-6 w-6 text-blue-500" />;
@@ -35,7 +35,7 @@ const StrategyDetails: React.FC<StrategyDetailsProps> = ({
     }
   };
   
-  const getStrategyTypeName = (type: StrategyType) => {
+  const getStrategyTypeName = (type: string) => {
     switch (type) {
       case StrategyType.MA_CROSSOVER:
         return 'Moving Average Crossover';
@@ -48,7 +48,7 @@ const StrategyDetails: React.FC<StrategyDetailsProps> = ({
     }
   };
   
-  const getStrategyDescription = (type: StrategyType) => {
+  const getStrategyDescription = (type: string) => {
     switch (type) {
       case StrategyType.MA_CROSSOVER:
         return 'This strategy generates signals when the short-term moving average crosses the long-term moving average. A buy signal is generated when the short MA crosses above the long MA, and a sell signal when it crosses below.';
@@ -68,11 +68,11 @@ const StrategyDetails: React.FC<StrategyDetailsProps> = ({
           <div className="grid grid-cols-2 gap-4">
             <div className="bg-gray-50 p-3 rounded-md">
               <div className="text-sm text-gray-500">Short Period</div>
-              <div className="text-lg font-semibold">{strategy.parameters.shortPeriod}</div>
+              <div className="text-lg font-semibold">{(strategy.parameters as any).shortPeriod || (strategy.parameters as any).fastPeriod}</div>
             </div>
             <div className="bg-gray-50 p-3 rounded-md">
               <div className="text-sm text-gray-500">Long Period</div>
-              <div className="text-lg font-semibold">{strategy.parameters.longPeriod}</div>
+              <div className="text-lg font-semibold">{(strategy.parameters as any).longPeriod || (strategy.parameters as any).slowPeriod}</div>
             </div>
           </div>
         );
@@ -81,15 +81,15 @@ const StrategyDetails: React.FC<StrategyDetailsProps> = ({
           <div className="grid grid-cols-3 gap-4">
             <div className="bg-gray-50 p-3 rounded-md">
               <div className="text-sm text-gray-500">Period</div>
-              <div className="text-lg font-semibold">{strategy.parameters.period}</div>
+              <div className="text-lg font-semibold">{(strategy.parameters as any).period}</div>
             </div>
             <div className="bg-gray-50 p-3 rounded-md">
               <div className="text-sm text-gray-500">Overbought</div>
-              <div className="text-lg font-semibold">{strategy.parameters.overbought}</div>
+              <div className="text-lg font-semibold">{(strategy.parameters as any).overbought}</div>
             </div>
             <div className="bg-gray-50 p-3 rounded-md">
               <div className="text-sm text-gray-500">Oversold</div>
-              <div className="text-lg font-semibold">{strategy.parameters.oversold}</div>
+              <div className="text-lg font-semibold">{(strategy.parameters as any).oversold}</div>
             </div>
           </div>
         );
@@ -98,11 +98,11 @@ const StrategyDetails: React.FC<StrategyDetailsProps> = ({
           <div className="grid grid-cols-2 gap-4">
             <div className="bg-gray-50 p-3 rounded-md">
               <div className="text-sm text-gray-500">Lookback Period</div>
-              <div className="text-lg font-semibold">{strategy.parameters.lookbackPeriod}</div>
+              <div className="text-lg font-semibold">{(strategy.parameters as any).lookbackPeriod}</div>
             </div>
             <div className="bg-gray-50 p-3 rounded-md">
               <div className="text-sm text-gray-500">Breakout Threshold</div>
-              <div className="text-lg font-semibold">{strategy.parameters.breakoutThreshold}%</div>
+              <div className="text-lg font-semibold">{(strategy.parameters as any).breakoutThreshold}%</div>
             </div>
           </div>
         );
@@ -126,7 +126,7 @@ const StrategyDetails: React.FC<StrategyDetailsProps> = ({
               <span>{strategy.parameters.pair}</span>
               <span className="mx-2">•</span>
               <Clock className="h-4 w-4 mr-1" />
-              <span>Created {new Date(strategy.created).toLocaleDateString()}</span>
+              <span>Created {new Date(strategy.createdAt).toLocaleDateString()}</span>
             </div>
           </div>
         </div>

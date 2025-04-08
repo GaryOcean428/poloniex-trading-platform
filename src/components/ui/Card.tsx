@@ -26,6 +26,19 @@ export const CardHeader: React.FC<CardHeaderProps> = ({ className = '', children
   );
 };
 
+export interface CardTitleProps {
+  className?: string;
+  children: React.ReactNode;
+}
+
+export const CardTitle: React.FC<CardTitleProps> = ({ className = '', children }) => {
+  return (
+    <h3 className={`font-bold text-xl ${className}`}>
+      {children}
+    </h3>
+  );
+};
+
 export interface CardBodyProps {
   className?: string;
   children: React.ReactNode;
@@ -38,6 +51,9 @@ export const CardBody: React.FC<CardBodyProps> = ({ className = '', children }) 
     </div>
   );
 };
+
+// Alias for CardBody to support both naming conventions
+export const CardContent: React.FC<CardBodyProps> = CardBody;
 
 export interface CardFooterProps {
   className?: string;

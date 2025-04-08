@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/Button';
 import { Select, SelectOption } from '@/components/ui/Select';
 import { Input } from '@/components/ui/Input';
 import { Label } from '@/components/ui/Label';
-import { chromeStorage, isChromeExtension } from '@/utils/chromeExtension';
+import { getChromeStorage, setChromeStorage, isChromeExtension } from '@/utils/chromeExtension';
 
 // Strategy types
 export type StrategyType = 'MovingAverageCrossover' | 'RSI' | 'MACD' | 'BollingerBands' | 'Custom';
@@ -82,10 +82,11 @@ const StrategyBuilder: React.FC = () => {
       try {
         if (isChromeExtension()) {
           // Load from Chrome storage if in extension
-          const data = await chromeStorage.get('trading_strategies');
-          if (data.trading_strategies) {
-            setStrategies(data.trading_strategies);
-          }
+          getChromeStorage('trading_strategies', (data) => {
+            if (data.trading_strategies) {
+              setStrategies(data.trading_strategies);
+            }
+          });
         } else {
           // Load from localStorage if in browser
           const savedStrategies = localStorage.getItem('trading_strategies');
@@ -107,7 +108,7 @@ const StrategyBuilder: React.FC = () => {
       try {
         if (isChromeExtension()) {
           // Save to Chrome storage if in extension
-          chromeStorage.set({ trading_strategies: strategies });
+          setChromeStorage({ trading_strategies: strategies });
         } else {
           // Save to localStorage if in browser
           localStorage.setItem('trading_strategies', JSON.stringify(strategies));

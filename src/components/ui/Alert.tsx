@@ -1,20 +1,27 @@
 import React from 'react';
 
 export interface AlertProps {
-  type: 'info' | 'success' | 'warning' | 'error';
-  message: string;
+  variant?: 'info' | 'success' | 'warning' | 'error';
+  type?: 'info' | 'success' | 'warning' | 'error';
+  message?: string;
+  children?: React.ReactNode;
   className?: string;
   onClose?: () => void;
 }
 
 export const Alert: React.FC<AlertProps> = ({ 
-  type = 'info', 
-  message, 
+  variant = 'info',
+  type,
+  message,
+  children,
   className = '',
   onClose
 }) => {
+  // Use variant prop if provided, otherwise fall back to type prop
+  const alertType = variant || type || 'info';
+  
   const getAlertStyles = () => {
-    switch (type) {
+    switch (alertType) {
       case 'success':
         return 'bg-green-100 border-green-500 text-green-700';
       case 'warning':
@@ -27,10 +34,12 @@ export const Alert: React.FC<AlertProps> = ({
     }
   };
 
+  const content = message || children;
+
   return (
     <div className={`border-l-4 p-4 mb-4 rounded ${getAlertStyles()} ${className}`} role="alert">
       <div className="flex items-center justify-between">
-        <p>{message}</p>
+        <p>{content}</p>
         {onClose && (
           <button 
             onClick={onClose}
