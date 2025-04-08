@@ -1,0 +1,47 @@
+{
+  "manifest_version": 3,
+  "name": "Poloniex Trading Extension",
+  "version": "1.0.0",
+  "description": "Trading tool with TradingView integration and Poloniex automation",
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "permissions": [
+    "storage",
+    "tabs",
+    "notifications",
+    "alarms",
+    "cookies"
+  ],
+  "host_permissions": [
+    "http://localhost:*/*",
+    "https://*.tradingview.com/*",
+    "https://*.poloniex.com/*",
+    "https://futures-api.poloniex.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.tradingview.com/*"],
+      "js": ["content/tradingview.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://poloniex.com/*", "https://futures.poloniex.com/*"],
+      "js": ["content/poloniex.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
