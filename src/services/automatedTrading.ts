@@ -1,4 +1,4 @@
-import { Strategy, MarketData, Trade } from '@/types';
+import { Strategy } from '@/types';
 import { executeStrategy } from '@/utils/strategyExecutors';
 import { poloniexApi } from '@/services/poloniexAPI';
 import { logger } from '@/utils/logger';
@@ -105,7 +105,7 @@ class AutomatedTradingService {
       }
 
       // Execute each active strategy
-      for (const [id, strategy] of this.activeStrategies) {
+      for (const strategy of this.activeStrategies.values()) {
         // Get market data
         const marketData = await poloniexApi.getMarketData(strategy.parameters.pair);
         

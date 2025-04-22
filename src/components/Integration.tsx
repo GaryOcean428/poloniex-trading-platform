@@ -24,7 +24,7 @@ const Integration: React.FC = () => {
         chrome.runtime.sendMessage(
           extensionId,
           { type: 'CHECK_INSTALLATION' },
-          (response) => {
+          (response: any) => {
             if (response && response.installed) {
               setIsExtensionInstalled(true);
               console.log('Extension is installed and connected!');
@@ -63,7 +63,7 @@ const Integration: React.FC = () => {
             apiSecret
           }
         },
-        (response) => {
+        (response: any) => {
           if (response && response.success) {
             console.log('API credentials updated in extension');
           }

@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+// React is used implicitly for JSX transformation
+import { useState, useEffect } from 'react';
 import { Zap, Check, AlertTriangle, RefreshCw, MonitorSmartphone } from 'lucide-react';
 
 interface ExtensionStatusProps {
@@ -31,7 +32,7 @@ const ExtensionStatus: React.FC<ExtensionStatusProps> = ({ onRefreshRequest }) =
         chrome.runtime.sendMessage(
           extensionId,
           { type: 'CHECK_INSTALLATION' },
-          (response) => {
+          (response: any) => {
             if (response && response.installed) {
               setExtensionStatus('connected');
               
@@ -39,7 +40,7 @@ const ExtensionStatus: React.FC<ExtensionStatusProps> = ({ onRefreshRequest }) =
               chrome.runtime.sendMessage(
                 extensionId,
                 { type: 'CHECK_TRADINGVIEW_STATUS' },
-                (response) => {
+                (response: any) => {
                   setTradingViewStatus(response && response.connected ? 'connected' : 'disconnected');
                 }
               );
@@ -47,7 +48,7 @@ const ExtensionStatus: React.FC<ExtensionStatusProps> = ({ onRefreshRequest }) =
               chrome.runtime.sendMessage(
                 extensionId,
                 { type: 'CHECK_POLONIEX_STATUS' },
-                (response) => {
+                (response: any) => {
                   setPoloniexStatus(response && response.connected ? 'connected' : 'disconnected');
                   setIsRefreshing(false);
                 }

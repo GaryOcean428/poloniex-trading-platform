@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useSettings } from '@/context/SettingsContext';
-import { Card, CardHeader, CardBody, CardFooter, Button, Input, Textarea, Alert } from '@/components/ui';
+import { Card, CardHeader, CardBody, Button, Textarea, Alert } from '@/components/ui';
 
 const SettingsExportImport: React.FC = () => {
   const { exportSettings, importSettings } = useSettings();

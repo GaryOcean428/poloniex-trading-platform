@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 import { useErrorHandler } from './useErrorHandler';
-import { sendChromeMessage, getChromeStorage, setChromeStorage } from '@/utils/chromeExtension';
+import { sendChromeMessage, getChromeStorage } from '@/utils/chromeExtension';
 
 /**
  * Custom hook for handling API requests with proper error handling

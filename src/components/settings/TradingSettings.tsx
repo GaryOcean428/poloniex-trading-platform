@@ -1,6 +1,5 @@
-import React, { useState } from 'react';
 import { useSettings } from '@/context/SettingsContext';
-import { Card, CardHeader, CardBody, CardFooter, Button, Input, Switch, Select, Label } from '@/components/ui';
+import { Card, CardHeader, CardBody, CardFooter, Input, Switch, Select, Label } from '@/components/ui';
 
 const TradingSettings: React.FC = () => {
   const { 

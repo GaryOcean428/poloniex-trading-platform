@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Key, Copy, Eye, EyeOff, Plus, Trash2, AlertTriangle, Clock, Shield, RefreshCw } from 'lucide-react';
+import { useState } from 'react';
+import { Copy, Plus, Trash2, AlertTriangle, Shield, RefreshCw } from 'lucide-react';
 import { useSettings } from '../../context/SettingsContext';
 
 interface ApiKey {
@@ -17,9 +17,8 @@ interface ApiKey {
 }
 
 const ApiKeyManagement: React.FC = () => {
-  const { apiKey, apiSecret, updateSettings } = useSettings();
+  const { apiKey } = useSettings();
   const [showCreateForm, setShowCreateForm] = useState(false);
-  const [showSecret, setShowSecret] = useState(false);
   const [newKeyForm, setNewKeyForm] = useState({
     name: '',
     permissions: {

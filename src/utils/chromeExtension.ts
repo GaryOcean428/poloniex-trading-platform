@@ -1,28 +1,7 @@
 // No need for React import in this utility file
 
-// Define a type for Chrome extension API to avoid type errors
-declare global {
-  interface Window {
-    chrome?: {
-      runtime?: {
-        sendMessage?: (message: any, callback?: (response: any) => void) => void;
-        onMessage?: {
-          addListener?: (callback: (message: any, sender: any, sendResponse: any) => void) => void;
-        };
-      };
-      tabs?: {
-        query?: (queryInfo: any, callback: (tabs: any[]) => void) => void;
-        create?: (createProperties: any, callback?: (tab: any) => void) => void;
-      };
-      storage?: {
-        local?: {
-          get?: (keys: string | string[] | object | null, callback: (items: any) => void) => void;
-          set?: (items: object, callback?: () => void) => void;
-        };
-      };
-    };
-  }
-}
+// Use a different approach to avoid conflicts with @types/chrome
+// Instead of extending Window interface, use runtime checks
 
 /**
  * Safely checks if Chrome extension API is available
@@ -70,7 +49,8 @@ export const getChromeStorage = (key: string, callback: (data: any) => void): vo
  */
 export const setChromeStorage = (data: object, callback?: () => void): void => {
   if (isChromeExtension() && window.chrome?.storage?.local?.set) {
-    window.chrome.storage.local.set(data, callback);
+    // Fix the callback type issue by providing a non-undefined callback
+    window.chrome.storage.local.set(data, callback || (() => {}));
   } else {
     console.warn('Chrome storage API not available');
     if (callback) {

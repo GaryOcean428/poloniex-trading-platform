@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
-import { X, ChevronDown, ChevronUp, RefreshCw, Settings, Info } from 'lucide-react';
+// React is used implicitly for JSX transformation
+import { useState } from 'react';
+import { X, RefreshCw, Info } from 'lucide-react';
 import ExtensionStatus from './ExtensionStatus';
 import ExtensionSettings from './ExtensionSettings';
 import { useSettings } from '../../context/SettingsContext';
@@ -9,7 +10,8 @@ interface ExtensionControlsProps {
 }
 
 const ExtensionControls: React.FC<ExtensionControlsProps> = ({ onClose }) => {
-  const { apiKey, apiSecret } = useSettings();
+  // Removed unused apiKey variable
+  const { } = useSettings();
   const [activePanel, setActivePanel] = useState<'status' | 'settings' | 'info'>('status');
   const [isRefreshing, setIsRefreshing] = useState(false);
   
@@ -25,7 +27,8 @@ const ExtensionControls: React.FC<ExtensionControlsProps> = ({ onClose }) => {
         chrome.runtime.sendMessage(
           extensionId,
           { type: 'REFRESH_DATA' },
-          (response) => {
+          () => {
+            // Removed unused response parameter
             setIsRefreshing(false);
           }
         );

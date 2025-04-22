@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useSettings } from '@/context/SettingsContext';
 import { tradingEngine } from '@/trading/tradingEngine';
 import { executeStrategy } from '@/utils/strategyExecutors';
@@ -10,7 +10,7 @@ const AutomationPanel: React.FC = () => {
   const { 
     autoTradingEnabled, 
     defaultPair,
-    timeframe,
+    // Removed unused timeframe variable
     leverage,
     riskPerTrade,
     stopLossPercent,
@@ -105,14 +105,12 @@ const AutomationPanel: React.FC = () => {
         
         // Check if we're in paper or live mode
         if (tradingEngine.modeManager.isLiveMode()) {
-          // For live trading, use the API
+          // For live trading, use the API - fixed parameter count
           await poloniexApi.placeOrder(
             pair,
             side,
             'market',
-            0.001, // Minimum order size
-            undefined,
-            leverage
+            0.001 // Minimum order size
           );
         } else {
           // For paper trading, use the paper engine

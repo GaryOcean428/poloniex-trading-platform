@@ -35,7 +35,17 @@ class WebSocketService {
   // In a real application, this would be your WebSocket server URL
   private readonly SOCKET_URL = 'http://localhost:3000';
   
-  private constructor() {}
+  private constructor() {
+    // Initialize offline data from localStorage if available
+    try {
+      const savedData = localStorage.getItem('websocket_offline_data');
+      if (savedData) {
+        this.offlineData = new Map(JSON.parse(savedData));
+      }
+    } catch (error) {
+      console.error('Error loading offline data:', error);
+    }
+  }
   
   public static getInstance(): WebSocketService {
     if (!WebSocketService.instance) {
@@ -212,20 +222,6 @@ class WebSocketService {
       localStorage.setItem('websocket_offline_data', JSON.stringify(Array.from(this.offlineData.entries())));
     } catch (error) {
       console.error('Error saving offline data:', error);
-    }
-  }
-  
-  /**
-   * Load offline data
-   */
-  private loadOfflineData(): void {
-    try {
-      const savedData = localStorage.getItem('websocket_offline_data');
-      if (savedData) {
-        this.offlineData = new Map(JSON.parse(savedData));
-      }
-    } catch (error) {
-      console.error('Error loading offline data:', error);
     }
   }
   

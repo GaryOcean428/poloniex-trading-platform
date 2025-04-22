@@ -1,10 +1,10 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Bell, User, Menu } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useSettings } from '../context/SettingsContext';
 
 const Navbar: React.FC = () => {
-  const [notifications, setNotifications] = useState<number>(3);
+  const [notifications] = useState<number>(3);
   const { hasStoredCredentials } = useSettings();
   
   return (

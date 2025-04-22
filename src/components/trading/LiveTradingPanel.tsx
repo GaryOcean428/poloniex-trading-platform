@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useSettings } from '@/context/SettingsContext';
 import { tradingEngine } from '@/trading/tradingEngine';
 import { Card, CardHeader, CardBody, CardFooter, Button, Switch, Label, Alert } from '@/components/ui';
@@ -8,10 +8,7 @@ const LiveTradingPanel: React.FC = () => {
     isLiveTrading, 
     apiKey, 
     apiSecret, 
-    leverage, 
-    riskPerTrade,
-    stopLossPercent,
-    takeProfitPercent,
+    // Removed unused variables
     autoTradingEnabled,
     updateSettings
   } = useSettings();
@@ -45,7 +42,7 @@ const LiveTradingPanel: React.FC = () => {
     return () => {
       tradingEngine.stopTrading();
     };
-  }, []);
+  }, [isLiveTrading]);
   
   // Toggle trading mode
   const toggleTradingMode = async () => {

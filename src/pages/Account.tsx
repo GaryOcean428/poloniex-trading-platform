@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { 
   Clock, 
   CreditCard, 
@@ -14,7 +14,6 @@ import {
   BarChart4
 } from 'lucide-react';
 import { useTradingContext } from '../context/TradingContext';
-import { useSettings } from '../context/SettingsContext';
 import MockModeNotice from '../components/MockModeNotice';
 import { poloniexApi } from '../services/poloniexAPI';
 import TransactionHistory from '../components/account/TransactionHistory';
@@ -22,8 +21,7 @@ import ApiKeyManagement from '../components/account/ApiKeyManagement';
 import { mockTransactions } from '../data/mockData';
 
 const Account: React.FC = () => {
-  const { accountBalance, isLoading, isMockMode, refreshApiConnection } = useTradingContext();
-  const { apiKey, apiSecret } = useSettings();
+  const { accountBalance, isMockMode } = useTradingContext();
   const [activeTab, setActiveTab] = useState<'overview' | 'transactions' | 'api' | 'settings'>('overview');
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -32,8 +30,8 @@ const Account: React.FC = () => {
     try {
       // Force API credentials reload
       poloniexApi.loadCredentials();
-      // Refresh all data
-      await refreshApiConnection();
+      // Refresh all data - using getAccountBalance instead of loadData
+      await poloniexApi.getAccountBalance();
     } finally {
       setIsRefreshing(false);
     }
@@ -330,7 +328,7 @@ const Account: React.FC = () => {
                             </span>
                           </td>
                           <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
-                            {new Date(transaction.timestamp).toLocaleDateString()}
+                            {transaction.timestamp}
                           </td>
                         </tr>
                       ))}
@@ -356,85 +354,35 @@ const Account: React.FC = () => {
                   <h3 className="font-medium">Security Settings</h3>
                 </div>
                 <div className="p-4 space-y-4">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between p-3 border rounded-md">
                     <div>
                       <h4 className="font-medium">Two-Factor Authentication</h4>
-                      <p className="text-sm text-gray-500 mt-1">
-                        Add an additional layer of security to your account
-                      </p>
+                      <p className="text-sm text-gray-500 mt-1">Secure your account with 2FA</p>
                     </div>
-                    <button className="px-3 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-sm">
+                    <button className="px-3 py-1 bg-blue-600 text-white rounded-md hover:bg-blue-700">
                       Enable
                     </button>
                   </div>
                   
-                  <div className="border-t border-gray-200 pt-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h4 className="font-medium">Password</h4>
-                        <p className="text-sm text-gray-500 mt-1">
-                          Last updated 45 days ago
-                        </p>
-                      </div>
-                      <button className="px-3 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 text-sm">
-                        Change
-                      </button>
-                    </div>
-                  </div>
-                  
-                  <div className="border-t border-gray-200 pt-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h4 className="font-medium">Session Management</h4>
-                        <p className="text-sm text-gray-500 mt-1">
-                          You are currently logged in from 1 device
-                        </p>
-                      </div>
-                      <button className="px-3 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 text-sm">
-                        Manage
-                      </button>
-                    </div>
-                  </div>
-                  
-                  <div className="border-t border-gray-200 pt-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h4 className="font-medium">Activity Log</h4>
-                        <p className="text-sm text-gray-500 mt-1">
-                          Monitor login activity and security events
-                        </p>
-                      </div>
-                      <button className="px-3 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 text-sm">
-                        View Log
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              
-              <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-                <div className="px-4 py-3 bg-gray-50 border-b border-gray-200">
-                  <h3 className="font-medium">Trading Limits</h3>
-                </div>
-                <div className="p-4">
-                  <div className="grid grid-cols-2 gap-6 mb-4">
+                  <div className="flex items-center justify-between p-3 border rounded-md">
                     <div>
-                      <h4 className="text-sm font-medium text-gray-500">Daily Withdrawal Limit</h4>
-                      <div className="flex items-center mt-1">
-                        <span className="font-medium">{formatCurrency(5000)}</span>
-                      </div>
+                      <h4 className="font-medium">Change Password</h4>
+                      <p className="text-sm text-gray-500 mt-1">Update your account password</p>
                     </div>
-                    <div>
-                      <h4 className="text-sm font-medium text-gray-500">Max Position Size</h4>
-                      <div className="flex items-center mt-1">
-                        <span className="font-medium">{formatCurrency(50000)}</span>
-                      </div>
-                    </div>
+                    <button className="px-3 py-1 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300">
+                      Update
+                    </button>
                   </div>
                   
-                  <button className="px-3 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 text-sm">
-                    Request Limit Increase
-                  </button>
+                  <div className="flex items-center justify-between p-3 border rounded-md">
+                    <div>
+                      <h4 className="font-medium">Login History</h4>
+                      <p className="text-sm text-gray-500 mt-1">View your recent login activity</p>
+                    </div>
+                    <button className="px-3 py-1 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300">
+                      View
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>

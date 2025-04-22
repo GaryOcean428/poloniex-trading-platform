@@ -78,7 +78,8 @@ interface TabsTriggerProps {
   onSelect?: () => void;
 }
 
-const TabsTrigger = ({ className, value, children, active, onSelect }: TabsTriggerProps) => {
+// Removed unused value parameter from the function parameters, keeping it in the interface
+const TabsTrigger = ({ className, children, active, onSelect }: TabsTriggerProps) => {
   return (
     <button
       className={cn(

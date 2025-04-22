@@ -1,4 +1,4 @@
-import React from 'react';
+// React is used implicitly for JSX transformation
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import Dashboard from './pages/Dashboard';
 import Strategies from './pages/Strategies';

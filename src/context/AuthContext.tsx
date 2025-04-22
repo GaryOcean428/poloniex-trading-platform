@@ -6,6 +6,7 @@ interface AuthContextType {
   login: (token: string, expiresIn: number) => void;
   logout: () => void;
   user: UserProfile | null;
+  isAuthenticated: boolean; // Added for FuturesContext
 }
 
 interface UserProfile {
@@ -19,7 +20,8 @@ const AuthContext = createContext<AuthContextType>({
   isLoggedIn: false,
   login: () => {},
   logout: () => {},
-  user: null
+  user: null,
+  isAuthenticated: false // Added for FuturesContext
 });
 
 export const useAuth = () => useContext(AuthContext);
@@ -78,7 +80,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ isLoggedIn, login, logout, user }}>
+    <AuthContext.Provider value={{ 
+      isLoggedIn, 
+      login, 
+      logout, 
+      user,
+      isAuthenticated: isLoggedIn // Added for FuturesContext
+    }}>
       {children}
     </AuthContext.Provider>
   );

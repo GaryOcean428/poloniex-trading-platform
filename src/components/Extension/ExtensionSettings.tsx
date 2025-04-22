@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+// React is used implicitly for JSX transformation
+import { useState, useEffect } from 'react';
 import { Shield, Lock, TerminalSquare, Zap } from 'lucide-react';
 import { useSettings } from '../../context/SettingsContext';
 
@@ -30,7 +31,7 @@ const ExtensionSettings: React.FC<ExtensionSettingsProps> = ({ onClose }) => {
         chrome.runtime.sendMessage(
           extensionId,
           { type: 'CHECK_INSTALLATION' },
-          (response) => {
+          (response: any) => {
             if (response && response.installed) {
               setExtensionStatus('Connected');
             } else {
@@ -90,7 +91,7 @@ const ExtensionSettings: React.FC<ExtensionSettingsProps> = ({ onClose }) => {
             riskLimit: formData.riskLimit
           }
         },
-        (response) => {
+        (response: any) => {
           console.log('Extension settings updated:', response);
         }
       );
@@ -105,7 +106,7 @@ const ExtensionSettings: React.FC<ExtensionSettingsProps> = ({ onClose }) => {
             apiSecret: formData.apiSecret
           }
         },
-        (response) => {
+        (response: any) => {
           console.log('Extension API credentials updated:', response);
         }
       );

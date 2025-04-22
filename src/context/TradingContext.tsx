@@ -1,9 +1,8 @@
-import React, { createContext, useContext, useState, ReactNode, useEffect, useCallback } from 'react';
-import { Strategy, StrategyType, MarketData, Trade } from '../types';
+import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
+import { Strategy, StrategyType, MarketData, Trade, MovingAverageCrossoverParameters } from '../types';
 import { mockMarketData, mockTrades } from '../data/mockData';
 import { usePoloniexData } from '../hooks/usePoloniexData';
 import { poloniexApi } from '../services/poloniexAPI';
-import { webSocketService } from '../services/websocketService';
 
 interface TradingContextType {
   marketData: MarketData[];
@@ -20,6 +19,7 @@ interface TradingContextType {
   errors: string[];
   addError: (error: string) => void;
   clearErrors: () => void;
+  refreshApiConnection: () => void; // Changed to non-Promise return type to match implementation
 }
 
 const TradingContext = createContext<TradingContextType | undefined>(undefined);
@@ -67,11 +67,13 @@ export const TradingProvider: React.FC<TradingProviderProps> = ({
       name: 'Moving Average Crossover',
       type: StrategyType.MA_CROSSOVER,
       parameters: {
-        shortPeriod: 10,
-        longPeriod: 50,
-        pair: 'BTC-USDT'
-      },
-      created: new Date().toISOString(),
+        fastPeriod: 10,
+        slowPeriod: 50,
+        pair: 'BTC-USDT',
+        timeframe: '1d'
+      } as MovingAverageCrossoverParameters,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
       performance: {
         totalPnL: 12.5,
         winRate: 0.65,
@@ -161,14 +163,14 @@ export const TradingProvider: React.FC<TradingProviderProps> = ({
       accountBalance,
       isLoading,
       isMockMode,
-      refreshApiConnection,
       addStrategy,
       removeStrategy,
       toggleStrategyActive,
       placeOrder,
       errors,
       addError,
-      clearErrors
+      clearErrors,
+      refreshApiConnection
     }}>
       {children}
     </TradingContext.Provider>

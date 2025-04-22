@@ -22,7 +22,7 @@ interface PoloniexDataHook {
 }
 
 export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataHook => {
-  const { apiKey, apiSecret, isLiveTrading, defaultPair } = useSettings();
+  const { apiKey, apiSecret, isLiveTrading } = useSettings();
   const [marketData, setMarketData] = useState<MarketData[]>(mockMarketData);
   const [trades, setTrades] = useState<Trade[]>(mockTrades);
   const [accountBalance, setAccountBalance] = useState<any>(null);

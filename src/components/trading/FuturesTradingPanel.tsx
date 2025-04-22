@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
@@ -29,7 +29,7 @@ const FuturesTradingPanel: React.FC<FuturesTradingPanelProps> = ({ symbol }) => 
   const [positionSide, setPositionSide] = useState<PositionSide>(PositionSide.LONG);
   const [price, setPrice] = useState<string>('');
   const [quantity, setQuantity] = useState<string>('');
-  const [leverage, setLeverage] = useState<string>('10');
+  const [leverage, setLeverageState] = useState<string>('10');
   const [marginMode, setMarginMode] = useState<MarginMode>(MarginMode.CROSS);
   const [isReduceOnly, setIsReduceOnly] = useState<boolean>(false);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
@@ -57,7 +57,7 @@ const FuturesTradingPanel: React.FC<FuturesTradingPanelProps> = ({ symbol }) => 
 
   // Handle leverage change
   const handleLeverageChange = async (newLeverage: string) => {
-    setLeverage(newLeverage);
+    setLeverageState(newLeverage);
     
     try {
       await setLeverage(symbol, newLeverage, marginMode);

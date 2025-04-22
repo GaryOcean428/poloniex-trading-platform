@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useSettings } from '@/context/SettingsContext';
 import { Strategy, MarketData } from '@/types';
 import { executeStrategy } from '@/utils/strategyExecutors';
@@ -41,12 +41,19 @@ interface BollingerBandsParameters extends BaseParameters {
   stdDev: number;
 }
 
+interface CustomParameters extends BaseParameters {
+  // Add any custom parameters here
+  lookbackPeriod: number;
+  breakoutThreshold: number;
+}
+
 // Union type for all parameter types
 export type StrategyParameters = 
   | MovingAverageCrossoverParameters 
   | RSIParameters 
   | MACDParameters 
-  | BollingerBandsParameters;
+  | BollingerBandsParameters
+  | CustomParameters;
 
 // Test result interface
 interface TestResult {
@@ -125,7 +132,7 @@ const StrategyBuilder: React.FC = () => {
     setError(null);
     
     try {
-      const pair = newStrategy.parameters?.pair || defaultPair;
+      const pair = (newStrategy.parameters as BaseParameters)?.pair || defaultPair;
       const data = await poloniexApi.getMarketData(pair);
       setMarketData(data);
     } catch (err) {
@@ -245,8 +252,10 @@ const StrategyBuilder: React.FC = () => {
       default:
         parameters = { 
           pair: defaultPair, 
-          timeframe 
-        } as BaseParameters;
+          timeframe,
+          lookbackPeriod: 20,
+          breakoutThreshold: 2
+        } as CustomParameters;
     }
     
     setNewStrategy({
@@ -464,6 +473,49 @@ const StrategyBuilder: React.FC = () => {
           </>
         );
       }
+      
+      case 'Custom': {
+        const params = parameters as CustomParameters;
+        return (
+          <>
+            <div className="mb-4">
+              <Label htmlFor="lookbackPeriod">Lookback Period</Label>
+              <Input
+                id="lookbackPeriod"
+                type="number"
+                value={params.lookbackPeriod || 20}
+                onChange={(e) => setNewStrategy({
+                  ...newStrategy,
+                  parameters: { 
+                    ...parameters, 
+                    lookbackPeriod: parseInt(e.target.value) 
+                  } as CustomParameters
+                })}
+                min="5"
+                max="100"
+              />
+            </div>
+            <div className="mb-4">
+              <Label htmlFor="breakoutThreshold">Breakout Threshold</Label>
+              <Input
+                id="breakoutThreshold"
+                type="number"
+                value={params.breakoutThreshold || 2}
+                onChange={(e) => setNewStrategy({
+                  ...newStrategy,
+                  parameters: { 
+                    ...parameters, 
+                    breakoutThreshold: parseFloat(e.target.value) 
+                  } as CustomParameters
+                })}
+                min="0.5"
+                max="5"
+                step="0.1"
+              />
+            </div>
+          </>
+        );
+      }
         
       default:
         return null;
@@ -524,10 +576,13 @@ const StrategyBuilder: React.FC = () => {
               <Label htmlFor="pair">Trading Pair</Label>
               <Input
                 id="pair"
-                value={newStrategy.parameters?.pair || defaultPair}
+                value={(newStrategy.parameters as BaseParameters)?.pair || defaultPair}
                 onChange={(e) => setNewStrategy({
                   ...newStrategy,
-                  parameters: { ...newStrategy.parameters, pair: e.target.value } as StrategyParameters
+                  parameters: { 
+                    ...newStrategy.parameters, 
+                    pair: e.target.value 
+                  } as StrategyParameters
                 })}
                 placeholder="BTC-USDT"
               />
@@ -537,31 +592,43 @@ const StrategyBuilder: React.FC = () => {
               <Label htmlFor="timeframe">Timeframe</Label>
               <Select
                 id="timeframe"
-                value={newStrategy.parameters?.timeframe || timeframe}
+                value={(newStrategy.parameters as BaseParameters)?.timeframe || timeframe}
                 onChange={(e) => setNewStrategy({
                   ...newStrategy,
-                  parameters: { ...newStrategy.parameters, timeframe: e.target.value } as StrategyParameters
+                  parameters: { 
+                    ...newStrategy.parameters, 
+                    timeframe: e.target.value 
+                  } as StrategyParameters
                 })}
               >
-                <SelectOption value="1m">1 minute</SelectOption>
-                <SelectOption value="5m">5 minutes</SelectOption>
-                <SelectOption value="15m">15 minutes</SelectOption>
-                <SelectOption value="1h">1 hour</SelectOption>
-                <SelectOption value="4h">4 hours</SelectOption>
-                <SelectOption value="1d">1 day</SelectOption>
+                <SelectOption value="1m">1 Minute</SelectOption>
+                <SelectOption value="5m">5 Minutes</SelectOption>
+                <SelectOption value="15m">15 Minutes</SelectOption>
+                <SelectOption value="1h">1 Hour</SelectOption>
+                <SelectOption value="4h">4 Hours</SelectOption>
+                <SelectOption value="1d">1 Day</SelectOption>
               </Select>
             </div>
             
             {renderParameterInputs()}
+            
+            <div className="flex space-x-2 pt-4">
+              <Button
+                type="button"
+                onClick={resetNewStrategy}
+                variant="outline"
+              >
+                Reset
+              </Button>
+              <Button
+                type="button"
+                onClick={saveStrategy}
+                disabled={!newStrategy.id || !newStrategy.name}
+              >
+                {selectedStrategy ? 'Update Strategy' : 'Save Strategy'}
+              </Button>
+            </div>
           </div>
-        </div>
-        <div className="p-4 border-t flex justify-between">
-          <Button variant="outline" onClick={resetNewStrategy}>
-            {selectedStrategy ? 'Cancel' : 'Reset'}
-          </Button>
-          <Button onClick={saveStrategy} disabled={isLoading}>
-            {selectedStrategy ? 'Update Strategy' : 'Save Strategy'}
-          </Button>
         </div>
       </Card>
       
@@ -570,47 +637,79 @@ const StrategyBuilder: React.FC = () => {
           <h3 className="text-lg font-medium">Test & Manage Strategies</h3>
         </div>
         <div className="p-4">
-          <div className="space-y-4">
-            <div className="flex space-x-2">
-              <Button onClick={loadMarketData} disabled={isLoading} className="flex-1">
-                Load Market Data
+          <div className="mb-6">
+            <h4 className="font-medium mb-2">Test Current Strategy</h4>
+            <div className="flex space-x-2 mb-4">
+              <Button
+                type="button"
+                onClick={loadMarketData}
+                disabled={isLoading}
+                variant="outline"
+              >
+                {isLoading ? 'Loading...' : 'Load Market Data'}
               </Button>
-              <Button onClick={testStrategy} disabled={isLoading || !marketData.length} className="flex-1">
+              <Button
+                type="button"
+                onClick={testStrategy}
+                disabled={!marketData.length || isLoading}
+              >
                 Test Strategy
               </Button>
             </div>
             
             {testResult && (
-              <div className="p-4 border rounded-md">
-                <h4 className="font-medium mb-2">Test Result:</h4>
-                <p><strong>Signal:</strong> {testResult.signal || 'No signal'}</p>
-                <p><strong>Reason:</strong> {testResult.reason}</p>
-                <p><strong>Confidence:</strong> {(testResult.confidence * 100).toFixed(2)}%</p>
+              <div className={`p-4 rounded-lg ${
+                testResult.signal === 'BUY' 
+                  ? 'bg-green-100 text-green-800' 
+                  : testResult.signal === 'SELL' 
+                    ? 'bg-red-100 text-red-800' 
+                    : 'bg-gray-100 text-gray-800'
+              }`}>
+                <div className="font-medium">
+                  Signal: {testResult.signal || 'NEUTRAL'}
+                </div>
+                <div className="text-sm mt-1">
+                  {testResult.reason}
+                </div>
+                <div className="text-sm mt-2">
+                  Confidence: {testResult.confidence}%
+                </div>
               </div>
             )}
-            
-            <div className="mt-6">
-              <h4 className="font-medium mb-2">Saved Strategies</h4>
-              {strategies.length === 0 ? (
-                <p className="text-gray-500">No strategies saved yet</p>
-              ) : (
-                <div className="space-y-2">
-                  {strategies.map(strategy => (
-                    <div key={strategy.id} className="p-3 border rounded-md flex justify-between items-center">
-                      <div>
-                        <p className="font-medium">{strategy.name}</p>
-                        <p className="text-sm text-gray-500">{strategy.type} - {strategy.parameters.pair}</p>
-                      </div>
-                      <div className="flex space-x-2">
-                        <Button size="sm" variant="outline" onClick={() => selectStrategy(strategy)}>
-                          Edit
-                        </Button>
-                        <Button size="sm" variant="outline" onClick={() => deleteStrategy(strategy.id)}>
-                          Delete
-                        </Button>
-                      </div>
+          </div>
+          
+          <div>
+            <h4 className="font-medium mb-2">Saved Strategies</h4>
+            <div className="space-y-2">
+              {strategies.map(strategy => (
+                <div 
+                  key={strategy.id}
+                  className={`p-3 border rounded-md cursor-pointer ${
+                    selectedStrategy?.id === strategy.id ? 'border-blue-500 bg-blue-50' : 'border-gray-200'
+                  }`}
+                  onClick={() => selectStrategy(strategy)}
+                >
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <div className="font-medium">{strategy.name}</div>
+                      <div className="text-xs text-gray-500">{strategy.type}</div>
                     </div>
-                  ))}
+                    <button
+                      className="text-red-500 hover:text-red-700"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deleteStrategy(strategy.id);
+                      }}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              ))}
+              
+              {strategies.length === 0 && (
+                <div className="text-center py-4 text-gray-500">
+                  No saved strategies yet
                 </div>
               )}
             </div>

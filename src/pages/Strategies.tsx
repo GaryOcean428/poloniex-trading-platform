@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useTradingContext } from '../context/TradingContext';
 import { Strategy, StrategyType } from '../types';
 import { Plus, Zap, Settings as SettingsIcon, BarChart2, Play, Pause, Trash2, History, Sparkles } from 'lucide-react';
@@ -37,7 +37,8 @@ const Strategies: React.FC = () => {
   const optimizeStrategy = async (strategy: Strategy) => {
     setIsOptimizing(true);
     try {
-      const parameterRanges = {
+      // Fix the parameter ranges to match the expected type
+      const parameterRanges: Record<string, [number, number, number]> = {
         shortPeriod: [5, 20, 5],
         longPeriod: [20, 100, 20]
       };
@@ -75,7 +76,7 @@ const Strategies: React.FC = () => {
     setShowNewStrategyForm(false);
   };
   
-  const getStrategyTypeIcon = (type: StrategyType) => {
+  const getStrategyTypeIcon = (type: string) => {
     switch (type) {
       case StrategyType.MA_CROSSOVER:
         return <Zap className="h-5 w-5 text-blue-500" />;

@@ -25,6 +25,7 @@ interface SettingsContextType {
   hasStoredCredentials: boolean;
   exportSettings: () => string;
   importSettings: (settingsJson: string) => boolean;
+  mockMode?: boolean; // Added for FuturesContext
 }
 
 interface SettingsState {
@@ -69,8 +70,9 @@ const defaultSettings: SettingsState = {
   autoTradingEnabled: false
 };
 
-// Add new storage keys
-Object.assign(STORAGE_KEYS, {
+// Define storage keys
+const EXTENDED_STORAGE_KEYS = {
+  ...STORAGE_KEYS,
   CHART_TYPE: 'poloniex_chart_type',
   TIMEFRAME: 'poloniex_timeframe',
   LEVERAGE: 'poloniex_leverage',
@@ -79,7 +81,7 @@ Object.assign(STORAGE_KEYS, {
   TAKE_PROFIT_PERCENT: 'poloniex_take_profit_percent',
   TRAILING_STOP_PERCENT: 'poloniex_trailing_stop_percent',
   AUTO_TRADING_ENABLED: 'poloniex_auto_trading_enabled'
-});
+};
 
 const SettingsContext = createContext<SettingsContextType | undefined>(undefined);
 
@@ -102,24 +104,24 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
     }
 
     return {
-      apiKey: getStorageItem(STORAGE_KEYS.API_KEY, import.meta.env.VITE_POLONIEX_API_KEY || ''),
-      apiSecret: getStorageItem(STORAGE_KEYS.API_SECRET, import.meta.env.VITE_POLONIEX_API_SECRET || ''),
-      isLiveTrading: getStorageItem(STORAGE_KEYS.IS_LIVE_TRADING, false),
-      darkMode: getStorageItem(STORAGE_KEYS.DARK_MODE, false),
-      defaultPair: getStorageItem(STORAGE_KEYS.DEFAULT_PAIR, 'BTC-USDT'),
-      emailNotifications: getStorageItem(STORAGE_KEYS.EMAIL_NOTIFICATIONS, true),
-      tradeNotifications: getStorageItem(STORAGE_KEYS.TRADE_NOTIFICATIONS, true),
-      priceAlerts: getStorageItem(STORAGE_KEYS.PRICE_ALERTS, false),
-      chatNotifications: getStorageItem(STORAGE_KEYS.CHAT_NOTIFICATIONS, true),
-      showExtension: getStorageItem(STORAGE_KEYS.SHOW_EXTENSION, true),
-      chartType: getStorageItem(STORAGE_KEYS.CHART_TYPE, 'candle'),
-      timeframe: getStorageItem(STORAGE_KEYS.TIMEFRAME, '5m'),
-      leverage: getStorageItem(STORAGE_KEYS.LEVERAGE, 1),
-      riskPerTrade: getStorageItem(STORAGE_KEYS.RISK_PER_TRADE, 2),
-      stopLossPercent: getStorageItem(STORAGE_KEYS.STOP_LOSS_PERCENT, 2),
-      takeProfitPercent: getStorageItem(STORAGE_KEYS.TAKE_PROFIT_PERCENT, 4),
-      trailingStopPercent: getStorageItem(STORAGE_KEYS.TRAILING_STOP_PERCENT, 1),
-      autoTradingEnabled: getStorageItem(STORAGE_KEYS.AUTO_TRADING_ENABLED, false)
+      apiKey: getStorageItem(EXTENDED_STORAGE_KEYS.API_KEY, import.meta.env.VITE_POLONIEX_API_KEY || ''),
+      apiSecret: getStorageItem(EXTENDED_STORAGE_KEYS.API_SECRET, import.meta.env.VITE_POLONIEX_API_SECRET || ''),
+      isLiveTrading: getStorageItem(EXTENDED_STORAGE_KEYS.IS_LIVE_TRADING, false),
+      darkMode: getStorageItem(EXTENDED_STORAGE_KEYS.DARK_MODE, false),
+      defaultPair: getStorageItem(EXTENDED_STORAGE_KEYS.DEFAULT_PAIR, 'BTC-USDT'),
+      emailNotifications: getStorageItem(EXTENDED_STORAGE_KEYS.EMAIL_NOTIFICATIONS, true),
+      tradeNotifications: getStorageItem(EXTENDED_STORAGE_KEYS.TRADE_NOTIFICATIONS, true),
+      priceAlerts: getStorageItem(EXTENDED_STORAGE_KEYS.PRICE_ALERTS, false),
+      chatNotifications: getStorageItem(EXTENDED_STORAGE_KEYS.CHAT_NOTIFICATIONS, true),
+      showExtension: getStorageItem(EXTENDED_STORAGE_KEYS.SHOW_EXTENSION, true),
+      chartType: getStorageItem(EXTENDED_STORAGE_KEYS.CHART_TYPE, 'candle'),
+      timeframe: getStorageItem(EXTENDED_STORAGE_KEYS.TIMEFRAME, '5m'),
+      leverage: getStorageItem(EXTENDED_STORAGE_KEYS.LEVERAGE, 1),
+      riskPerTrade: getStorageItem(EXTENDED_STORAGE_KEYS.RISK_PER_TRADE, 2),
+      stopLossPercent: getStorageItem(EXTENDED_STORAGE_KEYS.STOP_LOSS_PERCENT, 2),
+      takeProfitPercent: getStorageItem(EXTENDED_STORAGE_KEYS.TAKE_PROFIT_PERCENT, 4),
+      trailingStopPercent: getStorageItem(EXTENDED_STORAGE_KEYS.TRAILING_STOP_PERCENT, 1),
+      autoTradingEnabled: getStorageItem(EXTENDED_STORAGE_KEYS.AUTO_TRADING_ENABLED, false)
     };
   };
 
@@ -158,7 +160,7 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
       if (canUseStorage) {
         // Persist each updated setting to localStorage
         Object.entries(newSettings).forEach(([key, value]) => {
-          const storageKey = STORAGE_KEYS[key.toUpperCase()] || `poloniex_${key}`;
+          const storageKey = EXTENDED_STORAGE_KEYS[key.toUpperCase() as keyof typeof EXTENDED_STORAGE_KEYS] || `poloniex_${key}`;
           setStorageItem(storageKey, value);
         });
       }
@@ -172,7 +174,7 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
     setSettings(defaultSettings);
     
     if (canUseStorage) {
-      Object.values(STORAGE_KEYS).forEach(key => {
+      Object.values(EXTENDED_STORAGE_KEYS).forEach(key => {
         localStorage.removeItem(key);
       });
     }
@@ -183,8 +185,13 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
     try {
       // Create a copy of settings without sensitive data
       const exportableSettings = { ...settings };
-      delete exportableSettings.apiKey;
-      delete exportableSettings.apiSecret;
+      const sensitiveKeys: (keyof SettingsState)[] = ['apiKey', 'apiSecret'];
+      
+      sensitiveKeys.forEach(key => {
+        if (key in exportableSettings) {
+          delete exportableSettings[key];
+        }
+      });
       
       return JSON.stringify(exportableSettings);
     } catch (error) {
@@ -204,8 +211,12 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
       }
       
       // Don't import sensitive data
-      delete importedSettings.apiKey;
-      delete importedSettings.apiSecret;
+      const sensitiveKeys: (keyof SettingsState)[] = ['apiKey', 'apiSecret'];
+      sensitiveKeys.forEach(key => {
+        if (key in importedSettings) {
+          delete importedSettings[key];
+        }
+      });
       
       // Update settings
       updateSettings(importedSettings);
@@ -224,7 +235,8 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
         resetSettings,
         hasStoredCredentials,
         exportSettings,
-        importSettings
+        importSettings,
+        mockMode: !settings.isLiveTrading // Added for FuturesContext
       }}
     >
       {children}

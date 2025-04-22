@@ -1,4 +1,5 @@
 import { MarketData, Strategy, StrategyType, Trade } from '../types';
+import { MovingAverageCrossoverParameters, RSIParameters, BreakoutParameters } from '../types';
 
 export interface Transaction {
   id: string;
@@ -79,11 +80,13 @@ export const mockStrategies: Strategy[] = [
     name: 'BTC Daily MA Crossover',
     type: StrategyType.MA_CROSSOVER,
     parameters: {
-      shortPeriod: 10,
-      longPeriod: 50,
-      pair: 'BTC-USDT'
-    },
-    created: new Date().toISOString(),
+      fastPeriod: 10,
+      slowPeriod: 50,
+      pair: 'BTC-USDT',
+      timeframe: '1d'
+    } as MovingAverageCrossoverParameters,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
     performance: {
       totalPnL: 12.5,
       winRate: 0.65,
@@ -98,9 +101,11 @@ export const mockStrategies: Strategy[] = [
       period: 14,
       overbought: 70,
       oversold: 30,
-      pair: 'ETH-USDT'
-    },
-    created: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
+      pair: 'ETH-USDT',
+      timeframe: '4h'
+    } as RSIParameters,
+    createdAt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
+    updatedAt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
     performance: {
       totalPnL: 8.2,
       winRate: 0.58,
@@ -114,9 +119,11 @@ export const mockStrategies: Strategy[] = [
     parameters: {
       lookbackPeriod: 24,
       breakoutThreshold: 2.5,
-      pair: 'BTC-USDT'
-    },
-    created: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString(),
+      pair: 'BTC-USDT',
+      timeframe: '1h'
+    } as BreakoutParameters,
+    createdAt: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString(),
+    updatedAt: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString(),
     performance: {
       totalPnL: 15.7,
       winRate: 0.45,
