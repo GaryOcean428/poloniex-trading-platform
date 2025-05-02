@@ -13,7 +13,8 @@
     "baseUrl": "src",
     "paths": {
       "*": ["*"]
-    }
+    },
+    "incremental": true
   },
   "include": ["src/server/**/*", "src/trading/**/*", "src/types/**/*", "src/utils/**/*", "src/services/**/*"],
   "exclude": ["node_modules", "src/client/**/*"]
