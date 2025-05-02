@@ -89,7 +89,7 @@ describe('Comprehensive System Testing', () => {
   
   // WebSocket Reconnection Logic
   describe('WebSocket Reconnection Logic', () => {
-    let websocketService;
+    let websocketService: any;
     
     beforeEach(() => {
       websocketService = new WebSocketService();
@@ -426,7 +426,7 @@ describe('Comprehensive System Testing', () => {
   
   // Live Data Processing
   describe('Live Data Processing', () => {
-    let liveDataService;
+    let liveDataService: any;
     
     beforeEach(() => {
       liveDataService = new LiveDataService();
