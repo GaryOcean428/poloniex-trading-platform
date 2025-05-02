@@ -7,9 +7,10 @@ import { MLTradingPanel } from '@/components/trading/MLTradingPanel';
 import { DQNTradingPanel } from '@/components/trading/DQNTradingPanel';
 import { ModelRecalibrationPanel } from '@/components/ml/ModelRecalibrationPanel';
 import { LiveDataService } from '@/services/advancedLiveData';
-import { mlTrading } from '@/ml/mlTrading';
-import { dqnTrading } from '@/ml/dqnTrading';
-import { modelRecalibration } from '@/ml/modelRecalibration';
+import { default as mlTrading } from '@/ml/mlTrading';
+import { default as dqnTrading } from '@/ml/dqnTrading';
+import { default as modelRecalibration } from '@/ml/modelRecalibration';
+import React from 'react';
 
 // Mock dependencies
 vi.mock('@/services/advancedLiveData');
@@ -200,27 +201,38 @@ describe('Advanced Features Tests', () => {
   describe('MLTradingPanel', () => {
     beforeEach(() => {
       // Mock ML trading methods
-      mlTrading.trainModel = vi.fn().mockResolvedValue({
-        success: true,
-        accuracy: 0.78,
-        loss: 0.12,
-        epochs: 100,
-        duration: 5.2
+      mlTrading.trainMLModel = vi.fn().mockResolvedValue({
+        id: 'test-model',
+        name: 'Test Model',
+        description: 'Test model for unit tests',
+        config: {
+          modelType: 'neuralnetwork',
+          featureSet: 'technical',
+          predictionTarget: 'price_direction',
+          timeHorizon: 5
+        },
+        performance: {
+          accuracy: 0.78,
+          precision: 0.75,
+          recall: 0.72,
+          f1Score: 0.73,
+          trainingSamples: 800,
+          validationSamples: 200
+        },
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        lastTrainedAt: Date.now(),
+        status: 'ready'
       });
       
-      mlTrading.predictNextMove = vi.fn().mockResolvedValue({
-        action: 'BUY',
-        confidence: 0.85,
-        priceTarget: 51000,
-        stopLoss: 49500
-      });
-      
-      mlTrading.getModelInfo = vi.fn().mockReturnValue({
-        trained: true,
-        lastTraining: new Date().toISOString(),
-        accuracy: 0.78,
-        features: ['price', 'volume', 'rsi', 'macd']
-      });
+      mlTrading.predictWithMLModel = vi.fn().mockResolvedValue([
+        {
+          timestamp: Date.now(),
+          symbol: 'BTC_USDT',
+          prediction: 1,
+          confidence: 0.85
+        }
+      ]);
     });
     
     it('should render ML trading panel with model information', async () => {
@@ -282,19 +294,20 @@ describe('Advanced Features Tests', () => {
       });
       
       // Training should be called with correct parameters
-      expect(mlTrading.trainModel).toHaveBeenCalledWith(
+      expect(mlTrading.trainMLModel).toHaveBeenCalledWith(
+        expect.any(Array),
         expect.objectContaining({
-          epochs: 200,
-          learningRate: 0.01
-        })
+          hyperParameters: expect.objectContaining({
+            learningRate: 0.01
+          })
+        }),
+        expect.any(String)
       );
       
       // Results should be displayed after training
       await waitFor(() => {
         expect(screen.getByText(/Training Complete/i)).toBeInTheDocument();
         expect(screen.getByText(/Accuracy: 78%/i)).toBeInTheDocument();
-        expect(screen.getByText(/Loss: 0.12/i)).toBeInTheDocument();
-        expect(screen.getByText(/Duration: 5.2s/i)).toBeInTheDocument();
       });
     });
     
@@ -317,14 +330,12 @@ describe('Advanced Features Tests', () => {
       fireEvent.click(predictButton);
       
       // Prediction should be called
-      expect(mlTrading.predictNextMove).toHaveBeenCalled();
+      expect(mlTrading.predictWithMLModel).toHaveBeenCalled();
       
       // Prediction results should be displayed
       await waitFor(() => {
         expect(screen.getByText(/BUY/i)).toBeInTheDocument();
         expect(screen.getByText(/Confidence: 85%/i)).toBeInTheDocument();
-        expect(screen.getByText(/Price Target: \$51,000/i)).toBeInTheDocument();
-        expect(screen.getByText(/Stop Loss: \$49,500/i)).toBeInTheDocument();
       });
       
       // Execute trade button should be available
@@ -336,33 +347,52 @@ describe('Advanced Features Tests', () => {
   describe('DQNTradingPanel', () => {
     beforeEach(() => {
       // Mock DQN trading methods
-      dqnTrading.trainAgent = vi.fn().mockResolvedValue({
-        success: true,
-        episodes: 100,
-        finalReward: 125.5,
-        duration: 8.3
+      dqnTrading.trainDQNModel = vi.fn().mockResolvedValue({
+        id: 'test-dqn-model',
+        name: 'Test DQN Model',
+        description: 'Test DQN model for unit tests',
+        config: {
+          stateDimension: 30,
+          actionDimension: 3,
+          learningRate: 0.001,
+          gamma: 0.99,
+          epsilonStart: 1.0,
+          epsilonEnd: 0.01,
+          epsilonDecay: 0.995,
+          memorySize: 10000,
+          batchSize: 64,
+          updateTargetFreq: 100,
+          hiddenLayers: [128, 64],
+          activationFunction: 'relu',
+          optimizer: 'adam'
+        },
+        performance: {
+          averageReward: 85.2,
+          cumulativeReward: 8520,
+          sharpeRatio: 1.2,
+          maxDrawdown: 0.15,
+          winRate: 0.65,
+          episodeRewards: [],
+          trainingEpisodes: 100
+        },
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        lastTrainedAt: Date.now(),
+        status: 'ready',
+        episodesCompleted: 100,
+        totalTrainingSteps: 10000
       });
       
-      dqnTrading.getAction = vi.fn().mockReturnValue(1); // BUY
-      
-      dqnTrading.getAgentInfo = vi.fn().mockReturnValue({
-        trained: true,
-        lastTraining: new Date().toISOString(),
-        episodes: 100,
-        averageReward: 85.2,
-        environment: 'poloniex-btc-usdt'
-      });
-      
-      dqnTrading.getActionDetails = vi.fn().mockReturnValue({
-        action: 'BUY',
-        confidence: 0.92,
-        expectedReward: 15.3,
-        reasoning: [
-          { factor: 'price_trend', value: 0.8, weight: 0.6 },
-          { factor: 'volume', value: 0.5, weight: 0.3 },
-          { factor: 'volatility', value: 0.3, weight: 0.1 }
-        ]
-      });
+      dqnTrading.getDQNActions = vi.fn().mockResolvedValue([
+        {
+          timestamp: Date.now(),
+          symbol: 'BTC_USDT',
+          action: 'buy',
+          confidence: 0.92,
+          position: 1,
+          price: 50000
+        }
+      ]);
     });
     
     it('should render DQN trading panel with agent information', async () => {
@@ -382,7 +412,6 @@ describe('Advanced Features Tests', () => {
       // Agent info should be displayed
       expect(screen.getByText(/Agent Status/i)).toBeInTheDocument();
       expect(screen.getByText(/Trained/i)).toBeInTheDocument();
-      expect(screen.getByText(/Average Reward: 85.2/i)).toBeInTheDocument();
       
       // Training controls should be available
       expect(screen.getByText(/Training Parameters/i)).toBeInTheDocument();
@@ -427,24 +456,23 @@ describe('Advanced Features Tests', () => {
       });
       
       // Training should be called with correct parameters
-      expect(dqnTrading.trainAgent).toHaveBeenCalledWith(
+      expect(dqnTrading.trainDQNModel).toHaveBeenCalledWith(
+        expect.any(Array),
         expect.objectContaining({
-          episodes: 200,
           learningRate: 0.001,
-          explorationRate: 0.1
-        })
+          epsilonStart: 0.1
+        }),
+        expect.any(String),
+        200
       );
       
       // Results should be displayed after training
       await waitFor(() => {
         expect(screen.getByText(/Training Complete/i)).toBeInTheDocument();
-        expect(screen.getByText(/Episodes: 100/i)).toBeInTheDocument();
-        expect(screen.getByText(/Final Reward: 125.5/i)).toBeInTheDocument();
-        expect(screen.getByText(/Duration: 8.3s/i)).toBeInTheDocument();
       });
     });
     
-    it('should handle agent actions and explanations', async () => {
+    it('should handle agent actions', async () => {
       render(
         <MemoryRouter>
           <AppProviders>
@@ -463,24 +491,16 @@ describe('Advanced Features Tests', () => {
       fireEvent.click(actionButton);
       
       // Action should be called
-      expect(dqnTrading.getAction).toHaveBeenCalled();
-      expect(dqnTrading.getActionDetails).toHaveBeenCalled();
+      expect(dqnTrading.getDQNActions).toHaveBeenCalled();
       
       // Action results should be displayed
       await waitFor(() => {
         expect(screen.getByText(/BUY/i)).toBeInTheDocument();
         expect(screen.getByText(/Confidence: 92%/i)).toBeInTheDocument();
-        expect(screen.getByText(/Expected Reward: 15.3/i)).toBeInTheDocument();
       });
       
-      // Decision factors should be displayed
-      expect(screen.getByText(/Decision Factors/i)).toBeInTheDocument();
-      expect(screen.getByText(/price_trend/i)).toBeInTheDocument();
-      expect(screen.getByText(/volume/i)).toBeInTheDocument();
-      expect(screen.getByText(/volatility/i)).toBeInTheDocument();
-      
-      // Execute action button should be available
-      expect(screen.getByText(/Execute Action/i)).toBeInTheDocument();
+      // Execute trade button should be available
+      expect(screen.getByText(/Execute Trade/i)).toBeInTheDocument();
     });
   });
   
@@ -488,38 +508,40 @@ describe('Advanced Features Tests', () => {
   describe('ModelRecalibrationPanel', () => {
     beforeEach(() => {
       // Mock model recalibration methods
-      modelRecalibration.evaluateModelPerformance = vi.fn().mockResolvedValue({
+      modelRecalibration.calculateDrift = vi.fn().mockReturnValue(0.35);
+      
+      modelRecalibration.monitorMLModelPerformance = vi.fn().mockResolvedValue({
+        timestamp: Date.now(),
+        modelId: 'test-model',
+        modelType: 'ml',
         accuracy: 0.72,
-        profitLoss: 0.08,
-        confidenceCorrelation: 0.65,
-        predictionCount: 50,
-        successfulPredictions: 36
+        precision: 0.68,
+        recall: 0.65,
+        f1Score: 0.66,
+        winRate: 0.60,
+        driftScore: 0.35
       });
       
-      modelRecalibration.recalibrateModel = vi.fn().mockResolvedValue({
-        success: true,
-        improvements: {
-          accuracy: 0.05,
-          confidenceCalibration: 0.12
-        },
-        duration: 3.7
+      modelRecalibration.recalibrateMLModel = vi.fn().mockResolvedValue({
+        originalModelId: 'test-model',
+        newModelId: 'test-model-recal',
+        timestamp: Date.now(),
+        reason: 'Drift score: 0.3500, F1 score: 0.6600',
+        performanceImprovement: 0.15,
+        recalibrationStrategy: 'incremental'
       });
       
-      modelRecalibration.getRecalibrationHistory = vi.fn().mockReturnValue([
-        {
-          date: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
-          accuracy: { before: 0.68, after: 0.73 },
-          confidenceCalibration: { before: 0.55, after: 0.67 }
-        },
-        {
-          date: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString(),
-          accuracy: { before: 0.65, after: 0.68 },
-          confidenceCalibration: { before: 0.48, after: 0.55 }
-        }
-      ]);
+      modelRecalibration.scheduleModelRecalibration = vi.fn().mockResolvedValue({
+        originalModelId: 'test-model',
+        newModelId: 'test-model-recal',
+        timestamp: Date.now(),
+        reason: 'Drift score: 0.3500, F1 score: 0.6600',
+        performanceImprovement: 0.15,
+        recalibrationStrategy: 'incremental'
+      });
     });
     
-    it('should render model recalibration panel with history', async () => {
+    it('should render model recalibration panel', async () => {
       render(
         <MemoryRouter>
           <AppProviders>
@@ -533,21 +555,19 @@ describe('Advanced Features Tests', () => {
         expect(screen.getByText(/Model Recalibration/i)).toBeInTheDocument();
       });
       
-      // Performance metrics should be available
-      expect(screen.getByText(/Performance Metrics/i)).toBeInTheDocument();
-      expect(screen.getByText(/Evaluate Performance/i)).toBeInTheDocument();
+      // Model selection should be available
+      expect(screen.getByText(/Select Model/i)).toBeInTheDocument();
       
       // Recalibration controls should be available
-      expect(screen.getByText(/Recalibration/i)).toBeInTheDocument();
-      expect(screen.getByText(/Recalibrate Model/i)).toBeInTheDocument();
+      expect(screen.getByText(/Recalibration Settings/i)).toBeInTheDocument();
+      expect(screen.getByText(/Recalibrate/i)).toBeInTheDocument();
       
-      // History should be displayed
-      expect(screen.getByText(/Recalibration History/i)).toBeInTheDocument();
-      expect(screen.getAllByText(/Accuracy/i).length).toBeGreaterThan(1);
-      expect(screen.getAllByText(/Confidence/i).length).toBeGreaterThan(1);
+      // Monitoring section should be available
+      expect(screen.getByText(/Performance Monitoring/i)).toBeInTheDocument();
+      expect(screen.getByText(/Check Performance/i)).toBeInTheDocument();
     });
     
-    it('should handle model performance evaluation', async () => {
+    it('should monitor model performance', async () => {
       render(
         <MemoryRouter>
           <AppProviders>
@@ -561,31 +581,29 @@ describe('Advanced Features Tests', () => {
         expect(screen.getByText(/Model Recalibration/i)).toBeInTheDocument();
       });
       
-      // Set evaluation period
-      const periodSelect = screen.getByLabelText(/Evaluation Period/i);
-      fireEvent.change(periodSelect, { target: { value: '7d' } });
+      // Select model
+      const modelSelect = screen.getByLabelText(/Model/i);
+      fireEvent.change(modelSelect, { target: { value: 'test-model' } });
       
-      // Start evaluation
-      const evaluateButton = screen.getByText(/Evaluate Performance/i);
-      fireEvent.click(evaluateButton);
+      // Check performance
+      const checkButton = screen.getByText(/Check Performance/i);
+      fireEvent.click(checkButton);
       
-      // Evaluation should be called
-      expect(modelRecalibration.evaluateModelPerformance).toHaveBeenCalledWith(
-        expect.objectContaining({
-          period: '7d'
-        })
-      );
+      // Performance check should be called
+      expect(modelRecalibration.monitorMLModelPerformance).toHaveBeenCalled();
       
-      // Results should be displayed
+      // Performance results should be displayed
       await waitFor(() => {
         expect(screen.getByText(/Accuracy: 72%/i)).toBeInTheDocument();
-        expect(screen.getByText(/Profit\/Loss: \+8%/i)).toBeInTheDocument();
-        expect(screen.getByText(/Confidence Correlation: 0.65/i)).toBeInTheDocument();
-        expect(screen.getByText(/36\/50 successful predictions/i)).toBeInTheDocument();
+        expect(screen.getByText(/F1 Score: 66%/i)).toBeInTheDocument();
+        expect(screen.getByText(/Drift Score: 35%/i)).toBeInTheDocument();
       });
+      
+      // Drift warning should be displayed
+      expect(screen.getByText(/Significant drift detected/i)).toBeInTheDocument();
     });
     
-    it('should handle model recalibration process', async () => {
+    it('should recalibrate model', async () => {
       render(
         <MemoryRouter>
           <AppProviders>
@@ -599,32 +617,84 @@ describe('Advanced Features Tests', () => {
         expect(screen.getByText(/Model Recalibration/i)).toBeInTheDocument();
       });
       
-      // Set recalibration options
-      const focusSelect = screen.getByLabelText(/Recalibration Focus/i);
-      fireEvent.change(focusSelect, { target: { value: 'confidence' } });
+      // Select model
+      const modelSelect = screen.getByLabelText(/Model/i);
+      fireEvent.change(modelSelect, { target: { value: 'test-model' } });
       
-      // Start recalibration
-      const recalibrateButton = screen.getByText(/Recalibrate Model/i);
+      // Select recalibration strategy
+      const strategySelect = screen.getByLabelText(/Strategy/i);
+      fireEvent.change(strategySelect, { target: { value: 'incremental' } });
+      
+      // Recalibrate
+      const recalibrateButton = screen.getByText(/Recalibrate/i);
       fireEvent.click(recalibrateButton);
       
-      // Loading state should be shown
-      await waitFor(() => {
-        expect(screen.getByText(/Recalibration in progress/i)).toBeInTheDocument();
-      });
-      
-      // Recalibration should be called with correct parameters
-      expect(modelRecalibration.recalibrateModel).toHaveBeenCalledWith(
-        expect.objectContaining({
-          focus: 'confidence'
-        })
+      // Recalibration should be called
+      expect(modelRecalibration.recalibrateMLModel).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        'incremental'
       );
       
-      // Results should be displayed after recalibration
+      // Recalibration results should be displayed
       await waitFor(() => {
         expect(screen.getByText(/Recalibration Complete/i)).toBeInTheDocument();
-        expect(screen.getByText(/Accuracy Improvement: \+5%/i)).toBeInTheDocument();
-        expect(screen.getByText(/Confidence Calibration Improvement: \+12%/i)).toBeInTheDocument();
-        expect(screen.getByText(/Duration: 3.7s/i)).toBeInTheDocument();
+        expect(screen.getByText(/Performance Improvement: \+15%/i)).toBeInTheDocument();
+        expect(screen.getByText(/New Model ID: test-model-recal/i)).toBeInTheDocument();
+      });
+    });
+    
+    it('should schedule automatic recalibration', async () => {
+      render(
+        <MemoryRouter>
+          <AppProviders>
+            <ModelRecalibrationPanel />
+          </AppProviders>
+        </MemoryRouter>
+      );
+      
+      // Wait for component to load
+      await waitFor(() => {
+        expect(screen.getByText(/Model Recalibration/i)).toBeInTheDocument();
+      });
+      
+      // Select model
+      const modelSelect = screen.getByLabelText(/Model/i);
+      fireEvent.change(modelSelect, { target: { value: 'test-model' } });
+      
+      // Configure auto-recalibration
+      const driftThresholdInput = screen.getByLabelText(/Drift Threshold/i);
+      fireEvent.change(driftThresholdInput, { target: { value: '0.2' } });
+      
+      const autoRecalibrateToggle = screen.getByLabelText(/Auto-Recalibrate/i);
+      fireEvent.click(autoRecalibrateToggle);
+      
+      // Save settings
+      const saveButton = screen.getByText(/Save Settings/i);
+      fireEvent.click(saveButton);
+      
+      // Settings should be saved
+      await waitFor(() => {
+        expect(screen.getByText(/Settings Saved/i)).toBeInTheDocument();
+      });
+      
+      // Schedule recalibration
+      const scheduleButton = screen.getByText(/Schedule Recalibration/i);
+      fireEvent.click(scheduleButton);
+      
+      // Scheduling should be called
+      expect(modelRecalibration.scheduleModelRecalibration).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          driftThreshold: 0.2,
+          autoRecalibrate: true
+        }),
+        expect.anything()
+      );
+      
+      // Schedule results should be displayed
+      await waitFor(() => {
+        expect(screen.getByText(/Recalibration Scheduled/i)).toBeInTheDocument();
       });
     });
   });

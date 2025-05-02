@@ -1,14 +1,4 @@
-import numpy as np
-import pandas as pd
-from sklearn.preprocessing import StandardScaler, MinMaxScaler
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
-from sklearn.svm import SVC
-from sklearn.neural_network import MLPClassifier
-from sklearn.model_selection import train_test_split, GridSearchCV
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
-import joblib
-import os
-from datetime import datetime
+import * as tf from '@tensorflow/tfjs';
 
 /**
  * Machine Learning Trading Module
@@ -60,66 +50,208 @@ export interface MLPrediction {
 
 // Feature engineering functions
 const calculateTechnicalIndicators = (data: any[]): Record<string, number[]> => {
-  // Convert to pandas DataFrame for easier manipulation
-  const df = pd.DataFrame(data);
-  
   const features: Record<string, number[]> = {};
   
   // Simple Moving Averages
-  features.sma5 = df.close.rolling(5).mean().values;
-  features.sma10 = df.close.rolling(10).mean().values;
-  features.sma20 = df.close.rolling(20).mean().values;
+  features.sma5 = calculateSMA(data.map(d => d.close), 5);
+  features.sma10 = calculateSMA(data.map(d => d.close), 10);
+  features.sma20 = calculateSMA(data.map(d => d.close), 20);
   
   // Exponential Moving Averages
-  features.ema5 = df.close.ewm(span=5).mean().values;
-  features.ema10 = df.close.ewm(span=10).mean().values;
-  features.ema20 = df.close.ewm(span=20).mean().values;
+  features.ema5 = calculateEMA(data.map(d => d.close), 5);
+  features.ema10 = calculateEMA(data.map(d => d.close), 10);
+  features.ema20 = calculateEMA(data.map(d => d.close), 20);
+  features.ema12 = calculateEMA(data.map(d => d.close), 12);
+  features.ema26 = calculateEMA(data.map(d => d.close), 26);
   
   // MACD
-  features.macd = features.ema12 - features.ema26;
-  features.macd_signal = pd.Series(features.macd).ewm(span=9).mean().values;
-  features.macd_hist = features.macd - features.macd_signal;
+  features.macd = features.ema12.map((val, i) => val - features.ema26[i]);
+  features.macd_signal = calculateEMA(features.macd, 9);
+  features.macd_hist = features.macd.map((val, i) => val - features.macd_signal[i]);
   
   // RSI (Relative Strength Index)
-  const delta = df.close.diff();
-  const gain = delta.clip(lower=0);
-  const loss = -delta.clip(upper=0);
-  const avg_gain = gain.rolling(14).mean();
-  const avg_loss = loss.rolling(14).mean();
-  const rs = avg_gain / avg_loss;
-  features.rsi = 100 - (100 / (1 + rs));
+  features.rsi = calculateRSI(data.map(d => d.close), 14);
   
   // Bollinger Bands
   features.bb_middle = features.sma20;
-  const std20 = df.close.rolling(20).std();
-  features.bb_upper = features.bb_middle + (std20 * 2);
-  features.bb_lower = features.bb_middle - (std20 * 2);
+  const std20 = calculateStandardDeviation(data.map(d => d.close), 20);
+  features.bb_upper = features.bb_middle.map((val, i) => val + (std20[i] * 2));
+  features.bb_lower = features.bb_middle.map((val, i) => val - (std20[i] * 2));
   
   // Price momentum
-  features.momentum5 = df.close / df.close.shift(5) - 1;
-  features.momentum10 = df.close / df.close.shift(10) - 1;
-  features.momentum20 = df.close / df.close.shift(20) - 1;
+  features.momentum5 = calculateMomentum(data.map(d => d.close), 5);
+  features.momentum10 = calculateMomentum(data.map(d => d.close), 10);
+  features.momentum20 = calculateMomentum(data.map(d => d.close), 20);
   
   // Volatility
-  features.volatility5 = df.close.rolling(5).std() / features.sma5;
-  features.volatility10 = df.close.rolling(10).std() / features.sma10;
-  features.volatility20 = df.close.rolling(20).std() / features.sma20;
+  features.volatility5 = calculateVolatility(data.map(d => d.close), 5, features.sma5);
+  features.volatility10 = calculateVolatility(data.map(d => d.close), 10, features.sma10);
+  features.volatility20 = calculateVolatility(data.map(d => d.close), 20, features.sma20);
   
   // Volume indicators
-  features.volume_sma5 = df.volume.rolling(5).mean();
-  features.volume_ratio = df.volume / features.volume_sma5;
+  features.volume_sma5 = calculateSMA(data.map(d => d.volume), 5);
+  features.volume_ratio = data.map((d, i) => 
+    features.volume_sma5[i] ? d.volume / features.volume_sma5[i] : 1
+  );
   
   // Price ratios
-  features.close_to_sma5 = df.close / features.sma5;
-  features.close_to_sma10 = df.close / features.sma10;
-  features.close_to_sma20 = df.close / features.sma20;
+  features.close_to_sma5 = data.map((d, i) => 
+    features.sma5[i] ? d.close / features.sma5[i] : 1
+  );
+  features.close_to_sma10 = data.map((d, i) => 
+    features.sma10[i] ? d.close / features.sma10[i] : 1
+  );
+  features.close_to_sma20 = data.map((d, i) => 
+    features.sma20[i] ? d.close / features.sma20[i] : 1
+  );
   
   // Candle patterns
-  features.body_size = (df.close - df.open) / df.open;
-  features.upper_shadow = (df.high - np.maximum(df.open, df.close)) / df.open;
-  features.lower_shadow = (np.minimum(df.open, df.close) - df.low) / df.open;
+  features.body_size = data.map(d => (d.close - d.open) / d.open);
+  features.upper_shadow = data.map(d => 
+    (d.high - Math.max(d.open, d.close)) / d.open
+  );
+  features.lower_shadow = data.map(d => 
+    (Math.min(d.open, d.close) - d.low) / d.open
+  );
   
   return features;
+};
+
+// Helper functions for technical indicators
+const calculateSMA = (data: number[], period: number): number[] => {
+  const result: number[] = [];
+  
+  for (let i = 0; i < data.length; i++) {
+    if (i < period - 1) {
+      result.push(NaN);
+      continue;
+    }
+    
+    let sum = 0;
+    for (let j = 0; j < period; j++) {
+      sum += data[i - j];
+    }
+    result.push(sum / period);
+  }
+  
+  return result;
+};
+
+const calculateEMA = (data: number[], period: number): number[] => {
+  const result: number[] = [];
+  const multiplier = 2 / (period + 1);
+  
+  // Start with SMA for the first value
+  let ema = 0;
+  let validDataPoints = 0;
+  
+  for (let i = 0; i < period; i++) {
+    if (!isNaN(data[i])) {
+      ema += data[i];
+      validDataPoints++;
+    }
+  }
+  
+  if (validDataPoints > 0) {
+    ema /= validDataPoints;
+  }
+  
+  // Fill initial values with NaN
+  for (let i = 0; i < period - 1; i++) {
+    result.push(NaN);
+  }
+  
+  result.push(ema);
+  
+  // Calculate EMA for the rest
+  for (let i = period; i < data.length; i++) {
+    ema = (data[i] - ema) * multiplier + ema;
+    result.push(ema);
+  }
+  
+  return result;
+};
+
+const calculateRSI = (data: number[], period: number): number[] => {
+  const result: number[] = [];
+  const gains: number[] = [];
+  const losses: number[] = [];
+  
+  // Calculate price changes
+  for (let i = 1; i < data.length; i++) {
+    const change = data[i] - data[i - 1];
+    gains.push(change > 0 ? change : 0);
+    losses.push(change < 0 ? -change : 0);
+  }
+  
+  // Fill initial values with NaN
+  for (let i = 0; i < period; i++) {
+    result.push(NaN);
+  }
+  
+  // Calculate first average gain and loss
+  let avgGain = gains.slice(0, period).reduce((sum, val) => sum + val, 0) / period;
+  let avgLoss = losses.slice(0, period).reduce((sum, val) => sum + val, 0) / period;
+  
+  // Calculate RSI for the first period
+  let rs = avgGain / (avgLoss === 0 ? 1 : avgLoss);
+  result.push(100 - (100 / (1 + rs)));
+  
+  // Calculate RSI for the rest
+  for (let i = period; i < data.length - 1; i++) {
+    avgGain = ((avgGain * (period - 1)) + gains[i]) / period;
+    avgLoss = ((avgLoss * (period - 1)) + losses[i]) / period;
+    
+    rs = avgGain / (avgLoss === 0 ? 1 : avgLoss);
+    result.push(100 - (100 / (1 + rs)));
+  }
+  
+  return result;
+};
+
+const calculateStandardDeviation = (data: number[], period: number): number[] => {
+  const result: number[] = [];
+  const sma = calculateSMA(data, period);
+  
+  for (let i = 0; i < data.length; i++) {
+    if (i < period - 1) {
+      result.push(NaN);
+      continue;
+    }
+    
+    let sumSquaredDiff = 0;
+    for (let j = 0; j < period; j++) {
+      sumSquaredDiff += Math.pow(data[i - j] - sma[i], 2);
+    }
+    
+    result.push(Math.sqrt(sumSquaredDiff / period));
+  }
+  
+  return result;
+};
+
+const calculateMomentum = (data: number[], period: number): number[] => {
+  const result: number[] = [];
+  
+  // Fill initial values with NaN
+  for (let i = 0; i < period; i++) {
+    result.push(NaN);
+  }
+  
+  // Calculate momentum
+  for (let i = period; i < data.length; i++) {
+    result.push(data[i] / data[i - period] - 1);
+  }
+  
+  return result;
+};
+
+const calculateVolatility = (data: number[], period: number, sma: number[]): number[] => {
+  const stdDev = calculateStandardDeviation(data, period);
+  
+  return stdDev.map((val, i) => 
+    sma[i] ? val / sma[i] : NaN
+  );
 };
 
 const prepareFeatures = (data: any[], config: MLModelConfig): { features: number[][], labels: number[] } => {
@@ -246,81 +378,69 @@ export const trainMLModel = async (
     const { features, labels } = prepareFeatures(data, config);
     
     // Split data into training and validation sets
-    const [X_train, X_val, y_train, y_val] = train_test_split(features, labels, { test_size: 0.2, random_state: 42 });
+    const splitIndex = Math.floor(features.length * 0.8);
+    const X_train = features.slice(0, splitIndex);
+    const y_train = labels.slice(0, splitIndex);
+    const X_val = features.slice(splitIndex);
+    const y_val = labels.slice(splitIndex);
     
     // Standardize features
-    const scaler = new StandardScaler();
-    const X_train_scaled = scaler.fit_transform(X_train);
-    const X_val_scaled = scaler.transform(X_val);
+    const { mean, std } = calculateMeanAndStd(X_train);
+    const X_train_scaled = standardizeFeatures(X_train, mean, std);
+    const X_val_scaled = standardizeFeatures(X_val, mean, std);
     
-    // Initialize model based on config
-    let model;
+    // Convert to tensors
+    const xs_train = tf.tensor2d(X_train_scaled);
+    const ys_train = tf.tensor1d(y_train);
+    const xs_val = tf.tensor2d(X_val_scaled);
+    const ys_val = tf.tensor1d(y_val);
     
-    switch (config.modelType) {
-      case 'randomforest':
-        model = new RandomForestClassifier({
-          n_estimators: config.hyperParameters?.n_estimators || 100,
-          max_depth: config.hyperParameters?.max_depth || 10,
-          random_state: 42
-        });
-        break;
-      case 'gradientboosting':
-        model = new GradientBoostingClassifier({
-          n_estimators: config.hyperParameters?.n_estimators || 100,
-          learning_rate: config.hyperParameters?.learning_rate || 0.1,
-          max_depth: config.hyperParameters?.max_depth || 3,
-          random_state: 42
-        });
-        break;
-      case 'svm':
-        model = new SVC({
-          C: config.hyperParameters?.C || 1.0,
-          kernel: config.hyperParameters?.kernel || 'rbf',
-          probability: true,
-          random_state: 42
-        });
-        break;
-      case 'neuralnetwork':
-        model = new MLPClassifier({
-          hidden_layer_sizes: config.hyperParameters?.hidden_layer_sizes || [100, 50],
-          activation: config.hyperParameters?.activation || 'relu',
-          solver: config.hyperParameters?.solver || 'adam',
-          alpha: config.hyperParameters?.alpha || 0.0001,
-          max_iter: config.hyperParameters?.max_iter || 200,
-          random_state: 42
-        });
-        break;
-      default:
-        throw new Error(`Unsupported model type: ${config.modelType}`);
-    }
+    // Create model
+    const model = createModel(config, features[0].length);
     
     // Train model
-    model.fit(X_train_scaled, y_train);
+    await model.fit(xs_train, ys_train, {
+      epochs: 50,
+      batchSize: 32,
+      validationData: [xs_val, ys_val],
+      callbacks: {
+        onEpochEnd: (epoch, logs) => {
+          console.log(`Epoch ${epoch}: loss = ${logs?.loss}, val_loss = ${logs?.val_loss}`);
+        }
+      }
+    });
     
     // Evaluate model
-    const y_pred = model.predict(X_val_scaled);
+    const predictions = model.predict(xs_val) as tf.Tensor;
+    const y_pred = Array.from(predictions.dataSync()).map(p => p > 0.5 ? 1 : 0);
+    
+    // Calculate performance metrics
     const performance: MLModelPerformance = {
-      accuracy: accuracy_score(y_val, y_pred),
-      precision: precision_score(y_val, y_pred, { average: 'weighted' }),
-      recall: recall_score(y_val, y_pred, { average: 'weighted' }),
-      f1Score: f1_score(y_val, y_pred, { average: 'weighted' }),
+      accuracy: calculateAccuracy(y_val, y_pred),
+      precision: calculatePrecision(y_val, y_pred),
+      recall: calculateRecall(y_val, y_pred),
+      f1Score: calculateF1Score(y_val, y_pred),
       trainingSamples: X_train.length,
       validationSamples: X_val.length
     };
     
-    // Save model and scaler
+    // Save model
     const modelId = `${config.modelType}_${Date.now()}`;
     const modelsDir = './models';
     
-    if (!os.path.exists(modelsDir)) {
-      os.makedirs(modelsDir);
+    // Create models directory if it doesn't exist
+    try {
+      const fs = require('fs');
+      if (!fs.existsSync(modelsDir)) {
+        fs.mkdirSync(modelsDir, { recursive: true });
+      }
+    } catch (error) {
+      console.error('Error creating models directory:', error);
     }
     
-    const modelPath = `${modelsDir}/${modelId}.joblib`;
-    const scalerPath = `${modelsDir}/${modelId}_scaler.joblib`;
-    
-    joblib.dump(model, modelPath);
-    joblib.dump(scaler, scalerPath);
+    // Save model
+    const modelPath = `${modelsDir}/${modelId}`;
+    await model.save(`file://${modelPath}`);
     
     // Create model info
     const modelInfo: MLModelInfo = {
@@ -337,8 +457,20 @@ export const trainMLModel = async (
     };
     
     // Save model info
-    const modelInfoPath = `${modelsDir}/${modelId}_info.json`;
-    fs.writeFileSync(modelInfoPath, JSON.stringify(modelInfo, null, 2));
+    try {
+      const fs = require('fs');
+      const modelInfoPath = `${modelsDir}/${modelId}_info.json`;
+      fs.writeFileSync(modelInfoPath, JSON.stringify(modelInfo, null, 2));
+    } catch (error) {
+      console.error('Error saving model info:', error);
+    }
+    
+    // Clean up tensors
+    xs_train.dispose();
+    ys_train.dispose();
+    xs_val.dispose();
+    ys_val.dispose();
+    predictions.dispose();
     
     return modelInfo;
   } catch (error) {
@@ -352,19 +484,44 @@ export const predictWithMLModel = async (
   data: any[]
 ): Promise<MLPrediction[]> => {
   try {
-    // Load model and scaler
-    const model = joblib.load(modelInfo.filePath);
-    const scalerPath = modelInfo.filePath.replace('.joblib', '_scaler.joblib');
-    const scaler = joblib.load(scalerPath);
+    // Load model
+    const model = await tf.loadLayersModel(`file://${modelInfo.filePath}/model.json`);
     
     // Prepare features
     const { features } = prepareFeatures(data, modelInfo.config);
     
+    // Load mean and std from model info
+    let mean: number[] = [];
+    let std: number[] = [];
+    
+    try {
+      const fs = require('fs');
+      const statsPath = `${modelInfo.filePath}/stats.json`;
+      if (fs.existsSync(statsPath)) {
+        const stats = JSON.parse(fs.readFileSync(statsPath, 'utf8'));
+        mean = stats.mean;
+        std = stats.std;
+      } else {
+        // If stats file doesn't exist, calculate from features
+        const result = calculateMeanAndStd(features);
+        mean = result.mean;
+        std = result.std;
+      }
+    } catch (error) {
+      console.error('Error loading model stats:', error);
+      // Calculate from features if loading fails
+      const result = calculateMeanAndStd(features);
+      mean = result.mean;
+      std = result.std;
+    }
+    
     // Standardize features
-    const features_scaled = scaler.transform(features);
+    const features_scaled = standardizeFeatures(features, mean, std);
     
     // Make predictions
-    const predictions_proba = model.predict_proba(features_scaled);
+    const xs = tf.tensor2d(features_scaled);
+    const predictions = model.predict(xs) as tf.Tensor;
+    const predictionValues = Array.from(predictions.dataSync());
     
     // Create prediction objects
     const result: MLPrediction[] = [];
@@ -373,7 +530,7 @@ export const predictWithMLModel = async (
       // Skip if features couldn't be calculated for this candle
       if (i >= features.length) continue;
       
-      const confidence = predictions_proba[i][1]; // Probability of positive class
+      const confidence = predictionValues[i];
       const prediction = confidence > 0.5 ? 1 : 0;
       
       result.push({
@@ -383,6 +540,10 @@ export const predictWithMLModel = async (
         confidence
       });
     }
+    
+    // Clean up tensors
+    xs.dispose();
+    predictions.dispose();
     
     return result;
   } catch (error) {
@@ -401,80 +562,221 @@ export const optimizeMLModel = async (
     const { features, labels } = prepareFeatures(data, baseConfig);
     
     // Split data into training and validation sets
-    const [X_train, X_val, y_train, y_val] = train_test_split(features, labels, { test_size: 0.2, random_state: 42 });
+    const splitIndex = Math.floor(features.length * 0.8);
+    const X_train = features.slice(0, splitIndex);
+    const y_train = labels.slice(0, splitIndex);
+    const X_val = features.slice(splitIndex);
+    const y_val = labels.slice(splitIndex);
     
     // Standardize features
-    const scaler = new StandardScaler();
-    const X_train_scaled = scaler.fit_transform(X_train);
-    const X_val_scaled = scaler.transform(X_val);
+    const { mean, std } = calculateMeanAndStd(X_train);
+    const X_train_scaled = standardizeFeatures(X_train, mean, std);
+    const X_val_scaled = standardizeFeatures(X_val, mean, std);
     
-    // Define parameter grid based on model type
-    let model, param_grid;
+    // Convert to tensors
+    const xs_train = tf.tensor2d(X_train_scaled);
+    const ys_train = tf.tensor1d(y_train);
+    const xs_val = tf.tensor2d(X_val_scaled);
+    const ys_val = tf.tensor1d(y_val);
+    
+    // Define hyperparameter options based on model type
+    let bestConfig = { ...baseConfig };
+    let bestPerformance = -Infinity;
     
     switch (baseConfig.modelType) {
-      case 'randomforest':
-        model = new RandomForestClassifier({ random_state: 42 });
-        param_grid = {
-          n_estimators: [50, 100, 200],
-          max_depth: [5, 10, 15, null],
-          min_samples_split: [2, 5, 10],
-          min_samples_leaf: [1, 2, 4]
-        };
-        break;
-      case 'gradientboosting':
-        model = new GradientBoostingClassifier({ random_state: 42 });
-        param_grid = {
-          n_estimators: [50, 100, 200],
-          learning_rate: [0.01, 0.1, 0.2],
-          max_depth: [3, 5, 7],
-          subsample: [0.8, 1.0]
-        };
-        break;
-      case 'svm':
-        model = new SVC({ probability: true, random_state: 42 });
-        param_grid = {
-          C: [0.1, 1, 10],
-          kernel: ['linear', 'rbf'],
-          gamma: ['scale', 'auto', 0.1, 0.01]
-        };
-        break;
       case 'neuralnetwork':
-        model = new MLPClassifier({ random_state: 42 });
-        param_grid = {
-          hidden_layer_sizes: [[50], [100], [50, 50], [100, 50]],
-          activation: ['relu', 'tanh'],
-          alpha: [0.0001, 0.001, 0.01],
-          learning_rate: ['constant', 'adaptive']
-        };
+        // Test different network architectures
+        const hiddenLayerOptions = [
+          [32],
+          [64],
+          [128],
+          [32, 16],
+          [64, 32],
+          [128, 64]
+        ];
+        
+        const learningRateOptions = [0.001, 0.01, 0.1];
+        
+        for (const hiddenLayers of hiddenLayerOptions) {
+          for (const learningRate of learningRateOptions) {
+            const config = {
+              ...baseConfig,
+              hyperParameters: {
+                ...baseConfig.hyperParameters,
+                hiddenLayers,
+                learningRate
+              }
+            };
+            
+            // Create and train model
+            const model = createModel(config, features[0].length);
+            
+            await model.fit(xs_train, ys_train, {
+              epochs: 20,
+              batchSize: 32,
+              validationData: [xs_val, ys_val],
+              verbose: 0
+            });
+            
+            // Evaluate model
+            const predictions = model.predict(xs_val) as tf.Tensor;
+            const y_pred = Array.from(predictions.dataSync()).map(p => p > 0.5 ? 1 : 0);
+            
+            // Calculate F1 score
+            const f1Score = calculateF1Score(y_val, y_pred);
+            
+            if (f1Score > bestPerformance) {
+              bestPerformance = f1Score;
+              bestConfig = config;
+            }
+            
+            // Clean up
+            predictions.dispose();
+            model.dispose();
+          }
+        }
         break;
+        
       default:
-        throw new Error(`Unsupported model type: ${baseConfig.modelType}`);
+        // For other model types, use default hyperparameters
+        bestConfig = baseConfig;
+        break;
     }
     
-    // Perform grid search
-    const grid_search = new GridSearchCV(model, param_grid, {
-      cv: 5,
-      scoring: 'f1_weighted',
-      n_jobs: -1
-    });
+    // Clean up tensors
+    xs_train.dispose();
+    ys_train.dispose();
+    xs_val.dispose();
+    ys_val.dispose();
     
-    grid_search.fit(X_train_scaled, y_train);
-    
-    // Get best parameters
-    const best_params = grid_search.best_params_;
-    
-    // Create optimized config
-    const optimizedConfig: MLModelConfig = {
-      ...baseConfig,
-      hyperParameters: best_params
-    };
-    
-    // Train model with optimized parameters
-    return trainMLModel(data, optimizedConfig, modelName);
+    // Train model with best hyperparameters
+    return trainMLModel(data, bestConfig, modelName);
   } catch (error) {
     console.error('Error optimizing ML model:', error);
     throw error;
   }
+};
+
+// Helper functions for model creation and evaluation
+const createModel = (config: MLModelConfig, inputDimension: number): tf.LayersModel => {
+  const model = tf.sequential();
+  
+  // Get hyperparameters
+  const hyperParams = config.hyperParameters || {};
+  const hiddenLayers = hyperParams.hiddenLayers || [64, 32];
+  const learningRate = hyperParams.learningRate || 0.01;
+  const activation = hyperParams.activation || 'relu';
+  
+  // Input layer
+  model.add(tf.layers.dense({
+    units: hiddenLayers[0],
+    activation,
+    inputShape: [inputDimension]
+  }));
+  
+  // Hidden layers
+  for (let i = 1; i < hiddenLayers.length; i++) {
+    model.add(tf.layers.dense({
+      units: hiddenLayers[i],
+      activation
+    }));
+  }
+  
+  // Output layer
+  model.add(tf.layers.dense({
+    units: 1,
+    activation: 'sigmoid'
+  }));
+  
+  // Compile model
+  model.compile({
+    optimizer: tf.train.adam(learningRate),
+    loss: 'binaryCrossentropy',
+    metrics: ['accuracy']
+  });
+  
+  return model;
+};
+
+const calculateMeanAndStd = (features: number[][]): { mean: number[], std: number[] } => {
+  const numFeatures = features[0].length;
+  const mean: number[] = Array(numFeatures).fill(0);
+  const std: number[] = Array(numFeatures).fill(0);
+  
+  // Calculate mean
+  for (const sample of features) {
+    for (let i = 0; i < numFeatures; i++) {
+      mean[i] += sample[i];
+    }
+  }
+  
+  for (let i = 0; i < numFeatures; i++) {
+    mean[i] /= features.length;
+  }
+  
+  // Calculate standard deviation
+  for (const sample of features) {
+    for (let i = 0; i < numFeatures; i++) {
+      std[i] += Math.pow(sample[i] - mean[i], 2);
+    }
+  }
+  
+  for (let i = 0; i < numFeatures; i++) {
+    std[i] = Math.sqrt(std[i] / features.length);
+    // Prevent division by zero
+    if (std[i] === 0) std[i] = 1;
+  }
+  
+  return { mean, std };
+};
+
+const standardizeFeatures = (features: number[][], mean: number[], std: number[]): number[][] => {
+  return features.map(sample => 
+    sample.map((value, i) => (value - mean[i]) / std[i])
+  );
+};
+
+const calculateAccuracy = (actual: number[], predicted: number[]): number => {
+  let correct = 0;
+  for (let i = 0; i < actual.length; i++) {
+    if (actual[i] === predicted[i]) correct++;
+  }
+  return correct / actual.length;
+};
+
+const calculatePrecision = (actual: number[], predicted: number[]): number => {
+  let truePositives = 0;
+  let falsePositives = 0;
+  
+  for (let i = 0; i < actual.length; i++) {
+    if (predicted[i] === 1) {
+      if (actual[i] === 1) truePositives++;
+      else falsePositives++;
+    }
+  }
+  
+  return truePositives / (truePositives + falsePositives || 1);
+};
+
+const calculateRecall = (actual: number[], predicted: number[]): number => {
+  let truePositives = 0;
+  let falseNegatives = 0;
+  
+  for (let i = 0; i < actual.length; i++) {
+    if (actual[i] === 1) {
+      if (predicted[i] === 1) truePositives++;
+      else falseNegatives++;
+    }
+  }
+  
+  return truePositives / (truePositives + falseNegatives || 1);
+};
+
+const calculateF1Score = (actual: number[], predicted: number[]): number => {
+  const precision = calculatePrecision(actual, predicted);
+  const recall = calculateRecall(actual, predicted);
+  
+  return 2 * (precision * recall) / (precision + recall || 1);
 };
 
 export default {

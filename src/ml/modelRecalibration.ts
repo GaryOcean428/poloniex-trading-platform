@@ -1,12 +1,4 @@
-import numpy as np
-import pandas as pd
-import tensorflow as tf
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
-import joblib
-import os
-import json
-from datetime import datetime, timedelta
+import * as tf from '@tensorflow/tfjs';
 
 /**
  * Model Recalibration Module
@@ -116,10 +108,10 @@ export const calculateDrift = (trainingData: any[], newData: any[]): number => {
     };
     
     // Calculate drift for each feature
-    const drifts = [];
+    const drifts: number[] = [];
     
-    for (const feature of ['closePrices', 'volumes', 'highLowRanges', 'bodySizes']) {
-      for (const stat of ['mean', 'variance', 'skewness', 'kurtosis']) {
+    for (const feature of ['closePrices', 'volumes', 'highLowRanges', 'bodySizes'] as const) {
+      for (const stat of ['mean', 'variance', 'skewness', 'kurtosis'] as const) {
         const diff = calculateNormalizedDiff(
           trainingStats[feature][stat],
           newStats[feature][stat]
@@ -218,8 +210,8 @@ export const monitorDQNModelPerformance = async (
     // Simulate trading with these actions
     let balance = 10000;
     let position = 0;
-    let trades = [];
-    let returns = [];
+    let trades: Array<{type: string, price: number, return: number}> = [];
+    let returns: number[] = [];
     
     for (let i = 0; i < actions.length - 1; i++) {
       const action = actions[i];
@@ -338,18 +330,49 @@ export const recalibrateMLModel = async (
       case 'incremental':
         // Incremental training with new data
         // First, load the existing model
-        const existingModel = await joblib.load(modelInfo.filePath);
-        const existingScaler = await joblib.load(modelInfo.filePath.replace('.joblib', '_scaler.joblib'));
+        const model = await tf.loadLayersModel(`file://${modelInfo.filePath}/model.json`);
         
         // Prepare new data
         const { prepareFeatures } = await import('./mlTrading');
         const { features, labels } = prepareFeatures(newData, modelInfo.config);
         
-        // Scale features
-        const scaledFeatures = existingScaler.transform(features);
+        // Load mean and std from model info
+        let mean: number[] = [];
+        let std: number[] = [];
+        
+        try {
+          const fs = require('fs');
+          const statsPath = `${modelInfo.filePath}/stats.json`;
+          if (fs.existsSync(statsPath)) {
+            const stats = JSON.parse(fs.readFileSync(statsPath, 'utf8'));
+            mean = stats.mean;
+            std = stats.std;
+          } else {
+            // If stats file doesn't exist, calculate from features
+            const { calculateMeanAndStd } = await import('./mlTrading');
+            const result = calculateMeanAndStd(features);
+            mean = result.mean;
+            std = result.std;
+          }
+        } catch (error) {
+          console.error('Error loading model stats:', error);
+          // Calculate from features if loading fails
+          const { calculateMeanAndStd, standardizeFeatures } = await import('./mlTrading');
+          const result = calculateMeanAndStd(features);
+          mean = result.mean;
+          std = result.std;
+        }
+        
+        // Standardize features
+        const { standardizeFeatures } = await import('./mlTrading');
+        const features_scaled = standardizeFeatures(features, mean, std);
+        
+        // Convert to tensors
+        const xs = tf.tensor2d(features_scaled);
+        const ys = tf.tensor1d(labels);
         
         // Incrementally train the model
-        await existingModel.fit(scaledFeatures, labels, {
+        await model.fit(xs, ys, {
           epochs: 5,
           verbose: 0
         });
@@ -357,10 +380,17 @@ export const recalibrateMLModel = async (
         // Save updated model
         const newModelId = `${modelInfo.id}_recal_${Date.now()}`;
         const modelsDir = './models';
-        const newModelPath = `${modelsDir}/${newModelId}.joblib`;
+        const newModelPath = `${modelsDir}/${newModelId}`;
         
-        await joblib.dump(existingModel, newModelPath);
-        await joblib.dump(existingScaler, newModelPath.replace('.joblib', '_scaler.joblib'));
+        await model.save(`file://${newModelPath}`);
+        
+        // Save stats
+        try {
+          const fs = require('fs');
+          fs.writeFileSync(`${newModelPath}/stats.json`, JSON.stringify({ mean, std }));
+        } catch (error) {
+          console.error('Error saving model stats:', error);
+        }
         
         // Create new model info
         newModelInfo = {
@@ -371,6 +401,10 @@ export const recalibrateMLModel = async (
           updatedAt: Date.now(),
           lastTrainedAt: Date.now()
         };
+        
+        // Clean up tensors
+        xs.dispose();
+        ys.dispose();
         break;
         
       case 'transfer':
@@ -391,14 +425,14 @@ export const recalibrateMLModel = async (
     const newPerformance = await monitorMLModelPerformance(newModelInfo, newData);
     
     // Use F1 score for performance comparison
-    const performanceImprovement = (newPerformance.f1Score - originalPerformance.f1Score) / 
-                                  (originalPerformance.f1Score + 1e-8);
+    const performanceImprovement = (newPerformance.f1Score! - originalPerformance.f1Score!) / 
+                                  (originalPerformance.f1Score! + 1e-8);
     
     return {
       originalModelId: modelInfo.id,
       newModelId: newModelInfo.id,
       timestamp: Date.now(),
-      reason: `Drift score: ${originalPerformance.driftScore.toFixed(4)}, F1 score: ${originalPerformance.f1Score.toFixed(4)}`,
+      reason: `Drift score: ${originalPerformance.driftScore!.toFixed(4)}, F1 score: ${originalPerformance.f1Score!.toFixed(4)}`,
       performanceImprovement,
       recalibrationStrategy
     };
@@ -473,14 +507,14 @@ export const recalibrateDQNModel = async (
     const newPerformance = await monitorDQNModelPerformance(newModelInfo, newData);
     
     // Use Sharpe ratio for performance comparison
-    const performanceImprovement = (newPerformance.sharpeRatio - originalPerformance.sharpeRatio) / 
-                                  (Math.abs(originalPerformance.sharpeRatio) + 1e-8);
+    const performanceImprovement = (newPerformance.sharpeRatio! - originalPerformance.sharpeRatio!) / 
+                                  (Math.abs(originalPerformance.sharpeRatio!) + 1e-8);
     
     return {
       originalModelId: modelInfo.id,
       newModelId: newModelInfo.id,
       timestamp: Date.now(),
-      reason: `Drift score: ${originalPerformance.driftScore.toFixed(4)}, Sharpe ratio: ${originalPerformance.sharpeRatio.toFixed(4)}`,
+      reason: `Drift score: ${originalPerformance.driftScore!.toFixed(4)}, Sharpe ratio: ${originalPerformance.sharpeRatio!.toFixed(4)}`,
       performanceImprovement,
       recalibrationStrategy
     };
@@ -491,121 +525,212 @@ export const recalibrateDQNModel = async (
 };
 
 /**
- * Automatically monitor and recalibrate models based on performance
+ * Schedule model recalibration based on performance monitoring
  * @param modelInfo Model information (ML or DQN)
- * @param newData New market data for evaluation and recalibration
  * @param config Recalibration configuration
+ * @param newData New market data for evaluation and recalibration
  * @returns Recalibration result if performed, null otherwise
  */
-export const autoRecalibrate = async (
+export const scheduleModelRecalibration = async (
   modelInfo: any,
-  newData: any[],
-  config: RecalibrationConfig = defaultRecalibrationConfig
+  config: Partial<RecalibrationConfig> = {},
+  newData: any[]
 ): Promise<RecalibrationResult | null> => {
   try {
-    // Monitor performance
-    let performance;
+    // Merge with default config
+    const fullConfig: RecalibrationConfig = { ...defaultRecalibrationConfig, ...config };
     
-    if (modelInfo.config.modelType) {
-      // ML model
+    // Monitor model performance
+    let performance: ModelPerformanceMetrics;
+    
+    if (modelInfo.modelType === 'ml' || modelInfo.config.modelType) {
       performance = await monitorMLModelPerformance(modelInfo, newData);
     } else {
-      // DQN model
       performance = await monitorDQNModelPerformance(modelInfo, newData);
     }
     
     // Check if recalibration is needed
-    const needsRecalibration = performance.driftScore > config.driftThreshold;
+    let needsRecalibration = false;
+    let recalibrationReason = '';
     
-    if (needsRecalibration && config.autoRecalibrate) {
-      console.log(`Recalibrating model ${modelInfo.id} due to drift score ${performance.driftScore.toFixed(4)}`);
-      
-      // Choose recalibration strategy based on drift score
-      let strategy: 'full' | 'incremental' | 'transfer';
-      
-      if (performance.driftScore > 0.5) {
-        strategy = 'full'; // Major drift, full retraining
-      } else if (performance.driftScore > 0.3) {
-        strategy = 'transfer'; // Moderate drift, transfer learning
-      } else {
-        strategy = 'incremental'; // Minor drift, incremental training
+    // Check drift threshold
+    if (performance.driftScore! > fullConfig.driftThreshold) {
+      needsRecalibration = true;
+      recalibrationReason = `Drift score ${performance.driftScore!.toFixed(4)} exceeds threshold ${fullConfig.driftThreshold}`;
+    }
+    
+    // Check performance metrics
+    if (performance.modelType === 'ml') {
+      if (performance.accuracy! < 0.55) {
+        needsRecalibration = true;
+        recalibrationReason += ` Accuracy ${performance.accuracy!.toFixed(4)} below threshold`;
       }
-      
-      // Perform recalibration
-      if (modelInfo.config.modelType) {
-        // ML model
-        return await recalibrateMLModel(modelInfo, newData, strategy);
-      } else {
-        // DQN model
-        return await recalibrateDQNModel(modelInfo, newData, strategy);
+      if (performance.f1Score! < 0.5) {
+        needsRecalibration = true;
+        recalibrationReason += ` F1 score ${performance.f1Score!.toFixed(4)} below threshold`;
+      }
+    } else {
+      if (performance.sharpeRatio! < 0.2) {
+        needsRecalibration = true;
+        recalibrationReason += ` Sharpe ratio ${performance.sharpeRatio!.toFixed(4)} below threshold`;
+      }
+      if (performance.winRate! < 0.45) {
+        needsRecalibration = true;
+        recalibrationReason += ` Win rate ${performance.winRate!.toFixed(4)} below threshold`;
       }
     }
     
-    return null; // No recalibration needed or performed
+    // Perform recalibration if needed and auto-recalibrate is enabled
+    if (needsRecalibration && fullConfig.autoRecalibrate) {
+      console.log(`Recalibrating model ${modelInfo.id}: ${recalibrationReason}`);
+      
+      if (performance.modelType === 'ml') {
+        return await recalibrateMLModel(modelInfo, newData, fullConfig.recalibrationStrategy);
+      } else {
+        return await recalibrateDQNModel(modelInfo, newData, fullConfig.recalibrationStrategy);
+      }
+    }
+    
+    return null;
   } catch (error) {
-    console.error('Error in auto recalibration:', error);
+    console.error('Error scheduling model recalibration:', error);
     return null;
   }
 };
 
 /**
- * Schedule regular model monitoring and recalibration
- * @param modelInfo Model information (ML or DQN)
- * @param getNewData Function to fetch new market data
- * @param config Recalibration configuration
- * @returns Cleanup function to stop scheduling
+ * Evaluate model performance and recalibration history
+ * @param modelId Model ID to evaluate
+ * @param historyLength Number of historical performance records to analyze
+ * @returns Analysis of model performance trends
  */
-export const scheduleRecalibration = (
-  modelInfo: any,
-  getNewData: () => Promise<any[]>,
-  config: RecalibrationConfig = defaultRecalibrationConfig
-): () => void => {
-  let intervalId: any;
-  
-  const performCheck = async () => {
-    try {
-      // Get new data
-      const newData = await getNewData();
-      
-      // Perform auto recalibration
-      const result = await autoRecalibrate(modelInfo, newData, config);
-      
-      // Log result
-      if (result) {
-        console.log(`Model ${modelInfo.id} recalibrated:`, result);
-      } else {
-        console.log(`Model ${modelInfo.id} checked, no recalibration needed`);
-      }
-    } catch (error) {
-      console.error('Error in scheduled recalibration:', error);
+export const evaluateModelHistory = async (
+  modelId: string,
+  historyLength: number = 10
+): Promise<{
+  modelId: string;
+  performanceTrend: 'improving' | 'stable' | 'degrading';
+  driftTrend: 'increasing' | 'stable' | 'decreasing';
+  recalibrationFrequency: number;
+  recommendedAction: 'none' | 'monitor' | 'recalibrate' | 'replace';
+}> => {
+  try {
+    // Load performance history
+    const fs = require('fs');
+    const modelsDir = './models';
+    const historyPath = `${modelsDir}/${modelId}_history.json`;
+    
+    let performanceHistory: ModelPerformanceMetrics[] = [];
+    
+    if (fs.existsSync(historyPath)) {
+      performanceHistory = JSON.parse(fs.readFileSync(historyPath, 'utf8'));
     }
-  };
+    
+    // Limit to requested history length
+    performanceHistory = performanceHistory.slice(-historyLength);
+    
+    if (performanceHistory.length < 2) {
+      return {
+        modelId,
+        performanceTrend: 'stable',
+        driftTrend: 'stable',
+        recalibrationFrequency: 0,
+        recommendedAction: 'monitor'
+      };
+    }
+    
+    // Analyze performance trend
+    const performanceMetric = performanceHistory[0].modelType === 'ml' ? 'f1Score' : 'sharpeRatio';
+    const recentPerformances = performanceHistory.map(p => p[performanceMetric] as number);
+    
+    const performanceTrend = calculateTrend(recentPerformances);
+    
+    // Analyze drift trend
+    const driftScores = performanceHistory.map(p => p.driftScore as number);
+    const driftTrend = calculateTrend(driftScores, true); // Inverse for drift (lower is better)
+    
+    // Calculate recalibration frequency
+    // Load recalibration history
+    const recalHistoryPath = `${modelsDir}/${modelId}_recalibration_history.json`;
+    let recalibrationHistory: RecalibrationResult[] = [];
+    
+    if (fs.existsSync(recalHistoryPath)) {
+      recalibrationHistory = JSON.parse(fs.readFileSync(recalHistoryPath, 'utf8'));
+    }
+    
+    // Calculate frequency (recalibrations per month)
+    const recalibrationFrequency = calculateRecalibrationFrequency(recalibrationHistory);
+    
+    // Determine recommended action
+    let recommendedAction: 'none' | 'monitor' | 'recalibrate' | 'replace' = 'none';
+    
+    if (performanceTrend === 'degrading' && driftTrend === 'increasing') {
+      recommendedAction = 'recalibrate';
+    } else if (performanceTrend === 'degrading' && recalibrationFrequency > 4) {
+      recommendedAction = 'replace'; // Too frequent recalibrations needed
+    } else if (driftTrend === 'increasing') {
+      recommendedAction = 'monitor';
+    }
+    
+    return {
+      modelId,
+      performanceTrend,
+      driftTrend,
+      recalibrationFrequency,
+      recommendedAction
+    };
+  } catch (error) {
+    console.error('Error evaluating model history:', error);
+    return {
+      modelId,
+      performanceTrend: 'stable',
+      driftTrend: 'stable',
+      recalibrationFrequency: 0,
+      recommendedAction: 'monitor'
+    };
+  }
+};
+
+// Helper function to calculate trend
+const calculateTrend = (values: number[], inverse: boolean = false): 'improving' | 'stable' | 'degrading' => {
+  if (values.length < 2) return 'stable';
   
-  // Determine interval based on frequency
-  let interval: number;
-  switch (config.monitoringFrequency) {
-    case 'hourly':
-      interval = 60 * 60 * 1000; // 1 hour
-      break;
-    case 'weekly':
-      interval = 7 * 24 * 60 * 60 * 1000; // 1 week
-      break;
-    case 'daily':
-    default:
-      interval = 24 * 60 * 60 * 1000; // 1 day
-      break;
+  // Calculate linear regression slope
+  const n = values.length;
+  const x = Array.from({ length: n }, (_, i) => i);
+  const y = values;
+  
+  const sumX = x.reduce((a, b) => a + b, 0);
+  const sumY = y.reduce((a, b) => a + b, 0);
+  const sumXY = x.reduce((a, b, i) => a + b * y[i], 0);
+  const sumXX = x.reduce((a, b) => a + b * b, 0);
+  
+  const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
+  
+  // Determine trend based on slope
+  const threshold = 0.01; // Minimum slope to consider a trend
+  
+  if (Math.abs(slope) < threshold) {
+    return 'stable';
   }
   
-  // Schedule regular checks
-  intervalId = setInterval(performCheck, interval);
+  if (inverse) {
+    return slope > 0 ? 'degrading' : 'improving';
+  } else {
+    return slope > 0 ? 'improving' : 'degrading';
+  }
+};
+
+// Helper function to calculate recalibration frequency
+const calculateRecalibrationFrequency = (history: RecalibrationResult[]): number => {
+  if (history.length < 2) return 0;
   
-  // Perform initial check
-  performCheck();
+  // Get time range in months
+  const firstRecal = history[0].timestamp;
+  const lastRecal = history[history.length - 1].timestamp;
+  const monthsDiff = (lastRecal - firstRecal) / (1000 * 60 * 60 * 24 * 30);
   
-  // Return cleanup function
-  return () => {
-    clearInterval(intervalId);
-  };
+  return history.length / Math.max(1, monthsDiff);
 };
 
 export default {
@@ -614,6 +739,6 @@ export default {
   monitorDQNModelPerformance,
   recalibrateMLModel,
   recalibrateDQNModel,
-  autoRecalibrate,
-  scheduleRecalibration
+  scheduleModelRecalibration,
+  evaluateModelHistory
 };

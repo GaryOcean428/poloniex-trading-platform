@@ -1,8 +1,42 @@
 import React, { useState, useEffect } from 'react';
-import { trainMLModel, predictWithMLModel, optimizeMLModel, MLModelConfig, MLModelInfo } from '@/ml/mlTrading';
+import { default as mlTrading } from '@/ml/mlTrading';
 import { usePoloniexData } from '@/hooks/usePoloniexData';
 import { useTradingContext } from '@/context/TradingContext';
 import { useSettings } from '@/context/SettingsContext';
+
+interface MLModelConfig {
+  modelType: 'randomforest' | 'gradientboosting' | 'svm' | 'neuralnetwork';
+  featureSet: 'basic' | 'technical' | 'advanced' | 'custom';
+  predictionTarget: 'price_direction' | 'price_change' | 'volatility';
+  timeHorizon: number;
+  hyperParameters?: {
+    learningRate?: number;
+    maxDepth?: number;
+    numEstimators?: number;
+    epochs?: number;
+    batchSize?: number;
+  };
+}
+
+interface MLModelInfo {
+  id: string;
+  name: string;
+  description?: string;
+  config: MLModelConfig;
+  performance: {
+    accuracy: number;
+    precision: number;
+    recall: number;
+    f1Score: number;
+    trainingSamples: number;
+    validationSamples: number;
+  };
+  createdAt: number;
+  updatedAt: number;
+  lastTrainedAt: number;
+  status: 'training' | 'ready' | 'error';
+  filePath?: string;
+}
 
 const MLTradingPanel: React.FC = () => {
   const { getMarketData } = usePoloniexData();
@@ -10,10 +44,15 @@ const MLTradingPanel: React.FC = () => {
   const { defaultPair, timeframe } = useSettings();
   
   const [modelConfig, setModelConfig] = useState<MLModelConfig>({
-    modelType: 'randomforest',
+    modelType: 'neuralnetwork',
     featureSet: 'technical',
     predictionTarget: 'price_direction',
     timeHorizon: 12, // 12 candles ahead
+    hyperParameters: {
+      learningRate: 0.001,
+      epochs: 100,
+      batchSize: 32
+    }
   });
   
   const [modelInfo, setModelInfo] = useState<MLModelInfo | null>(null);
@@ -52,7 +91,7 @@ const MLTradingPanel: React.FC = () => {
     setError(null);
     
     try {
-      const info = await trainMLModel(marketData, modelConfig, modelName);
+      const info = await mlTrading.trainMLModel(marketData, modelConfig, modelName);
       setModelInfo(info);
       setIsTraining(false);
     } catch (err) {
@@ -78,7 +117,7 @@ const MLTradingPanel: React.FC = () => {
     setError(null);
     
     try {
-      const preds = await predictWithMLModel(modelInfo, marketData);
+      const preds = await mlTrading.predictWithMLModel(modelInfo, marketData);
       setPredictions(preds);
       setIsPredicting(false);
     } catch (err) {
@@ -99,7 +138,7 @@ const MLTradingPanel: React.FC = () => {
     setError(null);
     
     try {
-      const info = await optimizeMLModel(marketData, modelConfig, `${modelName} (Optimized)`);
+      const info = await mlTrading.optimizeMLModel(marketData, modelConfig, `${modelName} (Optimized)`);
       setModelInfo(info);
       setIsOptimizing(false);
     } catch (err) {
@@ -225,6 +264,48 @@ const MLTradingPanel: React.FC = () => {
               max="100"
               value={modelConfig.timeHorizon}
               onChange={(e) => setModelConfig({ ...modelConfig, timeHorizon: parseInt(e.target.value) })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+            />
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Learning Rate
+            </label>
+            <input
+              type="number"
+              min="0.0001"
+              max="0.1"
+              step="0.0001"
+              value={modelConfig.hyperParameters?.learningRate || 0.001}
+              onChange={(e) => setModelConfig({ 
+                ...modelConfig, 
+                hyperParameters: { 
+                  ...modelConfig.hyperParameters, 
+                  learningRate: parseFloat(e.target.value) 
+                } 
+              })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+            />
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Epochs
+            </label>
+            <input
+              type="number"
+              min="10"
+              max="1000"
+              step="10"
+              value={modelConfig.hyperParameters?.epochs || 100}
+              onChange={(e) => setModelConfig({ 
+                ...modelConfig, 
+                hyperParameters: { 
+                  ...modelConfig.hyperParameters, 
+                  epochs: parseInt(e.target.value) 
+                } 
+              })}
               className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
             />
           </div>
@@ -371,4 +452,4 @@ const MLTradingPanel: React.FC = () => {
   );
 };
 
-export default MLTradingPanel;
+export { MLTradingPanel };

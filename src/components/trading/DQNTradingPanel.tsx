@@ -1,9 +1,54 @@
 import React, { useState, useEffect } from 'react';
-import { trainDQNModel, getDQNActions, continueDQNTraining, DQNModelInfo, DQNConfig, DQNAction } from '@/ml/dqnTrading';
+import { default as dqnTrading } from '@/ml/dqnTrading';
 import { usePoloniexData } from '@/hooks/usePoloniexData';
 import { useTradingContext } from '@/context/TradingContext';
 import { useSettings } from '@/context/SettingsContext';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+
+interface DQNConfig {
+  learningRate: number;
+  gamma: number;
+  epsilonStart: number;
+  epsilonEnd: number;
+  epsilonDecay: number;
+  memorySize?: number;
+  batchSize?: number;
+  updateTargetFreq?: number;
+  hiddenLayers: number[];
+  activationFunction?: string;
+  optimizer?: string;
+}
+
+interface DQNModelInfo {
+  id: string;
+  name: string;
+  description?: string;
+  config: DQNConfig;
+  performance: {
+    averageReward: number;
+    cumulativeReward: number;
+    sharpeRatio: number;
+    maxDrawdown: number;
+    winRate: number;
+    episodeRewards: number[];
+    trainingEpisodes: number;
+  };
+  createdAt: number;
+  updatedAt: number;
+  lastTrainedAt: number;
+  status: 'training' | 'ready' | 'error';
+  episodesCompleted: number;
+  totalTrainingSteps: number;
+}
+
+interface DQNAction {
+  timestamp: number;
+  symbol: string;
+  action: 'buy' | 'sell' | 'hold';
+  confidence: number;
+  position?: number;
+  price?: number;
+}
 
 const DQNTradingPanel: React.FC = () => {
   const { getMarketData } = usePoloniexData();
@@ -58,7 +103,7 @@ const DQNTradingPanel: React.FC = () => {
     setError(null);
     
     try {
-      const info = await trainDQNModel(marketData, modelConfig, modelName, episodes);
+      const info = await dqnTrading.trainDQNModel(marketData, modelConfig as DQNConfig, modelName, episodes);
       setModelInfo(info);
       
       // Prepare performance data for chart
@@ -92,7 +137,7 @@ const DQNTradingPanel: React.FC = () => {
     setError(null);
     
     try {
-      const actionsList = await getDQNActions(modelInfo, marketData);
+      const actionsList = await dqnTrading.getDQNActions(modelInfo, marketData);
       setActions(actionsList);
       setIsGettingActions(false);
     } catch (err) {
@@ -118,7 +163,7 @@ const DQNTradingPanel: React.FC = () => {
     setError(null);
     
     try {
-      const updatedInfo = await continueDQNTraining(modelInfo, marketData, additionalEpisodes);
+      const updatedInfo = await dqnTrading.continueDQNTraining(modelInfo, marketData, additionalEpisodes);
       setModelInfo(updatedInfo);
       
       // Update performance data for chart
@@ -430,7 +475,7 @@ const DQNTradingPanel: React.FC = () => {
                             ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
                             : action.action === 'sell'
                             ? 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
-                            : 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200'
+                            : 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300'
                         }`}
                       >
                         {action.action.toUpperCase()}
@@ -440,7 +485,7 @@ const DQNTradingPanel: React.FC = () => {
                       {(action.confidence * 100).toFixed(2)}%
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-                      {action.price?.toFixed(2)}
+                      {action.price ? `$${action.price.toFixed(2)}` : '-'}
                     </td>
                   </tr>
                 ))}
@@ -453,4 +498,4 @@ const DQNTradingPanel: React.FC = () => {
   );
 };
 
-export default DQNTradingPanel;
+export { DQNTradingPanel };
