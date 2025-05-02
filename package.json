@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@tensorflow/tfjs": "^4.17.0",
+    "@tensorflow/tfjs-node-gpu": "^4.22.0",
     "axios": "^1.6.7",
     "chart.js": "^4.4.1",
     "date-fns": "^3.3.1",

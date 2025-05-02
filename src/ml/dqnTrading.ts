@@ -1,13 +1,4 @@
-import numpy as np
-import tensorflow as tf
-from tensorflow import keras
-from tensorflow.keras import layers
-import random
-from collections import deque
-import pandas as pd
-import os
-import json
-from datetime import datetime
+import * as tf from '@tensorflow/tfjs';
 
 /**
  * Deep Q-Network (DQN) Trading System
@@ -87,9 +78,9 @@ const defaultDQNConfig: DQNConfig = {
 // DQN Agent class
 class DQNAgent {
   private config: DQNConfig;
-  private mainModel: any;
-  private targetModel: any;
-  private memory: any[];
+  private mainModel: tf.LayersModel;
+  private targetModel: tf.LayersModel;
+  private memory: Array<[number[], number, number, number[], boolean]>;
   private epsilon: number;
   private step: number;
   
@@ -97,48 +88,54 @@ class DQNAgent {
     this.config = config;
     this.mainModel = this.createModel();
     this.targetModel = this.createModel();
-    this.targetModel.setWeights(this.mainModel.getWeights());
+    this.updateTargetModel();
     this.memory = [];
     this.epsilon = config.epsilonStart;
     this.step = 0;
   }
   
   // Create neural network model
-  private createModel() {
-    const model = keras.Sequential();
+  private createModel(): tf.LayersModel {
+    const model = tf.sequential();
     
     // Input layer
-    model.add(layers.Dense({
+    model.add(tf.layers.dense({
       units: this.config.hiddenLayers[0],
-      activation: this.config.activationFunction,
+      activation: this.config.activationFunction as any,
       inputShape: [this.config.stateDimension]
     }));
     
     // Hidden layers
     for (let i = 1; i < this.config.hiddenLayers.length; i++) {
-      model.add(layers.Dense({
+      model.add(tf.layers.dense({
         units: this.config.hiddenLayers[i],
-        activation: this.config.activationFunction
+        activation: this.config.activationFunction as any
       }));
     }
     
     // Output layer
-    model.add(layers.Dense({
+    model.add(tf.layers.dense({
       units: this.config.actionDimension,
       activation: 'linear'
     }));
     
     // Compile model
     model.compile({
-      optimizer: this.config.optimizer,
-      loss: 'mse'
+      optimizer: this.config.optimizer === 'adam' ? tf.train.adam(this.config.learningRate) : tf.train.sgd(this.config.learningRate),
+      loss: 'meanSquaredError'
     });
     
     return model;
   }
   
+  // Update target model with weights from main model
+  private updateTargetModel(): void {
+    const weights = this.mainModel.getWeights();
+    this.targetModel.setWeights(weights);
+  }
+  
   // Remember experience for replay
-  remember(state: number[], action: number, reward: number, nextState: number[], done: boolean) {
+  remember(state: number[], action: number, reward: number, nextState: number[], done: boolean): void {
     this.memory.push([state, action, reward, nextState, done]);
     if (this.memory.length > this.config.memorySize) {
       this.memory.shift();
@@ -146,33 +143,37 @@ class DQNAgent {
   }
   
   // Choose action using epsilon-greedy policy
-  chooseAction(state: number[]) {
+  chooseAction(state: number[]): number {
     if (Math.random() < this.epsilon) {
       // Exploration: random action
       return Math.floor(Math.random() * this.config.actionDimension);
     } else {
       // Exploitation: best action according to model
-      const stateTensor = tf.tensor2d([state]);
-      const prediction = this.mainModel.predict(stateTensor);
-      const action = tf.argMax(prediction, 1).dataSync()[0];
-      return action;
+      return tf.tidy(() => {
+        const stateTensor = tf.tensor2d([state]);
+        const prediction = this.mainModel.predict(stateTensor) as tf.Tensor;
+        const action = tf.argMax(prediction, 1).dataSync()[0];
+        return action;
+      });
     }
   }
   
   // Get action confidence
-  getActionConfidence(state: number[], action: number) {
-    const stateTensor = tf.tensor2d([state]);
-    const prediction = this.mainModel.predict(stateTensor);
-    const qValues = prediction.dataSync();
-    const maxQ = Math.max(...qValues);
-    const actionQ = qValues[action];
-    
-    // Normalize to [0, 1] range
-    return actionQ / (maxQ + 1e-8);
+  getActionConfidence(state: number[], action: number): number {
+    return tf.tidy(() => {
+      const stateTensor = tf.tensor2d([state]);
+      const prediction = this.mainModel.predict(stateTensor) as tf.Tensor;
+      const qValues = prediction.dataSync();
+      const maxQ = Math.max(...qValues);
+      const actionQ = qValues[action];
+      
+      // Normalize to [0, 1] range
+      return actionQ / (maxQ + 1e-8);
+    });
   }
   
   // Train model with experience replay
-  async replay() {
+  async replay(): Promise<void> {
     if (this.memory.length < this.config.batchSize) {
       return;
     }
@@ -187,40 +188,47 @@ class DQNAgent {
     const nextStates = batch.map(experience => experience[3]);
     const dones = batch.map(experience => experience[4]);
     
-    // Convert to tensors
-    const statesTensor = tf.tensor2d(states);
-    const nextStatesTensor = tf.tensor2d(nextStates);
-    
-    // Get current Q values
-    const currentQs = this.mainModel.predict(statesTensor);
-    
-    // Get next Q values from target model
-    const nextQs = this.targetModel.predict(nextStatesTensor);
-    
-    // Create target Q values by updating only the chosen actions
-    const targetQs = currentQs.clone();
-    
-    for (let i = 0; i < batch.length; i++) {
-      const action = actions[i];
-      const reward = rewards[i];
-      const done = dones[i];
+    // Train the model
+    await tf.tidy(() => {
+      // Convert to tensors
+      const statesTensor = tf.tensor2d(states);
+      const nextStatesTensor = tf.tensor2d(nextStates);
       
-      let targetQ;
-      if (done) {
-        targetQ = reward;
-      } else {
-        const nextQ = nextQs.slice([i, 0], [1, this.config.actionDimension]);
-        const maxNextQ = nextQ.max().dataSync()[0];
-        targetQ = reward + this.config.gamma * maxNextQ;
+      // Get current Q values
+      const currentQs = this.mainModel.predict(statesTensor) as tf.Tensor;
+      const currentQsArray = currentQs.arraySync() as number[][];
+      
+      // Get next Q values from target model
+      const nextQs = this.targetModel.predict(nextStatesTensor) as tf.Tensor;
+      const nextQsArray = nextQs.arraySync() as number[][];
+      
+      // Create target Q values by updating only the chosen actions
+      const targetQsArray = [...currentQsArray];
+      
+      for (let i = 0; i < batch.length; i++) {
+        const action = actions[i];
+        const reward = rewards[i];
+        const done = dones[i];
+        
+        let targetQ;
+        if (done) {
+          targetQ = reward;
+        } else {
+          const nextQ = nextQsArray[i];
+          const maxNextQ = Math.max(...nextQ);
+          targetQ = reward + this.config.gamma * maxNextQ;
+        }
+        
+        targetQsArray[i][action] = targetQ;
       }
       
-      targetQs.bufferSync().set(targetQ, i, action);
-    }
-    
-    // Train the model
-    await this.mainModel.fit(statesTensor, targetQs, {
-      epochs: 1,
-      verbose: 0
+      const targetQsTensor = tf.tensor2d(targetQsArray);
+      
+      // Train the model
+      return this.mainModel.fit(statesTensor, targetQsTensor, {
+        epochs: 1,
+        verbose: 0
+      });
     });
     
     // Update epsilon (exploration rate)
@@ -231,13 +239,13 @@ class DQNAgent {
     // Update target model periodically
     this.step++;
     if (this.step % this.config.updateTargetFreq === 0) {
-      this.targetModel.setWeights(this.mainModel.getWeights());
+      this.updateTargetModel();
     }
   }
   
   // Sample batch from memory
-  private sampleBatch() {
-    const indices = [];
+  private sampleBatch(): Array<[number[], number, number, number[], boolean]> {
+    const indices: number[] = [];
     const batchSize = Math.min(this.config.batchSize, this.memory.length);
     
     while (indices.length < batchSize) {
@@ -251,14 +259,14 @@ class DQNAgent {
   }
   
   // Save model
-  async saveModel(path: string) {
+  async saveModel(path: string): Promise<void> {
     await this.mainModel.save(`file://${path}`);
   }
   
   // Load model
-  async loadModel(path: string) {
-    this.mainModel = await tf.loadLayersModel(`file://${path}`);
-    this.targetModel = await tf.loadLayersModel(`file://${path}`);
+  async loadModel(path: string): Promise<void> {
+    this.mainModel = await tf.loadLayersModel(`file://${path}/model.json`);
+    this.targetModel = await tf.loadLayersModel(`file://${path}/model.json`);
   }
 }
 
@@ -279,11 +287,11 @@ class TradingEnvironment {
     this.data = data;
     this.initialBalance = initialBalance;
     this.transactionCost = transactionCost;
-    this.reset();
     this.stateDimension = 30; // Default state dimension
+    this.reset();
   }
   
-  reset() {
+  reset(): number[] {
     this.currentStep = 0;
     this.position = 0; // 0: no position, 1: long position
     this.balance = this.initialBalance;
@@ -293,7 +301,7 @@ class TradingEnvironment {
     return this.getState();
   }
   
-  getState() {
+  getState(): number[] {
     // If we've reached the end of data
     if (this.currentStep >= this.data.length - 1) {
       this.done = true;
@@ -307,7 +315,7 @@ class TradingEnvironment {
     const priceHistory = this.data.slice(historyStart, this.currentStep + 1);
     
     // Extract features
-    const state = [];
+    const state: number[] = [];
     
     // Position indicator
     state.push(this.position);
@@ -335,7 +343,7 @@ class TradingEnvironment {
     return state.slice(0, this.stateDimension);
   }
   
-  step(action: number) {
+  step(action: number): [number[], number, boolean] {
     // If already done, return terminal state
     if (this.done) {
       return [new Array(this.stateDimension).fill(0), 0, true];
@@ -406,7 +414,14 @@ class TradingEnvironment {
     return [this.getState(), reward, this.done];
   }
   
-  getPerformance() {
+  getPerformance(): {
+    totalReturn: number;
+    finalValue: number;
+    sharpeRatio: number;
+    maxDrawdown: number;
+    winRate: number;
+    cumulativeReward: number;
+  } {
     const finalPortfolioValue = this.balance + (this.inventory.length * this.data[this.currentStep].close);
     const totalReturn = (finalPortfolioValue - this.initialBalance) / this.initialBalance;
     
@@ -509,8 +524,13 @@ export const trainDQNModel = async (
     const modelId = `dqn_${Date.now()}`;
     const modelsDir = './models';
     
-    if (!fs.existsSync(modelsDir)) {
-      fs.mkdirSync(modelsDir, { recursive: true });
+    try {
+      const fs = require('fs');
+      if (!fs.existsSync(modelsDir)) {
+        fs.mkdirSync(modelsDir, { recursive: true });
+      }
+    } catch (error) {
+      console.error('Error creating models directory:', error);
     }
     
     const modelPath = `${modelsDir}/${modelId}`;
@@ -541,74 +561,17 @@ export const trainDQNModel = async (
     };
     
     // Save model info
-    const modelInfoPath = `${modelsDir}/${modelId}_info.json`;
-    fs.writeFileSync(modelInfoPath, JSON.stringify(modelInfo, null, 2));
+    try {
+      const fs = require('fs');
+      const modelInfoPath = `${modelsDir}/${modelId}_info.json`;
+      fs.writeFileSync(modelInfoPath, JSON.stringify(modelInfo, null, 2));
+    } catch (error) {
+      console.error('Error saving model info:', error);
+    }
     
     return modelInfo;
   } catch (error) {
     console.error('Error training DQN model:', error);
-    throw error;
-  }
-};
-
-// Get trading actions from DQN model
-export const getDQNActions = async (
-  modelInfo: DQNModelInfo,
-  data: any[]
-): Promise<DQNAction[]> => {
-  try {
-    // Load model
-    const agent = new DQNAgent(modelInfo.config);
-    await agent.loadModel(modelInfo.filePath);
-    
-    // Create environment
-    const env = new TradingEnvironment(data);
-    
-    // Get actions for each state
-    const actions: DQNAction[] = [];
-    let state = env.reset();
-    let done = false;
-    
-    while (!done) {
-      // Choose best action
-      const action = agent.chooseAction(state);
-      
-      // Get action confidence
-      const confidence = agent.getActionConfidence(state, action);
-      
-      // Map action to trading action
-      let tradingAction: 'buy' | 'sell' | 'hold';
-      switch (action) {
-        case 0:
-          tradingAction = 'buy';
-          break;
-        case 1:
-          tradingAction = 'sell';
-          break;
-        default:
-          tradingAction = 'hold';
-      }
-      
-      // Add to actions list
-      actions.push({
-        timestamp: data[env.currentStep].timestamp,
-        symbol: data[env.currentStep].symbol,
-        action: tradingAction,
-        confidence,
-        price: data[env.currentStep].close
-      });
-      
-      // Take action in environment
-      const [nextState, _, isDone] = env.step(action);
-      
-      // Update state and done flag
-      state = nextState;
-      done = isDone;
-    }
-    
-    return actions;
-  } catch (error) {
-    console.error('Error getting DQN actions:', error);
     throw error;
   }
 };
@@ -620,16 +583,16 @@ export const continueDQNTraining = async (
   additionalEpisodes: number = 50
 ): Promise<DQNModelInfo> => {
   try {
-    // Load existing model
-    const agent = new DQNAgent(modelInfo.config);
-    await agent.loadModel(modelInfo.filePath);
-    
-    // Create environment
+    // Create environment and agent
     const env = new TradingEnvironment(data);
+    const agent = new DQNAgent(modelInfo.config);
+    
+    // Load existing model
+    await agent.loadModel(modelInfo.filePath as string);
     
     // Training variables
     const episodeRewards: number[] = [];
-    let totalSteps = modelInfo.totalTrainingSteps || 0;
+    let totalSteps = modelInfo.totalTrainingSteps;
     
     // Train for additional episodes
     for (let episode = 0; episode < additionalEpisodes; episode++) {
@@ -664,24 +627,27 @@ export const continueDQNTraining = async (
       // Log progress
       if ((episode + 1) % 10 === 0) {
         const avgReward = episodeRewards.slice(-10).reduce((sum, r) => sum + r, 0) / 10;
-        console.log(`Episode ${episode + 1}/${additionalEpisodes}, Avg Reward: ${avgReward.toFixed(2)}`);
+        console.log(`Continued Training - Episode ${episode + 1}/${additionalEpisodes}, Avg Reward: ${avgReward.toFixed(2)}`);
       }
     }
     
     // Get performance metrics
     const performance = env.getPerformance();
     
-    // Save updated model
-    await agent.saveModel(modelInfo.filePath);
+    // Save model
+    const newModelId = `${modelInfo.id}_continued_${Date.now()}`;
+    const modelsDir = './models';
+    const modelPath = `${modelsDir}/${newModelId}`;
+    await agent.saveModel(modelPath);
     
-    // Update model info
-    const updatedModelInfo: DQNModelInfo = {
+    // Create model info
+    const newModelInfo: DQNModelInfo = {
       ...modelInfo,
+      id: newModelId,
+      name: `${modelInfo.name} (Continued)`,
+      description: `${modelInfo.description} - Continued training with ${data.length} additional candles`,
       performance: {
-        ...modelInfo.performance,
-        averageReward: (modelInfo.performance.averageReward * modelInfo.episodesCompleted + 
-                        episodeRewards.reduce((sum, r) => sum + r, 0)) / 
-                        (modelInfo.episodesCompleted + additionalEpisodes),
+        averageReward: episodeRewards.reduce((sum, r) => sum + r, 0) / additionalEpisodes,
         cumulativeReward: performance.cumulativeReward,
         sharpeRatio: performance.sharpeRatio,
         maxDrawdown: performance.maxDrawdown,
@@ -691,23 +657,100 @@ export const continueDQNTraining = async (
       },
       updatedAt: Date.now(),
       lastTrainedAt: Date.now(),
+      status: 'ready',
+      filePath: modelPath,
       episodesCompleted: modelInfo.episodesCompleted + additionalEpisodes,
       totalTrainingSteps: totalSteps
     };
     
-    // Save updated model info
-    const modelInfoPath = `${modelInfo.filePath}_info.json`;
-    fs.writeFileSync(modelInfoPath, JSON.stringify(updatedModelInfo, null, 2));
+    // Save model info
+    try {
+      const fs = require('fs');
+      const modelInfoPath = `${modelsDir}/${newModelId}_info.json`;
+      fs.writeFileSync(modelInfoPath, JSON.stringify(newModelInfo, null, 2));
+    } catch (error) {
+      console.error('Error saving model info:', error);
+    }
     
-    return updatedModelInfo;
+    return newModelInfo;
   } catch (error) {
-    console.error('Error continuing DQN training:', error);
+    console.error('Error continuing DQN model training:', error);
+    throw error;
+  }
+};
+
+// Get DQN actions for a sequence of market data
+export const getDQNActions = async (
+  modelInfo: DQNModelInfo,
+  data: any[]
+): Promise<DQNAction[]> => {
+  try {
+    // Create agent
+    const agent = new DQNAgent(modelInfo.config);
+    
+    // Load model
+    await agent.loadModel(modelInfo.filePath as string);
+    
+    // Create environment
+    const env = new TradingEnvironment(data);
+    
+    // Get actions
+    const actions: DQNAction[] = [];
+    let state = env.reset();
+    let position = 0;
+    
+    for (let i = 0; i < data.length - 1; i++) {
+      // Get action
+      const actionIndex = agent.chooseAction(state);
+      const confidence = agent.getActionConfidence(state, actionIndex);
+      
+      // Map action index to action type
+      let actionType: 'buy' | 'sell' | 'hold';
+      switch (actionIndex) {
+        case 0:
+          actionType = 'buy';
+          position = 1;
+          break;
+        case 1:
+          actionType = 'sell';
+          position = 0;
+          break;
+        default:
+          actionType = 'hold';
+          break;
+      }
+      
+      // Add action to list
+      actions.push({
+        timestamp: data[i].timestamp,
+        symbol: data[i].symbol,
+        action: actionType,
+        confidence,
+        position,
+        price: data[i].close
+      });
+      
+      // Take step in environment
+      const [nextState, , done] = env.step(actionIndex);
+      
+      // Update state
+      state = nextState;
+      
+      // Break if done
+      if (done) break;
+    }
+    
+    return actions;
+  } catch (error) {
+    console.error('Error getting DQN actions:', error);
     throw error;
   }
 };
 
 export default {
   trainDQNModel,
+  continueDQNTraining,
   getDQNActions,
-  continueDQNTraining
+  DQNAgent,
+  TradingEnvironment
 };

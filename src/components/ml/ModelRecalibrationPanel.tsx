@@ -4,8 +4,7 @@ import {
   monitorDQNModelPerformance, 
   recalibrateMLModel,
   recalibrateDQNModel,
-  autoRecalibrate,
-  scheduleRecalibration,
+  scheduleModelRecalibration,
   RecalibrationConfig,
   ModelPerformanceMetrics,
   RecalibrationResult
@@ -198,7 +197,54 @@ const ModelRecalibrationPanel: React.FC = () => {
         }
       };
       
-      const cleanup = scheduleRecalibration(selectedModel, getNewData, recalibrationConfig);
+      // Schedule recalibration
+      const scheduleRecalibration = async () => {
+        try {
+          const newData = await getNewData();
+          if (newData.length === 0) return;
+          
+          const result = await scheduleModelRecalibration(
+            selectedModel,
+            recalibrationConfig,
+            newData
+          );
+          
+          if (result) {
+            // Update recalibration history
+            setRecalibrationHistory(prev => [...prev, result]);
+            
+            // Update model list with new model
+            if (selectedModel.config.modelType) {
+              // ML model
+              setMlModels(prev => [...prev, { id: result.newModelId, name: `${selectedModel.name} (Recalibrated)` }]);
+            } else {
+              // DQN model
+              setDqnModels(prev => [...prev, { id: result.newModelId, name: `${selectedModel.name} (Recalibrated)` }]);
+            }
+          }
+        } catch (err) {
+          console.error('Error in scheduled recalibration:', err);
+        }
+      };
+      
+      // Set up interval based on monitoring frequency
+      let intervalMs = 24 * 60 * 60 * 1000; // Default: daily
+      
+      if (recalibrationConfig.monitoringFrequency === 'hourly') {
+        intervalMs = 60 * 60 * 1000;
+      } else if (recalibrationConfig.monitoringFrequency === 'weekly') {
+        intervalMs = 7 * 24 * 60 * 60 * 1000;
+      }
+      
+      // Initial run
+      scheduleRecalibration();
+      
+      // Set up interval
+      const intervalId = setInterval(scheduleRecalibration, intervalMs);
+      
+      // Cleanup function
+      const cleanup = () => clearInterval(intervalId);
+      
       setCleanupFunction(() => cleanup);
       setAutoRecalibrationEnabled(true);
     }
@@ -403,20 +449,20 @@ const ModelRecalibrationPanel: React.FC = () => {
                 <div className="w-full bg-gray-200 rounded-full h-2.5 dark:bg-gray-700">
                   <div 
                     className={`h-2.5 rounded-full ${
-                      performanceMetrics.driftScore > recalibrationConfig.driftThreshold
+                      performanceMetrics.driftScore! > recalibrationConfig.driftThreshold
                         ? 'bg-red-600'
                         : 'bg-green-600'
                     }`} 
-                    style={{ width: `${performanceMetrics.driftScore * 100}%` }}
+                    style={{ width: `${performanceMetrics.driftScore! * 100}%` }}
                   ></div>
                 </div>
                 <span className="ml-2 text-sm text-gray-700 dark:text-gray-300">
-                  {(performanceMetrics.driftScore * 100).toFixed(1)}%
+                  {(performanceMetrics.driftScore! * 100).toFixed(1)}%
                 </span>
               </div>
-              {performanceMetrics.driftScore > recalibrationConfig.driftThreshold && (
-                <p className="text-red-600 text-sm mt-1">
-                  Drift exceeds threshold ({(recalibrationConfig.driftThreshold * 100).toFixed(1)}%). Recalibration recommended.
+              {performanceMetrics.driftScore! > recalibrationConfig.driftThreshold && (
+                <p className="mt-1 text-sm text-red-600">
+                  Significant drift detected. Recalibration recommended.
                 </p>
               )}
             </div>
@@ -426,7 +472,7 @@ const ModelRecalibrationPanel: React.FC = () => {
       
       {recalibrationResult && (
         <div className="mb-6">
-          <h3 className="text-lg font-medium mb-2 text-gray-700 dark:text-gray-300">Recalibration Result</h3>
+          <h3 className="text-lg font-medium mb-2 text-gray-700 dark:text-gray-300">Recalibration Results</h3>
           
           <div className="bg-gray-100 dark:bg-gray-700 p-4 rounded-md">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -441,18 +487,14 @@ const ModelRecalibrationPanel: React.FC = () => {
               </div>
               
               <div>
-                <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Strategy</p>
+                <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Recalibration Strategy</p>
                 <p className="text-gray-800 dark:text-white">{recalibrationResult.recalibrationStrategy}</p>
               </div>
               
               <div>
                 <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Performance Improvement</p>
-                <p className={`${
-                  recalibrationResult.performanceImprovement > 0 
-                    ? 'text-green-600' 
-                    : 'text-red-600'
-                }`}>
-                  {(recalibrationResult.performanceImprovement * 100).toFixed(2)}%
+                <p className={`${recalibrationResult.performanceImprovement > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                  {(recalibrationResult.performanceImprovement * 100).toFixed(1)}%
                 </p>
               </div>
               
@@ -465,85 +507,25 @@ const ModelRecalibrationPanel: React.FC = () => {
         </div>
       )}
       
-      {performanceHistory.length > 0 && (
+      {performanceHistory.length > 1 && (
         <div className="mb-6">
           <h3 className="text-lg font-medium mb-2 text-gray-700 dark:text-gray-300">Performance History</h3>
           
-          <div className="h-64">
+          <div className="bg-gray-100 dark:bg-gray-700 p-4 rounded-md" style={{ height: '300px' }}>
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart
-                data={prepareChartData()}
-                margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
-              >
+              <LineChart data={prepareChartData()}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="timestamp" />
                 <YAxis />
                 <Tooltip />
                 <Legend />
-                <Line type="monotone" dataKey="driftScore" stroke="#ff0000" activeDot={{ r: 8 }} />
-                <Line type="monotone" dataKey="accuracy" stroke="#0000ff" />
-                <Line type="monotone" dataKey="f1Score" stroke="#00ff00" />
-                <Line type="monotone" dataKey="sharpeRatio" stroke="#ff00ff" />
-                <Line type="monotone" dataKey="winRate" stroke="#00ffff" />
+                <Line type="monotone" dataKey="driftScore" stroke="#ff0000" name="Drift Score" />
+                <Line type="monotone" dataKey="accuracy" stroke="#00ff00" name="Accuracy" />
+                <Line type="monotone" dataKey="f1Score" stroke="#0000ff" name="F1 Score" />
+                <Line type="monotone" dataKey="sharpeRatio" stroke="#ff00ff" name="Sharpe Ratio" />
+                <Line type="monotone" dataKey="winRate" stroke="#00ffff" name="Win Rate" />
               </LineChart>
             </ResponsiveContainer>
-          </div>
-        </div>
-      )}
-      
-      {recalibrationHistory.length > 0 && (
-        <div>
-          <h3 className="text-lg font-medium mb-2 text-gray-700 dark:text-gray-300">Recalibration History</h3>
-          
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-              <thead className="bg-gray-50 dark:bg-gray-800">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                    Date
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                    Original Model
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                    New Model
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                    Strategy
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                    Improvement
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700">
-                {recalibrationHistory.map((result, index) => (
-                  <tr key={index}>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-                      {new Date(result.timestamp).toLocaleString()}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-                      {result.originalModelId}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-                      {result.newModelId}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-                      {result.recalibrationStrategy}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm">
-                      <span className={`${
-                        result.performanceImprovement > 0 
-                          ? 'text-green-600' 
-                          : 'text-red-600'
-                      }`}>
-                        {(result.performanceImprovement * 100).toFixed(2)}%
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
           </div>
         </div>
       )}
@@ -551,4 +533,4 @@ const ModelRecalibrationPanel: React.FC = () => {
   );
 };
 
-export default ModelRecalibrationPanel;
+export { ModelRecalibrationPanel };
