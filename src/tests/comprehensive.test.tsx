@@ -7,10 +7,9 @@ import { LiveDataService } from '@/services/advancedLiveData';
 import { strategyTester } from '@/utils/strategyTester';
 import { MockModeContext } from '@/context/MockModeContext';
 import { chromeExtension } from '@/utils/chromeExtension';
-import { default as mlTrading } from '@/ml/mlTrading';
-import { default as dqnTrading } from '@/ml/dqnTrading';
-import { default as modelRecalibration } from '@/ml/modelRecalibration';
-import React from 'react';
+import { mlTrading } from '@/ml/mlTrading';
+import { dqnTrading } from '@/ml/dqnTrading';
+import { modelRecalibration } from '@/ml/modelRecalibration';
 
 // Mock dependencies
 vi.mock('@/services/websocketService');
@@ -90,7 +89,7 @@ describe('Comprehensive System Testing', () => {
   
   // WebSocket Reconnection Logic
   describe('WebSocket Reconnection Logic', () => {
-    let websocketService: any;
+    let websocketService;
     
     beforeEach(() => {
       websocketService = new WebSocketService();
@@ -294,8 +293,8 @@ describe('Comprehensive System Testing', () => {
   // ML Trading Capabilities
   describe('ML Trading Capabilities', () => {
     beforeEach(() => {
-      vi.spyOn(mlTrading, 'trainMLModel');
-      vi.spyOn(mlTrading, 'predictWithMLModel');
+      vi.spyOn(mlTrading, 'trainModel');
+      vi.spyOn(mlTrading, 'predictNextMove');
     });
     
     afterEach(() => {
@@ -304,92 +303,48 @@ describe('Comprehensive System Testing', () => {
     
     it('should train ML models correctly', async () => {
       const trainingData = Array(100).fill(0).map((_, i) => ({
-        timestamp: new Date(2023, 0, 1, 0, i).getTime(),
-        open: 100 + Math.random() * 10,
-        high: 105 + Math.random() * 10,
-        low: 95 + Math.random() * 10,
-        close: 100 + Math.random() * 10,
-        volume: 1000 + Math.random() * 500,
-        symbol: 'BTC_USDT'
+        features: [
+          Math.random(), // RSI
+          Math.random(), // MACD
+          Math.random(), // Bollinger
+          Math.random()  // Volume
+        ],
+        label: Math.random() > 0.5 ? 1 : 0 // Buy or Sell
       }));
       
-      const config = {
-        modelType: 'neuralnetwork' as const,
-        featureSet: 'technical' as const,
-        predictionTarget: 'price_direction' as const,
-        timeHorizon: 5
-      };
+      await mlTrading.trainModel(trainingData);
       
-      // Mock implementation
-      mlTrading.trainMLModel.mockResolvedValue({
-        id: 'test-model',
-        name: 'Test Model',
-        description: 'Test model for unit tests',
-        config,
-        performance: {
-          accuracy: 0.65,
-          precision: 0.7,
-          recall: 0.6,
-          f1Score: 0.65,
-          trainingSamples: 80,
-          validationSamples: 20
-        },
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-        lastTrainedAt: Date.now(),
-        status: 'ready' as const
-      });
-      
-      await mlTrading.trainMLModel(trainingData, config);
-      
-      expect(mlTrading.trainMLModel).toHaveBeenCalledWith(trainingData, config);
+      expect(mlTrading.trainModel).toHaveBeenCalledWith(trainingData);
+      expect(mlTrading.modelTrained).toBe(true);
     });
     
     it('should make predictions based on market data', async () => {
-      const marketData = Array(20).fill(0).map((_, i) => ({
-        timestamp: new Date(2023, 0, 1, 0, i).getTime(),
-        open: 100 + Math.random() * 10,
-        high: 105 + Math.random() * 10,
-        low: 95 + Math.random() * 10,
-        close: 100 + Math.random() * 10,
-        volume: 1000 + Math.random() * 500,
-        symbol: 'BTC_USDT'
-      }));
+      // Ensure model is trained
+      mlTrading.modelTrained = true;
       
-      const modelInfo = {
-        id: 'test-model',
-        name: 'Test Model',
-        config: {
-          modelType: 'neuralnetwork' as const,
-          featureSet: 'technical' as const,
-          predictionTarget: 'price_direction' as const,
-          timeHorizon: 5
-        }
+      const marketData = {
+        rsi: 45,
+        macd: 0.2,
+        bollingerBands: 0.1,
+        volume: 1.5
       };
       
-      // Mock implementation
-      mlTrading.predictWithMLModel.mockResolvedValue([
-        {
-          timestamp: marketData[0].timestamp,
-          symbol: 'BTC_USDT',
-          prediction: 1,
-          confidence: 0.75
-        }
-      ]);
+      const prediction = await mlTrading.predictNextMove(marketData);
       
-      const predictions = await mlTrading.predictWithMLModel(modelInfo, marketData);
-      
-      expect(mlTrading.predictWithMLModel).toHaveBeenCalledWith(modelInfo, marketData);
-      expect(predictions[0]).toHaveProperty('prediction');
-      expect(predictions[0]).toHaveProperty('confidence');
+      expect(mlTrading.predictNextMove).toHaveBeenCalledWith(marketData);
+      expect(prediction).toHaveProperty('action');
+      expect(prediction).toHaveProperty('confidence');
+      expect(['BUY', 'SELL', 'HOLD']).toContain(prediction.action);
+      expect(prediction.confidence).toBeGreaterThanOrEqual(0);
+      expect(prediction.confidence).toBeLessThanOrEqual(1);
     });
   });
   
   // DQN Trading System
   describe('DQN Trading System', () => {
     beforeEach(() => {
-      vi.spyOn(dqnTrading, 'trainDQNModel');
-      vi.spyOn(dqnTrading, 'getDQNActions');
+      vi.spyOn(dqnTrading, 'trainAgent');
+      vi.spyOn(dqnTrading, 'getAction');
     });
     
     afterEach(() => {
@@ -397,180 +352,81 @@ describe('Comprehensive System Testing', () => {
     });
     
     it('should train DQN agent correctly', async () => {
-      const trainingData = Array(100).fill(0).map((_, i) => ({
-        timestamp: new Date(2023, 0, 1, 0, i).getTime(),
-        open: 100 + Math.random() * 10,
-        high: 105 + Math.random() * 10,
-        low: 95 + Math.random() * 10,
-        close: 100 + Math.random() * 10,
-        volume: 1000 + Math.random() * 500,
-        symbol: 'BTC_USDT'
-      }));
-      
-      const config = {
+      const trainingConfig = {
+        episodes: 10,
         learningRate: 0.001,
-        gamma: 0.95,
-        epsilonStart: 0.1
+        discountFactor: 0.95,
+        explorationRate: 0.1
       };
       
-      // Mock implementation
-      dqnTrading.trainDQNModel.mockResolvedValue({
-        id: 'test-dqn-model',
-        name: 'Test DQN Model',
-        config: {
-          stateDimension: 30,
-          actionDimension: 3,
-          learningRate: 0.001,
-          gamma: 0.95,
-          epsilonStart: 0.1,
-          epsilonEnd: 0.01,
-          epsilonDecay: 0.995,
-          memorySize: 10000,
-          batchSize: 64,
-          updateTargetFreq: 100,
-          hiddenLayers: [128, 64],
-          activationFunction: 'relu',
-          optimizer: 'adam'
-        },
-        performance: {
-          averageReward: 0.5,
-          cumulativeReward: 50,
-          sharpeRatio: 1.2,
-          maxDrawdown: 0.15,
-          winRate: 0.6,
-          episodeRewards: [],
-          trainingEpisodes: 10
-        },
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-        lastTrainedAt: Date.now(),
-        status: 'ready' as const,
-        episodesCompleted: 10,
-        totalTrainingSteps: 1000
-      });
+      await dqnTrading.trainAgent(trainingConfig);
       
-      await dqnTrading.trainDQNModel(trainingData, config);
-      
-      expect(dqnTrading.trainDQNModel).toHaveBeenCalledWith(trainingData, config);
+      expect(dqnTrading.trainAgent).toHaveBeenCalledWith(trainingConfig);
+      expect(dqnTrading.agentTrained).toBe(true);
     });
     
-    it('should select actions based on market state', async () => {
-      const marketData = Array(20).fill(0).map((_, i) => ({
-        timestamp: new Date(2023, 0, 1, 0, i).getTime(),
-        open: 100 + Math.random() * 10,
-        high: 105 + Math.random() * 10,
-        low: 95 + Math.random() * 10,
-        close: 100 + Math.random() * 10,
-        volume: 1000 + Math.random() * 500,
-        symbol: 'BTC_USDT'
-      }));
+    it('should select actions based on market state', () => {
+      // Ensure agent is trained
+      dqnTrading.agentTrained = true;
       
-      const modelInfo = {
-        id: 'test-dqn-model',
-        config: {
-          stateDimension: 30,
-          actionDimension: 3
-        }
-      };
+      const marketState = [0.5, 0.2, 0.3, 0.8]; // Normalized market indicators
       
-      // Mock implementation
-      dqnTrading.getDQNActions.mockResolvedValue([
-        {
-          timestamp: marketData[0].timestamp,
-          symbol: 'BTC_USDT',
-          action: 'buy' as const,
-          confidence: 0.8
-        }
-      ]);
+      const action = dqnTrading.getAction(marketState);
       
-      const actions = await dqnTrading.getDQNActions(modelInfo, marketData);
-      
-      expect(dqnTrading.getDQNActions).toHaveBeenCalledWith(modelInfo, marketData);
-      expect(actions[0]).toHaveProperty('action');
-      expect(['buy', 'sell', 'hold']).toContain(actions[0].action);
+      expect(dqnTrading.getAction).toHaveBeenCalledWith(marketState);
+      expect([0, 1, 2]).toContain(action); // 0: Hold, 1: Buy, 2: Sell
     });
   });
   
   // Model Recalibration
   describe('Model Recalibration', () => {
     beforeEach(() => {
-      vi.spyOn(modelRecalibration, 'calculateDrift');
-      vi.spyOn(modelRecalibration, 'recalibrateMLModel');
+      vi.spyOn(modelRecalibration, 'evaluateModelPerformance');
+      vi.spyOn(modelRecalibration, 'recalibrateModel');
     });
     
     afterEach(() => {
       vi.clearAllMocks();
     });
     
-    it('should calculate drift correctly', () => {
-      const oldData = Array(100).fill(0).map((_, i) => ({
-        timestamp: new Date(2023, 0, 1, 0, i).getTime(),
-        open: 100 + Math.random() * 10,
-        high: 105 + Math.random() * 10,
-        low: 95 + Math.random() * 10,
-        close: 100 + Math.random() * 10,
-        volume: 1000 + Math.random() * 500
-      }));
+    it('should evaluate model performance correctly', () => {
+      const predictions = [
+        { action: 'BUY', confidence: 0.8, timestamp: new Date(2023, 0, 1).getTime() },
+        { action: 'SELL', confidence: 0.7, timestamp: new Date(2023, 0, 2).getTime() },
+        { action: 'HOLD', confidence: 0.6, timestamp: new Date(2023, 0, 3).getTime() }
+      ];
       
-      const newData = Array(100).fill(0).map((_, i) => ({
-        timestamp: new Date(2023, 0, 2, 0, i).getTime(),
-        open: 110 + Math.random() * 15, // Different distribution
-        high: 120 + Math.random() * 15,
-        low: 105 + Math.random() * 15,
-        close: 115 + Math.random() * 15,
-        volume: 2000 + Math.random() * 1000 // Higher volume
-      }));
+      const actualOutcomes = [
+        { action: 'BUY', profit: 0.05, timestamp: new Date(2023, 0, 1).getTime() },
+        { action: 'SELL', profit: -0.02, timestamp: new Date(2023, 0, 2).getTime() },
+        { action: 'HOLD', profit: 0.01, timestamp: new Date(2023, 0, 3).getTime() }
+      ];
       
-      // Mock implementation
-      modelRecalibration.calculateDrift.mockReturnValue(0.35);
+      const performance = modelRecalibration.evaluateModelPerformance(predictions, actualOutcomes);
       
-      const driftScore = modelRecalibration.calculateDrift(oldData, newData);
-      
-      expect(modelRecalibration.calculateDrift).toHaveBeenCalledWith(oldData, newData);
-      expect(driftScore).toBeGreaterThan(0);
-      expect(driftScore).toBeLessThanOrEqual(1);
+      expect(modelRecalibration.evaluateModelPerformance).toHaveBeenCalledWith(predictions, actualOutcomes);
+      expect(performance).toHaveProperty('accuracy');
+      expect(performance).toHaveProperty('profitLoss');
+      expect(performance).toHaveProperty('confidenceCorrelation');
     });
     
     it('should recalibrate model based on performance metrics', async () => {
-      const newData = Array(100).fill(0).map((_, i) => ({
-        timestamp: new Date(2023, 0, 2, 0, i).getTime(),
-        open: 110 + Math.random() * 15,
-        high: 120 + Math.random() * 15,
-        low: 105 + Math.random() * 15,
-        close: 115 + Math.random() * 15,
-        volume: 2000 + Math.random() * 1000
-      }));
-      
-      const modelInfo = {
-        id: 'test-model',
-        name: 'Test Model',
-        config: {
-          modelType: 'neuralnetwork' as const,
-          featureSet: 'technical' as const,
-          predictionTarget: 'price_direction' as const,
-          timeHorizon: 5
-        }
+      const performanceMetrics = {
+        accuracy: 0.65,
+        profitLoss: 0.03,
+        confidenceCorrelation: 0.4
       };
       
-      // Mock implementation
-      modelRecalibration.recalibrateMLModel.mockResolvedValue({
-        originalModelId: 'test-model',
-        newModelId: 'test-model-recal',
-        timestamp: Date.now(),
-        reason: 'Drift score: 0.3500, F1 score: 0.6000',
-        performanceImprovement: 0.15,
-        recalibrationStrategy: 'incremental'
-      });
+      await modelRecalibration.recalibrateModel(performanceMetrics);
       
-      await modelRecalibration.recalibrateMLModel(modelInfo, newData);
-      
-      expect(modelRecalibration.recalibrateMLModel).toHaveBeenCalledWith(modelInfo, newData);
+      expect(modelRecalibration.recalibrateModel).toHaveBeenCalledWith(performanceMetrics);
+      expect(modelRecalibration.lastRecalibration).toBeInstanceOf(Date);
     });
   });
   
   // Live Data Processing
   describe('Live Data Processing', () => {
-    let liveDataService: any;
+    let liveDataService;
     
     beforeEach(() => {
       liveDataService = new LiveDataService();
