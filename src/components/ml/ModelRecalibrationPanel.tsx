@@ -13,7 +13,7 @@ import { usePoloniexData } from '@/hooks/usePoloniexData';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 const ModelRecalibrationPanel: React.FC = () => {
-  const { getMarketData } = usePoloniexData();
+  const { marketData: poloniexMarketData, fetchMarketData } = usePoloniexData();
   
   const [mlModels, setMlModels] = useState<any[]>([]);
   const [dqnModels, setDqnModels] = useState<any[]>([]);
@@ -68,9 +68,9 @@ const ModelRecalibrationPanel: React.FC = () => {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        // Get 200 candles for monitoring and recalibration
-        const data = await getMarketData('BTC_USDT', '4h', 200);
-        setMarketData(data);
+        // Get market data for monitoring and recalibration
+        await fetchMarketData('BTC_USDT');
+        setMarketData(poloniexMarketData);
       } catch (err) {
         console.error('Error fetching market data:', err);
         setError('Failed to fetch market data');
@@ -83,7 +83,7 @@ const ModelRecalibrationPanel: React.FC = () => {
     const intervalId = setInterval(fetchData, 4 * 60 * 60 * 1000); // Refresh every 4 hours
     
     return () => clearInterval(intervalId);
-  }, [getMarketData]);
+  }, [fetchMarketData, poloniexMarketData]);
   
   // Monitor model performance
   const handleMonitorPerformance = async () => {
@@ -190,7 +190,8 @@ const ModelRecalibrationPanel: React.FC = () => {
       
       const getNewData = async () => {
         try {
-          return await getMarketData('BTC_USDT', '4h', 200);
+          await fetchMarketData('BTC_USDT');
+          return poloniexMarketData;
         } catch (err) {
           console.error('Error fetching new data for auto-recalibration:', err);
           return [];

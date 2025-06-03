@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import '@testing-library/jest-dom';
 import { MemoryRouter } from 'react-router-dom';
 import App from '@/App';
 import { AppProviders } from '@/context/AppProviders';
@@ -7,7 +8,6 @@ import { WebSocketService } from '@/services/websocketService';
 import { LiveDataService } from '@/services/advancedLiveData';
 import { default as mlTrading } from '@/ml/mlTrading';
 import { default as dqnTrading } from '@/ml/dqnTrading';
-import React from 'react';
 
 // Mock dependencies
 vi.mock('@/services/websocketService');

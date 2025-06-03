@@ -1,28 +1,29 @@
 import React, { useState, useEffect } from 'react';
 import { default as dqnTrading } from '@/ml/dqnTrading';
 import { usePoloniexData } from '@/hooks/usePoloniexData';
-import { useTradingContext } from '@/context/TradingContext';
 import { useSettings } from '@/context/SettingsContext';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 interface DQNConfig {
+  stateDimension: number;
+  actionDimension: number;
   learningRate: number;
   gamma: number;
   epsilonStart: number;
   epsilonEnd: number;
   epsilonDecay: number;
-  memorySize?: number;
-  batchSize?: number;
-  updateTargetFreq?: number;
+  memorySize: number;
+  batchSize: number;
+  updateTargetFreq: number;
   hiddenLayers: number[];
-  activationFunction?: string;
-  optimizer?: string;
+  activationFunction: string;
+  optimizer: string;
 }
 
 interface DQNModelInfo {
   id: string;
   name: string;
-  description?: string;
+  description: string;
   config: DQNConfig;
   performance: {
     averageReward: number;
@@ -51,17 +52,23 @@ interface DQNAction {
 }
 
 const DQNTradingPanel: React.FC = () => {
-  const { getMarketData } = usePoloniexData();
-  const { executeStrategy } = useTradingContext();
+  const { marketData: poloniexMarketData, fetchMarketData } = usePoloniexData();
   const { defaultPair, timeframe } = useSettings();
   
   const [modelConfig, setModelConfig] = useState<Partial<DQNConfig>>({
+    stateDimension: 8, // Default state dimension
+    actionDimension: 3, // Default action dimension (buy, sell, hold)
     learningRate: 0.0001,
     gamma: 0.99,
     epsilonStart: 1.0,
     epsilonEnd: 0.01,
     epsilonDecay: 0.995,
+    memorySize: 10000,
+    batchSize: 32,
+    updateTargetFreq: 100,
     hiddenLayers: [128, 64],
+    activationFunction: 'relu',
+    optimizer: 'adam',
   });
   
   const [modelInfo, setModelInfo] = useState<DQNModelInfo | null>(null);
@@ -80,9 +87,9 @@ const DQNTradingPanel: React.FC = () => {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        // Get 500 candles for training
-        const data = await getMarketData(defaultPair, timeframe, 500);
-        setMarketData(data);
+        // Get market data for training
+        await fetchMarketData(defaultPair);
+        setMarketData(poloniexMarketData);
       } catch (err) {
         setError('Failed to fetch market data');
         console.error(err);
@@ -90,7 +97,7 @@ const DQNTradingPanel: React.FC = () => {
     };
     
     fetchData();
-  }, [defaultPair, timeframe, getMarketData]);
+  }, [defaultPair, timeframe, fetchMarketData, poloniexMarketData]);
   
   // Train model
   const handleTrainModel = async () => {
@@ -193,7 +200,8 @@ const DQNTradingPanel: React.FC = () => {
     
     if (latestAction.action === 'buy') {
       // Execute buy strategy
-      executeStrategy({
+      // TODO: Implement executeStrategy functionality
+      console.log('DQN Strategy - BUY signal:', {
         type: 'DQN_STRATEGY',
         action: 'BUY',
         symbol: defaultPair,
@@ -203,7 +211,8 @@ const DQNTradingPanel: React.FC = () => {
       });
     } else if (latestAction.action === 'sell') {
       // Execute sell strategy
-      executeStrategy({
+      // TODO: Implement executeStrategy functionality
+      console.log('DQN Strategy - SELL signal:', {
         type: 'DQN_STRATEGY',
         action: 'SELL',
         symbol: defaultPair,
