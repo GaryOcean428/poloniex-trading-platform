@@ -3,16 +3,45 @@ import CryptoJS from 'crypto-js';
 import { getStorageItem, STORAGE_KEYS } from '@/utils/storage';
 import { MarketData } from '@/types';
 
-// Base URLs for Poloniex APIs
-const FUTURES_BASE_URL = 'https://futures-api.poloniex.com/v3';
-const SPOT_BASE_URL = 'https://api.poloniex.com/v3';
+import { 
+  getApiBaseUrl, 
+  shouldUseMockMode, 
+  getPoloniexApiKey, 
+  getPoloniexApiSecret,
+  IS_WEBCONTAINER,
+  IS_LOCAL_DEV 
+} from '@/utils/environment';
+
+// Get configured API base URLs
+const FUTURES_BASE_URL = getApiBaseUrl('futures');
+const SPOT_BASE_URL = getApiBaseUrl('spot');
 
 // Add WebSocket endpoints
 // WebSocket endpoints - commented out as they're not currently used
 // const FUTURES_WS_URL = 'wss://futures-ws.poloniex.com/ws/public';
 // const FUTURES_PRIVATE_WS_URL = 'wss://futures-ws.poloniex.com/ws/private';
 
-import { IS_WEBCONTAINER, IS_LOCAL_DEV } from '@/utils/environment';
+// Custom error classes for better error handling
+export class PoloniexAPIError extends Error {
+  constructor(message: string, public code?: string, public statusCode?: number) {
+    super(message);
+    this.name = 'PoloniexAPIError';
+  }
+}
+
+export class PoloniexConnectionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PoloniexConnectionError';
+  }
+}
+
+export class PoloniexAuthenticationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PoloniexAuthenticationError';
+  }
+}
 
 // Add rate limiting configuration
 const RATE_LIMITS = {
@@ -133,30 +162,44 @@ class PoloniexApiClient {
       const storedApiSecret = getStorageItem(STORAGE_KEYS.API_SECRET, '');
       const isLiveTrading = getStorageItem(STORAGE_KEYS.IS_LIVE_TRADING, false);
       
-      // Check for environment variable API key
-      const envApiKey = import.meta.env.VITE_POLONIEX_API_KEY || '';
+      // Check for environment variable credentials
+      const envApiKey = getPoloniexApiKey();
+      const envApiSecret = getPoloniexApiSecret();
       
-      // If stored credentials exist, use them
-      if ((storedApiKey && storedApiSecret) || envApiKey) {
+      // Determine if we have valid credentials
+      const hasStoredCredentials = storedApiKey && storedApiSecret;
+      const hasEnvCredentials = envApiKey && envApiSecret;
+      const hasValidCredentials = hasStoredCredentials || hasEnvCredentials;
+      
+      if (hasValidCredentials) {
         // Prioritize stored credentials, fall back to env variables
         this.apiKey = storedApiKey || envApiKey;
-        this.apiSecret = storedApiSecret || ''; // Secret should come from storage for security
-        this.mockMode = !isLiveTrading || IS_WEBCONTAINER || IS_LOCAL_DEV;
+        this.apiSecret = storedApiSecret || envApiSecret;
+        
+        // Use the new mock mode logic
+        this.mockMode = shouldUseMockMode(true) || !isLiveTrading;
         
         console.log(
           this.mockMode 
-            ? 'Using API credentials but running in mock mode' 
+            ? 'API credentials found but running in mock mode (check VITE_FORCE_MOCK_MODE or live trading settings)' 
             : 'Using API credentials with live trading enabled'
         );
       } else {
-        // No credentials, use mock mode
-        this.mockMode = true;
-        console.log('No API credentials found, using mock mode');
+        // No credentials available
+        this.apiKey = '';
+        this.apiSecret = '';
+        this.mockMode = shouldUseMockMode(false);
+        
+        if (!this.mockMode) {
+          console.warn('No API credentials found and mock mode is disabled - API calls will fail');
+        } else {
+          console.log('No API credentials found, using mock mode');
+        }
       }
       
       // Log connection status
       if (this.mockMode) {
-        console.log('Mock mode active - live trading disabled');
+        console.log('Mock mode active - using simulated data');
       } else {
         console.log('Live trading mode active with API credentials');
       }
@@ -166,9 +209,9 @@ class PoloniexApiClient {
       this.lastBalanceUpdate = 0;
     } catch (error) {
       console.error('Error loading credentials:', error instanceof Error ? error.message : String(error));
-      // Default to mock mode if there's any error
-      this.mockMode = true;
-      console.log('Error loading credentials, defaulting to mock mode');
+      // Use the environment-aware mock mode logic instead of defaulting
+      this.mockMode = shouldUseMockMode(false);
+      console.log('Error loading credentials, mock mode determined by environment configuration');
     }
   }
 
@@ -253,23 +296,26 @@ class PoloniexApiClient {
       console.log(`[Request ${requestId}] Account balance fetched successfully`);
       return this.cachedBalance;
     } catch (error) {
-      if (!IS_WEBCONTAINER) {
-        // Only log as error if not in WebContainer, since errors are expected there
-        console.error(`[Request ${requestId}] Error fetching account balance:`, safeErrorHandler(error).message);
-      } else {
-        console.log(`[Request ${requestId}] Expected network error in WebContainer, using mock data`);
+      // Convert axios errors to our custom error types
+      if (axios.isAxiosError(error)) {
+        if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
+          throw new PoloniexConnectionError(`Account balance request timed out: ${error.message}`);
+        }
+        if (error.response?.status === 401 || error.response?.status === 403) {
+          throw new PoloniexAuthenticationError(`Authentication failed for account balance: ${error.response.statusText}`);
+        }
+        if (error.response?.status) {
+          throw new PoloniexAPIError(
+            `API error fetching account balance: ${error.response.statusText}`, 
+            error.response.data?.code || 'API_ERROR',
+            error.response.status
+          );
+        }
+        throw new PoloniexConnectionError(`Network error fetching account balance: ${error.message}`);
       }
       
-      // If timeout or network error, return mock data
-      console.log(`[Request ${requestId}] Falling back to mock account balance data`);
-      return {
-        totalAmount: "15478.23",
-        availableAmount: "12345.67",
-        accountEquity: "15820.45",
-        unrealizedPnL: "342.22",
-        todayPnL: "156.78",
-        todayPnLPercentage: "1.02"
-      };
+      // Re-throw as connection error for other types
+      throw new PoloniexConnectionError(`Unexpected error fetching account balance: ${safeErrorHandler(error).message}`);
     }
   }
 
@@ -303,16 +349,26 @@ class PoloniexApiClient {
       console.log(`[Request ${requestId}] Market data fetched successfully for ${pair}`);
       return response.data;
     } catch (error) {
-      if (!IS_WEBCONTAINER) {
-        // Only log as error if not in WebContainer, since errors are expected there
-        console.error(`[Request ${requestId}] Error fetching market data for ${pair}:`, safeErrorHandler(error).message);
-      } else {
-        console.log(`[Request ${requestId}] Expected network error in WebContainer, using mock data`);
+      // Convert axios errors to our custom error types
+      if (axios.isAxiosError(error)) {
+        if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
+          throw new PoloniexConnectionError(`Market data request timed out for ${pair}: ${error.message}`);
+        }
+        if (error.response?.status === 404) {
+          throw new PoloniexAPIError(`Market data not found for ${pair}`, 'NOT_FOUND', 404);
+        }
+        if (error.response?.status) {
+          throw new PoloniexAPIError(
+            `API error fetching market data for ${pair}: ${error.response.statusText}`, 
+            error.response.data?.code || 'API_ERROR',
+            error.response.status
+          );
+        }
+        throw new PoloniexConnectionError(`Network error fetching market data for ${pair}: ${error.message}`);
       }
       
-      // If timeout or network error, return mock data
-      console.log(`[Request ${requestId}] Falling back to mock market data for ${pair}`);
-      return this.generateMockMarketData(100);
+      // Re-throw as connection error for other types
+      throw new PoloniexConnectionError(`Unexpected error fetching market data for ${pair}: ${safeErrorHandler(error).message}`);
     }
   }
 
@@ -392,31 +448,26 @@ class PoloniexApiClient {
       console.log(`[Request ${requestId}] Open positions fetched successfully`);
       return response.data;
     } catch (error) {
-      if (!IS_WEBCONTAINER) {
-        // Only log as error if not in WebContainer, since errors are expected there
-        console.error(`[Request ${requestId}] Error fetching open positions:`, safeErrorHandler(error).message);
-      } else {
-        console.log(`[Request ${requestId}] Expected network error in WebContainer, using mock data`);
+      // Convert axios errors to our custom error types
+      if (axios.isAxiosError(error)) {
+        if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
+          throw new PoloniexConnectionError(`Open positions request timed out: ${error.message}`);
+        }
+        if (error.response?.status === 401 || error.response?.status === 403) {
+          throw new PoloniexAuthenticationError(`Authentication failed for open positions: ${error.response.statusText}`);
+        }
+        if (error.response?.status) {
+          throw new PoloniexAPIError(
+            `API error fetching open positions: ${error.response.statusText}`, 
+            error.response.data?.code || 'API_ERROR',
+            error.response.status
+          );
+        }
+        throw new PoloniexConnectionError(`Network error fetching open positions: ${error.message}`);
       }
       
-      // If timeout or network error, return mock data
-      console.log(`[Request ${requestId}] Falling back to mock positions data`);
-      return {
-        positions: [
-          {
-            symbol: "BTC_USDT",
-            posId: "12345",
-            pos: "long",
-            marginMode: "cross",
-            posCost: "25000",
-            posSide: "long",
-            posSize: "0.5",
-            markPrice: "51000",
-            unrealizedPnL: "500",
-            liquidationPrice: "45000"
-          }
-        ]
-      };
+      // Re-throw as connection error for other types
+      throw new PoloniexConnectionError(`Unexpected error fetching open positions: ${safeErrorHandler(error).message}`);
     }
   }
 
@@ -625,16 +676,26 @@ class PoloniexApiClient {
       console.log(`[Request ${requestId}] Recent trades fetched successfully for ${pair}`);
       return response.data;
     } catch (error) {
-      if (!IS_WEBCONTAINER) {
-        // Only log as error if not in WebContainer, since errors are expected there
-        console.error(`[Request ${requestId}] Error fetching recent trades for ${pair}:`, safeErrorHandler(error).message);
-      } else {
-        console.log(`[Request ${requestId}] Expected network error in WebContainer, using mock data`);
+      // Convert axios errors to our custom error types
+      if (axios.isAxiosError(error)) {
+        if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
+          throw new PoloniexConnectionError(`Recent trades request timed out for ${pair}: ${error.message}`);
+        }
+        if (error.response?.status === 404) {
+          throw new PoloniexAPIError(`Recent trades not found for ${pair}`, 'NOT_FOUND', 404);
+        }
+        if (error.response?.status) {
+          throw new PoloniexAPIError(
+            `API error fetching recent trades for ${pair}: ${error.response.statusText}`, 
+            error.response.data?.code || 'API_ERROR',
+            error.response.status
+          );
+        }
+        throw new PoloniexConnectionError(`Network error fetching recent trades for ${pair}: ${error.message}`);
       }
       
-      // If timeout or network error, return mock data
-      console.log(`[Request ${requestId}] Falling back to mock trades data for ${pair}`);
-      return this.generateMockTrades(pair, limit);
+      // Re-throw as connection error for other types
+      throw new PoloniexConnectionError(`Unexpected error fetching recent trades for ${pair}: ${safeErrorHandler(error).message}`);
     }
   }
 

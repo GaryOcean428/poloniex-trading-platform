@@ -1,8 +1,8 @@
-import { getEnvVariable } from '@/utils/environment';
+import { getEnvVariable, getApiBaseUrl, getPoloniexApiKey, getPoloniexApiSecret, getPoloniexPassphrase } from '@/utils/environment';
 import crypto from 'crypto';
 
-// Poloniex Futures API endpoints
-const BASE_URL = 'https://futures-api.poloniex.com';
+// Get configured API base URL
+const BASE_URL = getApiBaseUrl('futures').replace('/v3', ''); // Remove /v3 since it's added to endpoints
 const V3_PREFIX = '/v3';
 
 // API endpoints
@@ -134,7 +134,7 @@ export interface FuturesOrder {
 
 // Generate HMAC-SHA256 signature for API authentication
 const generateSignature = (timestamp: string, method: string, requestPath: string, body: string = '') => {
-  const apiSecret = getEnvVariable('VITE_POLONIEX_API_SECRET');
+  const apiSecret = getPoloniexApiSecret();
   
   if (!apiSecret) {
     throw new Error('VITE_POLONIEX_API_SECRET is not defined in environment variables');
@@ -146,8 +146,8 @@ const generateSignature = (timestamp: string, method: string, requestPath: strin
 
 // Create headers for authenticated requests
 const createAuthHeaders = (method: string, endpoint: string, body: string = '') => {
-  const apiKey = getEnvVariable('VITE_POLONIEX_API_KEY');
-  const passphrase = getEnvVariable('VITE_POLONIEX_PASSPHRASE');
+  const apiKey = getPoloniexApiKey();
+  const passphrase = getPoloniexPassphrase();
   
   if (!apiKey || !passphrase) {
     throw new Error('VITE_POLONIEX_API_KEY or VITE_POLONIEX_PASSPHRASE is not defined in environment variables');
