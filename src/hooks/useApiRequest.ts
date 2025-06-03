@@ -1,6 +1,5 @@
 import { useCallback } from 'react';
 import { useErrorHandler } from './useErrorHandler';
-import { sendSecureMessage, getExtensionData } from '@/utils/chromeExtension';
 
 /**
  * Custom hook for handling API requests with proper error handling
@@ -15,7 +14,7 @@ export const useApiRequest = () => {
    * @returns Response data or null on error
    */
   const get = useCallback(async <T,>(url: string, options?: RequestInit): Promise<T | null> => {
-    return withErrorHandling(async () => {
+    const wrappedFn = withErrorHandling(async () => {
       const response = await fetch(url, {
         method: 'GET',
         headers: {
@@ -30,7 +29,9 @@ export const useApiRequest = () => {
       }
       
       return response.json();
-    }, `Failed to fetch data from ${url}`);
+    });
+    
+    return await wrappedFn();
   }, [withErrorHandling]);
 
   /**
@@ -41,7 +42,7 @@ export const useApiRequest = () => {
    * @returns Response data or null on error
    */
   const post = useCallback(async <T,>(url: string, data: any, options?: RequestInit): Promise<T | null> => {
-    return withErrorHandling(async () => {
+    const wrappedFn = withErrorHandling(async () => {
       const response = await fetch(url, {
         method: 'POST',
         headers: {
@@ -57,46 +58,30 @@ export const useApiRequest = () => {
       }
       
       return response.json();
-    }, `Failed to post data to ${url}`);
+    });
+    
+    return await wrappedFn();
   }, [withErrorHandling]);
 
   /**
-   * Send a message to Chrome extension with error handling
+   * Send a message to Chrome extension (placeholder)
    * @param message Message to send
    * @returns Response data or null on error
    */
-  const sendExtensionMessage = useCallback(async <T,>(message: any): Promise<T | null> => {
-    return withErrorHandling(async () => {
-      return new Promise((resolve, reject) => {
-        sendChromeMessage(message, (response) => {
-          if (response && response.error) {
-            reject(new Error(response.error));
-          } else {
-            resolve(response as T);
-          }
-        });
-      });
-    }, 'Failed to communicate with extension');
-  }, [withErrorHandling]);
+  const sendExtensionMessage = useCallback(async <T,>(_message: any): Promise<T | null> => {
+    console.log('Extension messaging not implemented');
+    return null;
+  }, []);
 
   /**
-   * Get data from Chrome storage with error handling
+   * Get data from Chrome storage (placeholder)
    * @param key Storage key
    * @returns Storage data or null on error
    */
-  const getExtensionStorage = useCallback(async <T,>(key: string): Promise<T | null> => {
-    return withErrorHandling(async () => {
-      return new Promise((resolve, reject) => {
-        getChromeStorage(key, (data) => {
-          if (data && data.error) {
-            reject(new Error(data.error));
-          } else {
-            resolve(data[key] as T);
-          }
-        });
-      });
-    }, 'Failed to get data from extension storage');
-  }, [withErrorHandling]);
+  const getExtensionStorage = useCallback(async <T,>(_key: string): Promise<T | null> => {
+    console.log('Extension storage not implemented');
+    return null;
+  }, []);
 
   return {
     get,
