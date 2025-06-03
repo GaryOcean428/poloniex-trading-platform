@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { default as mlTrading } from '@/ml/mlTrading';
 import { usePoloniexData } from '@/hooks/usePoloniexData';
-import { useTradingContext } from '@/context/TradingContext';
 import { useSettings } from '@/context/SettingsContext';
 
 interface MLModelConfig {
@@ -39,7 +38,7 @@ interface MLModelInfo {
 }
 
 const MLTradingPanel: React.FC = () => {
-  const { fetchMarketData } = usePoloniexData();
+  const { marketData: poloniexMarketData, fetchMarketData } = usePoloniexData();
   const { defaultPair, timeframe } = useSettings();
   
   const [modelConfig, setModelConfig] = useState<MLModelConfig>({
@@ -67,9 +66,9 @@ const MLTradingPanel: React.FC = () => {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        // Get 500 candles for training
-        const data = await getMarketData(defaultPair, timeframe, 500);
-        setMarketData(data);
+        // Get market data for training
+        await fetchMarketData(defaultPair);
+        setMarketData(poloniexMarketData);
       } catch (err) {
         setError('Failed to fetch market data');
         console.error(err);
@@ -77,7 +76,7 @@ const MLTradingPanel: React.FC = () => {
     };
     
     fetchData();
-  }, [defaultPair, timeframe, getMarketData]);
+  }, [defaultPair, timeframe, fetchMarketData, poloniexMarketData]);
   
   // Train model
   const handleTrainModel = async () => {
@@ -159,7 +158,8 @@ const MLTradingPanel: React.FC = () => {
     
     if (latestPrediction.prediction === 1 && latestPrediction.confidence > 0.6) {
       // Execute buy strategy
-      executeStrategy({
+      // TODO: Implement executeStrategy functionality
+      console.log('ML Strategy - BUY signal:', {
         type: 'ML_STRATEGY',
         action: 'BUY',
         symbol: defaultPair,
@@ -169,7 +169,8 @@ const MLTradingPanel: React.FC = () => {
       });
     } else if (latestPrediction.prediction === 0 && latestPrediction.confidence > 0.6) {
       // Execute sell strategy
-      executeStrategy({
+      // TODO: Implement executeStrategy functionality
+      console.log('ML Strategy - SELL signal:', {
         type: 'ML_STRATEGY',
         action: 'SELL',
         symbol: defaultPair,
