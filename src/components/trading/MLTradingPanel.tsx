@@ -182,8 +182,8 @@ const MLTradingPanel: React.FC = () => {
   };
   
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-      <h2 className="text-xl font-semibold mb-4 text-gray-800 dark:text-white">ML Trading</h2>
+    <div className="bg-white dark:bg-neutral-800 rounded-lg shadow p-6">
+      <h2 className="text-xl font-semibold mb-4 text-neutral-800 dark:text-white">ML Trading</h2>
       
       {error && (
         <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
@@ -192,29 +192,29 @@ const MLTradingPanel: React.FC = () => {
       )}
       
       <div className="mb-6">
-        <h3 className="text-lg font-medium mb-2 text-gray-700 dark:text-gray-300">Model Configuration</h3>
+        <h3 className="text-lg font-medium mb-2 text-neutral-700 dark:text-neutral-300">Model Configuration</h3>
         
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">
               Model Name
             </label>
             <input
               type="text"
               value={modelName}
               onChange={(e) => setModelName(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+              className="w-full px-3 py-2 border border-neutral-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-neutral-700 dark:border-neutral-600 dark:text-white"
             />
           </div>
           
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">
               Model Type
             </label>
             <select
               value={modelConfig.modelType}
               onChange={(e) => setModelConfig({ ...modelConfig, modelType: e.target.value as any })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+              className="w-full px-3 py-2 border border-neutral-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-neutral-700 dark:border-neutral-600 dark:text-white"
             >
               <option value="randomforest">Random Forest</option>
               <option value="gradientboosting">Gradient Boosting</option>
@@ -224,13 +224,13 @@ const MLTradingPanel: React.FC = () => {
           </div>
           
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">
               Feature Set
             </label>
             <select
               value={modelConfig.featureSet}
               onChange={(e) => setModelConfig({ ...modelConfig, featureSet: e.target.value as any })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+              className="w-full px-3 py-2 border border-neutral-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-neutral-700 dark:border-neutral-600 dark:text-white"
             >
               <option value="basic">Basic</option>
               <option value="technical">Technical</option>
@@ -240,13 +240,13 @@ const MLTradingPanel: React.FC = () => {
           </div>
           
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">
               Prediction Target
             </label>
             <select
               value={modelConfig.predictionTarget}
               onChange={(e) => setModelConfig({ ...modelConfig, predictionTarget: e.target.value as any })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+              className="w-full px-3 py-2 border border-neutral-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-neutral-700 dark:border-neutral-600 dark:text-white"
             >
               <option value="price_direction">Price Direction</option>
               <option value="price_change">Price Change</option>
@@ -255,7 +255,7 @@ const MLTradingPanel: React.FC = () => {
           </div>
           
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">
               Time Horizon (candles)
             </label>
             <input
@@ -264,12 +264,12 @@ const MLTradingPanel: React.FC = () => {
               max="100"
               value={modelConfig.timeHorizon}
               onChange={(e) => setModelConfig({ ...modelConfig, timeHorizon: parseInt(e.target.value) })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+              className="w-full px-3 py-2 border border-neutral-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-neutral-700 dark:border-neutral-600 dark:text-white"
             />
           </div>
           
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">
               Learning Rate
             </label>
             <input
@@ -285,12 +285,12 @@ const MLTradingPanel: React.FC = () => {
                   learningRate: parseFloat(e.target.value) 
                 } 
               })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+              className="w-full px-3 py-2 border border-neutral-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-neutral-700 dark:border-neutral-600 dark:text-white"
             />
           </div>
           
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">
               Epochs
             </label>
             <input
@@ -306,7 +306,7 @@ const MLTradingPanel: React.FC = () => {
                   epochs: parseInt(e.target.value) 
                 } 
               })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+              className="w-full px-3 py-2 border border-neutral-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-neutral-700 dark:border-neutral-600 dark:text-white"
             />
           </div>
         </div>
@@ -317,7 +317,7 @@ const MLTradingPanel: React.FC = () => {
           onClick={handleTrainModel}
           disabled={isTraining || marketData.length === 0}
           className={`px-4 py-2 rounded-md text-white ${
-            isTraining ? 'bg-gray-400' : 'bg-blue-600 hover:bg-blue-700'
+            isTraining ? 'bg-neutral-400' : 'bg-blue-600 hover:bg-blue-700'
           }`}
         >
           {isTraining ? 'Training...' : 'Train Model'}
@@ -327,7 +327,7 @@ const MLTradingPanel: React.FC = () => {
           onClick={handleOptimizeModel}
           disabled={isOptimizing || marketData.length === 0}
           className={`px-4 py-2 rounded-md text-white ${
-            isOptimizing ? 'bg-gray-400' : 'bg-green-600 hover:bg-green-700'
+            isOptimizing ? 'bg-neutral-400' : 'bg-green-600 hover:bg-green-700'
           }`}
         >
           {isOptimizing ? 'Optimizing...' : 'Optimize Model'}
@@ -337,7 +337,7 @@ const MLTradingPanel: React.FC = () => {
           onClick={handlePredict}
           disabled={isPredicting || !modelInfo}
           className={`px-4 py-2 rounded-md text-white ${
-            isPredicting || !modelInfo ? 'bg-gray-400' : 'bg-purple-600 hover:bg-purple-700'
+            isPredicting || !modelInfo ? 'bg-neutral-400' : 'bg-purple-600 hover:bg-purple-700'
           }`}
         >
           {isPredicting ? 'Predicting...' : 'Make Predictions'}
@@ -347,7 +347,7 @@ const MLTradingPanel: React.FC = () => {
           onClick={handleExecuteTrades}
           disabled={predictions.length === 0}
           className={`px-4 py-2 rounded-md text-white ${
-            predictions.length === 0 ? 'bg-gray-400' : 'bg-red-600 hover:bg-red-700'
+            predictions.length === 0 ? 'bg-neutral-400' : 'bg-red-600 hover:bg-red-700'
           }`}
         >
           Execute Trades
@@ -356,38 +356,38 @@ const MLTradingPanel: React.FC = () => {
       
       {modelInfo && (
         <div className="mb-6">
-          <h3 className="text-lg font-medium mb-2 text-gray-700 dark:text-gray-300">Model Information</h3>
+          <h3 className="text-lg font-medium mb-2 text-neutral-700 dark:text-neutral-300">Model Information</h3>
           
-          <div className="bg-gray-100 dark:bg-gray-700 p-4 rounded-md">
+          <div className="bg-neutral-100 dark:bg-neutral-700 p-4 rounded-md">
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Name</p>
-                <p className="text-gray-800 dark:text-white">{modelInfo.name}</p>
+                <p className="text-sm font-medium text-neutral-500 dark:text-neutral-400">Name</p>
+                <p className="text-neutral-800 dark:text-white">{modelInfo.name}</p>
               </div>
               
               <div>
-                <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Type</p>
-                <p className="text-gray-800 dark:text-white">{modelInfo.config.modelType}</p>
+                <p className="text-sm font-medium text-neutral-500 dark:text-neutral-400">Type</p>
+                <p className="text-neutral-800 dark:text-white">{modelInfo.config.modelType}</p>
               </div>
               
               <div>
-                <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Accuracy</p>
-                <p className="text-gray-800 dark:text-white">{(modelInfo.performance.accuracy * 100).toFixed(2)}%</p>
+                <p className="text-sm font-medium text-neutral-500 dark:text-neutral-400">Accuracy</p>
+                <p className="text-neutral-800 dark:text-white">{(modelInfo.performance.accuracy * 100).toFixed(2)}%</p>
               </div>
               
               <div>
-                <p className="text-sm font-medium text-gray-500 dark:text-gray-400">F1 Score</p>
-                <p className="text-gray-800 dark:text-white">{(modelInfo.performance.f1Score * 100).toFixed(2)}%</p>
+                <p className="text-sm font-medium text-neutral-500 dark:text-neutral-400">F1 Score</p>
+                <p className="text-neutral-800 dark:text-white">{(modelInfo.performance.f1Score * 100).toFixed(2)}%</p>
               </div>
               
               <div>
-                <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Training Samples</p>
-                <p className="text-gray-800 dark:text-white">{modelInfo.performance.trainingSamples}</p>
+                <p className="text-sm font-medium text-neutral-500 dark:text-neutral-400">Training Samples</p>
+                <p className="text-neutral-800 dark:text-white">{modelInfo.performance.trainingSamples}</p>
               </div>
               
               <div>
-                <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Last Trained</p>
-                <p className="text-gray-800 dark:text-white">
+                <p className="text-sm font-medium text-neutral-500 dark:text-neutral-400">Last Trained</p>
+                <p className="text-neutral-800 dark:text-white">
                   {new Date(modelInfo.lastTrainedAt).toLocaleString()}
                 </p>
               </div>
@@ -398,33 +398,33 @@ const MLTradingPanel: React.FC = () => {
       
       {predictions.length > 0 && (
         <div>
-          <h3 className="text-lg font-medium mb-2 text-gray-700 dark:text-gray-300">Latest Predictions</h3>
+          <h3 className="text-lg font-medium mb-2 text-neutral-700 dark:text-neutral-300">Latest Predictions</h3>
           
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-              <thead className="bg-gray-50 dark:bg-gray-800">
+            <table className="min-w-full divide-y divide-neutral-200 dark:divide-neutral-700">
+              <thead className="bg-neutral-50 dark:bg-neutral-800">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-neutral-500 dark:text-neutral-300 uppercase tracking-wider">
                     Time
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-neutral-500 dark:text-neutral-300 uppercase tracking-wider">
                     Symbol
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-neutral-500 dark:text-neutral-300 uppercase tracking-wider">
                     Prediction
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-neutral-500 dark:text-neutral-300 uppercase tracking-wider">
                     Confidence
                   </th>
                 </tr>
               </thead>
-              <tbody className="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700">
+              <tbody className="bg-white divide-y divide-neutral-200 dark:bg-neutral-900 dark:divide-neutral-700">
                 {predictions.slice(0, 10).map((pred, index) => (
                   <tr key={index}>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-500 dark:text-neutral-400">
                       {new Date(pred.timestamp).toLocaleString()}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-500 dark:text-neutral-400">
                       {pred.symbol}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
@@ -438,7 +438,7 @@ const MLTradingPanel: React.FC = () => {
                         {pred.prediction === 1 ? 'UP' : 'DOWN'}
                       </span>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-500 dark:text-neutral-400">
                       {(pred.confidence * 100).toFixed(2)}%
                     </td>
                   </tr>

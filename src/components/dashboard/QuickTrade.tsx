@@ -40,7 +40,7 @@ const QuickTrade: React.FC = () => {
     <form onSubmit={handleSubmit}>
       <div className="space-y-3">
         <div>
-          <label className="block text-sm font-medium text-gray-700">Pair</label>
+          <label className="block text-sm font-medium text-neutral-700">Pair</label>
           <select
             value={pair}
             onChange={(e) => setPair(e.target.value)}
@@ -55,7 +55,7 @@ const QuickTrade: React.FC = () => {
         
         <div className="grid grid-cols-2 gap-2">
           <div>
-            <label className="block text-sm font-medium text-gray-700">Type</label>
+            <label className="block text-sm font-medium text-neutral-700">Type</label>
             <select
               value={orderType}
               onChange={(e) => setOrderType(e.target.value)}
@@ -68,14 +68,14 @@ const QuickTrade: React.FC = () => {
           </div>
           
           <div>
-            <label className="block text-sm font-medium text-gray-700">Side</label>
+            <label className="block text-sm font-medium text-neutral-700">Side</label>
             <div className="mt-1 grid grid-cols-2 gap-2">
               <button
                 type="button"
                 className={`py-2 text-center rounded-md ${
                   side === 'BUY'
                     ? 'bg-green-600 text-white'
-                    : 'bg-gray-200 text-gray-700'
+                    : 'bg-neutral-200 text-neutral-700'
                 }`}
                 onClick={() => setSide('BUY')}
                 disabled={isLoading}
@@ -87,7 +87,7 @@ const QuickTrade: React.FC = () => {
                 className={`py-2 text-center rounded-md ${
                   side === 'SELL'
                     ? 'bg-red-600 text-white'
-                    : 'bg-gray-200 text-gray-700'
+                    : 'bg-neutral-200 text-neutral-700'
                 }`}
                 onClick={() => setSide('SELL')}
                 disabled={isLoading}
@@ -99,7 +99,7 @@ const QuickTrade: React.FC = () => {
         </div>
         
         <div>
-          <label className="block text-sm font-medium text-gray-700">Amount</label>
+          <label className="block text-sm font-medium text-neutral-700">Amount</label>
           <div className="mt-1 flex rounded-md shadow-sm">
             <input
               type="number"
@@ -112,7 +112,7 @@ const QuickTrade: React.FC = () => {
               required
               disabled={isLoading}
             />
-            <span className="inline-flex items-center px-3 rounded-r-md border border-l-0 border-gray-300 bg-gray-50 text-gray-500 text-sm">
+            <span className="inline-flex items-center px-3 rounded-r-md border border-l-0 border-neutral-300 bg-neutral-50 text-neutral-500 text-sm">
               {pair.split('-')[0]}
             </span>
           </div>
@@ -120,7 +120,7 @@ const QuickTrade: React.FC = () => {
         
         {orderType === 'LIMIT' && (
           <div>
-            <label className="block text-sm font-medium text-gray-700">Price</label>
+            <label className="block text-sm font-medium text-neutral-700">Price</label>
             <div className="mt-1 flex rounded-md shadow-sm">
               <input
                 type="number"
@@ -133,7 +133,7 @@ const QuickTrade: React.FC = () => {
                 required
                 disabled={isLoading}
               />
-              <span className="inline-flex items-center px-3 rounded-r-md border border-l-0 border-gray-300 bg-gray-50 text-gray-500 text-sm">
+              <span className="inline-flex items-center px-3 rounded-r-md border border-l-0 border-neutral-300 bg-neutral-50 text-neutral-500 text-sm">
                 USDT
               </span>
             </div>

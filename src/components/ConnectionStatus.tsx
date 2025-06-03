@@ -69,12 +69,12 @@ const ConnectionStatus: React.FC<ConnectionStatusProps> = ({
         };
       default:
         return {
-          icon: <Wifi className="h-4 w-4 text-gray-500" />,
+          icon: <Wifi className="h-4 w-4 text-neutral-500" />,
           text: 'Unknown',
           description: 'Connection status unknown',
-          color: 'text-gray-500',
-          bgColor: 'bg-gray-50',
-          borderColor: 'border-gray-500'
+          color: 'text-neutral-500',
+          bgColor: 'bg-neutral-50',
+          borderColor: 'border-neutral-500'
         };
     }
   };
@@ -99,7 +99,7 @@ const ConnectionStatus: React.FC<ConnectionStatusProps> = ({
           {status.icon}
           <div>
             <h4 className={`font-medium ${status.color}`}>{status.text}</h4>
-            <p className="text-xs text-gray-600">{status.description}</p>
+            <p className="text-xs text-neutral-600">{status.description}</p>
           </div>
         </div>
         
@@ -108,7 +108,7 @@ const ConnectionStatus: React.FC<ConnectionStatusProps> = ({
           onManualReconnect && (
           <button
             onClick={onManualReconnect}
-            className="px-2 py-1 text-xs bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+            className="px-2 py-1 text-xs bg-white border border-neutral-300 rounded-md hover:bg-neutral-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
           >
             Reconnect
           </button>

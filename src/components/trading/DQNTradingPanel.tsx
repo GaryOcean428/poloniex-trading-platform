@@ -224,8 +224,8 @@ const DQNTradingPanel: React.FC = () => {
   };
   
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-      <h2 className="text-xl font-semibold mb-4 text-gray-800 dark:text-white">DQN Reinforcement Learning Trading</h2>
+    <div className="bg-white dark:bg-neutral-800 rounded-lg shadow p-6">
+      <h2 className="text-xl font-semibold mb-4 text-neutral-800 dark:text-white">DQN Reinforcement Learning Trading</h2>
       
       {error && (
         <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
@@ -234,23 +234,23 @@ const DQNTradingPanel: React.FC = () => {
       )}
       
       <div className="mb-6">
-        <h3 className="text-lg font-medium mb-2 text-gray-700 dark:text-gray-300">Model Configuration</h3>
+        <h3 className="text-lg font-medium mb-2 text-neutral-700 dark:text-neutral-300">Model Configuration</h3>
         
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">
               Model Name
             </label>
             <input
               type="text"
               value={modelName}
               onChange={(e) => setModelName(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+              className="w-full px-3 py-2 border border-neutral-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-neutral-700 dark:border-neutral-600 dark:text-white"
             />
           </div>
           
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">
               Training Episodes
             </label>
             <input
@@ -259,12 +259,12 @@ const DQNTradingPanel: React.FC = () => {
               max="1000"
               value={episodes}
               onChange={(e) => setEpisodes(parseInt(e.target.value))}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+              className="w-full px-3 py-2 border border-neutral-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-neutral-700 dark:border-neutral-600 dark:text-white"
             />
           </div>
           
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">
               Learning Rate
             </label>
             <input
@@ -274,12 +274,12 @@ const DQNTradingPanel: React.FC = () => {
               step="0.00001"
               value={modelConfig.learningRate}
               onChange={(e) => setModelConfig({ ...modelConfig, learningRate: parseFloat(e.target.value) })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+              className="w-full px-3 py-2 border border-neutral-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-neutral-700 dark:border-neutral-600 dark:text-white"
             />
           </div>
           
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">
               Discount Factor (Gamma)
             </label>
             <input
@@ -289,12 +289,12 @@ const DQNTradingPanel: React.FC = () => {
               step="0.001"
               value={modelConfig.gamma}
               onChange={(e) => setModelConfig({ ...modelConfig, gamma: parseFloat(e.target.value) })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+              className="w-full px-3 py-2 border border-neutral-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-neutral-700 dark:border-neutral-600 dark:text-white"
             />
           </div>
           
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">
               Initial Exploration Rate
             </label>
             <input
@@ -304,12 +304,12 @@ const DQNTradingPanel: React.FC = () => {
               step="0.1"
               value={modelConfig.epsilonStart}
               onChange={(e) => setModelConfig({ ...modelConfig, epsilonStart: parseFloat(e.target.value) })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+              className="w-full px-3 py-2 border border-neutral-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-neutral-700 dark:border-neutral-600 dark:text-white"
             />
           </div>
           
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">
               Final Exploration Rate
             </label>
             <input
@@ -319,7 +319,7 @@ const DQNTradingPanel: React.FC = () => {
               step="0.001"
               value={modelConfig.epsilonEnd}
               onChange={(e) => setModelConfig({ ...modelConfig, epsilonEnd: parseFloat(e.target.value) })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+              className="w-full px-3 py-2 border border-neutral-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-neutral-700 dark:border-neutral-600 dark:text-white"
             />
           </div>
         </div>
@@ -330,7 +330,7 @@ const DQNTradingPanel: React.FC = () => {
           onClick={handleTrainModel}
           disabled={isTraining || marketData.length === 0}
           className={`px-4 py-2 rounded-md text-white ${
-            isTraining ? 'bg-gray-400' : 'bg-blue-600 hover:bg-blue-700'
+            isTraining ? 'bg-neutral-400' : 'bg-blue-600 hover:bg-blue-700'
           }`}
         >
           {isTraining ? 'Training...' : 'Train DQN Model'}
@@ -340,7 +340,7 @@ const DQNTradingPanel: React.FC = () => {
           onClick={handleGetActions}
           disabled={isGettingActions || !modelInfo}
           className={`px-4 py-2 rounded-md text-white ${
-            isGettingActions || !modelInfo ? 'bg-gray-400' : 'bg-purple-600 hover:bg-purple-700'
+            isGettingActions || !modelInfo ? 'bg-neutral-400' : 'bg-purple-600 hover:bg-purple-700'
           }`}
         >
           {isGettingActions ? 'Getting Actions...' : 'Get Trading Actions'}
@@ -350,7 +350,7 @@ const DQNTradingPanel: React.FC = () => {
           onClick={handleExecuteTrades}
           disabled={actions.length === 0}
           className={`px-4 py-2 rounded-md text-white ${
-            actions.length === 0 ? 'bg-gray-400' : 'bg-red-600 hover:bg-red-700'
+            actions.length === 0 ? 'bg-neutral-400' : 'bg-red-600 hover:bg-red-700'
           }`}
         >
           Execute Trades
@@ -359,38 +359,38 @@ const DQNTradingPanel: React.FC = () => {
       
       {modelInfo && (
         <div className="mb-6">
-          <h3 className="text-lg font-medium mb-2 text-gray-700 dark:text-gray-300">Model Information</h3>
+          <h3 className="text-lg font-medium mb-2 text-neutral-700 dark:text-neutral-300">Model Information</h3>
           
-          <div className="bg-gray-100 dark:bg-gray-700 p-4 rounded-md">
+          <div className="bg-neutral-100 dark:bg-neutral-700 p-4 rounded-md">
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Name</p>
-                <p className="text-gray-800 dark:text-white">{modelInfo.name}</p>
+                <p className="text-sm font-medium text-neutral-500 dark:text-neutral-400">Name</p>
+                <p className="text-neutral-800 dark:text-white">{modelInfo.name}</p>
               </div>
               
               <div>
-                <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Episodes</p>
-                <p className="text-gray-800 dark:text-white">{modelInfo.episodesCompleted}</p>
+                <p className="text-sm font-medium text-neutral-500 dark:text-neutral-400">Episodes</p>
+                <p className="text-neutral-800 dark:text-white">{modelInfo.episodesCompleted}</p>
               </div>
               
               <div>
-                <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Average Reward</p>
-                <p className="text-gray-800 dark:text-white">{modelInfo.performance.averageReward.toFixed(4)}</p>
+                <p className="text-sm font-medium text-neutral-500 dark:text-neutral-400">Average Reward</p>
+                <p className="text-neutral-800 dark:text-white">{modelInfo.performance.averageReward.toFixed(4)}</p>
               </div>
               
               <div>
-                <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Sharpe Ratio</p>
-                <p className="text-gray-800 dark:text-white">{modelInfo.performance.sharpeRatio.toFixed(4)}</p>
+                <p className="text-sm font-medium text-neutral-500 dark:text-neutral-400">Sharpe Ratio</p>
+                <p className="text-neutral-800 dark:text-white">{modelInfo.performance.sharpeRatio.toFixed(4)}</p>
               </div>
               
               <div>
-                <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Win Rate</p>
-                <p className="text-gray-800 dark:text-white">{(modelInfo.performance.winRate * 100).toFixed(2)}%</p>
+                <p className="text-sm font-medium text-neutral-500 dark:text-neutral-400">Win Rate</p>
+                <p className="text-neutral-800 dark:text-white">{(modelInfo.performance.winRate * 100).toFixed(2)}%</p>
               </div>
               
               <div>
-                <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Last Trained</p>
-                <p className="text-gray-800 dark:text-white">
+                <p className="text-sm font-medium text-neutral-500 dark:text-neutral-400">Last Trained</p>
+                <p className="text-neutral-800 dark:text-white">
                   {new Date(modelInfo.lastTrainedAt).toLocaleString()}
                 </p>
               </div>
@@ -399,7 +399,7 @@ const DQNTradingPanel: React.FC = () => {
           
           {performanceData.length > 0 && (
             <div className="mt-4">
-              <h4 className="text-md font-medium mb-2 text-gray-700 dark:text-gray-300">Training Performance</h4>
+              <h4 className="text-md font-medium mb-2 text-neutral-700 dark:text-neutral-300">Training Performance</h4>
               <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart
@@ -419,7 +419,7 @@ const DQNTradingPanel: React.FC = () => {
           )}
           
           <div className="mt-6">
-            <h4 className="text-md font-medium mb-2 text-gray-700 dark:text-gray-300">Continue Training</h4>
+            <h4 className="text-md font-medium mb-2 text-neutral-700 dark:text-neutral-300">Continue Training</h4>
             <div className="flex items-center gap-4">
               <input
                 type="number"
@@ -427,13 +427,13 @@ const DQNTradingPanel: React.FC = () => {
                 max="500"
                 value={additionalEpisodes}
                 onChange={(e) => setAdditionalEpisodes(parseInt(e.target.value))}
-                className="w-32 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                className="w-32 px-3 py-2 border border-neutral-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-neutral-700 dark:border-neutral-600 dark:text-white"
               />
               <button
                 onClick={handleContinueTraining}
                 disabled={isContinuingTraining}
                 className={`px-4 py-2 rounded-md text-white ${
-                  isContinuingTraining ? 'bg-gray-400' : 'bg-green-600 hover:bg-green-700'
+                  isContinuingTraining ? 'bg-neutral-400' : 'bg-green-600 hover:bg-green-700'
                 }`}
               >
                 {isContinuingTraining ? 'Training...' : 'Continue Training'}
@@ -445,36 +445,36 @@ const DQNTradingPanel: React.FC = () => {
       
       {actions.length > 0 && (
         <div>
-          <h3 className="text-lg font-medium mb-2 text-gray-700 dark:text-gray-300">Trading Actions</h3>
+          <h3 className="text-lg font-medium mb-2 text-neutral-700 dark:text-neutral-300">Trading Actions</h3>
           
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-              <thead className="bg-gray-50 dark:bg-gray-800">
+            <table className="min-w-full divide-y divide-neutral-200 dark:divide-neutral-700">
+              <thead className="bg-neutral-50 dark:bg-neutral-800">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-neutral-500 dark:text-neutral-300 uppercase tracking-wider">
                     Time
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-neutral-500 dark:text-neutral-300 uppercase tracking-wider">
                     Symbol
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-neutral-500 dark:text-neutral-300 uppercase tracking-wider">
                     Action
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-neutral-500 dark:text-neutral-300 uppercase tracking-wider">
                     Confidence
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-neutral-500 dark:text-neutral-300 uppercase tracking-wider">
                     Price
                   </th>
                 </tr>
               </thead>
-              <tbody className="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700">
+              <tbody className="bg-white divide-y divide-neutral-200 dark:bg-neutral-900 dark:divide-neutral-700">
                 {actions.slice(0, 10).map((action, index) => (
                   <tr key={index}>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-500 dark:text-neutral-400">
                       {new Date(action.timestamp).toLocaleString()}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-500 dark:text-neutral-400">
                       {action.symbol}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
@@ -484,16 +484,16 @@ const DQNTradingPanel: React.FC = () => {
                             ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
                             : action.action === 'sell'
                             ? 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
-                            : 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300'
+                            : 'bg-neutral-100 text-neutral-800 dark:bg-neutral-700 dark:text-neutral-300'
                         }`}
                       >
                         {action.action.toUpperCase()}
                       </span>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-500 dark:text-neutral-400">
                       {(action.confidence * 100).toFixed(2)}%
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-500 dark:text-neutral-400">
                       {action.price ? `$${action.price.toFixed(2)}` : '-'}
                     </td>
                   </tr>

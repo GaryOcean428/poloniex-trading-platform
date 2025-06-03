@@ -19,7 +19,7 @@ const UserProfile: React.FC<UserProfileProps> = ({ className = '' }) => {
       </div>
       <div className="flex flex-col">
         <span className="text-sm font-medium">{user.username}</span>
-        <span className="text-xs text-gray-500">{user.email}</span>
+        <span className="text-xs text-neutral-500">{user.email}</span>
       </div>
     </div>
   );

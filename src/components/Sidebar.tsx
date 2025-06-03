@@ -28,7 +28,7 @@ const Sidebar: React.FC = () => {
   ];
   
   return (
-    <aside className="w-64 bg-gray-800 text-white hidden md:block">
+    <aside className="w-64 bg-neutral-800 text-white hidden md:block">
       <div className="p-4">
         <div className="flex items-center justify-center mb-6 mt-2">
           <Zap className="h-8 w-8 text-blue-400 mr-2" />
@@ -44,7 +44,7 @@ const Sidebar: React.FC = () => {
                   className={`flex items-center p-3 rounded-md transition-colors duration-200 ${
                     location.pathname === item.path 
                       ? 'bg-blue-700 text-white' 
-                      : 'text-gray-300 hover:bg-gray-700'
+                      : 'text-neutral-300 hover:bg-neutral-700'
                   }`}
                 >
                   <span className="mr-3">{item.icon}</span>
@@ -56,11 +56,11 @@ const Sidebar: React.FC = () => {
         </nav>
       </div>
       
-      <div className="p-4 border-t border-gray-700 mt-auto">
-        <div className="bg-gray-900 p-3 rounded-md">
-          <div className="text-sm text-gray-400 mb-2">Account Balance</div>
+      <div className="p-4 border-t border-neutral-700 mt-auto">
+        <div className="bg-neutral-900 p-3 rounded-md">
+          <div className="text-sm text-neutral-400 mb-2">Account Balance</div>
           {isLoading ? (
-            <div className="text-sm text-gray-500">Loading...</div>
+            <div className="text-sm text-neutral-500">Loading...</div>
           ) : (
             <>
               <div className="text-lg font-semibold">

@@ -31,7 +31,7 @@ const StrategyDetails: React.FC<StrategyDetailsProps> = ({
       case StrategyType.BREAKOUT:
         return <RefreshCw className="h-6 w-6 text-orange-500" />;
       default:
-        return <Zap className="h-6 w-6 text-gray-500" />;
+        return <Zap className="h-6 w-6 text-neutral-500" />;
     }
   };
   
@@ -66,12 +66,12 @@ const StrategyDetails: React.FC<StrategyDetailsProps> = ({
       case StrategyType.MA_CROSSOVER:
         return (
           <div className="grid grid-cols-2 gap-4">
-            <div className="bg-gray-50 p-3 rounded-md">
-              <div className="text-sm text-gray-500">Short Period</div>
+            <div className="bg-neutral-50 p-3 rounded-md">
+              <div className="text-sm text-neutral-500">Short Period</div>
               <div className="text-lg font-semibold">{(strategy.parameters as any).shortPeriod || (strategy.parameters as any).fastPeriod}</div>
             </div>
-            <div className="bg-gray-50 p-3 rounded-md">
-              <div className="text-sm text-gray-500">Long Period</div>
+            <div className="bg-neutral-50 p-3 rounded-md">
+              <div className="text-sm text-neutral-500">Long Period</div>
               <div className="text-lg font-semibold">{(strategy.parameters as any).longPeriod || (strategy.parameters as any).slowPeriod}</div>
             </div>
           </div>
@@ -79,16 +79,16 @@ const StrategyDetails: React.FC<StrategyDetailsProps> = ({
       case StrategyType.RSI:
         return (
           <div className="grid grid-cols-3 gap-4">
-            <div className="bg-gray-50 p-3 rounded-md">
-              <div className="text-sm text-gray-500">Period</div>
+            <div className="bg-neutral-50 p-3 rounded-md">
+              <div className="text-sm text-neutral-500">Period</div>
               <div className="text-lg font-semibold">{(strategy.parameters as any).period}</div>
             </div>
-            <div className="bg-gray-50 p-3 rounded-md">
-              <div className="text-sm text-gray-500">Overbought</div>
+            <div className="bg-neutral-50 p-3 rounded-md">
+              <div className="text-sm text-neutral-500">Overbought</div>
               <div className="text-lg font-semibold">{(strategy.parameters as any).overbought}</div>
             </div>
-            <div className="bg-gray-50 p-3 rounded-md">
-              <div className="text-sm text-gray-500">Oversold</div>
+            <div className="bg-neutral-50 p-3 rounded-md">
+              <div className="text-sm text-neutral-500">Oversold</div>
               <div className="text-lg font-semibold">{(strategy.parameters as any).oversold}</div>
             </div>
           </div>
@@ -96,12 +96,12 @@ const StrategyDetails: React.FC<StrategyDetailsProps> = ({
       case StrategyType.BREAKOUT:
         return (
           <div className="grid grid-cols-2 gap-4">
-            <div className="bg-gray-50 p-3 rounded-md">
-              <div className="text-sm text-gray-500">Lookback Period</div>
+            <div className="bg-neutral-50 p-3 rounded-md">
+              <div className="text-sm text-neutral-500">Lookback Period</div>
               <div className="text-lg font-semibold">{(strategy.parameters as any).lookbackPeriod}</div>
             </div>
-            <div className="bg-gray-50 p-3 rounded-md">
-              <div className="text-sm text-gray-500">Breakout Threshold</div>
+            <div className="bg-neutral-50 p-3 rounded-md">
+              <div className="text-sm text-neutral-500">Breakout Threshold</div>
               <div className="text-lg font-semibold">{(strategy.parameters as any).breakoutThreshold}%</div>
             </div>
           </div>
@@ -120,7 +120,7 @@ const StrategyDetails: React.FC<StrategyDetailsProps> = ({
           </div>
           <div>
             <h2 className="text-xl font-bold">{strategy.name}</h2>
-            <div className="flex items-center text-sm text-gray-500 mt-1">
+            <div className="flex items-center text-sm text-neutral-500 mt-1">
               <span>{getStrategyTypeName(strategy.type)}</span>
               <span className="mx-2">•</span>
               <span>{strategy.parameters.pair}</span>
@@ -147,7 +147,7 @@ const StrategyDetails: React.FC<StrategyDetailsProps> = ({
       </div>
       
       <div className="mb-6">
-        <div className="text-gray-700 mb-4">{getStrategyDescription(strategy.type)}</div>
+        <div className="text-neutral-700 mb-4">{getStrategyDescription(strategy.type)}</div>
         {renderParameters()}
       </div>
       
@@ -156,8 +156,8 @@ const StrategyDetails: React.FC<StrategyDetailsProps> = ({
         <div className="grid grid-cols-3 gap-4 mb-4">
           {strategy.performance && (
             <>
-              <div className="bg-gray-50 p-3 rounded-md">
-                <div className="text-sm text-gray-500">Total P&L</div>
+              <div className="bg-neutral-50 p-3 rounded-md">
+                <div className="text-sm text-neutral-500">Total P&L</div>
                 <div className={`text-lg font-semibold ${
                   strategy.performance.totalPnL >= 0 ? 'text-green-600' : 'text-red-600'
                 }`}>
@@ -165,14 +165,14 @@ const StrategyDetails: React.FC<StrategyDetailsProps> = ({
                   {strategy.performance.totalPnL.toFixed(2)}
                 </div>
               </div>
-              <div className="bg-gray-50 p-3 rounded-md">
-                <div className="text-sm text-gray-500">Win Rate</div>
+              <div className="bg-neutral-50 p-3 rounded-md">
+                <div className="text-sm text-neutral-500">Win Rate</div>
                 <div className="text-lg font-semibold">
                   {(strategy.performance.winRate * 100).toFixed(1)}%
                 </div>
               </div>
-              <div className="bg-gray-50 p-3 rounded-md">
-                <div className="text-sm text-gray-500">Total Trades</div>
+              <div className="bg-neutral-50 p-3 rounded-md">
+                <div className="text-sm text-neutral-500">Total Trades</div>
                 <div className="text-lg font-semibold">{strategy.performance.tradesCount}</div>
               </div>
             </>
@@ -184,27 +184,27 @@ const StrategyDetails: React.FC<StrategyDetailsProps> = ({
             <h4 className="font-medium mb-3">Backtest Results</h4>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <div className="text-sm text-gray-600">Initial Balance</div>
+                <div className="text-sm text-neutral-600">Initial Balance</div>
                 <div className="font-medium">${backtestResults.initialBalance.toFixed(2)}</div>
               </div>
               <div>
-                <div className="text-sm text-gray-600">Final Balance</div>
+                <div className="text-sm text-neutral-600">Final Balance</div>
                 <div className="font-medium">${backtestResults.finalBalance.toFixed(2)}</div>
               </div>
               <div>
-                <div className="text-sm text-gray-600">Total Trades</div>
+                <div className="text-sm text-neutral-600">Total Trades</div>
                 <div className="font-medium">{backtestResults.totalTrades}</div>
               </div>
               <div>
-                <div className="text-sm text-gray-600">Win Rate</div>
+                <div className="text-sm text-neutral-600">Win Rate</div>
                 <div className="font-medium">{(backtestResults.winRate * 100).toFixed(1)}%</div>
               </div>
               <div>
-                <div className="text-sm text-gray-600">Max Drawdown</div>
+                <div className="text-sm text-neutral-600">Max Drawdown</div>
                 <div className="font-medium">{(backtestResults.maxDrawdown * 100).toFixed(1)}%</div>
               </div>
               <div>
-                <div className="text-sm text-gray-600">Sharpe Ratio</div>
+                <div className="text-sm text-neutral-600">Sharpe Ratio</div>
                 <div className="font-medium">{backtestResults.sharpeRatio.toFixed(2)}</div>
               </div>
             </div>
@@ -218,7 +218,7 @@ const StrategyDetails: React.FC<StrategyDetailsProps> = ({
           <select
             value={timeframe}
             onChange={(e) => setTimeframe(e.target.value as any)}
-            className="px-3 py-1 border border-gray-300 rounded-md"
+            className="px-3 py-1 border border-neutral-300 rounded-md"
           >
             <option value="1h">1 Hour</option>
             <option value="4h">4 Hours</option>
@@ -227,7 +227,7 @@ const StrategyDetails: React.FC<StrategyDetailsProps> = ({
           <select
             value={chartType}
             onChange={(e) => setChartType(e.target.value as any)}
-            className="px-3 py-1 border border-gray-300 rounded-md"
+            className="px-3 py-1 border border-neutral-300 rounded-md"
           >
             <option value="candlestick">Candlestick</option>
             <option value="line">Line</option>
