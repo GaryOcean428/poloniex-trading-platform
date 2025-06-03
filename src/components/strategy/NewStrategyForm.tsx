@@ -79,7 +79,7 @@ const NewStrategyForm: React.FC<NewStrategyFormProps> = ({ onClose }) => {
       <div className="flex justify-between items-center mb-4">
         <h2 className="text-xl font-bold">Create New Strategy</h2>
         <button 
-          className="p-1.5 rounded-md bg-gray-100 text-gray-500 hover:bg-gray-200"
+          className="p-1.5 rounded-md bg-neutral-100 text-neutral-500 hover:bg-neutral-200"
           onClick={onClose}
         >
           <X className="h-5 w-5" />
@@ -89,7 +89,7 @@ const NewStrategyForm: React.FC<NewStrategyFormProps> = ({ onClose }) => {
       <form onSubmit={handleSubmit}>
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700">Strategy Name</label>
+            <label className="block text-sm font-medium text-neutral-700">Strategy Name</label>
             <input
               type="text"
               value={name}
@@ -102,7 +102,7 @@ const NewStrategyForm: React.FC<NewStrategyFormProps> = ({ onClose }) => {
           
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700">Strategy Type</label>
+              <label className="block text-sm font-medium text-neutral-700">Strategy Type</label>
               <select
                 value={type}
                 onChange={(e) => setType(e.target.value as StrategyType)}
@@ -115,7 +115,7 @@ const NewStrategyForm: React.FC<NewStrategyFormProps> = ({ onClose }) => {
             </div>
             
             <div>
-              <label className="block text-sm font-medium text-gray-700">Trading Pair</label>
+              <label className="block text-sm font-medium text-neutral-700">Trading Pair</label>
               <select
                 value={pair}
                 onChange={(e) => setPair(e.target.value)}
@@ -133,7 +133,7 @@ const NewStrategyForm: React.FC<NewStrategyFormProps> = ({ onClose }) => {
               <h3 className="font-medium mb-3">Moving Average Crossover Parameters</h3>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">Short Period</label>
+                  <label className="block text-sm font-medium text-neutral-700">Short Period</label>
                   <input
                     type="number"
                     value={shortPeriod}
@@ -145,7 +145,7 @@ const NewStrategyForm: React.FC<NewStrategyFormProps> = ({ onClose }) => {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">Long Period</label>
+                  <label className="block text-sm font-medium text-neutral-700">Long Period</label>
                   <input
                     type="number"
                     value={longPeriod}
@@ -164,7 +164,7 @@ const NewStrategyForm: React.FC<NewStrategyFormProps> = ({ onClose }) => {
               <h3 className="font-medium mb-3">RSI Parameters</h3>
               <div className="grid grid-cols-3 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">Period</label>
+                  <label className="block text-sm font-medium text-neutral-700">Period</label>
                   <input
                     type="number"
                     value={rsiPeriod}
@@ -175,7 +175,7 @@ const NewStrategyForm: React.FC<NewStrategyFormProps> = ({ onClose }) => {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">Overbought</label>
+                  <label className="block text-sm font-medium text-neutral-700">Overbought</label>
                   <input
                     type="number"
                     value={overbought}
@@ -187,7 +187,7 @@ const NewStrategyForm: React.FC<NewStrategyFormProps> = ({ onClose }) => {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">Oversold</label>
+                  <label className="block text-sm font-medium text-neutral-700">Oversold</label>
                   <input
                     type="number"
                     value={oversold}
@@ -207,7 +207,7 @@ const NewStrategyForm: React.FC<NewStrategyFormProps> = ({ onClose }) => {
               <h3 className="font-medium mb-3">Breakout Parameters</h3>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">Lookback Period</label>
+                  <label className="block text-sm font-medium text-neutral-700">Lookback Period</label>
                   <input
                     type="number"
                     value={lookbackPeriod}
@@ -218,7 +218,7 @@ const NewStrategyForm: React.FC<NewStrategyFormProps> = ({ onClose }) => {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">Breakout Threshold (%)</label>
+                  <label className="block text-sm font-medium text-neutral-700">Breakout Threshold (%)</label>
                   <input
                     type="number"
                     value={breakoutThreshold}

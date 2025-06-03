@@ -46,7 +46,7 @@ const ExtensionControls: React.FC<ExtensionControlsProps> = ({ onClose }) => {
   
   return (
     <div className="bg-white rounded-lg shadow-lg overflow-hidden">
-      <div className="bg-gray-800 text-white p-4 flex justify-between items-center">
+      <div className="bg-neutral-800 text-white p-4 flex justify-between items-center">
         <h2 className="text-lg font-bold flex items-center">
           <svg className="h-5 w-5 mr-2" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
             <path d="M20.24 12.24c-1.07-.57-1.23-2.86-1.23-2.86-1.7 1.27-2.33-.28-2.33-.28-3.11 3.3-6.35.23-6.35.23v4.42c0 2.57-2.4 2.57-2.4 2.57H3.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
@@ -59,14 +59,14 @@ const ExtensionControls: React.FC<ExtensionControlsProps> = ({ onClose }) => {
           <button 
             onClick={handleRefresh}
             disabled={isRefreshing}
-            className="p-1.5 rounded-md hover:bg-gray-700 text-gray-300 disabled:opacity-50"
+            className="p-1.5 rounded-md hover:bg-neutral-700 text-neutral-300 disabled:opacity-50"
           >
             <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
           </button>
           {onClose && (
             <button 
               onClick={onClose}
-              className="p-1.5 rounded-md hover:bg-gray-700 text-gray-300"
+              className="p-1.5 rounded-md hover:bg-neutral-700 text-neutral-300"
             >
               <X className="h-4 w-4" />
             </button>
@@ -79,7 +79,7 @@ const ExtensionControls: React.FC<ExtensionControlsProps> = ({ onClose }) => {
           <button
             onClick={() => setActivePanel('status')}
             className={`flex-1 py-2 px-3 flex justify-center items-center text-sm font-medium ${
-              activePanel === 'status' ? 'bg-blue-50 text-blue-600' : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
+              activePanel === 'status' ? 'bg-blue-50 text-blue-600' : 'bg-neutral-50 text-neutral-600 hover:bg-neutral-100'
             }`}
           >
             Status
@@ -87,7 +87,7 @@ const ExtensionControls: React.FC<ExtensionControlsProps> = ({ onClose }) => {
           <button
             onClick={() => setActivePanel('settings')}
             className={`flex-1 py-2 px-3 flex justify-center items-center text-sm font-medium ${
-              activePanel === 'settings' ? 'bg-blue-50 text-blue-600' : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
+              activePanel === 'settings' ? 'bg-blue-50 text-blue-600' : 'bg-neutral-50 text-neutral-600 hover:bg-neutral-100'
             }`}
           >
             Settings
@@ -95,7 +95,7 @@ const ExtensionControls: React.FC<ExtensionControlsProps> = ({ onClose }) => {
           <button
             onClick={() => setActivePanel('info')}
             className={`flex-1 py-2 px-3 flex justify-center items-center text-sm font-medium ${
-              activePanel === 'info' ? 'bg-blue-50 text-blue-600' : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
+              activePanel === 'info' ? 'bg-blue-50 text-blue-600' : 'bg-neutral-50 text-neutral-600 hover:bg-neutral-100'
             }`}
           >
             Info
@@ -115,15 +115,15 @@ const ExtensionControls: React.FC<ExtensionControlsProps> = ({ onClose }) => {
                 <Info className="h-5 w-5 mr-2 text-blue-500" />
                 About This Extension
               </h3>
-              <p className="text-gray-600">
+              <p className="text-neutral-600">
                 This Chrome extension allows you to integrate TradingView's charting capabilities with Poloniex's trading platform.
                 Extract chart data, execute trades directly from the chart, and manage your positions all in one place.
               </p>
             </div>
             
-            <div className="bg-gray-50 p-3 rounded-md">
+            <div className="bg-neutral-50 p-3 rounded-md">
               <div className="font-medium mb-1">Features:</div>
-              <ul className="text-sm text-gray-600 space-y-1 pl-5 list-disc">
+              <ul className="text-sm text-neutral-600 space-y-1 pl-5 list-disc">
                 <li>Real-time data extraction from TradingView charts</li>
                 <li>One-click trading directly from TradingView</li>
                 <li>Automated trading based on chart indicators</li>
@@ -143,7 +143,7 @@ const ExtensionControls: React.FC<ExtensionControlsProps> = ({ onClose }) => {
               </ol>
             </div>
             
-            <div className="mt-4 text-gray-500 text-xs">
+            <div className="mt-4 text-neutral-500 text-xs">
               Extension Version: 1.0.0
             </div>
           </div>

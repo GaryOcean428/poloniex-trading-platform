@@ -94,7 +94,7 @@ const ExtensionStatus: React.FC<ExtensionStatusProps> = ({ onRefreshRequest }) =
         <button 
           onClick={handleRefresh}
           disabled={isRefreshing}
-          className="p-1.5 bg-gray-100 rounded-md hover:bg-gray-200 text-gray-600 disabled:opacity-50"
+          className="p-1.5 bg-neutral-100 rounded-md hover:bg-neutral-200 text-neutral-600 disabled:opacity-50"
         >
           <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
         </button>
@@ -104,7 +104,7 @@ const ExtensionStatus: React.FC<ExtensionStatusProps> = ({ onRefreshRequest }) =
         <div className="flex items-center justify-between">
           <div className="flex items-center">
             <Zap className="h-4 w-4 mr-2 text-blue-500" />
-            <span className="text-gray-700">Extension</span>
+            <span className="text-neutral-700">Extension</span>
           </div>
           <StatusBadge status={extensionStatus} />
         </div>
@@ -114,7 +114,7 @@ const ExtensionStatus: React.FC<ExtensionStatusProps> = ({ onRefreshRequest }) =
             <svg className="h-4 w-4 mr-2 text-blue-500" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
               <path d="M12 5L19 12L12 19M5 19L12 12L5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
-            <span className="text-gray-700">TradingView</span>
+            <span className="text-neutral-700">TradingView</span>
           </div>
           <StatusBadge status={tradingViewStatus} />
         </div>
@@ -125,7 +125,7 @@ const ExtensionStatus: React.FC<ExtensionStatusProps> = ({ onRefreshRequest }) =
               <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"/>
               <path d="M12 6V18M18 12H6" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
             </svg>
-            <span className="text-gray-700">Poloniex</span>
+            <span className="text-neutral-700">Poloniex</span>
           </div>
           <StatusBadge status={poloniexStatus} />
         </div>
@@ -148,7 +148,7 @@ const ExtensionStatus: React.FC<ExtensionStatusProps> = ({ onRefreshRequest }) =
             <span>All systems connected. Trading integration is fully operational.</span>
           </div>
         ) : (
-          <div className="text-gray-500 flex items-start">
+          <div className="text-neutral-500 flex items-start">
             <RefreshCw className="h-4 w-4 mr-1 mt-0.5 flex-shrink-0 animate-spin" />
             <span>Checking connection status...</span>
           </div>
@@ -180,7 +180,7 @@ const StatusBadge: React.FC<StatusBadgeProps> = ({ status }) => {
       );
     case 'checking':
       return (
-        <span className="px-2 py-1 bg-gray-100 text-gray-600 text-xs rounded-full flex items-center">
+        <span className="px-2 py-1 bg-neutral-100 text-neutral-600 text-xs rounded-full flex items-center">
           <RefreshCw className="h-3 w-3 mr-1 animate-spin" />
           Checking
         </span>

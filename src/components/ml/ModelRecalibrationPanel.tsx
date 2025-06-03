@@ -281,8 +281,8 @@ const ModelRecalibrationPanel: React.FC = () => {
   };
   
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-      <h2 className="text-xl font-semibold mb-4 text-gray-800 dark:text-white">Model Recalibration</h2>
+    <div className="bg-white dark:bg-neutral-800 rounded-lg shadow p-6">
+      <h2 className="text-xl font-semibold mb-4 text-neutral-800 dark:text-white">Model Recalibration</h2>
       
       {error && (
         <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
@@ -291,11 +291,11 @@ const ModelRecalibrationPanel: React.FC = () => {
       )}
       
       <div className="mb-6">
-        <h3 className="text-lg font-medium mb-2 text-gray-700 dark:text-gray-300">Select Model</h3>
+        <h3 className="text-lg font-medium mb-2 text-neutral-700 dark:text-neutral-300">Select Model</h3>
         
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">
               ML Models
             </label>
             <select
@@ -304,7 +304,7 @@ const ModelRecalibrationPanel: React.FC = () => {
                 const model = mlModels.find(m => m.id === e.target.value);
                 setSelectedModel(model || null);
               }}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+              className="w-full px-3 py-2 border border-neutral-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-neutral-700 dark:border-neutral-600 dark:text-white"
             >
               <option value="">Select ML Model</option>
               {mlModels.map(model => (
@@ -314,7 +314,7 @@ const ModelRecalibrationPanel: React.FC = () => {
           </div>
           
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">
               DQN Models
             </label>
             <select
@@ -323,7 +323,7 @@ const ModelRecalibrationPanel: React.FC = () => {
                 const model = dqnModels.find(m => m.id === e.target.value);
                 setSelectedModel(model || null);
               }}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+              className="w-full px-3 py-2 border border-neutral-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-neutral-700 dark:border-neutral-600 dark:text-white"
             >
               <option value="">Select DQN Model</option>
               {dqnModels.map(model => (
@@ -335,17 +335,17 @@ const ModelRecalibrationPanel: React.FC = () => {
       </div>
       
       <div className="mb-6">
-        <h3 className="text-lg font-medium mb-2 text-gray-700 dark:text-gray-300">Recalibration Settings</h3>
+        <h3 className="text-lg font-medium mb-2 text-neutral-700 dark:text-neutral-300">Recalibration Settings</h3>
         
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">
               Recalibration Strategy
             </label>
             <select
               value={recalibrationStrategy}
               onChange={(e) => setRecalibrationStrategy(e.target.value as any)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+              className="w-full px-3 py-2 border border-neutral-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-neutral-700 dark:border-neutral-600 dark:text-white"
             >
               <option value="incremental">Incremental (Fine-tune existing model)</option>
               <option value="full">Full (Retrain from scratch)</option>
@@ -354,7 +354,7 @@ const ModelRecalibrationPanel: React.FC = () => {
           </div>
           
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">
               Drift Threshold
             </label>
             <input
@@ -364,18 +364,18 @@ const ModelRecalibrationPanel: React.FC = () => {
               step="0.01"
               value={recalibrationConfig.driftThreshold}
               onChange={(e) => setRecalibrationConfig({ ...recalibrationConfig, driftThreshold: parseFloat(e.target.value) })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+              className="w-full px-3 py-2 border border-neutral-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-neutral-700 dark:border-neutral-600 dark:text-white"
             />
           </div>
           
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">
               Monitoring Frequency
             </label>
             <select
               value={recalibrationConfig.monitoringFrequency}
               onChange={(e) => setRecalibrationConfig({ ...recalibrationConfig, monitoringFrequency: e.target.value as any })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+              className="w-full px-3 py-2 border border-neutral-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-neutral-700 dark:border-neutral-600 dark:text-white"
             >
               <option value="hourly">Hourly</option>
               <option value="daily">Daily</option>
@@ -389,9 +389,9 @@ const ModelRecalibrationPanel: React.FC = () => {
               id="autoRecalibrate"
               checked={recalibrationConfig.autoRecalibrate}
               onChange={(e) => setRecalibrationConfig({ ...recalibrationConfig, autoRecalibrate: e.target.checked })}
-              className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+              className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-neutral-300 rounded"
             />
-            <label htmlFor="autoRecalibrate" className="ml-2 block text-sm text-gray-700 dark:text-gray-300">
+            <label htmlFor="autoRecalibrate" className="ml-2 block text-sm text-neutral-700 dark:text-neutral-300">
               Auto-recalibrate when drift exceeds threshold
             </label>
           </div>
@@ -403,7 +403,7 @@ const ModelRecalibrationPanel: React.FC = () => {
           onClick={handleMonitorPerformance}
           disabled={isMonitoring || !selectedModel}
           className={`px-4 py-2 rounded-md text-white ${
-            isMonitoring || !selectedModel ? 'bg-gray-400' : 'bg-blue-600 hover:bg-blue-700'
+            isMonitoring || !selectedModel ? 'bg-neutral-400' : 'bg-blue-600 hover:bg-blue-700'
           }`}
         >
           {isMonitoring ? 'Monitoring...' : 'Monitor Performance'}
@@ -413,7 +413,7 @@ const ModelRecalibrationPanel: React.FC = () => {
           onClick={handleRecalibrate}
           disabled={isRecalibrating || !selectedModel}
           className={`px-4 py-2 rounded-md text-white ${
-            isRecalibrating || !selectedModel ? 'bg-gray-400' : 'bg-green-600 hover:bg-green-700'
+            isRecalibrating || !selectedModel ? 'bg-neutral-400' : 'bg-green-600 hover:bg-green-700'
           }`}
         >
           {isRecalibrating ? 'Recalibrating...' : 'Recalibrate Model'}
@@ -423,7 +423,7 @@ const ModelRecalibrationPanel: React.FC = () => {
           onClick={handleToggleAutoRecalibration}
           disabled={!selectedModel}
           className={`px-4 py-2 rounded-md text-white ${
-            !selectedModel ? 'bg-gray-400' : autoRecalibrationEnabled ? 'bg-red-600 hover:bg-red-700' : 'bg-purple-600 hover:bg-purple-700'
+            !selectedModel ? 'bg-neutral-400' : autoRecalibrationEnabled ? 'bg-red-600 hover:bg-red-700' : 'bg-purple-600 hover:bg-purple-700'
           }`}
         >
           {autoRecalibrationEnabled ? 'Disable Auto-Recalibration' : 'Enable Auto-Recalibration'}
@@ -432,22 +432,22 @@ const ModelRecalibrationPanel: React.FC = () => {
       
       {performanceMetrics && (
         <div className="mb-6">
-          <h3 className="text-lg font-medium mb-2 text-gray-700 dark:text-gray-300">Performance Metrics</h3>
+          <h3 className="text-lg font-medium mb-2 text-neutral-700 dark:text-neutral-300">Performance Metrics</h3>
           
-          <div className="bg-gray-100 dark:bg-gray-700 p-4 rounded-md">
+          <div className="bg-neutral-100 dark:bg-neutral-700 p-4 rounded-md">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               {formatMetrics(performanceMetrics).map((metric, index) => (
                 <div key={index}>
-                  <p className="text-sm font-medium text-gray-500 dark:text-gray-400">{metric.name}</p>
-                  <p className="text-gray-800 dark:text-white">{metric.value}</p>
+                  <p className="text-sm font-medium text-neutral-500 dark:text-neutral-400">{metric.name}</p>
+                  <p className="text-neutral-800 dark:text-white">{metric.value}</p>
                 </div>
               ))}
             </div>
             
             <div className="mt-4">
-              <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Drift Status</p>
+              <p className="text-sm font-medium text-neutral-500 dark:text-neutral-400">Drift Status</p>
               <div className="flex items-center mt-1">
-                <div className="w-full bg-gray-200 rounded-full h-2.5 dark:bg-gray-700">
+                <div className="w-full bg-neutral-200 rounded-full h-2.5 dark:bg-neutral-700">
                   <div 
                     className={`h-2.5 rounded-full ${
                       performanceMetrics.driftScore! > recalibrationConfig.driftThreshold
@@ -457,7 +457,7 @@ const ModelRecalibrationPanel: React.FC = () => {
                     style={{ width: `${performanceMetrics.driftScore! * 100}%` }}
                   ></div>
                 </div>
-                <span className="ml-2 text-sm text-gray-700 dark:text-gray-300">
+                <span className="ml-2 text-sm text-neutral-700 dark:text-neutral-300">
                   {(performanceMetrics.driftScore! * 100).toFixed(1)}%
                 </span>
               </div>
@@ -473,35 +473,35 @@ const ModelRecalibrationPanel: React.FC = () => {
       
       {recalibrationResult && (
         <div className="mb-6">
-          <h3 className="text-lg font-medium mb-2 text-gray-700 dark:text-gray-300">Recalibration Results</h3>
+          <h3 className="text-lg font-medium mb-2 text-neutral-700 dark:text-neutral-300">Recalibration Results</h3>
           
-          <div className="bg-gray-100 dark:bg-gray-700 p-4 rounded-md">
+          <div className="bg-neutral-100 dark:bg-neutral-700 p-4 rounded-md">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Original Model</p>
-                <p className="text-gray-800 dark:text-white">{recalibrationResult.originalModelId}</p>
+                <p className="text-sm font-medium text-neutral-500 dark:text-neutral-400">Original Model</p>
+                <p className="text-neutral-800 dark:text-white">{recalibrationResult.originalModelId}</p>
               </div>
               
               <div>
-                <p className="text-sm font-medium text-gray-500 dark:text-gray-400">New Model</p>
-                <p className="text-gray-800 dark:text-white">{recalibrationResult.newModelId}</p>
+                <p className="text-sm font-medium text-neutral-500 dark:text-neutral-400">New Model</p>
+                <p className="text-neutral-800 dark:text-white">{recalibrationResult.newModelId}</p>
               </div>
               
               <div>
-                <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Recalibration Strategy</p>
-                <p className="text-gray-800 dark:text-white">{recalibrationResult.recalibrationStrategy}</p>
+                <p className="text-sm font-medium text-neutral-500 dark:text-neutral-400">Recalibration Strategy</p>
+                <p className="text-neutral-800 dark:text-white">{recalibrationResult.recalibrationStrategy}</p>
               </div>
               
               <div>
-                <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Performance Improvement</p>
+                <p className="text-sm font-medium text-neutral-500 dark:text-neutral-400">Performance Improvement</p>
                 <p className={`${recalibrationResult.performanceImprovement > 0 ? 'text-green-600' : 'text-red-600'}`}>
                   {(recalibrationResult.performanceImprovement * 100).toFixed(1)}%
                 </p>
               </div>
               
               <div className="col-span-2">
-                <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Reason</p>
-                <p className="text-gray-800 dark:text-white">{recalibrationResult.reason}</p>
+                <p className="text-sm font-medium text-neutral-500 dark:text-neutral-400">Reason</p>
+                <p className="text-neutral-800 dark:text-white">{recalibrationResult.reason}</p>
               </div>
             </div>
           </div>
@@ -510,9 +510,9 @@ const ModelRecalibrationPanel: React.FC = () => {
       
       {performanceHistory.length > 1 && (
         <div className="mb-6">
-          <h3 className="text-lg font-medium mb-2 text-gray-700 dark:text-gray-300">Performance History</h3>
+          <h3 className="text-lg font-medium mb-2 text-neutral-700 dark:text-neutral-300">Performance History</h3>
           
-          <div className="bg-gray-100 dark:bg-gray-700 p-4 rounded-md" style={{ height: '300px' }}>
+          <div className="bg-neutral-100 dark:bg-neutral-700 p-4 rounded-md" style={{ height: '300px' }}>
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={prepareChartData()}>
                 <CartesianGrid strokeDasharray="3 3" />

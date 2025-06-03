@@ -32,7 +32,7 @@ const MarketAnalysis: React.FC = () => {
         <select
           value={selectedPair}
           onChange={(e) => setSelectedPair(e.target.value)}
-          className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="px-3 py-2 border border-neutral-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
         >
           <option value="BTC-USDT">BTC/USDT</option>
           <option value="ETH-USDT">ETH/USDT</option>
@@ -45,7 +45,7 @@ const MarketAnalysis: React.FC = () => {
           <div className="flex items-center justify-between">
             <div className="flex items-center">
               <BarChart2 className="h-5 w-5 text-blue-500 mr-2" />
-              <span className="text-gray-500">Current Price</span>
+              <span className="text-neutral-500">Current Price</span>
             </div>
             <span className="text-lg font-semibold">${latestPrice.toFixed(2)}</span>
           </div>
@@ -59,7 +59,7 @@ const MarketAnalysis: React.FC = () => {
               ) : (
                 <TrendingDown className="h-5 w-5 text-red-500 mr-2" />
               )}
-              <span className="text-gray-500">24h Change</span>
+              <span className="text-neutral-500">24h Change</span>
             </div>
             <span className={`text-lg font-semibold ${priceChange >= 0 ? 'text-green-600' : 'text-red-600'}`}>
               {priceChangePercent >= 0 ? '+' : ''}{priceChangePercent.toFixed(2)}%
@@ -71,7 +71,7 @@ const MarketAnalysis: React.FC = () => {
           <div className="flex items-center justify-between">
             <div className="flex items-center">
               <Volume2 className="h-5 w-5 text-purple-500 mr-2" />
-              <span className="text-gray-500">24h Volume</span>
+              <span className="text-neutral-500">24h Volume</span>
             </div>
             <span className="text-lg font-semibold">${volume24h.toLocaleString()}</span>
           </div>
@@ -81,7 +81,7 @@ const MarketAnalysis: React.FC = () => {
           <div className="flex items-center justify-between">
             <div className="flex items-center">
               <ArrowRight className="h-5 w-5 text-orange-500 mr-2" />
-              <span className="text-gray-500">24h Range</span>
+              <span className="text-neutral-500">24h Range</span>
             </div>
             <span className="text-lg font-semibold">
               ${low24h.toFixed(2)} - ${high24h.toFixed(2)}
@@ -115,7 +115,7 @@ const MarketAnalysis: React.FC = () => {
             <div className="border-t border-b py-2 my-2">
               <div className="text-center font-bold">
                 $50,125.50
-                <span className="text-gray-500 ml-2">Current Price</span>
+                <span className="text-neutral-500 ml-2">Current Price</span>
               </div>
             </div>
             <div className="flex justify-between text-sm">
@@ -136,25 +136,25 @@ const MarketAnalysis: React.FC = () => {
           <div className="space-y-2">
             {/* Recent trades would be populated with real data */}
             <div className="flex justify-between text-sm">
-              <span className="text-gray-500">12:45:23</span>
+              <span className="text-neutral-500">12:45:23</span>
               <span className="text-green-600">Buy</span>
               <span>0.1234 BTC</span>
               <span>$50,123.45</span>
             </div>
             <div className="flex justify-between text-sm">
-              <span className="text-gray-500">12:45:21</span>
+              <span className="text-neutral-500">12:45:21</span>
               <span className="text-red-600">Sell</span>
               <span>0.0567 BTC</span>
               <span>$50,120.00</span>
             </div>
             <div className="flex justify-between text-sm">
-              <span className="text-gray-500">12:45:18</span>
+              <span className="text-neutral-500">12:45:18</span>
               <span className="text-green-600">Buy</span>
               <span>0.3456 BTC</span>
               <span>$50,118.75</span>
             </div>
             <div className="flex justify-between text-sm">
-              <span className="text-gray-500">12:45:15</span>
+              <span className="text-neutral-500">12:45:15</span>
               <span className="text-red-600">Sell</span>
               <span>0.2345 BTC</span>
               <span>$50,115.50</span>

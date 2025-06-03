@@ -302,35 +302,35 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
       <div className="space-y-6">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="bg-white p-4 rounded-lg shadow">
-            <h3 className="text-sm font-medium text-gray-500">Profit/Loss</h3>
+            <h3 className="text-sm font-medium text-neutral-500">Profit/Loss</h3>
             <p className={`text-2xl font-bold ${finalBalance > initialBalance ? 'text-green-600' : 'text-red-600'}`}>
               ${(finalBalance - initialBalance).toFixed(2)}
             </p>
-            <p className="text-sm text-gray-500">
+            <p className="text-sm text-neutral-500">
               {((finalBalance - initialBalance) / initialBalance * 100).toFixed(2)}%
             </p>
           </div>
           
           <div className="bg-white p-4 rounded-lg shadow">
-            <h3 className="text-sm font-medium text-gray-500">Win Rate</h3>
+            <h3 className="text-sm font-medium text-neutral-500">Win Rate</h3>
             <p className="text-2xl font-bold">{winRate.toFixed(2)}%</p>
-            <p className="text-sm text-gray-500">
+            <p className="text-sm text-neutral-500">
               {winningTrades} / {totalTrades} trades
             </p>
           </div>
           
           <div className="bg-white p-4 rounded-lg shadow">
-            <h3 className="text-sm font-medium text-gray-500">Profit Factor</h3>
+            <h3 className="text-sm font-medium text-neutral-500">Profit Factor</h3>
             <p className="text-2xl font-bold">{profitFactor.toFixed(2)}</p>
-            <p className="text-sm text-gray-500">
+            <p className="text-sm text-neutral-500">
               Wins / Losses ratio
             </p>
           </div>
           
           <div className="bg-white p-4 rounded-lg shadow">
-            <h3 className="text-sm font-medium text-gray-500">Max Drawdown</h3>
+            <h3 className="text-sm font-medium text-neutral-500">Max Drawdown</h3>
             <p className="text-2xl font-bold text-red-600">{maxDrawdownPercent.toFixed(2)}%</p>
-            <p className="text-sm text-gray-500">
+            <p className="text-sm text-neutral-500">
               ${maxDrawdown.toFixed(2)}
             </p>
           </div>
@@ -376,23 +376,23 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
             <table className="w-full">
               <tbody>
                 <tr>
-                  <td className="py-1 text-gray-600">Sharpe Ratio</td>
+                  <td className="py-1 text-neutral-600">Sharpe Ratio</td>
                   <td className="py-1 text-right font-medium">{sharpeRatio.toFixed(2)}</td>
                 </tr>
                 <tr>
-                  <td className="py-1 text-gray-600">Annualized Return</td>
+                  <td className="py-1 text-neutral-600">Annualized Return</td>
                   <td className="py-1 text-right font-medium">{(metrics.annualizedReturn * 100).toFixed(2)}%</td>
                 </tr>
                 <tr>
-                  <td className="py-1 text-gray-600">Average Trade</td>
+                  <td className="py-1 text-neutral-600">Average Trade</td>
                   <td className="py-1 text-right font-medium">${metrics.averageTrade.toFixed(2)}</td>
                 </tr>
                 <tr>
-                  <td className="py-1 text-gray-600">Average Win</td>
+                  <td className="py-1 text-neutral-600">Average Win</td>
                   <td className="py-1 text-right font-medium">${metrics.averageProfit.toFixed(2)}</td>
                 </tr>
                 <tr>
-                  <td className="py-1 text-gray-600">Average Loss</td>
+                  <td className="py-1 text-neutral-600">Average Loss</td>
                   <td className="py-1 text-right font-medium">${metrics.averageLoss.toFixed(2)}</td>
                 </tr>
               </tbody>
@@ -405,7 +405,7 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
               <tbody>
                 {Object.entries(strategy.parameters).map(([key, value]) => (
                   <tr key={key}>
-                    <td className="py-1 text-gray-600">{key}</td>
+                    <td className="py-1 text-neutral-600">{key}</td>
                     <td className="py-1 text-right font-medium">{value}</td>
                   </tr>
                 ))}
@@ -417,21 +417,21 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
         <div className="bg-white p-4 rounded-lg shadow">
           <h3 className="text-lg font-medium mb-4">Recent Trades</h3>
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
+            <table className="min-w-full divide-y divide-neutral-200">
+              <thead className="bg-neutral-50">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Entry Price</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Exit Price</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Profit</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Reason</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">Date</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">Type</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">Entry Price</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">Exit Price</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">Profit</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">Reason</th>
                 </tr>
               </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
+              <tbody className="bg-white divide-y divide-neutral-200">
                 {backtestResult.trades.slice(-10).reverse().map((trade, index) => (
                   <tr key={index}>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-500">
                       {new Date(trade.entryDate).toLocaleDateString()}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm">
@@ -441,10 +441,10 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
                         {trade.type}
                       </span>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-500">
                       ${trade.entryPrice.toFixed(2)}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-500">
                       ${trade.exitPrice ? trade.exitPrice.toFixed(2) : '-'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm">
@@ -452,7 +452,7 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
                         ${trade.profit.toFixed(2)} ({trade.profitPercent.toFixed(2)}%)
                       </span>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-500">
                       {trade.reason}
                     </td>
                   </tr>
@@ -470,7 +470,7 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
     if (!optimizationResult) {
       return (
         <div className="bg-white p-6 rounded-lg shadow text-center">
-          <p className="text-gray-600 mb-4">
+          <p className="text-neutral-600 mb-4">
             Run parameter optimization to find the best strategy parameters.
           </p>
           <button
@@ -490,7 +490,7 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
       <div className="space-y-6">
         <div className="bg-white p-4 rounded-lg shadow">
           <h3 className="text-lg font-medium mb-4">Optimization Results</h3>
-          <p className="text-sm text-gray-600 mb-2">
+          <p className="text-sm text-neutral-600 mb-2">
             Completed in {(optimizationTime / 1000).toFixed(2)} seconds
           </p>
           
@@ -501,7 +501,7 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
                 <tbody>
                   {Object.entries(bestParameters).map(([key, value]) => (
                     <tr key={key}>
-                      <td className="py-1 text-gray-600">{key}</td>
+                      <td className="py-1 text-neutral-600">{key}</td>
                       <td className="py-1 text-right font-medium">{value}</td>
                     </tr>
                   ))}
@@ -514,23 +514,23 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
               <table className="w-full">
                 <tbody>
                   <tr>
-                    <td className="py-1 text-gray-600">Net Profit</td>
+                    <td className="py-1 text-neutral-600">Net Profit</td>
                     <td className="py-1 text-right font-medium">${bestResult.metrics.netProfit.toFixed(2)}</td>
                   </tr>
                   <tr>
-                    <td className="py-1 text-gray-600">Win Rate</td>
+                    <td className="py-1 text-neutral-600">Win Rate</td>
                     <td className="py-1 text-right font-medium">{bestResult.winRate.toFixed(2)}%</td>
                   </tr>
                   <tr>
-                    <td className="py-1 text-gray-600">Profit Factor</td>
+                    <td className="py-1 text-neutral-600">Profit Factor</td>
                     <td className="py-1 text-right font-medium">{bestResult.profitFactor.toFixed(2)}</td>
                   </tr>
                   <tr>
-                    <td className="py-1 text-gray-600">Max Drawdown</td>
+                    <td className="py-1 text-neutral-600">Max Drawdown</td>
                     <td className="py-1 text-right font-medium">{bestResult.maxDrawdownPercent.toFixed(2)}%</td>
                   </tr>
                   <tr>
-                    <td className="py-1 text-gray-600">Sharpe Ratio</td>
+                    <td className="py-1 text-neutral-600">Sharpe Ratio</td>
                     <td className="py-1 text-right font-medium">{bestResult.sharpeRatio.toFixed(2)}</td>
                   </tr>
                 </tbody>
@@ -554,7 +554,7 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
             <tbody>
               {Object.entries(parameterRanges).map(([key, [min, max, step]]) => (
                 <tr key={key}>
-                  <td className="py-1 text-gray-600">{key}</td>
+                  <td className="py-1 text-neutral-600">{key}</td>
                   <td className="py-1 text-right">{min}</td>
                   <td className="py-1 text-right">{max}</td>
                   <td className="py-1 text-right">{step}</td>
@@ -598,7 +598,7 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
     if (!monteCarloResult) {
       return (
         <div className="bg-white p-6 rounded-lg shadow text-center">
-          <p className="text-gray-600 mb-4">
+          <p className="text-neutral-600 mb-4">
             Run Monte Carlo simulation to assess strategy robustness.
           </p>
           <button
@@ -621,30 +621,30 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
           <h3 className="text-lg font-medium mb-4">Monte Carlo Simulation Results</h3>
           
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="bg-gray-50 p-3 rounded">
-              <h4 className="text-sm font-medium text-gray-500 mb-2">95% Confidence Interval</h4>
+            <div className="bg-neutral-50 p-3 rounded">
+              <h4 className="text-sm font-medium text-neutral-500 mb-2">95% Confidence Interval</h4>
               <table className="w-full">
                 <tbody>
                   <tr>
-                    <td className="py-1 text-gray-600">Final Balance</td>
+                    <td className="py-1 text-neutral-600">Final Balance</td>
                     <td className="py-1 text-right font-medium">
                       ${confidenceIntervals.finalBalance[0].toFixed(2)} to ${confidenceIntervals.finalBalance[1].toFixed(2)}
                     </td>
                   </tr>
                   <tr>
-                    <td className="py-1 text-gray-600">Max Drawdown</td>
+                    <td className="py-1 text-neutral-600">Max Drawdown</td>
                     <td className="py-1 text-right font-medium">
                       {confidenceIntervals.maxDrawdownPercent[0].toFixed(2)}% to {confidenceIntervals.maxDrawdownPercent[1].toFixed(2)}%
                     </td>
                   </tr>
                   <tr>
-                    <td className="py-1 text-gray-600">Win Rate</td>
+                    <td className="py-1 text-neutral-600">Win Rate</td>
                     <td className="py-1 text-right font-medium">
                       {confidenceIntervals.winRate[0].toFixed(2)}% to {confidenceIntervals.winRate[1].toFixed(2)}%
                     </td>
                   </tr>
                   <tr>
-                    <td className="py-1 text-gray-600">Profit Factor</td>
+                    <td className="py-1 text-neutral-600">Profit Factor</td>
                     <td className="py-1 text-right font-medium">
                       {confidenceIntervals.profitFactor[0].toFixed(2)} to {confidenceIntervals.profitFactor[1].toFixed(2)}
                     </td>
@@ -653,48 +653,48 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
               </table>
             </div>
             
-            <div className="bg-gray-50 p-3 rounded">
-              <h4 className="text-sm font-medium text-gray-500 mb-2">Worst Case Scenario</h4>
+            <div className="bg-neutral-50 p-3 rounded">
+              <h4 className="text-sm font-medium text-neutral-500 mb-2">Worst Case Scenario</h4>
               <table className="w-full">
                 <tbody>
                   <tr>
-                    <td className="py-1 text-gray-600">Final Balance</td>
+                    <td className="py-1 text-neutral-600">Final Balance</td>
                     <td className="py-1 text-right font-medium">${worstCase.finalBalance.toFixed(2)}</td>
                   </tr>
                   <tr>
-                    <td className="py-1 text-gray-600">Max Drawdown</td>
+                    <td className="py-1 text-neutral-600">Max Drawdown</td>
                     <td className="py-1 text-right font-medium">{worstCase.maxDrawdownPercent.toFixed(2)}%</td>
                   </tr>
                   <tr>
-                    <td className="py-1 text-gray-600">Win Rate</td>
+                    <td className="py-1 text-neutral-600">Win Rate</td>
                     <td className="py-1 text-right font-medium">{worstCase.winRate.toFixed(2)}%</td>
                   </tr>
                   <tr>
-                    <td className="py-1 text-gray-600">Profit Factor</td>
+                    <td className="py-1 text-neutral-600">Profit Factor</td>
                     <td className="py-1 text-right font-medium">{worstCase.profitFactor.toFixed(2)}</td>
                   </tr>
                 </tbody>
               </table>
             </div>
             
-            <div className="bg-gray-50 p-3 rounded">
-              <h4 className="text-sm font-medium text-gray-500 mb-2">Best Case Scenario</h4>
+            <div className="bg-neutral-50 p-3 rounded">
+              <h4 className="text-sm font-medium text-neutral-500 mb-2">Best Case Scenario</h4>
               <table className="w-full">
                 <tbody>
                   <tr>
-                    <td className="py-1 text-gray-600">Final Balance</td>
+                    <td className="py-1 text-neutral-600">Final Balance</td>
                     <td className="py-1 text-right font-medium">${bestCase.finalBalance.toFixed(2)}</td>
                   </tr>
                   <tr>
-                    <td className="py-1 text-gray-600">Max Drawdown</td>
+                    <td className="py-1 text-neutral-600">Max Drawdown</td>
                     <td className="py-1 text-right font-medium">{bestCase.maxDrawdownPercent.toFixed(2)}%</td>
                   </tr>
                   <tr>
-                    <td className="py-1 text-gray-600">Win Rate</td>
+                    <td className="py-1 text-neutral-600">Win Rate</td>
                     <td className="py-1 text-right font-medium">{bestCase.winRate.toFixed(2)}%</td>
                   </tr>
                   <tr>
-                    <td className="py-1 text-gray-600">Profit Factor</td>
+                    <td className="py-1 text-neutral-600">Profit Factor</td>
                     <td className="py-1 text-right font-medium">{bestCase.profitFactor.toFixed(2)}</td>
                   </tr>
                 </tbody>
@@ -746,7 +746,7 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
     if (!walkForwardResult) {
       return (
         <div className="bg-white p-6 rounded-lg shadow text-center">
-          <p className="text-gray-600 mb-4">
+          <p className="text-neutral-600 mb-4">
             Run walk-forward analysis to test strategy robustness across different time periods.
           </p>
           <button
@@ -781,7 +781,7 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
                 </thead>
                 <tbody>
                   <tr>
-                    <td className="py-1 text-gray-600">Net Profit</td>
+                    <td className="py-1 text-neutral-600">Net Profit</td>
                     <td className="py-1 text-right">${aggregateResult.inSampleMetrics.netProfit.toFixed(2)}</td>
                     <td className="py-1 text-right">${aggregateResult.outOfSampleMetrics.netProfit.toFixed(2)}</td>
                     <td className="py-1 text-right font-medium">
@@ -789,7 +789,7 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
                     </td>
                   </tr>
                   <tr>
-                    <td className="py-1 text-gray-600">Win Rate</td>
+                    <td className="py-1 text-neutral-600">Win Rate</td>
                     <td className="py-1 text-right">{aggregateResult.inSampleMetrics.winRate.toFixed(2)}%</td>
                     <td className="py-1 text-right">{aggregateResult.outOfSampleMetrics.winRate.toFixed(2)}%</td>
                     <td className="py-1 text-right font-medium">
@@ -797,7 +797,7 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
                     </td>
                   </tr>
                   <tr>
-                    <td className="py-1 text-gray-600">Profit Factor</td>
+                    <td className="py-1 text-neutral-600">Profit Factor</td>
                     <td className="py-1 text-right">{aggregateResult.inSampleMetrics.profitFactor.toFixed(2)}</td>
                     <td className="py-1 text-right">{aggregateResult.outOfSampleMetrics.profitFactor.toFixed(2)}</td>
                     <td className="py-1 text-right font-medium">
@@ -805,7 +805,7 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
                     </td>
                   </tr>
                   <tr>
-                    <td className="py-1 text-gray-600">Max Drawdown</td>
+                    <td className="py-1 text-neutral-600">Max Drawdown</td>
                     <td className="py-1 text-right">{aggregateResult.inSampleMetrics.maxDrawdownPercent.toFixed(2)}%</td>
                     <td className="py-1 text-right">{aggregateResult.outOfSampleMetrics.maxDrawdownPercent.toFixed(2)}%</td>
                     <td className="py-1 text-right font-medium">
@@ -818,12 +818,12 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
             
             <div>
               <h4 className="text-md font-medium mb-2">Robustness Score</h4>
-              <div className="bg-gray-50 p-4 rounded">
+              <div className="bg-neutral-50 p-4 rounded">
                 <div className="text-center">
                   <span className="text-3xl font-bold">
                     {aggregateResult.robustnessScore.toFixed(2)}
                   </span>
-                  <p className="text-sm text-gray-600 mt-1">
+                  <p className="text-sm text-neutral-600 mt-1">
                     {aggregateResult.robustnessScore >= 0.7 
                       ? 'Good robustness (>= 0.7)' 
                       : aggregateResult.robustnessScore >= 0.5 
@@ -831,7 +831,7 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
                         : 'Poor robustness (< 0.5)'}
                   </p>
                 </div>
-                <p className="text-xs text-gray-500 mt-4">
+                <p className="text-xs text-neutral-500 mt-4">
                   A score close to 1.0 indicates that the strategy performs similarly on unseen data as it does on training data, suggesting good robustness.
                 </p>
               </div>
@@ -840,20 +840,20 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
           
           <h4 className="text-md font-medium mb-2">Fold Results</h4>
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
+            <table className="min-w-full divide-y divide-neutral-200">
+              <thead className="bg-neutral-50">
                 <tr>
-                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Fold</th>
-                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">In-Sample Profit</th>
-                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Out-of-Sample Profit</th>
-                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">In-Sample Win Rate</th>
-                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Out-of-Sample Win Rate</th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">Fold</th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">In-Sample Profit</th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">Out-of-Sample Profit</th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">In-Sample Win Rate</th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">Out-of-Sample Win Rate</th>
                 </tr>
               </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
+              <tbody className="bg-white divide-y divide-neutral-200">
                 {foldResults.map((fold, index) => (
                   <tr key={index}>
-                    <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">
+                    <td className="px-3 py-2 whitespace-nowrap text-sm text-neutral-500">
                       {index + 1}
                     </td>
                     <td className="px-3 py-2 whitespace-nowrap text-sm">
@@ -866,10 +866,10 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
                         ${fold.outOfSample.metrics.netProfit.toFixed(2)}
                       </span>
                     </td>
-                    <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">
+                    <td className="px-3 py-2 whitespace-nowrap text-sm text-neutral-500">
                       {fold.inSample.winRate.toFixed(2)}%
                     </td>
-                    <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">
+                    <td className="px-3 py-2 whitespace-nowrap text-sm text-neutral-500">
                       {fold.outOfSample.winRate.toFixed(2)}%
                     </td>
                   </tr>
@@ -893,7 +893,7 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
   };
 
   return (
-    <div className="bg-gray-100 p-4 rounded-lg">
+    <div className="bg-neutral-100 p-4 rounded-lg">
       <div className="mb-6">
         <h2 className="text-xl font-bold mb-4">Strategy Tester</h2>
         
@@ -901,7 +901,7 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
           <h3 className="text-lg font-medium mb-4">Test Options</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label className="block text-sm font-medium text-neutral-700 mb-1">
                 Initial Balance
               </label>
               <input
@@ -911,12 +911,12 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
                   ...testOptions,
                   initialBalance: parseFloat(e.target.value)
                 })}
-                className="w-full p-2 border border-gray-300 rounded-md"
+                className="w-full p-2 border border-neutral-300 rounded-md"
               />
             </div>
             
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label className="block text-sm font-medium text-neutral-700 mb-1">
                 Position Size (%)
               </label>
               <input
@@ -926,12 +926,12 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
                   ...testOptions,
                   positionSizePercent: parseFloat(e.target.value)
                 })}
-                className="w-full p-2 border border-gray-300 rounded-md"
+                className="w-full p-2 border border-neutral-300 rounded-md"
               />
             </div>
             
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label className="block text-sm font-medium text-neutral-700 mb-1">
                 Fee (%)
               </label>
               <input
@@ -941,12 +941,12 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
                   ...testOptions,
                   feePercent: parseFloat(e.target.value)
                 })}
-                className="w-full p-2 border border-gray-300 rounded-md"
+                className="w-full p-2 border border-neutral-300 rounded-md"
               />
             </div>
             
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label className="block text-sm font-medium text-neutral-700 mb-1">
                 Slippage (%)
               </label>
               <input
@@ -956,7 +956,7 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
                   ...testOptions,
                   slippagePercent: parseFloat(e.target.value)
                 })}
-                className="w-full p-2 border border-gray-300 rounded-md"
+                className="w-full p-2 border border-neutral-300 rounded-md"
               />
             </div>
           </div>
@@ -971,9 +971,9 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
                   ...testOptions,
                   useStopLoss: e.target.checked
                 })}
-                className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-neutral-300 rounded"
               />
-              <label htmlFor="useStopLoss" className="ml-2 block text-sm text-gray-700">
+              <label htmlFor="useStopLoss" className="ml-2 block text-sm text-neutral-700">
                 Use Stop Loss
               </label>
               {testOptions.useStopLoss && (
@@ -984,10 +984,10 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
                     ...testOptions,
                     stopLossPercent: parseFloat(e.target.value)
                   })}
-                  className="ml-2 w-16 p-1 border border-gray-300 rounded-md"
+                  className="ml-2 w-16 p-1 border border-neutral-300 rounded-md"
                 />
               )}
-              <span className="ml-1 text-sm text-gray-500">%</span>
+              <span className="ml-1 text-sm text-neutral-500">%</span>
             </div>
             
             <div className="flex items-center">
@@ -999,9 +999,9 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
                   ...testOptions,
                   useTakeProfit: e.target.checked
                 })}
-                className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-neutral-300 rounded"
               />
-              <label htmlFor="useTakeProfit" className="ml-2 block text-sm text-gray-700">
+              <label htmlFor="useTakeProfit" className="ml-2 block text-sm text-neutral-700">
                 Use Take Profit
               </label>
               {testOptions.useTakeProfit && (
@@ -1012,10 +1012,10 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
                     ...testOptions,
                     takeProfitPercent: parseFloat(e.target.value)
                   })}
-                  className="ml-2 w-16 p-1 border border-gray-300 rounded-md"
+                  className="ml-2 w-16 p-1 border border-neutral-300 rounded-md"
                 />
               )}
-              <span className="ml-1 text-sm text-gray-500">%</span>
+              <span className="ml-1 text-sm text-neutral-500">%</span>
             </div>
             
             <div className="flex items-center">
@@ -1027,9 +1027,9 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
                   ...testOptions,
                   useTrailingStop: e.target.checked
                 })}
-                className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-neutral-300 rounded"
               />
-              <label htmlFor="useTrailingStop" className="ml-2 block text-sm text-gray-700">
+              <label htmlFor="useTrailingStop" className="ml-2 block text-sm text-neutral-700">
                 Use Trailing Stop
               </label>
               {testOptions.useTrailingStop && (
@@ -1040,10 +1040,10 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
                     ...testOptions,
                     trailingStopPercent: parseFloat(e.target.value)
                   })}
-                  className="ml-2 w-16 p-1 border border-gray-300 rounded-md"
+                  className="ml-2 w-16 p-1 border border-neutral-300 rounded-md"
                 />
               )}
-              <span className="ml-1 text-sm text-gray-500">%</span>
+              <span className="ml-1 text-sm text-neutral-500">%</span>
             </div>
           </div>
           
@@ -1060,14 +1060,14 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
       </div>
       
       <div className="mb-4">
-        <div className="border-b border-gray-200">
+        <div className="border-b border-neutral-200">
           <nav className="-mb-px flex">
             <button
               onClick={() => setActiveTab('backtest')}
               className={`py-2 px-4 text-sm font-medium ${
                 activeTab === 'backtest'
                   ? 'border-b-2 border-blue-500 text-blue-600'
-                  : 'text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  : 'text-neutral-500 hover:text-neutral-700 hover:border-neutral-300'
               }`}
             >
               Backtest Results
@@ -1077,7 +1077,7 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
               className={`py-2 px-4 text-sm font-medium ${
                 activeTab === 'optimize'
                   ? 'border-b-2 border-blue-500 text-blue-600'
-                  : 'text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  : 'text-neutral-500 hover:text-neutral-700 hover:border-neutral-300'
               }`}
             >
               Optimization
@@ -1087,7 +1087,7 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
               className={`py-2 px-4 text-sm font-medium ${
                 activeTab === 'monteCarlo'
                   ? 'border-b-2 border-blue-500 text-blue-600'
-                  : 'text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  : 'text-neutral-500 hover:text-neutral-700 hover:border-neutral-300'
               }`}
             >
               Monte Carlo
@@ -1097,7 +1097,7 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
               className={`py-2 px-4 text-sm font-medium ${
                 activeTab === 'walkForward'
                   ? 'border-b-2 border-blue-500 text-blue-600'
-                  : 'text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  : 'text-neutral-500 hover:text-neutral-700 hover:border-neutral-300'
               }`}
             >
               Walk-Forward

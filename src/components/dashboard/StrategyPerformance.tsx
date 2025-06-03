@@ -12,12 +12,12 @@ const StrategyPerformance: React.FC<StrategyPerformanceProps> = ({ strategies })
       {strategies.map(strategy => (
         <div 
           key={strategy.id} 
-          className="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow duration-200"
+          className="bg-white border border-neutral-200 rounded-lg p-4 hover:shadow-md transition-shadow duration-200"
         >
           <div className="flex items-start justify-between mb-2">
             <div>
               <h3 className="font-semibold">{strategy.name}</h3>
-              <p className="text-xs text-gray-500">{strategy.parameters.pair}</p>
+              <p className="text-xs text-neutral-500">{strategy.parameters.pair}</p>
             </div>
             <div className="p-2 rounded-full bg-blue-50">
               <BarChart2 className="h-5 w-5 text-blue-500" />
@@ -27,7 +27,7 @@ const StrategyPerformance: React.FC<StrategyPerformanceProps> = ({ strategies })
           {strategy.performance && (
             <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <span className="text-sm text-gray-500">Total P&L</span>
+                <span className="text-sm text-neutral-500">Total P&L</span>
                 <span className={`font-medium ${
                   strategy.performance.totalPnL >= 0 ? 'text-green-600' : 'text-red-600'
                 }`}>
@@ -37,7 +37,7 @@ const StrategyPerformance: React.FC<StrategyPerformanceProps> = ({ strategies })
               </div>
               
               <div className="flex items-center justify-between">
-                <span className="text-sm text-gray-500">Win Rate</span>
+                <span className="text-sm text-neutral-500">Win Rate</span>
                 <span className="font-medium flex items-center">
                   {(strategy.performance.winRate * 100).toFixed(1)}%
                   {strategy.performance.winRate >= 0.5 ? (
@@ -49,7 +49,7 @@ const StrategyPerformance: React.FC<StrategyPerformanceProps> = ({ strategies })
               </div>
               
               <div className="flex items-center justify-between">
-                <span className="text-sm text-gray-500">Trades</span>
+                <span className="text-sm text-neutral-500">Trades</span>
                 <span className="font-medium">{strategy.performance.tradesCount}</span>
               </div>
             </div>
