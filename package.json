@@ -17,7 +17,7 @@
     "@tensorflow/tfjs": "^4.17.0",
     "@tensorflow/tfjs-node-gpu": "^4.22.0",
     "are-we-there-yet": "^4.0.2",
-    "axios": "^1.6.7",
+    "axios": "^1.8.2",
     "chart.js": "^4.4.1",
     "crypto-js": "^4.2.0",
     "date-fns": "^3.3.1",
@@ -51,7 +51,7 @@
     "@types/uuid": "^9.0.8",
     "@typescript-eslint/eslint-plugin": "^6.21.0",
     "@typescript-eslint/parser": "^6.21.0",
-    "@vitejs/plugin-react": "^4.2.1",
+    "@vitejs/plugin-react": "^4.5.1",
     "autoprefixer": "^10.4.17",
     "eslint": "^8.56.0",
     "eslint-plugin-react-hooks": "^4.6.0",
@@ -60,7 +60,7 @@
     "postcss": "^8.4.35",
     "tailwindcss": "^3.4.1",
     "typescript": "^5.2.2",
-    "vite": "^5.1.0",
-    "vitest": "^1.2.2"
+    "vite": "^6.3.5",
+    "vitest": "^3.2.0"
   }
 }
