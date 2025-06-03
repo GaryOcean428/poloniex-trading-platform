@@ -1,8 +1,9 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import '@testing-library/jest-dom';
 import { MemoryRouter } from 'react-router-dom';
 import { AppProviders } from '@/context/AppProviders';
-import { LiveDataDashboard } from '@/components/dashboard/LiveDataDashboard';
+import LiveDataDashboard from '@/components/dashboard/LiveDataDashboard';
 import { MLTradingPanel } from '@/components/trading/MLTradingPanel';
 import { DQNTradingPanel } from '@/components/trading/DQNTradingPanel';
 import { ModelRecalibrationPanel } from '@/components/ml/ModelRecalibrationPanel';
@@ -10,7 +11,6 @@ import { LiveDataService } from '@/services/advancedLiveData';
 import { default as mlTrading } from '@/ml/mlTrading';
 import { default as dqnTrading } from '@/ml/dqnTrading';
 import { default as modelRecalibration } from '@/ml/modelRecalibration';
-import React from 'react';
 
 // Mock dependencies
 vi.mock('@/services/advancedLiveData');
