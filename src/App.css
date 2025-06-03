@@ -1,7 +1,3 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-
 body {
   font-variant-numeric: normal;
   color: #262626; /* equivalent to text-neutral-800 */
