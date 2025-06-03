@@ -1,12 +1,12 @@
 import { useCallback } from 'react';
 import { useErrorHandler } from './useErrorHandler';
-import { sendChromeMessage, getChromeStorage } from '@/utils/chromeExtension';
+import { sendSecureMessage, getExtensionData } from '@/utils/chromeExtension';
 
 /**
  * Custom hook for handling API requests with proper error handling
  */
 export const useApiRequest = () => {
-  const { errors, isLoading, addError, clearErrors, executeWithErrorHandling } = useErrorHandler();
+  const { error, hasError, handleError, resetError, withErrorHandling } = useErrorHandler();
 
   /**
    * Make a GET request with error handling
@@ -15,7 +15,7 @@ export const useApiRequest = () => {
    * @returns Response data or null on error
    */
   const get = useCallback(async <T,>(url: string, options?: RequestInit): Promise<T | null> => {
-    return executeWithErrorHandling(async () => {
+    return withErrorHandling(async () => {
       const response = await fetch(url, {
         method: 'GET',
         headers: {
@@ -31,7 +31,7 @@ export const useApiRequest = () => {
       
       return response.json();
     }, `Failed to fetch data from ${url}`);
-  }, [executeWithErrorHandling]);
+  }, [withErrorHandling]);
 
   /**
    * Make a POST request with error handling
@@ -41,7 +41,7 @@ export const useApiRequest = () => {
    * @returns Response data or null on error
    */
   const post = useCallback(async <T,>(url: string, data: any, options?: RequestInit): Promise<T | null> => {
-    return executeWithErrorHandling(async () => {
+    return withErrorHandling(async () => {
       const response = await fetch(url, {
         method: 'POST',
         headers: {
@@ -58,7 +58,7 @@ export const useApiRequest = () => {
       
       return response.json();
     }, `Failed to post data to ${url}`);
-  }, [executeWithErrorHandling]);
+  }, [withErrorHandling]);
 
   /**
    * Send a message to Chrome extension with error handling
@@ -66,7 +66,7 @@ export const useApiRequest = () => {
    * @returns Response data or null on error
    */
   const sendExtensionMessage = useCallback(async <T,>(message: any): Promise<T | null> => {
-    return executeWithErrorHandling(async () => {
+    return withErrorHandling(async () => {
       return new Promise((resolve, reject) => {
         sendChromeMessage(message, (response) => {
           if (response && response.error) {
@@ -77,7 +77,7 @@ export const useApiRequest = () => {
         });
       });
     }, 'Failed to communicate with extension');
-  }, [executeWithErrorHandling]);
+  }, [withErrorHandling]);
 
   /**
    * Get data from Chrome storage with error handling
@@ -85,7 +85,7 @@ export const useApiRequest = () => {
    * @returns Storage data or null on error
    */
   const getExtensionStorage = useCallback(async <T,>(key: string): Promise<T | null> => {
-    return executeWithErrorHandling(async () => {
+    return withErrorHandling(async () => {
       return new Promise((resolve, reject) => {
         getChromeStorage(key, (data) => {
           if (data && data.error) {
@@ -96,17 +96,17 @@ export const useApiRequest = () => {
         });
       });
     }, 'Failed to get data from extension storage');
-  }, [executeWithErrorHandling]);
+  }, [withErrorHandling]);
 
   return {
     get,
     post,
     sendExtensionMessage,
     getExtensionStorage,
-    errors,
-    isLoading,
-    addError,
-    clearErrors
+    error,
+    hasError,
+    handleError,
+    resetError
   };
 };
 
