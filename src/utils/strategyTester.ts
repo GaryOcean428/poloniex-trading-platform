@@ -1,4 +1,4 @@
-import { Strategy, MarketData, Trade, StrategyParameters } from '@/types';
+import { Strategy, MarketData, StrategyParameters } from '@/types';
 import { executeStrategy, StrategyResult } from './strategyExecutors';
 
 export interface BacktestResult {

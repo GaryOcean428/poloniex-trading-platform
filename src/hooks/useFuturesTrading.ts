@@ -6,7 +6,7 @@ import { FuturesOrder, Position } from '@/types';
  * Custom hook for handling Poloniex Futures API requests with proper error handling
  */
 export const useFuturesTrading = () => {
-  const { errors, isLoading, addError, clearErrors, executeWithErrorHandling } = useErrorHandler();
+  const { withErrorHandling } = useErrorHandler();
   // Import the default export directly
   const api = new (require('@/services/poloniexFuturesAPI').default)();
 
@@ -15,22 +15,24 @@ export const useFuturesTrading = () => {
    * @returns List of positions or null on error
    */
   const getPositions = useCallback(async (): Promise<Position[] | null> => {
-    return executeWithErrorHandling(async () => {
+    const wrappedFn = withErrorHandling(async () => {
       const positions = await api.getPositions();
       return positions;
-    }, 'Failed to fetch positions');
-  }, [executeWithErrorHandling]);
+    });
+    return await wrappedFn();
+  }, [withErrorHandling]);
 
   /**
    * Get open orders with error handling
    * @returns List of orders or null on error
    */
   const getOpenOrders = useCallback(async (): Promise<FuturesOrder[] | null> => {
-    return executeWithErrorHandling(async () => {
+    const wrappedFn = withErrorHandling(async () => {
       const orders = await api.getOpenOrders();
       return orders;
-    }, 'Failed to fetch open orders');
-  }, [executeWithErrorHandling]);
+    });
+    return await wrappedFn();
+  }, [withErrorHandling]);
 
   /**
    * Place a futures order with error handling
@@ -46,11 +48,11 @@ export const useFuturesTrading = () => {
     leverage?: number,
     marginMode?: 'ISOLATED' | 'CROSS'
   ): Promise<FuturesOrder | null> => {
-    return executeWithErrorHandling(async () => {
+    return withErrorHandling(async () => {
       const order = await api.placeOrder(pair, side, type, size, price, leverage, marginMode);
       return order;
     }, 'Failed to place order');
-  }, [executeWithErrorHandling]);
+  }, [withErrorHandling]);
 
   /**
    * Cancel an order with error handling
@@ -58,11 +60,11 @@ export const useFuturesTrading = () => {
    * @returns Success status or null on error
    */
   const cancelOrder = useCallback(async (orderId: string): Promise<boolean | null> => {
-    return executeWithErrorHandling(async () => {
+    return withErrorHandling(async () => {
       const result = await api.cancelOrder(orderId);
       return result;
     }, 'Failed to cancel order');
-  }, [executeWithErrorHandling]);
+  }, [withErrorHandling]);
 
   /**
    * Set leverage for a pair with error handling
@@ -71,11 +73,11 @@ export const useFuturesTrading = () => {
    * @returns Success status or null on error
    */
   const setLeverage = useCallback(async (pair: string, leverage: number): Promise<boolean | null> => {
-    return executeWithErrorHandling(async () => {
+    return withErrorHandling(async () => {
       const result = await api.setLeverage(pair, leverage);
       return result;
     }, 'Failed to set leverage');
-  }, [executeWithErrorHandling]);
+  }, [withErrorHandling]);
 
   /**
    * Set margin mode for a pair with error handling
@@ -87,11 +89,11 @@ export const useFuturesTrading = () => {
     pair: string, 
     marginMode: 'ISOLATED' | 'CROSS'
   ): Promise<boolean | null> => {
-    return executeWithErrorHandling(async () => {
+    return withErrorHandling(async () => {
       const result = await api.setMarginMode(pair, marginMode);
       return result;
     }, 'Failed to set margin mode');
-  }, [executeWithErrorHandling]);
+  }, [withErrorHandling]);
 
   return {
     getPositions,
@@ -99,11 +101,7 @@ export const useFuturesTrading = () => {
     placeOrder,
     cancelOrder,
     setLeverage,
-    setMarginMode,
-    errors,
-    isLoading,
-    addError,
-    clearErrors
+    setMarginMode
   };
 };
 

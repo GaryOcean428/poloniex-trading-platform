@@ -23,7 +23,7 @@ const EVENTS = {
 };
 
 // Connection states
-enum ConnectionState {
+export enum ConnectionState {
   DISCONNECTED = 'disconnected',
   CONNECTING = 'connecting',
   CONNECTED = 'connected',

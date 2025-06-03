@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import '@testing-library/jest-dom';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { useErrorHandler } from '@/hooks/useErrorHandler';
 import { WebSocketService } from '@/services/websocketService';
