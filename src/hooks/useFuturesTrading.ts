@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 import { useErrorHandler } from './useErrorHandler';
 import { FuturesOrder, Position } from '@/types';
+import PoloniexFuturesAPI from '@/services/poloniexFuturesAPI';
 
 /**
  * Custom hook for handling Poloniex Futures API requests with proper error handling
@@ -8,7 +9,7 @@ import { FuturesOrder, Position } from '@/types';
 export const useFuturesTrading = () => {
   const { errors, isLoading, addError, clearErrors, executeWithErrorHandling } = useErrorHandler();
   // Import the default export directly
-  const api = new (require('@/services/poloniexFuturesAPI').default)();
+  const api = new PoloniexFuturesAPI();
 
   /**
    * Get account positions with error handling

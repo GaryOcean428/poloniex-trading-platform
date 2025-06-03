@@ -1,4 +1,5 @@
 import { getEnvVariable } from '@/utils/environment';
+import crypto from 'crypto';
 
 // Poloniex Futures API endpoints
 const BASE_URL = 'https://futures-api.poloniex.com';
@@ -133,7 +134,6 @@ export interface FuturesOrder {
 
 // Generate HMAC-SHA256 signature for API authentication
 const generateSignature = (timestamp: string, method: string, requestPath: string, body: string = '') => {
-  const crypto = require('crypto');
   const apiSecret = getEnvVariable('VITE_POLONIEX_API_SECRET');
   
   if (!apiSecret) {
