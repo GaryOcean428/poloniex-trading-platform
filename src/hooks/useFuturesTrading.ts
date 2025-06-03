@@ -101,11 +101,7 @@ export const useFuturesTrading = () => {
     placeOrder,
     cancelOrder,
     setLeverage,
-    setMarginMode,
-    errors,
-    isLoading,
-    addError,
-    clearErrors
+    setMarginMode
   };
 };
 
