@@ -6,7 +6,7 @@ import { FuturesOrder, Position } from '@/types';
  * Custom hook for handling Poloniex Futures API requests with proper error handling
  */
 export const useFuturesTrading = () => {
-  const { error, hasError, handleError, resetError, withErrorHandling } = useErrorHandler();
+  const { withErrorHandling } = useErrorHandler();
   // Import the default export directly
   const api = new (require('@/services/poloniexFuturesAPI').default)();
 
@@ -15,10 +15,11 @@ export const useFuturesTrading = () => {
    * @returns List of positions or null on error
    */
   const getPositions = useCallback(async (): Promise<Position[] | null> => {
-    return withErrorHandling(async () => {
+    const wrappedFn = withErrorHandling(async () => {
       const positions = await api.getPositions();
       return positions;
-    }, 'Failed to fetch positions');
+    });
+    return await wrappedFn();
   }, [withErrorHandling]);
 
   /**
@@ -26,10 +27,11 @@ export const useFuturesTrading = () => {
    * @returns List of orders or null on error
    */
   const getOpenOrders = useCallback(async (): Promise<FuturesOrder[] | null> => {
-    return withErrorHandling(async () => {
+    const wrappedFn = withErrorHandling(async () => {
       const orders = await api.getOpenOrders();
       return orders;
-    }, 'Failed to fetch open orders');
+    });
+    return await wrappedFn();
   }, [withErrorHandling]);
 
   /**
