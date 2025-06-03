@@ -10,7 +10,7 @@ import {
   MarketSummary
 } from '@/services/advancedLiveData';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { Tabs, TabList, Tab, TabPanel } from '@/components/ui/Tabs';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/Tabs';
 
 const LiveDataDashboard: React.FC = () => {
   const [marketData, setMarketData] = useState<MarketDataPoint[]>([]);
@@ -364,15 +364,15 @@ const LiveDataDashboard: React.FC = () => {
         </div>
       </div>
       
-      <Tabs>
-        <TabList>
-          <Tab>Order Book</Tab>
-          <Tab>Recent Trades</Tab>
-          <Tab>Anomalies</Tab>
-          <Tab>Configuration</Tab>
-        </TabList>
+      <Tabs defaultValue="order-book">
+        <TabsList>
+          <TabsTrigger value="order-book">Order Book</TabsTrigger>
+          <TabsTrigger value="recent-trades">Recent Trades</TabsTrigger>
+          <TabsTrigger value="anomalies">Anomalies</TabsTrigger>
+          <TabsTrigger value="configuration">Configuration</TabsTrigger>
+        </TabsList>
         
-        <TabPanel>
+        <TabsContent value="order-book">
           {orderBook ? (
             <div className="grid grid-cols-2 gap-4">
               <div>
@@ -452,9 +452,9 @@ const LiveDataDashboard: React.FC = () => {
               <p className="text-gray-500 dark:text-gray-400">No order book data available</p>
             </div>
           )}
-        </TabPanel>
+        </TabsContent>
         
-        <TabPanel>
+        <TabsContent value="recent-trades">
           {trades.length > 0 ? (
             <div className="overflow-y-auto max-h-60">
               <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
@@ -507,9 +507,9 @@ const LiveDataDashboard: React.FC = () => {
               <p className="text-gray-500 dark:text-gray-400">No trade data available</p>
             </div>
           )}
-        </TabPanel>
+        </TabsContent>
         
-        <TabPanel>
+        <TabsContent value="anomalies">
           {anomalies.length > 0 ? (
             <div className="overflow-y-auto max-h-60">
               <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
@@ -562,9 +562,9 @@ const LiveDataDashboard: React.FC = () => {
               <p className="text-gray-500 dark:text-gray-400">No anomalies detected</p>
             </div>
           )}
-        </TabPanel>
+        </TabsContent>
         
-        <TabPanel>
+        <TabsContent value="configuration">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
               <h4 className="text-md font-medium mb-4 text-gray-700 dark:text-gray-300">Data Sources</h4>
@@ -676,7 +676,7 @@ const LiveDataDashboard: React.FC = () => {
               </div>
             </div>
           </div>
-        </TabPanel>
+        </TabsContent>
       </Tabs>
     </div>
   );
