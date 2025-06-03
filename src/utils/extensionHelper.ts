@@ -162,7 +162,7 @@ header {
 .actions button {
   background: none;
   border: none;
-  color: #94a3b8;
+  color: #a3a3a3; /* neutral-400 equivalent */
   cursor: pointer;
   padding: 4px;
   border-radius: 4px;
@@ -182,7 +182,7 @@ header {
 }
 
 .balance .label {
-  color: #94a3b8;
+  color: #a3a3a3; /* neutral-400 equivalent */
   font-size: 12px;
 }
 
@@ -199,21 +199,21 @@ header {
 
 .quick-trade, .chat-section {
   padding: 12px 16px;
-  border-bottom: 1px solid #e2e8f0;
+  border-bottom: 1px solid #e5e5e5; /* neutral-200 equivalent */
 }
 
 h2 {
   font-size: 14px;
   font-weight: 600;
   margin-bottom: 8px;
-  color: #4b5563;
+  color: #525252; /* neutral-600 equivalent */
 }
 
 .trading-pair select {
   width: 100%;
   padding: 8px;
   border-radius: 4px;
-  border: 1px solid #d1d5db;
+  border: 1px solid #d4d4d4; /* neutral-300 equivalent */
   margin-bottom: 8px;
   background-color: white;
 }
@@ -264,7 +264,7 @@ button.sell:hover {
 
 .username {
   font-weight: 600;
-  color: #4b5563;
+  color: #525252; /* neutral-600 equivalent */
 }
 
 .chat-input {
@@ -276,7 +276,7 @@ button.sell:hover {
   flex: 1;
   padding: 8px;
   border-radius: 4px;
-  border: 1px solid #d1d5db;
+  border: 1px solid #d4d4d4; /* neutral-300 equivalent */
 }
 
 .chat-input button {

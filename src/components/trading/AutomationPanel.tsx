@@ -150,7 +150,7 @@ const AutomationPanel: React.FC = () => {
           <div className="flex items-center justify-between">
             <div>
               <Label htmlFor="automation">Automated Trading</Label>
-              <p className="text-xs text-gray-500">
+              <p className="text-xs text-neutral-500">
                 Automatically execute trades based on your active strategy
               </p>
             </div>
@@ -175,7 +175,7 @@ const AutomationPanel: React.FC = () => {
           <div className="mt-6">
             <h4 className="font-medium mb-2">Available Strategies</h4>
             {strategies.length === 0 ? (
-              <p className="text-gray-500">No strategies available. Create one in the Strategy Builder.</p>
+              <p className="text-neutral-500">No strategies available. Create one in the Strategy Builder.</p>
             ) : (
               <div className="space-y-2">
                 {strategies.map(strategy => (
@@ -187,7 +187,7 @@ const AutomationPanel: React.FC = () => {
                   >
                     <div>
                       <p className="font-medium">{strategy.name}</p>
-                      <p className="text-sm text-gray-500">{strategy.type} - {strategy.parameters.pair}</p>
+                      <p className="text-sm text-neutral-500">{strategy.type} - {strategy.parameters.pair}</p>
                     </div>
                     <div className="flex space-x-2">
                       <Button 
@@ -214,7 +214,7 @@ const AutomationPanel: React.FC = () => {
         </div>
       </CardBody>
       <CardFooter>
-        <p className="text-sm text-gray-500">
+        <p className="text-sm text-neutral-500">
           Trading parameters: {leverage}x leverage, {riskPerTrade}% risk per trade, 
           {stopLossPercent}% stop loss, {takeProfitPercent}% take profit
         </p>

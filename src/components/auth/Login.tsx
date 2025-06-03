@@ -89,7 +89,7 @@ const Login: React.FC<LoginProps> = ({ onSuccess }) => {
               disabled={isLoading}
             />
           </div>
-          <div className="mt-2 text-sm text-gray-500">
+          <div className="mt-2 text-sm text-neutral-500">
             <p>Demo credentials: username: demo, password: password</p>
           </div>
         </form>

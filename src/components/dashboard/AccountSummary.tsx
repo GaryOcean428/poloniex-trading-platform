@@ -40,29 +40,29 @@ const AccountSummary: React.FC = () => {
   
   return (
     <div>
-      <h2 className="text-xl font-bold mb-4 flex items-center justify-between">Account Summary {isLoading && <span className="text-sm text-gray-500">Loading...</span>}</h2>
+      <h2 className="text-xl font-bold mb-4 flex items-center justify-between">Account Summary {isLoading && <span className="text-sm text-neutral-500">Loading...</span>}</h2>
       
       <div className="space-y-4">
         <div className="grid grid-cols-2 gap-4">
-          <div className="bg-gray-50 p-3 rounded-md">
-            <div className="text-sm text-gray-500">Total Balance</div>
+          <div className="bg-neutral-50 p-3 rounded-md">
+            <div className="text-sm text-neutral-500">Total Balance</div>
             <div className="text-xl font-bold flex items-center">
-              <DollarSign className="h-4 w-4 mr-1 text-gray-500" />
+              <DollarSign className="h-4 w-4 mr-1 text-neutral-500" />
               {accountData.balance?.toFixed(2)}
             </div>
           </div>
           
-          <div className="bg-gray-50 p-3 rounded-md">
-            <div className="text-sm text-gray-500">Available</div>
+          <div className="bg-neutral-50 p-3 rounded-md">
+            <div className="text-sm text-neutral-500">Available</div>
             <div className="text-xl font-bold flex items-center">
-              <DollarSign className="h-4 w-4 mr-1 text-gray-500" />
+              <DollarSign className="h-4 w-4 mr-1 text-neutral-500" />
               {accountData.availableBalance?.toFixed(2)}
             </div>
           </div>
         </div>
         
-        <div className="bg-gray-50 p-3 rounded-md">
-          <div className="text-sm text-gray-500">Equity</div>
+        <div className="bg-neutral-50 p-3 rounded-md">
+          <div className="text-sm text-neutral-500">Equity</div>
           <div className="text-xl font-bold">${accountData.equity.toFixed(2)}</div>
           <div className="text-sm mt-1">
             Unrealized P&L: 
@@ -72,8 +72,8 @@ const AccountSummary: React.FC = () => {
           </div>
         </div>
         
-        <div className="bg-gray-50 p-3 rounded-md">
-          <div className="text-sm text-gray-500">Today's P&L</div>
+        <div className="bg-neutral-50 p-3 rounded-md">
+          <div className="text-sm text-neutral-500">Today's P&L</div>
           <div className="flex items-center">
             <span className={`text-xl font-bold ${(accountData.todayPnL || 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
               {(accountData.todayPnL || 0) >= 0 ? '+' : ''}{accountData.todayPnL?.toFixed(2)}

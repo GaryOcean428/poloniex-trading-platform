@@ -191,7 +191,7 @@ const ErrorFallback = ({
   const isCriticalError = errorCount > 3;
   
   return (
-    <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-neutral-100 flex items-center justify-center p-4">
       <div className="bg-white p-6 rounded-lg shadow-md max-w-lg w-full">
         <div className="flex items-center justify-center text-red-500 mb-4">
           <AlertTriangle size={48} />
@@ -237,7 +237,7 @@ const ErrorFallback = ({
             </button>
             
             <button
-              className="w-full bg-gray-600 hover:bg-gray-700 text-white py-2 px-4 rounded-md shadow-sm flex items-center justify-center"
+              className="w-full bg-neutral-600 hover:bg-neutral-700 text-white py-2 px-4 rounded-md shadow-sm flex items-center justify-center"
               onClick={navigateToDashboard}
             >
               <ArrowLeft className="h-4 w-4 mr-2" />
@@ -245,7 +245,7 @@ const ErrorFallback = ({
             </button>
             
             <button
-              className="w-full bg-gray-200 hover:bg-gray-300 text-gray-800 py-2 px-4 rounded-md shadow-sm"
+              className="w-full bg-neutral-200 hover:bg-neutral-300 text-neutral-800 py-2 px-4 rounded-md shadow-sm"
               onClick={() => window.location.reload()}
             >
               Reload Application
@@ -261,7 +261,7 @@ const ErrorFallback = ({
             </button>
             
             {showDetails && errorInfo && (
-              <div className="bg-gray-100 p-4 rounded mt-2 overflow-auto max-h-60">
+              <div className="bg-neutral-100 p-4 rounded mt-2 overflow-auto max-h-60">
                 <p className="font-mono text-xs whitespace-pre-wrap">{errorInfo.componentStack}</p>
               </div>
             )}

@@ -197,9 +197,9 @@ const LiveDataDashboard: React.FC = () => {
   };
   
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+    <div className="bg-white dark:bg-neutral-800 rounded-lg shadow p-6">
       <div className="flex justify-between items-center mb-6">
-        <h2 className="text-xl font-semibold text-gray-800 dark:text-white">Advanced Live Data Dashboard</h2>
+        <h2 className="text-xl font-semibold text-neutral-800 dark:text-white">Advanced Live Data Dashboard</h2>
         
         <div className="flex items-center space-x-4">
           <button
@@ -217,7 +217,7 @@ const LiveDataDashboard: React.FC = () => {
             <select
               value={selectedSymbol}
               onChange={(e) => setSelectedSymbol(e.target.value)}
-              className="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+              className="block w-full pl-3 pr-10 py-2 text-base border-neutral-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md dark:bg-neutral-700 dark:border-neutral-600 dark:text-white"
             >
               {symbols.map(symbol => (
                 <option key={symbol} value={symbol}>{symbol}</option>
@@ -229,7 +229,7 @@ const LiveDataDashboard: React.FC = () => {
             <select
               value={timeframe}
               onChange={(e) => setTimeframe(e.target.value)}
-              className="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+              className="block w-full pl-3 pr-10 py-2 text-base border-neutral-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md dark:bg-neutral-700 dark:border-neutral-600 dark:text-white"
             >
               {timeframes.map(tf => (
                 <option key={tf} value={tf}>{tf}</option>
@@ -241,7 +241,7 @@ const LiveDataDashboard: React.FC = () => {
             onClick={fetchMarketData}
             disabled={isLoading}
             className={`px-4 py-2 rounded-md text-white ${
-              isLoading ? 'bg-gray-400' : 'bg-blue-600 hover:bg-blue-700'
+              isLoading ? 'bg-neutral-400' : 'bg-blue-600 hover:bg-blue-700'
             }`}
           >
             {isLoading ? 'Loading...' : 'Refresh'}
@@ -258,9 +258,9 @@ const LiveDataDashboard: React.FC = () => {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
         {marketSummary && (
           <>
-            <div className="bg-gray-100 dark:bg-gray-700 p-4 rounded-md">
-              <h3 className="text-lg font-medium mb-2 text-gray-700 dark:text-gray-300">Price</h3>
-              <div className="text-3xl font-bold text-gray-800 dark:text-white">
+            <div className="bg-neutral-100 dark:bg-neutral-700 p-4 rounded-md">
+              <h3 className="text-lg font-medium mb-2 text-neutral-700 dark:text-neutral-300">Price</h3>
+              <div className="text-3xl font-bold text-neutral-800 dark:text-white">
                 ${marketSummary.lastPrice.toFixed(2)}
               </div>
               <div className={`text-sm font-medium ${
@@ -273,17 +273,17 @@ const LiveDataDashboard: React.FC = () => {
               </div>
             </div>
             
-            <div className="bg-gray-100 dark:bg-gray-700 p-4 rounded-md">
-              <h3 className="text-lg font-medium mb-2 text-gray-700 dark:text-gray-300">24h Range</h3>
+            <div className="bg-neutral-100 dark:bg-neutral-700 p-4 rounded-md">
+              <h3 className="text-lg font-medium mb-2 text-neutral-700 dark:text-neutral-300">24h Range</h3>
               <div className="flex justify-between items-center">
                 <div>
-                  <div className="text-sm text-gray-500 dark:text-gray-400">Low</div>
-                  <div className="text-lg font-semibold text-gray-800 dark:text-white">
+                  <div className="text-sm text-neutral-500 dark:text-neutral-400">Low</div>
+                  <div className="text-lg font-semibold text-neutral-800 dark:text-white">
                     ${marketSummary.low24h.toFixed(2)}
                   </div>
                 </div>
                 <div className="w-full mx-4">
-                  <div className="w-full bg-gray-200 rounded-full h-2.5 dark:bg-gray-600">
+                  <div className="w-full bg-neutral-200 rounded-full h-2.5 dark:bg-neutral-600">
                     <div 
                       className="h-2.5 rounded-full bg-blue-600" 
                       style={{ 
@@ -294,20 +294,20 @@ const LiveDataDashboard: React.FC = () => {
                   </div>
                 </div>
                 <div>
-                  <div className="text-sm text-gray-500 dark:text-gray-400">High</div>
-                  <div className="text-lg font-semibold text-gray-800 dark:text-white">
+                  <div className="text-sm text-neutral-500 dark:text-neutral-400">High</div>
+                  <div className="text-lg font-semibold text-neutral-800 dark:text-white">
                     ${marketSummary.high24h.toFixed(2)}
                   </div>
                 </div>
               </div>
             </div>
             
-            <div className="bg-gray-100 dark:bg-gray-700 p-4 rounded-md">
-              <h3 className="text-lg font-medium mb-2 text-gray-700 dark:text-gray-300">24h Volume</h3>
-              <div className="text-3xl font-bold text-gray-800 dark:text-white">
+            <div className="bg-neutral-100 dark:bg-neutral-700 p-4 rounded-md">
+              <h3 className="text-lg font-medium mb-2 text-neutral-700 dark:text-neutral-300">24h Volume</h3>
+              <div className="text-3xl font-bold text-neutral-800 dark:text-white">
                 {marketSummary.volume24h.toLocaleString(undefined, { maximumFractionDigits: 2 })}
               </div>
-              <div className="text-sm text-gray-500 dark:text-gray-400">
+              <div className="text-sm text-neutral-500 dark:text-neutral-400">
                 ${marketSummary.quoteVolume24h.toLocaleString(undefined, { maximumFractionDigits: 2 })}
               </div>
             </div>
@@ -316,9 +316,9 @@ const LiveDataDashboard: React.FC = () => {
       </div>
       
       <div className="mb-6">
-        <h3 className="text-lg font-medium mb-2 text-gray-700 dark:text-gray-300">Price Chart</h3>
+        <h3 className="text-lg font-medium mb-2 text-neutral-700 dark:text-neutral-300">Price Chart</h3>
         
-        <div className="h-80 bg-gray-50 dark:bg-gray-700 p-4 rounded-md">
+        <div className="h-80 bg-neutral-50 dark:bg-neutral-700 p-4 rounded-md">
           {marketData.length > 0 ? (
             <ResponsiveContainer width="100%" height="100%">
               <LineChart
@@ -358,7 +358,7 @@ const LiveDataDashboard: React.FC = () => {
             </ResponsiveContainer>
           ) : (
             <div className="flex items-center justify-center h-full">
-              <p className="text-gray-500 dark:text-gray-400">No data available</p>
+              <p className="text-neutral-500 dark:text-neutral-400">No data available</p>
             </div>
           )}
         </div>
@@ -378,30 +378,30 @@ const LiveDataDashboard: React.FC = () => {
               <div>
                 <h4 className="text-md font-medium mb-2 text-green-600">Bids</h4>
                 <div className="overflow-y-auto max-h-60">
-                  <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-                    <thead className="bg-gray-50 dark:bg-gray-800">
+                  <table className="min-w-full divide-y divide-neutral-200 dark:divide-neutral-700">
+                    <thead className="bg-neutral-50 dark:bg-neutral-800">
                       <tr>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                        <th className="px-6 py-3 text-left text-xs font-medium text-neutral-500 dark:text-neutral-300 uppercase tracking-wider">
                           Price
                         </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                        <th className="px-6 py-3 text-left text-xs font-medium text-neutral-500 dark:text-neutral-300 uppercase tracking-wider">
                           Amount
                         </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                        <th className="px-6 py-3 text-left text-xs font-medium text-neutral-500 dark:text-neutral-300 uppercase tracking-wider">
                           Total
                         </th>
                       </tr>
                     </thead>
-                    <tbody className="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700">
+                    <tbody className="bg-white divide-y divide-neutral-200 dark:bg-neutral-900 dark:divide-neutral-700">
                       {orderBook.bids.map((bid, index) => (
                         <tr key={index}>
                           <td className="px-6 py-2 whitespace-nowrap text-sm font-medium text-green-600">
                             {bid.price.toFixed(2)}
                           </td>
-                          <td className="px-6 py-2 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                          <td className="px-6 py-2 whitespace-nowrap text-sm text-neutral-500 dark:text-neutral-400">
                             {bid.amount.toFixed(6)}
                           </td>
-                          <td className="px-6 py-2 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                          <td className="px-6 py-2 whitespace-nowrap text-sm text-neutral-500 dark:text-neutral-400">
                             {(bid.price * bid.amount).toFixed(2)}
                           </td>
                         </tr>
@@ -414,30 +414,30 @@ const LiveDataDashboard: React.FC = () => {
               <div>
                 <h4 className="text-md font-medium mb-2 text-red-600">Asks</h4>
                 <div className="overflow-y-auto max-h-60">
-                  <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-                    <thead className="bg-gray-50 dark:bg-gray-800">
+                  <table className="min-w-full divide-y divide-neutral-200 dark:divide-neutral-700">
+                    <thead className="bg-neutral-50 dark:bg-neutral-800">
                       <tr>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                        <th className="px-6 py-3 text-left text-xs font-medium text-neutral-500 dark:text-neutral-300 uppercase tracking-wider">
                           Price
                         </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                        <th className="px-6 py-3 text-left text-xs font-medium text-neutral-500 dark:text-neutral-300 uppercase tracking-wider">
                           Amount
                         </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                        <th className="px-6 py-3 text-left text-xs font-medium text-neutral-500 dark:text-neutral-300 uppercase tracking-wider">
                           Total
                         </th>
                       </tr>
                     </thead>
-                    <tbody className="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700">
+                    <tbody className="bg-white divide-y divide-neutral-200 dark:bg-neutral-900 dark:divide-neutral-700">
                       {orderBook.asks.map((ask, index) => (
                         <tr key={index}>
                           <td className="px-6 py-2 whitespace-nowrap text-sm font-medium text-red-600">
                             {ask.price.toFixed(2)}
                           </td>
-                          <td className="px-6 py-2 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                          <td className="px-6 py-2 whitespace-nowrap text-sm text-neutral-500 dark:text-neutral-400">
                             {ask.amount.toFixed(6)}
                           </td>
-                          <td className="px-6 py-2 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                          <td className="px-6 py-2 whitespace-nowrap text-sm text-neutral-500 dark:text-neutral-400">
                             {(ask.price * ask.amount).toFixed(2)}
                           </td>
                         </tr>
@@ -449,7 +449,7 @@ const LiveDataDashboard: React.FC = () => {
             </div>
           ) : (
             <div className="flex items-center justify-center h-40">
-              <p className="text-gray-500 dark:text-gray-400">No order book data available</p>
+              <p className="text-neutral-500 dark:text-neutral-400">No order book data available</p>
             </div>
           )}
         </TabsContent>
@@ -457,27 +457,27 @@ const LiveDataDashboard: React.FC = () => {
         <TabsContent value="recent-trades">
           {trades.length > 0 ? (
             <div className="overflow-y-auto max-h-60">
-              <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-                <thead className="bg-gray-50 dark:bg-gray-800">
+              <table className="min-w-full divide-y divide-neutral-200 dark:divide-neutral-700">
+                <thead className="bg-neutral-50 dark:bg-neutral-800">
                   <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    <th className="px-6 py-3 text-left text-xs font-medium text-neutral-500 dark:text-neutral-300 uppercase tracking-wider">
                       Time
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    <th className="px-6 py-3 text-left text-xs font-medium text-neutral-500 dark:text-neutral-300 uppercase tracking-wider">
                       Price
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    <th className="px-6 py-3 text-left text-xs font-medium text-neutral-500 dark:text-neutral-300 uppercase tracking-wider">
                       Amount
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    <th className="px-6 py-3 text-left text-xs font-medium text-neutral-500 dark:text-neutral-300 uppercase tracking-wider">
                       Side
                     </th>
                   </tr>
                 </thead>
-                <tbody className="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700">
+                <tbody className="bg-white divide-y divide-neutral-200 dark:bg-neutral-900 dark:divide-neutral-700">
                   {trades.map((trade) => (
                     <tr key={trade.id}>
-                      <td className="px-6 py-2 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                      <td className="px-6 py-2 whitespace-nowrap text-sm text-neutral-500 dark:text-neutral-400">
                         {new Date(trade.timestamp).toLocaleTimeString()}
                       </td>
                       <td className={`px-6 py-2 whitespace-nowrap text-sm font-medium ${
@@ -485,7 +485,7 @@ const LiveDataDashboard: React.FC = () => {
                       }`}>
                         {trade.price.toFixed(2)}
                       </td>
-                      <td className="px-6 py-2 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                      <td className="px-6 py-2 whitespace-nowrap text-sm text-neutral-500 dark:text-neutral-400">
                         {trade.amount.toFixed(6)}
                       </td>
                       <td className="px-6 py-2 whitespace-nowrap text-sm">
@@ -504,7 +504,7 @@ const LiveDataDashboard: React.FC = () => {
             </div>
           ) : (
             <div className="flex items-center justify-center h-40">
-              <p className="text-gray-500 dark:text-gray-400">No trade data available</p>
+              <p className="text-neutral-500 dark:text-neutral-400">No trade data available</p>
             </div>
           )}
         </TabsContent>
@@ -512,34 +512,34 @@ const LiveDataDashboard: React.FC = () => {
         <TabsContent value="anomalies">
           {anomalies.length > 0 ? (
             <div className="overflow-y-auto max-h-60">
-              <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-                <thead className="bg-gray-50 dark:bg-gray-800">
+              <table className="min-w-full divide-y divide-neutral-200 dark:divide-neutral-700">
+                <thead className="bg-neutral-50 dark:bg-neutral-800">
                   <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    <th className="px-6 py-3 text-left text-xs font-medium text-neutral-500 dark:text-neutral-300 uppercase tracking-wider">
                       Time
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    <th className="px-6 py-3 text-left text-xs font-medium text-neutral-500 dark:text-neutral-300 uppercase tracking-wider">
                       Price
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    <th className="px-6 py-3 text-left text-xs font-medium text-neutral-500 dark:text-neutral-300 uppercase tracking-wider">
                       Confidence
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    <th className="px-6 py-3 text-left text-xs font-medium text-neutral-500 dark:text-neutral-300 uppercase tracking-wider">
                       Type
                     </th>
                   </tr>
                 </thead>
-                <tbody className="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700">
+                <tbody className="bg-white divide-y divide-neutral-200 dark:bg-neutral-900 dark:divide-neutral-700">
                   {anomalies.map((anomaly, index) => (
                     <tr key={index}>
-                      <td className="px-6 py-2 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                      <td className="px-6 py-2 whitespace-nowrap text-sm text-neutral-500 dark:text-neutral-400">
                         {new Date(anomaly.timestamp).toLocaleString()}
                       </td>
-                      <td className="px-6 py-2 whitespace-nowrap text-sm font-medium text-gray-800 dark:text-white">
+                      <td className="px-6 py-2 whitespace-nowrap text-sm font-medium text-neutral-800 dark:text-white">
                         {anomaly.close.toFixed(2)}
                       </td>
-                      <td className="px-6 py-2 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-                        <div className="w-full bg-gray-200 rounded-full h-2.5 dark:bg-gray-700">
+                      <td className="px-6 py-2 whitespace-nowrap text-sm text-neutral-500 dark:text-neutral-400">
+                        <div className="w-full bg-neutral-200 rounded-full h-2.5 dark:bg-neutral-700">
                           <div 
                             className="h-2.5 rounded-full bg-red-600" 
                             style={{ width: `${((anomaly.confidence || 0) * 100).toFixed(0)}%` }}
@@ -559,7 +559,7 @@ const LiveDataDashboard: React.FC = () => {
             </div>
           ) : (
             <div className="flex items-center justify-center h-40">
-              <p className="text-gray-500 dark:text-gray-400">No anomalies detected</p>
+              <p className="text-neutral-500 dark:text-neutral-400">No anomalies detected</p>
             </div>
           )}
         </TabsContent>
@@ -567,16 +567,16 @@ const LiveDataDashboard: React.FC = () => {
         <TabsContent value="configuration">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
-              <h4 className="text-md font-medium mb-4 text-gray-700 dark:text-gray-300">Data Sources</h4>
+              <h4 className="text-md font-medium mb-4 text-neutral-700 dark:text-neutral-300">Data Sources</h4>
               
               <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">
                   Primary Source
                 </label>
                 <select
                   value={config.primarySource}
                   onChange={(e) => updateConfig({ primarySource: e.target.value as any })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                  className="w-full px-3 py-2 border border-neutral-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-neutral-700 dark:border-neutral-600 dark:text-white"
                 >
                   <option value="poloniex">Poloniex API</option>
                   <option value="websocket">WebSocket</option>
@@ -585,13 +585,13 @@ const LiveDataDashboard: React.FC = () => {
               </div>
               
               <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">
                   Aggregation Method
                 </label>
                 <select
                   value={config.aggregationMethod}
                   onChange={(e) => updateConfig({ aggregationMethod: e.target.value as any })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                  className="w-full px-3 py-2 border border-neutral-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-neutral-700 dark:border-neutral-600 dark:text-white"
                 >
                   <option value="weighted">Weighted Average</option>
                   <option value="median">Median</option>
@@ -600,7 +600,7 @@ const LiveDataDashboard: React.FC = () => {
               </div>
               
               <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">
                   Update Interval (ms)
                 </label>
                 <input
@@ -610,13 +610,13 @@ const LiveDataDashboard: React.FC = () => {
                   step="100"
                   value={config.updateInterval}
                   onChange={(e) => updateConfig({ updateInterval: parseInt(e.target.value) })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                  className="w-full px-3 py-2 border border-neutral-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-neutral-700 dark:border-neutral-600 dark:text-white"
                 />
               </div>
             </div>
             
             <div>
-              <h4 className="text-md font-medium mb-4 text-gray-700 dark:text-gray-300">Data Processing</h4>
+              <h4 className="text-md font-medium mb-4 text-neutral-700 dark:text-neutral-300">Data Processing</h4>
               
               <div className="flex items-center mb-4">
                 <input
@@ -624,15 +624,15 @@ const LiveDataDashboard: React.FC = () => {
                   id="enableAnomalyDetection"
                   checked={config.enableAnomalyDetection}
                   onChange={(e) => updateConfig({ enableAnomalyDetection: e.target.checked })}
-                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-neutral-300 rounded"
                 />
-                <label htmlFor="enableAnomalyDetection" className="ml-2 block text-sm text-gray-700 dark:text-gray-300">
+                <label htmlFor="enableAnomalyDetection" className="ml-2 block text-sm text-neutral-700 dark:text-neutral-300">
                   Enable Anomaly Detection
                 </label>
               </div>
               
               <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">
                   Anomaly Threshold (standard deviations)
                 </label>
                 <input
@@ -642,7 +642,7 @@ const LiveDataDashboard: React.FC = () => {
                   step="0.1"
                   value={config.anomalyThreshold}
                   onChange={(e) => updateConfig({ anomalyThreshold: parseFloat(e.target.value) })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                  className="w-full px-3 py-2 border border-neutral-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-neutral-700 dark:border-neutral-600 dark:text-white"
                 />
               </div>
               
@@ -652,21 +652,21 @@ const LiveDataDashboard: React.FC = () => {
                   id="enableDataNormalization"
                   checked={config.enableDataNormalization}
                   onChange={(e) => updateConfig({ enableDataNormalization: e.target.checked })}
-                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-neutral-300 rounded"
                 />
-                <label htmlFor="enableDataNormalization" className="ml-2 block text-sm text-gray-700 dark:text-gray-300">
+                <label htmlFor="enableDataNormalization" className="ml-2 block text-sm text-neutral-700 dark:text-neutral-300">
                   Enable Data Normalization
                 </label>
               </div>
               
               <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">
                   Log Level
                 </label>
                 <select
                   value={config.logLevel}
                   onChange={(e) => updateConfig({ logLevel: e.target.value as any })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                  className="w-full px-3 py-2 border border-neutral-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-neutral-700 dark:border-neutral-600 dark:text-white"
                 >
                   <option value="debug">Debug</option>
                   <option value="info">Info</option>

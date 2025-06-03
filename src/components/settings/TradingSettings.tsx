@@ -70,7 +70,7 @@ const TradingSettings: React.FC = () => {
               <option value="10">10x</option>
               <option value="20">20x</option>
             </Select>
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="text-xs text-neutral-500 mt-1">
               Higher leverage increases both potential profits and risks.
             </p>
           </div>
@@ -87,7 +87,7 @@ const TradingSettings: React.FC = () => {
               onChange={handleRiskChange}
               className="w-full"
             />
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="text-xs text-neutral-500 mt-1">
               Percentage of your account balance to risk on each trade.
             </p>
           </div>
@@ -104,7 +104,7 @@ const TradingSettings: React.FC = () => {
               onChange={handleStopLossChange}
               className="w-full"
             />
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="text-xs text-neutral-500 mt-1">
               Automatically close position if price moves against you by this percentage.
             </p>
           </div>
@@ -121,7 +121,7 @@ const TradingSettings: React.FC = () => {
               onChange={handleTakeProfitChange}
               className="w-full"
             />
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="text-xs text-neutral-500 mt-1">
               Automatically close position if price moves in your favor by this percentage.
             </p>
           </div>
@@ -138,7 +138,7 @@ const TradingSettings: React.FC = () => {
               onChange={handleTrailingStopChange}
               className="w-full"
             />
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="text-xs text-neutral-500 mt-1">
               Trailing stop follows price movement to lock in profits.
             </p>
           </div>
@@ -146,7 +146,7 @@ const TradingSettings: React.FC = () => {
           <div className="flex items-center justify-between">
             <div>
               <Label htmlFor="autoTrading">Automated Trading</Label>
-              <p className="text-xs text-gray-500">
+              <p className="text-xs text-neutral-500">
                 Enable automated trading based on your strategies.
               </p>
             </div>
@@ -159,7 +159,7 @@ const TradingSettings: React.FC = () => {
         </div>
       </CardBody>
       <CardFooter>
-        <p className="text-xs text-gray-500">
+        <p className="text-xs text-neutral-500">
           These settings will be applied to all new trades. Existing trades will not be affected.
         </p>
       </CardFooter>
