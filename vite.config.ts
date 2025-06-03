@@ -6,7 +6,7 @@ import path from 'path';
 export default defineConfig({
   plugins: [react()],
   optimizeDeps: {
-    exclude: ['lucide-react'],
+    exclude: [],
   },
   build: {
     rollupOptions: {
@@ -23,7 +23,8 @@ export default defineConfig({
   base: './',
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, './src')
+      '@': path.resolve(__dirname, './src'),
+      'lucide-react': path.resolve(__dirname, './src/lucide-react.tsx'),
     }
   }
 });

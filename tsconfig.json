@@ -22,7 +22,8 @@
     "experimentalDecorators": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["src/*"],
+      "lucide-react": ["./src/lucide-react.tsx"]
     },
     "incremental": true
   },
