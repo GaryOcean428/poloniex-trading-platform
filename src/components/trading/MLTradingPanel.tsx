@@ -21,7 +21,7 @@ interface MLModelConfig {
 interface MLModelInfo {
   id: string;
   name: string;
-  description?: string;
+  description: string;
   config: MLModelConfig;
   performance: {
     accuracy: number;
@@ -39,8 +39,7 @@ interface MLModelInfo {
 }
 
 const MLTradingPanel: React.FC = () => {
-  const { getMarketData } = usePoloniexData();
-  const { executeStrategy } = useTradingContext();
+  const { fetchMarketData } = usePoloniexData();
   const { defaultPair, timeframe } = useSettings();
   
   const [modelConfig, setModelConfig] = useState<MLModelConfig>({

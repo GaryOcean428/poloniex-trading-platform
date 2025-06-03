@@ -63,7 +63,7 @@ const LiveDataDashboard: React.FC = () => {
       setIsLoading(false);
     } catch (err) {
       console.error('Error fetching market data:', err);
-      setError(`Failed to fetch market data: ${err.message}`);
+      setError(`Failed to fetch market data: ${err instanceof Error ? err.message : 'Unknown error'}`);
       setIsLoading(false);
     }
   }, [selectedSymbol, timeframe]);
@@ -542,10 +542,10 @@ const LiveDataDashboard: React.FC = () => {
                         <div className="w-full bg-gray-200 rounded-full h-2.5 dark:bg-gray-700">
                           <div 
                             className="h-2.5 rounded-full bg-red-600" 
-                            style={{ width: `${(anomaly.confidence * 100).toFixed(0)}%` }}
+                            style={{ width: `${((anomaly.confidence || 0) * 100).toFixed(0)}%` }}
                           ></div>
                         </div>
-                        <span className="text-xs">{(anomaly.confidence * 100).toFixed(0)}%</span>
+                        <span className="text-xs">{((anomaly.confidence || 0) * 100).toFixed(0)}%</span>
                       </td>
                       <td className="px-6 py-2 whitespace-nowrap text-sm">
                         <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800 dark:bg-yellow-800 dark:text-yellow-100">

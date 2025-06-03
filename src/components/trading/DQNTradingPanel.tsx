@@ -22,7 +22,7 @@ interface DQNConfig {
 interface DQNModelInfo {
   id: string;
   name: string;
-  description?: string;
+  description: string;
   config: DQNConfig;
   performance: {
     averageReward: number;
@@ -51,8 +51,7 @@ interface DQNAction {
 }
 
 const DQNTradingPanel: React.FC = () => {
-  const { getMarketData } = usePoloniexData();
-  const { executeStrategy } = useTradingContext();
+  const { fetchMarketData } = usePoloniexData();
   const { defaultPair, timeframe } = useSettings();
   
   const [modelConfig, setModelConfig] = useState<Partial<DQNConfig>>({
@@ -193,7 +192,8 @@ const DQNTradingPanel: React.FC = () => {
     
     if (latestAction.action === 'buy') {
       // Execute buy strategy
-      executeStrategy({
+      // TODO: Implement executeStrategy functionality
+      console.log('DQN Strategy - BUY signal:', {
         type: 'DQN_STRATEGY',
         action: 'BUY',
         symbol: defaultPair,
@@ -203,7 +203,8 @@ const DQNTradingPanel: React.FC = () => {
       });
     } else if (latestAction.action === 'sell') {
       // Execute sell strategy
-      executeStrategy({
+      // TODO: Implement executeStrategy functionality
+      console.log('DQN Strategy - SELL signal:', {
         type: 'DQN_STRATEGY',
         action: 'SELL',
         symbol: defaultPair,
