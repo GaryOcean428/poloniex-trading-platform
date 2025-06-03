@@ -1,0 +1,60 @@
+import React from 'react';
+
+function createIcon(name: string) {
+  return function Icon(props: React.SVGProps<SVGSVGElement>) {
+    return <svg {...props} data-icon={name} />;
+  };
+}
+
+export const LayoutDashboard = createIcon('LayoutDashboard');
+export const LineChart = createIcon('LineChart');
+export const AlertCircle = createIcon('AlertCircle');
+export const AlertTriangle = createIcon('AlertTriangle');
+export const ArrowLeft = createIcon('ArrowLeft');
+export const ArrowRight = createIcon('ArrowRight');
+export const BarChart2 = createIcon('BarChart2');
+export const BarChart4 = createIcon('BarChart4');
+export const Bell = createIcon('Bell');
+export const Check = createIcon('Check');
+export const CheckCircle2 = createIcon('CheckCircle2');
+export const Chrome = createIcon('Chrome');
+export const Clock = createIcon('Clock');
+export const Copy = createIcon('Copy');
+export const CreditCard = createIcon('CreditCard');
+export const DollarSign = createIcon('DollarSign');
+export const Download = createIcon('Download');
+export const DownloadIcon = createIcon('DownloadIcon');
+export const Filter = createIcon('Filter');
+export const History = createIcon('History');
+export const Info = createIcon('Info');
+export const Key = createIcon('Key');
+export const Lock = createIcon('Lock');
+export const Menu = createIcon('Menu');
+export const MonitorSmartphone = createIcon('MonitorSmartphone');
+export const Pause = createIcon('Pause');
+export const Play = createIcon('Play');
+export const Plus = createIcon('Plus');
+export const RefreshCw = createIcon('RefreshCw');
+export const Search = createIcon('Search');
+export const Settings = createIcon('Settings');
+export const SettingsIcon = createIcon('SettingsIcon');
+export const Shield = createIcon('Shield');
+export const Sparkles = createIcon('Sparkles');
+export const TerminalSquare = createIcon('TerminalSquare');
+export const Trash2 = createIcon('Trash2');
+export const TrendingDown = createIcon('TrendingDown');
+export const TrendingUp = createIcon('TrendingUp');
+export const Upload = createIcon('Upload');
+export const User = createIcon('User');
+export const Volume2 = createIcon('Volume2');
+export const Wifi = createIcon('Wifi');
+export const WifiOff = createIcon('WifiOff');
+export const X = createIcon('X');
+export const Zap = createIcon('Zap');
+export const ArrowUpRight = createIcon('ArrowUpRight');
+export const ArrowDownRight = createIcon('ArrowDownRight');
+export const MessageSquare = createIcon('MessageSquare');
+export const Save = createIcon('Save');
+export const Loader = createIcon('Loader');
+export const ChevronDown = createIcon('ChevronDown');
+export const ChevronUp = createIcon('ChevronUp');
