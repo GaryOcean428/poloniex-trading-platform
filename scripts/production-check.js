@@ -1,17 +1,17 @@
 #!/usr/bin/env node
 
-const { execSync } = require('child_process');
-const fs = require('fs');
-const path = require('path');
-const readline = require('readline');
+import { execSync } from 'child_process';
+import fs from 'fs';
+import path from 'path';
+import readline from 'readline';
 
 // Configuration
 const config = {
   projectName: 'Poloniex Trading Platform',
-  testCommand: 'npm test',
-  buildCommand: 'npm run build',
-  lintCommand: 'npm run lint',
-  deployCommand: 'npm run deploy',
+  testCommand: 'yarn test',
+  buildCommand: 'yarn build',
+  lintCommand: 'yarn lint',
+  deployCommand: 'yarn deploy',
   requiredDependencies: [
     '@types/chrome',
     'react',
@@ -102,12 +102,12 @@ async function checkEnvironment() {
   const nodeVersion = process.version;
   console.log(`Node.js version: ${nodeVersion}`);
   
-  // Check npm version
+  // Check yarn version
   try {
-    const npmVersion = execSync('npm --version').toString().trim();
-    console.log(`npm version: ${npmVersion}`);
+    const yarnVersion = execSync('yarn --version').toString().trim();
+    console.log(`yarn version: ${yarnVersion}`);
   } catch (error) {
-    throw new Error('npm is not installed or not in PATH');
+    throw new Error('yarn is not installed or not in PATH');
   }
   
   // Check Git
@@ -153,7 +153,7 @@ async function checkDependencies() {
     const answer = await askQuestion('Install missing dependencies? (y/n): ');
     if (answer.toLowerCase() === 'y') {
       console.log('Installing missing dependencies...');
-      execSync(`npm install --save-dev ${missingDependencies.join(' ')}`, { stdio: 'inherit' });
+      execSync(`yarn add --dev ${missingDependencies.join(' ')}`, { stdio: 'inherit' });
     }
   } else {
     console.log(`${colors.green}✓ All required dependencies are installed${colors.reset}`);
@@ -162,7 +162,7 @@ async function checkDependencies() {
   // Check for outdated dependencies
   console.log('Checking for outdated dependencies...');
   try {
-    const outdatedOutput = execSync('npm outdated --json').toString();
+    const outdatedOutput = execSync('yarn outdated --json').toString();
     const outdatedDeps = JSON.parse(outdatedOutput);
     
     if (Object.keys(outdatedDeps).length > 0) {
@@ -175,7 +175,7 @@ async function checkDependencies() {
       const answer = await askQuestion('Update outdated dependencies? (y/n): ');
       if (answer.toLowerCase() === 'y') {
         console.log('Updating dependencies...');
-        execSync('npm update', { stdio: 'inherit' });
+        execSync('yarn upgrade', { stdio: 'inherit' });
       }
     } else {
       console.log(`${colors.green}✓ All dependencies are up to date${colors.reset}`);

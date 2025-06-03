@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
-const { execSync } = require('child_process');
-const fs = require('fs');
-const path = require('path');
+import { execSync } from 'child_process';
+import fs from 'fs';
+import path from 'path';
 
 // Configuration
 const config = {
@@ -73,7 +73,7 @@ function checkVercelCLI() {
     console.log(`${colors.green}✓ Vercel CLI is available${colors.reset}\n`);
   } catch (error) {
     console.log(`${colors.yellow}Vercel CLI not found, installing...${colors.reset}`);
-    execSync('npm install -g vercel', { stdio: 'inherit' });
+    execSync('yarn global add vercel', { stdio: 'inherit' });
     console.log(`${colors.green}✓ Vercel CLI installed${colors.reset}\n`);
   }
 }
@@ -111,7 +111,7 @@ function buildProject() {
   console.log(`${colors.blue}${colors.bright}Building project...${colors.reset}`);
   
   try {
-    execSync('npm run build', { stdio: 'inherit' });
+    execSync('yarn build', { stdio: 'inherit' });
     console.log(`${colors.green}✓ Build successful${colors.reset}\n`);
   } catch (error) {
     throw new Error('Build failed');
