@@ -430,9 +430,12 @@ export const trainMLModel = async (
     
     // Create models directory if it doesn't exist
     try {
-      const fs = require('fs');
-      if (!fs.existsSync(modelsDir)) {
-        fs.mkdirSync(modelsDir, { recursive: true });
+      // Dynamic import for Node.js environments only
+      if (typeof process !== 'undefined' && process.versions && process.versions.node) {
+        const fs = await import('fs');
+        if (!fs.existsSync(modelsDir)) {
+          fs.mkdirSync(modelsDir, { recursive: true });
+        }
       }
     } catch (error) {
       console.error('Error creating models directory:', error);
@@ -458,9 +461,12 @@ export const trainMLModel = async (
     
     // Save model info
     try {
-      const fs = require('fs');
-      const modelInfoPath = `${modelsDir}/${modelId}_info.json`;
-      fs.writeFileSync(modelInfoPath, JSON.stringify(modelInfo, null, 2));
+      // Dynamic import for Node.js environments only
+      if (typeof process !== 'undefined' && process.versions && process.versions.node) {
+        const fs = await import('fs');
+        const modelInfoPath = `${modelsDir}/${modelId}_info.json`;
+        fs.writeFileSync(modelInfoPath, JSON.stringify(modelInfo, null, 2));
+      }
     } catch (error) {
       console.error('Error saving model info:', error);
     }
@@ -495,21 +501,29 @@ export const predictWithMLModel = async (
     let std: number[] = [];
     
     try {
-      const fs = require('fs');
-      const statsPath = `${modelInfo.filePath}/stats.json`;
-      if (fs.existsSync(statsPath)) {
-        const stats = JSON.parse(fs.readFileSync(statsPath, 'utf8'));
-        mean = stats.mean;
-        std = stats.std;
+      // Dynamic import for Node.js environments only
+      if (typeof process !== 'undefined' && process.versions && process.versions.node) {
+        const fs = await import('fs');
+        const statsPath = `${modelInfo.filePath}/stats.json`;
+        if (fs.existsSync(statsPath)) {
+          const stats = JSON.parse(fs.readFileSync(statsPath, 'utf8'));
+          mean = stats.mean;
+          std = stats.std;
+        } else {
+          // If stats file doesn't exist, calculate from features
+          const result = calculateMeanAndStd(features);
+          mean = result.mean;
+          std = result.std;
+        }
       } else {
-        // If stats file doesn't exist, calculate from features
+        // Browser environment, calculate from features
         const result = calculateMeanAndStd(features);
         mean = result.mean;
         std = result.std;
       }
     } catch (error) {
       console.error('Error loading model stats:', error);
-      // Calculate from features if loading fails
+      // Fallback to calculating from features
       const result = calculateMeanAndStd(features);
       mean = result.mean;
       std = result.std;

@@ -525,9 +525,12 @@ export const trainDQNModel = async (
     const modelsDir = './models';
     
     try {
-      const fs = require('fs');
-      if (!fs.existsSync(modelsDir)) {
-        fs.mkdirSync(modelsDir, { recursive: true });
+      // Dynamic import for Node.js environments only
+      if (typeof process !== 'undefined' && process.versions && process.versions.node) {
+        const fs = await import('fs');
+        if (!fs.existsSync(modelsDir)) {
+          fs.mkdirSync(modelsDir, { recursive: true });
+        }
       }
     } catch (error) {
       console.error('Error creating models directory:', error);
@@ -562,9 +565,12 @@ export const trainDQNModel = async (
     
     // Save model info
     try {
-      const fs = require('fs');
-      const modelInfoPath = `${modelsDir}/${modelId}_info.json`;
-      fs.writeFileSync(modelInfoPath, JSON.stringify(modelInfo, null, 2));
+      // Dynamic import for Node.js environments only
+      if (typeof process !== 'undefined' && process.versions && process.versions.node) {
+        const fs = await import('fs');
+        const modelInfoPath = `${modelsDir}/${modelId}_info.json`;
+        fs.writeFileSync(modelInfoPath, JSON.stringify(modelInfo, null, 2));
+      }
     } catch (error) {
       console.error('Error saving model info:', error);
     }
@@ -665,9 +671,12 @@ export const continueDQNTraining = async (
     
     // Save model info
     try {
-      const fs = require('fs');
-      const modelInfoPath = `${modelsDir}/${newModelId}_info.json`;
-      fs.writeFileSync(modelInfoPath, JSON.stringify(newModelInfo, null, 2));
+      // Dynamic import for Node.js environments only
+      if (typeof process !== 'undefined' && process.versions && process.versions.node) {
+        const fs = await import('fs');
+        const modelInfoPath = `${modelsDir}/${newModelId}_info.json`;
+        fs.writeFileSync(modelInfoPath, JSON.stringify(newModelInfo, null, 2));
+      }
     } catch (error) {
       console.error('Error saving model info:', error);
     }
