@@ -102,7 +102,7 @@ const ExtensionDownload: React.FC = () => {
                     </>
                   )}
                 </button>
-                <p className="text-sm text-gray-500 mt-2">
+                <p className="text-sm text-neutral-500 mt-2">
                   {downloadComplete 
                     ? "Extension package downloaded successfully! Extract the ZIP file to continue."
                     : "Downloads a ZIP file containing the extension files"}
@@ -114,7 +114,7 @@ const ExtensionDownload: React.FC = () => {
                   <div className="bg-blue-100 text-blue-700 rounded-full h-6 w-6 flex items-center justify-center flex-shrink-0 mt-1 mr-3">1</div>
                   <div>
                     <h3 className="font-semibold">Extract the ZIP file</h3>
-                    <p className="text-gray-600">Unzip the downloaded file to a location you'll remember, like your Desktop or Documents folder.</p>
+                    <p className="text-neutral-600">Unzip the downloaded file to a location you'll remember, like your Desktop or Documents folder.</p>
                   </div>
                 </div>
                 
@@ -122,7 +122,7 @@ const ExtensionDownload: React.FC = () => {
                   <div className="bg-blue-100 text-blue-700 rounded-full h-6 w-6 flex items-center justify-center flex-shrink-0 mt-1 mr-3">2</div>
                   <div>
                     <h3 className="font-semibold">Open Chrome Extensions Page</h3>
-                    <p className="text-gray-600">In Chrome, go to <code className="bg-gray-100 px-1.5 py-0.5 rounded">chrome://extensions</code> or select <strong>Menu</strong> <ArrowRight className="inline h-3 w-3" /> <strong>Settings</strong> <ArrowRight className="inline h-3 w-3" /> <strong>Extensions</strong></p>
+                    <p className="text-neutral-600">In Chrome, go to <code className="bg-neutral-100 px-1.5 py-0.5 rounded">chrome://extensions</code> or select <strong>Menu</strong> <ArrowRight className="inline h-3 w-3" /> <strong>Settings</strong> <ArrowRight className="inline h-3 w-3" /> <strong>Extensions</strong></p>
                   </div>
                 </div>
                 
@@ -130,7 +130,7 @@ const ExtensionDownload: React.FC = () => {
                   <div className="bg-blue-100 text-blue-700 rounded-full h-6 w-6 flex items-center justify-center flex-shrink-0 mt-1 mr-3">3</div>
                   <div>
                     <h3 className="font-semibold">Enable Developer Mode</h3>
-                    <p className="text-gray-600">Toggle the "Developer mode" switch in the top-right corner of the extensions page.</p>
+                    <p className="text-neutral-600">Toggle the "Developer mode" switch in the top-right corner of the extensions page.</p>
                   </div>
                 </div>
                 
@@ -138,7 +138,7 @@ const ExtensionDownload: React.FC = () => {
                   <div className="bg-blue-100 text-blue-700 rounded-full h-6 w-6 flex items-center justify-center flex-shrink-0 mt-1 mr-3">4</div>
                   <div>
                     <h3 className="font-semibold">Load the Extension</h3>
-                    <p className="text-gray-600">Click the "Load unpacked" button and select the folder where you extracted the ZIP file.</p>
+                    <p className="text-neutral-600">Click the "Load unpacked" button and select the folder where you extracted the ZIP file.</p>
                   </div>
                 </div>
                 
@@ -146,7 +146,7 @@ const ExtensionDownload: React.FC = () => {
                   <div className="bg-blue-100 text-blue-700 rounded-full h-6 w-6 flex items-center justify-center flex-shrink-0 mt-1 mr-3">5</div>
                   <div>
                     <h3 className="font-semibold">Pin the Extension</h3>
-                    <p className="text-gray-600">Click the puzzle piece icon in Chrome's toolbar, find the Poloniex Trading Extension, and click the pin icon.</p>
+                    <p className="text-neutral-600">Click the puzzle piece icon in Chrome's toolbar, find the Poloniex Trading Extension, and click the pin icon.</p>
                   </div>
                 </div>
               </div>
@@ -316,24 +316,24 @@ const ExtensionDownload: React.FC = () => {
                 <>
                   <div className="mt-4">
                     <h3 className="font-semibold mb-2">Extension Integration</h3>
-                    <p className="text-gray-600 mb-3">
+                    <p className="text-neutral-600 mb-3">
                       To connect the extension with your personal trading platform, you'll need to note the extension ID after installation.
                     </p>
                     
-                    <div className="bg-gray-100 p-3 rounded-md mb-2">
+                    <div className="bg-neutral-100 p-3 rounded-md mb-2">
                       <div className="font-mono text-sm flex items-center">
-                        <Lock className="h-4 w-4 mr-2 text-gray-500" />
+                        <Lock className="h-4 w-4 mr-2 text-neutral-500" />
                         jcdmopolmojdhpclfbemdpcdneobmnje
                       </div>
                     </div>
                     
-                    <p className="text-sm text-gray-500 mb-4">
+                    <p className="text-sm text-neutral-500 mb-4">
                       After installation, you can find this ID on the extensions page by clicking "Details" on the Poloniex Trading Extension.
                     </p>
                     
                     <button
                       onClick={() => copyExtensionId('jcdmopolmojdhpclfbemdpcdneobmnje')}
-                      className="bg-gray-200 hover:bg-gray-300 text-gray-800 py-2 px-4 rounded-md text-sm flex items-center"
+                      className="bg-neutral-200 hover:bg-neutral-300 text-neutral-800 py-2 px-4 rounded-md text-sm flex items-center"
                     >
                       {copiedToClipboard ? (
                         <>
@@ -350,25 +350,25 @@ const ExtensionDownload: React.FC = () => {
                   
                   <div className="mt-4">
                     <h3 className="font-semibold mb-2">Technical Details</h3>
-                    <ul className="space-y-2 text-sm text-gray-600">
+                    <ul className="space-y-2 text-sm text-neutral-600">
                       <li className="flex items-start">
-                        <Check className="h-4 w-4 text-gray-500 mr-2 mt-0.5" />
+                        <Check className="h-4 w-4 text-neutral-500 mr-2 mt-0.5" />
                         <span>Uses Manifest v3 for Chrome Extensions</span>
                       </li>
                       <li className="flex items-start">
-                        <Check className="h-4 w-4 text-gray-500 mr-2 mt-0.5" />
+                        <Check className="h-4 w-4 text-neutral-500 mr-2 mt-0.5" />
                         <span>API keys are stored securely in extension storage</span>
                       </li>
                       <li className="flex items-start">
-                        <Check className="h-4 w-4 text-gray-500 mr-2 mt-0.5" />
+                        <Check className="h-4 w-4 text-neutral-500 mr-2 mt-0.5" />
                         <span>Content scripts inject into TradingView and Poloniex</span>
                       </li>
                       <li className="flex items-start">
-                        <Check className="h-4 w-4 text-gray-500 mr-2 mt-0.5" />
+                        <Check className="h-4 w-4 text-neutral-500 mr-2 mt-0.5" />
                         <span>Background service worker handles API connections</span>
                       </li>
                       <li className="flex items-start">
-                        <Check className="h-4 w-4 text-gray-500 mr-2 mt-0.5" />
+                        <Check className="h-4 w-4 text-neutral-500 mr-2 mt-0.5" />
                         <span>WebSocket connection for real-time data streaming</span>
                       </li>
                     </ul>
@@ -392,35 +392,35 @@ const ExtensionDownload: React.FC = () => {
                 <div className="bg-blue-100 text-blue-700 rounded-full h-6 w-6 flex items-center justify-center flex-shrink-0 mt-0.5 mr-2">1</div>
                 <div>
                   <h3 className="font-semibold">TradingView + Poloniex Integration</h3>
-                  <p className="text-sm text-gray-600">Use TradingView's powerful charts with Poloniex's trading capabilities.</p>
+                  <p className="text-sm text-neutral-600">Use TradingView's powerful charts with Poloniex's trading capabilities.</p>
                 </div>
               </li>
               <li className="flex items-start">
                 <div className="bg-blue-100 text-blue-700 rounded-full h-6 w-6 flex items-center justify-center flex-shrink-0 mt-0.5 mr-2">2</div>
                 <div>
                   <h3 className="font-semibold">One-Click Trading</h3>
-                  <p className="text-sm text-gray-600">Execute trades directly from TradingView charts without switching tabs.</p>
+                  <p className="text-sm text-neutral-600">Execute trades directly from TradingView charts without switching tabs.</p>
                 </div>
               </li>
               <li className="flex items-start">
                 <div className="bg-blue-100 text-blue-700 rounded-full h-6 w-6 flex items-center justify-center flex-shrink-0 mt-0.5 mr-2">3</div>
                 <div>
                   <h3 className="font-semibold">Automated Strategies</h3>
-                  <p className="text-sm text-gray-600">Create indicator-based strategies that can execute trades automatically.</p>
+                  <p className="text-sm text-neutral-600">Create indicator-based strategies that can execute trades automatically.</p>
                 </div>
               </li>
               <li className="flex items-start">
                 <div className="bg-blue-100 text-blue-700 rounded-full h-6 w-6 flex items-center justify-center flex-shrink-0 mt-0.5 mr-2">4</div>
                 <div>
                   <h3 className="font-semibold">Risk Management</h3>
-                  <p className="text-sm text-gray-600">Set position size limits and customize risk parameters for safer trading.</p>
+                  <p className="text-sm text-neutral-600">Set position size limits and customize risk parameters for safer trading.</p>
                 </div>
               </li>
               <li className="flex items-start">
                 <div className="bg-blue-100 text-blue-700 rounded-full h-6 w-6 flex items-center justify-center flex-shrink-0 mt-0.5 mr-2">5</div>
                 <div>
                   <h3 className="font-semibold">Data Synchronization</h3>
-                  <p className="text-sm text-gray-600">Keep your trading platform and charts in sync for better decision making.</p>
+                  <p className="text-sm text-neutral-600">Keep your trading platform and charts in sync for better decision making.</p>
                 </div>
               </li>
             </ul>
@@ -435,7 +435,7 @@ const ExtensionDownload: React.FC = () => {
                   alt="TradingView chart with extension buttons" 
                   className="w-full"
                 />
-                <div className="p-2 text-xs text-gray-500">TradingView Integration</div>
+                <div className="p-2 text-xs text-neutral-500">TradingView Integration</div>
               </div>
               <div className="border rounded-md overflow-hidden">
                 <img 
@@ -443,7 +443,7 @@ const ExtensionDownload: React.FC = () => {
                   alt="Extension popup interface" 
                   className="w-full"
                 />
-                <div className="p-2 text-xs text-gray-500">Trading Dashboard</div>
+                <div className="p-2 text-xs text-neutral-500">Trading Dashboard</div>
               </div>
               <div className="border rounded-md overflow-hidden">
                 <img 
@@ -451,7 +451,7 @@ const ExtensionDownload: React.FC = () => {
                   alt="Strategy builder interface" 
                   className="w-full"
                 />
-                <div className="p-2 text-xs text-gray-500">Strategy Builder</div>
+                <div className="p-2 text-xs text-neutral-500">Strategy Builder</div>
               </div>
             </div>
           </div>

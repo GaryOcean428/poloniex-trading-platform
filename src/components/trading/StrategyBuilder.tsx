@@ -666,7 +666,7 @@ const StrategyBuilder: React.FC = () => {
                   ? 'bg-green-100 text-green-800' 
                   : testResult.signal === 'SELL' 
                     ? 'bg-red-100 text-red-800' 
-                    : 'bg-gray-100 text-gray-800'
+                    : 'bg-neutral-100 text-neutral-800'
               }`}>
                 <div className="font-medium">
                   Signal: {testResult.signal || 'NEUTRAL'}
@@ -688,14 +688,14 @@ const StrategyBuilder: React.FC = () => {
                 <div 
                   key={strategy.id}
                   className={`p-3 border rounded-md cursor-pointer ${
-                    selectedStrategy?.id === strategy.id ? 'border-blue-500 bg-blue-50' : 'border-gray-200'
+                    selectedStrategy?.id === strategy.id ? 'border-blue-500 bg-blue-50' : 'border-neutral-200'
                   }`}
                   onClick={() => selectStrategy(strategy)}
                 >
                   <div className="flex justify-between items-center">
                     <div>
                       <div className="font-medium">{strategy.name}</div>
-                      <div className="text-xs text-gray-500">{strategy.type}</div>
+                      <div className="text-xs text-neutral-500">{strategy.type}</div>
                     </div>
                     <button
                       className="text-red-500 hover:text-red-700"
@@ -711,7 +711,7 @@ const StrategyBuilder: React.FC = () => {
               ))}
               
               {strategies.length === 0 && (
-                <div className="text-center py-4 text-gray-500">
+                <div className="text-center py-4 text-neutral-500">
                   No saved strategies yet
                 </div>
               )}

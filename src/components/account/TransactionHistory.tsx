@@ -68,7 +68,7 @@ const TransactionHistory: React.FC = () => {
             className={`px-3 py-1.5 text-sm rounded-md ${
               filter === 'all' 
                 ? 'bg-blue-600 text-white' 
-                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                : 'bg-neutral-100 text-neutral-700 hover:bg-neutral-200'
             }`}
           >
             All
@@ -78,7 +78,7 @@ const TransactionHistory: React.FC = () => {
             className={`px-3 py-1.5 text-sm rounded-md flex items-center ${
               filter === 'deposit' 
                 ? 'bg-green-600 text-white' 
-                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                : 'bg-neutral-100 text-neutral-700 hover:bg-neutral-200'
             }`}
           >
             <Upload className="h-3.5 w-3.5 mr-1" />
@@ -89,7 +89,7 @@ const TransactionHistory: React.FC = () => {
             className={`px-3 py-1.5 text-sm rounded-md flex items-center ${
               filter === 'withdrawal' 
                 ? 'bg-red-600 text-white' 
-                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                : 'bg-neutral-100 text-neutral-700 hover:bg-neutral-200'
             }`}
           >
             <Download className="h-3.5 w-3.5 mr-1" />
@@ -100,7 +100,7 @@ const TransactionHistory: React.FC = () => {
             className={`px-3 py-1.5 text-sm rounded-md flex items-center ${
               filter === 'trade' 
                 ? 'bg-blue-600 text-white' 
-                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                : 'bg-neutral-100 text-neutral-700 hover:bg-neutral-200'
             }`}
           >
             <RefreshCw className="h-3.5 w-3.5 mr-1" />
@@ -115,16 +115,16 @@ const TransactionHistory: React.FC = () => {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search transactions..."
-              className="pl-9 pr-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="pl-9 pr-3 py-2 border border-neutral-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             />
-            <Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
+            <Search className="absolute left-3 top-2.5 h-4 w-4 text-neutral-400" />
           </div>
           
           <div className="relative">
             <select
               value={dateRange}
               onChange={(e) => setDateRange(e.target.value as any)}
-              className="pl-9 pr-8 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent appearance-none"
+              className="pl-9 pr-8 py-2 border border-neutral-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent appearance-none"
             >
               <option value="all">All Time</option>
               <option value="week">Last Week</option>
@@ -132,45 +132,45 @@ const TransactionHistory: React.FC = () => {
               <option value="quarter">Last Quarter</option>
               <option value="year">Last Year</option>
             </select>
-            <Filter className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
+            <Filter className="absolute left-3 top-2.5 h-4 w-4 text-neutral-400" />
           </div>
           
-          <button className="flex items-center px-3 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200">
+          <button className="flex items-center px-3 py-2 bg-neutral-100 text-neutral-700 rounded-md hover:bg-neutral-200">
             <DownloadIcon className="h-4 w-4 mr-1" />
             Export
           </button>
         </div>
       </div>
       
-      <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+      <div className="bg-white rounded-lg border border-neutral-200 overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
+          <table className="min-w-full divide-y divide-neutral-200">
+            <thead className="bg-neutral-50">
               <tr>
-                <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">
                   Transaction ID
                 </th>
-                <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">
                   Type
                 </th>
-                <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">
                   Description
                 </th>
-                <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">
                   Amount
                 </th>
-                <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">
                   Status
                 </th>
-                <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">
                   Date
                 </th>
               </tr>
             </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
+            <tbody className="bg-white divide-y divide-neutral-200">
               {filteredTransactions.map((transaction) => (
-                <tr key={transaction.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
+                <tr key={transaction.id} className="hover:bg-neutral-50">
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-neutral-500">
                     <span className="font-mono">{transaction.id}</span>
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap">
@@ -192,12 +192,12 @@ const TransactionHistory: React.FC = () => {
                           <RefreshCw className={`h-4 w-4 text-blue-600`} />
                         )}
                       </div>
-                      <div className="text-sm font-medium text-gray-900">
+                      <div className="text-sm font-medium text-neutral-900">
                         {transaction.type}
                       </div>
                     </div>
                   </td>
-                  <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-neutral-500">
                     {transaction.description}
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap">
@@ -206,7 +206,7 @@ const TransactionHistory: React.FC = () => {
                         ? 'text-red-600' 
                         : transaction.type === 'DEPOSIT'
                           ? 'text-green-600'
-                          : 'text-gray-900'
+                          : 'text-neutral-900'
                     }`}>
                       {transaction.type === 'WITHDRAWAL' ? '-' : transaction.type === 'DEPOSIT' ? '+' : ''}
                       {formatCurrency(transaction.amount)}
@@ -223,7 +223,7 @@ const TransactionHistory: React.FC = () => {
                       {transaction.status}
                     </span>
                   </td>
-                  <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-neutral-500">
                     {new Date(transaction.timestamp).toLocaleString()}
                   </td>
                 </tr>
@@ -231,7 +231,7 @@ const TransactionHistory: React.FC = () => {
               
               {filteredTransactions.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-gray-500">
+                  <td colSpan={6} className="px-4 py-8 text-center text-neutral-500">
                     No transactions found matching your filters.
                   </td>
                 </tr>
@@ -242,14 +242,14 @@ const TransactionHistory: React.FC = () => {
       </div>
       
       <div className="flex justify-between items-center">
-        <div className="text-sm text-gray-500">
+        <div className="text-sm text-neutral-500">
           Showing {filteredTransactions.length} of {mockTransactions.length} transactions
         </div>
         <div className="flex">
-          <button className="px-3 py-1 border border-gray-300 rounded-l-md bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">
+          <button className="px-3 py-1 border border-neutral-300 rounded-l-md bg-white text-neutral-700 hover:bg-neutral-50 disabled:opacity-50 disabled:cursor-not-allowed">
             Previous
           </button>
-          <button className="px-3 py-1 border border-gray-300 border-l-0 rounded-r-md bg-white text-gray-700 hover:bg-gray-50">
+          <button className="px-3 py-1 border border-neutral-300 border-l-0 rounded-r-md bg-white text-neutral-700 hover:bg-neutral-50">
             Next
           </button>
         </div>

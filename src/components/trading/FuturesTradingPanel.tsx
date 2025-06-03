@@ -160,14 +160,14 @@ const FuturesTradingPanel: React.FC<FuturesTradingPanelProps> = ({ symbol }) => 
               <div className="grid grid-cols-2 gap-2">
                 <Button
                   type="button"
-                  className={`w-full ${orderSide === OrderSide.BUY ? 'bg-green-600' : 'bg-gray-200 text-gray-800'}`}
+                  className={`w-full ${orderSide === OrderSide.BUY ? 'bg-green-600' : 'bg-neutral-200 text-neutral-800'}`}
                   onClick={() => setOrderSide(OrderSide.BUY)}
                 >
                   Buy/Long
                 </Button>
                 <Button
                   type="button"
-                  className={`w-full ${orderSide === OrderSide.SELL ? 'bg-red-600' : 'bg-gray-200 text-gray-800'}`}
+                  className={`w-full ${orderSide === OrderSide.SELL ? 'bg-red-600' : 'bg-neutral-200 text-neutral-800'}`}
                   onClick={() => setOrderSide(OrderSide.SELL)}
                 >
                   Sell/Short
@@ -182,14 +182,14 @@ const FuturesTradingPanel: React.FC<FuturesTradingPanelProps> = ({ symbol }) => 
                 <div className="grid grid-cols-2 gap-2">
                   <Button
                     type="button"
-                    className={`w-full ${positionSide === PositionSide.LONG ? 'bg-blue-600' : 'bg-gray-200 text-gray-800'}`}
+                    className={`w-full ${positionSide === PositionSide.LONG ? 'bg-blue-600' : 'bg-neutral-200 text-neutral-800'}`}
                     onClick={() => setPositionSide(PositionSide.LONG)}
                   >
                     Long
                   </Button>
                   <Button
                     type="button"
-                    className={`w-full ${positionSide === PositionSide.SHORT ? 'bg-blue-600' : 'bg-gray-200 text-gray-800'}`}
+                    className={`w-full ${positionSide === PositionSide.SHORT ? 'bg-blue-600' : 'bg-neutral-200 text-neutral-800'}`}
                     onClick={() => setPositionSide(PositionSide.SHORT)}
                   >
                     Short
@@ -277,14 +277,14 @@ const FuturesTradingPanel: React.FC<FuturesTradingPanelProps> = ({ symbol }) => 
               <div className="grid grid-cols-2 gap-2">
                 <Button
                   type="button"
-                  className={`w-full ${marginMode === MarginMode.CROSS ? 'bg-blue-600' : 'bg-gray-200 text-gray-800'}`}
+                  className={`w-full ${marginMode === MarginMode.CROSS ? 'bg-blue-600' : 'bg-neutral-200 text-neutral-800'}`}
                   onClick={() => setMarginMode(MarginMode.CROSS)}
                 >
                   Cross
                 </Button>
                 <Button
                   type="button"
-                  className={`w-full ${marginMode === MarginMode.ISOLATED ? 'bg-blue-600' : 'bg-gray-200 text-gray-800'}`}
+                  className={`w-full ${marginMode === MarginMode.ISOLATED ? 'bg-blue-600' : 'bg-neutral-200 text-neutral-800'}`}
                   onClick={() => setMarginMode(MarginMode.ISOLATED)}
                 >
                   Isolated
@@ -333,47 +333,47 @@ const FuturesTradingPanel: React.FC<FuturesTradingPanelProps> = ({ symbol }) => 
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <span className="text-sm text-gray-500">Side</span>
+                  <span className="text-sm text-neutral-500">Side</span>
                   <p className={`font-medium ${currentPosition.side === OrderSide.BUY ? 'text-green-600' : 'text-red-600'}`}>
                     {currentPosition.side === OrderSide.BUY ? 'Long' : 'Short'}
                   </p>
                 </div>
                 <div>
-                  <span className="text-sm text-gray-500">Size</span>
+                  <span className="text-sm text-neutral-500">Size</span>
                   <p className="font-medium">{currentPosition.qty}</p>
                 </div>
                 <div>
-                  <span className="text-sm text-gray-500">Entry Price</span>
+                  <span className="text-sm text-neutral-500">Entry Price</span>
                   <p className="font-medium">{currentPosition.openAvgPx}</p>
                 </div>
                 <div>
-                  <span className="text-sm text-gray-500">Mark Price</span>
+                  <span className="text-sm text-neutral-500">Mark Price</span>
                   <p className="font-medium">{currentPosition.markPx}</p>
                 </div>
                 <div>
-                  <span className="text-sm text-gray-500">Liquidation Price</span>
+                  <span className="text-sm text-neutral-500">Liquidation Price</span>
                   <p className="font-medium">{currentPosition.liqPx}</p>
                 </div>
                 <div>
-                  <span className="text-sm text-gray-500">Margin Mode</span>
+                  <span className="text-sm text-neutral-500">Margin Mode</span>
                   <p className="font-medium">{currentPosition.mgnMode}</p>
                 </div>
                 <div>
-                  <span className="text-sm text-gray-500">Leverage</span>
+                  <span className="text-sm text-neutral-500">Leverage</span>
                   <p className="font-medium">{currentPosition.lever}x</p>
                 </div>
                 <div>
-                  <span className="text-sm text-gray-500">Margin</span>
+                  <span className="text-sm text-neutral-500">Margin</span>
                   <p className="font-medium">{currentPosition.mgn}</p>
                 </div>
                 <div>
-                  <span className="text-sm text-gray-500">PnL</span>
+                  <span className="text-sm text-neutral-500">PnL</span>
                   <p className={`font-medium ${parseFloat(currentPosition.pnl) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                     {currentPosition.pnl} ({parseFloat(currentPosition.uplRatio) * 100}%)
                   </p>
                 </div>
                 <div>
-                  <span className="text-sm text-gray-500">ADL</span>
+                  <span className="text-sm text-neutral-500">ADL</span>
                   <p className="font-medium">{currentPosition.adl}</p>
                 </div>
               </div>
@@ -393,25 +393,25 @@ const FuturesTradingPanel: React.FC<FuturesTradingPanelProps> = ({ symbol }) => 
           
           {/* Account Balance Summary */}
           {accountBalance && (
-            <div className="mt-6 pt-4 border-t border-gray-200">
+            <div className="mt-6 pt-4 border-t border-neutral-200">
               <h3 className="font-medium mb-2">Account Summary</h3>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <span className="text-sm text-gray-500">Equity</span>
+                  <span className="text-sm text-neutral-500">Equity</span>
                   <p className="font-medium">{accountBalance.eq}</p>
                 </div>
                 <div>
-                  <span className="text-sm text-gray-500">Available</span>
+                  <span className="text-sm text-neutral-500">Available</span>
                   <p className="font-medium">
                     {(parseFloat(accountBalance.eq) - parseFloat(accountBalance.im)).toFixed(2)}
                   </p>
                 </div>
                 <div>
-                  <span className="text-sm text-gray-500">Initial Margin</span>
+                  <span className="text-sm text-neutral-500">Initial Margin</span>
                   <p className="font-medium">{accountBalance.im}</p>
                 </div>
                 <div>
-                  <span className="text-sm text-gray-500">Maintenance Margin</span>
+                  <span className="text-sm text-neutral-500">Maintenance Margin</span>
                   <p className="font-medium">{accountBalance.mm}</p>
                 </div>
               </div>

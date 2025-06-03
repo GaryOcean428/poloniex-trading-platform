@@ -55,7 +55,7 @@ const Dashboard: React.FC = () => {
                   <div className="flex justify-between items-center">
                     <div>
                       <h3 className="font-medium">{strategy.name}</h3>
-                      <p className="text-sm text-gray-500">{strategy.parameters.pair}</p>
+                      <p className="text-sm text-neutral-500">{strategy.parameters.pair}</p>
                     </div>
                     <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
                       Active
@@ -65,7 +65,7 @@ const Dashboard: React.FC = () => {
               ))}
             
             {activeStrategies.length === 0 && (
-              <p className="text-gray-500 text-sm">No active strategies</p>
+              <p className="text-neutral-500 text-sm">No active strategies</p>
             )}
           </div>
         </div>
