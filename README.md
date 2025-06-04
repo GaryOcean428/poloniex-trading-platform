@@ -38,6 +38,7 @@ npm install
 ```
 VITE_POLONIEX_API_KEY=your_api_key
 VITE_POLONIEX_API_SECRET=your_api_secret
+VITE_BACKEND_URL=http://localhost:3000
 ```
 
 ### Development
