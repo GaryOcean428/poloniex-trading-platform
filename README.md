@@ -38,7 +38,11 @@ npm install
 ```
 VITE_POLONIEX_API_KEY=your_api_key
 VITE_POLONIEX_API_SECRET=your_api_secret
+VITE_BACKEND_URL=http://localhost:3000
 ```
+
+When deploying to Vercel, you can omit `VITE_BACKEND_URL` so the frontend calls
+the built-in serverless functions under the same domain.
 
 ### Development
 
@@ -75,6 +79,12 @@ Deploy to production:
 ```bash
 npm run deploy
 ```
+
+### Serverless Functions on Vercel
+
+The `/api` directory contains Vercel serverless functions. During deployment,
+these functions are built and hosted alongside the frontend. The `health`
+endpoint can be reached at `/api/health` to verify the backend is running.
 
 ## Architecture
 
