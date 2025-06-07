@@ -17,7 +17,7 @@ A comprehensive trading platform for Poloniex with advanced features including a
 
 ### Prerequisites
 
-- Node.js (v16 or higher)
+- Node.js (v20 or higher)
 - npm (v8 or higher)
 - Chrome browser (for extension features)
 
