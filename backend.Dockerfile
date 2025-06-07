@@ -1,6 +1,6 @@
 # Use an official Node.js runtime as a parent image
-FROM node:20-alpine AS base
 
+FROM node:20-alpine AS base
 WORKDIR /usr/src/app
 
 # Install dependencies
