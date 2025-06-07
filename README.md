@@ -31,7 +31,7 @@ cd poloniex-trading-platform
 
 2. Install dependencies:
 ```bash
-npm install
+yarn install
 ```
 
 3. Create a `.env` file in the root directory with your API keys:
@@ -45,37 +45,77 @@ VITE_BACKEND_URL=http://localhost:3000
 
 Start the development server:
 ```bash
-npm run dev
+yarn dev
 ```
 
 ### Testing
 
 Run the test suite:
 ```bash
-npm test
+yarn test
 ```
 
 Run tests with coverage:
 ```bash
-npm run test:coverage
+yarn test:coverage
 ```
 
 ### Production
 
 Check if the application is ready for production:
 ```bash
-npm run production-check
+yarn production-check
 ```
 
 Build for production:
 ```bash
-npm run build
+yarn build
 ```
 
-Deploy to production:
+## Deployment
+
+### Deploying to Vercel
+
+To deploy to Vercel (current default for `deploy` script):
 ```bash
-npm run deploy
+yarn deploy
 ```
+This uses the `scripts/deploy.js` file which is configured for Vercel deployments.
+
+### Deploying to Railway
+
+This project can be deployed to Railway using a two-service architecture: a backend API service and a frontend static site service.
+
+**1. Backend Service (API)**
+
+*   **Creation**: In Railway, create a new service and connect it to your GitHub repository.
+*   **Configuration**:
+    *   In the Railway service settings (for this backend service), navigate to the "Config-as-code" section and set the "Railway Config File" path to `railway.json`. This instructs Railway to use our `railway.json` file, which is configured to build the service using the `backend.Dockerfile` (renamed from `Dockerfile` to allow the frontend service to default to Nixpacks).
+    *   The `backend.Dockerfile` sets up the Node.js environment and runs `server/index.js`.
+    *   The `railway.json` also specifies a health check at `/api/health`.
+*   **Environment Variables**: Set these in the Railway service dashboard:
+    *   `VITE_POLONIEX_API_KEY`: Your Poloniex API key (if the backend needs to make authenticated calls - currently `server/index.js` uses public websockets, but other functionality might require it).
+    *   `PORT`: Railway sets this automatically. The server is configured to use it.
+    *   *(Add any other necessary backend variables here, e.g., database URLs, if your project evolves to use them).*
+
+**2. Frontend Service (Static Site)**
+
+*   **Creation**: In Railway, create another new service, also connected to your GitHub repository.
+*   **Configuration**:
+    *   In the Railway service settings (for this frontend service):
+        *   Ensure **no path is set** for the "Railway Config File" (under "Config-as-code"). This service will be configured directly via the UI settings.
+        *   Select **Nixpacks** as the builder (it should default to this, as no `Dockerfile` is present in the root).
+        *   Set the **Build Command** to `yarn build`.
+        *   Set the **Publish Directory** to `dist`. Railway will serve the static files from this directory.
+*   **Environment Variables**: Set these in the Railway service dashboard:
+    *   `VITE_BACKEND_URL`: **Crucial.** This must be the public URL of your deployed backend service on Railway (e.g., `https://your-backend-service-name.up.railway.app`).
+    *   `VITE_POLONIEX_API_KEY`: Your Poloniex API key, if your *frontend client code* makes direct authenticated API calls to Poloniex.
+    *   *(Add any other necessary frontend Vite variables here).*
+
+**General Railway Tips:**
+*   After deploying, check the deployment logs in Railway for both services to ensure everything started correctly.
+*   Use the service URLs provided by Railway to access your frontend application and backend API.
+*   Manage environment variables securely through the Railway dashboard.
 
 ## Architecture
 
