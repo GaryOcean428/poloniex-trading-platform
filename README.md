@@ -90,8 +90,8 @@ This project can be deployed to Railway using a two-service architecture: a back
 
 *   **Creation**: In Railway, create a new service and connect it to your GitHub repository.
 *   **Configuration**:
-    *   In the Railway service settings (for this backend service), navigate to the "Config-as-code" section and set the "Railway Config File" path to `railway.json`. This instructs Railway to use our `railway.json` file, which is configured to build the service using the `Dockerfile` located in the project root.
-    *   The `Dockerfile` sets up the Node.js environment and runs `server/index.js`.
+    *   In the Railway service settings (for this backend service), navigate to the "Config-as-code" section and set the "Railway Config File" path to `railway.json`. This instructs Railway to use our `railway.json` file, which is configured to build the service using the `backend.Dockerfile` (renamed from `Dockerfile` to allow the frontend service to default to Nixpacks).
+    *   The `backend.Dockerfile` sets up the Node.js environment and runs `server/index.js`.
     *   The `railway.json` also specifies a health check at `/api/health`.
 *   **Environment Variables**: Set these in the Railway service dashboard:
     *   `VITE_POLONIEX_API_KEY`: Your Poloniex API key (if the backend needs to make authenticated calls - currently `server/index.js` uses public websockets, but other functionality might require it).
@@ -104,7 +104,7 @@ This project can be deployed to Railway using a two-service architecture: a back
 *   **Configuration**:
     *   In the Railway service settings (for this frontend service):
         *   Ensure **no path is set** for the "Railway Config File" (under "Config-as-code"). This service will be configured directly via the UI settings.
-        *   Select **Nixpacks** as the builder.
+        *   Select **Nixpacks** as the builder (it should default to this, as no `Dockerfile` is present in the root).
         *   Set the **Build Command** to `yarn build`.
         *   Set the **Publish Directory** to `dist`. Railway will serve the static files from this directory.
 *   **Environment Variables**: Set these in the Railway service dashboard:
