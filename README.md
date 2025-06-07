@@ -91,6 +91,7 @@ This project can be deployed to Railway using a two-service architecture: a back
 *   **Creation**: In Railway, create a new service and connect it to your GitHub repository.
 *   **Configuration**:
     *   In the Railway service settings (for this backend service), navigate to the "Config-as-code" section and set the "Railway Config File" path to `railway.json`. This instructs Railway to use our `railway.json` file, which is configured to build the service using the `backend.Dockerfile` (renamed from `Dockerfile` to allow the frontend service to default to Nixpacks).
+    *   A `.dockerignore` file is also present in the root to ensure a clean build by preventing local development files (like `node_modules/` and `.env`) from interfering with the Docker build process.
     *   The `backend.Dockerfile` sets up the Node.js environment and runs `server/index.js`.
     *   The `railway.json` also specifies a health check at `/api/health`.
 *   **Environment Variables**: Set these in the Railway service dashboard:
