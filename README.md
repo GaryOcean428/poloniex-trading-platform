@@ -90,9 +90,9 @@ This project can be deployed to Railway using a two-service architecture: a back
 
 *   **Creation**: In Railway, create a new service and connect it to your GitHub repository.
 *   **Configuration**:
-    *   Railway will use the `Dockerfile` and `railway.json` file in the root of the project to configure the build and deployment.
+    *   In the Railway service settings (for this backend service), navigate to the "Config-as-code" section and set the "Railway Config File" path to `railway.json`. This instructs Railway to use our `railway.json` file, which is configured to build the service using the `Dockerfile` located in the project root.
     *   The `Dockerfile` sets up the Node.js environment and runs `server/index.js`.
-    *   The `railway.json` specifies Dockerfile usage and a health check at `/api/health`.
+    *   The `railway.json` also specifies a health check at `/api/health`.
 *   **Environment Variables**: Set these in the Railway service dashboard:
     *   `VITE_POLONIEX_API_KEY`: Your Poloniex API key (if the backend needs to make authenticated calls - currently `server/index.js` uses public websockets, but other functionality might require it).
     *   `PORT`: Railway sets this automatically. The server is configured to use it.
@@ -102,8 +102,11 @@ This project can be deployed to Railway using a two-service architecture: a back
 
 *   **Creation**: In Railway, create another new service, also connected to your GitHub repository.
 *   **Configuration**:
-    *   **Build Command**: Set this to `yarn build` (or `npm run build`).
-    *   **Publish Directory**: Set this to `dist`. Railway will serve the static files from this directory.
+    *   In the Railway service settings (for this frontend service):
+        *   Ensure **no path is set** for the "Railway Config File" (under "Config-as-code"). This service will be configured directly via the UI settings.
+        *   Select **Nixpacks** as the builder.
+        *   Set the **Build Command** to `yarn build`.
+        *   Set the **Publish Directory** to `dist`. Railway will serve the static files from this directory.
 *   **Environment Variables**: Set these in the Railway service dashboard:
     *   `VITE_BACKEND_URL`: **Crucial.** This must be the public URL of your deployed backend service on Railway (e.g., `https://your-backend-service-name.up.railway.app`).
     *   `VITE_POLONIEX_API_KEY`: Your Poloniex API key, if your *frontend client code* makes direct authenticated API calls to Poloniex.
