@@ -169,6 +169,23 @@ The Chrome extension provides additional functionality:
 - Market monitoring
 - Custom alerts
 
+## Dependency Management and Node Versioning
+
+### Node.js Version Consistency
+
+This project uses Node.js. The required version is specified in the `engines` field in `package.json` and is also used in the `backend.Dockerfile`.
+
+When changing the Node.js version used for development, in the Dockerfile, or for Nixpacks builds (via `package.json`'s `engines` field):
+1.  Ensure your local development environment matches the intended Node.js version.
+2.  After switching Node.js versions locally, regenerate the `yarn.lock` file by running:
+    ```bash
+    yarn install
+    ```
+3.  Commit the updated `yarn.lock` file to the repository.
+
+This practice ensures that dependency resolution is consistent across development, CI, and deployment environments, preventing potential "works on my machine" issues or unexpected behavior due to dependency differences. The `yarn install --frozen-lockfile` command used in Docker builds relies on an up-to-date and consistent `yarn.lock` file.
+
+
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
