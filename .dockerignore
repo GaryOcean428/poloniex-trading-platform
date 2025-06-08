@@ -1,0 +1,25 @@
+# Git files
+.git
+.gitignore
+
+# Node modules - crucial to prevent local modules from overwriting
+# the ones installed by 'yarn install' in the Dockerfile
+node_modules/
+
+# Local environment files
+.env
+*.env
+
+# Log files
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Optional: OS-generated files
+.DS_Store
+Thumbs.db
+
+# Optional: Frontend build artifacts not needed for backend runtime
+coverage/
+dist/
+build/
