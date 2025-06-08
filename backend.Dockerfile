@@ -4,13 +4,13 @@ FROM node:20-alpine AS base
 WORKDIR /usr/src/app
 
 # Install dependencies
-# Copy only package.json and yarn.lock to leverage Docker cache
 COPY package.json yarn.lock ./
-# Cache buster: Mon Nov 06 12:00:00 UTC 2023
+RUN corepack enable yarn
+# Cache buster: Tue Nov 07 10:00:00 UTC 2023
 RUN yarn install --frozen-lockfile
 
-# Copy the rest of the application code
-COPY . .
+# Copy only the server code
+COPY server ./server
 
 # Expose the port the app runs on.
 # Railway will automatically set the PORT environment variable.
