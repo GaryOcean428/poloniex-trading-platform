@@ -128,19 +128,19 @@ const Settings: React.FC = () => {
                 </a>
               </li>
               <li>
-                <a href="#notifications" className="flex items-center py-2 px-3 rounded-md text-gray-700 hover:bg-gray-50">
+                <a href="#notifications" className="flex items-center py-2 px-3 rounded-md text-neutral-700 hover:bg-neutral-50">
                   <Bell className="h-5 w-5 mr-3" />
                   Notifications
                 </a>
               </li>
               <li>
-                <a href="#extension" className="flex items-center py-2 px-3 rounded-md text-gray-700 hover:bg-gray-50">
+                <a href="#extension" className="flex items-center py-2 px-3 rounded-md text-neutral-700 hover:bg-neutral-50">
                   <MessageSquare className="h-5 w-5 mr-3" />
                   Extension Settings
                 </a>
               </li>
               <li>
-                <a href="#account" className="flex items-center py-2 px-3 rounded-md text-gray-700 hover:bg-gray-50">
+                <a href="#account" className="flex items-center py-2 px-3 rounded-md text-neutral-700 hover:bg-neutral-50">
                   <User className="h-5 w-5 mr-3" />
                   Account
                 </a>
@@ -199,7 +199,7 @@ const Settings: React.FC = () => {
               
               <div className="space-y-4">
                 <div>
-                  <label htmlFor="apiKey" className="block text-sm font-medium text-gray-700">Poloniex API Key</label>
+                  <label htmlFor="apiKey" className="block text-sm font-medium text-neutral-700">Poloniex API Key</label>
                   <input
                     type="password"
                     id="apiKey"
@@ -212,7 +212,7 @@ const Settings: React.FC = () => {
                 </div>
                 
                 <div>
-                  <label htmlFor="apiSecret" className="block text-sm font-medium text-gray-700">API Secret</label>
+                  <label htmlFor="apiSecret" className="block text-sm font-medium text-neutral-700">API Secret</label>
                   <input
                     type="password"
                     id="apiSecret"
@@ -222,7 +222,7 @@ const Settings: React.FC = () => {
                     className="mt-1 block w-full input"
                     placeholder="Enter your API secret"
                   />
-                  <p className="mt-1 text-sm text-gray-500">
+                  <p className="mt-1 text-sm text-neutral-500">
                     Your API keys are stored securely in your browser's local storage and never shared.
                   </p>
                 </div>
@@ -234,9 +234,9 @@ const Settings: React.FC = () => {
                     type="checkbox"
                     checked={formData.isLiveTrading}
                     onChange={handleChange}
-                    className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                    className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-neutral-300 rounded"
                   />
-                  <label htmlFor="isLiveTrading" className="ml-2 block text-sm text-gray-700">
+                  <label htmlFor="isLiveTrading" className="ml-2 block text-sm text-neutral-700">
                     Enable live trading
                   </label>
                 </div>
@@ -256,7 +256,7 @@ const Settings: React.FC = () => {
                 <div className="flex items-center justify-between">
                   <div>
                     <h3 className="font-medium">Email Notifications</h3>
-                    <p className="text-sm text-gray-500">Receive important account updates via email</p>
+                    <p className="text-sm text-neutral-500">Receive important account updates via email</p>
                   </div>
                   <div className="ml-4">
                     <input
@@ -265,7 +265,7 @@ const Settings: React.FC = () => {
                       name="emailNotifications"
                       checked={formData.emailNotifications}
                       onChange={handleChange}
-                      className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                      className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-neutral-300 rounded"
                     />
                   </div>
                 </div>
@@ -273,7 +273,7 @@ const Settings: React.FC = () => {
                 <div className="flex items-center justify-between">
                   <div>
                     <h3 className="font-medium">Trade Notifications</h3>
-                    <p className="text-sm text-gray-500">Get notified when trades are executed</p>
+                    <p className="text-sm text-neutral-500">Get notified when trades are executed</p>
                   </div>
                   <div className="ml-4">
                     <input
@@ -282,7 +282,7 @@ const Settings: React.FC = () => {
                       name="tradeNotifications"
                       checked={formData.tradeNotifications}
                       onChange={handleChange}
-                      className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                      className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-neutral-300 rounded"
                     />
                   </div>
                 </div>
@@ -290,7 +290,7 @@ const Settings: React.FC = () => {
                 <div className="flex items-center justify-between">
                   <div>
                     <h3 className="font-medium">Price Alerts</h3>
-                    <p className="text-sm text-gray-500">Receive alerts when prices reach set thresholds</p>
+                    <p className="text-sm text-neutral-500">Receive alerts when prices reach set thresholds</p>
                   </div>
                   <div className="ml-4">
                     <input
@@ -299,7 +299,7 @@ const Settings: React.FC = () => {
                       name="priceAlerts"
                       checked={formData.priceAlerts}
                       onChange={handleChange}
-                      className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                      className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-neutral-300 rounded"
                     />
                   </div>
                 </div>
@@ -316,7 +316,7 @@ const Settings: React.FC = () => {
                 <div className="flex items-center justify-between">
                   <div>
                     <h3 className="font-medium">Show Extension Icon</h3>
-                    <p className="text-sm text-gray-500">Display the extension icon in your browser</p>
+                    <p className="text-sm text-neutral-500">Display the extension icon in your browser</p>
                   </div>
                   <div className="ml-4">
                     <input
@@ -325,7 +325,7 @@ const Settings: React.FC = () => {
                       name="showExtension"
                       checked={formData.showExtension}
                       onChange={handleChange}
-                      className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                      className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-neutral-300 rounded"
                     />
                   </div>
                 </div>
@@ -333,7 +333,7 @@ const Settings: React.FC = () => {
                 <div className="flex items-center justify-between">
                   <div>
                     <h3 className="font-medium">Chat Notifications</h3>
-                    <p className="text-sm text-gray-500">Receive notifications for new chat messages</p>
+                    <p className="text-sm text-neutral-500">Receive notifications for new chat messages</p>
                   </div>
                   <div className="ml-4">
                     <input
@@ -342,7 +342,7 @@ const Settings: React.FC = () => {
                       name="chatNotifications"
                       checked={formData.chatNotifications}
                       onChange={handleChange}
-                      className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                      className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-neutral-300 rounded"
                     />
                   </div>
                 </div>

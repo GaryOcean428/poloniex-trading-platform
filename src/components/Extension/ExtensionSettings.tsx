@@ -138,13 +138,13 @@ const ExtensionSettings: React.FC<ExtensionSettingsProps> = ({ onClose }) => {
         <div className="space-y-5">
           <div className="border-b pb-4">
             <h3 className="font-medium mb-3 flex items-center">
-              <TerminalSquare className="h-4 w-4 mr-2 text-gray-500" />
+              <TerminalSquare className="h-4 w-4 mr-2 text-neutral-500" />
               Extension Configuration
             </h3>
             
             <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <label htmlFor="extensionEnabled" className="text-sm text-gray-700">
+                <label htmlFor="extensionEnabled" className="text-sm text-neutral-700">
                   Enable Extension
                 </label>
                 <div className="relative inline-block w-10 mr-2 align-middle select-none">
@@ -156,12 +156,12 @@ const ExtensionSettings: React.FC<ExtensionSettingsProps> = ({ onClose }) => {
                     onChange={handleChange}
                     className="sr-only peer"
                   />
-                  <div className="w-10 h-5 bg-gray-200 rounded-full peer peer-checked:bg-blue-600 peer-checked:after:translate-x-5 after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:border after:rounded-full after:h-4 after:w-4 after:transition-all"></div>
+                  <div className="w-10 h-5 bg-neutral-200 rounded-full peer peer-checked:bg-blue-600 peer-checked:after:translate-x-5 after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:border after:rounded-full after:h-4 after:w-4 after:transition-all"></div>
                 </div>
               </div>
               
               <div className="flex items-center justify-between">
-                <label htmlFor="tradingViewEnabled" className="text-sm text-gray-700">
+                <label htmlFor="tradingViewEnabled" className="text-sm text-neutral-700">
                   TradingView Integration
                 </label>
                 <div className="relative inline-block w-10 mr-2 align-middle select-none">
@@ -174,12 +174,12 @@ const ExtensionSettings: React.FC<ExtensionSettingsProps> = ({ onClose }) => {
                     disabled={!formData.extensionEnabled}
                     className="sr-only peer"
                   />
-                  <div className="w-10 h-5 bg-gray-200 rounded-full peer peer-checked:bg-blue-600 peer-checked:after:translate-x-5 after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:border after:rounded-full after:h-4 after:w-4 after:transition-all"></div>
+                  <div className="w-10 h-5 bg-neutral-200 rounded-full peer peer-checked:bg-blue-600 peer-checked:after:translate-x-5 after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:border after:rounded-full after:h-4 after:w-4 after:transition-all"></div>
                 </div>
               </div>
               
               <div className="flex items-center justify-between">
-                <label htmlFor="poloniexEnabled" className="text-sm text-gray-700">
+                <label htmlFor="poloniexEnabled" className="text-sm text-neutral-700">
                   Poloniex Integration
                 </label>
                 <div className="relative inline-block w-10 mr-2 align-middle select-none">
@@ -192,12 +192,12 @@ const ExtensionSettings: React.FC<ExtensionSettingsProps> = ({ onClose }) => {
                     disabled={!formData.extensionEnabled}
                     className="sr-only peer"
                   />
-                  <div className="w-10 h-5 bg-gray-200 rounded-full peer peer-checked:bg-blue-600 peer-checked:after:translate-x-5 after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:border after:rounded-full after:h-4 after:w-4 after:transition-all"></div>
+                  <div className="w-10 h-5 bg-neutral-200 rounded-full peer peer-checked:bg-blue-600 peer-checked:after:translate-x-5 after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:border after:rounded-full after:h-4 after:w-4 after:transition-all"></div>
                 </div>
               </div>
               
               <div className="flex items-center justify-between">
-                <label htmlFor="autoConnect" className="text-sm text-gray-700">
+                <label htmlFor="autoConnect" className="text-sm text-neutral-700">
                   Auto-connect on startup
                 </label>
                 <div className="relative inline-block w-10 mr-2 align-middle select-none">
@@ -210,12 +210,12 @@ const ExtensionSettings: React.FC<ExtensionSettingsProps> = ({ onClose }) => {
                     disabled={!formData.extensionEnabled}
                     className="sr-only peer"
                   />
-                  <div className="w-10 h-5 bg-gray-200 rounded-full peer peer-checked:bg-blue-600 peer-checked:after:translate-x-5 after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:border after:rounded-full after:h-4 after:w-4 after:transition-all"></div>
+                  <div className="w-10 h-5 bg-neutral-200 rounded-full peer peer-checked:bg-blue-600 peer-checked:after:translate-x-5 after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:border after:rounded-full after:h-4 after:w-4 after:transition-all"></div>
                 </div>
               </div>
               
               <div className="flex items-center justify-between">
-                <label htmlFor="notificationsEnabled" className="text-sm text-gray-700">
+                <label htmlFor="notificationsEnabled" className="text-sm text-neutral-700">
                   Enable Notifications
                 </label>
                 <div className="relative inline-block w-10 mr-2 align-middle select-none">
@@ -228,7 +228,7 @@ const ExtensionSettings: React.FC<ExtensionSettingsProps> = ({ onClose }) => {
                     disabled={!formData.extensionEnabled}
                     className="sr-only peer"
                   />
-                  <div className="w-10 h-5 bg-gray-200 rounded-full peer peer-checked:bg-blue-600 peer-checked:after:translate-x-5 after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:border after:rounded-full after:h-4 after:w-4 after:transition-all"></div>
+                  <div className="w-10 h-5 bg-neutral-200 rounded-full peer peer-checked:bg-blue-600 peer-checked:after:translate-x-5 after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:border after:rounded-full after:h-4 after:w-4 after:transition-all"></div>
                 </div>
               </div>
             </div>
@@ -236,12 +236,12 @@ const ExtensionSettings: React.FC<ExtensionSettingsProps> = ({ onClose }) => {
           
           <div className="border-b pb-4">
             <h3 className="font-medium mb-3 flex items-center">
-              <Zap className="h-4 w-4 mr-2 text-gray-500" />
+              <Zap className="h-4 w-4 mr-2 text-neutral-500" />
               Trading Risk Management
             </h3>
             
             <div>
-              <label htmlFor="riskLimit" className="block text-sm text-gray-700 mb-1">
+              <label htmlFor="riskLimit" className="block text-sm text-neutral-700 mb-1">
                 Max Position Size (% of Available Balance)
               </label>
               <div className="flex items-center">
@@ -255,13 +255,13 @@ const ExtensionSettings: React.FC<ExtensionSettingsProps> = ({ onClose }) => {
                   value={formData.riskLimit}
                   onChange={handleRangeChange}
                   disabled={!formData.extensionEnabled}
-                  className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                  className="w-full h-2 bg-neutral-200 rounded-lg appearance-none cursor-pointer"
                 />
-                <span className="ml-2 text-sm font-medium text-gray-700 min-w-10">
+                <span className="ml-2 text-sm font-medium text-neutral-700 min-w-10">
                   {formData.riskLimit}%
                 </span>
               </div>
-              <p className="mt-1 text-xs text-gray-500">
+              <p className="mt-1 text-xs text-neutral-500">
                 Limits the maximum size of any position you can open through the extension.
               </p>
             </div>
@@ -269,13 +269,13 @@ const ExtensionSettings: React.FC<ExtensionSettingsProps> = ({ onClose }) => {
           
           <div>
             <h3 className="font-medium mb-3 flex items-center">
-              <Lock className="h-4 w-4 mr-2 text-gray-500" />
+              <Lock className="h-4 w-4 mr-2 text-neutral-500" />
               API Credentials
             </h3>
             
             <div className="space-y-3">
               <div>
-                <label htmlFor="apiKey" className="block text-sm text-gray-700 mb-1">
+                <label htmlFor="apiKey" className="block text-sm text-neutral-700 mb-1">
                   Poloniex API Key
                 </label>
                 <input
@@ -285,12 +285,12 @@ const ExtensionSettings: React.FC<ExtensionSettingsProps> = ({ onClose }) => {
                   value={formData.apiKey}
                   onChange={handleChange}
                   placeholder="Your API Key"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                  className="w-full px-3 py-2 border border-neutral-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
                 />
               </div>
               
               <div>
-                <label htmlFor="apiSecret" className="block text-sm text-gray-700 mb-1">
+                <label htmlFor="apiSecret" className="block text-sm text-neutral-700 mb-1">
                   Poloniex API Secret
                 </label>
                 <input
@@ -300,11 +300,11 @@ const ExtensionSettings: React.FC<ExtensionSettingsProps> = ({ onClose }) => {
                   value={formData.apiSecret}
                   onChange={handleChange}
                   placeholder="Your API Secret"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                  className="w-full px-3 py-2 border border-neutral-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
                 />
               </div>
               
-              <p className="text-xs text-gray-500 mt-1">
+              <p className="text-xs text-neutral-500 mt-1">
                 Your API keys are stored securely and never shared.
                 Create API keys with trading permissions in your Poloniex account.
               </p>

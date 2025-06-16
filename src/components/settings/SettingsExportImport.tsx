@@ -64,7 +64,7 @@ const SettingsExportImport: React.FC = () => {
         
         <div className="mb-6">
           <h4 className="text-md font-medium mb-2">Export Settings</h4>
-          <p className="text-sm text-gray-500 mb-2">
+          <p className="text-sm text-neutral-500 mb-2">
             Export your settings to a JSON file that you can save and import later.
             API keys and secrets are not included in the export for security reasons.
           </p>
@@ -75,7 +75,7 @@ const SettingsExportImport: React.FC = () => {
         
         <div>
           <h4 className="text-md font-medium mb-2">Import Settings</h4>
-          <p className="text-sm text-gray-500 mb-2">
+          <p className="text-sm text-neutral-500 mb-2">
             Paste previously exported settings JSON below to restore your configuration.
           </p>
           <Textarea

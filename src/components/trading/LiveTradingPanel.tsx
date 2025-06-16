@@ -104,7 +104,7 @@ const LiveTradingPanel: React.FC = () => {
           <div className="flex items-center justify-between">
             <div>
               <Label htmlFor="tradingMode">Live Trading</Label>
-              <p className="text-xs text-gray-500">
+              <p className="text-xs text-neutral-500">
                 {isLiveTrading 
                   ? 'Trading with real funds on Poloniex' 
                   : 'Paper trading with simulated funds'}
@@ -128,7 +128,7 @@ const LiveTradingPanel: React.FC = () => {
           <div className="flex items-center justify-between">
             <div>
               <Label htmlFor="autoTrading">Automated Trading</Label>
-              <p className="text-xs text-gray-500">
+              <p className="text-xs text-neutral-500">
                 Automatically execute trades based on market analysis
               </p>
             </div>
@@ -143,7 +143,7 @@ const LiveTradingPanel: React.FC = () => {
           <div>
             <Label>Current Status</Label>
             <p className="text-sm">{status}</p>
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="text-xs text-neutral-500 mt-1">
               {tradingEngine.getCurrentActivity()}
             </p>
           </div>

@@ -92,3 +92,11 @@ export const getBaseUrl = () => {
   }
   return 'https://poloniex-trading-platform.vercel.app'; // Production URL
 };
+
+// Get backend API URL
+export const getBackendUrl = (): string => {
+  const envUrl = getEnvVariable('VITE_BACKEND_URL');
+  if (envUrl) return envUrl;
+  if (IS_LOCAL_DEV) return 'http://localhost:3000';
+  return window.location.origin;
+};

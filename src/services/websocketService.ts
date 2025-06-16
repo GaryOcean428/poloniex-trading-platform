@@ -1,6 +1,7 @@
 import { io, Socket } from 'socket.io-client';
 import { MarketData, Trade } from '@/types';
 import { useErrorHandler } from '@/hooks/useErrorHandler';
+import { getBackendUrl } from '@/utils/environment';
 
 // Socket.io events
 const EVENTS = {
@@ -121,7 +122,7 @@ class WebSocketService {
   
   // Default connection config
   private config: ConnectionConfig = {
-    url: 'http://localhost:3000',
+    url: getBackendUrl(),
     options: {
       reconnectionStrategy: ReconnectionStrategy.EXPONENTIAL_BACKOFF,
       initialReconnectDelay: 1000,

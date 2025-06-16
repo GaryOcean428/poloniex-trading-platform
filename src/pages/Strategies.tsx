@@ -85,7 +85,7 @@ const Strategies: React.FC = () => {
       case StrategyType.BREAKOUT:
         return <SettingsIcon className="h-5 w-5 text-orange-500" />;
       default:
-        return <Zap className="h-5 w-5 text-gray-500" />;
+        return <Zap className="h-5 w-5 text-neutral-500" />;
     }
   };
   
@@ -114,7 +114,7 @@ const Strategies: React.FC = () => {
                 className={`border rounded-md p-3 cursor-pointer transition-colors duration-200 ${
                   selectedStrategy?.id === strategy.id 
                     ? 'border-blue-500 bg-blue-50' 
-                    : 'border-gray-200 hover:border-blue-300'
+                    : 'border-neutral-200 hover:border-blue-300'
                 }`}
                 onClick={() => handleSelectStrategy(strategy)}
               >
@@ -125,7 +125,7 @@ const Strategies: React.FC = () => {
                     </div>
                     <div>
                       <h3 className="font-medium">{strategy.name}</h3>
-                      <p className="text-xs text-gray-500">{strategy.parameters.pair}</p>
+                      <p className="text-xs text-neutral-500">{strategy.parameters.pair}</p>
                     </div>
                   </div>
                   <div className="flex space-x-2">
@@ -133,7 +133,7 @@ const Strategies: React.FC = () => {
                       className={`p-1.5 rounded-md ${
                         activeStrategies.includes(strategy.id)
                           ? 'bg-green-100 text-green-700'
-                          : 'bg-gray-100 text-gray-500'
+                          : 'bg-neutral-100 text-neutral-500'
                       }`}
                       onClick={(e) => {
                         e.stopPropagation();
@@ -167,7 +167,7 @@ const Strategies: React.FC = () => {
                       <Sparkles className="h-4 w-4" />
                     </button>
                     <button 
-                      className="p-1.5 rounded-md bg-gray-100 text-gray-500 hover:bg-red-100 hover:text-red-700"
+                      className="p-1.5 rounded-md bg-neutral-100 text-neutral-500 hover:bg-red-100 hover:text-red-700"
                       onClick={(e) => {
                         e.stopPropagation();
                         removeStrategy(strategy.id);
@@ -184,8 +184,8 @@ const Strategies: React.FC = () => {
             ))}
             
             {strategies.length === 0 && (
-              <div className="text-center py-6 text-gray-500">
-                <Zap className="h-12 w-12 mx-auto text-gray-300 mb-2" />
+              <div className="text-center py-6 text-neutral-500">
+                <Zap className="h-12 w-12 mx-auto text-neutral-300 mb-2" />
                 <p>You don't have any strategies yet</p>
                 <button 
                   className="mt-2 btn btn-primary"
@@ -211,8 +211,8 @@ const Strategies: React.FC = () => {
               isOptimizing={isOptimizing}
             />
           ) : (
-            <div className="text-center py-12 text-gray-500">
-              <SettingsIcon className="h-16 w-16 mx-auto text-gray-300 mb-3" />
+            <div className="text-center py-12 text-neutral-500">
+              <SettingsIcon className="h-16 w-16 mx-auto text-neutral-300 mb-3" />
               <h3 className="text-xl font-medium mb-2">No Strategy Selected</h3>
               <p>Select a strategy from the list or create a new one to get started</p>
             </div>
