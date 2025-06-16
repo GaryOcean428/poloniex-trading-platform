@@ -1,19 +1,17 @@
 import { useState, useEffect, useCallback } from 'react';
-import { poloniexApi } from '@/services/poloniexAPI';
+import { poloniexApi, PoloniexAPIError, PoloniexConnectionError, PoloniexAuthenticationError } from '@/services/poloniexAPI';
 import { MarketData, Trade } from '@/types';
 import { webSocketService } from '@/services/websocketService';
 import { mockMarketData, mockTrades } from '@/data/mockData';
 import { useSettings } from '@/context/SettingsContext';
-
-// Check if we're running in a WebContainer environment
-const IS_WEBCONTAINER = typeof window !== 'undefined' && window.location && window.location.hostname.includes('webcontainer-api.io');
+import { shouldUseMockMode, IS_WEBCONTAINER } from '@/utils/environment';
 
 interface PoloniexDataHook {
   marketData: MarketData[];
   trades: Trade[];
   accountBalance: any;
   isLoading: boolean;
-  error: string | null;
+  error: Error | null;
   isMockMode: boolean;
   fetchMarketData: (pair: string) => Promise<void>;
   fetchTrades: (pair: string) => Promise<void>;
@@ -27,18 +25,24 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
   const [trades, setTrades] = useState<Trade[]>(mockTrades);
   const [accountBalance, setAccountBalance] = useState<any>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [error, setError] = useState<string | null>(null);
-  const [isMockMode, setIsMockMode] = useState<boolean>(true);
+  const [error, setError] = useState<Error | null>(null);
   
-  // Force API refresh when live trading is toggled
+  // Determine mock mode based on environment and credentials
+  const hasCredentials = Boolean(apiKey && apiSecret);
+  const [isMockMode, setIsMockMode] = useState<boolean>(shouldUseMockMode(hasCredentials));
+  
+  // Update mock mode when credentials change
   useEffect(() => {
-    if (isLiveTrading && apiKey && apiSecret) {
-      console.log('Live trading enabled, refreshing API connection');
+    const newHasCredentials = Boolean(apiKey && apiSecret);
+    const newMockMode = shouldUseMockMode(newHasCredentials) || !isLiveTrading;
+    setIsMockMode(newMockMode);
+    
+    if (isLiveTrading && newHasCredentials && !newMockMode) {
+      console.log('Live trading enabled with credentials, refreshing API connection');
       poloniexApi.loadCredentials();
       refreshApiConnection();
     } else {
-      console.log('Live trading disabled or missing credentials');
-      setIsMockMode(true);
+      console.log('Using mock mode - live trading disabled or missing credentials');
     }
   }, [isLiveTrading, apiKey, apiSecret]);
   
@@ -113,11 +117,17 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
   };
   
   const fetchMarketData = useCallback(async (pair: string) => {
-    // In WebContainer, skip the actual API call and use mock data immediately
+    // If in mock mode, use mock data immediately
+    if (isMockMode) {
+      console.log('Mock mode active, using mock market data');
+      setMarketData(mockMarketData);
+      return;
+    }
+    
+    // In WebContainer, use mock data for development
     if (IS_WEBCONTAINER) {
       console.log('WebContainer environment detected, using mock market data');
       setMarketData(mockMarketData);
-      setIsMockMode(true);
       return;
     }
     
@@ -125,61 +135,47 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
     setError(null);
     
     try {
-      // Use AbortController to set a timeout for the fetch
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
-      
       const data = await poloniexApi.getMarketData(pair);
-      clearTimeout(timeoutId);
       
       if (data && Array.isArray(data)) {
         const formattedData = mapPoloniexDataToMarketData(data);
         if (formattedData.length > 0) {
           setMarketData(formattedData);
-          setIsMockMode(false);
         } else {
-          setMarketData(mockMarketData);
-          setIsMockMode(true);
+          throw new Error('No market data returned from API');
         }
       } else {
-        // If no data or invalid format, use mock data
-        setMarketData(mockMarketData);
-        setIsMockMode(true);
+        throw new Error('Invalid market data format received from API');
       }
     } catch (err) {
-      // Don't set error state for timeout/abort errors, just fallback to mock data
-      if (err instanceof Error && err.name === 'AbortError') {
-        console.log('Market data request timed out, using mock data');
-      } else if (!IS_WEBCONTAINER) {
-        console.error('Error fetching market data:', err instanceof Error ? err.message : String(err));
-        setError('Failed to fetch market data. Using demo data instead.');
-      }
-      
-      setMarketData(mockMarketData);
-      setIsMockMode(true);
+      const error = err as Error;
+      console.error('Error fetching market data:', error.message);
+      setError(error);
+      // Don't fall back to mock data - let the UI handle the error
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [isMockMode]);
   
   const fetchTrades = useCallback(async (pair: string) => {
-    // In WebContainer, skip the actual API call and use mock data immediately
+    // If in mock mode, use mock data immediately  
+    if (isMockMode) {
+      console.log('Mock mode active, using mock trades data');
+      setTrades(mockTrades);
+      return;
+    }
+    
+    // In WebContainer, use mock data for development
     if (IS_WEBCONTAINER) {
       console.log('WebContainer environment detected, using mock trades data');
       setTrades(mockTrades);
-      setIsMockMode(true);
       return;
     }
     
     setIsLoading(true);
     
     try {
-      // Use AbortController to set a timeout for the fetch
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
-      
       const data = await poloniexApi.getRecentTrades(pair);
-      clearTimeout(timeoutId);
       
       if (data && Array.isArray(data)) {
         const formattedTrades = data.map(mapPoloniexTradeToTrade).filter(trade => 
@@ -188,33 +184,38 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
         
         if (formattedTrades.length > 0) {
           setTrades(formattedTrades);
-          setIsMockMode(false);
         } else {
-          setTrades(mockTrades);
-          setIsMockMode(true);
+          throw new Error('No valid trades returned from API');
         }
       } else {
-        // If no data or invalid format, use mock data
-        setTrades(mockTrades);
-        setIsMockMode(true);
+        throw new Error('Invalid trades data format received from API');
       }
     } catch (err) {
-      // Don't set error state for timeout/abort errors, just fallback to mock data
-      if (err instanceof Error && err.name === 'AbortError') {
-        console.log('Trades request timed out, using mock data');
-      } else if (!IS_WEBCONTAINER) {
-        console.error('Error fetching trades:', err instanceof Error ? err.message : String(err));
-      }
-      
-      setTrades(mockTrades);
-      setIsMockMode(true);
+      const error = err as Error;
+      console.error('Error fetching trades:', error.message);
+      setError(error);
+      // Don't fall back to mock data - let the UI handle the error
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [isMockMode]);
   
   const fetchAccountBalance = useCallback(async () => {
-    // In WebContainer, skip the actual API call and use mock data immediately
+    // If in mock mode, use mock data immediately
+    if (isMockMode) {
+      console.log('Mock mode active, using mock account data');
+      setAccountBalance({
+        totalAmount: "15478.23",
+        availableAmount: "12345.67",
+        accountEquity: "15820.45",
+        unrealizedPnL: "342.22",
+        todayPnL: "156.78",
+        todayPnLPercentage: "1.02"
+      });
+      return;
+    }
+    
+    // In WebContainer, use mock data for development
     if (IS_WEBCONTAINER) {
       console.log('WebContainer environment detected, using mock account data');
       setAccountBalance({
@@ -225,44 +226,23 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
         todayPnL: "156.78",
         todayPnLPercentage: "1.02"
       });
-      setIsMockMode(true);
       return;
     }
     
     setIsLoading(true);
     
     try {
-      // Use AbortController to set a timeout for the fetch
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
-      
       const data = await poloniexApi.getAccountBalance();
-      clearTimeout(timeoutId);
-      
       setAccountBalance(data);
-      setIsMockMode(false);
     } catch (err) {
-      // Don't set error state for timeout/abort errors, just fallback to mock data
-      if (err instanceof Error && err.name === 'AbortError') {
-        console.log('Account balance request timed out, using mock data');
-      } else if (!IS_WEBCONTAINER) {
-        console.error('Error fetching account balance:', err instanceof Error ? err.message : String(err));
-      }
-      
-      // Set default mock balance
-      setAccountBalance({
-        totalAmount: "15478.23",
-        availableAmount: "12345.67",
-        accountEquity: "15820.45",
-        unrealizedPnL: "342.22",
-        todayPnL: "156.78",
-        todayPnLPercentage: "1.02"
-      });
-      setIsMockMode(true);
+      const error = err as Error;
+      console.error('Error fetching account balance:', error.message);
+      setError(error);
+      // Don't fall back to mock data - let the UI handle the error
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [isMockMode]);
   
   // Handle real-time updates via WebSocket
   useEffect(() => {

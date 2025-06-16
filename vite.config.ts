@@ -26,5 +26,10 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
       'lucide-react': path.resolve(__dirname, './src/lucide-react.tsx'),
     }
+  },
+  test: {
+    globals: true,
+    environment: 'jsdom',
+    setupFiles: './src/test-setup.ts',
   }
 });
