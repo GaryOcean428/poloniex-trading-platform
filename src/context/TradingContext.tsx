@@ -88,7 +88,8 @@ export const TradingProvider: React.FC<TradingProviderProps> = ({
   // If there was an error loading data, add it to our errors
   useEffect(() => {
     if (error) {
-      addError(error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      addError(errorMessage);
     }
   }, [error]);
 

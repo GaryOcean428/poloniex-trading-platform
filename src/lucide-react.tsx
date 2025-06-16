@@ -48,6 +48,7 @@ export const Upload = createIcon('Upload');
 export const User = createIcon('User');
 export const Volume2 = createIcon('Volume2');
 export const Wifi = createIcon('Wifi');
+export const ExternalLink = createIcon('ExternalLink');
 export const WifiOff = createIcon('WifiOff');
 export const X = createIcon('X');
 export const Zap = createIcon('Zap');
