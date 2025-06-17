@@ -4,10 +4,10 @@ FROM node:20-alpine AS base
 WORKDIR /usr/src/app
 
 # Install dependencies
-COPY package.json yarn.lock ./
+COPY package.json yarn.lock .yarnrc.yml ./
 RUN corepack enable yarn
 # Cache buster: Tue Nov 07 10:00:00 UTC 2023
-RUN yarn install --frozen-lockfile
+RUN yarn install --immutable
 
 # Copy only the server code
 COPY server ./server
