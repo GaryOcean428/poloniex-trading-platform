@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useErrorHandler } from './useErrorHandler';
 import { FuturesOrder, Position } from '@/types';
 import PoloniexFuturesAPI from '@/services/poloniexFuturesAPI';
@@ -8,8 +8,8 @@ import PoloniexFuturesAPI from '@/services/poloniexFuturesAPI';
  */
 export const useFuturesTrading = () => {
   const { withErrorHandling } = useErrorHandler();
-  // Import the default export directly
-  const api = new PoloniexFuturesAPI();
+  // Create API instance with useMemo to avoid recreating on every render
+  const api = useMemo(() => new PoloniexFuturesAPI(), []);
 
   /**
    * Get account positions with error handling
@@ -21,7 +21,7 @@ export const useFuturesTrading = () => {
       return positions;
     });
     return await wrappedFn();
-  }, [withErrorHandling]);
+  }, [withErrorHandling, api]);
 
   /**
    * Get open orders with error handling
@@ -33,7 +33,7 @@ export const useFuturesTrading = () => {
       return orders;
     });
     return await wrappedFn();
-  }, [withErrorHandling]);
+  }, [withErrorHandling, api]);
 
   /**
    * Place a futures order with error handling
@@ -53,7 +53,7 @@ export const useFuturesTrading = () => {
       const order = await api.placeOrder(pair, side, type, size, price, leverage, marginMode);
       return order;
     }, 'Failed to place order');
-  }, [withErrorHandling]);
+  }, [withErrorHandling, api]);
 
   /**
    * Cancel an order with error handling
@@ -65,7 +65,7 @@ export const useFuturesTrading = () => {
       const result = await api.cancelOrder(orderId);
       return result;
     }, 'Failed to cancel order');
-  }, [withErrorHandling]);
+  }, [withErrorHandling, api]);
 
   /**
    * Set leverage for a pair with error handling
@@ -78,7 +78,7 @@ export const useFuturesTrading = () => {
       const result = await api.setLeverage(pair, leverage);
       return result;
     }, 'Failed to set leverage');
-  }, [withErrorHandling]);
+  }, [withErrorHandling, api]);
 
   /**
    * Set margin mode for a pair with error handling
@@ -94,7 +94,7 @@ export const useFuturesTrading = () => {
       const result = await api.setMarginMode(pair, marginMode);
       return result;
     }, 'Failed to set margin mode');
-  }, [withErrorHandling]);
+  }, [withErrorHandling, api]);
 
   return {
     getPositions,
