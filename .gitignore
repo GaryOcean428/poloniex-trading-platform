@@ -13,6 +13,9 @@ dist
 dist-ssr
 *.local
 
+# Yarn Berry
+.yarn/install-state.gz
+
 # Environment variables
 .env
 .env.local
