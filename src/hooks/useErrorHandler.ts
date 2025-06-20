@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 
 type ErrorType = 'api' | 'network' | 'validation' | 'authentication' | 'unknown';
 type ErrorSeverity = 'low' | 'medium' | 'high' | 'critical';
@@ -30,7 +30,7 @@ const DEFAULT_OPTIONS: ErrorHandlerOptions = {
 };
 
 export const useErrorHandler = (options: ErrorHandlerOptions = {}) => {
-  const config = { ...DEFAULT_OPTIONS, ...options };
+  const config = useMemo(() => ({ ...DEFAULT_OPTIONS, ...options }), [options]);
   
   const [errorState, setErrorState] = useState<ErrorState>({
     hasError: false,

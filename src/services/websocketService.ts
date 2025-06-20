@@ -86,7 +86,7 @@ class WebSocketService {
   private static instance: WebSocketService;
   private socket: Socket | null = null;
   private connectionState: ConnectionState = ConnectionState.DISCONNECTED;
-  private eventListeners: Map<string, Set<Function>> = new Map();
+  private eventListeners: Map<string, Set<(...args: any[]) => void>> = new Map();
   private reconnectAttempts: number = 0;
   private maxReconnectAttempts: number = 10;
   private initialReconnectDelay: number = 1000;
@@ -759,7 +759,7 @@ class WebSocketService {
   /**
    * Register an event listener
    */
-  public on(event: string, callback: Function): void {
+  public on(event: string, callback: (...args: any[]) => void): void {
     if (!this.eventListeners.has(event)) {
       this.eventListeners.set(event, new Set());
     }
@@ -770,7 +770,7 @@ class WebSocketService {
   /**
    * Remove an event listener
    */
-  public off(event: string, callback: Function): void {
+  public off(event: string, callback: (...args: any[]) => void): void {
     if (!this.eventListeners.has(event)) return;
     
     this.eventListeners.get(event)?.delete(callback);

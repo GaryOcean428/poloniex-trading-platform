@@ -195,7 +195,7 @@ describe('API Error Handling Tests', () => {
       );
       
       expect(screen.getByText('Connection Error')).toBeInTheDocument();
-      expect(screen.getByText(/Network timeout/)).toBeInTheDocument();
+      expect(screen.getByText(/Unable to connect to the trading platform/)).toBeInTheDocument();
       expect(screen.getByText('Try Again')).toBeInTheDocument();
       
       fireEvent.click(screen.getByText('Try Again'));
