@@ -1,7 +1,7 @@
 import axios from 'axios';
 import CryptoJS from 'crypto-js';
 import { getStorageItem, STORAGE_KEYS } from '@/utils/storage';
-import { MarketData } from '@/types';
+import { MarketData, Position, FuturesOrder } from '@/types';
 
 import { 
   getApiBaseUrl, 
@@ -77,10 +77,10 @@ class PoloniexApiClient {
   private requestCounter: number = 0;
   private requestTimeoutMs: number = 5000; // 5 second timeout for requests
   private rateLimitQueue: Map<string, number[]> = new Map();
-  private positionUpdateCallbacks: Set<Function> = new Set();
-  private orderUpdateCallbacks: Set<Function> = new Set();
-  private liquidationCallbacks: Set<Function> = new Set();
-  private marginCallbacks: Set<Function> = new Set();
+  private positionUpdateCallbacks: Set<(positions: Position[]) => void> = new Set();
+  private orderUpdateCallbacks: Set<(orders: FuturesOrder[]) => void> = new Set();
+  private liquidationCallbacks: Set<(warning: { pair: string; message: string }) => void> = new Set();
+  private marginCallbacks: Set<(margin: { pair: string; ratio: number }) => void> = new Set();
 
   private constructor() {
     this.loadCredentials();
@@ -89,28 +89,28 @@ class PoloniexApiClient {
   /**
    * Subscribe to position updates
    */
-  public onPositionUpdate(callback: Function): void {
+  public onPositionUpdate(callback: (positions: Position[]) => void): void {
     this.positionUpdateCallbacks.add(callback);
   }
 
   /**
    * Subscribe to order updates
    */
-  public onOrderUpdate(callback: Function): void {
+  public onOrderUpdate(callback: (orders: FuturesOrder[]) => void): void {
     this.orderUpdateCallbacks.add(callback);
   }
 
   /**
    * Subscribe to liquidation warnings
    */
-  public onLiquidationWarning(callback: Function): void {
+  public onLiquidationWarning(callback: (warning: { pair: string; message: string }) => void): void {
     this.liquidationCallbacks.add(callback);
   }
 
   /**
    * Subscribe to margin updates
    */
-  public onMarginUpdate(callback: Function): void {
+  public onMarginUpdate(callback: (margin: { pair: string; ratio: number }) => void): void {
     this.marginCallbacks.add(callback);
   }
 
