@@ -364,20 +364,7 @@ export const recalibrateMLModel = async (
         } catch (error) {
           console.error('Error loading model stats:', error);
           // Fallback to calculating from features
-          const result = calculateMeanAndStd(features);
-          mean = result.mean;
-          std = result.std;
-        }
-            // If stats file doesn't exist, calculate from features
-            const { calculateMeanAndStd } = await import('./mlTrading');
-            const result = calculateMeanAndStd(features);
-            mean = result.mean;
-            std = result.std;
-          }
-        } catch (error) {
-          console.error('Error loading model stats:', error);
-          // Calculate from features if loading fails
-          const { calculateMeanAndStd, standardizeFeatures } = await import('./mlTrading');
+          const { calculateMeanAndStd } = await import('./mlTrading');
           const result = calculateMeanAndStd(features);
           mean = result.mean;
           std = result.std;

@@ -12,7 +12,8 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "production-check": "node scripts/production-check.js",
-    "deploy": "node scripts/deploy.js"
+    "deploy": "node scripts/deploy.js",
+    "start": "node server/index.js"
   },
   "dependencies": {
     "@tensorflow/tfjs": "^4.17.0",

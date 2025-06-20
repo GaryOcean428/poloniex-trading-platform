@@ -20,14 +20,52 @@ describe('Integration Tests', () => {
     // Reset mocks
     vi.clearAllMocks();
     
-    // Mock WebSocket service
-    WebSocketService.prototype.connect = vi.fn();
-    WebSocketService.prototype.disconnect = vi.fn();
-    WebSocketService.prototype.subscribe = vi.fn();
+    // Mock ML trading methods
+    vi.mocked(mlTrading.trainMLModel).mockResolvedValue({
+      id: 'test-model',
+      name: 'Test Model',
+      description: 'Test ML model',
+      config: {
+        modelType: 'neuralnetwork',
+        featureSet: 'technical',
+        predictionTarget: 'price_direction',
+        timeHorizon: 5
+      },
+      filePath: './models/test-model',
+      trainingData: [],
+      performance: {
+        accuracy: 0.75,
+        precision: 0.8,
+        recall: 0.7,
+        f1Score: 0.75
+      },
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      lastTrainedAt: Date.now()
+    });
     
-    // Mock LiveDataService
-    LiveDataService.prototype.start = vi.fn();
-    LiveDataService.prototype.getAggregatedData = vi.fn().mockResolvedValue([]);
+    vi.mocked(dqnTrading.trainAgent).mockResolvedValue({
+      id: 'test-agent',
+      name: 'Test DQN Agent',
+      description: 'Test DQN agent',
+      config: {
+        stateSize: 4,
+        actionSize: 3,
+        learningRate: 0.001,
+        memorySize: 10000,
+        batchSize: 32
+      },
+      filePath: './models/test-agent',
+      trainingData: [],
+      performance: {
+        averageReward: 100,
+        maxReward: 200,
+        episodeLength: 1000
+      },
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      lastTrainedAt: Date.now()
+    });
     LiveDataService.prototype.fetchOrderBook = vi.fn().mockResolvedValue({
       asks: [],
       bids: []
