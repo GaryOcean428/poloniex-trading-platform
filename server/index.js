@@ -10,7 +10,15 @@ dotenv.config();
 
 // Create Express app
 const app = express();
-app.use(cors());
+app.use(cors({
+  origin: [
+    '*',
+    'https://healthcheck.railway.app',
+    process.env.FRONTEND_URL || 'http://localhost:5173'
+  ],
+  methods: ['GET', 'POST'],
+  credentials: true
+}));
 app.use(express.json());
 
 // Create HTTP server
@@ -132,6 +140,16 @@ const poloniexWs = connectToPoloniexWebSocket();
 // Define API routes
 app.get('/api/health', (req, res) => {
   res.json({ status: 'up', timestamp: new Date() });
+});
+
+// Standard health endpoint for Railway
+app.get('/health', (req, res) => {
+  res.status(200).json({ 
+    status: 'ok', 
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    service: 'poloniex-trading-platform-backend'
+  });
 });
 
 // Start the server
