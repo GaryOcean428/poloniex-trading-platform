@@ -94,7 +94,9 @@ This project can be deployed to Railway using a two-service architecture: a back
     *   In the Railway service settings (for this backend service), navigate to the "Config-as-code" section and set the "Railway Config File" path to `railway.json`. This instructs Railway to use our `railway.json` file, which is configured to build the service using the `backend.Dockerfile` (renamed from `Dockerfile` to allow the frontend service to default to Nixpacks).
     *   A `.dockerignore` file is also present in the root to ensure a clean build by preventing local development files (like `node_modules/` and `.env`) from interfering with the Docker build process.
     *   The `backend.Dockerfile` sets up the Node.js environment and runs `server/index.js`.
-    *   The `railway.json` also specifies a health check at `/api/health`.
+    *   The `railway.json` also specifies a health check at `/api/health` with a 300-second timeout.
+    *   The server provides both `/health` and `/api/health` endpoints for Railway compatibility.
+    *   CORS is configured to allow `healthcheck.railway.app` for Railway health checks.
 *   **Environment Variables**: Set these in the Railway service dashboard:
     *   `VITE_POLONIEX_API_KEY`: Your Poloniex API key (if the backend needs to make authenticated calls - currently `server/index.js` uses public websockets, but other functionality might require it).
     *   `PORT`: Railway sets this automatically. The server is configured to use it.
