@@ -33,14 +33,26 @@ const io = new Server(server, {
 });
 
 // Connect to Poloniex WebSocket for live market data
+let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 5;
+const RECONNECT_DELAY = 5000;
+
 const connectToPoloniexWebSocket = () => {
-  console.log('Connecting to Poloniex WebSocket...');
+  if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+    console.log(`Max reconnection attempts (${MAX_RECONNECT_ATTEMPTS}) reached. Stopping reconnection.`);
+    return null;
+  }
+
+  console.log(`Connecting to Poloniex WebSocket... (attempt ${reconnectAttempts + 1})`);
   
   // Create WebSocket connection to Poloniex
   const poloniexWs = new WebSocket('wss://ws.poloniex.com/ws/public');
   
   poloniexWs.on('open', () => {
     console.log('Connected to Poloniex WebSocket');
+    
+    // Reset reconnect attempts on successful connection
+    reconnectAttempts = 0;
     
     // Subscribe to market data channels
     poloniexWs.send(JSON.stringify({
@@ -56,11 +68,22 @@ const connectToPoloniexWebSocket = () => {
       
       // Process different types of messages
       if (message.channel === 'ticker' && message.data) {
-        // Format the data for our clients
-        const formattedData = formatPoloniexTickerData(message.data);
-        
-        // Broadcast to all connected clients
-        io.emit('marketData', formattedData);
+        // message.data is an array of ticker objects
+        if (Array.isArray(message.data)) {
+          message.data.forEach(tickerData => {
+            const formattedData = formatPoloniexTickerData(tickerData);
+            if (formattedData) {
+              // Broadcast to all connected clients
+              io.emit('marketData', formattedData);
+            }
+          });
+        } else {
+          // Fallback for single ticker object
+          const formattedData = formatPoloniexTickerData(message.data);
+          if (formattedData) {
+            io.emit('marketData', formattedData);
+          }
+        }
       }
     } catch (error) {
       console.error('Error processing WebSocket message:', error);
@@ -69,14 +92,16 @@ const connectToPoloniexWebSocket = () => {
   
   poloniexWs.on('error', (error) => {
     console.error('Poloniex WebSocket error:', error);
+    reconnectAttempts++;
     // Attempt to reconnect after a delay
-    setTimeout(connectToPoloniexWebSocket, 5000);
+    setTimeout(connectToPoloniexWebSocket, RECONNECT_DELAY);
   });
   
   poloniexWs.on('close', () => {
     console.log('Poloniex WebSocket connection closed');
+    reconnectAttempts++;
     // Attempt to reconnect after a delay
-    setTimeout(connectToPoloniexWebSocket, 5000);
+    setTimeout(connectToPoloniexWebSocket, RECONNECT_DELAY);
   });
   
   // Keep-alive ping
@@ -91,18 +116,29 @@ const connectToPoloniexWebSocket = () => {
 
 // Format Poloniex ticker data to match our app's data structure
 const formatPoloniexTickerData = (data) => {
-  // Convert Poloniex pair format (BTC_USDT) to our format (BTC-USDT)
-  const pair = data.symbol.replace('_', '-');
-  
-  return {
-    pair,
-    timestamp: Date.now(),
-    open: parseFloat(data.open),
-    high: parseFloat(data.high),
-    low: parseFloat(data.low),
-    close: parseFloat(data.close),
-    volume: parseFloat(data.quantity)
-  };
+  try {
+    // Validate incoming data structure
+    if (!data || !data.symbol) {
+      console.warn('Invalid ticker data received:', data);
+      return null;
+    }
+
+    // Convert Poloniex pair format (BTC_USDT) to our format (BTC-USDT)
+    const pair = data.symbol.replace('_', '-');
+    
+    return {
+      pair,
+      timestamp: Date.now(),
+      open: parseFloat(data.open) || 0,
+      high: parseFloat(data.high) || 0,
+      low: parseFloat(data.low) || 0,
+      close: parseFloat(data.close) || 0,
+      volume: parseFloat(data.quantity) || 0
+    };
+  } catch (error) {
+    console.error('Error formatting ticker data:', error);
+    return null;
+  }
 };
 
 // Socket.IO connection handler
