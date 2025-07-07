@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "node src/index.js",
-    "build": "echo 'No build step needed for JavaScript backend'",
+    "build": "cd ../frontend && yarn install && yarn build && echo 'Frontend built successfully for backend deployment'",
     "start:prod": "node src/index.js",
     "start": "node src/index.js",
     "start:railway": "node railway-start.js",

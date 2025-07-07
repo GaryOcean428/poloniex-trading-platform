@@ -4,9 +4,15 @@ import { Server } from 'socket.io';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import WebSocket from 'ws';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 // Configure environment variables
 dotenv.config();
+
+// ES module path resolution
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Create Express app
 const app = express();
@@ -186,6 +192,15 @@ app.get('/health', (req, res) => {
     uptime: process.uptime(),
     service: 'poloniex-trading-platform-backend'
   });
+});
+
+// Serve static files from frontend build
+const frontendDistPath = path.join(__dirname, '../../frontend/dist');
+app.use(express.static(frontendDistPath));
+
+// Catch-all route for client-side routing (must be last)
+app.get('*', (req, res) => {
+  res.sendFile(path.join(frontendDistPath, 'index.html'));
 });
 
 // Start the server
