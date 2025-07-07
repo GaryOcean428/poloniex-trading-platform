@@ -42,6 +42,8 @@ const io = new Server(server, {
 let reconnectAttempts = 0;
 const MAX_RECONNECT_ATTEMPTS = 5;
 const RECONNECT_DELAY = 5000;
+const PING_INTERVAL = 25000; // 25 seconds
+const PONG_TIMEOUT = 60000; // 60 seconds
 
 const connectToPoloniexWebSocket = () => {
   if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
@@ -51,8 +53,14 @@ const connectToPoloniexWebSocket = () => {
 
   console.log(`Connecting to Poloniex WebSocket... (attempt ${reconnectAttempts + 1})`);
   
-  // Create WebSocket connection to Poloniex
-  const poloniexWs = new WebSocket('wss://ws.poloniex.com/ws/public');
+  // Create WebSocket connection to Poloniex with timeout
+  const poloniexWs = new WebSocket('wss://ws.poloniex.com/ws/public', {
+    handshakeTimeout: 10000,
+    perMessageDeflate: false
+  });
+  
+  let pingTimer;
+  let pongTimer;
   
   poloniexWs.on('open', () => {
     console.log('Connected to Poloniex WebSocket');
@@ -66,6 +74,27 @@ const connectToPoloniexWebSocket = () => {
       channel: ['ticker'],
       symbols: ['BTC_USDT', 'ETH_USDT', 'SOL_USDT']
     }));
+    
+    // Start ping timer for connection health
+    pingTimer = setInterval(() => {
+      if (poloniexWs.readyState === WebSocket.OPEN) {
+        poloniexWs.ping();
+        
+        // Set timeout for pong response
+        pongTimer = setTimeout(() => {
+          console.warn('Poloniex WebSocket pong timeout - closing connection');
+          poloniexWs.terminate();
+        }, PONG_TIMEOUT);
+      }
+    }, PING_INTERVAL);
+  });
+  
+  poloniexWs.on('pong', () => {
+    // Clear pong timeout when response received
+    if (pongTimer) {
+      clearTimeout(pongTimer);
+      pongTimer = null;
+    }
   });
   
   poloniexWs.on('message', (data) => {
@@ -98,24 +127,49 @@ const connectToPoloniexWebSocket = () => {
   
   poloniexWs.on('error', (error) => {
     console.error('Poloniex WebSocket error:', error);
+    
+    // Clean up timers
+    if (pingTimer) {
+      clearInterval(pingTimer);
+      pingTimer = null;
+    }
+    if (pongTimer) {
+      clearTimeout(pongTimer);
+      pongTimer = null;
+    }
+    
     reconnectAttempts++;
+    
+    // Calculate exponential backoff delay
+    const backoffDelay = Math.min(RECONNECT_DELAY * Math.pow(2, reconnectAttempts - 1), 30000);
+    console.log(`Attempting to reconnect in ${backoffDelay}ms (attempt ${reconnectAttempts})`);
+    
     // Attempt to reconnect after a delay
-    setTimeout(connectToPoloniexWebSocket, RECONNECT_DELAY);
+    setTimeout(connectToPoloniexWebSocket, backoffDelay);
   });
   
   poloniexWs.on('close', () => {
     console.log('Poloniex WebSocket connection closed');
-    reconnectAttempts++;
-    // Attempt to reconnect after a delay
-    setTimeout(connectToPoloniexWebSocket, RECONNECT_DELAY);
-  });
-  
-  // Keep-alive ping
-  setInterval(() => {
-    if (poloniexWs.readyState === WebSocket.OPEN) {
-      poloniexWs.ping();
+    
+    // Clean up timers
+    if (pingTimer) {
+      clearInterval(pingTimer);
+      pingTimer = null;
     }
-  }, 30000);
+    if (pongTimer) {
+      clearTimeout(pongTimer);
+      pongTimer = null;
+    }
+    
+    reconnectAttempts++;
+    
+    // Calculate exponential backoff delay
+    const backoffDelay = Math.min(RECONNECT_DELAY * Math.pow(2, reconnectAttempts - 1), 30000);
+    console.log(`Connection closed, attempting to reconnect in ${backoffDelay}ms (attempt ${reconnectAttempts})`);
+    
+    // Attempt to reconnect after a delay
+    setTimeout(connectToPoloniexWebSocket, backoffDelay);
+  });
   
   return poloniexWs;
 };

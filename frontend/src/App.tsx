@@ -10,6 +10,7 @@ import ExtensionDownload from './pages/ExtensionDownload';
 import Navbar from './components/Navbar';
 import Sidebar from './components/Sidebar';
 import EnvironmentStatus from './components/EnvironmentStatus';
+import ConnectionHealth from './components/ConnectionHealth';
 import { TradingProvider } from './context/TradingContext';
 import { SettingsProvider } from './context/SettingsContext';
 import { WebSocketProvider } from './context/WebSocketContext';
@@ -43,6 +44,7 @@ function App() {
               </div>
               <Integration />
               <EnvironmentStatus />
+              <ConnectionHealth />
             </TradingProvider>
           </WebSocketProvider>
         </SettingsProvider>
