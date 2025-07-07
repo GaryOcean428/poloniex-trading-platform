@@ -96,8 +96,8 @@ class WebSocketService {
   private reconnectionStrategy: ReconnectionStrategy = ReconnectionStrategy.EXPONENTIAL_BACKOFF;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private pingTimer: NodeJS.Timeout | null = null;
-  private pingInterval: number = 30000; // 30 seconds
-  private pingTimeout: number = 5000; // 5 seconds
+  private pingInterval: number = 25000; // 25 seconds
+  private pingTimeout: number = 60000; // 60 seconds
   private lastPingTime: number = 0;
   private lastPongTime: number = 0;
   private offlineData: Map<string, any> = new Map();
@@ -127,14 +127,14 @@ class WebSocketService {
       reconnectionStrategy: ReconnectionStrategy.EXPONENTIAL_BACKOFF,
       initialReconnectDelay: 1000,
       maxReconnectDelay: 30000,
-      maxReconnectAttempts: 10,
+      maxReconnectAttempts: 5,
       reconnectionJitter: 0.5,
       timeout: 10000,
-      pingInterval: 30000,
-      pingTimeout: 5000,
+      pingInterval: 25000,  // 25 seconds
+      pingTimeout: 60000,   // 60 seconds
       autoConnect: false,
       forceNew: true,
-      transports: ['websocket']
+      transports: ['websocket', 'polling']  // Add polling as fallback
     }
   };
   
@@ -439,15 +439,19 @@ class WebSocketService {
           // Server is available, attempt WebSocket connection
           clearTimeout(connectionTimeout);
           
-          // Configure socket.io options
+          // Configure socket.io options with enhanced stability settings
           const socketOptions = {
             auth: this.config.auth,
-            transports: this.config.options?.transports || ['websocket'],
+            transports: this.config.options?.transports || ['websocket', 'polling'],
             reconnection: false, // We handle reconnection ourselves
             timeout: this.config.options?.timeout || 10000,
             forceNew: this.config.options?.forceNew || true,
             autoConnect: this.config.options?.autoConnect !== undefined ? 
-                        this.config.options.autoConnect : false
+                        this.config.options.autoConnect : false,
+            // Additional stability settings
+            closeOnBeforeunload: false,
+            withCredentials: true,
+            upgrade: true
           };
           
           this.socket = io(this.config.url, socketOptions);
@@ -811,6 +815,51 @@ class WebSocketService {
     
     this.connectionState = ConnectionState.DISCONNECTED;
     this.notifyListeners('connectionStateChanged', this.connectionState);
+  }
+
+  /**
+   * Handle page visibility change
+   * When page becomes hidden, we maintain connection but reduce activity
+   * When page becomes visible, we ensure connection is active
+   */
+  public handlePageVisibilityChange(isVisible: boolean): void {
+    if (isVisible) {
+      // Page visible - ensure connection is active
+      console.log('Page visible - ensuring WebSocket connection is active');
+      if (this.connectionState === ConnectionState.DISCONNECTED || 
+          this.connectionState === ConnectionState.FAILED) {
+        this.connect();
+      }
+    } else {
+      // Page hidden - maintain connection but log the state
+      console.log('Page hidden - maintaining WebSocket connection in background');
+      // We don't disconnect on tab blur to maintain real-time data flow
+    }
+  }
+
+  /**
+   * Get connection health information
+   */
+  public getConnectionHealth(): {
+    state: ConnectionState;
+    isHealthy: boolean;
+    uptime: number;
+    lastPing: number;
+    latency: number | null;
+    reconnectAttempts: number;
+  } {
+    const now = Date.now();
+    const uptime = this.connectionStats.connectTime ? 
+      now - this.connectionStats.connectTime : 0;
+    
+    return {
+      state: this.connectionState,
+      isHealthy: this.connectionState === ConnectionState.CONNECTED,
+      uptime,
+      lastPing: this.connectionStats.lastPingTime || 0,
+      latency: this.connectionStats.pingLatency,
+      reconnectAttempts: this.reconnectAttempts
+    };
   }
 
   /**
