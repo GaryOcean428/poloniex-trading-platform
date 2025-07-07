@@ -8,7 +8,9 @@
     "build": "echo 'No build step needed for JavaScript backend'",
     "start:prod": "node src/index.js",
     "start": "node src/index.js",
-    "lint": "eslint . --report-unused-disable-directives"
+    "start:railway": "node railway-start.js",
+    "lint": "eslint . --report-unused-disable-directives",
+    "validate:railway": "node ../validate-railway-config.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
