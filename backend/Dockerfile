@@ -9,8 +9,8 @@ RUN corepack enable yarn && \
     yarn install --immutable && \
     yarn cache clean
 
-# Copy only the server code
-COPY server ./server
+# Copy source code
+COPY . .
 
 # Create non-root user for security
 RUN addgroup -g 1001 -S nodejs && \
@@ -20,10 +20,8 @@ RUN addgroup -g 1001 -S nodejs && \
 RUN chown -R nodejs:nodejs /usr/src/app
 USER nodejs
 
-# Expose the port the app runs on.
-# Railway will automatically set the PORT environment variable.
+# Expose the port the app runs on
 EXPOSE 3000
 
 # Define the command to run the app
-# This will start the server defined in server/index.js
-CMD ["node", "server/index.js"]
+CMD ["yarn", "start"]

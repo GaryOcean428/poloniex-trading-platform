@@ -1,11 +1,43 @@
 {
-  "$schema": "https://railway.app/railway.schema.json",
-  "build": {
-    "builder": "dockerfile",
-    "dockerfilePath": "./backend.Dockerfile"
-  },
-  "deploy": {
-    "healthcheckPath": "/api/health",
-    "healthcheckTimeout": 300
+  "$schema": "https://railway.com/railway.schema.json",
+  "environments": {
+    "production": {
+      "services": {
+        "frontend": {
+          "build": {
+            "builder": "NIXPACKS",
+            "buildCommand": "cd frontend && yarn install && yarn build",
+            "watchPatterns": [
+              "frontend/**",
+              "shared/**"
+            ]
+          },
+          "deploy": {
+            "startCommand": "cd frontend && yarn start",
+            "restartPolicyType": "ON_FAILURE",
+            "restartPolicyMaxRetries": 3,
+            "overlapSeconds": 60
+          }
+        },
+        "backend": {
+          "build": {
+            "builder": "NIXPACKS",
+            "buildCommand": "cd backend && yarn install && yarn build",
+            "watchPatterns": [
+              "backend/**",
+              "shared/**"
+            ]
+          },
+          "deploy": {
+            "startCommand": "cd backend && yarn start:prod",
+            "healthcheckPath": "/api/health",
+            "healthcheckTimeout": 300,
+            "restartPolicyType": "ON_FAILURE",
+            "restartPolicyMaxRetries": 3,
+            "overlapSeconds": 60
+          }
+        }
+      }
+    }
   }
 }
