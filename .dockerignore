@@ -56,3 +56,10 @@ scripts/
 README.md
 *.md
 ENVIRONMENT_CONFIG.md
+
+# Additional optimizations for backend-only build
+extension/
+*.patch
+jsconfig.json
+vercel.json
+yarn.lock.backup
