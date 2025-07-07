@@ -194,6 +194,21 @@ The workspace includes optimized build commands:
 - `yarn build:backend` - Builds backend only
 - `yarn start:frontend` - Starts frontend preview
 - `yarn start:backend` - Starts backend server
+- `yarn railway:help` - Get Railway configuration guidance
+- `yarn railway:validate` - Validate Railway configuration files
+
+#### Railway Troubleshooting
+
+If you encounter Railway deployment issues, especially "config file does not exist" errors:
+
+1. **Quick Help**: Run `yarn railway:help` for configuration guidance
+2. **Detailed Guide**: See [RAILWAY_TROUBLESHOOTING_GUIDE.md](./RAILWAY_TROUBLESHOOTING_GUIDE.md)
+3. **Validate Configs**: Run `yarn railway:validate` to check configuration files
+
+Common solutions:
+- Set Config Path to `/railway.json` with Root Directory `/backend` (recommended)
+- Or set Config Path to `/backend/railway.json` with Root Directory `/backend`
+- Or clear Config Path completely and use Railway UI configuration
 
 ## Architecture
 
