@@ -20,7 +20,9 @@
     "lint": "yarn workspace poloniex-frontend lint && yarn workspace poloniex-backend lint",
     "test": "yarn workspace poloniex-frontend test",
     "production-check": "node scripts/production-check.js",
-    "deploy": "node scripts/deploy.js"
+    "deploy": "node scripts/deploy.js",
+    "railway:help": "node railway-config-helper.js",
+    "railway:validate": "node validate-railway-config.js"
   },
   "engines": {
     "node": ">=20.0.0"
