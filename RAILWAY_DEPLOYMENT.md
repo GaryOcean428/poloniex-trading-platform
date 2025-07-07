@@ -148,6 +148,32 @@ Each service has its own `railway.json` configuration file.
   package.json
   ```
 
+### Critical Railway Dashboard Configuration
+
+**Important**: When configuring Railway services, config file paths must be absolute from repository root, not relative to the root directory setting.
+
+**Correct Configuration Examples**:
+
+**Option 1: Monorepo Configuration (Recommended)**
+```
+Root Directory: /backend
+Config Path: /railway.json
+```
+
+**Option 2: Service-Specific Configuration**
+```
+Root Directory: /backend
+Config Path: /backend/railway.json
+```
+
+**Option 3: No Config File (UI Configuration)**
+```
+Root Directory: /backend
+Config Path: (leave empty)
+```
+
+**⚠️ Common Error**: Setting Config Path to `backend/railway.json` or `./backend/railway.json` will cause the error "config file /backend/railway.json does not exist".
+
 ## Environment Variables
 
 ### Frontend Environment Variables
@@ -282,6 +308,19 @@ yarn lint               # Lint both services
 4. **CORS Issues**:
    - Backend CORS configured for Railway domains
    - Update CORS settings if using custom domains
+
+5. **Config File Path Error: "config file /backend/railway.json does not exist"**:
+   - **Root Cause**: Railway config file paths must be absolute from repository root
+   - **Fix Option 1** (Recommended): Use root config
+     - Set Config Path to: `/railway.json` (absolute path from repo root)
+     - Keep Root Directory as: `/backend`
+   - **Fix Option 2**: Use service-specific config
+     - Set Config Path to: `/backend/railway.json` (absolute path from repo root)
+     - Keep Root Directory as: `/backend`
+   - **Fix Option 3**: Remove config path entirely
+     - Clear the Config Path field in Railway dashboard
+     - Configure build/deploy settings directly in Railway UI
+   - **Important**: Config paths are always absolute from repository root, NOT relative to root directory
 
 ### Deployment Verification
 
