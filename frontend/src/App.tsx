@@ -4,6 +4,7 @@ import Dashboard from './pages/Dashboard';
 import Strategies from './pages/Strategies';
 import Account from './pages/Account';
 import MarketAnalysis from './pages/MarketAnalysis';
+import Performance from './pages/Performance';
 import Settings from './pages/Settings';
 import ExtensionDownload from './pages/ExtensionDownload';
 import Navbar from './components/Navbar';
@@ -29,6 +30,7 @@ function App() {
                     <Route path="/" element={<Dashboard />} />
                     <Route path="/strategies" element={<Strategies />} />
                     <Route path="/charts" element={<MarketAnalysis />} />
+                    <Route path="/performance" element={<Performance />} />
                     <Route path="/account" element={<Account />} />
                     <Route path="/settings" element={<Settings />} />
                     <Route path="/extension" element={<ExtensionDownload />} />
