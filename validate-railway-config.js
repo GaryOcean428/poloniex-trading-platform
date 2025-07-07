@@ -7,20 +7,40 @@
 
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Find the project root (where package.json with workspaces is located)
+let projectRoot = process.cwd();
+while (!fs.existsSync(path.join(projectRoot, 'package.json')) || 
+       !fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8').includes('workspaces')) {
+  const parent = path.dirname(projectRoot);
+  if (parent === projectRoot) {
+    // We've reached the filesystem root, use the directory containing this script
+    projectRoot = path.dirname(__dirname);
+    break;
+  }
+  projectRoot = parent;
+}
 
 const configs = [
-  { name: 'Root', path: './railway.json' },
-  { name: 'Backend', path: './backend/railway.json' },
-  { name: 'Frontend', path: './frontend/railway.json' }
+  { name: 'Root', path: path.join(projectRoot, 'railway.json') },
+  { name: 'Backend', path: path.join(projectRoot, 'backend', 'railway.json') },
+  { name: 'Frontend', path: path.join(projectRoot, 'frontend', 'railway.json') }
 ];
 
-console.log('🚂 Railway Configuration Validator\n');
+console.log('🚂 Railway Configuration Validator');
+console.log(`📁 Project Root: ${projectRoot}`);
+console.log('==========================\n');
 
 let allValid = true;
 
 for (const config of configs) {
   try {
-    console.log(`Checking ${config.name} config: ${config.path}`);
+    const relativePath = path.relative(projectRoot, config.path);
+    console.log(`Checking ${config.name} config: ${relativePath}`);
     
     // Check if file exists
     if (!fs.existsSync(config.path)) {
