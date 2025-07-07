@@ -14,7 +14,7 @@ COPY server ./server
 
 # Create non-root user for security
 RUN addgroup -g 1001 -S nodejs && \
-    adduser -S nodejs -u 1001
+    adduser -S nodejs -u 1001 -G nodejs
     
 # Change ownership of app directory
 RUN chown -R nodejs:nodejs /usr/src/app
