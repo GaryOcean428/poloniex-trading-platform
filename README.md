@@ -85,41 +85,115 @@ This uses the `scripts/deploy.js` file which is configured for Vercel deployment
 
 ### Deploying to Railway
 
-This project can be deployed to Railway using a two-service architecture: a backend API service and a frontend static site service.
+This project supports Railway deployment using a monorepo architecture with separate frontend and backend services.
 
-**1. Backend Service (API)**
+#### Project Structure
+```
+poloniex-trading-platform/
+├── frontend/
+│   ├── src/
+│   ├── public/
+│   ├── package.json
+│   ├── yarn.lock
+│   ├── vite.config.ts
+│   ├── tsconfig.json
+│   ├── railway.json
+│   ├── nixpacks.toml
+│   └── Dockerfile (optional)
+├── backend/
+│   ├── src/
+│   ├── package.json
+│   ├── yarn.lock
+│   ├── railway.json
+│   ├── nixpacks.toml
+│   └── Dockerfile (optional)
+├── shared/
+│   └── types/
+├── railway.json (monorepo config)
+├── package.json (root workspace)
+└── yarn.lock (root)
+```
 
-*   **Creation**: In Railway, create a new service and connect it to your GitHub repository.
-*   **Configuration**:
-    *   In the Railway service settings (for this backend service), navigate to the "Config-as-code" section and set the "Railway Config File" path to `railway.json`. This instructs Railway to use our `railway.json` file, which is configured to build the service using the `backend.Dockerfile` (renamed from `Dockerfile` to allow the frontend service to default to Nixpacks).
-    *   A `.dockerignore` file is also present in the root to ensure a clean build by preventing local development files (like `node_modules/` and `.env`) from interfering with the Docker build process.
-    *   The `backend.Dockerfile` sets up the Node.js environment and runs `server/index.js`.
-    *   The `railway.json` also specifies a health check at `/api/health` with a 300-second timeout.
-    *   The server provides both `/health` and `/api/health` endpoints for Railway compatibility.
-    *   CORS is configured to allow `healthcheck.railway.app` for Railway health checks.
-*   **Environment Variables**: Set these in the Railway service dashboard:
-    *   `VITE_POLONIEX_API_KEY`: Your Poloniex API key (if the backend needs to make authenticated calls - currently `server/index.js` uses public websockets, but other functionality might require it).
-    *   `PORT`: Railway sets this automatically. The server is configured to use it.
-    *   *(Add any other necessary backend variables here, e.g., database URLs, if your project evolves to use them).*
+#### Railway Configuration Options
 
-**2. Frontend Service (Static Site)**
+**Option 1: Single Configuration File (Recommended)**
 
-*   **Creation**: In Railway, create another new service, also connected to your GitHub repository.
-*   **Configuration**:
-    *   In the Railway service settings (for this frontend service):
-        *   Ensure **no path is set** for the "Railway Config File" (under "Config-as-code"). This service will be configured directly via the UI settings.
-        *   Select **Nixpacks** as the builder (it should default to this, as no `Dockerfile` is present in the root).
-        *   Set the **Build Command** to `yarn build`.
-        *   Set the **Publish Directory** to `dist`. Railway will serve the static files from this directory.
-*   **Environment Variables**: Set these in the Railway service dashboard:
-    *   `VITE_BACKEND_URL`: **Crucial.** This must be the public URL of your deployed backend service on Railway (e.g., `https://your-backend-service-name.up.railway.app`).
-    *   `VITE_POLONIEX_API_KEY`: Your Poloniex API key, if your *frontend client code* makes direct authenticated API calls to Poloniex.
-    *   *(Add any other necessary frontend Vite variables here).*
+Uses the root `railway.json` with multi-service configuration:
 
-**General Railway Tips:**
-*   After deploying, check the deployment logs in Railway for both services to ensure everything started correctly.
-*   Use the service URLs provided by Railway to access your frontend application and backend API.
-*   Manage environment variables securely through the Railway dashboard.
+1. **Frontend Service Settings**:
+   - Service Name: `poloniex-frontend`
+   - Root Directory: `/frontend`
+   - Config Path: `/railway.json`
+   - Builder: NIXPACKS
+
+2. **Backend Service Settings**:
+   - Service Name: `poloniex-backend`
+   - Root Directory: `/backend`
+   - Config Path: `/railway.json`
+   - Builder: NIXPACKS
+
+**Option 2: Separate Service Configurations**
+
+Each service has its own `railway.json`:
+
+1. **Frontend Service**:
+   - Root Directory: `/frontend`
+   - Config Path: `/frontend/railway.json`
+
+2. **Backend Service**:
+   - Root Directory: `/backend`
+   - Config Path: `/backend/railway.json`
+
+#### Environment Variables
+
+**Frontend Variables**:
+```bash
+# Railway System Variables (auto-generated)
+PORT=
+RAILWAY_PUBLIC_DOMAIN=
+
+# Application Variables
+NODE_ENV=production
+VITE_API_URL=${{backend.RAILWAY_PUBLIC_DOMAIN}}
+VITE_WS_URL=wss://${{backend.RAILWAY_PUBLIC_DOMAIN}}
+VITE_POLONIEX_API_KEY=your-key
+VITE_POLONIEX_API_SECRET=your-secret
+VITE_POLONIEX_PASSPHRASE=your-passphrase
+```
+
+**Backend Variables**:
+```bash
+# Railway System Variables (auto-generated)
+PORT=
+RAILWAY_PUBLIC_DOMAIN=
+
+# Application Variables
+NODE_ENV=production
+FRONTEND_URL=https://${{frontend.RAILWAY_PUBLIC_DOMAIN}}
+POLONIEX_API_KEY=your-key
+POLONIEX_SECRET=your-secret
+JWT_SECRET=generate-secure-secret
+SESSION_SECRET=generate-secure-secret
+```
+
+#### Deployment Steps
+
+1. **Create Services**: Create two services in Railway project
+2. **Connect Repository**: Connect GitHub repository to both services
+3. **Configure Root Directories**:
+   - Frontend: Set to `/frontend`
+   - Backend: Set to `/backend`
+4. **Set Environment Variables**: Add required variables per service
+5. **Deploy**: Deploy backend first, then frontend
+
+#### Build Commands
+
+The workspace includes optimized build commands:
+- `yarn build` - Builds both services
+- `yarn build:frontend` - Builds frontend only
+- `yarn build:backend` - Builds backend only
+- `yarn start:frontend` - Starts frontend preview
+- `yarn start:backend` - Starts backend server
 
 ## Architecture
 
