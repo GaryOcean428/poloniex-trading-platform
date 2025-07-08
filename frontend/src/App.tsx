@@ -7,6 +7,8 @@ import SkipLinks from './components/SkipLinks';
 import EnvironmentStatus from './components/EnvironmentStatus';
 import ConnectionHealth from './components/ConnectionHealth';
 import { ConfigurationStatus } from './components/ConfigurationStatus';
+import { EnvDebug } from './components/EnvDebug';
+import { ConnectionTest } from './components/ConnectionTest';
 import { TradingProvider } from './context/TradingContext';
 import { SettingsProvider } from './context/SettingsContext';
 import { WebSocketProvider } from './context/WebSocketContext';
@@ -79,6 +81,8 @@ function App() {
               <EnvironmentStatus />
               <ConfigurationStatus />
               <ConnectionHealth />
+              <EnvDebug />
+              <ConnectionTest />
             </TradingProvider>
           </WebSocketProvider>
         </SettingsProvider>

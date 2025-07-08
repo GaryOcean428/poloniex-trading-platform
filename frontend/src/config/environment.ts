@@ -28,7 +28,7 @@ export class EnvironmentManager {
   private loadConfiguration(): EnvironmentConfig {
     // Check for environment variables
     const apiKey = import.meta.env.VITE_POLONIEX_API_KEY || null;
-    const apiSecret = import.meta.env.VITE_POLONIEX_SECRET || null;
+    const apiSecret = import.meta.env.VITE_POLONIEX_API_SECRET || null;
     const forceMockMode = import.meta.env.VITE_FORCE_MOCK_MODE === 'true';
     
     // Check for localStorage override (for testing)
@@ -77,7 +77,7 @@ export class EnvironmentManager {
       console.warn(
         'API credentials missing or invalid. Running in MOCK mode.',
         '\nTo enable live trading:',
-        '\n1. Set VITE_POLONIEX_API_KEY and VITE_POLONIEX_SECRET in .env',
+        '\n1. Set VITE_POLONIEX_API_KEY and VITE_POLONIEX_API_SECRET in .env',
         '\n2. Ensure VITE_FORCE_MOCK_MODE is not set to "true"'
       );
     }
