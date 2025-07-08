@@ -50,13 +50,13 @@ function App() {
         <SettingsProvider>
           <WebSocketProvider>
             <TradingProvider>
-              <div className="flex h-screen bg-neutral-100">
+              <div className="flex h-screen bg-neutral-100 overflow-hidden">
                 <Sidebar />
-                <div className="flex-1 flex flex-col overflow-hidden">
+                <div className="flex-1 flex flex-col min-w-0">
                   <Navbar />
                   <main 
                     id="main-content"
-                    className="flex-1 overflow-x-hidden overflow-y-auto bg-neutral-100 p-4"
+                    className="flex-1 overflow-y-auto bg-neutral-100 p-4 sm:p-6 lg:p-8"
                     role="main"
                     aria-label="Main content"
                     tabIndex={-1}

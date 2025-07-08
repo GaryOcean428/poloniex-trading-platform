@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useTradingContext } from '../hooks/useTradingContext';
+import { useResponsiveNav } from '../hooks/useResponsiveNav';
 import { 
   LayoutDashboard, 
   LineChart, 
@@ -17,6 +18,7 @@ import {
 const Sidebar: React.FC = () => {
   const location = useLocation();
   const { accountBalance, isLoading } = useTradingContext();
+  const { isDesktop } = useResponsiveNav();
   const [isCollapsed, setIsCollapsed] = useState(false);
   
   const navItems = [
@@ -33,6 +35,9 @@ const Sidebar: React.FC = () => {
   const toggleSidebar = () => {
     setIsCollapsed(!isCollapsed);
   };
+
+  // Only show sidebar on desktop
+  if (!isDesktop) return null;
   
   return (
     <aside 
@@ -40,7 +45,7 @@ const Sidebar: React.FC = () => {
       className={`
         ${isCollapsed ? 'w-16' : 'w-64'} 
         bg-neutral-800 text-white transition-all duration-300 ease-in-out
-        hidden md:block relative
+        relative flex-shrink-0
       `}
       role="navigation"
       aria-label="Main navigation"
