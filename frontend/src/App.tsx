@@ -46,48 +46,50 @@ BrowserCompatibility.setupExtensionCompatibility();
 
 function App() {
   return (
-    <ErrorBoundary>
+    <>
       <SkipLinks />
       <Router>
-        <SettingsProvider>
-          <WebSocketProvider>
-            <TradingProvider>
-              <div className="flex h-screen bg-neutral-100 overflow-hidden">
-                <Sidebar />
-                <div className="flex-1 flex flex-col min-w-0">
-                  <Navbar />
-                  <main 
-                    id="main-content"
-                    className="flex-1 overflow-y-auto bg-neutral-100 p-4 sm:p-6 lg:p-8"
-                    role="main"
-                    aria-label="Main content"
-                    tabIndex={-1}
-                  >
-                    <Suspense fallback={<LoadingSpinner />}>
-                      <Routes>
-                        <Route path="/" element={<Dashboard />} />
-                        <Route path="/strategies" element={<Strategies />} />
-                        <Route path="/charts" element={<MarketAnalysis />} />
-                        <Route path="/performance" element={<Performance />} />
-                        <Route path="/account" element={<Account />} />
-                        <Route path="/settings" element={<Settings />} />
-                        <Route path="/extension" element={<ExtensionDownload />} />
-                      </Routes>
-                    </Suspense>
-                  </main>
+        <ErrorBoundary>
+          <SettingsProvider>
+            <WebSocketProvider>
+              <TradingProvider>
+                <div className="flex h-screen bg-neutral-100 overflow-hidden">
+                  <Sidebar />
+                  <div className="flex-1 flex flex-col min-w-0">
+                    <Navbar />
+                    <main 
+                      id="main-content"
+                      className="flex-1 overflow-y-auto bg-neutral-100 p-4 sm:p-6 lg:p-8"
+                      role="main"
+                      aria-label="Main content"
+                      tabIndex={-1}
+                    >
+                      <Suspense fallback={<LoadingSpinner />}>
+                        <Routes>
+                          <Route path="/" element={<Dashboard />} />
+                          <Route path="/strategies" element={<Strategies />} />
+                          <Route path="/charts" element={<MarketAnalysis />} />
+                          <Route path="/performance" element={<Performance />} />
+                          <Route path="/account" element={<Account />} />
+                          <Route path="/settings" element={<Settings />} />
+                          <Route path="/extension" element={<ExtensionDownload />} />
+                        </Routes>
+                      </Suspense>
+                    </main>
+                  </div>
                 </div>
-              </div>
-              <Integration />
-              <EnvironmentStatus />
-              <ConfigurationStatus />
-              <ConnectionHealth />
-              <EnvDebug />
-              <ConnectionTest />
-            </TradingProvider>
-          </WebSocketProvider>
-        </SettingsProvider>
+                <Integration />
+                <EnvironmentStatus />
+                <ConfigurationStatus />
+                <ConnectionHealth />
+                <EnvDebug />
+                <ConnectionTest />
+              </TradingProvider>
+            </WebSocketProvider>
+          </SettingsProvider>
+        </ErrorBoundary>
       </Router>
-    </ErrorBoundary>
+    </>
   );
 }
 
