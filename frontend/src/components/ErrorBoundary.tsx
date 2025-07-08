@@ -97,7 +97,6 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
       return (
         <FallbackComponent
           error={this.state.error}
-          errorInfo={this.state.errorInfo}
           errorCount={this.state.errorCount}
           onReset={this.handleReset}
         />
