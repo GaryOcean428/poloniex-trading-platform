@@ -1,12 +1,6 @@
 // React is used implicitly for JSX transformation
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
-import Dashboard from './pages/Dashboard';
-import Strategies from './pages/Strategies';
-import Account from './pages/Account';
-import MarketAnalysis from './pages/MarketAnalysis';
-import Performance from './pages/Performance';
-import Settings from './pages/Settings';
-import ExtensionDownload from './pages/ExtensionDownload';
+import { lazy, Suspense } from 'react';
 import Navbar from './components/Navbar';
 import Sidebar from './components/Sidebar';
 import EnvironmentStatus from './components/EnvironmentStatus';
@@ -19,6 +13,22 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import Integration from './components/Integration';
 import { BrowserCompatibility } from './utils/extensionErrorHandler';
 import './App.css';
+
+// Lazy load page components
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const Strategies = lazy(() => import('./pages/Strategies'));
+const Account = lazy(() => import('./pages/Account'));
+const MarketAnalysis = lazy(() => import('./pages/MarketAnalysis'));
+const Performance = lazy(() => import('./pages/Performance'));
+const Settings = lazy(() => import('./pages/Settings'));
+const ExtensionDownload = lazy(() => import('./pages/ExtensionDownload'));
+
+// Loading component
+const LoadingSpinner = () => (
+  <div className="flex items-center justify-center min-h-screen">
+    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+  </div>
+);
 
 // Initialize browser compatibility and extension error handling
 BrowserCompatibility.setupExtensionCompatibility();
@@ -35,15 +45,17 @@ function App() {
                 <div className="flex-1 flex flex-col overflow-hidden">
                   <Navbar />
                   <main className="flex-1 overflow-x-hidden overflow-y-auto bg-neutral-100 p-4">
-                    <Routes>
-                      <Route path="/" element={<Dashboard />} />
-                      <Route path="/strategies" element={<Strategies />} />
-                      <Route path="/charts" element={<MarketAnalysis />} />
-                      <Route path="/performance" element={<Performance />} />
-                      <Route path="/account" element={<Account />} />
-                      <Route path="/settings" element={<Settings />} />
-                      <Route path="/extension" element={<ExtensionDownload />} />
-                    </Routes>
+                    <Suspense fallback={<LoadingSpinner />}>
+                      <Routes>
+                        <Route path="/" element={<Dashboard />} />
+                        <Route path="/strategies" element={<Strategies />} />
+                        <Route path="/charts" element={<MarketAnalysis />} />
+                        <Route path="/performance" element={<Performance />} />
+                        <Route path="/account" element={<Account />} />
+                        <Route path="/settings" element={<Settings />} />
+                        <Route path="/extension" element={<ExtensionDownload />} />
+                      </Routes>
+                    </Suspense>
                   </main>
                 </div>
               </div>

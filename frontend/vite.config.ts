@@ -13,12 +13,16 @@ export default defineConfig({
       output: {
         manualChunks: {
           vendor: ['react', 'react-dom', 'react-router-dom'],
-          charts: ['chart.js', 'react-chartjs-2'],
-          utils: ['axios', 'crypto-js', 'socket.io-client']
+          charts: ['chart.js', 'react-chartjs-2', 'recharts'],
+          utils: ['axios', 'socket.io-client', 'date-fns', 'uuid'],
+          ml: ['@tensorflow/tfjs'],
+          crypto: ['crypto-js'],
+          ui: ['tailwind-merge']
         }
       }
     },
-    chunkSizeWarningLimit: 800
+    chunkSizeWarningLimit: 500,
+    sourcemap: false // Disable sourcemaps in production
   },
   base: './',
   server: {
