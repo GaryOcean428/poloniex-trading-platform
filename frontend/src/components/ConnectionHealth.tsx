@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Wifi, WifiOff, AlertCircle, CheckCircle2, Clock } from '../lucide-react';
+import React, { useState } from 'react';
+import { Wifi, WifiOff, AlertCircle, Clock } from 'lucide-react';
 import { useWebSocket } from '../hooks/useWebSocket';
 
 interface ConnectionHealthProps {
