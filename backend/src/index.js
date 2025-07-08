@@ -12,6 +12,42 @@ import helmet from 'helmet';
 // Configure environment variables
 dotenv.config();
 
+// Add startup logging for debugging
+console.log('\n🚀 POLYTRADE BACKEND STARTUP\n');
+console.log('='.repeat(50));
+
+// Check critical environment variables
+const envCheck = {
+  // Backend should use NON-VITE variables
+  POLONIEX_API_KEY: process.env.POLONIEX_API_KEY,
+  POLONIEX_API_SECRET: process.env.POLONIEX_API_SECRET,
+  DATABASE_URL: process.env.DATABASE_URL,
+  REDIS_URL: process.env.REDIS_URL,
+  JWT_SECRET: process.env.JWT_SECRET || process.env.JWT_SECRT, // Handle typo
+  PORT: process.env.PORT || 3000,
+  NODE_ENV: process.env.NODE_ENV,
+  FRONTEND_URL: process.env.FRONTEND_URL,
+};
+
+// Display configuration
+console.log('📋 Configuration Status:');
+Object.entries(envCheck).forEach(([key, value]) => {
+  if (key.includes('SECRET') || key.includes('URL')) {
+    console.log(`${key}: ${value ? '✅ SET' : '❌ NOT SET'}`);
+  } else {
+    console.log(`${key}: ${value || '❌ NOT SET'}`);
+  }
+});
+
+// Check if we're in mock mode
+const hasApiCredentials = !!(
+  envCheck.POLONIEX_API_KEY && 
+  envCheck.POLONIEX_API_SECRET
+);
+
+console.log('\nTrading Mode:', hasApiCredentials ? '✅ LIVE' : '🧪 MOCK');
+console.log('='.repeat(50));
+
 // ES module path resolution
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -336,7 +372,31 @@ const poloniexWs = connectToPoloniexWebSocket();
 
 // Define API routes
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'up', timestamp: new Date() });
+  res.json({ 
+    status: 'healthy',
+    mode: hasApiCredentials ? 'live' : 'mock',
+    timestamp: new Date().toISOString(),
+    env: process.env.NODE_ENV,
+  });
+});
+
+// Mock API endpoint for testing
+app.get('/api/account', (req, res) => {
+  if (!hasApiCredentials) {
+    // Return mock data
+    res.json({
+      mock: true,
+      balances: {
+        USDT: { available: '10000.00', locked: '0.00' },
+        BTC: { available: '0.5', locked: '0.00' },
+      }
+    });
+  } else {
+    // TODO: Implement real Poloniex API call
+    res.json({
+      message: 'Live mode active - implement Poloniex API call'
+    });
+  }
 });
 
 // Standard health endpoint for Railway

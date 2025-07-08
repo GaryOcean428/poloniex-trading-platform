@@ -75,6 +75,34 @@
   }
 }
 
+/* Navigation Visibility Fix */
+/* Fix unreadable navigation text */
+.text-neutral-300 {
+  color: #e5e7eb !important;
+}
+
+/* Fix all navigation links */
+aside a {
+  color: #e5e7eb !important;
+}
+
+aside a:hover {
+  color: #ffffff !important;
+  background-color: #374151 !important;
+}
+
+/* Active state */
+aside a.bg-blue-700 {
+  background-color: #2563eb !important;
+  color: #ffffff !important;
+  font-weight: 500;
+}
+
+/* Ensure text is visible */
+aside span {
+  opacity: 1 !important;
+}
+
 /* Reduced motion support */
 @media (prefers-reduced-motion: reduce) {
   * {
