@@ -42,8 +42,8 @@ const io = new Server(server, {
 let reconnectAttempts = 0;
 const MAX_RECONNECT_ATTEMPTS = 5;
 const RECONNECT_DELAY = 5000;
-const PING_INTERVAL = 25000; // 25 seconds
-const PONG_TIMEOUT = 60000; // 60 seconds
+const PING_INTERVAL = 30000; // 30 seconds (increased from 25)
+const PONG_TIMEOUT = 10000; // 10 seconds (decreased from 60)
 
 const connectToPoloniexWebSocket = () => {
   if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {

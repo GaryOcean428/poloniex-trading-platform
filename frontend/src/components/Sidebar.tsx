@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useTradingContext } from '../context/TradingContext';
 import { 
@@ -9,12 +9,15 @@ import {
   Zap,
   BarChart4,
   Chrome,
-  User
+  User,
+  Menu,
+  ArrowLeft
 } from 'lucide-react';
 
 const Sidebar: React.FC = () => {
   const location = useLocation();
   const { accountBalance, isLoading } = useTradingContext();
+  const [isCollapsed, setIsCollapsed] = useState(false);
   
   const navItems = [
     { path: '/', label: 'Dashboard', icon: <LayoutDashboard size={20} /> },
@@ -27,28 +30,66 @@ const Sidebar: React.FC = () => {
     { path: '/settings', label: 'Settings', icon: <Settings size={20} /> }
   ];
   
+  const toggleSidebar = () => {
+    setIsCollapsed(!isCollapsed);
+  };
+  
   return (
-    <aside className="w-64 bg-neutral-800 text-white hidden md:block">
+    <aside className={`
+      ${isCollapsed ? 'w-16' : 'w-64'} 
+      bg-neutral-800 text-white transition-all duration-300 ease-in-out
+      hidden md:block relative
+    `}>
       <div className="p-4">
-        <div className="flex items-center justify-center mb-6 mt-2">
-          <Zap className="h-8 w-8 text-blue-400 mr-2" />
-          <h2 className="text-xl font-bold">TradingBot</h2>
+        {/* Header with toggle */}
+        <div className="flex items-center justify-between mb-6 mt-2">
+          <div className={`flex items-center ${isCollapsed ? 'justify-center' : ''}`}>
+            <Zap className="h-8 w-8 text-blue-400 mr-2" />
+            {!isCollapsed && <h2 className="text-xl font-bold">TradingBot</h2>}
+          </div>
+          <button
+            onClick={toggleSidebar}
+            className="p-1 rounded-md text-neutral-400 hover:text-white hover:bg-neutral-700 transition-colors"
+            aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          >
+            {isCollapsed ? <Menu size={20} /> : <ArrowLeft size={20} />}
+          </button>
         </div>
         
         <nav>
-          <ul>
+          <ul className="space-y-1">
             {navItems.map((item) => (
-              <li key={item.path} className="mb-1">
+              <li key={item.path}>
                 <Link 
                   to={item.path} 
-                  className={`flex items-center p-3 rounded-md transition-colors duration-200 ${
-                    location.pathname === item.path 
+                  className={`
+                    flex items-center p-3 rounded-md transition-all duration-200 group
+                    ${location.pathname === item.path 
                       ? 'bg-blue-700 text-white' 
-                      : 'text-neutral-300 hover:bg-neutral-700'
-                  }`}
+                      : 'text-neutral-300 hover:bg-neutral-700 hover:text-white'
+                    }
+                    ${isCollapsed ? 'justify-center' : ''}
+                  `}
+                  title={isCollapsed ? item.label : undefined}
                 >
-                  <span className="mr-3">{item.icon}</span>
-                  <span>{item.label}</span>
+                  <span className={`flex-shrink-0 ${!isCollapsed ? 'mr-3' : ''}`}>
+                    {item.icon}
+                  </span>
+                  {!isCollapsed && (
+                    <span className="transition-opacity duration-200">{item.label}</span>
+                  )}
+                  
+                  {/* Tooltip for collapsed state */}
+                  {isCollapsed && (
+                    <div className="
+                      absolute left-full ml-2 px-2 py-1 
+                      bg-neutral-900 text-white text-sm rounded-md
+                      opacity-0 group-hover:opacity-100 transition-opacity duration-200
+                      pointer-events-none whitespace-nowrap z-50
+                    ">
+                      {item.label}
+                    </div>
+                  )}
                 </Link>
               </li>
             ))}
@@ -56,24 +97,27 @@ const Sidebar: React.FC = () => {
         </nav>
       </div>
       
-      <div className="p-4 border-t border-neutral-700 mt-auto">
-        <div className="bg-neutral-900 p-3 rounded-md">
-          <div className="text-sm text-neutral-400 mb-2">Account Balance</div>
-          {isLoading ? (
-            <div className="text-sm text-neutral-500">Loading...</div>
-          ) : (
-            <>
-              <div className="text-lg font-semibold">
-                ${parseFloat(accountBalance?.totalAmount || '0').toFixed(2)} USDT
-              </div>
-              <div className={`text-xs mt-1 ${parseFloat(accountBalance?.todayPnL || '0') >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                {parseFloat(accountBalance?.todayPnL || '0') >= 0 ? '+' : ''}
-                {parseFloat(accountBalance?.todayPnLPercentage || '0').toFixed(2)}% today
-              </div>
-            </>
-          )}
+      {/* Account balance section */}
+      {!isCollapsed && (
+        <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-neutral-700">
+          <div className="bg-neutral-900 p-3 rounded-md">
+            <div className="text-sm text-neutral-400 mb-2">Account Balance</div>
+            {isLoading ? (
+              <div className="text-sm text-neutral-500">Loading...</div>
+            ) : (
+              <>
+                <div className="text-lg font-semibold">
+                  ${parseFloat(accountBalance?.totalAmount || '0').toFixed(2)} USDT
+                </div>
+                <div className={`text-xs mt-1 ${parseFloat(accountBalance?.todayPnL || '0') >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  {parseFloat(accountBalance?.todayPnL || '0') >= 0 ? '+' : ''}
+                  {parseFloat(accountBalance?.todayPnLPercentage || '0').toFixed(2)}% today
+                </div>
+              </>
+            )}
+          </div>
         </div>
-      </div>
+      )}
     </aside>
   );
 };
