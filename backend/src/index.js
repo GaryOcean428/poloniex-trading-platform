@@ -73,6 +73,38 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false, // Allows cross-origin resources
 }));
 
+// More restrictive CORS configuration
+const allowedOrigins = [
+  'https://healthcheck.railway.app',
+  process.env.FRONTEND_URL || 'http://localhost:5173',
+  ...(process.env.NODE_ENV === 'production' ? [] : ['http://localhost:3000', 'http://localhost:5173'])
+];
+
+// Debug: Log allowed origins in production
+if (process.env.NODE_ENV === 'production') {
+  console.log('🔒 CORS Configuration (Production):');
+  console.log('Allowed Origins:', allowedOrigins);
+}
+
+// CORS middleware configuration
+const corsMiddleware = cors({
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      console.warn(`🚫 CORS blocked request from origin: ${origin}`);
+      console.warn('🔒 Allowed origins:', allowedOrigins);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  methods: ['GET', 'POST'],
+  credentials: true,
+  optionsSuccessStatus: 200
+});
+
 // Rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -81,32 +113,15 @@ const limiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
-app.use('/api/', limiter);
-
-// More restrictive CORS configuration
-const allowedOrigins = [
-  'https://healthcheck.railway.app',
-  process.env.FRONTEND_URL || 'http://localhost:5173',
-  ...(process.env.NODE_ENV === 'production' ? [] : ['http://localhost:3000', 'http://localhost:5173'])
-];
-
-app.use(cors({
-  origin: (origin, callback) => {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-    
-    if (allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-  methods: ['GET', 'POST'],
-  credentials: true,
-  optionsSuccessStatus: 200
-}));
 
 app.use(express.json({ limit: '10mb' })); // Limit request size
+
+// Serve static files from frontend build (before API routes)
+const frontendDistPath = path.join(__dirname, '../public');
+app.use(express.static(frontendDistPath));
+
+// Apply CORS and rate limiting only to API routes
+app.use('/api/', corsMiddleware, limiter);
 
 // Create HTTP server
 const server = http.createServer(app);
@@ -408,10 +423,6 @@ app.get('/health', (req, res) => {
     service: 'poloniex-trading-platform-backend'
   });
 });
-
-// Serve static files from frontend build
-const frontendDistPath = path.join(__dirname, '../public');
-app.use(express.static(frontendDistPath));
 
 // Catch-all route for client-side routing (must be last)
 app.get('*', (req, res) => {
