@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useState, useEffect, ReactNode } from 'react';
 import { isAuthenticated, clearAuthData, storeAuthData } from '@/utils/auth';
 
 interface AuthContextType {
@@ -23,8 +23,6 @@ const AuthContext = createContext<AuthContextType>({
   user: null,
   isAuthenticated: false // Added for FuturesContext
 });
-
-export const useAuth = () => useContext(AuthContext);
 
 interface AuthProviderProps {
   children: ReactNode;

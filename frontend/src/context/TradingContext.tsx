@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
+import React, { createContext, useState, ReactNode, useEffect } from 'react';
 import { Strategy, StrategyType, MarketData, Trade, MovingAverageCrossoverParameters } from '../types';
 import { mockMarketData, mockTrades } from '../data/mockData';
 import { usePoloniexData } from '../hooks/usePoloniexData';
@@ -23,6 +23,8 @@ interface TradingContextType {
 }
 
 const TradingContext = createContext<TradingContextType | undefined>(undefined);
+
+export { TradingContext };
 
 interface TradingProviderProps {
   children: ReactNode;
@@ -178,10 +180,4 @@ export const TradingProvider: React.FC<TradingProviderProps> = ({
   );
 };
 
-export const useTradingContext = () => {
-  const context = useContext(TradingContext);
-  if (context === undefined) {
-    throw new Error('useTradingContext must be used within a TradingProvider');
-  }
-  return context;
-};
+// End of component

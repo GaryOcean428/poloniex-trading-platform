@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useRef, ReactNode } from 'react';
+import React, { createContext, useEffect, useRef, ReactNode } from 'react';
 import { webSocketService } from '../services/websocketService';
 import { usePageVisibility } from '../hooks/usePageVisibility';
 
@@ -15,6 +15,9 @@ interface WebSocketContextType {
 }
 
 const WebSocketContext = createContext<WebSocketContextType | null>(null);
+
+export { WebSocketContext };
+export type { WebSocketContextType };
 
 interface WebSocketProviderProps {
   children: ReactNode;
@@ -101,10 +104,4 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
   );
 };
 
-export const useWebSocket = (): WebSocketContextType => {
-  const context = useContext(WebSocketContext);
-  if (!context) {
-    throw new Error('useWebSocket must be used within a WebSocketProvider');
-  }
-  return context;
-};
+// End of component

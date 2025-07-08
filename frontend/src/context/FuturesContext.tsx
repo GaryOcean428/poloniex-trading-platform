@@ -1,12 +1,12 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useState, useEffect, ReactNode, useCallback } from 'react';
 import PoloniexFuturesAPI, { 
   PositionMode, 
   MarginMode, 
   FuturesPosition, 
   FuturesAccountBalance 
 } from '@/services/poloniexFuturesAPI';
-import { useAuth } from '@/context/AuthContext';
-import { useSettings } from '@/context/SettingsContext';
+import { useAuth } from '@/hooks/useAuth';
+import { useSettings } from '@/hooks/useSettings';
 
 interface FuturesContextType {
   api: PoloniexFuturesAPI;
@@ -36,7 +36,7 @@ const defaultFuturesContext: FuturesContextType = {
 
 const FuturesContext = createContext<FuturesContextType>(defaultFuturesContext);
 
-export const useFutures = () => useContext(FuturesContext);
+export { FuturesContext };
 
 interface FuturesProviderProps {
   children: ReactNode;
@@ -54,7 +54,7 @@ export const FuturesProvider: React.FC<FuturesProviderProps> = ({ children }) =>
   const [error, setError] = useState<string | null>(null);
 
   // Refresh positions data
-  const refreshPositions = async () => {
+  const refreshPositions = useCallback(async () => {
     if (!isAuthenticated && !mockMode) return;
     
     setIsLoading(true);
@@ -69,10 +69,10 @@ export const FuturesProvider: React.FC<FuturesProviderProps> = ({ children }) =>
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [isAuthenticated, mockMode, api]);
 
   // Refresh account balance
-  const refreshAccountBalance = async () => {
+  const refreshAccountBalance = useCallback(async () => {
     if (!isAuthenticated && !mockMode) return;
     
     setIsLoading(true);
@@ -87,7 +87,7 @@ export const FuturesProvider: React.FC<FuturesProviderProps> = ({ children }) =>
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [isAuthenticated, mockMode, api]);
 
   // Set position mode (Hedge or One-way)
   const setPositionMode = async (mode: PositionMode) => {
@@ -153,7 +153,7 @@ export const FuturesProvider: React.FC<FuturesProviderProps> = ({ children }) =>
       
       fetchInitialData();
     }
-  }, [isAuthenticated, mockMode]);
+  }, [api, refreshAccountBalance, refreshPositions, isAuthenticated, mockMode]);
 
   // Refresh data periodically
   useEffect(() => {
@@ -165,7 +165,7 @@ export const FuturesProvider: React.FC<FuturesProviderProps> = ({ children }) =>
     }, 30000); // Refresh every 30 seconds
     
     return () => clearInterval(refreshInterval);
-  }, [isAuthenticated, mockMode]);
+  }, [refreshAccountBalance, refreshPositions, isAuthenticated, mockMode]);
 
   const value = {
     api,
