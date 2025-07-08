@@ -1,46 +1,29 @@
 import React, { useState, useEffect } from 'react';
 import { AlertTriangle, CheckCircle2, Info, X } from '../lucide-react';
+import { EnvironmentManager } from '../config/environment';
 
 interface EnvironmentConfig {
   apiKey: string | null;
   apiSecret: string | null;
   forceMockMode: boolean;
-  disableMockMode: boolean;
   isProduction: boolean;
   wsUrl: string;
-  hasValidCredentials: boolean;
-  isMockMode: boolean;
+  apiUrl: string;
+  liveTradingEnabled: boolean;
 }
 
 const EnvironmentStatus: React.FC = () => {
-  const [config, setConfig] = useState<EnvironmentConfig | null>(null);
+  const [config, setConfig] = useState(EnvironmentManager.getInstance().getConfig());
   const [isVisible, setIsVisible] = useState(true);
 
   useEffect(() => {
-    const validateEnvironment = (): EnvironmentConfig => {
-      const apiKey = import.meta.env.VITE_POLONIEX_API_KEY || null;
-      const apiSecret = import.meta.env.VITE_POLONIEX_SECRET || null;
-      const forceMockMode = import.meta.env.VITE_FORCE_MOCK_MODE === 'true';
-      const disableMockMode = import.meta.env.VITE_DISABLE_MOCK_MODE === 'true';
-      const isProduction = import.meta.env.PROD;
-      const wsUrl = import.meta.env.VITE_WS_URL || 'ws://localhost:3000';
-      
-      const hasValidCredentials = !!(apiKey && apiSecret);
-      const isMockMode = forceMockMode || (!hasValidCredentials && !disableMockMode);
-      
-      return {
-        apiKey,
-        apiSecret,
-        forceMockMode,
-        disableMockMode,
-        isProduction,
-        wsUrl,
-        hasValidCredentials,
-        isMockMode
-      };
+    const handleConfigUpdate = (event: Event) => {
+      const customEvent = event as CustomEvent;
+      setConfig(customEvent.detail);
     };
-
-    setConfig(validateEnvironment());
+    
+    window.addEventListener('config-updated', handleConfigUpdate);
+    return () => window.removeEventListener('config-updated', handleConfigUpdate);
   }, []);
 
   if (!config || !isVisible) {
@@ -48,14 +31,14 @@ const EnvironmentStatus: React.FC = () => {
   }
 
   const getStatusInfo = () => {
-    if (config.isMockMode) {
+    if (!config.liveTradingEnabled) {
       return {
         type: 'warning' as const,
         icon: AlertTriangle,
         title: 'Demo Mode Active',
         message: 'Using simulated trading data',
         details: [
-          ...(!config.hasValidCredentials ? ['Missing API credentials'] : []),
+          ...(!config.apiKey || !config.apiSecret ? ['Missing API credentials'] : []),
           ...(config.forceMockMode ? ['Force mock mode enabled'] : []),
           'No real trades will be executed'
         ]
@@ -126,7 +109,7 @@ const EnvironmentStatus: React.FC = () => {
                 <div>Has API Key: {config.apiKey ? 'Yes' : 'No'}</div>
                 <div>Has API Secret: {config.apiSecret ? 'Yes' : 'No'}</div>
                 <div>Force Mock: {config.forceMockMode ? 'Yes' : 'No'}</div>
-                <div>Disable Mock: {config.disableMockMode ? 'Yes' : 'No'}</div>
+                <div>Live Trading: {config.liveTradingEnabled ? 'Yes' : 'No'}</div>
               </div>
             </details>
           </div>

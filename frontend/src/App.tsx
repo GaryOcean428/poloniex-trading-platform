@@ -11,12 +11,17 @@ import Navbar from './components/Navbar';
 import Sidebar from './components/Sidebar';
 import EnvironmentStatus from './components/EnvironmentStatus';
 import ConnectionHealth from './components/ConnectionHealth';
+import { ConfigurationStatus } from './components/ConfigurationStatus';
 import { TradingProvider } from './context/TradingContext';
 import { SettingsProvider } from './context/SettingsContext';
 import { WebSocketProvider } from './context/WebSocketContext';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import Integration from './components/Integration';
+import { BrowserCompatibility } from './utils/extensionErrorHandler';
 import './App.css';
+
+// Initialize browser compatibility and extension error handling
+BrowserCompatibility.setupExtensionCompatibility();
 
 function App() {
   return (
@@ -44,6 +49,7 @@ function App() {
               </div>
               <Integration />
               <EnvironmentStatus />
+              <ConfigurationStatus />
               <ConnectionHealth />
             </TradingProvider>
           </WebSocketProvider>
