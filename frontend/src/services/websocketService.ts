@@ -2,6 +2,7 @@ import { io, Socket } from 'socket.io-client';
 import { MarketData, Trade } from '@/types';
 import { useErrorHandler } from '@/hooks/useErrorHandler';
 import { getBackendUrl } from '@/utils/environment';
+import { WEBSOCKET_CONFIG, HEALTH_CHECK_CONFIG } from './websocket/config';
 
 // Socket.io events
 const EVENTS = {
@@ -96,8 +97,8 @@ class WebSocketService {
   private reconnectionStrategy: ReconnectionStrategy = ReconnectionStrategy.EXPONENTIAL_BACKOFF;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private pingTimer: NodeJS.Timeout | null = null;
-  private pingInterval: number = 25000; // 25 seconds
-  private pingTimeout: number = 60000; // 60 seconds
+  private pingInterval: number = WEBSOCKET_CONFIG.pingInterval;
+  private pingTimeout: number = WEBSOCKET_CONFIG.pingTimeout;
   private lastPingTime: number = 0;
   private lastPongTime: number = 0;
   private offlineData: Map<string, any> = new Map();
@@ -120,21 +121,21 @@ class WebSocketService {
     connectionDowntime: 0
   };
   
-  // Default connection config
   private config: ConnectionConfig = {
     url: getBackendUrl(),
     options: {
+      ...WEBSOCKET_CONFIG,
       reconnectionStrategy: ReconnectionStrategy.EXPONENTIAL_BACKOFF,
-      initialReconnectDelay: 1000,
-      maxReconnectDelay: 30000,
-      maxReconnectAttempts: 5,
-      reconnectionJitter: 0.5,
+      initialReconnectDelay: WEBSOCKET_CONFIG.reconnectionDelay,
+      maxReconnectDelay: WEBSOCKET_CONFIG.reconnectionDelayMax,
+      maxReconnectAttempts: WEBSOCKET_CONFIG.reconnectionAttempts,
+      reconnectionJitter: WEBSOCKET_CONFIG.randomizationFactor,
       timeout: 10000,
-      pingInterval: 25000,  // 25 seconds
-      pingTimeout: 60000,   // 60 seconds
-      autoConnect: false,
+      pingInterval: WEBSOCKET_CONFIG.pingInterval,
+      pingTimeout: WEBSOCKET_CONFIG.pingTimeout,
+      autoConnect: WEBSOCKET_CONFIG.autoConnect,
       forceNew: true,
-      transports: ['websocket', 'polling']  // Add polling as fallback
+      transports: WEBSOCKET_CONFIG.transports
     }
   };
   
