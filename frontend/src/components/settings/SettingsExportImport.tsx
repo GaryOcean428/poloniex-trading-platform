@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useSettings } from '@/context/SettingsContext';
+import { useSettings } from '../../hooks/useSettings';
 import { Card, CardHeader, CardBody, Button, Textarea, Alert } from '@/components/ui';
 
 const SettingsExportImport: React.FC = () => {

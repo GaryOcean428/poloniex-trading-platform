@@ -3,7 +3,7 @@ import { poloniexApi, PoloniexAPIError, PoloniexConnectionError, PoloniexAuthent
 import { MarketData, Trade } from '@/types';
 import { webSocketService } from '@/services/websocketService';
 import { mockMarketData, mockTrades } from '@/data/mockData';
-import { useSettings } from '@/context/SettingsContext';
+import { useSettings } from '@/hooks/useSettings';
 import { shouldUseMockMode, IS_WEBCONTAINER } from '@/utils/environment';
 
 interface PoloniexDataHook {
@@ -44,7 +44,7 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
     } else {
       console.log('Using mock mode - live trading disabled or missing credentials');
     }
-  }, [isLiveTrading, apiKey, apiSecret]);
+  }, [isLiveTrading, apiKey, apiSecret, refreshApiConnection]);
   
   // Function to refresh API connection when settings change
   const refreshApiConnection = useCallback(() => {
@@ -63,14 +63,14 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
     ]).finally(() => {
       setIsLoading(false);
     });
-  }, [initialPair]);
+  }, [initialPair, fetchMarketData, fetchTrades, fetchAccountBalance]);
   
   // Monitor for changes in API credentials
   useEffect(() => {
     refreshApiConnection();
   }, [apiKey, apiSecret, isLiveTrading, refreshApiConnection]);
   
-  const mapPoloniexDataToMarketData = (data: any[]): MarketData[] => {
+  const mapPoloniexDataToMarketData = useCallback((data: any[]): MarketData[] => {
     try {
       return data.map(item => ({
         pair: initialPair,
@@ -85,9 +85,9 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
       console.error('Error mapping Poloniex data:', err instanceof Error ? err.message : String(err));
       return [];
     }
-  };
+  }, [initialPair]);
   
-  const mapPoloniexTradeToTrade = (trade: any): Trade => {
+  const mapPoloniexTradeToTrade = useCallback((trade: any): Trade => {
     try {
       return {
         id: trade.id || `generated-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
@@ -114,7 +114,7 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
         status: 'FAILED'
       };
     }
-  };
+  }, [initialPair]);
   
   const fetchMarketData = useCallback(async (pair: string) => {
     // If in mock mode, use mock data immediately
@@ -155,7 +155,7 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
     } finally {
       setIsLoading(false);
     }
-  }, [isMockMode]);
+  }, [isMockMode, mapPoloniexDataToMarketData]);
   
   const fetchTrades = useCallback(async (pair: string) => {
     // If in mock mode, use mock data immediately  
@@ -198,7 +198,7 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
     } finally {
       setIsLoading(false);
     }
-  }, [isMockMode]);
+  }, [isMockMode, mapPoloniexTradeToTrade]);
   
   const fetchAccountBalance = useCallback(async () => {
     // If in mock mode, use mock data immediately

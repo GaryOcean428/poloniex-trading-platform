@@ -1,6 +1,6 @@
 import React from 'react';
 import { TrendingUp, TrendingDown, DollarSign } from 'lucide-react';
-import { useTradingContext } from '../../context/TradingContext';
+import { useTradingContext } from '../../hooks/useTradingContext';
 
 const AccountSummary: React.FC = () => {
   const { accountBalance, isLoading } = useTradingContext();

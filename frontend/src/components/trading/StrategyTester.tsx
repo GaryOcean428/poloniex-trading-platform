@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Strategy, MarketData } from '@/types';
 import { 
   backtestStrategy, 
@@ -88,7 +88,7 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
   // Run backtest when options change
   useEffect(() => {
     runBacktest();
-  }, [strategy, testOptions]);
+  }, [runBacktest]);
 
   // Notify parent component when results change
   useEffect(() => {
@@ -98,7 +98,7 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
   }, [backtestResult, onResultsChange]);
 
   // Run backtest
-  const runBacktest = async () => {
+  const runBacktest = useCallback(async () => {
     if (!marketData.length) return;
     
     setIsLoading(prev => ({ ...prev, backtest: true }));
@@ -114,7 +114,7 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
       console.error('Backtest error:', error);
       setIsLoading(prev => ({ ...prev, backtest: false }));
     }
-  };
+  }, [strategy, marketData, testOptions]);
 
   // Run optimization
   const runOptimization = async (metric: string = 'netProfit') => {

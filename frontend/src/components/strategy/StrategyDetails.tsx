@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Strategy, StrategyType } from '../../types';
 import { BacktestResult } from '../../types/backtest';
 import PriceChart from '../charts/PriceChart';
-import { useTradingContext } from '../../context/TradingContext';
+import { useTradingContext } from '../../hooks/useTradingContext';
 import { Clock, Zap, BarChart2, History, Sparkles, RefreshCw } from 'lucide-react';
 
 interface StrategyDetailsProps {

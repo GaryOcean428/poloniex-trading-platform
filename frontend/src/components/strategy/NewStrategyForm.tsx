@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useTradingContext } from '../../context/TradingContext';
+import { useTradingContext } from '../../hooks/useTradingContext';
 import { Strategy, StrategyType } from '../../types';
 import { X } from 'lucide-react';
 

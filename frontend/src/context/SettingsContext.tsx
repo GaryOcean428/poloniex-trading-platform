@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useState, useEffect, ReactNode } from 'react';
 import { getStorageItem, setStorageItem, STORAGE_KEYS, isStorageAvailable } from '@/utils/storage';
 
 interface SettingsContextType {
@@ -84,6 +84,8 @@ const EXTENDED_STORAGE_KEYS = {
 };
 
 const SettingsContext = createContext<SettingsContextType | undefined>(undefined);
+
+export { SettingsContext };
 
 interface SettingsProviderProps {
   children: ReactNode;
@@ -244,10 +246,4 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
   );
 };
 
-export const useSettings = () => {
-  const context = useContext(SettingsContext);
-  if (context === undefined) {
-    throw new Error('useSettings must be used within a SettingsProvider');
-  }
-  return context;
-}
+// End of component

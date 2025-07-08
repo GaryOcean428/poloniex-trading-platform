@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useTradingContext } from '../context/TradingContext';
+import { useTradingContext } from '../hooks/useTradingContext';
 import { Strategy, StrategyType } from '../types';
 import { Plus, Zap, Settings as SettingsIcon, BarChart2, Play, Pause, Trash2, History, Sparkles } from 'lucide-react';
 import NewStrategyForm from '../components/strategy/NewStrategyForm';
