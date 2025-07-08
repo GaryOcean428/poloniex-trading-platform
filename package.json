@@ -22,7 +22,8 @@
     "production-check": "node scripts/production-check.js",
     "deploy": "node scripts/deploy.js",
     "railway:help": "node railway-config-helper.js",
-    "railway:validate": "node validate-railway-config.js"
+    "railway:validate": "node validate-railway-config.js",
+    "workspace:health": "node scripts/workspace-health.js"
   },
   "engines": {
     "node": ">=20.0.0"
