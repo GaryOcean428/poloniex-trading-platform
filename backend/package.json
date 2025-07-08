@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "node src/index.js",
-    "build": "cd ../frontend && yarn install && yarn build && echo 'Frontend built successfully for backend deployment'",
+    "build": "cd ../frontend && yarn install && yarn build && echo 'Frontend built successfully for backend deployment' && cd ../backend && cp -r ../frontend/dist ./public && echo 'Frontend dist copied to backend/public'",
     "start:prod": "node src/index.js",
     "start": "node src/index.js",
     "start:railway": "node railway-start.js",
