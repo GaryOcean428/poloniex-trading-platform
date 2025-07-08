@@ -43,6 +43,7 @@ frontend/dist/
 frontend/node_modules/
 backend/dist/
 backend/node_modules/
+backend/public/
 *.tsbuildinfo
 
 # Railway deployment files
