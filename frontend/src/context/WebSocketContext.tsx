@@ -1,4 +1,4 @@
-import React, { createContext, useEffect, useRef, ReactNode } from 'react';
+import React, { createContext, useEffect, ReactNode } from 'react';
 import { webSocketService } from '../services/websocketService';
 import { usePageVisibility } from '../hooks/usePageVisibility';
 

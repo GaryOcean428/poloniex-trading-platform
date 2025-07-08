@@ -34,7 +34,6 @@ export default [
       '@typescript-eslint/no-explicit-any': 'warn',
       '@typescript-eslint/no-unused-vars': 'warn',
       'no-undef': 'off',
-      '@typescript-eslint/ban-types': 'warn',
       '@typescript-eslint/no-duplicate-enum-values': 'off',
       'no-empty-pattern': 'warn',
       'react-hooks/rules-of-hooks': 'error',

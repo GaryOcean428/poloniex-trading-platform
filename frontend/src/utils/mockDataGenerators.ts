@@ -1,3 +1,4 @@
+import seedrandom from 'seedrandom';
 import { useMockMode } from '../hooks/useMockMode';
 
 // Mock data generators for various market data types
@@ -25,7 +26,7 @@ export const generateRandomMarketData = (
 ): any[] => {
   // Set random seed if provided
   if (seed !== undefined) {
-    Math.seedrandom(seed.toString());
+    seedrandom(seed.toString(), { global: true });
   }
 
   // Parse timeframe to get interval in minutes
@@ -65,8 +66,6 @@ export const generateRandomMarketData = (
   // Generate data
   const data = [];
   let lastClose = basePrice;
-  let lastHigh = basePrice * 1.01;
-  let lastLow = basePrice * 0.99;
   
   for (let i = 0; i < limit; i++) {
     // Calculate timestamp
@@ -124,8 +123,6 @@ export const generateRandomMarketData = (
     
     // Update last values for next iteration
     lastClose = close;
-    lastHigh = high;
-    lastLow = low;
   }
   
   return data;
@@ -145,7 +142,7 @@ export const generateRandomOrderBook = (
 ): any => {
   // Set random seed if provided
   if (seed !== undefined) {
-    Math.seedrandom(seed.toString());
+    seedrandom(seed.toString(), { global: true });
   }
   
   // Generate base price based on symbol
@@ -230,7 +227,7 @@ export const generateRandomTrades = (
 ): any[] => {
   // Set random seed if provided
   if (seed !== undefined) {
-    Math.seedrandom(seed.toString());
+    seedrandom(seed.toString(), { global: true });
   }
   
   // Generate base price based on symbol
@@ -304,7 +301,7 @@ export const generateRandomTicker = (
 ): any => {
   // Set random seed if provided
   if (seed !== undefined) {
-    Math.seedrandom(seed.toString());
+    seedrandom(seed.toString(), { global: true });
   }
   
   // Generate base price based on symbol
