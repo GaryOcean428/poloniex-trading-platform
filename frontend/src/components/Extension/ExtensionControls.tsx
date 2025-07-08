@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { X, RefreshCw, Info } from 'lucide-react';
 import ExtensionStatus from './ExtensionStatus';
 import ExtensionSettings from './ExtensionSettings';
-import { useSettings } from '../../context/SettingsContext';
+import { useSettings } from '../../hooks/useSettings';
 
 interface ExtensionControlsProps {
   onClose?: () => void;

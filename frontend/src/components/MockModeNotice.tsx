@@ -1,5 +1,5 @@
 import React from 'react';
-import { useTradingContext } from '../context/TradingContext';
+import { useTradingContext } from '../hooks/useTradingContext';
 import { AlertTriangle } from 'lucide-react';
 
 // Check if we're running in a WebContainer environment

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { default as dqnTrading } from '@/ml/dqnTrading';
 import { usePoloniexData } from '@/hooks/usePoloniexData';
-import { useSettings } from '@/context/SettingsContext';
+import { useSettings } from '../../hooks/useSettings';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 interface DQNConfig {

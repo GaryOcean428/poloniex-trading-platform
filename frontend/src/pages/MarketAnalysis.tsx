@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useTradingContext } from '../context/TradingContext';
+import { useTradingContext } from '../hooks/useTradingContext';
 import PriceChart from '../components/charts/PriceChart';
 import { BarChart2, TrendingUp, TrendingDown, Volume2, ArrowRight } from 'lucide-react';
 import MockModeNotice from '../components/MockModeNotice';

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Copy, Plus, Trash2, AlertTriangle, Shield, RefreshCw } from 'lucide-react';
-import { useSettings } from '../../context/SettingsContext';
+import { useSettings } from '../../hooks/useSettings';
 
 interface ApiKey {
   id: string;

@@ -1,7 +1,7 @@
 // React is used implicitly for JSX transformation
 import { useState, useEffect } from 'react';
 import { Shield, Lock, TerminalSquare, Zap } from 'lucide-react';
-import { useSettings } from '../../context/SettingsContext';
+import { useSettings } from '../../hooks/useSettings';
 
 interface ExtensionSettingsProps {
   onClose?: () => void;

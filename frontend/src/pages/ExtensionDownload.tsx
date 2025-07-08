@@ -13,7 +13,7 @@ import {
   ChevronUp,
   Lock
 } from 'lucide-react';
-import { useSettings } from '../context/SettingsContext';
+import { useSettings } from '../hooks/useSettings';
 import { createExtensionZip } from '../utils/extensionHelper';
 import ExtensionControls from '../components/Extension/ExtensionControls';
 

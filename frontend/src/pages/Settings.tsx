@@ -9,7 +9,7 @@ import {
   Check,
   X
 } from 'lucide-react';
-import { useSettings } from '../context/SettingsContext';
+import { useSettings } from '../hooks/useSettings';
 import { usePoloniexData } from '../hooks/usePoloniexData'; 
 
 // Check if we're running in a WebContainer environment

@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { lazy, Suspense } from 'react';
 import Navbar from './components/Navbar';
 import Sidebar from './components/Sidebar';
+import SkipLinks from './components/SkipLinks';
 import EnvironmentStatus from './components/EnvironmentStatus';
 import ConnectionHealth from './components/ConnectionHealth';
 import { ConfigurationStatus } from './components/ConfigurationStatus';
@@ -25,8 +26,16 @@ const ExtensionDownload = lazy(() => import('./pages/ExtensionDownload'));
 
 // Loading component
 const LoadingSpinner = () => (
-  <div className="flex items-center justify-center min-h-screen">
-    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+  <div 
+    className="flex items-center justify-center min-h-screen"
+    role="status"
+    aria-label="Loading application"
+  >
+    <div 
+      className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"
+      aria-hidden="true"
+    ></div>
+    <span className="sr-only">Loading...</span>
   </div>
 );
 
@@ -36,6 +45,7 @@ BrowserCompatibility.setupExtensionCompatibility();
 function App() {
   return (
     <ErrorBoundary>
+      <SkipLinks />
       <Router>
         <SettingsProvider>
           <WebSocketProvider>
@@ -44,7 +54,13 @@ function App() {
                 <Sidebar />
                 <div className="flex-1 flex flex-col overflow-hidden">
                   <Navbar />
-                  <main className="flex-1 overflow-x-hidden overflow-y-auto bg-neutral-100 p-4">
+                  <main 
+                    id="main-content"
+                    className="flex-1 overflow-x-hidden overflow-y-auto bg-neutral-100 p-4"
+                    role="main"
+                    aria-label="Main content"
+                    tabIndex={-1}
+                  >
                     <Suspense fallback={<LoadingSpinner />}>
                       <Routes>
                         <Route path="/" element={<Dashboard />} />

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useMockMode } from '@/context/MockModeContext';
+import { useMockMode } from '../../hooks/useMockMode';
 
 const MockModeSettings: React.FC = () => {
   const {
