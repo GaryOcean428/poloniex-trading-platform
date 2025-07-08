@@ -1,5 +1,5 @@
 import { MarketData, OrderBook, Trade, Ticker } from '@/types';
-import { useMockMode } from '@/context/MockModeContext';
+import { useMockMode } from '../hooks/useMockMode';
 import { generateRandomMarketData, generateRandomOrderBook, generateRandomTrades, generateRandomTicker } from './mockDataGenerators';
 
 // Cache for historical data

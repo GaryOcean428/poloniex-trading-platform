@@ -6,6 +6,8 @@ import dotenv from 'dotenv';
 import WebSocket from 'ws';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import rateLimit from 'express-rate-limit';
+import helmet from 'helmet';
 
 // Configure environment variables
 dotenv.config();
@@ -16,26 +18,72 @@ const __dirname = path.dirname(__filename);
 
 // Create Express app
 const app = express();
-app.use(cors({
-  origin: [
-    '*',
-    'https://healthcheck.railway.app',
-    process.env.FRONTEND_URL || 'http://localhost:5173'
-  ],
-  methods: ['GET', 'POST'],
-  credentials: true
+
+// Security middleware
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'", "'unsafe-eval'"], // Required for React dev
+      imgSrc: ["'self'", "data:", "https:"],
+      connectSrc: ["'self'", "wss:", "https:"],
+      fontSrc: ["'self'", "data:"],
+      objectSrc: ["'none'"],
+      mediaSrc: ["'self'"],
+      frameSrc: ["'none'"],
+    },
+  },
+  crossOriginEmbedderPolicy: false, // Allows cross-origin resources
 }));
-app.use(express.json());
+
+// Rate limiting
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
+  message: 'Too many requests from this IP, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use('/api/', limiter);
+
+// More restrictive CORS configuration
+const allowedOrigins = [
+  'https://healthcheck.railway.app',
+  process.env.FRONTEND_URL || 'http://localhost:5173',
+  ...(process.env.NODE_ENV === 'production' ? [] : ['http://localhost:3000', 'http://localhost:5173'])
+];
+
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  methods: ['GET', 'POST'],
+  credentials: true,
+  optionsSuccessStatus: 200
+}));
+
+app.use(express.json({ limit: '10mb' })); // Limit request size
 
 // Create HTTP server
 const server = http.createServer(app);
 
-// Set up Socket.IO
+// Set up Socket.IO with security
 const io = new Server(server, {
   cors: {
-    origin: '*',
-    methods: ['GET', 'POST']
-  }
+    origin: allowedOrigins,
+    methods: ['GET', 'POST'],
+    credentials: true
+  },
+  pingTimeout: 60000,
+  pingInterval: 25000
 });
 
 // Connect to Poloniex WebSocket for live market data
@@ -201,32 +249,85 @@ const formatPoloniexTickerData = (data) => {
   }
 };
 
-// Socket.IO connection handler
+// Socket.IO connection handler with security
 io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);
   
+  // Rate limiting for socket events
+  const socketRateLimit = new Map();
+  
+  const isRateLimited = (eventType) => {
+    const now = Date.now();
+    const key = `${socket.id}:${eventType}`;
+    const limit = socketRateLimit.get(key) || { count: 0, resetTime: now + 60000 };
+    
+    if (now > limit.resetTime) {
+      limit.count = 0;
+      limit.resetTime = now + 60000;
+    }
+    
+    if (limit.count >= 30) { // 30 events per minute
+      return true;
+    }
+    
+    limit.count++;
+    socketRateLimit.set(key, limit);
+    return false;
+  };
+  
   // Handle client subscription to market data
   socket.on('subscribeMarket', ({ pair }) => {
+    if (isRateLimited('subscribeMarket')) {
+      socket.emit('error', 'Rate limit exceeded for subscribeMarket');
+      return;
+    }
+    
+    // Validate pair format
+    if (!pair || !/^[A-Z]{3,5}-[A-Z]{3,5}$/.test(pair)) {
+      socket.emit('error', 'Invalid pair format');
+      return;
+    }
+    
     console.log(`Client ${socket.id} subscribed to ${pair}`);
     socket.join(pair);
   });
   
   // Handle client unsubscription from market data
   socket.on('unsubscribeMarket', ({ pair }) => {
+    if (isRateLimited('unsubscribeMarket')) {
+      socket.emit('error', 'Rate limit exceeded for unsubscribeMarket');
+      return;
+    }
+    
     console.log(`Client ${socket.id} unsubscribed from ${pair}`);
     socket.leave(pair);
   });
   
-  // Handle chat messages
+  // Handle chat messages with validation
   socket.on('chatMessage', (message) => {
-    console.log('Chat message received:', message);
+    if (isRateLimited('chatMessage')) {
+      socket.emit('error', 'Rate limit exceeded for chatMessage');
+      return;
+    }
+    
+    // Validate message
+    if (!message || typeof message !== 'string' || message.length > 500) {
+      socket.emit('error', 'Invalid message format');
+      return;
+    }
+    
+    // Sanitize message (basic XSS prevention)
+    const sanitizedMessage = message.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
+    
+    console.log('Chat message received:', sanitizedMessage);
     // Broadcast to all clients
-    io.emit('chatMessage', message);
+    io.emit('chatMessage', sanitizedMessage);
   });
   
   // Handle disconnection
   socket.on('disconnect', () => {
     console.log('Client disconnected:', socket.id);
+    socketRateLimit.delete(socket.id);
   });
 });
 

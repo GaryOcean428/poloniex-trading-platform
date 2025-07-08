@@ -1,4 +1,4 @@
-import { useSettings } from '@/context/SettingsContext';
+import { useSettings } from '../../hooks/useSettings';
 import { Card, CardHeader, CardBody, CardFooter, Input, Switch, Select, Label } from '@/components/ui';
 
 const TradingSettings: React.FC = () => {

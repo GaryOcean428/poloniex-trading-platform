@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { default as mlTrading } from '@/ml/mlTrading';
 import { usePoloniexData } from '@/hooks/usePoloniexData';
-import { useSettings } from '@/context/SettingsContext';
+import { useSettings } from '../../hooks/useSettings';
 
 interface MLModelConfig {
   modelType: 'randomforest' | 'gradientboosting' | 'svm' | 'neuralnetwork';

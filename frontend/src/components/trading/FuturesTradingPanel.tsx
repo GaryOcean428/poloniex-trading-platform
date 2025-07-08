@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Select, SelectOption } from '@/components/ui/Select';
 import { Switch } from '@/components/ui/Switch';
-import { useFutures } from '@/context/FuturesContext';
+import { useFutures } from '../../hooks/useFutures';
 import { MarginMode, OrderSide, OrderType, PositionSide } from '@/services/poloniexFuturesAPI';
 
 interface FuturesTradingPanelProps {

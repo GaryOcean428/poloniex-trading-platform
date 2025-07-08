@@ -1,4 +1,4 @@
-import { useMockMode } from '@/context/MockModeContext';
+import { useMockMode } from '../hooks/useMockMode';
 
 // Mock data generators for various market data types
 // These functions generate realistic-looking mock data for testing

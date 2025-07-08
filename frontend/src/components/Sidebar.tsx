@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { useTradingContext } from '../context/TradingContext';
+import { useTradingContext } from '../hooks/useTradingContext';
+import { useResponsiveNav } from '../hooks/useResponsiveNav';
 import { 
   LayoutDashboard, 
   LineChart, 
@@ -17,6 +18,7 @@ import {
 const Sidebar: React.FC = () => {
   const location = useLocation();
   const { accountBalance, isLoading } = useTradingContext();
+  const { isDesktop } = useResponsiveNav();
   const [isCollapsed, setIsCollapsed] = useState(false);
   
   const navItems = [
@@ -33,31 +35,40 @@ const Sidebar: React.FC = () => {
   const toggleSidebar = () => {
     setIsCollapsed(!isCollapsed);
   };
+
+  // Only show sidebar on desktop
+  if (!isDesktop) return null;
   
   return (
-    <aside className={`
-      ${isCollapsed ? 'w-16' : 'w-64'} 
-      bg-neutral-800 text-white transition-all duration-300 ease-in-out
-      hidden md:block relative
-    `}>
+    <aside 
+      id="navigation"
+      className={`
+        ${isCollapsed ? 'w-16' : 'w-64'} 
+        bg-neutral-800 text-white transition-all duration-300 ease-in-out
+        relative flex-shrink-0
+      `}
+      role="navigation"
+      aria-label="Main navigation"
+    >
       <div className="p-4">
         {/* Header with toggle */}
         <div className="flex items-center justify-between mb-6 mt-2">
           <div className={`flex items-center ${isCollapsed ? 'justify-center' : ''}`}>
-            <Zap className="h-8 w-8 text-blue-400 mr-2" />
+            <Zap className="h-8 w-8 text-blue-400 mr-2" aria-hidden="true" />
             {!isCollapsed && <h2 className="text-xl font-bold">TradingBot</h2>}
           </div>
           <button
             onClick={toggleSidebar}
             className="p-1 rounded-md text-neutral-400 hover:text-white hover:bg-neutral-700 transition-colors"
             aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            aria-expanded={!isCollapsed}
           >
-            {isCollapsed ? <Menu size={20} /> : <ArrowLeft size={20} />}
+            {isCollapsed ? <Menu size={20} aria-hidden="true" /> : <ArrowLeft size={20} aria-hidden="true" />}
           </button>
         </div>
         
-        <nav>
-          <ul className="space-y-1">
+        <nav aria-label="Main menu">
+          <ul className="space-y-1" role="list">
             {navItems.map((item) => (
               <li key={item.path}>
                 <Link 
@@ -71,8 +82,10 @@ const Sidebar: React.FC = () => {
                     ${isCollapsed ? 'justify-center' : ''}
                   `}
                   title={isCollapsed ? item.label : undefined}
+                  aria-label={item.label}
+                  aria-current={location.pathname === item.path ? 'page' : undefined}
                 >
-                  <span className={`flex-shrink-0 ${!isCollapsed ? 'mr-3' : ''}`}>
+                  <span className={`flex-shrink-0 ${!isCollapsed ? 'mr-3' : ''}`} aria-hidden="true">
                     {item.icon}
                   </span>
                   {!isCollapsed && (

@@ -13,7 +13,7 @@ import {
   DollarSign,
   BarChart4
 } from 'lucide-react';
-import { useTradingContext } from '../context/TradingContext';
+import { useTradingContext } from '../hooks/useTradingContext';
 import MockModeNotice from '../components/MockModeNotice';
 import { poloniexApi } from '../services/poloniexAPI';
 import TransactionHistory from '../components/account/TransactionHistory';

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useSettings } from '@/context/SettingsContext';
+import { useSettings } from '../../hooks/useSettings';
 import { tradingEngine } from '@/trading/tradingEngine';
 import { executeStrategy } from '@/utils/strategyExecutors';
 import { poloniexApi } from '@/services/poloniexAPI';

@@ -1,5 +1,5 @@
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { useSettings } from './SettingsContext';
+import { createContext, useState, useEffect, ReactNode } from 'react';
+import { useSettings } from '../hooks/useSettings';
 
 // Define the mock mode context type
 export interface MockModeContextType {
@@ -46,6 +46,8 @@ const defaultMockSettings = {
 // Create the context
 const MockModeContext = createContext<MockModeContextType | undefined>(undefined);
 
+export { MockModeContext };
+
 // Provider component
 interface MockModeProviderProps {
   children: ReactNode;
@@ -75,7 +77,7 @@ export const MockModeProvider: React.FC<MockModeProviderProps> = ({ children }) 
   // Update settings when mock mode changes
   useEffect(() => {
     settings.updateSettings({ isLiveTrading: !isMockMode });
-  }, [isMockMode]);
+  }, [isMockMode, settings]);
 
   // Update mock data options
   const updateMockDataOptions = (options: Partial<MockModeContextType['mockDataOptions']>) => {
@@ -122,11 +124,4 @@ export const MockModeProvider: React.FC<MockModeProviderProps> = ({ children }) 
   );
 };
 
-// Custom hook to use the mock mode context
-export const useMockMode = () => {
-  const context = useContext(MockModeContext);
-  if (context === undefined) {
-    throw new Error('useMockMode must be used within a MockModeProvider');
-  }
-  return context;
-};
+// End of component

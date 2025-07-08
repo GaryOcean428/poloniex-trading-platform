@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
-import { useTradingContext } from '../context/TradingContext';
-import { useSettings } from '../context/SettingsContext';
+import React, { useEffect, useState, useCallback } from 'react';
+import { useTradingContext } from '../hooks/useTradingContext';
+import { useSettings } from '../hooks/useSettings';
 
 interface ExtensionMessage {
   type: string;
@@ -11,6 +11,33 @@ const Integration: React.FC = () => {
   const { addError } = useTradingContext();
   const { apiKey, apiSecret } = useSettings();
   const [isExtensionInstalled, setIsExtensionInstalled] = useState(false);
+  
+  const handleExtensionMessage = useCallback((event: MessageEvent) => {
+    // Ensure message is from our extension
+    if (event.source !== window || !event.data || event.data.source !== 'POLONIEX_EXTENSION') {
+      return;
+    }
+    
+    const message = event.data as ExtensionMessage;
+    console.log('Received message from extension:', message);
+    
+    switch (message.type) {
+      case 'PLACE_ORDER':
+        // Handle order placement
+        console.log('Order received from extension:', message.data);
+        // In a real app, this would call your order placement logic
+        break;
+        
+      case 'GET_ACCOUNT_DATA':
+        // Handle account data request
+        console.log('Account data requested from extension');
+        // In a real app, this would send account data to extension
+        break;
+        
+      default:
+        console.log('Unknown message type:', message.type);
+    }
+  }, []);
   
   useEffect(() => {
     // Check if extension is installed
@@ -46,7 +73,7 @@ const Integration: React.FC = () => {
     return () => {
       window.removeEventListener('message', handleExtensionMessage);
     };
-  }, []);
+  }, [handleExtensionMessage]);
   
   // Update extension with credentials if available
   useEffect(() => {
@@ -71,33 +98,6 @@ const Integration: React.FC = () => {
       );
     }
   }, [isExtensionInstalled, apiKey, apiSecret]);
-  
-  const handleExtensionMessage = (event: MessageEvent) => {
-    // Ensure message is from our extension
-    if (event.source !== window || !event.data || event.data.source !== 'POLONIEX_EXTENSION') {
-      return;
-    }
-    
-    const message = event.data as ExtensionMessage;
-    console.log('Received message from extension:', message);
-    
-    switch (message.type) {
-      case 'PLACE_ORDER':
-        // Handle order placement
-        console.log('Order received from extension:', message.data);
-        // In a real app, this would call your order placement logic
-        break;
-        
-      case 'SEND_CHAT':
-        // Handle chat message
-        console.log('Chat message from extension:', message.data);
-        // In a real app, this would send the chat message to your backend
-        break;
-        
-      default:
-        addError(`Unknown message type from extension: ${message.type}`);
-    }
-  };
   
   // This component doesn't render anything visible, it just handles extension communication
   return null;
