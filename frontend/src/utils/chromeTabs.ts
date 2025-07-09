@@ -1,8 +1,47 @@
 import { isChromeExtension } from './chromeExtensionCheck';
 
+// Types for Chrome tabs operations
+export interface TabQueryInfo {
+  active?: boolean;
+  pinned?: boolean;
+  audible?: boolean;
+  muted?: boolean;
+  highlighted?: boolean;
+  discarded?: boolean;
+  autoDiscardable?: boolean;
+  currentWindow?: boolean;
+  lastFocusedWindow?: boolean;
+  status?: chrome.tabs.TabStatus;
+  title?: string;
+  url?: string | string[];
+  groupId?: number;
+  windowId?: number;
+  windowType?: chrome.windows.WindowType;
+  index?: number;
+}
+
+export interface TabCreateProperties {
+  windowId?: number;
+  index?: number;
+  url?: string;
+  active?: boolean;
+  pinned?: boolean;
+  openerTabId?: number;
+}
+
+export interface TabUpdateProperties {
+  url?: string;
+  active?: boolean;
+  highlighted?: boolean;
+  pinned?: boolean;
+  muted?: boolean;
+  openerTabId?: number;
+  autoDiscardable?: boolean;
+}
+
 // Helper to safely use Chrome tabs API
 export const chromeTabs = {
-  query: async (queryInfo: any): Promise<any[]> => {
+  query: async (queryInfo: TabQueryInfo): Promise<chrome.tabs.Tab[]> => {
     if (!isChromeExtension()) {
       return [];
     }
@@ -14,7 +53,7 @@ export const chromeTabs = {
     });
   },
   
-  create: async (createProperties: any): Promise<any> => {
+  create: async (createProperties: TabCreateProperties): Promise<chrome.tabs.Tab | null> => {
     if (!isChromeExtension()) {
       return null;
     }
@@ -26,7 +65,7 @@ export const chromeTabs = {
     });
   },
   
-  update: async (tabId: number, updateProperties: any): Promise<any> => {
+  update: async (tabId: number, updateProperties: TabUpdateProperties): Promise<chrome.tabs.Tab | null> => {
     if (!isChromeExtension()) {
       return null;
     }

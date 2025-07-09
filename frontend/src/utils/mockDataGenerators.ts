@@ -1,8 +1,46 @@
 import seedrandom from 'seedrandom';
-import { useMockMode } from '../hooks/useMockMode';
 
 // Mock data generators for various market data types
 // These functions generate realistic-looking mock data for testing
+
+export interface MarketDataPoint {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+export interface TickerData {
+  symbol: string;
+  price: number;
+  change24h: number;
+  changePercent24h: number;
+  volume24h: number;
+  high24h: number;
+  low24h: number;
+}
+
+export interface OrderBookEntry {
+  price: number;
+  quantity: number;
+}
+
+export interface OrderBookData {
+  symbol: string;
+  bids: OrderBookEntry[];
+  asks: OrderBookEntry[];
+}
+
+export interface TradeData {
+  id: string;
+  symbol: string;
+  price: number;
+  quantity: number;
+  side: 'buy' | 'sell';
+  timestamp: number;
+}
 
 /**
  * Generate random market data (candles/OHLCV)
@@ -23,7 +61,7 @@ export const generateRandomMarketData = (
   trendBias: number = 0,
   seed?: number,
   realistic: boolean = false
-): any[] => {
+): MarketDataPoint[] => {
   // Set random seed if provided
   if (seed !== undefined) {
     seedrandom(seed.toString(), { global: true });
@@ -64,7 +102,7 @@ export const generateRandomMarketData = (
   const startTime = endTime - (limit * intervalMinutes * 60 * 1000);
   
   // Generate data
-  const data = [];
+  const data: MarketDataPoint[] = [];
   let lastClose = basePrice;
   
   for (let i = 0; i < limit; i++) {
@@ -111,14 +149,12 @@ export const generateRandomMarketData = (
     
     // Add candle to data
     data.push({
-      timestamp,
+      time: timestamp,
       open,
       high,
       low,
       close,
-      volume,
-      symbol,
-      timeframe
+      volume
     });
     
     // Update last values for next iteration
@@ -139,7 +175,7 @@ export const generateRandomOrderBook = (
   symbol: string,
   volatility: number = 0.5,
   seed?: number
-): any => {
+): OrderBookData => {
   // Set random seed if provided
   if (seed !== undefined) {
     seedrandom(seed.toString(), { global: true });
@@ -224,7 +260,7 @@ export const generateRandomTrades = (
   limit: number = 50,
   volatility: number = 0.5,
   seed?: number
-): any[] => {
+): TradeData[] => {
   // Set random seed if provided
   if (seed !== undefined) {
     seedrandom(seed.toString(), { global: true });
@@ -247,7 +283,7 @@ export const generateRandomTrades = (
   const basePrice = symbolPriceMap[symbol] || 100;
   
   // Generate trades
-  const trades = [];
+  const trades: TradeData[] = [];
   const now = Date.now();
   let lastPrice = basePrice;
   
@@ -298,7 +334,7 @@ export const generateRandomTicker = (
   volatility: number = 0.5,
   trendBias: number = 0,
   seed?: number
-): any => {
+): TickerData => {
   // Set random seed if provided
   if (seed !== undefined) {
     seedrandom(seed.toString(), { global: true });
