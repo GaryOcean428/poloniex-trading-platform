@@ -64,7 +64,7 @@ export class ExtensionErrorHandler {
     );
   }
   
-  private handleExtensionError(error: any): void {
+  private handleExtensionError(error: Error): void {
     this.errorCount++;
     
     // Log once every 10 errors to avoid spam

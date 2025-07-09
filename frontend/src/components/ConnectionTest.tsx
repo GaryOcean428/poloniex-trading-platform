@@ -4,8 +4,7 @@ import { io, Socket } from 'socket.io-client';
 export const ConnectionTest: React.FC = () => {
   const [apiStatus, setApiStatus] = useState('checking');
   const [wsStatus, setWsStatus] = useState<'checking' | 'connected' | 'failed'>('checking');
-  const [apiData, setApiData] = useState<any>(null);
-  const [socket, setSocket] = useState<Socket | null>(null);
+  const [apiData, setApiData] = useState<{ status: string; timestamp: string } | null>(null);
 
   const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000';
   const wsUrl = import.meta.env.VITE_WS_URL || 'ws://localhost:3000';

@@ -39,7 +39,7 @@ const ExtensionSettings: React.FC<ExtensionSettingsProps> = ({ onClose }) => {
             }
           }
         );
-      } catch (error) {
+      } catch {
         setExtensionStatus('Not detected');
       }
     }

@@ -8,7 +8,6 @@ interface ExtensionMessage {
 }
 
 const Integration: React.FC = () => {
-  const { isConnected } = useTradingContext();
   const { apiKey, apiSecret } = useSettings();
   const [isExtensionInstalled, setIsExtensionInstalled] = useState(false);
   
