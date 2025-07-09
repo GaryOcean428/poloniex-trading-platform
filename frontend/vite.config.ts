@@ -11,18 +11,41 @@ export default defineConfig({
   build: {
     rollupOptions: {
       output: {
-        manualChunks: {
-          vendor: ['react', 'react-dom', 'react-router-dom'],
-          charts: ['chart.js', 'react-chartjs-2', 'recharts'],
-          utils: ['axios', 'socket.io-client', 'date-fns', 'uuid'],
-          ml: ['@tensorflow/tfjs'],
-          crypto: ['crypto-js'],
-          ui: ['tailwind-merge']
+        manualChunks: (id) => {
+          // Vendor chunk for core React libraries
+          if (id.includes('react') || id.includes('react-dom') || id.includes('react-router-dom')) {
+            return 'vendor';
+          }
+          // Chart.js chunk
+          if (id.includes('chart.js') || id.includes('react-chartjs-2')) {
+            return 'chartjs';
+          }
+          // Recharts chunk
+          if (id.includes('recharts')) {
+            return 'recharts';
+          }
+          // Utilities chunk
+          if (id.includes('axios') || id.includes('socket.io-client')) {
+            return 'utils';
+          }
+          // Machine learning chunk
+          if (id.includes('@tensorflow/tfjs')) {
+            return 'ml';
+          }
+          // Crypto chunk
+          if (id.includes('crypto-js')) {
+            return 'crypto';
+          }
+          // UI chunk - only include if modules are actually used
+          if (id.includes('tailwind-merge') || id.includes('lucide-react')) {
+            return 'ui';
+          }
+          return null;
         }
       }
     },
     chunkSizeWarningLimit: 500,
-    sourcemap: false // Disable sourcemaps in production
+    sourcemap: true // Enable sourcemaps for debugging production issues
   },
   base: './',
   server: {
@@ -36,7 +59,6 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
-      'lucide-react': path.resolve(__dirname, './src/lucide-react.tsx'),
     }
   },
   test: {

@@ -10,8 +10,7 @@ interface ExtensionControlsProps {
 }
 
 const ExtensionControls: React.FC<ExtensionControlsProps> = ({ onClose }) => {
-  // Removed unused apiKey variable
-  const { } = useSettings();
+  // Using settings hook for extension configuration
   const [activePanel, setActivePanel] = useState<'status' | 'settings' | 'info'>('status');
   const [isRefreshing, setIsRefreshing] = useState(false);
   

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { poloniexApi, PoloniexAPIError, PoloniexConnectionError, PoloniexAuthenticationError } from '@/services/poloniexAPI';
+import { poloniexApi } from '@/services/poloniexAPI';
 import { MarketData, Trade } from '@/types';
 import { webSocketService } from '@/services/websocketService';
 import { mockMarketData, mockTrades } from '@/data/mockData';
@@ -78,7 +78,8 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
       };
     }
   }, [initialPair]);
-  
+
+  // Fetch functions defined before refreshApiConnection
   const fetchMarketData = useCallback(async (pair: string) => {
     // If in mock mode, use mock data immediately
     if (isMockMode) {
@@ -206,6 +207,40 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
       setIsLoading(false);
     }
   }, [isMockMode]);
+
+  // Function to refresh API connection when settings change - defined after all dependencies
+  const refreshApiConnection = useCallback(() => {
+    console.log('Refreshing API connection with new credentials');
+    setIsLoading(true);
+    poloniexApi.loadCredentials();
+    
+    // Clear any existing errors
+    setError(null);
+    
+    // Refresh data with new credentials
+    Promise.all([
+      fetchMarketData(initialPair),
+      fetchTrades(initialPair),
+      fetchAccountBalance()
+    ]).finally(() => {
+      setIsLoading(false);
+    });
+  }, [initialPair, fetchMarketData, fetchTrades, fetchAccountBalance]);
+
+  // Update mock mode when credentials change
+  useEffect(() => {
+    const newHasCredentials = Boolean(apiKey && apiSecret);
+    const newMockMode = shouldUseMockMode(newHasCredentials) || !isLiveTrading;
+    setIsMockMode(newMockMode);
+    
+    if (isLiveTrading && newHasCredentials && !newMockMode) {
+      console.log('Live trading enabled with credentials, refreshing API connection');
+      poloniexApi.loadCredentials();
+      refreshApiConnection();
+    } else {
+      console.log('Using mock mode - live trading disabled or missing credentials');
+    }
+  }, [isLiveTrading, apiKey, apiSecret, refreshApiConnection]);
   
   // Function to refresh API connection when settings change
   const refreshApiConnection = useCallback(() => {
@@ -240,6 +275,11 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
       console.log('Using mock mode - live trading disabled or missing credentials');
     }
   }, [isLiveTrading, apiKey, apiSecret, refreshApiConnection]);
+
+  // Monitor for changes in API credentials
+  useEffect(() => {
+    refreshApiConnection();
+  }, [apiKey, apiSecret, isLiveTrading, refreshApiConnection]);
 
   // Handle real-time updates via WebSocket
   useEffect(() => {

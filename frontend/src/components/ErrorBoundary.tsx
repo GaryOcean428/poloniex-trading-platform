@@ -50,8 +50,8 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     // Log error to monitoring service
     this.logError(error, errorInfo);
 
-    // Auto-reset after 30 seconds for non-critical errors
-    if (this.state.errorCount < 3) {
+    // Auto-reset after 30 seconds for non-critical errors, but only for first few errors
+    if (this.state.errorCount < 3 && !this.isInitializationError(error)) {
       this.resetTimeoutId = window.setTimeout(() => {
         this.handleReset();
       }, 30000);
@@ -69,11 +69,25 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     console.error('ErrorBoundary caught an error:', error);
     console.error('Error info:', errorInfo);
 
+    // Check for initialization errors
+    if (this.isInitializationError(error)) {
+      console.error('Initialization error detected - this may require a page refresh');
+    }
+
     // In production, this would send to a logging service
     if (process.env.NODE_ENV === 'production') {
       // Example: Send to monitoring service
       // logErrorToService(error, errorInfo, this.state.errorCount);
     }
+  };
+
+  private isInitializationError = (error: Error): boolean => {
+    const message = error.message || '';
+    return (
+      message.includes('Cannot access') && message.includes('before initialization') ||
+      message.includes('temporal dead zone') ||
+      message.includes('ReferenceError')
+    );
   };
 
   private handleReset = () => {
@@ -97,7 +111,6 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
       return (
         <FallbackComponent
           error={this.state.error}
-          errorInfo={this.state.errorInfo}
           errorCount={this.state.errorCount}
           onReset={this.handleReset}
         />

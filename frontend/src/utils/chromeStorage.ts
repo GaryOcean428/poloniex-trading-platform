@@ -1,8 +1,13 @@
 import { isChromeExtension } from './chromeExtensionCheck';
 
+// Types for Chrome storage operations
+export type StorageValue = string | number | boolean | object | null;
+export type StorageItems = Record<string, StorageValue>;
+export type StorageKeys = string | string[] | Record<string, StorageValue> | null;
+
 // Helper to safely use Chrome storage API
 export const chromeStorage = {
-  get: async (keys: string | string[] | object | null): Promise<{ [key: string]: any }> => {
+  get: async (keys: StorageKeys): Promise<StorageItems> => {
     if (!isChromeExtension()) {
       return {};
     }
@@ -14,7 +19,7 @@ export const chromeStorage = {
     });
   },
   
-  set: async (items: { [key: string]: any }): Promise<void> => {
+  set: async (items: StorageItems): Promise<void> => {
     if (!isChromeExtension()) {
       return;
     }
