@@ -14,6 +14,7 @@ import { SettingsProvider } from './context/SettingsContext';
 import { WebSocketProvider } from './context/WebSocketContext';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import Integration from './components/Integration';
+import ToastContainer from './components/ToastContainer';
 import { BrowserCompatibility } from './utils/extensionErrorHandler';
 import './App.css';
 
@@ -80,6 +81,7 @@ function App() {
                   </div>
                 </div>
                 <Integration />
+                <ToastContainer />
                 <EnvironmentStatus />
                 <ConfigurationStatus />
                 <ConnectionHealth />
