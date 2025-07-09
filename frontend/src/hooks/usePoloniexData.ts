@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { poloniexApi, PoloniexAPIError, PoloniexConnectionError, PoloniexAuthenticationError } from '@/services/poloniexAPI';
+import { poloniexApi } from '@/services/poloniexAPI';
 import { MarketData, Trade } from '@/types';
 import { webSocketService } from '@/services/websocketService';
 import { mockMarketData, mockTrades } from '@/data/mockData';

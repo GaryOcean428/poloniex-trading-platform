@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { poloniexApi, PoloniexAPIError, PoloniexConnectionError, PoloniexAuthenticationError } from '@/services/poloniexAPI';
+import { poloniexApi } from '@/services/poloniexAPI';
 import APIErrorBoundary from '@/components/APIErrorBoundary';
 import useAPICall from '@/hooks/useAPICall';
 
@@ -11,7 +11,7 @@ interface AccountBalanceDisplayProps {
  * Example component showing proper error handling for API calls
  * This replaces the old pattern of silent fallbacks to mock data
  */
-export const AccountBalanceDisplay: React.FC<AccountBalanceDisplayProps> = ({ pair = 'BTC-USDT' }) => {
+export const AccountBalanceDisplay: React.FC<AccountBalanceDisplayProps> = () => {
   const [accountBalance, setAccountBalance] = useState<any>(null);
 
   // Use the new useAPICall hook for proper error handling

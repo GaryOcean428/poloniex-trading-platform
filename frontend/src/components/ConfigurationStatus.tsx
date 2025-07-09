@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { CheckCircle2, AlertTriangle, Settings, X } from '../lucide-react';
+import { CheckCircle2, AlertTriangle, Settings, X } from 'lucide-react';
 import { EnvironmentManager } from '../config/environment';
 
 export const ConfigurationStatus: React.FC = () => {

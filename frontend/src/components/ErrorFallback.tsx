@@ -11,7 +11,6 @@ interface ErrorFallbackProps {
 
 export const ErrorFallback: React.FC<ErrorFallbackProps> = ({
   error,
-  errorInfo,
   errorCount,
   onReset
 }) => {
