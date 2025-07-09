@@ -1,6 +1,6 @@
 // React is used implicitly for JSX transformation
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import Navbar from './components/Navbar';
 import Sidebar from './components/Sidebar';
 import SkipLinks from './components/SkipLinks';
@@ -41,10 +41,11 @@ const LoadingSpinner = () => (
   </div>
 );
 
-// Initialize browser compatibility and extension error handling
-BrowserCompatibility.setupExtensionCompatibility();
-
 function App() {
+  // Initialize browser compatibility and extension error handling after React mounts
+  useEffect(() => {
+    BrowserCompatibility.setupExtensionCompatibility();
+  }, []);
   return (
     <>
       <SkipLinks />
