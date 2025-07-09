@@ -76,6 +76,8 @@ app.use(helmet({
 // More restrictive CORS configuration
 const allowedOrigins = [
   'https://healthcheck.railway.app',
+  'https://poloniex-trading-platform-production.up.railway.app',
+  'https://polytrade-red.vercel.app',
   process.env.FRONTEND_URL || 'http://localhost:5173',
   ...(process.env.NODE_ENV === 'production' ? [] : ['http://localhost:3000', 'http://localhost:5173'])
 ];
@@ -133,7 +135,7 @@ const io = new Server(server, {
     methods: ['GET', 'POST'],
     credentials: true
   },
-  pingTimeout: 60000,
+  pingTimeout: 120000, // 2 minutes (increased from 60s to prevent Railway proxy timeouts)
   pingInterval: 25000
 });
 
