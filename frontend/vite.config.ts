@@ -13,7 +13,8 @@ export default defineConfig({
       output: {
         manualChunks: {
           vendor: ['react', 'react-dom', 'react-router-dom'],
-          charts: ['chart.js', 'react-chartjs-2', 'recharts'],
+          chartjs: ['chart.js', 'react-chartjs-2'],
+          recharts: ['recharts'],
           utils: ['axios', 'socket.io-client'],
           ml: ['@tensorflow/tfjs'],
           crypto: ['crypto-js'],

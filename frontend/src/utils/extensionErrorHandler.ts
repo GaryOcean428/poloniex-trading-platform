@@ -64,7 +64,7 @@ export class ExtensionErrorHandler {
     );
   }
   
-  private handleExtensionError(error: any): void {
+  private handleExtensionError(error: Error): void {
     this.errorCount++;
     
     // Log once every 10 errors to avoid spam
@@ -110,7 +110,7 @@ export class BrowserCompatibility {
     // Check for generic extension artifacts
     return !!(
       window.chrome?.runtime ||
-      (window as any).browser?.runtime
+      (window as unknown as { browser?: { runtime?: unknown } }).browser?.runtime
     );
   }
   
@@ -119,9 +119,9 @@ export class BrowserCompatibility {
     
     // Check for known conflicting extensions
     const conflictingExtensions = [
-      { name: 'MetaMask', check: () => !!(window as any).ethereum },
-      { name: 'AdBlock', check: () => !!(window as any).adblockDetected },
-      { name: 'React DevTools', check: () => !!(window as any).__REACT_DEVTOOLS_GLOBAL_HOOK__ },
+      { name: 'MetaMask', check: () => !!(window as unknown as { ethereum?: unknown }).ethereum },
+      { name: 'AdBlock', check: () => !!(window as unknown as { adblockDetected?: unknown }).adblockDetected },
+      { name: 'React DevTools', check: () => !!(window as unknown as { __REACT_DEVTOOLS_GLOBAL_HOOK__?: unknown }).__REACT_DEVTOOLS_GLOBAL_HOOK__ },
     ];
     
     conflictingExtensions.forEach(ext => {

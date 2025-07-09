@@ -8,7 +8,7 @@ interface LogEntry {
   timestamp: string;
   level: LogLevel;
   message: string;
-  data?: any;
+  data?: unknown;
 }
 
 // Configure log levels that should be output
@@ -29,7 +29,7 @@ class Logger {
     return Logger.instance;
   }
 
-  private createLogEntry(level: LogLevel, message: string, data?: any): LogEntry {
+  private createLogEntry(level: LogLevel, message: string, data?: unknown): LogEntry {
     return {
       timestamp: new Date().toISOString(),
       level,
@@ -57,19 +57,19 @@ class Logger {
     }
   }
 
-  public debug(message: string, data?: any): void {
+  public debug(message: string, data?: unknown): void {
     this.addLog(this.createLogEntry('debug', message, data));
   }
 
-  public info(message: string, data?: any): void {
+  public info(message: string, data?: unknown): void {
     this.addLog(this.createLogEntry('info', message, data));
   }
 
-  public warn(message: string, data?: any): void {
+  public warn(message: string, data?: unknown): void {
     this.addLog(this.createLogEntry('warn', message, data));
   }
 
-  public error(message: string, data?: any): void {
+  public error(message: string, data?: unknown): void {
     this.addLog(this.createLogEntry('error', message, data));
   }
 

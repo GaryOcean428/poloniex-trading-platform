@@ -7,6 +7,12 @@ interface ExtensionSettingsProps {
   onClose?: () => void;
 }
 
+interface ExtensionResponse {
+  installed?: boolean;
+  connected?: boolean;
+  status?: string;
+}
+
 const ExtensionSettings: React.FC<ExtensionSettingsProps> = ({ onClose }) => {
   const { apiKey, apiSecret, updateSettings } = useSettings();
   const [extensionStatus, setExtensionStatus] = useState<string>('Not detected');
@@ -31,7 +37,7 @@ const ExtensionSettings: React.FC<ExtensionSettingsProps> = ({ onClose }) => {
         chrome.runtime.sendMessage(
           extensionId,
           { type: 'CHECK_INSTALLATION' },
-          (response: any) => {
+          (response: ExtensionResponse) => {
             if (response && response.installed) {
               setExtensionStatus('Connected');
             } else {
@@ -39,7 +45,7 @@ const ExtensionSettings: React.FC<ExtensionSettingsProps> = ({ onClose }) => {
             }
           }
         );
-      } catch (error) {
+      } catch {
         setExtensionStatus('Not detected');
       }
     }
@@ -91,7 +97,7 @@ const ExtensionSettings: React.FC<ExtensionSettingsProps> = ({ onClose }) => {
             riskLimit: formData.riskLimit
           }
         },
-        (response: any) => {
+        (response: ExtensionResponse) => {
           console.log('Extension settings updated:', response);
         }
       );
@@ -106,7 +112,7 @@ const ExtensionSettings: React.FC<ExtensionSettingsProps> = ({ onClose }) => {
             apiSecret: formData.apiSecret
           }
         },
-        (response: any) => {
+        (response: ExtensionResponse) => {
           console.log('Extension API credentials updated:', response);
         }
       );

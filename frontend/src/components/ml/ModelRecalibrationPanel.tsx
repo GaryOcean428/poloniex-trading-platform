@@ -12,13 +12,26 @@ import {
 import { usePoloniexData } from '@/hooks/usePoloniexData';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
+interface ModelData {
+  id: string;
+  name: string;
+  type: string;
+  performance: number;
+}
+
+interface MarketDataPoint {
+  timestamp: number;
+  price: number;
+  volume: number;
+}
+
 const ModelRecalibrationPanel: React.FC = () => {
   const { marketData: poloniexMarketData, fetchMarketData } = usePoloniexData();
   
-  const [mlModels, setMlModels] = useState<any[]>([]);
-  const [dqnModels, setDqnModels] = useState<any[]>([]);
-  const [selectedModel, setSelectedModel] = useState<any>(null);
-  const [marketData, setMarketData] = useState<any[]>([]);
+  const [mlModels, setMlModels] = useState<ModelData[]>([]);
+  const [dqnModels, setDqnModels] = useState<ModelData[]>([]);
+  const [selectedModel, setSelectedModel] = useState<ModelData | null>(null);
+  const [marketData, setMarketData] = useState<MarketDataPoint[]>([]);
   const [performanceMetrics, setPerformanceMetrics] = useState<ModelPerformanceMetrics | null>(null);
   const [recalibrationResult, setRecalibrationResult] = useState<RecalibrationResult | null>(null);
   const [recalibrationHistory, setRecalibrationHistory] = useState<RecalibrationResult[]>([]);
