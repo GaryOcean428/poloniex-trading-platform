@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { io, Socket } from 'socket.io-client';
+import { io } from 'socket.io-client';
 
 export const ConnectionTest: React.FC = () => {
   const [apiStatus, setApiStatus] = useState('checking');
@@ -37,8 +37,6 @@ export const ConnectionTest: React.FC = () => {
       console.error('WebSocket error:', err);
       setWsStatus('failed');
     });
-
-    setSocket(newSocket);
 
     return () => {
       newSocket.disconnect();
