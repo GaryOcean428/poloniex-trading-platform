@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "start": "vite preview --port $PORT --host 0.0.0.0",
+    "start": "serve -s dist -l ${PORT:-3000}",
     "preview": "vite preview",
     "lint": "eslint . --report-unused-disable-directives",
     "test": "vitest run",
@@ -32,6 +32,7 @@
     "react-router-dom": "^7.6.1",
     "recharts": "^2.12.1",
     "seedrandom": "^3.0.5",
+    "serve": "^14.2.4",
     "socket.io-client": "^4.8.1",
     "tailwind-merge": "^3.3.0",
     "ws": "^8.18.3"
