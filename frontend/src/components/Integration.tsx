@@ -1,10 +1,9 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { useTradingContext } from '../hooks/useTradingContext';
 import { useSettings } from '../hooks/useSettings';
 
 interface ExtensionMessage {
   type: string;
-  data: any;
+  data: unknown;
 }
 
 const Integration: React.FC = () => {

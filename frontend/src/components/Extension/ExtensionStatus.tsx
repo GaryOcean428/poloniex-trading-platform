@@ -55,7 +55,7 @@ interface ExtensionResponse {
               chrome.runtime.sendMessage(
                 extensionId,
                 { type: 'CHECK_POLONIEX_STATUS' },
-                (response: any) => {
+                (response: ExtensionResponse) => {
                   setPoloniexStatus(response && response.connected ? 'connected' : 'disconnected');
                   setIsRefreshing(false);
                 }
