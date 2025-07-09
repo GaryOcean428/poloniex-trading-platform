@@ -14,10 +14,10 @@ export default defineConfig({
         manualChunks: {
           vendor: ['react', 'react-dom', 'react-router-dom'],
           charts: ['chart.js', 'react-chartjs-2', 'recharts'],
-          utils: ['axios', 'socket.io-client', 'date-fns', 'uuid'],
+          utils: ['axios', 'socket.io-client'],
           ml: ['@tensorflow/tfjs'],
           crypto: ['crypto-js'],
-          ui: ['tailwind-merge']
+          ui: ['tailwind-merge', 'lucide-react']
         }
       }
     },
@@ -36,7 +36,6 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
-      'lucide-react': path.resolve(__dirname, './src/lucide-react.tsx'),
     }
   },
   test: {

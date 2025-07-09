@@ -1,16 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { AlertTriangle, CheckCircle2, Info, X } from '../lucide-react';
+import { AlertTriangle, CheckCircle2, X } from 'lucide-react';
 import { EnvironmentManager } from '../config/environment';
-
-interface EnvironmentConfig {
-  apiKey: string | null;
-  apiSecret: string | null;
-  forceMockMode: boolean;
-  isProduction: boolean;
-  wsUrl: string;
-  apiUrl: string;
-  liveTradingEnabled: boolean;
-}
 
 const EnvironmentStatus: React.FC = () => {
   const [config, setConfig] = useState(EnvironmentManager.getInstance().getConfig());

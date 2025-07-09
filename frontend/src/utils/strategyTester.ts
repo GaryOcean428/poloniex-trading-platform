@@ -428,7 +428,6 @@ function calculateEquity(
       ? currentPrice - entryPrice
       : entryPrice - currentPrice;
     
-    const positionValue = position.quantity * currentPrice;
     const positionProfit = priceDiff * position.quantity;
     
     equity += positionProfit;
@@ -748,7 +747,6 @@ function simulateEquityCurve(
 } {
   let balance = initialBalance;
   let maxBalance = initialBalance;
-  let maxDrawdown = 0;
   let maxDrawdownPercent = 0;
   let winningTrades = 0;
   let totalProfit = 0;
@@ -773,7 +771,6 @@ function simulateEquityCurve(
     const drawdownPercent = (drawdown / maxBalance) * 100;
     
     if (drawdownPercent > maxDrawdownPercent) {
-      maxDrawdown = drawdown;
       maxDrawdownPercent = drawdownPercent;
     }
     
