@@ -29,10 +29,17 @@ const ExtensionStatus: React.FC<ExtensionStatusProps> = ({ onRefreshRequest }) =
         // Extension ID will need to be updated with your actual extension ID
         const extensionId = 'jcdmopolmojdhpclfbemdpcdneobmnje';
         
+interface ExtensionResponse {
+  installed?: boolean;
+  connected?: boolean;
+  status?: string;
+}
+
+// Check extension installation status
         chrome.runtime.sendMessage(
           extensionId,
           { type: 'CHECK_INSTALLATION' },
-          (response: any) => {
+          (response: ExtensionResponse) => {
             if (response && response.installed) {
               setExtensionStatus('connected');
               
@@ -40,7 +47,7 @@ const ExtensionStatus: React.FC<ExtensionStatusProps> = ({ onRefreshRequest }) =
               chrome.runtime.sendMessage(
                 extensionId,
                 { type: 'CHECK_TRADINGVIEW_STATUS' },
-                (response: any) => {
+                (response: ExtensionResponse) => {
                   setTradingViewStatus(response && response.connected ? 'connected' : 'disconnected');
                 }
               );
