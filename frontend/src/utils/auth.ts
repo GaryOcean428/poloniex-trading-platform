@@ -9,6 +9,18 @@ interface SignatureParams {
   secret: string;
 }
 
+interface AuthData {
+  accessToken: string;
+  refreshToken: string;
+  expiresIn: number;
+  user: {
+    id: string;
+    username: string;
+    email: string;
+    role: string;
+  };
+}
+
 /**
  * Generate HMAC-SHA256 signature for API authentication
  */
@@ -70,35 +82,47 @@ export function generateAuthHeaders(
 }
 
 /**
- * Verify if a user is authenticated
+ * Verify if a user is authenticated with JWT
  */
 export function isAuthenticated(): boolean {
-  // Check for authentication token in localStorage
-  const token = localStorage.getItem('auth_token');
-  const expiry = localStorage.getItem('auth_expiry');
-  
-  if (!token || !expiry) {
+  const token = getAccessToken();
+  if (!token) {
     return false;
   }
   
   // Check if token is expired
-  const expiryTime = parseInt(expiry, 10);
-  if (Date.now() > expiryTime) {
-    // Clear expired token
-    localStorage.removeItem('auth_token');
-    localStorage.removeItem('auth_expiry');
-    return false;
+  const expiry = localStorage.getItem('auth_expiry');
+  if (expiry) {
+    const expiryTime = parseInt(expiry, 10);
+    if (Date.now() > expiryTime) {
+      // Clear expired token
+      clearAuthData();
+      return false;
+    }
   }
   
   return true;
 }
 
 /**
- * Store authentication data
+ * Store authentication data from JWT login response
  */
-export function storeAuthData(token: string, expiresIn: number): void {
+export function storeAuthData(authData: AuthData): void {
+  const expiryTime = Date.now() + authData.expiresIn * 1000;
+  
+  localStorage.setItem('access_token', authData.accessToken);
+  localStorage.setItem('refresh_token', authData.refreshToken);
+  localStorage.setItem('auth_expiry', expiryTime.toString());
+  localStorage.setItem('user_data', JSON.stringify(authData.user));
+}
+
+/**
+ * Store authentication data (legacy method for backward compatibility)
+ */
+export function storeAuthDataLegacy(token: string, expiresIn: number): void {
   const expiryTime = Date.now() + expiresIn * 1000;
   localStorage.setItem('auth_token', token);
+  localStorage.setItem('access_token', token);
   localStorage.setItem('auth_expiry', expiryTime.toString());
 }
 
@@ -106,17 +130,87 @@ export function storeAuthData(token: string, expiresIn: number): void {
  * Clear authentication data
  */
 export function clearAuthData(): void {
-  localStorage.removeItem('auth_token');
+  localStorage.removeItem('auth_token'); // Legacy
+  localStorage.removeItem('access_token');
+  localStorage.removeItem('refresh_token');
   localStorage.removeItem('auth_expiry');
+  localStorage.removeItem('user_data');
 }
 
 /**
- * Get authentication token
+ * Get access token
+ */
+export function getAccessToken(): string | null {
+  return localStorage.getItem('access_token') || localStorage.getItem('auth_token');
+}
+
+/**
+ * Get refresh token
+ */
+export function getRefreshToken(): string | null {
+  return localStorage.getItem('refresh_token');
+}
+
+/**
+ * Get stored user data
+ */
+export function getUserData(): any | null {
+  const userData = localStorage.getItem('user_data');
+  if (!userData) return null;
+  
+  try {
+    return JSON.parse(userData);
+  } catch (error) {
+    console.error('Error parsing user data:', error);
+    return null;
+  }
+}
+
+/**
+ * Get authentication token (legacy method for backward compatibility)
  */
 export function getAuthToken(): string | null {
   if (!isAuthenticated()) {
     return null;
   }
   
-  return localStorage.getItem('auth_token');
+  return getAccessToken();
+}
+
+/**
+ * Get authorization header value
+ */
+export function getAuthHeader(): string | null {
+  const token = getAccessToken();
+  return token ? `Bearer ${token}` : null;
+}
+
+/**
+ * Check if token needs refresh (expires in less than 5 minutes)
+ */
+export function shouldRefreshToken(): boolean {
+  const expiry = localStorage.getItem('auth_expiry');
+  if (!expiry) return false;
+  
+  const expiryTime = parseInt(expiry, 10);
+  const fiveMinutes = 5 * 60 * 1000; // 5 minutes in milliseconds
+  
+  return Date.now() > (expiryTime - fiveMinutes);
+}
+
+/**
+ * Decode JWT payload (without verification - for display purposes only)
+ */
+export function decodeJWTPayload(token: string): any | null {
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    
+    const payload = parts[1];
+    const decoded = atob(payload.replace(/-/g, '+').replace(/_/g, '/'));
+    return JSON.parse(decoded);
+  } catch (error) {
+    console.error('Error decoding JWT:', error);
+    return null;
+  }
 }

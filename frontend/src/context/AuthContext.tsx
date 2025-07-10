@@ -1,12 +1,15 @@
 import React, { createContext, useState, useEffect, ReactNode } from 'react';
-import { isAuthenticated, clearAuthData, storeAuthData } from '@/utils/auth';
+import { isAuthenticated, clearAuthData, storeAuthDataLegacy, getUserData } from '@/utils/auth';
+import { authService } from '@/services/authService';
 
 interface AuthContextType {
   isLoggedIn: boolean;
-  login: (token: string, expiresIn: number) => void;
-  logout: () => void;
+  login: (usernameOrToken: string, passwordOrExpiresIn?: string | number) => Promise<boolean>;
+  logout: () => Promise<void>;
   user: UserProfile | null;
   isAuthenticated: boolean; // Added for FuturesContext
+  loading: boolean;
+  refreshToken: () => Promise<boolean>;
 }
 
 interface UserProfile {
@@ -18,10 +21,12 @@ interface UserProfile {
 
 export const AuthContext = createContext<AuthContextType>({
   isLoggedIn: false,
-  login: () => {},
-  logout: () => {},
+  login: async () => false,
+  logout: async () => {},
   user: null,
-  isAuthenticated: false // Added for FuturesContext
+  isAuthenticated: false, // Added for FuturesContext
+  loading: false,
+  refreshToken: async () => false
 });
 
 interface AuthProviderProps {
@@ -31,50 +36,111 @@ interface AuthProviderProps {
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
   const [user, setUser] = useState<UserProfile | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
 
   // Check authentication status on mount
   useEffect(() => {
     const checkAuth = async () => {
-      const authenticated = isAuthenticated();
-      setIsLoggedIn(authenticated);
+      setLoading(true);
       
-      if (authenticated) {
-        try {
-          // In a real app, you would fetch the user profile here
-          // For now, we'll use mock data
-          setUser({
-            id: '1',
-            username: 'trader',
-            email: 'trader@example.com',
-            role: 'user'
-          });
-        } catch (error) {
-          console.error('Failed to fetch user profile:', error);
-          logout();
+      try {
+        const authenticated = isAuthenticated();
+        setIsLoggedIn(authenticated);
+        
+        if (authenticated) {
+          // Get user data from localStorage first
+          const userData = getUserData();
+          if (userData) {
+            setUser(userData);
+          }
+          
+          // Verify token with server
+          const isValid = await authService.verifyToken();
+          if (!isValid) {
+            console.warn('Token verification failed, logging out');
+            await logout();
+          }
         }
+      } catch (error) {
+        console.error('Auth check error:', error);
+        await logout();
+      } finally {
+        setLoading(false);
       }
     };
     
     checkAuth();
   }, []);
 
-  const login = (token: string, expiresIn: number) => {
-    storeAuthData(token, expiresIn);
-    setIsLoggedIn(true);
-    
-    // Set mock user data
-    setUser({
-      id: '1',
-      username: 'trader',
-      email: 'trader@example.com',
-      role: 'user'
-    });
+  const login = async (usernameOrToken: string, passwordOrExpiresIn?: string | number): Promise<boolean> => {
+    try {
+      // Check if this is JWT login (new method) or legacy login
+      if (typeof passwordOrExpiresIn === 'string') {
+        // New JWT login method
+        const response = await authService.login({
+          username: usernameOrToken,
+          password: passwordOrExpiresIn
+        });
+
+        if (response.success && response.data) {
+          setIsLoggedIn(true);
+          setUser(response.data.user);
+          return true;
+        } else {
+          console.error('Login failed:', response.error);
+          return false;
+        }
+      } else {
+        // Legacy login method for backward compatibility
+        const token = usernameOrToken;
+        const expiresIn = passwordOrExpiresIn as number || 3600;
+        
+        storeAuthDataLegacy(token, expiresIn);
+        setIsLoggedIn(true);
+        
+        // Set mock user data for legacy login
+        setUser({
+          id: '1',
+          username: 'trader',
+          email: 'trader@example.com',
+          role: 'user'
+        });
+        
+        return true;
+      }
+    } catch (error) {
+      console.error('Login error:', error);
+      return false;
+    }
   };
 
-  const logout = () => {
-    clearAuthData();
-    setIsLoggedIn(false);
-    setUser(null);
+  const logout = async (): Promise<void> => {
+    try {
+      await authService.logout();
+    } catch (error) {
+      console.error('Logout error:', error);
+    } finally {
+      setIsLoggedIn(false);
+      setUser(null);
+    }
+  };
+
+  const refreshToken = async (): Promise<boolean> => {
+    try {
+      const newToken = await authService.refreshToken();
+      if (newToken) {
+        // Token refreshed successfully
+        return true;
+      } else {
+        // Refresh failed, log out
+        await logout();
+        return false;
+      }
+    } catch (error) {
+      console.error('Token refresh error:', error);
+      await logout();
+      return false;
+    }
   };
 
   return (
@@ -83,7 +149,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       login, 
       logout, 
       user,
-      isAuthenticated: isLoggedIn // Added for FuturesContext
+      isAuthenticated: isLoggedIn, // Added for FuturesContext
+      loading,
+      refreshToken
     }}>
       {children}
     </AuthContext.Provider>

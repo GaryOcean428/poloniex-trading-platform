@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { Button } from '@/components/ui';
 
@@ -14,11 +14,20 @@ const LogoutButton: React.FC<LogoutButtonProps> = ({
   className = ''
 }) => {
   const { logout } = useAuth();
+  const [isLoading, setIsLoading] = useState(false);
 
-  const handleLogout = () => {
-    logout();
-    if (onSuccess) {
-      onSuccess();
+  const handleLogout = async () => {
+    setIsLoading(true);
+    
+    try {
+      await logout();
+      if (onSuccess) {
+        onSuccess();
+      }
+    } catch (error) {
+      console.error('Logout error:', error);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -26,9 +35,10 @@ const LogoutButton: React.FC<LogoutButtonProps> = ({
     <Button 
       variant={variant} 
       onClick={handleLogout}
+      disabled={isLoading}
       className={className}
     >
-      Logout
+      {isLoading ? 'Logging out...' : 'Logout'}
     </Button>
   );
 };

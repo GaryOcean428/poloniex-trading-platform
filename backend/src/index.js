@@ -8,6 +8,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
+import authRoutes from './routes/auth.js';
+import { authenticateToken, optionalAuth } from './middleware/auth.js';
 
 // Configure environment variables
 dotenv.config();
@@ -124,6 +126,9 @@ app.use(express.static(frontendDistPath));
 
 // Apply CORS and rate limiting only to API routes
 app.use('/api/', corsMiddleware, limiter);
+
+// Mount auth routes
+app.use('/api/auth', authRoutes);
 
 // Create HTTP server
 const server = http.createServer(app);
@@ -397,22 +402,36 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// Mock API endpoint for testing
-app.get('/api/account', (req, res) => {
+// Mock API endpoint for testing - now with optional authentication
+app.get('/api/account', optionalAuth, (req, res) => {
   if (!hasApiCredentials) {
-    // Return mock data
-    res.json({
+    // Return mock data with user context if authenticated
+    const mockData = {
       mock: true,
       balances: {
         USDT: { available: '10000.00', locked: '0.00' },
         BTC: { available: '0.5', locked: '0.00' },
       }
-    });
+    };
+    
+    if (req.user) {
+      mockData.user = req.user.username;
+      mockData.authenticated = true;
+    }
+    
+    res.json(mockData);
   } else {
     // TODO: Implement real Poloniex API call
-    res.json({
+    const response = {
       message: 'Live mode active - implement Poloniex API call'
-    });
+    };
+    
+    if (req.user) {
+      response.user = req.user.username;
+      response.authenticated = true;
+    }
+    
+    res.json(response);
   }
 });
 
