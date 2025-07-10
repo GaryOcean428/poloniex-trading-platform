@@ -575,7 +575,7 @@ const LiveDataDashboard: React.FC = () => {
                 </label>
                 <select
                   value={config.primarySource}
-                  onChange={(e) => updateConfig({ primarySource: e.target.value as any })}
+                  onChange={(e) => updateConfig({ primarySource: e.target.value as LiveDataConfig['primarySource'] })}
                   className="w-full px-3 py-2 border border-neutral-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-neutral-700 dark:border-neutral-600 dark:text-white"
                 >
                   <option value="poloniex">Poloniex API</option>
@@ -590,7 +590,7 @@ const LiveDataDashboard: React.FC = () => {
                 </label>
                 <select
                   value={config.aggregationMethod}
-                  onChange={(e) => updateConfig({ aggregationMethod: e.target.value as any })}
+                  onChange={(e) => updateConfig({ aggregationMethod: e.target.value as LiveDataConfig['aggregationMethod'] })}
                   className="w-full px-3 py-2 border border-neutral-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-neutral-700 dark:border-neutral-600 dark:text-white"
                 >
                   <option value="weighted">Weighted Average</option>
@@ -665,7 +665,7 @@ const LiveDataDashboard: React.FC = () => {
                 </label>
                 <select
                   value={config.logLevel}
-                  onChange={(e) => updateConfig({ logLevel: e.target.value as any })}
+                  onChange={(e) => updateConfig({ logLevel: e.target.value as LiveDataConfig['logLevel'] })}
                   className="w-full px-3 py-2 border border-neutral-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-neutral-700 dark:border-neutral-600 dark:text-white"
                 >
                   <option value="debug">Debug</option>

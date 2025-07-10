@@ -50,7 +50,16 @@ const PriceChart: React.FC<PriceChartProps> = ({ data, pair }) => {
   });
   
   // Define chart data with proper typing
-  const chartData: any = {
+  const chartData: {
+    labels: string[];
+    datasets: Array<{
+      label: string;
+      data: number[];
+      fill: boolean;
+      borderColor: string;
+      backgroundColor: string;
+    }>;
+  } = {
     labels,
     datasets: [
       {
