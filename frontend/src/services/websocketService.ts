@@ -406,11 +406,15 @@ class WebSocketService {
         }
         
         this.connectionAttempted = true;
-        console.log('Attempting WebSocket connection...');
+        if (import.meta.env.DEV) {
+          console.info('Attempting WebSocket connection...');
+        }
         
         // Set a connection timeout
         const connectionTimeout = setTimeout(() => {
-          console.log(`WebSocket connection timed out after ${this.config.options?.timeout || 10000}ms`);
+          if (import.meta.env.DEV) {
+            console.warn(`WebSocket connection timed out after ${this.config.options?.timeout || 10000}ms`);
+          }
           this.connectionState = ConnectionState.FAILED;
           this.useMockData = true;
           resolve();

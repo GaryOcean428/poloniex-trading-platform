@@ -207,18 +207,6 @@ export const useAppStore = create<AppState & AppActions>()(
           timestamp: Date.now(),
         };
         state.toasts.push(newToast);
-        
-        // Auto-remove toast after 5 seconds if dismissible
-        if (toast.dismissible !== false) {
-          setTimeout(() => {
-            set((state) => {
-              const index = state.toasts.findIndex(t => t.id === newToast.id);
-              if (index !== -1) {
-                state.toasts.splice(index, 1);
-              }
-            });
-          }, 5000);
-        }
       }),
       
       removeToast: (id) => set((state) => {

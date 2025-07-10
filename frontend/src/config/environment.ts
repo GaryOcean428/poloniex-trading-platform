@@ -63,14 +63,16 @@ export class EnvironmentManager {
     
     this.config.liveTradingEnabled = hasValidCredentials && !isExplicitlyMocked;
     
-    // Log configuration status
-    console.log('Environment Configuration:', {
-      hasApiKey: !!apiKey,
-      hasApiSecret: !!apiSecret,
-      forceMockMode: isExplicitlyMocked,
-      liveTradingEnabled: this.config.liveTradingEnabled,
-      mode: this.config.liveTradingEnabled ? 'LIVE' : 'MOCK'
-    });
+    // Log configuration status (only in development)
+    if (import.meta.env.DEV) {
+      console.info('Environment Configuration:', {
+        hasApiKey: !!apiKey,
+        hasApiSecret: !!apiSecret,
+        forceMockMode: isExplicitlyMocked,
+        liveTradingEnabled: this.config.liveTradingEnabled,
+        mode: this.config.liveTradingEnabled ? 'LIVE' : 'MOCK'
+      });
+    }
     
     // Warn about configuration issues
     if (!hasValidCredentials && !isExplicitlyMocked) {
