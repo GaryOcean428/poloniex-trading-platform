@@ -6,6 +6,15 @@ interface ExtensionMessage {
   data: unknown;
 }
 
+// Extension response types
+interface ExtensionInstallResponse {
+  installed: boolean;
+}
+
+interface ExtensionUpdateResponse {
+  success: boolean;
+}
+
 const Integration: React.FC = () => {
   const { apiKey, apiSecret } = useSettings();
   const [isExtensionInstalled, setIsExtensionInstalled] = useState(false);
@@ -49,7 +58,7 @@ const Integration: React.FC = () => {
         chrome.runtime.sendMessage(
           extensionId,
           { type: 'CHECK_INSTALLATION' },
-          (response: any) => {
+          (response: ExtensionInstallResponse | undefined) => {
             if (response && response.installed) {
               setIsExtensionInstalled(true);
               console.log('Extension is installed and connected!');
@@ -88,7 +97,7 @@ const Integration: React.FC = () => {
             apiSecret
           }
         },
-        (response: any) => {
+        (response: ExtensionUpdateResponse | undefined) => {
           if (response && response.success) {
             console.log('API credentials updated in extension');
           }

@@ -11,7 +11,11 @@ export default [
     files: ['**/*.{ts,tsx}'],
     languageOptions: {
       parser,
-      parserOptions: { ecmaVersion: 2020, sourceType: 'module' },
+      parserOptions: { 
+        ecmaVersion: 2020, 
+        sourceType: 'module',
+        project: './tsconfig.json'
+      },
       globals: {
         ...Object.fromEntries(Object.entries(globals.browser).map(([k, v]) => [k.trim(), v])),
         React: 'readonly',
@@ -31,14 +35,24 @@ export default [
         'warn',
         { allowConstantExport: true },
       ],
-      '@typescript-eslint/no-explicit-any': 'warn',
-      '@typescript-eslint/no-unused-vars': 'warn',
+      // TypeScript strict rules for quality improvement
+      '@typescript-eslint/no-explicit-any': 'error',
+      '@typescript-eslint/no-unused-vars': 'error',
+      '@typescript-eslint/no-require-imports': 'error',
+      '@typescript-eslint/prefer-as-const': 'error',
+      '@typescript-eslint/no-unnecessary-type-assertion': 'error',
+      
+      // General code quality rules
       'no-undef': 'off',
       '@typescript-eslint/no-duplicate-enum-values': 'off',
       'no-empty-pattern': 'warn',
       'react-hooks/rules-of-hooks': 'error',
       'no-case-declarations': 'off',
-      '@typescript-eslint/no-var-requires': 'off',
+      '@typescript-eslint/no-var-requires': 'off', // Keep this off for compatibility
+      'prefer-const': 'error',
+      'no-var': 'error',
+      'no-console': 'warn',
+      'eqeqeq': ['error', 'always'],
     },
   },
 ];
