@@ -21,6 +21,7 @@ import './App.css';
 
 // Lazy load page components
 const Dashboard = lazy(() => import('./pages/Dashboard'));
+const LiveTradingDashboard = lazy(() => import('./pages/LiveTradingDashboard'));
 const Strategies = lazy(() => import('./pages/Strategies'));
 const Backtesting = lazy(() => import('./pages/Backtesting'));
 const Account = lazy(() => import('./pages/Account'));
@@ -74,6 +75,7 @@ function App() {
                         <Suspense fallback={<LoadingSpinner />}>
                           <Routes>
                             <Route path="/" element={<Dashboard />} />
+                            <Route path="/dashboard/live" element={<LiveTradingDashboard />} />
                             <Route path="/strategies" element={<Strategies />} />
                             <Route path="/backtesting" element={<Backtesting />} />
                             <Route path="/charts" element={<MarketAnalysis />} />

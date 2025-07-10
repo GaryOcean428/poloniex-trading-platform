@@ -1,7 +1,62 @@
 import axios from 'axios';
-import { WebSocket } from 'ws';
-import { EventEmitter } from 'events';
-import { throttle, debounce } from 'lodash';
+// Use browser WebSocket (available globally)
+
+// Simple throttle function
+function throttle<T extends (...args: any[]) => any>(func: T, limit: number): T {
+  let inThrottle: boolean;
+  return function(this: any, ...args: any[]) {
+    if (!inThrottle) {
+      func.apply(this, args);
+      inThrottle = true;
+      setTimeout(() => inThrottle = false, limit);
+    }
+  } as T;
+}
+
+// Simple debounce function
+function debounce<T extends (...args: any[]) => any>(func: T, wait: number): T {
+  let timeout: NodeJS.Timeout;
+  return function(this: any, ...args: any[]) {
+    clearTimeout(timeout);
+    timeout = setTimeout(() => func.apply(this, args), wait);
+  } as T;
+}
+
+// Use a browser-compatible EventEmitter
+class BrowserEventEmitter {
+  private events: { [key: string]: Function[] } = {};
+
+  on(event: string, callback: Function): void {
+    if (!this.events[event]) {
+      this.events[event] = [];
+    }
+    this.events[event].push(callback);
+  }
+
+  off(event: string, callback: Function): void {
+    if (!this.events[event]) return;
+    this.events[event] = this.events[event].filter(cb => cb !== callback);
+  }
+
+  emit(event: string, ...args: any[]): void {
+    if (!this.events[event]) return;
+    this.events[event].forEach(callback => {
+      try {
+        callback(...args);
+      } catch (error) {
+        console.error('Error in event handler:', error);
+      }
+    });
+  }
+
+  removeAllListeners(event?: string): void {
+    if (event) {
+      delete this.events[event];
+    } else {
+      this.events = {};
+    }
+  }
+}
 
 /**
  * Advanced Live Data Processing Module
@@ -105,7 +160,7 @@ const dataCache = new Map<string, {
 }>();
 
 // Event emitter for live data updates
-export const liveDataEvents = new EventEmitter();
+export const liveDataEvents = new BrowserEventEmitter();
 
 /**
  * Advanced Live Data Service class
