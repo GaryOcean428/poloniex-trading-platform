@@ -1,4 +1,4 @@
-import React, { createContext, useState, ReactNode, useEffect } from 'react';
+import React, { createContext, useState, ReactNode, useEffect, useCallback } from 'react';
 import { Strategy, StrategyType, MarketData, Trade, MovingAverageCrossoverParameters } from '../types';
 import { mockMarketData, mockTrades } from '../data/mockData';
 import { usePoloniexData } from '../hooks/usePoloniexData';
@@ -87,13 +87,27 @@ export const TradingProvider: React.FC<TradingProviderProps> = ({
   const [activeStrategies, setActiveStrategies] = useState<string[]>(['1']);
   const [errors, setErrors] = useState<string[]>([]);
 
+  const addError = useCallback((error: string) => {
+    // Avoid adding duplicate errors
+    setErrors(prev => {
+      if (prev.includes(error)) {
+        return prev;
+      }
+      return [...prev, error];
+    });
+  }, []);
+
+  const clearErrors = useCallback(() => {
+    setErrors([]);
+  }, []);
+
   // If there was an error loading data, add it to our errors
   useEffect(() => {
     if (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       addError(errorMessage);
     }
-  }, [error]);
+  }, [error, addError]);
 
   const addStrategy = (strategy: Strategy) => {
     setStrategies(prev => [...prev, strategy]);
@@ -110,20 +124,6 @@ export const TradingProvider: React.FC<TradingProviderProps> = ({
         ? prev.filter(strategyId => strategyId !== id) 
         : [...prev, id]
     );
-  };
-
-  const addError = (error: string) => {
-    // Avoid adding duplicate errors
-    setErrors(prev => {
-      if (prev.includes(error)) {
-        return prev;
-      }
-      return [...prev, error];
-    });
-  };
-
-  const clearErrors = () => {
-    setErrors([]);
   };
   
   // Place an order using the Poloniex API
