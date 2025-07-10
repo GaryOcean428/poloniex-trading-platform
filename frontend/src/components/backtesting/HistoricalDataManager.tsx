@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Calendar, Download, Database, Filter, TrendingUp, AlertCircle, CheckCircle } from 'lucide-react';
 
 interface HistoricalDataRequest {
@@ -20,8 +20,21 @@ interface DataQuality {
   gaps: { start: string; end: string; duration: number }[];
 }
 
+interface HistoricalData {
+  symbol: string;
+  timeframe: string;
+  data: Array<{
+    timestamp: number;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume: number;
+  }>;
+}
+
 interface HistoricalDataManagerProps {
-  onDataLoaded?: (data: any) => void;
+  onDataLoaded?: (data: HistoricalData[]) => void;
 }
 
 const HistoricalDataManager: React.FC<HistoricalDataManagerProps> = ({ onDataLoaded }) => {

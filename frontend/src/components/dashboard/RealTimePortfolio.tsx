@@ -4,12 +4,9 @@ import { useTradingContext } from '../../hooks/useTradingContext';
 import { 
   TrendingUp, 
   TrendingDown, 
-  DollarSign, 
   BarChart3,
-  Activity,
   Wallet,
-  Target,
-  AlertCircle
+  Target
 } from 'lucide-react';
 
 interface PortfolioMetric {
@@ -29,6 +26,24 @@ interface RealTimePortfolioData {
   marginUsed: number;
   marginFree: number;
   totalEquity: number;
+}
+
+interface MarketData {
+  symbol: string;
+  price: number;
+  change: number;
+  changePercent: number;
+  volume: number;
+  timestamp: number;
+}
+
+interface TradeData {
+  amount: number;
+  price: number;
+  profit: number;
+  side: 'buy' | 'sell';
+  symbol: string;
+  timestamp: number;
 }
 
 interface RealTimePortfolioProps {
@@ -86,7 +101,7 @@ const RealTimePortfolio: React.FC<RealTimePortfolioProps> = ({
   }, [accountBalance]);
 
   // Handle real-time trade execution updates
-  const handleTradeExecuted = useCallback((tradeData: any) => {
+  const handleTradeExecuted = useCallback((tradeData: TradeData) => {
     setPortfolioData(prev => {
       if (!prev) return null;
 
@@ -125,7 +140,7 @@ const RealTimePortfolio: React.FC<RealTimePortfolioProps> = ({
   }, []);
 
   // Handle market data updates that might affect portfolio value
-  const handleMarketData = useCallback((marketData: any) => {
+  const handleMarketData = useCallback((marketData: MarketData) => {
     // Update portfolio value based on market movements
     // This is a simplified calculation - in a real implementation,
     // you'd calculate based on actual holdings

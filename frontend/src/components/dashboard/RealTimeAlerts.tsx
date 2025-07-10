@@ -13,6 +13,24 @@ import {
   Settings
 } from 'lucide-react';
 
+interface MarketDataEvent {
+  symbol: string;
+  price: number;
+  changePercent: number;
+  volume: number;
+  timestamp: number;
+}
+
+interface TradeExecutionEvent {
+  id: string;
+  symbol: string;
+  side: 'buy' | 'sell';
+  amount: number;
+  price: number;
+  profit?: number;
+  timestamp: number;
+}
+
 export interface RealTimeAlert {
   id: string;
   type: 'success' | 'warning' | 'error' | 'info';
@@ -22,7 +40,7 @@ export interface RealTimeAlert {
   timestamp: number;
   priority: 'low' | 'medium' | 'high' | 'critical';
   acknowledged: boolean;
-  data?: any; // Additional data for the alert
+  data?: Record<string, unknown>; // Additional data for the alert
 }
 
 interface AlertRules {
@@ -58,7 +76,7 @@ const RealTimeAlerts: React.FC<RealTimeAlertsProps> = ({
   onAlertClick
 }) => {
   const { isConnected, on, off } = useWebSocket();
-  const { strategies, activeStrategies } = useTradingContext();
+  const { activeStrategies } = useTradingContext();
 
   const [alerts, setAlerts] = useState<RealTimeAlert[]>([]);
   const [soundEnabled, setSoundEnabled] = useState(initialSoundEnabled);
@@ -78,7 +96,7 @@ const RealTimeAlerts: React.FC<RealTimeAlertsProps> = ({
     title: string,
     message: string,
     priority: RealTimeAlert['priority'] = 'medium',
-    data?: any
+    data?: Record<string, unknown>
   ): RealTimeAlert => {
     return {
       id: `alert-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
@@ -115,7 +133,10 @@ const RealTimeAlerts: React.FC<RealTimeAlertsProps> = ({
   // Play alert sound
   const playAlertSound = (type: RealTimeAlert['type']) => {
     try {
-      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const AudioContextClass = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AudioContextClass) return;
+      
+      const audioContext = new AudioContextClass();
       const oscillator = audioContext.createOscillator();
       const gainNode = audioContext.createGain();
 
@@ -144,7 +165,7 @@ const RealTimeAlerts: React.FC<RealTimeAlertsProps> = ({
   };
 
   // Handle market data alerts
-  const handleMarketData = useCallback((marketData: any) => {
+  const handleMarketData = useCallback((marketData: MarketDataEvent) => {
     if (!alertRules.priceChange.enabled) return;
 
     const changePercent = Math.abs(marketData.changePercent || 0);
@@ -163,7 +184,7 @@ const RealTimeAlerts: React.FC<RealTimeAlertsProps> = ({
   }, [alertRules.priceChange, createAlert, addAlert]);
 
   // Handle trade execution alerts
-  const handleTradeExecuted = useCallback((tradeData: any) => {
+  const handleTradeExecuted = useCallback((tradeData: TradeExecutionEvent) => {
     const isProfit = (tradeData.profit || 0) > 0;
     const alert = createAlert(
       isProfit ? 'success' : 'error',
