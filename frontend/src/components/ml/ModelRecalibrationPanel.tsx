@@ -34,7 +34,6 @@ const ModelRecalibrationPanel: React.FC = () => {
   const [marketData, setMarketData] = useState<MarketDataPoint[]>([]);
   const [performanceMetrics, setPerformanceMetrics] = useState<ModelPerformanceMetrics | null>(null);
   const [recalibrationResult, setRecalibrationResult] = useState<RecalibrationResult | null>(null);
-  const [recalibrationHistory, setRecalibrationHistory] = useState<RecalibrationResult[]>([]);
   const [performanceHistory, setPerformanceHistory] = useState<ModelPerformanceMetrics[]>([]);
   const [isMonitoring, setIsMonitoring] = useState(false);
   const [isRecalibrating, setIsRecalibrating] = useState(false);
@@ -357,7 +356,7 @@ const ModelRecalibrationPanel: React.FC = () => {
             </label>
             <select
               value={recalibrationStrategy}
-              onChange={(e) => setRecalibrationStrategy(e.target.value as any)}
+              onChange={(e) => setRecalibrationStrategy(e.target.value as 'full' | 'incremental' | 'transfer')}
               className="w-full px-3 py-2 border border-neutral-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-neutral-700 dark:border-neutral-600 dark:text-white"
             >
               <option value="incremental">Incremental (Fine-tune existing model)</option>
@@ -387,7 +386,7 @@ const ModelRecalibrationPanel: React.FC = () => {
             </label>
             <select
               value={recalibrationConfig.monitoringFrequency}
-              onChange={(e) => setRecalibrationConfig({ ...recalibrationConfig, monitoringFrequency: e.target.value as any })}
+              onChange={(e) => setRecalibrationConfig({ ...recalibrationConfig, monitoringFrequency: e.target.value as 'hourly' | 'daily' | 'weekly' })}
               className="w-full px-3 py-2 border border-neutral-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-neutral-700 dark:border-neutral-600 dark:text-white"
             >
               <option value="hourly">Hourly</option>

@@ -36,8 +36,9 @@ const Login: React.FC<LoginProps> = ({ onSuccess }) => {
       } else {
         setError('Invalid username or password. Try demo/password');
       }
-    } catch (err: any) {
-      setError(err.message || 'Login failed. Please try again.');
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : 'Login failed. Please try again.';
+      setError(errorMessage);
       console.error('Login error:', err);
     } finally {
       setIsLoading(false);
