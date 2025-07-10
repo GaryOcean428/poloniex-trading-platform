@@ -12,6 +12,7 @@
     "dev:backend": "yarn workspace poloniex-backend dev",
     "dev:frontend": "yarn workspace poloniex-frontend dev",
     "build": "yarn build:backend && yarn build:frontend",
+    "build:dev": "yarn build:backend && yarn workspace poloniex-frontend build:dev",
     "build:backend": "yarn workspace poloniex-backend build",
     "build:frontend": "yarn workspace poloniex-frontend build",
     "start": "yarn workspace poloniex-backend start",
