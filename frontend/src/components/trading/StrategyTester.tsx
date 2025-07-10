@@ -229,13 +229,13 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
   };
 
   // Prepare optimization heatmap data
-  const prepareHeatmapData = () => {
-    if (!optimizationResult) return null;
-    
-    // Implementation depends on the charting library used
-    // This is a placeholder for the heatmap data preparation
-    return optimizationResult.parameterHeatmap;
-  };
+  // const prepareHeatmapData = () => {
+  //   if (!optimizationResult) return null;
+  //   
+  //   // Implementation depends on the charting library used
+  //   // This is a placeholder for the heatmap data preparation
+  //   return optimizationResult.parameterHeatmap;
+  // };
 
   // Prepare Monte Carlo simulation chart data
   const prepareMonteCarloData = () => {
