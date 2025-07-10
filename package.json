@@ -28,7 +28,8 @@
     "workspace:health": "node scripts/workspace-health.js",
     "security:audit": "node scripts/security-audit.js",
     "deps:health": "node scripts/dependency-health.js",
-    "quality:check": "yarn lint && yarn test && yarn security:audit && yarn deps:health"
+    "quality:check": "yarn lint && yarn test && yarn security:audit && yarn deps:health",
+    "hooks:install": "node scripts/install-pre-commit-hook.sh"
   },
   "engines": {
     "node": ">=20.0.0"
