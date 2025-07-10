@@ -1,4 +1,5 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 import { useTradingContext } from '../hooks/useTradingContext';
 import PriceChart from '../components/charts/PriceChart';
 import StrategyPerformance from '../components/dashboard/StrategyPerformance';
@@ -8,13 +9,26 @@ import QuickTrade from '../components/dashboard/QuickTrade';
 import MockModeNotice from '../components/MockModeNotice';
 import ExtensionBanner from '../components/dashboard/ExtensionBanner';
 import { mockTrades } from '../data/mockData';
+import { Activity, ArrowRight } from 'lucide-react';
 
 const Dashboard: React.FC = () => {
   const { marketData, strategies, activeStrategies, trades, isMockMode } = useTradingContext();
   
   return (
     <div className="container-responsive">
-      <h1 className="sr-only">Trading Dashboard</h1>
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-2xl font-bold text-neutral-800">Trading Dashboard</h1>
+        
+        {/* Live Trading CTA */}
+        <Link
+          to="/dashboard/live"
+          className="flex items-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors font-medium"
+        >
+          <Activity size={16} />
+          <span>Go Live</span>
+          <ArrowRight size={16} />
+        </Link>
+      </div>
       
       {isMockMode && (
         <div className="mb-4 lg:mb-6">
