@@ -25,26 +25,19 @@ const Login: React.FC<LoginProps> = ({ onSuccess }) => {
     setError(null);
     
     try {
-      // In a real app, this would be an API call
-      // For now, we'll simulate a successful login with mock data
-      if (username === 'demo' && password === 'password') {
-        // Simulate API response delay
-        await new Promise(resolve => setTimeout(resolve, 500));
-        
-        // Mock token and expiry
-        const token = 'mock-jwt-token-' + Math.random().toString(36).substring(2);
-        const expiresIn = 3600; // 1 hour
-        
-        login(token, expiresIn);
-        
+      // Use new JWT login method
+      const success = await login(username, password);
+      
+      if (success) {
+        console.log('Login successful');
         if (onSuccess) {
           onSuccess();
         }
       } else {
         setError('Invalid username or password. Try demo/password');
       }
-    } catch (err) {
-      setError('Login failed. Please try again.');
+    } catch (err: any) {
+      setError(err.message || 'Login failed. Please try again.');
       console.error('Login error:', err);
     } finally {
       setIsLoading(false);
@@ -74,6 +67,7 @@ const Login: React.FC<LoginProps> = ({ onSuccess }) => {
               onChange={(e) => setUsername(e.target.value)}
               placeholder="Enter your username"
               disabled={isLoading}
+              autoComplete="username"
             />
           </div>
           <div className="mb-4">
@@ -87,10 +81,12 @@ const Login: React.FC<LoginProps> = ({ onSuccess }) => {
               onChange={(e) => setPassword(e.target.value)}
               placeholder="Enter your password"
               disabled={isLoading}
+              autoComplete="current-password"
             />
           </div>
           <div className="mt-2 text-sm text-neutral-500">
-            <p>Demo credentials: username: demo, password: password</p>
+            <p>Demo credentials: username: <strong>demo</strong>, password: <strong>password</strong></p>
+            <p>Or try: username: <strong>trader</strong>, password: <strong>password</strong></p>
           </div>
         </form>
       </CardBody>
