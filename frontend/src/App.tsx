@@ -22,6 +22,7 @@ import './App.css';
 // Lazy load page components
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Strategies = lazy(() => import('./pages/Strategies'));
+const Backtesting = lazy(() => import('./pages/Backtesting'));
 const Account = lazy(() => import('./pages/Account'));
 const MarketAnalysis = lazy(() => import('./pages/MarketAnalysis'));
 const Performance = lazy(() => import('./pages/Performance'));
@@ -74,6 +75,7 @@ function App() {
                           <Routes>
                             <Route path="/" element={<Dashboard />} />
                             <Route path="/strategies" element={<Strategies />} />
+                            <Route path="/backtesting" element={<Backtesting />} />
                             <Route path="/charts" element={<MarketAnalysis />} />
                             <Route path="/performance" element={<Performance />} />
                             <Route path="/account" element={<Account />} />
