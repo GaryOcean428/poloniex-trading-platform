@@ -24,7 +24,9 @@ export const getPoloniexApiSecret = (): string => {
 };
 
 export const getPoloniexPassphrase = (): string => {
-  return getEnvVariable('VITE_POLONIEX_PASSPHRASE', '');
+  // Passphrase is not required for Poloniex API v3
+  // This function is kept for compatibility but returns empty string
+  return '';
 };
 
 // Get API base URLs with environment variable support
