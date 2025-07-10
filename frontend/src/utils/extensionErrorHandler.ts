@@ -23,7 +23,7 @@ export class ExtensionErrorHandler {
     // Override console.error to filter extension errors
     const originalError = console.error;
     
-    console.error = (...args: any[]) => {
+    console.error = (...args: unknown[]) => {
       const errorMessage = args[0]?.toString() || '';
       
       // Check if this is an extension communication error
@@ -34,6 +34,12 @@ export class ExtensionErrorHandler {
         if (this.suppressErrors || this.errorCount > this.maxErrors) {
           return;
         }
+      }
+
+      // Check if this is a React production error
+      if (this.isReactProductionError(errorMessage)) {
+        this.handleExtensionError(errorMessage);
+        return; // Don't call original console.error for React production errors
       }
       
       // Call original console.error for other errors
@@ -63,9 +69,34 @@ export class ExtensionErrorHandler {
       message.toLowerCase().includes(pattern.toLowerCase())
     );
   }
-  
-  private handleExtensionError(error: Error): void {
+
+  private isReactProductionError(message: string): boolean {
+    // Detect minified React errors that should be handled differently
+    const reactErrorPatterns = [
+      'Minified React error #185',
+      'visit https://react.dev/errors/185',
+      'use the non-minified dev environment for full errors'
+    ];
+    
+    return reactErrorPatterns.some(pattern => 
+      message.toLowerCase().includes(pattern.toLowerCase())
+    );
+  }
+
+  private handleExtensionError(error: Error | string): void {
     this.errorCount++;
+    
+    const errorMessage = typeof error === 'string' ? error : error.message || error.toString();
+    
+    // Handle React production errors differently
+    if (this.isReactProductionError(errorMessage)) {
+      console.warn(
+        'React Error #185 detected: This is likely caused by maximum update depth exceeded. ' +
+        'Check for infinite re-renders in component state updates or useEffect dependencies.'
+      );
+      console.warn('Initialization error detected - this may require a page refresh');
+      return;
+    }
     
     // Log once every 10 errors to avoid spam
     if (this.errorCount === 1 || this.errorCount % 10 === 0) {

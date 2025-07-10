@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { io } from 'socket.io-client';
 
 export const ConnectionTest: React.FC = () => {
-  const [apiStatus, setApiStatus] = useState('checking');
+  const [apiStatus, setApiStatus] = useState<'checking' | 'connected' | 'failed' | 'cors-blocked'>('checking');
   const [wsStatus, setWsStatus] = useState<'checking' | 'connected' | 'failed'>('checking');
   const [apiData, setApiData] = useState<{ status: string; timestamp: string } | null>(null);
 
@@ -10,31 +10,59 @@ export const ConnectionTest: React.FC = () => {
   const wsUrl = import.meta.env.VITE_WS_URL || 'ws://localhost:3000';
 
   useEffect(() => {
-    // Test API connection
-    fetch(`${apiUrl}/api/health`)
-      .then(res => res.json())
-      .then(data => {
+    // Test API connection with better error handling
+    const testApiConnection = async () => {
+      try {
+        const response = await fetch(`${apiUrl}/api/health`, {
+          method: 'GET',
+          headers: {
+            'Accept': 'application/json',
+          },
+          mode: 'cors', // Explicitly set CORS mode
+        });
+        
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const data = await response.json();
         setApiStatus('connected');
         setApiData(data);
-      })
-      .catch(err => {
-        console.error('API Error:', err);
-        setApiStatus('failed');
-      });
+      } catch (err) {
+        // Handle CORS and network errors more gracefully
+        const error = err as Error;
+        if (error.message.includes('CORS') || error.message.includes('Failed to fetch')) {
+          console.warn('API connection failed due to CORS policy or network error. This is expected in development mode.');
+          setApiStatus('cors-blocked');
+        } else {
+          console.warn('API connection error:', error.message);
+          setApiStatus('failed');
+        }
+      }
+    };
 
-    // Test WebSocket connection
+    testApiConnection();
+
+    // Test WebSocket connection with better error handling
     const newSocket = io(wsUrl, {
       transports: ['websocket', 'polling'],
       reconnectionAttempts: 3,
+      timeout: 5000,
     });
 
     newSocket.on('connect', () => {
-      console.log('WebSocket connected!');
+      if (import.meta.env.DEV) {
+        console.info('WebSocket connected!');
+      }
       setWsStatus('connected');
     });
 
     newSocket.on('connect_error', (err) => {
-      console.error('WebSocket error:', err);
+      if (err.message.includes('WebSocket is closed before the connection is established')) {
+        console.warn('WebSocket connection failed due to server unavailability. This is expected in development mode.');
+      } else {
+        console.warn('WebSocket error:', err.message);
+      }
       setWsStatus('failed');
     });
 
@@ -47,7 +75,18 @@ export const ConnectionTest: React.FC = () => {
     switch (status) {
       case 'connected': return '#4caf50';
       case 'failed': return '#f44336';
+      case 'cors-blocked': return '#ff9800';
       default: return '#ff9800';
+    }
+  };
+
+  const getStatusText = (status: string) => {
+    switch (status) {
+      case 'connected': return 'CONNECTED';
+      case 'failed': return 'FAILED';
+      case 'cors-blocked': return 'CORS BLOCKED';
+      case 'checking': return 'CHECKING';
+      default: return status.toUpperCase();
     }
   };
 
@@ -73,7 +112,7 @@ export const ConnectionTest: React.FC = () => {
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
           <span>API Connection:</span>
           <span style={{ color: getStatusColor(apiStatus), fontWeight: 'bold' }}>
-            {apiStatus.toUpperCase()}
+            {getStatusText(apiStatus)}
           </span>
         </div>
         <div style={{ fontSize: '12px', color: '#888' }}>
@@ -96,7 +135,7 @@ export const ConnectionTest: React.FC = () => {
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
           <span>WebSocket:</span>
           <span style={{ color: getStatusColor(wsStatus), fontWeight: 'bold' }}>
-            {wsStatus.toUpperCase()}
+            {getStatusText(wsStatus)}
           </span>
         </div>
         <div style={{ fontSize: '12px', color: '#888' }}>
