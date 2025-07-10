@@ -87,8 +87,10 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
       message.includes('Cannot access') && message.includes('before initialization') ||
       message.includes('temporal dead zone') ||
       message.includes('ReferenceError') ||
-      // React Error #185 - Hydration mismatch
+      // React Error #185 - Maximum update depth exceeded (infinite loop)
       message.includes('185') ||
+      message.includes('Maximum update depth exceeded') ||
+      message.includes('infinite') ||
       message.includes('hydration') ||
       message.includes('Text content does not match server-rendered HTML') ||
       message.includes('Hydration failed')

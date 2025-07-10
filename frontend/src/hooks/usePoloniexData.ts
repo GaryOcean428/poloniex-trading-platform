@@ -236,16 +236,22 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
     if (isLiveTrading && newHasCredentials && !newMockMode) {
       console.log('Live trading enabled with credentials, refreshing API connection');
       poloniexApi.loadCredentials();
-      refreshApiConnection();
+      
+      // Manually trigger data refresh without causing dependency loop
+      setIsLoading(true);
+      setError(null);
+      
+      Promise.all([
+        fetchMarketData(initialPair),
+        fetchTrades(initialPair),
+        fetchAccountBalance()
+      ]).finally(() => {
+        setIsLoading(false);
+      });
     } else {
       console.log('Using mock mode - live trading disabled or missing credentials');
     }
-  }, [isLiveTrading, apiKey, apiSecret, refreshApiConnection]);
-
-  // Monitor for changes in API credentials
-  useEffect(() => {
-    refreshApiConnection();
-  }, [apiKey, apiSecret, isLiveTrading, refreshApiConnection]);
+  }, [isLiveTrading, apiKey, apiSecret, initialPair, fetchMarketData, fetchTrades, fetchAccountBalance]);
 
   // Handle real-time updates via WebSocket
   useEffect(() => {
