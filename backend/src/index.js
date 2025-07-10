@@ -57,6 +57,9 @@ const __dirname = path.dirname(__filename);
 // Create Express app
 const app = express();
 
+// Trust proxy for Railway deployment
+app.set('trust proxy', true);
+
 // Security middleware
 app.use(helmet({
   contentSecurityPolicy: {
@@ -116,6 +119,7 @@ const limiter = rateLimit({
   message: 'Too many requests from this IP, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,
+  trustProxy: true, // Trust Railway's proxy
 });
 
 app.use(express.json({ limit: '10mb' })); // Limit request size
@@ -144,6 +148,58 @@ const io = new Server(server, {
   pingInterval: 25000
 });
 
+// Circuit breaker for WebSocket connections
+const circuitBreaker = {
+  state: 'CLOSED', // CLOSED, OPEN, HALF_OPEN
+  failureCount: 0,
+  lastFailureTime: null,
+  successCount: 0,
+  
+  // Circuit breaker thresholds
+  FAILURE_THRESHOLD: 3,
+  SUCCESS_THRESHOLD: 2,
+  TIMEOUT: 60000, // 1 minute timeout for OPEN state
+  
+  canAttemptConnection() {
+    if (this.state === 'CLOSED') return true;
+    if (this.state === 'HALF_OPEN') return true;
+    if (this.state === 'OPEN') {
+      const timeSinceLastFailure = Date.now() - this.lastFailureTime;
+      if (timeSinceLastFailure >= this.TIMEOUT) {
+        this.state = 'HALF_OPEN';
+        this.successCount = 0;
+        console.log('Circuit breaker moved to HALF_OPEN state');
+        return true;
+      }
+      return false;
+    }
+    return false;
+  },
+  
+  recordSuccess() {
+    if (this.state === 'HALF_OPEN') {
+      this.successCount++;
+      if (this.successCount >= this.SUCCESS_THRESHOLD) {
+        this.state = 'CLOSED';
+        this.failureCount = 0;
+        console.log('Circuit breaker moved to CLOSED state (recovery)');
+      }
+    } else if (this.state === 'CLOSED') {
+      this.failureCount = 0;
+    }
+  },
+  
+  recordFailure() {
+    this.failureCount++;
+    this.lastFailureTime = Date.now();
+    
+    if (this.failureCount >= this.FAILURE_THRESHOLD) {
+      this.state = 'OPEN';
+      console.log(`Circuit breaker OPENED after ${this.failureCount} failures`);
+    }
+  }
+};
+
 // Connect to Poloniex WebSocket for live market data
 let reconnectAttempts = 0;
 const MAX_RECONNECT_ATTEMPTS = 5;
@@ -152,12 +208,19 @@ const PING_INTERVAL = 30000; // 30 seconds (increased from 25)
 const PONG_TIMEOUT = 10000; // 10 seconds (decreased from 60)
 
 const connectToPoloniexWebSocket = () => {
+  // Check circuit breaker before attempting connection
+  if (!circuitBreaker.canAttemptConnection()) {
+    console.log('Circuit breaker is OPEN - skipping WebSocket connection attempt');
+    return null;
+  }
+  
   if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
     console.log(`Max reconnection attempts (${MAX_RECONNECT_ATTEMPTS}) reached. Stopping reconnection.`);
+    circuitBreaker.recordFailure();
     return null;
   }
 
-  console.log(`Connecting to Poloniex WebSocket... (attempt ${reconnectAttempts + 1})`);
+  console.log(`Connecting to Poloniex WebSocket... (attempt ${reconnectAttempts + 1}, circuit breaker: ${circuitBreaker.state})`);
   
   // Create WebSocket connection to Poloniex with timeout
   const poloniexWs = new WebSocket('wss://ws.poloniex.com/ws/public', {
@@ -173,6 +236,9 @@ const connectToPoloniexWebSocket = () => {
     
     // Reset reconnect attempts on successful connection
     reconnectAttempts = 0;
+    
+    // Record successful connection in circuit breaker
+    circuitBreaker.recordSuccess();
     
     // Subscribe to market data channels
     poloniexWs.send(JSON.stringify({
@@ -246,12 +312,20 @@ const connectToPoloniexWebSocket = () => {
     
     reconnectAttempts++;
     
-    // Calculate exponential backoff delay
-    const backoffDelay = Math.min(RECONNECT_DELAY * Math.pow(2, reconnectAttempts - 1), 30000);
-    console.log(`Attempting to reconnect in ${backoffDelay}ms (attempt ${reconnectAttempts})`);
+    // Record failure in circuit breaker
+    circuitBreaker.recordFailure();
     
-    // Attempt to reconnect after a delay
-    setTimeout(connectToPoloniexWebSocket, backoffDelay);
+    // Only attempt reconnection if circuit breaker allows it
+    if (circuitBreaker.canAttemptConnection()) {
+      // Calculate exponential backoff delay
+      const backoffDelay = Math.min(RECONNECT_DELAY * Math.pow(2, reconnectAttempts - 1), 30000);
+      console.log(`Attempting to reconnect in ${backoffDelay}ms (attempt ${reconnectAttempts})`);
+      
+      // Attempt to reconnect after a delay
+      setTimeout(connectToPoloniexWebSocket, backoffDelay);
+    } else {
+      console.log('Circuit breaker preventing reconnection attempt');
+    }
   });
   
   poloniexWs.on('close', () => {
@@ -269,12 +343,20 @@ const connectToPoloniexWebSocket = () => {
     
     reconnectAttempts++;
     
-    // Calculate exponential backoff delay
-    const backoffDelay = Math.min(RECONNECT_DELAY * Math.pow(2, reconnectAttempts - 1), 30000);
-    console.log(`Connection closed, attempting to reconnect in ${backoffDelay}ms (attempt ${reconnectAttempts})`);
+    // Record failure in circuit breaker
+    circuitBreaker.recordFailure();
     
-    // Attempt to reconnect after a delay
-    setTimeout(connectToPoloniexWebSocket, backoffDelay);
+    // Only attempt reconnection if circuit breaker allows it
+    if (circuitBreaker.canAttemptConnection()) {
+      // Calculate exponential backoff delay
+      const backoffDelay = Math.min(RECONNECT_DELAY * Math.pow(2, reconnectAttempts - 1), 30000);
+      console.log(`Connection closed, attempting to reconnect in ${backoffDelay}ms (attempt ${reconnectAttempts})`);
+      
+      // Attempt to reconnect after a delay
+      setTimeout(connectToPoloniexWebSocket, backoffDelay);
+    } else {
+      console.log('Circuit breaker preventing reconnection attempt');
+    }
   });
   
   return poloniexWs;
@@ -392,6 +474,22 @@ io.on('connection', (socket) => {
 // Start Poloniex WebSocket connection
 const poloniexWs = connectToPoloniexWebSocket();
 
+// Periodic circuit breaker check and recovery
+setInterval(() => {
+  if (circuitBreaker.state === 'OPEN') {
+    const timeSinceLastFailure = Date.now() - circuitBreaker.lastFailureTime;
+    if (timeSinceLastFailure >= circuitBreaker.TIMEOUT) {
+      console.log('Circuit breaker timeout reached, attempting recovery');
+      circuitBreaker.state = 'HALF_OPEN';
+      circuitBreaker.successCount = 0;
+      // Only attempt reconnection if we haven't exceeded max attempts
+      if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+        setTimeout(connectToPoloniexWebSocket, 1000);
+      }
+    }
+  }
+}, 30000); // Check every 30 seconds
+
 // Define API routes
 app.get('/api/health', (req, res) => {
   res.json({ 
@@ -399,6 +497,11 @@ app.get('/api/health', (req, res) => {
     mode: hasApiCredentials ? 'live' : 'mock',
     timestamp: new Date().toISOString(),
     env: process.env.NODE_ENV,
+    websocket: {
+      circuitBreakerState: circuitBreaker.state,
+      reconnectAttempts: reconnectAttempts,
+      failureCount: circuitBreaker.failureCount
+    }
   });
 });
 
