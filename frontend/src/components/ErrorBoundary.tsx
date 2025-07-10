@@ -86,7 +86,12 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     return (
       message.includes('Cannot access') && message.includes('before initialization') ||
       message.includes('temporal dead zone') ||
-      message.includes('ReferenceError')
+      message.includes('ReferenceError') ||
+      // React Error #185 - Hydration mismatch
+      message.includes('185') ||
+      message.includes('hydration') ||
+      message.includes('Text content does not match server-rendered HTML') ||
+      message.includes('Hydration failed')
     );
   };
 
