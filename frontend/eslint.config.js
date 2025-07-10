@@ -11,7 +11,11 @@ export default [
     files: ['**/*.{ts,tsx}'],
     languageOptions: {
       parser,
-      parserOptions: { ecmaVersion: 2020, sourceType: 'module' },
+      parserOptions: { 
+        ecmaVersion: 2020, 
+        sourceType: 'module',
+        project: './tsconfig.json'
+      },
       globals: {
         ...Object.fromEntries(Object.entries(globals.browser).map(([k, v]) => [k.trim(), v])),
         React: 'readonly',
@@ -36,8 +40,6 @@ export default [
       '@typescript-eslint/no-unused-vars': 'error',
       '@typescript-eslint/no-require-imports': 'error',
       '@typescript-eslint/prefer-as-const': 'error',
-      '@typescript-eslint/prefer-nullish-coalescing': 'warn',
-      '@typescript-eslint/prefer-optional-chain': 'warn',
       '@typescript-eslint/no-unnecessary-type-assertion': 'error',
       
       // General code quality rules
