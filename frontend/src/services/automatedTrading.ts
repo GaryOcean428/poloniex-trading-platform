@@ -1,7 +1,9 @@
 import { Strategy } from '@/types';
 import { executeStrategy } from '@/utils/strategyExecutors';
 import { poloniexApi } from '@/services/poloniexAPI';
+import { aiSignalGenerator, AISignal } from '@/ml/aiSignalGenerator';
 import { logger } from '@/utils/logger';
+import { useAppStore } from '@/store';
 
 interface AutomatedTradingConfig {
   maxPositions: number;
@@ -92,7 +94,7 @@ class AutomatedTradingService {
   }
 
   /**
-   * Main update loop
+   * Main update loop with AI-enhanced decision making
    */
   private async update(): Promise<void> {
     try {
@@ -101,86 +103,259 @@ class AutomatedTradingService {
       
       // Check if we can open new positions
       if (this.positions.size >= this.config.maxPositions) {
+        logger.info('Maximum positions reached, skipping new trades');
         return;
       }
 
-      // Execute each active strategy
+      // Execute each active strategy with AI enhancement
       for (const strategy of this.activeStrategies.values()) {
-        // Get market data
-        const marketData = await poloniexApi.getMarketData(strategy.parameters.pair);
-        
-        // Execute strategy
-        const { signal } = executeStrategy(strategy, marketData);
-        
-        if (signal) {
-          await this.executeTrade(strategy, signal, balance.availableAmount);
+        try {
+          // Get market data
+          const marketData = await poloniexApi.getMarketData(strategy.parameters.pair);
+          
+          // Execute traditional strategy
+          const strategyResult = executeStrategy(strategy, marketData);
+          
+          // Generate AI signal for comparison and enhancement
+          const aiSignal = await aiSignalGenerator.generateSignal(marketData);
+          
+          // Combine strategy and AI signals
+          const finalSignal = this.combineSignals(strategyResult, aiSignal);
+          
+          if (finalSignal && finalSignal.action !== 'HOLD') {
+            await this.executeTrade(strategy, finalSignal, balance.availableAmount);
+          }
+        } catch (error) {
+          logger.error(`Error processing strategy ${strategy.id}:`, error);
         }
       }
+      
+      // Also run pure AI trading for configured pairs
+      await this.executeAITradingSignals();
+      
     } catch (error) {
       logger.error('Error in automated trading update:', error);
     }
   }
 
   /**
-   * Execute a trade based on strategy signal
+   * Execute AI-only trading signals for configured pairs
+   */
+  private async executeAITradingSignals(): Promise<void> {
+    try {
+      // Get trading settings from store
+      const { defaultPair } = useAppStore.getState().trading;
+      
+      // Get market data for default pair
+      const marketData = await poloniexApi.getMarketData(defaultPair);
+      
+      // Generate AI signal
+      const aiSignal = await aiSignalGenerator.generateSignal(marketData);
+      
+      // Check if signal meets our criteria
+      if (aiSignal.action !== 'HOLD' && aiSignal.confidence > 0.7 && aiSignal.riskLevel !== 'HIGH') {
+        // Create a virtual strategy for AI signals
+        const aiStrategy: Strategy = {
+          id: 'ai-signal-' + Date.now(),
+          name: 'AI Signal Strategy',
+          description: 'Pure AI-generated trading signals',
+          type: 'Custom',
+          parameters: {
+            pair: defaultPair,
+            timeframe: '5m'
+          },
+          isActive: true,
+          riskLevel: aiSignal.riskLevel,
+          createdAt: Date.now(),
+          lastModified: Date.now()
+        };
+
+        const balance = await poloniexApi.getAccountBalance();
+        await this.executeTrade(aiStrategy, aiSignal, balance.availableAmount);
+      }
+    } catch (error) {
+      logger.error('Error in AI trading signals:', error);
+    }
+  }
+
+  /**
+   * Combine traditional strategy signals with AI signals
+   */
+  private combineSignals(strategyResult: any, aiSignal: AISignal): AISignal | null {
+    // If both signals agree, increase confidence
+    if (strategyResult.signal === aiSignal.action) {
+      return {
+        ...aiSignal,
+        confidence: Math.min(aiSignal.confidence * 1.2, 1),
+        reason: `Strategy + AI: ${strategyResult.reason} | ${aiSignal.reason}`
+      };
+    }
+    
+    // If signals disagree, only proceed if AI signal has very high confidence
+    if (strategyResult.signal !== aiSignal.action && aiSignal.confidence > 0.8) {
+      return {
+        ...aiSignal,
+        confidence: aiSignal.confidence * 0.8,
+        reason: `AI override: ${aiSignal.reason} (conflicted with strategy: ${strategyResult.reason})`
+      };
+    }
+    
+    // If traditional strategy says HOLD but AI has strong signal
+    if (!strategyResult.signal && aiSignal.action !== 'HOLD' && aiSignal.confidence > 0.75) {
+      return {
+        ...aiSignal,
+        confidence: aiSignal.confidence * 0.9,
+        reason: `AI signal: ${aiSignal.reason} (no strategy signal)`
+      };
+    }
+    
+    // Default to hold if signals are weak or conflicting
+    return null;
+  }
+
+  /**
+   * Execute a trade based on strategy signal or AI signal
    */
   private async executeTrade(
     strategy: Strategy,
-    signal: 'BUY' | 'SELL',
+    signal: 'BUY' | 'SELL' | AISignal,
     availableBalance: number
   ): Promise<void> {
     try {
       const pair = strategy.parameters.pair;
       
-      // Calculate position size based on risk
-      const riskAmount = (availableBalance * this.config.riskPerTrade) / 100;
+      // Handle both traditional signals and AI signals
+      let action: 'BUY' | 'SELL';
+      let stopLoss: number | undefined;
+      let takeProfit: number | undefined;
+      let confidence = 1;
+      let reason = 'Strategy signal';
+
+      if (typeof signal === 'string') {
+        // Traditional signal
+        action = signal;
+      } else {
+        // AI signal
+        action = signal.action as 'BUY' | 'SELL';
+        stopLoss = signal.stopLoss;
+        takeProfit = signal.takeProfit;
+        confidence = signal.confidence;
+        reason = signal.reason;
+      }
+
+      // Get current market data
       const marketData = await poloniexApi.getMarketData(pair);
       const lastPrice = marketData[marketData.length - 1].close;
-      const quantity = riskAmount / lastPrice;
+      
+      // Calculate position size based on risk and confidence
+      const baseRiskAmount = (availableBalance * this.config.riskPerTrade) / 100;
+      const adjustedRiskAmount = baseRiskAmount * confidence; // Reduce size for lower confidence
+      const quantity = adjustedRiskAmount / lastPrice;
+
+      // Validate minimum position size
+      if (quantity < 0.001) { // Minimum position size
+        logger.warn(`Position size too small for ${pair}: ${quantity}`);
+        return;
+      }
 
       // Place main order
-      await poloniexApi.placeOrder(
+      const order = await poloniexApi.placeOrder(
         pair,
-        signal.toLowerCase() as 'buy' | 'sell',
+        action.toLowerCase() as 'buy' | 'sell',
         'market',
         quantity
       );
 
-      // Place stop loss
-      const stopPrice = signal === 'BUY'
-        ? lastPrice * (1 - this.config.stopLossPercent / 100)
-        : lastPrice * (1 + this.config.stopLossPercent / 100);
+      // Use AI-provided stop loss or calculate default
+      let stopPrice: number;
+      if (stopLoss) {
+        stopPrice = stopLoss;
+      } else {
+        stopPrice = action === 'BUY'
+          ? lastPrice * (1 - this.config.stopLossPercent / 100)
+          : lastPrice * (1 + this.config.stopLossPercent / 100);
+      }
 
-      await poloniexApi.placeConditionalOrder(
+      // Place stop loss order
+      try {
+        await poloniexApi.placeConditionalOrder(
+          pair,
+          action === 'BUY' ? 'sell' : 'buy',
+          'stop',
+          quantity,
+          stopPrice
+        );
+      } catch (error) {
+        logger.warn('Failed to place stop loss order:', error);
+      }
+
+      // Use AI-provided take profit or calculate default
+      let takeProfitPrice: number;
+      if (takeProfit) {
+        takeProfitPrice = takeProfit;
+      } else {
+        takeProfitPrice = action === 'BUY'
+          ? lastPrice * (1 + this.config.takeProfitPercent / 100)
+          : lastPrice * (1 - this.config.takeProfitPercent / 100);
+      }
+
+      // Place take profit order
+      try {
+        await poloniexApi.placeConditionalOrder(
+          pair,
+          action === 'BUY' ? 'sell' : 'buy',
+          'takeProfit',
+          quantity,
+          takeProfitPrice
+        );
+      } catch (error) {
+        logger.warn('Failed to place take profit order:', error);
+      }
+
+      // Store position information
+      const positionId = `${strategy.id}-${Date.now()}`;
+      this.positions.set(positionId, {
+        strategy: strategy.id,
         pair,
-        signal === 'BUY' ? 'sell' : 'buy',
-        'stop',
+        action,
         quantity,
-        stopPrice
-      );
+        entryPrice: lastPrice,
+        stopPrice,
+        takeProfitPrice,
+        confidence,
+        reason,
+        timestamp: Date.now(),
+        orderId: order?.id
+      });
 
-      // Place take profit
-      const takeProfitPrice = signal === 'BUY'
-        ? lastPrice * (1 + this.config.takeProfitPercent / 100)
-        : lastPrice * (1 - this.config.takeProfitPercent / 100);
-
-      await poloniexApi.placeConditionalOrder(
-        pair,
-        signal === 'BUY' ? 'sell' : 'buy',
-        'takeProfit',
-        quantity,
-        takeProfitPrice
-      );
+      // Add toast notification
+      const store = useAppStore.getState();
+      store.addToast({
+        message: `Trade executed: ${action} ${quantity.toFixed(4)} ${pair} at ${lastPrice.toFixed(2)}`,
+        type: 'success',
+        dismissible: true
+      });
 
       logger.info(`Trade executed for strategy ${strategy.id}`, {
-        signal,
+        action,
         pair,
         quantity,
+        entryPrice: lastPrice,
         stopPrice,
-        takeProfitPrice
+        takeProfitPrice,
+        confidence,
+        reason
       });
     } catch (error) {
       logger.error('Error executing trade:', error);
+      
+      // Add error toast notification
+      const store = useAppStore.getState();
+      store.addToast({
+        message: `Trade execution failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        type: 'error',
+        dismissible: true
+      });
     }
   }
 

@@ -2,6 +2,7 @@ import axios from 'axios';
 import CryptoJS from 'crypto-js';
 import { getStorageItem, STORAGE_KEYS } from '@/utils/storage';
 import { MarketData, Position, FuturesOrder } from '@/types';
+import { useAppStore } from '@/store';
 
 import { 
   getApiBaseUrl, 
@@ -153,16 +154,15 @@ class PoloniexApiClient {
   }
 
   /**
-   * Load credentials from localStorage or environment variables
+   * Load credentials from Zustand store or environment variables
    */
   public loadCredentials(): void {
     try {
-      // Try to get credentials from localStorage first
-      const storedApiKey = getStorageItem(STORAGE_KEYS.API_KEY, '');
-      const storedApiSecret = getStorageItem(STORAGE_KEYS.API_SECRET, '');
-      const isLiveTrading = getStorageItem(STORAGE_KEYS.IS_LIVE_TRADING, false);
+      // Get credentials from Zustand store
+      const storeState = useAppStore.getState();
+      const { apiKey: storedApiKey, apiSecret: storedApiSecret, isLiveTrading } = storeState.apiCredentials;
       
-      // Check for environment variable credentials
+      // Check for environment variable credentials as fallback
       const envApiKey = getPoloniexApiKey();
       const envApiSecret = getPoloniexApiSecret();
       

@@ -1,4 +1,4 @@
-import { getEnvVariable, getApiBaseUrl, getPoloniexApiKey, getPoloniexApiSecret, getPoloniexPassphrase } from '@/utils/environment';
+import { getEnvVariable, getApiBaseUrl, getPoloniexApiKey, getPoloniexApiSecret } from '@/utils/environment';
 import crypto from 'crypto';
 
 // Get configured API base URL
@@ -147,10 +147,9 @@ const generateSignature = (timestamp: string, method: string, requestPath: strin
 // Create headers for authenticated requests
 const createAuthHeaders = (method: string, endpoint: string, body: string = '') => {
   const apiKey = getPoloniexApiKey();
-  const passphrase = getPoloniexPassphrase();
   
-  if (!apiKey || !passphrase) {
-    throw new Error('VITE_POLONIEX_API_KEY or VITE_POLONIEX_PASSPHRASE is not defined in environment variables');
+  if (!apiKey) {
+    throw new Error('VITE_POLONIEX_API_KEY is not defined in environment variables');
   }
   
   const timestamp = Date.now().toString();
@@ -160,8 +159,7 @@ const createAuthHeaders = (method: string, endpoint: string, body: string = '') 
     'Content-Type': 'application/json',
     'PF-API-KEY': apiKey,
     'PF-API-SIGN': signature,
-    'PF-API-TIMESTAMP': timestamp,
-    'PF-API-PASSPHRASE': passphrase
+    'PF-API-TIMESTAMP': timestamp
   };
 };
 

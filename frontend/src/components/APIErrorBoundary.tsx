@@ -47,7 +47,7 @@ export const APIErrorBoundary: React.FC<APIErrorBoundaryProps> = ({ error, onRet
           <ul className="text-sm text-blue-700 space-y-1">
             <li>• Go to Settings and enter your Poloniex API credentials</li>
             <li>• Ensure your API key has the required permissions</li>
-            <li>• Verify your API secret and passphrase are correct</li>
+            <li>• Verify your API key and secret are correct (passphrase not required for Poloniex API v3)</li>
             <li>• Check that your IP address is whitelisted on Poloniex</li>
           </ul>
         </div>

@@ -14,6 +14,8 @@ import { SettingsProvider } from './context/SettingsContext';
 import { WebSocketProvider } from './context/WebSocketContext';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import Integration from './components/Integration';
+import ToastContainer from './components/ToastContainer';
+import RouteGuard from './components/RouteGuard';
 import { BrowserCompatibility } from './utils/extensionErrorHandler';
 import './App.css';
 
@@ -24,7 +26,9 @@ const Account = lazy(() => import('./pages/Account'));
 const MarketAnalysis = lazy(() => import('./pages/MarketAnalysis'));
 const Performance = lazy(() => import('./pages/Performance'));
 const Settings = lazy(() => import('./pages/Settings'));
+const Chat = lazy(() => import('./pages/Chat'));
 const ExtensionDownload = lazy(() => import('./pages/ExtensionDownload'));
+const NotFound = lazy(() => import('./pages/NotFound'));
 
 // Loading component
 const LoadingSpinner = () => (
@@ -65,21 +69,27 @@ function App() {
                       aria-label="Main content"
                       tabIndex={-1}
                     >
-                      <Suspense fallback={<LoadingSpinner />}>
-                        <Routes>
-                          <Route path="/" element={<Dashboard />} />
-                          <Route path="/strategies" element={<Strategies />} />
-                          <Route path="/charts" element={<MarketAnalysis />} />
-                          <Route path="/performance" element={<Performance />} />
-                          <Route path="/account" element={<Account />} />
-                          <Route path="/settings" element={<Settings />} />
-                          <Route path="/extension" element={<ExtensionDownload />} />
-                        </Routes>
-                      </Suspense>
+                      <RouteGuard>
+                        <Suspense fallback={<LoadingSpinner />}>
+                          <Routes>
+                            <Route path="/" element={<Dashboard />} />
+                            <Route path="/strategies" element={<Strategies />} />
+                            <Route path="/charts" element={<MarketAnalysis />} />
+                            <Route path="/performance" element={<Performance />} />
+                            <Route path="/account" element={<Account />} />
+                            <Route path="/chat" element={<Chat />} />
+                            <Route path="/settings" element={<Settings />} />
+                            <Route path="/extension" element={<ExtensionDownload />} />
+                            <Route path="/404" element={<NotFound />} />
+                            <Route path="*" element={<NotFound />} />
+                          </Routes>
+                        </Suspense>
+                      </RouteGuard>
                     </main>
                   </div>
                 </div>
                 <Integration />
+                <ToastContainer />
                 <EnvironmentStatus />
                 <ConfigurationStatus />
                 <ConnectionHealth />
