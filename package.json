@@ -18,12 +18,17 @@
     "start:frontend": "yarn workspace poloniex-frontend start",
     "start:backend": "yarn workspace poloniex-backend start",
     "lint": "yarn workspace poloniex-frontend lint && yarn workspace poloniex-backend lint",
+    "lint:fix": "yarn workspace poloniex-frontend lint --fix && yarn workspace poloniex-backend lint --fix",
     "test": "yarn workspace poloniex-frontend test",
+    "test:coverage": "yarn workspace poloniex-frontend test:coverage",
     "production-check": "node scripts/production-check.js",
     "deploy": "node scripts/deploy.js",
     "railway:help": "node railway-config-helper.js",
     "railway:validate": "node validate-railway-config.js",
-    "workspace:health": "node scripts/workspace-health.js"
+    "workspace:health": "node scripts/workspace-health.js",
+    "security:audit": "node scripts/security-audit.js",
+    "deps:health": "node scripts/dependency-health.js",
+    "quality:check": "yarn lint && yarn test && yarn security:audit && yarn deps:health"
   },
   "engines": {
     "node": ">=20.0.0"
