@@ -1,11 +1,54 @@
-import React from 'react';
+import React, { useEffect, useRef, useCallback } from 'react';
 import { X, CheckCircle, AlertCircle, AlertTriangle, Info } from 'lucide-react';
-import { useToasts, useToastActions } from '@/store';
+import { useAppStore } from '@/store';
 import { clsx } from 'clsx';
 
 const ToastContainer: React.FC = () => {
-  const toasts = useToasts();
-  const { removeToast } = useToastActions();
+  const toasts = useAppStore(state => state.toasts);
+  const removeToast = useAppStore(state => state.removeToast);
+  const autoRemovalTimers = useRef<Map<string, NodeJS.Timeout>>(new Map());
+
+  const scheduleAutoRemoval = useCallback((toastId: string) => {
+    // Clear existing timer if any
+    const existingTimer = autoRemovalTimers.current.get(toastId);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+    }
+
+    // Schedule new removal
+    const timer = setTimeout(() => {
+      removeToast(toastId);
+      autoRemovalTimers.current.delete(toastId);
+    }, 5000);
+
+    autoRemovalTimers.current.set(toastId, timer);
+  }, [removeToast]);
+
+  // Handle auto-removal for new toasts
+  useEffect(() => {
+    toasts.forEach(toast => {
+      if (toast.dismissible !== false && !autoRemovalTimers.current.has(toast.id)) {
+        scheduleAutoRemoval(toast.id);
+      }
+    });
+
+    // Clean up timers for removed toasts
+    const currentToastIds = new Set(toasts.map(t => t.id));
+    autoRemovalTimers.current.forEach((timer, toastId) => {
+      if (!currentToastIds.has(toastId)) {
+        clearTimeout(timer);
+        autoRemovalTimers.current.delete(toastId);
+      }
+    });
+  }, [toasts.length, scheduleAutoRemoval]); // Only depend on toasts.length to avoid infinite loops
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      autoRemovalTimers.current.forEach(timer => clearTimeout(timer));
+      autoRemovalTimers.current.clear();
+    };
+  }, []);
 
   const getIcon = (type: string) => {
     switch (type) {
