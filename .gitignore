@@ -46,5 +46,13 @@ backend/node_modules/
 backend/public/
 *.tsbuildinfo
 
+# Test coverage
+coverage/
+*.lcov
+.nyc_output
+
+# Security and dependency files
+package-lock.json
+
 # Railway deployment files
 deployment-url.txt
