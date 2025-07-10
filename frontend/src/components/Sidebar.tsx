@@ -12,7 +12,8 @@ import {
   Chrome,
   User,
   Menu,
-  ArrowLeft
+  ArrowLeft,
+  TrendingUp
 } from 'lucide-react';
 
 const Sidebar: React.FC = () => {
@@ -24,6 +25,7 @@ const Sidebar: React.FC = () => {
   const navItems = [
     { path: '/', label: 'Dashboard', icon: <LayoutDashboard size={20} /> },
     { path: '/strategies', label: 'Trading Strategies', icon: <Zap size={20} /> },
+    { path: '/backtesting', label: 'Advanced Backtesting', icon: <TrendingUp size={20} /> },
     { path: '/account', label: 'Account', icon: <User size={20} /> },
     { path: '/charts', label: 'Market Analysis', icon: <BarChart4 size={20} /> },
     { path: '/performance', label: 'Performance', icon: <LineChart size={20} /> },
