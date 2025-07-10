@@ -179,11 +179,14 @@ class PoloniexApiClient {
         // Use the new mock mode logic
         this.mockMode = shouldUseMockMode(true) || !isLiveTrading;
         
-        console.log(
-          this.mockMode 
-            ? 'API credentials found but running in mock mode (check VITE_FORCE_MOCK_MODE or live trading settings)' 
-            : 'Using API credentials with live trading enabled'
-        );
+        // Only log in development mode to reduce console noise
+        if (import.meta.env.DEV) {
+          console.info(
+            this.mockMode 
+              ? 'API credentials found but running in mock mode (check VITE_FORCE_MOCK_MODE or live trading settings)' 
+              : 'Using API credentials with live trading enabled'
+          );
+        }
       } else {
         // No credentials available
         this.apiKey = '';
@@ -197,11 +200,13 @@ class PoloniexApiClient {
         }
       }
       
-      // Log connection status
-      if (this.mockMode) {
-        console.log('Mock mode active - using simulated data');
-      } else {
-        console.log('Live trading mode active with API credentials');
+      // Log connection status (only in development)
+      if (import.meta.env.DEV) {
+        if (this.mockMode) {
+          console.info('Mock mode active - using simulated data');
+        } else {
+          console.info('Live trading mode active with API credentials');
+        }
       }
       
       // Clear cached data when credentials change

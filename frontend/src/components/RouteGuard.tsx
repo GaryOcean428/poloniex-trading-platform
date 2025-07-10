@@ -12,8 +12,10 @@ const RouteGuard: React.FC<RouteGuardProps> = ({ children }) => {
   
   useEffect(() => {
     // Add navigation state preservation logic here
-    // For now, we'll just log the route change
-    console.log('Route changed to:', location.pathname);
+    // For now, we'll just log the route change in development
+    if (import.meta.env.DEV) {
+      console.info('Route changed to:', location.pathname);
+    }
     
     // Store current path in session storage for state preservation
     sessionStorage.setItem('lastRoute', location.pathname);
