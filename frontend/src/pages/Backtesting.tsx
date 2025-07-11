@@ -277,17 +277,45 @@ const Backtesting: React.FC = () => {
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              Initial Balance
+              Initial Balance (USD)
             </label>
-            <input
-              type="number"
-              value={backtestOptions.initialBalance}
-              onChange={(e) => setBacktestOptions({
-                ...backtestOptions,
-                initialBalance: parseFloat(e.target.value)
-              })}
-              className="w-full p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            />
+            <div className="space-y-2">
+              <input
+                type="number"
+                min="100"
+                max="1000000"
+                step="100"
+                value={backtestOptions.initialBalance}
+                onChange={(e) => setBacktestOptions({
+                  ...backtestOptions,
+                  initialBalance: parseFloat(e.target.value) || 10000
+                })}
+                className="w-full p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                placeholder="Enter amount (min: $100)"
+              />
+              <div className="flex flex-wrap gap-2">
+                {[1000, 5000, 10000, 25000, 50000, 100000].map(amount => (
+                  <button
+                    key={amount}
+                    type="button"
+                    onClick={() => setBacktestOptions({
+                      ...backtestOptions,
+                      initialBalance: amount
+                    })}
+                    className={`px-3 py-1 text-xs rounded-md border transition-colors ${
+                      backtestOptions.initialBalance === amount
+                        ? 'bg-blue-100 border-blue-300 text-blue-700'
+                        : 'bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100'
+                    }`}
+                  >
+                    ${amount.toLocaleString()}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-gray-500">
+                Choose a starting balance for your backtest simulation
+              </p>
+            </div>
           </div>
 
           <div>
