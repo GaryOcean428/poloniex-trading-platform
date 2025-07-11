@@ -107,6 +107,10 @@ class WebSocketService {
   private healthCheckEndpoint: string = '/api/health';
   private subscriptions: Set<string> = new Set();
   private pendingMessages: Array<{event: string, data: any}> = [];
+  
+  // Add error logging throttling
+  private lastErrorLog: { [key: string]: number } = {};
+  private ERROR_LOG_THROTTLE_MS = 30000; // 30 seconds
   private connectionStats: ConnectionStats = {
     connectTime: null,
     disconnectTime: null,
@@ -204,6 +208,21 @@ class WebSocketService {
     }
   }
   
+  /**
+   * Throttled logging to prevent console spam
+   */
+  private throttledLog(type: 'log' | 'warn' | 'error', key: string, message: string, ...args: any[]): void {
+    const now = Date.now();
+    const lastLog = this.lastErrorLog[key] || 0;
+    
+    if (now - lastLog > this.ERROR_LOG_THROTTLE_MS) {
+      if (import.meta.env.DEV) {
+        console[type](message, ...args);
+      }
+      this.lastErrorLog[key] = now;
+    }
+  }
+
   /**
    * Get current connection state
    */
@@ -328,7 +347,7 @@ class WebSocketService {
         
         // If we haven't received a pong or it's too old
         if (pongElapsed <= 0 || pongElapsed > this.pingTimeout) {
-          console.warn(`WebSocket ping timeout after ${this.pingTimeout}ms`);
+          this.throttledLog('warn', 'ping-timeout', `WebSocket ping timeout after ${this.pingTimeout}ms`);
           
           // Force disconnect and reconnect
           if (this.socket) {
@@ -399,7 +418,7 @@ class WebSocketService {
         
         // If we already attempted to connect and failed, don't retry
         if (this.connectionAttempted && this.useMockData) {
-          console.log('Using mock data (previous connection attempt failed)');
+          this.throttledLog('log', 'using-mock-data', 'Using mock data (previous connection attempt failed)');
           this.connectionState = ConnectionState.FAILED;
           resolve();
           return;
@@ -412,9 +431,7 @@ class WebSocketService {
         
         // Set a connection timeout
         const connectionTimeout = setTimeout(() => {
-          if (import.meta.env.DEV) {
-            console.warn(`WebSocket connection timed out after ${this.config.options?.timeout || 10000}ms`);
-          }
+          this.throttledLog('warn', 'connection-timeout', `WebSocket connection timed out after ${this.config.options?.timeout || 10000}ms`);
           this.connectionState = ConnectionState.FAILED;
           this.useMockData = true;
           resolve();
@@ -426,7 +443,7 @@ class WebSocketService {
           this.useMockData = true;
           this.connectionState = ConnectionState.FAILED;
           clearTimeout(connectionTimeout);
-          console.log('Running in WebContainer environment, defaulting to mock data');
+          this.throttledLog('log', 'webcontainer-mock', 'Running in WebContainer environment, defaulting to mock data');
           resolve();
           return;
         }
@@ -472,13 +489,13 @@ class WebSocketService {
         .catch(error => {
           // Server is not available, use mock data
           clearTimeout(connectionTimeout);
-          console.log('Server not available, using mock data:', error.message);
+          this.throttledLog('log', 'server-unavailable', 'Server not available, using mock data:', error.message);
           this.useMockData = true;
           this.connectionState = ConnectionState.FAILED;
           resolve();
         });
       } catch (error) {
-        console.error('WebSocket connection error:', error instanceof Error ? error.message : String(error));
+        this.throttledLog('error', 'websocket-connection-error', 'WebSocket connection error:', error instanceof Error ? error.message : String(error));
         this.useMockData = true;
         this.connectionState = ConnectionState.FAILED;
         resolve();
@@ -517,17 +534,17 @@ class WebSocketService {
     });
     
     this.socket.on(EVENTS.DISCONNECT, (reason) => {
-      console.log(`WebSocket disconnected: ${reason}`);
+      this.throttledLog('log', 'websocket-disconnect', `WebSocket disconnected: ${reason}`);
       this.handleDisconnect(new Error(reason));
     });
     
     this.socket.on(EVENTS.CONNECT_ERROR, (error) => {
-      console.error('WebSocket connection error:', error);
+      this.throttledLog('error', 'websocket-connect-error', 'WebSocket connection error:', error);
       this.handleDisconnect(error);
     });
     
     this.socket.on(EVENTS.CONNECT_TIMEOUT, () => {
-      console.error('WebSocket connection timeout');
+      this.throttledLog('error', 'websocket-timeout', 'WebSocket connection timeout');
       this.handleDisconnect(new Error('Connection timeout'));
     });
     
