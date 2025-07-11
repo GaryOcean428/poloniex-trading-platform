@@ -6,6 +6,8 @@ import { TradingModeManager } from './TradingModeManager';
 import { combineIndicatorSignals, calculateRSI, calculateMACD, calculateMovingAverageCrossover } from '@/utils/technicalIndicators';
 import { createRiskManager, RiskManager, RISK_PROFILES } from '@/utils/riskManagement';
 import { monitoringSystem } from '@/utils/monitoringSystem';
+import { performanceOptimizer } from '@/utils/performanceOptimizer';
+import { errorHandler, ErrorCategory, ErrorSeverity } from '@/utils/errorHandling';
 
 interface Activity {
   type: 'info' | 'warning' | 'error' | 'success';
@@ -38,6 +40,11 @@ class TradingEngine {
   private confidenceThreshold = 0.75; // Minimum confidence for live trading
   private riskManager: RiskManager;
   private accountBalance = 0;
+  private apiCircuitBreaker = errorHandler.createCircuitBreaker('poloniex_api', {
+    failureThreshold: 0.5,
+    resetTimeout: 60000,
+    minimumRequests: 5
+  });
   private performanceMetrics = {
     totalTrades: 0,
     winningTrades: 0,
@@ -83,6 +90,20 @@ class TradingEngine {
     if (storedBalance) {
       this.riskManager.setDailyStartValue(parseFloat(storedBalance));
     }
+    
+    // Configure error handling for trading operations
+    errorHandler.configureRetry('trading', {
+      maxAttempts: 2,
+      baseDelay: 1000,
+      maxDelay: 5000,
+      backoffMultiplier: 2,
+      retryableErrors: ['NetworkError', 'TimeoutError', 'PoloniexConnectionError']
+    });
+    
+    // Setup error listener for monitoring
+    errorHandler.addErrorListener((error) => {
+      monitoringSystem.logError(new Error(error.message), error.context.component);
+    });
   }
 
   async initialize() {
@@ -172,92 +193,117 @@ class TradingEngine {
   }
 
   async analyzeMarket(symbol: string) {
+    const analysisOperation = async () => {
+      try {
+        this.setCurrentActivity(`Analyzing market data for ${symbol}`);
+        
+        // Use cached market data for performance
+        const marketData = await performanceOptimizer.cachedRequest(
+          `market_data_${symbol}`,
+          () => poloniexApi.getMarketData(symbol),
+          false
+        );
+        
+        if (this.isEmergencyMode) {
+          this.addActivity('warning', 'Emergency mode activated', `Closing positions for ${symbol}`);
+          return;
+        }
+
+        // Check emergency stop conditions
+        const emergencyCheck = this.riskManager.checkEmergencyStop(this.accountBalance);
+        if (emergencyCheck.shouldStop) {
+          this.isEmergencyMode = true;
+          this.addActivity('error', 'Emergency stop triggered', emergencyCheck.reasons.join(', '));
+          await this.closeAllPositions();
+          return;
+        }
+
+        // Enhanced market analysis using multiple technical indicators
+        const indicatorSignals = combineIndicatorSignals(marketData, {
+          useRSI: true,
+          useMACD: true,
+          useBB: true,
+          useMA: true,
+          weights: { rsi: 0.3, macd: 0.3, bb: 0.2, stochastic: 0.1, ma: 0.1 }
+        });
+
+        // Update monitoring system with market data
+        const currentCandle = marketData[marketData.length - 1];
+        monitoringSystem.updateMarketData(symbol, currentCandle);
+        
+        // Update portfolio risk monitoring
+        const portfolioRisk = this.riskManager.calculatePortfolioRisk(this.accountBalance);
+        monitoringSystem.updatePortfolioRisk(portfolioRisk);
+        
+        // Update performance metrics
+        monitoringSystem.addPerformanceMetrics({
+          timestamp: Date.now(),
+          totalPnL: portfolioRisk.unrealizedPnL,
+          dailyPnL: portfolioRisk.dailyPnL,
+          winRate: this.calculateWinRate(),
+          avgWin: this.performanceMetrics.averageWin,
+          avgLoss: this.performanceMetrics.averageLoss,
+          totalTrades: this.performanceMetrics.totalTrades,
+          currentDrawdown: portfolioRisk.currentDrawdown,
+          maxDrawdown: portfolioRisk.maxDrawdown,
+          portfolioRisk: portfolioRisk.totalRiskPercent,
+          leverageUtilization: portfolioRisk.leverageUtilization,
+          apiLatency: 100, // This would be measured from actual API calls
+          successRate: 0.98, // This would be calculated from API success/failure rates
+          errorRate: 0.02,
+          wsConnectionStatus: 'connected',
+          volatility: this.calculateMarketVolatility(marketData),
+          volume: currentCandle.volume,
+          spread: 0.01 // This would be calculated from order book data
+        });
+        
+        // Update status with enhanced analysis results
+        this.status.marketAnalysis = {
+          prediction: {
+            direction: indicatorSignals.signal === 'BUY' ? 'up' : indicatorSignals.signal === 'SELL' ? 'down' : 'up',
+            probability: indicatorSignals.confidence,
+            reasoning: this.generateAnalysisReasoning(indicatorSignals)
+          },
+          sentiment: indicatorSignals.signal === 'BUY' ? 0.7 : indicatorSignals.signal === 'SELL' ? 0.3 : 0.5,
+          confidence: indicatorSignals.confidence
+        };
+
+        this.setCurrentActivity(`Enhanced analysis complete for ${symbol}: ${indicatorSignals.signal} (${Math.round(indicatorSignals.confidence * 100)}% confidence)`);
+        
+        // Execute trade if auto-trading is enabled and signal meets criteria
+        const autoTradingEnabled = localStorage.getItem('poloniex_auto_trading_enabled') === 'true';
+        if (autoTradingEnabled && indicatorSignals.signal !== 'HOLD' && indicatorSignals.confidence > this.confidenceThreshold) {
+          await this.executeEnhancedTrade(symbol, indicatorSignals.signal, indicatorSignals.confidence, marketData);
+        }
+      } catch (error) {
+        throw error; // Re-throw to be handled by error handler
+      }
+    };
+
+    // Execute with circuit breaker and error handling
     try {
-      this.setCurrentActivity(`Analyzing market data for ${symbol}`);
-      const marketData = await poloniexApi.getMarketData(symbol);
-      
-      if (this.isEmergencyMode) {
-        this.addActivity('warning', 'Emergency mode activated', `Closing positions for ${symbol}`);
-        return;
-      }
-
-      // Check emergency stop conditions
-      const emergencyCheck = this.riskManager.checkEmergencyStop(this.accountBalance);
-      if (emergencyCheck.shouldStop) {
-        this.isEmergencyMode = true;
-        this.addActivity('error', 'Emergency stop triggered', emergencyCheck.reasons.join(', '));
-        await this.closeAllPositions();
-        return;
-      }
-
-      // Enhanced market analysis using multiple technical indicators
-      const indicatorSignals = combineIndicatorSignals(marketData, {
-        useRSI: true,
-        useMACD: true,
-        useBB: true,
-        useMA: true,
-        weights: { rsi: 0.3, macd: 0.3, bb: 0.2, stochastic: 0.1, ma: 0.1 }
-      });
-
-      // Update monitoring system with market data
-      const currentCandle = marketData[marketData.length - 1];
-      monitoringSystem.updateMarketData(symbol, currentCandle);
-      
-      // Update portfolio risk monitoring
-      const portfolioRisk = this.riskManager.calculatePortfolioRisk(this.accountBalance);
-      monitoringSystem.updatePortfolioRisk(portfolioRisk);
-      
-      // Update performance metrics
-      monitoringSystem.addPerformanceMetrics({
-        timestamp: Date.now(),
-        totalPnL: portfolioRisk.unrealizedPnL,
-        dailyPnL: portfolioRisk.dailyPnL,
-        winRate: this.calculateWinRate(),
-        avgWin: this.performanceMetrics.averageWin,
-        avgLoss: this.performanceMetrics.averageLoss,
-        totalTrades: this.performanceMetrics.totalTrades,
-        currentDrawdown: portfolioRisk.currentDrawdown,
-        maxDrawdown: portfolioRisk.maxDrawdown,
-        portfolioRisk: portfolioRisk.totalRiskPercent,
-        leverageUtilization: portfolioRisk.leverageUtilization,
-        apiLatency: 100, // This would be measured from actual API calls
-        successRate: 0.98, // This would be calculated from API success/failure rates
-        errorRate: 0.02,
-        wsConnectionStatus: 'connected',
-        volatility: this.calculateMarketVolatility(marketData),
-        volume: currentCandle.volume,
-        spread: 0.01 // This would be calculated from order book data
-      });
-      this.status.marketAnalysis = {
-        prediction: {
-          direction: indicatorSignals.signal === 'BUY' ? 'up' : indicatorSignals.signal === 'SELL' ? 'down' : 'up',
-          probability: indicatorSignals.confidence,
-          reasoning: this.generateAnalysisReasoning(indicatorSignals)
-        },
-        sentiment: indicatorSignals.signal === 'BUY' ? 0.7 : indicatorSignals.signal === 'SELL' ? 0.3 : 0.5,
-        confidence: indicatorSignals.confidence
-      };
-
-      this.setCurrentActivity(`Enhanced analysis complete for ${symbol}: ${indicatorSignals.signal} (${Math.round(indicatorSignals.confidence * 100)}% confidence)`);
-      
-      // Execute trade if auto-trading is enabled and signal meets criteria
-      const autoTradingEnabled = localStorage.getItem('poloniex_auto_trading_enabled') === 'true';
-      if (autoTradingEnabled && indicatorSignals.signal !== 'HOLD' && indicatorSignals.confidence > this.confidenceThreshold) {
-        await this.executeEnhancedTrade(symbol, indicatorSignals.signal, indicatorSignals.confidence, marketData);
-      }
+      await this.apiCircuitBreaker.execute(analysisOperation);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.addActivity('error', `Market analysis failed for ${symbol}`, errorMessage);
-      logger.error(`Market analysis failed for ${symbol}:`, error);
+      await errorHandler.handleError(error as Error, {
+        component: 'trading_engine',
+        action: 'analyze_market',
+        metadata: { symbol }
+      });
     }
   }
 
   async executeEnhancedTrade(symbol: string, signal: 'BUY' | 'SELL', confidence: number, marketData: MarketData[]) {
-    try {
-      // Get current balance
-      this.accountBalance = this.modeManager.isLiveMode() 
-        ? await poloniexApi.getAccountBalance() 
-        : this.modeManager.getPaperEngine().getBalance();
+    const tradeOperation = async () => {
+      // Get current balance with retry and caching
+      this.accountBalance = await performanceOptimizer.cachedRequest(
+        'account_balance',
+        async () => {
+          return this.modeManager.isLiveMode() 
+            ? await poloniexApi.getAccountBalance() 
+            : this.modeManager.getPaperEngine().getBalance();
+        },
+        false
+      );
 
       const currentPrice = marketData[marketData.length - 1].close;
       const direction = signal === 'BUY' ? 'long' : 'short';
@@ -297,15 +343,13 @@ class TradingEngine {
 
       const side = signal === 'BUY' ? 'buy' : 'sell';
       
-      // Place main order
+      // Place main order with retry logic
       let orderResult;
       if (this.modeManager.isLiveMode()) {
-        orderResult = await poloniexApi.placeOrder(
-          symbol,
-          side,
-          'market',
-          size,
-          undefined // market order
+        orderResult = await errorHandler.executeWithRetry(
+          () => poloniexApi.placeOrder(symbol, side, 'market', size, undefined),
+          'trading',
+          { component: 'trading_engine', action: 'place_order', metadata: { symbol, side, size } }
         );
       } else {
         orderResult = await this.modeManager.getPaperEngine().placeOrder({
@@ -327,29 +371,38 @@ class TradingEngine {
         riskAssessment.takeProfitPrice
       );
 
-      // Place stop loss and take profit orders
+      // Place stop loss and take profit orders with error handling
       if (this.modeManager.isLiveMode()) {
-        try {
-          // Stop loss order
-          await poloniexApi.placeConditionalOrder(
+        const stopLossTask = errorHandler.executeWithRetry(
+          () => poloniexApi.placeConditionalOrder(
             symbol,
             side === 'buy' ? 'sell' : 'buy',
             'stop',
             size,
             riskAssessment.stopLossPrice
-          );
+          ),
+          'trading',
+          { component: 'trading_engine', action: 'place_stop_loss' }
+        ).catch(error => {
+          this.addActivity('warning', `Failed to place stop loss for ${symbol}`, error.message);
+        });
 
-          // Take profit order
-          await poloniexApi.placeConditionalOrder(
+        const takeProfitTask = errorHandler.executeWithRetry(
+          () => poloniexApi.placeConditionalOrder(
             symbol,
             side === 'buy' ? 'sell' : 'buy',
             'takeProfit',
             size,
             riskAssessment.takeProfitPrice
-          );
-        } catch (error) {
-          this.addActivity('warning', `Failed to place stop/TP orders for ${symbol}`, error instanceof Error ? error.message : 'Unknown error');
-        }
+          ),
+          'trading',
+          { component: 'trading_engine', action: 'place_take_profit' }
+        ).catch(error => {
+          this.addActivity('warning', `Failed to place take profit for ${symbol}`, error.message);
+        });
+
+        // Execute stop loss and take profit orders in parallel
+        await Promise.allSettled([stopLossTask, takeProfitTask]);
       }
 
       // Update performance metrics
@@ -361,11 +414,16 @@ class TradingEngine {
         `TP: ${riskAssessment.takeProfitPrice.toFixed(2)}, ` +
         `R:R ${riskAssessment.riskReward.toFixed(2)}, ` +
         `Confidence: ${(confidence * 100).toFixed(1)}%`);
-      
+    };
+
+    try {
+      await this.apiCircuitBreaker.execute(tradeOperation);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.addActivity('error', `Enhanced trade execution failed for ${symbol}`, errorMessage);
-      logger.error(`Enhanced trade execution failed for ${symbol}:`, error);
+      await errorHandler.handleError(error as Error, {
+        component: 'trading_engine',
+        action: 'execute_trade',
+        metadata: { symbol, signal, confidence }
+      });
     }
   }
 
