@@ -13,14 +13,13 @@ import {
   IS_LOCAL_DEV 
 } from '@/utils/environment';
 
-// Get configured API base URLs
-const FUTURES_BASE_URL = getApiBaseUrl('futures');
-const SPOT_BASE_URL = getApiBaseUrl('spot');
+// Get configured API base URLs - Use V3 futures API
+const FUTURES_BASE_URL = import.meta.env.VITE_POLONIEX_API_BASE_URL || 'https://api.poloniex.com/v3/futures';
+const SPOT_BASE_URL = import.meta.env.VITE_POLONIEX_SPOT_API_BASE_URL || 'https://api.poloniex.com/v3';
 
-// Add WebSocket endpoints
-// WebSocket endpoints - commented out as they're not currently used
-// const FUTURES_WS_URL = 'wss://futures-ws.poloniex.com/ws/public';
-// const FUTURES_PRIVATE_WS_URL = 'wss://futures-ws.poloniex.com/ws/private';
+// WebSocket endpoints for V3 futures
+const FUTURES_WS_URL = import.meta.env.VITE_POLONIEX_WS_URL || 'wss://ws.poloniex.com/ws/public';
+const FUTURES_PRIVATE_WS_URL = import.meta.env.VITE_POLONIEX_PRIVATE_WS_URL || 'wss://ws.poloniex.com/ws/private';
 
 // Custom error classes for better error handling
 export class PoloniexAPIError extends Error {
@@ -221,28 +220,23 @@ class PoloniexApiClient {
   }
 
   /**
-   * Generate signature for Poloniex API requests
+   * Generate signature for Poloniex V3 futures API requests
    */
-  private generateSignature(endpoint: string, queryString: string = '', body: any = null): string {
+  private generateSignature(method: string, endpoint: string, body: any = null): { signature: string; timestamp: string } {
     // Current timestamp in milliseconds
-    const timestamp = Date.now();
-    const signVersion = '2';
+    const timestamp = Date.now().toString();
     
-    // Create the string to sign
-    let signString = timestamp + signVersion + endpoint;
+    // Create the string to sign for V3 futures API
+    let signString = timestamp + method.toUpperCase() + endpoint;
     
-    if (queryString) {
-      signString += '?' + queryString;
-    }
-    
-    if (body) {
+    if (body && Object.keys(body).length > 0) {
       signString += JSON.stringify(body);
     }
     
     // Create HMAC SHA256 signature
     const signature = CryptoJS.HmacSHA256(signString, this.apiSecret).toString(CryptoJS.enc.Hex);
     
-    return signature;
+    return { signature, timestamp };
   }
 
   /**
@@ -274,21 +268,18 @@ class PoloniexApiClient {
         };
       }
       
-      const endpoint = '/accounts/balance';
-      const timestamp = Date.now().toString();
-      const signVersion = '2';
-      const signature = this.generateSignature(endpoint, '', null);
+      const endpoint = '/account/balance';
+      const { signature, timestamp } = this.generateSignature('GET', endpoint, null);
       const url = `${FUTURES_BASE_URL}${endpoint}`;
       
       logApiCall('GET', url);
       
-      // Use axios with timeout
+      // Use axios with timeout and V3 futures headers
       const response = await axios.get(url, {
         headers: {
           'PF-API-KEY': this.apiKey,
           'PF-API-SIGN': signature,
           'PF-API-TIMESTAMP': timestamp,
-          'PF-API-SIGN-VERSION': signVersion,
           'Content-Type': 'application/json'
         },
         timeout: this.requestTimeoutMs
@@ -339,15 +330,15 @@ class PoloniexApiClient {
         return this.generateMockMarketData(100);
       }
       
-      // Poloniex expects pairs in format like BTC_USDT (not BTC-USDT)
+      // Poloniex V3 futures expects pairs in format like BTC_USDT_PERP
       const formattedPair = pair.replace('-', '_') + '_PERP';
-      const endpoint = `/markets/${formattedPair}/candles`;
-      const queryParams = `interval=5m&limit=100`;
+      const endpoint = `/market/candles`;
+      const queryParams = `symbol=${formattedPair}&interval=5m&limit=100`;
       
       logApiCall('GET', `${endpoint}?${queryParams}`);
       
-      // Use axios with timeout
-      const response = await axios.get(`${SPOT_BASE_URL}${endpoint}?${queryParams}`, {
+      // Use futures API base URL for market data
+      const response = await axios.get(`${FUTURES_BASE_URL}${endpoint}?${queryParams}`, {
         timeout: this.requestTimeoutMs
       });
       
@@ -416,7 +407,7 @@ class PoloniexApiClient {
         return {
           positions: [
             {
-              symbol: "BTC_USDT",
+              symbol: "BTC_USDT_PERP",
               posId: "12345",
               pos: "long",
               marginMode: "cross",
@@ -431,20 +422,17 @@ class PoloniexApiClient {
         };
       }
       
-      const endpoint = '/positions';
-      const timestamp = Date.now().toString();
-      const signVersion = '2';
-      const signature = this.generateSignature(endpoint, '', null);
+      const endpoint = '/trade/position/opens';
+      const { signature, timestamp } = this.generateSignature('GET', endpoint, null);
       
       logApiCall('GET', endpoint);
       
-      // Use axios with timeout
+      // Use axios with timeout and V3 futures headers
       const response = await axios.get(`${FUTURES_BASE_URL}${endpoint}`, {
         headers: {
           'PF-API-KEY': this.apiKey,
           'PF-API-SIGN': signature,
           'PF-API-TIMESTAMP': timestamp,
-          'PF-API-SIGN-VERSION': signVersion,
           'Content-Type': 'application/json'
         },
         timeout: this.requestTimeoutMs
@@ -501,25 +489,23 @@ class PoloniexApiClient {
         };
       }
       
-      // Poloniex expects pairs in format like BTC_USDT (not BTC-USDT)
-      const formattedPair = pair.replace('-', '_');
-      const endpoint = '/orders';
-      const timestamp = Date.now();
+      // Poloniex V3 futures expects pairs in format like BTC_USDT_PERP
+      const formattedPair = pair.replace('-', '_') + '_PERP';
+      const endpoint = '/trade/order';
       
       const orderData = {
         symbol: formattedPair,
         side: side.toUpperCase(),
         type: type.toUpperCase(),
-        quantity: quantity.toString(),
-        leverage: '1', // Default leverage
+        size: quantity.toString(),
         ...(type === 'limit' && price ? { price: price.toString() } : {})
       };
       
-      const signature = this.generateSignature(endpoint, '', orderData);
+      const { signature, timestamp } = this.generateSignature('POST', endpoint, orderData);
       
       logApiCall('POST', endpoint, orderData);
       
-      // Use axios with timeout
+      // Use axios with timeout and V3 futures headers
       const response = await axios.post(`${FUTURES_BASE_URL}${endpoint}`, orderData, {
         headers: {
           'PF-API-KEY': this.apiKey,
