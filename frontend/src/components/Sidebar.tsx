@@ -14,7 +14,10 @@ import {
   Menu,
   ArrowLeft,
   TrendingUp,
-  Activity
+  Activity,
+  FileText,
+  Receipt,
+  History
 } from 'lucide-react';
 
 const Sidebar: React.FC = () => {
@@ -29,6 +32,8 @@ const Sidebar: React.FC = () => {
     { path: '/strategies', label: 'Trading Strategies', icon: <Zap size={20} /> },
     { path: '/backtesting', label: 'Advanced Backtesting', icon: <TrendingUp size={20} /> },
     { path: '/account', label: 'Account', icon: <User size={20} /> },
+    { path: '/transactions', label: 'Transaction History', icon: <Receipt size={20} /> },
+    { path: '/trades', label: 'Trade History', icon: <History size={20} /> },
     { path: '/charts', label: 'Market Analysis', icon: <BarChart4 size={20} /> },
     { path: '/performance', label: 'Performance', icon: <LineChart size={20} /> },
     { path: '/chat', label: 'Community Chat', icon: <MessageSquare size={20} /> },
