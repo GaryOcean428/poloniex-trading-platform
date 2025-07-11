@@ -1,10 +1,19 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
+import { useAppStore } from '@/store';
 
 export const ConnectionTest: React.FC = () => {
   const [apiStatus, setApiStatus] = useState<'checking' | 'connected' | 'failed' | 'cors-blocked'>('checking');
   const [wsStatus, setWsStatus] = useState<'checking' | 'connected' | 'failed'>('checking');
   const [apiData, setApiData] = useState<{ status: string; timestamp: string } | null>(null);
+  const [isVisible, setIsVisible] = useState(true);
+  
+  // Refs to track if we've already shown notifications for these errors
+  const apiErrorNotifiedRef = useRef(false);
+  const wsErrorNotifiedRef = useRef(false);
+  const lastErrorTimeRef = useRef<{ api: number, ws: number }>({ api: 0, ws: 0 });
+  
+  const addToast = useAppStore(state => state.addToast);
 
   const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000';
   const wsUrl = import.meta.env.VITE_WS_URL || 'ws://localhost:3000';
@@ -28,15 +37,47 @@ export const ConnectionTest: React.FC = () => {
         const data = await response.json();
         setApiStatus('connected');
         setApiData(data);
+        apiErrorNotifiedRef.current = false; // Reset error notification flag on success
       } catch (err) {
         // Handle CORS and network errors more gracefully
         const error = err as Error;
-        if (error.message.includes('CORS') || error.message.includes('Failed to fetch')) {
-          console.warn('API connection failed due to CORS policy or network error. This is expected in development mode.');
-          setApiStatus('cors-blocked');
+        const now = Date.now();
+        
+        // Only show toast notification once every 30 seconds to avoid spam
+        if (!apiErrorNotifiedRef.current || now - lastErrorTimeRef.current.api > 30000) {
+          if (error.message.includes('CORS') || error.message.includes('Failed to fetch')) {
+            if (import.meta.env.DEV) {
+              // eslint-disable-next-line no-console
+              console.warn('API connection failed due to CORS policy or network error. This is expected in development mode.');
+            }
+            setApiStatus('cors-blocked');
+            addToast({
+              message: 'Backend API unavailable - using mock data (expected in development)',
+              type: 'warning',
+              dismissible: true
+            });
+          } else {
+            if (import.meta.env.DEV) {
+              // eslint-disable-next-line no-console
+              console.warn('API connection error:', error.message);
+            }
+            setApiStatus('failed');
+            addToast({
+              message: `API connection failed: ${error.message}`,
+              type: 'error',
+              dismissible: true
+            });
+          }
+          
+          apiErrorNotifiedRef.current = true;
+          lastErrorTimeRef.current.api = now;
         } else {
-          console.warn('API connection error:', error.message);
-          setApiStatus('failed');
+          // Still update status but don't spam notifications
+          if (error.message.includes('CORS') || error.message.includes('Failed to fetch')) {
+            setApiStatus('cors-blocked');
+          } else {
+            setApiStatus('failed');
+          }
         }
       }
     };
@@ -52,24 +93,51 @@ export const ConnectionTest: React.FC = () => {
 
     newSocket.on('connect', () => {
       if (import.meta.env.DEV) {
+        // eslint-disable-next-line no-console
         console.info('WebSocket connected!');
       }
       setWsStatus('connected');
+      wsErrorNotifiedRef.current = false; // Reset error notification flag on success
     });
 
     newSocket.on('connect_error', (err) => {
-      if (err.message.includes('WebSocket is closed before the connection is established')) {
-        console.warn('WebSocket connection failed due to server unavailability. This is expected in development mode.');
-      } else {
-        console.warn('WebSocket error:', err.message);
+      const now = Date.now();
+      
+      // Only show toast notification once every 30 seconds to avoid spam
+      if (!wsErrorNotifiedRef.current || now - lastErrorTimeRef.current.ws > 30000) {
+        if (err.message.includes('WebSocket is closed before the connection is established')) {
+          if (import.meta.env.DEV) {
+            // eslint-disable-next-line no-console
+            console.warn('WebSocket connection failed due to server unavailability. This is expected in development mode.');
+          }
+          addToast({
+            message: 'WebSocket unavailable - using mock data (expected in development)',
+            type: 'warning',
+            dismissible: true
+          });
+        } else {
+          if (import.meta.env.DEV) {
+            // eslint-disable-next-line no-console
+            console.warn('WebSocket error:', err.message);
+          }
+          addToast({
+            message: `WebSocket error: ${err.message}`,
+            type: 'error',
+            dismissible: true
+          });
+        }
+        
+        wsErrorNotifiedRef.current = true;
+        lastErrorTimeRef.current.ws = now;
       }
+      
       setWsStatus('failed');
     });
 
     return () => {
       newSocket.disconnect();
     };
-  }, [apiUrl, wsUrl]);
+  }, [apiUrl, wsUrl, addToast]);
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -91,73 +159,120 @@ export const ConnectionTest: React.FC = () => {
   };
 
   return (
-    <div style={{
-      position: 'fixed',
-      top: '10px',
-      left: '10px',
-      background: '#1a1a1a',
-      color: '#fff',
-      padding: '15px',
-      borderRadius: '8px',
-      fontSize: '12px',
-      zIndex: 9999,
-      maxWidth: '350px',
-      border: '1px solid #333'
-    }}>
-      <h3 style={{ margin: '0 0 15px 0', color: '#4a90e2' }}>
-        🔌 Connection Status
-      </h3>
-      
-      <div style={{ marginBottom: '15px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-          <span>API Connection:</span>
-          <span style={{ color: getStatusColor(apiStatus), fontWeight: 'bold' }}>
-            {getStatusText(apiStatus)}
-          </span>
-        </div>
-        <div style={{ fontSize: '12px', color: '#888' }}>
-          {apiUrl}
-        </div>
-        {apiData && (
-          <pre style={{ 
-            background: '#0a0a0a', 
-            padding: '8px', 
-            borderRadius: '4px', 
-            fontSize: '11px',
-            marginTop: '8px'
-          }}>
-            {JSON.stringify(apiData, null, 2)}
-          </pre>
-        )}
-      </div>
-
-      <div style={{ marginBottom: '15px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-          <span>WebSocket:</span>
-          <span style={{ color: getStatusColor(wsStatus), fontWeight: 'bold' }}>
-            {getStatusText(wsStatus)}
-          </span>
-        </div>
-        <div style={{ fontSize: '12px', color: '#888' }}>
-          {wsUrl}
-        </div>
-      </div>
-
-      <button 
-        onClick={() => window.location.reload()}
-        style={{
-          width: '100%',
-          padding: '8px',
-          background: '#4a90e2',
+    <>
+      {isVisible && (
+        <div style={{
+          position: 'fixed',
+          top: '10px',
+          left: '10px',
+          background: '#1a1a1a',
           color: '#fff',
-          border: 'none',
-          borderRadius: '4px',
-          cursor: 'pointer',
-          fontSize: '14px'
-        }}
-      >
-        Refresh
-      </button>
-    </div>
+          padding: '15px',
+          borderRadius: '8px',
+          fontSize: '12px',
+          zIndex: 9999,
+          maxWidth: '350px',
+          border: '1px solid #333'
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '10px' }}>
+            <h3 style={{ margin: '0 0 5px 0', color: '#4a90e2' }}>
+              🔌 Connection Status
+            </h3>
+            <button 
+              onClick={() => setIsVisible(false)}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: '#999',
+                cursor: 'pointer',
+                fontSize: '16px',
+                padding: '0',
+                width: '20px',
+                height: '20px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}
+              title="Hide connection status"
+            >
+              ×
+            </button>
+          </div>
+          
+          <div style={{ marginBottom: '15px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+              <span>API Connection:</span>
+              <span style={{ color: getStatusColor(apiStatus), fontWeight: 'bold' }}>
+                {getStatusText(apiStatus)}
+              </span>
+            </div>
+            <div style={{ fontSize: '12px', color: '#888' }}>
+              {apiUrl}
+            </div>
+            {apiData && (
+              <pre style={{ 
+                background: '#0a0a0a', 
+                padding: '8px', 
+                borderRadius: '4px', 
+                fontSize: '11px',
+                marginTop: '8px'
+              }}>
+                {JSON.stringify(apiData, null, 2)}
+              </pre>
+            )}
+          </div>
+
+          <div style={{ marginBottom: '15px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+              <span>WebSocket:</span>
+              <span style={{ color: getStatusColor(wsStatus), fontWeight: 'bold' }}>
+                {getStatusText(wsStatus)}
+              </span>
+            </div>
+            <div style={{ fontSize: '12px', color: '#888' }}>
+              {wsUrl}
+            </div>
+          </div>
+
+          <button 
+            onClick={() => window.location.reload()}
+            style={{
+              width: '100%',
+              padding: '8px',
+              background: '#4a90e2',
+              color: '#fff',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontSize: '14px'
+            }}
+          >
+            Refresh
+          </button>
+        </div>
+      )}
+      
+      {!isVisible && (
+        <button
+          onClick={() => setIsVisible(true)}
+          style={{
+            position: 'fixed',
+            top: '10px',
+            left: '10px',
+            background: '#1a1a1a',
+            color: '#4a90e2',
+            border: '1px solid #333',
+            borderRadius: '4px',
+            padding: '8px 12px',
+            cursor: 'pointer',
+            fontSize: '12px',
+            zIndex: 9999
+          }}
+          title="Show connection status"
+        >
+          🔌 Status
+        </button>
+      )}
+    </>
   );
 };
