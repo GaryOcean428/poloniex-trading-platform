@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import { MemoryRouter } from 'react-router-dom';
 import App from '@/App';
 import { AppProviders } from '@/context/AppProviders';
 import { webSocketService } from '@/services/websocketService';
@@ -93,11 +92,9 @@ describe('Integration Tests', () => {
   
   it('should render main application components', async () => {
     render(
-      <MemoryRouter initialEntries={['/']}>
-        <AppProviders>
-          <App />
-        </AppProviders>
-      </MemoryRouter>
+      <AppProviders>
+        <App />
+      </AppProviders>
     );
     
     // Wait for app to load
@@ -114,11 +111,9 @@ describe('Integration Tests', () => {
   
   it('should navigate between main sections', async () => {
     render(
-      <MemoryRouter initialEntries={['/']}>
-        <AppProviders>
-          <App />
-        </AppProviders>
-      </MemoryRouter>
+      <AppProviders>
+        <App />
+      </AppProviders>
     );
     
     // Wait for app to load
@@ -147,11 +142,9 @@ describe('Integration Tests', () => {
   
   it('should connect to WebSocket service on startup', async () => {
     render(
-      <MemoryRouter initialEntries={['/']}>
-        <AppProviders>
-          <App />
-        </AppProviders>
-      </MemoryRouter>
+      <AppProviders>
+        <App />
+      </AppProviders>
     );
     
     // Wait for app to load and verify WebSocket connection
@@ -162,11 +155,9 @@ describe('Integration Tests', () => {
   
   it('should start live data service on startup', async () => {
     render(
-      <MemoryRouter initialEntries={['/']}>
-        <AppProviders>
-          <App />
-        </AppProviders>
-      </MemoryRouter>
+      <AppProviders>
+        <App />
+      </AppProviders>
     );
     
     // Wait for app to load and verify LiveDataService start
@@ -177,11 +168,9 @@ describe('Integration Tests', () => {
   
   it('should handle ML trading predictions', async () => {
     render(
-      <MemoryRouter initialEntries={['/trading/ml']}>
-        <AppProviders>
-          <App />
-        </AppProviders>
-      </MemoryRouter>
+      <AppProviders>
+        <App />
+      </AppProviders>
     );
     
     // Wait for ML trading panel to load
@@ -201,11 +190,9 @@ describe('Integration Tests', () => {
   
   it('should handle DQN trading actions', async () => {
     render(
-      <MemoryRouter initialEntries={['/trading/dqn']}>
-        <AppProviders>
-          <App />
-        </AppProviders>
-      </MemoryRouter>
+      <AppProviders>
+        <App />
+      </AppProviders>
     );
     
     // Wait for DQN trading panel to load
@@ -225,11 +212,9 @@ describe('Integration Tests', () => {
   
   it('should handle model recalibration', async () => {
     render(
-      <MemoryRouter initialEntries={['/ml/recalibration']}>
-        <AppProviders>
-          <App />
-        </AppProviders>
-      </MemoryRouter>
+      <AppProviders>
+        <App />
+      </AppProviders>
     );
     
     // Wait for recalibration panel to load
