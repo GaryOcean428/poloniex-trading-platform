@@ -7,6 +7,7 @@ import RecentTrades from '../components/dashboard/RecentTrades';
 import AccountSummary from '../components/dashboard/AccountSummary';
 import QuickTrade from '../components/dashboard/QuickTrade';
 import RealTimeMarketTicker from '../components/dashboard/RealTimeMarketTicker';
+import TradingInsights from '../components/TradingInsights';
 import MockModeNotice from '../components/MockModeNotice';
 import ExtensionBanner from '../components/dashboard/ExtensionBanner';
 import { mockTrades } from '../data/mockData';
@@ -118,6 +119,17 @@ const Dashboard: React.FC = () => {
           <section className="trading-card" aria-labelledby="quick-trade-heading">
             <h2 id="quick-trade-heading" className="text-lg sm:text-xl font-bold mb-4">Quick Trade</h2>
             <QuickTrade />
+          </section>
+
+          {/* AI Trading Insights */}
+          <section aria-labelledby="ai-insights-heading">
+            <h2 id="ai-insights-heading" className="sr-only">AI Trading Insights</h2>
+            <TradingInsights
+              symbol="BTC-USDT"
+              price={marketData && marketData.length > 0 ? marketData[marketData.length - 1]?.price : 41704}
+              change24h={-5.91}
+              volume={569500}
+            />
           </section>
         </aside>
       </div>

@@ -1,4 +1,3 @@
-// React is used implicitly for JSX transformation
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { lazy, Suspense, useEffect } from 'react';
 import Navbar from './components/Navbar';
@@ -9,6 +8,7 @@ import ConnectionHealth from './components/ConnectionHealth';
 import { ConfigurationStatus } from './components/ConfigurationStatus';
 import { EnvDebug } from './components/EnvDebug';
 import { ConnectionTest } from './components/ConnectionTest';
+import PWAInstallPrompt from './components/PWAInstallPrompt';
 import { TradingProvider } from './context/TradingContext';
 import { SettingsProvider } from './context/SettingsContext';
 import { WebSocketProvider } from './context/WebSocketContext';
@@ -103,6 +103,7 @@ function App() {
                 <ConnectionHealth />
                 <EnvDebug />
                 <ConnectionTest />
+                <PWAInstallPrompt />
               </TradingProvider>
             </WebSocketProvider>
           </SettingsProvider>
