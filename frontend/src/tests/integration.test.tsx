@@ -1,19 +1,20 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import { MemoryRouter } from 'react-router-dom';
 import App from '@/App';
 import { AppProviders } from '@/context/AppProviders';
-import { WebSocketService } from '@/services/websocketService';
+import { webSocketService } from '@/services/websocketService';
 import { LiveDataService } from '@/services/advancedLiveData';
 import { default as mlTrading } from '@/ml/mlTrading';
 import { default as dqnTrading } from '@/ml/dqnTrading';
+import { default as modelRecalibration } from '@/ml/modelRecalibration';
 
 // Mock dependencies
 vi.mock('@/services/websocketService');
 vi.mock('@/services/advancedLiveData');
 vi.mock('@/ml/mlTrading');
 vi.mock('@/ml/dqnTrading');
+vi.mock('@/ml/modelRecalibration');
 
 describe('Integration Tests', () => {
   beforeEach(() => {
@@ -31,20 +32,21 @@ describe('Integration Tests', () => {
         predictionTarget: 'price_direction',
         timeHorizon: 5
       },
-      filePath: './models/test-model',
-      trainingData: [],
       performance: {
         accuracy: 0.75,
         precision: 0.8,
         recall: 0.7,
-        f1Score: 0.75
+        f1Score: 0.75,
+        trainingSamples: 1000,
+        validationSamples: 200
       },
       createdAt: Date.now(),
       updatedAt: Date.now(),
-      lastTrainedAt: Date.now()
+      lastTrainedAt: Date.now(),
+      status: 'ready'
     });
     
-    vi.mocked(dqnTrading.trainAgent).mockResolvedValue({
+    vi.mocked(dqnTrading.trainDQNModel).mockResolvedValue({
       id: 'test-agent',
       name: 'Test DQN Agent',
       description: 'Test DQN agent',
@@ -55,8 +57,6 @@ describe('Integration Tests', () => {
         memorySize: 10000,
         batchSize: 32
       },
-      filePath: './models/test-agent',
-      trainingData: [],
       performance: {
         averageReward: 100,
         maxReward: 200,
@@ -64,28 +64,24 @@ describe('Integration Tests', () => {
       },
       createdAt: Date.now(),
       updatedAt: Date.now(),
-      lastTrainedAt: Date.now()
-    });
-    LiveDataService.prototype.fetchOrderBook = vi.fn().mockResolvedValue({
-      asks: [],
-      bids: []
+      lastTrainedAt: Date.now(),
+      status: 'ready'
     });
     
-    // Mock ML trading
-    mlTrading.trainMLModel = vi.fn().mockResolvedValue({
-      id: 'test-model',
-      performance: { accuracy: 0.75 }
-    });
-    mlTrading.predictWithMLModel = vi.fn().mockResolvedValue([
-      { prediction: 1, confidence: 0.8 }
+    // Mock LiveDataService
+    if (LiveDataService.prototype.fetchOrderBook) {
+      vi.mocked(LiveDataService.prototype.fetchOrderBook).mockResolvedValue({
+        asks: [],
+        bids: []
+      });
+    }
+    
+    // Mock additional ML methods
+    vi.mocked(mlTrading.predictWithMLModel).mockResolvedValue([
+      { prediction: 1, confidence: 0.8, timestamp: Date.now(), symbol: 'BTC_USDT' }
     ]);
     
-    // Mock DQN trading
-    dqnTrading.trainDQNModel = vi.fn().mockResolvedValue({
-      id: 'test-dqn-model',
-      performance: { winRate: 0.6 }
-    });
-    dqnTrading.getDQNActions = vi.fn().mockResolvedValue([
+    vi.mocked(dqnTrading.getDQNActions).mockResolvedValue([
       { action: 'buy', confidence: 0.7 }
     ]);
   });
@@ -96,11 +92,9 @@ describe('Integration Tests', () => {
   
   it('should render main application components', async () => {
     render(
-      <MemoryRouter initialEntries={['/']}>
-        <AppProviders>
-          <App />
-        </AppProviders>
-      </MemoryRouter>
+      <AppProviders>
+        <App />
+      </AppProviders>
     );
     
     // Wait for app to load
@@ -117,11 +111,9 @@ describe('Integration Tests', () => {
   
   it('should navigate between main sections', async () => {
     render(
-      <MemoryRouter initialEntries={['/']}>
-        <AppProviders>
-          <App />
-        </AppProviders>
-      </MemoryRouter>
+      <AppProviders>
+        <App />
+      </AppProviders>
     );
     
     // Wait for app to load
@@ -150,11 +142,9 @@ describe('Integration Tests', () => {
   
   it('should connect to WebSocket service on startup', async () => {
     render(
-      <MemoryRouter initialEntries={['/']}>
-        <AppProviders>
-          <App />
-        </AppProviders>
-      </MemoryRouter>
+      <AppProviders>
+        <App />
+      </AppProviders>
     );
     
     // Wait for app to load and verify WebSocket connection
@@ -165,11 +155,9 @@ describe('Integration Tests', () => {
   
   it('should start live data service on startup', async () => {
     render(
-      <MemoryRouter initialEntries={['/']}>
-        <AppProviders>
-          <App />
-        </AppProviders>
-      </MemoryRouter>
+      <AppProviders>
+        <App />
+      </AppProviders>
     );
     
     // Wait for app to load and verify LiveDataService start
@@ -180,11 +168,9 @@ describe('Integration Tests', () => {
   
   it('should handle ML trading predictions', async () => {
     render(
-      <MemoryRouter initialEntries={['/trading/ml']}>
-        <AppProviders>
-          <App />
-        </AppProviders>
-      </MemoryRouter>
+      <AppProviders>
+        <App />
+      </AppProviders>
     );
     
     // Wait for ML trading panel to load
@@ -204,11 +190,9 @@ describe('Integration Tests', () => {
   
   it('should handle DQN trading actions', async () => {
     render(
-      <MemoryRouter initialEntries={['/trading/dqn']}>
-        <AppProviders>
-          <App />
-        </AppProviders>
-      </MemoryRouter>
+      <AppProviders>
+        <App />
+      </AppProviders>
     );
     
     // Wait for DQN trading panel to load
@@ -228,11 +212,9 @@ describe('Integration Tests', () => {
   
   it('should handle model recalibration', async () => {
     render(
-      <MemoryRouter initialEntries={['/ml/recalibration']}>
-        <AppProviders>
-          <App />
-        </AppProviders>
-      </MemoryRouter>
+      <AppProviders>
+        <App />
+      </AppProviders>
     );
     
     // Wait for recalibration panel to load
