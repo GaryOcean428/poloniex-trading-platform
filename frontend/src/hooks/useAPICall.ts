@@ -39,7 +39,7 @@ export function useAPICall<T>(
       const shouldRetry = 
         attempt < retryCount &&
         !(apiError instanceof PoloniexAuthenticationError) &&
-        !(apiError instanceof PoloniexAPIError && (apiError as PoloniexAPIError).statusCode === 404);
+        !(apiError instanceof PoloniexAPIError && (apiError).statusCode === 404);
 
       if (shouldRetry && apiError instanceof PoloniexConnectionError) {
         // Wait before retrying

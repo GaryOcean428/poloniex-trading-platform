@@ -156,7 +156,7 @@ class TradingEngine {
       // Update status with analysis results
       this.status.marketAnalysis = {
         prediction: {
-          direction: direction as 'up' | 'down',
+          direction: direction,
           probability: Math.min(probability, 0.95),
           reasoning: `Price moved ${direction} by ${(change * 100).toFixed(2)}%`
         },
@@ -169,7 +169,7 @@ class TradingEngine {
       // Execute trade if auto-trading is enabled
       const autoTradingEnabled = localStorage.getItem('poloniex_auto_trading_enabled') === 'true';
       if (autoTradingEnabled && this.status.marketAnalysis.confidence > this.confidenceThreshold) {
-        await this.executeTrade(symbol, direction as 'up' | 'down');
+        await this.executeTrade(symbol, direction);
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';

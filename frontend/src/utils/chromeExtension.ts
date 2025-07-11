@@ -19,7 +19,7 @@ export enum ExtensionMessageType {
  */
 export interface ExtensionMessage {
   type: ExtensionMessageType;
-  payload?: any;
+  payload?: Record<string, unknown>;
   timestamp: number;
   requestId: string;
   origin: string;
@@ -30,7 +30,7 @@ export interface ExtensionMessage {
  */
 export interface ExtensionResponse {
   success: boolean;
-  data?: any;
+  data?: unknown;
   error?: string;
   timestamp: number;
   requestId: string;
@@ -74,12 +74,13 @@ const validateOrigin = (origin: string): boolean => {
  * Validate extension message structure
  * @param message Message to validate
  */
-const validateMessage = (message: any): boolean => {
+const validateMessage = (message: unknown): boolean => {
   if (!message || typeof message !== 'object') return false;
-  if (!Object.values(ExtensionMessageType).includes(message.type)) return false;
-  if (!message.timestamp || typeof message.timestamp !== 'number') return false;
-  if (!message.requestId || typeof message.requestId !== 'string') return false;
-  if (!message.origin || typeof message.origin !== 'string') return false;
+  const msg = message as Record<string, unknown>;
+  if (!Object.values(ExtensionMessageType).includes(msg.type as ExtensionMessageType)) return false;
+  if (!msg.timestamp || typeof msg.timestamp !== 'number') return false;
+  if (!msg.requestId || typeof msg.requestId !== 'string') return false;
+  if (!msg.origin || typeof msg.origin !== 'string') return false;
   
   return true;
 };
@@ -136,7 +137,7 @@ export const initExtensionSecurity = (token?: string): void => {
  */
 export const sendSecureMessage = (
   type: ExtensionMessageType,
-  payload?: any
+  payload?: Record<string, unknown>
 ): Promise<ExtensionResponse> => {
   return new Promise((resolve, reject) => {
     if (!isChromeExtension()) {
@@ -190,7 +191,7 @@ export const sendSecureMessage = (
  * @param key Data key
  * @returns Promise that resolves with the data
  */
-export const getExtensionData = (key: string): Promise<any> => {
+export const getExtensionData = (key: string): Promise<unknown> => {
   return sendSecureMessage(ExtensionMessageType.GET_DATA, { key })
     .then(response => response.data);
 };
@@ -201,7 +202,7 @@ export const getExtensionData = (key: string): Promise<any> => {
  * @param value Data value
  * @returns Promise that resolves when data is set
  */
-export const setExtensionData = (key: string, value: any): Promise<void> => {
+export const setExtensionData = (key: string, value: unknown): Promise<void> => {
   return sendSecureMessage(ExtensionMessageType.SET_DATA, { key, value })
     .then(() => undefined);
 };
@@ -211,7 +212,7 @@ export const setExtensionData = (key: string, value: any): Promise<void> => {
  * @param tradeParams Trade parameters
  * @returns Promise that resolves with trade result
  */
-export const executeExtensionTrade = (tradeParams: any): Promise<any> => {
+export const executeExtensionTrade = (tradeParams: Record<string, unknown>): Promise<unknown> => {
   return sendSecureMessage(ExtensionMessageType.EXECUTE_TRADE, tradeParams)
     .then(response => response.data);
 };
@@ -220,7 +221,7 @@ export const executeExtensionTrade = (tradeParams: any): Promise<any> => {
  * Get account information from extension securely
  * @returns Promise that resolves with account information
  */
-export const getExtensionAccount = (): Promise<any> => {
+export const getExtensionAccount = (): Promise<unknown> => {
   return sendSecureMessage(ExtensionMessageType.GET_ACCOUNT)
     .then(response => response.data);
 };
@@ -230,7 +231,7 @@ export const getExtensionAccount = (): Promise<any> => {
  * @param credentials Authentication credentials
  * @returns Promise that resolves with authentication result
  */
-export const authenticateExtension = (credentials: any): Promise<any> => {
+export const authenticateExtension = (credentials: Record<string, unknown>): Promise<unknown> => {
   return sendSecureMessage(ExtensionMessageType.AUTHENTICATE, credentials)
     .then(response => response.data);
 };
@@ -248,7 +249,7 @@ export const logoutExtension = (): Promise<void> => {
  * Get extension status securely
  * @returns Promise that resolves with extension status
  */
-export const getExtensionStatus = (): Promise<any> => {
+export const getExtensionStatus = (): Promise<unknown> => {
   return sendSecureMessage(ExtensionMessageType.STATUS)
     .then(response => response.data);
 };

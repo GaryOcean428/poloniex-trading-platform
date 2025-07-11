@@ -312,7 +312,7 @@ const prepareFeatures = (data: any[], config: MLModelConfig): { features: number
   }
   
   // Create labels based on prediction target
-  let labels: number[] = [];
+  const labels: number[] = [];
   
   switch (config.predictionTarget) {
     case 'price_direction':

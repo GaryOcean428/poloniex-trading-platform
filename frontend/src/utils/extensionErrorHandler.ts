@@ -185,7 +185,7 @@ export class BrowserCompatibility {
     // Wrap postMessage to handle closed channels gracefully
     const originalPostMessage = window.postMessage;
     
-    window.postMessage = function(...args: any[]) {
+    window.postMessage = function(...args: Parameters<typeof originalPostMessage>) {
       try {
         return originalPostMessage.apply(window, args);
       } catch (error) {
