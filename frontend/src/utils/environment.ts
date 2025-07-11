@@ -99,6 +99,23 @@ export const getBaseUrl = () => {
 export const getBackendUrl = (): string => {
   const envUrl = getEnvVariable('VITE_BACKEND_URL');
   if (envUrl) return envUrl;
-  if (IS_LOCAL_DEV) return 'http://localhost:3000';
-  return window.location.origin;
+  
+  // Check for local development first (localhost or 127.0.0.1)
+  if (typeof window !== 'undefined' && window.location) {
+    const hostname = window.location.hostname;
+    if (hostname === 'localhost' || hostname === '127.0.0.1') {
+      return 'http://localhost:3000';
+    }
+    
+    // For Railway deployment, use the backend service URL
+    if (hostname.includes('railway.app') || hostname.includes('up.railway.app')) {
+      return 'https://polytrade-be.up.railway.app';
+    }
+    
+    // Fall back to same origin for other cases
+    return window.location.origin;
+  }
+  
+  // Server-side fallback
+  return 'http://localhost:3000';
 };

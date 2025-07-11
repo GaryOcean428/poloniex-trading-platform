@@ -83,6 +83,7 @@ const allowedOrigins = [
   'https://healthcheck.railway.app',
   'https://poloniex-trading-platform-production.up.railway.app',
   'https://polytrade-red.vercel.app',
+  'https://polytrade-be.up.railway.app', // Railway backend URL for API calls
   process.env.FRONTEND_URL || 'http://localhost:5173',
   ...(process.env.NODE_ENV === 'production' ? [] : ['http://localhost:3000', 'http://localhost:5173'])
 ];
