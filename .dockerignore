@@ -6,7 +6,7 @@
 # the ones installed by 'yarn install' in the Dockerfile
 node_modules/
 
-# Yarn cache and temp files
+# Yarn cache and temp files - but keep lockfile and config
 .yarn/cache
 .yarn/install-state.gz
 .yarn/build-state.yml
@@ -26,40 +26,18 @@ yarn-error.log*
 
 # Build artifacts and temp files
 coverage/
-dist/
-build/
 *.tsbuildinfo
 
 # OS-generated files
 .DS_Store
 Thumbs.db
 
-# Development and testing files
-src/
-public/
-index.html
-vite.config.ts
-vitest.config.*
-*.test.*
-*.spec.*
-tests/
-__tests__/
-
-# Config files not needed for backend
-tailwind.config.js
-postcss.config.js
-tsconfig*.json
-eslint.config.js
-
 # Scripts and documentation
-scripts/
 README.md
 *.md
 ENVIRONMENT_CONFIG.md
 
-# Additional optimizations for backend-only build
-extension/
+# Additional optimizations for deployment
 *.patch
-jsconfig.json
 vercel.json
 yarn.lock.backup

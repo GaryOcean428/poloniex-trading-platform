@@ -3,14 +3,28 @@ FROM node:20-alpine AS base
 
 WORKDIR /usr/src/app
 
-# Install dependencies
-COPY package.json yarn.lock .yarnrc.yml ./
-RUN corepack enable yarn && \
-    yarn install --immutable && \
-    yarn cache clean
+# Enable corepack for Yarn 4.9.2
+RUN corepack enable
 
-# Copy source code
-COPY . .
+# Copy root workspace files first for proper workspace resolution
+COPY package.json yarn.lock .yarnrc.yml ./
+
+# Copy workspace package.json files
+COPY frontend/package.json ./frontend/
+COPY backend/package.json ./backend/
+
+# Install all workspace dependencies
+RUN yarn install --immutable
+
+# Copy both frontend and backend source code for build process
+COPY frontend/ ./frontend/
+COPY backend/ ./backend/
+
+# Copy any shared dependencies if they exist
+COPY shared/ ./shared/ 2>/dev/null || true
+
+# Build using the backend workspace build command (which includes frontend)
+RUN yarn workspace poloniex-backend build
 
 # Create non-root user for security
 RUN addgroup -g 1001 -S nodejs && \
@@ -24,4 +38,4 @@ USER nodejs
 EXPOSE 3000
 
 # Define the command to run the app
-CMD ["yarn", "start"]
+CMD ["yarn", "workspace", "poloniex-backend", "start"]
