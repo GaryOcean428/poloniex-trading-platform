@@ -60,10 +60,10 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     };
 
     // Error handler
-    const handleError = (error: any) => {
+    const handleError = (error: Error | unknown) => {
       setContextState(prev => ({
         ...prev,
-        lastError: error?.message || 'Unknown error'
+        lastError: error instanceof Error ? error.message : 'Unknown error'
       }));
     };
 

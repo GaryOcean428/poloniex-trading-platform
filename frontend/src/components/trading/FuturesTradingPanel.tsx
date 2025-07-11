@@ -118,7 +118,7 @@ const FuturesTradingPanel: React.FC<FuturesTradingPanelProps> = ({ symbol }) => 
         side: closeSide,
         type: OrderType.MARKET,
         size: currentPosition.qty,
-        posSide: currentPosition.posSide as PositionSide
+        posSide: currentPosition.posSide
       });
       
       // Refresh positions to show the closed position
