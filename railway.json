@@ -6,14 +6,17 @@
         "frontend": {
           "build": {
             "builder": "NIXPACKS",
-            "buildCommand": "cd frontend && yarn install && yarn build",
+            "buildCommand": "corepack enable && yarn install --immutable && yarn workspace poloniex-frontend build",
             "watchPatterns": [
               "frontend/**",
-              "shared/**"
+              "shared/**",
+              "package.json",
+              "yarn.lock",
+              ".yarnrc.yml"
             ]
           },
           "deploy": {
-            "startCommand": "cd frontend && yarn start",
+            "startCommand": "yarn workspace poloniex-frontend start",
             "restartPolicyType": "ON_FAILURE",
             "restartPolicyMaxRetries": 3,
             "overlapSeconds": 60
@@ -22,14 +25,18 @@
         "backend": {
           "build": {
             "builder": "NIXPACKS",
-            "buildCommand": "cd backend && yarn install && yarn build",
+            "buildCommand": "corepack enable && yarn install --immutable && yarn workspace poloniex-backend build",
             "watchPatterns": [
               "backend/**",
-              "shared/**"
+              "frontend/**",
+              "shared/**",
+              "package.json",
+              "yarn.lock",
+              ".yarnrc.yml"
             ]
           },
           "deploy": {
-            "startCommand": "cd backend && yarn start:prod",
+            "startCommand": "yarn workspace poloniex-backend start:prod",
             "healthcheckPath": "/api/health",
             "healthcheckTimeout": 300,
             "restartPolicyType": "ON_FAILURE",
