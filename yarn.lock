@@ -5046,6 +5046,23 @@ __metadata:
   languageName: node
   linkType: hard
 
+"openai@npm:^5.9.0":
+  version: 5.9.0
+  resolution: "openai@npm:5.9.0"
+  peerDependencies:
+    ws: ^8.18.0
+    zod: ^3.23.8
+  peerDependenciesMeta:
+    ws:
+      optional: true
+    zod:
+      optional: true
+  bin:
+    openai: bin/cli
+  checksum: 10c0/368a44471eea19b2ce1807b19cb9683ab0656af817e4e2d725a1d0e5efa9fde52d818215427692c6aee24dccf264155685071aa79abe8ddcc3c7b8ca695c610c
+  languageName: node
+  linkType: hard
+
 "optionator@npm:^0.9.3":
   version: 0.9.4
   resolution: "optionator@npm:0.9.4"
@@ -5278,6 +5295,7 @@ __metadata:
     jszip: "npm:^3.10.1"
     lodash: "npm:^4.17.21"
     lucide-react: "npm:^0.525.0"
+    openai: "npm:^5.9.0"
     postcss: "npm:^8.4.35"
     react: "npm:^19.1.0"
     react-chartjs-2: "npm:^5.2.0"
