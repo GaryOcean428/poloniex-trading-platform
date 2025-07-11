@@ -25,6 +25,8 @@ const LiveTradingDashboard = lazy(() => import('./pages/LiveTradingDashboard'));
 const Strategies = lazy(() => import('./pages/Strategies'));
 const Backtesting = lazy(() => import('./pages/Backtesting'));
 const Account = lazy(() => import('./pages/Account'));
+const TransactionHistory = lazy(() => import('./pages/TransactionHistory'));
+const TradeHistory = lazy(() => import('./pages/TradeHistory'));
 const MarketAnalysis = lazy(() => import('./pages/MarketAnalysis'));
 const Performance = lazy(() => import('./pages/Performance'));
 const Settings = lazy(() => import('./pages/Settings'));
@@ -81,6 +83,8 @@ function App() {
                             <Route path="/charts" element={<MarketAnalysis />} />
                             <Route path="/performance" element={<Performance />} />
                             <Route path="/account" element={<Account />} />
+                            <Route path="/transactions" element={<TransactionHistory />} />
+                            <Route path="/trades" element={<TradeHistory />} />
                             <Route path="/chat" element={<Chat />} />
                             <Route path="/settings" element={<Settings />} />
                             <Route path="/extension" element={<ExtensionDownload />} />

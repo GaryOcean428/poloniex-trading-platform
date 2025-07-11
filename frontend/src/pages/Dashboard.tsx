@@ -6,6 +6,7 @@ import StrategyPerformance from '../components/dashboard/StrategyPerformance';
 import RecentTrades from '../components/dashboard/RecentTrades';
 import AccountSummary from '../components/dashboard/AccountSummary';
 import QuickTrade from '../components/dashboard/QuickTrade';
+import RealTimeMarketTicker from '../components/dashboard/RealTimeMarketTicker';
 import MockModeNotice from '../components/MockModeNotice';
 import ExtensionBanner from '../components/dashboard/ExtensionBanner';
 import { mockTrades } from '../data/mockData';
@@ -38,6 +39,11 @@ const Dashboard: React.FC = () => {
       
       <div className="mb-4 lg:mb-6">
         <ExtensionBanner />
+      </div>
+      
+      {/* Real-time Market Ticker */}
+      <div className="mb-4 lg:mb-6">
+        <RealTimeMarketTicker />
       </div>
       
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 lg:gap-6">
