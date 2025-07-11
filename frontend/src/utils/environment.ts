@@ -31,8 +31,8 @@ export const getPoloniexPassphrase = (): string => {
 
 // Get API base URLs with environment variable support
 export const getApiBaseUrl = (service: 'futures' | 'spot' = 'futures'): string => {
-  // Check for custom API URL first
-  const customApiUrl = getEnvVariable('VITE_API_URL', '');
+  // Check for custom API URL first - V3 futures specific
+  const customApiUrl = getEnvVariable('VITE_POLONIEX_API_BASE_URL', '');
   if (customApiUrl) {
     return customApiUrl;
   }
@@ -43,10 +43,23 @@ export const getApiBaseUrl = (service: 'futures' | 'spot' = 'futures'): string =
     return nextPublicApiUrl;
   }
 
-  // Default to official Poloniex API endpoints
+  // Default to official Poloniex V3 futures API endpoints
   return service === 'futures' 
-    ? 'https://futures-api.poloniex.com/v3'
+    ? 'https://api.poloniex.com/v3/futures'
     : 'https://api.poloniex.com/v3';
+};
+
+// Get WebSocket URLs for V3 futures
+export const getPoloniexWebSocketUrl = (type: 'public' | 'private' = 'public'): string => {
+  const customWsUrl = getEnvVariable('VITE_POLONIEX_WS_URL', '');
+  if (customWsUrl) {
+    return customWsUrl;
+  }
+
+  // Default Poloniex V3 futures WebSocket endpoints
+  return type === 'public' 
+    ? 'wss://ws.poloniex.com/ws/public'
+    : 'wss://ws.poloniex.com/ws/private';
 };
 
 // Mock mode configuration

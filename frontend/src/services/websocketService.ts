@@ -2,11 +2,11 @@ import React from 'react';
 import { io, Socket } from 'socket.io-client';
 import { MarketData, Trade } from '@/types';
 import { useErrorHandler } from '@/hooks/useErrorHandler';
-import { getBackendUrl } from '@/utils/environment';
+import { getBackendUrl, getPoloniexApiKey, getPoloniexApiSecret, shouldUseMockMode, getPoloniexWebSocketUrl } from '@/utils/environment';
 import { WEBSOCKET_CONFIG, HEALTH_CHECK_CONFIG } from './websocket/config';
 
-// Socket.io events
-const EVENTS = {
+// Socket.io events for internal backend
+const SOCKET_IO_EVENTS = {
   CONNECT: 'connect',
   DISCONNECT: 'disconnect',
   RECONNECT: 'reconnect',
@@ -23,6 +23,15 @@ const EVENTS = {
   UNSUBSCRIBE_MARKET: 'unsubscribeMarket',
   PING: 'ping',
   PONG: 'pong'
+};
+
+// Poloniex V3 futures WebSocket configuration
+const POLONIEX_WS_CONFIG = {
+  url: getPoloniexWebSocketUrl('private'), // V3 futures private stream
+  publicUrl: getPoloniexWebSocketUrl('public'), // V3 futures public stream
+  reconnectInterval: 5000,
+  maxReconnectAttempts: 10,
+  pingInterval: 30000
 };
 
 // Connection states
@@ -87,6 +96,8 @@ interface ConnectionStats {
 class WebSocketService {
   private static instance: WebSocketService;
   private socket: Socket | null = null;
+  private poloniexWs: WebSocket | null = null; // Direct Poloniex WebSocket
+  private usePoloniexDirect: boolean = false; // Flag to determine connection type
   private connectionState: ConnectionState = ConnectionState.DISCONNECTED;
   private eventListeners: Map<string, Set<(...args: any[]) => void>> = new Map();
   private reconnectAttempts: number = 0;
@@ -145,6 +156,20 @@ class WebSocketService {
   };
   
   private constructor() {
+    // Determine connection strategy based on environment and credentials
+    const hasCredentials = !!(getPoloniexApiKey() && getPoloniexApiSecret());
+    const mockMode = shouldUseMockMode(hasCredentials);
+    
+    // Use direct Poloniex connection if we have credentials and not in mock mode
+    this.usePoloniexDirect = hasCredentials && !mockMode;
+    this.useMockData = mockMode;
+    
+    console.log('WebSocket Service initialized:', {
+      usePoloniexDirect: this.usePoloniexDirect,
+      useMockData: this.useMockData,
+      hasCredentials
+    });
+    
     // Initialize offline data from localStorage if available
     try {
       const savedData = localStorage.getItem('websocket_offline_data');
@@ -275,6 +300,7 @@ class WebSocketService {
    */
   private cleanup(): void {
     this.stopPingTimer();
+    this.stopPoloniexPingTimer();
     this.stopReconnectTimer();
     this.disconnect();
     
@@ -333,30 +359,36 @@ class WebSocketService {
     this.stopPingTimer();
     
     this.pingTimer = setInterval(() => {
-      if (!this.socket || this.connectionState !== ConnectionState.CONNECTED) {
+      if (this.connectionState !== ConnectionState.CONNECTED) {
         return;
       }
       
       this.lastPingTime = Date.now();
       this.connectionStats.lastPingTime = this.lastPingTime;
       
-      this.socket.emit(EVENTS.PING, { timestamp: this.lastPingTime });
-      
-      // Set timeout for pong response
-      setTimeout(() => {
-        const pongElapsed = this.lastPongTime - this.lastPingTime;
+      if (this.usePoloniexDirect && this.poloniexWs) {
+        // For Poloniex, the WebSocket handles ping/pong automatically
+        // We just track timing
+      } else if (this.socket) {
+        // For backend Socket.IO connection, send ping
+        this.socket.emit(SOCKET_IO_EVENTS.PING, { timestamp: this.lastPingTime });
         
-        // If we haven't received a pong or it's too old
-        if (pongElapsed <= 0 || pongElapsed > this.pingTimeout) {
-          this.throttledLog('warn', 'ping-timeout', `WebSocket ping timeout after ${this.pingTimeout}ms`);
+        // Set timeout for pong response
+        setTimeout(() => {
+          const pongElapsed = this.lastPongTime - this.lastPingTime;
           
-          // Force disconnect and reconnect
-          if (this.socket) {
-            this.socket.disconnect();
-            this.handleDisconnect(new Error('Ping timeout'));
+          // If we haven't received a pong or it's too old
+          if (pongElapsed <= 0 || pongElapsed > this.pingTimeout) {
+            this.throttledLog('warn', 'ping-timeout', `WebSocket ping timeout after ${this.pingTimeout}ms`);
+            
+            // Force disconnect and reconnect
+            if (this.socket) {
+              this.socket.disconnect();
+              this.handleDisconnect(new Error('Ping timeout'));
+            }
           }
-        }
-      }, this.pingTimeout);
+        }, this.pingTimeout);
+      }
     }, this.pingInterval);
   }
   
@@ -381,7 +413,204 @@ class WebSocketService {
   }
   
   /**
-   * Connect to the WebSocket server
+   * Connect to Poloniex V3 futures WebSocket directly
+   */
+  private connectToPoloniex(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      try {
+        const wsUrl = POLONIEX_WS_CONFIG.publicUrl; // Start with public stream
+        
+        console.log('Connecting to Poloniex V3 futures WebSocket:', wsUrl);
+        
+        this.poloniexWs = new WebSocket(wsUrl);
+        
+        this.poloniexWs.onopen = () => {
+          console.log('Connected to Poloniex V3 futures WebSocket');
+          this.connectionState = ConnectionState.CONNECTED;
+          this.useMockData = false;
+          this.reconnectAttempts = 0;
+          
+          // Update connection stats
+          this.connectionStats.connectTime = Date.now();
+          
+          // Start ping timer
+          this.startPoloniexPingTimer();
+          
+          // Subscribe to default channels
+          this.subscribeToPoloniexChannels();
+          
+          // Notify listeners
+          this.notifyListeners('connectionStateChanged', this.connectionState);
+          
+          resolve();
+        };
+        
+        this.poloniexWs.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            this.handlePoloniexMessage(data);
+          } catch (error) {
+            console.error('Error parsing Poloniex WebSocket message:', error);
+          }
+        };
+        
+        this.poloniexWs.onerror = (error) => {
+          console.error('Poloniex WebSocket error:', error);
+          this.handlePoloniexDisconnect();
+          reject(error);
+        };
+        
+        this.poloniexWs.onclose = () => {
+          console.log('Poloniex WebSocket connection closed');
+          this.handlePoloniexDisconnect();
+        };
+        
+      } catch (error) {
+        console.error('Failed to create Poloniex WebSocket connection:', error);
+        reject(error);
+      }
+    });
+  }
+  
+  /**
+   * Handle Poloniex WebSocket messages
+   */
+  private handlePoloniexMessage(data: any): void {
+    try {
+      // Handle different message types from Poloniex
+      if (data.channel === 'ticker' && data.data) {
+        const tickerData = Array.isArray(data.data) ? data.data : [data.data];
+        
+        tickerData.forEach((ticker: any) => {
+          const marketData: MarketData = {
+            pair: ticker.symbol?.replace('_', '-') || 'BTC-USDT',
+            timestamp: Date.now(),
+            open: parseFloat(ticker.open) || 0,
+            high: parseFloat(ticker.high) || 0,
+            low: parseFloat(ticker.low) || 0,
+            close: parseFloat(ticker.close) || 0,
+            volume: parseFloat(ticker.quantity) || 0
+          };
+          
+          this.notifyListeners(SOCKET_IO_EVENTS.MARKET_DATA, marketData);
+        });
+      } else if (data.channel === 'trades' && data.data) {
+        // Handle trades data
+        const tradesData = Array.isArray(data.data) ? data.data : [data.data];
+        
+        tradesData.forEach((trade: any) => {
+          const tradeData: Trade = {
+            id: trade.id,
+            pair: trade.symbol?.replace('_', '-') || 'BTC-USDT',
+            price: parseFloat(trade.price) || 0,
+            amount: parseFloat(trade.quantity) || 0,
+            side: trade.takerSide === 'buy' ? 'buy' : 'sell',
+            timestamp: trade.ts || Date.now()
+          };
+          
+          this.notifyListeners(SOCKET_IO_EVENTS.TRADE_EXECUTED, tradeData);
+        });
+      }
+    } catch (error) {
+      console.error('Error handling Poloniex message:', error);
+    }
+  }
+  
+  /**
+   * Subscribe to Poloniex channels
+   */
+  private subscribeToPoloniexChannels(): void {
+    if (!this.poloniexWs || this.poloniexWs.readyState !== WebSocket.OPEN) {
+      return;
+    }
+    
+    // Subscribe to ticker data for major pairs
+    const subscribeMessage = {
+      event: 'subscribe',
+      channel: ['ticker'],
+      symbols: ['BTC_USDT', 'ETH_USDT', 'SOL_USDT', 'ADA_USDT', 'DOT_USDT']
+    };
+    
+    this.poloniexWs.send(JSON.stringify(subscribeMessage));
+    console.log('Subscribed to Poloniex ticker channels');
+  }
+  
+  /**
+   * Handle Poloniex WebSocket disconnection
+   */
+  private handlePoloniexDisconnect(): void {
+    this.connectionState = ConnectionState.DISCONNECTED;
+    this.connectionStats.disconnectTime = Date.now();
+    this.connectionStats.totalDisconnects++;
+    
+    this.stopPoloniexPingTimer();
+    
+    // Notify listeners
+    this.notifyListeners('connectionStateChanged', this.connectionState);
+    
+    // Attempt to reconnect
+    this.reconnectToPoloniex();
+  }
+  
+  /**
+   * Reconnect to Poloniex WebSocket
+   */
+  private reconnectToPoloniex(): void {
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      console.log('Max Poloniex reconnect attempts reached, switching to mock mode');
+      this.useMockData = true;
+      this.connectionState = ConnectionState.FAILED;
+      this.notifyListeners('connectionStateChanged', this.connectionState);
+      return;
+    }
+    
+    const delay = this.calculateReconnectDelay();
+    this.reconnectAttempts++;
+    this.connectionState = ConnectionState.RECONNECTING;
+    
+    console.log(`Reconnecting to Poloniex in ${delay}ms (attempt ${this.reconnectAttempts})`);
+    
+    this.reconnectTimer = setTimeout(() => {
+      this.connectToPoloniex()
+        .then(() => {
+          console.log('Poloniex reconnection successful');
+          this.connectionStats.successfulReconnects++;
+        })
+        .catch(() => {
+          console.log('Poloniex reconnection failed');
+          this.connectionStats.failedReconnects++;
+          this.reconnectToPoloniex();
+        });
+    }, delay);
+  }
+  
+  /**
+   * Start ping timer for Poloniex connection
+   */
+  private startPoloniexPingTimer(): void {
+    this.stopPoloniexPingTimer();
+    
+    this.pingTimer = setInterval(() => {
+      if (this.poloniexWs && this.poloniexWs.readyState === WebSocket.OPEN) {
+        // Poloniex WebSocket handles ping/pong automatically
+        // We just track the connection health
+        this.lastPingTime = Date.now();
+        this.connectionStats.lastPingTime = this.lastPingTime;
+      }
+    }, POLONIEX_WS_CONFIG.pingInterval);
+  }
+  
+  /**
+   * Stop ping timer for Poloniex connection
+   */
+  private stopPoloniexPingTimer(): void {
+    if (this.pingTimer) {
+      clearInterval(this.pingTimer);
+      this.pingTimer = null;
+    }
+  }
+  /**
+   * Connect to the WebSocket server (either Poloniex direct or internal backend)
    */
   public connect(token?: string): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -426,8 +655,50 @@ class WebSocketService {
         }
         
         this.connectionAttempted = true;
+        
+        // Choose connection method based on configuration
+        if (this.usePoloniexDirect) {
+          console.info('Attempting direct Poloniex V3 futures WebSocket connection...');
+          this.connectToPoloniex()
+            .then(() => {
+              resolve();
+            })
+            .catch((error) => {
+              console.warn('Failed to connect to Poloniex, falling back to mock mode:', error);
+              this.useMockData = true;
+              this.connectionState = ConnectionState.FAILED;
+              resolve();
+            });
+        } else {
+          console.info('Attempting internal backend WebSocket connection...');
+          this.connectToBackend(token)
+            .then(() => {
+              resolve();
+            })
+            .catch((error) => {
+              console.warn('Failed to connect to backend, using mock mode:', error);
+              this.useMockData = true;
+              this.connectionState = ConnectionState.FAILED;
+              resolve();
+            });
+        }
+      } catch (error) {
+        this.throttledLog('error', 'websocket-connection-error', 'WebSocket connection error:', error instanceof Error ? error.message : String(error));
+        this.useMockData = true;
+        this.connectionState = ConnectionState.FAILED;
+        resolve();
+      }
+    });
+  }
+  
+  /**
+   * Connect to internal backend (original Socket.IO logic)
+   */
+  private connectToBackend(token?: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      try {
         if (import.meta.env.DEV) {
-          console.info('Attempting WebSocket connection...');
+          console.info('Attempting internal backend WebSocket connection...');
         }
         
         // Set a connection timeout
@@ -486,6 +757,8 @@ class WebSocketService {
           if (!socketOptions.autoConnect) {
             this.socket.connect();
           }
+          
+          resolve();
         })
         .catch(error => {
           // Server is not available, use mock data
@@ -511,7 +784,7 @@ class WebSocketService {
     if (!this.socket) return;
     
     // Connection events
-    this.socket.on(EVENTS.CONNECT, () => {
+    this.socket.on(SOCKET_IO_EVENTS.CONNECT, () => {
       console.log('WebSocket connected successfully');
       this.connectionState = ConnectionState.CONNECTED;
       this.useMockData = false;
@@ -534,23 +807,23 @@ class WebSocketService {
       this.notifyListeners('connectionStateChanged', this.connectionState);
     });
     
-    this.socket.on(EVENTS.DISCONNECT, (reason) => {
+    this.socket.on(SOCKET_IO_EVENTS.DISCONNECT, (reason) => {
       this.throttledLog('log', 'websocket-disconnect', `WebSocket disconnected: ${reason}`);
       this.handleDisconnect(new Error(reason));
     });
     
-    this.socket.on(EVENTS.CONNECT_ERROR, (error) => {
+    this.socket.on(SOCKET_IO_EVENTS.CONNECT_ERROR, (error) => {
       this.throttledLog('error', 'websocket-connect-error', 'WebSocket connection error:', error);
       this.handleDisconnect(error);
     });
     
-    this.socket.on(EVENTS.CONNECT_TIMEOUT, () => {
+    this.socket.on(SOCKET_IO_EVENTS.CONNECT_TIMEOUT, () => {
       this.throttledLog('error', 'websocket-timeout', 'WebSocket connection timeout');
       this.handleDisconnect(new Error('Connection timeout'));
     });
     
     // Ping/pong for connection health monitoring
-    this.socket.on(EVENTS.PONG, (data: { timestamp: number }) => {
+    this.socket.on(SOCKET_IO_EVENTS.PONG, (data: { timestamp: number }) => {
       this.lastPongTime = Date.now();
       this.connectionStats.lastPongTime = this.lastPongTime;
       
@@ -561,21 +834,21 @@ class WebSocketService {
     });
     
     // Data events
-    this.socket.on(EVENTS.MARKET_DATA, (data: MarketData) => {
-      this.notifyListeners(EVENTS.MARKET_DATA, data);
+    this.socket.on(SOCKET_IO_EVENTS.MARKET_DATA, (data: MarketData) => {
+      this.notifyListeners(SOCKET_IO_EVENTS.MARKET_DATA, data);
     });
     
-    this.socket.on(EVENTS.TRADE_EXECUTED, (data: Trade) => {
-      this.notifyListeners(EVENTS.TRADE_EXECUTED, data);
+    this.socket.on(SOCKET_IO_EVENTS.TRADE_EXECUTED, (data: Trade) => {
+      this.notifyListeners(SOCKET_IO_EVENTS.TRADE_EXECUTED, data);
     });
     
-    this.socket.on(EVENTS.CHAT_MESSAGE, (data: ChatMessage) => {
-      this.notifyListeners(EVENTS.CHAT_MESSAGE, data);
+    this.socket.on(SOCKET_IO_EVENTS.CHAT_MESSAGE, (data: ChatMessage) => {
+      this.notifyListeners(SOCKET_IO_EVENTS.CHAT_MESSAGE, data);
     });
     
-    this.socket.on(EVENTS.ERROR, (error) => {
+    this.socket.on(SOCKET_IO_EVENTS.ERROR, (error) => {
       console.error('WebSocket error:', typeof error === 'object' ? JSON.stringify(error) : error);
-      this.notifyListeners(EVENTS.ERROR, error);
+      this.notifyListeners(SOCKET_IO_EVENTS.ERROR, error);
     });
   }
   
@@ -583,12 +856,23 @@ class WebSocketService {
    * Resubscribe to previous subscriptions after reconnect
    */
   private resubscribe(): void {
-    if (!this.socket || this.connectionState !== ConnectionState.CONNECTED) return;
+    if (!this.isConnected()) return;
     
     console.log(`Resubscribing to ${this.subscriptions.size} channels`);
     
     this.subscriptions.forEach(subscription => {
-      this.socket?.emit(EVENTS.SUBSCRIBE_MARKET, { pair: subscription });
+      if (this.usePoloniexDirect && this.poloniexWs) {
+        // For Poloniex direct connection, send subscription message
+        const subscribeMessage = {
+          event: 'subscribe',
+          channel: ['ticker'],
+          symbols: [subscription.replace('-', '_')]
+        };
+        this.poloniexWs.send(JSON.stringify(subscribeMessage));
+      } else if (this.socket) {
+        // For backend connection, use Socket.IO events
+        this.socket.emit(SOCKET_IO_EVENTS.SUBSCRIBE_MARKET, { pair: subscription });
+      }
     });
   }
   
@@ -596,14 +880,20 @@ class WebSocketService {
    * Send any pending messages after reconnect
    */
   private sendPendingMessages(): void {
-    if (!this.socket || this.connectionState !== ConnectionState.CONNECTED) return;
+    if (!this.isConnected()) return;
     
     console.log(`Sending ${this.pendingMessages.length} pending messages`);
     
     while (this.pendingMessages.length > 0) {
       const message = this.pendingMessages.shift();
       if (message) {
-        this.socket.emit(message.event, message.data);
+        if (this.usePoloniexDirect && this.poloniexWs) {
+          // For Poloniex direct connection, send as JSON
+          this.poloniexWs.send(JSON.stringify(message));
+        } else if (this.socket) {
+          // For backend connection, use Socket.IO events
+          this.socket.emit(message.event, message.data);
+        }
       }
     }
   }
@@ -702,7 +992,13 @@ class WebSocketService {
    * Check if WebSocket is connected
    */
   public isConnected(): boolean {
-    return this.connectionState === ConnectionState.CONNECTED && this.socket !== null;
+    if (this.usePoloniexDirect) {
+      return this.connectionState === ConnectionState.CONNECTED && 
+             this.poloniexWs !== null && 
+             this.poloniexWs.readyState === WebSocket.OPEN;
+    } else {
+      return this.connectionState === ConnectionState.CONNECTED && this.socket !== null;
+    }
   }
   
   /**
@@ -736,12 +1032,23 @@ class WebSocketService {
       // Try to load offline data
       const offlineData = this.offlineData.get(`market_${pair}`);
       if (offlineData) {
-        this.notifyListeners(EVENTS.MARKET_DATA, offlineData);
+        this.notifyListeners(SOCKET_IO_EVENTS.MARKET_DATA, offlineData);
       }
       return;
     }
     
-    this.socket?.emit(EVENTS.SUBSCRIBE_MARKET, { pair });
+    if (this.usePoloniexDirect && this.poloniexWs) {
+      // For Poloniex direct connection
+      const subscribeMessage = {
+        event: 'subscribe',
+        channel: ['ticker'],
+        symbols: [pair.replace('-', '_')]
+      };
+      this.poloniexWs.send(JSON.stringify(subscribeMessage));
+    } else if (this.socket) {
+      // For backend Socket.IO connection
+      this.socket.emit(SOCKET_IO_EVENTS.SUBSCRIBE_MARKET, { pair });
+    }
   }
   
   /**
@@ -755,7 +1062,18 @@ class WebSocketService {
       return;
     }
     
-    this.socket?.emit(EVENTS.UNSUBSCRIBE_MARKET, { pair });
+    if (this.usePoloniexDirect && this.poloniexWs) {
+      // For Poloniex direct connection
+      const unsubscribeMessage = {
+        event: 'unsubscribe',
+        channel: ['ticker'],
+        symbols: [pair.replace('-', '_')]
+      };
+      this.poloniexWs.send(JSON.stringify(unsubscribeMessage));
+    } else if (this.socket) {
+      // For backend Socket.IO connection
+      this.socket.emit(SOCKET_IO_EVENTS.UNSUBSCRIBE_MARKET, { pair });
+    }
   }
   
   /**
@@ -769,14 +1087,21 @@ class WebSocketService {
       return;
     }
     
-    this.socket?.emit(event, data);
+    if (this.usePoloniexDirect && this.poloniexWs) {
+      // For Poloniex direct connection, send as JSON
+      const message = { event, ...data };
+      this.poloniexWs.send(JSON.stringify(message));
+    } else if (this.socket) {
+      // For backend Socket.IO connection
+      this.socket.emit(event, data);
+    }
   }
   
   /**
    * Send a chat message
    */
   public sendChatMessage(message: string, username: string): void {
-    this.send(EVENTS.CHAT_MESSAGE, {
+    this.send(SOCKET_IO_EVENTS.CHAT_MESSAGE, {
       message,
       username,
       timestamp: Date.now(),
@@ -810,7 +1135,7 @@ class WebSocketService {
     if (!this.eventListeners.has(event)) return;
     
     // Save data for offline access if it's a data event
-    if (event === EVENTS.MARKET_DATA || event === EVENTS.TRADE_EXECUTED) {
+    if (event === SOCKET_IO_EVENTS.MARKET_DATA || event === SOCKET_IO_EVENTS.TRADE_EXECUTED) {
       this.saveOfflineData(event, data);
     }
     
@@ -829,11 +1154,17 @@ class WebSocketService {
   public disconnect(): void {
     // Stop timers
     this.stopPingTimer();
+    this.stopPoloniexPingTimer();
     this.stopReconnectTimer();
     
     if (this.socket) {
       this.socket.disconnect();
       this.socket = null;
+    }
+    
+    if (this.poloniexWs) {
+      this.poloniexWs.close();
+      this.poloniexWs = null;
     }
     
     this.connectionState = ConnectionState.DISCONNECTED;
@@ -893,11 +1224,11 @@ class WebSocketService {
     if (this.useMockData) {
       // When in mock mode, simulate receiving the data from server
       setTimeout(() => {
-        this.notifyListeners(EVENTS.MARKET_DATA, data);
+        this.notifyListeners(SOCKET_IO_EVENTS.MARKET_DATA, data);
       }, 100);
     } else if (this.isConnected()) {
       // When connected to real server, emit the data
-      this.send(EVENTS.MARKET_DATA, data);
+      this.send(SOCKET_IO_EVENTS.MARKET_DATA, data);
     }
   }
 
@@ -909,11 +1240,11 @@ class WebSocketService {
     if (this.useMockData) {
       // When in mock mode, simulate receiving the data from server
       setTimeout(() => {
-        this.notifyListeners(EVENTS.TRADE_EXECUTED, data);
+        this.notifyListeners(SOCKET_IO_EVENTS.TRADE_EXECUTED, data);
       }, 100);
     } else if (this.isConnected()) {
       // When connected to real server, emit the data
-      this.send(EVENTS.TRADE_EXECUTED, data);
+      this.send(SOCKET_IO_EVENTS.TRADE_EXECUTED, data);
     }
   }
   
