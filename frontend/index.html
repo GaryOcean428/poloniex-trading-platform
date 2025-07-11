@@ -5,9 +5,49 @@
     <link rel="icon" href="./favicon.ico" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Poloniex Trading Platform</title>
+    
+    <!-- PWA Meta Tags -->
+    <meta name="description" content="Advanced trading platform with backtesting, real-time data, and AI-powered insights" />
+    <meta name="theme-color" content="#4a90e2" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Poloniex Trading" />
+    
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="./manifest.json" />
+    
+    <!-- PWA Icons -->
+    <link rel="apple-touch-icon" sizes="192x192" href="./favicon.ico" />
+    <link rel="icon" type="image/png" sizes="192x192" href="./favicon.ico" />
+    <link rel="icon" type="image/png" sizes="512x512" href="./favicon.ico" />
+    
+    <!-- Preload critical resources -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="dns-prefetch" href="//poloniex.com" />
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="./src/main.tsx"></script>
+    
+    <!-- PWA Service Worker Registration -->
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('./sw.js')
+            .then((registration) => {
+              console.log('PWA: Service Worker registered successfully:', registration);
+              
+              // Check for updates periodically
+              setInterval(() => {
+                registration.update();
+              }, 60000); // Check every minute
+            })
+            .catch((error) => {
+              console.log('PWA: Service Worker registration failed:', error);
+            });
+        });
+      }
+    </script>
   </body>
 </html>
