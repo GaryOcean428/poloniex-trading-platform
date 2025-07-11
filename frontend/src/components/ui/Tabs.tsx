@@ -31,13 +31,13 @@ const Tabs = ({ defaultValue, value, onValueChange, className, children }: TabsP
     <div className={cn("w-full", className)}>
       {React.Children.map(children, (child) => {
         if (React.isValidElement(child) && child.type === TabsList) {
-          return React.cloneElement(child as React.ReactElement<any>, {
+          return React.cloneElement(child as React.ReactElement<TabsListProps>, {
             activeTab,
             onTabChange: handleTabChange,
           });
         }
         if (React.isValidElement(child) && child.type === TabsContent) {
-          return React.cloneElement(child as React.ReactElement<any>, {
+          return React.cloneElement(child as React.ReactElement<TabsContentProps>, {
             activeTab,
           });
         }
@@ -59,7 +59,7 @@ const TabsList = ({ className, children, activeTab, onTabChange }: TabsListProps
     <div className={cn("flex border-b", className)}>
       {React.Children.map(children, (child) => {
         if (React.isValidElement(child) && child.type === TabsTrigger) {
-          return React.cloneElement(child as React.ReactElement<any>, {
+          return React.cloneElement(child as React.ReactElement<TabsTriggerProps>, {
             active: activeTab === child.props.value,
             onSelect: () => onTabChange && onTabChange(child.props.value),
           });
