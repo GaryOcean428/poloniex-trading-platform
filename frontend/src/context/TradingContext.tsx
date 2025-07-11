@@ -9,13 +9,17 @@ interface TradingContextType {
   trades: Trade[];
   strategies: Strategy[];
   activeStrategies: string[];
-  accountBalance: any;
+  accountBalance: {
+    available: number;
+    total: number;
+    currency: string;
+  } | null;
   isLoading: boolean;
   isMockMode: boolean;
   addStrategy: (strategy: Strategy) => void;
   removeStrategy: (id: string) => void;
   toggleStrategyActive: (id: string) => void;
-  placeOrder: (pair: string, side: 'buy' | 'sell', type: 'limit' | 'market', quantity: number, price?: number) => Promise<any>;
+  placeOrder: (pair: string, side: 'buy' | 'sell', type: 'limit' | 'market', quantity: number, price?: number) => Promise<unknown>;
   errors: string[];
   addError: (error: string) => void;
   clearErrors: () => void;
