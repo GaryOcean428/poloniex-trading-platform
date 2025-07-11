@@ -3,6 +3,9 @@ import { poloniexApi } from '@/services/poloniexAPI';
 import { logger } from '@/utils/logger';
 import { MarketData } from '@/types';
 import { TradingModeManager } from './TradingModeManager';
+import { combineIndicatorSignals, calculateRSI, calculateMACD, calculateMovingAverageCrossover } from '@/utils/technicalIndicators';
+import { createRiskManager, RiskManager, RISK_PROFILES } from '@/utils/riskManagement';
+import { monitoringSystem } from '@/utils/monitoringSystem';
 
 interface Activity {
   type: 'info' | 'warning' | 'error' | 'success';
@@ -33,6 +36,20 @@ class TradingEngine {
   public isRunning = false;
   private tradingLoop: ReturnType<typeof setInterval> | null = null;
   private confidenceThreshold = 0.75; // Minimum confidence for live trading
+  private riskManager: RiskManager;
+  private accountBalance = 0;
+  private performanceMetrics = {
+    totalTrades: 0,
+    winningTrades: 0,
+    losingTrades: 0,
+    totalProfit: 0,
+    totalLoss: 0,
+    maxDrawdown: 0,
+    averageWin: 0,
+    averageLoss: 0,
+    profitFactor: 0,
+    sharpeRatio: 0
+  };
   private status = {
     currentAction: 'Initialized',
     lastUpdate: new Date().toISOString(),
@@ -55,6 +72,17 @@ class TradingEngine {
 
   constructor() {
     this.modeManager = new TradingModeManager();
+    
+    // Initialize risk manager with moderate risk profile
+    const riskProfile = localStorage.getItem('poloniex_risk_profile') || 'moderate';
+    const riskParams = RISK_PROFILES[riskProfile as keyof typeof RISK_PROFILES];
+    this.riskManager = createRiskManager(riskParams);
+    
+    // Set daily start value for P&L calculation
+    const storedBalance = localStorage.getItem('poloniex_daily_start_balance');
+    if (storedBalance) {
+      this.riskManager.setDailyStartValue(parseFloat(storedBalance));
+    }
   }
 
   async initialize() {
@@ -63,9 +91,14 @@ class TradingEngine {
         this.modeManager = new TradingModeManager();
       }
       await this.modeManager.initialize();
+      
+      // Start monitoring system
+      monitoringSystem.start();
+      
       logger.info('Trading engine initialized successfully');
       return true;
     } catch (error) {
+      monitoringSystem.logError(error instanceof Error ? error : new Error(String(error)), 'Trading engine initialization');
       logger.error('Failed to initialize trading engine:', error);
       throw error;
     }
@@ -100,6 +133,10 @@ class TradingEngine {
       clearInterval(this.tradingLoop);
       this.tradingLoop = null;
     }
+    
+    // Stop monitoring system
+    monitoringSystem.stop();
+    
     logger.info('Trading engine stopped');
   }
 
@@ -144,32 +181,69 @@ class TradingEngine {
         return;
       }
 
-      // Simple market analysis based on recent price movements
-      const prices = marketData.map((candle: MarketData) => candle.close);
-      const lastPrice = prices[prices.length - 1];
-      const prevPrice = prices[prices.length - 2];
+      // Check emergency stop conditions
+      const emergencyCheck = this.riskManager.checkEmergencyStop(this.accountBalance);
+      if (emergencyCheck.shouldStop) {
+        this.isEmergencyMode = true;
+        this.addActivity('error', 'Emergency stop triggered', emergencyCheck.reasons.join(', '));
+        await this.closeAllPositions();
+        return;
+      }
+
+      // Enhanced market analysis using multiple technical indicators
+      const indicatorSignals = combineIndicatorSignals(marketData, {
+        useRSI: true,
+        useMACD: true,
+        useBB: true,
+        useMA: true,
+        weights: { rsi: 0.3, macd: 0.3, bb: 0.2, stochastic: 0.1, ma: 0.1 }
+      });
+
+      // Update monitoring system with market data
+      const currentCandle = marketData[marketData.length - 1];
+      monitoringSystem.updateMarketData(symbol, currentCandle);
       
-      const direction = lastPrice > prevPrice ? 'up' : 'down';
-      const change = Math.abs((lastPrice - prevPrice) / prevPrice);
-      const probability = 0.5 + (change * 10); // Simple probability calculation
+      // Update portfolio risk monitoring
+      const portfolioRisk = this.riskManager.calculatePortfolioRisk(this.accountBalance);
+      monitoringSystem.updatePortfolioRisk(portfolioRisk);
       
-      // Update status with analysis results
+      // Update performance metrics
+      monitoringSystem.addPerformanceMetrics({
+        timestamp: Date.now(),
+        totalPnL: portfolioRisk.unrealizedPnL,
+        dailyPnL: portfolioRisk.dailyPnL,
+        winRate: this.calculateWinRate(),
+        avgWin: this.performanceMetrics.averageWin,
+        avgLoss: this.performanceMetrics.averageLoss,
+        totalTrades: this.performanceMetrics.totalTrades,
+        currentDrawdown: portfolioRisk.currentDrawdown,
+        maxDrawdown: portfolioRisk.maxDrawdown,
+        portfolioRisk: portfolioRisk.totalRiskPercent,
+        leverageUtilization: portfolioRisk.leverageUtilization,
+        apiLatency: 100, // This would be measured from actual API calls
+        successRate: 0.98, // This would be calculated from API success/failure rates
+        errorRate: 0.02,
+        wsConnectionStatus: 'connected',
+        volatility: this.calculateMarketVolatility(marketData),
+        volume: currentCandle.volume,
+        spread: 0.01 // This would be calculated from order book data
+      });
       this.status.marketAnalysis = {
         prediction: {
-          direction: direction as 'up' | 'down',
-          probability: Math.min(probability, 0.95),
-          reasoning: `Price moved ${direction} by ${(change * 100).toFixed(2)}%`
+          direction: indicatorSignals.signal === 'BUY' ? 'up' : indicatorSignals.signal === 'SELL' ? 'down' : 'up',
+          probability: indicatorSignals.confidence,
+          reasoning: this.generateAnalysisReasoning(indicatorSignals)
         },
-        sentiment: direction === 'up' ? 0.6 : 0.4,
-        confidence: Math.min(probability, 0.95)
+        sentiment: indicatorSignals.signal === 'BUY' ? 0.7 : indicatorSignals.signal === 'SELL' ? 0.3 : 0.5,
+        confidence: indicatorSignals.confidence
       };
 
-      this.setCurrentActivity(`Analysis complete for ${symbol}: ${direction} (${Math.round(probability * 100)}% confidence)`);
+      this.setCurrentActivity(`Enhanced analysis complete for ${symbol}: ${indicatorSignals.signal} (${Math.round(indicatorSignals.confidence * 100)}% confidence)`);
       
-      // Execute trade if auto-trading is enabled
+      // Execute trade if auto-trading is enabled and signal meets criteria
       const autoTradingEnabled = localStorage.getItem('poloniex_auto_trading_enabled') === 'true';
-      if (autoTradingEnabled && this.status.marketAnalysis.confidence > this.confidenceThreshold) {
-        await this.executeTrade(symbol, direction as 'up' | 'down');
+      if (autoTradingEnabled && indicatorSignals.signal !== 'HOLD' && indicatorSignals.confidence > this.confidenceThreshold) {
+        await this.executeEnhancedTrade(symbol, indicatorSignals.signal, indicatorSignals.confidence, marketData);
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -178,41 +252,63 @@ class TradingEngine {
     }
   }
 
-  async executeTrade(symbol: string, direction: 'up' | 'down') {
+  async executeEnhancedTrade(symbol: string, signal: 'BUY' | 'SELL', confidence: number, marketData: MarketData[]) {
     try {
-      // Get settings from localStorage instead of using hook
-      const riskPerTrade = parseFloat(localStorage.getItem('poloniex_risk_per_trade') || '2');
-      const leverage = parseFloat(localStorage.getItem('poloniex_leverage') || '1');
+      // Get current balance
+      this.accountBalance = this.modeManager.isLiveMode() 
+        ? await poloniexApi.getAccountBalance() 
+        : this.modeManager.getPaperEngine().getBalance();
+
+      const currentPrice = marketData[marketData.length - 1].close;
+      const direction = signal === 'BUY' ? 'long' : 'short';
       
-      // Don't trade if we already have a position
-      const paperEngine = this.modeManager.getPaperEngine();
-      if (paperEngine.getPosition(symbol)) {
+      // Calculate ATR-based stop loss and take profit
+      const levels = this.riskManager.calculateATRLevels(marketData, currentPrice, direction);
+      
+      // Assess position risk
+      const leverage = parseFloat(localStorage.getItem('poloniex_leverage') || '1');
+      const riskAssessment = this.riskManager.assessPositionRisk(
+        symbol,
+        currentPrice,
+        0, // We'll calculate size based on risk
+        direction,
+        this.accountBalance,
+        leverage,
+        marketData
+      );
+
+      if (!riskAssessment.canOpenPosition) {
+        this.addActivity('warning', `Trade rejected for ${symbol}`, riskAssessment.reasons.join(', '));
         return;
       }
+
+      // Use recommended position size from risk assessment
+      const size = riskAssessment.recommendedSize;
       
-      const side = direction === 'up' ? 'buy' : 'sell';
-      const marketData = await poloniexApi.getMarketData(symbol);
-      const lastPrice = marketData[marketData.length - 1].close;
+      if (size < 0.001) { // Minimum trade size
+        this.addActivity('warning', `Position size too small for ${symbol}`, `Calculated size: ${size.toFixed(6)}`);
+        return;
+      }
+
+      // Add risk warnings if any
+      if (riskAssessment.warnings.length > 0) {
+        this.addActivity('warning', `Risk warnings for ${symbol}`, riskAssessment.warnings.join(', '));
+      }
+
+      const side = signal === 'BUY' ? 'buy' : 'sell';
       
-      // Calculate position size based on risk settings
-      const balance = this.modeManager.isLiveMode() 
-        ? await poloniexApi.getAccountBalance() 
-        : paperEngine.getBalance();
-      
-      const riskAmount = (balance * riskPerTrade) / 100;
-      const size = riskAmount / lastPrice;
-      
-      // Place order
+      // Place main order
+      let orderResult;
       if (this.modeManager.isLiveMode()) {
-        await poloniexApi.placeOrder(
+        orderResult = await poloniexApi.placeOrder(
           symbol,
           side,
           'market',
           size,
-          undefined // price is undefined for market orders
+          undefined // market order
         );
       } else {
-        await paperEngine.placeOrder({
+        orderResult = await this.modeManager.getPaperEngine().placeOrder({
           symbol,
           side,
           type: 'market',
@@ -220,13 +316,56 @@ class TradingEngine {
           leverage: leverage
         });
       }
+
+      // Add position to risk manager
+      this.riskManager.addPosition(
+        symbol,
+        currentPrice,
+        side === 'buy' ? size : -size,
+        leverage,
+        riskAssessment.stopLossPrice,
+        riskAssessment.takeProfitPrice
+      );
+
+      // Place stop loss and take profit orders
+      if (this.modeManager.isLiveMode()) {
+        try {
+          // Stop loss order
+          await poloniexApi.placeConditionalOrder(
+            symbol,
+            side === 'buy' ? 'sell' : 'buy',
+            'stop',
+            size,
+            riskAssessment.stopLossPrice
+          );
+
+          // Take profit order
+          await poloniexApi.placeConditionalOrder(
+            symbol,
+            side === 'buy' ? 'sell' : 'buy',
+            'takeProfit',
+            size,
+            riskAssessment.takeProfitPrice
+          );
+        } catch (error) {
+          this.addActivity('warning', `Failed to place stop/TP orders for ${symbol}`, error instanceof Error ? error.message : 'Unknown error');
+        }
+      }
+
+      // Update performance metrics
+      this.updatePerformanceMetrics(orderResult);
       
-      this.addActivity('success', `Executed ${side} order for ${symbol}`, 
-        `Size: ${size.toFixed(6)}, Price: ${lastPrice}, Leverage: ${leverage}x`);
+      this.addActivity('success', `Enhanced trade executed for ${symbol}`, 
+        `${side.toUpperCase()} ${size.toFixed(6)} at ${currentPrice.toFixed(2)}, ` +
+        `SL: ${riskAssessment.stopLossPrice.toFixed(2)}, ` +
+        `TP: ${riskAssessment.takeProfitPrice.toFixed(2)}, ` +
+        `R:R ${riskAssessment.riskReward.toFixed(2)}, ` +
+        `Confidence: ${(confidence * 100).toFixed(1)}%`);
+      
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.addActivity('error', `Failed to execute trade for ${symbol}`, errorMessage);
-      logger.error(`Trade execution failed for ${symbol}:`, error);
+      this.addActivity('error', `Enhanced trade execution failed for ${symbol}`, errorMessage);
+      logger.error(`Enhanced trade execution failed for ${symbol}:`, error);
     }
   }
 
@@ -289,7 +428,116 @@ class TradingEngine {
   }
 
   getStatus() {
-    return this.status;
+    return {
+      ...this.status,
+      riskMetrics: this.accountBalance > 0 ? this.riskManager.calculatePortfolioRisk(this.accountBalance) : null,
+      performanceMetrics: this.performanceMetrics
+    };
+  }
+
+  getRiskManager() {
+    return this.riskManager;
+  }
+
+  updateAccountBalance(balance: number) {
+    this.accountBalance = balance;
+    
+    // Set daily start value if not set
+    const dailyStartKey = `poloniex_daily_start_${new Date().toDateString()}`;
+    if (!localStorage.getItem(dailyStartKey)) {
+      localStorage.setItem(dailyStartKey, balance.toString());
+      this.riskManager.setDailyStartValue(balance);
+    }
+  }
+
+  async closeAllPositions() {
+    try {
+      this.setCurrentActivity('Closing all positions due to emergency stop');
+      
+      if (this.modeManager.isLiveMode()) {
+        const positions = await poloniexApi.getOpenPositions();
+        for (const position of positions.positions || []) {
+          try {
+            await poloniexApi.placeOrder(
+              position.symbol,
+              position.posSide === 'long' ? 'sell' : 'buy',
+              'market',
+              Math.abs(parseFloat(position.posSize))
+            );
+          } catch (error) {
+            logger.error(`Failed to close position ${position.symbol}:`, error);
+          }
+        }
+      } else {
+        // Close paper trading positions
+        const paperEngine = this.modeManager.getPaperEngine();
+        const positions = paperEngine.getPositions();
+        for (const position of positions) {
+          try {
+            await paperEngine.closePosition(position.symbol);
+          } catch (error) {
+            logger.error(`Failed to close paper position ${position.symbol}:`, error);
+          }
+        }
+      }
+      
+      this.addActivity('info', 'All positions closed', 'Emergency stop procedure completed');
+    } catch (error) {
+      this.addActivity('error', 'Failed to close all positions', error instanceof Error ? error.message : 'Unknown error');
+    }
+  }
+
+  private generateAnalysisReasoning(signals: any): string {
+    const reasons = [];
+    
+    if (signals.indicators.rsi && signals.indicators.rsi.signal !== 'HOLD') {
+      reasons.push(`RSI (${signals.indicators.rsi.currentValue.toFixed(1)}) indicates ${signals.indicators.rsi.signal}`);
+    }
+    
+    if (signals.indicators.macd && signals.indicators.macd.currentSignal !== 'NEUTRAL') {
+      reasons.push(`MACD shows ${signals.indicators.macd.currentSignal.toLowerCase()} crossover`);
+    }
+    
+    if (signals.indicators.bollingerBands && signals.indicators.bollingerBands.currentPosition !== 'BETWEEN_BANDS') {
+      reasons.push(`Price is ${signals.indicators.bollingerBands.currentPosition.toLowerCase().replace('_', ' ')}`);
+    }
+    
+    if (signals.indicators.movingAverage && signals.indicators.movingAverage.signal !== 'HOLD') {
+      reasons.push(`Moving averages suggest ${signals.indicators.movingAverage.signal.toLowerCase()}`);
+    }
+    
+    return reasons.length > 0 ? reasons.join('; ') : 'Multiple technical indicators align';
+  }
+
+  private updatePerformanceMetrics(orderResult: any) {
+    this.performanceMetrics.totalTrades++;
+    
+    // This is a simplified update - in a real implementation, you'd track
+    // the full lifecycle of trades to calculate wins/losses accurately
+    if (orderResult && orderResult.success !== false) {
+      // For now, just update trade count
+      // Full P&L tracking would require monitoring position closures
+    }
+  }
+
+  private calculateWinRate(): number {
+    if (this.performanceMetrics.totalTrades === 0) return 0;
+    return (this.performanceMetrics.winningTrades / this.performanceMetrics.totalTrades) * 100;
+  }
+
+  private calculateMarketVolatility(marketData: MarketData[]): number {
+    if (marketData.length < 20) return 0;
+    
+    const returns = [];
+    for (let i = 1; i < Math.min(marketData.length, 21); i++) {
+      const return_ = (marketData[i].close - marketData[i - 1].close) / marketData[i - 1].close;
+      returns.push(return_);
+    }
+    
+    const mean = returns.reduce((sum, ret) => sum + ret, 0) / returns.length;
+    const variance = returns.reduce((sum, ret) => sum + Math.pow(ret - mean, 2), 0) / returns.length;
+    
+    return Math.sqrt(variance);
   }
 
   private updateStatus(action: string) {
