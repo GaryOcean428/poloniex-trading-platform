@@ -118,7 +118,7 @@ export interface FuturesOrder {
 }
 
 export interface ExchangeService {
-  placeOrder: (pair: string, side: 'BUY' | 'SELL', type: 'LIMIT' | 'MARKET', quantity: number, price?: number) => Promise<any>;
+  placeOrder: (pair: string, side: 'BUY' | 'SELL', type: 'LIMIT' | 'MARKET', quantity: number, price?: number) => Promise<unknown>;
   errors: string[];
   addError: (error: string) => void;
   clearErrors: () => void;

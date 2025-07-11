@@ -210,8 +210,8 @@ export const monitorDQNModelPerformance = async (
     // Simulate trading with these actions
     let balance = 10000;
     let position = 0;
-    let trades: Array<{type: string, price: number, return: number}> = [];
-    let returns: number[] = [];
+    const trades: Array<{type: string, price: number, return: number}> = [];
+    const returns: number[] = [];
     
     for (let i = 0; i < actions.length - 1; i++) {
       const action = actions[i];
@@ -315,7 +315,7 @@ export const recalibrateMLModel = async (
     const { trainMLModel, optimizeMLModel } = await import('./mlTrading');
     
     let newModelInfo;
-    let recalibrationStrategy = strategy;
+    const recalibrationStrategy = strategy;
     
     switch (strategy) {
       case 'full':
@@ -469,7 +469,7 @@ export const recalibrateDQNModel = async (
     const { trainDQNModel, continueDQNTraining } = await import('./dqnTrading');
     
     let newModelInfo;
-    let recalibrationStrategy = strategy;
+    const recalibrationStrategy = strategy;
     
     switch (strategy) {
       case 'full':

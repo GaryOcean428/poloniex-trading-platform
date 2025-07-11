@@ -106,7 +106,7 @@ export function backtestStrategy(
   const sortedData = [...marketData].sort((a, b) => a.timestamp - b.timestamp);
   
   // Initialize backtest state
-  let balance = testOptions.initialBalance;
+  const balance = testOptions.initialBalance;
   let equity = balance;
   let maxEquity = balance;
   let maxDrawdown = 0;
@@ -116,10 +116,10 @@ export function backtestStrategy(
   const openPositions: BacktestTrade[] = [];
   
   // Track profit/loss for metrics
-  let totalProfit = 0;
-  let totalLoss = 0;
-  let winningTrades = 0;
-  let losingTrades = 0;
+  const totalProfit = 0;
+  const totalLoss = 0;
+  const winningTrades = 0;
+  const losingTrades = 0;
   
   // Daily returns for Sharpe ratio
   const dailyReturns: number[] = [];
@@ -475,7 +475,7 @@ export function optimizeStrategy(
     const strategy: Strategy = {
       id: 'optimization-test',
       name: `${strategyType} Optimization`,
-      type: strategyType as any,
+      type: strategyType,
       parameters,
       description: 'Strategy parameter optimization test'
     };

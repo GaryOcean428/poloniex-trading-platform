@@ -3,7 +3,7 @@ import CryptoJS from 'crypto-js';
 interface SignatureParams {
   method: string;
   path: string;
-  body?: any;
+  body?: Record<string, unknown> | string;
   queryString?: string;
   timestamp: number;
   secret: string;
@@ -59,7 +59,7 @@ export function generateAuthHeaders(
   apiSecret: string,
   method: string,
   path: string,
-  body?: any,
+  body?: Record<string, unknown> | string,
   queryString?: string
 ): Record<string, string> {
   const timestamp = Date.now();
@@ -154,7 +154,7 @@ export function getRefreshToken(): string | null {
 /**
  * Get stored user data
  */
-export function getUserData(): any | null {
+export function getUserData(): unknown | null {
   const userData = localStorage.getItem('user_data');
   if (!userData) return null;
   
@@ -201,7 +201,7 @@ export function shouldRefreshToken(): boolean {
 /**
  * Decode JWT payload (without verification - for display purposes only)
  */
-export function decodeJWTPayload(token: string): any | null {
+export function decodeJWTPayload(token: string): unknown | null {
   try {
     const parts = token.split('.');
     if (parts.length !== 3) return null;
