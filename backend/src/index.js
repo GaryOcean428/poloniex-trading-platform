@@ -10,6 +10,8 @@ import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
 import authRoutes from './routes/auth.js';
 import { authenticateToken, optionalAuth } from './middleware/auth.js';
+import { healthCheck } from './db/connection.js';
+import { UserService } from './services/userService.js';
 
 // Configure environment variables
 dotenv.config();
@@ -43,7 +45,7 @@ Object.entries(envCheck).forEach(([key, value]) => {
 
 // Check if we're in mock mode
 const hasApiCredentials = !!(
-  envCheck.POLONIEX_API_KEY && 
+  envCheck.POLONIEX_API_KEY &&
   envCheck.POLONIEX_API_SECRET
 );
 
@@ -99,7 +101,7 @@ const corsMiddleware = cors({
   origin: (origin, callback) => {
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
-    
+
     if (allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
@@ -156,12 +158,12 @@ const circuitBreaker = {
   failureCount: 0,
   lastFailureTime: null,
   successCount: 0,
-  
+
   // Circuit breaker thresholds
   FAILURE_THRESHOLD: 3,
   SUCCESS_THRESHOLD: 2,
   TIMEOUT: 60000, // 1 minute timeout for OPEN state
-  
+
   canAttemptConnection() {
     if (this.state === 'CLOSED') return true;
     if (this.state === 'HALF_OPEN') return true;
@@ -177,7 +179,7 @@ const circuitBreaker = {
     }
     return false;
   },
-  
+
   recordSuccess() {
     if (this.state === 'HALF_OPEN') {
       this.successCount++;
@@ -190,11 +192,11 @@ const circuitBreaker = {
       this.failureCount = 0;
     }
   },
-  
+
   recordFailure() {
     this.failureCount++;
     this.lastFailureTime = Date.now();
-    
+
     if (this.failureCount >= this.FAILURE_THRESHOLD) {
       this.state = 'OPEN';
       console.log(`Circuit breaker OPENED after ${this.failureCount} failures`);
@@ -215,7 +217,7 @@ const connectToPoloniexWebSocket = () => {
     console.log('Circuit breaker is OPEN - skipping WebSocket connection attempt');
     return null;
   }
-  
+
   if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
     console.log(`Max reconnection attempts (${MAX_RECONNECT_ATTEMPTS}) reached. Stopping reconnection.`);
     circuitBreaker.recordFailure();
@@ -223,37 +225,37 @@ const connectToPoloniexWebSocket = () => {
   }
 
   console.log(`Connecting to Poloniex WebSocket... (attempt ${reconnectAttempts + 1}, circuit breaker: ${circuitBreaker.state})`);
-  
+
   // Create WebSocket connection to Poloniex with timeout
   const poloniexWs = new WebSocket('wss://ws.poloniex.com/ws/public', {
     handshakeTimeout: 10000,
     perMessageDeflate: false
   });
-  
+
   let pingTimer;
   let pongTimer;
-  
+
   poloniexWs.on('open', () => {
     console.log('Connected to Poloniex WebSocket');
-    
+
     // Reset reconnect attempts on successful connection
     reconnectAttempts = 0;
-    
+
     // Record successful connection in circuit breaker
     circuitBreaker.recordSuccess();
-    
+
     // Subscribe to market data channels
     poloniexWs.send(JSON.stringify({
       event: 'subscribe',
       channel: ['ticker'],
       symbols: ['BTC_USDT', 'ETH_USDT', 'SOL_USDT']
     }));
-    
+
     // Start ping timer for connection health
     pingTimer = setInterval(() => {
       if (poloniexWs.readyState === WebSocket.OPEN) {
         poloniexWs.ping();
-        
+
         // Set timeout for pong response
         pongTimer = setTimeout(() => {
           console.warn('Poloniex WebSocket pong timeout - closing connection');
@@ -262,7 +264,7 @@ const connectToPoloniexWebSocket = () => {
       }
     }, PING_INTERVAL);
   });
-  
+
   poloniexWs.on('pong', () => {
     // Clear pong timeout when response received
     if (pongTimer) {
@@ -270,11 +272,11 @@ const connectToPoloniexWebSocket = () => {
       pongTimer = null;
     }
   });
-  
+
   poloniexWs.on('message', (data) => {
     try {
       const message = JSON.parse(data.toString());
-      
+
       // Process different types of messages
       if (message.channel === 'ticker' && message.data) {
         // message.data is an array of ticker objects
@@ -298,10 +300,10 @@ const connectToPoloniexWebSocket = () => {
       console.error('Error processing WebSocket message:', error);
     }
   });
-  
+
   poloniexWs.on('error', (error) => {
     console.error('Poloniex WebSocket error:', error);
-    
+
     // Clean up timers
     if (pingTimer) {
       clearInterval(pingTimer);
@@ -311,28 +313,28 @@ const connectToPoloniexWebSocket = () => {
       clearTimeout(pongTimer);
       pongTimer = null;
     }
-    
+
     reconnectAttempts++;
-    
+
     // Record failure in circuit breaker
     circuitBreaker.recordFailure();
-    
+
     // Only attempt reconnection if circuit breaker allows it
     if (circuitBreaker.canAttemptConnection()) {
       // Calculate exponential backoff delay
       const backoffDelay = Math.min(RECONNECT_DELAY * Math.pow(2, reconnectAttempts - 1), 30000);
       console.log(`Attempting to reconnect in ${backoffDelay}ms (attempt ${reconnectAttempts})`);
-      
+
       // Attempt to reconnect after a delay
       setTimeout(connectToPoloniexWebSocket, backoffDelay);
     } else {
       console.log('Circuit breaker preventing reconnection attempt');
     }
   });
-  
+
   poloniexWs.on('close', () => {
     console.log('Poloniex WebSocket connection closed');
-    
+
     // Clean up timers
     if (pingTimer) {
       clearInterval(pingTimer);
@@ -342,25 +344,25 @@ const connectToPoloniexWebSocket = () => {
       clearTimeout(pongTimer);
       pongTimer = null;
     }
-    
+
     reconnectAttempts++;
-    
+
     // Record failure in circuit breaker
     circuitBreaker.recordFailure();
-    
+
     // Only attempt reconnection if circuit breaker allows it
     if (circuitBreaker.canAttemptConnection()) {
       // Calculate exponential backoff delay
       const backoffDelay = Math.min(RECONNECT_DELAY * Math.pow(2, reconnectAttempts - 1), 30000);
       console.log(`Connection closed, attempting to reconnect in ${backoffDelay}ms (attempt ${reconnectAttempts})`);
-      
+
       // Attempt to reconnect after a delay
       setTimeout(connectToPoloniexWebSocket, backoffDelay);
     } else {
       console.log('Circuit breaker preventing reconnection attempt');
     }
   });
-  
+
   return poloniexWs;
 };
 
@@ -375,7 +377,7 @@ const formatPoloniexTickerData = (data) => {
 
     // Convert Poloniex pair format (BTC_USDT) to our format (BTC-USDT)
     const pair = data.symbol.replace('_', '-');
-    
+
     return {
       pair,
       timestamp: Date.now(),
@@ -394,78 +396,78 @@ const formatPoloniexTickerData = (data) => {
 // Socket.IO connection handler with security
 io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);
-  
+
   // Rate limiting for socket events
   const socketRateLimit = new Map();
-  
+
   const isRateLimited = (eventType) => {
     const now = Date.now();
     const key = `${socket.id}:${eventType}`;
     const limit = socketRateLimit.get(key) || { count: 0, resetTime: now + 60000 };
-    
+
     if (now > limit.resetTime) {
       limit.count = 0;
       limit.resetTime = now + 60000;
     }
-    
+
     if (limit.count >= 30) { // 30 events per minute
       return true;
     }
-    
+
     limit.count++;
     socketRateLimit.set(key, limit);
     return false;
   };
-  
+
   // Handle client subscription to market data
   socket.on('subscribeMarket', ({ pair }) => {
     if (isRateLimited('subscribeMarket')) {
       socket.emit('error', 'Rate limit exceeded for subscribeMarket');
       return;
     }
-    
+
     // Validate pair format
     if (!pair || !/^[A-Z]{3,5}-[A-Z]{3,5}$/.test(pair)) {
       socket.emit('error', 'Invalid pair format');
       return;
     }
-    
+
     console.log(`Client ${socket.id} subscribed to ${pair}`);
     socket.join(pair);
   });
-  
+
   // Handle client unsubscription from market data
   socket.on('unsubscribeMarket', ({ pair }) => {
     if (isRateLimited('unsubscribeMarket')) {
       socket.emit('error', 'Rate limit exceeded for unsubscribeMarket');
       return;
     }
-    
+
     console.log(`Client ${socket.id} unsubscribed from ${pair}`);
     socket.leave(pair);
   });
-  
+
   // Handle chat messages with validation
   socket.on('chatMessage', (message) => {
     if (isRateLimited('chatMessage')) {
       socket.emit('error', 'Rate limit exceeded for chatMessage');
       return;
     }
-    
+
     // Validate message
     if (!message || typeof message !== 'string' || message.length > 500) {
       socket.emit('error', 'Invalid message format');
       return;
     }
-    
+
     // Sanitize message (basic XSS prevention)
     const sanitizedMessage = message.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
-    
+
     console.log('Chat message received:', sanitizedMessage);
     // Broadcast to all clients
     io.emit('chatMessage', sanitizedMessage);
   });
-  
+
   // Handle disconnection
   socket.on('disconnect', () => {
     console.log('Client disconnected:', socket.id);
@@ -492,19 +494,65 @@ setInterval(() => {
   }
 }, 30000); // Check every 30 seconds
 
-// Define API routes
-app.get('/api/health', (req, res) => {
-  res.json({ 
-    status: 'healthy',
-    mode: hasApiCredentials ? 'live' : 'mock',
-    timestamp: new Date().toISOString(),
-    env: process.env.NODE_ENV,
-    websocket: {
-      circuitBreakerState: circuitBreaker.state,
-      reconnectAttempts: reconnectAttempts,
-      failureCount: circuitBreaker.failureCount
+// Initialize database cleanup tasks
+const initializeDatabaseTasks = () => {
+  // Clean up expired sessions every hour
+  setInterval(async () => {
+    try {
+      const cleaned = await UserService.cleanupExpiredSessions();
+      if (cleaned > 0) {
+        console.log(`🧹 Cleaned up ${cleaned} expired sessions`);
+      }
+    } catch (error) {
+      console.error('❌ Error cleaning up sessions:', error);
     }
-  });
+  }, 60 * 60 * 1000); // 1 hour
+
+  console.log('✅ Database cleanup tasks initialized');
+};
+
+// Initialize database tasks
+initializeDatabaseTasks();
+
+// Define API routes with enhanced health checks
+app.get('/api/health', async (req, res) => {
+  try {
+    const dbHealth = await healthCheck();
+
+    res.json({
+      status: dbHealth.healthy ? 'healthy' : 'degraded',
+      mode: hasApiCredentials ? 'live' : 'mock',
+      timestamp: new Date().toISOString(),
+      env: process.env.NODE_ENV,
+      database: {
+        healthy: dbHealth.healthy,
+        postgis_version: dbHealth.postgis_version,
+        pool_size: dbHealth.pool_size,
+        idle_connections: dbHealth.idle_connections,
+        waiting_connections: dbHealth.waiting_connections
+      },
+      websocket: {
+        circuitBreakerState: circuitBreaker.state,
+        reconnectAttempts: reconnectAttempts,
+        failureCount: circuitBreaker.failureCount
+      }
+    });
+  } catch (error) {
+    console.error('❌ Health check error:', error);
+    res.status(503).json({
+      status: 'unhealthy',
+      mode: hasApiCredentials ? 'live' : 'mock',
+      timestamp: new Date().toISOString(),
+      env: process.env.NODE_ENV,
+      error: error.message,
+      database: { healthy: false },
+      websocket: {
+        circuitBreakerState: circuitBreaker.state,
+        reconnectAttempts: reconnectAttempts,
+        failureCount: circuitBreaker.failureCount
+      }
+    });
+  }
 });
 
 // Mock API endpoint for testing - now with optional authentication
@@ -518,32 +566,32 @@ app.get('/api/account', optionalAuth, (req, res) => {
         BTC: { available: '0.5', locked: '0.00' },
       }
     };
-    
+
     if (req.user) {
       mockData.user = req.user.username;
       mockData.authenticated = true;
     }
-    
+
     res.json(mockData);
   } else {
     // TODO: Implement real Poloniex API call
     const response = {
       message: 'Live mode active - implement Poloniex API call'
     };
-    
+
     if (req.user) {
       response.user = req.user.username;
       response.authenticated = true;
     }
-    
+
     res.json(response);
   }
 });
 
 // Standard health endpoint for Railway
 app.get('/health', (req, res) => {
-  res.status(200).json({ 
-    status: 'ok', 
+  res.status(200).json({
+    status: 'ok',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
     service: 'poloniex-trading-platform-backend'
@@ -566,12 +614,12 @@ server.listen(PORT, HOST, () => {
 // Handle graceful shutdown
 process.on('SIGINT', () => {
   console.log('Shutting down server...');
-  
+
   // Close Poloniex WebSocket
   if (poloniexWs && poloniexWs.readyState === WebSocket.OPEN) {
     poloniexWs.close();
   }
-  
+
   // Close HTTP server
   server.close(() => {
     console.log('Server shut down');
