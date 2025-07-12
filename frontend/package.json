@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "build:dev": "vite build --mode development",
-    "start": "serve -s dist -l ${PORT:-3000}",
+    "start": "serve -s dist -l ${PORT:-3000} -H 0.0.0.0",
     "preview": "vite preview",
     "lint": "eslint . --report-unused-disable-directives",
     "test": "vitest run",
