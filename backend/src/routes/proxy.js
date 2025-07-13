@@ -440,7 +440,7 @@ router.get('/trades', async (req, res) => {
 /**
  * Error handling middleware
  */
-router.use((error, req, res, next) => {
+router.use((error, req, res) => {
   console.error('Proxy route error:', error);
 
   if (error.code === 'ECONNREFUSED') {

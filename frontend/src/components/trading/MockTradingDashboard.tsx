@@ -32,15 +32,6 @@ const MockTradingDashboard: React.FC<MockTradingDashboardProps> = ({ strategies 
         }
     }, [strategies, selectedStrategy]);
 
-    // Update sessions and confidence metrics periodically
-    useEffect(() => {
-        const updateInterval = setInterval(() => {
-            updateSessionsAndMetrics();
-        }, 5000);
-
-        return () => clearInterval(updateInterval);
-    }, []);
-
     const updateSessionsAndMetrics = () => {
         const updatedSessions = new Map<string, MockTradingSession>();
         const updatedConfidence = new Map<string, ConfidenceMetrics>();
@@ -61,13 +52,22 @@ const MockTradingDashboard: React.FC<MockTradingDashboardProps> = ({ strategies 
         setConfidenceMetrics(updatedConfidence);
     };
 
+    // Update sessions and confidence metrics periodically
+    useEffect(() => {
+        const updateInterval = setInterval(() => {
+            updateSessionsAndMetrics();
+        }, 5000);
+
+        return () => clearInterval(updateInterval);
+    }, [updateSessionsAndMetrics]);
+
     const handleStartMockTrading = async () => {
         if (!selectedStrategy) return;
 
         setIsStarting(true);
         try
         {
-            const sessionId = await mockTradingService.startMockSession(
+            await mockTradingService.startMockSession(
                 selectedStrategy,
                 10000, // $10k initial balance
                 {
@@ -78,11 +78,10 @@ const MockTradingDashboard: React.FC<MockTradingDashboardProps> = ({ strategies 
                 }
             );
 
-            console.log(`Started mock trading session: ${sessionId}`);
             updateSessionsAndMetrics();
-        } catch (error)
+        } catch
         {
-            console.error('Failed to start mock trading:', error);
+            // Handle error
         } finally
         {
             setIsStarting(false);
@@ -107,9 +106,6 @@ const MockTradingDashboard: React.FC<MockTradingDashboardProps> = ({ strategies 
         }).format(amount);
     };
 
-    const formatPercent = (value: number) => {
-        return `${(value * 100).toFixed(2)}%`;
-    };
 
     const getConfidenceColor = (score: number) => {
         if (score >= 75) return 'text-green-600';
@@ -158,6 +154,7 @@ const MockTradingDashboard: React.FC<MockTradingDashboardProps> = ({ strategies 
                 <div className="flex items-center space-x-4">
                     {/* Strategy Selector */}
                     <select
+                        aria-label="Select a strategy"
                         value={selectedStrategy?.id || ''}
                         onChange={(e) => {
                             const strategy = strategies.find(s => s.id === e.target.value);
@@ -283,7 +280,7 @@ const MockTradingDashboard: React.FC<MockTradingDashboardProps> = ({ strategies 
                                                 'bg-red-500'
                                             }`}
                                         style={{ width: `${confidence.overall}%` }}
-                                    />
+                                    ></div>
                                 </div>
                             </div>
 

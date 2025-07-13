@@ -11,6 +11,7 @@ export enum StrategyType {
 export interface BaseStrategyParameters {
   pair: string;
   timeframe: string;
+  positionSize?: number; // Position size as a percentage of the account balance
 }
 
 export interface MovingAverageCrossoverParameters extends BaseStrategyParameters {

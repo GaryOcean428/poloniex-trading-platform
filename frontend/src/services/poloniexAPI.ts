@@ -23,9 +23,9 @@ const createAuthenticatedAxios = () => {
     baseURL: API_BASE_URL,
     timeout: 30000,
     headers: {
-      'Content-Type': 'application/json',
-      ...(token && { 'Authorization': `Bearer ${token}` })
-    }
+      "Content-Type": "application/json",
+      ...(token && { Authorization: `Bearer ${token}` }),
+    },
   });
 };
 
@@ -63,8 +63,8 @@ const RATE_LIMITS = {
 };
 
 // Create a logger for API calls
-const logApiCall = (method: string, endpoint: string, data?: unknown) => {
-  console.log(`API ${method} ${endpoint}`, data ? JSON.stringify(data) : "");
+const logApiCall = (_method: string, _endpoint: string, _data?: unknown) => {
+  // Production logging should be handled by a dedicated service
 };
 
 // Safe error handler
@@ -85,10 +85,16 @@ class PoloniexApiClient {
   private balanceUpdateInterval: number = 10000; // 10 seconds
   private requestCounter: number = 0;
   private rateLimitQueue: Map<string, number[]> = new Map();
-  private positionUpdateCallbacks: Set<(positions: Position[]) => void> = new Set();
-  private orderUpdateCallbacks: Set<(orders: FuturesOrder[]) => void> = new Set();
-  private liquidationCallbacks: Set<(warning: { pair: string; message: string }) => void> = new Set();
-  private marginCallbacks: Set<(margin: { pair: string; ratio: number }) => void> = new Set();
+  private positionUpdateCallbacks: Set<(positions: Position[]) => void> =
+    new Set();
+  private orderUpdateCallbacks: Set<(orders: FuturesOrder[]) => void> =
+    new Set();
+  private liquidationCallbacks: Set<
+    (warning: { pair: string; message: string }) => void
+  > = new Set();
+  private marginCallbacks: Set<
+    (margin: { pair: string; ratio: number }) => void
+  > = new Set();
 
   private constructor() {
     this.loadCredentials();
@@ -121,7 +127,9 @@ class PoloniexApiClient {
     this.marginCallbacks.add(callback);
   }
 
-  private async checkRateLimit(type: "public" | "private" | "order"): Promise<void> {
+  private async checkRateLimit(
+    type: "public" | "private" | "order"
+  ): Promise<void> {
     const now = Date.now();
     const key = `${type}_requests`;
     const limit =
@@ -158,21 +166,9 @@ class PoloniexApiClient {
 
       this.mockMode = shouldUseMockMode(true) || !isLiveTrading;
 
-      if (import.meta.env.DEV) {
-        console.info(
-          this.mockMode
-            ? "Running in mock mode - using simulated data"
-            : "Live trading mode active"
-        );
-      }
-
       this.cachedBalance = null;
       this.lastBalanceUpdate = 0;
     } catch (error) {
-      console.error(
-        "Error loading credentials:",
-        error instanceof Error ? error.message : String(error)
-      );
       this.mockMode = shouldUseMockMode(false);
     }
   }
@@ -181,21 +177,15 @@ class PoloniexApiClient {
    * Get account balance via secure backend
    */
   public async getAccountBalance() {
-    const requestId = ++this.requestCounter;
-
     if (
       this.cachedBalance &&
       Date.now() - this.lastBalanceUpdate < this.balanceUpdateInterval
     ) {
-      console.log(`[Request ${requestId}] Using cached balance data`);
       return this.cachedBalance;
     }
 
-    console.log(`[Request ${requestId}] Getting account balance via backend`);
-
     try {
       if (this.mockMode) {
-        console.log(`[Request ${requestId}] Using mock account balance data`);
         return {
           totalAmount: "15478.23",
           availableAmount: "12345.67",
@@ -214,15 +204,21 @@ class PoloniexApiClient {
       this.cachedBalance = response.data;
       this.lastBalanceUpdate = Date.now();
 
-      console.log(`[Request ${requestId}] Account balance fetched successfully`);
       return this.cachedBalance;
     } catch (error) {
       if (axios.isAxiosError(error)) {
         if (error.response?.status === 401) {
-          throw new PoloniexAuthenticationError("Authentication failed - please check your API credentials");
+          throw new PoloniexAuthenticationError(
+            "Authentication failed - please check your API credentials"
+          );
         }
-        if (error.response?.status === 400 && error.response.data?.requiresApiKeys) {
-          throw new PoloniexAuthenticationError("API credentials required - please add your Poloniex API keys");
+        if (
+          error.response?.status === 400 &&
+          error.response.data?.requiresApiKeys
+        ) {
+          throw new PoloniexAuthenticationError(
+            "API credentials required - please add your Poloniex API keys"
+          );
         }
         if (error.response?.status) {
           throw new PoloniexAPIError(
@@ -243,12 +239,8 @@ class PoloniexApiClient {
    * Get market data via secure backend
    */
   public async getMarketData(pair: string) {
-    const requestId = ++this.requestCounter;
-    console.log(`[Request ${requestId}] Getting market data for ${pair} via backend`);
-
     try {
       if (this.mockMode) {
-        console.log(`[Request ${requestId}] Using mock market data for ${pair}`);
         return this.generateMockMarketData(100);
       }
 
@@ -258,12 +250,11 @@ class PoloniexApiClient {
       logApiCall("GET", `/klines/${pair}`);
       const response = await api.get(`/klines/${pair}`, {
         params: {
-          interval: '5m',
-          limit: 100
-        }
+          interval: "5m",
+          limit: 100,
+        },
       });
 
-      console.log(`[Request ${requestId}] Market data fetched successfully for ${pair}`);
       return response.data;
     } catch (error) {
       if (axios.isAxiosError(error)) {
@@ -277,7 +268,9 @@ class PoloniexApiClient {
       }
 
       throw new PoloniexConnectionError(
-        `Failed to fetch market data for ${pair}: ${safeErrorHandler(error).message}`
+        `Failed to fetch market data for ${pair}: ${
+          safeErrorHandler(error).message
+        }`
       );
     }
   }
@@ -307,12 +300,8 @@ class PoloniexApiClient {
    * Get open positions via secure backend
    */
   public async getOpenPositions() {
-    const requestId = ++this.requestCounter;
-    console.log(`[Request ${requestId}] Getting open positions via backend`);
-
     try {
       if (this.mockMode) {
-        console.log(`[Request ${requestId}] Using mock positions data`);
         return {
           positions: [
             {
@@ -337,12 +326,13 @@ class PoloniexApiClient {
       logApiCall("GET", "/account/balances");
       const response = await api.get("/account/balances");
 
-      console.log(`[Request ${requestId}] Open positions fetched successfully`);
       return response.data;
     } catch (error) {
       if (axios.isAxiosError(error)) {
         if (error.response?.status === 401) {
-          throw new PoloniexAuthenticationError("Authentication failed for positions");
+          throw new PoloniexAuthenticationError(
+            "Authentication failed for positions"
+          );
         }
       }
 
@@ -364,14 +354,8 @@ class PoloniexApiClient {
   ) {
     await this.checkRateLimit("order");
 
-    const requestId = ++this.requestCounter;
-    console.log(
-      `[Request ${requestId}] Placing ${side} ${type} order for ${quantity} ${pair} via backend`
-    );
-
     try {
       if (this.mockMode) {
-        console.log(`[Request ${requestId}] Using mock order placement`);
         return {
           success: true,
           orderId: "mock-order-" + Date.now(),
@@ -395,15 +379,11 @@ class PoloniexApiClient {
       logApiCall("POST", "/orders", orderData);
       const response = await api.post("/orders", orderData);
 
-      console.log(`[Request ${requestId}] Order placed successfully`);
       return response.data;
     } catch (error) {
       const safeError = safeErrorHandler(error);
 
-      if (!IS_WEBCONTAINER) {
-        console.error(`[Request ${requestId}] Error placing order:`, safeError.message);
-      } else {
-        console.log(`[Request ${requestId}] WebContainer mode - using mock order response`);
+      if (IS_WEBCONTAINER) {
         return {
           success: true,
           orderId: "mock-order-" + Date.now(),
@@ -423,12 +403,8 @@ class PoloniexApiClient {
    * Get recent trades via secure backend
    */
   public async getRecentTrades(pair: string, limit: number = 50) {
-    const requestId = ++this.requestCounter;
-    console.log(`[Request ${requestId}] Getting recent trades for ${pair} via backend`);
-
     try {
       if (this.mockMode) {
-        console.log(`[Request ${requestId}] Using mock trades data for ${pair}`);
         return this.generateMockTrades(pair, limit);
       }
 
@@ -437,14 +413,15 @@ class PoloniexApiClient {
 
       logApiCall("GET", "/trades");
       const response = await api.get("/trades", {
-        params: { symbol: pair, limit }
+        params: { symbol: pair, limit },
       });
 
-      console.log(`[Request ${requestId}] Recent trades fetched successfully for ${pair}`);
       return response.data;
     } catch (error) {
       throw new PoloniexConnectionError(
-        `Failed to fetch recent trades for ${pair}: ${safeErrorHandler(error).message}`
+        `Failed to fetch recent trades for ${pair}: ${
+          safeErrorHandler(error).message
+        }`
       );
     }
   }
@@ -483,7 +460,11 @@ class PoloniexApiClient {
 
     try {
       if (this.mockMode) {
-        const mockData = this.generateMockHistoricalData(pair, startDate, endDate);
+        const mockData = this.generateMockHistoricalData(
+          pair,
+          startDate,
+          endDate
+        );
         this.historicalData.set(cacheKey, mockData);
         return mockData;
       }
@@ -495,8 +476,8 @@ class PoloniexApiClient {
           interval: "1h",
           startTime: new Date(startDate).getTime(),
           endTime: new Date(endDate).getTime(),
-          limit: 1000
-        }
+          limit: 1000,
+        },
       });
 
       const data = response.data.map((candle: unknown[]) => ({
@@ -512,8 +493,11 @@ class PoloniexApiClient {
       this.historicalData.set(cacheKey, data);
       return data;
     } catch (error) {
-      console.warn("Failed to fetch historical data, using mock data:", error);
-      const mockData = this.generateMockHistoricalData(pair, startDate, endDate);
+      const mockData = this.generateMockHistoricalData(
+        pair,
+        startDate,
+        endDate
+      );
       this.historicalData.set(cacheKey, mockData);
       return mockData;
     }

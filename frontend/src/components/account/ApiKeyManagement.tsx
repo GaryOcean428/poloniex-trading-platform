@@ -52,11 +52,6 @@ const ApiKeyManagement: React.FC = () => {
   // API base URL
   const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3000';
 
-  // Load API credentials on component mount
-  useEffect(() => {
-    loadApiCredentials();
-  }, []);
-
   // Clear messages after 5 seconds
   useEffect(() => {
     if (successMessage || error) {
@@ -103,6 +98,11 @@ const ApiKeyManagement: React.FC = () => {
       setLoading(false);
     }
   };
+
+  // Load API credentials on component mount
+  useEffect(() => {
+    loadApiCredentials();
+  }, [loadApiCredentials]);
 
   const handleFormChange = (field: keyof NewCredentialForm, value: string) => {
     setNewCredentialForm(prev => ({

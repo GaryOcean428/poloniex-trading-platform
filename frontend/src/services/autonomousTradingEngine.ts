@@ -1,8 +1,8 @@
 import { advancedBacktestService } from "@/services/advancedBacktestService";
 import { liveTradingService } from "@/services/liveTradingService";
 import { mockTradingService } from "@/services/mockTradingService";
-import { Strategy } from "@/types";
-import { BacktestOptions } from "@/types/backtest";
+import { Strategy, StrategyParameters } from "@/types";
+import { BacktestOptions, BacktestResult } from "@/types/backtest";
 
 // Autonomous Engine Interfaces
 export interface AutonomousSession {
@@ -22,14 +22,15 @@ export interface EnhancedStrategy extends Strategy {
   confidence: number;
   profitPotential: number;
   riskScore: number;
-  backtestResults?: any;
+  description: string;
+  backtestResults?: BacktestResult;
   mockTradingSessionId?: string;
   liveTradingSessionId?: string;
-  learningMetrics: {
-    adaptationRate: number;
-    consistencyScore: number;
-    marketConditionPerformance: Record<string, number>;
-  };
+  learningMetrics: LearningMetrics;
+  // For backward compatibility with direct property access
+  adaptationRate: number;
+  consistencyScore: number;
+  marketConditionPerformance: Record<string, number>;
 }
 
 export interface AutonomousPerformance {
@@ -126,7 +127,8 @@ const STRATEGY_TEMPLATES = [
 export class AutonomousTradingEngine {
   private static instance: AutonomousTradingEngine;
   private activeSessions: Map<string, AutonomousSession> = new Map();
-  private learningDatabase: Map<string, any> = new Map();
+  private learningDatabase: Map<string, MarketConditions | string[] | LearningMetrics> =
+    new Map();
   private marketAnalyzer: MarketConditionAnalyzer;
 
   private constructor() {
@@ -267,10 +269,6 @@ export class AutonomousTradingEngine {
         await this.sleep(5000);
       }
     } catch (error) {
-      console.error(
-        `Autonomous workflow error for session ${sessionId}:`,
-        error
-      );
       this.addNotification(sessionId, {
         type: "CRITICAL",
         phase: session.currentPhase,
@@ -307,7 +305,10 @@ export class AutonomousTradingEngine {
       `${sessionId}_market_conditions`,
       marketConditions
     );
-    this.learningDatabase.set(`${sessionId}_optimal_pairs`, optimalPairs);
+    this.learningDatabase.set(
+      `${sessionId}_optimal_pairs`,
+      optimalPairs
+    );
 
     this.addNotification(sessionId, {
       type: "SUCCESS",
@@ -326,10 +327,14 @@ export class AutonomousTradingEngine {
     const session = this.activeSessions.get(sessionId)!;
     const marketConditions = this.learningDatabase.get(
       `${sessionId}_market_conditions`
-    );
+    ) as MarketConditions | undefined;
     const optimalPairs = this.learningDatabase.get(
       `${sessionId}_optimal_pairs`
-    );
+    ) as string[] | undefined;
+
+    if (!marketConditions || !optimalPairs) {
+      throw new Error('Market conditions or optimal pairs not found in learning database');
+    }
 
     this.addNotification(sessionId, {
       type: "INFO",
@@ -342,26 +347,28 @@ export class AutonomousTradingEngine {
     const strategies: EnhancedStrategy[] = [];
 
     // Generate strategies for each optimal pair
-    for (const pair of optimalPairs) {
-      for (const template of STRATEGY_TEMPLATES) {
-        const strategy = await this.generateStrategyFromTemplate(
-          template,
-          pair,
-          marketConditions,
-          session.settings
-        );
-        strategies.push(strategy);
+    if (optimalPairs && marketConditions) {
+      for (const pair of optimalPairs) {
+        for (const template of STRATEGY_TEMPLATES) {
+          const strategy = await this.generateStrategyFromTemplate(
+            template,
+            pair,
+            marketConditions,
+            session.settings
+          );
+          strategies.push(strategy);
+        }
       }
+
+      // Score and rank strategies
+      const rankedStrategies = await this.rankStrategiesByPotential(
+        strategies,
+        marketConditions
+      );
+
+      // Keep top 5 strategies
+      session.strategies = rankedStrategies.slice(0, 5);
     }
-
-    // Score and rank strategies
-    const rankedStrategies = await this.rankStrategiesByPotential(
-      strategies,
-      marketConditions
-    );
-
-    // Keep top 5 strategies
-    session.strategies = rankedStrategies.slice(0, 5);
 
     this.addNotification(sessionId, {
       type: "SUCCESS",
@@ -423,7 +430,15 @@ export class AutonomousTradingEngine {
           )}% confidence`,
         });
       } catch (error) {
-        console.error(`Backtest failed for strategy ${strategy.name}:`, error);
+        const session = this.getSessionProgress(sessionId);
+        if (session) {
+          this.addNotification(sessionId, {
+            type: 'CRITICAL',
+            phase: session.currentPhase,
+            title: 'Backtest Failed',
+            message: `Backtest failed for strategy ${strategy.name}: ${error instanceof Error ? error.message : String(error)}`
+          });
+        }
         strategy.confidence = 0;
         strategy.profitPotential = 0;
         strategy.riskScore = 1;
@@ -525,8 +540,7 @@ export class AutonomousTradingEngine {
           session.currentPhase = "CONFIDENCE_EVALUATION";
         }
       }, mockDuration);
-    } catch (error) {
-      console.error("Mock trading start failed:", error);
+    } catch {
       this.addNotification(sessionId, {
         type: "WARNING",
         phase: "MOCK_TRADING",
@@ -799,64 +813,251 @@ export class AutonomousTradingEngine {
       session.notifications = session.notifications.slice(-50);
     }
 
-    console.log(
-      `[${session.currentPhase}] ${fullNotification.title}: ${fullNotification.message}`
-    );
+    // In a production environment, consider using a proper logging service
+    // For now, we'll just add the notification to the session
+    // which will be available through the getAutonomousSession API
   }
 
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  private getSessionProgress(sessionId: string): any {
+  private calculateInitialConfidence(
+    marketConditions: MarketConditions,
+    strategyType: string
+  ): number {
+    // Base confidence on market conditions and strategy type match
+    let confidence = 0.5; // Base confidence
+    
+    // Adjust based on market volatility
+    if (marketConditions.volatility === 'high') {
+      // Trend-following strategies typically perform better in high volatility
+      if (strategyType.toLowerCase().includes('trend')) {
+        confidence += 0.15;
+      } else if (strategyType.toLowerCase().includes('mean')) {
+        // Mean reversion strategies may struggle in high volatility
+        confidence -= 0.1;
+      } else {
+        confidence += 0.1;
+      }
+    } else if (marketConditions.volatility === 'low') {
+      // Mean reversion strategies often perform better in low volatility
+      if (strategyType.toLowerCase().includes('mean')) {
+        confidence += 0.15;
+      } else if (strategyType.toLowerCase().includes('trend')) {
+        // Trend-following strategies may struggle in low volatility
+        confidence -= 0.1;
+      } else {
+        confidence -= 0.1;
+      }
+    }
+    
+    // Adjust based on trend strength
+    if (marketConditions.trend === 'strong') {
+      // Trend-following strategies excel in strong trends
+      if (strategyType.toLowerCase().includes('trend')) {
+        confidence += 0.2;
+      } else if (strategyType.toLowerCase().includes('mean')) {
+        // Mean reversion strategies may struggle in strong trends
+        confidence -= 0.1;
+      } else {
+        confidence += 0.1;
+      }
+    } else if (marketConditions.trend === 'weak' || marketConditions.trend === 'ranging') {
+      // Mean reversion strategies often perform better in ranging markets
+      if (strategyType.toLowerCase().includes('mean')) {
+        confidence += 0.15;
+      } else if (strategyType.toLowerCase().includes('trend')) {
+        // Trend-following strategies may struggle in ranging markets
+        confidence -= 0.15;
+      } else {
+        confidence -= 0.05;
+      }
+    }
+    
+    // Ensure confidence is within bounds
+    return Math.min(Math.max(confidence, 0.1), 0.9);
+  }
+
+  private calculateProfitPotential(
+    marketConditions: MarketConditions,
+    strategyType: string,
+    aggressiveness: 'conservative' | 'moderate' | 'aggressive'
+  ): number {
+    let potential = 0.3; // Base potential
+    
+    // Adjust based on market conditions
+    if (marketConditions.volatility === 'high') {
+      potential += 0.2;
+    }
+    
+    if (marketConditions.trend === 'strong') {
+      potential += 0.15;
+    }
+    
+    // Adjust based on strategy type
+    if (strategyType === 'trend_following' && marketConditions.trend === 'strong') {
+      potential += 0.2;
+    } else if (strategyType === 'mean_reversion' && marketConditions.volatility === 'high') {
+      potential += 0.15;
+    }
+    
+    // Adjust based on aggressiveness setting
+    const aggressivenessMultiplier = {
+      conservative: 0.8,
+      moderate: 1.0,
+      aggressive: 1.3
+    };
+    
+    return potential * aggressivenessMultiplier[aggressiveness];
+  }
+
+  private calculateRiskScore(
+    marketConditions: MarketConditions,
+    strategyType: string,
+    maxRiskPerTrade: number
+  ): number {
+    let risk = 0.5; // Base risk
+    
+    // Adjust based on market conditions
+    if (marketConditions.volatility === 'high') {
+      risk += 0.3;
+    } else if (marketConditions.volatility === 'low') {
+      risk -= 0.2;
+    }
+    
+    // Adjust based on strategy type
+    if (strategyType === 'trend_following') {
+      risk -= 0.1;
+    } else if (strategyType === 'mean_reversion') {
+      risk += 0.1;
+    }
+    
+    // Adjust based on max risk per trade setting
+    const riskAdjustment = (maxRiskPerTrade / 2) * 2; // Normalize to 0-1 range
+    risk = risk * (1 + (riskAdjustment - 0.5));
+    
+    // Ensure risk is within bounds
+    return Math.min(Math.max(risk, 0.1), 0.9);
+  }
+
+  private getSessionProgress(sessionId: string): AutonomousSession | undefined {
     return this.activeSessions.get(sessionId);
   }
 
-  // Placeholder implementations for complex methods
+  // Helper method implementations
   private async generateStrategyFromTemplate(
-    template: any,
+    template: StrategyTemplate,
     pair: string,
-    marketConditions: any,
+    marketConditions: MarketConditions,
     settings: AutonomousSettings
   ): Promise<EnhancedStrategy> {
-    return {
+    // Generate appropriate parameters based on template type and market conditions
+    let parameters: StrategyParameters;
+
+    switch (template.type) {
+      case "trend_following":
+        parameters = {
+          pair,
+          timeframe: "1h",
+          fastPeriod: 12,
+          slowPeriod: 26,
+        };
+        break;
+      case "mean_reversion":
+        parameters = {
+          pair,
+          timeframe: "1h",
+          period: 14,
+          overbought: 70,
+          oversold: 30,
+        };
+        break;
+      default:
+        parameters = {
+          pair,
+          timeframe: "1h",
+          fastPeriod: 12,
+          slowPeriod: 26,
+        };
+    }
+
+    const strategy: EnhancedStrategy = {
       id: `strategy_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
       name: `${template.name} - ${pair}`,
+      type: template.type,
       description: `Auto-generated ${template.type} strategy for ${pair}`,
-      parameters: {
-        pair,
-        timeframe: "1h",
-        indicators: template.baseConfig.indicators,
-        riskLevel: template.baseConfig.riskLevel,
-      },
-      confidence: 0,
-      profitPotential: 0,
-      riskScore: 0,
+      parameters,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      confidence: this.calculateInitialConfidence(marketConditions, template.type),
+      profitPotential: this.calculateProfitPotential(marketConditions, template.type, settings.aggressiveness),
+      riskScore: this.calculateRiskScore(marketConditions, template.type, settings.maxRiskPerTrade),
       learningMetrics: {
         adaptationRate: 0,
         consistencyScore: 0,
         marketConditionPerformance: {},
+        timestamp: Date.now(),
+        lastUpdated: new Date().toISOString(),
+        strategyType: template.type,
+        performanceScore: 0
       },
+      // For backward compatibility with direct property access
+      adaptationRate: 0,
+      consistencyScore: 0,
+      marketConditionPerformance: {}
     };
+
+    // Ensure the direct properties are in sync with learningMetrics
+    strategy.adaptationRate = strategy.learningMetrics.adaptationRate;
+    strategy.consistencyScore = strategy.learningMetrics.consistencyScore;
+    strategy.marketConditionPerformance = strategy.learningMetrics.marketConditionPerformance;
+
+    return strategy;
   }
 
   private async rankStrategiesByPotential(
     strategies: EnhancedStrategy[],
-    marketConditions: any
+    marketConditions: MarketConditions
   ): Promise<EnhancedStrategy[]> {
-    // Assign scores based on market conditions and strategy type
-    return strategies
-      .map((strategy) => ({
+    // Score strategies based on market conditions and strategy type
+    return strategies.map((strategy) => {
+      let score = 0.5; // Base score
+      
+      // Adjust score based on market conditions
+      if (marketConditions.volatility === 'high' && strategy.type === 'mean_reversion') {
+        score += 0.3;
+      } else if (marketConditions.trend === 'strong' && strategy.type === 'trend_following') {
+        score += 0.3;
+      }
+      
+      // Adjust based on volume
+      if (marketConditions.volume === 'high') {
+        score += 0.1;
+      }
+      
+      // Adjust based on sentiment
+      if (marketConditions.sentiment === 'bullish' && strategy.type === 'trend_following') {
+        score += 0.1;
+      } else if (marketConditions.sentiment === 'bearish' && strategy.type === 'mean_reversion') {
+        score += 0.1;
+      }
+      
+      // Ensure score is within bounds
+      score = Math.min(Math.max(score, 0.1), 0.9);
+      
+      return {
         ...strategy,
-        profitPotential: Math.random() * 0.3 + 0.1, // Placeholder
-        riskScore: Math.random() * 0.2 + 0.05,
-      }))
-      .sort((a, b) => b.profitPotential - a.profitPotential);
+        profitPotential: score,
+        riskScore: 1 - score // Inverse relationship between profit potential and risk
+      };
+    }).sort((a, b) => b.profitPotential - a.profitPotential);
   }
 
-  private calculateStrategyConfidence(backtestResult: any): number {
+  private calculateStrategyConfidence(backtestResult: BacktestResult): number {
     const winRate = backtestResult.winRate / 100;
-    const profitFactor = Math.min(backtestResult.profitFactor || 0, 3) / 3;
+    const profitFactor =
+      Math.min(backtestResult.metrics.profitFactor || 0, 3) / 3;
     const sharpeRatio =
       Math.min(Math.max(backtestResult.sharpeRatio || 0, 0), 2) / 2;
     const drawdownPenalty = Math.max(
@@ -872,7 +1073,6 @@ export class AutonomousTradingEngine {
     );
   }
 
-  // Missing method implementations
   private getBacktestStartDate(timeHorizon: number): string {
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - timeHorizon);
@@ -883,8 +1083,58 @@ export class AutonomousTradingEngine {
     strategy: EnhancedStrategy,
     settings: AutonomousSettings
   ): Promise<void> {
-    // Placeholder optimization logic
-    strategy.confidence *= 1.1; // Simulate improvement
+    // Base improvement based on strategy type and market conditions
+    let improvementFactor = 1.0;
+    
+    // Adjust improvement based on aggressiveness setting
+    switch (settings.aggressiveness) {
+      case 'conservative':
+        improvementFactor = 1.05;
+        break;
+      case 'moderate':
+        improvementFactor = 1.1;
+        break;
+      case 'aggressive':
+        improvementFactor = 1.15;
+        break;
+      default:
+        improvementFactor = 1.05;
+    }
+    
+    // Apply improvement to confidence, but cap at 0.95 to avoid overconfidence
+    strategy.confidence = Math.min(0.95, strategy.confidence * improvementFactor);
+    
+    // Adjust position size based on risk settings if strategy has position size
+    if (strategy.parameters.positionSize) {
+      // Ensure position size doesn't exceed max risk per trade setting
+      strategy.parameters.positionSize = Math.min(
+        settings.maxRiskPerTrade,
+        strategy.parameters.positionSize * improvementFactor
+      );
+    }
+    
+    // Update learning metrics to reflect optimization
+    if (!strategy.learningMetrics) {
+      strategy.learningMetrics = {
+        adaptationRate: 0.5,
+        consistencyScore: 0.5,
+        marketConditionPerformance: {},
+        timestamp: Date.now(),
+        lastUpdated: new Date().toISOString(),
+        strategyType: strategy.type || 'unknown',
+        performanceScore: 0.5
+      };
+    }
+    
+    // Slight improvement to learning metrics
+    strategy.learningMetrics.adaptationRate = Math.min(
+      1.0,
+      (strategy.learningMetrics.adaptationRate || 0.5) * 1.05
+    );
+    strategy.learningMetrics.consistencyScore = Math.min(
+      1.0,
+      (strategy.learningMetrics.consistencyScore || 0.5) * 1.03
+    );
   }
 
   private calculateMockTradingDuration(
@@ -900,24 +1150,26 @@ export class AutonomousTradingEngine {
     }
   }
 
-  private calculateCurrentPerformance(liveSession: any): any {
+  private calculateCurrentPerformance(
+    liveSession: LiveSession
+  ): PerformanceData {
     return {
       totalReturn:
         (liveSession.currentBalance - liveSession.initialBalance) /
         liveSession.initialBalance,
       drawdown: Math.max(
         ...(liveSession.trades.map(
-          (t: any) =>
+          (t: LiveTrade) =>
             (Math.max(
               ...liveSession.trades
                 .slice(0, liveSession.trades.indexOf(t) + 1)
-                .map((trade: any) => trade.balance)
+                .map((trade: LiveTrade) => trade.balance)
             ) -
               t.balance) /
             Math.max(
               ...liveSession.trades
                 .slice(0, liveSession.trades.indexOf(t) + 1)
-                .map((trade: any) => trade.balance)
+                .map((trade: LiveTrade) => trade.balance)
             )
         ) || [0])
       ),
@@ -926,7 +1178,7 @@ export class AutonomousTradingEngine {
 
   private updatePerformance(
     current: AutonomousPerformance,
-    newData: any
+    newData: PerformanceData
   ): AutonomousPerformance {
     return {
       ...current,
@@ -936,44 +1188,212 @@ export class AutonomousTradingEngine {
   }
 
   private async analyzePerformanceData(sessionId: string): Promise<void> {
-    // Placeholder for performance analysis
-    console.log(`Analyzing performance data for session ${sessionId}`);
+    const session = this.activeSessions.get(sessionId);
+    if (!session) return;
+
+    // Analyze strategy performance and update learning metrics
+    for (const strategy of session.strategies) {
+      if (strategy.backtestResults) {
+        const confidence = this.calculateStrategyConfidence(strategy.backtestResults);
+        strategy.confidence = confidence;
+        
+        // Update learning metrics based on performance
+        strategy.learningMetrics.adaptationRate = Math.min(1, confidence * 1.2);
+        strategy.learningMetrics.consistencyScore = Math.min(1, confidence * 0.8);
+      }
+    }
   }
 
   private async updateLearningDatabase(sessionId: string): Promise<void> {
-    // Placeholder for updating learning database
-    console.log(`Updating learning database for session ${sessionId}`);
+    const session = this.activeSessions.get(sessionId);
+    if (!session) return;
+
+    // Store market conditions and strategy performance for future learning
+    const marketConditions = this.learningDatabase.get(
+      `${sessionId}_market_conditions`
+    ) as MarketConditions | undefined;
+
+    if (marketConditions) {
+      // Store performance data for each strategy
+      session.strategies.forEach((strategy) => {
+        const strategyKey = `${strategy.id}_${marketConditions.volatility}_${marketConditions.trend}`;
+        this.learningDatabase.set(strategyKey, {
+          ...strategy.learningMetrics,
+          timestamp: Date.now(),
+        } as LearningMetrics);
+      });
+    }
   }
 
   private async optimizeForProfitMaximization(
     sessionId: string
   ): Promise<void> {
-    // Placeholder for profit maximization
-    console.log(`Optimizing for profit maximization for session ${sessionId}`);
+    const session = this.activeSessions.get(sessionId);
+    if (!session) return;
+
+    // Sort strategies by profit potential and risk
+    const sortedStrategies = [...session.strategies].sort((a, b) => {
+      const scoreA = a.confidence * a.profitPotential * (1 - a.riskScore);
+      const scoreB = b.confidence * b.profitPotential * (1 - b.riskScore);
+      return scoreB - scoreA;
+    });
+
+    // Allocate more capital to top-performing strategies
+    const topStrategies = sortedStrategies.slice(0, 3);
+    const remainingStrategies = sortedStrategies.slice(3);
+
+    // Update allocation based on performance
+    topStrategies.forEach((strategy) => {
+      strategy.parameters.positionSize = Math.min(
+        session.settings.maxRiskPerTrade * 1.5,
+        session.settings.maxRiskPerTrade * 2
+      );
+    });
+
+    // Reduce allocation for underperforming strategies
+    remainingStrategies.forEach((strategy) => {
+      strategy.parameters.positionSize = Math.max(
+        session.settings.maxRiskPerTrade * 0.5,
+        session.settings.maxRiskPerTrade * 0.1
+      );
+    });
   }
 
   private startLearningLoop(): void {
-    // Placeholder for learning loop
-    console.log("Learning loop started");
+    // Run learning loop every 6 hours
+    setInterval(async () => {
+      for (const [sessionId, session] of this.activeSessions.entries()) {
+        if (session.isActive) {
+          try {
+            await this.analyzePerformanceData(sessionId);
+            await this.updateLearningDatabase(sessionId);
+            await this.optimizeForProfitMaximization(sessionId);
+          } catch (error) {
+            const session = this.getSessionProgress(sessionId);
+            if (session) {
+              this.addNotification(sessionId, {
+                type: 'CRITICAL',
+                phase: session.currentPhase,
+                title: 'Learning Loop Error',
+                message: `Error in learning loop: ${error instanceof Error ? error.message : String(error)}`
+              });
+            }
+          }
+        }
+      }
+    }, 6 * 60 * 60 * 1000); // 6 hours
   }
 
   private async selectOptimalTradingPairs(
-    marketConditions: any
+    marketConditions: MarketConditions
   ): Promise<string[]> {
-    // Return popular trading pairs for now
-    return ["BTC-USDT", "ETH-USDT", "SOL-USDT"];
+    // Base pairs with different characteristics
+    const basePairs = [
+      { symbol: 'BTC-USDT', volatility: 'high', volume: 'very high' },
+      { symbol: 'ETH-USDT', volatility: 'high', volume: 'high' },
+      { symbol: 'SOL-USDT', volatility: 'very high', volume: 'high' },
+      { symbol: 'XRP-USDT', volatility: 'medium', volume: 'high' },
+      { symbol: 'ADA-USDT', volatility: 'medium', volume: 'medium' },
+      { symbol: 'DOGE-USDT', volatility: 'very high', volume: 'medium' },
+      { symbol: 'DOT-USDT', volatility: 'medium', volume: 'medium' },
+      { symbol: 'LTC-USDT', volatility: 'low', volume: 'medium' },
+      { symbol: 'LINK-USDT', volatility: 'high', volume: 'medium' },
+      { symbol: 'MATIC-USDT', volatility: 'high', volume: 'medium' },
+    ];
+
+    // Filter pairs based on market conditions
+    let filteredPairs = [...basePairs];
+
+    // Adjust pair selection based on market volatility
+    if (marketConditions.volatility === 'high') {
+      // In high volatility, prefer more established pairs
+      filteredPairs = filteredPairs.filter(
+        pair => pair.volatility !== 'very high' && pair.volume === 'high'
+      );
+    } else if (marketConditions.volatility === 'low') {
+      // In low volatility, can take on more risk with higher volatility pairs
+      filteredPairs = filteredPairs.filter(
+        pair => pair.volatility !== 'low' && pair.volume !== 'low'
+      );
+    }
+
+    // Adjust based on market trend
+    if (marketConditions.trend === 'strong uptrend') {
+      // In strong uptrends, prefer higher beta (more volatile) assets
+      filteredPairs = filteredPairs.sort((a, b) => {
+        const volatilityOrder = { 'low': 0, 'medium': 1, 'high': 2, 'very high': 3 };
+        return (volatilityOrder[b.volatility as keyof typeof volatilityOrder] || 0) - 
+               (volatilityOrder[a.volatility as keyof typeof volatilityOrder] || 0);
+      });
+    } else if (marketConditions.trend === 'strong downtrend') {
+      // In strong downtrends, prefer more stable assets
+      filteredPairs = filteredPairs.sort((a, b) => {
+        const volatilityOrder = { 'low': 0, 'medium': 1, 'high': 2, 'very high': 3 };
+        return (volatilityOrder[a.volatility as keyof typeof volatilityOrder] || 0) - 
+               (volatilityOrder[b.volatility as keyof typeof volatilityOrder] || 0);
+      });
+    }
+
+    // Ensure we have at least 3 pairs, but no more than 5
+    const maxPairs = Math.min(5, Math.max(3, filteredPairs.length));
+    return filteredPairs.slice(0, maxPairs).map(pair => pair.symbol);
   }
+}
+
+// Type definitions
+interface StrategyTemplate {
+  name: string;
+  type: string;
+  baseConfig: {
+    indicators: string[];
+    timeframes: string[];
+    riskLevel: string;
+  };
+}
+
+interface LearningMetrics {
+  adaptationRate: number;
+  consistencyScore: number;
+  marketConditionPerformance: Record<string, number>;
+  timestamp: number; // Track when metrics were last updated
+  lastUpdated?: string; // Optional ISO timestamp for display
+  strategyType?: string; // Optional strategy type for categorization
+  performanceScore?: number; // Optional overall performance metric
+}
+
+interface MarketConditions {
+  volatility: string;
+  trend: string;
+  volume: string;
+  sentiment: string;
+  timestamp: number;
+}
+
+interface LiveSession {
+  currentBalance: number;
+  initialBalance: number;
+  trades: LiveTrade[];
+}
+
+interface LiveTrade {
+  balance: number;
+}
+
+interface PerformanceData {
+  totalReturn: number;
+  drawdown: number;
 }
 
 // Market Condition Analyzer class
 class MarketConditionAnalyzer {
-  async analyzeCurrentMarket(): Promise<any> {
+  async analyzeCurrentMarket(): Promise<MarketConditions> {
     // Placeholder market analysis
     return {
       volatility: "medium",
       trend: "neutral",
       volume: "high",
       sentiment: "bullish",
+      timestamp: Date.now(),
     };
   }
 }

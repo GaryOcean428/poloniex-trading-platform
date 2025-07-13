@@ -143,28 +143,55 @@ const AutonomousTradingDashboard: React.FC = () => {
                     <div className="flex space-x-3">
                         <button
                             onClick={() => setShowSettings(!showSettings)}
-                            className="bg-white/20 hover:bg-white/30 px-4 py-2 rounded-lg flex items-center"
+                            className="bg-white/20 hover:bg-white/30 px-4 py-2 rounded-lg flex items-center focus:outline-none focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-blue-600"
+                            aria-expanded={showSettings}
+                            aria-controls="settings-panel"
+                            aria-label={`${showSettings ? 'Hide' : 'Show'} settings panel`}
                         >
-                            <Settings className="h-4 w-4 mr-2" />
+                            <Settings className="h-4 w-4 mr-2" aria-hidden="true" />
                             Settings
                         </button>
                         {!session?.isActive ? (
                             <button
                                 onClick={handleStartAutonomous}
                                 disabled={loading}
-                                className="bg-green-600 hover:bg-green-700 px-6 py-2 rounded-lg font-medium flex items-center disabled:opacity-50"
+                                className="bg-green-600 hover:bg-green-700 px-6 py-2 rounded-lg font-medium flex items-center disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 focus:ring-offset-blue-600"
+                                aria-busy={loading}
+                                aria-live="polite"
                             >
-                                <Play className="h-4 w-4 mr-2" />
-                                {loading ? 'Starting...' : 'Start Autonomous Trading'}
+                                {loading ? (
+                                    <>
+                                        <span className="mr-2 h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" aria-hidden="true" />
+                                        <span>Starting...</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <Play className="h-4 w-4 mr-2" aria-hidden="true" />
+                                        <span>Start Autonomous Trading</span>
+                                    </>
+                                )}
+                                <span className="sr-only">Start autonomous trading with current settings</span>
                             </button>
                         ) : (
                             <button
                                 onClick={handleStopAutonomous}
                                 disabled={loading}
-                                className="bg-red-600 hover:bg-red-700 px-6 py-2 rounded-lg font-medium flex items-center disabled:opacity-50"
+                                className="bg-red-600 hover:bg-red-700 px-6 py-2 rounded-lg font-medium flex items-center disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 focus:ring-offset-blue-600"
+                                aria-busy={loading}
+                                aria-live="polite"
                             >
-                                <Square className="h-4 w-4 mr-2" />
-                                {loading ? 'Stopping...' : 'Stop Trading'}
+                                {loading ? (
+                                    <>
+                                        <span className="mr-2 h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" aria-hidden="true" />
+                                        <span>Stopping...</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <Square className="h-4 w-4 mr-2" aria-hidden="true" />
+                                        <span>Stop Trading</span>
+                                    </>
+                                )}
+                                <span className="sr-only">Stop the current autonomous trading session</span>
                             </button>
                         )}
                     </div>
@@ -173,7 +200,7 @@ const AutonomousTradingDashboard: React.FC = () => {
 
             {/* Error Display */}
             {error && (
-                <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded-lg">
+                <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded-lg" role="alert">
                     <div className="flex">
                         <X className="h-5 w-5 text-red-500 mr-3 flex-shrink-0" />
                         <div>
@@ -185,149 +212,225 @@ const AutonomousTradingDashboard: React.FC = () => {
             )}
 
             {/* Settings Panel */}
-            {showSettings && (
-                <div className="bg-white rounded-lg border border-gray-200 p-6">
-                    <h3 className="text-lg font-medium mb-4">Autonomous Trading Settings</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                                Initial Balance ($)
-                            </label>
-                            <input
-                                type="number"
-                                value={settings.initialBalance}
-                                onChange={(e) => setSettings({ ...settings, initialBalance: parseFloat(e.target.value) })}
-                                className="w-full border border-gray-300 rounded-md px-3 py-2"
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                                Max Risk Per Trade (%)
-                            </label>
-                            <input
-                                type="number"
-                                step="0.01"
-                                min="0.01"
-                                max="0.1"
-                                value={settings.maxRiskPerTrade * 100}
-                                onChange={(e) => setSettings({ ...settings, maxRiskPerTrade: parseFloat(e.target.value) / 100 })}
-                                className="w-full border border-gray-300 rounded-md px-3 py-2"
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                                Max Drawdown (%)
-                            </label>
-                            <input
-                                type="number"
-                                step="0.01"
-                                min="0.05"
-                                max="0.5"
-                                value={settings.maxDrawdown * 100}
-                                onChange={(e) => setSettings({ ...settings, maxDrawdown: parseFloat(e.target.value) / 100 })}
-                                className="w-full border border-gray-300 rounded-md px-3 py-2"
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                                Confidence Threshold (%)
-                            </label>
-                            <input
-                                type="number"
-                                min="50"
-                                max="95"
-                                value={settings.confidenceThreshold}
-                                onChange={(e) => setSettings({ ...settings, confidenceThreshold: parseFloat(e.target.value) })}
-                                className="w-full border border-gray-300 rounded-md px-3 py-2"
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                                Profit Target (%)
-                            </label>
-                            <input
-                                type="number"
-                                step="0.01"
-                                min="0.05"
-                                max="1"
-                                value={settings.profitTarget * 100}
-                                onChange={(e) => setSettings({ ...settings, profitTarget: parseFloat(e.target.value) / 100 })}
-                                className="w-full border border-gray-300 rounded-md px-3 py-2"
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                                Aggressiveness
-                            </label>
-                            <select
-                                value={settings.aggressiveness}
-                                onChange={(e) => setSettings({ ...settings, aggressiveness: e.target.value as any })}
-                                className="w-full border border-gray-300 rounded-md px-3 py-2"
-                            >
-                                <option value="conservative">Conservative</option>
-                                <option value="moderate">Moderate</option>
-                                <option value="aggressive">Aggressive</option>
-                            </select>
-                        </div>
-                        <div className="md:col-span-2 lg:col-span-3">
-                            <label className="flex items-center">
+            <div id="settings-panel" role="region" aria-labelledby="settings-heading">
+                {showSettings && (
+                    <div className="bg-white rounded-lg border border-gray-200 p-6">
+                        <h3 id="settings-heading" className="text-lg font-medium mb-4">Autonomous Trading Settings</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="initial-balance">
+                                    Initial Balance ($)
+                                </label>
                                 <input
-                                    type="checkbox"
-                                    checked={settings.autoProgressToLive}
-                                    onChange={(e) => setSettings({ ...settings, autoProgressToLive: e.target.checked })}
-                                    className="mr-2"
+                                    id="initial-balance"
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={settings.initialBalance}
+                                    onChange={(e) => setSettings({ ...settings, initialBalance: parseFloat(e.target.value) })}
+                                    className="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                    aria-describedby="initial-balance-help"
                                 />
-                                <span className="text-sm text-gray-700">
-                                    Automatically progress to live trading when confidence threshold is met
-                                </span>
-                            </label>
+                                <p id="initial-balance-help" className="mt-1 text-xs text-gray-500">
+                                    The initial amount of money to start with
+                                </p>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="max-risk">
+                                    Max Risk Per Trade (%)
+                                </label>
+                                <input
+                                    id="max-risk"
+                                    type="number"
+                                    step="0.01"
+                                    min="0.01"
+                                    max="10"
+                                    value={settings.maxRiskPerTrade * 100}
+                                    onChange={(e) => setSettings({ ...settings, maxRiskPerTrade: parseFloat(e.target.value) / 100 })}
+                                    className="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                    aria-describedby="max-risk-help"
+                                />
+                                <p id="max-risk-help" className="mt-1 text-xs text-gray-500">
+                                    Maximum risk per trade as a percentage of the total balance
+                                </p>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="max-drawdown">
+                                    Max Drawdown (%)
+                                </label>
+                                <input
+                                    id="max-drawdown"
+                                    type="number"
+                                    step="0.1"
+                                    min="1"
+                                    max="50"
+                                    value={settings.maxDrawdown * 100}
+                                    onChange={(e) => setSettings({ ...settings, maxDrawdown: parseFloat(e.target.value) / 100 })}
+                                    className="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                    aria-describedby="max-drawdown-help"
+                                />
+                                <p id="max-drawdown-help" className="mt-1 text-xs text-gray-500">
+                                    Maximum allowed drawdown before taking protective action
+                                </p>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="confidence-threshold">
+                                    Confidence Threshold (%)
+                                </label>
+                                <input
+                                    id="confidence-threshold"
+                                    type="number"
+                                    min="50"
+                                    max="100"
+                                    value={settings.confidenceThreshold}
+                                    onChange={(e) => setSettings({ ...settings, confidenceThreshold: parseFloat(e.target.value) })}
+                                    className="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                    aria-describedby="confidence-threshold-help"
+                                />
+                                <p id="confidence-threshold-help" className="mt-1 text-xs text-gray-500">
+                                    Minimum confidence level required for trade execution (50-100%)
+                                </p>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="profit-target">
+                                    Profit Target (%)
+                                </label>
+                                <input
+                                    id="profit-target"
+                                    type="number"
+                                    step="0.1"
+                                    min="1"
+                                    max="100"
+                                    value={settings.profitTarget * 100}
+                                    onChange={(e) => setSettings({ ...settings, profitTarget: parseFloat(e.target.value) / 100 })}
+                                    className="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                    aria-describedby="profit-target-help"
+                                />
+                                <p id="profit-target-help" className="mt-1 text-xs text-gray-500">
+                                    Monthly profit target as a percentage of the total balance
+                                </p>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1" htmlFor="aggressiveness">
+                                    Aggressiveness
+                                </label>
+                                <select
+                                    id="aggressiveness"
+                                    value={settings.aggressiveness}
+                                    onChange={(e) => setSettings({ ...settings, aggressiveness: e.target.value as any })}
+                                    className="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                    aria-describedby="aggressiveness-help"
+                                >
+                                    <option value="conservative">Conservative</option>
+                                    <option value="moderate">Moderate</option>
+                                    <option value="aggressive">Aggressive</option>
+                                </select>
+                                <p id="aggressiveness-help" className="mt-1 text-xs text-gray-500">
+                                    Controls the risk level of the trading strategy
+                                </p>
+                            </div>
+                            <div className="md:col-span-2 lg:col-span-3">
+                                <div className="flex items-start">
+                                    <div className="flex items-center h-5">
+                                        <input
+                                            id="auto-progress"
+                                            type="checkbox"
+                                            checked={settings.autoProgressToLive}
+                                            onChange={(e) => setSettings({ ...settings, autoProgressToLive: e.target.checked })}
+                                            className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                                            aria-describedby="auto-progress-help"
+                                        />
+                                    </div>
+                                    <div className="ml-3 text-sm">
+                                        <label htmlFor="auto-progress" className="font-medium text-gray-700">
+                                            Auto-progress to live trading
+                                        </label>
+                                        <p id="auto-progress-help" className="text-gray-500">
+                                            Automatically progress to live trading when confidence threshold is met
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* Session Status */}
+                {session && (
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        {/* Current Phase */}
+                        <div className="lg:col-span-2 bg-white rounded-lg border border-gray-200 p-6">
+                            <h3 className="text-lg font-medium mb-4">Current Phase</h3>
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center">
+                                    {getPhaseIcon(session.currentPhase)}
+                                    <div className="ml-3">
+                                        <h4 className="font-medium">{formatPhase(session.currentPhase)}</h4>
+                                        <p className="text-sm text-gray-500">
+                                            {session.isActive ? 'Active' : 'Stopped'}
+                                        </p>
+                                    </div>
+                                </div>
+                                <div className="text-right">
+                                    <p className="text-2xl font-bold text-green-600">
+                                        {session.performance.confidenceScore.toFixed(1)}%
+                                    </p>
+                                    <p className="text-sm text-gray-500">Confidence Score</p>
+                                </div>
+                            </div>
+
+                            {/* Progress Bar */}
+                            <div className="mt-4">
+                                <div className="flex justify-between text-xs text-gray-500 mb-1">
+                                    <span>Progress to Live Trading</span>
+                                    <span>{session.performance.confidenceScore.toFixed(1)}% / {settings.confidenceThreshold}%</span>
+                                </div>
+                                <div className="w-full bg-gray-200 rounded-full h-2">
+                                    <div
+                                        className={`h-2 rounded-full transition-all duration-500 ${
+                                            session.performance.confidenceScore >= settings.confidenceThreshold
+                                                ? 'bg-green-500'
+                                                : 'bg-blue-500'
+                                        }`}
+                                        style={{ 
+                                            width: `${Math.min(100, (session.performance.confidenceScore / settings.confidenceThreshold) * 100)}%` 
+                                        }}
+                                        role="progressbar"
+                                        aria-valuenow={session.performance.confidenceScore}
+                                        aria-valuemin={0}
+                                        aria-valuemax={100}
+                                        aria-label="Progress to live trading"
+                                    />
+                                </div>
+                                <div className="mt-3">
+                                    <div className="flex items-start">
+                                        <div className="flex items-center h-5">
+                                            <input
+                                                id="auto-progress"
+                                                type="checkbox"
+                                                checked={settings.autoProgressToLive}
+                                                onChange={(e) => setSettings({ ...settings, autoProgressToLive: e.target.checked })}
+                                                className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                                                aria-describedby="auto-progress-help"
+                                            />
+                                        </div>
+                                        <div className="ml-3 text-sm">
+                                            <label htmlFor="auto-progress" className="font-medium text-gray-700">
+                                                Auto-progress to live trading
+                                            </label>
+                                            <p id="auto-progress-help" className="text-gray-500">
+                                                Automatically progress to live trading when confidence threshold is met
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
             )}
 
-            {/* Session Status */}
-            {session && (
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                    {/* Current Phase */}
-                    <div className="lg:col-span-2 bg-white rounded-lg border border-gray-200 p-6">
-                        <h3 className="text-lg font-medium mb-4">Current Phase</h3>
-                        <div className="flex items-center justify-between">
-                            <div className="flex items-center">
-                                {getPhaseIcon(session.currentPhase)}
-                                <div className="ml-3">
-                                    <h4 className="font-medium">{formatPhase(session.currentPhase)}</h4>
-                                    <p className="text-sm text-gray-500">
-                                        {session.isActive ? 'Active' : 'Stopped'}
-                                    </p>
-                                </div>
-                            </div>
-                            <div className="text-right">
-                                <p className="text-2xl font-bold text-green-600">
-                                    {session.performance.confidenceScore.toFixed(1)}%
-                                </p>
-                                <p className="text-sm text-gray-500">Confidence Score</p>
-                            </div>
-                        </div>
-
-                        {/* Progress Bar */}
-                        <div className="mt-4">
-                            <div className="flex justify-between text-xs text-gray-500 mb-1">
-                                <span>Progress to Live Trading</span>
-                                <span>{session.performance.confidenceScore.toFixed(1)}% / {settings.confidenceThreshold}%</span>
-                            </div>
-                            <div className="w-full bg-gray-200 rounded-full h-2">
-                                <div
-                                    className={`h-2 rounded-full transition-all duration-500 ${session.performance.confidenceScore >= settings.confidenceThreshold
-                                            ? 'bg-green-500'
-                                            : 'bg-blue-500'
-                                        }`}
-                                    style={{ width: `${Math.min(100, (session.performance.confidenceScore / settings.confidenceThreshold) * 100)}%` }}
-                                />
-                            </div>
-                        </div>
-
-                        {/* Performance Metrics */}
+            {/* Performance Metrics */}
                         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-6">
                             <div className="text-center">
                                 <p className="text-2xl font-bold">{session.strategies.length}</p>

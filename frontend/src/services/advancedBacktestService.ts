@@ -124,112 +124,107 @@ export class AdvancedBacktestService {
     strategy: Strategy,
     options: BacktestOptions
   ): Promise<BacktestResult & { advancedMetrics: AdvancedBacktestMetrics }> {
-    try {
-      // Load enhanced historical data
-      const data = await this.getMultiTimeframeData({
-        symbols: [strategy.parameters.pair],
-        timeframes: ["1h", "4h", "1d"],
-        startDate: options.startDate,
-        endDate: options.endDate,
-        includeVolume: true,
-        adjustForSplits: true,
-        adjustForDividends: true,
-      });
+    // Load enhanced historical data
+    const data = await this.getMultiTimeframeData({
+      symbols: [strategy.parameters.pair],
+      timeframes: ["1h", "4h", "1d"],
+      startDate: options.startDate,
+      endDate: options.endDate,
+      includeVolume: true,
+      adjustForSplits: true,
+      adjustForDividends: true,
+    });
 
-      const primaryData = data["1h"] || data["4h"] || data["1d"];
-      if (!primaryData || primaryData.length === 0) {
-        throw new Error("No historical data available");
-      }
-
-      // Initialize backtest state
-      let balance = options.initialBalance;
-      const trades: BacktestTrade[] = [];
-      let highWaterMark = balance;
-      const equityCurve: {
-        timestamp: number;
-        balance: number;
-        drawdown: number;
-      }[] = [];
-
-      // Enhanced execution with market microstructure considerations
-      for (let i = 50; i < primaryData.length; i++) {
-        const marketData = primaryData.slice(0, i + 1);
-        const signal = executeStrategy(strategy, marketData);
-
-        if (signal.signal) {
-          const price = primaryData[i].close;
-          const amount = this.calculateOptimalPositionSize(
-            balance,
-            price,
-            marketData
-          );
-
-          // Execute trade with enhanced slippage and market impact models
-          const trade = this.executeAdvancedTrade(
-            signal.signal,
-            price,
-            amount,
-            balance,
-            options,
-            marketData[marketData.length - 1]
-          );
-
-          trades.push(trade);
-          balance = trade.balance;
-
-          // Update high water mark and calculate drawdown
-          if (balance > highWaterMark) {
-            highWaterMark = balance;
-          }
-
-          const drawdown = (highWaterMark - balance) / highWaterMark;
-          equityCurve.push({
-            timestamp: primaryData[i].timestamp,
-            balance,
-            drawdown,
-          });
-        }
-      }
-
-      // Calculate enhanced metrics
-      const basicMetrics = this.calculateBasicMetrics(
-        trades,
-        options.initialBalance
-      );
-      const advancedMetrics = this.calculateAdvancedMetrics(
-        trades,
-        equityCurve,
-        options.initialBalance
-      );
-
-      const result: BacktestResult = {
-        strategyId: strategy.id,
-        startDate: options.startDate,
-        endDate: options.endDate,
-        initialBalance: options.initialBalance,
-        finalBalance: balance,
-        totalPnL: balance - options.initialBalance,
-        totalTrades: trades.length,
-        winningTrades: trades.filter((t) => t.pnl > 0).length,
-        losingTrades: trades.filter((t) => t.pnl < 0).length,
-        winRate:
-          trades.length > 0
-            ? (trades.filter((t) => t.pnl > 0).length / trades.length) * 100
-            : 0,
-        maxDrawdown: this.calculateMaxDrawdown(trades),
-        sharpeRatio: this.calculateSharpeRatio(trades),
-        trades,
-        metrics: basicMetrics,
-      };
-
-      return {
-        ...result,
-        advancedMetrics,
-      };
-    } catch (error) {
-      console.error("Advanced backtest failed:", error);
-      throw error;
+    const primaryData = data["1h"] || data["4h"] || data["1d"];
+    if (!primaryData || primaryData.length === 0) {
+      throw new Error("No historical data available");
     }
+
+    // Initialize backtest state
+    let balance = options.initialBalance;
+    const trades: BacktestTrade[] = [];
+    let highWaterMark = balance;
+    const equityCurve: {
+      timestamp: number;
+      balance: number;
+      drawdown: number;
+    }[] = [];
+
+    // Enhanced execution with market microstructure considerations
+    for (let i = 50; i < primaryData.length; i++) {
+      const marketData = primaryData.slice(0, i + 1);
+      const signal = executeStrategy(strategy, marketData);
+
+      if (signal.signal) {
+        const price = primaryData[i].close;
+        const amount = this.calculateOptimalPositionSize(
+          balance,
+          price,
+          marketData
+        );
+
+        // Execute trade with enhanced slippage and market impact models
+        const trade = this.executeAdvancedTrade(
+          signal.signal,
+          price,
+          amount,
+          balance,
+          options,
+          marketData[marketData.length - 1]
+        );
+
+        trades.push(trade);
+        balance = trade.balance;
+
+        // Update high water mark and calculate drawdown
+        if (balance > highWaterMark) {
+          highWaterMark = balance;
+        }
+
+        const drawdown = (highWaterMark - balance) / highWaterMark;
+        equityCurve.push({
+          timestamp: primaryData[i].timestamp,
+          balance,
+          drawdown,
+        });
+      }
+    }
+
+    // Calculate enhanced metrics
+    const basicMetrics = this.calculateBasicMetrics(
+      trades,
+      options.initialBalance
+    );
+    const advancedMetrics = this.calculateAdvancedMetrics(
+      trades,
+      equityCurve,
+      options.initialBalance
+    );
+
+    const result: BacktestResult = {
+      strategyId: strategy.id,
+      startDate: options.startDate,
+      endDate: options.endDate,
+      initialBalance: options.initialBalance,
+      finalBalance: balance,
+      totalPnL: balance - options.initialBalance,
+      totalTrades: trades.length,
+      winningTrades: trades.filter((t) => t.pnl > 0).length,
+      losingTrades: trades.filter((t) => t.pnl < 0).length,
+      winRate:
+        trades.length > 0
+          ? (trades.filter((t) => t.pnl > 0).length / trades.length) * 100
+          : 0,
+      maxDrawdown: this.calculateMaxDrawdown(trades),
+      sharpeRatio: this.calculateSharpeRatio(trades),
+      trades,
+      metrics: basicMetrics,
+    };
+
+    return {
+      ...result,
+      advancedMetrics,
+    };
   }
 
   /**
@@ -238,48 +233,42 @@ export class AdvancedBacktestService {
   public async runPortfolioBacktest(
     options: PortfolioBacktestOptions
   ): Promise<PortfolioBacktestResult> {
-    try {
-      const strategyResults: BacktestResult[] = [];
-      const rebalanceEvents: RebalanceEvent[] = [];
+    const strategyResults: BacktestResult[] = [];
+    const rebalanceEvents: RebalanceEvent[] = [];
 
-      // Run individual strategy backtests
-      for (const strategy of options.strategies) {
-        const result = await this.runAdvancedBacktest(strategy, options);
-        strategyResults.push(result);
-      }
-
-      // Calculate portfolio metrics
-      const correlationMatrix =
-        this.calculateStrategyCorrelations(strategyResults);
-      const portfolioReturns = this.calculatePortfolioReturns(
-        strategyResults,
-        options.weights
-      );
-      const diversificationRatio = this.calculateDiversificationRatio(
-        strategyResults,
-        options.weights,
-        correlationMatrix
-      );
-
-      return {
-        portfolioBalance: portfolioReturns.reduce(
-          (sum, r) => sum + r,
-          options.initialBalance
-        ),
-        strategyReturns: strategyResults,
-        correlationMatrix,
-        diversificationRatio,
-        portfolioSharpe: this.calculatePortfolioSharpe(portfolioReturns),
-        portfolioVolatility:
-          this.calculatePortfolioVolatility(portfolioReturns),
-        maxPortfolioDrawdown:
-          this.calculatePortfolioMaxDrawdown(portfolioReturns),
-        rebalanceEvents,
-      };
-    } catch (error) {
-      console.error("Portfolio backtest failed:", error);
-      throw error;
+    // Run individual strategy backtests
+    for (const strategy of options.strategies) {
+      const result = await this.runAdvancedBacktest(strategy, options);
+      strategyResults.push(result);
     }
+
+    // Calculate portfolio metrics
+    const correlationMatrix =
+      this.calculateStrategyCorrelations(strategyResults);
+    const portfolioReturns = this.calculatePortfolioReturns(
+      strategyResults,
+      options.weights
+    );
+    const diversificationRatio = this.calculateDiversificationRatio(
+      strategyResults,
+      options.weights,
+      correlationMatrix
+    );
+
+    return {
+      portfolioBalance: portfolioReturns.reduce(
+        (sum, r) => sum + r,
+        options.initialBalance
+      ),
+      strategyReturns: strategyResults,
+      correlationMatrix,
+      diversificationRatio,
+      portfolioSharpe: this.calculatePortfolioSharpe(portfolioReturns),
+      portfolioVolatility: this.calculatePortfolioVolatility(portfolioReturns),
+      maxPortfolioDrawdown:
+        this.calculatePortfolioMaxDrawdown(portfolioReturns),
+      rebalanceEvents,
+    };
   }
 
   /**
@@ -301,11 +290,8 @@ export class AdvancedBacktestService {
           scenario
         );
         results[scenario.name] = stressedResult;
-      } catch (error) {
-        console.error(
-          `Stress test failed for scenario ${scenario.name}:`,
-          error
-        );
+      } catch {
+        // Continue with other scenarios
       }
     }
 
@@ -339,11 +325,8 @@ export class AdvancedBacktestService {
             data[timeframe] = [];
           }
           data[timeframe] = marketData;
-        } catch (error) {
-          console.warn(
-            `Failed to fetch ${timeframe} data for ${symbol}:`,
-            error
-          );
+        } catch {
+          // Continue with other symbols/timeframes
         }
       }
     }
@@ -703,38 +686,6 @@ export class AdvancedBacktestService {
     );
   }
 
-  private calculateMaxConsecutive(
-    trades: BacktestTrade[],
-    winning: boolean
-  ): number {
-    let maxConsecutive = 0;
-    let currentConsecutive = 0;
-
-    for (const trade of trades) {
-      if ((winning && trade.pnl > 0) || (!winning && trade.pnl < 0)) {
-        currentConsecutive++;
-        maxConsecutive = Math.max(maxConsecutive, currentConsecutive);
-      } else {
-        currentConsecutive = 0;
-      }
-    }
-
-    return maxConsecutive;
-  }
-
-  private calculateAnnualizedReturn(trades: BacktestTrade[]): number {
-    if (trades.length < 2) return 0;
-
-    const firstTrade = trades[0];
-    const lastTrade = trades[trades.length - 1];
-    const totalDays =
-      (lastTrade.timestamp - firstTrade.timestamp) / (1000 * 60 * 60 * 24);
-    const totalReturn =
-      (lastTrade.balance - firstTrade.balance) / firstTrade.balance;
-
-    return Math.pow(1 + totalReturn, 365 / totalDays) - 1;
-  }
-
   private calculateDailyReturns(trades: BacktestTrade[]): number[] {
     const dailyPnL = new Map<string, number>();
 
@@ -960,7 +911,7 @@ export class AdvancedBacktestService {
   private async runStressScenario(
     strategy: Strategy,
     options: BacktestOptions,
-    _scenario: StressTestScenario
+    scenario: StressTestScenario
   ): Promise<BacktestResult> {
     // This would modify the historical data according to the stress scenario
     // For now, returning a placeholder - full implementation would involve:
