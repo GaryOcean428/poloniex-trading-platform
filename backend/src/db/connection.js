@@ -5,16 +5,39 @@ dotenv.config();
 
 const { Pool } = pkg;
 
-// Check for DATABASE_URL environment variable
-if (!process.env.DATABASE_URL) {
-  console.warn('⚠️  WARNING: DATABASE_URL environment variable not set');
+// Validate DATABASE_URL environment variable
+const validateDatabaseUrl = (url) => {
+  if (!url || typeof url !== 'string' || url.trim() === '') {
+    return false;
+  }
+
+  // Basic validation for PostgreSQL connection string format
+  const isValidFormat = url.startsWith('postgresql://') ||
+                       url.startsWith('postgres://') ||
+                       url.includes('host=') ||
+                       url.includes('localhost');
+
+  return isValidFormat;
+};
+
+const databaseUrl = process.env.DATABASE_URL;
+const isValidDatabaseUrl = validateDatabaseUrl(databaseUrl);
+
+if (!isValidDatabaseUrl) {
+  if (!databaseUrl) {
+    console.warn('⚠️  WARNING: DATABASE_URL environment variable not set');
+  } else {
+    console.warn('⚠️  WARNING: DATABASE_URL environment variable is invalid or empty');
+    console.warn(`Received: "${databaseUrl}"`);
+  }
   console.log('ℹ️  Backend will run without database connectivity');
-  console.log('ℹ️  Please set DATABASE_URL in your Railway environment variables');
+  console.log('ℹ️  Please set a valid DATABASE_URL in your Railway environment variables');
+  console.log('ℹ️  Expected format: postgresql://user:password@host:port/database');
 }
 
 // Database configuration with fallback
-const dbConfig = process.env.DATABASE_URL ? {
-  connectionString: process.env.DATABASE_URL,
+const dbConfig = isValidDatabaseUrl ? {
+  connectionString: databaseUrl,
   ssl: process.env.NODE_ENV === 'production' ? {
     rejectUnauthorized: false
   } : false,
@@ -24,13 +47,16 @@ const dbConfig = process.env.DATABASE_URL ? {
   query_timeout: 5000, // Return error after 5 seconds if query is taking too long
 } : null;
 
-// Create connection pool (only if DATABASE_URL is available)
+// Create connection pool (only if DATABASE_URL is valid)
 let pool = null;
 if (dbConfig) {
   try {
+    console.log('🔗 Attempting to create database connection pool...');
     pool = new Pool(dbConfig);
+    console.log('✅ Database pool created successfully');
   } catch (error) {
-    console.error('Failed to create database pool:', error.message);
+    console.error('❌ Failed to create database pool:', error.message);
+    console.error('❌ Database URL format may be invalid');
     pool = null;
   }
 } else {

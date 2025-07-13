@@ -136,9 +136,13 @@ app.use(express.static(frontendDistPath));
 app.use('/api/', corsMiddleware, limiter);
 
 import proxyRoutes from './routes/proxy.js';
+import apiKeysRoutes from './routes/apiKeys.js';
 
 // Mount auth routes
 app.use('/api/auth', authRoutes);
+
+// Mount API keys routes
+app.use('/api/keys', apiKeysRoutes);
 
 // Mount proxy routes
 app.use('/api', proxyRoutes);

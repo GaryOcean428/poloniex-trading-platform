@@ -1,4 +1,5 @@
 import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
 import { query, transaction, geoQuery } from '../db/connection.js';
 
 /**
@@ -457,6 +458,344 @@ export class UserService {
       return result.rows;
     } catch (error) {
       console.error('Error getting login activity:', error);
+      throw error;
+    }
+  }
+
+  // =================== API KEY MANAGEMENT ===================
+
+  /**
+   * Get encryption key from environment
+   */
+  static getEncryptionKey() {
+    const key = process.env.API_ENCRYPTION_KEY || process.env.JWT_SECRET;
+    if (!key) {
+      throw new Error('API_ENCRYPTION_KEY or JWT_SECRET environment variable is required for API key encryption');
+    }
+    // Create a 32-byte key from the provided key
+    return crypto.createHash('sha256').update(key).digest();
+  }
+
+  /**
+   * Encrypt sensitive data
+   */
+  static encrypt(text) {
+    try {
+      const algorithm = 'aes-256-gcm';
+      const key = this.getEncryptionKey();
+      const iv = crypto.randomBytes(16);
+
+      const cipher = crypto.createCipher(algorithm, key);
+      cipher.setAAD(Buffer.from('polytrade-api-key', 'utf8'));
+
+      let encrypted = cipher.update(text, 'utf8', 'hex');
+      encrypted += cipher.final('hex');
+
+      const authTag = cipher.getAuthTag();
+
+      // Return iv + authTag + encrypted data
+      return iv.toString('hex') + ':' + authTag.toString('hex') + ':' + encrypted;
+    } catch (error) {
+      console.error('Error encrypting data:', error);
+      throw new Error('Failed to encrypt data');
+    }
+  }
+
+  /**
+   * Decrypt sensitive data
+   */
+  static decrypt(encryptedData) {
+    try {
+      const algorithm = 'aes-256-gcm';
+      const key = this.getEncryptionKey();
+
+      const parts = encryptedData.split(':');
+      if (parts.length !== 3) {
+        throw new Error('Invalid encrypted data format');
+      }
+
+      const iv = Buffer.from(parts[0], 'hex');
+      const authTag = Buffer.from(parts[1], 'hex');
+      const encrypted = parts[2];
+
+      const decipher = crypto.createDecipher(algorithm, key);
+      decipher.setAAD(Buffer.from('polytrade-api-key', 'utf8'));
+      decipher.setAuthTag(authTag);
+
+      let decrypted = decipher.update(encrypted, 'hex', 'utf8');
+      decrypted += decipher.final('utf8');
+
+      return decrypted;
+    } catch (error) {
+      console.error('Error decrypting data:', error);
+      throw new Error('Failed to decrypt data');
+    }
+  }
+
+  /**
+   * Store encrypted API credentials for a user
+   */
+  static async storeApiCredentials({
+    userId,
+    exchange = 'poloniex',
+    credentialName,
+    apiKey,
+    apiSecret,
+    passphrase = null,
+    permissions = { read: true, trade: false, withdraw: false }
+  }) {
+    try {
+      // Encrypt sensitive data
+      const apiKeyEncrypted = this.encrypt(apiKey);
+      const apiSecretEncrypted = this.encrypt(apiSecret);
+      const passphraseEncrypted = passphrase ? this.encrypt(passphrase) : null;
+
+      const queryText = `
+        INSERT INTO user_api_credentials (
+          user_id, exchange, credential_name,
+          api_key_encrypted, api_secret_encrypted, passphrase_encrypted,
+          permissions, is_active
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        ON CONFLICT (user_id, exchange, credential_name)
+        DO UPDATE SET
+          api_key_encrypted = EXCLUDED.api_key_encrypted,
+          api_secret_encrypted = EXCLUDED.api_secret_encrypted,
+          passphrase_encrypted = EXCLUDED.passphrase_encrypted,
+          permissions = EXCLUDED.permissions,
+          updated_at = CURRENT_TIMESTAMP,
+          is_active = EXCLUDED.is_active
+        RETURNING id, credential_name, exchange, permissions, created_at, updated_at
+      `;
+
+      const params = [
+        userId, exchange, credentialName,
+        apiKeyEncrypted, apiSecretEncrypted, passphraseEncrypted,
+        JSON.stringify(permissions), true
+      ];
+
+      const result = await query(queryText, params);
+
+      if (result.rows.length === 0) {
+        throw new Error('Failed to store API credentials');
+      }
+
+      // Log security event
+      await this.logSecurityEvent({
+        userId,
+        eventType: 'api_credentials_stored',
+        eventDescription: `API credentials stored for ${exchange}`,
+        severity: 'info',
+        metadata: { exchange, credentialName }
+      });
+
+      return result.rows[0];
+    } catch (error) {
+      console.error('Error storing API credentials:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get API credentials for a user (with decryption)
+   */
+  static async getApiCredentials(userId, exchange = 'poloniex', credentialName = null) {
+    try {
+      let queryText = `
+        SELECT
+          id, user_id, exchange, credential_name,
+          api_key_encrypted, api_secret_encrypted, passphrase_encrypted,
+          permissions, is_active, last_used_at, created_at, updated_at
+        FROM user_api_credentials
+        WHERE user_id = $1 AND exchange = $2 AND is_active = true
+      `;
+
+      const params = [userId, exchange];
+
+      if (credentialName) {
+        queryText += ' AND credential_name = $3';
+        params.push(credentialName);
+      }
+
+      queryText += ' ORDER BY created_at DESC';
+
+      const result = await query(queryText, params);
+
+      if (result.rows.length === 0) {
+        return null;
+      }
+
+      // Return only the first credential for security
+      const credential = result.rows[0];
+
+      // Decrypt sensitive data
+      try {
+        const decryptedCredential = {
+          id: credential.id,
+          userId: credential.user_id,
+          exchange: credential.exchange,
+          credentialName: credential.credential_name,
+          apiKey: this.decrypt(credential.api_key_encrypted),
+          apiSecret: this.decrypt(credential.api_secret_encrypted),
+          passphrase: credential.passphrase_encrypted ? this.decrypt(credential.passphrase_encrypted) : null,
+          permissions: credential.permissions,
+          isActive: credential.is_active,
+          lastUsedAt: credential.last_used_at,
+          createdAt: credential.created_at,
+          updatedAt: credential.updated_at
+        };
+
+        // Update last used timestamp
+        await this.updateApiCredentialsLastUsed(credential.id);
+
+        return decryptedCredential;
+      } catch (decryptError) {
+        console.error('Failed to decrypt API credentials:', decryptError);
+
+        // Log security event for failed decryption
+        await this.logSecurityEvent({
+          userId,
+          eventType: 'api_credentials_decrypt_failed',
+          eventDescription: `Failed to decrypt API credentials for ${exchange}`,
+          severity: 'error',
+          metadata: { exchange, credentialName, error: decryptError.message }
+        });
+
+        throw new Error('Failed to decrypt API credentials. They may be corrupted.');
+      }
+    } catch (error) {
+      console.error('Error getting API credentials:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * List API credentials for a user (without decryption - for UI display)
+   */
+  static async listApiCredentials(userId) {
+    try {
+      const queryText = `
+        SELECT
+          id, exchange, credential_name, permissions,
+          is_active, last_used_at, created_at, updated_at
+        FROM user_api_credentials
+        WHERE user_id = $1
+        ORDER BY exchange, credential_name
+      `;
+
+      const result = await query(queryText, [userId]);
+      return result.rows;
+    } catch (error) {
+      console.error('Error listing API credentials:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Update API credentials last used timestamp
+   */
+  static async updateApiCredentialsLastUsed(credentialId) {
+    try {
+      const queryText = `
+        UPDATE user_api_credentials
+        SET last_used_at = CURRENT_TIMESTAMP
+        WHERE id = $1
+      `;
+
+      await query(queryText, [credentialId]);
+    } catch (error) {
+      console.error('Error updating API credentials last used:', error);
+      // Don't throw as this is non-critical
+    }
+  }
+
+  /**
+   * Delete API credentials
+   */
+  static async deleteApiCredentials(userId, credentialId) {
+    try {
+      const queryText = `
+        DELETE FROM user_api_credentials
+        WHERE id = $1 AND user_id = $2
+        RETURNING exchange, credential_name
+      `;
+
+      const result = await query(queryText, [credentialId, userId]);
+
+      if (result.rows.length === 0) {
+        throw new Error('API credentials not found or access denied');
+      }
+
+      const deleted = result.rows[0];
+
+      // Log security event
+      await this.logSecurityEvent({
+        userId,
+        eventType: 'api_credentials_deleted',
+        eventDescription: `API credentials deleted for ${deleted.exchange}`,
+        severity: 'warning',
+        metadata: { exchange: deleted.exchange, credentialName: deleted.credential_name }
+      });
+
+      return deleted;
+    } catch (error) {
+      console.error('Error deleting API credentials:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Test API credentials by making a simple API call
+   */
+  static async testApiCredentials(userId, credentialId) {
+    try {
+      // This is a placeholder - actual implementation would depend on the exchange API
+      // For now, just verify the credentials exist and are decryptable
+      const queryText = `
+        SELECT id, exchange, credential_name
+        FROM user_api_credentials
+        WHERE id = $1 AND user_id = $2 AND is_active = true
+      `;
+
+      const result = await query(queryText, [credentialId, userId]);
+
+      if (result.rows.length === 0) {
+        throw new Error('API credentials not found');
+      }
+
+      // Try to decrypt the credentials to ensure they're valid
+      const credentials = await this.getApiCredentials(userId, result.rows[0].exchange, result.rows[0].credential_name);
+
+      if (!credentials) {
+        throw new Error('Failed to decrypt API credentials');
+      }
+
+      // Log test event
+      await this.logSecurityEvent({
+        userId,
+        eventType: 'api_credentials_tested',
+        eventDescription: `API credentials tested for ${credentials.exchange}`,
+        severity: 'info',
+        metadata: { exchange: credentials.exchange, credentialName: credentials.credentialName }
+      });
+
+      return {
+        success: true,
+        exchange: credentials.exchange,
+        credentialName: credentials.credentialName,
+        permissions: credentials.permissions
+      };
+    } catch (error) {
+      console.error('Error testing API credentials:', error);
+
+      // Log failed test
+      await this.logSecurityEvent({
+        userId,
+        eventType: 'api_credentials_test_failed',
+        eventDescription: `API credentials test failed`,
+        severity: 'warning',
+        metadata: { credentialId, error: error.message }
+      });
+
       throw error;
     }
   }
