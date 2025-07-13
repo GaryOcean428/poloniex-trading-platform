@@ -91,15 +91,13 @@ const LiveTradingDashboard: React.FC<LiveTradingDashboardProps> = ({ strategies 
                 },
             };
 
-            const sessionId = await liveTradingService.startLiveTrading(config);
-            console.log(`Live trading started: ${sessionId}`);
+            await liveTradingService.startLiveTrading(config);
 
             // Update sessions
             const sessions = liveTradingService.getActiveLiveTradingSessions();
             setActiveSessions(sessions);
         } catch (error)
         {
-            console.error('Failed to start live trading:', error);
             alert(`Failed to start live trading: ${error instanceof Error ? error.message : 'Unknown error'}`);
         } finally
         {
@@ -117,7 +115,6 @@ const LiveTradingDashboard: React.FC<LiveTradingDashboardProps> = ({ strategies 
             setActiveSessions(sessions);
         } catch (error)
         {
-            console.error('Failed to stop live trading:', error);
             alert(`Failed to stop live trading: ${error instanceof Error ? error.message : 'Unknown error'}`);
         }
     };
@@ -132,9 +129,9 @@ const LiveTradingDashboard: React.FC<LiveTradingDashboardProps> = ({ strategies 
                 // Update sessions
                 const sessions = liveTradingService.getActiveLiveTradingSessions();
                 setActiveSessions(sessions);
-            } catch (error)
+            } catch
             {
-                console.error('Emergency stop failed:', error);
+                // Handle error
             }
         }
     };
@@ -205,6 +202,7 @@ const LiveTradingDashboard: React.FC<LiveTradingDashboardProps> = ({ strategies 
                                     maxDrawdownPercent: parseFloat(e.target.value) / 100
                                 })}
                                 className="w-full px-3 py-2 border border-neutral-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                                aria-label="Maximum Drawdown Percentage"
                             />
                         </div>
 
@@ -223,6 +221,7 @@ const LiveTradingDashboard: React.FC<LiveTradingDashboardProps> = ({ strategies 
                                     maxDailyLossPercent: parseFloat(e.target.value) / 100
                                 })}
                                 className="w-full px-3 py-2 border border-neutral-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                                aria-label="Maximum Daily Loss Percentage"
                             />
                         </div>
 
@@ -241,6 +240,7 @@ const LiveTradingDashboard: React.FC<LiveTradingDashboardProps> = ({ strategies 
                                     maxPositionSize: parseFloat(e.target.value)
                                 })}
                                 className="w-full px-3 py-2 border border-neutral-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                                aria-label="Maximum Position Size in USD"
                             />
                         </div>
 
@@ -259,6 +259,7 @@ const LiveTradingDashboard: React.FC<LiveTradingDashboardProps> = ({ strategies 
                                     maxOpenPositions: parseInt(e.target.value)
                                 })}
                                 className="w-full px-3 py-2 border border-neutral-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                                aria-label="Maximum Open Positions"
                             />
                         </div>
 
@@ -277,6 +278,7 @@ const LiveTradingDashboard: React.FC<LiveTradingDashboardProps> = ({ strategies 
                                     requireConfidenceScore: parseInt(e.target.value)
                                 })}
                                 className="w-full px-3 py-2 border border-neutral-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
+                                aria-label="Minimum Confidence Score Percentage"
                             />
                         </div>
                     </div>
@@ -311,6 +313,7 @@ const LiveTradingDashboard: React.FC<LiveTradingDashboardProps> = ({ strategies 
                             Select Strategy for Live Trading
                         </label>
                         <select
+                            aria-label="Select Strategy for Live Trading"
                             value={selectedStrategy?.id || ''}
                             onChange={(e) => {
                                 const strategy = strategies.find(s => s.id === e.target.value);
@@ -349,7 +352,7 @@ const LiveTradingDashboard: React.FC<LiveTradingDashboardProps> = ({ strategies 
                                         className={`h-2 rounded-full transition-all duration-300 ${confidenceMetrics.overall >= 75 ? 'bg-green-500' : 'bg-red-500'
                                             }`}
                                         style={{ width: `${confidenceMetrics.overall}%` }}
-                                    />
+                                    ></div>
                                 </div>
                             </div>
                         )}

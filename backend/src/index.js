@@ -9,7 +9,7 @@ import { fileURLToPath } from 'url';
 import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
 import authRoutes from './routes/auth.js';
-import { authenticateToken, optionalAuth } from './middleware/auth.js';
+import { optionalAuth } from './middleware/auth.js';
 import { healthCheck } from './db/connection.js';
 import { UserService } from './services/userService.js';
 

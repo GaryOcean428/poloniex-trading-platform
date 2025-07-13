@@ -133,7 +133,7 @@ export class MockTradingService {
   public async startMockSession(
     strategy: Strategy,
     initialBalance: number = 10000,
-    _options: {
+    options: {
       maxDrawdownLimit?: number;
       stopLossPercent?: number;
       takeProfitPercent?: number;
@@ -219,10 +219,8 @@ export class MockTradingService {
     const session = this.activeSessions.get(sessionId);
     if (!session || !session.isActive || !signal.signal) return null;
 
-    const {
-      amount = this.calculatePositionSize(session),
-      leverage: _leverage = 1,
-    } = options;
+    const { amount = this.calculatePositionSize(session), leverage = 1 } =
+      options;
 
     // Calculate realistic execution parameters
     const executionLatency = this.simulateExecutionLatency();
@@ -457,8 +455,8 @@ export class MockTradingService {
 
           this.processMarketDataUpdate(sessionId, strategy, latestData);
         }
-      } catch (error) {
-        console.error("Error fetching market data for mock trading:", error);
+      } catch {
+        // Continue trying
       }
     }, 5000); // Update every 5 seconds
   }
@@ -543,7 +541,7 @@ export class MockTradingService {
   private updatePortfolio(
     session: MockTradingSession,
     trade: MockTrade,
-    _marketData: MarketData
+    marketData: MarketData
   ): void {
     // Update balance
     session.currentBalance = trade.balance;
@@ -562,7 +560,7 @@ export class MockTradingService {
 
   private updatePortfolioWithCurrentPrices(
     session: MockTradingSession,
-    _marketData: MarketData
+    marketData: MarketData
   ): void {
     // Update portfolio equity with current market prices
     session.portfolio.equity =

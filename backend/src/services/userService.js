@@ -1,6 +1,6 @@
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
-import { query, transaction, geoQuery } from '../db/connection.js';
+import { query, geoQuery } from '../db/connection.js';
 
 /**
  * User Service - PostGIS-based user management with location-aware features
@@ -25,7 +25,6 @@ export class UserService {
       const saltRounds = 12;
       const passwordHash = await bcrypt.hash(password, saltRounds);
 
-      // Create location point if coordinates provided
       const locationPoint = (latitude && longitude)
         ? geoQuery.createPoint(latitude, longitude)
         : null;
@@ -138,9 +137,11 @@ export class UserService {
    */
   static async updateLastLogin(userId, latitude, longitude) {
     try {
-      const locationPoint = (latitude && longitude)
-        ? geoQuery.createPoint(latitude, longitude)
-        : null;
+      if (latitude && longitude) {
+        const locationPoint = geoQuery.createPoint(latitude, longitude);
+        // You can add logic here to update the user's location if needed.
+        // For now, we are just updating the last login time.
+      }
 
       const queryText = `
         UPDATE users
@@ -485,7 +486,7 @@ export class UserService {
       const key = this.getEncryptionKey();
       const iv = crypto.randomBytes(16);
 
-      const cipher = crypto.createCipher(algorithm, key);
+      const cipher = crypto.createCipheriv(algorithm, key, iv);
       cipher.setAAD(Buffer.from('polytrade-api-key', 'utf8'));
 
       let encrypted = cipher.update(text, 'utf8', 'hex');

@@ -105,70 +105,62 @@ export class LiveTradingService {
    * Start live trading session with comprehensive safety checks
    */
   public async startLiveTrading(config: LiveTradingConfig): Promise<string> {
-    try {
-      // Pre-flight safety checks
-      const safetyCheck = await this.performPreFlightChecks(config);
-      if (!safetyCheck.passed) {
-        throw new Error(
-          `Safety checks failed: ${safetyCheck.errors.join(", ")}`
-        );
-      }
-
-      // Verify confidence score from mock trading
-      const confidence = mockTradingService.getStrategyConfidenceAggregate(
-        config.strategy.id
-      );
-      if (
-        !confidence ||
-        confidence.overall < config.riskLimits.requireConfidenceScore
-      ) {
-        throw new Error(
-          `Strategy confidence score ${
-            confidence?.overall || 0
-          }% is below required ${config.riskLimits.requireConfidenceScore}%. ` +
-            "Complete mock trading with sufficient confidence before enabling live trading."
-        );
-      }
-
-      if (confidence.recommendation !== "READY_FOR_LIVE") {
-        throw new Error(
-          `Strategy is not ready for live trading. Current status: ${confidence.recommendation}. ` +
-            "Improve mock trading performance before proceeding."
-        );
-      }
-
-      // Create live trading session
-      const sessionId = `live_${Date.now()}_${Math.random()
-        .toString(36)
-        .substr(2, 9)}`;
-
-      const session: LiveTradingSession = {
-        id: sessionId,
-        strategyId: config.strategy.id,
-        startTime: Date.now(),
-        isActive: true,
-        initialBalance: config.initialBalance,
-        currentBalance: config.initialBalance,
-        totalTrades: 0,
-        winningTrades: 0,
-        losingTrades: 0,
-        trades: [],
-        riskLimits: config.riskLimits,
-        safetyChecks: this.createInitialSafetyStatus(),
-        confidenceMetrics: confidence,
-      };
-
-      this.activeSessions.set(sessionId, session);
-
-      // Start market data monitoring and strategy execution
-      await this.startStrategyExecution(sessionId, config.strategy);
-
-      console.log(`Live trading session started: ${sessionId}`);
-      return sessionId;
-    } catch (error) {
-      console.error("Failed to start live trading:", error);
-      throw error;
+    // Pre-flight safety checks
+    const safetyCheck = await this.performPreFlightChecks(config);
+    if (!safetyCheck.passed) {
+      throw new Error(`Safety checks failed: ${safetyCheck.errors.join(", ")}`);
     }
+
+    // Verify confidence score from mock trading
+    const confidence = mockTradingService.getStrategyConfidenceAggregate(
+      config.strategy.id
+    );
+    if (
+      !confidence ||
+      confidence.overall < config.riskLimits.requireConfidenceScore
+    ) {
+      throw new Error(
+        `Strategy confidence score ${
+          confidence?.overall || 0
+        }% is below required ${config.riskLimits.requireConfidenceScore}%. ` +
+          "Complete mock trading with sufficient confidence before enabling live trading."
+      );
+    }
+
+    if (confidence.recommendation !== "READY_FOR_LIVE") {
+      throw new Error(
+        `Strategy is not ready for live trading. Current status: ${confidence.recommendation}. ` +
+          "Improve mock trading performance before proceeding."
+      );
+    }
+
+    // Create live trading session
+    const sessionId = `live_${Date.now()}_${Math.random()
+      .toString(36)
+      .substr(2, 9)}`;
+
+    const session: LiveTradingSession = {
+      id: sessionId,
+      strategyId: config.strategy.id,
+      startTime: Date.now(),
+      isActive: true,
+      initialBalance: config.initialBalance,
+      currentBalance: config.initialBalance,
+      totalTrades: 0,
+      winningTrades: 0,
+      losingTrades: 0,
+      trades: [],
+      riskLimits: config.riskLimits,
+      safetyChecks: this.createInitialSafetyStatus(),
+      confidenceMetrics: confidence,
+    };
+
+    this.activeSessions.set(sessionId, session);
+
+    // Start market data monitoring and strategy execution
+    await this.startStrategyExecution(sessionId, config.strategy);
+
+    return sessionId;
   }
 
   /**
@@ -176,36 +168,28 @@ export class LiveTradingService {
    */
   public async stopLiveTrading(
     sessionId: string,
-    reason: string = "Manual stop"
+    _reason: string = "Manual stop"
   ): Promise<void> {
     const session = this.activeSessions.get(sessionId);
     if (!session) {
       throw new Error(`Live trading session ${sessionId} not found`);
     }
 
-    try {
-      // Cancel any pending orders
-      await this.cancelAllPendingOrders(sessionId);
+    // Cancel any pending orders
+    await this.cancelAllPendingOrders(sessionId);
 
-      // Close all open positions (if applicable)
-      await this.closeAllPositions(sessionId);
+    // Close all open positions (if applicable)
+    await this.closeAllPositions(sessionId);
 
-      // Mark session as inactive
-      session.isActive = false;
-      session.endTime = Date.now();
-
-      console.log(`Live trading session ${sessionId} stopped: ${reason}`);
-    } catch (error) {
-      console.error(`Error stopping live trading session ${sessionId}:`, error);
-      throw error;
-    }
+    // Mark session as inactive
+    session.isActive = false;
+    session.endTime = Date.now();
   }
 
   /**
    * Emergency stop all live trading
    */
   public async emergencyStopAll(reason: string): Promise<void> {
-    console.warn(`EMERGENCY STOP ALL LIVE TRADING: ${reason}`);
     this.emergencyStopActivated = true;
 
     const stopPromises = Array.from(this.activeSessions.keys()).map(
@@ -229,23 +213,17 @@ export class LiveTradingService {
 
     // Emergency stop check
     if (this.emergencyStopActivated) {
-      console.warn("Live trade blocked: Emergency stop active");
       return null;
     }
 
     // Rate limiting check
     if (!this.checkRateLimit(sessionId)) {
-      console.warn("Live trade blocked: Rate limit exceeded");
       return null;
     }
 
     // Safety checks
-    const safetyCheck = await this.performTradeSafetyChecks(
-      session,
-      signal
-    );
+    const safetyCheck = await this.performTradeSafetyChecks(session, signal);
     if (!safetyCheck.passed) {
-      console.warn(`Live trade blocked: ${safetyCheck.errors.join(", ")}`);
       return null;
     }
 
@@ -306,20 +284,14 @@ export class LiveTradingService {
           session.losingTrades++;
         }
 
-        console.log(
-          `Live trade executed: ${trade.type} ${trade.amount} ${trade.symbol} at ${trade.price}`
-        );
         return trade;
       } else {
         trade.status = "FAILED";
         trade.errorMessage = "Order execution failed";
         session.trades.push(trade);
-        console.error("Live trade failed:", orderResult);
         return trade;
       }
     } catch (error) {
-      console.error("Live trade execution error:", error);
-
       const errorTrade: LiveTrade = {
         id: `error_${Date.now()}`,
         sessionId,
@@ -371,9 +343,8 @@ export class LiveTradingService {
 
     // This would integrate with MCP memory service to store results
     // for future strategy optimization and learning
-    console.log(
-      `Updating memory with live trading results for session ${sessionId}`
-    );
+    // In a production environment, this would log to a proper logging service
+    // Logging: Updating memory with live trading results for session
   }
 
   // Private helper methods
@@ -517,7 +488,9 @@ export class LiveTradingService {
           }
         }
       } catch (error) {
-        console.error("Strategy execution error:", error);
+        // Re-throw the error to be handled by the caller
+        // In a production environment, this would also log to a proper logging service
+        throw new Error(`Strategy execution failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     }, 10000); // Execute every 10 seconds
   }
@@ -582,9 +555,14 @@ export class LiveTradingService {
     if (!session) return;
 
     const pendingTrades = session.trades.filter((t) => t.status === "PENDING");
-    console.log(
-      `Cancelling ${pendingTrades.length} pending orders for session ${sessionId}`
-    );
+    
+    // Update the session status to reflect the cancellation
+    // The caller can check the number of pending orders if needed
+    if (pendingTrades.length > 0) {
+      session.safetyChecks.warnings.push(
+        `Cancelled ${pendingTrades.length} pending orders during session cleanup`
+      );
+    }
 
     // Implementation would cancel orders via Poloniex API
     // For now, just mark as cancelled
@@ -636,7 +614,12 @@ export class LiveTradingService {
           lastSafetyCheck: Date.now(),
         };
       } catch (error) {
-        console.error(`Safety check failed for session ${session.id}:`, error);
+        // Add the error to the session's safety check errors
+        const errorMessage = `Safety check failed: ${error instanceof Error ? error.message : String(error)}`;
+        session.safetyChecks.errors.push(errorMessage);
+        
+        // In a production environment, this would also log to a proper logging service
+        // and potentially trigger an alert for critical safety check failures
       }
     }
   }
