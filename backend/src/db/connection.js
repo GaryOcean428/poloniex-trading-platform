@@ -27,7 +27,12 @@ const dbConfig = process.env.DATABASE_URL ? {
 // Create connection pool (only if DATABASE_URL is available)
 let pool = null;
 if (dbConfig) {
-  pool = new Pool(dbConfig);
+  try {
+    pool = new Pool(dbConfig);
+  } catch (error) {
+    console.error('Failed to create database pool:', error.message);
+    pool = null;
+  }
 } else {
   console.log('📄 Running in demo mode without database connection');
 }
@@ -80,7 +85,7 @@ export const query = async (text, params = []) => {
   if (!pool) {
     throw new Error('Database not available. Please configure DATABASE_URL environment variable.');
   }
-  
+
   const start = Date.now();
   try {
     const result = await pool.query(text, params);
@@ -104,7 +109,7 @@ export const transaction = async (callback) => {
   if (!pool) {
     throw new Error('Database not available. Please configure DATABASE_URL environment variable.');
   }
-  
+
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -151,7 +156,7 @@ export const healthCheck = async () => {
       database_configured: false
     };
   }
-  
+
   try {
     const result = await query('SELECT NOW() as timestamp, PostGIS_Version() as postgis_version');
     return {
