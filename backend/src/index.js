@@ -85,9 +85,9 @@ const allowedOrigins = [
   'https://healthcheck.railway.app',
   'https://poloniex-trading-platform-production.up.railway.app',
   'https://polytrade-red.vercel.app',
-  'https://polytrade-be.up.railway.app', // Railway backend URL for API calls
-  process.env.FRONTEND_URL || 'http://localhost:5173',
-  ...(process.env.NODE_ENV === 'production' ? [] : ['http://localhost:3000', 'http://localhost:5173'])
+  'https://polytrade-be.up.railway.app',
+  ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL] : []),
+  ...(process.env.NODE_ENV !== 'production' ? ['http://localhost:3000', 'http://localhost:5173'] : [])
 ];
 
 // Debug: Log allowed origins in production
@@ -135,8 +135,13 @@ app.use(express.static(frontendDistPath));
 // Apply CORS and rate limiting only to API routes
 app.use('/api/', corsMiddleware, limiter);
 
+import proxyRoutes from './routes/proxy.js';
+
 // Mount auth routes
 app.use('/api/auth', authRoutes);
+
+// Mount proxy routes
+app.use('/api', proxyRoutes);
 
 // Create HTTP server
 const server = http.createServer(app);
@@ -472,6 +477,44 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {
     console.log('Client disconnected:', socket.id);
     socketRateLimit.delete(socket.id);
+  });
+});
+
+// Poloniex WebSocket proxy namespace
+const poloniexNamespace = io.of('/poloniex');
+
+poloniexNamespace.on('connection', (socket) => {
+  console.log('Client connected to Poloniex proxy:', socket.id);
+
+  const poloniexWs = new WebSocket('wss://ws.poloniex.com/ws/public');
+
+  poloniexWs.on('open', () => {
+    socket.emit('connected');
+  });
+
+  poloniexWs.on('message', (data) => {
+    socket.emit('message', data.toString());
+  });
+
+  poloniexWs.on('error', (error) => {
+    console.error('Poloniex proxy error:', error);
+    socket.emit('error', error.message);
+  });
+
+  poloniexWs.on('close', () => {
+    socket.disconnect();
+  });
+
+  socket.on('message', (msg) => {
+    if (poloniexWs.readyState === WebSocket.OPEN) {
+      poloniexWs.send(msg);
+    }
+  });
+
+  socket.on('disconnect', () => {
+    if (poloniexWs.readyState === WebSocket.OPEN) {
+      poloniexWs.close();
+    }
   });
 });
 
