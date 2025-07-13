@@ -1,110 +1,235 @@
 import pkg from 'pg';
 import dotenv from 'dotenv';
+import { parse } from 'pg-connection-string';
 
 dotenv.config();
 
 const { Pool } = pkg;
 
-// Validate DATABASE_URL environment variable
-const validateDatabaseUrl = (url) => {
+// Validate and parse DATABASE_URL environment variable
+const validateAndParseDatabaseUrl = (url) => {
   if (!url || typeof url !== 'string' || url.trim() === '') {
-    return false;
+    console.warn('❌ DATABASE_URL is empty or not a string');
+    return { isValid: false };
   }
 
-  // Basic validation for PostgreSQL connection string format
-  const isValidFormat = url.startsWith('postgresql://') ||
-                       url.startsWith('postgres://') ||
-                       url.includes('host=') ||
-                       url.includes('localhost');
-
-  return isValidFormat;
+  try {
+    // Try to parse the connection string
+    const parsed = parse(url);
+    
+    // Check for required components
+    const hasRequiredFields = parsed.host && parsed.database && parsed.user;
+    const isValidFormat = url.startsWith('postgresql://') || 
+                         url.startsWith('postgres://') ||
+                         url.includes('host=');
+    
+    if (!hasRequiredFields || !isValidFormat) {
+      console.warn('❌ DATABASE_URL is missing required components');
+      return { isValid: false };
+    }
+    
+    return { 
+      isValid: true,
+      parsed,
+      maskedUrl: url.replace(/:[^:]*@/, ':***@') // Mask password in logs
+    };
+  } catch (error) {
+    console.warn('❌ Failed to parse DATABASE_URL:', error.message);
+    return { isValid: false };
+  }
 };
 
 const databaseUrl = process.env.DATABASE_URL;
-const isValidDatabaseUrl = validateDatabaseUrl(databaseUrl);
+const { isValid, parsed, maskedUrl } = validateAndParseDatabaseUrl(databaseUrl);
 
-if (!isValidDatabaseUrl) {
-  if (!databaseUrl) {
-    console.warn('⚠️  WARNING: DATABASE_URL environment variable not set');
-  } else {
-    console.warn('⚠️  WARNING: DATABASE_URL environment variable is invalid or empty');
-    console.warn(`Received: "${databaseUrl}"`);
-  }
-  console.log('ℹ️  Backend will run without database connectivity');
-  console.log('ℹ️  Please set a valid DATABASE_URL in your Railway environment variables');
-  console.log('ℹ️  Expected format: postgresql://user:password@host:port/database');
+// Log connection details (masking sensitive info)
+if (isValid) {
+  console.log(`🔍 Detected database: postgresql://${parsed.user}@${parsed.host}:${parsed.port || 5432}/${parsed.database}`);
+} else if (!databaseUrl) {
+  console.warn('⚠️  WARNING: DATABASE_URL environment variable is not set');
+} else {
+  console.warn('⚠️  WARNING: DATABASE_URL is invalid');
+  console.warn(`Received: ${maskedUrl || '(empty)'}`);
 }
 
 // Database configuration with fallback
-const dbConfig = isValidDatabaseUrl ? {
-  connectionString: databaseUrl,
-  ssl: process.env.NODE_ENV === 'production' ? {
-    rejectUnauthorized: false
-  } : false,
-  max: 20, // Maximum number of connections in the pool
-  idleTimeoutMillis: 30000, // Close idle connections after 30 seconds
-  connectionTimeoutMillis: 2000, // Return error after 2 seconds if connection could not be established
-  query_timeout: 5000, // Return error after 5 seconds if query is taking too long
-} : null;
+let dbConfig = null;
 
-// Create connection pool (only if DATABASE_URL is valid)
-let pool = null;
-if (dbConfig) {
+if (isValid) {
   try {
-    console.log('🔗 Attempting to create database connection pool...');
-    pool = new Pool(dbConfig);
-    console.log('✅ Database pool created successfully');
+    dbConfig = {
+      connectionString: databaseUrl,
+      ssl: process.env.NODE_ENV === 'production' 
+        ? { rejectUnauthorized: false }
+        : false,
+      max: 20, // Maximum number of connections in the pool
+      idleTimeoutMillis: 30000, // Close idle connections after 30 seconds
+      connectionTimeoutMillis: 2000, // Return error after 2 seconds if connection could not be established
+      query_timeout: 5000, // Return error after 5 seconds if query is taking too long
+    };
+    console.log('✅ Database configuration is valid');
   } catch (error) {
-    console.error('❌ Failed to create database pool:', error.message);
-    console.error('❌ Database URL format may be invalid');
-    pool = null;
+    console.error('❌ Failed to configure database:', error.message);
+    dbConfig = null;
   }
 } else {
-  console.log('📄 Running in demo mode without database connection');
+  console.warn('ℹ️  Backend will run in DEMO MODE without database connectivity');
+  console.warn('ℹ️  To enable database features, set a valid DATABASE_URL environment variable');
+  console.warn('ℹ️  Expected format: postgresql://user:password@host:port/database');
+  console.warn('ℹ️  Example: postgresql://postgres:yourpassword@localhost:5432/polytrade');
 }
 
-// Test connection on startup (only if pool exists)
-if (pool) {
-  pool.connect()
-    .then(client => {
-      console.log('✅ PostGIS database connected successfully');
-      client.release();
-    })
-    .catch(err => {
-      console.error('❌ Database connection failed:', err.message);
-      console.log('ℹ️  Backend will continue without database connectivity');
-      pool = null; // Disable pool if connection fails
-    });
+// Create connection pool (only if configuration is valid)
+let pool = null;
+let isConnected = false;
+
+async function initializePool() {
+  if (!dbConfig) {
+    console.log('ℹ️  Running in DEMO MODE - database features are disabled');
+    return null;
+  }
+
+  console.log('🔗 Attempting to create database connection pool...');
+  
+  let testPool = null;
+  let client = null;
+  
+  try {
+    // Create a test pool
+    testPool = new Pool(dbConfig);
+    
+    // Test the connection
+    client = await testPool.connect();
+    const result = await client.query('SELECT version()');
+    console.log(`✅ Connected to PostgreSQL ${result.rows[0].version.split(' ')[1]}`);
+    
+    // Connection successful, keep the pool
+    isConnected = true;
+    return testPool;
+  } catch (error) {
+    console.error('❌ Failed to connect to database:', error.message);
+    console.error('❌ Please check your DATABASE_URL and ensure the database is running');
+    
+    // Cleanup resources
+    if (client) {
+      try {
+        client.release();
+      } catch (e) {
+        console.error('❌ Error releasing client:', e.message);
+      }
+    }
+    
+    if (testPool) {
+      try {
+        await testPool.end();
+      } catch (e) {
+        console.error('❌ Error cleaning up connection pool:', e.message);
+      }
+    }
+    
+    return null;
+  } finally {
+    // Ensure client is always released
+    if (client) {
+      try {
+        client.release();
+      } catch (e) {
+        console.error('❌ Error in finally block releasing client:', e.message);
+      }
+    }
+  }
+}
+
+// Initialize the pool immediately
+initializePool()
+  .then(p => {
+    pool = p;
+  })
+  .catch(error => {
+    console.error('❌ Error initializing database pool:', error.message);
+    pool = null;
+  });
+
+// Health check function that can be called externally
+export async function healthCheck() {
+  if (!pool || !isConnected) {
+    return {
+      status: 'unhealthy',
+      message: 'Database connection not available',
+      timestamp: new Date().toISOString(),
+      database: 'disconnected',
+      readOnly: true
+    };
+  }
+
+  try {
+    const client = await pool.connect();
+    const result = await client.query('SELECT NOW() as current_time, version() as version');
+    client.release();
+    
+    return {
+      status: 'healthy',
+      timestamp: result.rows[0].current_time,
+      database: 'connected',
+      version: result.rows[0].version,
+      readOnly: false
+    };
+  } catch (error) {
+    console.error('❌ Database health check failed:', error.message);
+    return {
+      status: 'unhealthy',
+      message: error.message,
+      timestamp: new Date().toISOString(),
+      database: 'error',
+      readOnly: true
+    };
+  }
 }
 
 // Handle pool errors (only if pool exists)
 if (pool) {
   pool.on('error', (err) => {
-    console.error('❌ Unexpected error on idle client:', err);
-    console.log('ℹ️  Continuing without database connectivity');
-    pool = null; // Disable pool on error
+    console.error('❌ Unexpected error on idle client:', err.message);
+    console.error('❌ Stack:', err.stack);
+    console.log('ℹ️  Attempting to reconnect...');
+    
+    // Try to reinitialize the pool
+    initializePool()
+      .then(newPool => {
+        if (newPool) {
+          console.log('✅ Successfully reconnected to database');
+          pool = newPool;
+          isConnected = true;
+        } else {
+          console.error('❌ Failed to reconnect to database');
+          pool = null;
+          isConnected = false;
+        }
+      });
   });
 }
 
 // Handle graceful shutdown
-process.on('SIGINT', () => {
+const shutdown = async () => {
   console.log('\n🔄 Gracefully shutting down...');
+  
   if (pool) {
     console.log('🔄 Closing database connections...');
-    pool.end()
-      .then(() => {
-        console.log('✅ Database connections closed');
-        process.exit(0);
-      })
-      .catch(err => {
-        console.error('❌ Error closing database connections:', err);
-        process.exit(1);
-      });
-  } else {
-    console.log('✅ No database connections to close');
-    process.exit(0);
+    try {
+      await pool.end();
+      console.log('✅ Database connections closed');
+    } catch (err) {
+      console.error('❌ Error closing database connections:', err.message);
+    }
   }
-});
+  
+  process.exit(0);
+};
+
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
+
+// Database query helper with error handling
 
 // Database query helper with error handling
 export const query = async (text, params = []) => {
@@ -173,34 +298,6 @@ export const geoQuery = {
   }
 };
 
-// Health check query
-export const healthCheck = async () => {
-  if (!pool) {
-    return {
-      healthy: false,
-      error: 'Database not configured. Please set DATABASE_URL environment variable.',
-      database_configured: false
-    };
-  }
-
-  try {
-    const result = await query('SELECT NOW() as timestamp, PostGIS_Version() as postgis_version');
-    return {
-      healthy: true,
-      timestamp: result.rows[0].timestamp,
-      postgis_version: result.rows[0].postgis_version,
-      pool_size: pool.totalCount,
-      idle_connections: pool.idleCount,
-      waiting_connections: pool.waitingCount,
-      database_configured: true
-    };
-  } catch (error) {
-    return {
-      healthy: false,
-      error: error.message,
-      database_configured: true
-    };
-  }
-};
+// Note: healthCheck function is already defined above
 
 export default pool;
