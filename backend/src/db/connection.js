@@ -53,7 +53,7 @@ if (pool) {
 
 // Handle pool errors (only if pool exists)
 if (pool) {
-  pool.on('error', (err, client) => {
+  pool.on('error', (err) => {
     console.error('❌ Unexpected error on idle client:', err);
     console.log('ℹ️  Continuing without database connectivity');
     pool = null; // Disable pool on error
