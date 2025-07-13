@@ -1,103 +1,254 @@
-import { useState } from 'react';
-import { Copy, Plus, Trash2, AlertTriangle, Shield, RefreshCw } from 'lucide-react';
-import { useSettings } from '../../hooks/useSettings';
+import { AlertTriangle, CheckCircle, Plus, RefreshCw, Shield, Trash2, XCircle } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { getAccessToken } from '@/utils/auth';
 
-interface ApiKey {
+interface ApiCredential {
   id: string;
-  name: string;
-  key: string;
+  exchange: string;
+  credentialName: string;
   permissions: {
     read: boolean;
     trade: boolean;
     withdraw: boolean;
   };
+  isActive: boolean;
+  lastUsedAt: string | null;
   createdAt: string;
-  lastUsed: string;
-  expiresAt: string | null;
+}
+
+interface NewCredentialForm {
+  credentialName: string;
+  apiKey: string;
+  apiSecret: string;
+  passphrase: string;
+  permissions: {
+    read: boolean;
+    trade: boolean;
+    withdraw: boolean;
+  };
 }
 
 const ApiKeyManagement: React.FC = () => {
-  const { apiKey } = useSettings();
   const [showCreateForm, setShowCreateForm] = useState(false);
-  const [newKeyForm, setNewKeyForm] = useState({
-    name: '',
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  const [apiCredentials, setApiCredentials] = useState<ApiCredential[]>([]);
+
+  const [newCredentialForm, setNewCredentialForm] = useState<NewCredentialForm>({
+    credentialName: '',
+    apiKey: '',
+    apiSecret: '',
+    passphrase: '',
     permissions: {
       read: true,
       trade: false,
       withdraw: false
-    },
-    expiration: 'never'
-  });
-  
-  // Mock API keys
-  const [apiKeys, setApiKeys] = useState<ApiKey[]>([
-    {
-      id: '1',
-      name: 'Trading Bot',
-      key: apiKey || 'ce8c5f37d8e94a11a3e9bf20e7e92f31',
-      permissions: {
-        read: true,
-        trade: true,
-        withdraw: false
-      },
-      createdAt: '2023-05-15T14:30:00Z',
-      lastUsed: '2023-06-10T09:45:23Z',
-      expiresAt: null
     }
-  ]);
-  
-  // Handle form input changes
-  const handlePermissionChange = (permission: 'read' | 'trade' | 'withdraw') => {
-    setNewKeyForm({
-      ...newKeyForm,
-      permissions: {
-        ...newKeyForm.permissions,
-        [permission]: !newKeyForm.permissions[permission]
+  });
+
+  // API base URL
+  const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+
+  // Load API credentials on component mount
+  useEffect(() => {
+    loadApiCredentials();
+  }, []);
+
+  // Clear messages after 5 seconds
+  useEffect(() => {
+    if (successMessage || error) {
+      const timer = setTimeout(() => {
+        setSuccessMessage(null);
+        setError(null);
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [successMessage, error]);
+
+  const loadApiCredentials = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      const token = getAccessToken();
+      if (!token) {
+        setError('You must be logged in to view API credentials');
+        return;
       }
-    });
+
+      const response = await fetch(`${API_BASE}/api/keys`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to load API credentials');
+      }
+
+      const data = await response.json();
+      if (data.success) {
+        setApiCredentials(data.credentials);
+      } else {
+        throw new Error(data.error || 'Failed to load API credentials');
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load API credentials');
+    } finally {
+      setLoading(false);
+    }
   };
-  
-  // Copy to clipboard
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
-    // Here you might want to show a toast notification
+
+  const handleFormChange = (field: keyof NewCredentialForm, value: string) => {
+    setNewCredentialForm(prev => ({
+      ...prev,
+      [field]: value
+    }));
   };
-  
-  // Create a new API key
-  const handleCreateKey = () => {
-    // In a real app, you would call your API here
-    const newKey: ApiKey = {
-      id: Math.random().toString(36).substring(2, 11),
-      name: newKeyForm.name,
-      key: Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15),
-      permissions: newKeyForm.permissions,
-      createdAt: new Date().toISOString(),
-      lastUsed: new Date().toISOString(),
-      expiresAt: newKeyForm.expiration === 'never' ? null : new Date(Date.now() + parseInt(newKeyForm.expiration) * 24 * 60 * 60 * 1000).toISOString()
-    };
-    
-    setApiKeys([...apiKeys, newKey]);
-    setShowCreateForm(false);
-    
-    // Reset form
-    setNewKeyForm({
-      name: '',
+
+  const handlePermissionChange = (permission: 'read' | 'trade' | 'withdraw') => {
+    setNewCredentialForm(prev => ({
+      ...prev,
       permissions: {
-        read: true,
-        trade: false,
-        withdraw: false
-      },
-      expiration: 'never'
-    });
+        ...prev.permissions,
+        [permission]: !prev.permissions[permission]
+      }
+    }));
   };
-  
-  // Delete API key
-  const handleDeleteKey = (id: string) => {
-    setApiKeys(apiKeys.filter(key => key.id !== id));
+
+  const handleCreateCredentials = async () => {
+    if (!newCredentialForm.credentialName.trim() || !newCredentialForm.apiKey.trim() || !newCredentialForm.apiSecret.trim()) {
+      setError('Please fill in all required fields');
+      return;
+    }
+
+    try {
+      setSubmitting(true);
+      setError(null);
+
+      const token = getAccessToken();
+      if (!token) {
+        setError('You must be logged in to create API credentials');
+        return;
+      }
+
+      const response = await fetch(`${API_BASE}/api/keys`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          credentialName: newCredentialForm.credentialName,
+          apiKey: newCredentialForm.apiKey,
+          apiSecret: newCredentialForm.apiSecret,
+          passphrase: newCredentialForm.passphrase || undefined,
+          permissions: newCredentialForm.permissions
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to create API credentials');
+      }
+
+      const data = await response.json();
+      if (data.success) {
+        setSuccessMessage('API credentials created successfully');
+        setShowCreateForm(false);
+        setNewCredentialForm({
+          credentialName: '',
+          apiKey: '',
+          apiSecret: '',
+          passphrase: '',
+          permissions: {
+            read: true,
+            trade: false,
+            withdraw: false
+          }
+        });
+        // Reload credentials
+        await loadApiCredentials();
+      } else {
+        throw new Error(data.error || 'Failed to create API credentials');
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create API credentials');
+    } finally {
+      setSubmitting(false);
+    }
   };
-  
+
+  const handleDeleteCredentials = async (id: string) => {
+    if (!confirm('Are you sure you want to delete these API credentials? This action cannot be undone.')) {
+      return;
+    }
+
+    try {
+      const token = getAccessToken();
+      if (!token) {
+        setError('You must be logged in to delete API credentials');
+        return;
+      }
+
+      const response = await fetch(`${API_BASE}/api/keys/${id}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to delete API credentials');
+      }
+
+      const data = await response.json();
+      if (data.success) {
+        setSuccessMessage('API credentials deleted successfully');
+        // Reload credentials
+        await loadApiCredentials();
+      } else {
+        throw new Error(data.error || 'Failed to delete API credentials');
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete API credentials');
+    }
+  };
+
+  const formatDate = (dateString: string) => {
+    return new Date(dateString).toLocaleDateString();
+  };
+
   return (
     <div className="space-y-6">
+      {/* Success Message */}
+      {successMessage && (
+        <div className="bg-green-50 border-l-4 border-green-500 p-4 text-green-700">
+          <div className="flex">
+            <CheckCircle className="h-5 w-5 mr-3 flex-shrink-0" />
+            <p>{successMessage}</p>
+          </div>
+        </div>
+      )}
+
+      {/* Error Message */}
+      {error && (
+        <div className="bg-red-50 border-l-4 border-red-500 p-4 text-red-700">
+          <div className="flex">
+            <XCircle className="h-5 w-5 mr-3 flex-shrink-0" />
+            <p>{error}</p>
+          </div>
+        </div>
+      )}
+
+      {/* Security Warning */}
       <div className="bg-blue-50 border-l-4 border-blue-500 p-4 text-blue-700">
         <div className="flex">
           <Shield className="h-6 w-6 mr-3 flex-shrink-0" />
@@ -110,39 +261,96 @@ const ApiKeyManagement: React.FC = () => {
           </div>
         </div>
       </div>
-      
+
+      {/* Header */}
       <div className="flex justify-between items-center">
         <h2 className="text-lg font-medium">Your API Keys</h2>
-        <button
-          onClick={() => setShowCreateForm(true)}
-          className="flex items-center px-3 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
-        >
-          <Plus className="h-4 w-4 mr-1" />
-          Create New Key
-        </button>
+        <div className="flex space-x-2">
+          <button
+            onClick={loadApiCredentials}
+            disabled={loading}
+            className="flex items-center px-3 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200 disabled:opacity-50"
+            title="Refresh API credentials list"
+          >
+            <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+          <button
+            onClick={() => setShowCreateForm(true)}
+            className="flex items-center px-3 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+          >
+            <Plus className="h-4 w-4 mr-2" />
+            Add API Keys
+          </button>
+        </div>
       </div>
-      
+
+      {/* Create Form */}
       {showCreateForm && (
         <div className="bg-white rounded-lg border border-neutral-200 overflow-hidden">
           <div className="px-4 py-3 bg-neutral-50 border-b border-neutral-200">
-            <h3 className="font-medium">Create New API Key</h3>
+            <h3 className="font-medium">Add Poloniex API Keys</h3>
           </div>
           <div className="p-4 space-y-4">
             <div>
-              <label htmlFor="key-name" className="block text-sm font-medium text-neutral-700">
-                Key Name
+              <label htmlFor="credential-name" className="block text-sm font-medium text-neutral-700">
+                Credential Name *
               </label>
               <input
                 type="text"
-                id="key-name"
-                value={newKeyForm.name}
-                onChange={(e) => setNewKeyForm({...newKeyForm, name: e.target.value})}
+                id="credential-name"
+                value={newCredentialForm.credentialName}
+                onChange={(e) => handleFormChange('credentialName', e.target.value)}
                 className="mt-1 block w-full border border-neutral-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-                placeholder="e.g., Trading Bot"
+                placeholder="e.g., Main Trading Account"
                 required
               />
             </div>
-            
+
+            <div>
+              <label htmlFor="api-key" className="block text-sm font-medium text-neutral-700">
+                API Key *
+              </label>
+              <input
+                type="text"
+                id="api-key"
+                value={newCredentialForm.apiKey}
+                onChange={(e) => handleFormChange('apiKey', e.target.value)}
+                className="mt-1 block w-full border border-neutral-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 font-mono"
+                placeholder="Enter your Poloniex API Key"
+                required
+              />
+            </div>
+
+            <div>
+              <label htmlFor="api-secret" className="block text-sm font-medium text-neutral-700">
+                API Secret *
+              </label>
+              <input
+                type="password"
+                id="api-secret"
+                value={newCredentialForm.apiSecret}
+                onChange={(e) => handleFormChange('apiSecret', e.target.value)}
+                className="mt-1 block w-full border border-neutral-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 font-mono"
+                placeholder="Enter your Poloniex API Secret"
+                required
+              />
+            </div>
+
+            <div>
+              <label htmlFor="passphrase" className="block text-sm font-medium text-neutral-700">
+                Passphrase (Optional)
+              </label>
+              <input
+                type="password"
+                id="passphrase"
+                value={newCredentialForm.passphrase}
+                onChange={(e) => handleFormChange('passphrase', e.target.value)}
+                className="mt-1 block w-full border border-neutral-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 font-mono"
+                placeholder="Enter passphrase if required"
+              />
+            </div>
+
             <div>
               <span className="block text-sm font-medium text-neutral-700 mb-2">
                 Permissions
@@ -152,7 +360,7 @@ const ApiKeyManagement: React.FC = () => {
                   <input
                     id="permission-read"
                     type="checkbox"
-                    checked={newKeyForm.permissions.read}
+                    checked={newCredentialForm.permissions.read}
                     onChange={() => handlePermissionChange('read')}
                     className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-neutral-300 rounded"
                   />
@@ -164,7 +372,7 @@ const ApiKeyManagement: React.FC = () => {
                   <input
                     id="permission-trade"
                     type="checkbox"
-                    checked={newKeyForm.permissions.trade}
+                    checked={newCredentialForm.permissions.trade}
                     onChange={() => handlePermissionChange('trade')}
                     className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-neutral-300 rounded"
                   />
@@ -176,7 +384,7 @@ const ApiKeyManagement: React.FC = () => {
                   <input
                     id="permission-withdraw"
                     type="checkbox"
-                    checked={newKeyForm.permissions.withdraw}
+                    checked={newCredentialForm.permissions.withdraw}
                     onChange={() => handlePermissionChange('withdraw')}
                     className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-neutral-300 rounded"
                   />
@@ -190,142 +398,127 @@ const ApiKeyManagement: React.FC = () => {
                 </div>
               </div>
             </div>
-            
-            <div>
-              <label htmlFor="key-expiration" className="block text-sm font-medium text-neutral-700">
-                Expiration
-              </label>
-              <select
-                id="key-expiration"
-                value={newKeyForm.expiration}
-                onChange={(e) => setNewKeyForm({...newKeyForm, expiration: e.target.value})}
-                className="mt-1 block w-full border border-neutral-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-              >
-                <option value="never">Never</option>
-                <option value="30">30 Days</option>
-                <option value="90">90 Days</option>
-                <option value="180">180 Days</option>
-                <option value="365">1 Year</option>
-              </select>
-            </div>
-            
+
             <div className="flex justify-end space-x-3 pt-2">
               <button
                 type="button"
                 onClick={() => setShowCreateForm(false)}
-                className="px-4 py-2 border border-neutral-300 rounded-md shadow-sm text-sm font-medium text-neutral-700 bg-white hover:bg-neutral-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                disabled={submitting}
+                className="px-4 py-2 border border-neutral-300 rounded-md shadow-sm text-sm font-medium text-neutral-700 bg-white hover:bg-neutral-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
                 type="button"
-                onClick={handleCreateKey}
-                className="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                onClick={handleCreateCredentials}
+                disabled={submitting || !newCredentialForm.credentialName.trim() || !newCredentialForm.apiKey.trim() || !newCredentialForm.apiSecret.trim()}
+                className="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
               >
-                Create Key
+                {submitting ? 'Creating...' : 'Create Credentials'}
               </button>
             </div>
           </div>
         </div>
       )}
-      
+
+      {/* Credentials List */}
       <div className="bg-white rounded-lg border border-neutral-200 overflow-hidden">
-        <div className="px-4 py-3 bg-neutral-50 border-b border-neutral-200 flex justify-between items-center">
-          <h3 className="font-medium">Current API Keys</h3>
-          <button
-            onClick={() => {}}
-            className="text-sm text-blue-600 hover:text-blue-700 flex items-center"
-          >
-            <RefreshCw className="h-3.5 w-3.5 mr-1" />
-            Refresh
-          </button>
+        <div className="px-4 py-3 bg-neutral-50 border-b border-neutral-200">
+          <h3 className="font-medium">Your API Credentials</h3>
         </div>
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-neutral-200">
-            <thead className="bg-neutral-50">
-              <tr>
-                <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">
-                  Name
-                </th>
-                <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">
-                  API Key
-                </th>
-                <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">
-                  Permissions
-                </th>
-                <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">
-                  Created
-                </th>
-                <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">
-                  Last Used
-                </th>
-                <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">
-                  Expires
-                </th>
-                <th scope="col" className="relative px-4 py-3">
-                  <span className="sr-only">Actions</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-neutral-200">
-              {apiKeys.map((key) => (
-                <tr key={key.id}>
-                  <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-neutral-900">
-                    {key.name}
-                  </td>
-                  <td className="px-4 py-3 whitespace-nowrap text-sm text-neutral-500">
-                    <div className="flex items-center space-x-2">
-                      <code className="font-mono bg-neutral-100 px-2 py-1 rounded">
-                        {key.key.slice(0, 8)}...{key.key.slice(-8)}
-                      </code>
-                      <button
-                        onClick={() => copyToClipboard(key.key)}
-                        className="text-neutral-400 hover:text-neutral-600"
-                      >
-                        <Copy className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 whitespace-nowrap text-sm text-neutral-500">
-                    <div className="space-x-2">
-                      {key.permissions.read && (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
-                          Read
-                        </span>
-                      )}
-                      {key.permissions.trade && (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
-                          Trade
-                        </span>
-                      )}
-                      {key.permissions.withdraw && (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800">
-                          Withdraw
-                        </span>
-                      )}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 whitespace-nowrap text-sm text-neutral-500">
-                    {new Date(key.createdAt).toLocaleDateString()}
-                  </td>
-                  <td className="px-4 py-3 whitespace-nowrap text-sm text-neutral-500">
-                    {new Date(key.lastUsed).toLocaleDateString()}
-                  </td>
-                  <td className="px-4 py-3 whitespace-nowrap text-sm text-neutral-500">
-                    {key.expiresAt ? new Date(key.expiresAt).toLocaleDateString() : 'Never'}
-                  </td>
-                  <td className="px-4 py-3 whitespace-nowrap text-right text-sm font-medium">
-                    <button
-                      onClick={() => handleDeleteKey(key.id)}
-                      className="text-red-600 hover:text-red-900"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </td>
+          {loading ? (
+            <div className="p-8 text-center">
+              <RefreshCw className="h-8 w-8 animate-spin mx-auto text-neutral-400 mb-2" />
+              <p className="text-neutral-500">Loading API credentials...</p>
+            </div>
+          ) : apiCredentials.length === 0 ? (
+            <div className="p-8 text-center">
+              <p className="text-neutral-500">No API credentials found. Add your first set of credentials to get started.</p>
+            </div>
+          ) : (
+            <table className="min-w-full divide-y divide-neutral-200">
+              <thead className="bg-neutral-50">
+                <tr>
+                  <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">
+                    Name
+                  </th>
+                  <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">
+                    Exchange
+                  </th>
+                  <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">
+                    Permissions
+                  </th>
+                  <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">
+                    Created
+                  </th>
+                  <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">
+                    Last Used
+                  </th>
+                  <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">
+                    Status
+                  </th>
+                  <th scope="col" className="relative px-4 py-3">
+                    <span className="sr-only">Actions</span>
+                  </th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="bg-white divide-y divide-neutral-200">
+                {apiCredentials.map((credential) => (
+                  <tr key={credential.id}>
+                    <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-neutral-900">
+                      {credential.credentialName}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-sm text-neutral-500">
+                      <span className="capitalize">{credential.exchange}</span>
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-sm text-neutral-500">
+                      <div className="space-x-2">
+                        {credential.permissions.read && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
+                            Read
+                          </span>
+                        )}
+                        {credential.permissions.trade && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
+                            Trade
+                          </span>
+                        )}
+                        {credential.permissions.withdraw && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800">
+                            Withdraw
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-sm text-neutral-500">
+                      {formatDate(credential.createdAt)}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-sm text-neutral-500">
+                      {credential.lastUsedAt ? formatDate(credential.lastUsedAt) : 'Never'}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-sm text-neutral-500">
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${credential.isActive
+                        ? 'bg-green-100 text-green-800'
+                        : 'bg-red-100 text-red-800'
+                        }`}>
+                        {credential.isActive ? 'Active' : 'Inactive'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-right text-sm font-medium">
+                      <button
+                        onClick={() => handleDeleteCredentials(credential.id)}
+                        className="text-red-600 hover:text-red-900"
+                        title="Delete API credentials"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       </div>
     </div>
