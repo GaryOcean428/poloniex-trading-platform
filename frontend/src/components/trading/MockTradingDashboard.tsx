@@ -12,7 +12,8 @@ import {
     TrendingUp,
     XCircle
 } from 'lucide-react';
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
+import './TradingDashboard.css';
 
 interface MockTradingDashboardProps {
     strategies: Strategy[];
@@ -32,7 +33,7 @@ const MockTradingDashboard: React.FC<MockTradingDashboardProps> = ({ strategies 
         }
     }, [strategies, selectedStrategy]);
 
-    const updateSessionsAndMetrics = () => {
+    const updateSessionsAndMetrics = useCallback(() => {
         const updatedSessions = new Map<string, MockTradingSession>();
         const updatedConfidence = new Map<string, ConfidenceMetrics>();
 
@@ -50,7 +51,7 @@ const MockTradingDashboard: React.FC<MockTradingDashboardProps> = ({ strategies 
 
         setActiveSessions(updatedSessions);
         setConfidenceMetrics(updatedConfidence);
-    };
+    }, [strategies]);
 
     // Update sessions and confidence metrics periodically
     useEffect(() => {
@@ -273,13 +274,12 @@ const MockTradingDashboard: React.FC<MockTradingDashboardProps> = ({ strategies 
                                     </span>
                                 </div>
 
-                                <div className="w-full bg-neutral-200 rounded-full h-2">
+                                <div className="progress-bar-container">
                                     <div
-                                        className={`h-2 rounded-full transition-all duration-300 ${confidence.overall >= 75 ? 'bg-green-500' :
-                                            confidence.overall >= 50 ? 'bg-yellow-500' :
-                                                'bg-red-500'
+                                        className={`progress-bar-fill ${confidence.overall >= 75 ? 'green' :
+                                            confidence.overall >= 50 ? 'yellow' : 'red'
                                             }`}
-                                        style={{ width: `${confidence.overall}%` }}
+                                        style={{ '--progress-width': `${confidence.overall}%` } as React.CSSProperties}
                                     ></div>
                                 </div>
                             </div>

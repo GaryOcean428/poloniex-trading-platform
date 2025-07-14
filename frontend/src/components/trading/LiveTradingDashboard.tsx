@@ -19,6 +19,7 @@ import {
     Zap
 } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
+import './TradingDashboard.css';
 
 interface LiveTradingDashboardProps {
     strategies: Strategy[];
@@ -347,11 +348,10 @@ const LiveTradingDashboard: React.FC<LiveTradingDashboardProps> = ({ strategies 
                                     </span>
                                 </div>
 
-                                <div className="w-full bg-neutral-200 rounded-full h-2 mt-3">
+                                <div className="progress-bar-container mt-3">
                                     <div
-                                        className={`h-2 rounded-full transition-all duration-300 ${confidenceMetrics.overall >= 75 ? 'bg-green-500' : 'bg-red-500'
-                                            }`}
-                                        style={{ width: `${confidenceMetrics.overall}%` }}
+                                        className={`progress-bar-fill ${confidenceMetrics.overall >= 75 ? 'green' : 'red'}`}
+                                        style={{ '--progress-width': `${confidenceMetrics.overall}%` } as React.CSSProperties}
                                     ></div>
                                 </div>
                             </div>
