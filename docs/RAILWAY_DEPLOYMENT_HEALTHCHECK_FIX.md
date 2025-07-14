@@ -4,7 +4,7 @@
 
 The Railway deployment for `poloniex-trading-platform-production` was failing during the healthcheck phase with the following error:
 
-```
+```bash
 Blocked request. This host ("healthcheck.railway.app") is not allowed.
 To allow this host, add "healthcheck.railway.app" to `preview.allowedHosts` in vite.config.js.
 ```
@@ -18,6 +18,7 @@ The issue was caused by using `vite preview` command in production deployment, w
 ### 1. Primary Fix: Switch to Production-Ready Static Server
 
 **Updated frontend/railway.json:**
+
 ```json
 {
   "deploy": {
@@ -27,6 +28,7 @@ The issue was caused by using `vite preview` command in production deployment, w
 ```
 
 **Updated frontend/package.json:**
+
 ```json
 {
   "scripts": {
@@ -38,6 +40,7 @@ The issue was caused by using `vite preview` command in production deployment, w
 ### 2. Secondary Fix: Vite Preview Configuration (Backup)
 
 **Updated frontend/vite.config.ts:**
+
 ```typescript
 export default defineConfig({
   preview: {
@@ -58,12 +61,14 @@ export default defineConfig({
 ## Verification Results
 
 ### Build Test
+
 ```bash
 $ cd frontend && yarn build
 ✓ built in 7.39s
 ```
 
 ### Server Test
+
 ```bash
 $ cd frontend && yarn start
 ┌───────────────────────────────────────────┐
@@ -103,15 +108,18 @@ After redeployment on Railway:
 ## Technical Details
 
 ### serve Package Benefits
+
 - Lightweight and fast static file serving
 - Built-in SPA support with `-s` flag
 - Proper production HTTP headers
 - No development-specific restrictions
 
 ### Command Explanation
+
 ```bash
 serve -s dist -l tcp://0.0.0.0:${PORT:-3000}
 ```
+
 - `-s dist`: Serve the dist folder as a Single Page Application
 - `-l tcp://0.0.0.0:${PORT:-3000}`: Listen on all interfaces at specified port
 - `${PORT:-3000}`: Use Railway's PORT environment variable, fallback to 3000
