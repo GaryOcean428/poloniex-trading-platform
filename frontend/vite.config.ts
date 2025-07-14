@@ -59,6 +59,7 @@ export default defineConfig({
   preview: {
     host: "0.0.0.0",
     port: parseInt(process.env.PORT || "5173"),
+    allowedHosts: ["healthcheck.railway.app", "localhost"],
   },
   resolve: {
     alias: {
