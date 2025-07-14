@@ -303,7 +303,7 @@ export class EnhancedBacktester {
     const totalDays = (marketData.length * 24) / (24 * 60 * 60 * 1000); // Assuming 1-hour candles
     
     const walkForwardResults: WalkForwardResult[] = [];
-    let allTrades: Trade[] = [];
+    const allTrades: Trade[] = [];
     let cumulativeBalance = this.config.initialBalance;
     let maxBalance = cumulativeBalance;
     let maxDrawdown = 0;

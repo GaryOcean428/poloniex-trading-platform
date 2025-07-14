@@ -6,13 +6,13 @@ import reactHooks from 'eslint-plugin-react-hooks';
 import reactRefresh from 'eslint-plugin-react-refresh';
 
 export default [
-  { ignores: ['dist'] },
+  { ignores: ['dist', 'vite.config.ts', 'tailwind.config.js', 'postcss.config.js'] },
   {
     files: ['**/*.{ts,tsx}'],
     languageOptions: {
       parser,
-      parserOptions: { 
-        ecmaVersion: 2020, 
+      parserOptions: {
+        ecmaVersion: 2020,
         sourceType: 'module',
         project: './tsconfig.json'
       },
@@ -41,7 +41,7 @@ export default [
       '@typescript-eslint/no-require-imports': 'error',
       '@typescript-eslint/prefer-as-const': 'error',
       '@typescript-eslint/no-unnecessary-type-assertion': 'error',
-      
+
       // General code quality rules
       'no-undef': 'off',
       '@typescript-eslint/no-duplicate-enum-values': 'off',
