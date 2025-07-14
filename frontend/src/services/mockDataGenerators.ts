@@ -61,7 +61,7 @@ export const generateRandomMarketData = (
  */
 export const generateRandomOrderBook = (
   symbol: string,
-  _volatility: number = 0.02,
+  volatility: number = 0.02,
   seed?: number
 ): OrderBook => {
   // Use seeded random generator if seed provided
@@ -77,7 +77,7 @@ export const generateRandomOrderBook = (
       : Math.random;
 
   const basePrice = 50000 + getRandom() * 10000;
-  const spread = basePrice * 0.001; // 0.1% spread
+  const spread = basePrice * volatility * 0.05; // Use volatility to affect spread
 
   const bids: [number, number][] = [];
   const asks: [number, number][] = [];

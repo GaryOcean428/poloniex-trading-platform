@@ -1,123 +1,130 @@
-import React, { useState, useEffect } from 'react';
-import { Download, X } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
 
-interface BeforeInstallPromptEvent extends Event {
-  prompt(): Promise<void>;
-  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
+/* eslint-disable no-console, @typescript-eslint/no-explicit-any */
+
+interface PWAInstallPromptProps {
+  onInstall?: () => void;
+  onDismiss?: () => void;
 }
 
-const PWAInstallPrompt: React.FC = () => {
-  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
-  const [showPrompt, setShowPrompt] = useState(false);
-  const [isInstallable, setIsInstallable] = useState(false);
+const PWAInstallPrompt: React.FC<PWAInstallPromptProps> = ({
+  onInstall,
+  onDismiss
+}) => {
+  const [isStandalone, setIsStandalone] = useState<boolean>(false);
+  const [deferredPrompt, setDeferredPrompt] = useState<Event | null>(null);
+  const [showPrompt, setShowPrompt] = useState<boolean>(false);
 
   useEffect(() => {
-    // Check if already dismissed
-    const dismissed = localStorage.getItem('pwa_install_dismissed') === 'true';
-    
-    // Check if already installed
-    const isStandalone = window.matchMedia('(display-mode: standalone)').matches;
-    const isInWebAppiOS = (window.navigator as any).standalone === true;
-    const isInstalled = isStandalone || isInWebAppiOS;
+    // Check if app is running in standalone mode
+    const checkStandaloneMode = () => {
+      const standalone = window.matchMedia('(display-mode: standalone)').matches ||
+        (window.navigator as any).standalone ||
+        document.referrer.includes('android-app://');
 
-    if (dismissed || isInstalled) {
-      return;
-    }
-
-    const handleBeforeInstallPrompt = (e: Event) => {
-      // Prevent the mini-infobar from appearing on mobile
-      e.preventDefault();
-      
-      const promptEvent = e as BeforeInstallPromptEvent;
-      setDeferredPrompt(promptEvent);
-      setIsInstallable(true);
-      
-      // Show our custom prompt after a short delay
-      setTimeout(() => {
-        setShowPrompt(true);
-      }, 5000); // Show after 5 seconds
+      setIsStandalone(standalone);
+      console.log('Standalone mode:', standalone);
     };
 
-    const handleAppInstalled = () => {
-      console.log('PWA: App was installed');
-      setShowPrompt(false);
-      setDeferredPrompt(null);
-      setIsInstallable(false);
+    checkStandaloneMode();
+
+    // Listen for beforeinstallprompt event
+    const handleBeforeInstallPrompt = (e: Event) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+      setShowPrompt(true);
+      console.log('PWA install prompt available');
     };
 
     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-    window.addEventListener('appinstalled', handleAppInstalled);
+
+    // Check if already installed
+    if ((window.navigator as any).getInstalledRelatedApps)
+    {
+      (window.navigator as any).getInstalledRelatedApps().then((apps: any[]) => {
+        if (apps.length > 0)
+        {
+          console.log('PWA already installed');
+          setShowPrompt(false);
+        }
+      });
+    }
 
     return () => {
       window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-      window.removeEventListener('appinstalled', handleAppInstalled);
     };
   }, []);
 
-  const handleInstallClick = async () => {
+  const handleInstall = async () => {
     if (!deferredPrompt) return;
 
-    try {
-      await deferredPrompt.prompt();
-      const choiceResult = await deferredPrompt.userChoice;
-      
-      if (choiceResult.outcome === 'accepted') {
-        console.log('PWA: User accepted the install prompt');
-      } else {
-        console.log('PWA: User dismissed the install prompt');
+    try
+    {
+      // Cast to any for PWA-specific properties
+      const prompt = deferredPrompt as any;
+      prompt.prompt();
+      const { outcome } = await prompt.userChoice;
+
+      console.log(`User response to install prompt: ${outcome}`);
+
+      if (outcome === 'accepted')
+      {
+        setShowPrompt(false);
+        onInstall?.();
       }
-      
+
       setDeferredPrompt(null);
-      setShowPrompt(false);
-    } catch (error) {
-      console.error('PWA: Error during installation:', error);
+    } catch (error)
+    {
+      console.error('Error installing PWA:', error);
     }
   };
 
   const handleDismiss = () => {
     setShowPrompt(false);
-    localStorage.setItem('pwa_install_dismissed', 'true');
+    onDismiss?.();
   };
 
-  if (!showPrompt || !isInstallable) {
+  if (isStandalone || !showPrompt)
+  {
     return null;
   }
 
   return (
-    <div className="fixed bottom-4 left-4 right-4 md:left-auto md:right-4 md:max-w-sm bg-white border border-gray-200 rounded-lg shadow-lg p-4 z-50 animate-in slide-in-from-bottom duration-300">
+    <div className="fixed bottom-4 right-4 bg-white shadow-lg rounded-lg p-4 max-w-sm z-50 border border-neutral-200">
       <div className="flex items-start justify-between">
-        <div className="flex items-center space-x-3">
-          <div className="flex-shrink-0">
-            <Download className="h-6 w-6 text-blue-600" />
-          </div>
-          <div className="flex-1">
-            <h3 className="text-sm font-medium text-gray-900">
-              Install Poloniex Trading
-            </h3>
-            <p className="text-xs text-gray-600 mt-1">
-              Add to your home screen for quick access and offline support
+        <div className="flex items-center">
+          <img
+            src="/icon-192.png"
+            alt="Trading Bot"
+            className="w-8 h-8 mr-3"
+          />
+          <div>
+            <h3 className="text-sm font-semibold">Install Trading Bot</h3>
+            <p className="text-xs text-neutral-600 mt-1">
+              Get better performance and offline access
             </p>
           </div>
         </div>
         <button
           onClick={handleDismiss}
-          className="flex-shrink-0 text-gray-400 hover:text-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
-          aria-label="Dismiss install prompt"
+          className="text-neutral-400 hover:text-neutral-600"
+          aria-label="Dismiss"
         >
-          <X className="h-4 w-4" />
+          ×
         </button>
       </div>
-      
+
       <div className="mt-3 flex space-x-2">
         <button
-          onClick={handleInstallClick}
-          className="flex-1 bg-blue-600 text-white text-sm font-medium py-2 px-3 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
+          onClick={handleInstall}
+          className="flex-1 bg-blue-600 text-white text-sm py-2 px-3 rounded-md hover:bg-blue-700 transition-colors"
         >
           Install
         </button>
         <button
           onClick={handleDismiss}
-          className="flex-1 bg-gray-100 text-gray-700 text-sm font-medium py-2 px-3 rounded-md hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-500 transition-colors"
+          className="flex-1 bg-neutral-100 text-neutral-700 text-sm py-2 px-3 rounded-md hover:bg-neutral-200 transition-colors"
         >
           Not now
         </button>

@@ -1,21 +1,23 @@
-import React, { useState, useEffect } from 'react';
-import { TrendingUp, TrendingDown, DollarSign, Wifi, WifiOff, RefreshCw } from 'lucide-react';
+import { DollarSign, RefreshCw, TrendingDown, TrendingUp, Wifi, WifiOff } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
 import { useTradingContext } from '../../hooks/useTradingContext';
 import { useWebSocket } from '../../services/websocketService';
 
+/* eslint-disable no-console */
+
 const AccountSummary: React.FC = () => {
   const { accountBalance, isLoading, isMockMode, refreshApiConnection } = useTradingContext();
-  const { isConnected, connectionState } = useWebSocket();
+  const { isConnected } = useWebSocket();
   const [lastUpdateTime, setLastUpdateTime] = useState<Date>(new Date());
   const [isRefreshing, setIsRefreshing] = useState(false);
-  
+
   // Update last update time when account balance changes
   useEffect(() => {
     if (accountBalance) {
       setLastUpdateTime(new Date());
     }
   }, [accountBalance]);
-  
+
   // Default values if data is not available
   const defaultAccountData = {
     balance: 15478.23,
@@ -25,30 +27,29 @@ const AccountSummary: React.FC = () => {
     todayPnL: 156.78,
     todayPnLPercentage: 1.02
   };
-  
+
   // Process account data from API if available
   const processAccountData = () => {
     if (!accountBalance || isLoading) return defaultAccountData;
-    
+
     try {
-      // This mapping will depend on the exact format of your Poloniex API response
-      // Adjust as needed based on the actual response structure
+      // Map the actual account balance structure: { available: number; total: number; currency: string; }
       return {
-        balance: parseFloat(accountBalance.totalAmount || "0"),
-        availableBalance: parseFloat(accountBalance.availableAmount || "0"),
-        equity: parseFloat(accountBalance.accountEquity || "0"),
-        unrealizedPnL: parseFloat(accountBalance.unrealizedPnL || "0"),
-        todayPnL: parseFloat(accountBalance.todayPnL || "0"),
-        todayPnLPercentage: parseFloat(accountBalance.todayPnLPercentage || "0")
+        balance: parseFloat(accountBalance.total?.toString() || "0"),
+        availableBalance: parseFloat(accountBalance.available?.toString() || "0"),
+        equity: parseFloat(accountBalance.total?.toString() || "0"), // Use total as equity fallback
+        unrealizedPnL: 0, // Not available in current structure
+        todayPnL: 0, // Not available in current structure
+        todayPnLPercentage: 0 // Not available in current structure
       };
     } catch (error) {
       console.error('Error processing account data:', error);
       return defaultAccountData;
     }
   };
-  
+
   const accountData = processAccountData();
-  
+
   const handleRefresh = async () => {
     setIsRefreshing(true);
     try {
@@ -60,7 +61,7 @@ const AccountSummary: React.FC = () => {
       setIsRefreshing(false);
     }
   };
-  
+
   const getConnectionStatusIcon = () => {
     if (isConnected) {
       return <Wifi className="h-4 w-4 text-green-600" aria-label="Connected" />;
@@ -68,16 +69,16 @@ const AccountSummary: React.FC = () => {
       return <WifiOff className="h-4 w-4 text-red-600" aria-label="Disconnected" />;
     }
   };
-  
+
   const formatTime = (date: Date) => {
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   };
-  
+
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-xl font-bold flex items-center">
-          Account Summary 
+          Account Summary
           {isLoading && <span className="text-sm text-neutral-500 ml-2">Loading...</span>}
         </h2>
         <div className="flex items-center space-x-2">
@@ -92,7 +93,7 @@ const AccountSummary: React.FC = () => {
           </button>
         </div>
       </div>
-      
+
       {/* Connection Status Bar */}
       <div className={`mb-4 p-2 rounded-md text-xs flex items-center justify-between ${
         isConnected ? 'bg-green-50 text-green-700' : 'bg-yellow-50 text-yellow-700'
@@ -107,7 +108,7 @@ const AccountSummary: React.FC = () => {
           Last updated: {formatTime(lastUpdateTime)}
         </span>
       </div>
-      
+
       <div className="space-y-4">
         <div className="grid grid-cols-2 gap-4">
           <div className="bg-neutral-50 p-3 rounded-md relative">
@@ -118,11 +119,11 @@ const AccountSummary: React.FC = () => {
             </div>
             {/* Real-time indicator */}
             {isConnected && !isMockMode && (
-              <div className="absolute top-2 right-2 w-2 h-2 bg-green-500 rounded-full animate-pulse" 
-                   title="Live data"></div>
+              <div className="absolute top-2 right-2 w-2 h-2 bg-green-500 rounded-full animate-pulse"
+                title="Live data"></div>
             )}
           </div>
-          
+
           <div className="bg-neutral-50 p-3 rounded-md relative">
             <div className="text-sm text-neutral-500">Available</div>
             <div className="text-xl font-bold flex items-center">
@@ -131,28 +132,28 @@ const AccountSummary: React.FC = () => {
             </div>
             {/* Real-time indicator */}
             {isConnected && !isMockMode && (
-              <div className="absolute top-2 right-2 w-2 h-2 bg-green-500 rounded-full animate-pulse" 
-                   title="Live data"></div>
+              <div className="absolute top-2 right-2 w-2 h-2 bg-green-500 rounded-full animate-pulse"
+                title="Live data"></div>
             )}
           </div>
         </div>
-        
+
         <div className="bg-neutral-50 p-3 rounded-md relative">
           <div className="text-sm text-neutral-500">Equity</div>
           <div className="text-xl font-bold">${accountData.equity.toFixed(2)}</div>
           <div className="text-sm mt-1">
-            Unrealized P&L: 
+            Unrealized P&L:
             <span className={`font-medium ml-1 ${(accountData.unrealizedPnL || 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
               {(accountData.unrealizedPnL || 0) >= 0 ? '+' : ''}{accountData.unrealizedPnL?.toFixed(2)}
             </span>
           </div>
           {/* Real-time indicator */}
           {isConnected && !isMockMode && (
-            <div className="absolute top-2 right-2 w-2 h-2 bg-green-500 rounded-full animate-pulse" 
-                 title="Live data"></div>
+            <div className="absolute top-2 right-2 w-2 h-2 bg-green-500 rounded-full animate-pulse"
+              title="Live data"></div>
           )}
         </div>
-        
+
         <div className="bg-neutral-50 p-3 rounded-md relative">
           <div className="text-sm text-neutral-500">Today's P&L</div>
           <div className="flex items-center">
@@ -170,8 +171,8 @@ const AccountSummary: React.FC = () => {
           </div>
           {/* Real-time indicator */}
           {isConnected && !isMockMode && (
-            <div className="absolute top-2 right-2 w-2 h-2 bg-green-500 rounded-full animate-pulse" 
-                 title="Live data"></div>
+            <div className="absolute top-2 right-2 w-2 h-2 bg-green-500 rounded-full animate-pulse"
+              title="Live data"></div>
           )}
         </div>
       </div>
