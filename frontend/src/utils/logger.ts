@@ -1,24 +1,22 @@
 /**
- * Logger utility for tracking application events and errors
+ * Centralized logging utility for the application
+ * Provides structured logging with different levels and proper error handling
  */
 
-type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+export type LogLevel = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR' | 'FATAL';
 
-interface LogEntry {
-  timestamp: string;
+export interface LogEntry {
   level: LogLevel;
   message: string;
+  timestamp: string;
+  context?: string;
+  error?: Error;
   data?: unknown;
 }
 
-// Configure log levels that should be output
-// In production, you might want to set this to ['info', 'warn', 'error']
-const activeLevels: LogLevel[] = ['debug', 'info', 'warn', 'error'];
-
-class Logger {
+export class Logger {
   private static instance: Logger;
-  private logs: LogEntry[] = [];
-  private maxLogs = 1000; // Maximum number of logs to keep in memory
+  private logLevel: LogLevel = process.env.NODE_ENV === 'production' ? 'INFO' : 'DEBUG';
 
   private constructor() {}
 
@@ -29,59 +27,92 @@ class Logger {
     return Logger.instance;
   }
 
-  private createLogEntry(level: LogLevel, message: string, data?: unknown): LogEntry {
+  public setLogLevel(level: LogLevel): void {
+    this.logLevel = level;
+  }
+
+  private shouldLog(level: LogLevel): boolean {
+    const levels: Record<LogLevel, number> = {
+      DEBUG: 0,
+      INFO: 1,
+      WARN: 2,
+      ERROR: 3,
+      FATAL: 4,
+    };
+    return levels[level] >= levels[this.logLevel];
+  }
+
+  private createLogEntry(level: LogLevel, message: string, context?: string, error?: Error, data?: unknown): LogEntry {
     return {
-      timestamp: new Date().toISOString(),
       level,
       message,
-      data
+      timestamp: new Date().toISOString(),
+      context,
+      error,
+      data,
     };
   }
 
-  private addLog(entry: LogEntry): void {
-    // Add the log to our in-memory store
-    this.logs.push(entry);
-    
-    // Trim logs if they exceed the maximum
-    if (this.logs.length > this.maxLogs) {
-      this.logs = this.logs.slice(-this.maxLogs);
+  private formatLogEntry(entry: LogEntry): string {
+    const { level, message, timestamp, context, error } = entry;
+    const contextStr = context ? `[${context}] ` : '';
+    const errorStr = error ? `\nError: ${error.stack || error.message}` : '';
+    return `[${timestamp}] [${level}] ${contextStr}${message}${errorStr}`;
+  }
+
+  private logToConsole(entry: LogEntry): void {
+    const formatted = this.formatLogEntry(entry);
+
+    switch (entry.level) {
+      case 'DEBUG':
+        console.debug(formatted);
+        break;
+      case 'INFO':
+        console.info(formatted);
+        break;
+      case 'WARN':
+        console.warn(formatted);
+        break;
+      case 'ERROR':
+      case 'FATAL':
+        console.error(formatted);
+        break;
     }
-    
-    // In a real application, you might want to send logs to a server or service
-    if (activeLevels.includes(entry.level)) {
-      const { timestamp, level, message, data } = entry;
-      console[level === 'error' ? 'error' : level === 'warn' ? 'warn' : 'log'](
-        `[${level.toUpperCase()}] ${timestamp} - ${message}`,
-        data ? data : ''
-      );
+  }
+
+  public debug(message: string, context?: string, data?: unknown): void {
+    if (this.shouldLog('DEBUG')) {
+      const entry = this.createLogEntry('DEBUG', message, context, undefined, data);
+      this.logToConsole(entry);
     }
   }
 
-  public debug(message: string, data?: unknown): void {
-    this.addLog(this.createLogEntry('debug', message, data));
-  }
-
-  public info(message: string, data?: unknown): void {
-    this.addLog(this.createLogEntry('info', message, data));
-  }
-
-  public warn(message: string, data?: unknown): void {
-    this.addLog(this.createLogEntry('warn', message, data));
-  }
-
-  public error(message: string, data?: unknown): void {
-    this.addLog(this.createLogEntry('error', message, data));
-  }
-
-  public getLogs(level?: LogLevel): LogEntry[] {
-    if (level) {
-      return this.logs.filter(log => log.level === level);
+  public info(message: string, context?: string, data?: unknown): void {
+    if (this.shouldLog('INFO')) {
+      const entry = this.createLogEntry('INFO', message, context, undefined, data);
+      this.logToConsole(entry);
     }
-    return this.logs;
   }
 
-  public clearLogs(): void {
-    this.logs = [];
+  public warn(message: string, context?: string, error?: Error, data?: unknown): void {
+    if (this.shouldLog('WARN')) {
+      const entry = this.createLogEntry('WARN', message, context, error, data);
+      this.logToConsole(entry);
+    }
+  }
+
+  public error(message: string, context?: string, error?: Error, data?: unknown): void {
+    if (this.shouldLog('ERROR')) {
+      const entry = this.createLogEntry('ERROR', message, context, error, data);
+      this.logToConsole(entry);
+    }
+  }
+
+  public fatal(message: string, context?: string, error?: Error, data?: unknown): void {
+    if (this.shouldLog('FATAL')) {
+      const entry = this.createLogEntry('FATAL', message, context, error, data);
+      this.logToConsole(entry);
+    }
   }
 }
 

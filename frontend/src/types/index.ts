@@ -44,10 +44,10 @@ export interface BreakoutParameters extends BaseStrategyParameters {
   breakoutThreshold: number;
 }
 
-export type StrategyParameters = 
-  | MovingAverageCrossoverParameters 
-  | RSIParameters 
-  | MACDParameters 
+export type StrategyParameters =
+  | MovingAverageCrossoverParameters
+  | RSIParameters
+  | MACDParameters
   | BollingerBandsParameters
   | BreakoutParameters;
 
@@ -115,6 +115,24 @@ export interface FuturesOrder {
   marginMode: 'ISOLATED' | 'CROSS';
   positionSide: 'LONG' | 'SHORT' | 'BOTH';
   status: 'NEW' | 'PARTIALLY_FILLED' | 'FILLED' | 'CANCELED' | 'REJECTED';
+  timestamp: number;
+}
+
+export interface OrderBook {
+  symbol: string;
+  bids: [number, number][];
+  asks: [number, number][];
+  timestamp: number;
+}
+
+export interface Ticker {
+  symbol: string;
+  lastPrice: number;
+  bidPrice: number;
+  askPrice: number;
+  volume24h: number;
+  high24h: number;
+  low24h: number;
   timestamp: number;
 }
 

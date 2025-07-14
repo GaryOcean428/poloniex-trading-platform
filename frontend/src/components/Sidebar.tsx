@@ -1,31 +1,30 @@
-import React, { useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
-import { useTradingContext } from '../hooks/useTradingContext';
-import { useResponsiveNav } from '../hooks/useResponsiveNav';
-import { 
-  LayoutDashboard, 
-  LineChart, 
-  Settings, 
-  MessageSquare, 
-  Zap,
+import {
+  Activity,
+  ArrowLeft,
   BarChart4,
   Chrome,
-  User,
+  History,
+  LayoutDashboard,
+  LineChart,
   Menu,
-  ArrowLeft,
-  TrendingUp,
-  Activity,
-  FileText,
+  MessageSquare,
   Receipt,
-  History
+  Settings,
+  TrendingUp,
+  User,
+  Zap
 } from 'lucide-react';
+import React, { useState } from 'react';
+import { Link, useLocation } from 'react-router-dom';
+import { useResponsiveNav } from '../hooks/useResponsiveNav';
+import { useTradingContext } from '../hooks/useTradingContext';
 
 const Sidebar: React.FC = () => {
   const location = useLocation();
   const { accountBalance, isLoading } = useTradingContext();
   const { isDesktop } = useResponsiveNav();
   const [isCollapsed, setIsCollapsed] = useState(false);
-  
+
   const navItems = [
     { path: '/', label: 'Dashboard', icon: <LayoutDashboard size={20} /> },
     { path: '/dashboard/live', label: 'Live Trading', icon: <Activity size={20} /> },
@@ -40,19 +39,19 @@ const Sidebar: React.FC = () => {
     { path: '/extension', label: 'Chrome Extension', icon: <Chrome size={20} /> },
     { path: '/settings', label: 'Settings', icon: <Settings size={20} /> }
   ];
-  
+
   const toggleSidebar = () => {
     setIsCollapsed(!isCollapsed);
   };
 
   // Only show sidebar on desktop
   if (!isDesktop) return null;
-  
+
   return (
-    <aside 
+    <aside
       id="navigation"
       className={`
-        ${isCollapsed ? 'w-16' : 'w-64'} 
+        ${isCollapsed ? 'w-16' : 'w-64'}
         bg-neutral-800 text-white transition-all duration-300 ease-in-out
         relative flex-shrink-0
       `}
@@ -75,17 +74,17 @@ const Sidebar: React.FC = () => {
             {isCollapsed ? <Menu size={20} aria-hidden="true" /> : <ArrowLeft size={20} aria-hidden="true" />}
           </button>
         </div>
-        
+
         <nav aria-label="Main menu">
           <ul className="space-y-1" role="list">
             {navItems.map((item) => (
               <li key={item.path}>
-                <Link 
-                  to={item.path} 
+                <Link
+                  to={item.path}
                   className={`
                     flex items-center p-3 rounded-md transition-all duration-200 group
-                    ${location.pathname === item.path 
-                      ? 'bg-blue-700 text-white' 
+                    ${location.pathname === item.path
+                      ? 'bg-blue-700 text-white'
                       : 'text-neutral-300 hover:bg-neutral-700 hover:text-white'
                     }
                     ${isCollapsed ? 'justify-center' : ''}
@@ -100,11 +99,11 @@ const Sidebar: React.FC = () => {
                   {!isCollapsed && (
                     <span className="transition-opacity duration-200">{item.label}</span>
                   )}
-                  
+
                   {/* Tooltip for collapsed state */}
                   {isCollapsed && (
                     <div className="
-                      absolute left-full ml-2 px-2 py-1 
+                      absolute left-full ml-2 px-2 py-1
                       bg-neutral-900 text-white text-sm rounded-md
                       opacity-0 group-hover:opacity-100 transition-opacity duration-200
                       pointer-events-none whitespace-nowrap z-50
@@ -118,7 +117,7 @@ const Sidebar: React.FC = () => {
           </ul>
         </nav>
       </div>
-      
+
       {/* Account balance section */}
       {!isCollapsed && (
         <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-neutral-700">
