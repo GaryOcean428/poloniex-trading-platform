@@ -4,6 +4,7 @@ import {
 } from "@/services/mockTradingService";
 import { poloniexApi } from "@/services/poloniexAPI";
 import { MarketData, Strategy } from "@/types";
+import { logger } from "@/utils/logger";
 import { executeStrategy } from "@/utils/strategyExecutors";
 
 // Live trading interfaces
@@ -168,7 +169,7 @@ export class LiveTradingService {
    */
   public async stopLiveTrading(
     sessionId: string,
-    _reason: string = "Manual stop"
+    reason: string = "Manual stop"
   ): Promise<void> {
     const session = this.activeSessions.get(sessionId);
     if (!session) {
@@ -181,9 +182,11 @@ export class LiveTradingService {
     // Close all open positions (if applicable)
     await this.closeAllPositions(sessionId);
 
-    // Mark session as inactive
+    // Mark session as inactive with reason
     session.isActive = false;
     session.endTime = Date.now();
+
+    logger.info(`Stopped live trading session ${sessionId}: ${reason}`, "LiveTrading");
   }
 
   /**
@@ -490,7 +493,11 @@ export class LiveTradingService {
       } catch (error) {
         // Re-throw the error to be handled by the caller
         // In a production environment, this would also log to a proper logging service
-        throw new Error(`Strategy execution failed: ${error instanceof Error ? error.message : String(error)}`);
+        throw new Error(
+          `Strategy execution failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
       }
     }, 10000); // Execute every 10 seconds
   }
@@ -555,7 +562,7 @@ export class LiveTradingService {
     if (!session) return;
 
     const pendingTrades = session.trades.filter((t) => t.status === "PENDING");
-    
+
     // Update the session status to reflect the cancellation
     // The caller can check the number of pending orders if needed
     if (pendingTrades.length > 0) {
@@ -575,7 +582,10 @@ export class LiveTradingService {
     const session = this.activeSessions.get(sessionId);
     if (!session) return;
 
-    console.log(`Closing all positions for session ${sessionId}`);
+    logger.info(
+      `Closing all positions for session ${sessionId}`,
+      "LiveTrading"
+    );
     // Implementation would close positions via Poloniex API
   }
 
@@ -615,9 +625,11 @@ export class LiveTradingService {
         };
       } catch (error) {
         // Add the error to the session's safety check errors
-        const errorMessage = `Safety check failed: ${error instanceof Error ? error.message : String(error)}`;
+        const errorMessage = `Safety check failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`;
         session.safetyChecks.errors.push(errorMessage);
-        
+
         // In a production environment, this would also log to a proper logging service
         // and potentially trigger an alert for critical safety check failures
       }

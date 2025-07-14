@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { TrendingUp, TrendingDown, Activity, Wifi, WifiOff } from 'lucide-react';
-import { useWebSocket } from '../../services/websocketService';
+import { Activity, TrendingDown, TrendingUp, Wifi, WifiOff } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
 import { useTradingContext } from '../../hooks/useTradingContext';
+import { useWebSocket } from '../../services/websocketService';
 
 interface TickerData {
   symbol: string;
@@ -16,19 +16,26 @@ interface TickerData {
 
 const RealTimeMarketTicker: React.FC = () => {
   const { isConnected, isMockMode } = useWebSocket();
-  const { marketData, isMockMode: contextMockMode } = useTradingContext();
+  const { isMockMode: contextMockMode } = useTradingContext();
   const [tickerData, setTickerData] = useState<TickerData[]>([]);
   const [selectedPairs] = useState(['BTC-USDT', 'ETH-USDT', 'ADA-USDT', 'DOT-USDT']);
 
   // Generate mock ticker data for demonstration
   useEffect(() => {
     const generateMockTickerData = (): TickerData[] => {
-      const mockPairs = [
-        { symbol: 'BTC-USDT', basePrice: 43000 },
-        { symbol: 'ETH-USDT', basePrice: 2500 },
-        { symbol: 'ADA-USDT', basePrice: 0.45 },
-        { symbol: 'DOT-USDT', basePrice: 6.5 }
-      ];
+      const mockPairs = selectedPairs.map(pair => {
+        const basePrices: Record<string, number> = {
+          'BTC-USDT': 43000,
+          'ETH-USDT': 2500,
+          'ADA-USDT': 0.45,
+          'DOT-USDT': 6.5,
+          'SOL-USDT': 100,
+          'MATIC-USDT': 1.0,
+          'AVAX-USDT': 35,
+          'LINK-USDT': 15
+        };
+        return { symbol: pair, basePrice: basePrices[pair] || 100 };
+      });
 
       return mockPairs.map(pair => {
         const variance = (Math.random() - 0.5) * 0.1; // ±5% variance
@@ -54,7 +61,7 @@ const RealTimeMarketTicker: React.FC = () => {
 
     // Update ticker data every 2 seconds to simulate real-time updates
     const interval = setInterval(() => {
-      setTickerData(prevData => 
+      setTickerData(prevData =>
         prevData.map(ticker => {
           const priceChange = (Math.random() - 0.5) * ticker.price * 0.001; // ±0.1% change
           const newPrice = Math.max(0.01, ticker.price + priceChange);
@@ -82,30 +89,38 @@ const RealTimeMarketTicker: React.FC = () => {
   };
 
   const formatVolume = (volume: number) => {
-    if (volume >= 1000000) {
+    if (volume >= 1000000)
+    {
       return `${(volume / 1000000).toFixed(1)}M`;
-    } else if (volume >= 1000) {
+    } else if (volume >= 1000)
+    {
       return `${(volume / 1000).toFixed(1)}K`;
     }
     return volume.toFixed(0);
   };
 
   const getConnectionStatusColor = () => {
-    if (isConnected && !isMockMode && !contextMockMode) {
+    if (isConnected && !isMockMode && !contextMockMode)
+    {
       return 'bg-green-500';
-    } else if (isMockMode || contextMockMode) {
+    } else if (isMockMode || contextMockMode)
+    {
       return 'bg-yellow-500';
-    } else {
+    } else
+    {
       return 'bg-red-500';
     }
   };
 
   const getConnectionStatusText = () => {
-    if (isConnected && !isMockMode && !contextMockMode) {
+    if (isConnected && !isMockMode && !contextMockMode)
+    {
       return 'Live Data';
-    } else if (isMockMode || contextMockMode) {
+    } else if (isMockMode || contextMockMode)
+    {
       return 'Mock Data';
-    } else {
+    } else
+    {
       return 'Offline';
     }
   };
@@ -120,8 +135,8 @@ const RealTimeMarketTicker: React.FC = () => {
         <div className="flex items-center space-x-2">
           <div className={`w-2 h-2 rounded-full ${getConnectionStatusColor()} animate-pulse`}></div>
           <span className="text-xs text-gray-600">{getConnectionStatusText()}</span>
-          {isConnected ? 
-            <Wifi className="w-4 h-4 text-green-600" /> : 
+          {isConnected ?
+            <Wifi className="w-4 h-4 text-green-600" /> :
             <WifiOff className="w-4 h-4 text-red-600" />
           }
         </div>
@@ -129,7 +144,7 @@ const RealTimeMarketTicker: React.FC = () => {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         {tickerData.map((ticker) => (
-          <div 
+          <div
             key={ticker.symbol}
             className="border border-gray-200 rounded-md p-3 hover:border-blue-300 transition-colors"
           >
@@ -141,27 +156,26 @@ const RealTimeMarketTicker: React.FC = () => {
                 <TrendingDown className="w-4 h-4 text-red-600" />
               )}
             </div>
-            
+
             <div className="space-y-1">
               <div className="text-xl font-bold text-gray-900">
                 ${formatPrice(ticker.price, ticker.symbol)}
               </div>
-              
-              <div className={`text-sm font-medium ${
-                ticker.changePercent24h >= 0 ? 'text-green-600' : 'text-red-600'
-              }`}>
+
+              <div className={`text-sm font-medium ${ticker.changePercent24h >= 0 ? 'text-green-600' : 'text-red-600'
+                }`}>
                 {ticker.changePercent24h >= 0 ? '+' : ''}{ticker.changePercent24h.toFixed(2)}%
                 <span className="ml-1 text-gray-500">
                   ({ticker.change24h >= 0 ? '+' : ''}${ticker.change24h.toFixed(2)})
                 </span>
               </div>
-              
+
               <div className="text-xs text-gray-500 space-y-0.5">
                 <div>Vol: {formatVolume(ticker.volume24h)}</div>
                 <div>H: ${formatPrice(ticker.high24h, ticker.symbol)} L: ${formatPrice(ticker.low24h, ticker.symbol)}</div>
               </div>
             </div>
-            
+
             <div className="mt-2 text-xs text-gray-400">
               {ticker.lastUpdateTime.toLocaleTimeString()}
             </div>

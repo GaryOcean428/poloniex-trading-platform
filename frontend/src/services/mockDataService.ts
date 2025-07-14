@@ -1,12 +1,56 @@
-import { MarketData, OrderBook, Trade, Ticker } from '@/types';
-import { useMockMode } from '../hooks/useMockMode';
-import { generateRandomMarketData, generateRandomOrderBook, generateRandomTrades, generateRandomTicker } from './mockDataGenerators';
+import { MarketData, OrderBook, Ticker, Trade } from "@/types";
+import {
+  generateRandomMarketData,
+  generateRandomOrderBook,
+  generateRandomTicker,
+  generateRandomTrades,
+} from "./mockDataGenerators";
 
 // Cache for historical data
 const historicalDataCache: Record<string, MarketData[]> = {};
 const orderBookCache: Record<string, OrderBook> = {};
 const tradesCache: Record<string, Trade[]> = {};
 const tickerCache: Record<string, Ticker> = {};
+
+// Mock mode configuration
+interface MockDataConfig {
+  isMockMode: boolean;
+  mockDataSource: "random" | "historical" | "simulation";
+  mockDataDelay: number;
+  mockVolatility: number;
+  mockTrendBias: number;
+  mockHistoricalPeriod: string;
+  mockDataOptions: {
+    simulateLatency: boolean;
+    simulateErrors: boolean;
+    errorRate: number;
+    useRandomSeed: boolean;
+    randomSeed?: number;
+  };
+}
+
+// Default mock configuration
+let mockConfig: MockDataConfig = {
+  isMockMode: false,
+  mockDataSource: "random",
+  mockDataDelay: 1000,
+  mockVolatility: 0.02,
+  mockTrendBias: 0,
+  mockHistoricalPeriod: "30d",
+  mockDataOptions: {
+    simulateLatency: true,
+    simulateErrors: true,
+    errorRate: 0.05,
+    useRandomSeed: false,
+  },
+};
+
+/**
+ * Configure mock data service
+ */
+export const configureMockData = (config: Partial<MockDataConfig>) => {
+  mockConfig = { ...mockConfig, ...config };
+};
 
 /**
  * Mock data service for generating and managing mock market data
@@ -20,31 +64,24 @@ export const mockDataService = {
     timeframe: string,
     limit: number = 100
   ): Promise<MarketData[]> => {
-    const { 
-      isMockMode, 
-      mockDataSource, 
-      mockDataDelay, 
-      mockVolatility, 
-      mockTrendBias,
-      mockHistoricalPeriod,
-      mockDataOptions 
-    } = useMockMode();
-
     // If not in mock mode, reject with error
-    if (!isMockMode) {
-      return Promise.reject(new Error('Mock mode is disabled'));
+    if (!mockConfig.isMockMode) {
+      return Promise.reject(new Error("Mock mode is disabled"));
     }
 
     return new Promise((resolve, reject) => {
       // Simulate network delay if enabled
-      const delay = mockDataOptions.simulateLatency ? 
-        Math.random() * mockDataDelay : 
-        0;
+      const delay = mockConfig.mockDataOptions.simulateLatency
+        ? Math.random() * mockConfig.mockDataDelay
+        : 0;
 
       // Simulate random errors if enabled
-      if (mockDataOptions.simulateErrors && Math.random() < mockDataOptions.errorRate) {
+      if (
+        mockConfig.mockDataOptions.simulateErrors &&
+        Math.random() < mockConfig.mockDataOptions.errorRate
+      ) {
         setTimeout(() => {
-          reject(new Error('Simulated network error'));
+          reject(new Error("Simulated network error"));
         }, delay);
         return;
       }
@@ -53,22 +90,24 @@ export const mockDataService = {
         try {
           let data: MarketData[];
 
-          switch (mockDataSource) {
-            case 'random':
+          switch (mockConfig.mockDataSource) {
+            case "random":
               // Generate random data with specified parameters
               data = generateRandomMarketData(
                 symbol,
                 timeframe,
                 limit,
-                mockVolatility,
-                mockTrendBias,
-                mockDataOptions.useRandomSeed ? mockDataOptions.randomSeed : undefined
+                mockConfig.mockVolatility,
+                mockConfig.mockTrendBias,
+                mockConfig.mockDataOptions.useRandomSeed
+                  ? mockConfig.mockDataOptions.randomSeed
+                  : undefined
               );
               break;
 
-            case 'historical':
+            case "historical":
               // Use cached historical data or generate new data
-              const cacheKey = `${symbol}_${timeframe}_${mockHistoricalPeriod}`;
+              const cacheKey = `${symbol}_${timeframe}_${mockConfig.mockHistoricalPeriod}`;
               if (!historicalDataCache[cacheKey]) {
                 // In a real implementation, this would fetch from a historical data API
                 // For now, we'll generate random data as a placeholder
@@ -76,26 +115,30 @@ export const mockDataService = {
                   symbol,
                   timeframe,
                   limit * 5, // Generate more data for historical cache
-                  mockVolatility,
-                  mockTrendBias,
-                  mockDataOptions.useRandomSeed ? mockDataOptions.randomSeed : undefined
+                  mockConfig.mockVolatility,
+                  mockConfig.mockTrendBias,
+                  mockConfig.mockDataOptions.useRandomSeed
+                    ? mockConfig.mockDataOptions.randomSeed
+                    : undefined
                 );
               }
-              
+
               // Return a slice of the cached data
               data = historicalDataCache[cacheKey].slice(0, limit);
               break;
 
-            case 'simulation':
+            case "simulation":
               // Generate simulated market data based on realistic market behavior
               // This would be more sophisticated in a real implementation
               data = generateRandomMarketData(
                 symbol,
                 timeframe,
                 limit,
-                mockVolatility,
-                mockTrendBias,
-                mockDataOptions.useRandomSeed ? mockDataOptions.randomSeed : undefined,
+                mockConfig.mockVolatility,
+                mockConfig.mockTrendBias,
+                mockConfig.mockDataOptions.useRandomSeed
+                  ? mockConfig.mockDataOptions.randomSeed
+                  : undefined,
                 true // Use more realistic simulation
               );
               break;
@@ -116,28 +159,24 @@ export const mockDataService = {
    * Get mock order book data for a specific symbol
    */
   getOrderBook: (symbol: string): Promise<OrderBook> => {
-    const { 
-      isMockMode, 
-      mockDataDelay, 
-      mockVolatility,
-      mockDataOptions 
-    } = useMockMode();
-
     // If not in mock mode, reject with error
-    if (!isMockMode) {
-      return Promise.reject(new Error('Mock mode is disabled'));
+    if (!mockConfig.isMockMode) {
+      return Promise.reject(new Error("Mock mode is disabled"));
     }
 
     return new Promise((resolve, reject) => {
       // Simulate network delay if enabled
-      const delay = mockDataOptions.simulateLatency ? 
-        Math.random() * mockDataDelay : 
-        0;
+      const delay = mockConfig.mockDataOptions.simulateLatency
+        ? Math.random() * mockConfig.mockDataDelay
+        : 0;
 
       // Simulate random errors if enabled
-      if (mockDataOptions.simulateErrors && Math.random() < mockDataOptions.errorRate) {
+      if (
+        mockConfig.mockDataOptions.simulateErrors &&
+        Math.random() < mockConfig.mockDataOptions.errorRate
+      ) {
         setTimeout(() => {
-          reject(new Error('Simulated network error'));
+          reject(new Error("Simulated network error"));
         }, delay);
         return;
       }
@@ -148,24 +187,28 @@ export const mockDataService = {
           if (!orderBookCache[symbol]) {
             orderBookCache[symbol] = generateRandomOrderBook(
               symbol,
-              mockVolatility,
-              mockDataOptions.useRandomSeed ? mockDataOptions.randomSeed : undefined
+              mockConfig.mockVolatility,
+              mockConfig.mockDataOptions.useRandomSeed
+                ? mockConfig.mockDataOptions.randomSeed
+                : undefined
             );
           } else {
             // Update the existing order book with some changes to simulate market activity
             const book = orderBookCache[symbol];
             const updatedBook = generateRandomOrderBook(
               symbol,
-              mockVolatility,
-              mockDataOptions.useRandomSeed ? mockDataOptions.randomSeed : undefined
+              mockConfig.mockVolatility,
+              mockConfig.mockDataOptions.useRandomSeed
+                ? mockConfig.mockDataOptions.randomSeed
+                : undefined
             );
-            
+
             // Merge some of the new orders with existing ones
             orderBookCache[symbol] = {
               ...book,
               bids: [...book.bids.slice(3), ...updatedBook.bids.slice(0, 3)],
               asks: [...book.asks.slice(3), ...updatedBook.asks.slice(0, 3)],
-              timestamp: Date.now()
+              timestamp: Date.now(),
             };
           }
 
@@ -181,28 +224,24 @@ export const mockDataService = {
    * Get mock trades for a specific symbol
    */
   getTrades: (symbol: string, limit: number = 50): Promise<Trade[]> => {
-    const { 
-      isMockMode, 
-      mockDataDelay, 
-      mockVolatility,
-      mockDataOptions 
-    } = useMockMode();
-
     // If not in mock mode, reject with error
-    if (!isMockMode) {
-      return Promise.reject(new Error('Mock mode is disabled'));
+    if (!mockConfig.isMockMode) {
+      return Promise.reject(new Error("Mock mode is disabled"));
     }
 
     return new Promise((resolve, reject) => {
       // Simulate network delay if enabled
-      const delay = mockDataOptions.simulateLatency ? 
-        Math.random() * mockDataDelay : 
-        0;
+      const delay = mockConfig.mockDataOptions.simulateLatency
+        ? Math.random() * mockConfig.mockDataDelay
+        : 0;
 
       // Simulate random errors if enabled
-      if (mockDataOptions.simulateErrors && Math.random() < mockDataOptions.errorRate) {
+      if (
+        mockConfig.mockDataOptions.simulateErrors &&
+        Math.random() < mockConfig.mockDataOptions.errorRate
+      ) {
         setTimeout(() => {
-          reject(new Error('Simulated network error'));
+          reject(new Error("Simulated network error"));
         }, delay);
         return;
       }
@@ -213,8 +252,10 @@ export const mockDataService = {
           const newTrades = generateRandomTrades(
             symbol,
             limit,
-            mockVolatility,
-            mockDataOptions.useRandomSeed ? mockDataOptions.randomSeed : undefined
+            mockConfig.mockVolatility,
+            mockConfig.mockDataOptions.useRandomSeed
+              ? mockConfig.mockDataOptions.randomSeed
+              : undefined
           );
 
           // Update cache
@@ -232,29 +273,24 @@ export const mockDataService = {
    * Get mock ticker data for a specific symbol
    */
   getTicker: (symbol: string): Promise<Ticker> => {
-    const { 
-      isMockMode, 
-      mockDataDelay, 
-      mockVolatility,
-      mockTrendBias,
-      mockDataOptions 
-    } = useMockMode();
-
     // If not in mock mode, reject with error
-    if (!isMockMode) {
-      return Promise.reject(new Error('Mock mode is disabled'));
+    if (!mockConfig.isMockMode) {
+      return Promise.reject(new Error("Mock mode is disabled"));
     }
 
     return new Promise((resolve, reject) => {
       // Simulate network delay if enabled
-      const delay = mockDataOptions.simulateLatency ? 
-        Math.random() * mockDataDelay : 
-        0;
+      const delay = mockConfig.mockDataOptions.simulateLatency
+        ? Math.random() * mockConfig.mockDataDelay
+        : 0;
 
       // Simulate random errors if enabled
-      if (mockDataOptions.simulateErrors && Math.random() < mockDataOptions.errorRate) {
+      if (
+        mockConfig.mockDataOptions.simulateErrors &&
+        Math.random() < mockConfig.mockDataOptions.errorRate
+      ) {
         setTimeout(() => {
-          reject(new Error('Simulated network error'));
+          reject(new Error("Simulated network error"));
         }, delay);
         return;
       }
@@ -265,25 +301,38 @@ export const mockDataService = {
           if (!tickerCache[symbol]) {
             tickerCache[symbol] = generateRandomTicker(
               symbol,
-              mockVolatility,
-              mockTrendBias,
-              mockDataOptions.useRandomSeed ? mockDataOptions.randomSeed : undefined
+              mockConfig.mockVolatility,
+              mockConfig.mockTrendBias,
+              mockConfig.mockDataOptions.useRandomSeed
+                ? mockConfig.mockDataOptions.randomSeed
+                : undefined
             );
           } else {
             // Update the existing ticker with some changes to simulate market activity
             const prevTicker = tickerCache[symbol];
-            const priceFactor = 1 + (Math.random() * mockVolatility * 0.02 - 0.01 + mockTrendBias * 0.005);
-            const volumeFactor = 1 + (Math.random() * mockVolatility * 0.1 - 0.05);
-            
+            const priceFactor =
+              1 +
+              (Math.random() * mockConfig.mockVolatility * 0.02 -
+                0.01 +
+                mockConfig.mockTrendBias * 0.005);
+            const volumeFactor =
+              1 + (Math.random() * mockConfig.mockVolatility * 0.1 - 0.05);
+
             tickerCache[symbol] = {
               ...prevTicker,
               lastPrice: prevTicker.lastPrice * priceFactor,
               bidPrice: prevTicker.bidPrice * priceFactor,
               askPrice: prevTicker.askPrice * priceFactor,
               volume24h: prevTicker.volume24h * volumeFactor,
-              high24h: Math.max(prevTicker.high24h, prevTicker.lastPrice * priceFactor),
-              low24h: Math.min(prevTicker.low24h, prevTicker.lastPrice * priceFactor),
-              timestamp: Date.now()
+              high24h: Math.max(
+                prevTicker.high24h,
+                prevTicker.lastPrice * priceFactor
+              ),
+              low24h: Math.min(
+                prevTicker.low24h,
+                prevTicker.lastPrice * priceFactor
+              ),
+              timestamp: Date.now(),
             };
           }
 
@@ -299,11 +348,13 @@ export const mockDataService = {
    * Clear all cached mock data
    */
   clearCache: () => {
-    Object.keys(historicalDataCache).forEach(key => delete historicalDataCache[key]);
-    Object.keys(orderBookCache).forEach(key => delete orderBookCache[key]);
-    Object.keys(tradesCache).forEach(key => delete tradesCache[key]);
-    Object.keys(tickerCache).forEach(key => delete tickerCache[key]);
-  }
+    Object.keys(historicalDataCache).forEach(
+      (key) => delete historicalDataCache[key]
+    );
+    Object.keys(orderBookCache).forEach((key) => delete orderBookCache[key]);
+    Object.keys(tradesCache).forEach((key) => delete tradesCache[key]);
+    Object.keys(tickerCache).forEach((key) => delete tickerCache[key]);
+  },
 };
 
 export default mockDataService;
