@@ -266,23 +266,23 @@ const MockTradingDashboard: React.FC<MockTradingDashboardProps> = ({ strategies 
                             </div>
 
                             {/* Confidence Score */}
-                            <div className="mb-4">
-                                <div className="flex items-center justify-between mb-2">
-                                    <span className="text-sm font-medium text-neutral-700">Confidence Score</span>
-                                    <span className={`text-sm font-bold ${getConfidenceColor(confidence.overall)}`}>
-                                        {confidence.overall}%
-                                    </span>
-                                </div>
+                                <div className="mb-4">
+                                    <div className="flex items-center justify-between mb-2">
+                                        <span className="text-sm font-medium text-neutral-700">Confidence Score</span>
+                                        <span className={`text-sm font-bold ${getConfidenceColor(confidence.overall)}`}>
+                                            {confidence.overall}%
+                                        </span>
+                                    </div>
 
-                                <div className="progress-bar-container">
-                                    <div
-                                        className={`progress-bar-fill ${confidence.overall >= 75 ? 'green' :
-                                            confidence.overall >= 50 ? 'yellow' : 'red'
-                                            }`}
-                                        style={{ '--progress-width': `${confidence.overall}%` } as React.CSSProperties}
-                                    ></div>
+                                    <div className="progress-bar-container">
+                                        <div
+                                            className={`progress-bar-fill ${confidence.overall >= 75 ? 'green' :
+                                                confidence.overall >= 50 ? 'yellow' : 'red'
+                                                }`}
+                                            style={{ '--progress-width': `${confidence.overall}%` } as React.CSSProperties}
+                                        ></div>
+                                    </div>
                                 </div>
-                            </div>
 
                             {/* Confidence Breakdown */}
                             <div className="grid grid-cols-2 gap-2 text-xs">

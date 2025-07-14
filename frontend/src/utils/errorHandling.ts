@@ -784,7 +784,7 @@ export const errorUtils = {
     target: T,
     context: Partial<ErrorContext>
   ): T => {
-    return errorHandler.createSafeWrapper(target, context) as T;
+    return errorHandler.createSafeWrapper(target, context);
   },
 
   /**

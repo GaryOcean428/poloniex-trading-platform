@@ -350,7 +350,7 @@ export class RiskManager {
         }
       } else if (!isLong && currentPrice < position.entryPrice) {
         const newStopLoss = currentPrice + trailingDistance;
-        if (newStopLoss < position.stopLossPrice!) {
+        if (newStopLoss < position.stopLossPrice) {
           position.stopLossPrice = newStopLoss;
         }
       }
