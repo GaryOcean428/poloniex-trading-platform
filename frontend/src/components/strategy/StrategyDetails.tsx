@@ -1,9 +1,9 @@
+import { BarChart2, Clock, History, RefreshCw, Sparkles, Zap } from 'lucide-react';
 import React, { useState } from 'react';
-import { Strategy, StrategyType } from '../../types';
+import { useTradingContext } from '../../hooks/useTradingContext';
+import { Strategy, StrategyType, MovingAverageCrossoverParameters, RSIParameters, BreakoutParameters } from '../../types';
 import { BacktestResult } from '../../types/backtest';
 import PriceChart from '../charts/PriceChart';
-import { useTradingContext } from '../../hooks/useTradingContext';
-import { Clock, Zap, BarChart2, History, Sparkles, RefreshCw } from 'lucide-react';
 
 interface StrategyDetailsProps {
   strategy: Strategy;
@@ -12,7 +12,7 @@ interface StrategyDetailsProps {
   isOptimizing?: boolean;
 }
 
-const StrategyDetails: React.FC<StrategyDetailsProps> = ({ 
+const StrategyDetails: React.FC<StrategyDetailsProps> = ({
   strategy,
   backtestResults,
   isBacktesting,
@@ -21,7 +21,7 @@ const StrategyDetails: React.FC<StrategyDetailsProps> = ({
   const { marketData } = useTradingContext();
   const [timeframe, setTimeframe] = useState<'1h' | '4h' | '1d'>('1h');
   const [chartType, setChartType] = useState<'candlestick' | 'line'>('candlestick');
-  
+
   const getStrategyTypeIcon = (type: string) => {
     switch (type) {
       case StrategyType.MA_CROSSOVER:
@@ -34,7 +34,7 @@ const StrategyDetails: React.FC<StrategyDetailsProps> = ({
         return <Zap className="h-6 w-6 text-neutral-500" />;
     }
   };
-  
+
   const getStrategyTypeName = (type: string) => {
     switch (type) {
       case StrategyType.MA_CROSSOVER:
@@ -47,7 +47,7 @@ const StrategyDetails: React.FC<StrategyDetailsProps> = ({
         return type;
     }
   };
-  
+
   const getStrategyDescription = (type: string) => {
     switch (type) {
       case StrategyType.MA_CROSSOVER:
@@ -60,49 +60,52 @@ const StrategyDetails: React.FC<StrategyDetailsProps> = ({
         return 'Custom trading strategy.';
     }
   };
-  
+
   const renderParameters = () => {
     switch (strategy.type) {
       case StrategyType.MA_CROSSOVER:
+        const maParams = strategy.parameters as MovingAverageCrossoverParameters;
         return (
           <div className="grid grid-cols-2 gap-4">
             <div className="bg-neutral-50 p-3 rounded-md">
               <div className="text-sm text-neutral-500">Short Period</div>
-              <div className="text-lg font-semibold">{(strategy.parameters as any).shortPeriod || (strategy.parameters as any).fastPeriod}</div>
+              <div className="text-lg font-semibold">{maParams.shortPeriod || maParams.fastPeriod}</div>
             </div>
             <div className="bg-neutral-50 p-3 rounded-md">
               <div className="text-sm text-neutral-500">Long Period</div>
-              <div className="text-lg font-semibold">{(strategy.parameters as any).longPeriod || (strategy.parameters as any).slowPeriod}</div>
+              <div className="text-lg font-semibold">{maParams.longPeriod || maParams.slowPeriod}</div>
             </div>
           </div>
         );
       case StrategyType.RSI:
+        const rsiParams = strategy.parameters as RSIParameters;
         return (
           <div className="grid grid-cols-3 gap-4">
             <div className="bg-neutral-50 p-3 rounded-md">
               <div className="text-sm text-neutral-500">Period</div>
-              <div className="text-lg font-semibold">{(strategy.parameters as any).period}</div>
+              <div className="text-lg font-semibold">{rsiParams.period}</div>
             </div>
             <div className="bg-neutral-50 p-3 rounded-md">
               <div className="text-sm text-neutral-500">Overbought</div>
-              <div className="text-lg font-semibold">{(strategy.parameters as any).overbought}</div>
+              <div className="text-lg font-semibold">{rsiParams.overbought}</div>
             </div>
             <div className="bg-neutral-50 p-3 rounded-md">
               <div className="text-sm text-neutral-500">Oversold</div>
-              <div className="text-lg font-semibold">{(strategy.parameters as any).oversold}</div>
+              <div className="text-lg font-semibold">{rsiParams.oversold}</div>
             </div>
           </div>
         );
       case StrategyType.BREAKOUT:
+        const breakoutParams = strategy.parameters as BreakoutParameters;
         return (
           <div className="grid grid-cols-2 gap-4">
             <div className="bg-neutral-50 p-3 rounded-md">
               <div className="text-sm text-neutral-500">Lookback Period</div>
-              <div className="text-lg font-semibold">{(strategy.parameters as any).lookbackPeriod}</div>
+              <div className="text-lg font-semibold">{breakoutParams.lookbackPeriod}</div>
             </div>
             <div className="bg-neutral-50 p-3 rounded-md">
               <div className="text-sm text-neutral-500">Breakout Threshold</div>
-              <div className="text-lg font-semibold">{(strategy.parameters as any).breakoutThreshold}%</div>
+              <div className="text-lg font-semibold">{breakoutParams.breakoutThreshold}%</div>
             </div>
           </div>
         );
@@ -110,7 +113,7 @@ const StrategyDetails: React.FC<StrategyDetailsProps> = ({
         return null;
     }
   };
-  
+
   return (
     <div>
       <div className="flex items-start justify-between mb-6">
@@ -145,12 +148,12 @@ const StrategyDetails: React.FC<StrategyDetailsProps> = ({
           )}
         </div>
       </div>
-      
+
       <div className="mb-6">
         <div className="text-neutral-700 mb-4">{getStrategyDescription(strategy.type)}</div>
         {renderParameters()}
       </div>
-      
+
       <div className="mb-6">
         <h3 className="text-lg font-medium mb-3">Performance</h3>
         <div className="grid grid-cols-3 gap-4 mb-4">
@@ -178,7 +181,7 @@ const StrategyDetails: React.FC<StrategyDetailsProps> = ({
             </>
           )}
         </div>
-        
+
         {backtestResults && (
           <div className="bg-blue-50 p-4 rounded-lg">
             <h4 className="font-medium mb-3">Backtest Results</h4>
@@ -211,14 +214,15 @@ const StrategyDetails: React.FC<StrategyDetailsProps> = ({
           </div>
         )}
       </div>
-      
+
       <div>
         <h3 className="text-lg font-medium mb-3">Market Data</h3>
         <div className="flex space-x-4 mb-4">
           <select
             value={timeframe}
-            onChange={(e) => setTimeframe(e.target.value as any)}
+            onChange={(e) => setTimeframe(e.target.value as '1h' | '4h' | '1d')}
             className="px-3 py-1 border border-neutral-300 rounded-md"
+            title="Select timeframe"
           >
             <option value="1h">1 Hour</option>
             <option value="4h">4 Hours</option>
@@ -226,8 +230,9 @@ const StrategyDetails: React.FC<StrategyDetailsProps> = ({
           </select>
           <select
             value={chartType}
-            onChange={(e) => setChartType(e.target.value as any)}
+            onChange={(e) => setChartType(e.target.value as 'candlestick' | 'line')}
             className="px-3 py-1 border border-neutral-300 rounded-md"
+            title="Select chart type"
           >
             <option value="candlestick">Candlestick</option>
             <option value="line">Line</option>

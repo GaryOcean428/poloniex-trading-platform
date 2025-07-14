@@ -1,6 +1,8 @@
-import React, { createContext, useState, useEffect, ReactNode } from 'react';
-import { isAuthenticated, clearAuthData, storeAuthDataLegacy, getUserData } from '@/utils/auth';
 import { authService } from '@/services/authService';
+import { getUserData, isAuthenticated, storeAuthDataLegacy } from '@/utils/auth';
+import React, { ReactNode, createContext, useEffect, useState } from 'react';
+
+/* eslint-disable no-console */
 
 interface AuthContextType {
   isLoggedIn: boolean;
@@ -22,7 +24,7 @@ interface UserProfile {
 export const AuthContext = createContext<AuthContextType>({
   isLoggedIn: false,
   login: async () => false,
-  logout: async () => {},
+  logout: async () => { },
   user: null,
   isAuthenticated: false, // Added for FuturesContext
   loading: false,
@@ -42,62 +44,73 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   useEffect(() => {
     const checkAuth = async () => {
       setLoading(true);
-      
-      try {
+
+      try
+      {
         const authenticated = isAuthenticated();
         setIsLoggedIn(authenticated);
-        
-        if (authenticated) {
+
+        if (authenticated)
+        {
           // Get user data from localStorage first
           const userData = getUserData();
-          if (userData) {
+          if (userData)
+          {
             setUser(userData);
           }
-          
+
           // Verify token with server
           const isValid = await authService.verifyToken();
-          if (!isValid) {
+          if (!isValid)
+          {
             console.warn('Token verification failed, logging out');
             await logout();
           }
         }
-      } catch (error) {
+      } catch (error)
+      {
         console.error('Auth check error:', error);
         await logout();
-      } finally {
+      } finally
+      {
         setLoading(false);
       }
     };
-    
+
     checkAuth();
   }, []);
 
   const login = async (usernameOrToken: string, passwordOrExpiresIn?: string | number): Promise<boolean> => {
-    try {
+    try
+    {
       // Check if this is JWT login (new method) or legacy login
-      if (typeof passwordOrExpiresIn === 'string') {
+      if (typeof passwordOrExpiresIn === 'string')
+      {
         // New JWT login method
         const response = await authService.login({
           username: usernameOrToken,
           password: passwordOrExpiresIn
         });
 
-        if (response.success && response.data) {
+        if (response.success && response.data)
+        {
           setIsLoggedIn(true);
           setUser(response.data.user);
           return true;
-        } else {
+        } else
+        {
           console.error('Login failed:', response.error);
           return false;
         }
-      } else {
+      } else
+      {
         // Legacy login method for backward compatibility
         const token = usernameOrToken;
         const expiresIn = passwordOrExpiresIn as number || 3600;
-        
+
         storeAuthDataLegacy(token, expiresIn);
         setIsLoggedIn(true);
-        
+
         // Set mock user data for legacy login
         setUser({
           id: '1',
@@ -105,38 +118,46 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           email: 'trader@example.com',
           role: 'user'
         });
-        
+
         return true;
       }
-    } catch (error) {
+    } catch (error)
+    {
       console.error('Login error:', error);
       return false;
     }
   };
 
   const logout = async (): Promise<void> => {
-    try {
+    try
+    {
       await authService.logout();
-    } catch (error) {
+    } catch (error)
+    {
       console.error('Logout error:', error);
-    } finally {
+    } finally
+    {
       setIsLoggedIn(false);
       setUser(null);
     }
   };
 
   const refreshToken = async (): Promise<boolean> => {
-    try {
+    try
+    {
       const newToken = await authService.refreshToken();
-      if (newToken) {
+      if (newToken)
+      {
         // Token refreshed successfully
         return true;
-      } else {
+      } else
+      {
         // Refresh failed, log out
         await logout();
         return false;
       }
-    } catch (error) {
+    } catch (error)
+    {
       console.error('Token refresh error:', error);
       await logout();
       return false;
@@ -144,10 +165,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ 
-      isLoggedIn, 
-      login, 
-      logout, 
+    <AuthContext.Provider value={{
+      isLoggedIn,
+      login,
+      logout,
       user,
       isAuthenticated: isLoggedIn, // Added for FuturesContext
       loading,

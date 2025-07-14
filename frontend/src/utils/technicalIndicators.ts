@@ -1,9 +1,5 @@
 import { MarketData } from "@/types";
 
-/**
- * Enhanced Technical Indicators for Trading Strategies
- */
-
 export interface TechnicalIndicatorResult {
   values: number[];
   currentValue: number;
@@ -12,33 +8,7 @@ export interface TechnicalIndicatorResult {
   strength?: number;
 }
 
-export interface BollingerBandsResult {
-  upper: number[];
-  middle: number[];
-  lower: number[];
-  currentPosition: "ABOVE_UPPER" | "BELOW_LOWER" | "BETWEEN_BANDS";
-  bandwidth: number;
-}
-
-export interface MACDResult {
-  macd: number[];
-  signal: number[];
-  histogram: number[];
-  currentSignal: "BULLISH" | "BEARISH" | "NEUTRAL";
-}
-
-export interface StochasticResult {
-  k: number[];
-  d: number[];
-  currentK: number;
-  currentD: number;
-  signal: "BUY" | "SELL" | "HOLD";
-}
-
-export function calculateSMA(
-  data: MarketData[],
-  period: number
-): TechnicalIndicatorResult {
+export function calculateSMA(data: MarketData[], period: number): TechnicalIndicatorResult {
   const prices = data.map((candle) => candle.close);
   const values: number[] = [];
 
@@ -66,10 +36,7 @@ export function calculateSMA(
   };
 }
 
-export function calculateEMA(
-  data: MarketData[],
-  period: number
-): TechnicalIndicatorResult {
+export function calculateEMA(data: MarketData[], period: number): TechnicalIndicatorResult {
   const prices = data.map((candle) => candle.close);
   const values: number[] = [];
   const smoothing = 2 / (period + 1);
@@ -98,10 +65,7 @@ export function calculateEMA(
   };
 }
 
-export function calculateRSI(
-  data: MarketData[],
-  period: number = 14
-): TechnicalIndicatorResult {
+export function calculateRSI(data: MarketData[], period: number = 14): TechnicalIndicatorResult {
   const prices = data.map((candle) => candle.close);
   const values: number[] = [];
 
@@ -170,7 +134,12 @@ export function calculateMACD(
   fastPeriod: number = 12,
   slowPeriod: number = 26,
   signalPeriod: number = 9
-): MACDResult {
+): {
+  macd: number[];
+  signal: number[];
+  histogram: number[];
+  currentSignal: "BULLISH" | "BEARISH" | "NEUTRAL";
+} {
   const fastEMA = calculateEMA(data, fastPeriod);
   const slowEMA = calculateEMA(data, slowPeriod);
 
@@ -216,4 +185,55 @@ export function calculateMACD(
 }
 
 export function calculateBollingerBands(
-  data:
+  data: MarketData[],
+  period: number = 20,
+  stdDev: number = 2
+): {
+  upper: number[];
+  middle: number[];
+  lower: number[];
+  currentPosition: "ABOVE_UPPER" | "BELOW_LOWER" | "BETWEEN_BANDS";
+  bandwidth: number;
+} {
+  const prices = data.map((candle) => candle.close);
+  const sma = calculateSMA(data, period);
+
+  const upper: number[] = [];
+  const lower: number[] = [];
+
+  for (let i = 0; i < sma.values.length; i++) {
+    const start = i;
+    const end = i + period;
+    const slice = prices.slice(start, end);
+
+    if (slice.length === period) {
+      const mean = sma.values[i];
+      const variance = slice.reduce((sum, price) => sum + Math.pow(price - mean, 2), 0) / period;
+      const standardDeviation = Math.sqrt(variance);
+
+      upper.push(mean + stdDev * standardDeviation);
+      lower.push(mean - stdDev * standardDeviation);
+    }
+  }
+
+  const currentPrice = prices[prices.length - 1];
+  const currentUpper = upper[upper.length - 1];
+  const currentLower = lower[lower.length - 1];
+
+  let currentPosition: "ABOVE_UPPER" | "BELOW_LOWER" | "BETWEEN_BANDS" = "BETWEEN_BANDS";
+  if (currentPrice > currentUpper) {
+    currentPosition = "ABOVE_UPPER";
+  } else if (currentPrice < currentLower) {
+    currentPosition = "BELOW_LOWER";
+  }
+
+  const bandwidth = currentUpper - currentLower;
+
+  return {
+    upper,
+    middle: sma.values,
+    lower,
+    currentPosition,
+    bandwidth,
+  };
+}

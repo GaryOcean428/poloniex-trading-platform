@@ -69,7 +69,7 @@ const Sidebar: React.FC = () => {
             onClick={toggleSidebar}
             className="p-1 rounded-md text-neutral-400 hover:text-white hover:bg-neutral-700 transition-colors"
             aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            aria-expanded={!isCollapsed}
+            aria-expanded={isCollapsed ? 'false' : 'true'}
           >
             {isCollapsed ? <Menu size={20} aria-hidden="true" /> : <ArrowLeft size={20} aria-hidden="true" />}
           </button>
@@ -128,11 +128,10 @@ const Sidebar: React.FC = () => {
             ) : (
               <>
                 <div className="text-lg font-semibold">
-                  ${parseFloat(accountBalance?.totalAmount || '0').toFixed(2)} USDT
+                  ${parseFloat(accountBalance?.total?.toString() || '0').toFixed(2)} USDT
                 </div>
-                <div className={`text-xs mt-1 ${parseFloat(accountBalance?.todayPnL || '0') >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                  {parseFloat(accountBalance?.todayPnL || '0') >= 0 ? '+' : ''}
-                  {parseFloat(accountBalance?.todayPnLPercentage || '0').toFixed(2)}% today
+                <div className="text-xs text-neutral-400 mt-1">
+                  {accountBalance?.currency || 'USDT'}
                 </div>
               </>
             )}

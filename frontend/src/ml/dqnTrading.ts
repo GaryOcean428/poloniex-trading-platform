@@ -1,5 +1,7 @@
 import * as tf from "@tensorflow/tfjs";
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
 export interface DQNConfig {
   stateDimension: number;
   actionDimension: number;
@@ -49,6 +51,13 @@ export interface MarketCandle {
   close: number;
   volume: number;
   symbol: string;
+}
+
+export interface DQNAction {
+  timestamp: number;
+  symbol: string;
+  action: "buy" | "sell" | "hold";
+  confidence: number;
 }
 
 export interface Experience {

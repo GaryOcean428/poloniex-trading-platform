@@ -3,6 +3,8 @@
  * Provides structured logging with different levels and proper error handling
  */
 
+/* eslint-disable no-console */
+
 export type LogLevel = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR' | 'FATAL';
 
 export interface LogEntry {

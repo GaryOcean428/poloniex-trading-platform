@@ -81,20 +81,33 @@ describe('Comprehensive System Testing', () => {
   describe('Mock Mode Implementation', () => {
     it('should provide consistent mock data across components', () => {
       const mockContextValue = {
-        mockMode: true,
+        isMockMode: true,
         setMockMode: vi.fn(),
-        mockDataConfig: {
-          volatility: 'medium',
-          trend: 'bullish',
-          latency: 'low'
+        mockDataSource: 'historical' as const,
+        setMockDataSource: vi.fn(),
+        mockDataDelay: 1000,
+        setMockDataDelay: vi.fn(),
+        mockVolatility: 0.5,
+        setMockVolatility: vi.fn(),
+        mockTrendBias: 0,
+        setMockTrendBias: vi.fn(),
+        mockHistoricalPeriod: '30d',
+        setMockHistoricalPeriod: vi.fn(),
+        mockDataOptions: {
+          useRandomSeed: false,
+          randomSeed: 42,
+          simulateLatency: true,
+          simulateErrors: false,
+          errorRate: 0.05
         },
-        updateMockDataConfig: vi.fn()
+        updateMockDataOptions: vi.fn(),
+        resetMockSettings: vi.fn()
       };
 
       const TestComponent = () => {
         return (
           <div data-testid="test-component">
-            Mock Mode: {mockContextValue.mockMode ? 'Enabled' : 'Disabled'}
+            Mock Mode: {mockContextValue.isMockMode ? 'Enabled' : 'Disabled'}
           </div>
         );
       };

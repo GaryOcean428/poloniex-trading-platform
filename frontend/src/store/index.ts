@@ -3,6 +3,8 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { immer } from "zustand/middleware/immer";
 
+/* eslint-disable no-console */
+
 // Define store state interface
 export interface AppState {
   // API Configuration
