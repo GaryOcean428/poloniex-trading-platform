@@ -17,6 +17,31 @@ const TransactionHistory: React.FC = () => {
       maximumFractionDigits: 2
     }).format(numValue);
   };
+
+  // Format date for display
+  const formatDate = (timestamp: number | string) => {
+    try {
+      const date = new Date(typeof timestamp === 'string' ? parseInt(timestamp) : timestamp);
+      
+      // Check if date is valid
+      if (isNaN(date.getTime())) {
+        return 'Invalid Date';
+      }
+      
+      // Return formatted date and time
+      return date.toLocaleString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true
+      });
+    } catch (error) {
+      console.error('Error formatting date:', error);
+      return 'Invalid Date';
+    }
+  };
   
   // Filter transactions
   const filteredTransactions = mockTransactions.filter(transaction => {
@@ -125,6 +150,8 @@ const TransactionHistory: React.FC = () => {
               value={dateRange}
               onChange={(e) => setDateRange(e.target.value as 'all' | 'week' | 'month' | 'year')}
               className="pl-9 pr-8 py-2 border border-neutral-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent appearance-none"
+              aria-label="Filter transactions by date range"
+              title="Filter transactions by date range"
             >
               <option value="all">All Time</option>
               <option value="week">Last Week</option>
@@ -224,7 +251,7 @@ const TransactionHistory: React.FC = () => {
                     </span>
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap text-sm text-neutral-500">
-                    {new Date(transaction.timestamp).toLocaleString()}
+                    {formatDate(transaction.timestamp)}
                   </td>
                 </tr>
               ))}

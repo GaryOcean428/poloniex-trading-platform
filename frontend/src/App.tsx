@@ -12,6 +12,7 @@ import PWAInstallPrompt from './components/PWAInstallPrompt';
 import { TradingProvider } from './context/TradingContext';
 import { SettingsProvider } from './context/SettingsContext';
 import { WebSocketProvider } from './context/WebSocketContext';
+import { AuthProvider } from './context/AuthContext';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import Integration from './components/Integration';
 import ToastContainer from './components/ToastContainer';
@@ -32,6 +33,7 @@ const Performance = lazy(() => import('./pages/Performance'));
 const Settings = lazy(() => import('./pages/Settings'));
 const Chat = lazy(() => import('./pages/Chat'));
 const ExtensionDownload = lazy(() => import('./pages/ExtensionDownload'));
+const Login = lazy(() => import('./pages/Login'));
 const NotFound = lazy(() => import('./pages/NotFound'));
 
 // Loading component
@@ -59,9 +61,10 @@ function App() {
       <SkipLinks />
       <Router>
         <ErrorBoundary>
-          <SettingsProvider>
-            <WebSocketProvider>
-              <TradingProvider>
+          <AuthProvider>
+            <SettingsProvider>
+              <WebSocketProvider>
+                <TradingProvider>
                 <div className="flex h-screen bg-neutral-100 overflow-hidden">
                   <Sidebar />
                   <div className="flex-1 flex flex-col min-w-0">
@@ -88,6 +91,7 @@ function App() {
                             <Route path="/chat" element={<Chat />} />
                             <Route path="/settings" element={<Settings />} />
                             <Route path="/extension" element={<ExtensionDownload />} />
+                            <Route path="/login" element={<Login />} />
                             <Route path="/404" element={<NotFound />} />
                             <Route path="*" element={<NotFound />} />
                           </Routes>
@@ -104,9 +108,10 @@ function App() {
                 <EnvDebug />
                 <ConnectionTest />
                 <PWAInstallPrompt />
-              </TradingProvider>
-            </WebSocketProvider>
-          </SettingsProvider>
+                </TradingProvider>
+              </WebSocketProvider>
+            </SettingsProvider>
+          </AuthProvider>
         </ErrorBoundary>
       </Router>
     </>
