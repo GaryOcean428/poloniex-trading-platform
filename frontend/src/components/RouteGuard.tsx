@@ -24,12 +24,18 @@ const RouteGuard: React.FC<RouteGuardProps> = ({ children }) => {
     const validRoutes = [
       '/', 
       '/strategies', 
+      '/backtesting',
       '/charts', 
       '/performance', 
       '/account', 
+      '/transactions',
+      '/trades',
       '/chat', 
       '/settings', 
-      '/extension'
+      '/extension',
+      '/login',
+      '/dashboard/live',
+      '/404'
     ];
     
     // If route is not valid and not already a 404, redirect to 404
