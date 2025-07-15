@@ -28,8 +28,7 @@ const Navbar: React.FC = () => {
               onClick={toggleMobileMenu}
               className="mr-3 p-2 rounded-md text-neutral-500 hover:text-neutral-700 hover:bg-neutral-100 transition-colors touch-target"
               aria-label="Toggle mobile menu"
-              aria-expanded={isMobileMenuOpen ? 'true' : 'false'}
-              aria-controls="mobile-navigation"
+              aria-expanded={isMobileMenuOpen ? "true" : "false"}
             >
               <Menu className="h-6 w-6" aria-hidden="true" />
             </button>
