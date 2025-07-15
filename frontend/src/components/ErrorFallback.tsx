@@ -1,6 +1,8 @@
+import type { ErrorInfo } from 'react';
 import React, { useState } from 'react';
 import { useErrorRecovery } from '../hooks/useErrorRecovery';
-import type { ErrorInfo } from 'react';
+
+/* eslint-disable @typescript-eslint/no-unused-vars */
 
 interface ErrorFallbackProps {
   error: Error | null;
@@ -11,6 +13,7 @@ interface ErrorFallbackProps {
 
 export const ErrorFallback: React.FC<ErrorFallbackProps> = ({
   error,
+  errorInfo,
   errorCount,
   onReset
 }) => {
@@ -33,7 +36,7 @@ export const ErrorFallback: React.FC<ErrorFallbackProps> = ({
             {isCriticalError ? 'Critical Error' : 'Something went wrong'}
           </h2>
           <p className="text-gray-600 mb-4">
-            {isCriticalError 
+            {isCriticalError
               ? 'A critical error has occurred. Please refresh the page or contact support.'
               : 'Don\'t worry, we\'re working on fixing this issue.'}
           </p>

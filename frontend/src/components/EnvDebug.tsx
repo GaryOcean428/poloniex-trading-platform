@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import './EnvDebug.css';
 
 export const EnvDebug: React.FC = () => {
   const [isVisible, setIsVisible] = useState(true);
@@ -36,26 +37,14 @@ export const EnvDebug: React.FC = () => {
     return (
       <button
         onClick={handleShowAgain}
-        style={{
-          position: 'fixed',
-          top: '10px',
-          right: '10px',
-          background: '#4a90e2',
-          color: '#fff',
-          border: 'none',
-          borderRadius: '4px',
-          padding: '5px 8px',
-          fontSize: '11px',
-          cursor: 'pointer',
-          zIndex: 9999,
-          opacity: 0.7
-        }}
+        className="env-debug-restore"
         title="Show environment debug info"
       >
         🔍
       </button>
     );
   }
+
   const envVars = {
     // Check what the frontend is actually receiving
     API_KEY: import.meta.env.VITE_POLONIEX_API_KEY,
@@ -74,125 +63,76 @@ export const EnvDebug: React.FC = () => {
   
   const isLiveMode = hasApiKey && hasApiSecret && !forceMock;
 
+  if (isMinimized) {
+    return (
+      <div className="env-debug-minimized">
+        <span className="env-debug-mode-indicator">
+          Mode: <span className={isLiveMode ? 'status-connected' : 'status-disconnected'}>
+            {isLiveMode ? 'LIVE' : 'MOCK'}
+          </span>
+        </span>
+      </div>
+    );
+  }
+
   return (
-    <div style={{ 
-      position: 'fixed', 
-      top: '10px', 
-      right: '10px', 
-      background: '#1a1a1a', 
-      color: '#fff', 
-      padding: isMinimized ? '10px' : '15px', 
-      borderRadius: '8px', 
-      fontSize: '12px',
-      zIndex: 9999,
-      maxWidth: isMinimized ? '200px' : '400px',
-      border: '1px solid #333',
-      transition: 'all 0.3s ease'
-    }}>
-      <div style={{ 
-        display: 'flex', 
-        justifyContent: 'space-between', 
-        alignItems: 'center',
-        marginBottom: isMinimized ? '0' : '10px'
-      }}>
-        <h3 style={{ margin: '0', color: '#4a90e2', fontSize: isMinimized ? '11px' : '12px' }}>
-          🔍 Environment Debug
-        </h3>
-        <div style={{ display: 'flex', gap: '5px' }}>
+    <div className="env-debug">
+      <div className="env-debug-header">
+        <h3 className="env-debug-title">🔍 Environment Debug</h3>
+        <div className="env-debug-actions">
           <button
             onClick={handleToggleMinimize}
-            style={{
-              background: 'transparent',
-              border: 'none',
-              color: '#ccc',
-              cursor: 'pointer',
-              padding: '2px 5px',
-              fontSize: '12px'
-            }}
-            title={isMinimized ? "Expand" : "Minimize"}
+            className="env-debug-button"
+            title="Minimize"
           >
             {isMinimized ? '⬆️' : '⬇️'}
           </button>
           <button
             onClick={handleDismiss}
-            style={{
-              background: 'transparent',
-              border: 'none',
-              color: '#ccc',
-              cursor: 'pointer',
-              padding: '2px 5px',
-              fontSize: '12px'
-            }}
+            className="env-debug-button danger"
             title="Dismiss"
           >
             ✖️
           </button>
         </div>
       </div>
-
-      {!isMinimized && (
-        <>
-          <div style={{ marginBottom: '10px' }}>
-            <strong>Mode: </strong>
-            <span style={{ color: isLiveMode ? '#00ff00' : '#ff9800' }}>
-              {isLiveMode ? '✅ LIVE' : '🧪 MOCK'}
+      
+      <div className="env-debug-content">
+        {/* Environment Mode */}
+        <div className="env-debug-section">
+          <div>Environment Mode:</div>
+          <div>
+            <span className={`env-debug-mode ${isLiveMode ? 'status-connected' : 'status-disconnected'}`}>
+              {isLiveMode ? 'LIVE' : 'OFFLINE'}
             </span>
           </div>
-
-          <div style={{ marginBottom: '10px' }}>
-            <strong>Why Mock Mode?</strong>
-            <ul style={{ margin: '5px 0', paddingLeft: '20px' }}>
-              {!hasApiKey && <li style={{ color: '#ff5252' }}>No API Key</li>}
-              {!hasApiSecret && <li style={{ color: '#ff5252' }}>No API Secret</li>}
-              {forceMock && <li style={{ color: '#ff5252' }}>Force Mock = true</li>}
-              {isLiveMode && <li style={{ color: '#00ff00' }}>All conditions met!</li>}
-            </ul>
-          </div>
-
-          <details>
-            <summary style={{ cursor: 'pointer', marginBottom: '10px' }}>
-              Environment Variables
-            </summary>
-            <pre style={{ 
-              background: '#0a0a0a', 
-              padding: '10px', 
-              borderRadius: '4px', 
-              overflow: 'auto',
-              fontSize: '11px'
-            }}>
-{Object.entries(envVars).map(([key, value]) => {
-  const displayValue = key.includes('SECRET') && value 
-    ? value.substring(0, 10) + '...' 
-    : value || 'NOT SET';
-  return `${key}: ${displayValue}\n`;
-}).join('')}
-            </pre>
-          </details>
-
-          <button 
-            onClick={() => window.location.reload()}
-            style={{
-              marginTop: '10px',
-              padding: '5px 10px',
-              background: '#4a90e2',
-              color: '#fff',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: 'pointer'
-            }}
-          >
-            Reload Page
-          </button>
-        </>
-      )}
-
-      {isMinimized && (
-        <div style={{ fontSize: '10px', color: '#ccc' }}>
-          Mode: <span style={{ color: isLiveMode ? '#00ff00' : '#ff9800' }}>
-            {isLiveMode ? 'LIVE' : 'MOCK'}
-          </span>
         </div>
-      )}
+
+        {/* Issues */}
+        <div className="env-debug-section">
+          <div>Issues:</div>
+          <ul className="env-debug-issues">
+            {!hasApiKey && <li className="env-debug-issue">No API Key</li>}
+            {!hasApiSecret && <li className="env-debug-issue">No API Secret</li>}
+            {forceMock && <li className="env-debug-issue">Force Mock = true</li>}
+            {isLiveMode && <li className="env-debug-success">All conditions met!</li>}
+          </ul>
+        </div>
+
+        {/* Environment Variables */}
+        <details className="env-debug-details">
+          <summary>Show Environment Variables</summary>
+          <pre className="env-debug-pre">
+            {JSON.stringify(envVars, null, 2)}
+          </pre>
+        </details>
+      </div>
+
+      <div className="env-debug-footer">
+        Mode: <span className={isLiveMode ? 'status-connected' : 'status-disconnected'}>
+          {isLiveMode ? 'LIVE' : 'OFFLINE'}
+        </span> | {envVars.NODE_ENV} | v{import.meta.env.VITE_APP_VERSION}
+      </div>
     </div>
   );
 };

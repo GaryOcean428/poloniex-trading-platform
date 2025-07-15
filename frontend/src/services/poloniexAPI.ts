@@ -80,7 +80,14 @@ class PoloniexApiClient {
   private static instance: PoloniexApiClient;
   private mockMode: boolean = true;
   private lastBalanceUpdate: number = 0;
-  private cachedBalance: unknown = null;
+  private cachedBalance: {
+    totalAmount: string;
+    availableAmount: string;
+    accountEquity: string;
+    unrealizedPnL: string;
+    todayPnL: string;
+    todayPnLPercentage: string;
+  } | null = null;
   private historicalData: Map<string, MarketData[]> = new Map();
   private balanceUpdateInterval: number = 10000; // 10 seconds
   private requestCounter: number = 0;
@@ -176,7 +183,14 @@ class PoloniexApiClient {
   /**
    * Get account balance via secure backend
    */
-  public async getAccountBalance() {
+  public async getAccountBalance(): Promise<{
+    totalAmount: string;
+    availableAmount: string;
+    accountEquity: string;
+    unrealizedPnL: string;
+    todayPnL: string;
+    todayPnLPercentage: string;
+  } | null> {
     if (
       this.cachedBalance &&
       Date.now() - this.lastBalanceUpdate < this.balanceUpdateInterval

@@ -1,17 +1,20 @@
-import React, { useState, useEffect } from 'react';
-import { poloniexApi } from '@/services/poloniexAPI';
 import APIErrorBoundary from '@/components/APIErrorBoundary';
 import useAPICall from '@/hooks/useAPICall';
+import { logger } from '@/services/logger';
+import { poloniexApi } from '@/services/poloniexAPI';
+import React, { useEffect, useState } from 'react';
 
 interface AccountBalanceDisplayProps {
   pair?: string;
 }
 
 interface AccountBalance {
-  currency: string;
-  available: string;
-  onOrders: string;
-  btcValue: string;
+  totalAmount: string;
+  availableAmount: string;
+  accountEquity: string;
+  unrealizedPnL: string;
+  todayPnL: string;
+  todayPnLPercentage: string;
 }
 
 /**
@@ -19,7 +22,7 @@ interface AccountBalance {
  * This replaces the old pattern of silent fallbacks to mock data
  */
 export const AccountBalanceDisplay: React.FC<AccountBalanceDisplayProps> = () => {
-  const [accountBalance, setAccountBalance] = useState<AccountBalance[] | null>(null);
+  const [accountBalance, setAccountBalance] = useState<AccountBalance | null>(null);
 
   // Use the new useAPICall hook for proper error handling
   const {
@@ -28,11 +31,21 @@ export const AccountBalanceDisplay: React.FC<AccountBalanceDisplayProps> = () =>
     error,
     execute: fetchBalance,
     retry
-  } = useAPICall(
-    () => poloniexApi.getAccountBalance(),
+  } = useAPICall<AccountBalance | null>(
+    async () => {
+      const result = await poloniexApi.getAccountBalance();
+      if (!result) {
+        throw new Error('Failed to fetch account balance: No data returned');
+      }
+      return result;
+    },
     {
-      onError: (error) => {
-        console.error('Account balance fetch failed:', error.message);
+      onError: (error: Error) => {
+        logger.error('Account balance fetch failed', {
+          component: 'AccountBalanceDisplay',
+          action: 'fetchBalance',
+          metadata: { error: error.message }
+        });
       },
       retryCount: 3,
       retryDelay: 1000
@@ -70,8 +83,8 @@ export const AccountBalanceDisplay: React.FC<AccountBalanceDisplayProps> = () =>
     return (
       <div className="bg-white p-6 rounded-lg shadow">
         <h3 className="text-lg font-medium text-gray-900 mb-4">Account Balance</h3>
-        <APIErrorBoundary 
-          error={error} 
+        <APIErrorBoundary
+          error={error}
           onRetry={retry}
           context="Account Balance"
         />
@@ -99,9 +112,7 @@ export const AccountBalanceDisplay: React.FC<AccountBalanceDisplayProps> = () =>
           </div>
           <div>
             <p className="text-sm font-medium text-gray-500">Unrealized PnL</p>
-            <p className={`text-lg font-semibold ${
-              parseFloat(accountBalance.unrealizedPnL) >= 0 ? 'text-green-600' : 'text-red-600'
-            }`}>
+            <p className={`text-lg font-semibold ${parseFloat(accountBalance.unrealizedPnL) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
               ${accountBalance.unrealizedPnL}
             </p>
           </div>
