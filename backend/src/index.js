@@ -96,13 +96,25 @@ if (process.env.NODE_ENV === 'production') {
   console.log('Allowed Origins:', allowedOrigins);
 }
 
+// Utility: robust origin check (exact match OR startsWith to allow sub-paths)
+const isAllowedOrigin = (requestOrigin) => {
+  if (!requestOrigin) return true; // server-side / tools
+
+  // Strip trailing slash if present for comparison consistency
+  const cleanedOrigin = requestOrigin.replace(/\/$/, '');
+  return allowedOrigins.some((allowed) => {
+    const cleanedAllowed = allowed.replace(/\/$/, '');
+    return cleanedOrigin === cleanedAllowed || cleanedOrigin.startsWith(cleanedAllowed);
+  });
+};
+
 // CORS middleware configuration
 const corsMiddleware = cors({
   origin: (origin, callback) => {
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
 
-    if (allowedOrigins.includes(origin)) {
+    if (isAllowedOrigin(origin)) {
       callback(null, true);
     } else {
       console.warn(`🚫 CORS blocked request from origin: ${origin}`);
@@ -153,7 +165,15 @@ const server = http.createServer(app);
 // Set up Socket.IO with security
 const io = new Server(server, {
   cors: {
-    origin: allowedOrigins,
+    // Use same robust origin validation for Socket.IO handshakes
+    origin: (origin, callback) => {
+      if (!origin || isAllowedOrigin(origin)) {
+        callback(null, true);
+      } else {
+        console.warn(`🚫 Socket.IO CORS blocked origin: ${origin}`);
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
     methods: ['GET', 'POST'],
     credentials: true
   },
