@@ -35,6 +35,7 @@ const MobileNavigation: React.FC<MobileNavigationProps> = ({ isOpen, onClose }) 
 
   return (
     <div
+      id="mobile-navigation"
       className="fixed inset-0 z-50 lg:hidden"
       role="dialog"
       aria-modal="true"
