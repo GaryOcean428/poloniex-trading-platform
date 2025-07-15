@@ -9,18 +9,27 @@ document.addEventListener('DOMContentLoaded', function() {
   const openAppBtn = document.getElementById('open-app-btn');
   const settingsBtn = document.getElementById('settings-btn');
 
-  // Get base URL from current tab or default to localhost
-  let appURL = 'http://localhost:5173';
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    if (tabs[0]?.url) {
-      try {
-        const url = new URL(tabs[0].url);
-        if (url.hostname.includes('poloniex.com')) {
-          appURL = url.origin;
+  // Get base URL from storage or default to a placeholder
+  let appURL = 'https://your-deployed-frontend-url.railway.app'; // Placeholder for Railway URL
+
+  // Retrieve appURL from storage
+  chrome.storage.sync.get(['frontendUrl'], (result) => {
+    if (result.frontendUrl) {
+      appURL = result.frontendUrl;
+    } else {
+      // If not set in storage, try to derive from current tab if on Poloniex
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (tabs[0]?.url) {
+          try {
+            const url = new URL(tabs[0].url);
+            if (url.hostname.includes('poloniex.com')) {
+              appURL = url.origin;
+            }
+          } catch (e) {
+            console.error('Error parsing URL:', e);
+          }
         }
-      } catch (e) {
-        console.error('Error parsing URL:', e);
-      }
+      });
     }
   });
 
@@ -36,7 +45,7 @@ document.addEventListener('DOMContentLoaded', function() {
           chrome.tabs.update(tabs[0].id, { active: true });
         } else {
           // Otherwise open the dashboard in a new tab
-          chrome.tabs.create({ url: '/' });
+          chrome.tabs.create({ url: appURL });
         }
       });
     });

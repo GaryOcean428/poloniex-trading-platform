@@ -19,7 +19,8 @@
     "cookies"
   ],
   "host_permissions": [
-    "http://localhost:*/*",
+    "https://poloniex-trading-platform-production.up.railway.app/*",
+    "https://polytrade-be.up.railway.app/*",
     "https://*.tradingview.com/*",
     "https://*.poloniex.com/*",
     "https://futures-api.poloniex.com/*"
