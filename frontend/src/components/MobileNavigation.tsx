@@ -50,7 +50,7 @@ const MobileNavigation: React.FC<MobileNavigationProps> = ({ isOpen, onClose }) 
       
       {/* Navigation Panel */}
       <nav
-        id="mobile-navigation"
+        id="mobile-nav-panel"
         className="relative flex flex-col w-full max-w-xs bg-neutral-800 text-white h-full shadow-xl"
         aria-label="Mobile navigation"
       >
