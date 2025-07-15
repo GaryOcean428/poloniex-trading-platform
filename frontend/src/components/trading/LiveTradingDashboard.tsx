@@ -351,7 +351,7 @@ const LiveTradingDashboard: React.FC<LiveTradingDashboardProps> = ({ strategies 
                                 <div className="progress-bar-container mt-3">
                                     <div
                                         className={`progress-bar-fill ${confidenceMetrics.overall >= 75 ? 'green' : 'red'}`}
-                                        style={{ '--progress-width': `${confidenceMetrics.overall}%` } as React.CSSProperties}
+                                        style={{ width: `${confidenceMetrics.overall}%` }}
                                     ></div>
                                 </div>
                             </div>

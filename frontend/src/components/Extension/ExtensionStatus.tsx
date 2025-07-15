@@ -1,198 +1,181 @@
-// React is used implicitly for JSX transformation
-import { useState, useEffect } from 'react';
-import { Zap, Check, AlertTriangle, RefreshCw, MonitorSmartphone } from 'lucide-react';
+import { CheckCircle, RefreshCw, Shield, Signal, XCircle } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+
+/* eslint-disable no-console */
 
 interface ExtensionStatusProps {
   onRefreshRequest?: () => void;
 }
 
+interface ExtensionResponse {
+  status: string;
+  connected: boolean;
+  version?: string;
+  lastUpdate?: string;
+}
+
 const ExtensionStatus: React.FC<ExtensionStatusProps> = ({ onRefreshRequest }) => {
-  const [extensionStatus, setExtensionStatus] = useState<'connected' | 'disconnected' | 'checking'>('checking');
-  const [tradingViewStatus, setTradingViewStatus] = useState<'connected' | 'disconnected' | 'checking'>('checking');
-  const [poloniexStatus, setPoloniexStatus] = useState<'connected' | 'disconnected' | 'checking'>('checking');
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  
-  // Check extension connection status
-  useEffect(() => {
-    checkExtensionStatus();
-  }, []);
-  
-  const checkExtensionStatus = () => {
-    setExtensionStatus('checking');
-    setTradingViewStatus('checking');
-    setPoloniexStatus('checking');
-    setIsRefreshing(true);
-    
-    // Check if extension is installed
-    if (window.chrome && chrome.runtime && chrome.runtime.sendMessage) {
-      try {
+  const [status, setStatus] = useState<string>('Checking...');
+  const [connected, setConnected] = useState<boolean>(false);
+  const [version, setVersion] = useState<string>('Unknown');
+  const [lastUpdate, setLastUpdate] = useState<string>('Never');
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+
+  const checkExtensionStatus = async () => {
+    setIsLoading(true);
+
+    if (window.chrome && chrome.runtime && chrome.runtime.sendMessage)
+    {
+      try
+      {
         // Extension ID will need to be updated with your actual extension ID
         const extensionId = 'jcdmopolmojdhpclfbemdpcdneobmnje';
-        
-interface ExtensionResponse {
-  installed?: boolean;
-  connected?: boolean;
-  status?: string;
-}
 
-// Check extension installation status
         chrome.runtime.sendMessage(
           extensionId,
-          { type: 'CHECK_INSTALLATION' },
+          { type: 'STATUS_CHECK' },
           (response: ExtensionResponse) => {
-            if (response && response.installed) {
-              setExtensionStatus('connected');
-              
-              // Now check TradingView and Poloniex connection status
-              chrome.runtime.sendMessage(
-                extensionId,
-                { type: 'CHECK_TRADINGVIEW_STATUS' },
-                (response: ExtensionResponse) => {
-                  setTradingViewStatus(response && response.connected ? 'connected' : 'disconnected');
-                }
-              );
-              
-              chrome.runtime.sendMessage(
-                extensionId,
-                { type: 'CHECK_POLONIEX_STATUS' },
-                (response: ExtensionResponse) => {
-                  setPoloniexStatus(response && response.connected ? 'connected' : 'disconnected');
-                  setIsRefreshing(false);
-                }
-              );
-            } else {
-              setExtensionStatus('disconnected');
-              setTradingViewStatus('disconnected');
-              setPoloniexStatus('disconnected');
-              setIsRefreshing(false);
+            if (response)
+            {
+              setStatus(response.status);
+              setConnected(response.connected);
+              setVersion(response.version || 'Unknown');
+              setLastUpdate(response.lastUpdate || 'Just now');
+            } else
+            {
+              setStatus('Not responding');
+              setConnected(false);
             }
+            setIsLoading(false);
           }
         );
-      } catch (error) {
+      } catch (error)
+      {
         console.error('Error checking extension status:', error);
-        setExtensionStatus('disconnected');
-        setTradingViewStatus('disconnected');
-        setPoloniexStatus('disconnected');
-        setIsRefreshing(false);
+        setStatus('Error connecting');
+        setConnected(false);
+        setIsLoading(false);
       }
-    } else {
-      // Chrome extension API not available
-      setExtensionStatus('disconnected');
-      setTradingViewStatus('disconnected');
-      setPoloniexStatus('disconnected');
-      setIsRefreshing(false);
+    } else
+    {
+      setStatus('Extension not detected');
+      setConnected(false);
+      setIsLoading(false);
     }
   };
-  
-  const handleRefresh = () => {
+
+  useEffect(() => {
     checkExtensionStatus();
-    if (onRefreshRequest) {
-      onRefreshRequest();
+
+    // Set up periodic status checks
+    const interval = setInterval(() => {
+      checkExtensionStatus();
+    }, 30000); // Check every 30 seconds
+
+    return () => clearInterval(interval);
+  }, []);
+
+  const getStatusIcon = () => {
+    if (isLoading)
+    {
+      return <RefreshCw className="h-5 w-5 animate-spin text-blue-500" />;
     }
+
+    if (connected)
+    {
+      return <CheckCircle className="h-5 w-5 text-green-500" />;
+    }
+
+    return <XCircle className="h-5 w-5 text-red-500" />;
   };
-  
+
+  const getStatusColor = () => {
+    if (isLoading) return 'text-blue-600';
+    if (connected) return 'text-green-600';
+    return 'text-red-600';
+  };
+
   return (
-    <div className="bg-white rounded-lg shadow p-4">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-lg font-medium flex items-center">
-          <MonitorSmartphone className="h-5 w-5 mr-2 text-blue-500" />
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h3 className="font-medium text-lg flex items-center">
+          <Shield className="h-5 w-5 mr-2 text-blue-500" />
           Extension Status
         </h3>
-        <button 
-          onClick={handleRefresh}
-          disabled={isRefreshing}
-          className="p-1.5 bg-neutral-100 rounded-md hover:bg-neutral-200 text-neutral-600 disabled:opacity-50"
+        <button
+          onClick={() => {
+            if (onRefreshRequest) {
+              onRefreshRequest();
+            } else {
+              checkExtensionStatus();
+            }
+          }}
+          disabled={isLoading}
+          className="p-1.5 rounded hover:bg-neutral-100 disabled:opacity-50"
+          title="Refresh status"
+          aria-label="Refresh extension status"
         >
-          <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+          <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
         </button>
       </div>
-      
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center">
-            <Zap className="h-4 w-4 mr-2 text-blue-500" />
-            <span className="text-neutral-700">Extension</span>
+
+      <div className={`p-4 rounded-lg border ${connected ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
+        <div className="flex items-center">
+          {getStatusIcon()}
+          <div className="ml-3">
+            <p className={`font-medium ${getStatusColor()}`}>{status}</p>
+            <p className="text-sm text-neutral-600">
+              {connected ? 'Extension connected and ready' : 'Extension not connected'}
+            </p>
           </div>
-          <StatusBadge status={extensionStatus} />
-        </div>
-        
-        <div className="flex items-center justify-between">
-          <div className="flex items-center">
-            <svg className="h-4 w-4 mr-2 text-blue-500" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M12 5L19 12L12 19M5 19L12 12L5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-            <span className="text-neutral-700">TradingView</span>
-          </div>
-          <StatusBadge status={tradingViewStatus} />
-        </div>
-        
-        <div className="flex items-center justify-between">
-          <div className="flex items-center">
-            <svg className="h-4 w-4 mr-2 text-blue-500" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"/>
-              <path d="M12 6V18M18 12H6" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-            </svg>
-            <span className="text-neutral-700">Poloniex</span>
-          </div>
-          <StatusBadge status={poloniexStatus} />
         </div>
       </div>
-      
-      <div className="mt-4 text-sm">
-        {extensionStatus === 'disconnected' ? (
-          <div className="text-yellow-700 flex items-start">
-            <AlertTriangle className="h-4 w-4 mr-1 mt-0.5 flex-shrink-0" />
-            <span>Extension not detected. Please install the Chrome extension to enable integration features.</span>
+
+      <div className="grid grid-cols-2 gap-4 text-sm">
+        <div className="bg-neutral-50 p-3 rounded">
+          <div className="flex items-center mb-1">
+            <Signal className="h-4 w-4 text-neutral-500 mr-1" />
+            <span className="font-medium">Version</span>
           </div>
-        ) : extensionStatus === 'connected' && (tradingViewStatus === 'disconnected' || poloniexStatus === 'disconnected') ? (
-          <div className="text-yellow-700 flex items-start">
-            <AlertTriangle className="h-4 w-4 mr-1 mt-0.5 flex-shrink-0" />
-            <span>Some integrations are not connected. Please visit TradingView or Poloniex to activate them.</span>
+          <span className="text-neutral-600">{version}</span>
+        </div>
+
+        <div className="bg-neutral-50 p-3 rounded">
+          <div className="flex items-center mb-1">
+            <RefreshCw className="h-4 w-4 text-neutral-500 mr-1" />
+            <span className="font-medium">Last Update</span>
           </div>
-        ) : extensionStatus === 'connected' ? (
-          <div className="text-green-700 flex items-start">
-            <Check className="h-4 w-4 mr-1 mt-0.5 flex-shrink-0" />
-            <span>All systems connected. Trading integration is fully operational.</span>
-          </div>
-        ) : (
-          <div className="text-neutral-500 flex items-start">
-            <RefreshCw className="h-4 w-4 mr-1 mt-0.5 flex-shrink-0 animate-spin" />
-            <span>Checking connection status...</span>
-          </div>
-        )}
+          <span className="text-neutral-600">{lastUpdate}</span>
+        </div>
       </div>
+
+      {!connected && (
+        <div className="bg-yellow-50 border border-yellow-200 p-4 rounded">
+          <div className="flex">
+            <div className="flex-shrink-0">
+              <Shield className="h-5 w-5 text-yellow-400" />
+            </div>
+            <div className="ml-3">
+              <h3 className="text-sm font-medium text-yellow-800">
+                Extension Not Connected
+              </h3>
+              <div className="mt-2 text-sm text-yellow-700">
+                <p>
+                  Make sure the Chrome extension is installed and enabled. You may need to:
+                </p>
+                <ul className="list-disc pl-5 mt-1 space-y-1">
+                  <li>Install the extension from the Chrome Web Store</li>
+                  <li>Enable the extension in Chrome settings</li>
+                  <li>Visit TradingView to activate the extension</li>
+                  <li>Check that the extension has the necessary permissions</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
-};
-
-interface StatusBadgeProps {
-  status: 'connected' | 'disconnected' | 'checking';
-}
-
-const StatusBadge: React.FC<StatusBadgeProps> = ({ status }) => {
-  switch (status) {
-    case 'connected':
-      return (
-        <span className="px-2 py-1 bg-green-100 text-green-800 text-xs rounded-full flex items-center">
-          <Check className="h-3 w-3 mr-1" />
-          Connected
-        </span>
-      );
-    case 'disconnected':
-      return (
-        <span className="px-2 py-1 bg-red-100 text-red-800 text-xs rounded-full flex items-center">
-          <AlertTriangle className="h-3 w-3 mr-1" />
-          Disconnected
-        </span>
-      );
-    case 'checking':
-      return (
-        <span className="px-2 py-1 bg-neutral-100 text-neutral-600 text-xs rounded-full flex items-center">
-          <RefreshCw className="h-3 w-3 mr-1 animate-spin" />
-          Checking
-        </span>
-      );
-  }
 };
 
 export default ExtensionStatus;

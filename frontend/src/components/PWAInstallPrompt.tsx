@@ -1,6 +1,24 @@
+import { logger } from '@/services/logger';
 import React, { useEffect, useState } from 'react';
 
-/* eslint-disable no-console, @typescript-eslint/no-explicit-any */
+// Extend the Window interface to include PWA-related properties
+declare global {
+  interface Window {
+    deferredPrompt?: BeforeInstallPromptEvent;
+  }
+
+  interface BeforeInstallPromptEvent extends Event {
+    prompt: () => Promise<void>;
+    userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
+  }
+}
+
+// Type for installed related apps
+interface InstalledApp {
+  id: string;
+  url: string;
+  platform: string;
+}
 
 interface PWAInstallPromptProps {
   onInstall?: () => void;
@@ -12,18 +30,25 @@ const PWAInstallPrompt: React.FC<PWAInstallPromptProps> = ({
   onDismiss
 }) => {
   const [isStandalone, setIsStandalone] = useState<boolean>(false);
-  const [deferredPrompt, setDeferredPrompt] = useState<Event | null>(null);
+  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [showPrompt, setShowPrompt] = useState<boolean>(false);
 
   useEffect(() => {
     // Check if app is running in standalone mode
     const checkStandaloneMode = () => {
+      const nav = window.navigator as Navigator & {
+        standalone?: boolean;
+      };
+      
       const standalone = window.matchMedia('(display-mode: standalone)').matches ||
-        (window.navigator as any).standalone ||
+        nav.standalone === true ||
         document.referrer.includes('android-app://');
 
       setIsStandalone(standalone);
-      console.log('Standalone mode:', standalone);
+      logger.info('Standalone mode checked', {
+        component: 'PWAInstallPrompt',
+        metadata: { standalone }
+      });
     };
 
     checkStandaloneMode();
@@ -31,20 +56,30 @@ const PWAInstallPrompt: React.FC<PWAInstallPromptProps> = ({
     // Listen for beforeinstallprompt event
     const handleBeforeInstallPrompt = (e: Event) => {
       e.preventDefault();
-      setDeferredPrompt(e);
+      // Type assertion for the beforeinstallprompt event
+      const beforeInstallEvent = e as unknown as BeforeInstallPromptEvent;
+      setDeferredPrompt(beforeInstallEvent);
       setShowPrompt(true);
-      console.log('PWA install prompt available');
+      logger.info('PWA install prompt available', {
+        component: 'PWAInstallPrompt'
+      });
     };
 
     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
 
-    // Check if already installed
-    if ((window.navigator as any).getInstalledRelatedApps)
-    {
-      (window.navigator as any).getInstalledRelatedApps().then((apps: any[]) => {
+    // Check if already installed (with type assertion for getInstalledRelatedApps)
+    const nav = window.navigator as Navigator & {
+      getInstalledRelatedApps?: () => Promise<InstalledApp[]>;
+    };
+
+    if (nav.getInstalledRelatedApps) {
+      nav.getInstalledRelatedApps().then((apps: InstalledApp[]) => {
         if (apps.length > 0)
         {
-          console.log('PWA already installed');
+          logger.info('PWA already installed', {
+            component: 'PWAInstallPrompt',
+            metadata: { appsCount: apps.length }
+          });
           setShowPrompt(false);
         }
       });
@@ -58,14 +93,15 @@ const PWAInstallPrompt: React.FC<PWAInstallPromptProps> = ({
   const handleInstall = async () => {
     if (!deferredPrompt) return;
 
-    try
-    {
-      // Cast to any for PWA-specific properties
-      const prompt = deferredPrompt as any;
-      prompt.prompt();
-      const { outcome } = await prompt.userChoice;
+    try {
+      // Use the properly typed deferredPrompt
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
 
-      console.log(`User response to install prompt: ${outcome}`);
+      logger.info('User response to install prompt', {
+        component: 'PWAInstallPrompt',
+        metadata: { outcome }
+      });
 
       if (outcome === 'accepted')
       {
@@ -76,7 +112,10 @@ const PWAInstallPrompt: React.FC<PWAInstallPromptProps> = ({
       setDeferredPrompt(null);
     } catch (error)
     {
-      console.error('Error installing PWA:', error);
+      logger.error('Error installing PWA', {
+        component: 'PWAInstallPrompt',
+        metadata: { error: error instanceof Error ? error.message : 'Unknown error' }
+      });
     }
   };
 

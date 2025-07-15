@@ -84,9 +84,9 @@ export const APIErrorBoundary: React.FC<APIErrorBoundaryProps> = ({ error, onRet
           <p className="mt-1 text-sm text-gray-600">
             {context} operation failed. {getErrorMessage()}
           </p>
-          
+
           {getGuidance()}
-          
+
           <div className="mt-4 flex flex-col sm:flex-row gap-3">
             {onRetry && (
               <button
@@ -97,7 +97,7 @@ export const APIErrorBoundary: React.FC<APIErrorBoundaryProps> = ({ error, onRet
                 Try Again
               </button>
             )}
-            
+
             {isAuthError && (
               <button
                 onClick={() => window.location.href = '/settings'}
@@ -107,7 +107,7 @@ export const APIErrorBoundary: React.FC<APIErrorBoundaryProps> = ({ error, onRet
                 Go to Settings
               </button>
             )}
-            
+
             <a
               href="https://docs.poloniex.com/"
               target="_blank"

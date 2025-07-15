@@ -1,5 +1,7 @@
-import React, { Component, type ReactNode, type ErrorInfo } from 'react';
+import React, { Component, type ErrorInfo, type ReactNode } from 'react';
 import { ErrorFallback } from './ErrorFallback';
+
+/* eslint-disable no-console */
 
 interface ErrorBoundaryState {
   hasError: boolean;
@@ -51,7 +53,8 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     this.logError(error, errorInfo);
 
     // Auto-reset after 30 seconds for non-critical errors, but only for first few errors
-    if (this.state.errorCount < 3 && !this.isInitializationError(error)) {
+    if (this.state.errorCount < 3 && !this.isInitializationError(error))
+    {
       this.resetTimeoutId = window.setTimeout(() => {
         this.handleReset();
       }, 30000);
@@ -59,7 +62,8 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   }
 
   componentWillUnmount() {
-    if (this.resetTimeoutId) {
+    if (this.resetTimeoutId)
+    {
       clearTimeout(this.resetTimeoutId);
     }
   }
@@ -70,12 +74,14 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     console.error('Error info:', errorInfo);
 
     // Check for initialization errors
-    if (this.isInitializationError(error)) {
+    if (this.isInitializationError(error))
+    {
       console.error('Initialization error detected - this may require a page refresh');
     }
 
     // In production, this would send to a logging service
-    if (process.env.NODE_ENV === 'production') {
+    if (process.env.NODE_ENV === 'production')
+    {
       // Example: Send to monitoring service
       // logErrorToService(error, errorInfo, this.state.errorCount);
     }
@@ -98,7 +104,8 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   };
 
   private handleReset = () => {
-    if (this.resetTimeoutId) {
+    if (this.resetTimeoutId)
+    {
       clearTimeout(this.resetTimeoutId);
       this.resetTimeoutId = null;
     }
@@ -112,12 +119,14 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   };
 
   render() {
-    if (this.state.hasError) {
+    if (this.state.hasError)
+    {
       const FallbackComponent = this.props.fallback || ErrorFallback;
-      
+
       return (
         <FallbackComponent
           error={this.state.error}
+          errorInfo={this.state.errorInfo}
           errorCount={this.state.errorCount}
           onReset={this.handleReset}
         />

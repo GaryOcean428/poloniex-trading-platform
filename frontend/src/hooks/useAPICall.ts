@@ -18,7 +18,7 @@ export function useAPICall<T>(
   options: UseAPICallOptions = {}
 ) {
   const { onError, retryCount = 2, retryDelay = 1000 } = options;
-  
+
   const [state, setState] = useState<UseAPICallState<T>>({
     data: null,
     loading: false,
@@ -34,9 +34,9 @@ export function useAPICall<T>(
       return result;
     } catch (error) {
       const apiError = error as Error;
-      
+
       // Don't retry authentication errors or certain API errors
-      const shouldRetry = 
+      const shouldRetry =
         attempt < retryCount &&
         !(apiError instanceof PoloniexAuthenticationError) &&
         !(apiError instanceof PoloniexAPIError && (apiError).statusCode === 404);
@@ -48,11 +48,11 @@ export function useAPICall<T>(
       }
 
       setState({ data: null, loading: false, error: apiError });
-      
+
       if (onError) {
         onError(apiError);
       }
-      
+
       return null;
     }
   }, [apiCall, onError, retryCount, retryDelay]);
