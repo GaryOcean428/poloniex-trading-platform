@@ -10,8 +10,9 @@ import RealTimeMarketTicker from '../components/dashboard/RealTimeMarketTicker';
 import TradingInsights from '../components/TradingInsights';
 import MockModeNotice from '../components/MockModeNotice';
 import ExtensionBanner from '../components/dashboard/ExtensionBanner';
+import AutonomousTradingDashboard from '../components/trading/AutonomousTradingDashboard';
 import { mockTrades } from '../data/mockData';
-import { Activity, ArrowRight } from 'lucide-react';
+import { Activity, ArrowRight, Brain } from 'lucide-react';
 
 const Dashboard: React.FC = () => {
   const { marketData, strategies, activeStrategies, trades, isMockMode } = useTradingContext();
@@ -21,15 +22,17 @@ const Dashboard: React.FC = () => {
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-neutral-800">Trading Dashboard</h1>
         
-        {/* Live Trading CTA */}
-        <Link
-          to="/dashboard/live"
-          className="flex items-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors font-medium"
-        >
-          <Activity size={16} />
-          <span>Go Live</span>
-          <ArrowRight size={16} />
-        </Link>
+        <div className="flex items-center space-x-3">
+          {/* Live Trading CTA */}
+          <Link
+            to="/dashboard/live"
+            className="flex items-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors font-medium"
+          >
+            <Activity size={16} />
+            <span>Go Live</span>
+            <ArrowRight size={16} />
+          </Link>
+        </div>
       </div>
       
       {isMockMode && (
@@ -45,6 +48,11 @@ const Dashboard: React.FC = () => {
       {/* Real-time Market Ticker */}
       <div className="mb-4 lg:mb-6">
         <RealTimeMarketTicker />
+      </div>
+
+      {/* Autonomous Trading Dashboard */}
+      <div className="mb-4 lg:mb-6">
+        <AutonomousTradingDashboard />
       </div>
       
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 lg:gap-6">
