@@ -151,11 +151,15 @@ import futuresRoutes from './routes/futures.js';
 import backtestingRoutes from './routes/backtesting.js';
 import paperTradingRoutes from './routes/paperTrading.js';
 import confidenceScoringRoutes from './routes/confidenceScoring.js';
+import autonomousTradingRoutes from './routes/autonomousTrading.js';
 import automatedTradingService from './services/automatedTradingService.js';
 import futuresWebSocket from './websocket/futuresWebSocket.js';
 import backtestingEngine from './services/backtestingEngine.js';
 import paperTradingService from './services/paperTradingService.js';
 import confidenceScoringService from './services/confidenceScoringService.js';
+import autonomousStrategyGenerator from './services/autonomousStrategyGenerator.js';
+import strategyOptimizer from './services/strategyOptimizer.js';
+import profitBankingService from './services/profitBankingService.js';
 
 // Mount routes
 app.use('/api/auth', authRoutes);
@@ -164,6 +168,7 @@ app.use('/api/futures', futuresRoutes);
 app.use('/api/backtesting', backtestingRoutes);
 app.use('/api/paper-trading', paperTradingRoutes);
 app.use('/api/confidence-scoring', confidenceScoringRoutes);
+app.use('/api/autonomous-trading', autonomousTradingRoutes);
 app.use('/api', proxyRoutes);
 
 // Create HTTP server
@@ -614,11 +619,97 @@ server.listen(PORT, HOST, async () => {
   } catch (error) {
     logger.error('❌ Failed to initialize paper trading service:', error);
   }
+
+  // Initialize confidence scoring service
+  try {
+    logger.info('🎯 Initializing confidence scoring service...');
+    
+    // Initialize confidence scoring service
+    await confidenceScoringService.initialize();
+    
+    // Listen for confidence scoring events
+    confidenceScoringService.on('confidenceScoreCalculated', (data) => {
+      io.emit('confidenceScoreCalculated', data);
+    });
+    
+    confidenceScoringService.on('marketConditionsUpdated', (data) => {
+      io.emit('marketConditionsUpdated', data);
+    });
+    
+    confidenceScoringService.on('riskAssessmentAlert', (data) => {
+      io.emit('riskAssessmentAlert', data);
+    });
+    
+    logger.info('✅ Confidence scoring service initialized with WebSocket events');
+  } catch (error) {
+    logger.error('❌ Failed to initialize confidence scoring service:', error);
+  }
+
+  // Initialize autonomous trading system
+  try {
+    logger.info('🧠 Initializing autonomous trading system...');
+    
+    // Initialize profit banking service
+    await profitBankingService.initialize();
+    
+    // Initialize autonomous strategy generator
+    await autonomousStrategyGenerator.initialize();
+    
+    // Listen for autonomous trading events
+    autonomousStrategyGenerator.on('generationComplete', (data) => {
+      io.emit('generationComplete', data);
+    });
+    
+    autonomousStrategyGenerator.on('strategyCreated', (data) => {
+      io.emit('strategyCreated', data);
+    });
+    
+    profitBankingService.on('profitBanked', (data) => {
+      io.emit('profitBanked', data);
+    });
+    
+    profitBankingService.on('bankingFailed', (data) => {
+      io.emit('bankingFailed', data);
+    });
+    
+    profitBankingService.on('emergencyStop', (data) => {
+      io.emit('emergencyStop', data);
+    });
+    
+    strategyOptimizer.on('backtestCompleted', (data) => {
+      io.emit('backtestCompleted', data);
+    });
+    
+    strategyOptimizer.on('paperTradingStarted', (data) => {
+      io.emit('paperTradingStarted', data);
+    });
+    
+    strategyOptimizer.on('livePromotionCompleted', (data) => {
+      io.emit('livePromotionCompleted', data);
+    });
+    
+    strategyOptimizer.on('strategyRetired', (data) => {
+      io.emit('strategyRetired', data);
+    });
+    
+    logger.info('✅ Autonomous trading system initialized with WebSocket events');
+  } catch (error) {
+    logger.error('❌ Failed to initialize autonomous trading system:', error);
+  }
 });
 
 // Graceful shutdown
 process.on('SIGINT', async () => {
   logger.info('Shutting down server...');
+
+  try {
+    // Stop autonomous trading system
+    await autonomousStrategyGenerator.stop();
+    await profitBankingService.shutdown();
+    logger.info('✅ Autonomous trading system stopped');
+  } catch (error) {
+    logger.error('❌ Error stopping autonomous trading system:', error);
+  }
 
   try {
     await redisService.disconnect();
