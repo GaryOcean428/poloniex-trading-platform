@@ -198,7 +198,7 @@ export class LiveDataService {
 
   private initializeWebSockets(): void {
     try {
-      const poloniexWs = new WebSocket("wss://ws.poloniex.com/markets");
+      const poloniexWs = new WebSocket("wss://ws.poloniex.com/ws/public");
 
       poloniexWs.onopen = () => {
         this.log("info", "Poloniex WebSocket connected");
