@@ -147,10 +147,23 @@ app.use('/api/', corsMiddleware, apiRateLimiter.middleware());
 
 import proxyRoutes from './routes/proxy.js';
 import apiKeysRoutes from './routes/apiKeys.js';
+import futuresRoutes from './routes/futures.js';
+import backtestingRoutes from './routes/backtesting.js';
+import paperTradingRoutes from './routes/paperTrading.js';
+import confidenceScoringRoutes from './routes/confidenceScoring.js';
+import automatedTradingService from './services/automatedTradingService.js';
+import futuresWebSocket from './websocket/futuresWebSocket.js';
+import backtestingEngine from './services/backtestingEngine.js';
+import paperTradingService from './services/paperTradingService.js';
+import confidenceScoringService from './services/confidenceScoringService.js';
 
 // Mount routes
 app.use('/api/auth', authRoutes);
 app.use('/api/keys', apiKeysRoutes);
+app.use('/api/futures', futuresRoutes);
+app.use('/api/backtesting', backtestingRoutes);
+app.use('/api/paper-trading', paperTradingRoutes);
+app.use('/api/confidence-scoring', confidenceScoringRoutes);
 app.use('/api', proxyRoutes);
 
 // Create HTTP server
@@ -520,6 +533,86 @@ server.listen(PORT, HOST, async () => {
     logger.info('✅ Redis connection verified');
   } catch (error) {
     logger.error('❌ Redis connection failed:', error);
+  }
+
+  // Initialize futures services for automated trading
+  if (hasApiCredentials) {
+    try {
+      logger.info('🚀 Initializing automated futures trading services...');
+      
+      // Initialize futures WebSocket connection
+      futuresWebSocket.connect();
+      
+      // Start automated trading service
+      await automatedTradingService.initialize();
+      
+      logger.info('✅ Automated futures trading services initialized');
+    } catch (error) {
+      logger.error('❌ Failed to initialize futures services:', error);
+    }
+  } else {
+    logger.info('🧪 Running in mock mode - futures services disabled');
+  }
+
+  // Initialize backtesting engine WebSocket events
+  try {
+    logger.info('🔬 Initializing backtesting engine...');
+    
+    // Listen for backtest progress updates
+    backtestingEngine.on('backtestProgress', (data) => {
+      io.emit('backtestProgress', data);
+    });
+    
+    // Listen for backtest completion
+    backtestingEngine.on('backtestComplete', (data) => {
+      io.emit('backtestComplete', data);
+    });
+    
+    // Listen for backtest errors
+    backtestingEngine.on('backtestError', (data) => {
+      io.emit('backtestError', data);
+    });
+    
+    logger.info('✅ Backtesting engine initialized with WebSocket events');
+  } catch (error) {
+    logger.error('❌ Failed to initialize backtesting engine:', error);
+  }
+
+  // Initialize paper trading service
+  try {
+    logger.info('📝 Initializing paper trading service...');
+    
+    // Initialize paper trading service
+    await paperTradingService.initialize();
+    
+    // Listen for paper trading events
+    paperTradingService.on('sessionCreated', (data) => {
+      io.emit('sessionCreated', data);
+    });
+    
+    paperTradingService.on('sessionStarted', (data) => {
+      io.emit('sessionStarted', data);
+    });
+    
+    paperTradingService.on('sessionStopped', (data) => {
+      io.emit('sessionStopped', data);
+    });
+    
+    paperTradingService.on('sessionUpdate', (data) => {
+      io.emit('sessionUpdate', data);
+    });
+    
+    paperTradingService.on('positionOpened', (data) => {
+      io.emit('positionOpened', data);
+    });
+    
+    paperTradingService.on('positionClosed', (data) => {
+      io.emit('positionClosed', data);
+    });
+    
+    logger.info('✅ Paper trading service initialized with WebSocket events');
+  } catch (error) {
+    logger.error('❌ Failed to initialize paper trading service:', error);
   }
 });
 
