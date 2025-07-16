@@ -24,12 +24,14 @@ All 8 items from the Railway deployment checklist have been successfully verifie
 ## **🔧 Key Configuration Details**
 
 ### **Redis Stack Integration**
+
 - **Service**: Redis Stack on Railway
 - **Public URL**: `redis://default:KDjTgzmkEAwAxzCwUGdBCfExWlLWOPVo@redis-stack.railway.internal:6379`
 - **Password**: `KDjTgzmkEAwAxzCwUGdBCfExWlLWOPVo`
 - **Configuration**: Uses `REDIS_PUBLIC_URL` environment variable
 
 ### **Environment Variables**
+
 ```bash
 PORT=3000
 REDIS_PUBLIC_URL=redis://default:KDjTgzmkEAwAxzCwUGdBCfExWlLWOPVo@redis-stack.railway.internal:6379
@@ -38,6 +40,7 @@ REDIS_PRIVATE_DOMAIN=redis-stack.railway.internal
 ```
 
 ### **Production URLs**
+
 - **Backend API**: `https://polytrade-be.up.railway.app`
 - **Health Check**: `https://polytrade-be.up.railway.app/health`
 - **Detailed Health**: `https://polytrade-be.up.railway.app/api/health`
@@ -47,6 +50,7 @@ REDIS_PRIVATE_DOMAIN=redis-stack.railway.internal
 ## **🚀 Ready for Deployment**
 
 The application is now **production-ready** with:
+
 - ✅ Proper Railway environment variable usage
 - ✅ Redis Stack integration working
 - ✅ CORS configured for production
