@@ -59,13 +59,11 @@ if (isValid) {
   try {
     dbConfig = {
       connectionString: databaseUrl,
-      ssl: process.env.NODE_ENV === 'production' 
-        ? { rejectUnauthorized: false }
-        : false,
+      ssl: { rejectUnauthorized: false }, // Always use SSL for Railway connections
       max: 20, // Maximum number of connections in the pool
       idleTimeoutMillis: 30000, // Close idle connections after 30 seconds
-      connectionTimeoutMillis: 2000, // Return error after 2 seconds if connection could not be established
-      query_timeout: 5000, // Return error after 5 seconds if query is taking too long
+      connectionTimeoutMillis: 10000, // Return error after 10 seconds if connection could not be established
+      query_timeout: 15000, // Return error after 15 seconds if query is taking too long
     };
     console.log('✅ Database configuration is valid');
   } catch (error) {
