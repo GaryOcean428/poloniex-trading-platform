@@ -1,8 +1,7 @@
 import {
-    AutonomousSession,
-    AutonomousSettings,
-    autonomousTradingEngine
+    AutonomousSettings
 } from '@/services/autonomousTradingEngine';
+import { liveAutonomousTradingEngine, LiveAutonomousSession } from '@/services/liveAutonomousTradingEngine';
 import {
     Brain,
     CheckCircle,
@@ -12,12 +11,19 @@ import {
     Shield,
     Target,
     TrendingUp,
-    X
+    X,
+    AlertTriangle,
+    Activity,
+    DollarSign,
+    Zap,
+    PiggyBank,
+    RefreshCw
 } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
 
 const AutonomousTradingDashboard: React.FC = () => {
-    const [session, setSession] = useState<AutonomousSession | null>(null);
+    const [session, setSession] = useState<LiveAutonomousSession | null>(null);
+    const [connectionStatus, setConnectionStatus] = useState(liveAutonomousTradingEngine.getConnectionStatus());
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [settings, setSettings] = useState<AutonomousSettings>({
@@ -34,13 +40,13 @@ const AutonomousTradingDashboard: React.FC = () => {
     });
     const [showSettings, setShowSettings] = useState(false);
 
-    // Poll for session updates
+    // Poll for session updates and set up event listeners
     useEffect(() => {
         let interval: NodeJS.Timeout;
         if (session?.isActive)
         {
             interval = setInterval(() => {
-                const updatedSession = autonomousTradingEngine.getAutonomousSession(session.id);
+                const updatedSession = liveAutonomousTradingEngine.getAutonomousSession(session.id);
                 if (updatedSession)
                 {
                     setSession(updatedSession);
@@ -52,18 +58,47 @@ const AutonomousTradingDashboard: React.FC = () => {
         };
     }, [session?.id, session?.isActive]);
 
+    // Set up event listeners for live updates
+    useEffect(() => {
+        const handleConnectionChange = () => {
+            setConnectionStatus(liveAutonomousTradingEngine.getConnectionStatus());
+        };
+
+        const handleNotification = (data: any) => {
+            if (data.notification.type === 'CRITICAL') {
+                setError(data.notification.message);
+            }
+        };
+
+        const handlePerformanceUpdate = (data: any) => {
+            if (session && data.sessionId === session.id) {
+                setSession(prev => prev ? { ...prev, performance: data.performance } : null);
+            }
+        };
+
+        liveAutonomousTradingEngine.on('connectionStateChanged', handleConnectionChange);
+        liveAutonomousTradingEngine.on('notificationAdded', handleNotification);
+        liveAutonomousTradingEngine.on('performanceUpdate', handlePerformanceUpdate);
+
+        return () => {
+            liveAutonomousTradingEngine.off('connectionStateChanged', handleConnectionChange);
+            liveAutonomousTradingEngine.off('notificationAdded', handleNotification);
+            liveAutonomousTradingEngine.off('performanceUpdate', handlePerformanceUpdate);
+        };
+    }, [session]);
+
     const handleStartAutonomous = async () => {
         setLoading(true);
         setError(null);
 
         try
         {
-            const sessionId = await autonomousTradingEngine.startAutonomousTrading(
+            const sessionId = await liveAutonomousTradingEngine.startAutonomousTrading(
                 'user_123',
                 settings
             );
 
-            const newSession = autonomousTradingEngine.getAutonomousSession(sessionId);
+            const newSession = liveAutonomousTradingEngine.getAutonomousSession(sessionId);
             setSession(newSession);
         } catch (err)
         {
@@ -80,8 +115,8 @@ const AutonomousTradingDashboard: React.FC = () => {
         setLoading(true);
         try
         {
-            await autonomousTradingEngine.stopAutonomousTrading(session.id);
-            const updatedSession = autonomousTradingEngine.getAutonomousSession(session.id);
+            await liveAutonomousTradingEngine.stopAutonomousTrading(session.id);
+            const updatedSession = liveAutonomousTradingEngine.getAutonomousSession(session.id);
             setSession(updatedSession);
         } catch (err)
         {
@@ -102,9 +137,9 @@ const AutonomousTradingDashboard: React.FC = () => {
             case 'MOCK_TRADING': return <Play className="h-5 w-5" />;
             case 'CONFIDENCE_EVALUATION': return <CheckCircle className="h-5 w-5" />;
             case 'READY_FOR_LIVE': return <Shield className="h-5 w-5" />;
-            case 'LIVE_TRADING': return <TrendingUp className="h-5 w-5 text-green-500" />;
-            case 'LEARNING_ADAPTATION': return <Brain className="h-5 w-5" />;
-            case 'PROFIT_MAXIMIZATION': return <Target className="h-5 w-5 text-green-500" />;
+            case 'LIVE_TRADING': return <Zap className="h-5 w-5 text-green-500" />;
+            case 'LEARNING_ADAPTATION': return <RefreshCw className="h-5 w-5" />;
+            case 'PROFIT_MAXIMIZATION': return <PiggyBank className="h-5 w-5 text-green-500" />;
             default: return <Info className="h-5 w-5" />;
         }
     };
@@ -123,11 +158,23 @@ const AutonomousTradingDashboard: React.FC = () => {
                     <div>
                         <h1 className="text-2xl font-bold flex items-center">
                             <Brain className="h-8 w-8 mr-3" />
-                            Autonomous Trading System
+                            Live Autonomous Trading System
                         </h1>
                         <p className="mt-2 opacity-90">
                             AI-powered trading that learns, adapts, and maximizes profits autonomously
                         </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <div className={`px-3 py-1 rounded-full text-sm font-medium ${
+                            connectionStatus.useBackend ? 
+                                (connectionStatus.isConnected ? 'bg-green-500/20 text-green-100' : 'bg-red-500/20 text-red-100') :
+                                'bg-yellow-500/20 text-yellow-100'
+                        }`}>
+                            {connectionStatus.useBackend ? 
+                                (connectionStatus.isConnected ? 'Live Connected' : 'Disconnected') :
+                                'Mock Mode'
+                            }
+                        </div>
                     </div>
                     <div className="flex space-x-3">
                         <button
@@ -227,6 +274,12 @@ const AutonomousTradingDashboard: React.FC = () => {
                                 <div className="ml-3">
                                     <h4 className="font-medium">{formatPhase(session.currentPhase)}</h4>
                                     <p className="text-sm text-gray-500">{session.isActive ? 'Active' : 'Stopped'}</p>
+                                    {session.realTimeUpdates && (
+                                        <p className="text-xs text-green-600 flex items-center">
+                                            <Activity className="h-3 w-3 mr-1" />
+                                            Live Updates
+                                        </p>
+                                    )}
                                 </div>
                             </div>
                             <div className="text-right">
@@ -234,6 +287,26 @@ const AutonomousTradingDashboard: React.FC = () => {
                                 <p className="text-sm text-gray-500">Confidence Score</p>
                             </div>
                         </div>
+                        
+                        {/* Backend System Status */}
+                        {session.backendSystemStatus && (
+                            <div className="mt-4 pt-4 border-t">
+                                <div className="grid grid-cols-3 gap-4 text-center">
+                                    <div>
+                                        <p className="text-lg font-semibold text-gray-900">{session.backendSystemStatus.generationCount}</p>
+                                        <p className="text-sm text-gray-500">Generations</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-lg font-semibold text-gray-900">{session.backendSystemStatus.totalStrategies}</p>
+                                        <p className="text-sm text-gray-500">Total Strategies</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-lg font-semibold text-green-600">{session.backendSystemStatus.activeStrategies}</p>
+                                        <p className="text-sm text-gray-500">Active Strategies</p>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                     </div>
 
                     <div className="bg-white rounded-lg border p-6">
@@ -243,8 +316,14 @@ const AutonomousTradingDashboard: React.FC = () => {
                                 <p className="text-sm text-gray-500 text-center">No notifications yet</p>
                             ) : (
                                 session.notifications.slice(-5).map((notification) => (
-                                    <div key={notification.id} className="text-sm">
-                                        {notification.title}
+                                    <div key={notification.id} className={`text-sm p-2 rounded border-l-4 ${
+                                        notification.type === 'CRITICAL' ? 'border-red-500 bg-red-50' :
+                                        notification.type === 'WARNING' ? 'border-yellow-500 bg-yellow-50' :
+                                        notification.type === 'SUCCESS' ? 'border-green-500 bg-green-50' :
+                                        'border-blue-500 bg-blue-50'
+                                    }`}>
+                                        <div className="font-medium">{notification.title}</div>
+                                        <div className="text-xs text-gray-600 mt-1">{notification.message}</div>
                                     </div>
                                 ))
                             )}
@@ -255,22 +334,55 @@ const AutonomousTradingDashboard: React.FC = () => {
 
             {/* Performance Metrics */}
             {session && (
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
                     <div className="text-center">
-                        <p className="text-2xl font-bold">{session.strategies.length}</p>
-                        <p className="text-sm text-gray-500">Strategies</p>
+                        <p className="text-2xl font-bold">{session.liveStrategies.length}</p>
+                        <p className="text-sm text-gray-500">Live Strategies</p>
                     </div>
                     <div className="text-center">
-                        <p className="text-2xl font-bold">${session.performance.totalPnL.toFixed(2)}</p>
+                        <p className="text-2xl font-bold text-green-600">${session.performance.totalPnL.toFixed(2)}</p>
                         <p className="text-sm text-gray-500">Total P&L</p>
                     </div>
                     <div className="text-center">
-                        <p className="text-2xl font-bold">{(session.performance.winRate * 100).toFixed(1)}%</p>
+                        <p className="text-2xl font-bold text-blue-600">{(session.performance.winRate * 100).toFixed(1)}%</p>
                         <p className="text-sm text-gray-500">Win Rate</p>
                     </div>
                     <div className="text-center">
-                        <p className="text-2xl font-bold">{(session.performance.maxDrawdown * 100).toFixed(1)}%</p>
+                        <p className="text-2xl font-bold text-purple-600">{session.performance.sharpeRatio.toFixed(2)}</p>
+                        <p className="text-sm text-gray-500">Sharpe Ratio</p>
+                    </div>
+                    <div className="text-center">
+                        <p className="text-2xl font-bold text-orange-600">{(session.performance.maxDrawdown * 100).toFixed(1)}%</p>
                         <p className="text-sm text-gray-500">Max Drawdown</p>
+                    </div>
+                </div>
+            )}
+
+            {/* Banking Status */}
+            {session?.bankingStatus && (
+                <div className="bg-white rounded-lg border p-6 mt-6">
+                    <h3 className="text-lg font-medium mb-4 flex items-center">
+                        <PiggyBank className="h-5 w-5 mr-2" />
+                        Profit Banking Status
+                    </h3>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="text-center">
+                            <p className="text-2xl font-bold text-green-600">${session.bankingStatus.totalBanked.toFixed(2)}</p>
+                            <p className="text-sm text-gray-500">Total Banked</p>
+                        </div>
+                        <div className="text-center">
+                            <p className="text-2xl font-bold text-blue-600">{session.bankingStatus.totalTransfers}</p>
+                            <p className="text-sm text-gray-500">Total Transfers</p>
+                        </div>
+                        <div className="text-center">
+                            <p className="text-sm text-gray-900">
+                                {session.bankingStatus.lastBankingTime ? 
+                                    new Date(session.bankingStatus.lastBankingTime).toLocaleString() : 
+                                    'Never'
+                                }
+                            </p>
+                            <p className="text-sm text-gray-500">Last Banking</p>
+                        </div>
                     </div>
                 </div>
             )}
