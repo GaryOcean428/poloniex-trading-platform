@@ -16,8 +16,8 @@ const { Client } = pkg;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Use Railway database URL
-const DATABASE_URL = 'postgresql://postgres:HcsyUTnGVUNmdsKrWDHloHcTcwUzeteT@interchange.proxy.rlwy.net:45066/railway';
+// Use Railway database URL from environment variables
+const DATABASE_URL = process.env.DATABASE_URL || process.env.DATABASE_PUBLIC_URL;
 
 async function setupDatabase() {
   const client = new Client({
