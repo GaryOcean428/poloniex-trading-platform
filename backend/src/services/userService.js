@@ -25,19 +25,15 @@ export class UserService {
       const saltRounds = 12;
       const passwordHash = await bcrypt.hash(password, saltRounds);
 
-      const locationPoint = (latitude && longitude)
-        ? geoQuery.createPoint(latitude, longitude)
-        : null;
-
       const queryText = `
         INSERT INTO users (
           username, email, password_hash, role,
-          registered_location, country_code, timezone
-        ) VALUES ($1, $2, $3, $4, ${locationPoint || 'NULL'}, $5, $6)
+          registered_latitude, registered_longitude, country_code, timezone
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         RETURNING id, username, email, role, country_code, timezone, created_at
       `;
 
-      const params = [username, email, passwordHash, role, countryCode, timezone];
+      const params = [username, email, passwordHash, role, latitude, longitude, countryCode, timezone];
       const result = await query(queryText, params);
 
       if (result.rows.length === 0) {
@@ -75,7 +71,7 @@ export class UserService {
           u.country_code, u.timezone, u.is_active, u.is_verified,
           u.kyc_status, u.trading_enabled, u.risk_level,
           u.created_at, u.updated_at, u.last_login_at,
-          ${geoQuery.getLatLon('u.registered_location')},
+          ${geoQuery.getLatLon('u.registered_latitude', 'u.registered_longitude')},
           gr.trading_allowed as jurisdiction_trading_allowed,
           gr.kyc_required as jurisdiction_kyc_required,
           gr.futures_allowed as jurisdiction_futures_allowed
@@ -176,16 +172,12 @@ export class UserService {
     mfaVerified = false
   }) {
     try {
-      const locationPoint = (latitude && longitude)
-        ? geoQuery.createPoint(latitude, longitude)
-        : null;
-
       // Check if location is suspicious
       let isSuspiciousLocation = false;
-      if (locationPoint) {
+      if (latitude && longitude) {
         const suspiciousResult = await query(
-          'SELECT is_suspicious_location($1, $2) as is_suspicious',
-          [userId, locationPoint]
+          'SELECT detect_suspicious_location($1, $2, $3) as is_suspicious',
+          [userId, latitude, longitude]
         );
         isSuspiciousLocation = suspiciousResult.rows[0]?.is_suspicious || false;
       }
@@ -193,15 +185,15 @@ export class UserService {
       const queryText = `
         INSERT INTO login_sessions (
           user_id, refresh_token_hash, session_token, expires_at,
-          login_location, ip_address, user_agent, device_fingerprint,
+          login_latitude, login_longitude, ip_address, user_agent, device_fingerprint,
           is_suspicious_location, mfa_verified
-        ) VALUES ($1, $2, $3, $4, ${locationPoint || 'NULL'}, $5, $6, $7, $8, $9)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         RETURNING id, is_suspicious_location
       `;
 
       const params = [
         userId, refreshTokenHash, sessionToken, expiresAt,
-        ipAddress, userAgent, deviceFingerprint,
+        latitude, longitude, ipAddress, userAgent, deviceFingerprint,
         isSuspiciousLocation, mfaVerified
       ];
 
@@ -330,20 +322,16 @@ export class UserService {
     metadata = {}
   }) {
     try {
-      const locationPoint = (latitude && longitude)
-        ? geoQuery.createPoint(latitude, longitude)
-        : null;
-
       const queryText = `
         INSERT INTO security_audit_log (
-          user_id, session_id, event_type, event_description, severity,
-          ip_address, user_agent, event_location, metadata
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, ${locationPoint || 'NULL'}, $8)
+          user_id, event_type, event_description, severity,
+          ip_address, user_agent, event_latitude, event_longitude, metadata
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       `;
 
       const params = [
-        userId, sessionId, eventType, eventDescription, severity,
-        ipAddress, userAgent, JSON.stringify(metadata)
+        userId, eventType, eventDescription, severity,
+        ipAddress, userAgent, latitude, longitude, JSON.stringify(metadata)
       ];
 
       await query(queryText, params);

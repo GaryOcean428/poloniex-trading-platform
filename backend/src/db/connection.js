@@ -273,26 +273,29 @@ export const transaction = async (callback) => {
   }
 };
 
-// Geospatial query helpers
+// Geographic query helpers (without PostGIS)
 export const geoQuery = {
-  // Create a point from latitude and longitude
+  // Create point values for insertion (returns object with lat/lon)
   createPoint: (lat, lon) => {
-    return `ST_GeogFromText('POINT(${lon} ${lat})')`;
+    return {
+      latitude: lat,
+      longitude: lon
+    };
   },
 
-  // Calculate distance between two points in kilometers
-  distance: (point1, point2) => {
-    return `ST_Distance(${point1}, ${point2}) / 1000.0`;
+  // Calculate distance between two points in kilometers using Haversine formula
+  distance: (lat1, lon1, lat2, lon2) => {
+    return `calculate_distance_km(${lat1}, ${lon1}, ${lat2}, ${lon2})`;
   },
 
   // Check if a point is within a certain distance of another point
-  withinDistance: (point1, point2, distanceKm) => {
-    return `ST_DWithin(${point1}, ${point2}, ${distanceKm * 1000})`;
+  withinDistance: (lat1, lon1, lat2, lon2, distanceKm) => {
+    return `calculate_distance_km(${lat1}, ${lon1}, ${lat2}, ${lon2}) <= ${distanceKm}`;
   },
 
-  // Get latitude and longitude from a geography point
-  getLatLon: (point) => {
-    return `ST_Y(${point}::geometry) as latitude, ST_X(${point}::geometry) as longitude`;
+  // Get latitude and longitude from separate columns
+  getLatLon: (latColumn, lonColumn) => {
+    return `${latColumn} as latitude, ${lonColumn} as longitude`;
   }
 };
 
