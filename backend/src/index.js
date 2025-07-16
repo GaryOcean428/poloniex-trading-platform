@@ -161,6 +161,45 @@ import autonomousStrategyGenerator from './services/autonomousStrategyGenerator.
 import strategyOptimizer from './services/strategyOptimizer.js';
 import profitBankingService from './services/profitBankingService.js';
 
+// Define health endpoint before proxy routes to avoid auth middleware
+app.get('/api/health', async (req, res) => {
+  try {
+    const [dbHealth, redisHealth] = await Promise.all([
+      healthCheck(),
+      redisService.healthCheck()
+    ]);
+
+    res.json({
+      status: dbHealth.healthy && redisHealth.healthy ? 'healthy' : 'degraded',
+      mode: hasApiCredentials ? 'live' : 'mock',
+      timestamp: new Date().toISOString(),
+      env: process.env.NODE_ENV,
+      database: {
+        healthy: dbHealth.healthy,
+        postgis_version: dbHealth.postgis_version,
+        pool_size: dbHealth.pool_size,
+        idle_connections: dbHealth.idle_connections,
+        waiting_connections: dbHealth.waiting_connections
+      },
+      redis: redisHealth,
+      websocket: {
+        circuitBreakerState: circuitBreaker.state,
+        reconnectAttempts: reconnectAttempts,
+        failureCount: circuitBreaker.failureCount
+      }
+    });
+  } catch (error) {
+    logger.error('Health check error:', error);
+    res.status(503).json({
+      status: 'unhealthy',
+      mode: hasApiCredentials ? 'live' : 'mock',
+      timestamp: new Date().toISOString(),
+      env: process.env.NODE_ENV,
+      error: error.message
+    });
+  }
+});
+
 // Mount routes
 app.use('/api/auth', authRoutes);
 app.use('/api/keys', apiKeysRoutes);
@@ -416,44 +455,7 @@ io.on('connection', (socket) => {
   });
 });
 
-// Enhanced health check with Redis
-app.get('/api/health', async (req, res) => {
-  try {
-    const [dbHealth, redisHealth] = await Promise.all([
-      healthCheck(),
-      redisService.healthCheck()
-    ]);
-
-    res.json({
-      status: dbHealth.healthy && redisHealth.healthy ? 'healthy' : 'degraded',
-      mode: hasApiCredentials ? 'live' : 'mock',
-      timestamp: new Date().toISOString(),
-      env: process.env.NODE_ENV,
-      database: {
-        healthy: dbHealth.healthy,
-        postgis_version: dbHealth.postgis_version,
-        pool_size: dbHealth.pool_size,
-        idle_connections: dbHealth.idle_connections,
-        waiting_connections: dbHealth.waiting_connections
-      },
-      redis: redisHealth,
-      websocket: {
-        circuitBreakerState: circuitBreaker.state,
-        reconnectAttempts: reconnectAttempts,
-        failureCount: circuitBreaker.failureCount
-      }
-    });
-  } catch (error) {
-    logger.error('Health check error:', error);
-    res.status(503).json({
-      status: 'unhealthy',
-      mode: hasApiCredentials ? 'live' : 'mock',
-      timestamp: new Date().toISOString(),
-      env: process.env.NODE_ENV,
-      error: error.message
-    });
-  }
-});
+// Health endpoint is now defined earlier in the file to avoid auth middleware
 
 // Cache market data endpoint
 app.get('/api/market/:pair', async (req, res) => {
