@@ -6,40 +6,43 @@ import dotenv from 'dotenv';
 import WebSocket from 'ws';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import rateLimit from 'express-rate-limit';
 import helmet from 'helmet';
 import authRoutes from './routes/auth.js';
 import { optionalAuth } from './middleware/auth.js';
 import { healthCheck } from './db/connection.js';
 import { UserService } from './services/userService.js';
+import redisService from './services/redisService.js';
+import { RedisRateLimiter, SocketIORateLimiter } from './middleware/redisRateLimit.js';
+import { logger } from './utils/logger.js';
 
 // Configure environment variables
 dotenv.config();
 
 // Add startup logging for debugging
-console.log('\n🚀 POLYTRADE BACKEND STARTUP\n');
-console.log('='.repeat(50));
+logger.info('\n🚀 POLYTRADE BACKEND STARTUP\n');
+logger.info('='.repeat(50));
 
 // Check critical environment variables
 const envCheck = {
-  // Backend should use NON-VITE variables
   POLONIEX_API_KEY: process.env.POLONIEX_API_KEY,
   POLONIEX_API_SECRET: process.env.POLONIEX_API_SECRET,
   DATABASE_URL: process.env.DATABASE_URL,
   REDIS_URL: process.env.REDIS_URL,
-  JWT_SECRET: process.env.JWT_SECRET || process.env.JWT_SECRT, // Handle typo
+  REDIS_PASSWORD: process.env.REDIS_PASSWORD,
+  REDIS_PRIVATE_DOMAIN: process.env.REDIS_PRIVATE_DOMAIN,
+  JWT_SECRET: process.env.JWT_SECRET || process.env.JWT_SECRT,
   PORT: process.env.PORT || 3000,
   NODE_ENV: process.env.NODE_ENV,
   FRONTEND_URL: process.env.FRONTEND_URL,
 };
 
 // Display configuration
-console.log('📋 Configuration Status:');
+logger.info('📋 Configuration Status:');
 Object.entries(envCheck).forEach(([key, value]) => {
-  if (key.includes('SECRET') || key.includes('URL')) {
-    console.log(`${key}: ${value ? '✅ SET' : '❌ NOT SET'}`);
+  if (key.includes('SECRET') || key.includes('URL') || key.includes('PASSWORD')) {
+    logger.info(`${key}: ${value ? '✅ SET' : '❌ NOT SET'}`);
   } else {
-    console.log(`${key}: ${value || '❌ NOT SET'}`);
+    logger.info(`${key}: ${value || '❌ NOT SET'}`);
   }
 });
 
@@ -49,12 +52,17 @@ const hasApiCredentials = !!(
   envCheck.POLONIEX_API_SECRET
 );
 
-console.log('\nTrading Mode:', hasApiCredentials ? '✅ LIVE' : '🧪 MOCK');
-console.log('='.repeat(50));
+logger.info(`\nTrading Mode: ${hasApiCredentials ? '✅ LIVE' : '🧪 MOCK'}`);
+logger.info('='.repeat(50));
 
 // ES module path resolution
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Initialize Redis
+redisService.connect().catch(error => {
+  logger.error('❌ Failed to initialize Redis:', error);
+});
 
 // Create Express app
 const app = express();
@@ -68,7 +76,7 @@ app.use(helmet({
     directives: {
       defaultSrc: ["'self'"],
       styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
-      scriptSrc: ["'self'", "'unsafe-eval'"], // Required for React dev
+      scriptSrc: ["'self'", "'unsafe-eval'"],
       imgSrc: ["'self'", "data:", "https:"],
       connectSrc: ["'self'", "wss:", "https:"],
       fontSrc: ["'self'", "data:", "https://fonts.gstatic.com"],
@@ -77,7 +85,7 @@ app.use(helmet({
       frameSrc: ["'none'"],
     },
   },
-  crossOriginEmbedderPolicy: false, // Allows cross-origin resources
+  crossOriginEmbedderPolicy: false,
 }));
 
 // More restrictive CORS configuration
@@ -90,17 +98,9 @@ const allowedOrigins = [
   ...(process.env.NODE_ENV !== 'production' ? ['http://localhost:3000', 'http://localhost:5173'] : [])
 ];
 
-// Debug: Log allowed origins in production
-if (process.env.NODE_ENV === 'production') {
-  console.log('🔒 CORS Configuration (Production):');
-  console.log('Allowed Origins:', allowedOrigins);
-}
-
-// Utility: robust origin check (exact match OR startsWith to allow sub-paths)
+// Utility: robust origin check
 const isAllowedOrigin = (requestOrigin) => {
-  if (!requestOrigin) return true; // server-side / tools
-
-  // Strip trailing slash if present for comparison consistency
+  if (!requestOrigin) return true;
   const cleanedOrigin = requestOrigin.replace(/\/$/, '');
   return allowedOrigins.some((allowed) => {
     const cleanedAllowed = allowed.replace(/\/$/, '');
@@ -111,52 +111,46 @@ const isAllowedOrigin = (requestOrigin) => {
 // CORS middleware configuration
 const corsMiddleware = cors({
   origin: (origin, callback) => {
-    // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
-
     if (isAllowedOrigin(origin)) {
       callback(null, true);
     } else {
-      console.warn(`🚫 CORS blocked request from origin: ${origin}`);
-      console.warn('🔒 Allowed origins:', allowedOrigins);
+      logger.warn(`🚫 CORS blocked request from origin: ${origin}`);
       callback(new Error('Not allowed by CORS'));
     }
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   credentials: true,
   optionsSuccessStatus: 200,
-  preflightContinue: false
 });
 
-// Rate limiting
-const limiter = rateLimit({
+// Redis-based rate limiting
+const apiRateLimiter = new RedisRateLimiter({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
-  message: 'Too many requests from this IP, please try again later.',
-  standardHeaders: true,
-  legacyHeaders: false,
-  trustProxy: true, // Trust Railway's proxy
+  max: 100,
+  keyGenerator: (req) => `api:${req.ip || req.connection?.remoteAddress || 'unknown'}`
 });
 
-app.use(express.json({ limit: '10mb' })); // Limit request size
+// Socket.IO rate limiter
+const socketRateLimiter = new SocketIORateLimiter({
+  maxEventsPerMinute: 30
+});
 
-// Serve static files from frontend build (before API routes)
+app.use(express.json({ limit: '10mb' }));
+
+// Serve static files from frontend build
 const frontendDistPath = path.join(__dirname, '../public');
 app.use(express.static(frontendDistPath));
 
-// Apply CORS and rate limiting only to API routes
-app.use('/api/', corsMiddleware, limiter);
+// Apply CORS and rate limiting to API routes
+app.use('/api/', corsMiddleware, apiRateLimiter.middleware());
 
 import proxyRoutes from './routes/proxy.js';
 import apiKeysRoutes from './routes/apiKeys.js';
 
-// Mount auth routes
+// Mount routes
 app.use('/api/auth', authRoutes);
-
-// Mount API keys routes
 app.use('/api/keys', apiKeysRoutes);
-
-// Mount proxy routes
 app.use('/api', proxyRoutes);
 
 // Create HTTP server
@@ -165,33 +159,30 @@ const server = http.createServer(app);
 // Set up Socket.IO with security
 const io = new Server(server, {
   cors: {
-    // Use same robust origin validation for Socket.IO handshakes
     origin: (origin, callback) => {
       if (!origin || isAllowedOrigin(origin)) {
         callback(null, true);
       } else {
-        console.warn(`🚫 Socket.IO CORS blocked origin: ${origin}`);
+        logger.warn(`🚫 Socket.IO CORS blocked origin: ${origin}`);
         callback(new Error('Not allowed by CORS'));
       }
     },
     methods: ['GET', 'POST'],
     credentials: true
   },
-  pingTimeout: 120000, // 2 minutes (increased from 60s to prevent Railway proxy timeouts)
+  pingTimeout: 120000,
   pingInterval: 25000
 });
 
 // Circuit breaker for WebSocket connections
 const circuitBreaker = {
-  state: 'CLOSED', // CLOSED, OPEN, HALF_OPEN
+  state: 'CLOSED',
   failureCount: 0,
   lastFailureTime: null,
   successCount: 0,
-
-  // Circuit breaker thresholds
   FAILURE_THRESHOLD: 3,
   SUCCESS_THRESHOLD: 2,
-  TIMEOUT: 60000, // 1 minute timeout for OPEN state
+  TIMEOUT: 60000,
 
   canAttemptConnection() {
     if (this.state === 'CLOSED') return true;
@@ -201,7 +192,7 @@ const circuitBreaker = {
       if (timeSinceLastFailure >= this.TIMEOUT) {
         this.state = 'HALF_OPEN';
         this.successCount = 0;
-        console.log('Circuit breaker moved to HALF_OPEN state');
+        logger.info('Circuit breaker moved to HALF_OPEN state');
         return true;
       }
       return false;
@@ -215,7 +206,7 @@ const circuitBreaker = {
       if (this.successCount >= this.SUCCESS_THRESHOLD) {
         this.state = 'CLOSED';
         this.failureCount = 0;
-        console.log('Circuit breaker moved to CLOSED state (recovery)');
+        logger.info('Circuit breaker moved to CLOSED state (recovery)');
       }
     } else if (this.state === 'CLOSED') {
       this.failureCount = 0;
@@ -225,37 +216,35 @@ const circuitBreaker = {
   recordFailure() {
     this.failureCount++;
     this.lastFailureTime = Date.now();
-
     if (this.failureCount >= this.FAILURE_THRESHOLD) {
       this.state = 'OPEN';
-      console.log(`Circuit breaker OPENED after ${this.failureCount} failures`);
+      logger.warn(`Circuit breaker OPENED after ${this.failureCount} failures`);
     }
   }
 };
 
-// Connect to Poloniex WebSocket for live market data
+// WebSocket connection management
 let reconnectAttempts = 0;
 const MAX_RECONNECT_ATTEMPTS = 5;
 const RECONNECT_DELAY = 5000;
-const PING_INTERVAL = 30000; // 30 seconds (increased from 25)
-const PONG_TIMEOUT = 10000; // 10 seconds (decreased from 60)
+const PING_INTERVAL = 30000;
+const PONG_TIMEOUT = 10000;
 
+// Connect to Poloniex WebSocket
 const connectToPoloniexWebSocket = () => {
-  // Check circuit breaker before attempting connection
   if (!circuitBreaker.canAttemptConnection()) {
-    console.log('Circuit breaker is OPEN - skipping WebSocket connection attempt');
+    logger.warn('Circuit breaker is OPEN - skipping WebSocket connection attempt');
     return null;
   }
 
   if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-    console.log(`Max reconnection attempts (${MAX_RECONNECT_ATTEMPTS}) reached. Stopping reconnection.`);
+    logger.warn(`Max reconnection attempts (${MAX_RECONNECT_ATTEMPTS}) reached`);
     circuitBreaker.recordFailure();
     return null;
   }
 
-  console.log(`Connecting to Poloniex WebSocket... (attempt ${reconnectAttempts + 1}, circuit breaker: ${circuitBreaker.state})`);
+  logger.info(`Connecting to Poloniex WebSocket... (attempt ${reconnectAttempts + 1})`);
 
-  // Create WebSocket connection to Poloniex with timeout
   const poloniexWs = new WebSocket('wss://ws.poloniex.com/ws/public', {
     handshakeTimeout: 10000,
     perMessageDeflate: false
@@ -265,29 +254,21 @@ const connectToPoloniexWebSocket = () => {
   let pongTimer;
 
   poloniexWs.on('open', () => {
-    console.log('Connected to Poloniex WebSocket');
-
-    // Reset reconnect attempts on successful connection
+    logger.info('Connected to Poloniex WebSocket');
     reconnectAttempts = 0;
-
-    // Record successful connection in circuit breaker
     circuitBreaker.recordSuccess();
 
-    // Subscribe to market data channels
     poloniexWs.send(JSON.stringify({
       event: 'subscribe',
       channel: ['ticker'],
       symbols: ['BTC_USDT', 'ETH_USDT', 'SOL_USDT']
     }));
 
-    // Start ping timer for connection health
     pingTimer = setInterval(() => {
       if (poloniexWs.readyState === WebSocket.OPEN) {
         poloniexWs.ping();
-
-        // Set timeout for pong response
         pongTimer = setTimeout(() => {
-          console.warn('Poloniex WebSocket pong timeout - closing connection');
+          logger.warn('Poloniex WebSocket pong timeout');
           poloniexWs.terminate();
         }, PONG_TIMEOUT);
       }
@@ -295,118 +276,61 @@ const connectToPoloniexWebSocket = () => {
   });
 
   poloniexWs.on('pong', () => {
-    // Clear pong timeout when response received
-    if (pongTimer) {
-      clearTimeout(pongTimer);
-      pongTimer = null;
-    }
+    if (pongTimer) clearTimeout(pongTimer);
   });
 
-  poloniexWs.on('message', (data) => {
+  poloniexWs.on('message', async (data) => {
     try {
       const message = JSON.parse(data.toString());
-
-      // Process different types of messages
       if (message.channel === 'ticker' && message.data) {
-        // message.data is an array of ticker objects
-        if (Array.isArray(message.data)) {
-          message.data.forEach(tickerData => {
-            const formattedData = formatPoloniexTickerData(tickerData);
-            if (formattedData) {
-              // Broadcast to all connected clients
-              io.emit('marketData', formattedData);
-            }
-          });
-        } else {
-          // Fallback for single ticker object
-          const formattedData = formatPoloniexTickerData(message.data);
+        const tickerData = Array.isArray(message.data) ? message.data : [message.data];
+
+        for (const ticker of tickerData) {
+          const formattedData = formatPoloniexTickerData(ticker);
           if (formattedData) {
+            // Cache market data in Redis
+            await redisService.set(`market:${formattedData.pair}`, formattedData, 60);
             io.emit('marketData', formattedData);
           }
         }
       }
     } catch (error) {
-      console.error('Error processing WebSocket message:', error);
+      logger.error('Error processing WebSocket message:', error);
     }
   });
 
   poloniexWs.on('error', (error) => {
-    console.error('Poloniex WebSocket error:', error);
-
-    // Clean up timers
-    if (pingTimer) {
-      clearInterval(pingTimer);
-      pingTimer = null;
-    }
-    if (pongTimer) {
-      clearTimeout(pongTimer);
-      pongTimer = null;
-    }
-
+    logger.error('Poloniex WebSocket error:', error);
     reconnectAttempts++;
-
-    // Record failure in circuit breaker
     circuitBreaker.recordFailure();
 
-    // Only attempt reconnection if circuit breaker allows it
-    if (circuitBreaker.canAttemptConnection()) {
-      // Calculate exponential backoff delay
-      const backoffDelay = Math.min(RECONNECT_DELAY * Math.pow(2, reconnectAttempts - 1), 30000);
-      console.log(`Attempting to reconnect in ${backoffDelay}ms (attempt ${reconnectAttempts})`);
-
-      // Attempt to reconnect after a delay
-      setTimeout(connectToPoloniexWebSocket, backoffDelay);
-    } else {
-      console.log('Circuit breaker preventing reconnection attempt');
-    }
+    setTimeout(() => {
+      if (circuitBreaker.canAttemptConnection()) {
+        connectToPoloniexWebSocket();
+      }
+    }, Math.min(RECONNECT_DELAY * Math.pow(2, reconnectAttempts - 1), 30000));
   });
 
   poloniexWs.on('close', () => {
-    console.log('Poloniex WebSocket connection closed');
-
-    // Clean up timers
-    if (pingTimer) {
-      clearInterval(pingTimer);
-      pingTimer = null;
-    }
-    if (pongTimer) {
-      clearTimeout(pongTimer);
-      pongTimer = null;
-    }
-
+    logger.info('Poloniex WebSocket connection closed');
     reconnectAttempts++;
-
-    // Record failure in circuit breaker
     circuitBreaker.recordFailure();
 
-    // Only attempt reconnection if circuit breaker allows it
-    if (circuitBreaker.canAttemptConnection()) {
-      // Calculate exponential backoff delay
-      const backoffDelay = Math.min(RECONNECT_DELAY * Math.pow(2, reconnectAttempts - 1), 30000);
-      console.log(`Connection closed, attempting to reconnect in ${backoffDelay}ms (attempt ${reconnectAttempts})`);
-
-      // Attempt to reconnect after a delay
-      setTimeout(connectToPoloniexWebSocket, backoffDelay);
-    } else {
-      console.log('Circuit breaker preventing reconnection attempt');
-    }
+    setTimeout(() => {
+      if (circuitBreaker.canAttemptConnection()) {
+        connectToPoloniexWebSocket();
+      }
+    }, Math.min(RECONNECT_DELAY * Math.pow(2, reconnectAttempts - 1), 30000));
   });
 
   return poloniexWs;
 };
 
-// Format Poloniex ticker data to match our app's data structure
+// Format ticker data
 const formatPoloniexTickerData = (data) => {
   try {
-    // Validate incoming data structure
-    if (!data || !data.symbol) {
-      console.warn('Invalid ticker data received:', data);
-      return null;
-    }
-
-    // Convert Poloniex pair format (BTC_USDT) to our format (BTC-USDT)
+    if (!data || !data.symbol) return null;
     const pair = data.symbol.replace('_', '-');
-
     return {
       pair,
       timestamp: Date.now(),
@@ -417,177 +341,73 @@ const formatPoloniexTickerData = (data) => {
       volume: parseFloat(data.quantity) || 0
     };
   } catch (error) {
-    console.error('Error formatting ticker data:', error);
+    logger.error('Error formatting ticker data:', error);
     return null;
   }
 };
 
-// Socket.IO connection handler with security
+// Socket.IO connection handler
 io.on('connection', (socket) => {
-  console.log('Client connected:', socket.id);
+  logger.info(`Client connected: ${socket.id}`);
 
-  // Rate limiting for socket events
-  const socketRateLimit = new Map();
-
-  const isRateLimited = (eventType) => {
-    const now = Date.now();
-    const key = `${socket.id}:${eventType}`;
-    const limit = socketRateLimit.get(key) || { count: 0, resetTime: now + 60000 };
-
-    if (now > limit.resetTime) {
-      limit.count = 0;
-      limit.resetTime = now + 60000;
-    }
-
-    if (limit.count >= 30) { // 30 events per minute
-      return true;
-    }
-
-    limit.count++;
-    socketRateLimit.set(key, limit);
-    return false;
-  };
-
-  // Handle client subscription to market data
-  socket.on('subscribeMarket', ({ pair }) => {
-    if (isRateLimited('subscribeMarket')) {
-      socket.emit('error', 'Rate limit exceeded for subscribeMarket');
+  socket.on('subscribeMarket', async ({ pair }) => {
+    const rateCheck = await socketRateLimiter.check(socket.id, 'subscribeMarket');
+    if (!rateCheck.allowed) {
+      socket.emit('error', { message: 'Rate limit exceeded' });
       return;
     }
 
-    // Validate pair format
     if (!pair || !/^[A-Z]{3,5}-[A-Z]{3,5}$/.test(pair)) {
-      socket.emit('error', 'Invalid pair format');
+      socket.emit('error', { message: 'Invalid pair format' });
       return;
     }
 
-    console.log(`Client ${socket.id} subscribed to ${pair}`);
     socket.join(pair);
+    logger.info(`Client ${socket.id} subscribed to ${pair}`);
+
+    // Send cached data if available
+    const cachedData = await redisService.get(`market:${pair}`);
+    if (cachedData) {
+      socket.emit('marketData', cachedData);
+    }
   });
 
-  // Handle client unsubscription from market data
   socket.on('unsubscribeMarket', ({ pair }) => {
-    if (isRateLimited('unsubscribeMarket')) {
-      socket.emit('error', 'Rate limit exceeded for unsubscribeMarket');
-      return;
-    }
-
-    console.log(`Client ${socket.id} unsubscribed from ${pair}`);
     socket.leave(pair);
+    logger.info(`Client ${socket.id} unsubscribed from ${pair}`);
   });
 
-  // Handle chat messages with validation
-  socket.on('chatMessage', (message) => {
-    if (isRateLimited('chatMessage')) {
-      socket.emit('error', 'Rate limit exceeded for chatMessage');
+  socket.on('chatMessage', async (message) => {
+    const rateCheck = await socketRateLimiter.check(socket.id, 'chatMessage');
+    if (!rateCheck.allowed) {
+      socket.emit('error', { message: 'Rate limit exceeded' });
       return;
     }
 
-    // Validate message
     if (!message || typeof message !== 'string' || message.length > 500) {
-      socket.emit('error', 'Invalid message format');
+      socket.emit('error', { message: 'Invalid message format' });
       return;
     }
 
-    // Sanitize message (basic XSS prevention)
     const sanitizedMessage = message.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
-
-    console.log('Chat message received:', sanitizedMessage);
-    // Broadcast to all clients
     io.emit('chatMessage', sanitizedMessage);
   });
 
-  // Handle disconnection
   socket.on('disconnect', () => {
-    console.log('Client disconnected:', socket.id);
-    socketRateLimit.delete(socket.id);
+    logger.info(`Client disconnected: ${socket.id}`);
   });
 });
 
-// Poloniex WebSocket proxy namespace
-const poloniexNamespace = io.of('/poloniex');
-
-poloniexNamespace.on('connection', (socket) => {
-  console.log('Client connected to Poloniex proxy:', socket.id);
-
-  const poloniexWs = new WebSocket('wss://ws.poloniex.com/ws/public');
-
-  poloniexWs.on('open', () => {
-    socket.emit('connected');
-  });
-
-  poloniexWs.on('message', (data) => {
-    socket.emit('message', data.toString());
-  });
-
-  poloniexWs.on('error', (error) => {
-    console.error('Poloniex proxy error:', error);
-    socket.emit('error', error.message);
-  });
-
-  poloniexWs.on('close', () => {
-    socket.disconnect();
-  });
-
-  socket.on('message', (msg) => {
-    if (poloniexWs.readyState === WebSocket.OPEN) {
-      poloniexWs.send(msg);
-    }
-  });
-
-  socket.on('disconnect', () => {
-    if (poloniexWs.readyState === WebSocket.OPEN) {
-      poloniexWs.close();
-    }
-  });
-});
-
-// Start Poloniex WebSocket connection
-const poloniexWs = connectToPoloniexWebSocket();
-
-// Periodic circuit breaker check and recovery
-setInterval(() => {
-  if (circuitBreaker.state === 'OPEN') {
-    const timeSinceLastFailure = Date.now() - circuitBreaker.lastFailureTime;
-    if (timeSinceLastFailure >= circuitBreaker.TIMEOUT) {
-      console.log('Circuit breaker timeout reached, attempting recovery');
-      circuitBreaker.state = 'HALF_OPEN';
-      circuitBreaker.successCount = 0;
-      // Only attempt reconnection if we haven't exceeded max attempts
-      if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-        setTimeout(connectToPoloniexWebSocket, 1000);
-      }
-    }
-  }
-}, 30000); // Check every 30 seconds
-
-// Initialize database cleanup tasks
-const initializeDatabaseTasks = () => {
-  // Clean up expired sessions every hour
-  setInterval(async () => {
-    try {
-      const cleaned = await UserService.cleanupExpiredSessions();
-      if (cleaned > 0) {
-        console.log(`🧹 Cleaned up ${cleaned} expired sessions`);
-      }
-    } catch (error) {
-      console.error('❌ Error cleaning up sessions:', error);
-    }
-  }, 60 * 60 * 1000); // 1 hour
-
-  console.log('✅ Database cleanup tasks initialized');
-};
-
-// Initialize database tasks
-initializeDatabaseTasks();
-
-// Define API routes with enhanced health checks
+// Enhanced health check with Redis
 app.get('/api/health', async (req, res) => {
   try {
-    const dbHealth = await healthCheck();
+    const [dbHealth, redisHealth] = await Promise.all([
+      healthCheck(),
+      redisService.healthCheck()
+    ]);
 
     res.json({
-      status: dbHealth.healthy ? 'healthy' : 'degraded',
+      status: dbHealth.healthy && redisHealth.healthy ? 'healthy' : 'degraded',
       mode: hasApiCredentials ? 'live' : 'mock',
       timestamp: new Date().toISOString(),
       env: process.env.NODE_ENV,
@@ -598,6 +418,7 @@ app.get('/api/health', async (req, res) => {
         idle_connections: dbHealth.idle_connections,
         waiting_connections: dbHealth.waiting_connections
       },
+      redis: redisHealth,
       websocket: {
         circuitBreakerState: circuitBreaker.state,
         reconnectAttempts: reconnectAttempts,
@@ -605,57 +426,73 @@ app.get('/api/health', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('❌ Health check error:', error);
+    logger.error('Health check error:', error);
     res.status(503).json({
       status: 'unhealthy',
       mode: hasApiCredentials ? 'live' : 'mock',
       timestamp: new Date().toISOString(),
       env: process.env.NODE_ENV,
-      error: error.message,
-      database: { healthy: false },
-      websocket: {
-        circuitBreakerState: circuitBreaker.state,
-        reconnectAttempts: reconnectAttempts,
-        failureCount: circuitBreaker.failureCount
-      }
+      error: error.message
     });
   }
 });
 
-// Mock API endpoint for testing - now with optional authentication
-app.get('/api/account', optionalAuth, (req, res) => {
-  if (!hasApiCredentials) {
-    // Return mock data with user context if authenticated
-    const mockData = {
-      mock: true,
-      balances: {
-        USDT: { available: '10000.00', locked: '0.00' },
-        BTC: { available: '0.5', locked: '0.00' },
-      }
-    };
+// Cache market data endpoint
+app.get('/api/market/:pair', async (req, res) => {
+  try {
+    const { pair } = req.params;
+    const data = await redisService.get(`market:${pair}`);
 
-    if (req.user) {
-      mockData.user = req.user.username;
-      mockData.authenticated = true;
+    if (data) {
+      res.json({ ...data, cached: true });
+    } else {
+      res.status(404).json({ error: 'Market data not found' });
     }
-
-    res.json(mockData);
-  } else {
-    // TODO: Implement real Poloniex API call
-    const response = {
-      message: 'Live mode active - implement Poloniex API call'
-    };
-
-    if (req.user) {
-      response.user = req.user.username;
-      response.authenticated = true;
-    }
-
-    res.json(response);
+  } catch (error) {
+    logger.error('Market data fetch error:', error);
+    res.status(500).json({ error: 'Failed to fetch market data' });
   }
 });
 
-// Standard health endpoint for Railway
+// Account endpoint with caching
+app.get('/api/account', optionalAuth, async (req, res) => {
+  try {
+    if (!hasApiCredentials) {
+      const mockData = {
+        mock: true,
+        balances: {
+          USDT: { available: '10000.00', locked: '0.00' },
+          BTC: { available: '0.5', locked: '0.00' },
+        }
+      };
+
+      if (req.user) {
+        mockData.user = req.user.username;
+        mockData.authenticated = true;
+      }
+
+      res.json(mockData);
+    } else {
+      const accountData = await redisService.cacheGet(
+        'account:live',
+        () => ({ message: 'Live mode active - implement Poloniex API call' }),
+        300
+      );
+
+      if (req.user) {
+        accountData.user = req.user.username;
+        accountData.authenticated = true;
+      }
+
+      res.json(accountData);
+    }
+  } catch (error) {
+    logger.error('Account fetch error:', error);
+    res.status(500).json({ error: 'Failed to fetch account data' });
+  }
+});
+
+// Standard health endpoint
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'ok',
@@ -665,31 +502,40 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Catch-all route for client-side routing (must be last)
+// Catch-all route
 app.get('*', (req, res) => {
   res.sendFile(path.join(frontendDistPath, 'index.html'));
 });
 
-// Start the server
+// Start server
 const PORT = process.env.PORT || 3000;
 const HOST = '0.0.0.0';
 
-server.listen(PORT, HOST, () => {
-  console.log(`Server running on http://${HOST}:${PORT}`);
+server.listen(PORT, HOST, async () => {
+  logger.info(`🚀 Server running on http://${HOST}:${PORT}`);
+
+  // Test Redis connection on startup
+  try {
+    await redisService.healthCheck();
+    logger.info('✅ Redis connection verified');
+  } catch (error) {
+    logger.error('❌ Redis connection failed:', error);
+  }
 });
 
-// Handle graceful shutdown
-process.on('SIGINT', () => {
-  console.log('Shutting down server...');
+// Graceful shutdown
+process.on('SIGINT', async () => {
+  logger.info('Shutting down server...');
 
-  // Close Poloniex WebSocket
-  if (poloniexWs && poloniexWs.readyState === WebSocket.OPEN) {
-    poloniexWs.close();
+  try {
+    await redisService.disconnect();
+    logger.info('✅ Redis disconnected');
+  } catch (error) {
+    logger.error('❌ Error disconnecting Redis:', error);
   }
 
-  // Close HTTP server
   server.close(() => {
-    console.log('Server shut down');
+    logger.info('✅ Server shut down');
     process.exit(0);
   });
 });
