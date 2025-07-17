@@ -59,7 +59,7 @@ class FuturesWebSocketClient extends EventEmitter {
    */
   async getWebSocketToken() {
     try {
-      const response = await fetch('https://futures-api.poloniex.com/api/v1/bullet-public', {
+      const response = await globalThis.fetch('https://futures-api.poloniex.com/api/v1/bullet-public', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'

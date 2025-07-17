@@ -279,7 +279,7 @@ class ComprehensiveTestSuite {
         mockMarketData
       );
 
-      if (!riskCheck.hasOwnProperty('allowed')) {
+      if (!Object.prototype.hasOwnProperty.call(riskCheck, 'allowed')) {
         throw new Error('Risk check integration failed');
       }
 

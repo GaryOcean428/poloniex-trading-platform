@@ -134,8 +134,7 @@ export class UserService {
   static async updateLastLogin(userId, latitude, longitude) {
     try {
       if (latitude && longitude) {
-        const locationPoint = geoQuery.createPoint(latitude, longitude);
-        // You can add logic here to update the user's location if needed.
+        // Location point can be created for future use
         // For now, we are just updating the last login time.
       }
 
@@ -311,7 +310,7 @@ export class UserService {
    */
   static async logSecurityEvent({
     userId,
-    sessionId,
+    sessionId, // Used for session-specific events
     eventType,
     eventDescription,
     severity = 'info',
@@ -507,7 +506,7 @@ export class UserService {
       const authTag = Buffer.from(parts[1], 'hex');
       const encrypted = parts[2];
 
-      const decipher = crypto.createDecipher(algorithm, key);
+      const decipher = crypto.createDecipheriv(algorithm, key, iv);
       decipher.setAAD(Buffer.from('polytrade-api-key', 'utf8'));
       decipher.setAuthTag(authTag);
 
