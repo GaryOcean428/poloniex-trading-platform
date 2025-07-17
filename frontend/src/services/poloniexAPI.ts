@@ -1,14 +1,7 @@
 import { useAppStore } from "@/store";
 import { MarketData } from "@/types";
+import { getApiBaseUrl, shouldUseMockMode } from "@/utils/environment";
 import axios from "axios";
-
-import {
-  getApiBaseUrl,
-  shouldUseMockMode
-} from "@/utils/environment";
-
-// Poloniex V3 Futures API Configuration
-const POLONIEX_V3_BASE_URL = "https://futures-api.poloniex.com/api/v1";
 
 // Authentication token for backend API
 const getAuthToken = (): string | null => {
@@ -28,7 +21,7 @@ const createAuthenticatedAxios = () => {
   });
 };
 
-// Custom error classes for better error handling
+// Custom error classes
 export class PoloniexAPIError extends Error {
   constructor(
     message: string,
@@ -61,29 +54,18 @@ const RATE_LIMITS = {
   ORDERS_PER_SECOND: 2,
 };
 
-// Safe error handler
 const safeErrorHandler = (error: unknown): Error => {
-  if (error instanceof Error) {
-    return new Error(error.message);
-  }
+  if (error instanceof Error) return error;
   return new Error(String(error));
 };
 
-// Create a singleton API client
+// Singleton API client
 class PoloniexApiClient {
   private static instance: PoloniexApiClient;
   private mockMode: boolean = true;
   private lastBalanceUpdate: number = 0;
-  private cachedBalance: {
-    totalAmount: string;
-    availableAmount: string;
-    accountEquity: string;
-    unrealizedPnL: string;
-    todayPnL: string;
-    todayPnLPercentage: string;
-  } | null = null;
+  private cachedBalance = null;
   private historicalData: Map<string, MarketData[]> = new Map();
-  private balanceUpdateInterval: number = 10000;
   private rateLimitQueue: Map<string, number[]> = new Map();
 
   private constructor() {
@@ -100,8 +82,8 @@ class PoloniexApiClient {
   public loadCredentials(): void {
     try {
       const storeState = useAppStore.getState();
-      const { isLiveTrading } = storeState.apiCredentials;
-      this.mockMode = shouldUseMockMode(true) || !isLiveTrading;
+      this.mockMode =
+        shouldUseMockMode(true) || !storeState.apiCredentials.isLiveTrading;
     } catch {
       this.mockMode = shouldUseMockMode(false);
     }
@@ -110,9 +92,12 @@ class PoloniexApiClient {
   private async checkRateLimit(type: string): Promise<void> {
     const now = Date.now();
     const key = `${type}_requests`;
-    const limit = type === "public" ? RATE_LIMITS.PUBLIC_REQUESTS_PER_SECOND :
-                  type === "private" ? RATE_LIMITS.PRIVATE_REQUESTS_PER_SECOND :
-                  RATE_LIMITS.ORDERS_PER_SECOND;
+    const limit =
+      type === "public"
+        ? RATE_LIMITS.PUBLIC_REQUESTS_PER_SECOND
+        : type === "private"
+        ? RATE_LIMITS.PRIVATE_REQUESTS_PER_SECOND
+        : RATE_LIMITS.ORDERS_PER_SECOND;
 
     if (!this.rateLimitQueue.has(key)) {
       this.rateLimitQueue.set(key, []);
@@ -142,10 +127,7 @@ class PoloniexApiClient {
     todayPnL: string;
     todayPnLPercentage: string;
   } | null> {
-    if (
-      this.cachedBalance &&
-      Date.now() - this.lastBalanceUpdate < this.balanceUpdateInterval
-    ) {
+    if (this.cachedBalance && Date.now() - this.lastBalanceUpdate < 10000) {
       return this.cachedBalance;
     }
 
@@ -175,13 +157,6 @@ class PoloniexApiClient {
             "Authentication failed - please check your API credentials"
           );
         }
-        if (error.response?.status) {
-          throw new PoloniexAPIError(
-            `Backend API error: ${error.response.statusText}`,
-            error.response.data?.code || "API_ERROR",
-            error.response.status
-          );
-        }
       }
       throw new PoloniexConnectionError(
         `Failed to fetch account balance: ${safeErrorHandler(error).message}`
@@ -206,15 +181,10 @@ class PoloniexApiClient {
 
       return response.data;
     } catch (error) {
-      if (axios.isAxiosError(error) && error.response?.status === 404) {
-        throw new PoloniexAPIError(
-          `Market data not found for ${pair}`,
-          "NOT_FOUND",
-          404
-        );
-      }
       throw new PoloniexConnectionError(
-        `Failed to fetch market data for ${pair}: ${safeErrorHandler(error).message}`
+        `Failed to fetch market data for ${pair}: ${
+          safeErrorHandler(error).message
+        }`
       );
     }
   }
@@ -240,49 +210,86 @@ class PoloniexApiClient {
     });
   }
 
-  public async getOpenPositions() {
+  public async getHistoricalData(
+    pair: string,
+    startDate: string,
+    endDate: string
+  ): Promise<MarketData[]> {
+    const cacheKey = `${pair}-${startDate}-${endDate}`;
+
+    if (this.historicalData.has(cacheKey)) {
+      return this.historicalData.get(cacheKey)!;
+    }
+
     try {
       if (this.mockMode) {
-        return {
-          positions: [
-            {
-              symbol: "BTC_USDT_PERP",
-              posId: "12345",
-              pos: "long",
-              marginMode: "cross",
-              posCost: "25000",
-              posSide: "long",
-              posSize: "0.5",
-              markPrice: "51000",
-              unrealizedPnL: "500",
-              liquidationPrice: "45000",
-            },
-          ],
-        };
+        const mockData = this.generateMockHistoricalData(startDate, endDate);
+        this.historicalData.set(cacheKey, mockData);
+        return mockData;
       }
 
-      await this.checkRateLimit("private");
       const api = createAuthenticatedAxios();
-      const response = await api.get("/account/balances");
+      const response = await api.get(`/klines/${pair}`, {
+        params: {
+          interval: "1h",
+          startTime: new Date(startDate).getTime(),
+          endTime: new Date(endDate).getTime(),
+          limit: 1000,
+        },
+      });
 
-      return response.data;
-    } catch (error) {
-      if (axios.isAxiosError(error) && error.response?.status === 401) {
-        throw new PoloniexAuthenticationError(
-          "Authentication failed for positions"
-        );
-      }
-      throw new PoloniexConnectionError(
-        `Failed to fetch open positions: ${safeErrorHandler(error).message}`
-      );
+      const data = response.data.map((candle: unknown[]) => ({
+        pair,
+        timestamp: new Date(candle[0] as string).getTime(),
+        open: parseFloat(candle[1] as string),
+        high: parseFloat(candle[2] as string),
+        low: parseFloat(candle[3] as string),
+        close: parseFloat(candle[4] as string),
+        volume: parseFloat(candle[5] as string),
+      }));
+
+      this.historicalData.set(cacheKey, data);
+      return data;
+    } catch {
+      const mockData = this.generateMockHistoricalData(startDate, endDate);
+      this.historicalData.set(cacheKey, mockData);
+      return mockData;
     }
   }
 
-  public async placeOrder(
-    pair: string,
-    side: "buy" | "sell",
-    type: "limit" | "market",
-    quantity: number,
-    price?: number
-  ) {
-    await this.checkRate
+  private generateMockHistoricalData(
+    startDate: string,
+    endDate: string
+  ): MarketData[] {
+    const start = new Date(startDate).getTime();
+    const end = new Date(endDate).getTime();
+    const hourMs = 60 * 60 * 1000;
+    const data: MarketData[] = [];
+
+    let basePrice = 50000;
+
+    for (let time = start; time <= end; time += hourMs) {
+      const volatility = basePrice * 0.01;
+      const open = basePrice + (Math.random() - 0.5) * volatility;
+      const high = open + Math.random() * volatility;
+      const low = open - Math.random() * volatility;
+      const close = low + Math.random() * (high - low);
+
+      data.push({
+        pair: "BTC-USDT",
+        timestamp: time,
+        open,
+        high,
+        low,
+        close,
+        volume: 100 + Math.random() * 900,
+      });
+
+      basePrice = close;
+    }
+
+    return data;
+  }
+}
+
+export const poloniexApi = PoloniexApiClient.getInstance();
