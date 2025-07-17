@@ -61,3 +61,61 @@ deployment-url.txt
 *database_setup*.sql
 *_database_*.sql
 setup_database*.sql
+
+# Additional security files
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+credentials.json
+service-account.json
+auth-config.json
+
+# API keys and secrets
+.env.*
+!.env.example
+.secrets
+secrets.json
+config.json
+
+# Development and temp files
+temp/
+tmp/
+*.tmp
+*.bak
+*.swp
+*.swo
+*~
+
+# OS generated files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# IDE files
+.vscode/settings.json
+.vscode/launch.json
+.vscode/tasks.json
+.vscode/c_cpp_properties.json
+.vscode/extensions.json
+*.code-workspace
+
+# Logs and debugging
+debug.log
+error.log
+access.log
+combined.log
+*.log.*
+
+# Database dumps and backups
+*.dump
+*.sql.gz
+*.db
+*.sqlite
+*.sqlite3
+
+# Docker files (if containing secrets)
+.dockerignore
+docker-compose.override.yml
