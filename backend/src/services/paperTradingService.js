@@ -786,9 +786,9 @@ class PaperTradingService extends EventEmitter {
       }
 
       if (shouldClose) {
-        setImmediate(() => {
+        setTimeout(() => {
           this.closePosition(session.id, positionId, reason, currentPrice);
-        });
+        }, 0);
       }
     }
   }

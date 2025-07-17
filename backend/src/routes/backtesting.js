@@ -138,13 +138,13 @@ router.post('/run', authenticateToken, async (req, res) => {
     };
 
     // Start backtest (non-blocking)
-    setImmediate(async () => {
+    setTimeout(async () => {
       try {
         await backtestingEngine.runBacktest(strategyName, config);
       } catch (error) {
         logger.error('Backtest execution error:', error);
       }
-    });
+    }, 0);
 
     res.json({
       success: true,
@@ -383,7 +383,7 @@ router.post('/strategy-from-template', authenticateToken, async (req, res) => {
     }
 
     // Get template
-    const templatesResponse = await fetch(`${req.protocol}://${req.get('host')}/api/backtesting/strategy-templates`);
+    const templatesResponse = await globalThis.fetch(`${req.protocol}://${req.get('host')}/api/backtesting/strategy-templates`);
     const templatesData = await templatesResponse.json();
     
     const template = templatesData.templates[templateType];

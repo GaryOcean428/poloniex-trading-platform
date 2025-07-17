@@ -42,7 +42,7 @@ class PoloniexFuturesService {
       
       // Generate query string
       const queryString = Object.keys(params).length > 0
-        ? '?' + new URLSearchParams(params).toString()
+        ? '?' + new globalThis.URLSearchParams(params).toString()
         : '';
       
       const fullUrl = url + queryString;
