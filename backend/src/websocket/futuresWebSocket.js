@@ -35,6 +35,19 @@ class FuturesWebSocketClient extends EventEmitter {
   // =================== CONNECTION MANAGEMENT ===================
 
   /**
+   * Connect to WebSocket (general method)
+   */
+  async connect() {
+    try {
+      await this.connectPublic();
+      logger.info('✅ Futures WebSocket connected');
+    } catch (error) {
+      logger.error('Failed to connect to Futures WebSocket:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Connect to public WebSocket
    */
   async connectPublic() {
