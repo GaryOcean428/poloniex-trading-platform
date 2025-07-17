@@ -28,7 +28,7 @@ export class UserService {
       const queryText = `
         INSERT INTO users (
           username, email, password_hash, role,
-          registered_latitude, registered_longitude, country_code, timezone
+          latitude, longitude, country_code, timezone
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         RETURNING id, username, email, role, country_code, timezone, created_at
       `;
@@ -71,7 +71,7 @@ export class UserService {
           u.country_code, u.timezone, u.is_active, u.is_verified,
           u.kyc_status, u.trading_enabled, u.risk_level,
           u.created_at, u.updated_at, u.last_login_at,
-          ${geoQuery.getLatLon('u.registered_latitude', 'u.registered_longitude')},
+          u.latitude, u.longitude,
           gr.trading_allowed as jurisdiction_trading_allowed,
           gr.kyc_required as jurisdiction_kyc_required,
           gr.futures_allowed as jurisdiction_futures_allowed
@@ -99,7 +99,7 @@ export class UserService {
           u.country_code, u.timezone, u.is_active, u.is_verified,
           u.kyc_status, u.trading_enabled, u.risk_level,
           u.created_at, u.updated_at, u.last_login_at,
-          ${geoQuery.getLatLon('u.registered_location')},
+          u.latitude, u.longitude,
           gr.trading_allowed as jurisdiction_trading_allowed,
           gr.kyc_required as jurisdiction_kyc_required,
           gr.futures_allowed as jurisdiction_futures_allowed
@@ -323,14 +323,14 @@ export class UserService {
     try {
       const queryText = `
         INSERT INTO security_audit_log (
-          user_id, event_type, event_description, severity,
-          ip_address, user_agent, event_latitude, event_longitude, metadata
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          user_id, event_type, details,
+          ip_address, user_agent, latitude, longitude, country_code
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       `;
 
       const params = [
-        userId, eventType, eventDescription, severity,
-        ipAddress, userAgent, latitude, longitude, JSON.stringify(metadata)
+        userId, eventType, JSON.stringify({ description: eventDescription, severity }),
+        ipAddress, userAgent, latitude, longitude, null
       ];
 
       await query(queryText, params);

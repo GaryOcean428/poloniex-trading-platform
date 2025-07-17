@@ -57,7 +57,7 @@ router.post('/login', async (req, res) => {
     }
 
     // Find user in database
-    const user = await UserService.findUser(username.toLowerCase());
+    const user = await UserService.findUser(username);
     if (!user) {
       await UserService.logSecurityEvent({
         eventType: 'login_failed',
