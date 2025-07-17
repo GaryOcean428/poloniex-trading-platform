@@ -3478,6 +3478,17 @@ __metadata:
   languageName: node
   linkType: hard
 
+"bcrypt@npm:^6.0.0":
+  version: 6.0.0
+  resolution: "bcrypt@npm:6.0.0"
+  dependencies:
+    node-addon-api: "npm:^8.3.0"
+    node-gyp: "npm:latest"
+    node-gyp-build: "npm:^4.8.4"
+  checksum: 10/24dc552828435f2346fe0a27eb2b23e4fdcc4f139d069db0dbee6e3b37fcf8e88ffbd6473a138e1d594a4b9df91e9b71994d15cf9fc6f5c3ff68f3d851fd973a
+  languageName: node
+  linkType: hard
+
 "bcryptjs@npm:*, bcryptjs@npm:^3.0.2":
   version: 3.0.2
   resolution: "bcryptjs@npm:3.0.2"
@@ -7071,6 +7082,15 @@ __metadata:
   languageName: node
   linkType: hard
 
+"node-addon-api@npm:^8.3.0":
+  version: 8.5.0
+  resolution: "node-addon-api@npm:8.5.0"
+  dependencies:
+    node-gyp: "npm:latest"
+  checksum: 10/9a893f4f835fbc3908e0070f7bcacf36e37fd06be8008409b104c30df4092a0d9a29927b3a74cdbc1d34338274ba4116d597a41f573e06c29538a1a70d07413f
+  languageName: node
+  linkType: hard
+
 "node-domexception@npm:^1.0.0":
   version: 1.0.0
   resolution: "node-domexception@npm:1.0.0"
@@ -7100,6 +7120,17 @@ __metadata:
     encoding:
       optional: true
   checksum: 10/72f94498d547e322207575b2778e7b3d969b0d73f35a19f258c7fb982bf0ae96e5a3a518477300ba1dd2bd22e6b05be074648ed88448c5cf1a9b7d23c6529d1a
+  languageName: node
+  linkType: hard
+
+"node-gyp-build@npm:^4.8.4":
+  version: 4.8.4
+  resolution: "node-gyp-build@npm:4.8.4"
+  bin:
+    node-gyp-build: bin.js
+    node-gyp-build-optional: optional.js
+    node-gyp-build-test: build-test.js
+  checksum: 10/6a7d62289d1afc419fc8fc9bd00aa4e554369e50ca0acbc215cb91446148b75ff7e2a3b53c2c5b2c09a39d416d69f3d3237937860373104b5fe429bf30ad9ac5
   languageName: node
   linkType: hard
 
@@ -7547,6 +7578,7 @@ __metadata:
     "@types/ws": "npm:^8.5.10"
     "@typescript-eslint/eslint-plugin": "npm:^8.33.1"
     "@typescript-eslint/parser": "npm:^8.33.1"
+    bcrypt: "npm:^6.0.0"
     bcryptjs: "npm:^3.0.2"
     cors: "npm:^2.8.5"
     dotenv: "npm:^16.4.5"
