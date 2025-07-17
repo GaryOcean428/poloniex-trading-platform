@@ -30,7 +30,7 @@ const envCheck = {
   REDIS_URL: process.env.REDIS_URL,
   REDIS_PASSWORD: process.env.REDIS_PASSWORD,
   REDIS_PRIVATE_DOMAIN: process.env.REDIS_PRIVATE_DOMAIN,
-  JWT_SECRET: process.env.JWT_SECRET || process.env.JWT_SECRT,
+  JWT_SECRET: process.env.JWT_SECRET,
   PORT: process.env.PORT || 3000,
   NODE_ENV: process.env.NODE_ENV,
   FRONTEND_URL: process.env.FRONTEND_URL,
@@ -287,8 +287,37 @@ const RECONNECT_DELAY = 5000;
 const PING_INTERVAL = 30000;
 const PONG_TIMEOUT = 10000;
 
-// Connect to Poloniex WebSocket
-const connectToPoloniexWebSocket = () => {
+// Get bullet token for V3 WebSocket
+const getBulletToken = async () => {
+  try {
+    const response = await globalThis.fetch('https://futures-api.poloniex.com/api/v1/bullet-public', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Failed to get bullet token: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    if (data && data.data && data.data.token) {
+      return {
+        token: data.data.token,
+        endpoint: data.data.instanceServers[0].endpoint
+      };
+    } else {
+      throw new Error('Invalid bullet token response format');
+    }
+  } catch (error) {
+    logger.error('Failed to get bullet token:', error);
+    throw error;
+  }
+};
+
+// Connect to Poloniex V3 WebSocket
+const connectToPoloniexWebSocket = async () => {
   if (!circuitBreaker.canAttemptConnection()) {
     logger.warn('Circuit breaker is OPEN - skipping WebSocket connection attempt');
     return null;
@@ -300,90 +329,148 @@ const connectToPoloniexWebSocket = () => {
     return null;
   }
 
-  logger.info(`Connecting to Poloniex WebSocket... (attempt ${reconnectAttempts + 1})`);
+  try {
+    logger.info(`Getting bullet token... (attempt ${reconnectAttempts + 1})`);
+    const { token, endpoint } = await getBulletToken();
+    
+    logger.info(`Connecting to Poloniex V3 WebSocket... (attempt ${reconnectAttempts + 1})`);
+    const wsUrl = `${endpoint}?token=${token}`;
+    
+    const poloniexWs = new WebSocket(wsUrl, {
+      handshakeTimeout: 10000,
+      perMessageDeflate: false
+    });
 
-  const poloniexWs = new WebSocket('wss://ws.poloniex.com/ws/public', {
-    handshakeTimeout: 10000,
-    perMessageDeflate: false
-  });
+    let pingTimer;
+    let pongTimer;
 
-  let pingTimer;
-  let pongTimer;
+    poloniexWs.on('open', () => {
+      logger.info('Connected to Poloniex V3 WebSocket');
+      reconnectAttempts = 0;
+      circuitBreaker.recordSuccess();
 
-  poloniexWs.on('open', () => {
-    logger.info('Connected to Poloniex WebSocket');
-    reconnectAttempts = 0;
-    circuitBreaker.recordSuccess();
+      // Subscribe to ticker data for major pairs
+      const subscribeMessage = {
+        id: Date.now(),
+        type: 'subscribe',
+        topic: '/contractMarket/ticker:BTCUSDTPERP',
+        response: true
+      };
+      poloniexWs.send(JSON.stringify(subscribeMessage));
 
-    poloniexWs.send(JSON.stringify({
-      event: 'subscribe',
-      channel: ['ticker'],
-      symbols: ['BTC_USDT', 'ETH_USDT', 'SOL_USDT']
-    }));
+      // Subscribe to additional pairs
+      ['ETHUSDTPERP', 'SOLUSDTPERP'].forEach(symbol => {
+        const message = {
+          id: Date.now(),
+          type: 'subscribe',
+          topic: `/contractMarket/ticker:${symbol}`,
+          response: true
+        };
+        poloniexWs.send(JSON.stringify(message));
+      });
 
-    pingTimer = setInterval(() => {
-      if (poloniexWs.readyState === WebSocket.OPEN) {
-        poloniexWs.ping();
-        pongTimer = setTimeout(() => {
-          logger.warn('Poloniex WebSocket pong timeout');
-          poloniexWs.terminate();
-        }, PONG_TIMEOUT);
-      }
-    }, PING_INTERVAL);
-  });
+      pingTimer = setInterval(() => {
+        if (poloniexWs.readyState === WebSocket.OPEN) {
+          poloniexWs.send(JSON.stringify({ type: 'ping' }));
+          pongTimer = setTimeout(() => {
+            logger.warn('Poloniex V3 WebSocket pong timeout');
+            poloniexWs.terminate();
+          }, PONG_TIMEOUT);
+        }
+      }, PING_INTERVAL);
+    });
 
-  poloniexWs.on('pong', () => {
-    if (pongTimer) clearTimeout(pongTimer);
-  });
+    poloniexWs.on('pong', () => {
+      if (pongTimer) clearTimeout(pongTimer);
+    });
 
-  poloniexWs.on('message', async (data) => {
-    try {
-      const message = JSON.parse(data.toString());
-      if (message.channel === 'ticker' && message.data) {
-        const tickerData = Array.isArray(message.data) ? message.data : [message.data];
-
-        for (const ticker of tickerData) {
-          const formattedData = formatPoloniexTickerData(ticker);
-          if (formattedData) {
-            // Cache market data in Redis
-            await redisService.set(`market:${formattedData.pair}`, formattedData, 60);
-            io.emit('marketData', formattedData);
+    poloniexWs.on('message', async (data) => {
+      try {
+        const message = JSON.parse(data.toString());
+        
+        if (message.type === 'message' && message.topic && message.topic.includes('/contractMarket/ticker')) {
+          const tickerData = message.data;
+          if (tickerData) {
+            const formattedData = formatPoloniexV3TickerData(tickerData);
+            if (formattedData) {
+              // Cache market data in Redis
+              await redisService.set(`market:${formattedData.pair}`, formattedData, 60);
+              io.emit('marketData', formattedData);
+            }
           }
         }
+      } catch (error) {
+        logger.error('Error processing V3 WebSocket message:', error);
       }
-    } catch (error) {
-      logger.error('Error processing WebSocket message:', error);
-    }
-  });
+    });
 
-  poloniexWs.on('error', (error) => {
-    logger.error('Poloniex WebSocket error:', error);
+    poloniexWs.on('error', (error) => {
+      logger.error('Poloniex V3 WebSocket error:', error);
+      reconnectAttempts++;
+      circuitBreaker.recordFailure();
+
+      setTimeout(() => {
+        if (circuitBreaker.canAttemptConnection()) {
+          connectToPoloniexWebSocket();
+        }
+      }, Math.min(RECONNECT_DELAY * Math.pow(2, reconnectAttempts - 1), 30000));
+    });
+
+    poloniexWs.on('close', () => {
+      logger.info('Poloniex V3 WebSocket connection closed');
+      reconnectAttempts++;
+      circuitBreaker.recordFailure();
+
+      setTimeout(() => {
+        if (circuitBreaker.canAttemptConnection()) {
+          connectToPoloniexWebSocket();
+        }
+      }, Math.min(RECONNECT_DELAY * Math.pow(2, reconnectAttempts - 1), 30000));
+    });
+
+    return poloniexWs;
+  } catch (error) {
+    logger.error('Failed to connect to Poloniex V3 WebSocket:', error);
     reconnectAttempts++;
     circuitBreaker.recordFailure();
-
+    
     setTimeout(() => {
       if (circuitBreaker.canAttemptConnection()) {
         connectToPoloniexWebSocket();
       }
     }, Math.min(RECONNECT_DELAY * Math.pow(2, reconnectAttempts - 1), 30000));
-  });
-
-  poloniexWs.on('close', () => {
-    logger.info('Poloniex WebSocket connection closed');
-    reconnectAttempts++;
-    circuitBreaker.recordFailure();
-
-    setTimeout(() => {
-      if (circuitBreaker.canAttemptConnection()) {
-        connectToPoloniexWebSocket();
-      }
-    }, Math.min(RECONNECT_DELAY * Math.pow(2, reconnectAttempts - 1), 30000));
-  });
-
-  return poloniexWs;
+    
+    return null;
+  }
 };
 
-// Format ticker data
+// Format V3 ticker data
+const formatPoloniexV3TickerData = (data) => {
+  try {
+    if (!data || !data.symbol) return null;
+    
+    // Convert symbol format: BTCUSDTPERP -> BTC-USDT
+    const symbol = data.symbol.replace('USDTPERP', '').replace('USDT', '');
+    const pair = `${symbol}-USDT`;
+    
+    return {
+      pair,
+      timestamp: Date.now(),
+      open: parseFloat(data.open24h) || 0,
+      high: parseFloat(data.high24h) || 0,
+      low: parseFloat(data.low24h) || 0,
+      close: parseFloat(data.price) || parseFloat(data.lastPrice) || 0,
+      volume: parseFloat(data.volume24h) || 0,
+      change: parseFloat(data.change24h) || 0,
+      changePercent: parseFloat(data.changePercent24h) || 0
+    };
+  } catch (error) {
+    logger.error('Error formatting V3 ticker data:', error);
+    return null;
+  }
+};
+
+// Legacy format ticker data (keep for backward compatibility)
 const formatPoloniexTickerData = (data) => {
   try {
     if (!data || !data.symbol) return null;
@@ -540,6 +627,15 @@ server.listen(PORT, HOST, async () => {
     logger.info('✅ Redis connection verified');
   } catch (error) {
     logger.error('❌ Redis connection failed:', error);
+  }
+
+  // Initialize WebSocket connection for market data
+  try {
+    logger.info('🔗 Initializing Poloniex V3 WebSocket connection...');
+    connectToPoloniexWebSocket();
+    logger.info('✅ WebSocket connection initialized');
+  } catch (error) {
+    logger.error('❌ Failed to initialize WebSocket connection:', error);
   }
 
   // Initialize futures services for automated trading

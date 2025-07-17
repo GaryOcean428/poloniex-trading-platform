@@ -15,7 +15,11 @@ export const authenticateToken = (req, res, next) => {
     });
   }
 
-  const jwtSecret = process.env.JWT_SECRET || process.env.JWT_SECRT || 'fallback-secret-key';
+  const jwtSecret = process.env.JWT_SECRET;
+  if (!jwtSecret) {
+    console.error('JWT_SECRET environment variable is required');
+    throw new Error('JWT_SECRET environment variable is required');
+  }
   
   jwt.verify(token, jwtSecret, (err, user) => {
     if (err) {
@@ -43,7 +47,11 @@ export const optionalAuth = (req, res, next) => {
     return next();
   }
 
-  const jwtSecret = process.env.JWT_SECRET || process.env.JWT_SECRT || 'fallback-secret-key';
+  const jwtSecret = process.env.JWT_SECRET;
+  if (!jwtSecret) {
+    console.error('JWT_SECRET environment variable is required');
+    throw new Error('JWT_SECRET environment variable is required');
+  }
   
   jwt.verify(token, jwtSecret, (err, user) => {
     if (err) {
@@ -60,7 +68,11 @@ export const optionalAuth = (req, res, next) => {
  * Generate JWT token
  */
 export const generateToken = (payload, expiresIn = '1h') => {
-  const jwtSecret = process.env.JWT_SECRET || process.env.JWT_SECRT || 'fallback-secret-key';
+  const jwtSecret = process.env.JWT_SECRET;
+  if (!jwtSecret) {
+    console.error('JWT_SECRET environment variable is required');
+    throw new Error('JWT_SECRET environment variable is required');
+  }
   
   return jwt.sign(payload, jwtSecret, {
     expiresIn,
@@ -80,7 +92,11 @@ export const generateRefreshToken = (payload) => {
  * Verify and decode token without middleware
  */
 export const verifyToken = (token) => {
-  const jwtSecret = process.env.JWT_SECRET || process.env.JWT_SECRT || 'fallback-secret-key';
+  const jwtSecret = process.env.JWT_SECRET;
+  if (!jwtSecret) {
+    console.error('JWT_SECRET environment variable is required');
+    throw new Error('JWT_SECRET environment variable is required');
+  }
   
   try {
     return jwt.verify(token, jwtSecret);
