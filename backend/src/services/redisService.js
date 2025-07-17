@@ -19,8 +19,7 @@ class RedisService {
 
       // Use Railway's Redis Stack configuration - use public URL for local development
       const redisUrl = process.env.REDIS_PUBLIC_URL ||
-                      process.env.REDIS_URL ||
-                      `redis://default:${process.env.REDIS_PASSWORD}@redis-stack.railway.internal:6379`;
+                      process.env.REDIS_URL;
 
       this.client = createClient({
         url: redisUrl,

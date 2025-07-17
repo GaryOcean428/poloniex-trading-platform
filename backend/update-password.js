@@ -2,11 +2,19 @@
 
 import bcrypt from 'bcrypt';
 import pkg from 'pg';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 const { Client } = pkg;
 
-// Use Railway database URL
-const DATABASE_URL = "postgresql://postgres:HcsyUTnGVUNmdsKrWDHloHcTcwUzeteT@interchange.proxy.rlwy.net:45066/railway";
+// Use environment variable for database URL
+const DATABASE_URL = process.env.DATABASE_URL || process.env.DATABASE_PUBLIC_URL;
+
+if (!DATABASE_URL) {
+  console.error('❌ DATABASE_URL environment variable is required');
+  process.exit(1);
+}
 
 async function updatePassword() {
   const client = new Client({
@@ -19,7 +27,7 @@ async function updatePassword() {
     await client.connect();
     
     // Generate password hash
-    const password = "I.Am.Dev.1";
+    const password = process.env.DEFAULT_PASSWORD || "I.Am.Dev.1";
     const saltRounds = 10;
     const hashedPassword = await bcrypt.hash(password, saltRounds);
     
