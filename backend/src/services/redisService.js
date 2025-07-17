@@ -11,15 +11,26 @@ class RedisService {
     if (this.client) return this.client;
 
     try {
+      // Skip Redis connection if no Redis URL is configured
+      if (!process.env.REDIS_URL && !process.env.REDIS_PUBLIC_URL) {
+        logger.info('ℹ️ Redis not configured - running without Redis cache');
+        return null;
+      }
+
       // Use Railway's Redis Stack configuration - use public URL for local development
       const redisUrl = process.env.REDIS_PUBLIC_URL ||
+                      process.env.REDIS_URL ||
                       `redis://default:${process.env.REDIS_PASSWORD}@redis-stack.railway.internal:6379`;
 
       this.client = createClient({
         url: redisUrl,
         socket: {
           connectTimeout: 5000,
-          reconnectStrategy: (retries) => Math.min(retries * 50, 500)
+          reconnectStrategy: (retries) => {
+            // Limit reconnection attempts to prevent spam
+            if (retries > 10) return false;
+            return Math.min(retries * 50, 500);
+          }
         }
       });
 
@@ -41,7 +52,9 @@ class RedisService {
       return this.client;
     } catch (error) {
       logger.error('❌ Failed to connect to Redis:', error);
-      throw error;
+      logger.info('ℹ️ Continuing without Redis cache');
+      this.client = null;
+      return null;
     }
   }
 
@@ -119,6 +132,12 @@ class RedisService {
   async expire(key, ttl) {
     try {
       if (!this.client) await this.connect();
+      
+      // If Redis is not available, return a mock value
+      if (!this.client) {
+        logger.debug(`⏰ Redis EXPIRE (mock): ${key} (${ttl}s)`);
+        return true;
+      }
 
       const result = await this.client.expire(key, ttl);
       logger.debug(`⏰ Redis EXPIRE: ${key} (${ttl}s)`);
@@ -132,6 +151,12 @@ class RedisService {
   async incr(key) {
     try {
       if (!this.client) await this.connect();
+      
+      // If Redis is not available, return a mock value
+      if (!this.client) {
+        logger.debug(`➕ Redis INCR (mock): ${key} = 1`);
+        return 1;
+      }
 
       const result = await this.client.incr(key);
       logger.debug(`➕ Redis INCR: ${key} = ${result}`);
