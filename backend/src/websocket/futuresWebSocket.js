@@ -71,7 +71,11 @@ class FuturesWebSocketClient extends EventEmitter {
       }
       
       const data = await response.json();
-      return data.data.token;
+      if (data && data.data && data.data.token) {
+        return data.data.token;
+      } else {
+        throw new Error('Invalid token response format');
+      }
     } catch (error) {
       logger.error('Failed to get WebSocket token:', error);
       throw error;
