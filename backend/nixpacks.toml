@@ -2,7 +2,7 @@
 nixPkgs = ["nodejs-20_x", "yarn", "postgresql"]
 
 [phases.install]
-cmds = ["yarn install --frozen-lockfile"]
+cmds = ["corepack enable", "yarn install --immutable"]
 
 [phases.build]
 cmds = ["yarn build"]
