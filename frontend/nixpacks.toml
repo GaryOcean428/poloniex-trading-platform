@@ -5,7 +5,16 @@ nixPkgs = ["nodejs-20_x", "yarn"]
 cmds = ["yarn install --frozen-lockfile"]
 
 [phases.build]
-cmds = ["yarn build"]
+cmds = [
+  "rm -rf dist",
+  "rm -rf .vite",
+  "rm -rf node_modules/.vite",
+  "yarn build --force"
+]
 
 [start]
 cmd = "yarn start"
+
+[staticAssets]
+# Ensure static assets are served correctly
+"public" = "/"
