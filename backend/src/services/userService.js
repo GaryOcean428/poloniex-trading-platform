@@ -171,15 +171,8 @@ export class UserService {
     mfaVerified = false
   }) {
     try {
-      // Check if location is suspicious
+      // Check if location is suspicious - disabled without PostGIS
       let isSuspiciousLocation = false;
-      if (latitude && longitude) {
-        const suspiciousResult = await query(
-          'SELECT detect_suspicious_location($1, $2, $3) as is_suspicious',
-          [userId, latitude, longitude]
-        );
-        isSuspiciousLocation = suspiciousResult.rows[0]?.is_suspicious || false;
-      }
 
       const queryText = `
         INSERT INTO login_sessions (
@@ -234,7 +227,7 @@ export class UserService {
           ls.id, ls.user_id, ls.refresh_token_hash, ls.expires_at,
           ls.is_active, ls.is_suspicious_location, ls.mfa_verified,
           ls.created_at, ls.last_accessed_at,
-          ${geoQuery.getLatLon('ls.login_location')},
+          ls.login_latitude as latitude, ls.login_longitude as longitude,
           u.username, u.email, u.role, u.is_active as user_active
         FROM login_sessions ls
         JOIN users u ON ls.user_id = u.id
