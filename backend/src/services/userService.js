@@ -177,16 +177,16 @@ export class UserService {
       const queryText = `
         INSERT INTO login_sessions (
           user_id, refresh_token_hash, session_token, expires_at,
-          login_latitude, login_longitude, ip_address, user_agent, device_fingerprint,
-          is_suspicious_location, mfa_verified
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-        RETURNING id, is_suspicious_location
+          latitude, longitude, ip_address, user_agent,
+          is_active
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        RETURNING id
       `;
 
       const params = [
         userId, refreshTokenHash, sessionToken, expiresAt,
-        latitude, longitude, ipAddress, userAgent, deviceFingerprint,
-        isSuspiciousLocation, mfaVerified
+        latitude, longitude, ipAddress, userAgent,
+        true
       ];
 
       const result = await query(queryText, params);
@@ -227,11 +227,11 @@ export class UserService {
           ls.id, ls.user_id, ls.refresh_token_hash, ls.expires_at,
           ls.is_active, ls.is_suspicious_location, ls.mfa_verified,
           ls.created_at, ls.last_accessed_at,
-          ls.login_latitude as latitude, ls.login_longitude as longitude,
+          ls.latitude, ls.longitude,
           u.username, u.email, u.role, u.is_active as user_active
         FROM login_sessions ls
         JOIN users u ON ls.user_id = u.id
-        WHERE ls.session_token = $1 AND ls.is_active = true
+        WHERE ls.refresh_token_hash = $1 AND ls.is_active = true
       `;
 
       const result = await query(queryText, [sessionToken]);
