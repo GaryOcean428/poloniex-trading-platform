@@ -13,13 +13,14 @@ class AutomatedTradingService extends EventEmitter {
   constructor() {
     super();
     this.isRunning = false;
+    this.isInitialized = false;
     this.activeStrategies = new Map();
     this.marketData = new Map();
     this.userCredentials = new Map();
     this.riskManager = null;
     this.executionQueue = [];
     this.processingExecution = false;
-    
+
     // Trading configuration
     this.config = {
       maxConcurrentOrders: 10,
@@ -30,7 +31,7 @@ class AutomatedTradingService extends EventEmitter {
       maxPositionSize: 0.1, // 10% max position size
       emergencyStopLoss: 0.15 // 15% emergency stop loss
     };
-    
+
     // Initialize WebSocket event handlers
     this.setupWebSocketHandlers();
   }
@@ -43,19 +44,20 @@ class AutomatedTradingService extends EventEmitter {
   async initialize() {
     try {
       logger.info('Initializing Automated Trading Service...');
-      
+
       // Load active strategies from database
       await this.loadActiveStrategies();
-      
+
       // Start execution engine
       this.startExecutionEngine();
-      
+
       // Start risk monitoring
       this.startRiskMonitoring();
-      
+
       this.isRunning = true;
+      this.isInitialized = true;
       logger.info('✅ Automated Trading Service initialized successfully');
-      
+
     } catch (error) {
       logger.error('Failed to initialize Automated Trading Service:', error);
       throw error;
@@ -70,17 +72,17 @@ class AutomatedTradingService extends EventEmitter {
     futuresWebSocket.on('ticker', (data) => {
       this.updateMarketData(data);
     });
-    
+
     // Handle position updates
     futuresWebSocket.on('position', (data) => {
       this.handlePositionUpdate(data);
     });
-    
+
     // Handle order updates
     futuresWebSocket.on('order', (data) => {
       this.handleOrderUpdate(data);
     });
-    
+
     // Handle trade executions
     futuresWebSocket.on('tradeExecution', (data) => {
       this.handleTradeExecution(data);
@@ -103,10 +105,10 @@ class AutomatedTradingService extends EventEmitter {
         AND s.executed_at >= NOW() - INTERVAL '24 hours'
         ORDER BY s.executed_at DESC
       `);
-      
+
       // Group strategies by user and type
       const strategies = new Map();
-      
+
       for (const row of result.rows) {
         const key = `${row.user_id}_${row.strategy_type}_${row.symbol}`;
         if (!strategies.has(key)) {
@@ -128,10 +130,10 @@ class AutomatedTradingService extends EventEmitter {
           });
         }
       }
-      
+
       this.activeStrategies = strategies;
       logger.info(`Loaded ${strategies.size} active strategies`);
-      
+
     } catch (error) {
       logger.error('Failed to load active strategies:', error);
     }
@@ -143,16 +145,16 @@ class AutomatedTradingService extends EventEmitter {
   async registerStrategy(userId, strategyConfig) {
     try {
       const key = `${userId}_${strategyConfig.type}_${strategyConfig.symbol}`;
-      
+
       // Validate strategy configuration
       this.validateStrategyConfig(strategyConfig);
-      
+
       // Load user credentials
       const credentials = await this.loadUserCredentials(userId);
       if (!credentials) {
         throw new Error('User credentials not found');
       }
-      
+
       // Create strategy instance
       const strategy = {
         userId,
@@ -170,14 +172,14 @@ class AutomatedTradingService extends EventEmitter {
           tradeCount: 0
         }
       };
-      
+
       this.activeStrategies.set(key, strategy);
       this.userCredentials.set(userId, credentials);
-      
+
       logger.info(`Registered strategy: ${strategyConfig.name} for user ${userId}`);
-      
+
       return { success: true, strategyKey: key };
-      
+
     } catch (error) {
       logger.error('Failed to register strategy:', error);
       throw error;
@@ -190,13 +192,13 @@ class AutomatedTradingService extends EventEmitter {
   deactivateStrategy(userId, strategyType, symbol) {
     const key = `${userId}_${strategyType}_${symbol}`;
     const strategy = this.activeStrategies.get(key);
-    
+
     if (strategy) {
       strategy.isActive = false;
       logger.info(`Deactivated strategy: ${key}`);
       return true;
     }
-    
+
     return false;
   }
 
@@ -210,7 +212,7 @@ class AutomatedTradingService extends EventEmitter {
     setInterval(() => {
       this.evaluateStrategies();
     }, this.config.strategyUpdateInterval);
-    
+
     // Execution queue processor
     setInterval(() => {
       this.processExecutionQueue();
@@ -222,10 +224,10 @@ class AutomatedTradingService extends EventEmitter {
    */
   async evaluateStrategies() {
     if (!this.isRunning) return;
-    
+
     for (const [key, strategy] of this.activeStrategies) {
       if (!strategy.isActive) continue;
-      
+
       try {
         await this.evaluateStrategy(strategy);
       } catch (error) {
@@ -240,13 +242,13 @@ class AutomatedTradingService extends EventEmitter {
   async evaluateStrategy(strategy) {
     const marketData = this.marketData.get(strategy.symbol);
     if (!marketData) return;
-    
+
     // Get current positions
     const positions = await this.getCurrentPositions(strategy.userId, strategy.symbol);
-    
+
     // Execute strategy based on type
     const signal = await this.executeStrategyLogic(strategy, marketData, positions);
-    
+
     if (signal && signal.action !== 'HOLD') {
       await this.queueExecution(strategy, signal);
     }
@@ -257,23 +259,23 @@ class AutomatedTradingService extends EventEmitter {
    */
   async executeStrategyLogic(strategy, marketData, positions) {
     const { strategyType, parameters } = strategy;
-    
+
     switch (strategyType) {
       case 'MOMENTUM':
         return this.executeMomentumStrategy(strategy, marketData, positions);
-      
+
       case 'MEAN_REVERSION':
         return this.executeMeanReversionStrategy(strategy, marketData, positions);
-      
+
       case 'GRID':
         return this.executeGridStrategy(strategy, marketData, positions);
-      
+
       case 'DCA':
         return this.executeDCAStrategy(strategy, marketData, positions);
-      
+
       case 'ARBITRAGE':
         return this.executeArbitrageStrategy(strategy, marketData, positions);
-      
+
       default:
         logger.warn(`Unknown strategy type: ${strategyType}`);
         return null;
@@ -286,15 +288,15 @@ class AutomatedTradingService extends EventEmitter {
   executeMomentumStrategy(strategy, marketData, positions) {
     const { parameters } = strategy;
     const { lookback = 20, threshold = 0.02, stopLoss = 0.05 } = parameters;
-    
+
     // Calculate momentum indicators
     const priceChange = (marketData.last_price - marketData.prev_price) / marketData.prev_price;
     const volume = marketData.volume_24h;
-    
+
     // Current position
     const currentPosition = positions.find(p => p.symbol === strategy.symbol);
     const positionSize = currentPosition ? currentPosition.size : 0;
-    
+
     // Entry signals
     if (Math.abs(positionSize) < parameters.maxPositionSize) {
       if (priceChange > threshold && volume > parameters.minVolume) {
@@ -306,7 +308,7 @@ class AutomatedTradingService extends EventEmitter {
           takeProfit: marketData.last_price * (1 + parameters.takeProfit || 0.1)
         };
       }
-      
+
       if (priceChange < -threshold && volume > parameters.minVolume) {
         return {
           action: 'SELL',
@@ -317,13 +319,13 @@ class AutomatedTradingService extends EventEmitter {
         };
       }
     }
-    
+
     // Exit signals
     if (currentPosition) {
       const unrealizedPnl = currentPosition.unrealized_pnl;
       const positionValue = Math.abs(positionSize) * marketData.last_price;
       const pnlPercent = unrealizedPnl / positionValue;
-      
+
       // Stop loss or take profit
       if (pnlPercent < -stopLoss || pnlPercent > (parameters.takeProfit || 0.1)) {
         return {
@@ -333,7 +335,7 @@ class AutomatedTradingService extends EventEmitter {
         };
       }
     }
-    
+
     return { action: 'HOLD' };
   }
 
@@ -343,16 +345,16 @@ class AutomatedTradingService extends EventEmitter {
   executeMeanReversionStrategy(strategy, marketData, positions) {
     const { parameters } = strategy;
     const { periods = 20, stdDev = 2 } = parameters;
-    
+
     // Calculate Bollinger Bands
     const upperBand = marketData.sma_20 + (stdDev * marketData.std_20);
     const lowerBand = marketData.sma_20 - (stdDev * marketData.std_20);
     const currentPrice = marketData.last_price;
-    
+
     // Current position
     const currentPosition = positions.find(p => p.symbol === strategy.symbol);
     const positionSize = currentPosition ? currentPosition.size : 0;
-    
+
     // Entry signals
     if (Math.abs(positionSize) < parameters.maxPositionSize) {
       if (currentPrice < lowerBand) {
@@ -363,7 +365,7 @@ class AutomatedTradingService extends EventEmitter {
           takeProfit: marketData.sma_20
         };
       }
-      
+
       if (currentPrice > upperBand) {
         return {
           action: 'SELL',
@@ -373,13 +375,13 @@ class AutomatedTradingService extends EventEmitter {
         };
       }
     }
-    
+
     // Exit signals
     if (currentPosition) {
       const isLong = positionSize > 0;
       const isShort = positionSize < 0;
-      
-      if ((isLong && currentPrice >= marketData.sma_20) || 
+
+      if ((isLong && currentPrice >= marketData.sma_20) ||
           (isShort && currentPrice <= marketData.sma_20)) {
         return {
           action: 'CLOSE',
@@ -388,7 +390,7 @@ class AutomatedTradingService extends EventEmitter {
         };
       }
     }
-    
+
     return { action: 'HOLD' };
   }
 
@@ -398,10 +400,10 @@ class AutomatedTradingService extends EventEmitter {
   executeGridStrategy(strategy, marketData, positions) {
     const { parameters } = strategy;
     const { gridSize = 0.01, levels = 10, orderSize } = parameters;
-    
+
     const currentPrice = marketData.last_price;
     const basePrice = parameters.basePrice || currentPrice;
-    
+
     // Calculate grid levels
     const gridLevels = [];
     for (let i = -levels; i <= levels; i++) {
@@ -412,15 +414,15 @@ class AutomatedTradingService extends EventEmitter {
         side: i > 0 ? 'SELL' : 'BUY'
       });
     }
-    
+
     // Find nearest grid levels
     const nearestLevel = gridLevels.reduce((prev, curr) => {
       return Math.abs(curr.price - currentPrice) < Math.abs(prev.price - currentPrice) ? curr : prev;
     });
-    
+
     // Check if we should place order at nearest level
     const priceDistance = Math.abs(currentPrice - nearestLevel.price) / currentPrice;
-    
+
     if (priceDistance < gridSize * 0.5) {
       return {
         action: nearestLevel.side,
@@ -429,7 +431,7 @@ class AutomatedTradingService extends EventEmitter {
         type: 'LIMIT'
       };
     }
-    
+
     return { action: 'HOLD' };
   }
 
@@ -439,11 +441,11 @@ class AutomatedTradingService extends EventEmitter {
   executeDCAStrategy(strategy, marketData, positions) {
     const { parameters } = strategy;
     const { interval = 3600000, orderSize, priceDropThreshold = 0.02 } = parameters; // 1 hour default
-    
+
     const currentPrice = marketData.last_price;
     const lastExecution = strategy.lastExecution;
     const timeSinceLastExecution = Date.now() - lastExecution.getTime();
-    
+
     // Time-based DCA
     if (timeSinceLastExecution > interval) {
       return {
@@ -453,7 +455,7 @@ class AutomatedTradingService extends EventEmitter {
         type: 'MARKET'
       };
     }
-    
+
     // Price-based DCA (buy more on dips)
     if (parameters.lastPrice && (parameters.lastPrice - currentPrice) / parameters.lastPrice > priceDropThreshold) {
       return {
@@ -463,7 +465,7 @@ class AutomatedTradingService extends EventEmitter {
         type: 'MARKET'
       };
     }
-    
+
     return { action: 'HOLD' };
   }
 
@@ -474,12 +476,12 @@ class AutomatedTradingService extends EventEmitter {
     // Simplified arbitrage between spot and futures
     const { parameters } = strategy;
     const { minSpread = 0.005, orderSize } = parameters;
-    
+
     const futuresPrice = marketData.last_price;
     const spotPrice = marketData.spot_price || futuresPrice;
-    
+
     const spread = (futuresPrice - spotPrice) / spotPrice;
-    
+
     if (Math.abs(spread) > minSpread) {
       if (spread > 0) {
         // Futures premium - sell futures, buy spot
@@ -499,7 +501,7 @@ class AutomatedTradingService extends EventEmitter {
         };
       }
     }
-    
+
     return { action: 'HOLD' };
   }
 
@@ -515,7 +517,7 @@ class AutomatedTradingService extends EventEmitter {
       logger.warn(`Risk check failed for strategy ${strategy.strategyId}`);
       return;
     }
-    
+
     const execution = {
       id: Date.now() + Math.random(),
       strategy,
@@ -524,7 +526,7 @@ class AutomatedTradingService extends EventEmitter {
       status: 'QUEUED',
       retries: 0
     };
-    
+
     this.executionQueue.push(execution);
     logger.info(`Queued execution for ${strategy.strategyName}: ${signal.action}`);
   }
@@ -534,9 +536,9 @@ class AutomatedTradingService extends EventEmitter {
    */
   async processExecutionQueue() {
     if (this.processingExecution || this.executionQueue.length === 0) return;
-    
+
     this.processingExecution = true;
-    
+
     try {
       const execution = this.executionQueue.shift();
       await this.executeSignal(execution);
@@ -552,45 +554,45 @@ class AutomatedTradingService extends EventEmitter {
    */
   async executeSignal(execution) {
     const { strategy, signal } = execution;
-    
+
     try {
       execution.status = 'EXECUTING';
-      
+
       // Get user credentials
       const credentials = this.userCredentials.get(strategy.userId);
       if (!credentials) {
         throw new Error('User credentials not found');
       }
-      
+
       let result;
-      
+
       switch (signal.action) {
         case 'BUY':
         case 'SELL':
           result = await this.executeBuySellOrder(credentials, strategy, signal);
           break;
-          
+
         case 'CLOSE':
           result = await this.executeClosePosition(credentials, strategy, signal);
           break;
-          
+
         default:
           throw new Error(`Unknown signal action: ${signal.action}`);
       }
-      
+
       execution.status = 'COMPLETED';
       execution.result = result;
-      
+
       // Log execution
       await this.logStrategyExecution(strategy, signal, 'SUCCESS', result);
-      
+
       logger.info(`Executed signal for ${strategy.strategyName}: ${signal.action}`);
-      
+
     } catch (error) {
       execution.status = 'FAILED';
       execution.error = error.message;
       execution.retries++;
-      
+
       // Retry logic
       if (execution.retries < 3) {
         this.executionQueue.push(execution);
@@ -616,12 +618,12 @@ class AutomatedTradingService extends EventEmitter {
       marginMode: strategy.parameters.marginMode || 'CROSS',
       reduceOnly: false
     };
-    
+
     const result = await poloniexFuturesService.placeOrder(credentials, orderData);
-    
+
     // Store order in database
     await poloniexFuturesService.storeOrderInDatabase(strategy.userId, orderData, result);
-    
+
     return result;
   }
 
@@ -636,12 +638,12 @@ class AutomatedTradingService extends EventEmitter {
       size: signal.size,
       reduceOnly: true
     };
-    
+
     const result = await poloniexFuturesService.placeOrder(credentials, orderData);
-    
+
     // Store order in database
     await poloniexFuturesService.storeOrderInDatabase(strategy.userId, orderData, result);
-    
+
     return result;
   }
 
@@ -660,23 +662,41 @@ class AutomatedTradingService extends EventEmitter {
    * Perform risk checks
    */
   async performRiskChecks() {
-    if (!this.isRunning) return;
-    
+    if (!this.isRunning || !this.isInitialized) return;
+
     try {
+      // Check if database is available before running risk checks
+      if (!await this.isDatabaseAvailable()) {
+        return;
+      }
+
       // Check daily loss limits
       await this.checkDailyLossLimits();
-      
+
       // Check position size limits
       await this.checkPositionSizeLimits();
-      
+
       // Check margin requirements
       await this.checkMarginRequirements();
-      
+
       // Check emergency conditions
       await this.checkEmergencyConditions();
-      
+
     } catch (error) {
       logger.error('Risk check failed:', error);
+    }
+  }
+
+  /**
+   * Check if database is available
+   */
+  async isDatabaseAvailable() {
+    try {
+      const result = await query('SELECT 1 as test');
+      return result.rows.length > 0;
+    } catch (error) {
+      logger.debug('Database not available for risk checks:', error.message);
+      return false;
     }
   }
 
@@ -691,19 +711,19 @@ class AutomatedTradingService extends EventEmitter {
         logger.warn(`Daily loss limit exceeded for user ${strategy.userId}`);
         return false;
       }
-      
+
       // Check position size limit
       const currentPositions = await this.getCurrentPositions(strategy.userId);
       const totalPositionValue = currentPositions.reduce((sum, pos) => sum + Math.abs(pos.size * pos.mark_price), 0);
       const accountEquity = await this.getAccountEquity(strategy.userId);
-      
+
       if (totalPositionValue / accountEquity > this.config.maxPositionSize) {
         logger.warn(`Position size limit exceeded for user ${strategy.userId}`);
         return false;
       }
-      
+
       return true;
-      
+
     } catch (error) {
       logger.error('Risk limit check failed:', error);
       return false;
@@ -721,7 +741,7 @@ class AutomatedTradingService extends EventEmitter {
       GROUP BY user_id
       HAVING SUM(realized_pnl) < -1000 -- $1000 daily loss limit
     `);
-    
+
     for (const row of result.rows) {
       logger.warn(`Daily loss limit exceeded for user ${row.user_id}: ${row.daily_pnl}`);
       // Deactivate all strategies for this user
@@ -740,7 +760,7 @@ class AutomatedTradingService extends EventEmitter {
       WHERE fp.size != 0
       AND ABS(fp.size * fp.mark_price) > fa.total_equity * 0.5
     `);
-    
+
     for (const row of result.rows) {
       logger.warn(`Position size limit exceeded for user ${row.user_id} on ${row.symbol}`);
       // Could trigger position reduction or strategy deactivation
@@ -756,7 +776,7 @@ class AutomatedTradingService extends EventEmitter {
       FROM futures_accounts
       WHERE margin_ratio > 0.8 -- 80% margin utilization
     `);
-    
+
     for (const row of result.rows) {
       logger.warn(`High margin utilization for user ${row.user_id}: ${row.margin_ratio}`);
       // Could trigger risk reduction measures
@@ -769,7 +789,7 @@ class AutomatedTradingService extends EventEmitter {
   async checkEmergencyConditions() {
     // Check for system-wide conditions that might require immediate action
     const systemRisk = await this.assessSystemRisk();
-    
+
     if (systemRisk.level === 'HIGH') {
       logger.error('High system risk detected, implementing emergency measures');
       await this.implementEmergencyMeasures();
@@ -784,7 +804,7 @@ class AutomatedTradingService extends EventEmitter {
   updateMarketData(data) {
     const existing = this.marketData.get(data.symbol) || {};
     existing.prev_price = existing.last_price || data.last_price;
-    
+
     this.marketData.set(data.symbol, {
       ...existing,
       ...data,
@@ -802,9 +822,9 @@ class AutomatedTradingService extends EventEmitter {
       WHERE user_id = $1 AND exchange = 'poloniex' AND is_active = true
       LIMIT 1
     `, [userId]);
-    
+
     if (result.rows.length === 0) return null;
-    
+
     const row = result.rows[0];
     // Decrypt credentials (implementation depends on encryption method)
     return {
@@ -820,12 +840,12 @@ class AutomatedTradingService extends EventEmitter {
   async getCurrentPositions(userId, symbol = null) {
     const params = [userId];
     let query_text = 'SELECT * FROM futures_positions WHERE user_id = $1 AND size != 0';
-    
+
     if (symbol) {
       query_text += ' AND symbol = $2';
       params.push(symbol);
     }
-    
+
     const result = await query(query_text, params);
     return result.rows;
   }
@@ -839,7 +859,7 @@ class AutomatedTradingService extends EventEmitter {
       FROM futures_trades
       WHERE user_id = $1 AND trade_time >= CURRENT_DATE
     `, [userId]);
-    
+
     return result.rows[0]?.daily_pnl || 0;
   }
 
@@ -853,7 +873,7 @@ class AutomatedTradingService extends EventEmitter {
       WHERE user_id = $1 AND is_active = true
       LIMIT 1
     `, [userId]);
-    
+
     return result.rows[0]?.total_equity || 0;
   }
 
@@ -886,15 +906,15 @@ class AutomatedTradingService extends EventEmitter {
   validateStrategyConfig(config) {
     const required = ['type', 'symbol', 'parameters'];
     const missing = required.filter(field => !config[field]);
-    
+
     if (missing.length > 0) {
       throw new Error(`Missing required fields: ${missing.join(', ')}`);
     }
-    
+
     if (!config.parameters.orderSize || config.parameters.orderSize <= 0) {
       throw new Error('Order size must be greater than 0');
     }
-    
+
     return true;
   }
 
@@ -917,15 +937,15 @@ class AutomatedTradingService extends EventEmitter {
     // Simplified risk assessment
     const activeStrategies = Array.from(this.activeStrategies.values()).filter(s => s.isActive);
     const marketVolatility = this.calculateMarketVolatility();
-    
+
     let riskLevel = 'LOW';
-    
+
     if (activeStrategies.length > 100 || marketVolatility > 0.1) {
       riskLevel = 'HIGH';
     } else if (activeStrategies.length > 50 || marketVolatility > 0.05) {
       riskLevel = 'MEDIUM';
     }
-    
+
     return { level: riskLevel, details: { activeStrategies: activeStrategies.length, marketVolatility } };
   }
 
@@ -935,10 +955,10 @@ class AutomatedTradingService extends EventEmitter {
   calculateMarketVolatility() {
     const prices = Array.from(this.marketData.values()).map(data => data.last_price);
     if (prices.length < 2) return 0;
-    
+
     const mean = prices.reduce((sum, price) => sum + price, 0) / prices.length;
     const variance = prices.reduce((sum, price) => sum + Math.pow(price - mean, 2), 0) / prices.length;
-    
+
     return Math.sqrt(variance) / mean;
   }
 
@@ -947,12 +967,12 @@ class AutomatedTradingService extends EventEmitter {
    */
   async implementEmergencyMeasures() {
     logger.error('Implementing emergency measures - stopping all strategies');
-    
+
     // Deactivate all strategies
     for (const [key, strategy] of this.activeStrategies) {
       strategy.isActive = false;
     }
-    
+
     // Could also close all positions, cancel all orders, etc.
   }
 
@@ -977,10 +997,10 @@ class AutomatedTradingService extends EventEmitter {
   async shutdown() {
     logger.info('Shutting down Automated Trading Service...');
     this.isRunning = false;
-    
+
     // Clear all intervals and timeouts
     // Save state if needed
-    
+
     logger.info('Automated Trading Service shutdown complete');
   }
 
