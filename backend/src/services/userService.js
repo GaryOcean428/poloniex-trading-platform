@@ -376,8 +376,7 @@ export class UserService {
       const queryText = `
         SELECT
           u.country_code, u.kyc_status, u.trading_enabled,
-          gr.trading_allowed, gr.futures_allowed, gr.kyc_required,
-          gr.enhanced_kyc_required, gr.regulatory_framework
+          gr.trading_allowed, gr.futures_allowed, gr.kyc_required
         FROM users u
         LEFT JOIN geo_restrictions gr ON u.country_code = gr.country_code
         WHERE u.id = $1
@@ -410,8 +409,7 @@ export class UserService {
 
       return {
         compliant: true,
-        jurisdiction: user.country_code,
-        regulatory_framework: user.regulatory_framework
+        jurisdiction: user.country_code
       };
     } catch (error) {
       console.error('Error checking jurisdiction compliance:', error);
