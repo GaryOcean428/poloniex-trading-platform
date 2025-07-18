@@ -16,19 +16,19 @@ const validateAndParseDatabaseUrl = (url) => {
   try {
     // Try to parse the connection string
     const parsed = parse(url);
-    
+
     // Check for required components
     const hasRequiredFields = parsed.host && parsed.database && parsed.user;
-    const isValidFormat = url.startsWith('postgresql://') || 
+    const isValidFormat = url.startsWith('postgresql://') ||
                          url.startsWith('postgres://') ||
                          url.includes('host=');
-    
+
     if (!hasRequiredFields || !isValidFormat) {
       console.warn('❌ DATABASE_URL is missing required components');
       return { isValid: false };
     }
-    
-    return { 
+
+    return {
       isValid: true,
       parsed,
       maskedUrl: url.replace(/:[^:]*@/, ':***@') // Mask password in logs
@@ -88,26 +88,26 @@ async function initializePool() {
   }
 
   console.log('🔗 Attempting to create database connection pool...');
-  
+
   let testPool = null;
   let client = null;
-  
+
   try {
     // Create a test pool
     testPool = new Pool(dbConfig);
-    
+
     // Test the connection
     client = await testPool.connect();
     const result = await client.query('SELECT version()');
     console.log(`✅ Connected to PostgreSQL ${result.rows[0].version.split(' ')[1]}`);
-    
+
     // Connection successful, keep the pool
     isConnected = true;
     return testPool;
   } catch (error) {
     console.error('❌ Failed to connect to database:', error.message);
     console.error('❌ Please check your DATABASE_URL and ensure the database is running');
-    
+
     // Cleanup resources
     if (client) {
       try {
@@ -116,7 +116,7 @@ async function initializePool() {
         console.error('❌ Error releasing client:', e.message);
       }
     }
-    
+
     if (testPool) {
       try {
         await testPool.end();
@@ -124,7 +124,7 @@ async function initializePool() {
         console.error('❌ Error cleaning up connection pool:', e.message);
       }
     }
-    
+
     return null;
   } finally {
     // Ensure client is always released
@@ -138,14 +138,16 @@ async function initializePool() {
   }
 }
 
-// Initialize the pool immediately
-initializePool()
+// Initialize the pool immediately and wait for it
+let poolInitPromise = initializePool()
   .then(p => {
     pool = p;
+    return p;
   })
   .catch(error => {
     console.error('❌ Error initializing database pool:', error.message);
     pool = null;
+    return null;
   });
 
 // Health check function that can be called externally
@@ -164,7 +166,7 @@ export async function healthCheck() {
     const client = await pool.connect();
     const result = await client.query('SELECT NOW() as current_time, version() as version');
     client.release();
-    
+
     return {
       status: 'healthy',
       timestamp: result.rows[0].current_time,
@@ -190,7 +192,7 @@ if (pool) {
     console.error('❌ Unexpected error on idle client:', err.message);
     console.error('❌ Stack:', err.stack);
     console.log('ℹ️  Attempting to reconnect...');
-    
+
     // Try to reinitialize the pool
     initializePool()
       .then(newPool => {
@@ -210,7 +212,7 @@ if (pool) {
 // Handle graceful shutdown
 const shutdown = async () => {
   console.log('\n🔄 Gracefully shutting down...');
-  
+
   if (pool) {
     console.log('🔄 Closing database connections...');
     try {
@@ -220,7 +222,7 @@ const shutdown = async () => {
       console.error('❌ Error closing database connections:', err.message);
     }
   }
-  
+
   process.exit(0);
 };
 
@@ -231,6 +233,9 @@ process.on('SIGTERM', shutdown);
 
 // Database query helper with error handling
 export const query = async (text, params = []) => {
+  // Wait for pool initialization to complete
+  await poolInitPromise;
+
   if (!pool) {
     throw new Error('Database not available. Please configure DATABASE_URL environment variable.');
   }
@@ -255,6 +260,9 @@ export const query = async (text, params = []) => {
 
 // Transaction helper
 export const transaction = async (callback) => {
+  // Wait for pool initialization to complete
+  await poolInitPromise;
+
   if (!pool) {
     throw new Error('Database not available. Please configure DATABASE_URL environment variable.');
   }
