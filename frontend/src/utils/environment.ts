@@ -58,8 +58,8 @@ export const getPoloniexWebSocketUrl = (type: 'public' | 'private' = 'public'): 
 
   // Default Poloniex V3 futures WebSocket endpoints
   return type === 'public' 
-    ? 'wss://ws.poloniex.com/ws/public'
-    : 'wss://ws.poloniex.com/ws/private';
+    ? 'wss://futures-apiws.poloniex.com'
+    : 'wss://futures-apiws.poloniex.com';
 };
 
 // Mock mode configuration

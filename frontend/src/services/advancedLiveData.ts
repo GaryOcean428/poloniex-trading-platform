@@ -198,19 +198,26 @@ export class LiveDataService {
 
   private initializeWebSockets(): void {
     try {
-      const poloniexWs = new WebSocket("wss://ws.poloniex.com/ws/public");
+      // Get bullet token for V3 WebSocket connection
+      this.getBulletToken().then(({ token, endpoint }) => {
+        const poloniexWs = new WebSocket(`${endpoint}?token=${token}`);
 
-      poloniexWs.onopen = () => {
-        this.log("info", "Poloniex WebSocket connected");
-        poloniexWs.send(
-          JSON.stringify({
-            event: "subscribe",
-            channel: ["ticker"],
-          })
-        );
-        this.websockets.set("poloniex", poloniexWs);
-        liveDataEvents.emit("websocket_connected", "poloniex");
-      };
+        poloniexWs.onopen = () => {
+          this.log("info", "Poloniex V3 WebSocket connected");
+          
+          // Subscribe to ticker using V3 format
+          poloniexWs.send(
+            JSON.stringify({
+              id: Date.now(),
+              type: 'subscribe',
+              topic: '/contractMarket/ticker:BTCUSDTPERP',
+              response: true
+            })
+          );
+          
+          this.websockets.set("poloniex", poloniexWs);
+          liveDataEvents.emit("websocket_connected", "poloniex");
+        };
 
       poloniexWs.onmessage = (event: MessageEvent) => {
         try {
@@ -228,27 +235,60 @@ export class LiveDataService {
         liveDataEvents.emit("connection_error", { source: "poloniex", error });
       };
 
-      poloniexWs.onclose = () => {
-        this.log("info", "Poloniex WebSocket disconnected");
-        this.websockets.delete("poloniex");
+        poloniexWs.onclose = () => {
+          this.log("info", "Poloniex V3 WebSocket disconnected");
+          this.websockets.delete("poloniex");
 
-        if (this.isRunning) {
-          const retryCount = (this.retryCount.get("poloniex") || 0) + 1;
-          this.retryCount.set("poloniex", retryCount);
+          if (this.isRunning) {
+            const retryCount = (this.retryCount.get("poloniex") || 0) + 1;
+            this.retryCount.set("poloniex", retryCount);
 
-          if (retryCount <= this.config.maxRetries) {
-            setTimeout(
-              () => this.initializeWebSockets(),
-              this.config.retryDelay * retryCount
-            );
-          } else {
-            liveDataEvents.emit("max_retries_reached", "poloniex");
+            if (retryCount <= this.config.maxRetries) {
+              setTimeout(
+                () => this.initializeWebSockets(),
+                this.config.retryDelay * retryCount
+              );
+            } else {
+              liveDataEvents.emit("max_retries_reached", "poloniex");
+            }
           }
-        }
-      };
+        };
+      }).catch(error => {
+        this.log("error", `Error getting bullet token: ${error}`);
+        liveDataEvents.emit("initialization_error", { error });
+      });
     } catch (error) {
       this.log("error", `Error initializing WebSockets: ${error}`);
       liveDataEvents.emit("initialization_error", { error });
+    }
+  }
+
+  // Add bullet token getter method
+  private async getBulletToken(): Promise<{ token: string; endpoint: string }> {
+    try {
+      const response = await fetch('https://futures-api.poloniex.com/api/v1/bullet-public', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Failed to get bullet token: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      if (data && data.data && data.data.token) {
+        return {
+          token: data.data.token,
+          endpoint: data.data.instanceServers[0].endpoint
+        };
+      } else {
+        throw new Error('Invalid bullet token response format');
+      }
+    } catch (error) {
+      this.log("error", `Failed to get bullet token: ${error}`);
+      throw error;
     }
   }
 
@@ -257,22 +297,22 @@ export class LiveDataService {
       if (
         typeof message === "object" &&
         message !== null &&
-        "channel" in message &&
+        "type" in message &&
         "data" in message
       ) {
-        const msg = message as { channel: string; data: any };
-        if (msg.channel === "ticker" && msg.data) {
+        const msg = message as { type: string; topic?: string; data: any };
+        if (msg.type === "message" && msg.topic && msg.topic.includes('/contractMarket/ticker') && msg.data) {
           const tickerData = msg.data;
           const marketData: MarketDataPoint = {
-            symbol: tickerData.symbol,
+            symbol: tickerData.symbol || 'UNKNOWN',
             timestamp: Date.now(),
-            open: parseFloat(tickerData.open || "0"),
-            high: parseFloat(tickerData.high || "0"),
-            low: parseFloat(tickerData.low || "0"),
-            close: parseFloat(tickerData.close || "0"),
-            volume: parseFloat(tickerData.volume || "0"),
-            quoteVolume: parseFloat(tickerData.quoteVolume || "0"),
-            source: "poloniex_ws",
+            open: parseFloat(tickerData.open24h || "0"),
+            high: parseFloat(tickerData.high24h || "0"),
+            low: parseFloat(tickerData.low24h || "0"),
+            close: parseFloat(tickerData.price || tickerData.lastPrice || "0"),
+            volume: parseFloat(tickerData.volume24h || "0"),
+            quoteVolume: parseFloat(tickerData.turnover24h || "0"),
+            source: "poloniex_ws_v3",
           };
           this.processData(marketData);
           this.addToDataBuffer(marketData);
