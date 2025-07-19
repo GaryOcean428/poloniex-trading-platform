@@ -609,7 +609,7 @@ export class ErrorHandler {
   /**
    * Get recovery actions for error
    */
-  private getRecoveryActions(error: Error, category: ErrorCategory): string[] {
+  private getRecoveryActions(_error: Error, category: ErrorCategory): string[] {
     const actions: string[] = [];
 
     switch (category) {

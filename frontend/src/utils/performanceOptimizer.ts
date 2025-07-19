@@ -70,7 +70,6 @@ export class PerformanceOptimizer {
     errorRate: 0
   };
   private metricsHistory: PerformanceMetrics[] = [];
-  private startTime = Date.now();
 
   constructor(config?: Partial<PerformanceConfig>) {
     this.config = {
@@ -454,7 +453,7 @@ export class PerformanceOptimizer {
   /**
    * Execute batch of requests
    */
-  private async executeBatch(type: string, requests: BatchRequest[]): Promise<any[]> {
+  private async executeBatch(_type: string, requests: BatchRequest[]): Promise<any[]> {
     // This would be implemented based on specific API requirements
     // For now, execute requests individually
     const results = [];
@@ -496,7 +495,6 @@ export class PerformanceOptimizer {
    * Update performance metrics
    */
   private updateMetrics(type: 'cacheHit' | 'cacheMiss' | 'error', duration: number, success: boolean = true): void {
-    const now = Date.now();
     const requestsInLastSecond = this.getRequestsInLastSecond();
     
     // Update cache hit rate
