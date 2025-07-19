@@ -6,3 +6,6 @@ cmds = ["corepack enable", "yarn install --immutable"]
 
 [start]
 cmd = "yarn start:prod"
+
+[env]
+NODE_ENV = "production"
