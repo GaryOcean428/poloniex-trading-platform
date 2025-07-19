@@ -1,7 +1,58 @@
-// Helper to check if running in Chrome extension environment
+/**
+ * Platform detection utilities for Chrome extension vs web environment
+ */
+
+// Declare chrome as potentially undefined to handle both contexts
+declare global {
+  interface Window {
+    chrome?: typeof chrome;
+  }
+}
+
+/**
+ * Check if running in Chrome extension environment
+ * More robust check that handles both extension and web contexts
+ */
 export const isChromeExtension = (): boolean => {
-  return typeof window !== 'undefined' && 
-         typeof window.chrome !== 'undefined' && 
-         typeof window.chrome.runtime !== 'undefined' && 
-         typeof window.chrome.runtime.id !== 'undefined';
+  if (typeof window === 'undefined') return false;
+  
+  try {
+    return !!(
+      window.chrome &&
+      window.chrome.runtime &&
+      window.chrome.runtime.id &&
+      typeof window.chrome.runtime.sendMessage === 'function'
+    );
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Check if Chrome APIs are available (even if not in extension context)
+ */
+export const isChromeApiAvailable = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  
+  try {
+    return !!(window.chrome && window.chrome.runtime);
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Get Chrome runtime safely
+ */
+export const getChromeRuntime = (): typeof chrome.runtime | null => {
+  if (!isChromeApiAvailable()) return null;
+  return window.chrome?.runtime || null;
+};
+
+/**
+ * Get Chrome tabs API safely  
+ */
+export const getChromeTabs = (): typeof chrome.tabs | null => {
+  if (!isChromeApiAvailable()) return null;
+  return window.chrome?.tabs || null;
 };
