@@ -47,6 +47,7 @@ railway run -- redis-cli -u $REDIS_URL ping
 ## **🔧 Application Configuration**
 
 ### **Redis Service Check**
+
 The application has been updated to gracefully handle missing Redis configuration:
 
 ```javascript
@@ -57,6 +58,7 @@ if (!process.env.REDIS_PRIVATE_DOMAIN || !process.env.REDIS_PASSWORD) {
 ```
 
 ### **Features That Work Without Redis**
+
 - ✅ All API endpoints function normally
 - ✅ Rate limiting falls back to allowing requests
 - ✅ Caching is bypassed (direct API calls)
@@ -68,13 +70,15 @@ if (!process.env.REDIS_PRIVATE_DOMAIN || !process.env.REDIS_PASSWORD) {
 ## **🎯 Step-by-Step Deployment**
 
 ### **Step 1: Add Redis Service**
-1. Login to Railway Dashboard: https://railway.com
+
+1. Login to Railway Dashboard: <https://railway.com>
 2. Navigate to your project
 3. Click "New" → "Database" → "Redis"
 4. Name the service "redis-stack"
 5. Wait for deployment (2-3 minutes)
 
 ### **Step 2: Update Environment**
+
 ```bash
 # Pull latest environment variables
 railway login
@@ -83,6 +87,7 @@ railway variables
 ```
 
 ### **Step 3: Test Redis Integration**
+
 ```bash
 # Deploy with Redis
 cd backend
@@ -93,6 +98,7 @@ railway run -- yarn node test-redis-integration.js
 ```
 
 ### **Step 4: Verify Features**
+
 - ✅ Redis rate limiting active
 - ✅ Market data caching enabled
 - ✅ Session persistence working
@@ -111,6 +117,7 @@ railway run -- yarn node test-redis-integration.js
 ## **🚨 Troubleshooting**
 
 ### **Redis Not Connecting**
+
 ```bash
 # Check if Redis service exists
 railway services
@@ -123,7 +130,9 @@ railway restart
 ```
 
 ### **Connection Errors**
+
 If you see `ENOTFOUND redis-stack.railway.internal`:
+
 1. Ensure Redis service is deployed
 2. Check service name is "redis-stack"
 3. Verify environment variables are set
@@ -162,6 +171,7 @@ When Redis is properly configured, you should see:
 ## **📞 Support**
 
 If Redis setup fails:
+
 - Check Railway documentation
 - Verify service deployment status
 - Ensure correct service name ("redis-stack")
