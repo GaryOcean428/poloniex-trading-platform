@@ -2,7 +2,7 @@
   "$schema": "https://railway.com/railway.schema.json",
   "build": {
     "builder": "NIXPACKS",
-    "buildCommand": "yarn workspace poloniex-trading-platform-backend build",
+    "buildCommand": "yarn workspace backend build",
     "watchPatterns": [
       "**/*.js",
       "**/*.json",
@@ -11,7 +11,7 @@
     ]
   },
   "deploy": {
-    "startCommand": "yarn workspace poloniex-trading-platform-backend start",
+    "startCommand": "yarn workspace backend start",
     "healthcheckPath": "/api/health",
     "healthcheckTimeout": 300,
     "restartPolicyType": "ON_FAILURE",

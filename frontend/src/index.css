@@ -1,4 +1,6 @@
-@import "tailwindcss";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 :root {
   --color-gray-50: #f9fafb;
   --color-gray-100: #f3f4f6;
@@ -65,11 +67,11 @@
   .text-neutral-500 {
     color: #000 !important;
   }
-  
+
   .text-neutral-300 {
     color: #000 !important;
   }
-  
+
   .bg-neutral-100 {
     background-color: #fff !important;
   }
