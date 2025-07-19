@@ -1,4 +1,4 @@
-import { isChromeExtension } from './chromeExtensionCheck';
+import { getChromeRuntime } from './chromeExtensionCheck';
 
 // Types for Chrome extension messaging
 export interface ChromeMessage {
@@ -24,30 +24,33 @@ export type ChromeMessageListener = (
 // Helper to safely use Chrome messaging API
 export const chromeMessaging = {
   sendMessage: async (message: ChromeMessage): Promise<unknown> => {
-    if (!isChromeExtension()) {
+    const runtime = getChromeRuntime();
+    if (!runtime || !runtime.sendMessage) {
       return null;
     }
     
     return new Promise((resolve) => {
-      window.chrome?.runtime?.sendMessage(message, (response) => {
+      runtime.sendMessage(message, (response) => {
         resolve(response || null);
       });
     });
   },
   
   addListener: (callback: ChromeMessageListener): void => {
-    if (!isChromeExtension()) {
+    const runtime = getChromeRuntime();
+    if (!runtime || !runtime.onMessage) {
       return;
     }
     
-    window.chrome?.runtime?.onMessage.addListener(callback);
+    runtime.onMessage.addListener(callback);
   },
   
   removeListener: (callback: ChromeMessageListener): void => {
-    if (!isChromeExtension()) {
+    const runtime = getChromeRuntime();
+    if (!runtime || !runtime.onMessage) {
       return;
     }
     
-    window.chrome?.runtime?.onMessage.removeListener(callback);
+    runtime.onMessage.removeListener(callback);
   }
 };

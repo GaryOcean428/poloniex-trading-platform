@@ -1,4 +1,4 @@
-import { isChromeExtension } from './chromeExtensionCheck';
+import { getChromeTabs } from './chromeExtensionCheck';
 
 // Types for Chrome tabs operations
 export interface TabQueryInfo {
@@ -42,36 +42,39 @@ export interface TabUpdateProperties {
 // Helper to safely use Chrome tabs API
 export const chromeTabs = {
   query: async (queryInfo: TabQueryInfo): Promise<chrome.tabs.Tab[]> => {
-    if (!isChromeExtension()) {
+    const tabs = getChromeTabs();
+    if (!tabs || !tabs.query) {
       return [];
     }
     
     return new Promise((resolve) => {
-      window.chrome?.tabs?.query(queryInfo, (tabs) => {
+      tabs.query(queryInfo, (tabs) => {
         resolve(tabs || []);
       });
     });
   },
   
   create: async (createProperties: TabCreateProperties): Promise<chrome.tabs.Tab | null> => {
-    if (!isChromeExtension()) {
+    const tabs = getChromeTabs();
+    if (!tabs || !tabs.create) {
       return null;
     }
     
     return new Promise((resolve) => {
-      window.chrome?.tabs?.create(createProperties, (tab) => {
+      tabs.create(createProperties, (tab) => {
         resolve(tab || null);
       });
     });
   },
   
   update: async (tabId: number, updateProperties: TabUpdateProperties): Promise<chrome.tabs.Tab | null> => {
-    if (!isChromeExtension()) {
+    const tabs = getChromeTabs();
+    if (!tabs || !tabs.update) {
       return null;
     }
     
     return new Promise((resolve) => {
-      window.chrome?.tabs?.update(tabId, updateProperties, (tab) => {
+      tabs.update(tabId, updateProperties, (tab) => {
         resolve(tab || null);
       });
     });

@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
 import {
-  isChromeExtension,
+  isChromeExtensionAvailable,
   initExtensionSecurity,
   getExtensionStatus
 } from '@/utils/chromeExtension';
@@ -13,7 +13,7 @@ import {
 const ExtensionSecurityManager: React.FC = () => {
   useEffect(() => {
     // Initialize extension security on component mount
-    if (isChromeExtension()) {
+    if (isChromeExtensionAvailable()) {
       // Generate a unique security token for this session
       const securityToken = `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
 
