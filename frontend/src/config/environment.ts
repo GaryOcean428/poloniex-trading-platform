@@ -39,7 +39,7 @@ export class EnvironmentManager {
       apiSecret: storedConfig?.apiSecret || apiSecret,
       forceMockMode: storedConfig?.forceMockMode ?? forceMockMode,
       isProduction: import.meta.env.PROD,
-      wsUrl: import.meta.env.VITE_WS_URL || 'wss://ws.poloniex.com/ws/public',
+      wsUrl: import.meta.env.VITE_WS_URL || 'wss://futures-apiws.poloniex.com',
       apiUrl: import.meta.env.VITE_API_URL || 'https://api.poloniex.com',
       liveTradingEnabled: false // Will be set after validation
     };
