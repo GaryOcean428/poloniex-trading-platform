@@ -58,11 +58,11 @@ app.use('/api/confidence-scoring', confidenceScoringRoutes);
 // Serve static files in production
 if (process.env.NODE_ENV === 'production') {
   // Serve frontend static files
-  app.use(express.static(path.join(__dirname, '../public')));
+  app.use(express.static(path.join(__dirname, '../../frontend/dist')));
 
   // Serve index.html for all other routes (SPA support)
   app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, '../public/index.html'));
+    res.sendFile(path.join(__dirname, '../../frontend/dist/index.html'));
   });
 }
 
