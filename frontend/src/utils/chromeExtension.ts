@@ -1,4 +1,5 @@
 // Enhanced Chrome extension utilities with improved security features
+import { isChromeExtension, getChromeRuntime } from './chromeExtensionCheck';
 
 /**
  * Extension message types for type safety
@@ -56,10 +57,8 @@ const generateRequestId = (): string => {
 /**
  * Safely checks if Chrome extension API is available
  */
-export const isChromeExtension = (): boolean => {
-  return typeof window !== 'undefined' && 
-         typeof window.chrome !== 'undefined' && 
-         typeof window.chrome.runtime !== 'undefined';
+export const isChromeExtensionAvailable = (): boolean => {
+  return isChromeExtension();
 };
 
 /**
@@ -94,8 +93,9 @@ export const initExtensionSecurity = (token?: string): void => {
   securityToken = token || Math.random().toString(36).substring(2, 15);
   
   // Set up message listener with security checks
-  if (isChromeExtension()) {
-    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  const runtime = getChromeRuntime();
+  if (runtime && runtime.onMessage) {
+    runtime.onMessage.addListener((message, sender, sendResponse) => {
       // Validate message origin
       if (sender.origin && !validateOrigin(sender.origin)) {
         console.error(`Invalid message origin: ${sender.origin}`);
@@ -140,7 +140,8 @@ export const sendSecureMessage = (
   payload?: Record<string, unknown>
 ): Promise<ExtensionResponse> => {
   return new Promise((resolve, reject) => {
-    if (!isChromeExtension()) {
+    const runtime = getChromeRuntime();
+    if (!runtime || !runtime.sendMessage) {
       reject(new Error('Chrome extension API not available'));
       return;
     }
@@ -168,11 +169,11 @@ export const sendSecureMessage = (
       reject(new Error('Extension communication timeout'));
     }, 10000);
     
-    chrome.runtime.sendMessage(message, (response: ExtensionResponse) => {
+    runtime.sendMessage(message, (response: ExtensionResponse) => {
       clearTimeout(timeout);
       
-      if (chrome.runtime.lastError) {
-        reject(new Error(chrome.runtime.lastError.message));
+      if (runtime.lastError) {
+        reject(new Error(runtime.lastError.message));
         return;
       }
       
@@ -255,7 +256,7 @@ export const getExtensionStatus = (): Promise<unknown> => {
 };
 
 export default {
-  isChromeExtension,
+  isChromeExtensionAvailable,
   initExtensionSecurity,
   sendSecureMessage,
   getExtensionData,

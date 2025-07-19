@@ -2,6 +2,9 @@
  * Handles browser extension communication errors
  * These errors occur when extensions try to communicate but channels close prematurely
  */
+
+import { isChromeApiAvailable, getChromeRuntime } from './chromeExtensionCheck';
+
 export class ExtensionErrorHandler {
   private static instance: ExtensionErrorHandler;
   private errorCount = 0;
@@ -125,10 +128,11 @@ export class ExtensionErrorHandler {
 export class BrowserCompatibility {
   static isExtensionInstalled(extensionId?: string): boolean {
     // Check for common extension indicators
-    if (extensionId && chrome?.runtime) {
+    const runtime = getChromeRuntime();
+    if (extensionId && runtime) {
       try {
-        chrome.runtime.sendMessage(extensionId, { ping: true }, () => {
-          if (chrome.runtime.lastError) {
+        runtime.sendMessage(extensionId, { ping: true }, () => {
+          if (runtime.lastError) {
             return false;
           }
           return true;
@@ -140,7 +144,7 @@ export class BrowserCompatibility {
     
     // Check for generic extension artifacts
     return !!(
-      window.chrome?.runtime ||
+      isChromeApiAvailable() ||
       (window as unknown as { browser?: { runtime?: unknown } }).browser?.runtime
     );
   }

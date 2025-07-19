@@ -5,7 +5,7 @@ import { Label } from '@/components/ui/Label';
 import { Select, SelectOption } from '@/components/ui/Select';
 import { poloniexApi } from '@/services/poloniexAPI';
 import { MarketData, Strategy } from '@/types';
-import { getExtensionData, isChromeExtension, setExtensionData } from '@/utils/chromeExtension';
+import { getExtensionData, isChromeExtensionAvailable, setExtensionData } from '@/utils/chromeExtension';
 import { executeStrategy } from '@/utils/strategyExecutors';
 import { useEffect, useState } from 'react';
 import { useSettings } from '../../hooks/useSettings';
@@ -88,7 +88,7 @@ const StrategyBuilder: React.FC = () => {
     const loadStrategies = async () => {
       try
       {
-        if (isChromeExtension())
+        if (isChromeExtensionAvailable())
         {
           // Load from Chrome storage if in extension
           getExtensionData('trading_strategies')
@@ -123,7 +123,7 @@ const StrategyBuilder: React.FC = () => {
     {
       try
       {
-        if (isChromeExtension())
+        if (isChromeExtensionAvailable())
         {
           // Save to Chrome storage if in extension
           setExtensionData('trading_strategies', strategies)
