@@ -6,10 +6,7 @@ cmds = ["yarn install --frozen-lockfile"]
 
 [phases.build]
 cmds = [
-  "rm -rf dist",
-  "rm -rf .vite",
-  "rm -rf node_modules/.vite",
-  "yarn build --force"
+  "yarn build"
 ]
 
 [start]
@@ -17,4 +14,4 @@ cmd = "yarn start"
 
 [staticAssets]
 # Ensure static assets are served correctly
-"public" = "/"
+"dist" = "/"
