@@ -2,13 +2,6 @@
  * Platform detection utilities for Chrome extension vs web environment
  */
 
-// Declare chrome as potentially undefined to handle both contexts
-declare global {
-  interface Window {
-    chrome?: typeof chrome;
-  }
-}
-
 /**
  * Check if running in Chrome extension environment
  * More robust check that handles both extension and web contexts
@@ -46,7 +39,7 @@ export const isChromeApiAvailable = (): boolean => {
  */
 export const getChromeRuntime = (): typeof chrome.runtime | null => {
   if (!isChromeApiAvailable()) return null;
-  return window.chrome?.runtime || null;
+  return (window as any).chrome?.runtime || null;
 };
 
 /**
@@ -54,5 +47,5 @@ export const getChromeRuntime = (): typeof chrome.runtime | null => {
  */
 export const getChromeTabs = (): typeof chrome.tabs | null => {
   if (!isChromeApiAvailable()) return null;
-  return window.chrome?.tabs || null;
+  return (window as any).chrome?.tabs || null;
 };

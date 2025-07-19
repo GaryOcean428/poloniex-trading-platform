@@ -1,4 +1,4 @@
-import { isChromeApiAvailable, getChromeRuntime } from './chromeExtensionCheck';
+import { getChromeRuntime } from './chromeExtensionCheck';
 
 // Types for Chrome extension messaging
 export interface ChromeMessage {

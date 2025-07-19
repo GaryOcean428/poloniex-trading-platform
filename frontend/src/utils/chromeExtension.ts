@@ -1,5 +1,5 @@
 // Enhanced Chrome extension utilities with improved security features
-import { isChromeExtension, isChromeApiAvailable, getChromeRuntime } from './chromeExtensionCheck';
+import { isChromeExtension, getChromeRuntime } from './chromeExtensionCheck';
 
 /**
  * Extension message types for type safety

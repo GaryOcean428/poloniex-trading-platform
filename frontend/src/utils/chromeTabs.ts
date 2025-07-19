@@ -1,4 +1,4 @@
-import { isChromeApiAvailable, getChromeTabs } from './chromeExtensionCheck';
+import { getChromeTabs } from './chromeExtensionCheck';
 
 // Types for Chrome tabs operations
 export interface TabQueryInfo {
