@@ -1,5 +1,4 @@
 import { MarketData } from "@/types";
-import { logger } from "./logger";
 
 /**
  * Simplified Enhanced Backtesting Framework
@@ -128,31 +127,7 @@ export class EnhancedBacktester {
     );
   }
 
-  private async runWalkForwardBacktest(
-    marketData: MarketData[]
-  ): Promise<BacktestResults> {
-    // Placeholder implementation for walk-forward optimization
-    // TODO: Implement walk-forward analysis with parameter optimization
-    logger.debug(
-      `Walk-forward backtest with ${marketData.length} data points`,
-      "Backtesting"
-    );
-    return {
-      totalTrades: 0,
-      winningTrades: 0,
-      losingTrades: 0,
-      winRate: 0,
-      totalReturn: 0,
-      totalReturnPercent: 0,
-      averageWin: 0,
-      averageLoss: 0,
-      profitFactor: 0,
-      maxDrawdown: 0,
-      maxDrawdownPercent: 0,
-      trades: [],
-      equityCurve: [],
-    };
-  }
+
 
   private generateSignal(data: MarketData[]): "BUY" | "SELL" | "HOLD" {
     if (data.length < 50) return "HOLD";
@@ -228,29 +203,5 @@ export class EnhancedBacktester {
     };
   }
 
-  private closePosition(
-    position: { side: "long" | "short"; entryPrice: number; entryTime: number },
-    exitPrice: number,
-    exitTime: number,
-    exitReason: string
-  ): Trade {
-    const pnl =
-      position.side === "long"
-        ? (exitPrice - position.entryPrice) * 100
-        : (position.entryPrice - exitPrice) * 100;
 
-    return {
-      entryTime: position.entryTime,
-      exitTime,
-      pair: "BTC_USDT",
-      side: position.side,
-      entryPrice: position.entryPrice,
-      exitPrice,
-      quantity: 1,
-      pnl,
-      pnlPercent: (pnl / position.entryPrice) * 100,
-      netPnl: pnl - this.config.commission,
-      exitReason,
-    };
-  }
 }

@@ -37,7 +37,11 @@ export default [
       ],
       // TypeScript strict rules for quality improvement
       '@typescript-eslint/no-explicit-any': 'error',
-      '@typescript-eslint/no-unused-vars': 'error',
+      '@typescript-eslint/no-unused-vars': ['error', { 
+        argsIgnorePattern: '^_',
+        varsIgnorePattern: '^_',
+        destructuredArrayIgnorePattern: '^_'
+      }],
       '@typescript-eslint/no-require-imports': 'error',
       '@typescript-eslint/prefer-as-const': 'error',
       '@typescript-eslint/no-unnecessary-type-assertion': 'error',

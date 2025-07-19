@@ -255,7 +255,7 @@ export class MonitoringSystem {
   /**
    * Update API performance metrics
    */
-  updateAPIMetrics(latency: number, success: boolean): void {
+  updateAPIMetrics(latency: number, _success: boolean): void {
     const recentMetrics = this.performanceHistory.slice(-10);
     const avgLatency = recentMetrics.reduce((sum, m) => sum + m.apiLatency, latency) / (recentMetrics.length + 1);
     const successRate = recentMetrics.filter(m => m.successRate > 0.95).length / recentMetrics.length;
@@ -688,7 +688,7 @@ export class MonitoringSystem {
   /**
    * Get recent prices for a pair (placeholder - would need actual price storage)
    */
-  private getRecentPrices(pair: string): number[] {
+  private getRecentPrices(_pair: string): number[] {
     // This would retrieve recent price history from storage
     // For now, return empty array
     return [];
