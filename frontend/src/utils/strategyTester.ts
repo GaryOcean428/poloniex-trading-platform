@@ -33,6 +33,7 @@ export interface BacktestTrade {
   profitPercent: number;
   reason: string;
   confidence: number;
+  highestProfit?: number; // For trailing stop functionality
 }
 
 export interface EquityPoint {
@@ -457,30 +458,31 @@ function calculateAnnualizedReturn(
  * Optimize strategy parameters using grid search
  */
 export function optimizeStrategy(
-  strategyType: string,
-  marketData: MarketData[],
-  parameterRanges: Record<string, [number, number, number]>, // [min, max, step]
+  strategy: Strategy,
+  data: MarketData[],
+  parameterRanges: Record<string, [number, number, number]>,
   optimizationMetric: keyof BacktestResult['metrics'] = 'netProfit',
-  baseParameters: StrategyParameters = {},
+  baseParameters: Record<string, unknown> = {},
   testOptions: Partial<StrategyTestOptions> = {}
 ): StrategyOptimizationResult {
   const startTime = Date.now();
   const results: BacktestResult[] = [];
-  const parameterCombinations: StrategyParameters[] = generateParameterCombinations(parameterRanges, baseParameters);
+  const parameterCombinations: Record<string, unknown>[] = generateParameterCombinations(parameterRanges, baseParameters);
   
   console.log(`Testing ${parameterCombinations.length} parameter combinations...`);
   
   // Test each parameter combination
   for (const parameters of parameterCombinations) {
-    const strategy: Strategy = {
+    const testStrategy: Strategy = {
       id: 'optimization-test',
-      name: `${strategyType} Optimization`,
-      type: strategyType,
-      parameters,
-      description: 'Strategy parameter optimization test'
+      name: `${strategy.type} Optimization`,
+      type: strategy.type,
+      parameters: parameters as StrategyParameters,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
     };
     
-    const result = backtestStrategy(strategy, marketData, testOptions);
+    const result = backtestStrategy(testStrategy, data, testOptions);
     results.push(result);
   }
   
@@ -513,12 +515,12 @@ export function optimizeStrategy(
  */
 function generateParameterCombinations(
   parameterRanges: Record<string, [number, number, number]>,
-  baseParameters: StrategyParameters = {}
-): StrategyParameters[] {
+  baseParameters: Record<string, unknown> = {}
+): Record<string, unknown>[] {
   const parameterNames = Object.keys(parameterRanges);
-  const combinations: StrategyParameters[] = [];
+  const combinations: Record<string, unknown>[] = [];
   
-  function generateCombination(index: number, currentParams: StrategyParameters): void {
+  function generateCombination(index: number, currentParams: Record<string, unknown>): void {
     if (index >= parameterNames.length) {
       combinations.push({ ...baseParameters, ...currentParams });
       return;
@@ -532,7 +534,7 @@ function generateParameterCombinations(
     }
   }
   
-  generateCombination(0, {});
+  generateCombination(0, { ...baseParameters });
   return combinations;
 }
 
@@ -554,7 +556,7 @@ function generateParameterHeatmap(
       const parameters: Record<string, number> = {};
       
       for (const paramName of parameterNames) {
-        parameters[paramName] = result.parameters[paramName] as number;
+        parameters[paramName] = (result.parameters as Record<string, unknown>)[paramName] as number;
       }
       
       heatmap.push({
@@ -570,7 +572,7 @@ function generateParameterHeatmap(
     const parameterCorrelations: Record<string, number> = {};
     
     for (const paramName of parameterNames) {
-      const values = results.map(r => r.parameters[paramName] as number);
+      const values = results.map(r => (r.parameters as Record<string, unknown>)[paramName] as number);
       const metricValues = results.map(r => r.metrics[metric] || 0);
       
       parameterCorrelations[paramName] = Math.abs(calculateCorrelation(values, metricValues));
@@ -586,7 +588,7 @@ function generateParameterHeatmap(
     const groupedResults: Record<string, BacktestResult[]> = {};
     
     for (const result of results) {
-      const key = sortedParameters.map(param => `${param}:${result.parameters[param]}`).join(',');
+      const key = sortedParameters.map(param => `${param}:${(result.parameters as Record<string, unknown>)[param]}`).join(',');
       
       if (!groupedResults[key]) {
         groupedResults[key] = [];
@@ -884,11 +886,11 @@ export function walkForwardAnalysis(
     if (Object.keys(parameterRanges).length > 0) {
       // If parameter ranges provided, perform optimization
       const optimizationResult = optimizeStrategy(
-        strategy.type,
+        strategy,
         inSampleData,
         parameterRanges,
         optimizationMetric,
-        strategy.parameters,
+        strategy.parameters as unknown as Record<string, unknown>,
         testOptions
       );
       

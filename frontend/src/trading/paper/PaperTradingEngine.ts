@@ -335,7 +335,7 @@ export class PaperTradingEngine extends EventEmitter {
     try {
       logger.info('Paper trading engine initialized');
     } catch (error) {
-      logger.error('Failed to initialize paper trading engine:', error);
+      logger.error('Failed to initialize paper trading engine:', 'PaperTradingEngine', error instanceof Error ? error : new Error(String(error)));
       throw error;
     }
   }
@@ -422,7 +422,7 @@ export class PaperTradingEngine extends EventEmitter {
 
       return { ...order, price: executionPrice, status: 'filled', fee };
     } catch (error) {
-      logger.error('Failed to place order:', error);
+      logger.error('Failed to place order:', 'PaperTradingEngine', error instanceof Error ? error : new Error(String(error)));
       throw error;
     }
   }

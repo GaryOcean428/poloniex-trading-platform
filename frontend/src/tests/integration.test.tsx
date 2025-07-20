@@ -3,10 +3,13 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import App from '@/App';
 import { AppProviders } from '@/context/AppProviders';
-import { webSocketService } from '@/services/websocketService';
+import LiveDataDashboard from '@/components/dashboard/LiveDataDashboard';
+import { MLTradingPanel } from '@/components/trading/MLTradingPanel';
+import { DQNTradingPanel } from '@/components/trading/DQNTradingPanel';
+import { ModelRecalibrationPanel } from '@/components/ml/ModelRecalibrationPanel';
 import { LiveDataService } from '@/services/advancedLiveData';
 import { default as mlTrading } from '@/ml/mlTrading';
-import { default as dqnTrading } from '@/ml/dqnTrading';
+import * as dqnTrading from '@/ml/dqnTrading';
 import { default as modelRecalibration } from '@/ml/modelRecalibration';
 
 // Mock dependencies
@@ -46,33 +49,13 @@ describe('Integration Tests', () => {
       status: 'ready'
     });
     
-    vi.mocked(dqnTrading.trainDQNModel).mockResolvedValue({
-      id: 'test-agent',
-      name: 'Test DQN Agent',
-      description: 'Test DQN agent',
-      config: {
-        stateSize: 4,
-        actionSize: 3,
-        learningRate: 0.001,
-        memorySize: 10000,
-        batchSize: 32
-      },
-      performance: {
-        averageReward: 100,
-        maxReward: 200,
-        episodeLength: 1000
-      },
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      lastTrainedAt: Date.now(),
-      status: 'ready'
-    });
-    
     // Mock LiveDataService
     if (LiveDataService.prototype.fetchOrderBook) {
       vi.mocked(LiveDataService.prototype.fetchOrderBook).mockResolvedValue({
+        symbol: 'BTC-USDT',
         asks: [],
-        bids: []
+        bids: [],
+        timestamp: Date.now()
       });
     }
     
@@ -81,9 +64,7 @@ describe('Integration Tests', () => {
       { prediction: 1, confidence: 0.8, timestamp: Date.now(), symbol: 'BTC_USDT' }
     ]);
     
-    vi.mocked(dqnTrading.getDQNActions).mockResolvedValue([
-      { action: 'buy', confidence: 0.7 }
-    ]);
+    vi.mocked(mlTrading.generateSignal).mockResolvedValue({ signal: 'BUY', confidence: 0.8 });
   });
   
   afterEach(() => {
@@ -149,7 +130,7 @@ describe('Integration Tests', () => {
     
     // Wait for app to load and verify WebSocket connection
     await waitFor(() => {
-      expect(WebSocketService.prototype.connect).toHaveBeenCalled();
+      expect(webSocketService.connect).toHaveBeenCalled();
     });
   });
   
@@ -206,7 +187,7 @@ describe('Integration Tests', () => {
     
     // Verify DQN action was called
     await waitFor(() => {
-      expect(dqnTrading.getDQNActions).toHaveBeenCalled();
+      expect(dqnTrading.createDQNAction).toHaveBeenCalled();
     });
   });
   

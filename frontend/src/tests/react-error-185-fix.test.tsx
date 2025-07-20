@@ -103,8 +103,25 @@ describe('React Error #185 Fix - Infinite Loop Prevention', () => {
     mockUseSettings.mockReturnValue({
       apiKey: '',
       apiSecret: '',
-      isLiveTrading: false
-    });
+      isLiveTrading: false,
+      darkMode: false,
+      defaultPair: 'BTC-USDT',
+      emailNotifications: false,
+      tradeNotifications: false,
+      riskLevel: 'medium',
+      maxPositionSize: 100,
+      stopLossPercent: 5,
+      takeProfitPercent: 10,
+      leverage: 1,
+      updateSettings: vi.fn(),
+      resetSettings: vi.fn(),
+      exportSettings: vi.fn(),
+      importSettings: vi.fn(),
+      validateApiCredentials: vi.fn(),
+      getApiStatus: vi.fn(),
+      theme: 'light',
+      language: 'en'
+    } as any);
 
     const { result, rerender } = renderHook(
       () => {
@@ -124,8 +141,25 @@ describe('React Error #185 Fix - Infinite Loop Prevention', () => {
     mockUseSettings.mockReturnValue({
       apiKey: 'test-api-key',
       apiSecret: 'test-api-secret',
-      isLiveTrading: true
-    });
+      isLiveTrading: true,
+      darkMode: false,
+      defaultPair: 'BTC-USDT',
+      emailNotifications: false,
+      tradeNotifications: false,
+      riskLevel: 'medium',
+      maxPositionSize: 100,
+      stopLossPercent: 5,
+      takeProfitPercent: 10,
+      leverage: 1,
+      updateSettings: vi.fn(),
+      resetSettings: vi.fn(),
+      exportSettings: vi.fn(),
+      importSettings: vi.fn(),
+      validateApiCredentials: vi.fn(),
+      getApiStatus: vi.fn(),
+      theme: 'light',
+      language: 'en'
+    } as any);
 
     rerender();
 

@@ -84,6 +84,27 @@ export const trainMLModel = async (
   };
 };
 
+export const generateSignal = async (
+  data: MarketDataPoint[]
+): Promise<{ signal: string; confidence: number }> => {
+  // Simple signal generation based on price movement
+  if (data.length < 2) {
+    return { signal: 'HOLD', confidence: 0.5 };
+  }
+  
+  const latest = data[data.length - 1];
+  const previous = data[data.length - 2];
+  const priceChange = (latest.close - previous.close) / previous.close;
+  
+  if (priceChange > 0.02) {
+    return { signal: 'BUY', confidence: Math.min(0.9, 0.5 + Math.abs(priceChange) * 10) };
+  } else if (priceChange < -0.02) {
+    return { signal: 'SELL', confidence: Math.min(0.9, 0.5 + Math.abs(priceChange) * 10) };
+  }
+  
+  return { signal: 'HOLD', confidence: 0.5 };
+};
+
 export const predictWithMLModel = async (
   modelInfo: MLModelInfo,
   data: MarketDataPoint[]
@@ -156,5 +177,6 @@ export default {
   trainMLModel,
   predictWithMLModel,
   optimizeMLModel,
-  prepareFeatures
+  prepareFeatures,
+  generateSignal
 };

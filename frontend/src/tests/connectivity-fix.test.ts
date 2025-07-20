@@ -46,14 +46,20 @@ describe('WebSocket & API Connectivity Fix', () => {
       // We'll test the logic directly since mocking import.meta.env is complex in this test setup
       
       const mockEnvUrl = 'https://custom-backend.example.com';
-      const backendUrl = mockEnvUrl || getBackendUrl(); // Environment variable would take precedence
-      
+      // Test that environment variable would take precedence
       expect(mockEnvUrl).toBe('https://custom-backend.example.com');
     });
 
     it('should fall back to window.location.origin for other domains', () => {
       global.window.location.hostname = 'example.com';
-      global.window.location.origin = 'https://example.com';
+      // Mock window.location.origin using Object.defineProperty
+      Object.defineProperty(window, 'location', {
+        value: {
+          ...window.location,
+          origin: 'https://example.com'
+        },
+        writable: true
+      });
       
       const backendUrl = getBackendUrl();
       expect(backendUrl).toBe('https://example.com');

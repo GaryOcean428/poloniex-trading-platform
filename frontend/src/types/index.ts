@@ -44,12 +44,17 @@ export interface BreakoutParameters extends BaseStrategyParameters {
   breakoutThreshold: number;
 }
 
+export interface CustomParameters extends BaseStrategyParameters {
+  [key: string]: unknown;
+}
+
 export type StrategyParameters =
   | MovingAverageCrossoverParameters
   | RSIParameters
   | MACDParameters
   | BollingerBandsParameters
-  | BreakoutParameters;
+  | BreakoutParameters
+  | CustomParameters;
 
 export interface StrategyPerformance {
   totalPnL: number;

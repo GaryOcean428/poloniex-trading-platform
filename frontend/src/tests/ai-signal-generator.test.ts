@@ -19,18 +19,13 @@ describe('AI Signal Generator', () => {
     for (let i = 0; i < 25; i++) {
       const price = basePrice + (Math.sin(i / 5) * 1000) + (Math.random() * 500 - 250);
       mockMarketData.push({
-        symbol: 'BTC_USDT',
-        interval: '5m',
+        pair: 'BTC_USDT',
         open: price - 50,
         high: price + 100,
         low: price - 100,
         close: price,
         volume: 1000 + Math.random() * 500,
-        timestamp: Date.now() - (25 - i) * 5 * 60 * 1000,
-        quoteVolume: 0,
-        takerBuyBaseVolume: 0,
-        takerBuyQuoteVolume: 0,
-        count: 0
+        timestamp: Date.now() - (25 - i) * 5 * 60 * 1000
       });
     }
   });
@@ -124,7 +119,7 @@ describe('AI Signal Generator', () => {
 
     it('should calculate appropriate risk level', async () => {
       // Create high volatility data
-      const highVolatilityData = mockMarketData.map((data, index) => ({
+      const highVolatilityData = mockMarketData.map((data) => ({
         ...data,
         close: data.close + (Math.random() * 2000 - 1000) // Add high volatility
       }));

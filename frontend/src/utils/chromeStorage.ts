@@ -1,4 +1,4 @@
-import { isChromeExtension, isChromeApiAvailable } from './chromeExtensionCheck';
+import { isChromeApiAvailable } from './chromeExtensionCheck';
 
 // Types for Chrome storage operations
 export type StorageValue = string | number | boolean | object | null;

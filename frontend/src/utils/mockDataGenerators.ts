@@ -15,11 +15,15 @@ export interface MarketDataPoint {
 export interface TickerData {
   symbol: string;
   price: number;
+  lastPrice: number;
+  bidPrice: number;
+  askPrice: number;
   change24h: number;
   changePercent24h: number;
   volume24h: number;
   high24h: number;
   low24h: number;
+  timestamp: number;
 }
 
 export interface OrderBookEntry {
@@ -31,6 +35,7 @@ export interface OrderBookData {
   symbol: string;
   bids: OrderBookEntry[];
   asks: OrderBookEntry[];
+  timestamp: number;
 }
 
 export interface TradeData {
@@ -38,6 +43,7 @@ export interface TradeData {
   symbol: string;
   price: number;
   quantity: number;
+  amount: number;
   side: 'buy' | 'sell';
   timestamp: number;
 }
@@ -221,7 +227,7 @@ export const generateRandomOrderBook = (
     const volumeFactor = 1 + (i / 10) * volatility;
     const volume = (Math.random() * basePrice * 0.1 + basePrice * 0.01) * volumeFactor;
     
-    bids.push([bidPrice, volume]);
+    bids.push({ price: bidPrice, quantity: volume });
   }
   
   // Generate asks (sell orders)
@@ -236,7 +242,7 @@ export const generateRandomOrderBook = (
     const volumeFactor = 1 + (i / 10) * volatility;
     const volume = (Math.random() * basePrice * 0.1 + basePrice * 0.01) * volumeFactor;
     
-    asks.push([askPrice, volume]);
+    asks.push({ price: askPrice, quantity: volume });
   }
   
   return {
@@ -309,6 +315,7 @@ export const generateRandomTrades = (
       id: `mock-trade-${symbol}-${timestamp}`,
       symbol,
       price,
+      quantity: volume,
       amount: volume,
       side: isBuy ? 'buy' : 'sell',
       timestamp
@@ -382,6 +389,7 @@ export const generateRandomTicker = (
   
   return {
     symbol,
+    price: lastPrice,
     lastPrice,
     bidPrice,
     askPrice,
@@ -389,6 +397,7 @@ export const generateRandomTicker = (
     low24h,
     volume24h,
     change24h,
+    changePercent24h: change24h,
     timestamp: Date.now()
   };
 };
