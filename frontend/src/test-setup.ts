@@ -2,19 +2,24 @@ import '@testing-library/jest-dom';
 
 // Mock WebSocket for tests
 global.WebSocket = class WebSocket {
+  static readonly CONNECTING = 0;
+  static readonly OPEN = 1;
+  static readonly CLOSING = 2;
+  static readonly CLOSED = 3;
+  
   constructor() {}
   send() {}
   close() {}
   addEventListener() {}
   removeEventListener() {}
-};
+} as any;
 
 // Mock Canvas for chart tests
-HTMLCanvasElement.prototype.getContext = () => {
+(HTMLCanvasElement.prototype.getContext as any) = () => {
   return {
     fillRect: () => {},
     clearRect: () => {},
-    getImageData: () => ({ data: new Array(4) }),
+    getImageData: () => ({ data: [] }),
     putImageData: () => {},
     createImageData: () => [],
     setTransform: () => {},
@@ -35,7 +40,7 @@ HTMLCanvasElement.prototype.getContext = () => {
     measureText: () => ({ width: 0 }),
     transform: () => {},
     rect: () => {},
-    clip: () => {},
+    clip: () => {}
   };
 };
 

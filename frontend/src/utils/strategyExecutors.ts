@@ -35,7 +35,7 @@ export function executeStrategy(strategy: Strategy, marketData: MarketData[]): S
         return { signal: null, reason: 'Unknown strategy type', confidence: 0 };
     }
   } catch (error) {
-    logger.error('Strategy execution error:', error);
+    logger.error('Strategy execution error:', 'StrategyExecutor', error instanceof Error ? error : new Error(String(error)));
     return { signal: null, reason: 'Strategy execution error', confidence: 0 };
   }
 }

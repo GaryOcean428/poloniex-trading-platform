@@ -241,7 +241,7 @@ export class MonitoringSystem {
    * Log system error and trigger alert
    */
   logError(error: Error, context?: string): void {
-    logger.error(`System error: ${error.message}`, { context, stack: error.stack });
+    logger.error(`System error: ${error.message}`, context, error instanceof Error ? error : new Error(String(error)));
     
     this.triggerAlert('system_error', {
       title: 'System Error',
@@ -505,7 +505,7 @@ export class MonitoringSystem {
     // Send notifications
     this.sendNotifications(alert);
     
-    logger.warn(`Alert triggered: ${alert.title}`, alert);
+    logger.warn(`Alert triggered: ${alert.title}`, 'AlertSystem', undefined, alert);
   }
 
   /**
@@ -551,7 +551,7 @@ export class MonitoringSystem {
         try {
           await handler(alert);
         } catch (error) {
-          logger.error(`Failed to send ${method} notification:`, error);
+          logger.error(`Failed to send ${method} notification:`, 'NotificationService', error instanceof Error ? error : new Error(String(error)));
         }
       }
     }

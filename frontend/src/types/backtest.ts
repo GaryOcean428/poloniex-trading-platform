@@ -16,14 +16,27 @@ export interface BacktestResult {
 }
 
 export interface BacktestTrade {
-  timestamp: number;
-  type: 'BUY' | 'SELL';
-  price: number;
-  amount: number;
-  total: number;
+  id: string;
+  entryPrice: number;
+  exitPrice: number | null;
+  entryTime: string;
+  exitTime: string | null;
+  side: 'long' | 'short';
+  status: 'open' | 'closed' | 'stopped';
   pnl: number;
   pnlPercent: number;
   balance: number;
+  size: number;
+  fee: number;
+  reason?: string;
+  metadata?: Record<string, unknown>;
+  highestProfit?: number;
+  // Legacy properties for backward compatibility
+  timestamp?: number;
+  type?: 'BUY' | 'SELL';
+  price?: number;
+  amount?: number;
+  total?: number;
 }
 
 export interface BacktestMetrics {

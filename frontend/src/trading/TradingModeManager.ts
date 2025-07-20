@@ -23,7 +23,7 @@ export class TradingModeManager extends EventEmitter {
       this.isInitialized = true;
       logger.info('Trading mode manager initialized');
     } catch (error) {
-      logger.error('Failed to initialize trading mode manager:', error);
+      logger.error('Failed to initialize trading mode manager:', 'TradingModeManager', error instanceof Error ? error : new Error(String(error)));
       throw error;
     }
   }
@@ -36,7 +36,7 @@ export class TradingModeManager extends EventEmitter {
       await this.paperEngine.initialize();
       logger.info('Paper trading engine initialized');
     } catch (error) {
-      logger.error('Failed to initialize paper trading:', error);
+      logger.error('Failed to initialize paper trading:', 'TradingModeManager', error instanceof Error ? error : new Error(String(error)));
       throw error;
     }
   }
@@ -59,7 +59,7 @@ export class TradingModeManager extends EventEmitter {
       }
       logger.info('Live mode validation successful');
     } catch (error) {
-      logger.error('Live mode validation failed:', error);
+      logger.error('Live mode validation failed:', 'TradingModeManager', error instanceof Error ? error : new Error(String(error)));
       throw error;
     }
   }
@@ -91,7 +91,7 @@ export class TradingModeManager extends EventEmitter {
       logger.info(`Successfully switched to ${mode} mode`);
       return;
     } catch (error) {
-      logger.error(`Failed to switch to ${mode} mode:`, error);
+      logger.error(`Failed to switch to ${mode} mode:`, 'TradingModeManager', error instanceof Error ? error : new Error(String(error)));
       throw error;
     }
   }

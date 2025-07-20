@@ -184,6 +184,51 @@ export function calculateMACD(
   };
 }
 
+export function calculateATR(data: MarketData[], period: number = 14): TechnicalIndicatorResult {
+  if (data.length < period + 1) {
+    throw new Error(`Insufficient data: need ${period + 1} candles`);
+  }
+
+  const trueRanges: number[] = [];
+  
+  for (let i = 1; i < data.length; i++) {
+    const high = data[i].high;
+    const low = data[i].low;
+    const prevClose = data[i - 1].close;
+    
+    const tr1 = high - low;
+    const tr2 = Math.abs(high - prevClose);
+    const tr3 = Math.abs(low - prevClose);
+    
+    trueRanges.push(Math.max(tr1, tr2, tr3));
+  }
+
+  const values: number[] = [];
+  
+  // Calculate initial ATR using SMA
+  let sum = trueRanges.slice(0, period).reduce((a, b) => a + b, 0);
+  values.push(sum / period);
+  
+  // Calculate subsequent ATR values using smoothed moving average
+  for (let i = period; i < trueRanges.length; i++) {
+    const prevATR = values[values.length - 1];
+    const currentTR = trueRanges[i];
+    const atr = (prevATR * (period - 1) + currentTR) / period;
+    values.push(atr);
+  }
+
+  const currentValue = values[values.length - 1];
+  const previousValue = values[values.length - 2] || currentValue;
+  
+  return {
+    values,
+    currentValue,
+    previousValue,
+    signal: "HOLD", // ATR is typically used for volatility, not signals
+    strength: currentValue / data[data.length - 1].close, // ATR as percentage of price
+  };
+}
+
 export function calculateBollingerBands(
   data: MarketData[],
   period: number = 20,

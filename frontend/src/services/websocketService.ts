@@ -143,7 +143,7 @@ class WebSocketService implements WebSocketServiceInterface {
 
   private async connectToPoloniexV3(): Promise<void> {
     try {
-      const ws = await this.connectionManager.connectToPoloniexV3();
+      const ws = await this.connectionManager.connect();
 
       this.eventHandlerService = new EventHandlerService(ws, null);
       this.healthService = new HealthService(ws, null);

@@ -81,12 +81,12 @@ vi.mock('@/hooks/useTradingContext', () => ({
 
 // Mock Chart.js
 vi.mock('react-chartjs-2', () => ({
-  Line: ({ data, options }: any) => (
+  Line: ({ data }: any) => (
     <div data-testid="line-chart">
       Chart: {data?.datasets?.[0]?.label || 'Unknown'}
     </div>
   ),
-  Bar: ({ data, options }: any) => (
+  Bar: ({ data }: any) => (
     <div data-testid="bar-chart">
       Chart: {data?.datasets?.[0]?.label || 'Unknown'}
     </div>
@@ -160,7 +160,7 @@ describe('Phase 5: Real-time WebSocket Trading Dashboard', () => {
       const selector = screen.getByDisplayValue('BTC-USDT');
       fireEvent.change(selector, { target: { value: 'ETH-USDT' } });
       
-      expect(selector.value).toBe('ETH-USDT');
+      expect((selector as HTMLSelectElement).value).toBe('ETH-USDT');
     });
 
     it('should display price chart when data is available', () => {

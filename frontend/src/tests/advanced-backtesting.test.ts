@@ -45,7 +45,7 @@ vi.mock('@/services/poloniexAPI', () => ({
 
 // Mock strategy executor
 vi.mock('@/utils/strategyExecutors', () => ({
-  executeStrategy: vi.fn().mockImplementation((strategy, data) => {
+  executeStrategy: vi.fn().mockImplementation((_strategy, data) => {
     // Simple mock strategy that alternates buy/sell signals
     const index = data.length - 1;
     if (index % 20 === 0) return { signal: 'BUY' as const };
@@ -64,14 +64,14 @@ describe('Advanced Backtesting Service', () => {
       name: 'Test RSI Strategy',
       type: 'RSI' as StrategyType,
       parameters: {
-        pair: 'BTC_USDT',
+        pair: 'BTC-USDT',
+        timeframe: '1h',
         rsiPeriod: 14,
         oversoldThreshold: 30,
         overboughtThreshold: 70
       },
-      isActive: true,
-      createdAt: new Date(),
-      lastModified: new Date()
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
     };
 
     testOptions = {
@@ -316,7 +316,11 @@ describe('Advanced Backtesting Service', () => {
   describe('Data Handling', () => {
     it('should handle empty trade data gracefully', async () => {
       // Mock strategy that never triggers
-      vi.mocked(executeStrategy).mockReturnValue({ signal: null });
+      vi.mocked(executeStrategy).mockReturnValue({ 
+        signal: null, 
+        reason: 'No signal generated', 
+        confidence: 0 
+      });
       
       const result = await advancedBacktestService.runAdvancedBacktest(testStrategy, testOptions);
       
@@ -334,6 +338,7 @@ describe('Advanced Backtesting Service', () => {
       vi.mocked(poloniexApi.getHistoricalData)
         .mockResolvedValueOnce([
           {
+            pair: 'BTC-USDT',
             timestamp: Date.now(),
             open: 50000,
             high: 51000,
@@ -371,7 +376,7 @@ describe('Advanced Backtesting Service', () => {
       const buyTrades = result.trades.filter(t => t.type === 'BUY');
       if (buyTrades.length > 1) {
         const amounts = buyTrades.map(t => t.amount);
-        const uniqueAmounts = new Set(amounts.map(a => Math.round(a * 1000))); // Round to avoid floating point issues
+        const uniqueAmounts = new Set(amounts.map(a => Math.round((a || 0) * 1000))); // Round to avoid floating point issues
         
         // Should have some variation in position sizes
         expect(uniqueAmounts.size).toBeGreaterThan(1);

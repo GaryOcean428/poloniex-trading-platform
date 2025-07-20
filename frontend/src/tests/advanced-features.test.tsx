@@ -9,7 +9,7 @@ import { DQNTradingPanel } from '@/components/trading/DQNTradingPanel';
 import { ModelRecalibrationPanel } from '@/components/ml/ModelRecalibrationPanel';
 import { LiveDataService } from '@/services/advancedLiveData';
 import { default as mlTrading } from '@/ml/mlTrading';
-import { default as dqnTrading } from '@/ml/dqnTrading';
+import * as dqnTrading from '@/ml/dqnTrading';
 import { default as modelRecalibration } from '@/ml/modelRecalibration';
 
 // Mock dependencies
@@ -23,7 +23,7 @@ describe('Advanced Features Tests', () => {
   describe('LiveDataDashboard', () => {
     beforeEach(() => {
       // Mock LiveDataService
-      LiveDataService.prototype.getAggregatedData = vi.fn().mockResolvedValue([
+      (LiveDataService.prototype as any).getAggregatedData = vi.fn().mockResolvedValue([
         {
           timestamp: Date.now(),
           open: 50000,
@@ -192,8 +192,8 @@ describe('Advanced Features Tests', () => {
       // Configuration should be updated
       // Note: We can't easily test the internal state changes without exposing them,
       // but we can verify the UI elements respond correctly
-      expect(sourceSelect.value).toBe('websocket');
-      expect(anomalyToggle.checked).toBe(false);
+      expect((sourceSelect as HTMLSelectElement).value).toBe('websocket');
+      expect((anomalyToggle as HTMLInputElement).checked).toBe(false);
     });
   });
   
@@ -347,7 +347,7 @@ describe('Advanced Features Tests', () => {
   describe('DQNTradingPanel', () => {
     beforeEach(() => {
       // Mock DQN trading methods
-      dqnTrading.trainDQNModel = vi.fn().mockResolvedValue({
+      vi.mocked(dqnTrading.trainDQNModel).mockResolvedValue({
         id: 'test-dqn-model',
         name: 'Test DQN Model',
         description: 'Test DQN model for unit tests',
@@ -383,16 +383,12 @@ describe('Advanced Features Tests', () => {
         totalTrainingSteps: 10000
       });
       
-      dqnTrading.getDQNActions = vi.fn().mockResolvedValue([
-        {
-          timestamp: Date.now(),
-          symbol: 'BTC_USDT',
-          action: 'buy',
-          confidence: 0.92,
-          position: 1,
-          price: 50000
-        }
-      ]);
+      vi.mocked(dqnTrading.createDQNAction).mockReturnValue({
+        timestamp: Date.now(),
+        symbol: 'BTC_USDT',
+        action: 'buy',
+        confidence: 0.92
+      });
     });
     
     it('should render DQN trading panel with agent information', async () => {
@@ -491,7 +487,7 @@ describe('Advanced Features Tests', () => {
       fireEvent.click(actionButton);
       
       // Action should be called
-      expect(dqnTrading.getDQNActions).toHaveBeenCalled();
+      expect(dqnTrading.createDQNAction).toHaveBeenCalled();
       
       // Action results should be displayed
       await waitFor(() => {

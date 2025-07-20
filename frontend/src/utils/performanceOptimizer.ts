@@ -301,7 +301,9 @@ export class PerformanceOptimizer {
       // Manage cache size
       if (cache.size >= maxCacheSize) {
         const oldestKey = cache.keys().next().value;
-        cache.delete(oldestKey);
+        if (oldestKey) {
+          cache.delete(oldestKey);
+        }
       }
       
       cache.set(key, { result, timestamp: Date.now() });

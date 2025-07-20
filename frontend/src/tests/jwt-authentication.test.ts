@@ -126,7 +126,7 @@ describe('JWT Authentication System', () => {
       };
 
       const axios = await import('axios');
-      vi.mocked(axios.post).mockResolvedValue(mockResponse);
+      (axios.default.post as any) = vi.fn().mockResolvedValue(mockResponse);
 
       const result = await authService.login({
         username: 'demo',
@@ -149,7 +149,7 @@ describe('JWT Authentication System', () => {
       };
 
       const axios = await import('axios');
-      vi.mocked(axios.post).mockRejectedValue(mockError);
+      (axios.default.post as any) = vi.fn().mockRejectedValue(mockError);
 
       const result = await authService.login({
         username: 'wrong',
@@ -184,12 +184,12 @@ describe('JWT Authentication System', () => {
       };
 
       const axios = await import('axios');
-      vi.mocked(axios.get).mockResolvedValue(mockResponse);
+      (axios.default.get as any) = vi.fn().mockResolvedValue(mockResponse);
 
       const isValid = await authService.verifyToken();
 
       expect(isValid).toBe(true);
-      expect(axios.get).toHaveBeenCalledWith(
+      expect(axios.default.get).toHaveBeenCalledWith(
         expect.stringContaining('/api/auth/verify'),
         expect.objectContaining({
           headers: {
@@ -223,7 +223,7 @@ describe('JWT Authentication System', () => {
       };
 
       const axios = await import('axios');
-      vi.mocked(axios.post).mockResolvedValue(mockResponse);
+      (axios.default.post as any) = vi.fn().mockResolvedValue(mockResponse);
 
       const newToken = await authService.refreshToken();
 
