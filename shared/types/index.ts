@@ -106,3 +106,6 @@ export interface TradingStrategy {
     sharpeRatio: number;
   };
 }
+
+// Export Strategy as alias to TradingStrategy for compatibility
+export type Strategy = TradingStrategy;
