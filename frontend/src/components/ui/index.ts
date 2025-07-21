@@ -9,10 +9,12 @@ import { Switch } from "./Switch";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "./Tabs";
 import { Alert } from "./Alert";
 import { Textarea } from "./Textarea";
+import { Badge } from "./Badge";
 
 // Export all UI components
 export {
   Button,
+  Badge,
   Card,
   CardHeader,
   CardBody,

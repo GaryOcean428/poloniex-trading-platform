@@ -25,7 +25,7 @@ const QuickTrade: React.FC = () => {
       );
       
       console.log('Order placed:', result);
-      setOrderStatus(`Order successfully placed: ${result.orderId || 'Success'}`);
+      setOrderStatus(`Order successfully placed: ${(result as any)?.orderId || 'Success'}`);
       
       // Reset form
       setAmount('');
