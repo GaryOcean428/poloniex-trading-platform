@@ -63,10 +63,10 @@ const RealTimePortfolio: React.FC<RealTimePortfolioProps> = ({
   // Initialize portfolio data from account balance
   const initializePortfolioData = useCallback(() => {
     if (accountBalance) {
-      const totalValue = parseFloat(accountBalance.totalAmount || '0');
-      const unrealizedPnL = parseFloat(accountBalance.unrealizedPnL || '0');
-      const todayPnL = parseFloat(accountBalance.todayPnL || '0');
-      const availableBalance = parseFloat(accountBalance.availableAmount || '0');
+      const totalValue = parseFloat(accountBalance.total?.toString() || '0');
+      const unrealizedPnL = 0; // Not available in basic balance structure
+      const todayPnL = 0; // Not available in basic balance structure
+      const availableBalance = parseFloat(accountBalance.available?.toString() || '0');
 
       const baseMetric = {
         change: 0,
@@ -87,7 +87,7 @@ const RealTimePortfolio: React.FC<RealTimePortfolioProps> = ({
         dayPnL: { 
           value: todayPnL,
           change: todayPnL,
-          changePercent: parseFloat(accountBalance.todayPnLPercentage || '0'),
+          changePercent: 0, // Not available in basic balance structure
           timestamp: Date.now()
         },
         openPositions: 0,
@@ -101,7 +101,8 @@ const RealTimePortfolio: React.FC<RealTimePortfolioProps> = ({
   }, [accountBalance]);
 
   // Handle real-time trade execution updates
-  const handleTradeExecuted = useCallback((tradeData: TradeData) => {
+  const handleTradeExecuted = useCallback((...args: unknown[]) => {
+    const tradeData = args[0] as TradeData;
     setPortfolioData(prev => {
       if (!prev) return null;
 
@@ -140,7 +141,8 @@ const RealTimePortfolio: React.FC<RealTimePortfolioProps> = ({
   }, []);
 
   // Handle market data updates that might affect portfolio value
-  const handleMarketData = useCallback((marketData: MarketData) => {
+  const handleMarketData = useCallback((...args: unknown[]) => {
+    const marketData = args[0] as MarketData;
     // Update portfolio value based on market movements
     // This is a simplified calculation - in a real implementation,
     // you'd calculate based on actual holdings

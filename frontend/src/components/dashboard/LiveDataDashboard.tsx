@@ -53,11 +53,11 @@ const LiveDataDashboard: React.FC = () => {
       setIsLoading(true);
       setError(null);
       
-      const data = await liveDataService.getAggregatedData(selectedSymbol, timeframe, 100);
+      const data = await liveDataService.fetchMarketData(selectedSymbol, timeframe, 100);
       setMarketData(data);
       
       // Extract anomalies
-      const anomalyPoints = data.filter(point => point.isAnomaly);
+      const anomalyPoints = data.filter((point: any) => point.isAnomaly);
       setAnomalies(anomalyPoints);
       
       setIsLoading(false);
