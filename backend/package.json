@@ -2,14 +2,14 @@
   "name": "backend",
   "version": "1.0.0",
   "type": "module",
-  "main": "src/index.js",
+  "main": "dist/index.js",
   "scripts": {
-    "dev": "nodemon src/index.js",
-    "start": "node src/index.js",
-    "start:prod": "node src/index.js",
-    "build": "echo 'No build step required for Node.js backend'",
-    "test": "echo 'No tests configured'",
-    "lint": "echo 'No linting configured'"
+    "dev": "nodemon --exec ts-node src/index.ts",
+    "start": "node dist/index.js",
+    "start:prod": "node dist/index.js",
+    "build": "tsc",
+    "test": "vitest",
+    "lint": "eslint src/**/*.ts"
   },
   "dependencies": {
     "axios": "^1.4.0",
@@ -26,7 +26,10 @@
     "ws": "^8.13.0"
   },
   "devDependencies": {
-    "nodemon": "^3.0.1",
+    "@types/node": "^24.0.15",
+    "nodemon": "^3.1.10",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.3",
     "vitest": "^3.2.4"
   }
 }
