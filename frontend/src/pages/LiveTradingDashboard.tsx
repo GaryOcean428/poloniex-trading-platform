@@ -9,13 +9,9 @@ import StrategyPerformance from '../components/dashboard/StrategyPerformance';
 import MockModeNotice from '../components/MockModeNotice';
 import { 
   Activity, 
-  TrendingUp, 
-  TrendingDown, 
   Clock,
-  BarChart3,
   Wifi,
-  WifiOff,
-  Zap
+  WifiOff
 } from 'lucide-react';
 import { Line } from 'react-chartjs-2';
 import {
