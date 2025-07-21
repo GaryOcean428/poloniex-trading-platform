@@ -15,20 +15,24 @@ import {
 
 interface MarketDataEvent {
   symbol: string;
+  pair: string; // Add pair for backward compatibility
   price: number;
   changePercent: number;
   volume: number;
   timestamp: number;
+  [key: string]: unknown; // Add index signature for Record<string, unknown> compatibility
 }
 
 interface TradeExecutionEvent {
   id: string;
   symbol: string;
+  pair: string; // Add pair for backward compatibility  
   side: 'buy' | 'sell';
   amount: number;
   price: number;
   profit?: number;
   timestamp: number;
+  [key: string]: unknown; // Add index signature for Record<string, unknown> compatibility
 }
 
 export interface RealTimeAlert {
