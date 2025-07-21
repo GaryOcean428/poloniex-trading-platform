@@ -292,3 +292,6 @@ export const useWebSocket = () => {
     unsubscribeFromV3: service.unsubscribeFromPoloniexV3.bind(service),
   };
 };
+
+// Re-export types for convenience
+export { ConnectionState } from "@/types/websocketTypes";

@@ -199,14 +199,24 @@ export class BacktestService {
       : balance + total - fee;
     
     return {
+      id: `trade-${timestamp}-${type}`,
+      entryPrice: executionPrice,
+      exitPrice: type === 'SELL' ? executionPrice : null,
+      entryTime: new Date(timestamp).toISOString(),
+      exitTime: type === 'SELL' ? new Date(timestamp).toISOString() : null,
+      side: type === 'BUY' ? 'long' : 'short',
+      status: type === 'SELL' ? 'closed' : 'open',
+      pnl,
+      pnlPercent,
+      balance: newBalance,
+      size: amount,
+      fee,
+      // Legacy compatibility
       timestamp,
       type,
       price: executionPrice,
       amount,
-      total,
-      pnl,
-      pnlPercent,
-      balance: newBalance
+      total
     };
   }
   

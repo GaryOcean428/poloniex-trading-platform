@@ -1,4 +1,4 @@
-import { MarketData } from '@/types';
+import { MarketData } from '../../../shared/types';
 import { calculateATR } from './technicalIndicators';
 
 /**

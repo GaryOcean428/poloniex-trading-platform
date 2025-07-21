@@ -408,14 +408,24 @@ export class AdvancedBacktestService {
       type === "BUY" ? balance - total - fee : balance + total - fee;
 
     return {
+      id: `trade-${marketData.timestamp}-${type}`,
+      entryPrice: executionPrice,
+      exitPrice: type === 'SELL' ? executionPrice : null,
+      entryTime: new Date(marketData.timestamp).toISOString(),
+      exitTime: type === 'SELL' ? new Date(marketData.timestamp).toISOString() : null,
+      side: type === 'BUY' ? 'long' : 'short',
+      status: type === 'SELL' ? 'closed' : 'open',
+      pnl,
+      pnlPercent,
+      balance: newBalance,
+      size: amount,
+      fee,
+      // Legacy compatibility
       timestamp: marketData.timestamp,
       type,
       price: executionPrice,
       amount,
-      total,
-      pnl,
-      pnlPercent,
-      balance: newBalance,
+      total
     };
   }
 
