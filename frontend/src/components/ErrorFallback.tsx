@@ -13,7 +13,7 @@ interface ErrorFallbackProps {
 
 export const ErrorFallback: React.FC<ErrorFallbackProps> = ({
   error,
-  errorInfo,
+  errorInfo: _errorInfo,
   errorCount,
   onReset
 }) => {

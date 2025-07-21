@@ -15,7 +15,7 @@ import {
   BarController,
   LineController
 } from 'chart.js';
-import { Line } from 'react-chartjs-2';
+import { Chart } from 'react-chartjs-2';
 import { MarketData } from '@/types';
 
 // Register all chart components to avoid type errors
@@ -50,16 +50,7 @@ const PriceChart: React.FC<PriceChartProps> = ({ data, pair }) => {
   });
   
   // Define chart data with proper typing
-  const chartData: {
-    labels: string[];
-    datasets: Array<{
-      label: string;
-      data: number[];
-      fill: boolean;
-      borderColor: string;
-      backgroundColor: string;
-    }>;
-  } = {
+  const chartData = {
     labels,
     datasets: [
       {
@@ -79,6 +70,7 @@ const PriceChart: React.FC<PriceChartProps> = ({ data, pair }) => {
         backgroundColor: 'rgba(59, 130, 246, 0.2)',
         borderColor: 'rgba(59, 130, 246, 0.2)',
         yAxisID: 'volume' as const,
+        fill: false,
       },
     ],
   };
@@ -126,7 +118,7 @@ const PriceChart: React.FC<PriceChartProps> = ({ data, pair }) => {
     },
   };
   
-  return <Line options={options} data={chartData} height={80} />;
+  return <Chart type="line" options={options} data={chartData} height={80} />;
 };
 
 export default PriceChart;

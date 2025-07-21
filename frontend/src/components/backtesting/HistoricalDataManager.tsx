@@ -105,6 +105,7 @@ const HistoricalDataManager: React.FC<HistoricalDataManagerProps> = ({ onDataLoa
       let completedSteps = 0;
 
       const mockDataQuality: DataQuality[] = [];
+      const historicalData: HistoricalData[] = [];
 
       for (const symbol of request.symbols) {
         for (const timeframe of request.timeframes) {
@@ -131,6 +132,34 @@ const HistoricalDataManager: React.FC<HistoricalDataManagerProps> = ({ onDataLoa
             ] : []
           });
 
+          // Generate mock historical data
+          const mockData: Array<{
+            timestamp: number;
+            open: number;
+            high: number;
+            low: number;
+            close: number;
+            volume: number;
+          }> = [];
+
+          const basePrice = 50000; // Starting price for mock data
+          for (let i = 0; i < totalCandles; i++) {
+            const timestamp = Date.now() - (totalCandles - i) * 60000; // 1 minute intervals
+            const open = basePrice + (Math.random() - 0.5) * 1000;
+            const close = open + (Math.random() - 0.5) * 100;
+            const high = Math.max(open, close) + Math.random() * 50;
+            const low = Math.min(open, close) - Math.random() * 50;
+            const volume = Math.random() * 1000000;
+
+            mockData.push({ timestamp, open, high, low, close, volume });
+          }
+
+          historicalData.push({
+            symbol,
+            timeframe,
+            data: mockData
+          });
+
           completedSteps++;
           setLoadingProgress((completedSteps / totalSteps) * 100);
         }
@@ -139,11 +168,7 @@ const HistoricalDataManager: React.FC<HistoricalDataManagerProps> = ({ onDataLoa
       setDataQuality(mockDataQuality);
       
       if (onDataLoaded) {
-        onDataLoaded({
-          request,
-          quality: mockDataQuality,
-          loadedAt: new Date()
-        });
+        onDataLoaded(historicalData);
       }
 
     } catch (err) {
