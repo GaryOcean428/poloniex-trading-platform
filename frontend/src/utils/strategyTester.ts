@@ -474,9 +474,8 @@ export function optimizeStrategy(
       id: 'optimization-test',
       name: `${strategy.type} Optimization`,
       type: strategy.type,
-      parameters: parameters as StrategyParameters,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      active: true,
+      parameters: parameters as StrategyParameters
     };
     
     const result = backtestStrategy(testStrategy, data, testOptions);

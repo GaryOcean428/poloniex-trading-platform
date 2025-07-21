@@ -12,9 +12,7 @@ import {
     Target,
     TrendingUp,
     X,
-    AlertTriangle,
     Activity,
-    DollarSign,
     Zap,
     PiggyBank,
     RefreshCw

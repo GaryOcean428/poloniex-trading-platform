@@ -98,6 +98,7 @@ export interface TradingStrategy {
   id: string;
   name: string;
   type: 'manual' | 'automated' | 'ml' | 'dqn';
+  algorithm?: 'MovingAverageCrossover' | 'RSI' | 'MACD' | 'BollingerBands' | 'Custom';
   active: boolean;
   parameters: Record<string, any>;
   performance?: {

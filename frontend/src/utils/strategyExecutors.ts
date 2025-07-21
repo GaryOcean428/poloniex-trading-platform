@@ -20,7 +20,7 @@ export function executeStrategy(strategy: Strategy, marketData: MarketData[]): S
       timeframe: strategy.parameters.timeframe || '5m'
     };
 
-    switch (strategy.type) {
+    switch (strategy.algorithm || strategy.name) {
       case 'MovingAverageCrossover':
         return executeMovingAverageCrossover(parameters, marketData);
       case 'RSI':
@@ -32,7 +32,7 @@ export function executeStrategy(strategy: Strategy, marketData: MarketData[]): S
       case 'Custom':
         return executeCustomStrategy();
       default:
-        logger.error(`Unknown strategy type: ${strategy.type}`);
+        logger.error(`Unknown strategy algorithm: ${strategy.algorithm || strategy.name}`);
         return { signal: null, reason: 'Unknown strategy type', confidence: 0 };
     }
   } catch (error) {
