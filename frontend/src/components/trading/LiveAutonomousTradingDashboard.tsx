@@ -639,7 +639,7 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
                   <Label>Maximum Risk Per Trade: {(settings.maxRiskPerTrade * 100).toFixed(1)}%</Label>
                   <Slider
                     value={[(settings.maxRiskPerTrade * 100).toString()]}
-                    onValueChange={(value) => setSettings(prev => ({ ...prev, maxRiskPerTrade: parseFloat(value[0]) / 100 }))}
+                    onValueChange={(value) => setSettings(prev => ({ ...prev, maxRiskPerTrade: parseFloat(value[0] as string) / 100 }))}
                     min={0.5}
                     max={5}
                     step={0.1}
@@ -651,7 +651,7 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
                   <Label>Maximum Drawdown: {(settings.maxDrawdown * 100).toFixed(1)}%</Label>
                   <Slider
                     value={[(settings.maxDrawdown * 100).toString()]}
-                    onValueChange={(value) => setSettings(prev => ({ ...prev, maxDrawdown: parseFloat(value[0]) / 100 }))}
+                    onValueChange={(value) => setSettings(prev => ({ ...prev, maxDrawdown: parseFloat(value[0] as string) / 100 }))}
                     min={5}
                     max={30}
                     step={0.5}
@@ -663,7 +663,7 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
                   <Label>Confidence Threshold: {settings.confidenceThreshold}%</Label>
                   <Slider
                     value={[settings.confidenceThreshold.toString()]}
-                    onValueChange={(value) => setSettings(prev => ({ ...prev, confidenceThreshold: parseFloat(value[0]) }))}
+                    onValueChange={(value) => setSettings(prev => ({ ...prev, confidenceThreshold: parseFloat(value[0] as string) }))}
                     min={50}
                     max={95}
                     step={1}
@@ -710,7 +710,7 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
                   <Label>Banking Percentage: {(bankingConfig.bankingPercentage * 100).toFixed(1)}%</Label>
                   <Slider
                     value={[(bankingConfig.bankingPercentage * 100).toString()]}
-                    onValueChange={(value) => setBankingConfig(prev => ({ ...prev, bankingPercentage: parseFloat(value[0]) / 100 }))}
+                    onValueChange={(value) => setBankingConfig(prev => ({ ...prev, bankingPercentage: parseFloat(value[0] as string) / 100 }))}
                     min={10}
                     max={50}
                     step={1}

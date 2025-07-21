@@ -1,8 +1,7 @@
 import { X } from 'lucide-react';
 import React, { useState } from 'react';
 import { useTradingContext } from '../../hooks/useTradingContext';
-import { Strategy, StrategyType } from '../../types';
-import { StrategyParameters } from '../../../shared/types';
+import { Strategy, StrategyType, StrategyParameters } from '../../types';
 
 interface NewStrategyFormProps {
   onClose: () => void;
