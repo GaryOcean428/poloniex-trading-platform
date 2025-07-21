@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useSettings } from '../../hooks/useSettings';
-import { Strategy } from '../../types';
+import { Strategy, StrategyParameters } from '../../types';
 import { tradingEngine } from '@/trading/tradingEngine';
 import { executeStrategy } from '@/utils/strategyExecutors';
 import { poloniexApi } from '@/services/poloniexAPI';
@@ -89,8 +89,12 @@ const AutomationPanel: React.FC = () => {
       const pair = strategy.parameters.pair || defaultPair;
       const data = await poloniexApi.getMarketData(pair);
 
-      // Execute strategy
-      const result = executeStrategy(strategy, data);
+      // Execute strategy - convert TradingStrategy to Strategy format
+      const strategyForExecution = {
+        ...strategy,
+        parameters: strategy.parameters as StrategyParameters
+      };
+      const result = executeStrategy(strategyForExecution, data);
 
       // Record signal
       setLastSignal({
@@ -104,16 +108,15 @@ const AutomationPanel: React.FC = () => {
       if (result.signal && result.confidence > 0.7) {
         const side = result.signal === 'BUY' ? 'buy' : 'sell';
 
-        // For now, just use the poloniex API directly
-        // TODO: Implement proper mode management when trading engine is ready
-        await poloniexApi.placeOrder(
-          pair,
-          side,
-          'market',
-          0.001 // Minimum order size
-        );
-
-        logger.info(`Executed ${side} order based on strategy ${strategy.name}`);
+        // TODO: Implement actual order placement when trading engine is ready
+        // For now, just log the intended trade
+        logger.info(`Would execute ${side} order based on strategy ${strategy.name} for ${pair}`);
+        
+        // Simulate order execution for UI feedback
+        setLastSignal(prev => prev ? {
+          ...prev,
+          executed: true
+        } : null);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to run strategy');

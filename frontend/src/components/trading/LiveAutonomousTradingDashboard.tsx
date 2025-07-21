@@ -254,12 +254,12 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
   // Get connection status badge
   const getConnectionBadge = () => {
     if (!connectionStatus.useBackend) {
-      return <Badge variant="outline" className="bg-yellow-50">Mock Mode</Badge>;
+      return <Badge variant="warning" className="bg-yellow-50">Mock Mode</Badge>;
     }
     if (connectionStatus.isConnected) {
       return <Badge variant="default" className="bg-green-50 text-green-700">Live Connected</Badge>;
     }
-    return <Badge variant="destructive">Disconnected</Badge>;
+    return <Badge variant="error">Disconnected</Badge>;
   };
 
   return (
@@ -287,7 +287,7 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
 
       {/* Error Alert */}
       {error && (
-        <Alert variant="destructive">
+        <Alert variant="error">
           <AlertTriangle className="h-4 w-4" />
           <div className="flex-1">{error}</div>
           <Button variant="ghost" size="sm" onClick={() => setError(null)}>
@@ -351,7 +351,7 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
                   </Button>
                   
                   <Button
-                    variant="destructive"
+                    variant="danger"
                     onClick={handleEmergencyStop}
                     disabled={loading}
                     className="w-full"

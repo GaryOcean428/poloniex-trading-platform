@@ -555,6 +555,24 @@ const ModelRecalibrationPanel: React.FC = () => {
         </div>
       )}
       
+      {recalibrationHistory.length > 0 && (
+        <div className="mb-6">
+          <h3 className="text-lg font-medium mb-2 text-neutral-700 dark:text-neutral-300">Recalibration History</h3>
+          <div className="bg-neutral-100 dark:bg-neutral-700 p-4 rounded-md max-h-40 overflow-y-auto">
+            {recalibrationHistory.map((result, index) => (
+              <div key={index} className="mb-2 p-2 bg-white dark:bg-neutral-600 rounded text-sm">
+                <span className="font-medium">{new Date(result.timestamp).toLocaleString()}</span>
+                <span className="mx-2">-</span>
+                <span>{result.reason}</span>
+                <span className="text-green-600 dark:text-green-400 ml-2">
+                  (+{(result.performanceImprovement * 100).toFixed(1)}%)
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      
       {performanceHistory.length > 1 && (
         <div className="mb-6">
           <h3 className="text-lg font-medium mb-2 text-neutral-700 dark:text-neutral-300">Performance History</h3>
