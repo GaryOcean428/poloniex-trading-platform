@@ -17,6 +17,10 @@ interface ModelData {
   name: string;
   type: string;
   performance: number;
+  config?: {
+    modelType?: string;
+    [key: string]: any;
+  };
 }
 
 interface MarketDataPoint {
@@ -48,6 +52,7 @@ const ModelRecalibrationPanel: React.FC = () => {
     recalibrationStrategy: 'incremental'
   });
   const [recalibrationStrategy, setRecalibrationStrategy] = useState<'full' | 'incremental' | 'transfer'>('incremental');
+  const [recalibrationHistory, setRecalibrationHistory] = useState<RecalibrationResult[]>([]);
   const [autoRecalibrationEnabled, setAutoRecalibrationEnabled] = useState(false);
   const [cleanupFunction, setCleanupFunction] = useState<(() => void) | null>(null);
   
@@ -82,7 +87,13 @@ const ModelRecalibrationPanel: React.FC = () => {
       try {
         // Get market data for monitoring and recalibration
         await fetchMarketData('BTC_USDT');
-        setMarketData(poloniexMarketData);
+        // Map MarketData to MarketDataPoint format
+        const mappedData = poloniexMarketData.map(data => ({
+          timestamp: data.timestamp,
+          price: data.close, // Use close price as the main price
+          volume: data.volume
+        }));
+        setMarketData(mappedData);
       } catch (err) {
         console.error('Error fetching market data:', err);
         setError('Failed to fetch market data');
@@ -115,7 +126,7 @@ const ModelRecalibrationPanel: React.FC = () => {
     try {
       let metrics;
       
-      if (selectedModel.config.modelType) {
+      if (selectedModel.config?.modelType) {
         // ML model
         metrics = await monitorMLModelPerformance(selectedModel, marketData);
       } else {
@@ -154,7 +165,7 @@ const ModelRecalibrationPanel: React.FC = () => {
     try {
       let result;
       
-      if (selectedModel.config.modelType) {
+      if (selectedModel.config?.modelType) {
         // ML model
         result = await recalibrateMLModel(selectedModel, marketData, recalibrationStrategy);
       } else {
@@ -168,12 +179,24 @@ const ModelRecalibrationPanel: React.FC = () => {
       setRecalibrationHistory(prev => [...prev, result]);
       
       // Update model list with new model
-      if (selectedModel.config.modelType) {
+      if (selectedModel.config?.modelType) {
         // ML model
-        setMlModels(prev => [...prev, { id: result.newModelId, name: `${selectedModel.name} (Recalibrated)` }]);
+        setMlModels(prev => [...prev, { 
+          id: result.newModelId, 
+          name: `${selectedModel.name} (Recalibrated)`,
+          type: selectedModel.type,
+          performance: result.newPerformanceMetrics?.overallScore ?? 0,
+          config: selectedModel.config
+        }]);
       } else {
         // DQN model
-        setDqnModels(prev => [...prev, { id: result.newModelId, name: `${selectedModel.name} (Recalibrated)` }]);
+        setDqnModels(prev => [...prev, { 
+          id: result.newModelId, 
+          name: `${selectedModel.name} (Recalibrated)`,
+          type: selectedModel.type,
+          performance: result.newPerformanceMetrics?.overallScore ?? 0,
+          config: selectedModel.config
+        }]);
       }
       
       setIsRecalibrating(false);
@@ -227,12 +250,24 @@ const ModelRecalibrationPanel: React.FC = () => {
             setRecalibrationHistory(prev => [...prev, result]);
             
             // Update model list with new model
-            if (selectedModel.config.modelType) {
+            if (selectedModel.config?.modelType) {
               // ML model
-              setMlModels(prev => [...prev, { id: result.newModelId, name: `${selectedModel.name} (Recalibrated)` }]);
+              setMlModels(prev => [...prev, { 
+                id: result.newModelId, 
+                name: `${selectedModel.name} (Recalibrated)`,
+                type: selectedModel.type,
+                performance: result.newPerformanceMetrics?.overallScore ?? 0,
+                config: selectedModel.config
+              }]);
             } else {
               // DQN model
-              setDqnModels(prev => [...prev, { id: result.newModelId, name: `${selectedModel.name} (Recalibrated)` }]);
+              setDqnModels(prev => [...prev, { 
+                id: result.newModelId, 
+                name: `${selectedModel.name} (Recalibrated)`,
+                type: selectedModel.type,
+                performance: result.newPerformanceMetrics?.overallScore ?? 0,
+                config: selectedModel.config
+              }]);
             }
           }
         } catch (err) {
