@@ -16,6 +16,7 @@
     "isolatedModules": true,
     "allowJs": true,
     "allowSyntheticDefaultImports": true,
+    "moduleDetection": "force",
     "baseUrl": ".",
     "paths": {
       "@/*": [
@@ -25,6 +26,9 @@
         "../shared/*"
       ]
     }
+  },
+  "ts-node": {
+    "esm": true
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "**/*.test.ts"]
