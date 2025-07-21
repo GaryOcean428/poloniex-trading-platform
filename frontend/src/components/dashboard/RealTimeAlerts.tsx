@@ -169,7 +169,8 @@ const RealTimeAlerts: React.FC<RealTimeAlertsProps> = ({
   };
 
   // Handle market data alerts
-  const handleMarketData = useCallback((marketData: MarketDataEvent) => {
+  const handleMarketData = useCallback((...args: unknown[]) => {
+    const marketData = args[0] as MarketDataEvent;
     if (!alertRules.priceChange.enabled) return;
 
     const changePercent = Math.abs(marketData.changePercent || 0);
@@ -188,7 +189,8 @@ const RealTimeAlerts: React.FC<RealTimeAlertsProps> = ({
   }, [alertRules.priceChange, createAlert, addAlert]);
 
   // Handle trade execution alerts
-  const handleTradeExecuted = useCallback((tradeData: TradeExecutionEvent) => {
+  const handleTradeExecuted = useCallback((...args: unknown[]) => {
+    const tradeData = args[0] as TradeExecutionEvent;
     const isProfit = (tradeData.profit || 0) > 0;
     const alert = createAlert(
       isProfit ? 'success' : 'error',
@@ -202,7 +204,8 @@ const RealTimeAlerts: React.FC<RealTimeAlertsProps> = ({
   }, [createAlert, addAlert]);
 
   // Handle WebSocket connection changes
-  const handleConnectionChange = useCallback((connectionState: string) => {
+  const handleConnectionChange = useCallback((...args: unknown[]) => {
+    const connectionState = args[0] as string;
     if (!alertRules.connectionIssues.enabled) return;
 
     if (connectionState === 'disconnected' || connectionState === 'failed') {

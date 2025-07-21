@@ -101,7 +101,8 @@ const RealTimePortfolio: React.FC<RealTimePortfolioProps> = ({
   }, [accountBalance]);
 
   // Handle real-time trade execution updates
-  const handleTradeExecuted = useCallback((tradeData: TradeData) => {
+  const handleTradeExecuted = useCallback((...args: unknown[]) => {
+    const tradeData = args[0] as TradeData;
     setPortfolioData(prev => {
       if (!prev) return null;
 
@@ -140,7 +141,8 @@ const RealTimePortfolio: React.FC<RealTimePortfolioProps> = ({
   }, []);
 
   // Handle market data updates that might affect portfolio value
-  const handleMarketData = useCallback((marketData: MarketData) => {
+  const handleMarketData = useCallback((...args: unknown[]) => {
+    const marketData = args[0] as MarketData;
     // Update portfolio value based on market movements
     // This is a simplified calculation - in a real implementation,
     // you'd calculate based on actual holdings
