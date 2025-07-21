@@ -3,17 +3,22 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import App from '@/App';
 import { AppProviders } from '@/context/AppProviders';
-import LiveDataDashboard from '@/components/dashboard/LiveDataDashboard';
-import { MLTradingPanel } from '@/components/trading/MLTradingPanel';
-import { DQNTradingPanel } from '@/components/trading/DQNTradingPanel';
-import { ModelRecalibrationPanel } from '@/components/ml/ModelRecalibrationPanel';
 import { LiveDataService } from '@/services/advancedLiveData';
 import { default as mlTrading } from '@/ml/mlTrading';
 import * as dqnTrading from '@/ml/dqnTrading';
-import { default as modelRecalibration } from '@/ml/modelRecalibration';
 
 // Mock dependencies
-vi.mock('@/services/websocketService');
+const mockWebSocketService = {
+  connect: vi.fn(),
+  disconnect: vi.fn(),
+  subscribe: vi.fn(),
+  unsubscribe: vi.fn()
+};
+
+vi.mock('@/services/websocketService', () => ({
+  default: mockWebSocketService,
+  webSocketService: mockWebSocketService
+}));
 vi.mock('@/services/advancedLiveData');
 vi.mock('@/ml/mlTrading');
 vi.mock('@/ml/dqnTrading');
@@ -130,7 +135,7 @@ describe('Integration Tests', () => {
     
     // Wait for app to load and verify WebSocket connection
     await waitFor(() => {
-      expect(webSocketService.connect).toHaveBeenCalled();
+      expect(mockWebSocketService.connect).toHaveBeenCalled();
     });
   });
   

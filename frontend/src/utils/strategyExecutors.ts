@@ -20,19 +20,21 @@ export function executeStrategy(strategy: Strategy, marketData: MarketData[]): S
       timeframe: strategy.parameters.timeframe || '5m'
     };
 
-    switch (strategy.type) {
+    switch (strategy.name || strategy.type) {
       case 'MovingAverageCrossover':
+      case 'Moving Average Crossover':
         return executeMovingAverageCrossover(parameters, marketData);
       case 'RSI':
         return executeRSI(parameters, marketData);
       case 'MACD':
         return executeMACD(parameters, marketData);
       case 'BollingerBands':
+      case 'Bollinger Bands':
         return executeBollingerBands(parameters, marketData);
       case 'Custom':
         return executeCustomStrategy();
       default:
-        logger.error(`Unknown strategy type: ${strategy.type}`);
+        logger.error(`Unknown strategy: ${strategy.name || strategy.type}`);
         return { signal: null, reason: 'Unknown strategy type', confidence: 0 };
     }
   } catch (error) {
