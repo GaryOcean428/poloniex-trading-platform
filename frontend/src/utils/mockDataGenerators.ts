@@ -1,4 +1,5 @@
 import seedrandom from 'seedrandom';
+import { OrderBookEntry, TradeData, TickerData } from '../../../shared/types';
 
 // Mock data generators for various market data types
 // These functions generate realistic-looking mock data for testing
@@ -12,39 +13,10 @@ export interface MarketDataPoint {
   volume: number;
 }
 
-export interface TickerData {
-  symbol: string;
-  price: number;
-  lastPrice: number;
-  bidPrice: number;
-  askPrice: number;
-  change24h: number;
-  changePercent24h: number;
-  volume24h: number;
-  high24h: number;
-  low24h: number;
-  timestamp: number;
-}
-
-export interface OrderBookEntry {
-  price: number;
-  quantity: number;
-}
-
 export interface OrderBookData {
   symbol: string;
   bids: OrderBookEntry[];
   asks: OrderBookEntry[];
-  timestamp: number;
-}
-
-export interface TradeData {
-  id: string;
-  symbol: string;
-  price: number;
-  quantity: number;
-  amount: number;
-  side: 'buy' | 'sell';
   timestamp: number;
 }
 
@@ -316,7 +288,6 @@ export const generateRandomTrades = (
       symbol,
       price,
       quantity: volume,
-      amount: volume,
       side: isBuy ? 'buy' : 'sell',
       timestamp
     });

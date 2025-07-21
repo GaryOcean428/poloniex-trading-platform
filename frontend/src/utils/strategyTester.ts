@@ -1,4 +1,4 @@
-import { Strategy, MarketData, StrategyParameters } from '@/types';
+import { Strategy, MarketData, StrategyParameters, BacktestTrade } from '../../../shared/types';
 import { executeStrategy, StrategyResult } from './strategyExecutors';
 
 export interface BacktestResult {
@@ -20,20 +20,6 @@ export interface BacktestResult {
   parameters: StrategyParameters;
   marketData: MarketData[];
   metrics: Record<string, number>;
-}
-
-export interface BacktestTrade {
-  entryDate: Date;
-  entryPrice: number;
-  exitDate: Date | null;
-  exitPrice: number | null;
-  type: 'BUY' | 'SELL';
-  quantity: number;
-  profit: number;
-  profitPercent: number;
-  reason: string;
-  confidence: number;
-  highestProfit?: number; // For trailing stop functionality
 }
 
 export interface EquityPoint {
@@ -346,17 +332,28 @@ function processSignal(
   
   // Create new trade
   const newTrade: BacktestTrade = {
-    entryDate: currentDate,
+    id: `trade-${currentDate.getTime()}-${result.signal}`,
     entryPrice,
-    exitDate: null,
     exitPrice: null,
+    entryTime: currentDate.toISOString(),
+    exitTime: null,
+    side: result.signal === 'BUY' ? 'long' : 'short',
+    status: 'open',
+    pnl: 0,
+    pnlPercent: 0,
+    balance: 0, // Will be updated later
+    size: quantity,
+    fee: 0, // Will be calculated later
+    reason: result.reason,
+    confidence: result.confidence,
+    highestProfit: 0, // For trailing stop
+    // Compatibility properties
+    entryDate: currentDate,
+    exitDate: null,
     type: result.signal,
     quantity,
     profit: 0,
-    profitPercent: 0,
-    reason: result.reason,
-    confidence: result.confidence,
-    highestProfit: 0 // For trailing stop
+    profitPercent: 0
   };
   
   // Add to open positions
