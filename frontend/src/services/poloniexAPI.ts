@@ -290,6 +290,27 @@ class PoloniexApiClient {
 
     return data;
   }
+
+  public async placeOrder(
+    pair: string,
+    side: 'buy' | 'sell',
+    type: 'market' | 'limit',
+    quantity: number,
+    price?: number
+  ): Promise<{ orderId: string; status: string }> {
+    // TODO: Implement actual order placement
+    // For now, return a mock response to satisfy the interface
+    console.warn('placeOrder called - this is a stub implementation');
+    
+    if (this.mockMode) {
+      return {
+        orderId: `mock_${Date.now()}`,
+        status: 'filled'
+      };
+    }
+    
+    throw new Error('Order placement not implemented for live trading');
+  }
 }
 
 export const poloniexApi = PoloniexApiClient.getInstance();
