@@ -106,3 +106,6 @@ export interface TradingStrategy {
     sharpeRatio: number;
   };
 }
+
+// Alias for backward compatibility
+export type Strategy = TradingStrategy;

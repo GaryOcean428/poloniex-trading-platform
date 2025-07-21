@@ -1,4 +1,4 @@
-import { Strategy, MarketData, StrategyParameters } from '../../../shared/types';
+import { Strategy, MarketData, StrategyParameters } from '@shared/types';
 import { MovingAverageCrossoverParameters, RSIParameters, MACDParameters, BollingerBandsParameters } from '@/types';
 import { logger } from '@/utils/logger';
 
