@@ -2,6 +2,7 @@ import { X } from 'lucide-react';
 import React, { useState } from 'react';
 import { useTradingContext } from '../../hooks/useTradingContext';
 import { Strategy, StrategyType } from '../../types';
+import { StrategyParameters } from '../../../shared/types';
 
 interface NewStrategyFormProps {
   onClose: () => void;
@@ -61,7 +62,7 @@ const NewStrategyForm: React.FC<NewStrategyFormProps> = ({ onClose }) => {
       id: Date.now().toString(),
       name,
       type,
-      parameters,
+      parameters: parameters as unknown as StrategyParameters,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       performance: {

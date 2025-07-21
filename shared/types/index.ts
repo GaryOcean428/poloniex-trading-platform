@@ -14,10 +14,63 @@ export interface Trade {
   id: string;
   symbol: string;
   side: 'buy' | 'sell';
-  amount: number;
+  quantity: number;
   price: number;
   timestamp: number;
   fee?: number;
+}
+
+export interface TradeData {
+  id: string;
+  symbol: string;
+  price: number;
+  quantity: number;
+  side: 'buy' | 'sell';
+  timestamp: number;
+}
+
+export interface TickerData {
+  symbol: string;
+  price: number;
+  lastPrice: number;
+  bidPrice: number;
+  askPrice: number;
+  change24h: number;
+  changePercent24h: number;
+  volume24h: number;
+  high24h: number;
+  low24h: number;
+  timestamp: number;
+}
+
+export interface StrategyParameters {
+  [key: string]: number | string | boolean;
+}
+
+export interface BacktestTrade {
+  id: string;
+  entryPrice: number;
+  exitPrice: number | null;
+  entryTime: string;
+  exitTime: string | null;
+  side: 'long' | 'short';
+  status: 'open' | 'closed' | 'stopped';
+  pnl: number;
+  pnlPercent: number;
+  balance: number;
+  size: number;
+  fee: number;
+  reason?: string;
+  metadata?: Record<string, unknown>;
+  highestProfit?: number;
+  // Compatibility with strategyTester.ts
+  entryDate?: Date;
+  exitDate?: Date | null;
+  type?: 'BUY' | 'SELL';
+  quantity?: number;
+  profit?: number;
+  profitPercent?: number;
+  confidence?: number;
 }
 
 export interface Position {
@@ -33,7 +86,7 @@ export interface Position {
 
 export interface OrderBookEntry {
   price: number;
-  amount: number;
+  quantity: number;
 }
 
 export interface OrderBook {
