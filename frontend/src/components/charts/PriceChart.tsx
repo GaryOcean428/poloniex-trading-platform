@@ -50,16 +50,7 @@ const PriceChart: React.FC<PriceChartProps> = ({ data, pair }) => {
   });
   
   // Define chart data with proper typing
-  const chartData: {
-    labels: string[];
-    datasets: Array<{
-      label: string;
-      data: number[];
-      fill: boolean;
-      borderColor: string;
-      backgroundColor: string;
-    }>;
-  } = {
+  const chartData = {
     labels,
     datasets: [
       {
@@ -69,16 +60,7 @@ const PriceChart: React.FC<PriceChartProps> = ({ data, pair }) => {
         borderColor: 'rgb(59, 130, 246)',
         backgroundColor: 'rgba(59, 130, 246, 0.5)',
         tension: 0.2,
-        type: 'line' as const,
-        yAxisID: 'price' as const,
-      },
-      {
-        label: 'Volume',
-        data: filteredData.map(item => item.volume),
-        type: 'bar' as const,
-        backgroundColor: 'rgba(59, 130, 246, 0.2)',
-        borderColor: 'rgba(59, 130, 246, 0.2)',
-        yAxisID: 'volume' as const,
+        yAxisID: 'price',
       },
     ],
   };
@@ -114,13 +96,6 @@ const PriceChart: React.FC<PriceChartProps> = ({ data, pair }) => {
         position: 'left' as const,
         grid: {
           display: true
-        }
-      },
-      volume: {
-        type: 'linear' as const,
-        position: 'right' as const,
-        grid: {
-          display: false
         }
       }
     },
