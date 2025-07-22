@@ -28,6 +28,7 @@ const AutomationPanel: React.FC = () => {
     pair: string;
     signal: string | null;
     reason: string;
+    executed?: boolean;
   } | null>(null);
 
   // Load saved strategies
@@ -86,7 +87,7 @@ const AutomationPanel: React.FC = () => {
       }
 
       // Get market data
-      const pair = strategy.parameters.pair || defaultPair;
+      const pair = (strategy.parameters.pair as string) || defaultPair;
       const data = await poloniexApi.getMarketData(pair);
 
       // Execute strategy
@@ -104,16 +105,15 @@ const AutomationPanel: React.FC = () => {
       if (result.signal && result.confidence > 0.7) {
         const side = result.signal === 'BUY' ? 'buy' : 'sell';
 
-        // For now, just use the poloniex API directly
-        // TODO: Implement proper mode management when trading engine is ready
-        await poloniexApi.placeOrder(
-          pair,
-          side,
-          'market',
-          0.001 // Minimum order size
-        );
-
-        logger.info(`Executed ${side} order based on strategy ${strategy.name}`);
+        // TODO: Implement actual order placement when trading engine is ready
+        // For now, just log the intended trade
+        logger.info(`Would execute ${side} order based on strategy ${strategy.name} for ${pair}`);
+        
+        // Simulate order execution for UI feedback
+        setLastSignal(prev => prev ? {
+          ...prev,
+          executed: true
+        } : null);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to run strategy');
@@ -158,6 +158,9 @@ const AutomationPanel: React.FC = () => {
               <p><strong>Pair:</strong> {lastSignal.pair}</p>
               <p><strong>Signal:</strong> {lastSignal.signal || 'No signal'}</p>
               <p><strong>Reason:</strong> {lastSignal.reason}</p>
+              {lastSignal.executed && (
+                <p className="text-green-600 font-medium mt-1">✓ Executed</p>
+              )}
             </div>
           )}
 

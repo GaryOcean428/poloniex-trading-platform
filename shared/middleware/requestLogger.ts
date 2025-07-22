@@ -5,6 +5,52 @@
 
 import { logger } from '../logger.js';
 
+interface RequestContext {
+  requestId: string;
+  method: any;
+  url: any;
+  userAgent?: any;
+  ip?: any;
+  component: string;
+  action: string;
+  requestBody?: any;
+  bodyTruncated?: boolean;
+}
+
+interface ResponseContext {
+  requestId: string;
+  method: any;
+  url: any;
+  statusCode: any;
+  duration: number;
+  component: string;
+  action: string;
+  responseBody?: any;
+  bodyTruncated?: boolean;
+}
+
+interface FetchRequestContext {
+  requestId: string;
+  method: string;
+  url: string;
+  component: string;
+  action: string;
+  requestBody?: any;
+  bodyTruncated?: boolean;
+}
+
+interface FetchResponseContext {
+  requestId: string;
+  method: string;
+  url: string;
+  statusCode: number;
+  duration: number;
+  component: string;
+  action: string;
+  responseBody?: any;
+  bodyTruncated?: boolean;
+}
+
 export interface LoggingConfig {
   enabled: boolean;
   logLevel: 'debug' | 'info' | 'warn' | 'error';
@@ -112,7 +158,7 @@ export class RequestResponseLogger {
   }
 
   private logRequest(req: any, requestId: string): void {
-    const context = {
+    const context: RequestContext = {
       requestId,
       method: req.method,
       url: req.originalUrl || req.url,
@@ -144,7 +190,7 @@ export class RequestResponseLogger {
     const statusCode = res.statusCode;
     const logLevel = statusCode >= 500 ? 'error' : statusCode >= 400 ? 'warn' : 'info';
     
-    const context = {
+    const context: ResponseContext = {
       requestId,
       method: req.method,
       url: req.originalUrl || req.url,
@@ -186,7 +232,7 @@ export class RequestResponseLogger {
 
   private logFetchRequest(url: string, init: RequestInit | undefined, requestId: string): void {
     const method = init?.method || 'GET';
-    const context = {
+    const context: FetchRequestContext = {
       requestId,
       method,
       url,
@@ -219,7 +265,7 @@ export class RequestResponseLogger {
     const statusCode = response.status;
     const logLevel = statusCode >= 500 ? 'error' : statusCode >= 400 ? 'warn' : 'info';
     
-    const context = {
+    const context: FetchResponseContext = {
       requestId,
       method: 'GET', // Default, actual method would need to be passed separately
       url,
@@ -262,7 +308,7 @@ export class RequestResponseLogger {
       return obj;
     }
 
-    const sanitized = Array.isArray(obj) ? [] : {};
+    const sanitized: { [key: string]: any } = Array.isArray(obj) ? [] : {};
 
     for (const [key, value] of Object.entries(obj)) {
       if (this.config.sensitiveFields.some(field => 
@@ -300,6 +346,3 @@ export class RequestResponseLogger {
 
 // Export singleton instance
 export const requestLogger = new RequestResponseLogger();
-
-// Export for custom configurations
-export { RequestResponseLogger };

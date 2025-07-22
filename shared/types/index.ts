@@ -62,8 +62,7 @@ export interface BacktestTrade {
   fee: number;
   reason?: string;
   metadata?: Record<string, unknown>;
-  highestProfit?: number;
-  // Compatibility with strategyTester.ts
+  highestProfit?: number; // Compatibility with strategyTester.ts
   entryDate?: Date;
   exitDate?: Date | null;
   type?: 'BUY' | 'SELL';
@@ -108,5 +107,5 @@ export interface TradingStrategy {
   };
 }
 
-// Alias for backward compatibility
+// Export Strategy as alias to TradingStrategy for compatibility
 export type Strategy = TradingStrategy;
