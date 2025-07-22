@@ -106,7 +106,7 @@ export const generateSignal = async (
 };
 
 export const predictWithMLModel = async (
-  modelInfo: MLModelInfo,
+  _modelInfo: MLModelInfo,
   data: MarketDataPoint[]
 ): Promise<MLPrediction[]> => {
   return data.map((candle) => ({

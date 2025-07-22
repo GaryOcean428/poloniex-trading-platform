@@ -53,9 +53,9 @@ interface LiveAlert {
 
 const LiveTradingDashboard: React.FC = () => {
   const { 
-    marketData, 
+    // marketData, 
     strategies, 
-    activeStrategies, 
+    // activeStrategies, 
     trades, 
     isMockMode 
   } = useTradingContext();

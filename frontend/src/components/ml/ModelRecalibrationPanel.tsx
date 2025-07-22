@@ -124,7 +124,7 @@ const ModelRecalibrationPanel: React.FC = () => {
     try {
       let metrics;
       
-      if (selectedModel.config.modelType) {
+      if (selectedModel.config?.modelType) {
         // ML model
         metrics = await monitorMLModelPerformance(selectedModel, marketData);
       } else {
@@ -163,7 +163,7 @@ const ModelRecalibrationPanel: React.FC = () => {
     try {
       let result;
       
-      if (selectedModel.config.modelType) {
+      if (selectedModel.config?.modelType) {
         // ML model
         result = await recalibrateMLModel(selectedModel, marketData, recalibrationStrategy);
       } else {
@@ -173,8 +173,8 @@ const ModelRecalibrationPanel: React.FC = () => {
       
       setRecalibrationResult(result);
       
-      // Add to recalibration history
-      setPerformanceHistory(prev => [...prev, result]);
+      // Add to recalibration result
+      setRecalibrationResult(result);
       
       // Update model list with new model
       if (selectedModel.config?.modelType) {
@@ -183,7 +183,7 @@ const ModelRecalibrationPanel: React.FC = () => {
           id: result.newModelId, 
           name: `${selectedModel.name} (Recalibrated)`,
           type: 'ml',
-          performance: result.metrics.accuracy || 0
+          performance: result.performanceImprovement || 0
         }]);
       } else {
         // DQN model
@@ -191,7 +191,7 @@ const ModelRecalibrationPanel: React.FC = () => {
           id: result.newModelId, 
           name: `${selectedModel.name} (Recalibrated)`,
           type: 'dqn',
-          performance: result.metrics.accuracy || 0
+          performance: result.performanceImprovement || 0
         }]);
       }
       
@@ -242,8 +242,8 @@ const ModelRecalibrationPanel: React.FC = () => {
           );
           
           if (result) {
-            // Update recalibration history
-            setPerformanceHistory(prev => [...prev, result]);
+            // Update recalibration result
+            setRecalibrationResult(result);
             
             // Update model list with new model
             if (selectedModel.config?.modelType) {
@@ -252,7 +252,7 @@ const ModelRecalibrationPanel: React.FC = () => {
                 id: result.newModelId, 
                 name: `${selectedModel.name} (Recalibrated)`,
                 type: 'ml',
-                performance: result.metrics.accuracy || 0
+                performance: result.performanceImprovement || 0
               }]);
             } else {
               // DQN model
@@ -260,7 +260,7 @@ const ModelRecalibrationPanel: React.FC = () => {
                 id: result.newModelId, 
                 name: `${selectedModel.name} (Recalibrated)`,
                 type: 'dqn',
-                performance: result.metrics.accuracy || 0
+                performance: result.performanceImprovement || 0
               }]);
             }
           }
