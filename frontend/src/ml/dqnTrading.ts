@@ -285,3 +285,22 @@ export const createDQNAction = (
   action,
   confidence,
 });
+
+// Stub implementations for missing methods
+export const getDQNActions = async (
+  _modelInfo: DQNModelInfo,
+  _marketData: unknown[]
+): Promise<DQNAction[]> => {
+  // TODO: Implement actual DQN action generation
+  console.warn('getDQNActions called - this is a stub implementation');
+  return [];
+};
+
+export const continueDQNTraining = async (
+  _modelInfo: DQNModelInfo,
+  _newData: unknown[]
+): Promise<DQNModelInfo> => {
+  // TODO: Implement actual DQN continued training
+  console.warn('continueDQNTraining called - this is a stub implementation');
+  return _modelInfo;
+};

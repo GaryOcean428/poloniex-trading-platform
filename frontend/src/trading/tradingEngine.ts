@@ -1,6 +1,10 @@
 // Trading Engine - Production ready with proper logging
 export class TradingEngine {
   private isRunning = false;
+  public modeManager = {
+    getCurrentMode: () => 'manual',
+    isLiveMode: () => false
+  };
 
   async initialize(): Promise<boolean> {
     // Production logging
@@ -17,6 +21,15 @@ export class TradingEngine {
 
   getStatus(): boolean {
     return this.isRunning;
+  }
+
+  async switchMode(mode: string): Promise<void> {
+    // TODO: Implement mode switching
+    console.log(`Switching to mode: ${mode}`);
+  }
+
+  getCurrentActivity(): string {
+    return this.isRunning ? 'Trading Active' : 'Trading Stopped';
   }
 }
 

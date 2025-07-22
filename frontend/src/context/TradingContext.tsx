@@ -1,5 +1,6 @@
 import React, { createContext, useState, ReactNode, useEffect, useCallback } from 'react';
-import { Strategy, StrategyType, MarketData, Trade, MovingAverageCrossoverParameters } from '../types';
+import { Strategy } from '@shared/types';
+import { StrategyType, MarketData, Trade, MovingAverageCrossoverParameters } from '../types';
 import { mockMarketData, mockTrades } from '../data/mockData';
 import { usePoloniexData } from '../hooks/usePoloniexData';
 import { poloniexApi } from '../services/poloniexAPI';

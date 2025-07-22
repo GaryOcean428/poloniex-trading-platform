@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Search, Filter, Download, Calendar, ArrowUpDown, FileText } from 'lucide-react';
+import { Search, Filter, Download, ArrowUpDown, FileText } from 'lucide-react';
 
 interface Transaction {
   id: string;
@@ -144,9 +144,9 @@ const TransactionHistory: React.FC = () => {
       if (bValue instanceof Date) bValue = bValue.getTime();
 
       if (sortDirection === 'asc') {
-        return aValue > bValue ? 1 : -1;
+        return (aValue ?? 0) > (bValue ?? 0) ? 1 : -1;
       } else {
-        return aValue < bValue ? 1 : -1;
+        return (aValue ?? 0) < (bValue ?? 0) ? 1 : -1;
       }
     });
 
