@@ -17,6 +17,9 @@ interface ModelData {
   name: string;
   type: string;
   performance: number;
+  config?: {
+    modelType?: string;
+  };
 }
 
 interface MarketDataPoint {
@@ -82,7 +85,13 @@ const ModelRecalibrationPanel: React.FC = () => {
       try {
         // Get market data for monitoring and recalibration
         await fetchMarketData('BTC_USDT');
-        setMarketData(poloniexMarketData);
+        // Convert MarketData[] to MarketDataPoint[]
+        const convertedData: MarketDataPoint[] = poloniexMarketData.map(data => ({
+          timestamp: data.timestamp,
+          price: data.close, // Use close price as the price
+          volume: data.volume
+        }));
+        setMarketData(convertedData);
       } catch (err) {
         console.error('Error fetching market data:', err);
         setError('Failed to fetch market data');
@@ -165,15 +174,25 @@ const ModelRecalibrationPanel: React.FC = () => {
       setRecalibrationResult(result);
       
       // Add to recalibration history
-      setRecalibrationHistory(prev => [...prev, result]);
+      setPerformanceHistory(prev => [...prev, result]);
       
       // Update model list with new model
-      if (selectedModel.config.modelType) {
+      if (selectedModel.config?.modelType) {
         // ML model
-        setMlModels(prev => [...prev, { id: result.newModelId, name: `${selectedModel.name} (Recalibrated)` }]);
+        setMlModels(prev => [...prev, { 
+          id: result.newModelId, 
+          name: `${selectedModel.name} (Recalibrated)`,
+          type: 'ml',
+          performance: result.metrics.accuracy || 0
+        }]);
       } else {
         // DQN model
-        setDqnModels(prev => [...prev, { id: result.newModelId, name: `${selectedModel.name} (Recalibrated)` }]);
+        setDqnModels(prev => [...prev, { 
+          id: result.newModelId, 
+          name: `${selectedModel.name} (Recalibrated)`,
+          type: 'dqn',
+          performance: result.metrics.accuracy || 0
+        }]);
       }
       
       setIsRecalibrating(false);
@@ -224,15 +243,25 @@ const ModelRecalibrationPanel: React.FC = () => {
           
           if (result) {
             // Update recalibration history
-            setRecalibrationHistory(prev => [...prev, result]);
+            setPerformanceHistory(prev => [...prev, result]);
             
             // Update model list with new model
-            if (selectedModel.config.modelType) {
+            if (selectedModel.config?.modelType) {
               // ML model
-              setMlModels(prev => [...prev, { id: result.newModelId, name: `${selectedModel.name} (Recalibrated)` }]);
+              setMlModels(prev => [...prev, { 
+                id: result.newModelId, 
+                name: `${selectedModel.name} (Recalibrated)`,
+                type: 'ml',
+                performance: result.metrics.accuracy || 0
+              }]);
             } else {
               // DQN model
-              setDqnModels(prev => [...prev, { id: result.newModelId, name: `${selectedModel.name} (Recalibrated)` }]);
+              setDqnModels(prev => [...prev, { 
+                id: result.newModelId, 
+                name: `${selectedModel.name} (Recalibrated)`,
+                type: 'dqn',
+                performance: result.metrics.accuracy || 0
+              }]);
             }
           }
         } catch (err) {

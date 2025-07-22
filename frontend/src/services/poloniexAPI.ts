@@ -311,6 +311,22 @@ class PoloniexApiClient {
     
     throw new Error('Order placement not implemented for live trading');
   }
+
+  // Event listener methods for automated trading
+  public onPositionUpdate(callback: (data: any) => void): void {
+    // TODO: Implement position update listener
+    console.warn('onPositionUpdate called - this is a stub implementation');
+  }
+
+  public onLiquidationWarning(callback: (data: any) => void): void {
+    // TODO: Implement liquidation warning listener
+    console.warn('onLiquidationWarning called - this is a stub implementation');
+  }
+
+  public onMarginUpdate(callback: (data: any) => void): void {
+    // TODO: Implement margin update listener
+    console.warn('onMarginUpdate called - this is a stub implementation');
+  }
 }
 
 export const poloniexApi = PoloniexApiClient.getInstance();

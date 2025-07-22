@@ -1,5 +1,5 @@
 import { usePoloniexData } from '@/hooks/usePoloniexData';
-import { default as dqnTrading } from '@/ml/dqnTrading';
+import * as dqnTrading from '@/ml/dqnTrading';
 import React, { useEffect, useState } from 'react';
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { useSettings } from '../../hooks/useSettings';

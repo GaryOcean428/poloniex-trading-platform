@@ -58,10 +58,29 @@ const NewStrategyForm: React.FC<NewStrategyFormProps> = ({ onClose }) => {
         break;
     }
 
+    // Map strategy type to the expected format
+    const getStrategyTypeAndAlgorithm = (strategyType: StrategyType) => {
+      switch (strategyType) {
+        case StrategyType.MA_CROSSOVER:
+          return { type: 'automated' as const, algorithm: 'MovingAverageCrossover' as const };
+        case StrategyType.RSI:
+          return { type: 'automated' as const, algorithm: 'RSI' as const };
+        case StrategyType.MACD:
+          return { type: 'automated' as const, algorithm: 'MACD' as const };
+        case StrategyType.BOLLINGER_BANDS:
+          return { type: 'automated' as const, algorithm: 'BollingerBands' as const };
+        default:
+          return { type: 'automated' as const, algorithm: 'Custom' as const };
+      }
+    };
+
+    const { type: strategyType, algorithm } = getStrategyTypeAndAlgorithm(type);
+
     const newStrategy: Strategy = {
       id: Date.now().toString(),
       name,
-      type,
+      type: strategyType,
+      algorithm,
       active: true,
       parameters: parameters as unknown as StrategyParameters,
       performance: {

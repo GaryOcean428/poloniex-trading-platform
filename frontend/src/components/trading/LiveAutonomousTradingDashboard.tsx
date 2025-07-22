@@ -87,7 +87,7 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
 
   // Set up event listeners
   useEffect(() => {
-    const handleConnectionChange = (data: any) => {
+    const handleConnectionChange = (_data: any) => {
       setConnectionStatus(liveAutonomousTradingEngine.getConnectionStatus());
     };
 
@@ -254,12 +254,12 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
   // Get connection status badge
   const getConnectionBadge = () => {
     if (!connectionStatus.useBackend) {
-      return <Badge variant="outline" className="bg-yellow-50">Mock Mode</Badge>;
+      return <Badge variant="warning" className="bg-yellow-50">Mock Mode</Badge>;
     }
     if (connectionStatus.isConnected) {
-      return <Badge variant="default" className="bg-green-50 text-green-700">Live Connected</Badge>;
+      return <Badge variant="success" className="bg-green-50 text-green-700">Live Connected</Badge>;
     }
-    return <Badge variant="destructive">Disconnected</Badge>;
+    return <Badge variant="error">Disconnected</Badge>;
   };
 
   return (
@@ -287,7 +287,7 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
 
       {/* Error Alert */}
       {error && (
-        <Alert variant="destructive">
+        <Alert variant="error">
           <AlertTriangle className="h-4 w-4" />
           <div className="flex-1">{error}</div>
           <Button variant="ghost" size="sm" onClick={() => setError(null)}>
@@ -351,7 +351,7 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
                   </Button>
                   
                   <Button
-                    variant="destructive"
+                    variant="danger"
                     onClick={handleEmergencyStop}
                     disabled={loading}
                     className="w-full"
@@ -639,7 +639,7 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
                   <Label>Maximum Risk Per Trade: {(settings.maxRiskPerTrade * 100).toFixed(1)}%</Label>
                   <Slider
                     value={[settings.maxRiskPerTrade * 100]}
-                    onValueChange={(value) => setSettings(prev => ({ ...prev, maxRiskPerTrade: value[0] / 100 }))}
+                    onValueChange={(value) => setSettings(prev => ({ ...prev, maxRiskPerTrade: Number(value[0]) / 100 }))}
                     min={0.5}
                     max={5}
                     step={0.1}
@@ -651,7 +651,7 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
                   <Label>Maximum Drawdown: {(settings.maxDrawdown * 100).toFixed(1)}%</Label>
                   <Slider
                     value={[settings.maxDrawdown * 100]}
-                    onValueChange={(value) => setSettings(prev => ({ ...prev, maxDrawdown: value[0] / 100 }))}
+                    onValueChange={(value) => setSettings(prev => ({ ...prev, maxDrawdown: Number(value[0]) / 100 }))}
                     min={5}
                     max={30}
                     step={0.5}
@@ -663,7 +663,7 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
                   <Label>Confidence Threshold: {settings.confidenceThreshold}%</Label>
                   <Slider
                     value={[settings.confidenceThreshold]}
-                    onValueChange={(value) => setSettings(prev => ({ ...prev, confidenceThreshold: value[0] }))}
+                    onValueChange={(value) => setSettings(prev => ({ ...prev, confidenceThreshold: Number(value[0]) }))}
                     min={50}
                     max={95}
                     step={1}
@@ -710,7 +710,7 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
                   <Label>Banking Percentage: {(bankingConfig.bankingPercentage * 100).toFixed(1)}%</Label>
                   <Slider
                     value={[bankingConfig.bankingPercentage * 100]}
-                    onValueChange={(value) => setBankingConfig(prev => ({ ...prev, bankingPercentage: value[0] / 100 }))}
+                    onValueChange={(value) => setBankingConfig(prev => ({ ...prev, bankingPercentage: Number(value[0]) / 100 }))}
                     min={10}
                     max={50}
                     step={1}
