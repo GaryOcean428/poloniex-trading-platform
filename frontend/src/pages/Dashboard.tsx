@@ -12,7 +12,7 @@ import MockModeNotice from '../components/MockModeNotice';
 import ExtensionBanner from '../components/dashboard/ExtensionBanner';
 import AutonomousTradingDashboard from '../components/trading/AutonomousTradingDashboard';
 import { mockTrades } from '../data/mockData';
-import { Activity, ArrowRight, Brain } from 'lucide-react';
+import { Activity, ArrowRight } from 'lucide-react';
 
 const Dashboard: React.FC = () => {
   const { marketData, strategies, activeStrategies, trades, isMockMode } = useTradingContext();

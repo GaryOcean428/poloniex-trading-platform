@@ -1,5 +1,5 @@
 import { usePoloniexData } from '@/hooks/usePoloniexData';
-import { default as dqnTrading } from '@/ml/dqnTrading';
+import * as dqnTrading from '@/ml/dqnTrading';
 import React, { useEffect, useState } from 'react';
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { useSettings } from '../../hooks/useSettings';
@@ -77,7 +77,7 @@ const DQNTradingPanel: React.FC = () => {
   const [isGettingActions, setIsGettingActions] = useState(false);
   const [isContinuingTraining, setIsContinuingTraining] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [marketData, setMarketData] = useState<unknown[]>([]);
+  // const [marketData, setMarketData] = useState<unknown[]>([]);
   const [modelName, setModelName] = useState('My DQN Model');
   const [episodes, setEpisodes] = useState(100);
   const [additionalEpisodes, setAdditionalEpisodes] = useState(50);
@@ -90,7 +90,7 @@ const DQNTradingPanel: React.FC = () => {
       {
         // Get market data for training
         await fetchMarketData(defaultPair);
-        setMarketData(poloniexMarketData);
+        // Market data is now available via poloniexMarketData
       } catch (err)
       {
         setError('Failed to fetch market data');
@@ -103,7 +103,7 @@ const DQNTradingPanel: React.FC = () => {
 
   // Train model
   const handleTrainModel = async () => {
-    if (marketData.length === 0)
+    if (poloniexMarketData.length === 0)
     {
       setError('No market data available for training');
       return;
@@ -114,7 +114,18 @@ const DQNTradingPanel: React.FC = () => {
 
     try
     {
-      const info = await dqnTrading.trainDQNModel(marketData, modelConfig as DQNConfig, modelName, episodes);
+      // Convert poloniex market data to MarketCandle format
+      const convertedMarketData = poloniexMarketData.map(data => ({
+        timestamp: data.timestamp,
+        open: data.open,
+        high: data.high,
+        low: data.low,
+        close: data.close,
+        volume: data.volume,
+        symbol: data.pair
+      }));
+      
+      const info = await dqnTrading.trainDQNModel(convertedMarketData, modelConfig as DQNConfig, modelName, episodes);
       setModelInfo(info);
 
       // Prepare performance data for chart
@@ -141,7 +152,7 @@ const DQNTradingPanel: React.FC = () => {
       return;
     }
 
-    if (marketData.length === 0)
+    if (poloniexMarketData.length === 0)
     {
       setError('No market data available for prediction');
       return;
@@ -152,7 +163,18 @@ const DQNTradingPanel: React.FC = () => {
 
     try
     {
-      const actionsList = await dqnTrading.getDQNActions(modelInfo, marketData);
+      // Convert poloniex market data to MarketCandle format
+      const convertedMarketData = poloniexMarketData.map(data => ({
+        timestamp: data.timestamp,
+        open: data.open,
+        high: data.high,
+        low: data.low,
+        close: data.close,
+        volume: data.volume,
+        symbol: data.pair
+      }));
+      
+      const actionsList = await dqnTrading.getDQNActions(modelInfo, convertedMarketData);
       setActions(actionsList);
       setIsGettingActions(false);
     } catch (err)
@@ -171,7 +193,7 @@ const DQNTradingPanel: React.FC = () => {
       return;
     }
 
-    if (marketData.length === 0)
+    if (poloniexMarketData.length === 0)
     {
       setError('No market data available for training');
       return;
@@ -182,7 +204,18 @@ const DQNTradingPanel: React.FC = () => {
 
     try
     {
-      const updatedInfo = await dqnTrading.continueDQNTraining(modelInfo, marketData, additionalEpisodes);
+      // Convert poloniex market data to MarketCandle format
+      const convertedMarketData = poloniexMarketData.map(data => ({
+        timestamp: data.timestamp,
+        open: data.open,
+        high: data.high,
+        low: data.low,
+        close: data.close,
+        volume: data.volume,
+        symbol: data.pair
+      }));
+      
+      const updatedInfo = await dqnTrading.continueDQNTraining(modelInfo, convertedMarketData);
       setModelInfo(updatedInfo);
 
       // Update performance data for chart
@@ -356,7 +389,7 @@ const DQNTradingPanel: React.FC = () => {
       <div className="flex flex-wrap gap-4 mb-6">
         <button
           onClick={handleTrainModel}
-          disabled={isTraining || marketData.length === 0}
+          disabled={isTraining || poloniexMarketData.length === 0}
           className={`px-4 py-2 rounded-md text-white ${isTraining ? 'bg-neutral-400' : 'bg-blue-600 hover:bg-blue-700'
             }`}
         >

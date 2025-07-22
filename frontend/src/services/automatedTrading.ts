@@ -1,4 +1,4 @@
-import { Strategy } from '@/types';
+import { Strategy } from '@shared/types';
 import { executeStrategy } from '@/utils/strategyExecutors';
 import { poloniexApi } from '@/services/poloniexAPI';
 import { aiSignalGenerator, AISignal } from '@/ml/aiSignalGenerator';
@@ -90,7 +90,7 @@ class AutomatedTradingService {
    */
   public updateConfig(config: Partial<AutomatedTradingConfig>): void {
     this.config = { ...this.config, ...config };
-    logger.info('Automated trading configuration updated', this.config);
+    logger.info('Automated trading configuration updated', JSON.stringify(this.config));
   }
 
   /**
@@ -100,6 +100,11 @@ class AutomatedTradingService {
     try {
       // Get account balance
       const balance = await poloniexApi.getAccountBalance();
+      
+      if (!balance) {
+        logger.warn('Unable to get account balance, skipping trading update');
+        return;
+      }
       
       // Check if we can open new positions
       if (this.positions.size >= this.config.maxPositions) {

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Strategy } from '@/types';
 import { BacktestResult, BacktestOptions } from '@/types/backtest';
-import { backtestService } from '@/services/backtestService';
+// import { backtestService } from '@/services/backtestService';
 import { advancedBacktestService } from '@/services/advancedBacktestService';
 import { useTradingContext } from '@/hooks/useTradingContext';
 import HistoricalDataManager from '@/components/backtesting/HistoricalDataManager';
@@ -9,7 +9,6 @@ import {
   Play, 
   Settings, 
   Download, 
-  Calendar,
   TrendingUp,
   AlertTriangle,
   BarChart3,
@@ -174,6 +173,8 @@ const Backtesting: React.FC = () => {
     }
   };
 
+  // TODO: Implement advanced metrics calculation
+  /*
   const calculateAdvancedMetrics = (result: BacktestResult): AdvancedMetrics => {
     const returns = result.trades.map(t => t.pnlPercent / 100);
     const negativeReturns = returns.filter(r => r < 0).sort((a, b) => a - b);
@@ -236,6 +237,7 @@ const Backtesting: React.FC = () => {
       profitabilityIndex: result.initialBalance > 0 ? (result.finalBalance - result.initialBalance) / result.initialBalance : 0
     };
   };
+  */
 
   const exportResults = async (format: 'csv' | 'pdf' | 'excel') => {
     if (!activeSession?.result) return;
