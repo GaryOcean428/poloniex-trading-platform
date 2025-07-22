@@ -36,9 +36,31 @@ class Logger {
   private environment: string;
 
   constructor() {
-    this.isDevelopment = import.meta.env.DEV;
+    // Determine environment based on available globals
+    // Default to development for safety
+    this.isDevelopment = true;
     this.version = '1.0.0';
-    this.environment = import.meta.env.MODE || 'development';
+    this.environment = 'development';
+    
+    // Try to detect environment from various sources
+    try {
+      // Check if we're in a browser with Vite
+      if (typeof window !== 'undefined' && (window as any).__VITE_DEV__) {
+        this.isDevelopment = true;
+        this.environment = 'development';
+      }
+      // Check for Node.js production indicators
+      else if (typeof globalThis !== 'undefined') {
+        const nodeEnv = (globalThis as any).process?.env?.NODE_ENV;
+        if (nodeEnv) {
+          this.isDevelopment = nodeEnv === 'development';
+          this.environment = nodeEnv;
+        }
+      }
+    } catch (e) {
+      // Fall back to defaults if environment detection fails
+      console.warn('Failed to detect environment, using development defaults');
+    }
   }
 
   private createLogEntry(

@@ -22,12 +22,14 @@ export function executeStrategy(strategy: Strategy, marketData: MarketData[]): S
 
     switch (strategy.algorithm || strategy.name) {
       case 'MovingAverageCrossover':
+      case 'Moving Average Crossover':
         return executeMovingAverageCrossover(parameters, marketData);
       case 'RSI':
         return executeRSI(parameters, marketData);
       case 'MACD':
         return executeMACD(parameters, marketData);
       case 'BollingerBands':
+      case 'Bollinger Bands':
         return executeBollingerBands(parameters, marketData);
       case 'Custom':
         return executeCustomStrategy();

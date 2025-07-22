@@ -43,6 +43,7 @@ export interface RecalibrationResult {
   reason: string;
   performanceImprovement: number;
   recalibrationStrategy: string;
+  newPerformanceMetrics?: ModelPerformanceMetrics & { overallScore?: number };
 }
 
 // Default recalibration configuration

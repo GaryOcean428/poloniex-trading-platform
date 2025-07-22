@@ -19,6 +19,7 @@ interface ModelData {
   performance: number;
   config?: {
     modelType?: string;
+    [key: string]: any;
   };
 }
 
@@ -51,6 +52,7 @@ const ModelRecalibrationPanel: React.FC = () => {
     recalibrationStrategy: 'incremental'
   });
   const [recalibrationStrategy, setRecalibrationStrategy] = useState<'full' | 'incremental' | 'transfer'>('incremental');
+  const [recalibrationHistory, setRecalibrationHistory] = useState<RecalibrationResult[]>([]);
   const [autoRecalibrationEnabled, setAutoRecalibrationEnabled] = useState(false);
   const [cleanupFunction, setCleanupFunction] = useState<(() => void) | null>(null);
   
@@ -182,16 +184,18 @@ const ModelRecalibrationPanel: React.FC = () => {
         setMlModels(prev => [...prev, { 
           id: result.newModelId, 
           name: `${selectedModel.name} (Recalibrated)`,
-          type: 'ml',
-          performance: result.performanceImprovement || 0
+          type: selectedModel.type,
+          performance: result.newPerformanceMetrics?.overallScore ?? 0,
+          config: selectedModel.config
         }]);
       } else {
         // DQN model
         setDqnModels(prev => [...prev, { 
           id: result.newModelId, 
           name: `${selectedModel.name} (Recalibrated)`,
-          type: 'dqn',
-          performance: result.performanceImprovement || 0
+          type: selectedModel.type,
+          performance: result.newPerformanceMetrics?.overallScore ?? 0,
+          config: selectedModel.config
         }]);
       }
       
@@ -251,16 +255,18 @@ const ModelRecalibrationPanel: React.FC = () => {
               setMlModels(prev => [...prev, { 
                 id: result.newModelId, 
                 name: `${selectedModel.name} (Recalibrated)`,
-                type: 'ml',
-                performance: result.performanceImprovement || 0
+                type: selectedModel.type,
+                performance: result.newPerformanceMetrics?.overallScore ?? 0,
+                config: selectedModel.config
               }]);
             } else {
               // DQN model
               setDqnModels(prev => [...prev, { 
                 id: result.newModelId, 
                 name: `${selectedModel.name} (Recalibrated)`,
-                type: 'dqn',
-                performance: result.performanceImprovement || 0
+                type: selectedModel.type,
+                performance: result.newPerformanceMetrics?.overallScore ?? 0,
+                config: selectedModel.config
               }]);
             }
           }
@@ -545,6 +551,24 @@ const ModelRecalibrationPanel: React.FC = () => {
                 <p className="text-neutral-800 dark:text-white">{recalibrationResult.reason}</p>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+      
+      {recalibrationHistory.length > 0 && (
+        <div className="mb-6">
+          <h3 className="text-lg font-medium mb-2 text-neutral-700 dark:text-neutral-300">Recalibration History</h3>
+          <div className="bg-neutral-100 dark:bg-neutral-700 p-4 rounded-md max-h-40 overflow-y-auto">
+            {recalibrationHistory.map((result, index) => (
+              <div key={index} className="mb-2 p-2 bg-white dark:bg-neutral-600 rounded text-sm">
+                <span className="font-medium">{new Date(result.timestamp).toLocaleString()}</span>
+                <span className="mx-2">-</span>
+                <span>{result.reason}</span>
+                <span className="text-green-600 dark:text-green-400 ml-2">
+                  (+{(result.performanceImprovement * 100).toFixed(1)}%)
+                </span>
+              </div>
+            ))}
           </div>
         </div>
       )}

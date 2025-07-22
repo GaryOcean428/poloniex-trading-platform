@@ -258,7 +258,7 @@ function checkExitConditions(
     if (options.useStopLoss && !isProfitable && Math.abs(profitPercent) >= (options.stopLossPercent || 0)) {
       position.exitDate = currentDate;
       position.exitPrice = currentPrice;
-      position.profit = priceDiff * (position.quantity || 0);
+      position.profit = priceDiff * (position.quantity ?? 0);
       position.profitPercent = profitPercent;
       position.reason += ' (Stop Loss)';
       
@@ -271,7 +271,7 @@ function checkExitConditions(
     if (options.useTakeProfit && isProfitable && profitPercent >= (options.takeProfitPercent || 0)) {
       position.exitDate = currentDate;
       position.exitPrice = currentPrice;
-      position.profit = priceDiff * (position.quantity || 0);
+      position.profit = priceDiff * (position.quantity ?? 0);
       position.profitPercent = profitPercent;
       position.reason += ' (Take Profit)';
       
@@ -285,7 +285,7 @@ function checkExitConditions(
         position.highestProfit - profitPercent >= (options.trailingStopPercent || 0)) {
       position.exitDate = currentDate;
       position.exitPrice = currentPrice;
-      position.profit = priceDiff * (position.quantity || 0);
+      position.profit = priceDiff * (position.quantity ?? 0);
       position.profitPercent = profitPercent;
       position.reason += ' (Trailing Stop)';
       
@@ -388,7 +388,7 @@ function closeAllPositions(
     // Update trade
     position.exitDate = currentDate;
     position.exitPrice = currentPrice;
-    position.profit = priceDiff * (position.quantity || 0);
+    position.profit = priceDiff * (position.quantity ?? 0);
     position.profitPercent = profitPercent;
     position.reason += ' (End of Test)';
     
@@ -426,7 +426,7 @@ function calculateEquity(
       ? currentPrice - entryPrice
       : entryPrice - currentPrice;
     
-    const positionProfit = priceDiff * (position.quantity || 0);
+    const positionProfit = priceDiff * (position.quantity ?? 0);
     
     equity += positionProfit;
   }
@@ -758,7 +758,7 @@ function simulateEquityCurve(
   // Process each trade
   for (const trade of trades) {
     // Update balance
-    balance += trade.profit || 0;
+    balance += (trade.profit ?? 0);
     
     // Track maximum balance and drawdown
     if (balance > maxBalance) {
@@ -773,11 +773,11 @@ function simulateEquityCurve(
     }
     
     // Track winning/losing trades
-    if ((trade.profit || 0) > 0) {
+    if ((trade.profit ?? 0) > 0) {
       winningTrades++;
-      totalProfit += trade.profit || 0;
+      totalProfit += (trade.profit ?? 0);
     } else {
-      totalLoss += trade.profit || 0; // Note: loss is negative
+      totalLoss += (trade.profit ?? 0); // Note: loss is negative
     }
     
     // Track daily returns for Sharpe ratio
