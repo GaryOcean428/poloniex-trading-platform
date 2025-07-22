@@ -62,8 +62,7 @@ export interface BacktestTrade {
   fee: number;
   reason?: string;
   metadata?: Record<string, unknown>;
-  highestProfit?: number;
-  // Compatibility with strategyTester.ts
+  highestProfit?: number; // Compatibility with strategyTester.ts
   entryDate?: Date;
   exitDate?: Date | null;
   type?: 'BUY' | 'SELL';
@@ -98,6 +97,7 @@ export interface TradingStrategy {
   id: string;
   name: string;
   type: 'manual' | 'automated' | 'ml' | 'dqn';
+  algorithm?: 'MovingAverageCrossover' | 'RSI' | 'MACD' | 'BollingerBands' | 'Custom';
   active: boolean;
   parameters: Record<string, any>;
   performance?: {

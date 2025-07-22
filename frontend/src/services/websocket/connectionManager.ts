@@ -4,6 +4,10 @@ import { io, Socket } from "socket.io-client";
 export class ConnectionManager {
   private socket: Socket | null = null;
 
+  async connect(token?: string): Promise<Socket> {
+    return this.connectToBackend(token);
+  }
+
   async connectToBackend(token?: string): Promise<Socket> {
     const backendUrl = getBackendUrl();
 

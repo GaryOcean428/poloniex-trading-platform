@@ -1,4 +1,4 @@
-import { Strategy, MarketData, StrategyParameters } from '../../../shared/types';
+import { Strategy, MarketData, StrategyParameters } from '@shared/types';
 import { MovingAverageCrossoverParameters, RSIParameters, MACDParameters, BollingerBandsParameters } from '@/types';
 import { logger } from '@/utils/logger';
 
@@ -20,7 +20,7 @@ export function executeStrategy(strategy: Strategy, marketData: MarketData[]): S
       timeframe: strategy.parameters.timeframe || '5m'
     };
 
-    switch (strategy.name || strategy.type) {
+    switch (strategy.algorithm || strategy.name) {
       case 'MovingAverageCrossover':
       case 'Moving Average Crossover':
         return executeMovingAverageCrossover(parameters, marketData);
@@ -34,7 +34,7 @@ export function executeStrategy(strategy: Strategy, marketData: MarketData[]): S
       case 'Custom':
         return executeCustomStrategy();
       default:
-        logger.error(`Unknown strategy: ${strategy.name || strategy.type}`);
+        logger.error(`Unknown strategy algorithm: ${strategy.algorithm || strategy.name}`);
         return { signal: null, reason: 'Unknown strategy type', confidence: 0 };
     }
   } catch (error) {

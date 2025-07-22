@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useSettings } from '../../hooks/useSettings';
-import { Strategy, StrategyParameters } from '../../types';
+import { Strategy } from '@shared/types';
 import { tradingEngine } from '@/trading/tradingEngine';
 import { executeStrategy } from '@/utils/strategyExecutors';
 import { poloniexApi } from '@/services/poloniexAPI';
@@ -28,6 +28,7 @@ const AutomationPanel: React.FC = () => {
     pair: string;
     signal: string | null;
     reason: string;
+    executed?: boolean;
   } | null>(null);
 
   // Load saved strategies
@@ -86,15 +87,11 @@ const AutomationPanel: React.FC = () => {
       }
 
       // Get market data
-      const pair = strategy.parameters.pair || defaultPair;
+      const pair = (strategy.parameters.pair as string) || defaultPair;
       const data = await poloniexApi.getMarketData(pair);
 
-      // Execute strategy - convert TradingStrategy to Strategy format
-      const strategyForExecution = {
-        ...strategy,
-        parameters: strategy.parameters as StrategyParameters
-      };
-      const result = executeStrategy(strategyForExecution, data);
+      // Execute strategy
+      const result = executeStrategy(strategy, data);
 
       // Record signal
       setLastSignal({
@@ -161,6 +158,9 @@ const AutomationPanel: React.FC = () => {
               <p><strong>Pair:</strong> {lastSignal.pair}</p>
               <p><strong>Signal:</strong> {lastSignal.signal || 'No signal'}</p>
               <p><strong>Reason:</strong> {lastSignal.reason}</p>
+              {lastSignal.executed && (
+                <p className="text-green-600 font-medium mt-1">✓ Executed</p>
+              )}
             </div>
           )}
 

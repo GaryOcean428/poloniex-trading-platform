@@ -87,13 +87,13 @@ const ModelRecalibrationPanel: React.FC = () => {
       try {
         // Get market data for monitoring and recalibration
         await fetchMarketData('BTC_USDT');
-        // Map MarketData to MarketDataPoint format
-        const mappedData = poloniexMarketData.map(data => ({
+        // Convert MarketData[] to MarketDataPoint[]
+        const convertedData: MarketDataPoint[] = poloniexMarketData.map(data => ({
           timestamp: data.timestamp,
-          price: data.close, // Use close price as the main price
+          price: data.close, // Use close price as the price
           volume: data.volume
         }));
-        setMarketData(mappedData);
+        setMarketData(convertedData);
       } catch (err) {
         console.error('Error fetching market data:', err);
         setError('Failed to fetch market data');
@@ -175,8 +175,8 @@ const ModelRecalibrationPanel: React.FC = () => {
       
       setRecalibrationResult(result);
       
-      // Add to recalibration history
-      setRecalibrationHistory(prev => [...prev, result]);
+      // Add to recalibration result
+      setRecalibrationResult(result);
       
       // Update model list with new model
       if (selectedModel.config?.modelType) {
@@ -246,8 +246,8 @@ const ModelRecalibrationPanel: React.FC = () => {
           );
           
           if (result) {
-            // Update recalibration history
-            setRecalibrationHistory(prev => [...prev, result]);
+            // Update recalibration result
+            setRecalibrationResult(result);
             
             // Update model list with new model
             if (selectedModel.config?.modelType) {

@@ -1,5 +1,4 @@
-import { MarketData, StrategyParameters, BacktestTrade } from '../../../shared/types';
-import { Strategy } from '../types';
+import { Strategy, MarketData, StrategyParameters, BacktestTrade } from '@shared/types';
 import { executeStrategy, StrategyResult } from './strategyExecutors';
 
 export interface BacktestResult {
@@ -475,9 +474,8 @@ export function optimizeStrategy(
       id: 'optimization-test',
       name: `${strategy.type} Optimization`,
       type: strategy.type,
-      parameters: parameters as StrategyParameters,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      active: true,
+      parameters: parameters as StrategyParameters
     };
     
     const result = backtestStrategy(testStrategy, data, testOptions);
@@ -755,7 +753,7 @@ function simulateEquityCurve(
   // Daily returns for Sharpe ratio
   const dailyReturns: number[] = [];
   let lastDayEquity = initialBalance;
-  let lastDay = trades.length > 0 ? trades[0].entryDate?.toDateString() ?? '' : '';
+  let lastDay = trades.length > 0 && trades[0].entryDate ? trades[0].entryDate.toDateString() : '';
   
   // Process each trade
   for (const trade of trades) {

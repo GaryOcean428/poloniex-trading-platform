@@ -257,7 +257,7 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
       return <Badge variant="warning" className="bg-yellow-50">Mock Mode</Badge>;
     }
     if (connectionStatus.isConnected) {
-      return <Badge variant="default" className="bg-green-50 text-green-700">Live Connected</Badge>;
+      return <Badge variant="success" className="bg-green-50 text-green-700">Live Connected</Badge>;
     }
     return <Badge variant="error">Disconnected</Badge>;
   };
@@ -638,8 +638,11 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
                 <div>
                   <Label>Maximum Risk Per Trade: {(settings.maxRiskPerTrade * 100).toFixed(1)}%</Label>
                   <Slider
-                    value={[(settings.maxRiskPerTrade * 100).toString()]}
-                    onValueChange={(value) => setSettings(prev => ({ ...prev, maxRiskPerTrade: parseFloat(value[0] as string) / 100 }))}
+                    value={[settings.maxRiskPerTrade * 100]}
+                    onValueChange={(value) => {
+                      const numValue = Array.isArray(value) ? Number(value[0]) : Number(value);
+                      setSettings(prev => ({ ...prev, maxRiskPerTrade: numValue / 100 }));
+                    }}
                     min={0.5}
                     max={5}
                     step={0.1}
@@ -650,8 +653,11 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
                 <div>
                   <Label>Maximum Drawdown: {(settings.maxDrawdown * 100).toFixed(1)}%</Label>
                   <Slider
-                    value={[(settings.maxDrawdown * 100).toString()]}
-                    onValueChange={(value) => setSettings(prev => ({ ...prev, maxDrawdown: parseFloat(value[0] as string) / 100 }))}
+                    value={[settings.maxDrawdown * 100]}
+                    onValueChange={(value) => {
+                      const numValue = Array.isArray(value) ? Number(value[0]) : Number(value);
+                      setSettings(prev => ({ ...prev, maxDrawdown: numValue / 100 }));
+                    }}
                     min={5}
                     max={30}
                     step={0.5}
@@ -662,8 +668,11 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
                 <div>
                   <Label>Confidence Threshold: {settings.confidenceThreshold}%</Label>
                   <Slider
-                    value={[settings.confidenceThreshold.toString()]}
-                    onValueChange={(value) => setSettings(prev => ({ ...prev, confidenceThreshold: parseFloat(value[0] as string) }))}
+                    value={[settings.confidenceThreshold]}
+                    onValueChange={(value) => {
+                      const numValue = Array.isArray(value) ? Number(value[0]) : Number(value);
+                      setSettings(prev => ({ ...prev, confidenceThreshold: numValue }));
+                    }}
                     min={50}
                     max={95}
                     step={1}
@@ -709,8 +718,11 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
                 <div>
                   <Label>Banking Percentage: {(bankingConfig.bankingPercentage * 100).toFixed(1)}%</Label>
                   <Slider
-                    value={[(bankingConfig.bankingPercentage * 100).toString()]}
-                    onValueChange={(value) => setBankingConfig(prev => ({ ...prev, bankingPercentage: parseFloat(value[0] as string) / 100 }))}
+                    value={[bankingConfig.bankingPercentage * 100]}
+                    onValueChange={(value) => {
+                      const numValue = Array.isArray(value) ? Number(value[0]) : Number(value);
+                      setBankingConfig(prev => ({ ...prev, bankingPercentage: numValue / 100 }));
+                    }}
                     min={10}
                     max={50}
                     step={1}
