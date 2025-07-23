@@ -14,16 +14,7 @@ import { EventHandlerService } from "./websocket/eventHandlerService";
 import { HealthService } from "./websocket/healthService";
 import { ReconnectionService } from "./websocket/reconnectionService";
 
-// Constants
-const POLONIEX_V3_CONFIG = {
-  BULLET_ENDPOINT: "https://futures-api.poloniex.com/api/v1/bullet-public",
-  PUBLIC_WS_URL: "wss://futures-apiws.poloniex.com",
-  PRIVATE_WS_URL: "wss://futures-apiws.poloniex.com",
-  RECONNECT_INTERVAL: 5000,
-  MAX_RECONNECT_ATTEMPTS: 10,
-  PING_INTERVAL: 30000,
-  TOKEN_EXPIRY: 24 * 60 * 60 * 1000, // 24 hours
-};
+// Removed unused POLONIEX_V3_CONFIG constant
 
 class WebSocketService implements WebSocketServiceInterface {
   private static instance: WebSocketService;
@@ -33,8 +24,6 @@ class WebSocketService implements WebSocketServiceInterface {
   private healthService: HealthService;
   private connectionState: ConnectionState = ConnectionState.DISCONNECTED;
   private useMockData: boolean = true;
-  private lastErrorLog: { [key: string]: number } = {};
-  private ERROR_LOG_THROTTLE_MS = 30000;
 
   private constructor() {
     this.connectionManager = new ConnectionManager();

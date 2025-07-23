@@ -61,14 +61,13 @@ const LiveTradingDashboard: React.FC = () => {
   } = useTradingContext();
   
   const { 
-    connectionState, 
+    connectionState: _connectionState, 
     isMockMode: wsIsMockMode, 
     isConnected,
     on,
     off
   } = useWebSocket();
 
-  const [realTimePrice, setRealTimePrice] = useState<RealTimeMetric | null>(null);
   const [priceHistory, setPriceHistory] = useState<RealTimeMetric[]>([]);
   const [selectedPair, setSelectedPair] = useState<string>('BTC-USDT');
   const [isLiveMode, setIsLiveMode] = useState<boolean>(false);

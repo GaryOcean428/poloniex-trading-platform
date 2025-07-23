@@ -18,7 +18,7 @@ interface TradePerformanceData {
 }
 
 const Performance: React.FC = () => {
-  const [metrics, setMetrics] = useState<PerformanceMetrics>({
+  const [metrics, _setMetrics] = useState<PerformanceMetrics>({
     totalPnL: 1247.89,
     winRate: 68.5,
     totalTrades: 127,
@@ -27,7 +27,7 @@ const Performance: React.FC = () => {
     avgTradeReturn: 0.85
   });
 
-  const [performanceData, setPerformanceData] = useState<TradePerformanceData[]>([
+  const [performanceData, _setPerformanceData] = useState<TradePerformanceData[]>([
     { date: '2024-01-01', pnl: 45.23, cumulativePnL: 45.23, trades: 3 },
     { date: '2024-01-02', pnl: -12.45, cumulativePnL: 32.78, trades: 2 },
     { date: '2024-01-03', pnl: 78.92, cumulativePnL: 111.70, trades: 4 },
@@ -170,7 +170,7 @@ const Performance: React.FC = () => {
                   fill="#8884d8"
                   dataKey="value"
                 >
-                  {strategyBreakdown.map((entry, index) => (
+                  {strategyBreakdown.map((_entry, index) => (
                     <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                   ))}
                 </Pie>
