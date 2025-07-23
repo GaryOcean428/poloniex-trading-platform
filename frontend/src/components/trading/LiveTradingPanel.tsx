@@ -26,10 +26,9 @@ const LiveTradingPanel: React.FC = () => {
         await tradingEngine.initialize();
         setIsInitialized(true);
         
-        // Get initial balance if in paper mode
+        // Set initial balance for paper mode
         if (!isLiveTrading) {
-          const paperEngine = tradingEngine.modeManager.getPaperEngine();
-          setBalance(paperEngine.getBalance());
+          setBalance(10000); // Default paper trading balance
         }
       } catch (err) {
         setError('Failed to initialize trading engine');
@@ -51,17 +50,19 @@ const LiveTradingPanel: React.FC = () => {
     
     try {
       const newMode = isLiveTrading ? 'paper' : 'live';
-      const result = await tradingEngine.switchMode(newMode);
+      await tradingEngine.switchMode(newMode);
       
-      if (result.success) {
-        updateSettings({ isLiveTrading: !isLiveTrading });
-        setStatus(result.status);
-        
-        if (result.balance) {
-          setBalance(result.balance);
-        }
+      // Update settings after successful mode switch
+      updateSettings({ isLiveTrading: !isLiveTrading });
+      setStatus(`Switched to ${newMode} mode`);
+      
+      // Reset balance display when switching modes
+      if (!isLiveTrading) {
+        // Switching to paper mode - set initial paper balance
+        setBalance(10000); // Default paper trading balance
       } else {
-        setError('Failed to switch trading mode');
+        // Switching to live mode - balance will be fetched from account
+        setBalance(0);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error occurred');

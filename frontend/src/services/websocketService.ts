@@ -134,8 +134,8 @@ class WebSocketService implements WebSocketServiceInterface {
     try {
       const ws = await this.connectionManager.connect();
 
-      this.eventHandlerService = new EventHandlerService(ws, null);
-      this.healthService = new HealthService(ws, null);
+      this.eventHandlerService = new EventHandlerService(null, ws);
+      this.healthService = new HealthService(null, ws);
 
       this.eventHandlerService.setupSocketIOHandlers();
       this.healthService.startPoloniexV3PingTimer();
@@ -236,7 +236,8 @@ class WebSocketService implements WebSocketServiceInterface {
     const [isMock, setIsMock] = React.useState(this.useMockData);
 
     React.useEffect(() => {
-      const handleStateChange = (newState: ConnectionState) => {
+      const handleStateChange = (...args: unknown[]) => {
+        const newState = args[0] as ConnectionState;
         setState(newState);
         setIsMock(this.useMockData);
       };

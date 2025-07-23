@@ -1,6 +1,6 @@
 import { autonomousTradingAPI, AutonomousStrategy, RiskToleranceConfig, BankingConfig } from './autonomousTradingAPI';
 import { autonomousTradingWebSocket, AUTONOMOUS_TRADING_EVENTS } from './autonomousTradingWebSocket';
-import { AutonomousSession, AutonomousSettings, AutonomousPhase, AutonomousPerformance, AutonomousNotification } from './autonomousTradingEngine';
+import { AutonomousSession, AutonomousSettings, AutonomousNotification } from './autonomousTradingEngine';
 import { shouldUseMockMode } from '@/utils/environment';
 
 // Enhanced session interface for live trading
