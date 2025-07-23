@@ -11,7 +11,7 @@ import {
   Legend,
 } from 'chart.js';
 import 'chart.js/auto';
-import { Strategy, MarketData } from '@/types';
+import { Strategy, MarketData, TradingStrategy } from '@/types';
 import { optimizeStrategy, backtestStrategy, StrategyTestOptions } from '@/utils/strategyTester';
 import { logger } from '@/utils/logger';
 

@@ -223,7 +223,8 @@ class LiveAutonomousTradingEngine {
       return sessionId;
 
     } catch (error) {
-      throw new Error(`Failed to start autonomous trading: ${error.message}`);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to start autonomous trading: ${errorMessage}`);
     }
   }
 
@@ -252,7 +253,8 @@ class LiveAutonomousTradingEngine {
       });
 
     } catch (error) {
-      throw new Error(`Failed to stop autonomous trading: ${error.message}`);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to stop autonomous trading: ${errorMessage}`);
     }
   }
 
