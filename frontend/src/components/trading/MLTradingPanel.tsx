@@ -1,7 +1,8 @@
 import { usePoloniexData } from '@/hooks/usePoloniexData';
-import { default as mlTrading } from '@/ml/mlTrading';
+import { default as mlTrading, MarketDataPoint } from '@/ml/mlTrading';
 import React, { useEffect, useState } from 'react';
 import { useSettings } from '../../hooks/useSettings';
+import { MarketData } from '@shared/types';
 
 interface MLModelConfig {
   modelType: 'randomforest' | 'gradientboosting' | 'svm' | 'neuralnetwork';
@@ -66,8 +67,21 @@ const MLTradingPanel: React.FC = () => {
   const [isPredicting, setIsPredicting] = useState(false);
   const [isOptimizing, setIsOptimizing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [marketData, setMarketData] = useState<unknown[]>([]);
+  const [marketData, setMarketData] = useState<MarketData[]>([]);
   const [modelName, setModelName] = useState('My ML Model');
+
+  // Helper function to convert MarketData to MarketDataPoint
+  const convertToMarketDataPoints = (data: MarketData[]): MarketDataPoint[] => {
+    return data.map(item => ({
+      timestamp: item.timestamp,
+      open: item.open,
+      high: item.high,
+      low: item.low,
+      close: item.close,
+      volume: item.volume,
+      symbol: item.pair // Convert 'pair' to 'symbol'
+    }));
+  };
 
   // Fetch market data
   useEffect(() => {
@@ -100,7 +114,8 @@ const MLTradingPanel: React.FC = () => {
 
     try
     {
-      const info = await mlTrading.trainMLModel(marketData, modelConfig, modelName);
+      const marketDataPoints = convertToMarketDataPoints(marketData);
+      const info = await mlTrading.trainMLModel(marketDataPoints, modelConfig, modelName);
       setModelInfo(info);
       setIsTraining(false);
     } catch (err)
@@ -130,7 +145,8 @@ const MLTradingPanel: React.FC = () => {
 
     try
     {
-      const preds = await mlTrading.predictWithMLModel(modelInfo, marketData);
+      const marketDataPoints = convertToMarketDataPoints(marketData);
+      const preds = await mlTrading.predictWithMLModel(modelInfo, marketDataPoints);
       setPredictions(preds);
       setIsPredicting(false);
     } catch (err)
@@ -154,7 +170,8 @@ const MLTradingPanel: React.FC = () => {
 
     try
     {
-      const info = await mlTrading.optimizeMLModel(marketData, modelConfig, `${modelName} (Optimized)`);
+      const marketDataPoints = convertToMarketDataPoints(marketData);
+      const info = await mlTrading.optimizeMLModel(marketDataPoints, modelConfig, `${modelName} (Optimized)`);
       setModelInfo(info);
       setIsOptimizing(false);
     } catch (err)

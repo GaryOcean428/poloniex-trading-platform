@@ -147,7 +147,7 @@ export const monitorMLModelPerformance = async (
     const { prepareFeatures, predictWithMLModel } = await import('./mlTrading');
     
     // Prepare features and labels for evaluation
-    const { features, labels } = prepareFeatures(newData, modelInfo.config);
+    const { features: _features, labels } = prepareFeatures(newData, modelInfo.config);
     
     // Get predictions
     const predictions = await predictWithMLModel(modelInfo, newData);
@@ -216,9 +216,7 @@ export const monitorDQNModelPerformance = async (
     
     for (let i = 0; i < actions.length - 1; i++) {
       const action = actions[i];
-      const nextAction = actions[i + 1];
       const price = newData[i].close;
-      const nextPrice = newData[i + 1].close;
       
       if (action.action === 'buy' && position === 0) {
         // Buy
@@ -693,48 +691,6 @@ export const evaluateModelHistory = async (
       recommendedAction: 'monitor'
     };
   }
-};
-
-// Helper function to calculate trend
-const calculateTrend = (values: number[], inverse: boolean = false): 'improving' | 'stable' | 'degrading' => {
-  if (values.length < 2) return 'stable';
-  
-  // Calculate linear regression slope
-  const n = values.length;
-  const x = Array.from({ length: n }, (_, i) => i);
-  const y = values;
-  
-  const sumX = x.reduce((a, b) => a + b, 0);
-  const sumY = y.reduce((a, b) => a + b, 0);
-  const sumXY = x.reduce((a, b, i) => a + b * y[i], 0);
-  const sumXX = x.reduce((a, b) => a + b * b, 0);
-  
-  const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
-  
-  // Determine trend based on slope
-  const threshold = 0.01; // Minimum slope to consider a trend
-  
-  if (Math.abs(slope) < threshold) {
-    return 'stable';
-  }
-  
-  if (inverse) {
-    return slope > 0 ? 'degrading' : 'improving';
-  } else {
-    return slope > 0 ? 'improving' : 'degrading';
-  }
-};
-
-// Helper function to calculate recalibration frequency
-const calculateRecalibrationFrequency = (history: RecalibrationResult[]): number => {
-  if (history.length < 2) return 0;
-  
-  // Get time range in months
-  const firstRecal = history[0].timestamp;
-  const lastRecal = history[history.length - 1].timestamp;
-  const monthsDiff = (lastRecal - firstRecal) / (1000 * 60 * 60 * 24 * 30);
-  
-  return history.length / Math.max(1, monthsDiff);
 };
 
 export default {

@@ -4,7 +4,6 @@ import '@testing-library/jest-dom';
 import App from '@/App';
 import { AppProviders } from '@/context/AppProviders';
 import { LiveDataService } from '@/services/advancedLiveData';
-import { webSocketService } from '@/services/websocketService';
 import { default as mlTrading } from '@/ml/mlTrading';
 import * as dqnTrading from '@/ml/dqnTrading';
 

@@ -11,7 +11,7 @@ import {
   Legend,
 } from 'chart.js';
 import 'chart.js/auto';
-import { Strategy, MarketData } from '@/types';
+import { Strategy, MarketData, TradingStrategy } from '@/types';
 import { optimizeStrategy, backtestStrategy, StrategyTestOptions } from '@/utils/strategyTester';
 import { logger } from '@/utils/logger';
 
@@ -129,7 +129,14 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
       setError(null);
 
       const strategyToUse = customStrategy || strategy;
-      const result = await backtestStrategy(strategyToUse, marketData, {
+      
+      // Ensure strategy has all required properties
+      const completeStrategy: TradingStrategy = {
+        ...strategyToUse,
+        active: strategyToUse.active ?? true
+      };
+      
+      const result = await backtestStrategy(completeStrategy, marketData, {
         initialBalance: 10000,
         feePercent: 0.1,
         slippagePercent: 0.1,
@@ -221,8 +228,14 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
       setIsLoading(prev => ({ ...prev, optimize: true, loading: true }));
       setError(null);
 
+      // Ensure strategy has all required properties
+      const completeStrategy: TradingStrategy = {
+        ...strategy,
+        active: strategy.active ?? true
+      };
+
       const result = await optimizeStrategy(
-        strategy.type,
+        completeStrategy,
         marketData,
         parameterRanges || {},
         'sharpeRatio',

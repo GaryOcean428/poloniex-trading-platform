@@ -4,7 +4,7 @@ import { Input } from '@/components/ui/Input';
 import { Label } from '@/components/ui/Label';
 import { Select, SelectOption } from '@/components/ui/Select';
 import { poloniexApi } from '@/services/poloniexAPI';
-import { MarketData, Strategy } from '@/types';
+import { MarketData, Strategy, TradingStrategy } from '@/types';
 import { getExtensionData, isChromeExtensionAvailable, setExtensionData } from '@/utils/chromeExtension';
 import { executeStrategy } from '@/utils/strategyExecutors';
 import { useEffect, useState } from 'react';
@@ -92,10 +92,11 @@ const StrategyBuilder: React.FC = () => {
         {
           // Load from Chrome storage if in extension
           getExtensionData('trading_strategies')
-            .then((data: Strategy[] | null) => {
-              if (data)
+            .then((data: unknown) => {
+              const strategies = data as Strategy[] | null;
+              if (strategies)
               {
-                setStrategies(data);
+                setStrategies(strategies);
               }
             })
             .catch(err => console.error('Failed to load strategies from extension:', err));
@@ -170,7 +171,15 @@ const StrategyBuilder: React.FC = () => {
 
     try
     {
-      const result = executeStrategy(newStrategy as Strategy, marketData);
+      const strategyWithDefaults: TradingStrategy = {
+        ...newStrategy,
+        active: true,
+        id: newStrategy.id || '',
+        name: newStrategy.name || '',
+        type: newStrategy.type || 'manual',
+        parameters: newStrategy.parameters || {}
+      } as TradingStrategy;
+      const result = executeStrategy(strategyWithDefaults, marketData);
       setTestResult(result);
     } catch (err)
     {

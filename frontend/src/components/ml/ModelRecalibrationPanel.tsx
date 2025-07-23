@@ -52,7 +52,7 @@ const ModelRecalibrationPanel: React.FC = () => {
     recalibrationStrategy: 'incremental'
   });
   const [recalibrationStrategy, setRecalibrationStrategy] = useState<'full' | 'incremental' | 'transfer'>('incremental');
-  const [recalibrationHistory, setRecalibrationHistory] = useState<RecalibrationResult[]>([]);
+  const [recalibrationHistory, _setRecalibrationHistory] = useState<RecalibrationResult[]>([]);
   const [autoRecalibrationEnabled, setAutoRecalibrationEnabled] = useState(false);
   const [cleanupFunction, setCleanupFunction] = useState<(() => void) | null>(null);
   
