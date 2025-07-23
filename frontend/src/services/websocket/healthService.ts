@@ -149,7 +149,7 @@ export class HealthService {
   /**
    * Handle pong response
    */
-  handlePong(timestamp: number): void {
+  handlePong(_timestamp: number): void {
     this.connectionStats.lastPongTime = Date.now();
 
     if (this.connectionStats.lastPingTime) {
@@ -185,7 +185,7 @@ export class HealthService {
     health: string;
   } {
     const stats = this.getConnectionStats();
-    const now = Date.now();
+    const _now = Date.now();
 
     return {
       connected: stats.connectTime !== null,

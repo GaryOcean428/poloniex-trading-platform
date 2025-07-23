@@ -638,7 +638,7 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
                 <div>
                   <Label>Maximum Risk Per Trade: {(settings.maxRiskPerTrade * 100).toFixed(1)}%</Label>
                   <Slider
-                    value={[settings.maxRiskPerTrade * 100]}
+                    value={[(settings.maxRiskPerTrade * 100).toString()]}
                     onValueChange={(value) => {
                       const numValue = Array.isArray(value) ? Number(value[0]) : Number(value);
                       setSettings(prev => ({ ...prev, maxRiskPerTrade: numValue / 100 }));
@@ -653,7 +653,7 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
                 <div>
                   <Label>Maximum Drawdown: {(settings.maxDrawdown * 100).toFixed(1)}%</Label>
                   <Slider
-                    value={[settings.maxDrawdown * 100]}
+                    value={[(settings.maxDrawdown * 100).toString()]}
                     onValueChange={(value) => {
                       const numValue = Array.isArray(value) ? Number(value[0]) : Number(value);
                       setSettings(prev => ({ ...prev, maxDrawdown: numValue / 100 }));
@@ -668,7 +668,7 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
                 <div>
                   <Label>Confidence Threshold: {settings.confidenceThreshold}%</Label>
                   <Slider
-                    value={[settings.confidenceThreshold]}
+                    value={[settings.confidenceThreshold.toString()]}
                     onValueChange={(value) => {
                       const numValue = Array.isArray(value) ? Number(value[0]) : Number(value);
                       setSettings(prev => ({ ...prev, confidenceThreshold: numValue }));
@@ -718,7 +718,7 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
                 <div>
                   <Label>Banking Percentage: {(bankingConfig.bankingPercentage * 100).toFixed(1)}%</Label>
                   <Slider
-                    value={[bankingConfig.bankingPercentage * 100]}
+                    value={[(bankingConfig.bankingPercentage * 100).toString()]}
                     onValueChange={(value) => {
                       const numValue = Array.isArray(value) ? Number(value[0]) : Number(value);
                       setBankingConfig(prev => ({ ...prev, bankingPercentage: numValue / 100 }));
