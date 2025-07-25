@@ -72,19 +72,24 @@ export interface StrategyPerformance {
 // FIXME strict: Temporary extended type union for backward compatibility
 export type StrategyTypeUnion = 
   | 'manual' | 'automated' | 'ml' | 'dqn' // Core types
-  | 'MovingAverageCrossover' | 'RSI' | 'MACD' | 'BollingerBands' | 'Custom' | 'Breakout'; // Algorithm types
+  | 'MovingAverageCrossover' | 'RSI' | 'MACD' | 'BollingerBands' | 'Custom' | 'Breakout' // Algorithm types
+  | 'mean_reversion' | 'trend_following'; // Additional strategy types
 
 // Unified Strategy interface - single source of truth
 export interface Strategy {
   id: string;
   name: string;
+  description?: string; // Optional description field
   type: StrategyTypeUnion; // FIXME strict: Use union type temporarily
   algorithm?: 'MovingAverageCrossover' | 'RSI' | 'MACD' | 'BollingerBands' | 'Custom' | 'Breakout';
   active: boolean;
+  isActive?: boolean; // Legacy alias for active
   parameters: StrategyParameters;
   performance?: StrategyPerformance;
+  riskLevel?: 'LOW' | 'MEDIUM' | 'HIGH'; // Risk level for strategy
   createdAt?: string | number; // FIXME strict: Support both string and number timestamps
   updatedAt?: string;
+  lastModified?: string | number; // Legacy alias for updatedAt
 }
 
 // Export TradingStrategy as alias to Strategy for compatibility

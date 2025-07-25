@@ -297,19 +297,42 @@ class PoloniexApiClient {
     type: 'market' | 'limit',
     quantity: number,
     price?: number
-  ): Promise<{ orderId: string; status: string }> {
+  ): Promise<{ orderId: string; status: string; id?: string }> {
     // TODO: Implement actual order placement
     // For now, return a mock response to satisfy the interface
     console.warn('placeOrder called - this is a stub implementation');
     
     if (this.mockMode) {
+      const orderId = `mock_${Date.now()}`;
       return {
-        orderId: `mock_${Date.now()}`,
+        orderId,
+        id: orderId, // Add id field for compatibility
         status: 'filled'
       };
     }
     
     throw new Error('Order placement not implemented for live trading');
+  }
+
+  public async placeConditionalOrder(
+    pair: string,
+    side: 'buy' | 'sell',
+    type: 'stop' | 'takeProfit',
+    quantity: number,
+    triggerPrice: number
+  ): Promise<{ orderId: string; status: string }> {
+    // TODO: Implement actual conditional order placement
+    // For now, return a mock response to satisfy the interface
+    console.warn('placeConditionalOrder called - this is a stub implementation');
+    
+    if (this.mockMode) {
+      return {
+        orderId: `mock_conditional_${Date.now()}`,
+        status: 'pending'
+      };
+    }
+    
+    throw new Error('Conditional order placement not implemented for live trading');
   }
 
   // Event listener methods for automated trading

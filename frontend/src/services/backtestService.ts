@@ -285,7 +285,8 @@ export class BacktestService {
     const dailyPnL = new Map<string, number>();
     
     trades.forEach(trade => {
-      const date = new Date(trade.timestamp).toISOString().split('T')[0];
+      const timestamp = trade.timestamp ?? Date.now();
+      const date = new Date(timestamp).toISOString().split('T')[0];
       const currentPnL = dailyPnL.get(date) || 0;
       dailyPnL.set(date, currentPnL + trade.pnl);
     });
@@ -300,7 +301,8 @@ export class BacktestService {
     const monthlyPnL = new Map<string, number>();
     
     trades.forEach(trade => {
-      const date = new Date(trade.timestamp);
+      const timestamp = trade.timestamp ?? Date.now();
+      const date = new Date(timestamp);
       const monthKey = `${date.getFullYear()}-${date.getMonth() + 1}`;
       const currentPnL = monthlyPnL.get(monthKey) || 0;
       monthlyPnL.set(monthKey, currentPnL + trade.pnl);
@@ -341,8 +343,12 @@ export class BacktestService {
    */
   private calculateRecoveryFactor(trades: BacktestTrade[], initialBalance: number): number {
     const maxDrawdown = this.calculateMaxDrawdown(trades);
-    const netProfit = trades[trades.length - 1].balance - initialBalance;
+    const lastTrade = trades[trades.length - 1];
+    if (!lastTrade) return 0;
     
+    const netProfit = lastTrade.balance - initialBalance;
+    
+    if (maxDrawdown === 0) return netProfit > 0 ? Infinity : 0;
     return netProfit / (maxDrawdown * initialBalance);
   }
   
@@ -355,11 +361,14 @@ export class BacktestService {
     
     for (let i = 0; i < trades.length - 1; i++) {
       if (trades[i].type === 'BUY' && trades[i + 1].type === 'SELL') {
-        totalHoldingTime += trades[i + 1].timestamp - trades[i].timestamp;
+        const currentTimestamp = trades[i].timestamp ?? Date.now();
+        const nextTimestamp = trades[i + 1].timestamp ?? Date.now();
+        totalHoldingTime += nextTimestamp - currentTimestamp;
         positions++;
       }
     }
     
+    if (positions === 0) return 0; // Avoid division by zero
     return totalHoldingTime / positions / (1000 * 60 * 60); // Convert to hours
   }
   
