@@ -63,6 +63,7 @@ describe('Advanced Backtesting Service', () => {
       id: 'test-strategy-1',
       name: 'Test RSI Strategy',
       type: 'RSI' as StrategyType,
+      active: true,
       parameters: {
         pair: 'BTC-USDT',
         timeframe: '1h',
@@ -152,7 +153,8 @@ describe('Advanced Backtesting Service', () => {
         ...testStrategy,
         id: 'test-strategy-2',
         name: 'Test MACD Strategy',
-        type: 'MACD' as StrategyType
+        type: 'MACD' as StrategyType,
+        active: true
       };
 
       const portfolioOptions = {

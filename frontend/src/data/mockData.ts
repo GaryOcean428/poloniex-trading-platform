@@ -79,6 +79,7 @@ export const mockStrategies: Strategy[] = [
     id: '1',
     name: 'BTC Daily MA Crossover',
     type: StrategyType.MA_CROSSOVER,
+    active: true,
     parameters: {
       fastPeriod: 10,
       slowPeriod: 50,
@@ -97,6 +98,7 @@ export const mockStrategies: Strategy[] = [
     id: '2',
     name: 'ETH RSI Strategy',
     type: StrategyType.RSI,
+    active: true,
     parameters: {
       period: 14,
       overbought: 70,
@@ -116,6 +118,7 @@ export const mockStrategies: Strategy[] = [
     id: '3',
     name: 'BTC Breakout',
     type: StrategyType.BREAKOUT,
+    active: false,
     parameters: {
       lookbackPeriod: 24,
       breakoutThreshold: 2.5,
