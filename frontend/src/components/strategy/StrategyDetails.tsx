@@ -1,7 +1,7 @@
 import { BarChart2, Clock, History, RefreshCw, Sparkles, Zap } from 'lucide-react';
 import React, { useState } from 'react';
 import { useTradingContext } from '../../hooks/useTradingContext';
-import { Strategy, StrategyType, MovingAverageCrossoverParameters, RSIParameters, BreakoutParameters } from '../../types';
+import { Strategy, MovingAverageCrossoverParameters, RSIParameters, BreakoutParameters } from '@shared/types';
 import { BacktestResult } from '../../types/backtest';
 import PriceChart from '../charts/PriceChart';
 
@@ -22,39 +22,39 @@ const StrategyDetails: React.FC<StrategyDetailsProps> = ({
   const [timeframe, setTimeframe] = useState<'1h' | '4h' | '1d'>('1h');
   const [chartType, setChartType] = useState<'candlestick' | 'line'>('candlestick');
 
-  const getStrategyTypeIcon = (type: string) => {
-    switch (type) {
-      case StrategyType.MA_CROSSOVER:
+  const getStrategyTypeIcon = (algorithm?: string) => {
+    switch (algorithm) {
+      case 'MovingAverageCrossover':
         return <Zap className="h-6 w-6 text-blue-500" />;
-      case StrategyType.RSI:
+      case 'RSI':
         return <BarChart2 className="h-6 w-6 text-purple-500" />;
-      case StrategyType.BREAKOUT:
+      case 'Breakout':
         return <RefreshCw className="h-6 w-6 text-orange-500" />;
       default:
         return <Zap className="h-6 w-6 text-neutral-500" />;
     }
   };
 
-  const getStrategyTypeName = (type: string) => {
-    switch (type) {
-      case StrategyType.MA_CROSSOVER:
+  const getStrategyTypeName = (algorithm?: string) => {
+    switch (algorithm) {
+      case 'MovingAverageCrossover':
         return 'Moving Average Crossover';
-      case StrategyType.RSI:
+      case 'RSI':
         return 'Relative Strength Index (RSI)';
-      case StrategyType.BREAKOUT:
+      case 'Breakout':
         return 'Breakout';
       default:
-        return type;
+        return algorithm || 'Custom';
     }
   };
 
-  const getStrategyDescription = (type: string) => {
-    switch (type) {
-      case StrategyType.MA_CROSSOVER:
+  const getStrategyDescription = (algorithm?: string) => {
+    switch (algorithm) {
+      case 'MovingAverageCrossover':
         return 'This strategy generates signals when the short-term moving average crosses the long-term moving average. A buy signal is generated when the short MA crosses above the long MA, and a sell signal when it crosses below.';
-      case StrategyType.RSI:
+      case 'RSI':
         return 'The RSI strategy measures the magnitude of recent price changes to evaluate overbought or oversold conditions. It generates buy signals when RSI crosses above the oversold threshold and sell signals when it crosses below the overbought threshold.';
-      case StrategyType.BREAKOUT:
+      case 'Breakout':
         return 'The Breakout strategy identifies significant price movements beyond established support and resistance levels. It generates buy signals when the price breaks above resistance and sell signals when it breaks below support.';
       default:
         return 'Custom trading strategy.';
@@ -62,8 +62,8 @@ const StrategyDetails: React.FC<StrategyDetailsProps> = ({
   };
 
   const renderParameters = () => {
-    switch (strategy.type) {
-      case StrategyType.MA_CROSSOVER:
+    switch (strategy.algorithm) {
+      case 'MovingAverageCrossover':
         const maParams = strategy.parameters as MovingAverageCrossoverParameters;
         return (
           <div className="grid grid-cols-2 gap-4">
@@ -77,7 +77,7 @@ const StrategyDetails: React.FC<StrategyDetailsProps> = ({
             </div>
           </div>
         );
-      case StrategyType.RSI:
+      case 'RSI':
         const rsiParams = strategy.parameters as RSIParameters;
         return (
           <div className="grid grid-cols-3 gap-4">
@@ -95,7 +95,8 @@ const StrategyDetails: React.FC<StrategyDetailsProps> = ({
             </div>
           </div>
         );
-      case StrategyType.BREAKOUT:
+      case 'Breakout':
+      case 'BREAKOUT': // FIXME strict: Support both naming conventions
         const breakoutParams = strategy.parameters as BreakoutParameters;
         return (
           <div className="grid grid-cols-2 gap-4">
@@ -119,17 +120,17 @@ const StrategyDetails: React.FC<StrategyDetailsProps> = ({
       <div className="flex items-start justify-between mb-6">
         <div className="flex items-center">
           <div className="mr-4">
-            {getStrategyTypeIcon(strategy.type)}
+            {getStrategyTypeIcon(strategy.algorithm)}
           </div>
           <div>
             <h2 className="text-xl font-bold">{strategy.name}</h2>
             <div className="flex items-center text-sm text-neutral-500 mt-1">
-              <span>{getStrategyTypeName(strategy.type)}</span>
+              <span>{getStrategyTypeName(strategy.algorithm)}</span>
               <span className="mx-2">•</span>
               <span>{strategy.parameters.pair}</span>
               <span className="mx-2">•</span>
               <Clock className="h-4 w-4 mr-1" />
-              <span>Created {new Date(strategy.createdAt).toLocaleDateString()}</span>
+              <span>Created {strategy.createdAt ? new Date(strategy.createdAt).toLocaleDateString() : 'Unknown'}</span>
             </div>
           </div>
         </div>
@@ -150,7 +151,7 @@ const StrategyDetails: React.FC<StrategyDetailsProps> = ({
       </div>
 
       <div className="mb-6">
-        <div className="text-neutral-700 mb-4">{getStrategyDescription(strategy.type)}</div>
+        <div className="text-neutral-700 mb-4">{getStrategyDescription(strategy.algorithm)}</div>
         {renderParameters()}
       </div>
 

@@ -3,6 +3,9 @@ import {
   SubscriptionMessage,
   Trade,
   WebSocketMessage,
+  ClientWebSocketEvents,
+  PoloniexTopics,
+  WebSocketEvents,
 } from "@/types/websocketTypes";
 
 export class EventHandlerService {
@@ -43,9 +46,9 @@ export class EventHandlerService {
   notifyListeners(event: string, data: unknown): void {
     // Save data for offline access if it's a data event
     if (
-      event === "marketData" ||
-      event === "tradeExecuted" ||
-      event === "ticker"
+      event === ClientWebSocketEvents.MARKET_DATA ||
+      event === ClientWebSocketEvents.TRADE_EXECUTED ||
+      event === ClientWebSocketEvents.TICKER_UPDATE
     ) {
       this.saveOfflineData(event, data);
     }
@@ -116,7 +119,7 @@ export class EventHandlerService {
       const subscribeMessage: SubscriptionMessage = {
         id: Date.now(),
         type: "subscribe",
-        topic: "/contractMarket/tickerV2",
+        topic: PoloniexTopics.TICKER_V2,
         symbols: [pair.replace("-", "_")],
         privateChannel: false,
         response: true,

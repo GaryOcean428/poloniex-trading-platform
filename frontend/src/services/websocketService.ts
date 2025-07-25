@@ -11,6 +11,7 @@ import {
 import React from "react";
 import { ConnectionManager } from "./websocket/connectionManager";
 import { EventHandlerService } from "./websocket/eventHandlerService";
+import { ClientWebSocketEvents, PoloniexTopics } from "@/types/websocketTypes";
 import { HealthService } from "./websocket/healthService";
 import { ReconnectionService } from "./websocket/reconnectionService";
 
@@ -46,7 +47,7 @@ class WebSocketService implements WebSocketServiceInterface {
 
   private initializeService(): void {
     // Determine connection strategy
-    const hasCredentials = !!(getPoloniexApiKey() && getPoloniexApiSecret());
+const hasCredentials = getPoloniexApiKey() !== undefined && getPoloniexApiSecret() !== undefined;
     this.useMockData = shouldUseMockMode(hasCredentials);
 
     console.log("WebSocket Service V3 initialized:", {

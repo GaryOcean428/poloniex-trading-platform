@@ -1,8 +1,7 @@
 import { X } from 'lucide-react';
 import React, { useState } from 'react';
 import { useTradingContext } from '../../hooks/useTradingContext';
-import { Strategy, StrategyParameters } from '@shared/types';
-import { StrategyType } from '../../types';
+import { Strategy, StrategyParameters, StrategyType } from '@shared/types';
 
 interface NewStrategyFormProps {
   onClose: () => void;
@@ -84,9 +83,9 @@ const NewStrategyForm: React.FC<NewStrategyFormProps> = ({ onClose }) => {
       active: true,
       parameters: parameters as unknown as StrategyParameters,
       performance: {
-        totalPnl: 0,
+        totalPnL: 0, // FIXME strict: Use standardized naming
         winRate: 0,
-        sharpeRatio: 0
+        tradesCount: 0 // FIXME strict: Add required property
       }
     };
 

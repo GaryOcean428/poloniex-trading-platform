@@ -1,30 +1,33 @@
-import js from '@eslint/js';
+import js from "@eslint/js";
+import globals from "globals";
+import tseslint from "typescript-eslint";
 
 export default [
   {
-    ignores: ['public/**/*'],
+    files: ["**/*.{js,mjs,cjs,ts,mts,cts}"],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+      },
+    },
   },
   js.configs.recommended,
+  ...tseslint.configs.recommended,
   {
-    files: ['**/*.js'],
+    files: ["**/*.ts"],
     languageOptions: {
-      ecmaVersion: 2020,
-      sourceType: 'module',
-      globals: {
-        console: 'readonly',
-        process: 'readonly',
-        Buffer: 'readonly',
-        __dirname: 'readonly',
-        __filename: 'readonly',
-        setTimeout: 'readonly',
-        setInterval: 'readonly',
-        clearTimeout: 'readonly',
-        clearInterval: 'readonly'
-      }
+      parser: tseslint.parser,
+      parserOptions: {
+        project: "./tsconfig.json",
+      },
     },
     rules: {
-      'no-unused-vars': 'warn',
-      'no-console': 'off'
-    }
-  }
+      "@typescript-eslint/no-unused-vars": ["error", { "argsIgnorePattern": "^_" }],
+      "@typescript-eslint/explicit-function-return-type": "warn",
+      "@typescript-eslint/no-explicit-any": "warn",
+    },
+  },
+  {
+    ignores: ["dist/**", "node_modules/**", "*.js", "*.mjs"],
+  },
 ];

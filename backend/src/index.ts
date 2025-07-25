@@ -14,6 +14,7 @@ import backtestingRoutes from './routes/backtesting.js';
 import paperTradingRoutes from './routes/paperTrading.js';
 import autonomousTradingRoutes from './routes/autonomousTrading.js';
 import confidenceScoringRoutes from './routes/confidenceScoring.js';
+import strategiesRoutes from './routes/strategies.js';
 
 // Import services
 import { logger } from './utils/logger.js';
@@ -54,6 +55,7 @@ app.use('/api/backtesting', backtestingRoutes);
 app.use('/api/paper-trading', paperTradingRoutes);
 app.use('/api/autonomous-trading', autonomousTradingRoutes);
 app.use('/api/confidence-scoring', confidenceScoringRoutes);
+app.use('/api/strategies', strategiesRoutes);
 
 // Serve static files in production
 if (process.env.NODE_ENV === 'production') {
