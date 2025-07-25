@@ -486,7 +486,7 @@ export const recalibrateDQNModel = async (
         newModelInfo = await continueDQNTraining(
           modelInfo,
           newData,
-          50 // Default additional episodes
+          // Removed third parameter to match function signature
         );
         break;
         
@@ -656,12 +656,12 @@ export const evaluateModelHistory = async (
       const earliestMetrics = performanceHistory[0];
       
       // Simple trend calculation based on accuracy change
-      const accuracyChange = latestMetrics.accuracy - earliestMetrics.accuracy;
+      const accuracyChange = (latestMetrics?.accuracy ?? 0) - (earliestMetrics?.accuracy ?? 0);
       const performanceTrend = accuracyChange > 0.01 ? 'improving' : 
                               accuracyChange < -0.01 ? 'degrading' : 'stable';
       
       // Simple drift calculation based on precision change  
-      const precisionChange = latestMetrics.precision - earliestMetrics.precision;
+      const precisionChange = (latestMetrics?.precision ?? 0) - (earliestMetrics?.precision ?? 0);
       const driftTrend = Math.abs(precisionChange) > 0.01 ? 'increasing' : 'stable';
       
       return {

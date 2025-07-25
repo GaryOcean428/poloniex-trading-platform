@@ -172,11 +172,17 @@ export const prepareFeatures = (
   return { features: featureMatrix, labels };
 };
 
+// Add missing exports to fix modelRecalibration.ts imports
+export { calculateMeanAndStd, standardizeFeatures, recalibrateModel } from './mlUtils';
+
 // Default export
 export default {
   trainMLModel,
   predictWithMLModel,
   optimizeMLModel,
   prepareFeatures,
-  generateSignal
+  generateSignal,
+  calculateMeanAndStd,
+  standardizeFeatures,
+  recalibrateModel
 };

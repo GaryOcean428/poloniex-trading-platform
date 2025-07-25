@@ -378,8 +378,9 @@ class LiveAutonomousTradingEngine {
 
       session.liveStrategies = response.strategies;
       
-      // Convert to legacy format for compatibility
-      session.strategies = response.strategies.map(strategy => ({
+      // Convert to legacy format for compatibility with type safety
+      const { ensureStrategyType } = await import('../utils/typeGuards');
+      session.strategies = response.strategies.map(strategy => ensureStrategyType({
         id: strategy.id,
         name: strategy.name,
         type: strategy.type,
@@ -390,7 +391,7 @@ class LiveAutonomousTradingEngine {
         profitPotential: strategy.performance.profit * 100,
         riskScore: (1 - strategy.performance.winRate) * 100,
         description: `${strategy.type} strategy for ${strategy.symbol}`,
-        active: true, // Add required property
+        active: true,
         learningMetrics: {
           adaptationRate: 0.1,
           consistencyScore: strategy.performance.winRate,
