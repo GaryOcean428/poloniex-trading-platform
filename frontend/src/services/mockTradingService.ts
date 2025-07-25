@@ -116,6 +116,7 @@ export class MockTradingService {
   private marketDataCache: Map<string, MarketData[]> = new Map();
   private priceSubscriptions: Map<string, (data: MarketData) => void> =
     new Map();
+  // Flag to track service state (for future use)
   private _isRunning: boolean = false;
 
   private constructor() {}

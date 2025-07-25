@@ -185,7 +185,8 @@ export class HealthService {
     health: string;
   } {
     const stats = this.getConnectionStats();
-    const _now = Date.now();
+    // Current time for status calculations
+    const now = Date.now();
 
     return {
       connected: stats.connectTime !== null,
