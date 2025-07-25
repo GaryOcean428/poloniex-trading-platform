@@ -128,18 +128,18 @@ class AutomatedTradingService {
           const finalSignal = this.combineSignals(strategyResult, aiSignal);
           
           if (finalSignal && finalSignal.action !== 'HOLD') {
-            await this.executeTrade(strategy, finalSignal, balance.availableAmount);
+            await this.executeTrade(strategy, finalSignal, parseFloat(balance.availableAmount));
           }
-        } catch (error) {
-          logger.error(`Error processing strategy ${strategy.id}:`, error);
+        } catch (error: unknown) {
+          logger.error(`Error processing strategy ${strategy.id}:`, error instanceof Error ? error.message : String(error));
         }
       }
       
       // Also run pure AI trading for configured pairs
       await this.executeAITradingSignals();
       
-    } catch (error) {
-      logger.error('Error in automated trading update:', error);
+    } catch (error: unknown) {
+      logger.error('Error in automated trading update:', error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -165,6 +165,7 @@ class AutomatedTradingService {
           name: 'AI Signal Strategy',
           description: 'Pure AI-generated trading signals',
           type: 'Custom',
+          active: true,
           parameters: {
             pair: defaultPair,
             timeframe: '5m'
@@ -176,10 +177,12 @@ class AutomatedTradingService {
         };
 
         const balance = await poloniexApi.getAccountBalance();
-        await this.executeTrade(aiStrategy, aiSignal, balance.availableAmount);
+        if (balance?.availableAmount) {
+          await this.executeTrade(aiStrategy, aiSignal, parseFloat(balance.availableAmount));
+        }
       }
-    } catch (error) {
-      logger.error('Error in AI trading signals:', error);
+    } catch (error: unknown) {
+      logger.error('Error in AI trading signals:', error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -290,8 +293,8 @@ class AutomatedTradingService {
           quantity,
           stopPrice
         );
-      } catch (error) {
-        logger.warn('Failed to place stop loss order:', error);
+      } catch (error: unknown) {
+        logger.warn('Failed to place stop loss order:', error instanceof Error ? error.message : String(error));
       }
 
       // Use AI-provided take profit or calculate default
@@ -313,8 +316,8 @@ class AutomatedTradingService {
           quantity,
           takeProfitPrice
         );
-      } catch (error) {
-        logger.warn('Failed to place take profit order:', error);
+      } catch (error: unknown) {
+        logger.warn('Failed to place take profit order:', error instanceof Error ? error.message : String(error));
       }
 
       // Store position information
@@ -341,7 +344,7 @@ class AutomatedTradingService {
         dismissible: true
       });
 
-      logger.info(`Trade executed for strategy ${strategy.id}`, {
+      logger.info(`Trade executed for strategy ${strategy.id}`, JSON.stringify({
         action,
         pair,
         quantity,
@@ -350,9 +353,9 @@ class AutomatedTradingService {
         takeProfitPrice,
         confidence,
         reason
-      });
-    } catch (error) {
-      logger.error('Error executing trade:', error);
+      }));
+    } catch (error: unknown) {
+      logger.error('Error executing trade:', error instanceof Error ? error.message : String(error));
       
       // Add error toast notification
       const store = useAppStore.getState();

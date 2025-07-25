@@ -1,7 +1,7 @@
 import { advancedBacktestService } from "@/services/advancedBacktestService";
 import { liveTradingService } from "@/services/liveTradingService";
 import { mockTradingService } from "@/services/mockTradingService";
-import { Strategy, StrategyParameters } from "@/types";
+import { Strategy, StrategyParameters, StrategyTypeUnion } from "@/types";
 import { BacktestOptions, BacktestResult } from "@/types/backtest";
 
 // Autonomous Engine Interfaces
@@ -985,7 +985,8 @@ export class AutonomousTradingEngine {
     const strategy: EnhancedStrategy = {
       id: `strategy_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
       name: `${template.name} - ${pair}`,
-      type: template.type,
+      type: template.type as StrategyTypeUnion,
+      active: true, // Required property from Strategy interface
       description: `Auto-generated ${template.type} strategy for ${pair}`,
       parameters,
       createdAt: new Date().toISOString(),
