@@ -211,7 +211,7 @@ class OpenAITradingService {
     return '24-48h';
   }
 
-  private getMockInsight(data: TradingData, userQuery?: string): TradingInsight {
+  private getMockInsight(data: TradingData, _userQuery?: string): TradingInsight {
     const mockInsights = [
       {
         type: 'analysis' as const,

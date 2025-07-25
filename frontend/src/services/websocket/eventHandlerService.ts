@@ -5,7 +5,6 @@ import {
   WebSocketMessage,
   ClientWebSocketEvents,
   PoloniexTopics,
-  WebSocketEvents,
 } from "@/types/websocketTypes";
 
 export class EventHandlerService {
@@ -160,7 +159,7 @@ export class EventHandlerService {
   send(event: string, data: unknown): void {
     if (this.poloniexWs && this.poloniexWs.readyState === WebSocket.OPEN) {
       // For Poloniex direct connection, send as JSON
-      const message = { event, ...data };
+      const message = { event, ...(data || {}) };
       this.poloniexWs.send(JSON.stringify(message));
     } else if (this.socket) {
       // For backend Socket.IO connection
@@ -302,7 +301,7 @@ export class EventHandlerService {
             pair: (tradeData.symbol as string)?.replace("_", "_") || "BTC-USDT",
             price: parseFloat(tradeData.price as string) || 0,
             amount: parseFloat(tradeData.size as string) || 0,
-            side: (tradeData.side as string)?.toLowerCase() || "buy",
+            side: ((tradeData.side as string)?.toLowerCase() === 'sell' ? 'sell' : 'buy') as 'buy' | 'sell',
             timestamp: (tradeData.ts as number) || Date.now(),
           };
 
@@ -331,7 +330,7 @@ export class EventHandlerService {
       this.notifyListeners("connectionStateChanged", "connected");
     });
 
-    this.socket.on("disconnect", (reason) => {
+    this.socket.on("disconnect", (reason: any) => {
       console.log("Socket.IO disconnected:", reason);
       this.notifyListeners("connectionStateChanged", "disconnected");
     });

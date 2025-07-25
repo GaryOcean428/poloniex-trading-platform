@@ -292,11 +292,11 @@ class PoloniexApiClient {
   }
 
   public async placeOrder(
-    pair: string,
-    side: 'buy' | 'sell',
-    type: 'market' | 'limit',
-    quantity: number,
-    price?: number
+    _pair: string,
+    _side: 'buy' | 'sell',
+    _type: 'market' | 'limit',
+    _quantity: number,
+    _price?: number
   ): Promise<{ orderId: string; status: string; id?: string }> {
     // TODO: Implement actual order placement
     // For now, return a mock response to satisfy the interface
@@ -315,11 +315,11 @@ class PoloniexApiClient {
   }
 
   public async placeConditionalOrder(
-    pair: string,
-    side: 'buy' | 'sell',
-    type: 'stop' | 'takeProfit',
-    quantity: number,
-    triggerPrice: number
+    _pair: string,
+    _side: 'buy' | 'sell',
+    _type: 'stop' | 'takeProfit',
+    _quantity: number,
+    _triggerPrice: number
   ): Promise<{ orderId: string; status: string }> {
     // TODO: Implement actual conditional order placement
     // For now, return a mock response to satisfy the interface
@@ -336,17 +336,17 @@ class PoloniexApiClient {
   }
 
   // Event listener methods for automated trading
-  public onPositionUpdate(callback: (data: any) => void): void {
+  public onPositionUpdate(_callback: (data: any) => void): void {
     // TODO: Implement position update listener
     console.warn('onPositionUpdate called - this is a stub implementation');
   }
 
-  public onLiquidationWarning(callback: (data: any) => void): void {
+  public onLiquidationWarning(_callback: (data: any) => void): void {
     // TODO: Implement liquidation warning listener
     console.warn('onLiquidationWarning called - this is a stub implementation');
   }
 
-  public onMarginUpdate(callback: (data: any) => void): void {
+  public onMarginUpdate(_callback: (data: any) => void): void {
     // TODO: Implement margin update listener
     console.warn('onMarginUpdate called - this is a stub implementation');
   }

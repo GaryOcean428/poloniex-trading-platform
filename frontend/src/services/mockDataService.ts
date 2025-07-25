@@ -138,8 +138,7 @@ export const mockDataService = {
                 mockConfig.mockTrendBias,
                 mockConfig.mockDataOptions.useRandomSeed
                   ? mockConfig.mockDataOptions.randomSeed
-                  : undefined,
-                true // Use more realistic simulation
+                  : undefined
               );
               break;
 

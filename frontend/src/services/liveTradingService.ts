@@ -269,7 +269,7 @@ export class LiveTradingService {
       trade.executionTime = Date.now() - startTime;
       trade.orderId = orderResult.orderId || "";
 
-      if (orderResult.success) {
+      if (orderResult.status === 'filled') {
         // Update trade with execution details
         trade.status = "FILLED";
         trade.fee = trade.total * 0.001; // Approximate fee

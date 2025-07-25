@@ -11,7 +11,7 @@ import {
 import React from "react";
 import { ConnectionManager } from "./websocket/connectionManager";
 import { EventHandlerService } from "./websocket/eventHandlerService";
-import { ClientWebSocketEvents, PoloniexTopics } from "@/types/websocketTypes";
+// import { ClientWebSocketEvents, PoloniexTopics } from "@/types/websocketTypes";
 import { HealthService } from "./websocket/healthService";
 import { ReconnectionService } from "./websocket/reconnectionService";
 

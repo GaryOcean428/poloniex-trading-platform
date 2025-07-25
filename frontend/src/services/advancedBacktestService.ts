@@ -700,9 +700,12 @@ export class AdvancedBacktestService {
     const dailyPnL = new Map<string, number>();
 
     trades.forEach((trade) => {
-      const date = new Date(trade.timestamp).toISOString().split("T")[0];
-      const currentPnL = dailyPnL.get(date) || 0;
-      dailyPnL.set(date, currentPnL + trade.pnl);
+      // Add null safety for timestamp
+      if (trade.timestamp) {
+        const date = new Date(trade.timestamp).toISOString().split("T")[0];
+        const currentPnL = dailyPnL.get(date) || 0;
+        dailyPnL.set(date, currentPnL + trade.pnl);
+      }
     });
 
     return Array.from(dailyPnL.values());
@@ -712,10 +715,13 @@ export class AdvancedBacktestService {
     const monthlyPnL = new Map<string, number>();
 
     trades.forEach((trade) => {
-      const date = new Date(trade.timestamp);
-      const monthKey = `${date.getFullYear()}-${date.getMonth() + 1}`;
-      const currentPnL = monthlyPnL.get(monthKey) || 0;
-      monthlyPnL.set(monthKey, currentPnL + trade.pnl);
+      // Add null safety for timestamp
+      if (trade.timestamp) {
+        const date = new Date(trade.timestamp);
+        const monthKey = `${date.getFullYear()}-${date.getMonth() + 1}`;
+        const currentPnL = monthlyPnL.get(monthKey) || 0;
+        monthlyPnL.set(monthKey, currentPnL + trade.pnl);
+      }
     });
 
     return Array.from(monthlyPnL.values());
@@ -766,8 +772,11 @@ export class AdvancedBacktestService {
 
     for (let i = 0; i < trades.length - 1; i++) {
       if (trades[i].type === "BUY" && trades[i + 1].type === "SELL") {
-        totalHoldingTime += trades[i + 1].timestamp - trades[i].timestamp;
-        positions++;
+        // Add null safety for timestamps
+        if (trades[i + 1].timestamp && trades[i].timestamp) {
+          totalHoldingTime += trades[i + 1].timestamp - trades[i].timestamp;
+          positions++;
+        }
       }
     }
 
@@ -921,7 +930,7 @@ export class AdvancedBacktestService {
   private async runStressScenario(
     strategy: Strategy,
     options: BacktestOptions,
-    scenario: StressTestScenario
+    _scenario: StressTestScenario
   ): Promise<BacktestResult> {
     // This would modify the historical data according to the stress scenario
     // For now, returning a placeholder - full implementation would involve:

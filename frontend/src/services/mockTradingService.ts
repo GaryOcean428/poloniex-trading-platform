@@ -233,6 +233,7 @@ export class MockTradingService {
 
     // Create mock trade
     const trade: MockTrade = {
+      id: `trade_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       timestamp: Date.now(),
       type: signal.signal,
       price: executionPrice,
@@ -245,6 +246,14 @@ export class MockTradingService {
       slippage,
       latency: executionLatency,
       confidence: signal.confidence,
+      entryPrice: executionPrice,
+      exitPrice: null,
+      entryTime: new Date().toISOString(),
+      exitTime: null,
+      side: signal.signal === 'BUY' ? 'long' : 'short',
+      status: 'open',
+      size: amount,
+      fee: executionPrice * amount * 0.001,
       marketConditions: {
         volatility: this.calculateVolatility(marketData),
         volume: marketData.volume || 0,

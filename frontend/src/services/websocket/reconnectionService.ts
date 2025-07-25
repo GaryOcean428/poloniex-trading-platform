@@ -139,7 +139,7 @@ export class ReconnectionService {
    */
   resetReconnectAttempts(): void {
     this.reconnectAttempts = 0;
-    this.currentReconnectDelay = this.initialReconnectDelay;
+    this._currentReconnectDelay = this.initialReconnectDelay;
   }
 
   /**
@@ -252,6 +252,6 @@ export class ReconnectionService {
   forceStop(): void {
     this.stopReconnectTimer();
     this.reconnectAttempts = 0;
-    this.currentReconnectDelay = this.initialReconnectDelay;
+    this._currentReconnectDelay = this.initialReconnectDelay;
   }
 }
