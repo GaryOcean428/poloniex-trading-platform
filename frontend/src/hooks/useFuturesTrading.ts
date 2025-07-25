@@ -65,7 +65,7 @@ export const useFuturesTrading = () => {
     type: 'LIMIT' | 'MARKET',
     size: number,
     price?: number
-  ): Promise<FuturesOrder | null> => {
+  ) => {
     const errorHandlerOptions: LocalErrorHandlerOptions = {
       fallbackValue: null,
       retryCount: 2,
@@ -111,7 +111,7 @@ export const useFuturesTrading = () => {
    * @param params Order cancellation parameters
    * @returns Success status or null on error
    */
-  const cancelOrder = useCallback(async (params: { symbol: string; orderId: string }): Promise<boolean | null> => {
+  const cancelOrder = useCallback(async (params: { symbol: string; orderId: string }) => {
     const errorHandlerOptions: LocalErrorHandlerOptions = {
       fallbackValue: null,
       retryCount: 2,
@@ -129,7 +129,7 @@ export const useFuturesTrading = () => {
    * @param symbol Trading symbol
    * @returns Success status or null on error
    */
-  const setLeverage = useCallback(async (symbol: string): Promise<boolean | null> => {
+  const setLeverage = useCallback(async (symbol: string) => {
     const errorHandlerOptions: LocalErrorHandlerOptions = {
       fallbackValue: null,
       retryCount: 1,
@@ -147,7 +147,7 @@ export const useFuturesTrading = () => {
    * Note: This functionality may not be directly available in the current API
    * @returns Success status or null on error
    */
-  const setMarginMode = useCallback(async (): Promise<boolean | null> => {
+  const setMarginMode = useCallback(async () => {
     const errorHandlerOptions: LocalErrorHandlerOptions = {
       fallbackValue: null,
       retryCount: 1,

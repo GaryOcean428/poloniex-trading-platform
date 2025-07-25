@@ -43,6 +43,7 @@ interface RealTimeMetric {
   changePercent: number;
 }
 
+// Interface for future alert functionality
 interface _LiveAlert {
   id: string;
   type: 'success' | 'warning' | 'error' | 'info';
