@@ -2203,14 +2203,14 @@ __metadata:
   languageName: node
   linkType: hard
 
-"axios@npm:^1.10.0, axios@npm:^1.4.0":
-  version: 1.10.0
-  resolution: "axios@npm:1.10.0"
+"axios@npm:^1.11.0":
+  version: 1.11.0
+  resolution: "axios@npm:1.11.0"
   dependencies:
     follow-redirects: "npm:^1.15.6"
-    form-data: "npm:^4.0.0"
+    form-data: "npm:^4.0.4"
     proxy-from-env: "npm:^1.1.0"
-  checksum: 10c0/2239cb269cc789eac22f5d1aabd58e1a83f8f364c92c2caa97b6f5cbb4ab2903d2e557d9dc670b5813e9bcdebfb149e783fb8ab3e45098635cd2f559b06bd5d8
+  checksum: 10c0/5de273d33d43058610e4d252f0963cc4f10714da0bfe872e8ef2cbc23c2c999acc300fd357b6bce0fc84a2ca9bd45740fa6bb28199ce2c1266c8b1a393f2b36e
   languageName: node
   linkType: hard
 
@@ -2227,7 +2227,7 @@ __metadata:
     "@types/pg": "npm:^8.15.4"
     "@types/socket.io-client": "npm:^3.0.0"
     "@types/ws": "npm:^8.18.1"
-    axios: "npm:^1.4.0"
+    axios: "npm:^1.11.0"
     bcryptjs: "npm:^2.4.3"
     compression: "npm:^1.7.4"
     cors: "npm:^2.8.5"
@@ -3726,7 +3726,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"form-data@npm:^4.0.0":
+"form-data@npm:^4.0.0, form-data@npm:^4.0.4":
   version: 4.0.4
   resolution: "form-data@npm:4.0.4"
   dependencies:
@@ -3791,7 +3791,7 @@ __metadata:
     "@typescript-eslint/parser": "npm:^6.0.0"
     "@vitejs/plugin-react": "npm:^4.0.3"
     autoprefixer: "npm:^10.4.14"
-    axios: "npm:^1.4.0"
+    axios: "npm:^1.11.0"
     chart.js: "npm:^4.5.0"
     clsx: "npm:^2.0.0"
     crypto-js: "npm:^4.2.0"
@@ -5478,7 +5478,7 @@ __metadata:
   resolution: "polytrade@workspace:."
   dependencies:
     "@types/ws": "npm:^8.18.1"
-    axios: "npm:^1.10.0"
+    axios: "npm:^1.11.0"
     glob: "npm:^11.0.2"
     immer: "npm:^10.1.1"
     node-fetch: "npm:^3.3.2"
