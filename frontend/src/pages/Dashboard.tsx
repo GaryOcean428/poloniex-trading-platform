@@ -134,7 +134,7 @@ const Dashboard: React.FC = () => {
             <h2 id="ai-insights-heading" className="sr-only">AI Trading Insights</h2>
             <TradingInsights
               symbol="BTC-USDT"
-              price={marketData && marketData.length > 0 ? marketData[marketData.length - 1]?.price : 41704}
+              price={marketData && marketData.length > 0 ? (marketData[marketData.length - 1]?.price ?? marketData[marketData.length - 1]?.close ?? 41704) : 41704}
               change24h={-5.91}
               volume={569500}
             />

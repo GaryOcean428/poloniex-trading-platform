@@ -9,7 +9,7 @@ export class ReconnectionService {
   private maxReconnectAttempts: number = 10;
   private initialReconnectDelay: number = 1000;
   private maxReconnectDelay: number = 30000;
-  private _currentReconnectDelay: number = this.initialReconnectDelay;
+  private _currentReconnectDelay: number = this.baseReconnectDelay;
   private reconnectionJitter: number = 0.5;
   private reconnectionStrategy: ReconnectionStrategy =
     ReconnectionStrategy.EXPONENTIAL_BACKOFF;
