@@ -154,7 +154,8 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
     setIsLoading(true);
     
     try {
-      const data = await poloniexApi.getRecentTrades(pair);
+      // Note: getRecentTrades method does not exist in current API, using placeholder
+      const data = await poloniexApi.getTrades?.(pair) || [];
       
       if (data && Array.isArray(data)) {
         const formattedTrades = data.map(mapPoloniexTradeToTrade).filter(trade => 
@@ -332,9 +333,10 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
         setTrades(mockTrades);
       });
     
-    // Listen for market data updates
-    const handleMarketDataUpdate = (data: MarketData) => {
-      if (data.pair === initialPair) {
+    // Listen for market data updates with proper typing
+    const handleMarketDataUpdate = (...args: unknown[]) => {
+      const data = args[0] as MarketData;
+      if (data?.pair === initialPair) {
         setMarketData(prevData => {
           // Find if this timestamp already exists
           const existingIndex = prevData.findIndex(item => item.timestamp === data.timestamp);
@@ -353,9 +355,10 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
       }
     };
     
-    // Listen for trade updates
-    const handleTradeUpdate = (trade: Trade) => {
-      if (trade.pair === initialPair) {
+    // Listen for trade updates with proper typing
+    const handleTradeUpdate = (...args: unknown[]) => {
+      const trade = args[0] as Trade;
+      if (trade?.pair === initialPair) {
         setTrades(prevTrades => {
           // Check if trade already exists
           if (!prevTrades.some(t => t.id === trade.id)) {

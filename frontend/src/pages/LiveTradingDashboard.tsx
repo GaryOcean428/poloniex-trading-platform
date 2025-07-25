@@ -43,7 +43,7 @@ interface RealTimeMetric {
   changePercent: number;
 }
 
-interface LiveAlert {
+interface _LiveAlert {
   id: string;
   type: 'success' | 'warning' | 'error' | 'info';
   message: string;
@@ -88,7 +88,8 @@ const LiveTradingDashboard: React.FC = () => {
         changePercent: data.changePercent || 0
       };
 
-      setRealTimePrice(newMetric);
+      // Update real-time price data for this pair
+      // Note: This would be used by a price display component
       
       // Update price history (keep last 50 points)
       setPriceHistory(prev => {

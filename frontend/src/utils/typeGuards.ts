@@ -66,8 +66,6 @@ export function safeMetricsAccess(metrics: any): Partial<AdvancedMetrics> {
     sharpeRatio: metrics.sharpeRatio ?? 0,
     maxDrawdown: metrics.maxDrawdown ?? 0,
     calmarRatio: metrics.calmarRatio ?? 0,
-    accuracy: metrics.accuracy ?? 0,
-    precision: metrics.precision ?? 0,
     gainToLossRatio: metrics.gainToLossRatio ?? 0,
     payoffRatio: metrics.payoffRatio ?? 0,
     expectancy: metrics.expectancy ?? 0,

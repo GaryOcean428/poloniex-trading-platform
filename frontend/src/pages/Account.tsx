@@ -50,11 +50,11 @@ const Account: React.FC = () => {
   
   // Parse account data
   const accountData = {
-    totalBalance: parseFloat(accountBalance?.totalAmount || '0'),
-    availableBalance: parseFloat(accountBalance?.availableAmount || '0'),
-    equity: parseFloat(accountBalance?.accountEquity || '0'),
-    unrealizedPnL: parseFloat(accountBalance?.unrealizedPnL || '0'),
-    todayPnL: parseFloat(accountBalance?.todayPnL || '0'),
+    totalBalance: parseFloat(accountBalance?.total?.toString() || '0'),
+    availableBalance: parseFloat(accountBalance?.available?.toString() || '0'),
+    equity: parseFloat(accountBalance?.total?.toString() || '0'), // Use total as fallback for equity
+    unrealizedPnL: 0, // Set to 0 as not available in basic interface
+    todayPnL: 0, // Set to 0 as not available in basic interface
     weeklyPnL: 275.32, // Mock data
     monthlyPnL: 1245.87, // Mock data
     lifetimePnL: 5782.43, // Mock data

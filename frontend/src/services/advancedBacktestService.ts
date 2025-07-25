@@ -106,7 +106,7 @@ interface StressTestScenario {
 export class AdvancedBacktestService {
   private static instance: AdvancedBacktestService;
   private historicalDataCache: Map<string, MultiTimeframeData> = new Map();
-  private correlationCache: Map<string, number[][]> = new Map();
+  private _correlationCache: Map<string, number> = new Map();
 
   private constructor() {}
 

@@ -116,7 +116,7 @@ export class MockTradingService {
   private marketDataCache: Map<string, MarketData[]> = new Map();
   private priceSubscriptions: Map<string, (data: MarketData) => void> =
     new Map();
-  private isRunning: boolean = false;
+  private _isRunning: boolean = false;
 
   private constructor() {}
 
@@ -133,7 +133,7 @@ export class MockTradingService {
   public async startMockSession(
     strategy: Strategy,
     initialBalance: number = 10000,
-    options: {
+    _options: {
       maxDrawdownLimit?: number;
       stopLossPercent?: number;
       takeProfitPercent?: number;
@@ -219,7 +219,7 @@ export class MockTradingService {
     const session = this.activeSessions.get(sessionId);
     if (!session || !session.isActive || !signal.signal) return null;
 
-    const { amount = this.calculatePositionSize(session), leverage = 1 } =
+    const { amount = this.calculatePositionSize(session), leverage: _leverage = 1 } =
       options;
 
     // Calculate realistic execution parameters
@@ -550,7 +550,7 @@ export class MockTradingService {
   private updatePortfolio(
     session: MockTradingSession,
     trade: MockTrade,
-    marketData: MarketData
+    _marketData: MarketData
   ): void {
     // Update balance
     session.currentBalance = trade.balance;
@@ -569,7 +569,7 @@ export class MockTradingService {
 
   private updatePortfolioWithCurrentPrices(
     session: MockTradingSession,
-    marketData: MarketData
+    _marketData: MarketData
   ): void {
     // Update portfolio equity with current market prices
     session.portfolio.equity =
