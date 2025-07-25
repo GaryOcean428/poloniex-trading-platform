@@ -283,7 +283,8 @@ class LiveAutonomousTradingEngine {
       });
 
     } catch (error) {
-      throw new Error(`Failed to execute emergency stop: ${error.message}`);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to execute emergency stop: ${errorMessage}`);
     }
   }
 
@@ -307,7 +308,7 @@ class LiveAutonomousTradingEngine {
     }, 30000); // Update every 30 seconds
   }
 
-  private stopPerformanceMonitoring(sessionId: string): void {
+  private stopPerformanceMonitoring(_sessionId: string): void {
     if (this.performanceUpdateInterval) {
       clearInterval(this.performanceUpdateInterval);
       this.performanceUpdateInterval = null;
@@ -389,10 +390,12 @@ class LiveAutonomousTradingEngine {
         profitPotential: strategy.performance.profit * 100,
         riskScore: (1 - strategy.performance.winRate) * 100,
         description: `${strategy.type} strategy for ${strategy.symbol}`,
+        active: true, // Add required property
         learningMetrics: {
           adaptationRate: 0.1,
           consistencyScore: strategy.performance.winRate,
-          marketConditionPerformance: {}
+          marketConditionPerformance: {},
+          timestamp: Date.now()
         },
         adaptationRate: 0.1,
         consistencyScore: strategy.performance.winRate,
@@ -503,7 +506,7 @@ class LiveAutonomousTradingEngine {
 
   private handleConfidenceUpdate(data: any): void {
     // Update confidence scores for relevant sessions
-    for (const [sessionId, session] of this.activeSessions) {
+    for (const [_sessionId, session] of this.activeSessions) {
       if (session.isActive) {
         session.performance.confidenceScore = data.confidenceScore || session.performance.confidenceScore;
       }
@@ -600,7 +603,8 @@ class LiveAutonomousTradingEngine {
         message: 'Risk tolerance settings have been updated.'
       });
     } catch (error) {
-      throw new Error(`Failed to update risk tolerance: ${error.message}`);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to update risk tolerance: ${errorMessage}`);
     }
   }
 
@@ -618,7 +622,8 @@ class LiveAutonomousTradingEngine {
         message: 'Banking configuration has been updated.'
       });
     } catch (error) {
-      throw new Error(`Failed to update banking config: ${error.message}`);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to update banking config: ${errorMessage}`);
     }
   }
 
@@ -636,7 +641,8 @@ class LiveAutonomousTradingEngine {
         message: `${amount.toFixed(2)} USDT banking initiated.`
       });
     } catch (error) {
-      throw new Error(`Failed to execute banking: ${error.message}`);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to execute banking: ${errorMessage}`);
     }
   }
 
