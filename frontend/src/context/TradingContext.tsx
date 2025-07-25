@@ -1,6 +1,6 @@
 import React, { createContext, useState, ReactNode, useEffect, useCallback } from 'react';
-import { Strategy } from '@shared/types';
-import { StrategyType, MarketData, Trade, MovingAverageCrossoverParameters } from '../types';
+import { Strategy, StrategyType, MovingAverageCrossoverParameters } from '@shared/types';
+import { MarketData, Trade } from '../types';
 import { mockMarketData, mockTrades } from '../data/mockData';
 import { usePoloniexData } from '../hooks/usePoloniexData';
 import { poloniexApi } from '../services/poloniexAPI';
@@ -72,7 +72,9 @@ export const TradingProvider: React.FC<TradingProviderProps> = ({
     {
       id: '1',
       name: 'Moving Average Crossover',
-      type: StrategyType.MA_CROSSOVER,
+      type: 'automated',
+      algorithm: 'MovingAverageCrossover',
+      active: true,
       parameters: {
         fastPeriod: 10,
         slowPeriod: 50,

@@ -130,6 +130,78 @@ export interface PoloniexV3Config {
   TOKEN_EXPIRY: number;
 }
 
+// WebSocket Events aligned with backend enums
+export enum WebSocketEvents {
+  // Connection lifecycle events (matching @types/ws)
+  OPEN = 'open',
+  CLOSE = 'close',
+  ERROR = 'error',
+  MESSAGE = 'message',
+  PING = 'ping',
+  PONG = 'pong',
+  
+  // Custom application events
+  CONNECTED = 'connected',
+  DISCONNECTED = 'disconnected',
+  RECONNECTING = 'reconnecting',
+  RECONNECTED = 'reconnected',
+  WELCOME = 'welcome',
+  ACK = 'ack'
+}
+
+// Client-side WebSocket Events
+export enum ClientWebSocketEvents {
+  // Connection state
+  CONNECTION_STATE_CHANGED = 'connectionStateChanged',
+  CONNECTION_ESTABLISHED = 'connectionEstablished',
+  CONNECTION_LOST = 'connectionLost',
+  
+  // Market data
+  MARKET_DATA = 'marketData',
+  TICKER_UPDATE = 'tickerUpdate',
+  ORDER_BOOK_UPDATE = 'orderBookUpdate',
+  TRADE_EXECUTED = 'tradeExecuted',
+  KLINE_UPDATE = 'klineUpdate',
+  
+  // Account updates
+  ACCOUNT_UPDATE = 'accountUpdate',
+  POSITION_UPDATE = 'positionUpdate',
+  ORDER_UPDATE = 'orderUpdate',
+  BALANCE_UPDATE = 'balanceUpdate',
+  
+  // Subscription management
+  MARKET_SUBSCRIBED = 'marketSubscribed',
+  MARKET_UNSUBSCRIBED = 'marketUnsubscribed',
+  SUBSCRIBE_MARKET = 'subscribeMarket',
+  UNSUBSCRIBE_MARKET = 'unsubscribeMarket',
+  
+  // Error handling
+  WEBSOCKET_ERROR = 'websocketError',
+  SUBSCRIPTION_ERROR = 'subscriptionError',
+  RECONNECTION_ERROR = 'reconnectionError'
+}
+
+// Poloniex V3 Topics (exact API paths)
+export enum PoloniexTopics {
+  // Public market data
+  TICKER = '/contractMarket/ticker',
+  TICKER_V2 = '/contractMarket/tickerV2',
+  LEVEL2 = '/contractMarket/level2',
+  LEVEL3 = '/contractMarket/level3',
+  EXECUTION = '/contractMarket/execution',
+  KLINE = '/contractMarket/candles',
+  
+  // Private account data
+  WALLET = '/contractAccount/wallet',
+  POSITION = '/contractAccount/position',
+  ORDERS = '/contractAccount/orders',
+  TRADES = '/contractAccount/trades',
+  
+  // System topics
+  FUNDING = '/contract/funding',
+  SYSTEM = '/contract/system'
+}
+
 export interface SocketIOEvents {
   CONNECT: string;
   DISCONNECT: string;

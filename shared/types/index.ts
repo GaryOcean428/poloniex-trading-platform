@@ -43,7 +43,11 @@ export interface TickerData {
   timestamp: number;
 }
 
-export interface StrategyParameters {
+// Re-export strategy types from strategy module
+export * from './strategy';
+
+// Legacy interface for backward compatibility
+export interface LegacyStrategyParameters {
   [key: string]: number | string | boolean;
 }
 
@@ -93,19 +97,4 @@ export interface OrderBook {
   bids: OrderBookEntry[];
 }
 
-export interface TradingStrategy {
-  id: string;
-  name: string;
-  type: 'manual' | 'automated' | 'ml' | 'dqn';
-  algorithm?: 'MovingAverageCrossover' | 'RSI' | 'MACD' | 'BollingerBands' | 'Custom';
-  active: boolean;
-  parameters: Record<string, any>;
-  performance?: {
-    totalPnl: number;
-    winRate: number;
-    sharpeRatio: number;
-  };
-}
-
-// Export Strategy as alias to TradingStrategy for compatibility
-export type Strategy = TradingStrategy;
+// TradingStrategy and Strategy are now exported from ./strategy module

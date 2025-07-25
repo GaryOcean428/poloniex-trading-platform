@@ -22,10 +22,12 @@
     "jsonwebtoken": "^9.0.2",
     "node-cron": "^3.0.2",
     "pg": "^8.11.3",
+    "seedrandom": "^3.0.5",
     "winston": "^3.10.0",
     "ws": "^8.13.0"
   },
   "devDependencies": {
+    "@eslint/js": "^9.31.0",
     "@types/compression": "^1.8.1",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.3",
@@ -33,11 +35,16 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^24.0.15",
     "@types/pg": "^8.15.4",
+    "@types/seedrandom": "^3.0.8",
     "@types/socket.io-client": "^3.0.0",
     "@types/ws": "^8.18.1",
+    "eslint": "^9.31.0",
+    "globals": "^16.3.0",
+    "jiti": "^2.5.1",
     "nodemon": "^3.1.10",
     "ts-node": "^10.9.2",
     "typescript": "^5.8.3",
+    "typescript-eslint": "^8.38.0",
     "vitest": "^3.2.4"
   }
 }
