@@ -40,9 +40,9 @@ export class HealthService {
 
         // Set timeout for pong response
         setTimeout(() => {
-        const pingTime =
-          (this.connectionStats.lastPongTime || 0) -
-          (this.connectionStats.lastPingTime || 0);
+          const lastPongTime = this.connectionStats.lastPongTime || 0;
+          const lastPingTime = this.connectionStats.lastPingTime || 0;
+          const pongElapsed = Date.now() - Math.max(lastPongTime, lastPingTime);
 
           // If we haven't received a pong or it's too old
           if (pongElapsed <= 0 || pongElapsed > this.PING_TIMEOUT) {
