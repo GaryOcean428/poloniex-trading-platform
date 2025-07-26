@@ -107,7 +107,7 @@ export class AdvancedBacktestService {
   private static instance: AdvancedBacktestService;
   private historicalDataCache: Map<string, MultiTimeframeData> = new Map();
   // Cache for correlation calculations (for future optimization)
-  private _correlationCache: Map<string, number> = new Map();
+  // private _correlationCache: Map<string, number> = new Map();
 
   private constructor() {}
 
@@ -775,7 +775,7 @@ export class AdvancedBacktestService {
       if (trades[i].type === "BUY" && trades[i + 1].type === "SELL") {
         // Add null safety for timestamps
         if (trades[i + 1].timestamp && trades[i].timestamp) {
-          totalHoldingTime += trades[i + 1].timestamp - trades[i].timestamp;
+          totalHoldingTime += (trades[i + 1]?.timestamp ?? 0) - (trades[i]?.timestamp ?? 0);
           positions++;
         }
       }

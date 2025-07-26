@@ -73,7 +73,7 @@ export class AISignalGenerator {
 
       return combinedSignal;
     } catch (error) {
-      logger.error('AI Signal generation error:', error);
+      logger.error('AI Signal generation error:', error instanceof Error ? error.message : String(error));
       return {
         action: 'HOLD',
         confidence: 0,

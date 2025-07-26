@@ -239,7 +239,7 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
         marketData,
         parameterRanges || {},
         'sharpeRatio',
-        strategy.parameters || {},
+        (strategy.parameters as Record<string, unknown>) || {},
         {
           initialBalance: 10000,
           feePercent: 0.1,

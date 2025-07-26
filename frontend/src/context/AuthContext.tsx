@@ -56,7 +56,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           const userData = getUserData();
           if (userData)
           {
-            setUser(userData);
+            setUser(userData as UserProfile);
           }
 
           // Verify token with server

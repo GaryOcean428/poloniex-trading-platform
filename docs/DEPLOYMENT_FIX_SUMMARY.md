@@ -15,7 +15,6 @@ The deployment was failing with 404 "Not Found" errors due to:
 - ✅ **Created `railway.json`** - Root configuration for Railway deployment
 - ✅ **Updated `frontend/railway.json`** - Proper frontend build and deploy configuration
 - ✅ **Updated `backend/railway.json`** - Backend API service configuration
-- ✅ **Created `railway.toml`** - Alternative Railway configuration format
 
 ### 2. Build Configuration
 

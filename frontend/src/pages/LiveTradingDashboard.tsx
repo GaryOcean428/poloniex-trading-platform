@@ -44,13 +44,13 @@ interface RealTimeMetric {
 }
 
 // Interface for future alert functionality
-interface _LiveAlert {
-  id: string;
-  type: 'success' | 'warning' | 'error' | 'info';
-  message: string;
-  timestamp: number;
-  acknowledged: boolean;
-}
+// interface LiveAlert {
+//   id: string;
+//   type: 'success' | 'warning' | 'error' | 'info';
+//   message: string;
+//   timestamp: number;
+//   acknowledged: boolean;
+// }
 
 const LiveTradingDashboard: React.FC = () => {
   const { 
