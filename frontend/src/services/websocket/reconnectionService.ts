@@ -10,7 +10,7 @@ export class ReconnectionService {
   private initialReconnectDelay: number = 1000;
   private maxReconnectDelay: number = 30000;
   // Current delay for reconnection attempts (for future use)
-  private _currentReconnectDelay: number = this.initialReconnectDelay;
+  // private _currentReconnectDelay: number = this.initialReconnectDelay;
   private reconnectionJitter: number = 0.5;
   private reconnectionStrategy: ReconnectionStrategy =
     ReconnectionStrategy.EXPONENTIAL_BACKOFF;
@@ -140,7 +140,7 @@ export class ReconnectionService {
    */
   resetReconnectAttempts(): void {
     this.reconnectAttempts = 0;
-    this._currentReconnectDelay = this.initialReconnectDelay;
+    // this._currentReconnectDelay = this.initialReconnectDelay;
   }
 
   /**
@@ -253,6 +253,6 @@ export class ReconnectionService {
   forceStop(): void {
     this.stopReconnectTimer();
     this.reconnectAttempts = 0;
-    this._currentReconnectDelay = this.initialReconnectDelay;
+    // this._currentReconnectDelay = this.initialReconnectDelay;
   }
 }

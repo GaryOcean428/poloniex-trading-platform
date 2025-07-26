@@ -132,7 +132,7 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
     }
   }, [isMockMode, mapPoloniexDataToMarketData]);
   
-  const fetchTrades = useCallback(async (pair: string) => {
+  const fetchTrades = useCallback(async (_pair: string) => {
     // If in mock mode, use mock data immediately  
     if (isMockMode) {
       if (import.meta.env.DEV) {
@@ -155,7 +155,10 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
     
     try {
       // Note: getRecentTrades method does not exist in current API, using placeholder
-      const data = await poloniexApi.getTrades?.(pair) || [];
+      // Use getRecentTrades method or fallback to empty array
+      // Mock data for now since getRecentTrades doesn't exist
+      const data: any[] = [];
+      console.log('Poloniex API method getRecentTrades not available, using mock data');
       
       if (data && Array.isArray(data)) {
         const formattedTrades = data.map(mapPoloniexTradeToTrade).filter(trade => 

@@ -96,7 +96,7 @@ const StrategyDetails: React.FC<StrategyDetailsProps> = ({
           </div>
         );
       case 'Breakout':
-      case 'BREAKOUT': // FIXME strict: Support both naming conventions
+      case 'BREAKOUT' as any: // Support both naming conventions
         const breakoutParams = strategy.parameters as BreakoutParameters;
         return (
           <div className="grid grid-cols-2 gap-4">

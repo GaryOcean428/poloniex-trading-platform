@@ -40,18 +40,21 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
   usePageVisibility(
     () => {
       // Page visible - ensure connection
-      webSocketService.handlePageVisibilityChange(true);
+      if (!webSocketService.isConnected()) {
+        webSocketService.connect().catch(console.error);
+      }
     },
     () => {
       // Page hidden - maintain connection in background
-      webSocketService.handlePageVisibilityChange(false);
+      // For now, we keep the connection active
     },
     30000 // 30 second grace period
   );
 
   useEffect(() => {
     // Connection state change handler
-    const handleConnectionStateChange = (state: string) => {
+    const handleConnectionStateChange = (...args: unknown[]) => {
+      const state = args[0] as string;
       setContextState(prev => ({
         ...prev,
         connectionState: state,
@@ -60,7 +63,8 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     };
 
     // Error handler
-    const handleError = (error: Error | unknown) => {
+    const handleError = (...args: unknown[]) => {
+      const error = args[0];
       setContextState(prev => ({
         ...prev,
         lastError: error instanceof Error ? error.message : 'Unknown error'

@@ -61,6 +61,15 @@ interface AdvancedMetrics {
   ulcerIndex: number;
   recoveryFactor: number;
   profitabilityIndex: number;
+  // Additional properties used in the UI
+  painIndex: number;
+  martinRatio: number;
+  burkeRatio: number;
+  skewness: number;
+  kurtosis: number;
+  upnessIndex: number;
+  upsidePotentialRatio: number;
+  gainToPainRatio: number;
 }
 
 interface BacktestSession {
@@ -69,7 +78,7 @@ interface BacktestSession {
   strategy: Strategy;
   options: BacktestOptions;
   result: BacktestResult | null;
-  advancedMetrics: AdvancedMetrics | null;
+  advancedMetrics: AdvancedMetrics;
   createdAt: Date;
   status: 'pending' | 'running' | 'completed' | 'failed';
 }
@@ -101,7 +110,14 @@ const Backtesting: React.FC = () => {
         strategy: strategies[0],
         options: backtestOptions,
         result: null,
-        advancedMetrics: null,
+        advancedMetrics: {
+          valueAtRisk95: 0, valueAtRisk99: 0, conditionalVaR95: 0, conditionalVaR99: 0,
+          calmarRatio: 0, sortinoRatio: 0, omegaRatio: 0, tailRatio: 0,
+          gainToLossRatio: 0, payoffRatio: 0, expectancy: 0, systemQualityNumber: 0,
+          kRatio: 0, ulcerIndex: 0, recoveryFactor: 0, profitabilityIndex: 0,
+          painIndex: 0, martinRatio: 0, burkeRatio: 0, skewness: 0, kurtosis: 0,
+          upnessIndex: 0, upsidePotentialRatio: 0, gainToPainRatio: 0
+        },
         createdAt: new Date(),
         status: 'pending'
       };
@@ -121,7 +137,14 @@ const Backtesting: React.FC = () => {
       strategy: selectedStrategy,
       options: backtestOptions,
       result: null,
-      advancedMetrics: null,
+      advancedMetrics: {
+        valueAtRisk95: 0, valueAtRisk99: 0, conditionalVaR95: 0, conditionalVaR99: 0,
+        calmarRatio: 0, sortinoRatio: 0, omegaRatio: 0, tailRatio: 0,
+        gainToLossRatio: 0, payoffRatio: 0, expectancy: 0, systemQualityNumber: 0,
+        kRatio: 0, ulcerIndex: 0, recoveryFactor: 0, profitabilityIndex: 0,
+        painIndex: 0, martinRatio: 0, burkeRatio: 0, skewness: 0, kurtosis: 0,
+        upnessIndex: 0, upsidePotentialRatio: 0, gainToPainRatio: 0
+      },
       createdAt: new Date(),
       status: 'running'
     };
@@ -154,7 +177,32 @@ const Backtesting: React.FC = () => {
             annualizedReturn: ((result.finalBalance / result.initialBalance) - 1) * 365 / 365 // Simplified
           }
         },
-        advancedMetrics,
+        advancedMetrics: {
+          valueAtRisk95: advancedMetrics.valueAtRisk95 || 0,
+          valueAtRisk99: advancedMetrics.valueAtRisk99 || 0,
+          conditionalVaR95: advancedMetrics.conditionalVaR95 || 0,
+          conditionalVaR99: advancedMetrics.conditionalVaR99 || 0,
+          calmarRatio: advancedMetrics.calmarRatio || 0,
+          sortinoRatio: advancedMetrics.sortinoRatio || 0,
+          omegaRatio: advancedMetrics.omegaRatio || 0,
+          tailRatio: advancedMetrics.tailRatio || 0,
+          gainToLossRatio: (advancedMetrics.averageWin || 0) / Math.max(Math.abs(advancedMetrics.averageLoss || 0), 1),
+          payoffRatio: (advancedMetrics.averageWin || 0) / Math.max(Math.abs(advancedMetrics.averageLoss || 0), 1),
+          expectancy: (advancedMetrics.averageWin || 0) * (result.winRate / 100) - Math.abs(advancedMetrics.averageLoss || 0) * ((100 - result.winRate) / 100),
+          systemQualityNumber: result.sharpeRatio * Math.sqrt(result.totalTrades),
+          kRatio: 0, // Not available in service response yet
+          ulcerIndex: advancedMetrics.ulcerIndex || 0,
+          recoveryFactor: advancedMetrics.recoveryFactor || 0,
+          profitabilityIndex: ((result.finalBalance - result.initialBalance) / result.initialBalance) || 0,
+          painIndex: advancedMetrics.painIndex || 0,
+          martinRatio: advancedMetrics.martinRatio || 0,
+          burkeRatio: advancedMetrics.burkeRatio || 0,
+          skewness: advancedMetrics.skewness || 0,
+          kurtosis: advancedMetrics.kurtosis || 0,
+          upnessIndex: advancedMetrics.upnessIndex || 0,
+          upsidePotentialRatio: advancedMetrics.upsidePotentialRatio || 0,
+          gainToPainRatio: advancedMetrics.gainToPainRatio || 0
+        },
         status: 'completed' as const
       };
 

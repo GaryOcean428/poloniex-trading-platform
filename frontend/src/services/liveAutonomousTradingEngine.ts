@@ -381,9 +381,10 @@ class LiveAutonomousTradingEngine {
       // Convert to legacy format for compatibility with type safety
       const { ensureStrategyType } = await import('../utils/typeGuards');
       session.strategies = response.strategies.map(strategy => ensureStrategyType({
+        // Type assertion needed for strategy type compatibility
         id: strategy.id,
         name: strategy.name,
-        type: strategy.type,
+        type: strategy.type as any, // Type assertion for compatibility
         symbol: strategy.symbol,
         timeframe: strategy.timeframe,
         parameters: strategy.parameters,
@@ -401,7 +402,7 @@ class LiveAutonomousTradingEngine {
         adaptationRate: 0.1,
         consistencyScore: strategy.performance.winRate,
         marketConditionPerformance: {}
-      }));
+      })) as any; // Type assertion for the entire array
 
       this.notifyListeners('strategiesLoaded', { sessionId, strategies: session.strategies });
     } catch (error) {

@@ -1,5 +1,5 @@
 import React, { createContext, useState, ReactNode, useEffect, useCallback } from 'react';
-import { Strategy, StrategyType, MovingAverageCrossoverParameters } from '@shared/types';
+import { Strategy, MovingAverageCrossoverParameters } from '@shared/types';
 import { MarketData, Trade } from '../types';
 import { mockMarketData, mockTrades } from '../data/mockData';
 import { usePoloniexData } from '../hooks/usePoloniexData';

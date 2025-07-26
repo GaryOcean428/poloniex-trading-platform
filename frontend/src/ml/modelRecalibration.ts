@@ -1,4 +1,5 @@
 import * as tf from '@tensorflow/tfjs';
+import { calculateMeanAndStd, standardizeFeatures } from './mlUtils';
 
 /**
  * Model Recalibration Module
@@ -363,14 +364,12 @@ export const recalibrateMLModel = async (
         } catch (error) {
           console.error('Error loading model stats:', error);
           // Fallback to calculating from features
-          const { calculateMeanAndStd } = await import('./mlTrading');
           const result = calculateMeanAndStd(features);
           mean = result.mean;
           std = result.std;
         }
         
         // Standardize features
-        const { standardizeFeatures } = await import('./mlTrading');
         const features_scaled = standardizeFeatures(features, mean, std);
         
         // Convert to tensors

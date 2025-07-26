@@ -226,11 +226,10 @@ railway-docs-links.md contains documentation links to railway platform for troub
 
 railway-build.sh is the build script for railway deployment.
 
-railway.toml is the deployment configuration for railway deployment.
 
 nixpacks.toml is the nixpacks configuration for railway deployment.
 
-railway.toml and nixpacks.toml should be in the root directory of the project. Although mmicroservices contained in this project will have their own specific setup requirements.
+nixpacks.toml should be in the root directory of the project. Although microservices contained in this project will have their own specific setup requirements.
 
 #### Duplication Prevention Protocols
 
@@ -561,7 +560,7 @@ git pull origin main
 
 ### 2. Open the three files that matter
 
-- `railway.toml` or `railway.json`
+- `railway.json`
 - `Dockerfile` (if you use one)
 - Your main entry file (`server.js`, `app.py`, etc.)
 
