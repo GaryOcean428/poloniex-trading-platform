@@ -59,17 +59,37 @@ app.use('/api/strategies', strategiesRoutes);
 
 // Serve static files in production
 if (process.env.NODE_ENV === 'production') {
-  // Serve frontend static files
-  app.use(express.static(path.join(__dirname, '../../frontend/dist')));
+  // Serve frontend static files with proper MIME types
+  app.use(express.static(path.join(__dirname, '../../../../frontend/dist'), {
+    setHeaders: (res, path) => {
+      // Ensure JavaScript files are served with correct MIME type
+      if (path.endsWith('.js')) {
+        res.set('Content-Type', 'application/javascript');
+      }
+      // Ensure service worker is served with proper headers
+      if (path.endsWith('sw.js')) {
+        res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.set('Service-Worker-Allowed', '/');
+      }
+      // Ensure PNG files are served with correct MIME type
+      if (path.endsWith('.png')) {
+        res.set('Content-Type', 'image/png');
+      }
+      // Ensure manifest.json is served with correct MIME type
+      if (path.endsWith('manifest.json')) {
+        res.set('Content-Type', 'application/manifest+json');
+      }
+    }
+  }));
 
   // Serve index.html for all other routes (SPA support)
   app.get('*', (req: Request, res: Response) => {
-    res.sendFile(path.join(__dirname, '../../frontend/dist/index.html'));
+    res.sendFile(path.join(__dirname, '../../../../frontend/dist/index.html'));
   });
 }
 
 // Error handling middleware
-app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
+app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
   logger.error('Unhandled error:', err);
   res.status(500).json({ error: 'Internal server error' });
 });
