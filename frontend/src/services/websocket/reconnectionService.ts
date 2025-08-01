@@ -84,7 +84,7 @@ export class ReconnectionService {
 
     // Check if we've reached the maximum number of reconnect attempts
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      // console.log(
+      console.log(
         `Max reconnection attempts (${this.maxReconnectAttempts}) reached, staying in mock mode`
       );
       this.connectionStats.failedReconnects++;
@@ -106,7 +106,7 @@ export class ReconnectionService {
     this.reconnectAttempts++;
     this.connectionStats.reconnectAttempts++;
 
-    // console.log(
+    console.log(
       `Attempting reconnect ${this.reconnectAttempts}/${this.maxReconnectAttempts} in ${delay}ms`
     );
 
