@@ -62,7 +62,7 @@ const FuturesTradingPanel: React.FC<FuturesTradingPanelProps> = ({ symbol }) => 
     try {
       await setLeverage(symbol, newLeverage, marginMode);
     } catch (err) {
-      console.error('Failed to set leverage:', err);
+      // console.error('Failed to set leverage:', err);
     }
   };
 
@@ -95,7 +95,7 @@ const FuturesTradingPanel: React.FC<FuturesTradingPanelProps> = ({ symbol }) => 
       // Refresh positions to show the new position
       await refreshPositions();
     } catch (err) {
-      console.error('Failed to place order:', err);
+      // console.error('Failed to place order:', err);
       setOrderError(err instanceof Error ? err.message : 'Failed to place order');
     } finally {
       setIsSubmitting(false);
@@ -124,7 +124,7 @@ const FuturesTradingPanel: React.FC<FuturesTradingPanelProps> = ({ symbol }) => 
       // Refresh positions to show the closed position
       await refreshPositions();
     } catch (err) {
-      console.error('Failed to close position:', err);
+      // console.error('Failed to close position:', err);
       setOrderError(err instanceof Error ? err.message : 'Failed to close position');
     } finally {
       setIsSubmitting(false);

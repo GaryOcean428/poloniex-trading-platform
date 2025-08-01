@@ -99,7 +99,7 @@ const StrategyBuilder: React.FC = () => {
                 setStrategies(strategies);
               }
             })
-            .catch(err => console.error('Failed to load strategies from extension:', err));
+            .catch(err => // console.error('Failed to load strategies from extension:', err));
         } else
         {
           // Load from localStorage if in browser
@@ -111,7 +111,7 @@ const StrategyBuilder: React.FC = () => {
         }
       } catch (err)
       {
-        console.error('Failed to load saved strategies:', err);
+        // console.error('Failed to load saved strategies:', err);
       }
     };
 
@@ -128,7 +128,7 @@ const StrategyBuilder: React.FC = () => {
         {
           // Save to Chrome storage if in extension
           setExtensionData('trading_strategies', strategies)
-            .catch(err => console.error('Failed to save strategies to extension:', err));
+            .catch(err => // console.error('Failed to save strategies to extension:', err));
         } else
         {
           // Save to localStorage if in browser
@@ -136,7 +136,7 @@ const StrategyBuilder: React.FC = () => {
         }
       } catch (err)
       {
-        console.error('Failed to save strategies:', err);
+        // console.error('Failed to save strategies:', err);
       }
     }
   }, [strategies]);
@@ -154,7 +154,7 @@ const StrategyBuilder: React.FC = () => {
     } catch (err)
     {
       setError('Failed to load market data');
-      console.error(err);
+      // console.error(err);
     } finally
     {
       setIsLoading(false);
@@ -184,7 +184,7 @@ const StrategyBuilder: React.FC = () => {
     } catch (err)
     {
       setError('Failed to execute strategy');
-      console.error(err);
+      // console.error(err);
     }
   };
 

@@ -73,11 +73,11 @@ export class Logger {
         console.info(formatted);
         break;
       case 'WARN':
-        console.warn(formatted);
+        // console.warn(formatted);
         break;
       case 'ERROR':
       case 'FATAL':
-        console.error(formatted);
+        // console.error(formatted);
         break;
     }
   }

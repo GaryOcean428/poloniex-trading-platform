@@ -84,7 +84,7 @@ export class ReconnectionService {
 
     // Check if we've reached the maximum number of reconnect attempts
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      console.log(
+      // console.log(
         `Max reconnection attempts (${this.maxReconnectAttempts}) reached, staying in mock mode`
       );
       this.connectionStats.failedReconnects++;
@@ -97,7 +97,7 @@ export class ReconnectionService {
 
     // If delay is negative, don't reconnect
     if (delay < 0) {
-      console.log("Reconnection strategy is NONE, not attempting to reconnect");
+      // console.log("Reconnection strategy is NONE, not attempting to reconnect");
       this.onConnectionFailed();
       return;
     }
@@ -106,7 +106,7 @@ export class ReconnectionService {
     this.reconnectAttempts++;
     this.connectionStats.reconnectAttempts++;
 
-    console.log(
+    // console.log(
       `Attempting reconnect ${this.reconnectAttempts}/${this.maxReconnectAttempts} in ${delay}ms`
     );
 
@@ -117,7 +117,7 @@ export class ReconnectionService {
         this.connectionStats.successfulReconnects++;
         this.resetReconnectAttempts();
       } catch (error) {
-        console.log("Reconnect attempt failed:", error);
+        // console.log("Reconnect attempt failed:", error);
         this.connectionStats.failedReconnects++;
         // Continue with reconnection attempts
         this.reconnect();

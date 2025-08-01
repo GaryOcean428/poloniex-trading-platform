@@ -48,7 +48,7 @@ export class BacktestService {
       );
       
       // Initialize backtest state
-      let balance = options.initialBalance;
+      const balance = options.initialBalance;
       // Position tracking variable (not currently used but kept for future implementation)
       // let position = 0;
       const trades: BacktestTrade[] = [];
@@ -101,7 +101,7 @@ export class BacktestService {
         metrics
       };
     } catch (error) {
-      console.error('Backtest failed:', error);
+      // console.error('Backtest failed:', error);
       throw error;
     }
   }
@@ -250,8 +250,8 @@ export class BacktestService {
    * Calculate maximum drawdown
    */
   private calculateMaxDrawdown(trades: BacktestTrade[]): number {
-    let peak = -Infinity;
-    let maxDrawdown = 0;
+    const peak = -Infinity;
+    const maxDrawdown = 0;
     
     trades.forEach(trade => {
       if (trade.balance > peak) {
@@ -356,8 +356,8 @@ export class BacktestService {
    * Calculate average holding period
    */
   private calculateAverageHoldingPeriod(trades: BacktestTrade[]): number {
-    let totalHoldingTime = 0;
-    let positions = 0;
+    const totalHoldingTime = 0;
+    const positions = 0;
     
     for (let i = 0; i < trades.length - 1; i++) {
       if (trades[i].type === 'BUY' && trades[i + 1].type === 'SELL') {

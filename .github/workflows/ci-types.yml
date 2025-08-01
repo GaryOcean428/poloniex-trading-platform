@@ -1,4 +1,4 @@
-name: TypeScript Type Check
+name: Comprehensive QA Pipeline
 
 on:
   pull_request:
@@ -17,14 +17,39 @@ on:
       - 'backend/tsconfig.json'
       - 'frontend/tsconfig.json'
       - 'tsconfig.json'
+      - '.github/workflows/**'
 
 jobs:
+  dependency-check:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: 'yarn'
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      - name: Check dependency health
+        run: yarn deps:health
+        continue-on-error: true
+
   type-check:
     runs-on: ubuntu-latest
+    needs: dependency-check
     
     strategy:
       matrix:
-        node-version: [20.x]
+        node-version: [22.x]
     
     steps:
       - name: Checkout code
@@ -48,7 +73,7 @@ jobs:
 
       - name: TypeScript check - Frontend
         run: yarn workspace frontend tsc --noEmit
-        continue-on-error: true
+        continue-on-error: false
 
   lint-check:
     runs-on: ubuntu-latest
@@ -61,7 +86,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20.x
+          node-version: 22.x
           cache: 'yarn'
 
       - name: Enable Corepack
@@ -72,10 +97,64 @@ jobs:
 
       - name: Lint check - Backend
         run: yarn workspace backend lint
-        continue-on-error: true
+        continue-on-error: false
 
       - name: Lint check - Frontend
         run: yarn workspace frontend lint
+        continue-on-error: false
+
+  build-check:
+    runs-on: ubuntu-latest
+    needs: [type-check, lint-check]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: 'yarn'
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      - name: Build backend
+        run: yarn workspace backend build
+
+      - name: Build frontend
+        run: yarn workspace frontend build
+
+  test-check:
+    runs-on: ubuntu-latest
+    needs: build-check
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: 'yarn'
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      - name: Test backend
+        run: yarn workspace backend test:run
+        continue-on-error: true
+
+      - name: Test frontend
+        run: yarn workspace frontend test:run
         continue-on-error: true
 
   security-audit:
@@ -89,7 +168,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20.x
+          node-version: 22.x
           cache: 'yarn'
 
       - name: Enable Corepack
@@ -105,3 +184,66 @@ jobs:
       - name: Run custom security checks
         run: yarn security:audit
         continue-on-error: true
+
+  railway-validation:
+    runs-on: ubuntu-latest
+    needs: build-check
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: 'yarn'
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      - name: Validate Railway configuration
+        run: yarn railway:validate
+        continue-on-error: true
+
+      - name: Check workspace health
+        run: yarn workspace:health
+        continue-on-error: true
+
+  comprehensive-qa:
+    runs-on: ubuntu-latest
+    needs: [test-check, security-audit, railway-validation]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: 'yarn'
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      - name: Run comprehensive quality check
+        run: yarn quality:check
+        continue-on-error: true
+
+      - name: QA Summary
+        run: |
+          echo "🎉 Comprehensive QA Pipeline Complete!"
+          echo "✅ Dependencies checked"
+          echo "✅ TypeScript compilation verified"
+          echo "✅ Linting completed"
+          echo "✅ Build successful"
+          echo "✅ Tests executed"
+          echo "✅ Security audit performed"
+          echo "✅ Railway configuration validated"

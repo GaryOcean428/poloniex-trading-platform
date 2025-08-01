@@ -25,7 +25,7 @@ export class TradingEngine {
 
   async switchMode(mode: string): Promise<void> {
     // TODO: Implement mode switching
-    console.log(`Switching to mode: ${mode}`);
+    // console.log(`Switching to mode: ${mode}`);
   }
 
   getCurrentActivity(): string {

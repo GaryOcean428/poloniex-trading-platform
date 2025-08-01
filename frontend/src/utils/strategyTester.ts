@@ -94,10 +94,10 @@ export function backtestStrategy(
   
   // Initialize backtest state
   const balance = testOptions.initialBalance;
-  let equity = balance;
-  let maxEquity = balance;
-  let maxDrawdown = 0;
-  let maxDrawdownPercent = 0;
+  const equity = balance;
+  const maxEquity = balance;
+  const maxDrawdown = 0;
+  const maxDrawdownPercent = 0;
   const trades: BacktestTrade[] = [];
   const equityCurve: EquityPoint[] = [];
   const openPositions: BacktestTrade[] = [];
@@ -110,8 +110,8 @@ export function backtestStrategy(
   
   // Daily returns for Sharpe ratio
   const dailyReturns: number[] = [];
-  let lastDayEquity = balance;
-  let lastDay = new Date(sortedData[0].timestamp).toDateString();
+  const lastDayEquity = balance;
+  const lastDay = new Date(sortedData[0].timestamp).toDateString();
   
   // Process each candle
   for (let i = 50; i < sortedData.length; i++) { // Start at 50 to have enough data for indicators
@@ -416,7 +416,7 @@ function calculateEquity(
   openPositions: BacktestTrade[],
   currentPrice: number
 ): number {
-  let equity = balance;
+  const equity = balance;
   
   for (const position of openPositions) {
     const entryPrice = position.entryPrice;
@@ -466,7 +466,7 @@ export function optimizeStrategy(
   const results: BacktestResult[] = [];
   const parameterCombinations: Record<string, unknown>[] = generateParameterCombinations(parameterRanges, baseParameters);
   
-  console.log(`Testing ${parameterCombinations.length} parameter combinations...`);
+  // console.log(`Testing ${parameterCombinations.length} parameter combinations...`);
   
   // Test each parameter combination
   for (const parameters of parameterCombinations) {
@@ -626,9 +626,9 @@ function calculateCorrelation(x: number[], y: number[]): number {
   const yMean = y.reduce((sum, val) => sum + val, 0) / n;
   
   // Calculate covariance and variances
-  let covariance = 0;
-  let xVariance = 0;
-  let yVariance = 0;
+  const covariance = 0;
+  const xVariance = 0;
+  const yVariance = 0;
   
   for (let i = 0; i < n; i++) {
     const xDiff = x[i] - xMean;
@@ -743,17 +743,17 @@ function simulateEquityCurve(
   profitFactor: number;
   sharpeRatio: number;
 } {
-  let balance = initialBalance;
-  let maxBalance = initialBalance;
-  let maxDrawdownPercent = 0;
-  let winningTrades = 0;
-  let totalProfit = 0;
-  let totalLoss = 0;
+  const balance = initialBalance;
+  const maxBalance = initialBalance;
+  const maxDrawdownPercent = 0;
+  const winningTrades = 0;
+  const totalProfit = 0;
+  const totalLoss = 0;
   
   // Daily returns for Sharpe ratio
   const dailyReturns: number[] = [];
-  let lastDayEquity = initialBalance;
-  let lastDay = trades.length > 0 && trades[0].entryDate ? trades[0].entryDate.toDateString() : '';
+  const lastDayEquity = initialBalance;
+  const lastDay = trades.length > 0 && trades[0].entryDate ? trades[0].entryDate.toDateString() : '';
   
   // Process each trade
   for (const trade of trades) {
@@ -797,7 +797,7 @@ function simulateEquityCurve(
   const profitFactor = totalLoss !== 0 ? totalProfit / Math.abs(totalLoss) : totalProfit > 0 ? Infinity : 0;
   
   // Calculate Sharpe ratio
-  let sharpeRatio = 0;
+  const sharpeRatio = 0;
   if (dailyReturns.length > 0) {
     const averageDailyReturn = dailyReturns.reduce((sum, ret) => sum + ret, 0) / dailyReturns.length;
     const dailyReturnStdDev = Math.sqrt(
@@ -855,8 +855,8 @@ export function walkForwardAnalysis(
   const foldSize = Math.floor(sortedData.length / numFolds);
   
   const foldResults = [];
-  let totalInSampleProfit = 0;
-  let totalOutOfSampleProfit = 0;
+  const totalInSampleProfit = 0;
+  const totalOutOfSampleProfit = 0;
   
   // Process each fold
   for (let i = 0; i < numFolds; i++) {

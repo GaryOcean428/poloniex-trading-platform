@@ -78,8 +78,8 @@ export function calculateRSI(data: MarketData[], period: number = 14): Technical
     changes.push(prices[i] - prices[i - 1]);
   }
 
-  let avgGain = 0;
-  let avgLoss = 0;
+  const avgGain = 0;
+  const avgLoss = 0;
 
   for (let i = 0; i < period; i++) {
     if (changes[i] > 0) {
@@ -110,7 +110,7 @@ export function calculateRSI(data: MarketData[], period: number = 14): Technical
   const previousValue = values[values.length - 2] || currentValue;
 
   let signal: "BUY" | "SELL" | "HOLD" = "HOLD";
-  let strength = 0;
+  const strength = 0;
 
   if (currentValue < 30 && previousValue < currentValue) {
     signal = "BUY";
@@ -206,7 +206,7 @@ export function calculateATR(data: MarketData[], period: number = 14): Technical
   const values: number[] = [];
   
   // Calculate initial ATR using SMA
-  let sum = trueRanges.slice(0, period).reduce((a, b) => a + b, 0);
+  const sum = trueRanges.slice(0, period).reduce((a, b) => a + b, 0);
   values.push(sum / period);
   
   // Calculate subsequent ATR values using smoothed moving average

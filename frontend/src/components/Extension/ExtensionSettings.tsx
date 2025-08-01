@@ -100,7 +100,7 @@ const ExtensionSettings: React.FC<ExtensionSettingsProps> = ({ onClose }) => {
           }
         },
         (response: ExtensionResponse) => {
-          console.log('Extension settings updated:', response);
+          // console.log('Extension settings updated:', response);
         }
       );
 
@@ -115,7 +115,7 @@ const ExtensionSettings: React.FC<ExtensionSettingsProps> = ({ onClose }) => {
           }
         },
         (response: ExtensionResponse) => {
-          console.log('Extension API credentials updated:', response);
+          // console.log('Extension API credentials updated:', response);
         }
       );
     }

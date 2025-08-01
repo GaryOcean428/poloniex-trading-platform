@@ -33,7 +33,7 @@ export function generateSignature({
   secret
 }: SignatureParams): string {
   // Create the string to sign
-  let signString = `${method}\n${path}`;
+  const signString = `${method}\n${path}`;
   
   if (queryString) {
     signString += `?${queryString}`;
@@ -161,7 +161,7 @@ export function getUserData(): unknown | null {
   try {
     return JSON.parse(userData);
   } catch (error) {
-    console.error('Error parsing user data:', error);
+    // console.error('Error parsing user data:', error);
     return null;
   }
 }
@@ -210,7 +210,7 @@ export function decodeJWTPayload(token: string): unknown | null {
     const decoded = atob(payload.replace(/-/g, '+').replace(/_/g, '/'));
     return JSON.parse(decoded);
   } catch (error) {
-    console.error('Error decoding JWT:', error);
+    // console.error('Error decoding JWT:', error);
     return null;
   }
 }

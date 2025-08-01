@@ -47,7 +47,7 @@ export interface Alert {
   message: string;
   priority: AlertRule['priority'];
   type: AlertType;
-  data?: any;
+  data?: unknown;
   acknowledged: boolean;
   acknowledgedAt?: number;
   acknowledgedBy?: string;
@@ -360,7 +360,7 @@ export class MonitoringSystem {
   /**
    * Generate performance report
    */
-  generatePerformanceReport(hours: number = 24): any {
+  generatePerformanceReport(hours: number = 24): unknown {
     const metrics = this.getPerformanceHistory(hours);
     if (metrics.length === 0) return null;
     
@@ -440,7 +440,7 @@ export class MonitoringSystem {
     // Toast notifications
     this.notificationHandlers.set('toast', async (alert: Alert) => {
       // This would integrate with your toast system
-      console.log(`Toast: ${alert.title} - ${alert.message}`);
+      // console.log(`Toast: ${alert.title} - ${alert.message}`);
     });
     
     // Browser notifications
@@ -460,9 +460,9 @@ export class MonitoringSystem {
         // Play alert sound
         try {
           const audio = new Audio('/alert-sound.mp3');
-          audio.play().catch(e => console.warn('Could not play alert sound:', e));
+          audio.play().catch(e => // console.warn('Could not play alert sound:', e));
         } catch (error) {
-          console.warn('Alert sound not available');
+          // console.warn('Alert sound not available');
         }
       }
     });
@@ -470,14 +470,14 @@ export class MonitoringSystem {
     // Webhook notifications (placeholder)
     this.notificationHandlers.set('webhook', async (alert: Alert) => {
       // This would send to configured webhook URL
-      console.log(`Webhook: ${JSON.stringify(alert)}`);
+      // console.log(`Webhook: ${JSON.stringify(alert)}`);
     });
   }
 
   /**
    * Trigger an alert
    */
-  private triggerAlert(type: AlertType, alertData: { title: string; message: string; data?: any }): void {
+  private triggerAlert(type: AlertType, alertData: { title: string; message: string; data?: unknown }): void {
     // Check for existing similar alerts to avoid spam
     const recentSimilar = this.alerts.filter(
       a => a.type === type && 

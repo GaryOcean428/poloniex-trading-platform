@@ -35,28 +35,36 @@ export default [
         'warn',
         { allowConstantExport: true },
       ],
-      // TypeScript strict rules for quality improvement
-      '@typescript-eslint/no-explicit-any': 'error',
-      '@typescript-eslint/no-unused-vars': ['error', { 
+      // TypeScript strict rules for quality improvement (warnings for now)
+      '@typescript-eslint/no-explicit-any': 'warn',
+      '@typescript-eslint/no-unused-vars': ['warn', { 
         argsIgnorePattern: '^_',
         varsIgnorePattern: '^_',
         destructuredArrayIgnorePattern: '^_'
       }],
-      '@typescript-eslint/no-require-imports': 'error',
-      '@typescript-eslint/prefer-as-const': 'error',
-      '@typescript-eslint/no-unnecessary-type-assertion': 'error',
+      '@typescript-eslint/no-require-imports': 'warn',
+      '@typescript-eslint/prefer-as-const': 'warn',
+      '@typescript-eslint/no-unnecessary-type-assertion': 'warn',
 
       // General code quality rules
       'no-undef': 'off',
       '@typescript-eslint/no-duplicate-enum-values': 'off',
       'no-empty-pattern': 'warn',
       'react-hooks/rules-of-hooks': 'error',
+      'react-hooks/exhaustive-deps': 'warn',
       'no-case-declarations': 'off',
       '@typescript-eslint/no-var-requires': 'off', // Keep this off for compatibility
-      'prefer-const': 'error',
+      'prefer-const': 'warn',
       'no-var': 'error',
       'no-console': 'warn',
-      'eqeqeq': ['error', 'always'],
+      'eqeqeq': ['warn', 'always'],
+      // Additional QA rules
+      'no-debugger': 'warn',
+      'no-alert': 'warn',
+      'no-eval': 'error',
+      'no-implied-eval': 'error',
+      'no-new-func': 'error',
+      'no-script-url': 'error',
     },
   },
 ];

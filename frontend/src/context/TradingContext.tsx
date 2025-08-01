@@ -143,7 +143,7 @@ export const TradingProvider: React.FC<TradingProviderProps> = ({
   ) => {
     try {
       if (isMockMode) {
-        console.log('Using mock order placement', { pair, side, type, quantity, price });
+        // console.log('Using mock order placement', { pair, side, type, quantity, price });
         return { 
           success: true, 
           orderId: 'mock-order-' + Date.now(),

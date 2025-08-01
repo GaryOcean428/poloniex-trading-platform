@@ -189,7 +189,7 @@ class AutomatedTradingService {
   /**
    * Combine traditional strategy signals with AI signals
    */
-  private combineSignals(strategyResult: any, aiSignal: AISignal): AISignal | null {
+  private combineSignals(strategyResult: unknown, aiSignal: AISignal): AISignal | null {
     // If both signals agree, increase confidence
     if (strategyResult.signal === aiSignal.action) {
       return {
@@ -236,8 +236,8 @@ class AutomatedTradingService {
       let action: 'BUY' | 'SELL';
       let stopLoss: number | undefined;
       let takeProfit: number | undefined;
-      let confidence = 1;
-      let reason = 'Strategy signal';
+      const confidence = 1;
+      const reason = 'Strategy signal';
 
       if (typeof signal === 'string') {
         // Traditional signal
@@ -370,7 +370,7 @@ class AutomatedTradingService {
   /**
    * Handle position update from exchange
    */
-  private handlePositionUpdate(position: any): void {
+  private handlePositionUpdate(position: unknown): void {
     this.positions.set(position.symbol, position);
     logger.info('Position updated:', position);
   }
@@ -378,7 +378,7 @@ class AutomatedTradingService {
   /**
    * Handle liquidation warning
    */
-  private handleLiquidationWarning(warning: any): void {
+  private handleLiquidationWarning(warning: unknown): void {
     logger.warn('Liquidation warning received:', warning);
     // Implement emergency position closure or risk reduction
   }
@@ -386,7 +386,7 @@ class AutomatedTradingService {
   /**
    * Handle margin update
    */
-  private handleMarginUpdate(margin: any): void {
+  private handleMarginUpdate(margin: unknown): void {
     logger.info('Margin updated:', margin);
     // Implement margin management logic
   }

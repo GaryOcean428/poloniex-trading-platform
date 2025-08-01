@@ -76,7 +76,7 @@ export class EnvironmentManager {
     
     // Warn about configuration issues
     if (!hasValidCredentials && !isExplicitlyMocked) {
-      console.warn(
+      // console.warn(
         'API credentials missing or invalid. Running in MOCK mode.',
         '\nTo enable live trading:',
         '\n1. Set VITE_POLONIEX_API_KEY and VITE_POLONIEX_API_SECRET in .env',
@@ -85,7 +85,7 @@ export class EnvironmentManager {
     }
     
     if (hasValidCredentials && isExplicitlyMocked) {
-      console.warn(
+      // console.warn(
         'Valid API credentials found but VITE_FORCE_MOCK_MODE is enabled.',
         '\nTo enable live trading, set VITE_FORCE_MOCK_MODE=false'
       );

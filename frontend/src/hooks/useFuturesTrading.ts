@@ -8,7 +8,7 @@ interface LocalErrorHandlerOptions {
   retryDelay?: number;
   onRetry?: (error: Error, attempt: number) => void;
   onFallback?: (error: Error) => void;
-  fallbackValue?: any;
+  fallbackValue?: unknown;
   logToServer?: boolean;
   showToUser?: boolean;
 }

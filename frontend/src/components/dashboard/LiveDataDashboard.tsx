@@ -57,12 +57,12 @@ const LiveDataDashboard: React.FC = () => {
       setMarketData(data);
       
       // Extract anomalies
-      const anomalyPoints = data.filter((point: any) => point.isAnomaly);
+      const anomalyPoints = data.filter((point: unknown) => point.isAnomaly);
       setAnomalies(anomalyPoints);
       
       setIsLoading(false);
     } catch (err) {
-      console.error('Error fetching market data:', err);
+      // console.error('Error fetching market data:', err);
       setError(`Failed to fetch market data: ${err instanceof Error ? err.message : 'Unknown error'}`);
       setIsLoading(false);
     }
@@ -74,7 +74,7 @@ const LiveDataDashboard: React.FC = () => {
       const book = await liveDataService.fetchOrderBook(selectedSymbol);
       setOrderBook(book);
     } catch (err) {
-      console.error('Error fetching order book:', err);
+      // console.error('Error fetching order book:', err);
       // Don't set error state to avoid disrupting the UI
     }
   }, [selectedSymbol]);
@@ -85,7 +85,7 @@ const LiveDataDashboard: React.FC = () => {
       const tradeData = await liveDataService.fetchTrades(selectedSymbol, 50);
       setTrades(tradeData);
     } catch (err) {
-      console.error('Error fetching trades:', err);
+      // console.error('Error fetching trades:', err);
       // Don't set error state to avoid disrupting the UI
     }
   }, [selectedSymbol]);
@@ -96,7 +96,7 @@ const LiveDataDashboard: React.FC = () => {
       const summary = await liveDataService.fetchMarketSummary(selectedSymbol);
       setMarketSummary(summary);
     } catch (err) {
-      console.error('Error fetching market summary:', err);
+      // console.error('Error fetching market summary:', err);
       // Don't set error state to avoid disrupting the UI
     }
   }, [selectedSymbol]);

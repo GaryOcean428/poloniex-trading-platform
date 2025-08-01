@@ -107,7 +107,7 @@ class BrowserEventEmitter {
       try {
         callback(data);
       } catch (error) {
-        console.error("Error in event handler:", error);
+        // console.error("Error in event handler:", error);
       }
     });
   }
@@ -138,7 +138,7 @@ const defaultLiveDataConfig: LiveDataConfig = {
 };
 
 // Cache for market data
-const dataCache = new Map<string, { data: any; timestamp: number }>();
+const dataCache = new Map<string, { data: unknown; timestamp: number }>();
 
 // Event emitter for live data updates
 export const liveDataEvents = new BrowserEventEmitter();
@@ -149,7 +149,7 @@ export const liveDataEvents = new BrowserEventEmitter();
 export class LiveDataService {
   private config: LiveDataConfig;
   private websockets: Map<string, WebSocket> = new Map();
-  private poloniexRestClient: any;
+  private poloniexRestClient: unknown;
   private isRunning = false;
   private retryCount = new Map<string, number>();
   private dataBuffer = new Map<string, MarketDataPoint[]>();
@@ -300,7 +300,7 @@ export class LiveDataService {
         "type" in message &&
         "data" in message
       ) {
-        const msg = message as { type: string; topic?: string; data: any };
+        const msg = message as { type: string; topic?: string; data: unknown };
         if (msg.type === "message" && msg.topic && msg.topic.includes('/contractMarket/ticker') && msg.data) {
           const tickerData = msg.data;
           const marketData: MarketDataPoint = {
@@ -452,7 +452,7 @@ export class LiveDataService {
       );
 
       const processedData = marketData.map((point) => {
-        let processed = point;
+        const processed = point;
         if (this.config.enableDataNormalization) {
           processed = this.normalizeData(processed);
         }

@@ -38,13 +38,13 @@ export function standardizeFeatures(data: number[][], mean: number[], std: numbe
 
 // Fix function signature mismatch in modelRecalibration.ts
 export function recalibrateModel(
-  modelData: any,
-  newData: any
+  modelData: unknown,
+  newData: unknown
   // Removed third parameter to match expected signature
 ): Promise<any> {
   // Process newData for recalibration (placeholder implementation)
   const dataLength = Array.isArray(newData) ? newData.length : Object.keys(newData || {}).length;
-  console.log('Processing data for recalibration:', dataLength, 'data points');
+  // console.log('Processing data for recalibration:', dataLength, 'data points');
   
   // Basic implementation for compatibility
   return Promise.resolve({
