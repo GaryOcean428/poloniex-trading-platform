@@ -86,32 +86,26 @@ const StrategyBuilder: React.FC = () => {
   // Load saved strategies from storage
   useEffect(() => {
     const loadStrategies = async () => {
-      try
-      {
-        if (isChromeExtensionAvailable())
-        {
+      try {
+        if (isChromeExtensionAvailable()) {
           // Load from Chrome storage if in extension
           getExtensionData('trading_strategies')
             .then((data: unknown) => {
               const strategies = data as Strategy[] | null;
-              if (strategies)
-              {
+              if (strategies) {
                 setStrategies(strategies);
               }
             })
-            .catch(err => // console.error('Failed to load strategies from extension:', err));
-        } else
-        {
+            .catch(err => console.error('Failed to load strategies from extension:', err));
+        } else {
           // Load from localStorage if in browser
           const savedStrategies = localStorage.getItem('trading_strategies');
-          if (savedStrategies)
-          {
+          if (savedStrategies) {
             setStrategies(JSON.parse(savedStrategies));
           }
         }
-      } catch (err)
-      {
-        // console.error('Failed to load saved strategies:', err);
+      } catch (err) {
+        console.error('Failed to load saved strategies:', err);
       }
     };
 
@@ -120,23 +114,18 @@ const StrategyBuilder: React.FC = () => {
 
   // Save strategies to storage when they change
   useEffect(() => {
-    if (strategies.length > 0)
-    {
-      try
-      {
-        if (isChromeExtensionAvailable())
-        {
+    if (strategies.length > 0) {
+      try {
+        if (isChromeExtensionAvailable()) {
           // Save to Chrome storage if in extension
           setExtensionData('trading_strategies', strategies)
-            .catch(err => // console.error('Failed to save strategies to extension:', err));
-        } else
-        {
+            .catch(err => console.error('Failed to save strategies to extension:', err));
+        } else {
           // Save to localStorage if in browser
           localStorage.setItem('trading_strategies', JSON.stringify(strategies));
         }
-      } catch (err)
-      {
-        // console.error('Failed to save strategies:', err);
+      } catch (err) {
+        console.error('Failed to save strategies:', err);
       }
     }
   }, [strategies]);
