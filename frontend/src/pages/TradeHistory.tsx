@@ -101,7 +101,7 @@ const TradeHistory: React.FC = () => {
 
   // Apply filters and search
   useEffect(() => {
-    const filtered = [...trades];
+    let filtered = [...trades];
 
     // Apply search
     if (searchQuery) {
@@ -140,8 +140,8 @@ const TradeHistory: React.FC = () => {
 
     // Apply sorting
     filtered.sort((a, b) => {
-      const aValue = a[sortField];
-      const bValue = b[sortField];
+      let aValue = a[sortField];
+      let bValue = b[sortField];
 
       if (aValue instanceof Date) aValue = aValue.getTime();
       if (bValue instanceof Date) bValue = bValue.getTime();

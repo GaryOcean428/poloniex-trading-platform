@@ -93,11 +93,11 @@ export function backtestStrategy(
   const sortedData = [...marketData].sort((a, b) => a.timestamp - b.timestamp);
   
   // Initialize backtest state
-  const balance = testOptions.initialBalance;
-  const equity = balance;
-  const maxEquity = balance;
-  const maxDrawdown = 0;
-  const maxDrawdownPercent = 0;
+  let balance = testOptions.initialBalance;
+  let equity = balance;
+  let maxEquity = balance;
+  let maxDrawdown = 0;
+  let maxDrawdownPercent = 0;
   const trades: BacktestTrade[] = [];
   const equityCurve: EquityPoint[] = [];
   const openPositions: BacktestTrade[] = [];
@@ -743,17 +743,17 @@ function simulateEquityCurve(
   profitFactor: number;
   sharpeRatio: number;
 } {
-  const balance = initialBalance;
-  const maxBalance = initialBalance;
-  const maxDrawdownPercent = 0;
-  const winningTrades = 0;
-  const totalProfit = 0;
-  const totalLoss = 0;
+  let balance = initialBalance;
+  let maxBalance = initialBalance;
+  let maxDrawdownPercent = 0;
+  let winningTrades = 0;
+  let totalProfit = 0;
+  let totalLoss = 0;
   
   // Daily returns for Sharpe ratio
   const dailyReturns: number[] = [];
-  const lastDayEquity = initialBalance;
-  const lastDay = trades.length > 0 && trades[0].entryDate ? trades[0].entryDate.toDateString() : '';
+  let lastDayEquity = initialBalance;
+  let lastDay = trades.length > 0 && trades[0].entryDate ? trades[0].entryDate.toDateString() : '';
   
   // Process each trade
   for (const trade of trades) {

@@ -250,8 +250,8 @@ export class BacktestService {
    * Calculate maximum drawdown
    */
   private calculateMaxDrawdown(trades: BacktestTrade[]): number {
-    const peak = -Infinity;
-    const maxDrawdown = 0;
+    let peak = -Infinity;
+    let maxDrawdown = 0;
     
     trades.forEach(trade => {
       if (trade.balance > peak) {
@@ -356,8 +356,8 @@ export class BacktestService {
    * Calculate average holding period
    */
   private calculateAverageHoldingPeriod(trades: BacktestTrade[]): number {
-    const totalHoldingTime = 0;
-    const positions = 0;
+    let totalHoldingTime = 0;
+    let positions = 0;
     
     for (let i = 0; i < trades.length - 1; i++) {
       if (trades[i].type === 'BUY' && trades[i + 1].type === 'SELL') {
