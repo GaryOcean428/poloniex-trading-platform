@@ -16,7 +16,7 @@ export class Logger {
   private logLevel: LogLevel;
 
   private constructor() {
-    this.logLevel = (process.env.LOG_LEVEL as LogLevel) || 'info';
+    this.logLevel = (import.meta.env.VITE_LOG_LEVEL as LogLevel) || 'info';
   }
 
   public static getInstance(): Logger {
@@ -50,7 +50,7 @@ export class Logger {
     };
 
     // In production, this could send to a logging service
-    if (process.env.NODE_ENV === 'production') {
+    if (import.meta.env.MODE === 'production') {
       console[level](JSON.stringify(logEntry));
     } else {
       console[level](`[${timestamp}] [${level.toUpperCase()}] ${message}`, context ? JSON.stringify(context.metadata || {}) : '');
