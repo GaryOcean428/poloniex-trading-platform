@@ -56,7 +56,7 @@ export class EventHandlerService {
       try {
         callback(data);
       } catch (error) {
-        // console.error(
+        console.error(
           `Error in ${event} event listener:`,
           error instanceof Error ? error.message : String(error)
         );
@@ -77,7 +77,7 @@ export class EventHandlerService {
         );
       }
     } catch (error) {
-      // console.error("Error saving offline data:", error);
+      console.error("Error saving offline data:", error);
     }
   }
 
@@ -95,7 +95,7 @@ export class EventHandlerService {
         }
       }
     } catch (error) {
-      // console.error("Error loading offline data:", error);
+      console.error("Error loading offline data:", error);
     }
   }
 
@@ -258,13 +258,13 @@ export class EventHandlerService {
           // console.log("Poloniex V3 pong received");
           break;
         case "error":
-          // console.error("Poloniex V3 error:", data);
+          console.error("Poloniex V3 error:", data);
           break;
         default:
           // console.log("Unknown Poloniex V3 message type:", data.type);
       }
     } catch (error) {
-      // console.error("Error handling Poloniex V3 message:", error);
+      console.error("Error handling Poloniex V3 message:", error);
     }
   }
 
@@ -315,7 +315,7 @@ export class EventHandlerService {
         this.notifyListeners("fullOrderBook", data.data);
       }
     } catch (error) {
-      // console.error("Error handling Poloniex V3 data message:", error);
+      console.error("Error handling Poloniex V3 data message:", error);
     }
   }
 
@@ -344,7 +344,7 @@ export class EventHandlerService {
     });
 
     this.socket.on("error", (error: Error) => {
-      // console.error("Socket.IO error:", error);
+      console.error("Socket.IO error:", error);
       this.notifyListeners("error", error);
     });
   }

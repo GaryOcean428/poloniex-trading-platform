@@ -103,7 +103,7 @@ export class ExtensionErrorHandler {
     
     // Log once every 10 errors to avoid spam
     if (this.errorCount === 1 || this.errorCount % 10 === 0) {
-      // console.warn(
+      console.warn(
         `Browser extension communication error (${this.errorCount} occurrences). ` +
         'This is likely caused by a browser extension and can be safely ignored.'
       );

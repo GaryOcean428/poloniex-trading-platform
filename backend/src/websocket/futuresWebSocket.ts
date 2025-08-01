@@ -10,6 +10,18 @@ const query = async (text: string, params?: unknown[]) => {
 };
 import poloniexFuturesService from '../services/poloniexFuturesService.js';
 import { WebSocketEvents, PoloniexEvents, PoloniexTopics, MessageTypes } from '../types/websocketEvents.js';
+import { 
+  AccountData, 
+  PositionData, 
+  OrderData, 
+  TradeExecutionData, 
+  TickerData,
+  WebSocketData,
+  isAccountData,
+  isPositionData,
+  isOrderData,
+  isTradeExecutionData
+} from '../types/websocketData.js';
 
 // WebSocket event handler type definitions aligned with @types/ws
 type WebSocketEventHandler = (ws: WebSocket, message: Buffer) => void | Promise<void>;
@@ -422,24 +434,7 @@ class FuturesWebSocketClient extends EventEmitter {
   private async handleTickerUpdate(data: unknown): Promise<void> {
     try {
       // Type assertion for ticker data
-      const tickerData = data as {
-        symbol?: string;
-        price?: number;
-        lastPrice?: number;
-        markPrice?: number;
-        indexPrice?: number;
-        bestBid?: number;
-        bestAsk?: number;
-        high24h?: number;
-        low24h?: number;
-        volume24h?: number;
-        turnover24h?: number;
-        change24h?: number;
-        fundingRate?: number;
-        nextFundingTime?: number;
-        openInterest?: number;
-        ts?: number;
-      };
+      const tickerData = data as TickerData;
 
       await query(`
         INSERT INTO futures_market_data (
@@ -507,6 +502,14 @@ class FuturesWebSocketClient extends EventEmitter {
    */
   private async handleAccountUpdate(data: unknown): Promise<void> {
     try {
+      // Type assertion for account data with validation
+      if (!isAccountData(data)) {
+        logger.warn('Invalid account data format:', data);
+        return;
+      }
+      
+      const accountData = data as AccountData;
+      
       // Update account balance in database
       await query(`
         UPDATE futures_accounts 
@@ -515,12 +518,12 @@ class FuturesWebSocketClient extends EventEmitter {
             margin_ratio = $5, last_synced_at = CURRENT_TIMESTAMP
         WHERE poloniex_account_id = $6
       `, [
-        data.equity || 0,
-        data.availableBalance || 0,
-        data.initialMargin || 0,
-        data.maintenanceMargin || 0,
-        data.marginRatio || 0,
-        data.accountId || 'default'
+        accountData.equity || 0,
+        accountData.availableBalance || 0,
+        accountData.initialMargin || 0,
+        accountData.maintenanceMargin || 0,
+        accountData.marginRatio || 0,
+        accountData.accountId || 'default'
       ]);
       
       this.emit('account', data);
@@ -535,6 +538,14 @@ class FuturesWebSocketClient extends EventEmitter {
    */
   private async handlePositionUpdate(data: unknown): Promise<void> {
     try {
+      // Type assertion for position data with validation
+      if (!isPositionData(data)) {
+        logger.warn('Invalid position data format:', data);
+        return;
+      }
+      
+      const positionData = data as PositionData;
+      
       // Update position in database
       await query(`
         UPDATE futures_positions 
@@ -543,13 +554,13 @@ class FuturesWebSocketClient extends EventEmitter {
             last_updated_at = CURRENT_TIMESTAMP
         WHERE symbol = $6 AND position_side = $7
       `, [
-        data.currentQty || 0,
-        data.availableQty || 0,
-        data.markPrice || 0,
-        data.unrealisedPnl || 0,
-        data.liquidationPrice || 0,
-        data.symbol,
-        data.side?.toUpperCase() || 'BOTH'
+        positionData.currentQty || 0,
+        positionData.availableQty || 0,
+        positionData.markPrice || 0,
+        positionData.unrealisedPnl || 0,
+        positionData.liquidationPrice || 0,
+        positionData.symbol,
+        positionData.side?.toUpperCase() || 'BOTH'
       ]);
       
       this.emit('position', data);
@@ -564,6 +575,14 @@ class FuturesWebSocketClient extends EventEmitter {
    */
   private async handleOrderUpdate(data: unknown): Promise<void> {
     try {
+      // Type assertion for order data with validation
+      if (!isOrderData(data)) {
+        logger.warn('Invalid order data format:', data);
+        return;
+      }
+      
+      const orderData = data as OrderData;
+      
       // Update order status in database
       await query(`
         UPDATE futures_orders 
@@ -571,12 +590,12 @@ class FuturesWebSocketClient extends EventEmitter {
             avg_filled_price = $4, fee = $5, updated_at = CURRENT_TIMESTAMP
         WHERE poloniex_order_id = $6
       `, [
-        data.status?.toUpperCase() || 'UNKNOWN',
-        data.filledSize || 0,
-        data.filledValue || 0,
-        data.avgPrice || 0,
-        data.fee || 0,
-        data.orderId
+        orderData.status?.toUpperCase() || 'UNKNOWN',
+        orderData.filledSize || 0,
+        orderData.filledValue || 0,
+        orderData.avgPrice || 0,
+        orderData.fee || 0,
+        orderData.orderId
       ]);
       
       this.emit('order', data);
@@ -591,10 +610,18 @@ class FuturesWebSocketClient extends EventEmitter {
    */
   private async handleTradeExecutionUpdate(data: unknown): Promise<void> {
     try {
+      // Type assertion for trade execution data with validation
+      if (!isTradeExecutionData(data)) {
+        logger.warn('Invalid trade execution data format:', data);
+        return;
+      }
+      
+      const tradeData = data as TradeExecutionData;
+      
       // Store trade execution in database
       const orderResult = await query(
         'SELECT id, user_id, account_id FROM futures_orders WHERE poloniex_order_id = $1',
-        [data.orderId]
+        [tradeData.orderId]
       );
       
       if (orderResult.rows.length > 0) {
@@ -611,17 +638,17 @@ class FuturesWebSocketClient extends EventEmitter {
           order.user_id,
           order.account_id,
           order.id,
-          data.tradeId,
-          data.symbol,
-          data.side?.toUpperCase(),
-          data.side?.toUpperCase() || 'BOTH',
-          data.price || 0,
-          data.size || 0,
-          data.value || 0,
-          data.fee || 0,
-          data.liquidity || 'TAKER',
+          tradeData.tradeId,
+          tradeData.symbol,
+          tradeData.side?.toUpperCase(),
+          tradeData.side?.toUpperCase() || 'BOTH',
+          tradeData.price || 0,
+          tradeData.size || 0,
+          tradeData.value || 0,
+          tradeData.fee || 0,
+          tradeData.liquidity || 'TAKER',
           new Date(),
-          new Date(data.ts || Date.now())
+          new Date(tradeData.ts || Date.now())
         ]);
       }
       

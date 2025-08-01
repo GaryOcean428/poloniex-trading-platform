@@ -460,7 +460,7 @@ export class MonitoringSystem {
         // Play alert sound
         try {
           const audio = new Audio('/alert-sound.mp3');
-          audio.play().catch(e => // console.warn('Could not play alert sound:', e));
+          audio.play().catch(e => console.warn('Could not play alert sound:', e));
         } catch (error) {
           // console.warn('Alert sound not available');
         }

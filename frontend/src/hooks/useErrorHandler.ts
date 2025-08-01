@@ -116,7 +116,7 @@ export const useErrorHandler = (options: ErrorHandlerOptions = {}) => {
   // Log error to server
   const logErrorToServer = useCallback((error: Error, type: ErrorType, severity: ErrorSeverity) => {
     // In production, this would send to a logging service
-    // console.error('Error logged to server:', {
+    console.error('Error logged to server:', {
       message: error.message,
       stack: error.stack,
       type,
