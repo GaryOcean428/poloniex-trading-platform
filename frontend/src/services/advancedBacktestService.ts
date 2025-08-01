@@ -729,8 +729,8 @@ export class AdvancedBacktestService {
   }
 
   private calculateMaxDrawdown(trades: BacktestTrade[]): number {
-    const peak = -Infinity;
-    const maxDrawdown = 0;
+    let peak = -Infinity;
+    let maxDrawdown = 0;
 
     trades.forEach((trade) => {
       if (trade.balance > peak) {
@@ -768,8 +768,8 @@ export class AdvancedBacktestService {
   }
 
   private calculateAverageHoldingPeriod(trades: BacktestTrade[]): number {
-    const totalHoldingTime = 0;
-    const positions = 0;
+    let totalHoldingTime = 0;
+    let positions = 0;
 
     for (let i = 0; i < trades.length - 1; i++) {
       if (trades[i].type === "BUY" && trades[i + 1].type === "SELL") {
@@ -840,7 +840,7 @@ export class AdvancedBacktestService {
     const portfolioReturns: number[] = [];
 
     for (let i = 0; i < maxLength; i++) {
-      const weightedReturn = 0;
+      let weightedReturn = 0;
       for (let j = 0; j < results.length; j++) {
         const trade = results[j].trades[i];
         if (trade) {
@@ -912,9 +912,9 @@ export class AdvancedBacktestService {
   }
 
   private calculatePortfolioMaxDrawdown(returns: number[]): number {
-    const peak = -Infinity;
-    const maxDrawdown = 0;
-    const cumulative = 0;
+    let peak = -Infinity;
+    let maxDrawdown = 0;
+    let cumulative = 0;
 
     for (const ret of returns) {
       cumulative += ret;
