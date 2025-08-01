@@ -16,6 +16,17 @@ const EnvironmentStatus: React.FC = () => {
     return () => window.removeEventListener('config-updated', handleConfigUpdate);
   }, []);
 
+  // Auto-hide after 10 seconds if live trading is enabled (success state)
+  useEffect(() => {
+    if (config?.liveTradingEnabled) {
+      const timer = setTimeout(() => {
+        setIsVisible(false);
+      }, 10000);
+      
+      return () => clearTimeout(timer);
+    }
+  }, [config?.liveTradingEnabled]);
+
   if (!config || !isVisible) {
     return null;
   }
@@ -56,8 +67,8 @@ const EnvironmentStatus: React.FC = () => {
   const iconColor = status.type === 'warning' ? 'text-yellow-600' : 'text-green-600';
 
   return (
-    <div className="fixed top-4 right-4 z-50 max-w-sm">
-      <div className={`${bgColor} ${borderColor} border rounded-lg p-4 shadow-lg`}>
+    <div className="fixed top-36 right-4 z-30 max-w-sm">
+      <div className={`${bgColor} ${borderColor} border rounded-lg p-4 shadow-lg transition-all duration-300`}>
         <div className="flex items-start justify-between">
           <div className="flex items-start space-x-3">
             <StatusIcon className={`w-5 h-5 ${iconColor} mt-0.5`} />

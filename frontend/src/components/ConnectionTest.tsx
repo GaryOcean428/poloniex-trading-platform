@@ -163,14 +163,14 @@ export const ConnectionTest: React.FC = () => {
       {isVisible && (
         <div style={{
           position: 'fixed',
-          top: '10px',
+          bottom: '10px',
           left: '10px',
           background: '#1a1a1a',
           color: '#fff',
           padding: '15px',
           borderRadius: '8px',
           fontSize: '12px',
-          zIndex: 9999,
+          zIndex: 40,
           maxWidth: '350px',
           border: '1px solid #333'
         }}>
@@ -257,7 +257,7 @@ export const ConnectionTest: React.FC = () => {
           onClick={() => setIsVisible(true)}
           style={{
             position: 'fixed',
-            top: '10px',
+            bottom: '10px',
             left: '10px',
             background: '#1a1a1a',
             color: '#4a90e2',
@@ -266,7 +266,7 @@ export const ConnectionTest: React.FC = () => {
             padding: '8px 12px',
             cursor: 'pointer',
             fontSize: '12px',
-            zIndex: 9999
+            zIndex: 40
           }}
           title="Show connection status"
         >

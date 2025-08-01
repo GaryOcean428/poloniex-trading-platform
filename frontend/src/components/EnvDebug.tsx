@@ -65,11 +65,12 @@ export const EnvDebug: React.FC = () => {
 
   if (isMinimized) {
     return (
-      <div className="env-debug-minimized">
+      <div className="env-debug-minimized" onClick={handleToggleMinimize}>
         <span className="env-debug-mode-indicator">
           Mode: <span className={isLiveMode ? 'status-connected' : 'status-disconnected'}>
             {isLiveMode ? 'LIVE' : 'MOCK'}
           </span>
+          | {envVars.NODE_ENV} | 🔍
         </span>
       </div>
     );

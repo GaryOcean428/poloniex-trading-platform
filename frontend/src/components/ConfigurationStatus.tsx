@@ -16,16 +16,27 @@ export const ConfigurationStatus: React.FC = () => {
     window.addEventListener('config-updated', handleConfigUpdate);
     return () => window.removeEventListener('config-updated', handleConfigUpdate);
   }, []);
+
+  // Auto-hide after 8 seconds if live trading is enabled (success state)
+  useEffect(() => {
+    if (config.liveTradingEnabled) {
+      const timer = setTimeout(() => {
+        setIsVisible(false);
+      }, 8000);
+      
+      return () => clearTimeout(timer);
+    }
+  }, [config.liveTradingEnabled]);
   
   if (!isVisible) return null;
   
   const isLiveMode = config.liveTradingEnabled;
   
   return (
-    <div className="fixed top-4 right-4 z-50 max-w-sm">
+    <div className="fixed top-20 right-4 z-30 max-w-sm">
       <div className={`
         ${isLiveMode ? 'bg-green-50 border-green-200' : 'bg-yellow-50 border-yellow-200'}
-        border rounded-lg p-4 shadow-lg
+        border rounded-lg p-4 shadow-lg transition-all duration-300
       `}>
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-3">
