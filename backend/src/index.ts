@@ -26,22 +26,29 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = parseInt(process.env.PORT || '3000', 10);
+// Use Railway PORT environment variable or fallback to .clinerules compliant port range (8765-8799)
+const PORT = parseInt(process.env.PORT || '8765', 10);
 
 // Middleware
 app.use(helmet());
 app.use(compression());
 
-// CORS configuration with support for multiple origins
+// CORS configuration with support for multiple origins and Railway deployment
 const corsOptions = {
   origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
     
-    // Get allowed origins from environment variable
+    // Get allowed origins from environment variable with Railway support
     const allowedOrigins = process.env.CORS_ALLOWED_ORIGINS 
       ? process.env.CORS_ALLOWED_ORIGINS.split(',').map(origin => origin.trim())
-      : [process.env.FRONTEND_URL || 'http://localhost:5173'];
+      : [
+          process.env.FRONTEND_URL || 'http://localhost:5675', // .clinerules compliant frontend port
+          process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : null,
+          process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null,
+          'http://localhost:5173', // Legacy support
+          'http://localhost:3000'  // Legacy support
+        ].filter(Boolean);
     
     if (allowedOrigins.includes(origin)) {
       callback(null, true);
