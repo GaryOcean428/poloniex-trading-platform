@@ -1,4 +1,4 @@
-import { getBackendUrl } from "@/utils/environment";
+import { getBackendUrl, getWebSocketUrl } from "@/utils/environment";
 import { io, Socket } from "socket.io-client";
 
 export class ConnectionManager {
@@ -23,6 +23,10 @@ export class ConnectionManager {
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
       randomizationFactor: 0.5,
+      // Ensure proper protocol handling for Railway deployment
+      forceNew: true,
+      upgrade: true,
+      rememberUpgrade: false,
     };
 
     if (token) {

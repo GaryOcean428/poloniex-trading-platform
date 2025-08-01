@@ -103,12 +103,12 @@ export const getBaseUrl = () => {
     return window.location.origin;
   }
   if (IS_LOCAL_DEV) {
-    return 'http://localhost:5173';
+    return 'http://localhost:5675'; // .clinerules compliant frontend port
   }
   return 'https://poloniex-trading-platform.vercel.app'; // Production URL
 };
 
-// Get backend API URL
+// Get backend API URL with proper protocol and Railway support
 export const getBackendUrl = (): string => {
   const envUrl = getEnvVariable('VITE_BACKEND_URL');
   if (envUrl) return envUrl;
@@ -116,11 +116,26 @@ export const getBackendUrl = (): string => {
   // Check for local development first (localhost or 127.0.0.1)
   if (typeof window !== 'undefined' && window.location) {
     const hostname = window.location.hostname;
+    const protocol = window.location.protocol;
+    
     if (hostname === 'localhost' || hostname === '127.0.0.1') {
-      return 'http://localhost:3000';
+      // Use .clinerules compliant backend port range (8765-8799)
+      return `${protocol}//localhost:8765`;
     }
     
-    // For Railway deployment, use the backend service URL
+    // For Railway deployment, use Railway reference variables
+    const railwayPublicDomain = getEnvVariable('VITE_RAILWAY_PUBLIC_DOMAIN');
+    const railwayPrivateDomain = getEnvVariable('VITE_RAILWAY_PRIVATE_DOMAIN');
+    
+    if (railwayPublicDomain) {
+      return `https://${railwayPublicDomain}`;
+    }
+    
+    if (railwayPrivateDomain) {
+      return `https://${railwayPrivateDomain}`;
+    }
+    
+    // Legacy Railway support
     if (hostname.includes('railway.app') || hostname.includes('up.railway.app')) {
       return 'https://polytrade-be.up.railway.app';
     }
@@ -129,6 +144,30 @@ export const getBackendUrl = (): string => {
     return window.location.origin;
   }
   
-  // Server-side fallback
-  return 'http://localhost:3000';
+  // Server-side fallback - use .clinerules compliant port
+  return 'http://localhost:8765';
+};
+
+// Get WebSocket URL with proper protocol handling for Railway deployment
+export const getWebSocketUrl = (): string => {
+  const backendUrl = getBackendUrl();
+  
+  // Convert HTTP/HTTPS to WS/WSS appropriately
+  if (backendUrl.startsWith('https://')) {
+    return backendUrl.replace('https://', 'wss://');
+  } else if (backendUrl.startsWith('http://')) {
+    return backendUrl.replace('http://', 'ws://');
+  }
+  
+  return backendUrl;
+};
+
+// Get development frontend URL with .clinerules compliant ports
+export const getFrontendUrl = (): string => {
+  if (typeof window !== 'undefined' && window.location) {
+    return window.location.origin;
+  }
+  
+  // Default to .clinerules compliant frontend port range (5675-5699)
+  return 'http://localhost:5675';
 };
