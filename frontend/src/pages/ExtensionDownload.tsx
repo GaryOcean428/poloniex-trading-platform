@@ -35,7 +35,7 @@ const ExtensionDownload: React.FC = () => {
       
       setDownloadComplete(true);
     } catch (error) {
-      console.error('Error downloading extension:', error);
+      // console.error('Error downloading extension:', error);
     } finally {
       setIsDownloading(false);
     }

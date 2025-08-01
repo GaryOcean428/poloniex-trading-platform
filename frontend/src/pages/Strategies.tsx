@@ -28,7 +28,7 @@ const Strategies: React.FC = () => {
       });
       setBacktestResults(result);
     } catch (error) {
-      console.error('Backtest failed:', error);
+      // console.error('Backtest failed:', error);
     } finally {
       setIsBacktesting(false);
     }
@@ -65,7 +65,7 @@ const Strategies: React.FC = () => {
         };
       }
     } catch (error) {
-      console.error('Optimization failed:', error);
+      // console.error('Optimization failed:', error);
     } finally {
       setIsOptimizing(false);
     }

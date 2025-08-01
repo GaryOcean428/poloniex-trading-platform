@@ -73,7 +73,7 @@ const encryptData = (data: string): string => {
   try {
     return CryptoJS.AES.encrypt(data, ENCRYPTION_KEY).toString();
   } catch (error) {
-    console.error("Encryption failed:", error);
+    // console.error("Encryption failed:", error);
     return data;
   }
 };
@@ -84,7 +84,7 @@ const decryptData = (encryptedData: string): string => {
     const bytes = CryptoJS.AES.decrypt(encryptedData, ENCRYPTION_KEY);
     return bytes.toString(CryptoJS.enc.Utf8);
   } catch (error) {
-    console.error("Decryption failed:", error);
+    // console.error("Decryption failed:", error);
     return encryptedData;
   }
 };
@@ -112,7 +112,7 @@ const createEncryptedStorage = () => ({
       }
       return JSON.stringify(parsed);
     } catch (error) {
-      console.error("Error parsing stored data:", error);
+      // console.error("Error parsing stored data:", error);
       return item;
     }
   },
@@ -135,7 +135,7 @@ const createEncryptedStorage = () => ({
       }
       localStorage.setItem(name, JSON.stringify(parsed));
     } catch (error) {
-      console.error("Error storing data:", error);
+      // console.error("Error storing data:", error);
       localStorage.setItem(name, value);
     }
   },

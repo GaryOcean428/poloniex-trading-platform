@@ -93,17 +93,17 @@ export class ExtensionErrorHandler {
     
     // Handle React production errors differently
     if (this.isReactProductionError(errorMessage)) {
-      console.warn(
+      // console.warn(
         'React Error #185 detected: This is likely caused by maximum update depth exceeded. ' +
         'Check for infinite re-renders in component state updates or useEffect dependencies.'
       );
-      console.warn('Initialization error detected - this may require a page refresh');
+      // console.warn('Initialization error detected - this may require a page refresh');
       return;
     }
     
     // Log once every 10 errors to avoid spam
     if (this.errorCount === 1 || this.errorCount % 10 === 0) {
-      console.warn(
+      // console.warn(
         `Browser extension communication error (${this.errorCount} occurrences). ` +
         'This is likely caused by a browser extension and can be safely ignored.'
       );
@@ -112,7 +112,7 @@ export class ExtensionErrorHandler {
     // Start suppressing after too many errors
     if (this.errorCount > this.maxErrors * 2) {
       this.suppressErrors = true;
-      console.warn('Suppressing further extension errors to reduce console noise.');
+      // console.warn('Suppressing further extension errors to reduce console noise.');
     }
   }
   

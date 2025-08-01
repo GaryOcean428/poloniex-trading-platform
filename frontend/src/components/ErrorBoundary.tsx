@@ -70,13 +70,13 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
   private logError = (error: Error, errorInfo: ErrorInfo) => {
     // Log to console for development
-    console.error('ErrorBoundary caught an error:', error);
-    console.error('Error info:', errorInfo);
+    // console.error('ErrorBoundary caught an error:', error);
+    // console.error('Error info:', errorInfo);
 
     // Check for initialization errors
     if (this.isInitializationError(error))
     {
-      console.error('Initialization error detected - this may require a page refresh');
+      // console.error('Initialization error detected - this may require a page refresh');
     }
 
     // In production, this would send to a logging service

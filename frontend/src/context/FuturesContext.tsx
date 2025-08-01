@@ -64,7 +64,7 @@ export const FuturesProvider: React.FC<FuturesProviderProps> = ({ children }) =>
       const positions = await api.getCurrentPositions();
       setPositions(positions);
     } catch (err) {
-      console.error('Failed to fetch positions:', err);
+      // console.error('Failed to fetch positions:', err);
       setError(err instanceof Error ? err.message : 'Failed to fetch positions');
     } finally {
       setIsLoading(false);
@@ -82,7 +82,7 @@ export const FuturesProvider: React.FC<FuturesProviderProps> = ({ children }) =>
       const balance = await api.getAccountBalance();
       setAccountBalance(balance);
     } catch (err) {
-      console.error('Failed to fetch account balance:', err);
+      // console.error('Failed to fetch account balance:', err);
       setError(err instanceof Error ? err.message : 'Failed to fetch account balance');
     } finally {
       setIsLoading(false);
@@ -100,7 +100,7 @@ export const FuturesProvider: React.FC<FuturesProviderProps> = ({ children }) =>
       await api.switchPositionMode(mode);
       setPositionModeState(mode);
     } catch (err) {
-      console.error('Failed to set position mode:', err);
+      // console.error('Failed to set position mode:', err);
       setError(err instanceof Error ? err.message : 'Failed to set position mode');
     } finally {
       setIsLoading(false);
@@ -119,7 +119,7 @@ export const FuturesProvider: React.FC<FuturesProviderProps> = ({ children }) =>
       // Refresh positions to get updated leverage
       await refreshPositions();
     } catch (err) {
-      console.error('Failed to set leverage:', err);
+      // console.error('Failed to set leverage:', err);
       setError(err instanceof Error ? err.message : 'Failed to set leverage');
     } finally {
       setIsLoading(false);
@@ -144,7 +144,7 @@ export const FuturesProvider: React.FC<FuturesProviderProps> = ({ children }) =>
             refreshAccountBalance()
           ]);
         } catch (err) {
-          console.error('Failed to fetch initial futures data:', err);
+          // console.error('Failed to fetch initial futures data:', err);
           setError(err instanceof Error ? err.message : 'Failed to fetch initial futures data');
         } finally {
           setIsLoading(false);

@@ -63,7 +63,7 @@ const TestWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => (
 );
 
 describe('React Error #185 Fix - Infinite Loop Prevention', () => {
-  let renderCount = 0;
+  const renderCount = 0;
   
   beforeEach(() => {
     renderCount = 0;
@@ -217,7 +217,7 @@ describe('React Error #185 Fix - Infinite Loop Prevention', () => {
 
   it('should prevent React Error #185 with maximum update depth exceeded', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    let errorThrown = false;
+    const errorThrown = false;
 
     try {
       const { result } = renderHook(

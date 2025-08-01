@@ -56,7 +56,7 @@ export class EventHandlerService {
       try {
         callback(data);
       } catch (error) {
-        console.error(
+        // console.error(
           `Error in ${event} event listener:`,
           error instanceof Error ? error.message : String(error)
         );
@@ -77,7 +77,7 @@ export class EventHandlerService {
         );
       }
     } catch (error) {
-      console.error("Error saving offline data:", error);
+      // console.error("Error saving offline data:", error);
     }
   }
 
@@ -95,7 +95,7 @@ export class EventHandlerService {
         }
       }
     } catch (error) {
-      console.error("Error loading offline data:", error);
+      // console.error("Error loading offline data:", error);
     }
   }
 
@@ -174,7 +174,7 @@ export class EventHandlerService {
    * Resubscribe to previous subscriptions after reconnect
    */
   resubscribe(): void {
-    console.log(`Resubscribing to ${this.subscriptions.size} channels`);
+    // console.log(`Resubscribing to ${this.subscriptions.size} channels`);
 
     this.subscriptions.forEach((subscription) => {
       if (this.poloniexWs && this.poloniexWs.readyState === WebSocket.OPEN) {
@@ -199,7 +199,7 @@ export class EventHandlerService {
    * Send any pending messages after reconnect
    */
   sendPendingMessages(): void {
-    console.log(`Sending ${this.pendingMessages.length} pending messages`);
+    // console.log(`Sending ${this.pendingMessages.length} pending messages`);
 
     while (this.pendingMessages.length > 0) {
       const message = this.pendingMessages.shift();
@@ -252,19 +252,19 @@ export class EventHandlerService {
           this.handlePoloniexV3DataMessage(data);
           break;
         case "welcome":
-          console.log("Poloniex V3 welcome message:", data);
+          // console.log("Poloniex V3 welcome message:", data);
           break;
         case "pong":
-          console.log("Poloniex V3 pong received");
+          // console.log("Poloniex V3 pong received");
           break;
         case "error":
-          console.error("Poloniex V3 error:", data);
+          // console.error("Poloniex V3 error:", data);
           break;
         default:
-          console.log("Unknown Poloniex V3 message type:", data.type);
+          // console.log("Unknown Poloniex V3 message type:", data.type);
       }
     } catch (error) {
-      console.error("Error handling Poloniex V3 message:", error);
+      // console.error("Error handling Poloniex V3 message:", error);
     }
   }
 
@@ -315,7 +315,7 @@ export class EventHandlerService {
         this.notifyListeners("fullOrderBook", data.data);
       }
     } catch (error) {
-      console.error("Error handling Poloniex V3 data message:", error);
+      // console.error("Error handling Poloniex V3 data message:", error);
     }
   }
 
@@ -326,12 +326,12 @@ export class EventHandlerService {
     if (!this.socket) return;
 
     this.socket.on("connect", () => {
-      console.log("Socket.IO connected");
+      // console.log("Socket.IO connected");
       this.notifyListeners("connectionStateChanged", "connected");
     });
 
-    this.socket.on("disconnect", (reason: any) => {
-      console.log("Socket.IO disconnected:", reason);
+    this.socket.on("disconnect", (reason: unknown) => {
+      // console.log("Socket.IO disconnected:", reason);
       this.notifyListeners("connectionStateChanged", "disconnected");
     });
 
@@ -344,7 +344,7 @@ export class EventHandlerService {
     });
 
     this.socket.on("error", (error: Error) => {
-      console.error("Socket.IO error:", error);
+      // console.error("Socket.IO error:", error);
       this.notifyListeners("error", error);
     });
   }

@@ -98,7 +98,7 @@ export const initExtensionSecurity = (token?: string): void => {
     runtime.onMessage.addListener((message, sender, sendResponse) => {
       // Validate message origin
       if (sender.origin && !validateOrigin(sender.origin)) {
-        console.error(`Invalid message origin: ${sender.origin}`);
+        // console.error(`Invalid message origin: ${sender.origin}`);
         sendResponse({
           success: false,
           error: 'Invalid message origin',
@@ -110,7 +110,7 @@ export const initExtensionSecurity = (token?: string): void => {
       
       // Validate message structure
       if (!validateMessage(message)) {
-        console.error('Invalid message structure', message);
+        // console.error('Invalid message structure', message);
         sendResponse({
           success: false,
           error: 'Invalid message structure',
@@ -121,7 +121,7 @@ export const initExtensionSecurity = (token?: string): void => {
       }
       
       // Process message
-      console.log('Valid message received', message);
+      // console.log('Valid message received', message);
       
       // Return true to indicate async response
       return true;

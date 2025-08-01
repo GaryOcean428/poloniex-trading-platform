@@ -36,7 +36,7 @@ const ExtensionControls: React.FC<ExtensionControlsProps> = ({ onClose }) => {
         );
       } catch (error)
       {
-        // console.error('Error refreshing extension data:', error);
+        // // console.error('Error refreshing extension data:', error);
         setIsRefreshing(false);
       }
     } else

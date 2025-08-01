@@ -8,7 +8,7 @@ interface ErrorHandlerOptions {
   retryDelay?: number;
   onRetry?: (error: Error, attempt: number) => void;
   onFallback?: (error: Error) => void;
-  fallbackValue?: any;
+  fallbackValue?: unknown;
   logToServer?: boolean;
   showToUser?: boolean;
 }
@@ -116,7 +116,7 @@ export const useErrorHandler = (options: ErrorHandlerOptions = {}) => {
   // Log error to server
   const logErrorToServer = useCallback((error: Error, type: ErrorType, severity: ErrorSeverity) => {
     // In production, this would send to a logging service
-    console.error('Error logged to server:', {
+    // console.error('Error logged to server:', {
       message: error.message,
       stack: error.stack,
       type,
@@ -141,7 +141,7 @@ export const useErrorHandler = (options: ErrorHandlerOptions = {}) => {
       if (errorLog.length > 20) errorLog.shift();
       localStorage.setItem('errorLog', JSON.stringify(errorLog));
     } catch (e) {
-      console.error('Failed to log error to localStorage', e);
+      // console.error('Failed to log error to localStorage', e);
     }
   }, []);
   
@@ -202,7 +202,7 @@ export const useErrorHandler = (options: ErrorHandlerOptions = {}) => {
   ]);
   
   // Wrap async function with error handling
-  const withErrorHandling = useCallback(<T extends any[], R>(
+  const withErrorHandling = useCallback(<T extends unknown[], R>(
     fn: (...args: T) => Promise<R>,
     options: ErrorHandlerOptions = {}
   ) => {

@@ -50,7 +50,7 @@ class WebSocketService implements WebSocketServiceInterface {
 const hasCredentials = getPoloniexApiKey() !== undefined && getPoloniexApiSecret() !== undefined;
     this.useMockData = shouldUseMockMode(hasCredentials);
 
-    console.log("WebSocket Service V3 initialized:", {
+    // console.log("WebSocket Service V3 initialized:", {
       usePoloniexDirect: !this.useMockData && hasCredentials,
       useMockData: this.useMockData,
       hasCredentials,
@@ -68,7 +68,7 @@ const hasCredentials = getPoloniexApiKey() !== undefined && getPoloniexApiSecret
   }
 
   private handleOnline(): void {
-    console.log("Device is online, attempting to reconnect WebSocket");
+    // console.log("Device is online, attempting to reconnect WebSocket");
     if (
       this.connectionState === ConnectionState.DISCONNECTED ||
       this.connectionState === ConnectionState.FAILED
@@ -78,7 +78,7 @@ const hasCredentials = getPoloniexApiKey() !== undefined && getPoloniexApiSecret
   }
 
   private handleOffline(): void {
-    console.log("Device is offline, WebSocket connection will be affected");
+    // console.log("Device is offline, WebSocket connection will be affected");
     if (this.connectionState === ConnectionState.CONNECTED) {
       this.connectionState = ConnectionState.DISCONNECTED;
     }
@@ -95,13 +95,13 @@ const hasCredentials = getPoloniexApiKey() !== undefined && getPoloniexApiSecret
     try {
       await this.connect();
     } catch (error) {
-      console.error("Reconnection failed:", error);
+      // console.error("Reconnection failed:", error);
       throw error;
     }
   }
 
   private handleConnectionFailed(): void {
-    console.log("Connection failed, switching to mock mode");
+    // console.log("Connection failed, switching to mock mode");
     this.useMockData = true;
     this.connectionState = ConnectionState.FAILED;
   }
@@ -125,7 +125,7 @@ const hasCredentials = getPoloniexApiKey() !== undefined && getPoloniexApiSecret
         await this.connectToBackend(token);
       }
     } catch (error) {
-      console.error("Connection failed, using mock mode:", error);
+      // console.error("Connection failed, using mock mode:", error);
       this.useMockData = true;
       this.connectionState = ConnectionState.FAILED;
     }
@@ -144,9 +144,9 @@ const hasCredentials = getPoloniexApiKey() !== undefined && getPoloniexApiSecret
       this.connectionState = ConnectionState.CONNECTED;
       this.useMockData = false;
 
-      console.log("Connected to Poloniex V3 WebSocket");
+      // console.log("Connected to Poloniex V3 WebSocket");
     } catch (error) {
-      console.error("Failed to connect to Poloniex V3:", error);
+      // console.error("Failed to connect to Poloniex V3:", error);
       throw error;
     }
   }
@@ -164,9 +164,9 @@ const hasCredentials = getPoloniexApiKey() !== undefined && getPoloniexApiSecret
       this.connectionState = ConnectionState.CONNECTED;
       this.useMockData = false;
 
-      console.log("Connected to backend WebSocket");
+      // console.log("Connected to backend WebSocket");
     } catch (error) {
-      console.error("Failed to connect to backend:", error);
+      // console.error("Failed to connect to backend:", error);
       throw error;
     }
   }

@@ -1,10 +1,12 @@
+/// <reference types="vitest" />
 import react from "@vitejs/plugin-react";
 import path from "path";
 import { defineConfig } from "vite";
+import tsconfigPaths from 'vite-tsconfig-paths';
 
 // https://vitejs.dev/config/
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tsconfigPaths()],
   optimizeDeps: {
     exclude: [],
   },
@@ -67,4 +69,23 @@ export default defineConfig({
       "@shared": path.resolve(__dirname, "../shared"),
     },
   },
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: './src/test/setup.ts',
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'json', 'html'],
+      exclude: [
+        'coverage/**',
+        'dist/**',
+        '**/node_modules/**',
+        '**/test/**',
+        '**/*.test.{ts,tsx}',
+        '**/*.spec.{ts,tsx}',
+        'src/main.tsx',
+        'src/vite-env.d.ts'
+      ]
+    }
+  }
 });

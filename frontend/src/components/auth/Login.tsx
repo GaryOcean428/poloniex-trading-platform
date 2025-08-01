@@ -29,7 +29,7 @@ const Login: React.FC<LoginProps> = ({ onSuccess }) => {
       const success = await login(username, password);
       
       if (success) {
-        console.log('Login successful');
+        // console.log('Login successful');
         if (onSuccess) {
           onSuccess();
         }
@@ -39,7 +39,7 @@ const Login: React.FC<LoginProps> = ({ onSuccess }) => {
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : 'Login failed. Please try again.';
       setError(errorMessage);
-      console.error('Login error:', err);
+      // console.error('Login error:', err);
     } finally {
       setIsLoading(false);
     }

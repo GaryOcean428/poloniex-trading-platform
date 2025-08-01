@@ -827,7 +827,7 @@ export class AutonomousTradingEngine {
     strategyType: string
   ): number {
     // Base confidence on market conditions and strategy type match
-    let confidence = 0.5; // Base confidence
+    const confidence = 0.5; // Base confidence
     
     // Adjust based on market volatility
     if (marketConditions.volatility === 'high') {
@@ -884,7 +884,7 @@ export class AutonomousTradingEngine {
     strategyType: string,
     aggressiveness: 'conservative' | 'moderate' | 'aggressive'
   ): number {
-    let potential = 0.3; // Base potential
+    const potential = 0.3; // Base potential
     
     // Adjust based on market conditions
     if (marketConditions.volatility === 'high') {
@@ -917,7 +917,7 @@ export class AutonomousTradingEngine {
     strategyType: string,
     maxRiskPerTrade: number
   ): number {
-    let risk = 0.5; // Base risk
+    const risk = 0.5; // Base risk
     
     // Adjust based on market conditions
     if (marketConditions.volatility === 'high') {
@@ -1023,7 +1023,7 @@ export class AutonomousTradingEngine {
   ): Promise<EnhancedStrategy[]> {
     // Score strategies based on market conditions and strategy type
     return strategies.map((strategy) => {
-      let score = 0.5; // Base score
+      const score = 0.5; // Base score
       
       // Adjust score based on market conditions
       if (marketConditions.volatility === 'high' && strategy.type === 'mean_reversion') {
@@ -1085,7 +1085,7 @@ export class AutonomousTradingEngine {
     settings: AutonomousSettings
   ): Promise<void> {
     // Base improvement based on strategy type and market conditions
-    let improvementFactor = 1.0;
+    const improvementFactor = 1.0;
     
     // Adjust improvement based on aggressiveness setting
     switch (settings.aggressiveness) {
@@ -1303,7 +1303,7 @@ export class AutonomousTradingEngine {
     ];
 
     // Filter pairs based on market conditions
-    let filteredPairs = [...basePairs];
+    const filteredPairs = [...basePairs];
 
     // Adjust pair selection based on market volatility
     if (marketConditions.volatility === 'high') {

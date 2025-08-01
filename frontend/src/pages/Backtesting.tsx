@@ -210,7 +210,7 @@ const Backtesting: React.FC = () => {
       setActiveSession(updatedSession);
       setActiveTab('results');
     } catch (error) {
-      console.error('Backtest failed:', error);
+      // console.error('Backtest failed:', error);
       const failedSession = {
         ...newSession,
         status: 'failed' as const
@@ -291,7 +291,7 @@ const Backtesting: React.FC = () => {
     if (!activeSession?.result) return;
     
     // Implement export functionality
-    console.log(`Exporting results in ${format} format`);
+    // console.log(`Exporting results in ${format} format`);
     // This would integrate with a reporting service
   };
 
@@ -682,7 +682,7 @@ const Backtesting: React.FC = () => {
       <HistoricalDataManager 
         onDataLoaded={(data) => {
           setHistoricalDataLoaded(true);
-          console.log('Historical data loaded:', data);
+          // console.log('Historical data loaded:', data);
         }}
       />
       

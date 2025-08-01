@@ -39,9 +39,9 @@ export interface CacheEntry<T> {
 export interface BatchRequest {
   id: string;
   type: string;
-  params: any;
-  resolve: (result: any) => void;
-  reject: (error: any) => void;
+  params: Record<string, unknown>;
+  resolve: (result: unknown) => void;
+  reject: (error: Error) => void;
   timestamp: number;
 }
 
@@ -154,7 +154,7 @@ export class PerformanceOptimizer {
    */
   async batchRequest<T>(
     type: string,
-    params: any
+    params: unknown
   ): Promise<T> {
     if (!this.config.enableBatching) {
       throw new Error('Batching is disabled');
@@ -244,7 +244,7 @@ export class PerformanceOptimizer {
   /**
    * Debounced function executor
    */
-  debounce<T extends (...args: any[]) => any>(
+  debounce<T extends (...args: unknown[]) => any>(
     func: T,
     wait: number
   ): (...args: Parameters<T>) => void {
@@ -264,11 +264,11 @@ export class PerformanceOptimizer {
   /**
    * Throttled function executor
    */
-  throttle<T extends (...args: any[]) => any>(
+  throttle<T extends (...args: unknown[]) => any>(
     func: T,
     limit: number
   ): (...args: Parameters<T>) => void {
-    let inThrottle = false;
+    const inThrottle = false;
     
     return (...args: Parameters<T>) => {
       if (!inThrottle) {
@@ -282,7 +282,7 @@ export class PerformanceOptimizer {
   /**
    * Memoization for expensive calculations
    */
-  memoize<T extends (...args: any[]) => any>(
+  memoize<T extends (...args: unknown[]) => any>(
     func: T,
     maxCacheSize: number = 100
   ): T {
@@ -455,7 +455,7 @@ export class PerformanceOptimizer {
   /**
    * Execute batch of requests
    */
-  private async executeBatch(_type: string, requests: BatchRequest[]): Promise<any[]> {
+  private async executeBatch(_type: string, requests: BatchRequest[]): Promise<unknown[]> {
     // This would be implemented based on specific API requirements
     // For now, execute requests individually
     const results = [];
@@ -478,8 +478,8 @@ export class PerformanceOptimizer {
    * Evict oldest cache entry
    */
   private evictOldestEntry(): void {
-    let oldestKey = '';
-    let oldestTime = Infinity;
+    const oldestKey = '';
+    const oldestTime = Infinity;
     
     for (const [key, entry] of this.cache.entries()) {
       if (entry.lastAccessed < oldestTime) {
@@ -587,7 +587,7 @@ export class OptimizedWebSocket {
   private config: PerformanceConfig;
   private reconnectAttempts = 0;
   private heartbeatInterval: NodeJS.Timeout | null = null;
-  private messageQueue: any[] = [];
+  private messageQueue: unknown[] = [];
   private connectionState: 'connecting' | 'connected' | 'disconnected' | 'reconnecting' = 'disconnected';
   
   constructor(url: string, protocols?: string[], config?: PerformanceConfig) {
@@ -605,7 +605,7 @@ export class OptimizedWebSocket {
   /**
    * Send message with queuing
    */
-  send(data: any): void {
+  send(data: unknown): void {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(typeof data === 'string' ? data : JSON.stringify(data));
     } else {
@@ -669,12 +669,12 @@ export class OptimizedWebSocket {
       };
       
       this.ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
+        // console.error('WebSocket error:', error);
         this.attemptReconnect();
       };
       
     } catch (error) {
-      console.error('Failed to create WebSocket:', error);
+      // console.error('Failed to create WebSocket:', error);
       this.attemptReconnect();
     }
   }
@@ -684,7 +684,7 @@ export class OptimizedWebSocket {
    */
   private attemptReconnect(): void {
     if (this.reconnectAttempts >= this.config.wsMaxReconnectAttempts) {
-      console.error('Max reconnection attempts reached');
+      // console.error('Max reconnection attempts reached');
       return;
     }
     

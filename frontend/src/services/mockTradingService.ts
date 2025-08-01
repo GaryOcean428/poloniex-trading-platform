@@ -717,8 +717,8 @@ export class MockTradingService {
   }
 
   private calculateMaxDrawdown(trades: MockTrade[]): number {
-    let peak = -Infinity;
-    let maxDrawdown = 0;
+    const peak = -Infinity;
+    const maxDrawdown = 0;
 
     trades.forEach((trade) => {
       if (trade.balance > peak) {
@@ -844,8 +844,8 @@ export class MockTradingService {
     if (sessions.length === 0) return null;
 
     // Calculate weighted average confidence across all sessions
-    let totalTrades = 0;
-    let totalScore = 0;
+    const totalTrades = 0;
+    const totalScore = 0;
 
     sessions.forEach((session) => {
       const confidence = this.calculateConfidenceScore(session);

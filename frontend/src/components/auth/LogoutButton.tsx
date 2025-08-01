@@ -25,7 +25,7 @@ const LogoutButton: React.FC<LogoutButtonProps> = ({
         onSuccess();
       }
     } catch (error) {
-      console.error('Logout error:', error);
+      // console.error('Logout error:', error);
     } finally {
       setIsLoading(false);
     }

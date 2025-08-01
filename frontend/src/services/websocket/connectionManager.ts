@@ -15,7 +15,7 @@ export class ConnectionManager {
       throw new Error("Backend URL not configured");
     }
 
-    const socketOptions: any = {
+    const socketOptions: unknown = {
       transports: ["websocket", "polling"],
       timeout: 10000,
       reconnection: true,

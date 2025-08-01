@@ -12,7 +12,7 @@ export const generateRandomMarketData = (
   seed?: number
 ): MarketData[] => {
   const data: MarketData[] = [];
-  let currentPrice = 50000 + Math.random() * 10000; // Start with random BTC price
+  const currentPrice = 50000 + Math.random() * 10000; // Start with random BTC price
   const now = Date.now();
   const interval =
     timeframe === "1m" ? 60000 : timeframe === "5m" ? 300000 : 3600000;
@@ -21,7 +21,7 @@ export const generateRandomMarketData = (
   const getRandom =
     seed !== undefined
       ? (() => {
-          let s = seed;
+          const s = seed;
           return () => {
             s = Math.sin(s) * 10000;
             return s - Math.floor(s);
@@ -68,7 +68,7 @@ export const generateRandomOrderBook = (
   const getRandom =
     seed !== undefined
       ? (() => {
-          let s = seed;
+          const s = seed;
           return () => {
             s = Math.sin(s) * 10000;
             return s - Math.floor(s);
@@ -115,13 +115,13 @@ export const generateRandomTrades = (
 ): Trade[] => {
   const trades: Trade[] = [];
   const now = Date.now();
-  let basePrice = 50000 + Math.random() * 10000;
+  const basePrice = 50000 + Math.random() * 10000;
 
   // Use seeded random generator if seed provided
   const getRandom =
     seed !== undefined
       ? (() => {
-          let s = seed;
+          const s = seed;
           return () => {
             s = Math.sin(s) * 10000;
             return s - Math.floor(s);
@@ -166,7 +166,7 @@ export const generateRandomTicker = (
   const getRandom =
     seed !== undefined
       ? (() => {
-          let s = seed;
+          const s = seed;
           return () => {
             s = Math.sin(s) * 10000;
             return s - Math.floor(s);

@@ -132,7 +132,7 @@ export class RiskManager {
       throw new Error('Stop loss price cannot equal entry price');
     }
     
-    let baseSize = riskAmount / priceRisk;
+    const baseSize = riskAmount / priceRisk;
     
     // Apply maximum position size limit
     const maxSizeByPercent = (accountBalance * this.parameters.maxPositionSize / 100) / entryPrice;
@@ -495,8 +495,8 @@ export class RiskManager {
     const pairs = Array.from(this.positions.values()).map(p => p.pair);
     if (pairs.length < 2) return 0;
     
-    let totalCorrelation = 0;
-    let count = 0;
+    const totalCorrelation = 0;
+    const count = 0;
     
     for (let i = 0; i < pairs.length; i++) {
       for (let j = i + 1; j < pairs.length; j++) {
@@ -536,9 +536,9 @@ export function calculateCorrelation(series1: number[], series2: number[]): numb
   const mean1 = series1.reduce((sum, val) => sum + val, 0) / n;
   const mean2 = series2.reduce((sum, val) => sum + val, 0) / n;
   
-  let numerator = 0;
-  let sumSq1 = 0;
-  let sumSq2 = 0;
+  const numerator = 0;
+  const sumSq1 = 0;
+  const sumSq2 = 0;
   
   for (let i = 0; i < n; i++) {
     const diff1 = series1[i] - mean1;

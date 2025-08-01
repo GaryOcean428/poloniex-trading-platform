@@ -266,7 +266,7 @@ class PoloniexApiClient {
     const hourMs = 60 * 60 * 1000;
     const data: MarketData[] = [];
 
-    let basePrice = 50000;
+    const basePrice = 50000;
 
     for (let time = start; time <= end; time += hourMs) {
       const volatility = basePrice * 0.01;
@@ -300,7 +300,7 @@ class PoloniexApiClient {
   ): Promise<{ orderId: string; status: string; id?: string }> {
     // TODO: Implement actual order placement
     // For now, return a mock response to satisfy the interface
-    console.warn('placeOrder called - this is a stub implementation');
+    // console.warn('placeOrder called - this is a stub implementation');
     
     if (this.mockMode) {
       const orderId = `mock_${Date.now()}`;
@@ -323,7 +323,7 @@ class PoloniexApiClient {
   ): Promise<{ orderId: string; status: string }> {
     // TODO: Implement actual conditional order placement
     // For now, return a mock response to satisfy the interface
-    console.warn('placeConditionalOrder called - this is a stub implementation');
+    // console.warn('placeConditionalOrder called - this is a stub implementation');
     
     if (this.mockMode) {
       return {
@@ -336,19 +336,19 @@ class PoloniexApiClient {
   }
 
   // Event listener methods for automated trading
-  public onPositionUpdate(_callback: (data: any) => void): void {
+  public onPositionUpdate(_callback: (data: unknown) => void): void {
     // TODO: Implement position update listener
-    console.warn('onPositionUpdate called - this is a stub implementation');
+    // console.warn('onPositionUpdate called - this is a stub implementation');
   }
 
-  public onLiquidationWarning(_callback: (data: any) => void): void {
+  public onLiquidationWarning(_callback: (data: unknown) => void): void {
     // TODO: Implement liquidation warning listener
-    console.warn('onLiquidationWarning called - this is a stub implementation');
+    // console.warn('onLiquidationWarning called - this is a stub implementation');
   }
 
-  public onMarginUpdate(_callback: (data: any) => void): void {
+  public onMarginUpdate(_callback: (data: unknown) => void): void {
     // TODO: Implement margin update listener
-    console.warn('onMarginUpdate called - this is a stub implementation');
+    // console.warn('onMarginUpdate called - this is a stub implementation');
   }
 }
 

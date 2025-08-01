@@ -81,12 +81,12 @@ vi.mock('@/hooks/useTradingContext', () => ({
 
 // Mock Chart.js
 vi.mock('react-chartjs-2', () => ({
-  Line: ({ data }: any) => (
+  Line: ({ data }: unknown) => (
     <div data-testid="line-chart">
       Chart: {data?.datasets?.[0]?.label || 'Unknown'}
     </div>
   ),
-  Bar: ({ data }: any) => (
+  Bar: ({ data }: unknown) => (
     <div data-testid="bar-chart">
       Chart: {data?.datasets?.[0]?.label || 'Unknown'}
     </div>

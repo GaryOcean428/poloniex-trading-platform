@@ -73,8 +73,8 @@ export class AuthService {
       }
 
       return { success: false, error: 'Login failed' };
-    } catch (error: any) {
-      console.error('Login error:', error);
+    } catch (error: unknown) {
+      // console.error('Login error:', error);
       
       if (error.response?.data) {
         return { 
@@ -108,7 +108,7 @@ export class AuthService {
       const refreshToken = getRefreshToken();
       
       if (!refreshToken) {
-        console.warn('No refresh token available');
+        // console.warn('No refresh token available');
         return null;
       }
 
@@ -138,8 +138,8 @@ export class AuthService {
       }
 
       return null;
-    } catch (error: any) {
-      console.error('Token refresh error:', error);
+    } catch (error: unknown) {
+      // console.error('Token refresh error:', error);
       
       // If refresh fails, clear auth data and redirect to login
       if (error.response?.status === 403 || error.response?.status === 401) {
@@ -170,7 +170,7 @@ export class AuthService {
         );
       }
     } catch (error) {
-      console.error('Logout error:', error);
+      // console.error('Logout error:', error);
     } finally {
       // Always clear local auth data
       clearAuthData();
@@ -199,7 +199,7 @@ export class AuthService {
 
       return response.data.success;
     } catch (error) {
-      console.error('Token verification error:', error);
+      // console.error('Token verification error:', error);
       return false;
     }
   }
@@ -207,14 +207,14 @@ export class AuthService {
   /**
    * Get current user data
    */
-  getCurrentUser(): any | null {
+  getCurrentUser(): unknown | null {
     const userData = localStorage.getItem('user_data');
     if (!userData) return null;
     
     try {
       return JSON.parse(userData);
     } catch (error) {
-      console.error('Error parsing user data:', error);
+      // console.error('Error parsing user data:', error);
       return null;
     }
   }
@@ -225,14 +225,14 @@ export class AuthService {
   async authenticatedRequest<T = any>(
     method: 'GET' | 'POST' | 'PUT' | 'DELETE',
     endpoint: string,
-    data?: any
+    data?: unknown
   ): Promise<ApiResponse<T>> {
     try {
-      let token = getAccessToken();
+      const token = getAccessToken();
 
       // Check if we need to refresh the token
       if (shouldRefreshToken()) {
-        console.log('Token needs refresh, refreshing...');
+        // console.log('Token needs refresh, refreshing...');
         const newToken = await this.refreshToken();
         if (newToken) {
           token = newToken;
@@ -257,8 +257,8 @@ export class AuthService {
 
       const response = await axios(config);
       return { success: true, data: response.data };
-    } catch (error: any) {
-      console.error('Authenticated request error:', error);
+    } catch (error: unknown) {
+      // console.error('Authenticated request error:', error);
       
       // If token is invalid, try to refresh once
       if (error.response?.status === 401 || error.response?.status === 403) {
@@ -278,8 +278,8 @@ export class AuthService {
 
             const response = await axios(config);
             return { success: true, data: response.data };
-          } catch (retryError: any) {
-            console.error('Retry request error:', retryError);
+          } catch (retryError: unknown) {
+            // console.error('Retry request error:', retryError);
             return { 
               success: false, 
               error: retryError.response?.data?.error || 'Request failed'

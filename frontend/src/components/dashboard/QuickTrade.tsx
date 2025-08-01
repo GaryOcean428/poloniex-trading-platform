@@ -24,14 +24,14 @@ const QuickTrade: React.FC = () => {
         orderType === 'LIMIT' ? parseFloat(price) : undefined
       );
       
-      console.log('Order placed:', result);
+      // console.log('Order placed:', result);
       setOrderStatus(`Order successfully placed: ${(result as any)?.orderId || 'Success'}`);
       
       // Reset form
       setAmount('');
       setPrice('');
     } catch (error) {
-      console.error('Failed to place order:', error);
+      // console.error('Failed to place order:', error);
       setOrderStatus(`Order failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };

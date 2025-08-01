@@ -153,7 +153,7 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
       if (newSettings.isLiveTrading !== undefined) {
         // Only allow live trading if we have API credentials
         if (newSettings.isLiveTrading && (!updated.apiKey || !updated.apiSecret)) {
-          console.log('Cannot enable live trading without API credentials');
+          // console.log('Cannot enable live trading without API credentials');
           updated.isLiveTrading = false;
         }
       }
@@ -197,7 +197,7 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
       
       return JSON.stringify(exportableSettings);
     } catch (error) {
-      console.error('Error exporting settings:', error);
+      // console.error('Error exporting settings:', error);
       return '';
     }
   };
@@ -224,7 +224,7 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
       updateSettings(importedSettings);
       return true;
     } catch (error) {
-      console.error('Error importing settings:', error);
+      // console.error('Error importing settings:', error);
       return false;
     }
   };
