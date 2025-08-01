@@ -56,11 +56,11 @@ export default defineConfig({
   base: "/",
   server: {
     host: "0.0.0.0",
-    port: parseInt(process.env.PORT || "5173"),
+    port: parseInt(process.env.PORT || "5675"), // .clinerules compliant frontend port range (5675-5699)
   },
   preview: {
     host: "0.0.0.0",
-    port: parseInt(process.env.PORT || "5173"),
+    port: parseInt(process.env.PORT || "5675"), // .clinerules compliant frontend port range (5675-5699)
     allowedHosts: ["healthcheck.railway.app", "localhost"],
   },
   resolve: {

@@ -94,9 +94,9 @@ export class ExtensionErrorHandler {
     // Handle React production errors differently
     if (this.isReactProductionError(errorMessage)) {
       // console.warn(
-        'React Error #185 detected: This is likely caused by maximum update depth exceeded. ' +
-        'Check for infinite re-renders in component state updates or useEffect dependencies.'
-      );
+      //   'React Error #185 detected: This is likely caused by maximum update depth exceeded. ' +
+      //   'Check for infinite re-renders in component state updates or useEffect dependencies.'
+      // );
       // console.warn('Initialization error detected - this may require a page refresh');
       return;
     }

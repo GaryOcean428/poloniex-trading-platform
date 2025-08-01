@@ -51,10 +51,10 @@ const hasCredentials = getPoloniexApiKey() !== undefined && getPoloniexApiSecret
     this.useMockData = shouldUseMockMode(hasCredentials);
 
     // console.log("WebSocket Service V3 initialized:", {
-      usePoloniexDirect: !this.useMockData && hasCredentials,
-      useMockData: this.useMockData,
-      hasCredentials,
-    });
+    //   usePoloniexDirect: !this.useMockData && hasCredentials,
+    //   useMockData: this.useMockData,
+    //   hasCredentials,
+    // });
 
     // Load offline data
     this.eventHandlerService.loadOfflineData();
