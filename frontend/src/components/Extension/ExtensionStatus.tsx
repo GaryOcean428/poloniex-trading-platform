@@ -51,7 +51,7 @@ const ExtensionStatus: React.FC<ExtensionStatusProps> = ({ onRefreshRequest }) =
         );
       } catch (error)
       {
-        console.error('Error checking extension status:', error);
+        // console.error('Error checking extension status:', error);
         setStatus('Error connecting');
         setConnected(false);
         setIsLoading(false);

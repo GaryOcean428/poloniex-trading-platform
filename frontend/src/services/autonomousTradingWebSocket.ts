@@ -69,13 +69,13 @@ export interface StrategyEvent {
   strategy?: AutonomousStrategy;
   confidenceScore?: number;
   reason?: string;
-  performance?: any;
+  performance?: unknown;
 }
 
 export interface BacktestCompletedEvent {
   strategyId: string;
-  result: any;
-  evaluation: any;
+  result: unknown;
+  evaluation: unknown;
   passed: boolean;
 }
 
@@ -164,7 +164,7 @@ class AutonomousTradingWebSocket {
       this.startConnectionTimeout();
 
     } catch (error) {
-      console.error('Error connecting to autonomous trading WebSocket:', error);
+      // console.error('Error connecting to autonomous trading WebSocket:', error);
       this.handleConnectionError();
     }
   }
@@ -216,7 +216,7 @@ class AutonomousTradingWebSocket {
 
     // Connection events
     this.socket.on('connect', () => {
-      console.log('Connected to autonomous trading WebSocket');
+      // console.log('Connected to autonomous trading WebSocket');
       this.connectionState = ConnectionState.CONNECTED;
       this.reconnectAttempts = 0;
       this.isConnecting = false;
@@ -226,7 +226,7 @@ class AutonomousTradingWebSocket {
     });
 
     this.socket.on('disconnect', (reason: string) => {
-      console.log('Disconnected from autonomous trading WebSocket:', reason);
+      // console.log('Disconnected from autonomous trading WebSocket:', reason);
       this.connectionState = ConnectionState.DISCONNECTED;
       this.clearTimers();
       this.notifyListeners('connectionStateChanged', this.connectionState);
@@ -237,8 +237,8 @@ class AutonomousTradingWebSocket {
       }
     });
 
-    this.socket.on('connect_error', (error: any) => {
-      console.error('Connection error:', error);
+    this.socket.on('connect_error', (error: unknown) => {
+      // console.error('Connection error:', error);
       this.handleConnectionError();
     });
 
@@ -251,7 +251,7 @@ class AutonomousTradingWebSocket {
       this.notifyListeners(AUTONOMOUS_TRADING_EVENTS.PROFIT_BANKED, data);
     });
 
-    this.socket.on(AUTONOMOUS_TRADING_EVENTS.BANKING_FAILED, (data: any) => {
+    this.socket.on(AUTONOMOUS_TRADING_EVENTS.BANKING_FAILED, (data: unknown) => {
       this.notifyListeners(AUTONOMOUS_TRADING_EVENTS.BANKING_FAILED, data);
     });
 
@@ -267,7 +267,7 @@ class AutonomousTradingWebSocket {
       this.notifyListeners(AUTONOMOUS_TRADING_EVENTS.BACKTEST_COMPLETED, data);
     });
 
-    this.socket.on(AUTONOMOUS_TRADING_EVENTS.PAPER_TRADING_STARTED, (data: any) => {
+    this.socket.on(AUTONOMOUS_TRADING_EVENTS.PAPER_TRADING_STARTED, (data: unknown) => {
       this.notifyListeners(AUTONOMOUS_TRADING_EVENTS.PAPER_TRADING_STARTED, data);
     });
 
@@ -275,11 +275,11 @@ class AutonomousTradingWebSocket {
       this.notifyListeners(AUTONOMOUS_TRADING_EVENTS.EMERGENCY_STOP, data);
     });
 
-    this.socket.on(AUTONOMOUS_TRADING_EVENTS.CONFIDENCE_SCORE_CALCULATED, (data: any) => {
+    this.socket.on(AUTONOMOUS_TRADING_EVENTS.CONFIDENCE_SCORE_CALCULATED, (data: unknown) => {
       this.notifyListeners(AUTONOMOUS_TRADING_EVENTS.CONFIDENCE_SCORE_CALCULATED, data);
     });
 
-    this.socket.on(AUTONOMOUS_TRADING_EVENTS.MARKET_CONDITIONS_UPDATED, (data: any) => {
+    this.socket.on(AUTONOMOUS_TRADING_EVENTS.MARKET_CONDITIONS_UPDATED, (data: unknown) => {
       this.notifyListeners(AUTONOMOUS_TRADING_EVENTS.MARKET_CONDITIONS_UPDATED, data);
     });
 
@@ -288,27 +288,27 @@ class AutonomousTradingWebSocket {
     });
 
     // Paper Trading Events
-    this.socket.on(AUTONOMOUS_TRADING_EVENTS.SESSION_CREATED, (data: any) => {
+    this.socket.on(AUTONOMOUS_TRADING_EVENTS.SESSION_CREATED, (data: unknown) => {
       this.notifyListeners(AUTONOMOUS_TRADING_EVENTS.SESSION_CREATED, data);
     });
 
-    this.socket.on(AUTONOMOUS_TRADING_EVENTS.SESSION_STARTED, (data: any) => {
+    this.socket.on(AUTONOMOUS_TRADING_EVENTS.SESSION_STARTED, (data: unknown) => {
       this.notifyListeners(AUTONOMOUS_TRADING_EVENTS.SESSION_STARTED, data);
     });
 
-    this.socket.on(AUTONOMOUS_TRADING_EVENTS.SESSION_STOPPED, (data: any) => {
+    this.socket.on(AUTONOMOUS_TRADING_EVENTS.SESSION_STOPPED, (data: unknown) => {
       this.notifyListeners(AUTONOMOUS_TRADING_EVENTS.SESSION_STOPPED, data);
     });
 
-    this.socket.on(AUTONOMOUS_TRADING_EVENTS.SESSION_UPDATE, (data: any) => {
+    this.socket.on(AUTONOMOUS_TRADING_EVENTS.SESSION_UPDATE, (data: unknown) => {
       this.notifyListeners(AUTONOMOUS_TRADING_EVENTS.SESSION_UPDATE, data);
     });
 
-    this.socket.on(AUTONOMOUS_TRADING_EVENTS.POSITION_OPENED, (data: any) => {
+    this.socket.on(AUTONOMOUS_TRADING_EVENTS.POSITION_OPENED, (data: unknown) => {
       this.notifyListeners(AUTONOMOUS_TRADING_EVENTS.POSITION_OPENED, data);
     });
 
-    this.socket.on(AUTONOMOUS_TRADING_EVENTS.POSITION_CLOSED, (data: any) => {
+    this.socket.on(AUTONOMOUS_TRADING_EVENTS.POSITION_CLOSED, (data: unknown) => {
       this.notifyListeners(AUTONOMOUS_TRADING_EVENTS.POSITION_CLOSED, data);
     });
 
@@ -318,14 +318,14 @@ class AutonomousTradingWebSocket {
     });
   }
 
-  private notifyListeners(event: string, data: any): void {
+  private notifyListeners(event: string, data: unknown): void {
     const listeners = this.listeners.get(event);
     if (listeners) {
       listeners.forEach(listener => {
         try {
           listener(data);
         } catch (error) {
-          console.error(`Error in listener for event ${event}:`, error);
+          // console.error(`Error in listener for event ${event}:`, error);
         }
       });
     }
@@ -341,7 +341,7 @@ class AutonomousTradingWebSocket {
 
   private scheduleReconnect(): void {
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      console.warn('Max reconnection attempts reached');
+      // console.warn('Max reconnection attempts reached');
       this.connectionState = ConnectionState.FAILED;
       this.notifyListeners('connectionStateChanged', this.connectionState);
       return;
@@ -350,7 +350,7 @@ class AutonomousTradingWebSocket {
     this.reconnectAttempts++;
     const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1);
     
-    console.log(`Attempting to reconnect in ${delay}ms (attempt ${this.reconnectAttempts})`);
+    // console.log(`Attempting to reconnect in ${delay}ms (attempt ${this.reconnectAttempts})`);
     
     setTimeout(() => {
       if (this.connectionState !== ConnectionState.CONNECTED) {
@@ -364,7 +364,7 @@ class AutonomousTradingWebSocket {
   private startConnectionTimeout(): void {
     this.connectionTimeout = setTimeout(() => {
       if (this.connectionState === ConnectionState.CONNECTING) {
-        console.warn('Connection timeout');
+        // console.warn('Connection timeout');
         this.handleConnectionError();
       }
     }, 10000);

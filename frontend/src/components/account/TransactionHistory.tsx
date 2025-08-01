@@ -38,7 +38,7 @@ const TransactionHistory: React.FC = () => {
         hour12: true
       });
     } catch (error) {
-      console.error('Error formatting date:', error);
+      // console.error('Error formatting date:', error);
       return 'Invalid Date';
     }
   };

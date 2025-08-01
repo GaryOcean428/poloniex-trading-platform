@@ -60,42 +60,42 @@ class LiveAutonomousTradingEngine {
     if (!this.useBackend) return;
 
     // Generation and strategy events
-    autonomousTradingWebSocket.on(AUTONOMOUS_TRADING_EVENTS.GENERATION_COMPLETE, (data: any) => {
+    autonomousTradingWebSocket.on(AUTONOMOUS_TRADING_EVENTS.GENERATION_COMPLETE, (data: unknown) => {
       this.handleGenerationComplete(data);
     });
 
-    autonomousTradingWebSocket.on(AUTONOMOUS_TRADING_EVENTS.STRATEGY_PROMOTED, (data: any) => {
+    autonomousTradingWebSocket.on(AUTONOMOUS_TRADING_EVENTS.STRATEGY_PROMOTED, (data: unknown) => {
       this.handleStrategyPromotion(data);
     });
 
-    autonomousTradingWebSocket.on(AUTONOMOUS_TRADING_EVENTS.STRATEGY_RETIRED, (data: any) => {
+    autonomousTradingWebSocket.on(AUTONOMOUS_TRADING_EVENTS.STRATEGY_RETIRED, (data: unknown) => {
       this.handleStrategyRetirement(data);
     });
 
     // Banking events
-    autonomousTradingWebSocket.on(AUTONOMOUS_TRADING_EVENTS.PROFIT_BANKED, (data: any) => {
+    autonomousTradingWebSocket.on(AUTONOMOUS_TRADING_EVENTS.PROFIT_BANKED, (data: unknown) => {
       this.handleProfitBanking(data);
     });
 
-    autonomousTradingWebSocket.on(AUTONOMOUS_TRADING_EVENTS.BANKING_FAILED, (data: any) => {
+    autonomousTradingWebSocket.on(AUTONOMOUS_TRADING_EVENTS.BANKING_FAILED, (data: unknown) => {
       this.handleBankingFailure(data);
     });
 
     // Emergency events
-    autonomousTradingWebSocket.on(AUTONOMOUS_TRADING_EVENTS.EMERGENCY_STOP, (data: any) => {
+    autonomousTradingWebSocket.on(AUTONOMOUS_TRADING_EVENTS.EMERGENCY_STOP, (data: unknown) => {
       this.handleEmergencyStop(data);
     });
 
     // Performance updates
-    autonomousTradingWebSocket.on(AUTONOMOUS_TRADING_EVENTS.CONFIDENCE_SCORE_CALCULATED, (data: any) => {
+    autonomousTradingWebSocket.on(AUTONOMOUS_TRADING_EVENTS.CONFIDENCE_SCORE_CALCULATED, (data: unknown) => {
       this.handleConfidenceUpdate(data);
     });
 
-    autonomousTradingWebSocket.on(AUTONOMOUS_TRADING_EVENTS.BACKTEST_COMPLETED, (data: any) => {
+    autonomousTradingWebSocket.on(AUTONOMOUS_TRADING_EVENTS.BACKTEST_COMPLETED, (data: unknown) => {
       this.handleBacktestComplete(data);
     });
 
-    autonomousTradingWebSocket.on(AUTONOMOUS_TRADING_EVENTS.PAPER_TRADING_STARTED, (data: any) => {
+    autonomousTradingWebSocket.on(AUTONOMOUS_TRADING_EVENTS.PAPER_TRADING_STARTED, (data: unknown) => {
       this.handlePaperTradingStarted(data);
     });
   }
@@ -341,7 +341,7 @@ class LiveAutonomousTradingEngine {
 
       this.notifyListeners('performanceUpdate', { sessionId, performance: session.performance });
     } catch (error) {
-      console.error('Error updating performance metrics:', error);
+      // console.error('Error updating performance metrics:', error);
     }
   }
 
@@ -361,7 +361,7 @@ class LiveAutonomousTradingEngine {
 
       this.notifyListeners('systemStatusUpdate', { sessionId, status: session.backendSystemStatus });
     } catch (error) {
-      console.error('Error updating system status:', error);
+      // console.error('Error updating system status:', error);
     }
   }
 
@@ -406,12 +406,12 @@ class LiveAutonomousTradingEngine {
 
       this.notifyListeners('strategiesLoaded', { sessionId, strategies: session.strategies });
     } catch (error) {
-      console.error('Error loading strategies:', error);
+      // console.error('Error loading strategies:', error);
     }
   }
 
   // WebSocket Event Handlers
-  private handleGenerationComplete(data: any): void {
+  private handleGenerationComplete(data: unknown): void {
     for (const [sessionId, session] of this.activeSessions) {
       if (session.isActive) {
         session.backendSystemStatus = {
@@ -431,7 +431,7 @@ class LiveAutonomousTradingEngine {
     }
   }
 
-  private handleStrategyPromotion(data: any): void {
+  private handleStrategyPromotion(data: unknown): void {
     for (const [sessionId, session] of this.activeSessions) {
       if (session.isActive) {
         this.addNotification(sessionId, {
@@ -444,7 +444,7 @@ class LiveAutonomousTradingEngine {
     }
   }
 
-  private handleStrategyRetirement(data: any): void {
+  private handleStrategyRetirement(data: unknown): void {
     for (const [sessionId, session] of this.activeSessions) {
       if (session.isActive) {
         this.addNotification(sessionId, {
@@ -457,7 +457,7 @@ class LiveAutonomousTradingEngine {
     }
   }
 
-  private handleProfitBanking(data: any): void {
+  private handleProfitBanking(data: unknown): void {
     for (const [sessionId, session] of this.activeSessions) {
       if (session.isActive) {
         if (session.bankingStatus) {
@@ -476,7 +476,7 @@ class LiveAutonomousTradingEngine {
     }
   }
 
-  private handleBankingFailure(data: any): void {
+  private handleBankingFailure(data: unknown): void {
     for (const [sessionId, session] of this.activeSessions) {
       if (session.isActive) {
         this.addNotification(sessionId, {
@@ -489,7 +489,7 @@ class LiveAutonomousTradingEngine {
     }
   }
 
-  private handleEmergencyStop(data: any): void {
+  private handleEmergencyStop(data: unknown): void {
     for (const [sessionId, session] of this.activeSessions) {
       if (session.isActive) {
         session.isActive = false;
@@ -506,7 +506,7 @@ class LiveAutonomousTradingEngine {
     }
   }
 
-  private handleConfidenceUpdate(data: any): void {
+  private handleConfidenceUpdate(data: unknown): void {
     // Update confidence scores for relevant sessions
     for (const [_sessionId, session] of this.activeSessions) {
       if (session.isActive) {
@@ -515,7 +515,7 @@ class LiveAutonomousTradingEngine {
     }
   }
 
-  private handleBacktestComplete(data: any): void {
+  private handleBacktestComplete(data: unknown): void {
     for (const [sessionId, session] of this.activeSessions) {
       if (session.isActive) {
         this.addNotification(sessionId, {
@@ -528,7 +528,7 @@ class LiveAutonomousTradingEngine {
     }
   }
 
-  private handlePaperTradingStarted(data: any): void {
+  private handlePaperTradingStarted(data: unknown): void {
     for (const [sessionId, session] of this.activeSessions) {
       if (session.isActive) {
         this.addNotification(sessionId, {
@@ -577,14 +577,14 @@ class LiveAutonomousTradingEngine {
     }
   }
 
-  private notifyListeners(event: string, data: any): void {
+  private notifyListeners(event: string, data: unknown): void {
     const listeners = this.listeners.get(event);
     if (listeners) {
       listeners.forEach(listener => {
         try {
           listener(data);
         } catch (error) {
-          console.error(`Error in listener for event ${event}:`, error);
+          // console.error(`Error in listener for event ${event}:`, error);
         }
       });
     }

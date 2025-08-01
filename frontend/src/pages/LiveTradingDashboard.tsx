@@ -80,7 +80,7 @@ const LiveTradingDashboard: React.FC = () => {
   ];
 
   // Handle real-time market data
-  const handleMarketData = useCallback((data: any) => {
+  const handleMarketData = useCallback((data: unknown) => {
     if (data.pair === selectedPair) {
       const newMetric: RealTimeMetric = {
         timestamp: data.timestamp || Date.now(),
@@ -101,9 +101,9 @@ const LiveTradingDashboard: React.FC = () => {
   }, [selectedPair]);
 
   // Handle real-time trade execution
-  const handleTradeExecuted = useCallback((tradeData: any) => {
+  const handleTradeExecuted = useCallback((tradeData: unknown) => {
     // This will be handled by the RealTimeAlerts component
-    console.log('Trade executed:', tradeData);
+    // console.log('Trade executed:', tradeData);
   }, []);
 
   // Set up WebSocket event listeners

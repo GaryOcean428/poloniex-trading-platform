@@ -517,8 +517,8 @@ export class LiveTradingService {
   private calculateCurrentDrawdown(session: LiveTradingSession): number {
     if (session.trades.length === 0) return 0;
 
-    let peak = session.initialBalance;
-    let maxDrawdown = 0;
+    const peak = session.initialBalance;
+    const maxDrawdown = 0;
 
     session.trades.forEach((trade) => {
       if (trade.balance > peak) peak = trade.balance;

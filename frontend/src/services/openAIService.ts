@@ -38,7 +38,7 @@ class OpenAITradingService {
     const apiKey = import.meta.env.VITE_OPENAI_API_KEY;
     
     if (!apiKey) {
-      console.warn('OpenAI API key not found. LLM features will use mock data.');
+      // console.warn('OpenAI API key not found. LLM features will use mock data.');
       return;
     }
 
@@ -50,9 +50,9 @@ class OpenAITradingService {
         dangerouslyAllowBrowser: true
       });
       this.isConfigured = true;
-      console.log('OpenAI client initialized successfully');
+      // console.log('OpenAI client initialized successfully');
     } catch (error) {
-      console.error('Failed to initialize OpenAI client:', error);
+      // console.error('Failed to initialize OpenAI client:', error);
     }
   }
 
@@ -102,7 +102,7 @@ class OpenAITradingService {
       };
 
     } catch (error) {
-      console.error('OpenAI API error:', error);
+      // console.error('OpenAI API error:', error);
       return this.getMockInsight(tradingData, userQuery);
     }
   }
@@ -144,13 +144,13 @@ class OpenAITradingService {
       };
 
     } catch (error) {
-      console.error('OpenAI API error:', error);
+      // console.error('OpenAI API error:', error);
       return this.getMockMarketAnalysis(symbols);
     }
   }
 
   private buildTradingPrompt(data: TradingData, userQuery?: string): string {
-    let prompt = `Analyze ${data.symbol} trading data:
+    const prompt = `Analyze ${data.symbol} trading data:
     - Current Price: $${data.price.toFixed(2)}
     - 24h Change: ${data.change24h.toFixed(2)}%
     - Volume: ${data.volume.toLocaleString()}`;

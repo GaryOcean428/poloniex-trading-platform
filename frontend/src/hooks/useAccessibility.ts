@@ -82,7 +82,7 @@ export const useAccessibility = () => {
       try {
         element.focus();
       } catch (error) {
-        console.warn('Failed to set focus:', error);
+        // console.warn('Failed to set focus:', error);
       }
     }
   }, []);
@@ -120,7 +120,7 @@ export const useKeyboardNavigation = (
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     const { key } = e;
-    let newIndex = currentIndex.current;
+    const newIndex = currentIndex.current;
 
     switch (key) {
       case 'ArrowDown':

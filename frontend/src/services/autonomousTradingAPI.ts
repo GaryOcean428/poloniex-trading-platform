@@ -294,9 +294,9 @@ class AutonomousTradingAPIService {
   // Configuration Methods
   async getConfig(): Promise<{
     riskTolerance: RiskToleranceConfig;
-    generationConfig: any;
+    generationConfig: unknown;
     bankingConfig: BankingConfig;
-    optimizationThresholds: any;
+    optimizationThresholds: unknown;
   }> {
     try {
       const api = createAuthenticatedAxios();
@@ -317,7 +317,7 @@ class AutonomousTradingAPIService {
     }
   }
 
-  async updateOptimizationThresholds(thresholds: any): Promise<void> {
+  async updateOptimizationThresholds(thresholds: unknown): Promise<void> {
     try {
       const api = createAuthenticatedAxios();
       await api.post('/config/optimization-thresholds', { thresholds });
@@ -350,7 +350,7 @@ class AutonomousTradingAPIService {
   }
 
   // Error handling helper
-  private handleError(error: any): void {
+  private handleError(error: unknown): void {
     if (axios.isAxiosError(error)) {
       if (error.response?.status === 401) {
         throw new AutonomousTradingAuthError(

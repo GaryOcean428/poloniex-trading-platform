@@ -120,13 +120,13 @@ export interface WebSocketEventHandlers {
 // Client-side event handler signatures
 export interface ClientWebSocketEventHandlers {
   onConnectionChange: (state: string) => void;
-  onMarketData: (data: any) => void;
-  onTickerUpdate: (data: any) => void;
-  onOrderBookUpdate: (data: any) => void;
-  onTradeExecuted: (data: any) => void;
-  onAccountUpdate: (data: any) => void;
-  onPositionUpdate: (data: any) => void;
-  onOrderUpdate: (data: any) => void;
+  onMarketData: (data: unknown) => void;
+  onTickerUpdate: (data: unknown) => void;
+  onOrderBookUpdate: (data: unknown) => void;
+  onTradeExecuted: (data: unknown) => void;
+  onAccountUpdate: (data: unknown) => void;
+  onPositionUpdate: (data: unknown) => void;
+  onOrderUpdate: (data: unknown) => void;
   onError: (error: Error) => void;
 }
 
@@ -134,7 +134,7 @@ export interface ClientWebSocketEventHandlers {
 export interface WebSocketEventPayload {
   type: string;
   timestamp: number;
-  data?: any;
+  data?: unknown;
 }
 
 export interface PoloniexEventPayload extends WebSocketEventPayload {

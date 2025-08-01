@@ -292,7 +292,7 @@ export const getDQNActions = async (
   _marketData: unknown[]
 ): Promise<DQNAction[]> => {
   // TODO: Implement actual DQN action generation
-  console.warn('getDQNActions called - this is a stub implementation');
+  // console.warn('getDQNActions called - this is a stub implementation');
   return [];
 };
 
@@ -301,6 +301,6 @@ export const continueDQNTraining = async (
   _newData: unknown[]
 ): Promise<DQNModelInfo> => {
   // TODO: Implement actual DQN continued training
-  console.warn('continueDQNTraining called - this is a stub implementation');
+  // console.warn('continueDQNTraining called - this is a stub implementation');
   return _modelInfo;
 };

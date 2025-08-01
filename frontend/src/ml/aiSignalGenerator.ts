@@ -140,8 +140,8 @@ export class AISignalGenerator {
    * Calculate technical analysis signal
    */
   private calculateTechnicalSignal(features: Record<string, number>): AISignal {
-    let score = 0;
-    let confidence = 0;
+    const score = 0;
+    const confidence = 0;
     const reasons: string[] = [];
 
     // Moving Average signals
@@ -231,7 +231,7 @@ export class AISignalGenerator {
       volatility: -0.1 // Lower volatility preferred
     };
 
-    let mlScore = 0;
+    const mlScore = 0;
     Object.entries(weights).forEach(([feature, weight]) => {
       if (features[feature] !== undefined) {
         mlScore += this.normalizeFeature(features[feature], feature) * weight;
@@ -320,7 +320,7 @@ export class AISignalGenerator {
     }
 
     // Reduce confidence based on risk level
-    let adjustedConfidence = signal.confidence;
+    const adjustedConfidence = signal.confidence;
     if (signal.riskLevel === 'HIGH') {
       adjustedConfidence *= 0.7;
     } else if (signal.riskLevel === 'MEDIUM') {
@@ -379,7 +379,7 @@ export class AISignalGenerator {
     if (prices.length === 1) return prices[0];
     
     const multiplier = 2 / (period + 1);
-    let ema = prices[0];
+    const ema = prices[0];
     
     for (let i = 1; i < prices.length; i++) {
       ema = (prices[i] * multiplier) + (ema * (1 - multiplier));

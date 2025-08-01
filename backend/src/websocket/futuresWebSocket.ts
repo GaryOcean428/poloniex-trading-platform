@@ -5,7 +5,7 @@ import { logger } from '../utils/logger.js';
 import { pool } from '../db/connection.js';
 
 // Query helper function
-const query = async (text: string, params?: any[]) => {
+const query = async (text: string, params?: unknown[]) => {
   return await pool.query(text, params);
 };
 import poloniexFuturesService from '../services/poloniexFuturesService.js';
@@ -22,7 +22,7 @@ interface PoloniexMessage {
   type: string;
   topic?: string;
   subject?: string;
-  data?: any;
+  data?: unknown;
   id?: number;
 }
 
@@ -419,8 +419,28 @@ class FuturesWebSocketClient extends EventEmitter {
   /**
    * Handle ticker updates
    */
-  private async handleTickerUpdate(data: any): Promise<void> {
+  private async handleTickerUpdate(data: unknown): Promise<void> {
     try {
+      // Type assertion for ticker data
+      const tickerData = data as {
+        symbol?: string;
+        price?: number;
+        lastPrice?: number;
+        markPrice?: number;
+        indexPrice?: number;
+        bestBid?: number;
+        bestAsk?: number;
+        high24h?: number;
+        low24h?: number;
+        volume24h?: number;
+        turnover24h?: number;
+        change24h?: number;
+        fundingRate?: number;
+        nextFundingTime?: number;
+        openInterest?: number;
+        ts?: number;
+      };
+
       await query(`
         INSERT INTO futures_market_data (
           symbol, last_price, mark_price, index_price, best_bid, best_ask,
@@ -443,21 +463,21 @@ class FuturesWebSocketClient extends EventEmitter {
           open_interest = EXCLUDED.open_interest,
           updated_at = CURRENT_TIMESTAMP
       `, [
-        data.symbol,
-        data.price || data.lastPrice || 0,
-        data.markPrice || 0,
-        data.indexPrice || 0,
-        data.bestBid || 0,
-        data.bestAsk || 0,
-        data.high24h || 0,
-        data.low24h || 0,
-        data.volume24h || 0,
-        data.turnover24h || 0,
-        data.change24h || 0,
-        data.fundingRate || 0,
-        data.nextFundingTime ? new Date(data.nextFundingTime) : null,
-        data.openInterest || 0,
-        new Date(data.ts || Date.now())
+        tickerData.symbol,
+        tickerData.price || tickerData.lastPrice || 0,
+        tickerData.markPrice || 0,
+        tickerData.indexPrice || 0,
+        tickerData.bestBid || 0,
+        tickerData.bestAsk || 0,
+        tickerData.high24h || 0,
+        tickerData.low24h || 0,
+        tickerData.volume24h || 0,
+        tickerData.turnover24h || 0,
+        tickerData.change24h || 0,
+        tickerData.fundingRate || 0,
+        tickerData.nextFundingTime ? new Date(tickerData.nextFundingTime) : null,
+        tickerData.openInterest || 0,
+        new Date(tickerData.ts || Date.now())
       ]);
       
       this.emit('ticker', data);
@@ -470,7 +490,7 @@ class FuturesWebSocketClient extends EventEmitter {
   /**
    * Handle order book updates
    */
-  private async handleOrderBookUpdate(data: any): Promise<void> {
+  private async handleOrderBookUpdate(data: unknown): Promise<void> {
     // Store in memory or cache for real-time access
     this.emit('orderbook', data);
   }
@@ -478,14 +498,14 @@ class FuturesWebSocketClient extends EventEmitter {
   /**
    * Handle trade updates
    */
-  private async handleTradeUpdate(data: any): Promise<void> {
+  private async handleTradeUpdate(data: unknown): Promise<void> {
     this.emit('trade', data);
   }
 
   /**
    * Handle account updates
    */
-  private async handleAccountUpdate(data: any): Promise<void> {
+  private async handleAccountUpdate(data: unknown): Promise<void> {
     try {
       // Update account balance in database
       await query(`
@@ -513,7 +533,7 @@ class FuturesWebSocketClient extends EventEmitter {
   /**
    * Handle position updates
    */
-  private async handlePositionUpdate(data: any): Promise<void> {
+  private async handlePositionUpdate(data: unknown): Promise<void> {
     try {
       // Update position in database
       await query(`
@@ -542,7 +562,7 @@ class FuturesWebSocketClient extends EventEmitter {
   /**
    * Handle order updates
    */
-  private async handleOrderUpdate(data: any): Promise<void> {
+  private async handleOrderUpdate(data: unknown): Promise<void> {
     try {
       // Update order status in database
       await query(`
@@ -569,7 +589,7 @@ class FuturesWebSocketClient extends EventEmitter {
   /**
    * Handle trade execution updates
    */
-  private async handleTradeExecutionUpdate(data: any): Promise<void> {
+  private async handleTradeExecutionUpdate(data: unknown): Promise<void> {
     try {
       // Store trade execution in database
       const orderResult = await query(
@@ -615,7 +635,7 @@ class FuturesWebSocketClient extends EventEmitter {
   /**
    * Handle funding updates
    */
-  private async handleFundingUpdate(data: any): Promise<void> {
+  private async handleFundingUpdate(data: unknown): Promise<void> {
     this.emit('funding', data);
   }
 

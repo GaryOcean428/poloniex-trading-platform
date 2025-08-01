@@ -142,9 +142,9 @@ export class AdvancedBacktestService {
     }
 
     // Initialize backtest state
-    let balance = options.initialBalance;
+    const balance = options.initialBalance;
     const trades: BacktestTrade[] = [];
-    let highWaterMark = balance;
+    const highWaterMark = balance;
     const equityCurve: {
       timestamp: number;
       balance: number;
@@ -729,8 +729,8 @@ export class AdvancedBacktestService {
   }
 
   private calculateMaxDrawdown(trades: BacktestTrade[]): number {
-    let peak = -Infinity;
-    let maxDrawdown = 0;
+    const peak = -Infinity;
+    const maxDrawdown = 0;
 
     trades.forEach((trade) => {
       if (trade.balance > peak) {
@@ -768,8 +768,8 @@ export class AdvancedBacktestService {
   }
 
   private calculateAverageHoldingPeriod(trades: BacktestTrade[]): number {
-    let totalHoldingTime = 0;
-    let positions = 0;
+    const totalHoldingTime = 0;
+    const positions = 0;
 
     for (let i = 0; i < trades.length - 1; i++) {
       if (trades[i].type === "BUY" && trades[i + 1].type === "SELL") {
@@ -816,9 +816,9 @@ export class AdvancedBacktestService {
     const mean1 = returns1.slice(0, n).reduce((sum, r) => sum + r, 0) / n;
     const mean2 = returns2.slice(0, n).reduce((sum, r) => sum + r, 0) / n;
 
-    let numerator = 0;
-    let sumSq1 = 0;
-    let sumSq2 = 0;
+    const numerator = 0;
+    const sumSq1 = 0;
+    const sumSq2 = 0;
 
     for (let i = 0; i < n; i++) {
       const diff1 = returns1[i] - mean1;
@@ -840,7 +840,7 @@ export class AdvancedBacktestService {
     const portfolioReturns: number[] = [];
 
     for (let i = 0; i < maxLength; i++) {
-      let weightedReturn = 0;
+      const weightedReturn = 0;
       for (let j = 0; j < results.length; j++) {
         const trade = results[j].trades[i];
         if (trade) {
@@ -868,7 +868,7 @@ export class AdvancedBacktestService {
     }, 0);
 
     // Portfolio volatility calculation (simplified)
-    let portfolioVariance = 0;
+    const portfolioVariance = 0;
     for (let i = 0; i < weights.length; i++) {
       for (let j = 0; j < weights.length; j++) {
         const vol_i = Math.sqrt(
@@ -912,9 +912,9 @@ export class AdvancedBacktestService {
   }
 
   private calculatePortfolioMaxDrawdown(returns: number[]): number {
-    let peak = -Infinity;
-    let maxDrawdown = 0;
-    let cumulative = 0;
+    const peak = -Infinity;
+    const maxDrawdown = 0;
+    const cumulative = 0;
 
     for (const ret of returns) {
       cumulative += ret;

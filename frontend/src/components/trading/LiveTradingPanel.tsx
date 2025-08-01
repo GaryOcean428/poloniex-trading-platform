@@ -32,7 +32,7 @@ const LiveTradingPanel: React.FC = () => {
         }
       } catch (err) {
         setError('Failed to initialize trading engine');
-        console.error(err);
+        // console.error(err);
       }
     };
     

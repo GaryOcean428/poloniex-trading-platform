@@ -81,7 +81,7 @@ export const generateRandomMarketData = (
   
   // Generate data
   const data: MarketDataPoint[] = [];
-  let lastClose = basePrice;
+  const lastClose = basePrice;
   
   for (let i = 0; i < limit; i++) {
     // Calculate timestamp
@@ -189,7 +189,7 @@ export const generateRandomOrderBook = (
   
   // Generate bids (buy orders)
   const bids = [];
-  let bidPrice = basePrice * (1 - 0.001 * (1 + volatility));
+  const bidPrice = basePrice * (1 - 0.001 * (1 + volatility));
   
   for (let i = 0; i < 50; i++) {
     const priceDecrease = priceStep * (1 + Math.random() * volatility);
@@ -204,7 +204,7 @@ export const generateRandomOrderBook = (
   
   // Generate asks (sell orders)
   const asks = [];
-  let askPrice = basePrice * (1 + 0.001 * (1 + volatility));
+  const askPrice = basePrice * (1 + 0.001 * (1 + volatility));
   
   for (let i = 0; i < 50; i++) {
     const priceIncrease = priceStep * (1 + Math.random() * volatility);
@@ -263,7 +263,7 @@ export const generateRandomTrades = (
   // Generate trades
   const trades: TradeData[] = [];
   const now = Date.now();
-  let lastPrice = basePrice;
+  const lastPrice = basePrice;
   
   for (let i = 0; i < limit; i++) {
     // Calculate price movement

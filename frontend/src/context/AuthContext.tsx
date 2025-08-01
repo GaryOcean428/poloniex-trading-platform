@@ -63,13 +63,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           const isValid = await authService.verifyToken();
           if (!isValid)
           {
-            console.warn('Token verification failed, logging out');
+            // console.warn('Token verification failed, logging out');
             await logout();
           }
         }
       } catch (error)
       {
-        console.error('Auth check error:', error);
+        // console.error('Auth check error:', error);
         await logout();
       } finally
       {
@@ -99,7 +99,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           return true;
         } else
         {
-          console.error('Login failed:', response.error);
+          // console.error('Login failed:', response.error);
           return false;
         }
       } else
@@ -123,7 +123,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       }
     } catch (error)
     {
-      console.error('Login error:', error);
+      // console.error('Login error:', error);
       return false;
     }
   };
@@ -134,7 +134,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       await authService.logout();
     } catch (error)
     {
-      console.error('Logout error:', error);
+      // console.error('Logout error:', error);
     } finally
     {
       setIsLoggedIn(false);
@@ -158,7 +158,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       }
     } catch (error)
     {
-      console.error('Token refresh error:', error);
+      // console.error('Token refresh error:', error);
       await logout();
       return false;
     }

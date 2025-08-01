@@ -48,7 +48,7 @@ export const ConnectionTest: React.FC = () => {
           if (error.message.includes('CORS') || error.message.includes('Failed to fetch')) {
             if (import.meta.env.DEV) {
               // eslint-disable-next-line no-console
-              console.warn('API connection failed due to CORS policy or network error. This is expected in development mode.');
+              // console.warn('API connection failed due to CORS policy or network error. This is expected in development mode.');
             }
             setApiStatus('cors-blocked');
             addToast({
@@ -59,7 +59,7 @@ export const ConnectionTest: React.FC = () => {
           } else {
             if (import.meta.env.DEV) {
               // eslint-disable-next-line no-console
-              console.warn('API connection error:', error.message);
+              // console.warn('API connection error:', error.message);
             }
             setApiStatus('failed');
             addToast({
@@ -108,7 +108,7 @@ export const ConnectionTest: React.FC = () => {
         if (err.message.includes('WebSocket is closed before the connection is established')) {
           if (import.meta.env.DEV) {
             // eslint-disable-next-line no-console
-            console.warn('WebSocket connection failed due to server unavailability. This is expected in development mode.');
+            // console.warn('WebSocket connection failed due to server unavailability. This is expected in development mode.');
           }
           addToast({
             message: 'WebSocket unavailable - using mock data (expected in development)',
@@ -118,7 +118,7 @@ export const ConnectionTest: React.FC = () => {
         } else {
           if (import.meta.env.DEV) {
             // eslint-disable-next-line no-console
-            console.warn('WebSocket error:', err.message);
+            // console.warn('WebSocket error:', err.message);
           }
           addToast({
             message: `WebSocket error: ${err.message}`,

@@ -345,7 +345,7 @@ button.sell:hover {
     const pair = pairSelect.value;
     
     // This would typically make an API call to your backend
-    console.log(\`Buy order placed for \${pair}\`);
+    // console.log(\`Buy order placed for \${pair}\`);
     
     // Show notification to user
     showNotification(\`Buy order placed for \${pair}\`);
@@ -356,7 +356,7 @@ button.sell:hover {
     const pair = pairSelect.value;
     
     // This would typically make an API call to your backend
-    console.log(\`Sell order placed for \${pair}\`);
+    // console.log(\`Sell order placed for \${pair}\`);
     
     // Show notification to user
     showNotification(\`Sell order placed for \${pair}\`);
@@ -426,7 +426,7 @@ button.sell:hover {
 
 // Listen for installation
 chrome.runtime.onInstalled.addListener(() => {
-  console.log('Poloniex Trading Extension installed');
+  // console.log('Poloniex Trading Extension installed');
   
   // Initialize storage with default settings
   chrome.storage.sync.set({
@@ -440,7 +440,7 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.type === 'PLACE_ORDER') {
     // This would typically make an API call to your backend
-    console.log('Order request received:', request);
+    // console.log('Order request received:', request);
     
     // Simulate API call
     setTimeout(() => {
@@ -508,7 +508,7 @@ function checkMarketConditions() {
         priority: 2
       });
     } catch (error) {
-      console.error('Failed to create notification:', error);
+      // console.error('Failed to create notification:', error);
     }
   }
 }`);
@@ -542,7 +542,7 @@ function checkMarketConditions() {
     
     return Promise.resolve();
   } catch (error) {
-    console.error("Error creating extension zip:", error);
+    // console.error("Error creating extension zip:", error);
     return Promise.reject(error);
   }
 };

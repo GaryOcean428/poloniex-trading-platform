@@ -19,7 +19,7 @@ interface ModelData {
   performance: number;
   config?: {
     modelType?: string;
-    [key: string]: any;
+    [key: string]: unknown;
   };
 }
 
@@ -73,7 +73,7 @@ const ModelRecalibrationPanel: React.FC = () => {
           setDqnModels(JSON.parse(dqnModelsJson));
         }
       } catch (err) {
-        console.error('Error loading models:', err);
+        // console.error('Error loading models:', err);
         setError('Failed to load models');
       }
     };
@@ -95,7 +95,7 @@ const ModelRecalibrationPanel: React.FC = () => {
         }));
         setMarketData(convertedData);
       } catch (err) {
-        console.error('Error fetching market data:', err);
+        // console.error('Error fetching market data:', err);
         setError('Failed to fetch market data');
       }
     };
@@ -141,7 +141,7 @@ const ModelRecalibrationPanel: React.FC = () => {
       
       setIsMonitoring(false);
     } catch (err) {
-      console.error('Error monitoring performance:', err);
+      // console.error('Error monitoring performance:', err);
       setError('Failed to monitor performance');
       setIsMonitoring(false);
     }
@@ -201,7 +201,7 @@ const ModelRecalibrationPanel: React.FC = () => {
       
       setIsRecalibrating(false);
     } catch (err) {
-      console.error('Error recalibrating model:', err);
+      // console.error('Error recalibrating model:', err);
       setError('Failed to recalibrate model');
       setIsRecalibrating(false);
     }
@@ -228,7 +228,7 @@ const ModelRecalibrationPanel: React.FC = () => {
           await fetchMarketData('BTC_USDT');
           return poloniexMarketData;
         } catch (err) {
-          console.error('Error fetching new data for auto-recalibration:', err);
+          // console.error('Error fetching new data for auto-recalibration:', err);
           return [];
         }
       };
@@ -271,12 +271,12 @@ const ModelRecalibrationPanel: React.FC = () => {
             }
           }
         } catch (err) {
-          console.error('Error in scheduled recalibration:', err);
+          // console.error('Error in scheduled recalibration:', err);
         }
       };
       
       // Set up interval based on monitoring frequency
-      let intervalMs = 24 * 60 * 60 * 1000; // Default: daily
+      const intervalMs = 24 * 60 * 60 * 1000; // Default: daily
       
       if (recalibrationConfig.monitoringFrequency === 'hourly') {
         intervalMs = 60 * 60 * 1000;

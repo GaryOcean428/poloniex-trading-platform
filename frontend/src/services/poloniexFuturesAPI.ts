@@ -269,7 +269,7 @@ class PoloniexFuturesAPI {
     }
 
     const url = new URL(this.baseUrl + endpoint);
-    let body = "";
+    const body = "";
 
     if (method === "GET" && Object.keys(params).length > 0) {
       Object.keys(params).forEach((key) => {
@@ -299,7 +299,7 @@ class PoloniexFuturesAPI {
 
       return (await response.json()) as T;
     } catch (error) {
-      console.error("Poloniex Futures API request failed:", error);
+      // console.error("Poloniex Futures API request failed:", error);
       throw error;
     }
   }

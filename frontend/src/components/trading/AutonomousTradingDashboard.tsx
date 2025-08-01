@@ -62,13 +62,13 @@ const AutonomousTradingDashboard: React.FC = () => {
             setConnectionStatus(liveAutonomousTradingEngine.getConnectionStatus());
         };
 
-        const handleNotification = (data: any) => {
+        const handleNotification = (data: unknown) => {
             if (data.notification.type === 'CRITICAL') {
                 setError(data.notification.message);
             }
         };
 
-        const handlePerformanceUpdate = (data: any) => {
+        const handlePerformanceUpdate = (data: unknown) => {
             if (session && data.sessionId === session.id) {
                 setSession(prev => prev ? { ...prev, performance: data.performance } : null);
             }

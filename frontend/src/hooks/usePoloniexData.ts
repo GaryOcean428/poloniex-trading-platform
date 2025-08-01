@@ -9,7 +9,7 @@ import { shouldUseMockMode, IS_WEBCONTAINER } from '@/utils/environment';
 interface PoloniexDataHook {
   marketData: MarketData[];
   trades: Trade[];
-  accountBalance: any;
+  accountBalance: unknown;
   isLoading: boolean;
   error: Error | null;
   isMockMode: boolean;
@@ -40,7 +40,7 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
 
   // Helper function to map Poloniex data to MarketData format
   
-  const mapPoloniexDataToMarketData = useCallback((data: any[]): MarketData[] => {
+  const mapPoloniexDataToMarketData = useCallback((data: unknown[]): MarketData[] => {
     try {
       return data.map(item => ({
         pair: initialPair,
@@ -52,12 +52,12 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
         volume: parseFloat(item[5])
       }));
     } catch (err) {
-      console.error('Error mapping Poloniex data:', err instanceof Error ? err.message : String(err));
+      // console.error('Error mapping Poloniex data:', err instanceof Error ? err.message : String(err));
       return [];
     }
   }, [initialPair]);
   
-  const mapPoloniexTradeToTrade = useCallback((trade: any): Trade => {
+  const mapPoloniexTradeToTrade = useCallback((trade: unknown): Trade => {
     try {
       return {
         id: trade.id || `generated-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
@@ -71,7 +71,7 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
         status: 'COMPLETED'
       };
     } catch (err) {
-      console.error('Error mapping Poloniex trade:', err instanceof Error ? err.message : String(err));
+      // console.error('Error mapping Poloniex trade:', err instanceof Error ? err.message : String(err));
       return {
         id: `error-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
         pair: initialPair,
@@ -124,7 +124,7 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
       }
     } catch (err) {
       const error = err as Error;
-      console.error('Error fetching market data:', error.message);
+      // console.error('Error fetching market data:', error.message);
       setError(error);
       // Don't fall back to mock data - let the UI handle the error
     } finally {
@@ -157,8 +157,8 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
       // Note: getRecentTrades method does not exist in current API, using placeholder
       // Use getRecentTrades method or fallback to empty array
       // Mock data for now since getRecentTrades doesn't exist
-      const data: any[] = [];
-      console.log('Poloniex API method getRecentTrades not available, using mock data');
+      const data: unknown[] = [];
+      // console.log('Poloniex API method getRecentTrades not available, using mock data');
       
       if (data && Array.isArray(data)) {
         const formattedTrades = data.map(mapPoloniexTradeToTrade).filter(trade => 
@@ -175,7 +175,7 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
       }
     } catch (err) {
       const error = err as Error;
-      console.error('Error fetching trades:', error.message);
+      // console.error('Error fetching trades:', error.message);
       setError(error);
       // Don't fall back to mock data - let the UI handle the error
     } finally {
@@ -223,7 +223,7 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
       setAccountBalance(data);
     } catch (err) {
       const error = err as Error;
-      console.error('Error fetching account balance:', error.message);
+      // console.error('Error fetching account balance:', error.message);
       setError(error);
       // Don't fall back to mock data - let the UI handle the error
     } finally {
@@ -330,7 +330,7 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
         }
       })
       .catch(err => {
-        console.error('Error connecting to WebSocket:', err instanceof Error ? err.message : String(err));
+        // console.error('Error connecting to WebSocket:', err instanceof Error ? err.message : String(err));
         setIsMockMode(true);
         setMarketData(mockMarketData);
         setTrades(mockTrades);

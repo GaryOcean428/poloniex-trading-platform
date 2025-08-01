@@ -87,17 +87,17 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
 
   // Set up event listeners
   useEffect(() => {
-    const handleConnectionChange = (_data: any) => {
+    const handleConnectionChange = (_data: unknown) => {
       setConnectionStatus(liveAutonomousTradingEngine.getConnectionStatus());
     };
 
-    const handleNotification = (data: any) => {
+    const handleNotification = (data: unknown) => {
       if (data.notification.type === 'CRITICAL') {
         setError(data.notification.message);
       }
     };
 
-    const handlePerformanceUpdate = (data: any) => {
+    const handlePerformanceUpdate = (data: unknown) => {
       if (session && data.sessionId === session.id) {
         setSession(prev => prev ? { ...prev, performance: data.performance } : null);
       }
@@ -129,7 +129,7 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
         }));
       }
     } catch (error) {
-      console.error('Failed to load configuration:', error);
+      // console.error('Failed to load configuration:', error);
     }
   };
 

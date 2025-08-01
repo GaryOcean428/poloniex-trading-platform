@@ -354,7 +354,7 @@ export class ErrorHandler {
   /**
    * Get error statistics
    */
-  getErrorStats(timeWindow?: number): any {
+  getErrorStats(timeWindow?: number): unknown {
     const cutoff = timeWindow ? Date.now() - timeWindow : 0;
     const relevantErrors = this.errors.filter(e => e.context.timestamp >= cutoff);
 
@@ -394,10 +394,10 @@ export class ErrorHandler {
   /**
    * Create a safe wrapper for async operations
    */
-  createSafeWrapper<T extends (...args: any[]) => Promise<any>>(
+  createSafeWrapper<T extends (...args: unknown[]) => Promise<any>>(
     operation: T,
     context: Partial<ErrorContext>,
-    fallbackValue?: any
+    fallbackValue?: unknown
   ): T {
     return (async (...args: Parameters<T>) => {
       try {
@@ -461,20 +461,20 @@ export class ErrorHandler {
       try {
         listener(errorInfo);
       } catch (listenerError) {
-        console.error('Error in error listener:', listenerError);
+        // console.error('Error in error listener:', listenerError);
       }
     });
 
     // Console logging based on severity
     switch (error.severity) {
       case ErrorSeverity.CRITICAL:
-        console.error('CRITICAL ERROR:', error);
+        // console.error('CRITICAL ERROR:', error);
         break;
       case ErrorSeverity.HIGH:
-        console.error('HIGH SEVERITY ERROR:', error);
+        // console.error('HIGH SEVERITY ERROR:', error);
         break;
       case ErrorSeverity.MEDIUM:
-        console.warn('MEDIUM SEVERITY ERROR:', error);
+        // console.warn('MEDIUM SEVERITY ERROR:', error);
         break;
       case ErrorSeverity.LOW:
         console.info('LOW SEVERITY ERROR:', error);
@@ -508,7 +508,7 @@ export class ErrorHandler {
    * Apply fallback strategies
    */
   private async applyFallback<T>(error: EnhancedError): Promise<T | null> {
-    console.warn(`Applying fallback for error: ${error.message}`);
+    // console.warn(`Applying fallback for error: ${error.message}`);
 
     // Try cached data first
     if (this.fallbackConfig.enableCachedData) {
@@ -652,7 +652,7 @@ export class ErrorHandler {
   /**
    * Get cached data for fallback
    */
-  private getCachedData(action: string): any {
+  private getCachedData(action: string): unknown {
     if (typeof localStorage !== 'undefined') {
       try {
         const cached = localStorage.getItem(`fallback_${action}`);
@@ -667,7 +667,7 @@ export class ErrorHandler {
   /**
    * Get mock data for fallback
    */
-  private getMockData(action: string): any {
+  private getMockData(action: string): unknown {
     const mockData: Record<string, any> = {
       getMarketData: [
         { timestamp: Date.now(), open: 50000, high: 51000, low: 49000, close: 50500, volume: 1000 }
@@ -682,7 +682,7 @@ export class ErrorHandler {
   /**
    * Get reduced functionality fallback
    */
-  private getReducedFunctionality(action: string): any {
+  private getReducedFunctionality(action: string): unknown {
     // Return minimal functionality or empty states
     const reducedFunctionality: Record<string, any> = {
       getMarketData: [],
@@ -780,7 +780,7 @@ export const errorUtils = {
   /**
    * Decorator for automatic error handling
    */
-  withErrorHandling: <T extends (...args: any[]) => Promise<any>>(
+  withErrorHandling: <T extends (...args: unknown[]) => Promise<any>>(
     target: T,
     context: Partial<ErrorContext>
   ): T => {
@@ -790,9 +790,9 @@ export const errorUtils = {
   /**
    * Create error boundary component
    */
-  createErrorBoundary: (fallbackComponent: any, context: Partial<ErrorContext>) => {
+  createErrorBoundary: (fallbackComponent: unknown, context: Partial<ErrorContext>) => {
     return class ErrorBoundary extends React.Component {
-      constructor(props: any) {
+      constructor(props: unknown) {
         super(props);
         this.state = { hasError: false, error: null };
       }
@@ -801,7 +801,7 @@ export const errorUtils = {
         return { hasError: true, error };
       }
 
-      componentDidCatch(error: Error, errorInfo: any) {
+      componentDidCatch(error: Error, errorInfo: unknown) {
         errorHandler.handleError(error, {
           ...context,
           action: 'component_error',

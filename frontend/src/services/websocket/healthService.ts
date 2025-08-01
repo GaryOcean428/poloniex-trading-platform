@@ -46,7 +46,7 @@ export class HealthService {
 
           // If we haven't received a pong or it's too old
           if (pongElapsed <= 0 || pongElapsed > this.PING_TIMEOUT) {
-            console.warn(`WebSocket ping timeout after ${this.PING_TIMEOUT}ms`);
+            // console.warn(`WebSocket ping timeout after ${this.PING_TIMEOUT}ms`);
 
             // Force disconnect and reconnect
             if (this.socket) {
@@ -236,7 +236,7 @@ export class HealthService {
       const health = this.getConnectionHealth();
 
       if (!this.isConnectionHealthy()) {
-        console.warn("Connection health is poor:", health);
+        // console.warn("Connection health is poor:", health);
       }
     }, 60000); // Check every minute
   }
