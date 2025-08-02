@@ -19,12 +19,14 @@ router.get('/', async (req, res) => {
           version: process.env.npm_package_version || '1.0.0'
         },
         database: {
-          status: 'healthy', // This would be checked against actual DB in real implementation
-          lastCheck: new Date().toISOString()
+          status: 'unknown', // Placeholder - implement actual DB health check
+          lastCheck: new Date().toISOString(),
+          note: 'Health check not implemented'
         },
         websocket: {
-          status: 'healthy',
-          connections: 0 // This would be actual connection count in real implementation
+          status: 'unknown', // Placeholder - implement actual WS health check
+          connections: 0,
+          note: 'Health check not implemented'
         }
       },
       features: {
