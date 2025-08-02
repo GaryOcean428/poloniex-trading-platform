@@ -12,7 +12,8 @@ import {
   Settings,
   TrendingUp,
   User,
-  Zap
+  Zap,
+  AlertCircle
 } from 'lucide-react';
 import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
@@ -37,6 +38,7 @@ const Sidebar: React.FC = () => {
     { path: '/performance', label: 'Performance', icon: <LineChart size={20} /> },
     { path: '/chat', label: 'Community Chat', icon: <MessageSquare size={20} /> },
     { path: '/extension', label: 'Chrome Extension', icon: <Chrome size={20} /> },
+    { path: '/status', label: 'System Status', icon: <AlertCircle size={20} /> },
     { path: '/settings', label: 'Settings', icon: <Settings size={20} /> }
   ];
 
