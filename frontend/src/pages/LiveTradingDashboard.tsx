@@ -6,7 +6,6 @@ import RealTimePortfolio from '../components/dashboard/RealTimePortfolio';
 import RealTimeAlerts from '../components/dashboard/RealTimeAlerts';
 import RecentTrades from '../components/dashboard/RecentTrades';
 import StrategyPerformance from '../components/dashboard/StrategyPerformance';
-import MockModeNotice from '../components/MockModeNotice';
 import { 
   Activity, 
   Clock,
@@ -215,12 +214,6 @@ const LiveTradingDashboard: React.FC = () => {
           </button>
         </div>
       </div>
-
-      {(isMockMode || wsIsMockMode) && (
-        <div className="mb-6">
-          <MockModeNotice />
-        </div>
-      )}
 
       {/* Real-time Portfolio Overview */}
       <div className="mb-6">

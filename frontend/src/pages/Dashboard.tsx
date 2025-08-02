@@ -8,7 +8,6 @@ import AccountSummary from '../components/dashboard/AccountSummary';
 import QuickTrade from '../components/dashboard/QuickTrade';
 import RealTimeMarketTicker from '../components/dashboard/RealTimeMarketTicker';
 import TradingInsights from '../components/TradingInsights';
-import MockModeNotice from '../components/MockModeNotice';
 import ExtensionBanner from '../components/dashboard/ExtensionBanner';
 import AutonomousTradingDashboard from '../components/trading/AutonomousTradingDashboard';
 import { mockTrades } from '../data/mockData';
@@ -34,12 +33,6 @@ const Dashboard: React.FC = () => {
           </Link>
         </div>
       </div>
-      
-      {isMockMode && (
-        <div className="mb-4 lg:mb-6">
-          <MockModeNotice />
-        </div>
-      )}
       
       <div className="mb-4 lg:mb-6">
         <ExtensionBanner />
