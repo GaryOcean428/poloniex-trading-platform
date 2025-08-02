@@ -73,13 +73,20 @@ const Status: React.FC = () => {
       setLoading(true);
       const response = await fetch('/api/status');
       if (!response.ok) {
-        throw new Error('Failed to fetch status');
+        const errorMessage = response.status === 404 
+          ? 'Status endpoint not found' 
+          : `Server error: ${response.status} ${response.statusText}`;
+        throw new Error(errorMessage);
       }
       const data = await response.json();
       setStatusData(data);
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
+      if (err instanceof TypeError && err.message.includes('fetch')) {
+        setError('Network connection failed - check if server is running');
+      } else {
+        setError(err instanceof Error ? err.message : 'Unknown error');
+      }
     } finally {
       setLoading(false);
     }
