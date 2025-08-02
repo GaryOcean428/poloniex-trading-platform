@@ -150,7 +150,7 @@ class OpenAITradingService {
   }
 
   private buildTradingPrompt(data: TradingData, userQuery?: string): string {
-    const prompt = `Analyze ${data.symbol} trading data:
+    let prompt = `Analyze ${data.symbol} trading data:
     - Current Price: $${data.price.toFixed(2)}
     - 24h Change: ${data.change24h.toFixed(2)}%
     - Volume: ${data.volume.toLocaleString()}`;

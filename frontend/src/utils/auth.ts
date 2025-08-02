@@ -33,7 +33,7 @@ export function generateSignature({
   secret
 }: SignatureParams): string {
   // Create the string to sign
-  const signString = `${method}\n${path}`;
+  let signString = `${method}\n${path}`;
   
   if (queryString) {
     signString += `?${queryString}`;
