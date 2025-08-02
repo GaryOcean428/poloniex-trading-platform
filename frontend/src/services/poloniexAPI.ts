@@ -266,7 +266,7 @@ class PoloniexApiClient {
     const hourMs = 60 * 60 * 1000;
     const data: MarketData[] = [];
 
-    const basePrice = 50000;
+    let basePrice = 50000;
 
     for (let time = start; time <= end; time += hourMs) {
       const volatility = basePrice * 0.01;

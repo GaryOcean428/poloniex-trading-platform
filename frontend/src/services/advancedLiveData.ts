@@ -452,7 +452,7 @@ export class LiveDataService {
       );
 
       const processedData = marketData.map((point) => {
-        const processed = point;
+        let processed = point;
         if (this.config.enableDataNormalization) {
           processed = this.normalizeData(processed);
         }

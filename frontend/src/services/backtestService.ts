@@ -48,7 +48,7 @@ export class BacktestService {
       );
       
       // Initialize backtest state
-      const balance = options.initialBalance;
+      let balance = options.initialBalance;
       // Position tracking variable (not currently used but kept for future implementation)
       // let position = 0;
       const trades: BacktestTrade[] = [];

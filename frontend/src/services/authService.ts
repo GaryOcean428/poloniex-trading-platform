@@ -228,7 +228,7 @@ export class AuthService {
     data?: unknown
   ): Promise<ApiResponse<T>> {
     try {
-      const token = getAccessToken();
+      let token = getAccessToken();
 
       // Check if we need to refresh the token
       if (shouldRefreshToken()) {

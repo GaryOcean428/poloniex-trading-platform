@@ -102,7 +102,7 @@ const HistoricalDataManager: React.FC<HistoricalDataManagerProps> = ({ onDataLoa
     try {
       // Simulate data loading with progress
       const totalSteps = request.symbols.length * request.timeframes.length;
-      const completedSteps = 0;
+      let completedSteps = 0;
 
       const mockDataQuality: DataQuality[] = [];
       const historicalData: HistoricalData[] = [];

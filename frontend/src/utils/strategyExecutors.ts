@@ -134,7 +134,7 @@ function executeRSI(
   const previousRSI = rsi[rsi.length - 2];
   
   // Calculate confidence based on distance from thresholds
-  const confidence = 0;
+  let confidence = 0;
   
   if (currentRSI < oversold) {
     confidence = Math.min(0.9, (oversold - currentRSI) / oversold);
@@ -259,7 +259,7 @@ function executeBollingerBands(
   // Middle band value not used in this function
   
   // Calculate confidence based on position within bands
-  const confidence = 0;
+  let confidence = 0;
   
   if (currentPrice < currentLower) {
     confidence = Math.min(0.9, (currentLower - currentPrice) / (currentLower * 0.05));
