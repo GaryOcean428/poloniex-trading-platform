@@ -89,7 +89,11 @@ const Status: React.FC = () => {
     const newDismissed = new Set(dismissedNotifications);
     newDismissed.add(id);
     setDismissedNotifications(newDismissed);
-    localStorage.setItem('dismissedStatusNotifications', JSON.stringify([...newDismissed]));
+    try {
+      localStorage.setItem('dismissedStatusNotifications', JSON.stringify([...newDismissed]));
+    } catch (error) {
+      console.warn('Failed to save dismissed notifications to localStorage:', error);
+    }
   };
 
   const getStatusIcon = (status: string) => {
