@@ -33,6 +33,7 @@ const RouteGuard: React.FC<RouteGuardProps> = ({ children }) => {
       '/chat', 
       '/settings', 
       '/extension',
+      '/status',
       '/login',
       '/dashboard/live',
       '/404'
