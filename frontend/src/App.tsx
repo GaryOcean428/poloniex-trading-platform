@@ -4,7 +4,7 @@ import Navbar from './components/Navbar';
 import Sidebar from './components/Sidebar';
 import SkipLinks from './components/SkipLinks';
 import ConnectionHealth from './components/ConnectionHealth';
-import { ConfigurationStatus } from './components/ConfigurationStatus';
+
 import { EnvDebug } from './components/EnvDebug';
 import { ConnectionTest } from './components/ConnectionTest';
 import PWAInstallPrompt from './components/PWAInstallPrompt';
@@ -103,7 +103,7 @@ function App() {
                 </div>
                 <Integration />
                 <ToastContainer />
-                <ConfigurationStatus />
+
                 <ConnectionHealth />
                 <EnvDebug />
                 <ConnectionTest />
