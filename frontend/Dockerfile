@@ -22,6 +22,18 @@ COPY frontend/ ./frontend/
 # Copy shared code if it exists
 COPY shared/ ./shared/ 2>/dev/null || true
 
+# Build-time environment variables for Railway deployment
+ARG VITE_BACKEND_URL
+ARG VITE_WS_URL
+ARG VITE_RAILWAY_PUBLIC_DOMAIN
+ARG VITE_RAILWAY_PRIVATE_DOMAIN
+
+# Set environment variables during build
+ENV VITE_BACKEND_URL=$VITE_BACKEND_URL
+ENV VITE_WS_URL=$VITE_WS_URL
+ENV VITE_RAILWAY_PUBLIC_DOMAIN=$VITE_RAILWAY_PUBLIC_DOMAIN
+ENV VITE_RAILWAY_PRIVATE_DOMAIN=$VITE_RAILWAY_PRIVATE_DOMAIN
+
 # Build the frontend application
 RUN cd frontend && yarn build
 

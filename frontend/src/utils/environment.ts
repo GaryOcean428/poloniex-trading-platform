@@ -110,34 +110,40 @@ export const getBaseUrl = () => {
 
 // Get backend API URL with proper protocol and Railway support
 export const getBackendUrl = (): string => {
+  // Priority 1: Explicit backend URL
   const envUrl = getEnvVariable('VITE_BACKEND_URL');
   if (envUrl) return envUrl;
   
-  // Check for local development first (localhost or 127.0.0.1)
+  // Priority 2: Railway environment variables
+  const railwayPublicDomain = getEnvVariable('VITE_RAILWAY_PUBLIC_DOMAIN');
+  if (railwayPublicDomain) {
+    return `https://${railwayPublicDomain}`;
+  }
+  
+  const railwayPrivateDomain = getEnvVariable('VITE_RAILWAY_PRIVATE_DOMAIN');
+  if (railwayPrivateDomain) {
+    return `https://${railwayPrivateDomain}`;
+  }
+  
+  // Priority 3: Environment detection
   if (typeof window !== 'undefined' && window.location) {
     const hostname = window.location.hostname;
     const protocol = window.location.protocol;
     
+    // Local development
     if (hostname === 'localhost' || hostname === '127.0.0.1') {
       // Use .clinerules compliant backend port range (8765-8799)
       return `${protocol}//localhost:8765`;
     }
     
-    // For Railway deployment, use Railway reference variables
-    const railwayPublicDomain = getEnvVariable('VITE_RAILWAY_PUBLIC_DOMAIN');
-    const railwayPrivateDomain = getEnvVariable('VITE_RAILWAY_PRIVATE_DOMAIN');
-    
-    if (railwayPublicDomain) {
-      return `https://${railwayPublicDomain}`;
-    }
-    
-    if (railwayPrivateDomain) {
-      return `https://${railwayPrivateDomain}`;
-    }
-    
-    // Legacy Railway support
+    // Railway deployment detection
     if (hostname.includes('railway.app') || hostname.includes('up.railway.app')) {
       return 'https://polytrade-be.up.railway.app';
+    }
+    
+    // WebContainer detection
+    if (hostname.includes('webcontainer-api.io')) {
+      return `${protocol}//${hostname}:8765`;
     }
     
     // Fall back to same origin for other cases
@@ -150,6 +156,11 @@ export const getBackendUrl = (): string => {
 
 // Get WebSocket URL with proper protocol handling for Railway deployment
 export const getWebSocketUrl = (): string => {
+  // Priority 1: Explicit WebSocket URL
+  const explicitWsUrl = getEnvVariable('VITE_WS_URL');
+  if (explicitWsUrl) return explicitWsUrl;
+  
+  // Priority 2: Convert backend URL to WebSocket URL
   const backendUrl = getBackendUrl();
   
   // Convert HTTP/HTTPS to WS/WSS appropriately
