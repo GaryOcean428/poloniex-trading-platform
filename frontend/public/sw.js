@@ -1,9 +1,22 @@
-const CACHE_NAME = 'poloniex-trading-v1';
+const CACHE_NAME = 'poloniex-trading-v1.1';
 const STATIC_ASSETS = [
   '/',
   '/manifest.json',
-  '/favicon.ico'
+  '/favicon.ico',
+  '/favicon-16x16.png',
+  '/favicon-32x32.png',
+  '/apple-touch-icon.png',
+  '/icon-192.png',
+  '/icon-512.png'
 ];
+
+// Cache trading data for offline access
+const TRADING_DATA_CACHE = 'trading-data-v1';
+const OFFLINE_FALLBACK_DATA = {
+  markets: [],
+  lastUpdate: new Date().toISOString(),
+  offline: true
+};
 
 // Install event - cache static assets
 self.addEventListener('install', (event) => {
@@ -82,11 +95,53 @@ self.addEventListener('fetch', (event) => {
                 caches.open(CACHE_NAME).then((cache) => {
                   cache.put(event.request, responseClone);
                 });
+                
+                // Cache trading data separately for offline access
+                if (event.request.url.includes('/api/market') || 
+                    event.request.url.includes('/api/trade')) {
+                  response.clone().json().then((data) => {
+                    caches.open(TRADING_DATA_CACHE).then((cache) => {
+                      cache.put(event.request, new Response(JSON.stringify({
+                        ...data,
+                        cached: true,
+                        cacheTime: new Date().toISOString()
+                      })));
+                    });
+                  }).catch(() => {
+                    // Ignore JSON parsing errors
+                  });
+                }
               }
               return response;
             })
             .catch(() => {
-              // Return a basic offline response for API calls
+              // Try to return cached trading data for offline mode
+              if (event.request.url.includes('/api/market') || 
+                  event.request.url.includes('/api/trade')) {
+                return caches.open(TRADING_DATA_CACHE).then((cache) => {
+                  return cache.match(event.request).then((cachedResponse) => {
+                    if (cachedResponse) {
+                      return cachedResponse;
+                    }
+                    // Return fallback offline data
+                    return new Response(
+                      JSON.stringify({
+                        ...OFFLINE_FALLBACK_DATA,
+                        message: 'Using offline data due to connectivity issues'
+                      }),
+                      {
+                        status: 200,
+                        statusText: 'OK (Offline)',
+                        headers: {
+                          'Content-Type': 'application/json'
+                        }
+                      }
+                    );
+                  });
+                });
+              }
+              
+              // Return a basic offline response for other API calls
               return new Response(
                 JSON.stringify({ 
                   error: 'Offline', 
