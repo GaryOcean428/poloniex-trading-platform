@@ -67,9 +67,14 @@ export const getWebSocketUrl = (): string => {
       return `${protocol === 'https:' ? 'wss:' : 'ws:'}//${hostname}:8765`;
     }
 
-    // Railway detection
+    // Railway detection (derive from env or same-origin)
     if (hostname.includes('railway.app') || hostname.includes('up.railway.app')) {
-      return 'wss://polytrade-be.up.railway.app';
+      const railwayPublicDomain = getEnvVariable('VITE_RAILWAY_PUBLIC_DOMAIN');
+      if (railwayPublicDomain) {
+        return `wss://${railwayPublicDomain}`;
+      }
+      // Fallback to same-origin protocol/host
+      return `${protocol === 'https:' ? 'wss:' : 'ws:'}//${hostname}`;
     }
 
     // WebContainer detection
