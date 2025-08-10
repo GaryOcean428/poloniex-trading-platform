@@ -13,7 +13,7 @@ export const useAccessibility = () => {
     const focusableElements = containerElement.querySelectorAll(
       'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
     );
-    
+
     const firstElement = focusableElements[0] as HTMLElement;
     const lastElement = focusableElements[focusableElements.length - 1] as HTMLElement;
 
@@ -34,7 +34,7 @@ export const useAccessibility = () => {
     };
 
     containerElement.addEventListener('keydown', handleTabKeyPress);
-    
+
     return () => {
       containerElement.removeEventListener('keydown', handleTabKeyPress);
     };
@@ -51,7 +51,7 @@ export const useAccessibility = () => {
     };
 
     document.addEventListener('keydown', handleKeyPress);
-    
+
     return () => {
       document.removeEventListener('keydown', handleKeyPress);
     };
@@ -120,7 +120,7 @@ export const useKeyboardNavigation = (
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     const { key } = e;
-    const newIndex = currentIndex.current;
+    let newIndex = currentIndex.current;
 
     switch (key) {
       case 'ArrowDown':
@@ -133,7 +133,7 @@ export const useKeyboardNavigation = (
           newIndex = Math.min(currentIndex.current + 1, itemCount - 1);
         }
         break;
-      
+
       case 'ArrowUp':
         e.preventDefault();
         if (columns) {
@@ -144,31 +144,31 @@ export const useKeyboardNavigation = (
           newIndex = Math.max(currentIndex.current - 1, 0);
         }
         break;
-      
+
       case 'ArrowRight':
         if (columns) {
           e.preventDefault();
           newIndex = Math.min(currentIndex.current + 1, itemCount - 1);
         }
         break;
-      
+
       case 'ArrowLeft':
         if (columns) {
           e.preventDefault();
           newIndex = Math.max(currentIndex.current - 1, 0);
         }
         break;
-      
+
       case 'Home':
         e.preventDefault();
         newIndex = 0;
         break;
-      
+
       case 'End':
         e.preventDefault();
         newIndex = itemCount - 1;
         break;
-      
+
       case 'Enter':
       case ' ':
         e.preventDefault();

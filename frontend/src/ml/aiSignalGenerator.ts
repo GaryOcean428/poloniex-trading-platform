@@ -56,16 +56,16 @@ export class AISignalGenerator {
 
       // Extract features
       const features = this.extractFeatures(marketData);
-      
+
       // Calculate technical indicators
       const technicalSignal = this.calculateTechnicalSignal(features);
-      
+
       // Apply ML prediction (simplified for now)
       const mlPrediction = this.calculateMLPrediction(features);
-      
+
       // Combine signals
       const combinedSignal = this.combineSignals(technicalSignal, mlPrediction);
-      
+
       // Apply risk management
       if (this.config.enableRiskManagement) {
         return this.applyRiskManagement(combinedSignal, features);
@@ -97,24 +97,24 @@ export class AISignalGenerator {
     const currentPrice = prices[prices.length - 1];
     const priceChange = (currentPrice - prices[0]) / prices[0];
     const volatility = this.calculateVolatility(prices);
-    
+
     // Moving averages
     const sma5 = this.calculateSMA(prices, 5);
     const sma10 = this.calculateSMA(prices, 10);
     const sma20 = this.calculateSMA(prices, 20);
-    
+
     // Technical indicators
     const rsi = this.calculateRSI(prices, 14);
     const macd = this.calculateMACD(prices);
     const bbands = this.calculateBollingerBands(prices, 20);
-    
+
     // Volume features
     const avgVolume = volumes.reduce((a, b) => a + b, 0) / volumes.length;
     const volumeRatio = volumes[volumes.length - 1] / avgVolume;
-    
+
     // Momentum features
     const momentum = (prices[prices.length - 1] - prices[prices.length - 5]) / prices[prices.length - 5];
-    
+
     return {
       currentPrice,
       priceChange,
@@ -140,8 +140,8 @@ export class AISignalGenerator {
    * Calculate technical analysis signal
    */
   private calculateTechnicalSignal(features: Record<string, number>): AISignal {
-    const score = 0;
-    const confidence = 0;
+    let score = 0;
+    let confidence = 0;
     const reasons: string[] = [];
 
     // Moving Average signals
@@ -221,7 +221,7 @@ export class AISignalGenerator {
   private calculateMLPrediction(features: Record<string, number>): AISignal {
     // This is a simplified ML prediction
     // In a real implementation, this would use trained models
-    
+
     const weights = {
       priceChange: 0.3,
       rsi: -0.2, // Contrarian indicator
@@ -231,7 +231,7 @@ export class AISignalGenerator {
       volatility: -0.1 // Lower volatility preferred
     };
 
-    const mlScore = 0;
+    let mlScore = 0;
     Object.entries(weights).forEach(([feature, weight]) => {
       if (features[feature] !== undefined) {
         mlScore += this.normalizeFeature(features[feature], feature) * weight;
@@ -270,10 +270,10 @@ export class AISignalGenerator {
     const mlScore = mlSignal.action === 'BUY' ? 1 : mlSignal.action === 'SELL' ? -1 : 0;
 
     // Combine scores
-    const combinedScore = (techScore * techSignal.confidence * techWeight) + 
+    const combinedScore = (techScore * techSignal.confidence * techWeight) +
                          (mlScore * mlSignal.confidence * mlWeight);
 
-    const combinedConfidence = (techSignal.confidence * techWeight) + 
+    const combinedConfidence = (techSignal.confidence * techWeight) +
                               (mlSignal.confidence * mlWeight);
 
     let finalAction: 'BUY' | 'SELL' | 'HOLD' = 'HOLD';
@@ -320,7 +320,7 @@ export class AISignalGenerator {
     }
 
     // Reduce confidence based on risk level
-    const adjustedConfidence = signal.confidence;
+    let adjustedConfidence = signal.confidence;
     if (signal.riskLevel === 'HIGH') {
       adjustedConfidence *= 0.7;
     } else if (signal.riskLevel === 'MEDIUM') {
@@ -344,7 +344,7 @@ export class AISignalGenerator {
 
   private calculateRSI(prices: number[], period: number): number {
     if (prices.length < period + 1) return 50; // Neutral
-    
+
     const changes = [];
     for (let i = 1; i < prices.length; i++) {
       changes.push(prices[i] - prices[i - 1]);
@@ -366,7 +366,7 @@ export class AISignalGenerator {
     const ema12 = this.calculateEMA(prices, 12);
     const ema26 = this.calculateEMA(prices, 26);
     const macd = ema12 - ema26;
-    
+
     // Simplified signal line calculation
     const signal = this.calculateEMA([macd], 9);
     const histogram = macd - signal;
@@ -377,25 +377,25 @@ export class AISignalGenerator {
   private calculateEMA(prices: number[], period: number): number {
     if (prices.length === 0) return 0;
     if (prices.length === 1) return prices[0];
-    
+
     const multiplier = 2 / (period + 1);
-    const ema = prices[0];
-    
+    let ema = prices[0];
+
     for (let i = 1; i < prices.length; i++) {
       ema = (prices[i] * multiplier) + (ema * (1 - multiplier));
     }
-    
+
     return ema;
   }
 
   private calculateBollingerBands(prices: number[], period: number): { upper: number; middle: number; lower: number } {
     const sma = this.calculateSMA(prices, period);
     const recent = prices.slice(-period);
-    
+
     // Calculate standard deviation
     const variance = recent.reduce((acc, price) => acc + Math.pow(price - sma, 2), 0) / period;
     const stdDev = Math.sqrt(variance);
-    
+
     return {
       upper: sma + (stdDev * 2),
       middle: sma,
@@ -405,22 +405,22 @@ export class AISignalGenerator {
 
   private calculateVolatility(prices: number[]): number {
     if (prices.length < 2) return 0;
-    
+
     const returns = [];
     for (let i = 1; i < prices.length; i++) {
       returns.push((prices[i] - prices[i - 1]) / prices[i - 1]);
     }
-    
+
     const avgReturn = returns.reduce((a, b) => a + b, 0) / returns.length;
     const variance = returns.reduce((acc, ret) => acc + Math.pow(ret - avgReturn, 2), 0) / returns.length;
-    
+
     return Math.sqrt(variance);
   }
 
   private calculateRiskLevel(features: Record<string, number>): 'LOW' | 'MEDIUM' | 'HIGH' {
     const volatility = features.volatility;
     const volumeRatio = features.volumeRatio;
-    
+
     if (volatility > 0.05 || volumeRatio > 3) {
       return 'HIGH';
     } else if (volatility > 0.02 || volumeRatio > 1.5) {
@@ -433,7 +433,7 @@ export class AISignalGenerator {
     // Base expected return on signal strength and market conditions
     const baseReturn = Math.abs(score) * 0.02; // 2% max base return
     const volatilityAdjustment = Math.min(features.volatility * 5, 0.03); // Volatility can add up to 3%
-    
+
     return Math.sign(score) * (baseReturn + volatilityAdjustment);
   }
 

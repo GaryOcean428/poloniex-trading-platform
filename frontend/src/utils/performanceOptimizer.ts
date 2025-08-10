@@ -8,20 +8,20 @@ export interface PerformanceConfig {
   enableCaching: boolean;
   cacheMaxSize: number;
   cacheExpiryMs: number;
-  
+
   // Batching settings
   enableBatching: boolean;
   batchSize: number;
   batchDelayMs: number;
-  
+
   // Rate limiting settings
   maxRequestsPerSecond: number;
   maxConcurrentRequests: number;
-  
+
   // Memory management
   maxMemoryUsageMB: number;
   gcThresholdMB: number;
-  
+
   // WebSocket optimization
   wsHeartbeatInterval: number;
   wsReconnectDelay: number;
@@ -76,24 +76,24 @@ export class PerformanceOptimizer {
       enableCaching: true,
       cacheMaxSize: 1000,
       cacheExpiryMs: 300000, // 5 minutes
-      
+
       enableBatching: true,
       batchSize: 10,
       batchDelayMs: 100,
-      
+
       maxRequestsPerSecond: 10,
       maxConcurrentRequests: 5,
-      
+
       maxMemoryUsageMB: 512,
       gcThresholdMB: 256,
-      
+
       wsHeartbeatInterval: 30000,
       wsReconnectDelay: 5000,
       wsMaxReconnectAttempts: 5,
-      
+
       ...config
     };
-    
+
     this.startCacheCleanup();
     this.startMetricsCollection();
   }
@@ -107,7 +107,7 @@ export class PerformanceOptimizer {
     forceRefresh: boolean = false
   ): Promise<T> {
     const startTime = performance.now();
-    
+
     try {
       // Check cache first
       if (!forceRefresh && this.config.enableCaching) {
@@ -117,27 +117,27 @@ export class PerformanceOptimizer {
           return cached;
         }
       }
-      
+
       // Apply rate limiting
       if (!this.checkRateLimit('api')) {
         throw new Error('Rate limit exceeded');
       }
-      
+
       // Check concurrent request limit
       if (this.activeRequests >= this.config.maxConcurrentRequests) {
         await this.waitForSlot();
       }
-      
+
       this.activeRequests++;
-      
+
       try {
         const result = await requestFn();
-        
+
         // Cache the result
         if (this.config.enableCaching) {
           this.setCached(key, result);
         }
-        
+
         this.updateMetrics('cacheMiss', performance.now() - startTime, true);
         return result;
       } finally {
@@ -154,12 +154,12 @@ export class PerformanceOptimizer {
    */
   async batchRequest<T>(
     type: string,
-    params: unknown
+    params: Record<string, unknown>
   ): Promise<T> {
     if (!this.config.enableBatching) {
       throw new Error('Batching is disabled');
     }
-    
+
     return new Promise<T>((resolve, reject) => {
       const request: BatchRequest = {
         id: `${type}_${Date.now()}_${Math.random()}`,
@@ -169,16 +169,16 @@ export class PerformanceOptimizer {
         reject,
         timestamp: Date.now()
       };
-      
+
       this.requestQueue.push(request);
-      
+
       // Start batch processor if not running
       if (!this.batchProcessor) {
         this.batchProcessor = setTimeout(() => {
           this.processBatch();
         }, this.config.batchDelayMs);
       }
-      
+
       // Process immediately if batch is full
       if (this.requestQueue.length >= this.config.batchSize) {
         if (this.batchProcessor) {
@@ -204,9 +204,9 @@ export class PerformanceOptimizer {
     if (typeof window !== 'undefined' && 'performance' in window && 'memory' in (window.performance as any)) {
       const memory = (window.performance as any).memory;
       const usedMB = memory.usedJSHeapSize / 1024 / 1024;
-      
+
       this.metrics.memoryUsage = usedMB;
-      
+
       if (usedMB > this.config.gcThresholdMB) {
         this.performGarbageCollection();
       }
@@ -249,12 +249,12 @@ export class PerformanceOptimizer {
     wait: number
   ): (...args: Parameters<T>) => void {
     let timeout: NodeJS.Timeout | null = null;
-    
+
     return (...args: Parameters<T>) => {
       if (timeout) {
         clearTimeout(timeout);
       }
-      
+
       timeout = setTimeout(() => {
         func(...args);
       }, wait);
@@ -268,8 +268,8 @@ export class PerformanceOptimizer {
     func: T,
     limit: number
   ): (...args: Parameters<T>) => void {
-    const inThrottle = false;
-    
+    let inThrottle = false;
+
     return (...args: Parameters<T>) => {
       if (!inThrottle) {
         func(...args);
@@ -287,17 +287,17 @@ export class PerformanceOptimizer {
     maxCacheSize: number = 100
   ): T {
     const cache = new Map<string, { result: ReturnType<T>; timestamp: number }>();
-    
+
     return ((...args: Parameters<T>): ReturnType<T> => {
       const key = JSON.stringify(args);
       const cached = cache.get(key);
-      
+
       if (cached && Date.now() - cached.timestamp < this.config.cacheExpiryMs) {
         return cached.result;
       }
-      
+
       const result = func(...args);
-      
+
       // Manage cache size
       if (cache.size >= maxCacheSize) {
         const oldestKey = cache.keys().next().value;
@@ -305,7 +305,7 @@ export class PerformanceOptimizer {
           cache.delete(oldestKey);
         }
       }
-      
+
       cache.set(key, { result, timestamp: Date.now() });
       return result;
     }) as T;
@@ -323,7 +323,7 @@ export class PerformanceOptimizer {
       const batch = items.slice(i, i + batchSize);
       const results = await Promise.all(batch.map(processor));
       yield results;
-      
+
       // Yield control to prevent blocking
       await new Promise(resolve => setTimeout(resolve, 0));
     }
@@ -335,12 +335,12 @@ export class PerformanceOptimizer {
   private getCached<T>(key: string): T | null {
     const entry = this.cache.get(key);
     if (!entry) return null;
-    
+
     if (Date.now() > entry.expiresAt) {
       this.cache.delete(key);
       return null;
     }
-    
+
     entry.accessCount++;
     entry.lastAccessed = Date.now();
     return entry.data;
@@ -354,7 +354,7 @@ export class PerformanceOptimizer {
     if (this.cache.size >= this.config.cacheMaxSize) {
       this.evictOldestEntry();
     }
-    
+
     const entry: CacheEntry<T> = {
       data,
       timestamp: Date.now(),
@@ -362,7 +362,7 @@ export class PerformanceOptimizer {
       accessCount: 0,
       lastAccessed: Date.now()
     };
-    
+
     this.cache.set(key, entry);
   }
 
@@ -372,22 +372,22 @@ export class PerformanceOptimizer {
   private checkRateLimit(type: string): boolean {
     const now = Date.now();
     const windowStart = now - 1000; // 1 second window
-    
+
     if (!this.rateLimiter.has(type)) {
       this.rateLimiter.set(type, []);
     }
-    
+
     const timestamps = this.rateLimiter.get(type)!;
-    
+
     // Remove old timestamps
     while (timestamps.length > 0 && timestamps[0] < windowStart) {
       timestamps.shift();
     }
-    
+
     if (timestamps.length >= this.config.maxRequestsPerSecond) {
       return false;
     }
-    
+
     timestamps.push(now);
     return true;
   }
@@ -413,10 +413,10 @@ export class PerformanceOptimizer {
    */
   private async processBatch(): Promise<void> {
     if (this.requestQueue.length === 0) return;
-    
+
     const batch = this.requestQueue.splice(0, this.config.batchSize);
     this.batchProcessor = null;
-    
+
     // Group requests by type
     const grouped = batch.reduce((acc, req) => {
       if (!acc[req.type]) {
@@ -425,7 +425,7 @@ export class PerformanceOptimizer {
       acc[req.type].push(req);
       return acc;
     }, {} as Record<string, BatchRequest[]>);
-    
+
     // Process each group
     for (const [type, requests] of Object.entries(grouped)) {
       try {
@@ -439,11 +439,11 @@ export class PerformanceOptimizer {
         });
       }
     }
-    
+
     // Update batch efficiency metric
     const efficiency = batch.length / this.config.batchSize;
     this.metrics.batchEfficiency = (this.metrics.batchEfficiency + efficiency) / 2;
-    
+
     // Process remaining requests if any
     if (this.requestQueue.length > 0) {
       this.batchProcessor = setTimeout(() => {
@@ -478,16 +478,16 @@ export class PerformanceOptimizer {
    * Evict oldest cache entry
    */
   private evictOldestEntry(): void {
-    const oldestKey = '';
-    const oldestTime = Infinity;
-    
+    let oldestKey = '';
+    let oldestTime = Infinity;
+
     for (const [key, entry] of this.cache.entries()) {
       if (entry.lastAccessed < oldestTime) {
         oldestTime = entry.lastAccessed;
         oldestKey = key;
       }
     }
-    
+
     if (oldestKey) {
       this.cache.delete(oldestKey);
     }
@@ -498,20 +498,20 @@ export class PerformanceOptimizer {
    */
   private updateMetrics(type: 'cacheHit' | 'cacheMiss' | 'error', duration: number, success: boolean = true): void {
     const requestsInLastSecond = this.getRequestsInLastSecond();
-    
+
     // Update cache hit rate
     if (type === 'cacheHit' || type === 'cacheMiss') {
       const totalRequests = this.metricsHistory.length + 1;
       const hitRate = type === 'cacheHit' ? 1 : 0;
       this.metrics.cacheHitRate = (this.metrics.cacheHitRate * (totalRequests - 1) + hitRate) / totalRequests;
     }
-    
+
     // Update response time
     this.metrics.avgResponseTime = (this.metrics.avgResponseTime + duration) / 2;
-    
+
     // Update RPS
     this.metrics.requestsPerSecond = requestsInLastSecond;
-    
+
     // Update error rate
     const errorRate = success ? 0 : 1;
     this.metrics.errorRate = (this.metrics.errorRate + errorRate) / 2;
@@ -546,7 +546,7 @@ export class PerformanceOptimizer {
     setInterval(() => {
       this.monitorMemory();
       this.metricsHistory.push({ ...this.metrics });
-      
+
       // Keep only last 100 metrics
       if (this.metricsHistory.length > 100) {
         this.metricsHistory.shift();
@@ -565,10 +565,10 @@ export class PerformanceOptimizer {
         this.cache.delete(key);
       }
     }
-    
+
     // Clear old metrics
     this.metricsHistory = this.metricsHistory.slice(-50);
-    
+
     // Clear old rate limit data
     const windowStart = Date.now() - 60000; // 1 minute
     for (const [type, timestamps] of this.rateLimiter.entries()) {
@@ -589,7 +589,7 @@ export class OptimizedWebSocket {
   private heartbeatInterval: NodeJS.Timeout | null = null;
   private messageQueue: unknown[] = [];
   private connectionState: 'connecting' | 'connected' | 'disconnected' | 'reconnecting' = 'disconnected';
-  
+
   constructor(url: string, protocols?: string[], config?: PerformanceConfig) {
     this.url = url;
     this.protocols = protocols;
@@ -598,7 +598,7 @@ export class OptimizedWebSocket {
       wsReconnectDelay: 5000,
       wsMaxReconnectAttempts: 5
     } as PerformanceConfig;
-    
+
     this.connect();
   }
 
@@ -620,11 +620,11 @@ export class OptimizedWebSocket {
     if (this.heartbeatInterval) {
       clearInterval(this.heartbeatInterval);
     }
-    
+
     if (this.ws) {
       this.ws.close();
     }
-    
+
     this.connectionState = 'disconnected';
   }
 
@@ -640,39 +640,39 @@ export class OptimizedWebSocket {
    */
   private connect(): void {
     this.connectionState = this.reconnectAttempts > 0 ? 'reconnecting' : 'connecting';
-    
+
     try {
       this.ws = new WebSocket(this.url, this.protocols);
-      
+
       this.ws.onopen = () => {
         this.connectionState = 'connected';
         this.reconnectAttempts = 0;
-        
+
         // Send queued messages
         while (this.messageQueue.length > 0) {
           const message = this.messageQueue.shift();
           this.send(message);
         }
-        
+
         // Start heartbeat
         this.startHeartbeat();
       };
-      
+
       this.ws.onclose = () => {
         this.connectionState = 'disconnected';
-        
+
         if (this.heartbeatInterval) {
           clearInterval(this.heartbeatInterval);
         }
-        
+
         this.attemptReconnect();
       };
-      
+
       this.ws.onerror = (error) => {
         // console.error('WebSocket error:', error);
         this.attemptReconnect();
       };
-      
+
     } catch (error) {
       // console.error('Failed to create WebSocket:', error);
       this.attemptReconnect();
@@ -687,9 +687,9 @@ export class OptimizedWebSocket {
       // console.error('Max reconnection attempts reached');
       return;
     }
-    
+
     this.reconnectAttempts++;
-    
+
     setTimeout(() => {
       this.connect();
     }, this.config.wsReconnectDelay * Math.pow(2, this.reconnectAttempts - 1)); // Exponential backoff
@@ -740,9 +740,9 @@ export const optimizationUtils = {
         );
         return { start: Math.max(0, start), end };
       },
-      
+
       getTotalHeight: () => totalItems * itemHeight,
-      
+
       getItemStyle: (index: number) => ({
         position: 'absolute' as const,
         top: index * itemHeight,

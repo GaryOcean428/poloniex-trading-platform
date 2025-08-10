@@ -1,4 +1,4 @@
-import React from 'react';
+import React from "react";
 
 /**
  * Enhanced Error Handling and Graceful Degradation System
@@ -6,20 +6,20 @@ import React from 'react';
  */
 
 export enum ErrorSeverity {
-  LOW = 'low',
-  MEDIUM = 'medium',
-  HIGH = 'high',
-  CRITICAL = 'critical'
+  LOW = "low",
+  MEDIUM = "medium",
+  HIGH = "high",
+  CRITICAL = "critical",
 }
 
 export enum ErrorCategory {
-  NETWORK = 'network',
-  API = 'api',
-  AUTHENTICATION = 'authentication',
-  VALIDATION = 'validation',
-  TRADING = 'trading',
-  SYSTEM = 'system',
-  USER = 'user'
+  NETWORK = "network",
+  API = "api",
+  AUTHENTICATION = "authentication",
+  VALIDATION = "validation",
+  TRADING = "trading",
+  SYSTEM = "system",
+  USER = "user",
 }
 
 export interface ErrorContext {
@@ -89,7 +89,7 @@ export class EnhancedError extends Error {
     maxRetries: number = 3
   ) {
     super(message);
-    this.name = 'EnhancedError';
+    this.name = "EnhancedError";
     this.id = `error_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     this.severity = severity;
     this.category = category;
@@ -110,13 +110,13 @@ export class EnhancedError extends Error {
       retryCount: this.retryCount,
       maxRetries: this.maxRetries,
       isRecoverable: this.isRecoverable,
-      recoveryActions: this.recoveryActions
+      recoveryActions: this.recoveryActions,
     };
   }
 }
 
 export class CircuitBreaker {
-  private state: 'CLOSED' | 'OPEN' | 'HALF_OPEN' = 'CLOSED';
+  private state: "CLOSED" | "OPEN" | "HALF_OPEN" = "CLOSED";
   private failureCount = 0;
   private successCount = 0;
   private lastFailureTime = 0;
@@ -128,18 +128,18 @@ export class CircuitBreaker {
   }
 
   async execute<T>(operation: () => Promise<T>): Promise<T> {
-    if (this.state === 'OPEN') {
+    if (this.state === "OPEN") {
       if (Date.now() - this.lastFailureTime >= this.config.resetTimeout) {
-        this.state = 'HALF_OPEN';
+        this.state = "HALF_OPEN";
         this.successCount = 0;
       } else {
         throw new EnhancedError(
-          'Circuit breaker is OPEN',
+          "Circuit breaker is OPEN",
           ErrorSeverity.HIGH,
           ErrorCategory.SYSTEM,
-          this.createContext('circuit_breaker'),
+          this.createContext("circuit_breaker"),
           false,
-          ['Wait for circuit breaker to reset']
+          ["Wait for circuit breaker to reset"]
         );
       }
     }
@@ -158,10 +158,11 @@ export class CircuitBreaker {
 
   private onSuccess(): void {
     this.failureCount = 0;
-    if (this.state === 'HALF_OPEN') {
+    if (this.state === "HALF_OPEN") {
       this.successCount++;
-      if (this.successCount >= 3) { // Require multiple successes to close
-        this.state = 'CLOSED';
+      if (this.successCount >= 3) {
+        // Require multiple successes to close
+        this.state = "CLOSED";
       }
     }
   }
@@ -170,9 +171,11 @@ export class CircuitBreaker {
     this.failureCount++;
     this.lastFailureTime = Date.now();
 
-    if (this.requestCount >= this.config.minimumRequests && 
-        this.getFailureRate() >= this.config.failureThreshold) {
-      this.state = 'OPEN';
+    if (
+      this.requestCount >= this.config.minimumRequests &&
+      this.getFailureRate() >= this.config.failureThreshold
+    ) {
+      this.state = "OPEN";
     }
   }
 
@@ -182,11 +185,12 @@ export class CircuitBreaker {
 
   private createContext(action: string): ErrorContext {
     return {
-      component: 'circuit_breaker',
+      component: "circuit_breaker",
       action,
       timestamp: Date.now(),
-      userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown',
-      url: typeof window !== 'undefined' ? window.location.href : 'unknown'
+      userAgent:
+        typeof navigator !== "undefined" ? navigator.userAgent : "unknown",
+      url: typeof window !== "undefined" ? window.location.href : "unknown",
     };
   }
 
@@ -200,7 +204,7 @@ export class CircuitBreaker {
       failureCount: this.failureCount,
       successCount: this.successCount,
       requestCount: this.requestCount,
-      failureRate: this.getFailureRate()
+      failureRate: this.getFailureRate(),
     };
   }
 }
@@ -219,7 +223,7 @@ export class ErrorHandler {
       enableCachedData: true,
       enableReducedFunctionality: true,
       gracefulDegradation: true,
-      ...fallbackConfig
+      ...fallbackConfig,
     };
 
     this.setupDefaultConfigs();
@@ -238,7 +242,11 @@ export class ErrorHandler {
     this.logError(enhancedError);
 
     // Attempt recovery if the error is recoverable and we have an operation
-    if (enhancedError.isRecoverable && operation && enhancedError.retryCount < enhancedError.maxRetries) {
+    if (
+      enhancedError.isRecoverable &&
+      operation &&
+      enhancedError.retryCount < enhancedError.maxRetries
+    ) {
       return this.attemptRecovery(enhancedError, operation);
     }
 
@@ -249,12 +257,15 @@ export class ErrorHandler {
   /**
    * Create a circuit breaker for a specific operation
    */
-  createCircuitBreaker(name: string, config?: Partial<CircuitBreakerConfig>): CircuitBreaker {
+  createCircuitBreaker(
+    name: string,
+    config?: Partial<CircuitBreakerConfig>
+  ): CircuitBreaker {
     const defaultConfig: CircuitBreakerConfig = {
       failureThreshold: 0.5,
       resetTimeout: 60000,
       monitoringPeriod: 10000,
-      minimumRequests: 5
+      minimumRequests: 5,
     };
 
     const circuitBreaker = new CircuitBreaker({ ...defaultConfig, ...config });
@@ -278,7 +289,11 @@ export class ErrorHandler {
       baseDelay: 1000,
       maxDelay: 30000,
       backoffMultiplier: 2,
-      retryableErrors: ['NetworkError', 'TimeoutError', 'PoloniexConnectionError']
+      retryableErrors: [
+        "NetworkError",
+        "TimeoutError",
+        "PoloniexConnectionError",
+      ],
     };
 
     this.retryConfigs.set(operationType, { ...defaultConfig, ...config });
@@ -292,7 +307,8 @@ export class ErrorHandler {
     operationType: string,
     context: Partial<ErrorContext>
   ): Promise<T> {
-    const retryConfig = this.retryConfigs.get(operationType) || this.retryConfigs.get('default')!;
+    const retryConfig =
+      this.retryConfigs.get(operationType) || this.retryConfigs.get("default");
     let lastError: Error;
 
     for (let attempt = 1; attempt <= retryConfig.maxAttempts; attempt++) {
@@ -300,9 +316,11 @@ export class ErrorHandler {
         return await operation();
       } catch (error) {
         lastError = error as Error;
-        
+
         // Check if error is retryable
-        if (!this.isRetryableError(error as Error, retryConfig.retryableErrors)) {
+        if (
+          !this.isRetryableError(error as Error, retryConfig.retryableErrors)
+        ) {
           throw error;
         }
 
@@ -313,7 +331,8 @@ export class ErrorHandler {
 
         // Calculate delay with exponential backoff
         const delay = Math.min(
-          retryConfig.baseDelay * Math.pow(retryConfig.backoffMultiplier, attempt - 1),
+          retryConfig.baseDelay *
+            Math.pow(retryConfig.backoffMultiplier, attempt - 1),
           retryConfig.maxDelay
         );
 
@@ -322,10 +341,10 @@ export class ErrorHandler {
     }
 
     // All retries failed
-    throw this.enhanceError(lastError!, {
+    throw this.enhanceError(lastError, {
       ...context,
       action: `${context.action}_retry_exhausted`,
-      metadata: { attempts: retryConfig.maxAttempts }
+      metadata: { attempts: retryConfig.maxAttempts },
     });
   }
 
@@ -347,7 +366,9 @@ export class ErrorHandler {
    * Get error history
    */
   getErrorHistory(limit?: number): ErrorInfo[] {
-    const errors = this.errors.sort((a, b) => b.context.timestamp - a.context.timestamp);
+    const errors = this.errors.sort(
+      (a, b) => b.context.timestamp - a.context.timestamp
+    );
     return limit ? errors.slice(0, limit) : errors;
   }
 
@@ -356,20 +377,24 @@ export class ErrorHandler {
    */
   getErrorStats(timeWindow?: number): unknown {
     const cutoff = timeWindow ? Date.now() - timeWindow : 0;
-    const relevantErrors = this.errors.filter(e => e.context.timestamp >= cutoff);
+    const relevantErrors = this.errors.filter(
+      (e) => e.context.timestamp >= cutoff
+    );
 
     const stats = {
       total: relevantErrors.length,
       bySeverity: {} as Record<string, number>,
       byCategory: {} as Record<string, number>,
       errorRate: 0,
-      mostCommon: '',
-      recoverableCount: 0
+      mostCommon: "",
+      recoverableCount: 0,
     };
 
-    relevantErrors.forEach(error => {
-      stats.bySeverity[error.severity] = (stats.bySeverity[error.severity] || 0) + 1;
-      stats.byCategory[error.category] = (stats.byCategory[error.category] || 0) + 1;
+    relevantErrors.forEach((error) => {
+      stats.bySeverity[error.severity] =
+        (stats.bySeverity[error.severity] || 0) + 1;
+      stats.byCategory[error.category] =
+        (stats.byCategory[error.category] || 0) + 1;
       if (error.isRecoverable) {
         stats.recoverableCount++;
       }
@@ -378,7 +403,9 @@ export class ErrorHandler {
     // Find most common error
     const categoryEntries = Object.entries(stats.byCategory);
     if (categoryEntries.length > 0) {
-      stats.mostCommon = categoryEntries.reduce((a, b) => a[1] > b[1] ? a : b)[0];
+      stats.mostCommon = categoryEntries.reduce((a, b) =>
+        a[1] > b[1] ? a : b
+      )[0];
     }
 
     return stats;
@@ -397,14 +424,22 @@ export class ErrorHandler {
   createSafeWrapper<T extends (...args: unknown[]) => Promise<any>>(
     operation: T,
     context: Partial<ErrorContext>,
-    fallbackValue?: unknown
+    fallbackValue?: ReturnType<T> extends Promise<infer R> ? R : unknown
   ): T {
     return (async (...args: Parameters<T>) => {
       try {
         return await operation(...args);
       } catch (error) {
-        const handled = await this.handleError(error as Error, context);
-        return handled !== null ? handled : fallbackValue;
+        const handled = await this.handleError<
+          ReturnType<T> extends Promise<infer R> ? R : unknown
+        >(error as Error, context);
+        return (
+          handled !== null
+            ? handled
+            : (fallbackValue as ReturnType<T> extends Promise<infer R>
+                ? R
+                : unknown)
+        ) as any;
       }
     }) as T;
   }
@@ -412,18 +447,22 @@ export class ErrorHandler {
   /**
    * Enhanced error conversion
    */
-  private enhanceError(error: Error | EnhancedError, context: Partial<ErrorContext>): EnhancedError {
+  private enhanceError(
+    error: Error | EnhancedError,
+    context: Partial<ErrorContext>
+  ): EnhancedError {
     if (error instanceof EnhancedError) {
       return error;
     }
 
     const fullContext: ErrorContext = {
-      component: 'unknown',
-      action: 'unknown',
+      component: "unknown",
+      action: "unknown",
       timestamp: Date.now(),
-      userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown',
-      url: typeof window !== 'undefined' ? window.location.href : 'unknown',
-      ...context
+      userAgent:
+        typeof navigator !== "undefined" ? navigator.userAgent : "unknown",
+      url: typeof window !== "undefined" ? window.location.href : "unknown",
+      ...context,
     };
 
     // Determine error category and severity
@@ -447,17 +486,17 @@ export class ErrorHandler {
    */
   private logError(error: EnhancedError): void {
     const errorInfo = error.toJSON();
-    
+
     // Add to history
     this.errors.unshift(errorInfo);
-    
+
     // Limit history size
     if (this.errors.length > this.maxErrorHistory) {
       this.errors = this.errors.slice(0, this.maxErrorHistory);
     }
 
     // Notify listeners
-    this.errorListeners.forEach(listener => {
+    this.errorListeners.forEach((listener) => {
       try {
         listener(errorInfo);
       } catch (listenerError) {
@@ -477,7 +516,7 @@ export class ErrorHandler {
         // console.warn('MEDIUM SEVERITY ERROR:', error);
         break;
       case ErrorSeverity.LOW:
-        console.info('LOW SEVERITY ERROR:', error);
+        console.info("LOW SEVERITY ERROR:", error);
         break;
     }
   }
@@ -485,7 +524,10 @@ export class ErrorHandler {
   /**
    * Attempt error recovery
    */
-  private async attemptRecovery<T>(error: EnhancedError, operation: () => Promise<T>): Promise<T | null> {
+  private async attemptRecovery<T>(
+    error: EnhancedError,
+    operation: () => Promise<T>
+  ): Promise<T | null> {
     error.retryCount++;
 
     // Wait before retry
@@ -512,7 +554,7 @@ export class ErrorHandler {
 
     // Try cached data first
     if (this.fallbackConfig.enableCachedData) {
-      const cachedData = this.getCachedData(error.context.action);
+      const cachedData = this.getCachedData<T>(error.context.action);
       if (cachedData) {
         return cachedData;
       }
@@ -520,7 +562,7 @@ export class ErrorHandler {
 
     // Try mock data
     if (this.fallbackConfig.enableMockData) {
-      const mockData = this.getMockData(error.context.action);
+      const mockData = this.getMockData<T>(error.context.action);
       if (mockData) {
         return mockData;
       }
@@ -528,7 +570,7 @@ export class ErrorHandler {
 
     // Graceful degradation
     if (this.fallbackConfig.gracefulDegradation) {
-      return this.getReducedFunctionality(error.context.action);
+      return this.getReducedFunctionality<T>(error.context.action);
     }
 
     return null;
@@ -541,22 +583,34 @@ export class ErrorHandler {
     const message = error.message.toLowerCase();
     const name = error.name.toLowerCase();
 
-    if (name.includes('network') || message.includes('network') || message.includes('fetch')) {
+    if (
+      name.includes("network") ||
+      message.includes("network") ||
+      message.includes("fetch")
+    ) {
       return ErrorCategory.NETWORK;
     }
-    if (name.includes('auth') || message.includes('unauthorized') || message.includes('forbidden')) {
+    if (
+      name.includes("auth") ||
+      message.includes("unauthorized") ||
+      message.includes("forbidden")
+    ) {
       return ErrorCategory.AUTHENTICATION;
     }
-    if (message.includes('validation') || message.includes('invalid')) {
+    if (message.includes("validation") || message.includes("invalid")) {
       return ErrorCategory.VALIDATION;
     }
-    if (message.includes('api') || message.includes('request')) {
+    if (message.includes("api") || message.includes("request")) {
       return ErrorCategory.API;
     }
-    if (message.includes('trading') || message.includes('order') || message.includes('position')) {
+    if (
+      message.includes("trading") ||
+      message.includes("order") ||
+      message.includes("position")
+    ) {
       return ErrorCategory.TRADING;
     }
-    if (message.includes('user') || message.includes('input')) {
+    if (message.includes("user") || message.includes("input")) {
       return ErrorCategory.USER;
     }
 
@@ -566,24 +620,30 @@ export class ErrorHandler {
   /**
    * Determine error severity
    */
-  private determineSeverity(error: Error, category: ErrorCategory): ErrorSeverity {
+  private determineSeverity(
+    error: Error,
+    category: ErrorCategory
+  ): ErrorSeverity {
     // Critical errors
-    if (category === ErrorCategory.AUTHENTICATION || 
-        error.message.includes('critical') ||
-        error.message.includes('fatal')) {
+    if (
+      category === ErrorCategory.AUTHENTICATION ||
+      error.message.includes("critical") ||
+      error.message.includes("fatal")
+    ) {
       return ErrorSeverity.CRITICAL;
     }
 
     // High severity
-    if (category === ErrorCategory.TRADING ||
-        category === ErrorCategory.SYSTEM ||
-        error.message.includes('timeout')) {
+    if (
+      category === ErrorCategory.TRADING ||
+      category === ErrorCategory.SYSTEM ||
+      error.message.includes("timeout")
+    ) {
       return ErrorSeverity.HIGH;
     }
 
     // Medium severity
-    if (category === ErrorCategory.API ||
-        category === ErrorCategory.NETWORK) {
+    if (category === ErrorCategory.API || category === ErrorCategory.NETWORK) {
       return ErrorSeverity.MEDIUM;
     }
 
@@ -596,10 +656,12 @@ export class ErrorHandler {
    */
   private isErrorRecoverable(error: Error, category: ErrorCategory): boolean {
     // Non-recoverable errors
-    if (category === ErrorCategory.AUTHENTICATION ||
-        category === ErrorCategory.VALIDATION ||
-        error.message.includes('permanent') ||
-        error.message.includes('invalid credentials')) {
+    if (
+      category === ErrorCategory.AUTHENTICATION ||
+      category === ErrorCategory.VALIDATION ||
+      error.message.includes("permanent") ||
+      error.message.includes("invalid credentials")
+    ) {
       return false;
     }
 
@@ -614,25 +676,45 @@ export class ErrorHandler {
 
     switch (category) {
       case ErrorCategory.NETWORK:
-        actions.push('Check internet connection', 'Retry request', 'Use cached data');
+        actions.push(
+          "Check internet connection",
+          "Retry request",
+          "Use cached data"
+        );
         break;
       case ErrorCategory.API:
-        actions.push('Retry with exponential backoff', 'Check API status', 'Use fallback endpoint');
+        actions.push(
+          "Retry with exponential backoff",
+          "Check API status",
+          "Use fallback endpoint"
+        );
         break;
       case ErrorCategory.AUTHENTICATION:
-        actions.push('Refresh authentication token', 'Re-login', 'Check API credentials');
+        actions.push(
+          "Refresh authentication token",
+          "Re-login",
+          "Check API credentials"
+        );
         break;
       case ErrorCategory.TRADING:
-        actions.push('Validate order parameters', 'Check account balance', 'Retry with adjusted parameters');
+        actions.push(
+          "Validate order parameters",
+          "Check account balance",
+          "Retry with adjusted parameters"
+        );
         break;
       case ErrorCategory.VALIDATION:
-        actions.push('Correct input validation', 'Check required fields');
+        actions.push("Correct input validation", "Check required fields");
         break;
       case ErrorCategory.SYSTEM:
-        actions.push('Restart service', 'Check system resources', 'Contact support');
+        actions.push(
+          "Restart service",
+          "Check system resources",
+          "Contact support"
+        );
         break;
       case ErrorCategory.USER:
-        actions.push('Show user-friendly error message', 'Provide guidance');
+        actions.push("Show user-friendly error message", "Provide guidance");
         break;
     }
 
@@ -643,17 +725,18 @@ export class ErrorHandler {
    * Check if error is retryable
    */
   private isRetryableError(error: Error, retryableErrors: string[]): boolean {
-    return retryableErrors.some(retryableError => 
-      error.name.includes(retryableError) || 
-      error.message.includes(retryableError)
+    return retryableErrors.some(
+      (retryableError) =>
+        error.name.includes(retryableError) ||
+        error.message.includes(retryableError)
     );
   }
 
   /**
    * Get cached data for fallback
    */
-  private getCachedData(action: string): unknown {
-    if (typeof localStorage !== 'undefined') {
+  private getCachedData<T>(action: string): T | null {
+    if (typeof localStorage !== "undefined") {
       try {
         const cached = localStorage.getItem(`fallback_${action}`);
         return cached ? JSON.parse(cached) : null;
@@ -667,13 +750,20 @@ export class ErrorHandler {
   /**
    * Get mock data for fallback
    */
-  private getMockData(action: string): unknown {
+  private getMockData<T>(action: string): T | null {
     const mockData: Record<string, any> = {
       getMarketData: [
-        { timestamp: Date.now(), open: 50000, high: 51000, low: 49000, close: 50500, volume: 1000 }
+        {
+          timestamp: Date.now(),
+          open: 50000,
+          high: 51000,
+          low: 49000,
+          close: 50500,
+          volume: 1000,
+        },
       ],
       getAccountBalance: { totalAmount: "10000", availableAmount: "8000" },
-      getOpenPositions: { positions: [] }
+      getOpenPositions: { positions: [] },
     };
 
     return mockData[action] || null;
@@ -682,12 +772,12 @@ export class ErrorHandler {
   /**
    * Get reduced functionality fallback
    */
-  private getReducedFunctionality(action: string): unknown {
+  private getReducedFunctionality<T>(action: string): T | null {
     // Return minimal functionality or empty states
     const reducedFunctionality: Record<string, any> = {
       getMarketData: [],
       getAccountBalance: { totalAmount: "0", availableAmount: "0" },
-      getOpenPositions: { positions: [] }
+      getOpenPositions: { positions: [] },
     };
 
     return reducedFunctionality[action] || null;
@@ -698,30 +788,35 @@ export class ErrorHandler {
    */
   private setupDefaultConfigs(): void {
     // Default retry config
-    this.configureRetry('default', {
+    this.configureRetry("default", {
       maxAttempts: 3,
       baseDelay: 1000,
       maxDelay: 30000,
       backoffMultiplier: 2,
-      retryableErrors: ['NetworkError', 'TimeoutError', 'ConnectionError']
+      retryableErrors: ["NetworkError", "TimeoutError", "ConnectionError"],
     });
 
     // API-specific retry config
-    this.configureRetry('api', {
+    this.configureRetry("api", {
       maxAttempts: 5,
       baseDelay: 2000,
       maxDelay: 60000,
       backoffMultiplier: 1.5,
-      retryableErrors: ['NetworkError', 'TimeoutError', 'PoloniexConnectionError', 'RateLimitError']
+      retryableErrors: [
+        "NetworkError",
+        "TimeoutError",
+        "PoloniexConnectionError",
+        "RateLimitError",
+      ],
     });
 
     // Trading-specific retry config
-    this.configureRetry('trading', {
+    this.configureRetry("trading", {
       maxAttempts: 2,
       baseDelay: 500,
       maxDelay: 5000,
       backoffMultiplier: 2,
-      retryableErrors: ['NetworkError', 'TimeoutError']
+      retryableErrors: ["NetworkError", "TimeoutError"],
     });
   }
 
@@ -730,32 +825,26 @@ export class ErrorHandler {
    */
   private setupGlobalErrorHandling(): void {
     // Handle unhandled promise rejections
-    if (typeof window !== 'undefined') {
-      window.addEventListener('unhandledrejection', (event) => {
-        this.handleError(
-          new Error(event.reason),
-          {
-            component: 'global',
-            action: 'unhandled_promise_rejection',
-            metadata: { reason: event.reason }
-          }
-        );
+    if (typeof window !== "undefined") {
+      window.addEventListener("unhandledrejection", (event) => {
+        this.handleError(new Error(event.reason), {
+          component: "global",
+          action: "unhandled_promise_rejection",
+          metadata: { reason: event.reason },
+        });
       });
 
       // Handle global errors
-      window.addEventListener('error', (event) => {
-        this.handleError(
-          event.error || new Error(event.message),
-          {
-            component: 'global',
-            action: 'global_error',
-            metadata: {
-              filename: event.filename,
-              lineno: event.lineno,
-              colno: event.colno
-            }
-          }
-        );
+      window.addEventListener("error", (event) => {
+        this.handleError(event.error || new Error(event.message), {
+          component: "global",
+          action: "global_error",
+          metadata: {
+            filename: event.filename,
+            lineno: event.lineno,
+            colno: event.colno,
+          },
+        });
       });
     }
   }
@@ -764,7 +853,7 @@ export class ErrorHandler {
    * Sleep utility
    */
   private sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 }
 
@@ -790,7 +879,10 @@ export const errorUtils = {
   /**
    * Create error boundary component
    */
-  createErrorBoundary: (fallbackComponent: unknown, context: Partial<ErrorContext>) => {
+  createErrorBoundary: (
+    fallbackComponent: unknown,
+    context: Partial<ErrorContext>
+  ) => {
     return class ErrorBoundary extends React.Component {
       constructor(props: unknown) {
         super(props);
@@ -804,8 +896,8 @@ export const errorUtils = {
       componentDidCatch(error: Error, errorInfo: unknown) {
         errorHandler.handleError(error, {
           ...context,
-          action: 'component_error',
-          metadata: errorInfo
+          action: "component_error",
+          metadata: errorInfo,
         });
       }
 
@@ -816,5 +908,5 @@ export const errorUtils = {
         return (this.props as any).children;
       }
     };
-  }
+  },
 };

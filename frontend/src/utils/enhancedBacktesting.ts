@@ -58,9 +58,9 @@ export class EnhancedBacktester {
     marketData: MarketData[]
   ): Promise<BacktestResults> {
     const trades: Trade[] = [];
-    const balance = this.config.initialBalance;
-    const maxBalance = balance;
-    const maxDrawdown = 0;
+    let balance = this.config.initialBalance;
+    let maxBalance = balance;
+    let maxDrawdown = 0;
     let position: {
       side: "long" | "short";
       entryPrice: number;

@@ -2,8 +2,8 @@ import axios, { AxiosResponse } from 'axios';
 import { getAccessToken, getRefreshToken, storeAuthData, clearAuthData, shouldRefreshToken } from '@/utils/auth';
 
 // Get the backend URL from environment
-const API_BASE_URL = import.meta.env.VITE_BACKEND_URL || 
-                     import.meta.env.VITE_API_URL || 
+const API_BASE_URL = import.meta.env.VITE_BACKEND_URL ||
+                     import.meta.env.VITE_API_URL ||
                      'http://localhost:3000';
 
 interface LoginCredentials {
@@ -35,6 +35,19 @@ interface ApiResponse<T = any> {
   data?: T;
   error?: string;
   code?: string;
+}
+
+type User = LoginResponse['user'];
+
+function isUser(value: unknown): value is User {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    'id' in value &&
+    'username' in value &&
+    'email' in value &&
+    'role' in value
+  );
 }
 
 /**
@@ -74,16 +87,14 @@ export class AuthService {
 
       return { success: false, error: 'Login failed' };
     } catch (error: unknown) {
-      // console.error('Login error:', error);
-      
-      if (error.response?.data) {
-        return { 
-          success: false, 
-          error: error.response.data.error || 'Login failed',
-          code: error.response.data.code
+      if (axios.isAxiosError(error) && error.response?.data) {
+        return {
+          success: false,
+          error: (error.response.data as any).error || 'Login failed',
+          code: (error.response.data as any).code
         };
       }
-      
+
       return { success: false, error: 'Network error occurred' };
     }
   }
@@ -106,7 +117,7 @@ export class AuthService {
   private async _refreshToken(): Promise<string | null> {
     try {
       const refreshToken = getRefreshToken();
-      
+
       if (!refreshToken) {
         // console.warn('No refresh token available');
         return null;
@@ -133,19 +144,17 @@ export class AuthService {
             user: currentUser
           });
         }
-        
+
         return response.data.accessToken;
       }
 
       return null;
     } catch (error: unknown) {
-      // console.error('Token refresh error:', error);
-      
       // If refresh fails, clear auth data and redirect to login
-      if (error.response?.status === 403 || error.response?.status === 401) {
+      if (axios.isAxiosError(error) && (error.response?.status === 403 || error.response?.status === 401)) {
         this.logout();
       }
-      
+
       return null;
     }
   }
@@ -156,7 +165,7 @@ export class AuthService {
   async logout(): Promise<void> {
     try {
       const refreshToken = getRefreshToken();
-      
+
       if (refreshToken) {
         // Notify server to invalidate refresh token
         await axios.post(
@@ -183,7 +192,7 @@ export class AuthService {
   async verifyToken(): Promise<boolean> {
     try {
       const token = getAccessToken();
-      
+
       if (!token) {
         return false;
       }
@@ -207,14 +216,14 @@ export class AuthService {
   /**
    * Get current user data
    */
-  getCurrentUser(): unknown | null {
+  getCurrentUser(): User | null {
     const userData = localStorage.getItem('user_data');
     if (!userData) return null;
-    
+
     try {
-      return JSON.parse(userData);
-    } catch (error) {
-      // console.error('Error parsing user data:', error);
+      const parsed = JSON.parse(userData) as unknown;
+      return isUser(parsed) ? parsed : null;
+    } catch {
       return null;
     }
   }
@@ -259,9 +268,9 @@ export class AuthService {
       return { success: true, data: response.data };
     } catch (error: unknown) {
       // console.error('Authenticated request error:', error);
-      
+
       // If token is invalid, try to refresh once
-      if (error.response?.status === 401 || error.response?.status === 403) {
+      if (axios.isAxiosError(error) && (error.response?.status === 401 || error.response?.status === 403)) {
         const newToken = await this.refreshToken();
         if (newToken) {
           // Retry the request with new token
@@ -280,19 +289,19 @@ export class AuthService {
             return { success: true, data: response.data };
           } catch (retryError: unknown) {
             // console.error('Retry request error:', retryError);
-            return { 
-              success: false, 
-              error: retryError.response?.data?.error || 'Request failed'
+            return {
+              success: false,
+              error: (axios.isAxiosError(retryError) && retryError.response?.data?.error) || 'Request failed'
             };
           }
         } else {
           return { success: false, error: 'Authentication failed' };
         }
       }
-      
-      return { 
-        success: false, 
-        error: error.response?.data?.error || 'Request failed'
+
+      return {
+        success: false,
+        error: (axios.isAxiosError(error) && error.response?.data?.error) || 'Request failed'
       };
     }
   }

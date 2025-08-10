@@ -39,7 +39,7 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [showBankingConfig, setShowBankingConfig] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState(liveAutonomousTradingEngine.getConnectionStatus());
-  
+
   // Configuration states
   const [settings, setSettings] = useState<AutonomousSettings>({
     initialBalance: 10000,
@@ -91,15 +91,20 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
       setConnectionStatus(liveAutonomousTradingEngine.getConnectionStatus());
     };
 
-    const handleNotification = (data: unknown) => {
-      if (data.notification.type === 'CRITICAL') {
-        setError(data.notification.message);
+    type NotificationPayload = { notification?: { type?: string; message?: string } };
+    type PerformancePayload = { sessionId?: string; performance?: LiveAutonomousSession['performance'] };
+
+    const handleNotification = (payload: unknown) => {
+      const data = payload as NotificationPayload;
+      if (data.notification?.type === 'CRITICAL') {
+        setError(data.notification.message ?? 'Critical error');
       }
     };
 
-    const handlePerformanceUpdate = (data: unknown) => {
-      if (session && data.sessionId === session.id) {
-        setSession(prev => prev ? { ...prev, performance: data.performance } : null);
+    const handlePerformanceUpdate = (payload: unknown) => {
+      const data = payload as PerformancePayload;
+      if (session && data.sessionId === session.id && data.performance) {
+        setSession(prev => (prev ? { ...prev, performance: data.performance! } : null));
       }
     };
 
@@ -120,7 +125,7 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
       if (connectionStatus.useBackend) {
         const config = await autonomousTradingAPI.getConfig();
         setBankingConfig(config.bankingConfig);
-        
+
         // Convert risk tolerance to settings
         setSettings(prev => ({
           ...prev,
@@ -302,7 +307,7 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
         <Card className="lg:col-span-1">
           <div className="p-6">
             <h2 className="text-lg font-semibold mb-4">System Control</h2>
-            
+
             {!session?.isActive ? (
               <div className="space-y-4">
                 <Button
@@ -314,7 +319,7 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
                   <Play className="h-5 w-5 mr-2" />
                   {loading ? 'Starting...' : 'Start Autonomous Trading'}
                 </Button>
-                
+
                 <Button
                   variant="outline"
                   onClick={() => setShowSettings(true)}
@@ -349,7 +354,7 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
                     <X className="h-5 w-5 mr-2" />
                     Stop Trading
                   </Button>
-                  
+
                   <Button
                     variant="danger"
                     onClick={handleEmergencyStop}
@@ -388,7 +393,7 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
         <Card className="lg:col-span-2">
           <div className="p-6">
             <h2 className="text-lg font-semibold mb-4">Performance Overview</h2>
-            
+
             {session ? (
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
                 <div className="text-center">
@@ -465,7 +470,7 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
             <TabsTrigger value="notifications">Notifications</TabsTrigger>
             <TabsTrigger value="system">System</TabsTrigger>
           </TabsList>
-          
+
           <TabsContent value="strategies" className="space-y-4">
             <Card>
               <div className="p-6">
@@ -504,12 +509,12 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
               </div>
             </Card>
           </TabsContent>
-          
+
           <TabsContent value="banking" className="space-y-4">
             <Card>
               <div className="p-6">
                 <h3 className="text-lg font-semibold mb-4">Profit Banking</h3>
-                
+
                 {session.bankingStatus && (
                   <div className="grid grid-cols-3 gap-4 mb-6">
                     <div className="text-center">
@@ -558,7 +563,7 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
               </div>
             </Card>
           </TabsContent>
-          
+
           <TabsContent value="notifications" className="space-y-4">
             <Card>
               <div className="p-6">
@@ -588,7 +593,7 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
               </div>
             </Card>
           </TabsContent>
-          
+
           <TabsContent value="system" className="space-y-4">
             <Card>
               <div className="p-6">
@@ -597,7 +602,7 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
                   <div>
                     <div className="text-sm text-gray-600">Connection Status</div>
                     <div className="font-medium">
-                      {connectionStatus.useBackend ? 
+                      {connectionStatus.useBackend ?
                         (connectionStatus.isConnected ? 'Connected to Backend' : 'Disconnected') :
                         'Mock Mode'
                       }
@@ -633,7 +638,7 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
                   <X className="h-4 w-4" />
                 </Button>
               </div>
-              
+
               <div className="space-y-6">
                 <div>
                   <Label>Maximum Risk Per Trade: {(settings.maxRiskPerTrade * 100).toFixed(1)}%</Label>
@@ -649,7 +654,7 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
                     className="mt-2"
                   />
                 </div>
-                
+
                 <div>
                   <Label>Maximum Drawdown: {(settings.maxDrawdown * 100).toFixed(1)}%</Label>
                   <Slider
@@ -664,7 +669,7 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
                     className="mt-2"
                   />
                 </div>
-                
+
                 <div>
                   <Label>Confidence Threshold: {settings.confidenceThreshold}%</Label>
                   <Slider
@@ -679,7 +684,7 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
                     className="mt-2"
                   />
                 </div>
-                
+
                 <div className="flex justify-end space-x-2">
                   <Button variant="outline" onClick={() => setShowSettings(false)}>
                     Cancel
@@ -705,7 +710,7 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
                   <X className="h-4 w-4" />
                 </Button>
               </div>
-              
+
               <div className="space-y-6">
                 <div className="flex items-center justify-between">
                   <Label>Enable Automatic Banking</Label>
@@ -714,7 +719,7 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
                     onCheckedChange={(checked) => setBankingConfig(prev => ({ ...prev, enabled: checked }))}
                   />
                 </div>
-                
+
                 <div>
                   <Label>Banking Percentage: {(bankingConfig.bankingPercentage * 100).toFixed(1)}%</Label>
                   <Slider
@@ -729,7 +734,7 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
                     className="mt-2"
                   />
                 </div>
-                
+
                 <div>
                   <Label htmlFor="minProfit">Minimum Profit Threshold (USDT)</Label>
                   <Input
@@ -741,7 +746,7 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
                     max="500"
                   />
                 </div>
-                
+
                 <div>
                   <Label htmlFor="maxTransfer">Maximum Single Transfer (USDT)</Label>
                   <Input
@@ -753,7 +758,7 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
                     max="50000"
                   />
                 </div>
-                
+
                 <div className="flex justify-end space-x-2">
                   <Button variant="outline" onClick={() => setShowBankingConfig(false)}>
                     Cancel

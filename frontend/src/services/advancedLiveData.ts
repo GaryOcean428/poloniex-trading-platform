@@ -1,4 +1,4 @@
-import axios from "axios";
+import axios, { AxiosInstance } from "axios";
 
 // Type definitions for live data processing
 export interface LiveDataConfig {
@@ -137,7 +137,10 @@ const defaultLiveDataConfig: LiveDataConfig = {
   logLevel: "info",
 };
 
-// Cache for market data
+/**
+ * Cache for market data
+ * Note: We keep data as unknown in the map, but provide typed accessors below
+ */
 const dataCache = new Map<string, { data: unknown; timestamp: number }>();
 
 // Event emitter for live data updates
@@ -149,7 +152,7 @@ export const liveDataEvents = new BrowserEventEmitter();
 export class LiveDataService {
   private config: LiveDataConfig;
   private websockets: Map<string, WebSocket> = new Map();
-  private poloniexRestClient: unknown;
+  private poloniexRestClient: AxiosInstance;
   private isRunning = false;
   private retryCount = new Map<string, number>();
   private dataBuffer = new Map<string, MarketDataPoint[]>();
@@ -162,6 +165,23 @@ export class LiveDataService {
   constructor(config: Partial<LiveDataConfig> = {}) {
     this.config = { ...defaultLiveDataConfig, ...config };
     this.initializePoloniexClient();
+  }
+
+  // Typed cache helpers
+  private getCache<T>(key: string, maxAgeMs?: number): T | undefined {
+    const entry = dataCache.get(key);
+    if (!entry) return undefined;
+    if (
+      typeof maxAgeMs === "number" &&
+      Date.now() - entry.timestamp > maxAgeMs
+    ) {
+      return undefined;
+    }
+    return entry.data as T;
+  }
+
+  private setCache<T>(key: string, data: T): void {
+    dataCache.set(key, { data, timestamp: Date.now() });
   }
 
   private initializePoloniexClient(): void {
@@ -199,64 +219,69 @@ export class LiveDataService {
   private initializeWebSockets(): void {
     try {
       // Get bullet token for V3 WebSocket connection
-      this.getBulletToken().then(({ token, endpoint }) => {
-        const poloniexWs = new WebSocket(`${endpoint}?token=${token}`);
+      this.getBulletToken()
+        .then(({ token, endpoint }) => {
+          const poloniexWs = new WebSocket(`${endpoint}?token=${token}`);
 
-        poloniexWs.onopen = () => {
-          this.log("info", "Poloniex V3 WebSocket connected");
-          
-          // Subscribe to ticker using V3 format
-          poloniexWs.send(
-            JSON.stringify({
-              id: Date.now(),
-              type: 'subscribe',
-              topic: '/contractMarket/ticker:BTCUSDTPERP',
-              response: true
-            })
-          );
-          
-          this.websockets.set("poloniex", poloniexWs);
-          liveDataEvents.emit("websocket_connected", "poloniex");
-        };
+          poloniexWs.onopen = () => {
+            this.log("info", "Poloniex V3 WebSocket connected");
 
-      poloniexWs.onmessage = (event: MessageEvent) => {
-        try {
-          const parsedData = JSON.parse(event.data);
-          this.handleWebSocketMessage("poloniex", parsedData);
-        } catch (error) {
-          this.log("error", `Error parsing WebSocket message: ${error}`);
-        }
-      };
+            // Subscribe to ticker using V3 format
+            poloniexWs.send(
+              JSON.stringify({
+                id: Date.now(),
+                type: "subscribe",
+                topic: "/contractMarket/ticker:BTCUSDTPERP",
+                response: true,
+              })
+            );
 
-      poloniexWs.onerror = (event: Event) => {
-        const error =
-          event instanceof ErrorEvent ? event.error : "WebSocket error";
-        this.log("error", `WebSocket error: ${error}`);
-        liveDataEvents.emit("connection_error", { source: "poloniex", error });
-      };
+            this.websockets.set("poloniex", poloniexWs);
+            liveDataEvents.emit("websocket_connected", "poloniex");
+          };
 
-        poloniexWs.onclose = () => {
-          this.log("info", "Poloniex V3 WebSocket disconnected");
-          this.websockets.delete("poloniex");
-
-          if (this.isRunning) {
-            const retryCount = (this.retryCount.get("poloniex") || 0) + 1;
-            this.retryCount.set("poloniex", retryCount);
-
-            if (retryCount <= this.config.maxRetries) {
-              setTimeout(
-                () => this.initializeWebSockets(),
-                this.config.retryDelay * retryCount
-              );
-            } else {
-              liveDataEvents.emit("max_retries_reached", "poloniex");
+          poloniexWs.onmessage = (event: MessageEvent) => {
+            try {
+              const parsedData = JSON.parse(event.data);
+              this.handleWebSocketMessage("poloniex", parsedData);
+            } catch (error) {
+              this.log("error", `Error parsing WebSocket message: ${error}`);
             }
-          }
-        };
-      }).catch(error => {
-        this.log("error", `Error getting bullet token: ${error}`);
-        liveDataEvents.emit("initialization_error", { error });
-      });
+          };
+
+          poloniexWs.onerror = (event: Event) => {
+            const error =
+              event instanceof ErrorEvent ? event.error : "WebSocket error";
+            this.log("error", `WebSocket error: ${error}`);
+            liveDataEvents.emit("connection_error", {
+              source: "poloniex",
+              error,
+            });
+          };
+
+          poloniexWs.onclose = () => {
+            this.log("info", "Poloniex V3 WebSocket disconnected");
+            this.websockets.delete("poloniex");
+
+            if (this.isRunning) {
+              const retryCount = (this.retryCount.get("poloniex") || 0) + 1;
+              this.retryCount.set("poloniex", retryCount);
+
+              if (retryCount <= this.config.maxRetries) {
+                setTimeout(
+                  () => this.initializeWebSockets(),
+                  this.config.retryDelay * retryCount
+                );
+              } else {
+                liveDataEvents.emit("max_retries_reached", "poloniex");
+              }
+            }
+          };
+        })
+        .catch((error) => {
+          this.log("error", `Error getting bullet token: ${error}`);
+          liveDataEvents.emit("initialization_error", { error });
+        });
     } catch (error) {
       this.log("error", `Error initializing WebSockets: ${error}`);
       liveDataEvents.emit("initialization_error", { error });
@@ -266,25 +291,28 @@ export class LiveDataService {
   // Add bullet token getter method
   private async getBulletToken(): Promise<{ token: string; endpoint: string }> {
     try {
-      const response = await fetch('https://futures-api.poloniex.com/api/v1/bullet-public', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
+      const response = await fetch(
+        "https://futures-api.poloniex.com/api/v1/bullet-public",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
         }
-      });
-      
+      );
+
       if (!response.ok) {
         throw new Error(`Failed to get bullet token: ${response.status}`);
       }
-      
+
       const data = await response.json();
       if (data && data.data && data.data.token) {
         return {
           token: data.data.token,
-          endpoint: data.data.instanceServers[0].endpoint
+          endpoint: data.data.instanceServers[0].endpoint,
         };
       } else {
-        throw new Error('Invalid bullet token response format');
+        throw new Error("Invalid bullet token response format");
       }
     } catch (error) {
       this.log("error", `Failed to get bullet token: ${error}`);
@@ -301,17 +329,25 @@ export class LiveDataService {
         "data" in message
       ) {
         const msg = message as { type: string; topic?: string; data: unknown };
-        if (msg.type === "message" && msg.topic && msg.topic.includes('/contractMarket/ticker') && msg.data) {
-          const tickerData = msg.data;
+        if (
+          msg.type === "message" &&
+          msg.topic &&
+          msg.topic.includes("/contractMarket/ticker") &&
+          msg.data
+        ) {
+          const td = msg.data as Record<string, unknown>;
+          const asStr = (v: unknown, def = "0"): string =>
+            typeof v === "number" ? String(v) : typeof v === "string" ? v : def;
+
           const marketData: MarketDataPoint = {
-            symbol: tickerData.symbol || 'UNKNOWN',
+            symbol: typeof td.symbol === "string" ? td.symbol : "UNKNOWN",
             timestamp: Date.now(),
-            open: parseFloat(tickerData.open24h || "0"),
-            high: parseFloat(tickerData.high24h || "0"),
-            low: parseFloat(tickerData.low24h || "0"),
-            close: parseFloat(tickerData.price || tickerData.lastPrice || "0"),
-            volume: parseFloat(tickerData.volume24h || "0"),
-            quoteVolume: parseFloat(tickerData.turnover24h || "0"),
+            open: parseFloat(asStr(td.open24h)),
+            high: parseFloat(asStr(td.high24h)),
+            low: parseFloat(asStr(td.low24h)),
+            close: parseFloat(asStr(td.price, asStr(td.lastPrice))),
+            volume: parseFloat(asStr(td.volume24h)),
+            quoteVolume: parseFloat(asStr(td.turnover24h)),
             source: "poloniex_ws_v3",
           };
           this.processData(marketData);
@@ -330,7 +366,7 @@ export class LiveDataService {
       this.dataBuffer.set(key, []);
     }
 
-    const buffer = this.dataBuffer.get(key)!;
+    const buffer = this.dataBuffer.get(key);
     buffer.push(dataPoint);
 
     if (buffer.length > 100) {
@@ -423,10 +459,12 @@ export class LiveDataService {
   ): Promise<MarketDataPoint[]> {
     try {
       const cacheKey = `${symbol}_${interval}_${limit}`;
-      const cached = dataCache.get(cacheKey);
-
-      if (cached && Date.now() - cached.timestamp < this.config.cacheDuration) {
-        return cached.data;
+      const cached = this.getCache<MarketDataPoint[]>(
+        cacheKey,
+        this.config.cacheDuration
+      );
+      if (cached) {
+        return cached;
       }
 
       const response = await this.poloniexRestClient.get(`/${symbol}/candles`, {
@@ -462,11 +500,14 @@ export class LiveDataService {
         return processed;
       });
 
-      dataCache.set(cacheKey, { data: processedData, timestamp: Date.now() });
+      this.setCache(cacheKey, processedData);
       return processedData;
     } catch (error) {
-      const cached = dataCache.get(`${symbol}_${interval}_${limit}`);
-      if (cached) return cached.data;
+      const cached = this.getCache<MarketDataPoint[]>(
+        `${symbol}_${interval}_${limit}`,
+        this.config.cacheDuration
+      );
+      if (cached) return cached;
       throw error;
     }
   }
@@ -474,13 +515,12 @@ export class LiveDataService {
   public async fetchOrderBook(symbol: string, limit = 100): Promise<OrderBook> {
     try {
       const cacheKey = `orderbook_${symbol}_${limit}`;
-      const cached = dataCache.get(cacheKey);
-
-      if (
-        cached &&
-        Date.now() - cached.timestamp < this.config.cacheDuration / 10
-      ) {
-        return cached.data;
+      const cached = this.getCache<OrderBook>(
+        cacheKey,
+        this.config.cacheDuration / 10
+      );
+      if (cached) {
+        return cached;
       }
 
       const response = await this.poloniexRestClient.get(
@@ -507,11 +547,14 @@ export class LiveDataService {
         lastUpdateId: response.data.sequence,
       };
 
-      dataCache.set(cacheKey, { data: orderBook, timestamp: Date.now() });
+      this.setCache(cacheKey, orderBook);
       return orderBook;
     } catch (error) {
-      const cached = dataCache.get(`orderbook_${symbol}_${limit}`);
-      if (cached) return cached.data;
+      const cached = this.getCache<OrderBook>(
+        `orderbook_${symbol}_${limit}`,
+        this.config.cacheDuration / 10
+      );
+      if (cached) return cached;
       throw error;
     }
   }
@@ -519,13 +562,12 @@ export class LiveDataService {
   public async fetchTrades(symbol: string, limit = 100): Promise<TradeEntry[]> {
     try {
       const cacheKey = `trades_${symbol}_${limit}`;
-      const cached = dataCache.get(cacheKey);
-
-      if (
-        cached &&
-        Date.now() - cached.timestamp < this.config.cacheDuration / 10
-      ) {
-        return cached.data;
+      const cached = this.getCache<TradeEntry[]>(
+        cacheKey,
+        this.config.cacheDuration / 10
+      );
+      if (cached) {
+        return cached;
       }
 
       const response = await this.poloniexRestClient.get(`/${symbol}/trades`, {
@@ -547,11 +589,14 @@ export class LiveDataService {
         })
       );
 
-      dataCache.set(cacheKey, { data: trades, timestamp: Date.now() });
+      this.setCache(cacheKey, trades);
       return trades;
     } catch (error) {
-      const cached = dataCache.get(`trades_${symbol}_${limit}`);
-      if (cached) return cached.data;
+      const cached = this.getCache<TradeEntry[]>(
+        `trades_${symbol}_${limit}`,
+        this.config.cacheDuration / 10
+      );
+      if (cached) return cached;
       throw error;
     }
   }
@@ -559,13 +604,12 @@ export class LiveDataService {
   public async fetchMarketSummary(symbol: string): Promise<MarketSummary> {
     try {
       const cacheKey = `summary_${symbol}`;
-      const cached = dataCache.get(cacheKey);
-
-      if (
-        cached &&
-        Date.now() - cached.timestamp < this.config.cacheDuration / 2
-      ) {
-        return cached.data;
+      const cached = this.getCache<MarketSummary>(
+        cacheKey,
+        this.config.cacheDuration / 2
+      );
+      if (cached) {
+        return cached;
       }
 
       const response = await this.poloniexRestClient.get(
@@ -586,11 +630,14 @@ export class LiveDataService {
         source: "poloniex_rest",
       };
 
-      dataCache.set(cacheKey, { data: summary, timestamp: Date.now() });
+      this.setCache(cacheKey, summary);
       return summary;
     } catch (error) {
-      const cached = dataCache.get(`summary_${symbol}`);
-      if (cached) return cached.data;
+      const cached = this.getCache<MarketSummary>(
+        `summary_${symbol}`,
+        this.config.cacheDuration / 2
+      );
+      if (cached) return cached;
       throw error;
     }
   }

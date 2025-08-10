@@ -1,0 +1,205 @@
+src/components/dashboard/LiveDataDashboard.tsx(60,67): error TS2339: Property 'isAnomaly' does not exist on type 'unknown'.
+src/components/ml/ModelRecalibrationPanel.tsx(282,9): error TS2588: Cannot assign to 'intervalMs' because it is a constant.
+src/components/ml/ModelRecalibrationPanel.tsx(284,9): error TS2588: Cannot assign to 'intervalMs' because it is a constant.
+src/components/trading/AutonomousTradingDashboard.tsx(66,22): error TS2339: Property 'notification' does not exist on type 'unknown'.
+src/components/trading/AutonomousTradingDashboard.tsx(67,31): error TS2339: Property 'notification' does not exist on type 'unknown'.
+src/components/trading/AutonomousTradingDashboard.tsx(72,33): error TS2339: Property 'sessionId' does not exist on type 'unknown'.
+src/components/trading/AutonomousTradingDashboard.tsx(73,72): error TS2339: Property 'performance' does not exist on type 'unknown'.
+src/components/trading/LiveAutonomousTradingDashboard.tsx(95,16): error TS2339: Property 'notification' does not exist on type 'unknown'.
+src/components/trading/LiveAutonomousTradingDashboard.tsx(96,23): error TS2339: Property 'notification' does not exist on type 'unknown'.
+src/components/trading/LiveAutonomousTradingDashboard.tsx(101,27): error TS2339: Property 'sessionId' does not exist on type 'unknown'.
+src/components/trading/LiveAutonomousTradingDashboard.tsx(102,64): error TS2339: Property 'performance' does not exist on type 'unknown'.
+src/context/TradingContext.tsx(173,7): error TS2739: Type '{}' is missing the following properties from type '{ available: number; total: number; currency: string; }': available, total, currency
+src/hooks/useAccessibility.ts(130,11): error TS2588: Cannot assign to 'newIndex' because it is a constant.
+src/hooks/useAccessibility.ts(133,11): error TS2588: Cannot assign to 'newIndex' because it is a constant.
+src/hooks/useAccessibility.ts(141,11): error TS2588: Cannot assign to 'newIndex' because it is a constant.
+src/hooks/useAccessibility.ts(144,11): error TS2588: Cannot assign to 'newIndex' because it is a constant.
+src/hooks/useAccessibility.ts(151,11): error TS2588: Cannot assign to 'newIndex' because it is a constant.
+src/hooks/useAccessibility.ts(158,11): error TS2588: Cannot assign to 'newIndex' because it is a constant.
+src/hooks/useAccessibility.ts(164,9): error TS2588: Cannot assign to 'newIndex' because it is a constant.
+src/hooks/useAccessibility.ts(169,9): error TS2588: Cannot assign to 'newIndex' because it is a constant.
+src/hooks/usePoloniexData.ts(63,19): error TS2339: Property 'id' does not exist on type 'unknown'.
+src/hooks/usePoloniexData.ts(65,35): error TS2339: Property 'createdAt' does not exist on type 'unknown'.
+src/hooks/usePoloniexData.ts(66,21): error TS2339: Property 'takerSide' does not exist on type 'unknown'.
+src/hooks/usePoloniexData.ts(67,33): error TS2339: Property 'price' does not exist on type 'unknown'.
+src/hooks/usePoloniexData.ts(68,34): error TS2339: Property 'quantity' does not exist on type 'unknown'.
+src/hooks/usePoloniexData.ts(69,33): error TS2339: Property 'price' does not exist on type 'unknown'.
+src/hooks/usePoloniexData.ts(69,59): error TS2339: Property 'quantity' does not exist on type 'unknown'.
+src/ml/aiSignalGenerator.ts(149,7): error TS2588: Cannot assign to 'score' because it is a constant.
+src/ml/aiSignalGenerator.ts(152,7): error TS2588: Cannot assign to 'score' because it is a constant.
+src/ml/aiSignalGenerator.ts(158,7): error TS2588: Cannot assign to 'score' because it is a constant.
+src/ml/aiSignalGenerator.ts(161,7): error TS2588: Cannot assign to 'score' because it is a constant.
+src/ml/aiSignalGenerator.ts(167,7): error TS2588: Cannot assign to 'score' because it is a constant.
+src/ml/aiSignalGenerator.ts(170,7): error TS2588: Cannot assign to 'score' because it is a constant.
+src/ml/aiSignalGenerator.ts(176,7): error TS2588: Cannot assign to 'score' because it is a constant.
+src/ml/aiSignalGenerator.ts(179,7): error TS2588: Cannot assign to 'score' because it is a constant.
+src/ml/aiSignalGenerator.ts(185,7): error TS2588: Cannot assign to 'score' because it is a constant.
+src/ml/aiSignalGenerator.ts(191,7): error TS2588: Cannot assign to 'score' because it is a constant.
+src/ml/aiSignalGenerator.ts(194,7): error TS2588: Cannot assign to 'score' because it is a constant.
+src/ml/aiSignalGenerator.ts(199,5): error TS2588: Cannot assign to 'confidence' because it is a constant.
+src/ml/aiSignalGenerator.ts(237,9): error TS2588: Cannot assign to 'mlScore' because it is a constant.
+src/ml/aiSignalGenerator.ts(325,7): error TS2588: Cannot assign to 'adjustedConfidence' because it is a constant.
+src/ml/aiSignalGenerator.ts(327,7): error TS2588: Cannot assign to 'adjustedConfidence' because it is a constant.
+src/ml/aiSignalGenerator.ts(385,7): error TS2588: Cannot assign to 'ema' because it is a constant.
+src/ml/mlUtils.ts(54,18): error TS2698: Spread types may only be created from object types.
+src/ml/modelRecalibration.ts(72,38): error TS2339: Property 'close' does not exist on type 'unknown'.
+src/ml/modelRecalibration.ts(73,34): error TS2339: Property 'volume' does not exist on type 'unknown'.
+src/ml/modelRecalibration.ts(74,41): error TS2339: Property 'high' does not exist on type 'unknown'.
+src/ml/modelRecalibration.ts(74,50): error TS2339: Property 'low' does not exist on type 'unknown'.
+src/ml/modelRecalibration.ts(74,59): error TS2339: Property 'low' does not exist on type 'unknown'.
+src/ml/modelRecalibration.ts(75,45): error TS2339: Property 'close' does not exist on type 'unknown'.
+src/ml/modelRecalibration.ts(75,55): error TS2339: Property 'open' does not exist on type 'unknown'.
+src/ml/modelRecalibration.ts(75,65): error TS2339: Property 'open' does not exist on type 'unknown'.
+src/ml/modelRecalibration.ts(151,61): error TS2345: Argument of type 'unknown[]' is not assignable to parameter of type 'MarketDataPoint[]'.
+  Type '{}' is missing the following properties from type 'MarketDataPoint': timestamp, open, high, low, and 3 more.
+src/ml/modelRecalibration.ts(151,80): error TS2339: Property 'config' does not exist on type 'unknown'.
+src/ml/modelRecalibration.ts(154,50): error TS2345: Argument of type 'unknown' is not assignable to parameter of type 'MLModelInfo'.
+  Type '{}' is missing the following properties from type 'MLModelInfo': id, name, description, config, and 5 more.
+src/ml/modelRecalibration.ts(180,26): error TS2339: Property 'id' does not exist on type 'unknown'.
+src/ml/modelRecalibration.ts(210,41): error TS2345: Argument of type 'unknown' is not assignable to parameter of type 'DQNModelInfo'.
+  Type '{}' is missing the following properties from type 'DQNModelInfo': id, name, description, config, and 7 more.
+src/ml/modelRecalibration.ts(220,32): error TS2339: Property 'close' does not exist on type 'unknown'.
+src/ml/modelRecalibration.ts(224,9): error TS2588: Cannot assign to 'position' because it is a constant.
+src/ml/modelRecalibration.ts(225,9): error TS2588: Cannot assign to 'balance' because it is a constant.
+src/ml/modelRecalibration.ts(228,9): error TS2588: Cannot assign to 'balance' because it is a constant.
+src/ml/modelRecalibration.ts(236,9): error TS2588: Cannot assign to 'position' because it is a constant.
+src/ml/modelRecalibration.ts(264,7): error TS2588: Cannot assign to 'cumulativeReturn' because it is a constant.
+src/ml/modelRecalibration.ts(266,9): error TS2588: Cannot assign to 'peak' because it is a constant.
+src/ml/modelRecalibration.ts(269,7): error TS2588: Cannot assign to 'maxDrawdown' because it is a constant.
+src/ml/modelRecalibration.ts(285,26): error TS2339: Property 'id' does not exist on type 'unknown'.
+src/ml/modelRecalibration.ts(324,11): error TS2345: Argument of type 'unknown[]' is not assignable to parameter of type 'MarketDataPoint[]'.
+  Type '{}' is missing the following properties from type 'MarketDataPoint': timestamp, open, high, low, and 3 more.
+src/ml/modelRecalibration.ts(325,21): error TS2339: Property 'config' does not exist on type 'unknown'.
+src/ml/modelRecalibration.ts(326,24): error TS2339: Property 'name' does not exist on type 'unknown'.
+src/ml/modelRecalibration.ts(333,68): error TS2339: Property 'filePath' does not exist on type 'unknown'.
+src/ml/modelRecalibration.ts(337,54): error TS2345: Argument of type 'unknown[]' is not assignable to parameter of type 'MarketDataPoint[]'.
+  Type '{}' is missing the following properties from type 'MarketDataPoint': timestamp, open, high, low, and 3 more.
+src/ml/modelRecalibration.ts(337,73): error TS2339: Property 'config' does not exist on type 'unknown'.
+src/ml/modelRecalibration.ts(347,44): error TS2339: Property 'filePath' does not exist on type 'unknown'.
+src/ml/modelRecalibration.ts(386,41): error TS2339: Property 'id' does not exist on type 'unknown'.
+src/ml/modelRecalibration.ts(405,11): error TS2698: Spread types may only be created from object types.
+src/ml/modelRecalibration.ts(407,30): error TS2339: Property 'name' does not exist on type 'unknown'.
+src/ml/modelRecalibration.ts(421,11): error TS2345: Argument of type 'unknown[]' is not assignable to parameter of type 'MarketDataPoint[]'.
+  Type '{}' is missing the following properties from type 'MarketDataPoint': timestamp, open, high, low, and 3 more.
+src/ml/modelRecalibration.ts(422,21): error TS2339: Property 'config' does not exist on type 'unknown'.
+src/ml/modelRecalibration.ts(423,24): error TS2339: Property 'name' does not exist on type 'unknown'.
+src/ml/modelRecalibration.ts(440,34): error TS2339: Property 'id' does not exist on type 'unknown'.
+src/ml/modelRecalibration.ts(476,11): error TS2345: Argument of type 'unknown[]' is not assignable to parameter of type 'MarketCandle[]'.
+  Type '{}' is missing the following properties from type 'MarketCandle': timestamp, open, high, low, and 3 more.
+src/ml/modelRecalibration.ts(477,21): error TS2339: Property 'config' does not exist on type 'unknown'.
+src/ml/modelRecalibration.ts(478,24): error TS2339: Property 'name' does not exist on type 'unknown'.
+src/ml/modelRecalibration.ts(486,11): error TS2345: Argument of type 'unknown' is not assignable to parameter of type 'DQNModelInfo'.
+  Type '{}' is missing the following properties from type 'DQNModelInfo': id, name, description, config, and 7 more.
+src/ml/modelRecalibration.ts(495,24): error TS2339: Property 'config' does not exist on type 'unknown'.
+src/ml/modelRecalibration.ts(496,35): error TS2339: Property 'config' does not exist on type 'unknown'.
+src/ml/modelRecalibration.ts(502,11): error TS2345: Argument of type 'unknown[]' is not assignable to parameter of type 'MarketCandle[]'.
+  Type '{}' is missing the following properties from type 'MarketCandle': timestamp, open, high, low, and 3 more.
+src/ml/modelRecalibration.ts(504,24): error TS2339: Property 'name' does not exist on type 'unknown'.
+src/ml/modelRecalibration.ts(522,34): error TS2339: Property 'id' does not exist on type 'unknown'.
+src/ml/modelRecalibration.ts(554,19): error TS2339: Property 'modelType' does not exist on type 'unknown'.
+src/ml/modelRecalibration.ts(554,51): error TS2339: Property 'config' does not exist on type 'unknown'.
+src/ml/modelRecalibration.ts(566,7): error TS2588: Cannot assign to 'needsRecalibration' because it is a constant.
+src/ml/modelRecalibration.ts(567,7): error TS2588: Cannot assign to 'recalibrationReason' because it is a constant.
+src/ml/modelRecalibration.ts(573,9): error TS2588: Cannot assign to 'needsRecalibration' because it is a constant.
+src/ml/modelRecalibration.ts(574,9): error TS2588: Cannot assign to 'recalibrationReason' because it is a constant.
+src/ml/modelRecalibration.ts(577,9): error TS2588: Cannot assign to 'needsRecalibration' because it is a constant.
+src/ml/modelRecalibration.ts(578,9): error TS2588: Cannot assign to 'recalibrationReason' because it is a constant.
+src/ml/modelRecalibration.ts(582,9): error TS2588: Cannot assign to 'needsRecalibration' because it is a constant.
+src/ml/modelRecalibration.ts(583,9): error TS2588: Cannot assign to 'recalibrationReason' because it is a constant.
+src/ml/modelRecalibration.ts(586,9): error TS2588: Cannot assign to 'needsRecalibration' because it is a constant.
+src/ml/modelRecalibration.ts(587,9): error TS2588: Cannot assign to 'recalibrationReason' because it is a constant.
+src/pages/LiveTradingDashboard.tsx(83,14): error TS2339: Property 'pair' does not exist on type 'unknown'.
+src/pages/LiveTradingDashboard.tsx(85,25): error TS2339: Property 'timestamp' does not exist on type 'unknown'.
+src/pages/LiveTradingDashboard.tsx(86,21): error TS2339: Property 'close' does not exist on type 'unknown'.
+src/pages/LiveTradingDashboard.tsx(86,35): error TS2339: Property 'price' does not exist on type 'unknown'.
+src/pages/LiveTradingDashboard.tsx(87,22): error TS2339: Property 'change' does not exist on type 'unknown'.
+src/pages/LiveTradingDashboard.tsx(88,29): error TS2339: Property 'changePercent' does not exist on type 'unknown'.
+src/services/advancedLiveData.ts(307,32): error TS2339: Property 'symbol' does not exist on type 'unknown'.
+src/services/advancedLiveData.ts(309,41): error TS2339: Property 'open24h' does not exist on type 'unknown'.
+src/services/advancedLiveData.ts(310,41): error TS2339: Property 'high24h' does not exist on type 'unknown'.
+src/services/advancedLiveData.ts(311,40): error TS2339: Property 'low24h' does not exist on type 'unknown'.
+src/services/advancedLiveData.ts(312,42): error TS2339: Property 'price' does not exist on type 'unknown'.
+src/services/advancedLiveData.ts(312,62): error TS2339: Property 'lastPrice' does not exist on type 'unknown'.
+src/services/advancedLiveData.ts(313,43): error TS2339: Property 'volume24h' does not exist on type 'unknown'.
+src/services/advancedLiveData.ts(314,48): error TS2339: Property 'turnover24h' does not exist on type 'unknown'.
+src/services/advancedLiveData.ts(429,9): error TS2740: Type '{}' is missing the following properties from type 'MarketDataPoint[]': length, pop, push, concat, and 28 more.
+src/services/advancedLiveData.ts(432,54): error TS2339: Property 'get' does not exist on type 'unknown'.
+src/services/advancedLiveData.ts(469,19): error TS2740: Type '{}' is missing the following properties from type 'MarketDataPoint[]': length, pop, push, concat, and 28 more.
+src/services/advancedLiveData.ts(483,9): error TS2739: Type '{}' is missing the following properties from type 'OrderBook': symbol, timestamp, bids, asks
+src/services/advancedLiveData.ts(486,54): error TS2339: Property 'get' does not exist on type 'unknown'.
+src/services/advancedLiveData.ts(514,19): error TS2739: Type '{}' is missing the following properties from type 'OrderBook': symbol, timestamp, bids, asks
+src/services/advancedLiveData.ts(528,9): error TS2740: Type '{}' is missing the following properties from type 'TradeEntry[]': length, pop, push, concat, and 28 more.
+src/services/advancedLiveData.ts(531,54): error TS2339: Property 'get' does not exist on type 'unknown'.
+src/services/advancedLiveData.ts(554,19): error TS2740: Type '{}' is missing the following properties from type 'TradeEntry[]': length, pop, push, concat, and 28 more.
+src/services/advancedLiveData.ts(568,9): error TS2740: Type '{}' is missing the following properties from type 'MarketSummary': symbol, timestamp, lastPrice, bidPrice, and 6 more.
+src/services/advancedLiveData.ts(571,54): error TS2339: Property 'get' does not exist on type 'unknown'.
+src/services/advancedLiveData.ts(593,19): error TS2740: Type '{}' is missing the following properties from type 'MarketSummary': symbol, timestamp, lastPrice, bidPrice, and 6 more.
+src/services/automatedTrading.ts(194,24): error TS2339: Property 'signal' does not exist on type 'unknown'.
+src/services/automatedTrading.ts(198,50): error TS2339: Property 'reason' does not exist on type 'unknown'.
+src/services/automatedTrading.ts(203,24): error TS2339: Property 'signal' does not exist on type 'unknown'.
+src/services/automatedTrading.ts(207,94): error TS2339: Property 'reason' does not exist on type 'unknown'.
+src/services/automatedTrading.ts(212,25): error TS2339: Property 'signal' does not exist on type 'unknown'.
+src/services/automatedTrading.ts(250,9): error TS2588: Cannot assign to 'confidence' because it is a constant.
+src/services/automatedTrading.ts(251,9): error TS2588: Cannot assign to 'reason' because it is a constant.
+src/services/automatedTrading.ts(374,33): error TS2339: Property 'symbol' does not exist on type 'unknown'.
+src/services/automatedTrading.ts(375,38): error TS2345: Argument of type 'unknown' is not assignable to parameter of type 'string'.
+src/services/automatedTrading.ts(382,50): error TS2345: Argument of type 'unknown' is not assignable to parameter of type 'string'.
+src/services/automatedTrading.ts(390,36): error TS2345: Argument of type 'unknown' is not assignable to parameter of type 'string'.
+src/services/autonomousTradingAPI.ts(369,31): error TS2339: Property 'message' does not exist on type 'unknown'.
+src/services/liveTradingService.ts(524,33): error TS2588: Cannot assign to 'peak' because it is a constant.
+src/services/liveTradingService.ts(526,7): error TS2588: Cannot assign to 'maxDrawdown' because it is a constant.
+src/services/mockDataGenerators.ts(26,13): error TS2588: Cannot assign to 's' because it is a constant.
+src/services/mockDataGenerators.ts(53,5): error TS2588: Cannot assign to 'currentPrice' because it is a constant.
+src/services/mockDataGenerators.ts(73,13): error TS2588: Cannot assign to 's' because it is a constant.
+src/services/mockDataGenerators.ts(126,13): error TS2588: Cannot assign to 's' because it is a constant.
+src/services/mockDataGenerators.ts(150,5): error TS2588: Cannot assign to 'basePrice' because it is a constant.
+src/services/mockDataGenerators.ts(171,13): error TS2588: Cannot assign to 's' because it is a constant.
+src/services/mockTradingService.ts(725,9): error TS2588: Cannot assign to 'peak' because it is a constant.
+src/services/mockTradingService.ts(728,7): error TS2588: Cannot assign to 'maxDrawdown' because it is a constant.
+src/services/mockTradingService.ts(853,7): error TS2588: Cannot assign to 'totalTrades' because it is a constant.
+src/services/mockTradingService.ts(854,7): error TS2588: Cannot assign to 'totalScore' because it is a constant.
+src/services/poloniexFuturesAPI.ts(281,7): error TS2588: Cannot assign to 'body' because it is a constant.
+src/tests/phase5-realtime-dashboard.test.tsx(84,12): error TS2339: Property 'data' does not exist on type '{}'.
+src/tests/phase5-realtime-dashboard.test.tsx(89,11): error TS2339: Property 'data' does not exist on type '{}'.
+src/tests/react-error-185-fix.test.tsx(69,5): error TS2588: Cannot assign to 'renderCount' because it is a constant.
+src/tests/react-error-185-fix.test.tsx(80,9): error TS2588: Cannot assign to 'renderCount' because it is a constant.
+src/tests/react-error-185-fix.test.tsx(128,9): error TS2588: Cannot assign to 'renderCount' because it is a constant.
+src/tests/react-error-185-fix.test.tsx(179,7): error TS2588: Cannot assign to 'renderCount' because it is a constant.
+src/tests/react-error-185-fix.test.tsx(225,11): error TS2588: Cannot assign to 'renderCount' because it is a constant.
+src/tests/react-error-185-fix.test.tsx(239,9): error TS2588: Cannot assign to 'errorThrown' because it is a constant.
+src/utils/enhancedBacktesting.ts(97,9): error TS2588: Cannot assign to 'balance' because it is a constant.
+src/utils/enhancedBacktesting.ts(111,9): error TS2588: Cannot assign to 'maxBalance' because it is a constant.
+src/utils/enhancedBacktesting.ts(114,7): error TS2588: Cannot assign to 'maxDrawdown' because it is a constant.
+src/utils/errorHandling.ts(517,9): error TS2322: Type 'unknown' is not assignable to type 'T'.
+  'T' could be instantiated with an arbitrary type which could be unrelated to 'unknown'.
+src/utils/errorHandling.ts(525,9): error TS2322: Type 'unknown' is not assignable to type 'T'.
+  'T' could be instantiated with an arbitrary type which could be unrelated to 'unknown'.
+src/utils/errorHandling.ts(531,7): error TS2322: Type 'unknown' is not assignable to type 'T'.
+  'T' could be instantiated with an arbitrary type which could be unrelated to 'unknown'.
+src/utils/mockDataGenerators.ts(139,5): error TS2588: Cannot assign to 'lastClose' because it is a constant.
+src/utils/mockDataGenerators.ts(196,5): error TS2588: Cannot assign to 'bidPrice' because it is a constant.
+src/utils/mockDataGenerators.ts(211,5): error TS2588: Cannot assign to 'askPrice' because it is a constant.
+src/utils/mockDataGenerators.ts(295,5): error TS2588: Cannot assign to 'lastPrice' because it is a constant.
+src/utils/performanceOptimizer.ts(167,9): error TS2322: Type 'unknown' is not assignable to type 'Record<string, unknown>'.
+  Index signature for type 'string' is missing in type '{}'.
+src/utils/performanceOptimizer.ts(276,9): error TS2588: Cannot assign to 'inThrottle' because it is a constant.
+src/utils/performanceOptimizer.ts(277,26): error TS2588: Cannot assign to 'inThrottle' because it is a constant.
+src/utils/performanceOptimizer.ts(486,9): error TS2588: Cannot assign to 'oldestTime' because it is a constant.
+src/utils/performanceOptimizer.ts(487,9): error TS2588: Cannot assign to 'oldestKey' because it is a constant.
+src/utils/riskManagement.ts(139,5): error TS2588: Cannot assign to 'baseSize' because it is a constant.
+src/utils/riskManagement.ts(144,7): error TS2588: Cannot assign to 'baseSize' because it is a constant.
+src/utils/riskManagement.ts(150,7): error TS2588: Cannot assign to 'baseSize' because it is a constant.
+src/utils/riskManagement.ts(504,9): error TS2588: Cannot assign to 'totalCorrelation' because it is a constant.
+src/utils/riskManagement.ts(505,9): error TS2588: Cannot assign to 'count' because it is a constant.
+src/utils/riskManagement.ts(546,5): error TS2588: Cannot assign to 'numerator' because it is a constant.
+src/utils/riskManagement.ts(547,5): error TS2588: Cannot assign to 'sumSq1' because it is a constant.
+src/utils/riskManagement.ts(548,5): error TS2588: Cannot assign to 'sumSq2' because it is a constant.
+src/utils/strategyTester.ts(172,7): error TS2588: Cannot assign to 'lastDayEquity' because it is a constant.
+src/utils/strategyTester.ts(173,7): error TS2588: Cannot assign to 'lastDay' because it is a constant.
+src/utils/strategyTester.ts(431,5): error TS2588: Cannot assign to 'equity' because it is a constant.
+src/utils/strategyTester.ts(637,5): error TS2588: Cannot assign to 'covariance' because it is a constant.
+src/utils/strategyTester.ts(638,5): error TS2588: Cannot assign to 'xVariance' because it is a constant.
+src/utils/strategyTester.ts(639,5): error TS2588: Cannot assign to 'yVariance' because it is a constant.
+src/utils/strategyTester.ts(806,5): error TS2588: Cannot assign to 'sharpeRatio' because it is a constant.
+src/utils/strategyTester.ts(919,5): error TS2588: Cannot assign to 'totalInSampleProfit' because it is a constant.
+src/utils/strategyTester.ts(920,5): error TS2588: Cannot assign to 'totalOutOfSampleProfit' because it is a constant.

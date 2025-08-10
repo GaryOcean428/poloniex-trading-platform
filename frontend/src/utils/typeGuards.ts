@@ -1,7 +1,7 @@
 import { AccountBalance, MarketData, AdvancedMetrics, StrategyTypeUnion, EnhancedStrategy } from '../types/unified-interfaces';
 
 export function isValidAccountBalance(obj: unknown): obj is AccountBalance {
-  return obj !== null && 
+  return obj !== null &&
     typeof obj === 'object' &&
     typeof (obj as AccountBalance).available === 'number' &&
     typeof (obj as AccountBalance).total === 'number' &&
@@ -9,22 +9,57 @@ export function isValidAccountBalance(obj: unknown): obj is AccountBalance {
 }
 
 export function isValidMarketData(obj: unknown): obj is MarketData {
-  return obj !== null && 
+  return obj !== null &&
     typeof obj === 'object' &&
     typeof (obj as MarketData).close === 'number' &&
     typeof (obj as MarketData).pair === 'string' &&
     typeof (obj as MarketData).timestamp === 'number';
 }
 
-// Enhanced market data with price fallback
+/**
+ * Enhanced market data with safe extraction and price fallback
+ */
 export function enhanceMarketData(data: unknown): MarketData {
-  if (!data) {
+  if (!data || typeof data !== 'object') {
     throw new Error('Invalid market data provided');
   }
-  
+
+  const obj = data as Record<string, unknown>;
+
+  const pair =
+    typeof obj.pair === 'string'
+      ? obj.pair
+      : typeof obj.symbol === 'string'
+        ? (obj.symbol as string).replace('_', '-')
+        : 'BTC-USDT';
+
+  const toNum = (v: unknown, def = 0): number =>
+    typeof v === 'number' ? v : typeof v === 'string' ? parseFloat(v) || def : def;
+
+  const timestamp =
+    typeof obj.timestamp === 'number'
+      ? obj.timestamp
+      : typeof obj.ts === 'number'
+        ? obj.ts
+        : Date.now();
+
+  const open = toNum(obj.open);
+  const high = toNum(obj.high);
+  const low = toNum(obj.low);
+  const close = toNum((obj as any).close ?? (obj as any).last ?? 0);
+  const volume = toNum(obj.volume);
+
+  const price = toNum((obj as any).price ?? (obj as any).close ?? (obj as any).last);
+
   return {
-    ...data,
-    price: data.price ?? data.close ?? data.last ?? 0
+    pair,
+    timestamp,
+    open,
+    high,
+    low,
+    close,
+    volume,
+    price,
   };
 }
 
@@ -62,26 +97,34 @@ export function safeMetricsAccess(metrics: unknown): Partial<AdvancedMetrics> {
     return {};
   }
 
-  const metricsObj = metrics as Partial<AdvancedMetrics>;
+  const m = metrics as Partial<AdvancedMetrics>;
+
+  const ensureNumber = (v: unknown, def = 0): number =>
+    typeof v === 'number' ? v : typeof v === 'string' ? parseFloat(v) || def : def;
+
   return {
-    totalTrades: metricsObj.totalTrades ?? 0,
-    winRate: metricsObj.winRate ?? 0,
-    profitFactor: metricsObj.profitFactor ?? 0,
-    sharpeRatio: metricsObj.sharpeRatio ?? 0,
-    maxDrawdown: metricsObj.maxDrawdown ?? 0,
-    calmarRatio: metricsObj.calmarRatio ?? 0,
-    gainToLossRatio: metrics.gainToLossRatio ?? 0,
-    payoffRatio: metrics.payoffRatio ?? 0,
-    expectancy: metrics.expectancy ?? 0,
-    systemQualityNumber: metrics.systemQualityNumber ?? 0,
-    painIndex: metrics.painIndex ?? 0,
-    martinRatio: metrics.martinRatio ?? 0,
-    burkeRatio: metrics.burkeRatio ?? 0,
-    skewness: metricsObj.skewness ?? 0,
-    kurtosis: metricsObj.kurtosis ?? 0,
-    upnessIndex: metricsObj.upnessIndex ?? 0,
-    upsidePotentialRatio: metricsObj.upsidePotentialRatio ?? 0,
-    gainToPainRatio: metricsObj.gainToPainRatio ?? 0
+    totalTrades: ensureNumber(m.totalTrades),
+    winRate: ensureNumber(m.winRate),
+    profitFactor: ensureNumber(m.profitFactor),
+    sharpeRatio: ensureNumber(m.sharpeRatio),
+    maxDrawdown: ensureNumber(m.maxDrawdown),
+    calmarRatio: ensureNumber(m.calmarRatio),
+
+    // Extended metrics (previously accessed via untyped object)
+    gainToLossRatio: ensureNumber((m as any).gainToLossRatio),
+    payoffRatio: ensureNumber((m as any).payoffRatio),
+    expectancy: ensureNumber((m as any).expectancy),
+    systemQualityNumber: ensureNumber((m as any).systemQualityNumber),
+
+    painIndex: ensureNumber((m as any).painIndex),
+    martinRatio: ensureNumber((m as any).martinRatio),
+    burkeRatio: ensureNumber((m as any).burkeRatio),
+
+    skewness: ensureNumber(m.skewness),
+    kurtosis: ensureNumber(m.kurtosis),
+    upnessIndex: ensureNumber(m.upnessIndex),
+    upsidePotentialRatio: ensureNumber(m.upsidePotentialRatio),
+    gainToPainRatio: ensureNumber(m.gainToPainRatio),
   };
 }
 
@@ -95,10 +138,10 @@ export function ensureStrategyType(strategy: unknown): EnhancedStrategy {
 
   // Validate and convert strategy type
   const validTypes: StrategyTypeUnion[] = [
-    'scalping', 'swing', 'arbitrage', 'momentum', 
+    'scalping', 'swing', 'arbitrage', 'momentum',
     'mean_reversion', 'trend_following', 'ml_based', 'grid', 'dca'
   ];
-  
+
   let strategyType: StrategyTypeUnion = 'momentum'; // default
   if (typeof strategyObj.type === 'string') {
     const lowerType = strategyObj.type.toLowerCase();
