@@ -39,7 +39,7 @@ const PWAInstallPrompt: React.FC<PWAInstallPromptProps> = ({
       const nav = window.navigator as Navigator & {
         standalone?: boolean;
       };
-      
+
       const standalone = window.matchMedia('(display-mode: standalone)').matches ||
         nav.standalone === true ||
         document.referrer.includes('android-app://');
@@ -56,6 +56,19 @@ const PWAInstallPrompt: React.FC<PWAInstallPromptProps> = ({
     // Listen for beforeinstallprompt event
     const handleBeforeInstallPrompt = (e: Event) => {
       e.preventDefault();
+
+      // Respect prior dismissal and standalone state to avoid noisy warnings
+      const dismissed = (() => {
+        try {
+          return localStorage.getItem('pwa_install_dismissed') === 'true';
+        } catch {
+          return false;
+        }
+      })();
+      if (dismissed || isStandalone) {
+        return;
+      }
+
       // Type assertion for the beforeinstallprompt event
       const beforeInstallEvent = e as unknown as BeforeInstallPromptEvent;
       setDeferredPrompt(beforeInstallEvent);
@@ -65,7 +78,18 @@ const PWAInstallPrompt: React.FC<PWAInstallPromptProps> = ({
       });
     };
 
+    // Hide banner and clear deferred prompt when app is installed via browser UI
+    const handleAppInstalled = () => {
+      setShowPrompt(false);
+      setDeferredPrompt(null);
+      logger.info('PWA installed', {
+        component: 'PWAInstallPrompt'
+      });
+      onInstall?.();
+    };
+
     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    window.addEventListener('appinstalled', handleAppInstalled);
 
     // Check if already installed (with type assertion for getInstalledRelatedApps)
     const nav = window.navigator as Navigator & {
@@ -87,6 +111,7 @@ const PWAInstallPrompt: React.FC<PWAInstallPromptProps> = ({
 
     return () => {
       window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+      window.removeEventListener('appinstalled', handleAppInstalled);
     };
   }, []);
 
@@ -121,6 +146,11 @@ const PWAInstallPrompt: React.FC<PWAInstallPromptProps> = ({
 
   const handleDismiss = () => {
     setShowPrompt(false);
+    try {
+      localStorage.setItem('pwa_install_dismissed', 'true');
+    } catch {
+      // no-op if storage unavailable
+    }
     onDismiss?.();
   };
 
