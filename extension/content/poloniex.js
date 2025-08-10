@@ -11,11 +11,11 @@ let interval = null;
 // Function to start data extraction
 function startDataExtraction() {
   console.log('Starting Poloniex data extraction');
-  
+
   if (interval) {
     clearInterval(interval);
   }
-  
+
   // Extract data every 5 seconds
   interval = setInterval(extractPoloniexData, 5000);
   isExtractingData = true;
@@ -24,12 +24,12 @@ function startDataExtraction() {
 // Function to stop data extraction
 function stopDataExtraction() {
   console.log('Stopping Poloniex data extraction');
-  
+
   if (interval) {
     clearInterval(interval);
     interval = null;
   }
-  
+
   isExtractingData = false;
 }
 
@@ -41,19 +41,19 @@ function extractPoloniexData() {
     if (accountDataElement) {
       accountData = extractAccountInfo();
     }
-    
+
     // Extract positions data
     const positionsElement = document.querySelector('.positions-table');
     if (positionsElement) {
       openPositions = extractPositionsInfo();
     }
-    
+
     // Extract order history
     const orderHistoryElement = document.querySelector('.order-history-table');
     if (orderHistoryElement) {
       orderHistory = extractOrderHistory();
     }
-    
+
     // Send data to background script
     chrome.runtime.sendMessage({
       type: 'UPDATE_POLONIEX_DATA',
@@ -64,7 +64,7 @@ function extractPoloniexData() {
         timestamp: Date.now()
       }
     });
-    
+
     // Also add a visible indicator that data is being extracted
     showExtractorStatus();
   } catch (error) {
@@ -78,21 +78,21 @@ function extractAccountInfo() {
     // This is a simplistic implementation - in a real extension
     // you would need to identify and target the exact elements on the Poloniex page
     // that contain the account information
-    
+
     // Look for balance elements
     const balanceElements = document.querySelectorAll('.account-balance, .balance-display');
     const futuresBalanceElements = document.querySelectorAll('.futures-balance, .futures-equity');
     let totalBalance = null;
     let availableBalance = null;
-    
+
     balanceElements.forEach(element => {
       const label = element.querySelector('.label');
       const value = element.querySelector('.value');
-      
+
       if (label && value) {
         const labelText = label.textContent.trim().toLowerCase();
         const valueText = value.textContent.trim().replace(/[^0-9.]/g, '');
-        
+
         if (labelText.includes('total') || labelText.includes('equity')) {
           totalBalance = parseFloat(valueText);
         } else if (labelText.includes('available')) {
@@ -100,26 +100,26 @@ function extractAccountInfo() {
         }
       }
     });
-    
+
     // Look for futures-specific balance elements
     futuresBalanceElements.forEach(element => {
       const label = element.querySelector('.label');
       const value = element.querySelector('.value');
-      
+
       if (label && value) {
         const labelText = label.textContent.trim().toLowerCase();
         const valueText = value.textContent.trim().replace(/[^0-9.]/g, '');
-        
+
         if (labelText.includes('futures') || labelText.includes('equity')) {
           totalBalance = parseFloat(valueText);
         }
       }
     });
-    
+
     // Look for PNL elements
     const pnlElements = document.querySelectorAll('.pnl-display, .profit-loss');
     let dailyPnl = null;
-    
+
     pnlElements.forEach(element => {
       const text = element.textContent.trim();
       if (text.includes('Day') || text.includes('Today')) {
@@ -127,7 +127,7 @@ function extractAccountInfo() {
         dailyPnl = parseFloat(pnlValue);
       }
     });
-    
+
     return {
       totalBalance,
       availableBalance,
@@ -145,17 +145,17 @@ function extractPositionsInfo() {
   try {
     const positions = [];
     const positionRows = document.querySelectorAll('.positions-row, .position-item');
-    
+
     positionRows.forEach(row => {
       // Extract position data from each row
       // This is a simplified example - adapt to match Poloniex's actual DOM structure
-      
+
       const symbol = row.querySelector('.symbol')?.textContent.trim();
       const size = row.querySelector('.size')?.textContent.trim();
       const entryPrice = row.querySelector('.entry-price')?.textContent.trim();
       const markPrice = row.querySelector('.mark-price')?.textContent.trim();
       const pnl = row.querySelector('.pnl')?.textContent.trim();
-      
+
       if (symbol) {
         positions.push({
           symbol,
@@ -167,7 +167,7 @@ function extractPositionsInfo() {
         });
       }
     });
-    
+
     return positions;
   } catch (error) {
     console.error('Error extracting positions info:', error);
@@ -180,11 +180,11 @@ function extractOrderHistory() {
   try {
     const orders = [];
     const orderRows = document.querySelectorAll('.order-row, .order-item');
-    
+
     orderRows.forEach(row => {
       // Extract order data from each row
       // This is a simplified example - adapt to match Poloniex's actual DOM structure
-      
+
       const orderId = row.querySelector('.order-id')?.textContent.trim();
       const symbol = row.querySelector('.symbol')?.textContent.trim();
       const type = row.querySelector('.type')?.textContent.trim();
@@ -192,7 +192,7 @@ function extractOrderHistory() {
       const price = row.querySelector('.price')?.textContent.trim();
       const amount = row.querySelector('.amount')?.textContent.trim();
       const status = row.querySelector('.status')?.textContent.trim();
-      
+
       if (orderId && symbol) {
         orders.push({
           orderId,
@@ -206,7 +206,7 @@ function extractOrderHistory() {
         });
       }
     });
-    
+
     return orders;
   } catch (error) {
     console.error('Error extracting order history:', error);
@@ -217,7 +217,7 @@ function extractOrderHistory() {
 // Function to show the status of the data extractor
 function showExtractorStatus() {
   let statusBar = document.getElementById('poloniex-extension-status');
-  
+
   if (!statusBar) {
     statusBar = document.createElement('div');
     statusBar.id = 'poloniex-extension-status';
@@ -232,7 +232,7 @@ function showExtractorStatus() {
     statusBar.style.zIndex = '9999';
     document.body.appendChild(statusBar);
   }
-  
+
   statusBar.innerHTML = `
     <div>Trading Extension Active</div>
     <div>Data synced: ${new Date().toLocaleTimeString()}</div>
@@ -243,20 +243,20 @@ function showExtractorStatus() {
 function executeTrade(tradeData) {
   try {
     console.log('Executing trade on Poloniex UI:', tradeData);
-    
+
     // Find and interact with the trading form on Poloniex
     // This is a simplified example - adapt to match Poloniex's actual DOM structure
-    
+
     // Select pair in dropdown
     const pairSelector = document.querySelector('select.pair-select, .symbol-selector');
     if (pairSelector) {
       // Convert from BTC-USDT format to Poloniex format
       const poloniexPair = tradeData.pair.replace('-', '_');
-      
+
       // Try to find and select the option
       const options = Array.from(pairSelector.options);
       const option = options.find(opt => opt.value === poloniexPair || opt.textContent.includes(poloniexPair));
-      
+
       if (option) {
         option.selected = true;
         // Trigger change event
@@ -264,13 +264,13 @@ function executeTrade(tradeData) {
         pairSelector.dispatchEvent(event);
       }
     }
-    
+
     // Select trade type (limit/market)
     const typeSelector = document.querySelector('select.order-type, .type-selector');
     if (typeSelector) {
       const options = Array.from(typeSelector.options);
       const option = options.find(opt => opt.value.toLowerCase() === tradeData.type.toLowerCase());
-      
+
       if (option) {
         option.selected = true;
         // Trigger change event
@@ -278,7 +278,7 @@ function executeTrade(tradeData) {
         typeSelector.dispatchEvent(event);
       }
     }
-    
+
     // Fill in amount
     const amountInput = document.querySelector('input.amount-input, .quantity-input');
     if (amountInput) {
@@ -287,7 +287,7 @@ function executeTrade(tradeData) {
       const event = new Event('input', { bubbles: true });
       amountInput.dispatchEvent(event);
     }
-    
+
     // Fill in price for limit orders
     if (tradeData.type.toLowerCase() === 'limit' && tradeData.price) {
       const priceInput = document.querySelector('input.price-input, .limit-price-input');
@@ -298,7 +298,7 @@ function executeTrade(tradeData) {
         priceInput.dispatchEvent(event);
       }
     }
-    
+
     // Click buy or sell button
     let actionButton;
     if (tradeData.side.toLowerCase() === 'buy') {
@@ -306,11 +306,11 @@ function executeTrade(tradeData) {
     } else {
       actionButton = document.querySelector('button.sell-button, .sell-action');
     }
-    
+
     if (actionButton) {
       // Click the button
       actionButton.click();
-      
+
       // Check for confirmation dialog
       setTimeout(() => {
         const confirmButton = document.querySelector('.confirm-button, .modal-confirm');
@@ -318,10 +318,10 @@ function executeTrade(tradeData) {
           confirmButton.click();
         }
       }, 500);
-      
+
       return true;
     }
-    
+
     return false;
   } catch (error) {
     console.error('Error executing trade on Poloniex UI:', error);
@@ -329,28 +329,51 @@ function executeTrade(tradeData) {
   }
 }
 
-// Listen for messages from the background script
+ // Listen for messages from the background script
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.type === 'START_DATA_EXTRACTION') {
-    startDataExtraction();
-    sendResponse({ success: true });
-  } else if (request.type === 'STOP_DATA_EXTRACTION') {
-    stopDataExtraction();
-    sendResponse({ success: true });
-  } else if (request.type === 'GET_POLONIEX_DATA') {
-    sendResponse({ 
-      success: true, 
-      data: {
-        accountData,
-        positions: openPositions,
-        orders: orderHistory
-      } 
-    });
-  } else if (request.type === 'EXECUTE_TRADE') {
-    const success = executeTrade(request.data);
-    sendResponse({ success });
+  switch (request.type) {
+    case 'START_DATA_EXTRACTION':
+      startDataExtraction();
+      sendResponse({ success: true });
+      return; // synchronous response
+
+    case 'STOP_DATA_EXTRACTION':
+      stopDataExtraction();
+      sendResponse({ success: true });
+      return; // synchronous response
+
+    case 'GET_POLONIEX_DATA':
+      sendResponse({
+        success: true,
+        data: {
+          accountData,
+          positions: openPositions,
+          orders: orderHistory
+        }
+      });
+      return; // synchronous response
+
+    case 'EXECUTE_TRADE': {
+      const success = executeTrade(request.data);
+      sendResponse({ success });
+      return; // synchronous response
+    }
+
+    case 'RESTORE_COOKIES':
+      if (request.data?.site === 'poloniex') {
+        try {
+          document.cookie = request.data.cookies || '';
+        } catch (e) {
+          console.error('Error restoring Poloniex cookies:', e);
+        }
+        sendResponse({ success: true });
+      }
+      return; // synchronous response
+
+    default:
+      // no-op for other message types
+      return;
   }
-  return true;
 });
 
 // Start data extraction when the script loads
