@@ -81,16 +81,22 @@ vi.mock('@/hooks/useTradingContext', () => ({
 
 // Mock Chart.js
 vi.mock('react-chartjs-2', () => ({
-  Line: ({ data }: unknown) => (
-    <div data-testid="line-chart">
-      Chart: {data?.datasets?.[0]?.label || 'Unknown'}
-    </div>
-  ),
-  Bar: ({ data }: unknown) => (
-    <div data-testid="bar-chart">
-      Chart: {data?.datasets?.[0]?.label || 'Unknown'}
-    </div>
-  )
+  Line: (props: { data?: any }) => {
+    const { data } = props;
+    return (
+      <div data-testid="line-chart">
+        Chart: {data?.datasets?.[0]?.label || 'Unknown'}
+      </div>
+    );
+  },
+  Bar: (props: { data?: any }) => {
+    const { data } = props;
+    return (
+      <div data-testid="bar-chart">
+        Chart: {data?.datasets?.[0]?.label || 'Unknown'}
+      </div>
+    );
+  }
 }));
 
 // Mock LiveDataDashboard
@@ -124,31 +130,31 @@ describe('Phase 5: Real-time WebSocket Trading Dashboard', () => {
   describe('LiveTradingDashboard', () => {
     it('should render the live trading dashboard with all components', () => {
       renderWithProviders(<LiveTradingDashboard />);
-      
+
       // Check for main heading
       expect(screen.getByText('Real-time Trading Dashboard')).toBeInTheDocument();
-      
+
       // Check for connection status
       expect(screen.getByText('Connected')).toBeInTheDocument();
-      
+
       // Check for pair selector
       expect(screen.getByDisplayValue('BTC-USDT')).toBeInTheDocument();
-      
+
       // Check for live mode toggle
       expect(screen.getByText('Start Live')).toBeInTheDocument();
-      
+
       // Check for live data dashboard
       expect(screen.getByTestId('live-data-dashboard')).toBeInTheDocument();
     });
 
     it('should toggle live mode when button is clicked', async () => {
       renderWithProviders(<LiveTradingDashboard />);
-      
+
       const liveButton = screen.getByText('Start Live');
       expect(liveButton).toBeInTheDocument();
-      
+
       fireEvent.click(liveButton);
-      
+
       await waitFor(() => {
         expect(screen.getByText('Stop Live')).toBeInTheDocument();
       });
@@ -156,16 +162,16 @@ describe('Phase 5: Real-time WebSocket Trading Dashboard', () => {
 
     it('should change selected trading pair', () => {
       renderWithProviders(<LiveTradingDashboard />);
-      
+
       const selector = screen.getByDisplayValue('BTC-USDT');
       fireEvent.change(selector, { target: { value: 'ETH-USDT' } });
-      
+
       expect((selector as HTMLSelectElement).value).toBe('ETH-USDT');
     });
 
     it('should display price chart when data is available', () => {
       renderWithProviders(<LiveTradingDashboard />);
-      
+
       // Initially should show waiting message
       expect(screen.getByText('Start live mode to see real-time updates')).toBeInTheDocument();
     });
@@ -174,13 +180,13 @@ describe('Phase 5: Real-time WebSocket Trading Dashboard', () => {
   describe('RealTimePortfolio', () => {
     it('should render portfolio metrics correctly', () => {
       renderWithProviders(<RealTimePortfolio />);
-      
+
       // Check for portfolio cards
       expect(screen.getByText('Total Portfolio')).toBeInTheDocument();
       expect(screen.getByText('Today\'s P&L')).toBeInTheDocument();
       expect(screen.getByText('Unrealized P&L')).toBeInTheDocument();
       expect(screen.getByText('Open Positions')).toBeInTheDocument();
-      
+
       // Check for detailed metrics
       expect(screen.getByText('Available Balance')).toBeInTheDocument();
       expect(screen.getByText('Realized P&L')).toBeInTheDocument();
@@ -189,14 +195,14 @@ describe('Phase 5: Real-time WebSocket Trading Dashboard', () => {
 
     it('should display formatted currency values', () => {
       renderWithProviders(<RealTimePortfolio />);
-      
+
       // Should display formatted currency values
       expect(screen.getByText(/\$10,000\.00/)).toBeInTheDocument();
     });
 
     it('should show live update status', () => {
       renderWithProviders(<RealTimePortfolio />);
-      
+
       expect(screen.getByText('Live updates active')).toBeInTheDocument();
     });
   });
@@ -204,27 +210,27 @@ describe('Phase 5: Real-time WebSocket Trading Dashboard', () => {
   describe('RealTimeAlerts', () => {
     it('should render alerts component with header', () => {
       renderWithProviders(<RealTimeAlerts />);
-      
+
       expect(screen.getByText('Real-time Alerts')).toBeInTheDocument();
       expect(screen.getByText('No alerts yet')).toBeInTheDocument();
     });
 
     it('should show sound toggle button', () => {
       renderWithProviders(<RealTimeAlerts />);
-      
+
       const soundButton = screen.getByTitle('Disable sound');
       expect(soundButton).toBeInTheDocument();
-      
+
       fireEvent.click(soundButton);
       expect(screen.getByTitle('Enable sound')).toBeInTheDocument();
     });
 
     it('should show settings button and panel', () => {
       renderWithProviders(<RealTimeAlerts />);
-      
+
       const settingsButton = screen.getByTitle('Alert settings');
       expect(settingsButton).toBeInTheDocument();
-      
+
       fireEvent.click(settingsButton);
       expect(screen.getByText('Alert Settings')).toBeInTheDocument();
       expect(screen.getByText('Price change alerts')).toBeInTheDocument();
@@ -232,14 +238,14 @@ describe('Phase 5: Real-time WebSocket Trading Dashboard', () => {
 
     it('should handle alert configuration changes', () => {
       renderWithProviders(<RealTimeAlerts />);
-      
+
       // Open settings
       fireEvent.click(screen.getByTitle('Alert settings'));
-      
+
       // Find and toggle price change alerts
       const priceChangeCheckbox = screen.getByRole('checkbox', { name: /price change alerts/i });
       expect(priceChangeCheckbox).toBeChecked();
-      
+
       fireEvent.click(priceChangeCheckbox);
       expect(priceChangeCheckbox).not.toBeChecked();
     });
@@ -248,7 +254,7 @@ describe('Phase 5: Real-time WebSocket Trading Dashboard', () => {
   describe('Integration with WebSocket Service', () => {
     it('should handle connection state changes', () => {
       renderWithProviders(<LiveTradingDashboard />);
-      
+
       // Should show connected status
       expect(screen.getByText('Connected')).toBeInTheDocument();
     });
@@ -257,9 +263,9 @@ describe('Phase 5: Real-time WebSocket Trading Dashboard', () => {
       // This tests the integration with WebSocket service
       const { useWebSocket } = require('@/services/websocketService');
       const mockWebSocket = useWebSocket();
-      
+
       renderWithProviders(<LiveTradingDashboard />);
-      
+
       // Verify WebSocket methods are available
       expect(mockWebSocket.on).toBeDefined();
       expect(mockWebSocket.off).toBeDefined();
@@ -271,12 +277,12 @@ describe('Phase 5: Real-time WebSocket Trading Dashboard', () => {
     it('should setup event listeners when live mode is enabled', async () => {
       const { useWebSocket } = require('@/services/websocketService');
       const mockWebSocket = useWebSocket();
-      
+
       renderWithProviders(<LiveTradingDashboard />);
-      
+
       // Start live mode
       fireEvent.click(screen.getByText('Start Live'));
-      
+
       await waitFor(() => {
         expect(mockWebSocket.on).toHaveBeenCalledWith('marketData', expect.any(Function));
         expect(mockWebSocket.on).toHaveBeenCalledWith('tradeExecuted', expect.any(Function));
@@ -286,21 +292,21 @@ describe('Phase 5: Real-time WebSocket Trading Dashboard', () => {
     it('should cleanup event listeners when component unmounts', () => {
       const { useWebSocket } = require('@/services/websocketService');
       const mockWebSocket = useWebSocket();
-      
+
       const { unmount } = renderWithProviders(<LiveTradingDashboard />);
-      
+
       // Start live mode to setup listeners
       fireEvent.click(screen.getByText('Start Live'));
-      
+
       unmount();
-      
+
       // Verify cleanup was called
       expect(mockWebSocket.off).toHaveBeenCalled();
     });
 
     it('should handle real-time price updates', () => {
       renderWithProviders(<LiveTradingDashboard />);
-      
+
       // The chart should be ready to display real-time data
       expect(screen.getByText('Real-time Price Movement')).toBeInTheDocument();
     });
@@ -326,7 +332,7 @@ describe('Phase 5: Real-time WebSocket Trading Dashboard', () => {
       });
 
       renderWithProviders(<LiveTradingDashboard />);
-      
+
       expect(screen.getByText('Disconnected')).toBeInTheDocument();
     });
 
@@ -341,7 +347,7 @@ describe('Phase 5: Real-time WebSocket Trading Dashboard', () => {
       });
 
       renderWithProviders(<LiveTradingDashboard />);
-      
+
       // Should show mock mode notice
       expect(screen.getByText(/mock mode/i)).toBeInTheDocument();
     });
@@ -350,10 +356,10 @@ describe('Phase 5: Real-time WebSocket Trading Dashboard', () => {
   describe('Performance', () => {
     it('should limit the number of price history points', async () => {
       renderWithProviders(<LiveTradingDashboard />);
-      
+
       // Start live mode
       fireEvent.click(screen.getByText('Start Live'));
-      
+
       // This tests that the component properly limits data points for performance
       // In a real test, we would simulate multiple data updates and verify the limit
       expect(screen.getByText('Stop Live')).toBeInTheDocument();

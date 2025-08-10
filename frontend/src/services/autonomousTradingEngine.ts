@@ -827,8 +827,8 @@ export class AutonomousTradingEngine {
     strategyType: string
   ): number {
     // Base confidence on market conditions and strategy type match
-    const confidence = 0.5; // Base confidence
-    
+    let confidence = 0.5; // Base confidence
+
     // Adjust based on market volatility
     if (marketConditions.volatility === 'high') {
       // Trend-following strategies typically perform better in high volatility
@@ -851,7 +851,7 @@ export class AutonomousTradingEngine {
         confidence -= 0.1;
       }
     }
-    
+
     // Adjust based on trend strength
     if (marketConditions.trend === 'strong') {
       // Trend-following strategies excel in strong trends
@@ -874,7 +874,7 @@ export class AutonomousTradingEngine {
         confidence -= 0.05;
       }
     }
-    
+
     // Ensure confidence is within bounds
     return Math.min(Math.max(confidence, 0.1), 0.9);
   }
@@ -884,31 +884,31 @@ export class AutonomousTradingEngine {
     strategyType: string,
     aggressiveness: 'conservative' | 'moderate' | 'aggressive'
   ): number {
-    const potential = 0.3; // Base potential
-    
+    let potential = 0.3; // Base potential
+
     // Adjust based on market conditions
     if (marketConditions.volatility === 'high') {
       potential += 0.2;
     }
-    
+
     if (marketConditions.trend === 'strong') {
       potential += 0.15;
     }
-    
+
     // Adjust based on strategy type
     if (strategyType === 'trend_following' && marketConditions.trend === 'strong') {
       potential += 0.2;
     } else if (strategyType === 'mean_reversion' && marketConditions.volatility === 'high') {
       potential += 0.15;
     }
-    
+
     // Adjust based on aggressiveness setting
     const aggressivenessMultiplier = {
       conservative: 0.8,
       moderate: 1.0,
       aggressive: 1.3
     };
-    
+
     return potential * aggressivenessMultiplier[aggressiveness];
   }
 
@@ -917,26 +917,26 @@ export class AutonomousTradingEngine {
     strategyType: string,
     maxRiskPerTrade: number
   ): number {
-    const risk = 0.5; // Base risk
-    
+    let risk = 0.5; // Base risk
+
     // Adjust based on market conditions
     if (marketConditions.volatility === 'high') {
       risk += 0.3;
     } else if (marketConditions.volatility === 'low') {
       risk -= 0.2;
     }
-    
+
     // Adjust based on strategy type
     if (strategyType === 'trend_following') {
       risk -= 0.1;
     } else if (strategyType === 'mean_reversion') {
       risk += 0.1;
     }
-    
+
     // Adjust based on max risk per trade setting
     const riskAdjustment = (maxRiskPerTrade / 2) * 2; // Normalize to 0-1 range
     risk = risk * (1 + (riskAdjustment - 0.5));
-    
+
     // Ensure risk is within bounds
     return Math.min(Math.max(risk, 0.1), 0.9);
   }
@@ -1023,30 +1023,30 @@ export class AutonomousTradingEngine {
   ): Promise<EnhancedStrategy[]> {
     // Score strategies based on market conditions and strategy type
     return strategies.map((strategy) => {
-      const score = 0.5; // Base score
-      
+      let score = 0.5; // Base score
+
       // Adjust score based on market conditions
       if (marketConditions.volatility === 'high' && strategy.type === 'mean_reversion') {
         score += 0.3;
       } else if (marketConditions.trend === 'strong' && strategy.type === 'trend_following') {
         score += 0.3;
       }
-      
+
       // Adjust based on volume
       if (marketConditions.volume === 'high') {
         score += 0.1;
       }
-      
+
       // Adjust based on sentiment
       if (marketConditions.sentiment === 'bullish' && strategy.type === 'trend_following') {
         score += 0.1;
       } else if (marketConditions.sentiment === 'bearish' && strategy.type === 'mean_reversion') {
         score += 0.1;
       }
-      
+
       // Ensure score is within bounds
       score = Math.min(Math.max(score, 0.1), 0.9);
-      
+
       return {
         ...strategy,
         profitPotential: score,
@@ -1085,8 +1085,8 @@ export class AutonomousTradingEngine {
     settings: AutonomousSettings
   ): Promise<void> {
     // Base improvement based on strategy type and market conditions
-    const improvementFactor = 1.0;
-    
+    let improvementFactor = 1.0;
+
     // Adjust improvement based on aggressiveness setting
     switch (settings.aggressiveness) {
       case 'conservative':
@@ -1101,10 +1101,10 @@ export class AutonomousTradingEngine {
       default:
         improvementFactor = 1.05;
     }
-    
+
     // Apply improvement to confidence, but cap at 0.95 to avoid overconfidence
     strategy.confidence = Math.min(0.95, strategy.confidence * improvementFactor);
-    
+
     // Adjust position size based on risk settings if strategy has position size
     if (strategy.parameters.positionSize) {
       // Ensure position size doesn't exceed max risk per trade setting
@@ -1113,7 +1113,7 @@ export class AutonomousTradingEngine {
         strategy.parameters.positionSize * improvementFactor
       );
     }
-    
+
     // Update learning metrics to reflect optimization
     if (!strategy.learningMetrics) {
       strategy.learningMetrics = {
@@ -1126,7 +1126,7 @@ export class AutonomousTradingEngine {
         performanceScore: 0.5
       };
     }
-    
+
     // Slight improvement to learning metrics
     strategy.learningMetrics.adaptationRate = Math.min(
       1.0,
@@ -1197,7 +1197,7 @@ export class AutonomousTradingEngine {
       if (strategy.backtestResults) {
         const confidence = this.calculateStrategyConfidence(strategy.backtestResults);
         strategy.confidence = confidence;
-        
+
         // Update learning metrics based on performance
         strategy.learningMetrics.adaptationRate = Math.min(1, confidence * 1.2);
         strategy.learningMetrics.consistencyScore = Math.min(1, confidence * 0.8);
@@ -1303,7 +1303,7 @@ export class AutonomousTradingEngine {
     ];
 
     // Filter pairs based on market conditions
-    const filteredPairs = [...basePairs];
+    let filteredPairs = [...basePairs];
 
     // Adjust pair selection based on market volatility
     if (marketConditions.volatility === 'high') {
@@ -1323,14 +1323,14 @@ export class AutonomousTradingEngine {
       // In strong uptrends, prefer higher beta (more volatile) assets
       filteredPairs = filteredPairs.sort((a, b) => {
         const volatilityOrder = { 'low': 0, 'medium': 1, 'high': 2, 'very high': 3 };
-        return (volatilityOrder[b.volatility as keyof typeof volatilityOrder] || 0) - 
+        return (volatilityOrder[b.volatility as keyof typeof volatilityOrder] || 0) -
                (volatilityOrder[a.volatility as keyof typeof volatilityOrder] || 0);
       });
     } else if (marketConditions.trend === 'strong downtrend') {
       // In strong downtrends, prefer more stable assets
       filteredPairs = filteredPairs.sort((a, b) => {
         const volatilityOrder = { 'low': 0, 'medium': 1, 'high': 2, 'very high': 3 };
-        return (volatilityOrder[a.volatility as keyof typeof volatilityOrder] || 0) - 
+        return (volatilityOrder[a.volatility as keyof typeof volatilityOrder] || 0) -
                (volatilityOrder[b.volatility as keyof typeof volatilityOrder] || 0);
       });
     }

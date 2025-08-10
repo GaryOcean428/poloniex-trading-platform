@@ -159,7 +159,8 @@ export class EventHandlerService {
   send(event: string, data: unknown): void {
     if (this.poloniexWs && this.poloniexWs.readyState === WebSocket.OPEN) {
       // For Poloniex direct connection, send as JSON
-      const message = { event, ...(data || {}) };
+      const payload = (data && typeof data === "object") ? (data as Record<string, unknown>) : {};
+      const message = { event, ...payload };
       this.poloniexWs.send(JSON.stringify(message));
     } else if (this.socket) {
       // For backend Socket.IO connection

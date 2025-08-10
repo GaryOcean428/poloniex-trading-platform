@@ -225,7 +225,10 @@ const generateSignature = (
     throw new Error("VITE_POLONIEX_API_SECRET is not defined");
   }
   const message = timestamp + method + requestPath + body;
-  return crypto.createHmac("sha256", apiSecret).update(message).digest("base64");
+  return crypto
+    .createHmac("sha256", apiSecret)
+    .update(message)
+    .digest("base64");
 };
 
 // Create auth headers
@@ -269,7 +272,7 @@ class PoloniexFuturesAPI {
     }
 
     const url = new URL(this.baseUrl + endpoint);
-    const body = "";
+    let body = "";
 
     if (method === "GET" && Object.keys(params).length > 0) {
       Object.keys(params).forEach((key) => {
@@ -285,26 +288,24 @@ class PoloniexFuturesAPI {
       ? createAuthHeaders(method, endpoint, body)
       : { "Content-Type": "application/json" };
 
-    try {
-      const response = await fetch(url.toString(), {
-        method,
-        headers,
-        body: method !== "GET" ? body : undefined,
-      });
+    const response = await fetch(url.toString(), {
+      method,
+      headers,
+      body: method !== "GET" ? body : undefined,
+    });
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(`API error: ${JSON.stringify(errorData)}`);
-      }
-
-      return (await response.json()) as T;
-    } catch (error) {
-      // console.error("Poloniex Futures API request failed:", error);
-      throw error;
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(`API error: ${JSON.stringify(errorData)}`);
     }
+
+    return (await response.json()) as T;
   }
 
-  private mockResponse<T>(endpoint: string, params: Record<string, unknown>): Promise<T> {
+  private mockResponse<T>(
+    endpoint: string,
+    params: Record<string, unknown>
+  ): Promise<T> {
     let mockData: T;
 
     switch (endpoint) {
@@ -319,28 +320,30 @@ class PoloniexFuturesAPI {
         break;
 
       case ENDPOINTS.CURRENT_POSITIONS:
-        mockData = [{
-          symbol: "BTC-USDT",
-          side: OrderSide.BUY,
-          mgnMode: MarginMode.ISOLATED,
-          posSide: PositionSide.LONG,
-          openAvgPx: "50000.00",
-          qty: "0.1",
-          availQty: "0.1",
-          lever: "10",
-          adl: "1",
-          liqPx: "45000.00",
-          im: "500.00",
-          mm: "250.00",
-          mgn: "500.00",
-          maxWAmt: "4500.00",
-          upl: "100.00",
-          uplRatio: "0.02",
-          pnl: "100.00",
-          markPx: "51000.00",
-          mgnRatio: "0.05",
-          state: PositionStatus.NORMAL,
-        }] as T;
+        mockData = [
+          {
+            symbol: "BTC-USDT",
+            side: OrderSide.BUY,
+            mgnMode: MarginMode.ISOLATED,
+            posSide: PositionSide.LONG,
+            openAvgPx: "50000.00",
+            qty: "0.1",
+            availQty: "0.1",
+            lever: "10",
+            adl: "1",
+            liqPx: "45000.00",
+            im: "500.00",
+            mm: "250.00",
+            mgn: "500.00",
+            maxWAmt: "4500.00",
+            upl: "100.00",
+            uplRatio: "0.02",
+            pnl: "100.00",
+            markPx: "51000.00",
+            mgnRatio: "0.05",
+            state: PositionStatus.NORMAL,
+          },
+        ] as T;
         break;
 
       case ENDPOINTS.VIEW_POSITION_MODE:
@@ -374,31 +377,41 @@ class PoloniexFuturesAPI {
         break;
 
       case ENDPOINTS.MARKET_KLINES:
-        mockData = [{
-          ts: Date.now(),
-          open: "50000.00",
-          high: "50200.00",
-          low: "49900.00",
-          close: "50050.00",
-          volume: "100.00",
-        }] as T;
+        mockData = [
+          {
+            ts: Date.now(),
+            open: "50000.00",
+            high: "50200.00",
+            low: "49900.00",
+            close: "50050.00",
+            volume: "100.00",
+          },
+        ] as T;
         break;
 
       case ENDPOINTS.MARKET_DEPTH:
         mockData = {
-          asks: [["50010.00", "10.00"], ["50020.00", "20.00"]],
-          bids: [["49990.00", "15.00"], ["49980.00", "25.00"]],
+          asks: [
+            ["50010.00", "10.00"],
+            ["50020.00", "20.00"],
+          ],
+          bids: [
+            ["49990.00", "15.00"],
+            ["49980.00", "25.00"],
+          ],
           ts: Date.now(),
         } as T;
         break;
 
       case ENDPOINTS.MARKET_TRADES:
-        mockData = [{
-          ts: Date.now(),
-          price: "50000.00",
-          size: "0.1",
-          side: OrderSide.BUY,
-        }] as T;
+        mockData = [
+          {
+            ts: Date.now(),
+            price: "50000.00",
+            size: "0.1",
+            side: OrderSide.BUY,
+          },
+        ] as T;
         break;
 
       case ENDPOINTS.MARKET_FUNDING_RATE:
@@ -418,7 +431,10 @@ class PoloniexFuturesAPI {
 
   // Account endpoints
   async getAccountBalance(): Promise<FuturesAccountBalance> {
-    return this.request<FuturesAccountBalance>("GET", ENDPOINTS.ACCOUNT_BALANCE);
+    return this.request<FuturesAccountBalance>(
+      "GET",
+      ENDPOINTS.ACCOUNT_BALANCE
+    );
   }
 
   async getAccountBills(params: {
@@ -432,7 +448,9 @@ class PoloniexFuturesAPI {
 
   // Position endpoints
   async getCurrentPositions(symbol?: string): Promise<FuturesPosition[]> {
-    return this.request<FuturesPosition[]>("GET", ENDPOINTS.CURRENT_POSITIONS, { symbol });
+    return this.request<FuturesPosition[]>("GET", ENDPOINTS.CURRENT_POSITIONS, {
+      symbol,
+    });
   }
 
   async getPositionHistory(params: {
@@ -441,7 +459,11 @@ class PoloniexFuturesAPI {
     endTime?: number;
     limit?: number;
   }): Promise<PositionHistory[]> {
-    return this.request<PositionHistory[]>("GET", ENDPOINTS.POSITION_HISTORY, params);
+    return this.request<PositionHistory[]>(
+      "GET",
+      ENDPOINTS.POSITION_HISTORY,
+      params
+    );
   }
 
   async adjustMargin(params: {
@@ -449,11 +471,17 @@ class PoloniexFuturesAPI {
     posSide: PositionSide;
     amount: string;
   }): Promise<GenericApiResponse> {
-    return this.request<GenericApiResponse>("POST", ENDPOINTS.ADJUST_MARGIN, params);
+    return this.request<GenericApiResponse>(
+      "POST",
+      ENDPOINTS.ADJUST_MARGIN,
+      params
+    );
   }
 
   async getLeverages(symbol: string): Promise<LeverageInfo> {
-    return this.request<LeverageInfo>("GET", ENDPOINTS.GET_LEVERAGES, { symbol });
+    return this.request<LeverageInfo>("GET", ENDPOINTS.GET_LEVERAGES, {
+      symbol,
+    });
   }
 
   async setLeverage(params: {
@@ -461,15 +489,26 @@ class PoloniexFuturesAPI {
     lever: string;
     mgnMode: MarginMode;
   }): Promise<GenericApiResponse> {
-    return this.request<GenericApiResponse>("POST", ENDPOINTS.SET_LEVERAGE, params);
+    return this.request<GenericApiResponse>(
+      "POST",
+      ENDPOINTS.SET_LEVERAGE,
+      params
+    );
   }
 
   async switchPositionMode(posMode: PositionMode): Promise<GenericApiResponse> {
-    return this.request<GenericApiResponse>("POST", ENDPOINTS.SWITCH_POSITION_MODE, { posMode });
+    return this.request<GenericApiResponse>(
+      "POST",
+      ENDPOINTS.SWITCH_POSITION_MODE,
+      { posMode }
+    );
   }
 
   async getPositionMode(): Promise<{ posMode: PositionMode }> {
-    return this.request<{ posMode: PositionMode }>("GET", ENDPOINTS.VIEW_POSITION_MODE);
+    return this.request<{ posMode: PositionMode }>(
+      "GET",
+      ENDPOINTS.VIEW_POSITION_MODE
+    );
   }
 
   // Trading endpoints
@@ -485,12 +524,19 @@ class PoloniexFuturesAPI {
     return this.request<OrderResponse>("POST", ENDPOINTS.PLACE_ORDER, params);
   }
 
-  async cancelOrder(params: { symbol: string; orderId: string }): Promise<OrderResponse> {
+  async cancelOrder(params: {
+    symbol: string;
+    orderId: string;
+  }): Promise<OrderResponse> {
     return this.request<OrderResponse>("POST", ENDPOINTS.CANCEL_ORDER, params);
   }
 
   async cancelAllOrders(symbol?: string): Promise<GenericApiResponse> {
-    return this.request<GenericApiResponse>("POST", ENDPOINTS.CANCEL_ALL_ORDERS, { symbol });
+    return this.request<GenericApiResponse>(
+      "POST",
+      ENDPOINTS.CANCEL_ALL_ORDERS,
+      { symbol }
+    );
   }
 
   async getOrderHistory(params: {
@@ -503,12 +549,19 @@ class PoloniexFuturesAPI {
   }
 
   async getOpenOrders(symbol?: string): Promise<FuturesOrder[]> {
-    return this.request<FuturesOrder[]>("GET", ENDPOINTS.OPEN_ORDERS, { symbol });
+    return this.request<FuturesOrder[]>("GET", ENDPOINTS.OPEN_ORDERS, {
+      symbol,
+    });
   }
 
   // Market data endpoints
   async getMarketTicker(symbol: string): Promise<MarketTicker> {
-    return this.request<MarketTicker>("GET", ENDPOINTS.MARKET_TICKER, { symbol }, false);
+    return this.request<MarketTicker>(
+      "GET",
+      ENDPOINTS.MARKET_TICKER,
+      { symbol },
+      false
+    );
   }
 
   async getMarketKlines(params: {
@@ -518,25 +571,45 @@ class PoloniexFuturesAPI {
     endTime?: number;
     limit?: number;
   }): Promise<MarketKline[]> {
-    return this.request<MarketKline[]>("GET", ENDPOINTS.MARKET_KLINES, params, false);
+    return this.request<MarketKline[]>(
+      "GET",
+      ENDPOINTS.MARKET_KLINES,
+      params,
+      false
+    );
   }
 
   async getMarketDepth(params: {
     symbol: string;
     limit?: number;
   }): Promise<MarketDepth> {
-    return this.request<MarketDepth>("GET", ENDPOINTS.MARKET_DEPTH, params, false);
+    return this.request<MarketDepth>(
+      "GET",
+      ENDPOINTS.MARKET_DEPTH,
+      params,
+      false
+    );
   }
 
   async getMarketTrades(params: {
     symbol: string;
     limit?: number;
   }): Promise<MarketTrade[]> {
-    return this.request<MarketTrade[]>("GET", ENDPOINTS.MARKET_TRADES, params, false);
+    return this.request<MarketTrade[]>(
+      "GET",
+      ENDPOINTS.MARKET_TRADES,
+      params,
+      false
+    );
   }
 
   async getMarketFundingRate(symbol: string): Promise<FundingRate> {
-    return this.request<FundingRate>("GET", ENDPOINTS.MARKET_FUNDING_RATE, { symbol }, false);
+    return this.request<FundingRate>(
+      "GET",
+      ENDPOINTS.MARKET_FUNDING_RATE,
+      { symbol },
+      false
+    );
   }
 }
 

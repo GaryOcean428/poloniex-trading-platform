@@ -1,28 +1,28 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { useTradingContext } from '../hooks/useTradingContext';
-import { useWebSocket } from '../services/websocketService';
-import LiveDataDashboard from '../components/dashboard/LiveDataDashboard';
-import RealTimePortfolio from '../components/dashboard/RealTimePortfolio';
-import RealTimeAlerts from '../components/dashboard/RealTimeAlerts';
-import RecentTrades from '../components/dashboard/RecentTrades';
-import StrategyPerformance from '../components/dashboard/StrategyPerformance';
-import { 
-  Activity, 
+import {
+  CategoryScale,
+  Chart as ChartJS,
+  Legend,
+  LineElement,
+  LinearScale,
+  PointElement,
+  Title,
+  Tooltip
+} from 'chart.js';
+import {
+  Activity,
   Clock,
   Wifi,
   WifiOff
 } from 'lucide-react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Line } from 'react-chartjs-2';
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  Title,
-  Tooltip,
-  Legend
-} from 'chart.js';
+import LiveDataDashboard from '../components/dashboard/LiveDataDashboard';
+import RealTimeAlerts from '../components/dashboard/RealTimeAlerts';
+import RealTimePortfolio from '../components/dashboard/RealTimePortfolio';
+import RecentTrades from '../components/dashboard/RecentTrades';
+import StrategyPerformance from '../components/dashboard/StrategyPerformance';
+import { useTradingContext } from '../hooks/useTradingContext';
+import { useWebSocket } from '../services/websocketService';
 
 // Register Chart.js components
 ChartJS.register(
@@ -52,17 +52,17 @@ interface RealTimeMetric {
 // }
 
 const LiveTradingDashboard: React.FC = () => {
-  const { 
-    // marketData, 
-    strategies, 
-    // activeStrategies, 
-    trades, 
-    isMockMode 
+  const {
+    // marketData,
+    strategies,
+    // activeStrategies,
+    trades,
+    isMockMode
   } = useTradingContext();
-  
-  const { 
-    connectionState: _connectionState, 
-    isMockMode: wsIsMockMode, 
+
+  const {
+    connectionState: _connectionState,
+    isMockMode: wsIsMockMode,
     isConnected,
     on,
     off
@@ -74,25 +74,31 @@ const LiveTradingDashboard: React.FC = () => {
 
   // Available trading pairs for live monitoring
   const tradingPairs = [
-    'BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'XRP-USDT', 
+    'BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'XRP-USDT',
     'ADA-USDT', 'DOGE-USDT', 'MATIC-USDT', 'DOT-USDT'
   ];
 
   // Handle real-time market data
-  const handleMarketData = useCallback((data: unknown) => {
-    if (data.pair === selectedPair) {
+  const handleMarketData = useCallback((payload: unknown) => {
+    const d = (payload ?? {}) as Record<string, unknown>;
+    const toNum = (v: unknown, def = 0): number =>
+      typeof v === 'number' ? v : typeof v === 'string' ? parseFloat(v) || def : def;
+
+    const pair = typeof d.pair === 'string' ? d.pair : '';
+    if (pair === selectedPair)
+    {
       const newMetric: RealTimeMetric = {
-        timestamp: data.timestamp || Date.now(),
-        value: data.close || data.price,
-        change: data.change || 0,
-        changePercent: data.changePercent || 0
+        timestamp: typeof d.timestamp === 'number' ? d.timestamp : Date.now(),
+        value: toNum(d.close, toNum(d.price)),
+        change: toNum(d.change),
+        changePercent: toNum(d.changePercent),
       };
 
       // Update real-time price data for this pair
       // Note: This would be used by a price display component
-      
+
       // Update price history (keep last 50 points)
-      setPriceHistory(prev => {
+      setPriceHistory((prev) => {
         const updated = [...prev, newMetric];
         return updated.slice(-50);
       });
@@ -107,7 +113,8 @@ const LiveTradingDashboard: React.FC = () => {
 
   // Set up WebSocket event listeners
   useEffect(() => {
-    if (isLiveMode && isConnected) {
+    if (isLiveMode && isConnected)
+    {
       on('marketData', handleMarketData);
       on('tradeExecuted', handleTradeExecuted);
 
@@ -121,7 +128,8 @@ const LiveTradingDashboard: React.FC = () => {
   // Toggle live mode
   const toggleLiveMode = () => {
     setIsLiveMode(!isLiveMode);
-    if (!isLiveMode) {
+    if (!isLiveMode)
+    {
       // Clear existing data when starting live mode
       setPriceHistory([]);
     }
@@ -129,10 +137,10 @@ const LiveTradingDashboard: React.FC = () => {
 
   // Format chart data for real-time price chart
   const formatPriceChartData = () => {
-    const labels = priceHistory.map(point => 
+    const labels = priceHistory.map(point =>
       new Date(point.timestamp).toLocaleTimeString()
     );
-    
+
     return {
       labels,
       datasets: [
@@ -175,7 +183,7 @@ const LiveTradingDashboard: React.FC = () => {
     <div className="container-responsive">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-neutral-800">Real-time Trading Dashboard</h1>
-        
+
         <div className="flex items-center space-x-4">
           {/* Connection Status */}
           <div className="flex items-center space-x-2">
@@ -191,6 +199,7 @@ const LiveTradingDashboard: React.FC = () => {
 
           {/* Pair Selector */}
           <select
+            aria-label="Select trading pair"
             value={selectedPair}
             onChange={(e) => setSelectedPair(e.target.value)}
             className="block w-32 px-3 py-2 border border-neutral-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
@@ -203,11 +212,10 @@ const LiveTradingDashboard: React.FC = () => {
           {/* Live Mode Toggle */}
           <button
             onClick={toggleLiveMode}
-            className={`flex items-center space-x-2 px-4 py-2 rounded-md font-medium transition-colors ${
-              isLiveMode 
-                ? 'bg-red-600 text-white hover:bg-red-700' 
+            className={`flex items-center space-x-2 px-4 py-2 rounded-md font-medium transition-colors ${isLiveMode
+                ? 'bg-red-600 text-white hover:bg-red-700'
                 : 'bg-green-600 text-white hover:bg-green-700'
-            }`}
+              }`}
           >
             <Activity size={16} />
             <span>{isLiveMode ? 'Stop Live' : 'Start Live'}</span>

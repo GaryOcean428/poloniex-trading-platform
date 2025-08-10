@@ -11,13 +11,13 @@ export interface RiskParameters {
   maxAccountRisk: number; // Maximum percentage of account at risk (default: 2%)
   maxDailyLoss: number; // Maximum daily loss percentage (default: 5%)
   maxDrawdown: number; // Maximum drawdown percentage (default: 10%)
-  
+
   // Position-level risk settings
   maxPositionSize: number; // Maximum position size percentage (default: 5%)
   maxLeverage: number; // Maximum leverage allowed (default: 3x)
   maxPositionsPerPair: number; // Maximum positions per trading pair (default: 1)
   maxTotalPositions: number; // Maximum total open positions (default: 5)
-  
+
   // Stop loss and take profit settings
   useATRStops: boolean; // Use ATR-based stops (default: true)
   atrMultiplier: number; // ATR multiplier for stops (default: 2)
@@ -25,7 +25,7 @@ export interface RiskParameters {
   takeProfitRatio: number; // Take profit to stop loss ratio (default: 2:1)
   useTrailingStops: boolean; // Enable trailing stops (default: true)
   trailingStopPercent: number; // Trailing stop percentage (default: 1%)
-  
+
   // Risk-adjusted sizing
   useVolatilityAdjustment: boolean; // Adjust position size based on volatility (default: true)
   baseVolatility: number; // Base volatility for sizing (default: 1%)
@@ -84,13 +84,13 @@ export class RiskManager {
       maxAccountRisk: 2,
       maxDailyLoss: 5,
       maxDrawdown: 10,
-      
+
       // Position-level defaults
       maxPositionSize: 5,
       maxLeverage: 3,
       maxPositionsPerPair: 1,
       maxTotalPositions: 5,
-      
+
       // Stop loss defaults
       useATRStops: true,
       atrMultiplier: 2,
@@ -98,12 +98,12 @@ export class RiskManager {
       takeProfitRatio: 2,
       useTrailingStops: true,
       trailingStopPercent: 1,
-      
+
       // Risk adjustment defaults
       useVolatilityAdjustment: true,
       baseVolatility: 1,
       correlationThreshold: 0.7,
-      
+
       ...parameters
     };
   }
@@ -127,29 +127,29 @@ export class RiskManager {
   ): number {
     const riskAmount = accountBalance * (this.parameters.maxAccountRisk / 100);
     const priceRisk = Math.abs(entryPrice - stopLossPrice);
-    
+
     if (priceRisk === 0) {
       throw new Error('Stop loss price cannot equal entry price');
     }
-    
-    const baseSize = riskAmount / priceRisk;
-    
+
+    let baseSize = riskAmount / priceRisk;
+
     // Apply maximum position size limit
     const maxSizeByPercent = (accountBalance * this.parameters.maxPositionSize / 100) / entryPrice;
     baseSize = Math.min(baseSize, maxSizeByPercent);
-    
+
     // Apply volatility adjustment if enabled
     if (this.parameters.useVolatilityAdjustment && marketData) {
       const volatilityAdjustment = this.calculateVolatilityAdjustment(marketData);
       baseSize *= volatilityAdjustment;
     }
-    
+
     // Apply correlation adjustment if enabled
     if (pair && this.parameters.correlationThreshold < 1) {
       const correlationAdjustment = this.calculateCorrelationAdjustment(pair);
       baseSize *= correlationAdjustment;
     }
-    
+
     return Math.max(baseSize, 0);
   }
 
@@ -164,31 +164,31 @@ export class RiskManager {
   ): { stopLoss: number; takeProfit: number } {
     if (!this.parameters.useATRStops) {
       const stopLossDistance = entryPrice * (this.parameters.stopLossPercent / 100);
-      const stopLoss = direction === 'long' 
-        ? entryPrice - stopLossDistance 
+      const stopLoss = direction === 'long'
+        ? entryPrice - stopLossDistance
         : entryPrice + stopLossDistance;
-      
+
       const takeProfitDistance = stopLossDistance * this.parameters.takeProfitRatio;
-      const takeProfit = direction === 'long' 
-        ? entryPrice + takeProfitDistance 
+      const takeProfit = direction === 'long'
+        ? entryPrice + takeProfitDistance
         : entryPrice - takeProfitDistance;
-      
+
       return { stopLoss, takeProfit };
     }
-    
+
     const atr = calculateATR(marketData, atrPeriod);
     const atrValue = atr.currentValue;
     const atrDistance = atrValue * this.parameters.atrMultiplier;
-    
-    const stopLoss = direction === 'long' 
-      ? entryPrice - atrDistance 
+
+    const stopLoss = direction === 'long'
+      ? entryPrice - atrDistance
       : entryPrice + atrDistance;
-    
+
     const takeProfitDistance = atrDistance * this.parameters.takeProfitRatio;
-    const takeProfit = direction === 'long' 
-      ? entryPrice + takeProfitDistance 
+    const takeProfit = direction === 'long'
+      ? entryPrice + takeProfitDistance
       : entryPrice - takeProfitDistance;
-    
+
     return { stopLoss, takeProfit };
   }
 
@@ -235,7 +235,7 @@ export class RiskManager {
 
     // Calculate stop loss and take profit
     let stopLoss: number, takeProfit: number;
-    
+
     if (marketData && this.parameters.useATRStops) {
       const levels = this.calculateATRLevels(marketData, entryPrice, direction);
       stopLoss = levels.stopLoss;
@@ -243,7 +243,7 @@ export class RiskManager {
     } else {
       const stopDistance = entryPrice * (this.parameters.stopLossPercent / 100);
       stopLoss = direction === 'long' ? entryPrice - stopDistance : entryPrice + stopDistance;
-      takeProfit = direction === 'long' 
+      takeProfit = direction === 'long'
         ? entryPrice + (stopDistance * this.parameters.takeProfitRatio)
         : entryPrice - (stopDistance * this.parameters.takeProfitRatio);
     }
@@ -263,13 +263,13 @@ export class RiskManager {
 
     // Calculate optimal position size
     const optimalSize = this.calculatePositionSize(
-      accountBalance, 
-      entryPrice, 
-      stopLoss, 
-      marketData, 
+      accountBalance,
+      entryPrice,
+      stopLoss,
+      marketData,
       pair
     );
-    
+
     if (size > optimalSize * 1.5) {
       assessment.warnings.push(`Position size ${size.toFixed(6)} exceeds recommended ${optimalSize.toFixed(6)}`);
       assessment.recommendedSize = optimalSize;
@@ -278,7 +278,7 @@ export class RiskManager {
     // Check portfolio heat
     const portfolioRisk = this.calculatePortfolioRisk(accountBalance);
     const newPositionRisk = (size * Math.abs(entryPrice - stopLoss)) / accountBalance * 100;
-    
+
     if (portfolioRisk.totalRiskPercent + newPositionRisk > this.parameters.maxAccountRisk * 2) {
       assessment.canOpenPosition = false;
       assessment.reasons.push(`Total portfolio risk would exceed ${this.parameters.maxAccountRisk * 2}%`);
@@ -342,7 +342,7 @@ export class RiskManager {
     if (this.parameters.useTrailingStops && position.stopLossPrice) {
       const isLong = position.quantity > 0;
       const trailingDistance = currentPrice * (this.parameters.trailingStopPercent / 100);
-      
+
       if (isLong && currentPrice > position.entryPrice) {
         const newStopLoss = currentPrice - trailingDistance;
         if (newStopLoss > position.stopLossPrice) {
@@ -369,28 +369,28 @@ export class RiskManager {
    */
   calculatePortfolioRisk(accountBalance: number): PortfolioRisk {
     const positions = Array.from(this.positions.values());
-    
+
     const totalUnrealizedPnL = positions.reduce((sum, pos) => sum + pos.unrealizedPnL, 0);
     const totalRisk = positions.reduce((sum, pos) => sum + pos.riskAmount, 0);
-    
+
     const currentValue = accountBalance + totalUnrealizedPnL;
     const currentDrawdown = Math.max(0, ((this.maxPortfolioValue - currentValue) / this.maxPortfolioValue) * 100);
-    
+
     // Update maximum portfolio value
     if (currentValue > this.maxPortfolioValue) {
       this.maxPortfolioValue = currentValue;
     }
-    
+
     // Calculate daily P&L
     const dailyPnL = this.dailyStartValue > 0 ? currentValue - this.dailyStartValue : 0;
     const dailyPnLPercent = this.dailyStartValue > 0 ? (dailyPnL / this.dailyStartValue) * 100 : 0;
-    
+
     // Calculate leverage utilization
-    const totalPositionValue = positions.reduce((sum, pos) => 
+    const totalPositionValue = positions.reduce((sum, pos) =>
       sum + (Math.abs(pos.quantity) * pos.currentPrice * pos.leverage), 0
     );
     const leverageUtilization = (totalPositionValue / accountBalance) || 0;
-    
+
     return {
       totalValue: currentValue,
       totalRisk,
@@ -413,22 +413,22 @@ export class RiskManager {
   checkEmergencyStop(accountBalance: number): { shouldStop: boolean; reasons: string[] } {
     const reasons: string[] = [];
     const portfolioRisk = this.calculatePortfolioRisk(accountBalance);
-    
+
     // Check daily loss limit
     if (portfolioRisk.dailyPnLPercent < -this.parameters.maxDailyLoss) {
       reasons.push(`Daily loss limit exceeded: ${portfolioRisk.dailyPnLPercent.toFixed(2)}%`);
     }
-    
+
     // Check maximum drawdown
     if (portfolioRisk.currentDrawdown > this.parameters.maxDrawdown) {
       reasons.push(`Maximum drawdown exceeded: ${portfolioRisk.currentDrawdown.toFixed(2)}%`);
     }
-    
+
     // Check if account risk is too high
     if (portfolioRisk.totalRiskPercent > this.parameters.maxAccountRisk * 3) {
       reasons.push(`Total account risk too high: ${portfolioRisk.totalRiskPercent.toFixed(2)}%`);
     }
-    
+
     return {
       shouldStop: reasons.length > 0,
       reasons
@@ -454,18 +454,18 @@ export class RiskManager {
    */
   private calculateVolatilityAdjustment(marketData: MarketData[]): number {
     if (marketData.length < 20) return 1;
-    
+
     // Calculate recent volatility (20-period)
     const returns = [];
     for (let i = 1; i < Math.min(marketData.length, 21); i++) {
       const return_ = (marketData[i].close - marketData[i - 1].close) / marketData[i - 1].close;
       returns.push(return_);
     }
-    
+
     const meanReturn = returns.reduce((sum, ret) => sum + ret, 0) / returns.length;
     const variance = returns.reduce((sum, ret) => sum + Math.pow(ret - meanReturn, 2), 0) / returns.length;
     const volatility = Math.sqrt(variance) * 100; // Convert to percentage
-    
+
     // Adjust position size inverse to volatility
     const adjustment = this.parameters.baseVolatility / Math.max(volatility, 0.1);
     return Math.min(Math.max(adjustment, 0.2), 2); // Limit adjustment between 0.2x and 2x
@@ -477,14 +477,14 @@ export class RiskManager {
   private calculateCorrelationAdjustment(newPair: string): number {
     const correlations = this.correlationMatrix.get(newPair);
     if (!correlations) return 1;
-    
+
     const existingPairs = Array.from(this.positions.values()).map(p => p.pair);
     const maxCorrelation = Math.max(0, ...existingPairs.map(pair => correlations.get(pair) || 0));
-    
+
     if (maxCorrelation > this.parameters.correlationThreshold) {
       return 1 - (maxCorrelation - this.parameters.correlationThreshold);
     }
-    
+
     return 1;
   }
 
@@ -494,10 +494,10 @@ export class RiskManager {
   private calculatePortfolioCorrelationRisk(): number {
     const pairs = Array.from(this.positions.values()).map(p => p.pair);
     if (pairs.length < 2) return 0;
-    
-    const totalCorrelation = 0;
-    const count = 0;
-    
+
+    let totalCorrelation = 0;
+    let count = 0;
+
     for (let i = 0; i < pairs.length; i++) {
       for (let j = i + 1; j < pairs.length; j++) {
         const correlation = this.correlationMatrix.get(pairs[i])?.get(pairs[j]) || 0;
@@ -505,7 +505,7 @@ export class RiskManager {
         count++;
       }
     }
-    
+
     return count > 0 ? totalCorrelation / count : 0;
   }
 
@@ -531,15 +531,15 @@ export function calculateCorrelation(series1: number[], series2: number[]): numb
   if (series1.length !== series2.length || series1.length < 2) {
     return 0;
   }
-  
+
   const n = series1.length;
   const mean1 = series1.reduce((sum, val) => sum + val, 0) / n;
   const mean2 = series2.reduce((sum, val) => sum + val, 0) / n;
-  
-  const numerator = 0;
-  const sumSq1 = 0;
-  const sumSq2 = 0;
-  
+
+  let numerator = 0;
+  let sumSq1 = 0;
+  let sumSq2 = 0;
+
   for (let i = 0; i < n; i++) {
     const diff1 = series1[i] - mean1;
     const diff2 = series2[i] - mean2;
@@ -547,7 +547,7 @@ export function calculateCorrelation(series1: number[], series2: number[]): numb
     sumSq1 += diff1 * diff1;
     sumSq2 += diff2 * diff2;
   }
-  
+
   const denominator = Math.sqrt(sumSq1 * sumSq2);
   return denominator === 0 ? 0 : numerator / denominator;
 }

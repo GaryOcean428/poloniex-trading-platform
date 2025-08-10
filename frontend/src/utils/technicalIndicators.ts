@@ -73,13 +73,13 @@ export function calculateRSI(data: MarketData[], period: number = 14): Technical
     throw new Error(`Insufficient data: need ${period + 1} candles`);
   }
 
-  const changes = [];
+  const changes: number[] = [];
   for (let i = 1; i < prices.length; i++) {
     changes.push(prices[i] - prices[i - 1]);
   }
 
-  const avgGain = 0;
-  const avgLoss = 0;
+  let avgGain = 0;
+  let avgLoss = 0;
 
   for (let i = 0; i < period; i++) {
     if (changes[i] > 0) {
@@ -110,7 +110,7 @@ export function calculateRSI(data: MarketData[], period: number = 14): Technical
   const previousValue = values[values.length - 2] || currentValue;
 
   let signal: "BUY" | "SELL" | "HOLD" = "HOLD";
-  const strength = 0;
+  let strength = 0;
 
   if (currentValue < 30 && previousValue < currentValue) {
     signal = "BUY";
@@ -190,25 +190,25 @@ export function calculateATR(data: MarketData[], period: number = 14): Technical
   }
 
   const trueRanges: number[] = [];
-  
+
   for (let i = 1; i < data.length; i++) {
     const high = data[i].high;
     const low = data[i].low;
     const prevClose = data[i - 1].close;
-    
+
     const tr1 = high - low;
     const tr2 = Math.abs(high - prevClose);
     const tr3 = Math.abs(low - prevClose);
-    
+
     trueRanges.push(Math.max(tr1, tr2, tr3));
   }
 
   const values: number[] = [];
-  
+
   // Calculate initial ATR using SMA
   const sum = trueRanges.slice(0, period).reduce((a, b) => a + b, 0);
   values.push(sum / period);
-  
+
   // Calculate subsequent ATR values using smoothed moving average
   for (let i = period; i < trueRanges.length; i++) {
     const prevATR = values[values.length - 1];
@@ -219,7 +219,7 @@ export function calculateATR(data: MarketData[], period: number = 14): Technical
 
   const currentValue = values[values.length - 1];
   const previousValue = values[values.length - 2] || currentValue;
-  
+
   return {
     values,
     currentValue,

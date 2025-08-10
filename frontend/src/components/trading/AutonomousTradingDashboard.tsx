@@ -62,15 +62,20 @@ const AutonomousTradingDashboard: React.FC = () => {
             setConnectionStatus(liveAutonomousTradingEngine.getConnectionStatus());
         };
 
-        const handleNotification = (data: unknown) => {
-            if (data.notification.type === 'CRITICAL') {
-                setError(data.notification.message);
+        type NotificationPayload = { notification?: { type?: string; message?: string } };
+        type PerformancePayload = { sessionId?: string; performance?: LiveAutonomousSession['performance'] };
+
+        const handleNotification = (payload: unknown) => {
+            const data = payload as NotificationPayload;
+            if (data.notification?.type === 'CRITICAL') {
+                setError(data.notification.message ?? 'Critical error');
             }
         };
 
-        const handlePerformanceUpdate = (data: unknown) => {
-            if (session && data.sessionId === session.id) {
-                setSession(prev => prev ? { ...prev, performance: data.performance } : null);
+        const handlePerformanceUpdate = (payload: unknown) => {
+            const data = payload as PerformancePayload;
+            if (session && data.sessionId === session.id && data.performance) {
+                setSession(prev => (prev ? { ...prev, performance: data.performance! } : null));
             }
         };
 
@@ -164,11 +169,11 @@ const AutonomousTradingDashboard: React.FC = () => {
                     </div>
                     <div className="flex items-center gap-2">
                         <div className={`px-3 py-1 rounded-full text-sm font-medium ${
-                            connectionStatus.useBackend ? 
+                            connectionStatus.useBackend ?
                                 (connectionStatus.isConnected ? 'bg-green-500/20 text-green-100' : 'bg-red-500/20 text-red-100') :
                                 'bg-yellow-500/20 text-yellow-100'
                         }`}>
-                            {connectionStatus.useBackend ? 
+                            {connectionStatus.useBackend ?
                                 (connectionStatus.isConnected ? 'Live Connected' : 'Disconnected') :
                                 'Mock Mode'
                             }
@@ -285,7 +290,7 @@ const AutonomousTradingDashboard: React.FC = () => {
                                 <p className="text-sm text-gray-500">Confidence Score</p>
                             </div>
                         </div>
-                        
+
                         {/* Backend System Status */}
                         {session.backendSystemStatus && (
                             <div className="mt-4 pt-4 border-t">
@@ -374,8 +379,8 @@ const AutonomousTradingDashboard: React.FC = () => {
                         </div>
                         <div className="text-center">
                             <p className="text-sm text-gray-900">
-                                {session.bankingStatus.lastBankingTime ? 
-                                    new Date(session.bankingStatus.lastBankingTime).toLocaleString() : 
+                                {session.bankingStatus.lastBankingTime ?
+                                    new Date(session.bankingStatus.lastBankingTime).toLocaleString() :
                                     'Never'
                                 }
                             </p>

@@ -1,4 +1,5 @@
 import '@testing-library/jest-dom';
+import { vi } from 'vitest';
 
 // Mock environment variables
 global.process = {
@@ -12,10 +13,9 @@ global.process = {
 
 // Mock WebSocket
 global.WebSocket = class WebSocket {
-  constructor() {
-    this.readyState = 1; // OPEN
-  }
-  send() {}
+  readyState: number = 1; // OPEN
+  constructor() {}
+  send(_: unknown) {}
   close() {}
   addEventListener() {}
   removeEventListener() {}
@@ -34,7 +34,7 @@ global.IntersectionObserver = class IntersectionObserver {
   observe() {}
   unobserve() {}
   disconnect() {}
-};
+} as any;
 
 // Mock matchMedia
 Object.defineProperty(window, 'matchMedia', {

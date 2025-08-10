@@ -63,8 +63,8 @@ const TestWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => (
 );
 
 describe('React Error #185 Fix - Infinite Loop Prevention', () => {
-  const renderCount = 0;
-  
+  let renderCount = 0;
+
   beforeEach(() => {
     renderCount = 0;
     vi.clearAllMocks();
@@ -90,7 +90,7 @@ describe('React Error #185 Fix - Infinite Loop Prevention', () => {
 
     // Check that renders are reasonable (not infinite)
     expect(renderCount).toBeLessThan(10);
-    
+
     // Should have loaded mock data
     expect(result.current.marketData).toBeDefined();
     expect(result.current.trades).toBeDefined();
@@ -98,7 +98,7 @@ describe('React Error #185 Fix - Infinite Loop Prevention', () => {
 
   it('should handle credential changes without infinite loops', async () => {
     const mockUseSettings = vi.mocked(await import('../hooks/useSettings')).useSettings;
-    
+
     // Start with no credentials
     mockUseSettings.mockReturnValue({
       apiKey: '',
@@ -174,7 +174,7 @@ describe('React Error #185 Fix - Infinite Loop Prevention', () => {
 
   it('should not cause infinite loops in TradingProvider error handling', async () => {
     const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    
+
     const TestComponent = () => {
       renderCount++;
       return <div>Test</div>;
@@ -199,7 +199,7 @@ describe('React Error #185 Fix - Infinite Loop Prevention', () => {
 
   it('should handle WebSocket connection states without infinite loops', async () => {
     const { webSocketService } = await import('../services/websocketService');
-    
+
     render(
       <TestWrapper>
         <div>WebSocket Test</div>
@@ -217,7 +217,7 @@ describe('React Error #185 Fix - Infinite Loop Prevention', () => {
 
   it('should prevent React Error #185 with maximum update depth exceeded', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const errorThrown = false;
+    let errorThrown = false;
 
     try {
       const { result } = renderHook(
