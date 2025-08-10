@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 import pkg from 'pg';
 import dotenv from 'dotenv';
 
@@ -21,26 +21,25 @@ async function updatePassword() {
     connectionString: DATABASE_URL,
     ssl: { rejectUnauthorized: false }
   });
-  
+
   try {
     console.log('🔗 Connecting to database...');
     await client.connect();
-    
+
     // Generate password hash
     const password = process.env.DEFAULT_PASSWORD || "I.Am.Dev.1";
-    const saltRounds = 10;
-    const hashedPassword = await bcrypt.hash(password, saltRounds);
-    
+    const hashedPassword = await bcrypt.hash(password, 10);
+
     console.log('🔐 Generated password hash for:', password);
-    
+
     // Update the password
     await client.query(
       'UPDATE users SET password_hash = $1 WHERE username = $2',
       [hashedPassword, 'GaryOcean']
     );
-    
+
     console.log('✅ Password updated successfully for GaryOcean');
-    
+
   } catch (error) {
     console.error('❌ Error updating password:', error);
     process.exit(1);

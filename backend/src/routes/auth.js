@@ -20,14 +20,15 @@ router.post('/login', async (req, res) => {
     }
 
     // Determine identifier: prefer explicit email if provided, otherwise username
-    const identifier = email || username;
+    const identifierRaw = (email || username || '').trim();
+    const identifier = identifierRaw.toLowerCase();
 
-    // If identifier looks like an email (has @), lookup by email only; otherwise allow name OR email match
-    const looksLikeEmail = typeof identifier === 'string' && identifier.includes('@');
+    // If identifier looks like an email (has @), lookup by email only; otherwise allow username OR email match (case-insensitive)
+    const looksLikeEmail = typeof identifierRaw === 'string' && identifierRaw.includes('@');
 
     const query = looksLikeEmail
-      ? 'SELECT * FROM users WHERE email = $1 LIMIT 1'
-      : 'SELECT * FROM users WHERE name = $1 OR email = $1 LIMIT 1';
+      ? 'SELECT * FROM users WHERE LOWER(email) = $1 LIMIT 1'
+      : 'SELECT * FROM users WHERE LOWER(username) = $1 OR LOWER(email) = $1 LIMIT 1';
 
     const result = await pool.query(query, [identifier]);
 
@@ -53,7 +54,7 @@ router.post('/login', async (req, res) => {
       user: {
         id: user.id,
         email: user.email,
-        name: user.name
+        name: user.username || user.name
       }
     });
   } catch (error) {
@@ -65,29 +66,34 @@ router.post('/login', async (req, res) => {
 // Register endpoint
 router.post('/register', async (req, res) => {
   try {
-    const { email, password, name } = req.body;
+    const { email, password } = req.body;
+    const username = (req.body.username || req.body.name || '').trim();
 
-    if (!email || !password || !name) {
-      return res.status(400).json({ error: 'All fields required' });
+    if (!email || !password || !username) {
+      return res.status(400).json({ error: 'All fields required (email, username, password)' });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const result = await pool.query(
-      'INSERT INTO users (email, password_hash, name) VALUES ($1, $2, $3) RETURNING id, email, name',
-      [email, hashedPassword, name]
+      'INSERT INTO users (email, password_hash, username) VALUES ($1, $2, $3) RETURNING id, email, username',
+      [email, hashedPassword, username]
     );
 
     const user = result.rows[0];
     const token = jwt.sign(
       { userId: user.id, email: user.email },
       process.env.JWT_SECRET || 'your-secret-key',
-      { expiresIn: '24h' }
+      { expiresIn: `${process.env.JWT_ACCESS_TOKEN_EXPIRE_MINUTES || 1440}m` }
     );
 
     res.json({
       token,
-      user
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.username
+      }
     });
   } catch (error) {
     console.error('Registration error:', error);
