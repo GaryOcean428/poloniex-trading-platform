@@ -1,4 +1,4 @@
-const CACHE_NAME = 'poloniex-trading-v1.1';
+const CACHE_NAME = 'poloniex-trading-v1.2';
 const STATIC_ASSETS = [
   '/',
   '/manifest.json',
@@ -65,6 +65,25 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  // Network-first for navigations to avoid stale index.html after deploy
+  if (event.request.mode === 'navigate') {
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          if (response && response.ok) {
+            const responseClone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => {
+              // Always keep the latest index cached at '/'
+              cache.put('/', responseClone);
+            });
+          }
+          return response;
+        })
+        .catch(() => caches.match('/'))
+    );
+    return;
+  }
+
   event.respondWith(
     caches.match(event.request)
       .then((cachedResponse) => {
@@ -95,9 +114,9 @@ self.addEventListener('fetch', (event) => {
                 caches.open(CACHE_NAME).then((cache) => {
                   cache.put(event.request, responseClone);
                 });
-                
+
                 // Cache trading data separately for offline access
-                if (event.request.url.includes('/api/market') || 
+                if (event.request.url.includes('/api/market') ||
                     event.request.url.includes('/api/trade')) {
                   response.clone().json().then((data) => {
                     caches.open(TRADING_DATA_CACHE).then((cache) => {
@@ -116,7 +135,7 @@ self.addEventListener('fetch', (event) => {
             })
             .catch(() => {
               // Try to return cached trading data for offline mode
-              if (event.request.url.includes('/api/market') || 
+              if (event.request.url.includes('/api/market') ||
                   event.request.url.includes('/api/trade')) {
                 return caches.open(TRADING_DATA_CACHE).then((cache) => {
                   return cache.match(event.request).then((cachedResponse) => {
@@ -140,11 +159,11 @@ self.addEventListener('fetch', (event) => {
                   });
                 });
               }
-              
+
               // Return a basic offline response for other API calls
               return new Response(
-                JSON.stringify({ 
-                  error: 'Offline', 
+                JSON.stringify({
+                  error: 'Offline',
                   message: 'API unavailable in offline mode',
                   timestamp: new Date().toISOString()
                 }),
@@ -175,7 +194,7 @@ self.addEventListener('fetch', (event) => {
             if (event.request.mode === 'navigate') {
               return caches.match('/');
             }
-            
+
             // For other failed requests, return a basic response
             return new Response('Offline', {
               status: 503,

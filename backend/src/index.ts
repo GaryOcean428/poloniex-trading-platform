@@ -68,7 +68,7 @@ const corsOptions = {
   origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
-    
+
     if (allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
@@ -105,7 +105,7 @@ app.use('/api/status', statusRoutes);
 // Serve static files in production
 if (process.env.NODE_ENV === 'production') {
   // Serve frontend static files with proper MIME types
-  app.use(express.static(path.join(__dirname, '../../../../frontend/dist'), {
+  app.use(express.static(path.join(__dirname, '../../frontend/dist'), {
     setHeaders: (res, path) => {
       // Ensure JavaScript files are served with correct MIME type
       if (path.endsWith('.js')) {
@@ -129,7 +129,7 @@ if (process.env.NODE_ENV === 'production') {
 
   // Serve index.html for all other routes (SPA support)
   app.get('*', (req: Request, res: Response) => {
-    res.sendFile(path.join(__dirname, '../../../../frontend/dist/index.html'));
+    res.sendFile(path.join(__dirname, '../../frontend/dist/index.html'));
   });
 }
 
@@ -142,7 +142,7 @@ app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
 // Socket.IO connection handling
 io.on('connection', (socket) => {
   logger.info(`Client connected: ${socket.id}`);
-  
+
   // Handle health check
   socket.on('health-check', () => {
     socket.emit('health-response', {
@@ -151,18 +151,18 @@ io.on('connection', (socket) => {
       environment: process.env.NODE_ENV || 'development'
     });
   });
-  
+
   // Handle market data subscription (mock implementation)
   socket.on('subscribe-market-data', (data) => {
     logger.info(`Client ${socket.id} subscribed to market data:`, data);
     socket.emit('market-data-subscribed', { status: 'subscribed', symbol: data.symbol });
   });
-  
+
   // Handle disconnection
   socket.on('disconnect', (reason) => {
     logger.info(`Client disconnected: ${socket.id}, reason: ${reason}`);
   });
-  
+
   // Handle connection errors
   socket.on('error', (error) => {
     logger.error(`Socket error for ${socket.id}:`, error);

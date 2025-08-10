@@ -1,11 +1,12 @@
 /**
  * WebSocket Configuration
- * 
+ *
  * Provides environment-aware WebSocket URL resolution with proper fallbacks
  * for Railway deployment and local development.
  */
 
 import { getEnvVariable } from '@/utils/environment';
+import { getBackendUrl } from '@/utils/environment';
 
 export interface WebSocketConfig {
   url: string;
@@ -27,63 +28,44 @@ export interface WebSocketConfig {
  * Get WebSocket URL with proper environment variable resolution
  */
 export const getWebSocketUrl = (): string => {
-  // Check for explicit WebSocket URL first
+  // Priority 1: Explicit WebSocket URL
   const explicitWsUrl = getEnvVariable('VITE_WS_URL');
-  if (explicitWsUrl) {
-    return explicitWsUrl;
-  }
+  if (explicitWsUrl) return explicitWsUrl;
 
-  // Check for backend URL and convert to WebSocket URL
-  const backendUrl = getEnvVariable('VITE_BACKEND_URL');
+  // Priority 2: Derive from backend URL (handles Railway domains correctly)
+  const backendUrl = getBackendUrl();
   if (backendUrl) {
-    // Convert HTTP/HTTPS to WS/WSS
-    if (backendUrl.startsWith('https://')) {
-      return backendUrl.replace('https://', 'wss://');
-    } else if (backendUrl.startsWith('http://')) {
-      return backendUrl.replace('http://', 'ws://');
-    }
+    if (backendUrl.startsWith('https://')) return backendUrl.replace('https://', 'wss://');
+    if (backendUrl.startsWith('http://')) return backendUrl.replace('http://', 'ws://');
     return backendUrl;
   }
 
-  // Check Railway-specific environment variables
+  // Priority 3: Railway/public domain hints
   const railwayPublicDomain = getEnvVariable('VITE_RAILWAY_PUBLIC_DOMAIN');
-  if (railwayPublicDomain) {
-    return `wss://${railwayPublicDomain}`;
-  }
-
+  if (railwayPublicDomain) return `wss://${railwayPublicDomain}`;
   const railwayPrivateDomain = getEnvVariable('VITE_RAILWAY_PRIVATE_DOMAIN');
-  if (railwayPrivateDomain) {
-    return `wss://${railwayPrivateDomain}`;
-  }
+  if (railwayPrivateDomain) return `wss://${railwayPrivateDomain}`;
 
-  // Environment detection for fallbacks
+  // Priority 4: Environment detection
   if (typeof window !== 'undefined' && window.location) {
     const hostname = window.location.hostname;
     const protocol = window.location.protocol;
 
-    // Local development
     if (hostname === 'localhost' || hostname === '127.0.0.1') {
-      // Use .clinerules compliant backend port (8765-8799)
       return `${protocol === 'https:' ? 'wss:' : 'ws:'}//${hostname}:8765`;
     }
 
-    // Railway detection (derive from env or same-origin)
     if (hostname.includes('railway.app') || hostname.includes('up.railway.app')) {
-      const railwayPublicDomain = getEnvVariable('VITE_RAILWAY_PUBLIC_DOMAIN');
-      if (railwayPublicDomain) {
-        return `wss://${railwayPublicDomain}`;
-      }
-      // Fallback to same-origin protocol/host
+      // As a last resort, same-origin; backend proxy must exist for /socket.io
       return `${protocol === 'https:' ? 'wss:' : 'ws:'}//${hostname}`;
     }
 
-    // WebContainer detection
     if (hostname.includes('webcontainer-api.io')) {
       return `${protocol === 'https:' ? 'wss:' : 'ws:'}//${hostname}:8765`;
     }
   }
 
-  // Final fallback for development
+  // Final fallback
   return 'ws://localhost:8765';
 };
 
