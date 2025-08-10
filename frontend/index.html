@@ -28,9 +28,17 @@
     <link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png" />
     <link rel="shortcut icon" href="./favicon.ico" />
     
-    <!-- Preload critical resources -->
+    <!-- Preload critical resources and optimize performance -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link rel="dns-prefetch" href="//poloniex.com" />
+    <link rel="dns-prefetch" href="//polytrade-be.up.railway.app" />
+    
+    <!-- Preload removed: no font href available; avoids console warnings -->
+    
+    <!-- Add resource hints for WebSocket connection -->
+    <meta name="description" content="Advanced trading platform with backtesting, real-time data, and AI-powered insights" />
+    <meta name="keywords" content="trading, cryptocurrency, poloniex, backtesting, real-time data, AI insights" />
   </head>
   <body>
     <div id="root"></div>

@@ -14,7 +14,6 @@ import {
   BarChart4
 } from 'lucide-react';
 import { useTradingContext } from '../hooks/useTradingContext';
-import MockModeNotice from '../components/MockModeNotice';
 import { poloniexApi } from '../services/poloniexAPI';
 import TransactionHistory from '../components/account/TransactionHistory';
 import ApiKeyManagement from '../components/account/ApiKeyManagement';
@@ -67,8 +66,6 @@ const Account: React.FC = () => {
   
   return (
     <div className="space-y-6">
-      {isMockMode && <MockModeNotice />}
-      
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-bold">Account Overview</h1>
         <button 

@@ -3,9 +3,8 @@ import { lazy, Suspense, useEffect } from 'react';
 import Navbar from './components/Navbar';
 import Sidebar from './components/Sidebar';
 import SkipLinks from './components/SkipLinks';
-import EnvironmentStatus from './components/EnvironmentStatus';
 import ConnectionHealth from './components/ConnectionHealth';
-import { ConfigurationStatus } from './components/ConfigurationStatus';
+
 import { EnvDebug } from './components/EnvDebug';
 import { ConnectionTest } from './components/ConnectionTest';
 import PWAInstallPrompt from './components/PWAInstallPrompt';
@@ -33,6 +32,7 @@ const Performance = lazy(() => import('./pages/Performance'));
 const Settings = lazy(() => import('./pages/Settings'));
 const Chat = lazy(() => import('./pages/Chat'));
 const ExtensionDownload = lazy(() => import('./pages/ExtensionDownload'));
+const Status = lazy(() => import('./pages/Status'));
 const Login = lazy(() => import('./pages/Login'));
 const NotFound = lazy(() => import('./pages/NotFound'));
 
@@ -91,6 +91,7 @@ function App() {
                             <Route path="/chat" element={<Chat />} />
                             <Route path="/settings" element={<Settings />} />
                             <Route path="/extension" element={<ExtensionDownload />} />
+                            <Route path="/status" element={<Status />} />
                             <Route path="/login" element={<Login />} />
                             <Route path="/404" element={<NotFound />} />
                             <Route path="*" element={<NotFound />} />
@@ -102,8 +103,7 @@ function App() {
                 </div>
                 <Integration />
                 <ToastContainer />
-                <EnvironmentStatus />
-                <ConfigurationStatus />
+
                 <ConnectionHealth />
                 <EnvDebug />
                 <ConnectionTest />

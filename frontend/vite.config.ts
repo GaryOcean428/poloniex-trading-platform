@@ -78,7 +78,7 @@ export default defineConfig({
   preview: {
     host: "0.0.0.0",
     port: parseInt(process.env.PORT || "5675"), // .clinerules compliant frontend port range (5675-5699)
-    allowedHosts: ["healthcheck.railway.app", "localhost"],
+    allowedHosts: ["healthcheck.railway.app", "localhost", process.env.RAILWAY_STATIC_URL || "poloniex-trading-platform-production.up.railway.app"],
   },
   resolve: {
     alias: {

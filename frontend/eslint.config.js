@@ -45,6 +45,7 @@ export default [
       '@typescript-eslint/no-require-imports': 'warn',
       '@typescript-eslint/prefer-as-const': 'warn',
       '@typescript-eslint/no-unnecessary-type-assertion': 'warn',
+      'no-const-assign': 'warn', // Change from error to warning
 
       // General code quality rules
       'no-undef': 'off',

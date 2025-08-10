@@ -5,6 +5,8 @@ import compression from 'compression';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { createServer } from 'http';
+import { Server as SocketIOServer } from 'socket.io';
 
 // Import routes
 import authRoutes from './routes/auth.js';
@@ -15,6 +17,7 @@ import paperTradingRoutes from './routes/paperTrading.js';
 import autonomousTradingRoutes from './routes/autonomousTrading.js';
 import confidenceScoringRoutes from './routes/confidenceScoring.js';
 import strategiesRoutes from './routes/strategies.js';
+import statusRoutes from './routes/status.js';
 
 // Import services
 import { logger } from './utils/logger.js';
@@ -26,8 +29,35 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
+const server = createServer(app);
+
 // Use Railway PORT environment variable or fallback to .clinerules compliant port range (8765-8799)
 const PORT = parseInt(process.env.PORT || '8765', 10);
+
+// CORS configuration with support for multiple origins and Railway deployment
+const allowedOrigins = [
+  'https://healthcheck.railway.app',
+  'https://poloniex-trading-platform-production.up.railway.app',
+  'https://polytrade-red.vercel.app',
+  'https://polytrade-be.up.railway.app',
+  process.env.FRONTEND_URL || 'http://localhost:5675',
+  ...(process.env.NODE_ENV === 'production' ? [] : ['http://localhost:3000', 'http://localhost:5173'])
+];
+
+// Socket.IO server setup with Railway-compatible CORS
+const io = new SocketIOServer(server, {
+  cors: {
+    origin: allowedOrigins,
+    credentials: true,
+    methods: ['GET', 'POST']
+  },
+  // Configure for Railway deployment compatibility
+  transports: ['websocket', 'polling'],
+  pingTimeout: 120000,
+  pingInterval: 25000,
+  upgradeTimeout: 30000,
+  maxHttpBufferSize: 1e6
+});
 
 // Middleware
 app.use(helmet());
@@ -38,17 +68,6 @@ const corsOptions = {
   origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
-    
-    // Get allowed origins from environment variable with Railway support
-    const allowedOrigins = process.env.CORS_ALLOWED_ORIGINS 
-      ? process.env.CORS_ALLOWED_ORIGINS.split(',').map(origin => origin.trim())
-      : [
-          process.env.FRONTEND_URL || 'http://localhost:5675', // .clinerules compliant frontend port
-          process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : null,
-          process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null,
-          'http://localhost:5173', // Legacy support
-          'http://localhost:3000'  // Legacy support
-        ].filter(Boolean);
     
     if (allowedOrigins.includes(origin)) {
       callback(null, true);
@@ -81,6 +100,7 @@ app.use('/api/paper-trading', paperTradingRoutes);
 app.use('/api/autonomous-trading', autonomousTradingRoutes);
 app.use('/api/confidence-scoring', confidenceScoringRoutes);
 app.use('/api/strategies', strategiesRoutes);
+app.use('/api/status', statusRoutes);
 
 // Serve static files in production
 if (process.env.NODE_ENV === 'production') {
@@ -119,8 +139,39 @@ app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
   res.status(500).json({ error: 'Internal server error' });
 });
 
+// Socket.IO connection handling
+io.on('connection', (socket) => {
+  logger.info(`Client connected: ${socket.id}`);
+  
+  // Handle health check
+  socket.on('health-check', () => {
+    socket.emit('health-response', {
+      status: 'healthy',
+      timestamp: new Date().toISOString(),
+      environment: process.env.NODE_ENV || 'development'
+    });
+  });
+  
+  // Handle market data subscription (mock implementation)
+  socket.on('subscribe-market-data', (data) => {
+    logger.info(`Client ${socket.id} subscribed to market data:`, data);
+    socket.emit('market-data-subscribed', { status: 'subscribed', symbol: data.symbol });
+  });
+  
+  // Handle disconnection
+  socket.on('disconnect', (reason) => {
+    logger.info(`Client disconnected: ${socket.id}, reason: ${reason}`);
+  });
+  
+  // Handle connection errors
+  socket.on('error', (error) => {
+    logger.error(`Socket error for ${socket.id}:`, error);
+  });
+});
+
 // Start server
-app.listen(PORT, '0.0.0.0', () => {
-  // console.log(`Server running on port ${PORT}`);
-  // console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+server.listen(PORT, '0.0.0.0', () => {
+  logger.info(`Server running on port ${PORT}`);
+  logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  logger.info(`Socket.IO server initialized`);
 });

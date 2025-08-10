@@ -10,16 +10,26 @@ router.get('/health', (req, res) => {
   res.json({ status: 'ok', service: 'auth' });
 });
 
-// Login endpoint
+// Login endpoint (supports username OR email + password)
 router.post('/login', async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { username, email, password } = req.body;
 
-    if (!email || !password) {
-      return res.status(400).json({ error: 'Email and password required' });
+    if ((!username && !email) || !password) {
+      return res.status(400).json({ error: 'Username/email and password required' });
     }
 
-    const result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+    // Determine identifier: prefer explicit email if provided, otherwise username
+    const identifier = email || username;
+
+    // If identifier looks like an email (has @), lookup by email only; otherwise allow name OR email match
+    const looksLikeEmail = typeof identifier === 'string' && identifier.includes('@');
+
+    const query = looksLikeEmail
+      ? 'SELECT * FROM users WHERE email = $1 LIMIT 1'
+      : 'SELECT * FROM users WHERE name = $1 OR email = $1 LIMIT 1';
+
+    const result = await pool.query(query, [identifier]);
 
     if (result.rows.length === 0) {
       return res.status(401).json({ error: 'Invalid credentials' });
@@ -35,7 +45,7 @@ router.post('/login', async (req, res) => {
     const token = jwt.sign(
       { userId: user.id, email: user.email },
       process.env.JWT_SECRET || 'your-secret-key',
-      { expiresIn: '24h' }
+      { expiresIn: `${process.env.JWT_ACCESS_TOKEN_EXPIRE_MINUTES || 1440}m` }
     );
 
     res.json({

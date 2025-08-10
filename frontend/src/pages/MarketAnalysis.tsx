@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { useTradingContext } from '../hooks/useTradingContext';
 import PriceChart from '../components/charts/PriceChart';
 import { BarChart2, TrendingUp, TrendingDown, Volume2, ArrowRight } from 'lucide-react';
-import MockModeNotice from '../components/MockModeNotice';
 
 const MarketAnalysis: React.FC = () => {
   const { marketData, isMockMode } = useTradingContext();
@@ -25,8 +24,6 @@ const MarketAnalysis: React.FC = () => {
   
   return (
     <div className="space-y-6">
-      {isMockMode && <MockModeNotice />}
-      
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-bold">Market Analysis</h1>
         <select

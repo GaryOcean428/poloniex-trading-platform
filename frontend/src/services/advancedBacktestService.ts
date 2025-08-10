@@ -142,9 +142,9 @@ export class AdvancedBacktestService {
     }
 
     // Initialize backtest state
-    const balance = options.initialBalance;
+    let balance = options.initialBalance;
     const trades: BacktestTrade[] = [];
-    const highWaterMark = balance;
+    let highWaterMark = balance;
     const equityCurve: {
       timestamp: number;
       balance: number;
@@ -816,9 +816,9 @@ export class AdvancedBacktestService {
     const mean1 = returns1.slice(0, n).reduce((sum, r) => sum + r, 0) / n;
     const mean2 = returns2.slice(0, n).reduce((sum, r) => sum + r, 0) / n;
 
-    const numerator = 0;
-    const sumSq1 = 0;
-    const sumSq2 = 0;
+    let numerator = 0;
+    let sumSq1 = 0;
+    let sumSq2 = 0;
 
     for (let i = 0; i < n; i++) {
       const diff1 = returns1[i] - mean1;
@@ -868,7 +868,7 @@ export class AdvancedBacktestService {
     }, 0);
 
     // Portfolio volatility calculation (simplified)
-    const portfolioVariance = 0;
+    let portfolioVariance = 0;
     for (let i = 0; i < weights.length; i++) {
       for (let j = 0; j < weights.length; j++) {
         const vol_i = Math.sqrt(
