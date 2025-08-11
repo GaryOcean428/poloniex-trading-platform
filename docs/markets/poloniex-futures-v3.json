@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "_note": "Canonical, programmatically consumable catalog of ALL Poloniex Futures v3 markets. Policy: include all markets; use exchange max leverage and exchange fees.",
+  "version": 1,
+  "source": "../railway-poloniex-docs.md",
+  "lastSynced": "",
+  "markets": [
+  ],
+  "schema": {
+    "symbol": "string",
+    "base": "string",
+    "quote": "string",
+    "contractType": "perpetual | delivery | other",
+    "status": "trading | paused | delisted",
+    "pricePrecision": "number of decimals",
+    "quantityPrecision": "number of decimals",
+    "tickSize": "number",
+    "lotSize": "number",
+    "minNotional": "number",
+    "maxLeverage": "number",
+    "maintenanceMarginTable": [
+      {
+        "notionalFloor": "number",
+        "maintenanceMarginRate": "number"
+      }
+    ],
+    "riskLimits": [
+      { "tier": "number", "maxPosition": "number", "initialMarginRate": "number", "maintenanceMarginRate": "number" }
+    ],
+    "feesBps": { "maker": "number", "taker": "number" },
+    "funding": { "intervalHours": 8, "rateCap": "number | null" },
+    "endpoints": {
+      "marketInfo": "https://api-docs.poloniex.com/v3/futures/market",
+      "ticker": "https://api-docs.poloniex.com/v3/futures/market/get-ticker",
+      "kline": "https://api-docs.poloniex.com/v3/futures/market/get-kline-data",
+      "orderbook": "https://api-docs.poloniex.com/v3/futures/market/get-order-book-v2",
+      "trades": "https://api-docs.poloniex.com/v3/futures/market/get-execution-info",
+      "fundingHistory": "https://api-docs.poloniex.com/v3/futures/market/get-historical-funding-rates"
+    }
+  },
+  "examples": [
+    {
+      "symbol": "BTCUSDT",
+      "base": "BTC",
+      "quote": "USDT",
+      "contractType": "perpetual",
+      "status": "trading",
+      "pricePrecision": 1,
+      "quantityPrecision": 3,
+      "tickSize": 0.1,
+      "lotSize": 0.001,
+      "minNotional": 5,
+      "maxLeverage": 100,
+      "maintenanceMarginTable": [
+        { "notionalFloor": 0, "maintenanceMarginRate": 0.004 }
+      ],
+      "riskLimits": [
+        { "tier": 1, "maxPosition": 100000, "initialMarginRate": 0.01, "maintenanceMarginRate": 0.004 }
+      ],
+      "feesBps": { "maker": 2, "taker": 5 },
+      "funding": { "intervalHours": 8, "rateCap": null }
+    }
+  ]
+}
