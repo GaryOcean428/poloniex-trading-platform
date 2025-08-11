@@ -68,24 +68,38 @@ router.post('/login', async (req, res) => {
  * Expects: Authorization: Bearer <jwt>
  * Returns: { success: true, user: { id, email } } on valid token
  */
-router.get('/verify', async (req, res) => {
+router.get('/verify', (req, res) => {
+  // Defensive, never throw: always return JSON with explicit status
   try {
     const authHeader = req.headers.authorization || '';
     const parts = authHeader.split(' ');
-    const token = parts.length === 2 && parts[0].toLowerCase() === 'bearer' ? parts[1] : null;
+    const token = parts.length === 2 && (parts[0] || '').toLowerCase() === 'bearer' ? parts[1] : null;
 
     if (!token) {
       return res.status(401).json({ success: false, error: 'Missing token' });
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+    const secret = process.env.JWT_SECRET || 'your-secret-key';
+    if (!secret || typeof secret !== 'string' || secret.length === 0) {
+      console.error('JWT_SECRET missing or invalid; using fallback secret');
+    }
 
-    return res.json({
+    let decoded;
+    try {
+      decoded = jwt.verify(token, secret);
+    } catch (e) {
+      console.warn('JWT verify failed:', e?.message || e);
+      return res.status(401).json({ success: false, error: 'Invalid token' });
+    }
+
+    // Success
+    return res.status(200).json({
       success: true,
-      user: { id: decoded.userId, email: decoded.email }
+      user: { id: decoded?.userId, email: decoded?.email }
     });
   } catch (err) {
-    console.error('Verify error:', err);
+    // Absolute fallback: never escalate to global 500
+    console.error('Verify handler error:', err);
     return res.status(401).json({ success: false, error: 'Invalid token' });
   }
 });
