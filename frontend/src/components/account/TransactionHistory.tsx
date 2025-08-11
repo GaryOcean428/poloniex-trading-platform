@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Download, Upload, RefreshCw, Search, Filter, Download as DownloadIcon } from 'lucide-react';
-import { mockTransactions } from '../../data/mockData';
+import PoloniexFuturesAPI, { AccountBill } from '../../services/poloniexFuturesAPI';
 
 const TransactionHistory: React.FC = () => {
   const [filter, setFilter] = useState<'all' | 'deposit' | 'withdrawal' | 'trade'>('all');
@@ -43,31 +43,76 @@ const TransactionHistory: React.FC = () => {
     }
   };
   
+  // Local state for transactions from API
+  const [rows, setRows] = useState<Array<{
+    id: string;
+    type: 'DEPOSIT' | 'WITHDRAWAL' | 'TRADE';
+    description: string;
+    amount: number;
+    status: 'COMPLETED' | 'PENDING' | 'FAILED';
+    timestamp: number;
+  }>>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Map AccountBill to UI row
+  const mapBillToRow = (b: AccountBill) => {
+    const typeMap: Record<string, 'DEPOSIT' | 'WITHDRAWAL' | 'TRADE'> = {
+      deposit: 'DEPOSIT',
+      withdrawal: 'WITHDRAWAL',
+      trade: 'TRADE',
+      fee: 'TRADE',
+      funding: 'TRADE',
+    };
+    const t = typeMap[b.type?.toLowerCase?.() || 'trade'] || 'TRADE';
+    return {
+      id: b.billId,
+      type: t,
+      description: `${b.symbol || b.currency || ''} ${b.type}`.trim(),
+      amount: parseFloat(b.amount || '0'),
+      status: 'COMPLETED' as const,
+      timestamp: typeof b.ts === 'number' && b.ts < 1e12 ? b.ts * 1000 : b.ts,
+    };
+  };
+
+  // Load transactions from API on mount and when dateRange changes (to reduce payload)
+  useEffect(() => {
+    let mounted = true;
+    const load = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const params: { startTime?: number; endTime?: number; limit?: number } = { limit: 200 };
+        const now = Date.now();
+        if (dateRange !== 'all') {
+          let start = 0;
+          if (dateRange === 'week') start = now - 7 * 24 * 60 * 60 * 1000;
+          else if (dateRange === 'month') start = new Date(new Date().getFullYear(), new Date().getMonth() - 1, new Date().getDate()).getTime();
+          else if (dateRange === 'quarter') start = new Date(new Date().getFullYear(), new Date().getMonth() - 3, new Date().getDate()).getTime();
+          else if (dateRange === 'year') start = new Date(new Date().getFullYear() - 1, new Date().getMonth(), new Date().getDate()).getTime();
+          params.startTime = start;
+          params.endTime = now;
+        }
+        const bills = await new PoloniexFuturesAPI().getAccountBills(params);
+        const mapped = bills.map(mapBillToRow);
+        if (mounted) setRows(mapped);
+      } catch (e) {
+        if (mounted) setError(e instanceof Error ? e.message : 'Failed to load transactions');
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    };
+    load();
+    return () => {
+      mounted = false;
+    };
+  }, [dateRange]);
+
   // Filter transactions
-  const filteredTransactions = mockTransactions.filter(transaction => {
+  const filteredTransactions = useMemo(() => rows.filter(transaction => {
     // Filter by type
     if (filter !== 'all' && transaction.type.toLowerCase() !== filter.toLowerCase()) {
       return false;
-    }
-    
-    // Filter by date range
-    if (dateRange !== 'all') {
-      const now = new Date();
-      const transactionDate = new Date(transaction.timestamp);
-      
-      if (dateRange === 'week') {
-        const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-        if (transactionDate < oneWeekAgo) return false;
-      } else if (dateRange === 'month') {
-        const oneMonthAgo = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
-        if (transactionDate < oneMonthAgo) return false;
-      } else if (dateRange === 'quarter') {
-        const oneQuarterAgo = new Date(now.getFullYear(), now.getMonth() - 3, now.getDate());
-        if (transactionDate < oneQuarterAgo) return false;
-      } else if (dateRange === 'year') {
-        const oneYearAgo = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
-        if (transactionDate < oneYearAgo) return false;
-      }
     }
     
     // Filter by search query
@@ -82,7 +127,7 @@ const TransactionHistory: React.FC = () => {
     }
     
     return true;
-  });
+  }), [rows, filter, searchQuery]);
   
   return (
     <div className="space-y-4">
@@ -195,10 +240,25 @@ const TransactionHistory: React.FC = () => {
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-neutral-200">
-              {filteredTransactions.map((transaction) => (
+              {loading && (
+                <tr>
+                  <td colSpan={6} className="px-4 py-6 text-center text-sm text-neutral-500">Loading transactions...</td>
+                </tr>
+              )}
+              {error && !loading && (
+                <tr>
+                  <td colSpan={6} className="px-4 py-6 text-center text-sm text-red-600">{error}</td>
+                </tr>
+              )}
+              {!loading && !error && filteredTransactions.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-4 py-6 text-center text-sm text-neutral-500">No transactions found</td>
+                </tr>
+              )}
+              {!loading && !error && filteredTransactions.map((transaction) => (
                 <tr key={transaction.id} className="hover:bg-neutral-50">
                   <td className="px-4 py-3 whitespace-nowrap text-sm text-neutral-500">
-                    <span className="font-mono">{transaction.id}</span>
+                    {transaction.id}
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap">
                     <div className="flex items-center">
@@ -219,23 +279,15 @@ const TransactionHistory: React.FC = () => {
                           <RefreshCw className={`h-4 w-4 text-blue-600`} />
                         )}
                       </div>
-                      <div className="text-sm font-medium text-neutral-900">
-                        {transaction.type}
+                      <div>
+                        <div className="text-sm font-medium text-neutral-900">{transaction.type}</div>
+                        <div className="text-xs text-neutral-500">{transaction.description}</div>
                       </div>
                     </div>
                   </td>
-                  <td className="px-4 py-3 whitespace-nowrap text-sm text-neutral-500">
-                    {transaction.description}
-                  </td>
                   <td className="px-4 py-3 whitespace-nowrap">
-                    <div className={`text-sm font-medium ${
-                      transaction.type === 'WITHDRAWAL' 
-                        ? 'text-red-600' 
-                        : transaction.type === 'DEPOSIT'
-                          ? 'text-green-600'
-                          : 'text-neutral-900'
-                    }`}>
-                      {transaction.type === 'WITHDRAWAL' ? '-' : transaction.type === 'DEPOSIT' ? '+' : ''}
+                    <div className="text-sm font-medium text-neutral-900">
+                      {transaction.type === 'WITHDRAWAL' ? '-' : ''}
                       {formatCurrency(transaction.amount)}
                     </div>
                   </td>
@@ -255,14 +307,6 @@ const TransactionHistory: React.FC = () => {
                   </td>
                 </tr>
               ))}
-              
-              {filteredTransactions.length === 0 && (
-                <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-neutral-500">
-                    No transactions found matching your filters.
-                  </td>
-                </tr>
-              )}
             </tbody>
           </table>
         </div>
@@ -270,7 +314,7 @@ const TransactionHistory: React.FC = () => {
       
       <div className="flex justify-between items-center">
         <div className="text-sm text-neutral-500">
-          Showing {filteredTransactions.length} of {mockTransactions.length} transactions
+          Showing {filteredTransactions.length} of {rows.length} transactions
         </div>
         <div className="flex">
           <button className="px-3 py-1 border border-neutral-300 rounded-l-md bg-white text-neutral-700 hover:bg-neutral-50 disabled:opacity-50 disabled:cursor-not-allowed">

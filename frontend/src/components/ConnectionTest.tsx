@@ -1,52 +1,70 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { io } from 'socket.io-client';
 import { useAppStore } from '@/store';
+import { getBackendUrl, getWebSocketUrl } from '@/utils/environment';
+import React, { useEffect, useRef, useState } from 'react';
+import { io } from 'socket.io-client';
 
 export const ConnectionTest: React.FC = () => {
   const [apiStatus, setApiStatus] = useState<'checking' | 'connected' | 'failed' | 'cors-blocked'>('checking');
   const [wsStatus, setWsStatus] = useState<'checking' | 'connected' | 'failed'>('checking');
   const [apiData, setApiData] = useState<{ status: string; timestamp: string } | null>(null);
   const [isVisible, setIsVisible] = useState(true);
-  
+
   // Refs to track if we've already shown notifications for these errors
   const apiErrorNotifiedRef = useRef(false);
   const wsErrorNotifiedRef = useRef(false);
   const lastErrorTimeRef = useRef<{ api: number, ws: number }>({ api: 0, ws: 0 });
-  
+
   const addToast = useAppStore(state => state.addToast);
 
-  const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000';
-  const wsUrl = import.meta.env.VITE_WS_URL || 'ws://localhost:3000';
+  const apiUrl = (import.meta.env.VITE_API_URL as string) || getBackendUrl();
+  const wsUrl = (import.meta.env.VITE_WS_URL as string) || getWebSocketUrl();
 
   useEffect(() => {
     // Test API connection with better error handling
     const testApiConnection = async () => {
-      try {
-        const response = await fetch(`${apiUrl}/api/health`, {
+      try
+      {
+        const url = `${apiUrl}/api/health`;
+        const response = await fetch(url, {
           method: 'GET',
           headers: {
             'Accept': 'application/json',
           },
           mode: 'cors', // Explicitly set CORS mode
         });
-        
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+
+        const contentType = response.headers.get('content-type') || '';
+
+        if (!response.ok)
+        {
+          let preview = '';
+          try { preview = await response.text(); } catch (_e) { preview = ''; }
+          throw new Error(`HTTP ${response.status}: ${response.statusText} (${url}) ${preview.slice(0, 200)}`);
         }
-        
+
+        if (!contentType.includes('application/json'))
+        {
+          const text = await response.text().catch(() => '');
+          throw new Error(`Non-JSON response ${response.status} from ${url}: ${text.slice(0, 200)}`);
+        }
+
         const data = await response.json();
         setApiStatus('connected');
         setApiData(data);
         apiErrorNotifiedRef.current = false; // Reset error notification flag on success
-      } catch (err) {
+      } catch (err)
+      {
         // Handle CORS and network errors more gracefully
         const error = err as Error;
         const now = Date.now();
-        
+
         // Only show toast notification once every 30 seconds to avoid spam
-        if (!apiErrorNotifiedRef.current || now - lastErrorTimeRef.current.api > 30000) {
-          if (error.message.includes('CORS') || error.message.includes('Failed to fetch')) {
-            if (import.meta.env.DEV) {
+        if (!apiErrorNotifiedRef.current || now - lastErrorTimeRef.current.api > 30000)
+        {
+          if (error.message.includes('CORS') || error.message.includes('Failed to fetch'))
+          {
+            if (import.meta.env.DEV)
+            {
               // eslint-disable-next-line no-console
               // console.warn('API connection failed due to CORS policy or network error. This is expected in development mode.');
             }
@@ -56,8 +74,10 @@ export const ConnectionTest: React.FC = () => {
               type: 'warning',
               dismissible: true
             });
-          } else {
-            if (import.meta.env.DEV) {
+          } else
+          {
+            if (import.meta.env.DEV)
+            {
               // eslint-disable-next-line no-console
               // console.warn('API connection error:', error.message);
             }
@@ -68,14 +88,17 @@ export const ConnectionTest: React.FC = () => {
               dismissible: true
             });
           }
-          
+
           apiErrorNotifiedRef.current = true;
           lastErrorTimeRef.current.api = now;
-        } else {
+        } else
+        {
           // Still update status but don't spam notifications
-          if (error.message.includes('CORS') || error.message.includes('Failed to fetch')) {
+          if (error.message.includes('CORS') || error.message.includes('Failed to fetch'))
+          {
             setApiStatus('cors-blocked');
-          } else {
+          } else
+          {
             setApiStatus('failed');
           }
         }
@@ -92,7 +115,8 @@ export const ConnectionTest: React.FC = () => {
     });
 
     newSocket.on('connect', () => {
-      if (import.meta.env.DEV) {
+      if (import.meta.env.DEV)
+      {
         // eslint-disable-next-line no-console
         console.info('WebSocket connected!');
       }
@@ -102,11 +126,14 @@ export const ConnectionTest: React.FC = () => {
 
     newSocket.on('connect_error', (err) => {
       const now = Date.now();
-      
+
       // Only show toast notification once every 30 seconds to avoid spam
-      if (!wsErrorNotifiedRef.current || now - lastErrorTimeRef.current.ws > 30000) {
-        if (err.message.includes('WebSocket is closed before the connection is established')) {
-          if (import.meta.env.DEV) {
+      if (!wsErrorNotifiedRef.current || now - lastErrorTimeRef.current.ws > 30000)
+      {
+        if (err.message.includes('WebSocket is closed before the connection is established'))
+        {
+          if (import.meta.env.DEV)
+          {
             // eslint-disable-next-line no-console
             // console.warn('WebSocket connection failed due to server unavailability. This is expected in development mode.');
           }
@@ -115,8 +142,10 @@ export const ConnectionTest: React.FC = () => {
             type: 'warning',
             dismissible: true
           });
-        } else {
-          if (import.meta.env.DEV) {
+        } else
+        {
+          if (import.meta.env.DEV)
+          {
             // eslint-disable-next-line no-console
             // console.warn('WebSocket error:', err.message);
           }
@@ -126,11 +155,11 @@ export const ConnectionTest: React.FC = () => {
             dismissible: true
           });
         }
-        
+
         wsErrorNotifiedRef.current = true;
         lastErrorTimeRef.current.ws = now;
       }
-      
+
       setWsStatus('failed');
     });
 
@@ -140,7 +169,8 @@ export const ConnectionTest: React.FC = () => {
   }, [apiUrl, wsUrl, addToast]);
 
   const getStatusColor = (status: string) => {
-    switch (status) {
+    switch (status)
+    {
       case 'connected': return '#4caf50';
       case 'failed': return '#f44336';
       case 'cors-blocked': return '#ff9800';
@@ -149,7 +179,8 @@ export const ConnectionTest: React.FC = () => {
   };
 
   const getStatusText = (status: string) => {
-    switch (status) {
+    switch (status)
+    {
       case 'connected': return 'CONNECTED';
       case 'failed': return 'FAILED';
       case 'cors-blocked': return 'CORS BLOCKED';
@@ -178,7 +209,7 @@ export const ConnectionTest: React.FC = () => {
             <h3 style={{ margin: '0 0 5px 0', color: '#4a90e2' }}>
               🔌 Connection Status
             </h3>
-            <button 
+            <button
               onClick={() => setIsVisible(false)}
               style={{
                 background: 'none',
@@ -198,7 +229,7 @@ export const ConnectionTest: React.FC = () => {
               ×
             </button>
           </div>
-          
+
           <div style={{ marginBottom: '15px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
               <span>API Connection:</span>
@@ -210,10 +241,10 @@ export const ConnectionTest: React.FC = () => {
               {apiUrl}
             </div>
             {apiData && (
-              <pre style={{ 
-                background: '#0a0a0a', 
-                padding: '8px', 
-                borderRadius: '4px', 
+              <pre style={{
+                background: '#0a0a0a',
+                padding: '8px',
+                borderRadius: '4px',
                 fontSize: '11px',
                 marginTop: '8px'
               }}>
@@ -234,7 +265,7 @@ export const ConnectionTest: React.FC = () => {
             </div>
           </div>
 
-          <button 
+          <button
             onClick={() => window.location.reload()}
             style={{
               width: '100%',
@@ -251,7 +282,7 @@ export const ConnectionTest: React.FC = () => {
           </button>
         </div>
       )}
-      
+
       {!isVisible && (
         <button
           onClick={() => setIsVisible(true)}
