@@ -294,9 +294,28 @@ class PoloniexFuturesAPI {
       body: method !== "GET" ? body : undefined,
     });
 
+    // Determine response content type up-front
+    const contentType = response.headers.get("content-type") || "";
+
+    // Handle non-OK responses with robust parsing
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(`API error: ${JSON.stringify(errorData)}`);
+      // Try to parse JSON error first, otherwise capture text snippet
+      let errorPayload: unknown = {};
+      if (contentType.includes("application/json")) {
+        errorPayload = await response.json().catch(() => ({}));
+      } else {
+        const text = await response.text().catch(() => "");
+        errorPayload = { status: response.status, url: url.toString(), preview: text?.slice(0, 200) };
+      }
+      throw new Error(`API error (${response.status}) from ${url.toString()}: ${JSON.stringify(errorPayload)}`);
+    }
+
+    // Guard: successful but non-JSON (e.g., HTML index.html) should not be parsed as JSON
+    if (!contentType.includes("application/json")) {
+      const text = await response.text().catch(() => "");
+      throw new Error(
+        `Non-JSON response (${response.status}) from ${url.toString()}: ${text?.slice(0, 200)}`
+      );
     }
 
     return (await response.json()) as T;
