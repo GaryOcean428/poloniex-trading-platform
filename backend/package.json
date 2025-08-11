@@ -4,7 +4,7 @@
   "type": "module",
   "main": "dist/backend/src/index.js",
   "scripts": {
-    "dev": "nodemon --exec ts-node src/index.ts",
+    "dev": "nodemon --watch src --ext ts,js,json --exec node --loader ts-node/esm src/index.ts",
     "start": "node dist/backend/src/index.js",
     "start:prod": "node dist/backend/src/index.js",
     "build": "tsc",
@@ -12,7 +12,8 @@
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",
     "lint": "eslint src/**/*.ts",
-    "lint:fix": "eslint src/**/*.ts --fix"
+    "lint:fix": "eslint src/**/*.ts --fix",
+    "check:catalog": "node ../scripts/check-catalog.mjs"
   },
   "dependencies": {
     "@types/socket.io": "^3.0.2",
