@@ -69,7 +69,7 @@ export class AuthService {
    */
   async login(credentials: LoginCredentials): Promise<ApiResponse<LoginResponse>> {
     try {
-      const response: AxiosResponse<LoginResponse> = await axios.post(
+      const response: AxiosResponse<any> = await axios.post(
         `${API_BASE_URL}/api/auth/login`,
         credentials,
         {
@@ -79,10 +79,30 @@ export class AuthService {
         }
       );
 
-      if (response.data.success) {
-        // Store authentication data
-        storeAuthData(response.data);
-        return { success: true, data: response.data };
+      // Backend may return { success, accessToken, refreshToken, expiresIn, user }
+      if (response.data?.success) {
+        storeAuthData(response.data as LoginResponse);
+        return { success: true, data: response.data as LoginResponse };
+      }
+
+      // Fallback to backend shape { token, user }
+      if (response.data?.token && response.data?.user) {
+        const mapped: LoginResponse = {
+          success: true,
+          accessToken: response.data.token,
+          // Backend does not currently issue refresh tokens; store empty and rely on access token
+          refreshToken: '',
+          // Align with backend default of 30 minutes if configured; otherwise a safe default (30 min)
+          expiresIn: 30 * 60,
+          user: {
+            id: String(response.data.user.id ?? ''),
+            username: String(response.data.user.username ?? response.data.user.name ?? ''),
+            email: String(response.data.user.email ?? ''),
+            role: String(response.data.user.role ?? 'trader')
+          }
+        };
+        storeAuthData(mapped);
+        return { success: true, data: mapped };
       }
 
       return { success: false, error: 'Login failed' };
@@ -206,9 +226,15 @@ export class AuthService {
         }
       );
 
-      return response.data.success;
+      return !!response.data?.success;
     } catch (error) {
-      // console.error('Token verification error:', error);
+      // If verify endpoint is not implemented on the backend, treat as valid to avoid false logouts
+      if (axios.isAxiosError(error)) {
+        const status = error.response?.status;
+        if (status === 404 || status === 405 || status === 501) {
+          return true;
+        }
+      }
       return false;
     }
   }

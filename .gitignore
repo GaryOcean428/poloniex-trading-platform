@@ -124,3 +124,7 @@ combined.log
 # Docker files (if containing secrets)
 .dockerignore
 docker-compose.override.yml
+
+# Env templates for Railway (do not commit)
+docs/env/*.env
+docs/env/**/*.env
