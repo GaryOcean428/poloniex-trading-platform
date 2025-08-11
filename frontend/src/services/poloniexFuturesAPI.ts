@@ -5,31 +5,76 @@ import {
 } from "@/utils/environment";
 import crypto from "crypto";
 
-// Get configured API base URL
-const BASE_URL = getApiBaseUrl("futures").replace("/v3", "");
-const V3_PREFIX = "/v3";
+/**
+ * Resolve Poloniex Futures REST base and API prefix
+ * We avoid brittle string replaces and instead derive a canonical host + prefix.
+ * Docs reference paths like: /v3/futures/api/market/get-*
+ * - For hosts under api.poloniex.com we use baseHost=https://api.poloniex.com and apiPrefix=/v3/futures/api
+ * - If a custom base explicitly targets a futures host, we fall back to /v3 by default
+ */
+const RAW_BASE = getApiBaseUrl("futures");
+function resolveFuturesBase(raw: string): { baseHost: string; apiPrefix: string } {
+  try {
+    const u = new URL(raw);
+    const host = u.origin; // protocol + host
+    const path = u.pathname || "";
 
-// API endpoints
+    // Primary: standard API host
+    if (host.includes("api.poloniex.com")) {
+      return { baseHost: "https://api.poloniex.com", apiPrefix: "/v3/futures/api" };
+    }
+
+    // Secondary: futures-dedicated host
+    if (host.includes("futures-api.poloniex.com")) {
+      // Some deployments use /v3 on this host
+      return { baseHost: host, apiPrefix: "/v3" };
+    }
+
+    // Fallback: default to api.poloniex.com
+    return { baseHost: "https://api.poloniex.com", apiPrefix: "/v3/futures/api" };
+  } catch {
+    // If RAW_BASE isn't a valid URL, use canonical default
+    return { baseHost: "https://api.poloniex.com", apiPrefix: "/v3/futures/api" };
+  }
+}
+
+const { baseHost: BASE_HOST, apiPrefix: API_PREFIX } = resolveFuturesBase(RAW_BASE);
+
+// Normalize symbol (UI uses BTC-USDT; API commonly expects BTCUSDT)
+const normalizeFuturesSymbol = (sym?: string): string | undefined => {
+  if (!sym) return sym;
+  return sym.replace(/-/g, "").toUpperCase();
+};
+
+// API endpoints (aligned to documented futures routes)
 const ENDPOINTS = {
-  ACCOUNT_BALANCE: `${V3_PREFIX}/account/balance`,
-  ACCOUNT_BILLS: `${V3_PREFIX}/account/bills`,
-  CURRENT_POSITIONS: `${V3_PREFIX}/trade/position/opens`,
-  POSITION_HISTORY: `${V3_PREFIX}/trade/position/history`,
-  ADJUST_MARGIN: `${V3_PREFIX}/position/margin`,
-  GET_LEVERAGES: `${V3_PREFIX}/account/leverage-info`,
-  SET_LEVERAGE: `${V3_PREFIX}/trade/set-leverage`,
-  SWITCH_POSITION_MODE: `${V3_PREFIX}/position/mode`,
-  VIEW_POSITION_MODE: `${V3_PREFIX}/position/mode-info`,
-  PLACE_ORDER: `${V3_PREFIX}/trade/order`,
-  CANCEL_ORDER: `${V3_PREFIX}/trade/cancel-order`,
-  CANCEL_ALL_ORDERS: `${V3_PREFIX}/trade/cancel-all-orders`,
-  ORDER_HISTORY: `${V3_PREFIX}/trade/history-orders`,
-  OPEN_ORDERS: `${V3_PREFIX}/trade/open-orders`,
-  MARKET_TICKER: `${V3_PREFIX}/market/ticker`,
-  MARKET_KLINES: `${V3_PREFIX}/market/candles`,
-  MARKET_DEPTH: `${V3_PREFIX}/market/orderbook`,
-  MARKET_TRADES: `${V3_PREFIX}/market/trades`,
-  MARKET_FUNDING_RATE: `${V3_PREFIX}/market/funding-rate`,
+  // Account / positions / trading (authenticated)
+  ACCOUNT_BALANCE: `${API_PREFIX}/account/balance`,
+  ACCOUNT_BILLS: `${API_PREFIX}/account/bills`,
+  CURRENT_POSITIONS: `${API_PREFIX}/trade/position/opens`,
+  POSITION_HISTORY: `${API_PREFIX}/trade/position/history`,
+  ADJUST_MARGIN: `${API_PREFIX}/position/margin`,
+  GET_LEVERAGES: `${API_PREFIX}/account/leverage-info`,
+  SET_LEVERAGE: `${API_PREFIX}/trade/set-leverage`,
+  SWITCH_POSITION_MODE: `${API_PREFIX}/position/mode`,
+  VIEW_POSITION_MODE: `${API_PREFIX}/position/mode-info`,
+  PLACE_ORDER: `${API_PREFIX}/trade/order`,
+  CANCEL_ORDER: `${API_PREFIX}/trade/cancel-order`,
+  CANCEL_ALL_ORDERS: `${API_PREFIX}/trade/cancel-all-orders`,
+  ORDER_HISTORY: `${API_PREFIX}/trade/history-orders`,
+  OPEN_ORDERS: `${API_PREFIX}/trade/open-orders`,
+
+  // Market data (public)
+  // Use "get-trading-info" for 24h stats/last price
+  MARKET_TICKER: `${API_PREFIX}/market/get-trading-info`,
+  // Klines/candles
+  MARKET_KLINES: `${API_PREFIX}/market/get-kline-data`,
+  // Order book (Level 2)
+  MARKET_DEPTH: `${API_PREFIX}/market/get-order-book`,
+  // Recent executions/trades
+  MARKET_TRADES: `${API_PREFIX}/market/get-execution-info`,
+  // Funding rate
+  MARKET_FUNDING_RATE: `${API_PREFIX}/market/get-funding-rate`,
 };
 
 // Enums
@@ -253,11 +298,11 @@ const createAuthHeaders = (
 
 // Main API class
 class PoloniexFuturesAPI {
-  private baseUrl: string;
+  private baseHost: string;
   private mockMode: boolean;
 
   constructor(mockMode = false) {
-    this.baseUrl = BASE_URL;
+    this.baseHost = BASE_HOST;
     this.mockMode = mockMode;
   }
 
@@ -271,7 +316,7 @@ class PoloniexFuturesAPI {
       return this.mockResponse<T>(endpoint, params);
     }
 
-    const url = new URL(this.baseUrl + endpoint);
+    const url = new URL(this.baseHost + endpoint);
     let body = "";
 
     if (method === "GET" && Object.keys(params).length > 0) {
@@ -578,7 +623,7 @@ class PoloniexFuturesAPI {
     return this.request<MarketTicker>(
       "GET",
       ENDPOINTS.MARKET_TICKER,
-      { symbol },
+      { symbol: normalizeFuturesSymbol(symbol) },
       false
     );
   }
@@ -590,10 +635,14 @@ class PoloniexFuturesAPI {
     endTime?: number;
     limit?: number;
   }): Promise<MarketKline[]> {
+    const payload = {
+      ...params,
+      symbol: normalizeFuturesSymbol(params.symbol),
+    };
     return this.request<MarketKline[]>(
       "GET",
       ENDPOINTS.MARKET_KLINES,
-      params,
+      payload,
       false
     );
   }
@@ -602,10 +651,14 @@ class PoloniexFuturesAPI {
     symbol: string;
     limit?: number;
   }): Promise<MarketDepth> {
+    const payload = {
+      ...params,
+      symbol: normalizeFuturesSymbol(params.symbol),
+    };
     return this.request<MarketDepth>(
       "GET",
       ENDPOINTS.MARKET_DEPTH,
-      params,
+      payload,
       false
     );
   }
@@ -614,10 +667,14 @@ class PoloniexFuturesAPI {
     symbol: string;
     limit?: number;
   }): Promise<MarketTrade[]> {
+    const payload = {
+      ...params,
+      symbol: normalizeFuturesSymbol(params.symbol),
+    };
     return this.request<MarketTrade[]>(
       "GET",
       ENDPOINTS.MARKET_TRADES,
-      params,
+      payload,
       false
     );
   }
@@ -626,7 +683,7 @@ class PoloniexFuturesAPI {
     return this.request<FundingRate>(
       "GET",
       ENDPOINTS.MARKET_FUNDING_RATE,
-      { symbol },
+      { symbol: normalizeFuturesSymbol(symbol) },
       false
     );
   }
