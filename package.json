@@ -33,7 +33,8 @@
     "quality:check": "yarn lint && yarn test:run && yarn security:audit && yarn deps:health",
     "hooks:install": "bash scripts/install-pre-commit-hook.sh",
     "ci:verify": "node scripts/verify-ci-commands.js",
-    "sync:poloniex": "node scripts/sync-poloniex-futures-v3.js"
+    "sync:poloniex": "node scripts/sync-poloniex-futures-v3.js",
+    "py:ingest:markets": "python python-services/poloniex/ingest_markets.py"
   },
   "engines": {
     "node": ">=20.0.0"
