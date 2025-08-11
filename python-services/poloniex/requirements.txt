@@ -1,0 +1,4 @@
+# Python ML/Worker service dependencies
+fastapi==0.112.0
+uvicorn==0.30.1
+requests==2.32.4
