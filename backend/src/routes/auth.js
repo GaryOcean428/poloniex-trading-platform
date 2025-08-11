@@ -63,6 +63,48 @@ router.post('/login', async (req, res) => {
   }
 });
 
+/**
+ * Verify token endpoint
+ * Expects: Authorization: Bearer <jwt>
+ * Returns: { success: true, user: { id, email } } on valid token
+ */
+router.get('/verify', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization || '';
+    const parts = authHeader.split(' ');
+    const token = parts.length === 2 && parts[0].toLowerCase() === 'bearer' ? parts[1] : null;
+
+    if (!token) {
+      return res.status(401).json({ success: false, error: 'Missing token' });
+    }
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+
+    return res.json({
+      success: true,
+      user: { id: decoded.userId, email: decoded.email }
+    });
+  } catch (err) {
+    console.error('Verify error:', err);
+    return res.status(401).json({ success: false, error: 'Invalid token' });
+  }
+});
+
+/**
+ * Logout endpoint (no-op for stateless JWT)
+ */
+router.post('/logout', async (_req, res) => {
+  return res.json({ success: true });
+});
+
+/**
+ * Refresh endpoint (not implemented)
+ * If you later add refresh tokens, implement here and update the frontend accordingly.
+ */
+router.post('/refresh', async (_req, res) => {
+  return res.status(501).json({ success: false, error: 'Not implemented' });
+});
+
 // Register endpoint
 router.post('/register', async (req, res) => {
   try {
