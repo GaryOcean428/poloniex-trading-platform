@@ -9,8 +9,8 @@
  *
  * Notes:
  * - Node 20+ (global fetch)
- * - Some endpoints require authentication; if API key/secret present, signed requests are used.
- * - Resilient host/prefix and endpoint variants.
+ * - Uses Poloniex Futures v3 signing per https://api-docs.poloniex.com/v3/futures/api/
+ * - Host base (from docs): https://api.poloniex.com with /v3 prefix
  */
 import fs from 'fs/promises';
 import path from 'path';
@@ -22,28 +22,27 @@ const __dirname = path.dirname(__filename);
 
 const ROOT = path.resolve(__dirname, '..');
 const CATALOG_PATH = path.resolve(ROOT, 'docs/markets/poloniex-futures-v3.json');
-const USER_AGENT = 'PolytradeSync/1.0 (+https://github.com/GaryOcean428/poloniex-trading-platform)';
+const USER_AGENT = 'PolytradeSync/1.1 (+https://github.com/GaryOcean428/poloniex-trading-platform)';
 
-// Candidate hosts/prefixes for Futures v3 (docs show v3/futures/api; some deployments use api/v3)
+// Per docs: REST base is https://api.poloniex.com with /v3 prefix.
+// Keep a small fallback list to be resilient to infra variance.
 const BASE_CANDIDATES = [
-  { host: 'https://api.poloniex.com',        prefix: '/v3/futures/api' },
-  { host: 'https://futures-api.poloniex.com', prefix: '/v3/futures/api' },
-  { host: 'https://futures-api.poloniex.com', prefix: '/v3' },
   { host: 'https://api.poloniex.com',        prefix: '/v3' },
-  { host: 'https://futures-api.poloniex.com', prefix: '/api/v3' },
-  { host: 'https://api.poloniex.com',        prefix: '/api/v3' },
+  { host: 'https://api.poloniex.com',        prefix: '/api/v3' }, // some deployments use /api/v3
 ];
 
-// Endpoint path variants (relative to prefix)
+// Endpoint path per docs (relative to prefix)
 const PATHS = {
-  ALL_PRODUCT_INFO: '/market/get-all-product-info',
-  MARKET_INFO: '/market/get-market-info',
-  FUTURES_RISK_LIMIT: '/market/get-futures-risk-limit',
+  ALL_PRODUCT_INFO: '/market/allInstruments', // Get All Product Info
+  PRODUCT_INFO: '/market/instruments',        // Get Product Info
+  MARKET_TICKERS: '/market/tickers',          // Get Market Info (tickers)
+  FUTURES_RISK_LIMIT: '/market/riskLimit',    // Get Futures Risk Limit
 };
 
 const API_KEY = process.env.POLONIEX_API_KEY || '';
 const API_SECRET = process.env.POLONIEX_API_SECRET || '';
-const API_PASSPHRASE = process.env.POLONIEX_PASSPHRASE || '';
+const SIGNATURE_METHOD = 'HmacSHA256';
+const SIGNATURE_VERSION = '2';
 
 function upperNoDash(sym = '') {
   return String(sym).replace(/-/g, '').toUpperCase();
@@ -53,37 +52,44 @@ function hasCredentials() {
   return Boolean(API_KEY && API_SECRET);
 }
 
-function generateSignature(timestamp, method, requestPath, body = '') {
-  const message = timestamp + method + requestPath + body;
-  return crypto.createHmac('sha256', API_SECRET).update(message).digest('base64');
-}
+/**
+ * Build the Poloniex Futures v3 signature headers.
+ * Docs specify:
+ * - Headers: key, signatureMethod (optional), signatureVersion (optional), signTimestamp, signature
+ * - Signature string format:
+ *   Method + "\n" + accessPath + "\n" + (sorted paramString, URL/UTF-8 encoded)
+ * - The "parameters" include query params; include signTimestamp in the parameter list for signature generation.
+ */
+function buildV3Headers(method, accessPath, urlSearchParams) {
+  const tsMs = Date.now().toString(); // docs show ms in examples
+  // Compose parameter list for signature. Include signTimestamp plus any query params.
+  const params = new URLSearchParams(urlSearchParams ? urlSearchParams : '');
+  params.set('signTimestamp', tsMs);
 
-function buildSignedHeadersVariants(method, requestPath, body = '', queryString = '') {
-  // Try multiple variants: seconds and milliseconds timestamps, with and without queryString in the signed path
-  const nowMs = Date.now();
-  const tsSeconds = Math.floor(nowMs / 1000).toString();
-  const tsMillis = String(nowMs);
+  // Sort by ASCII order; URLSearchParams iteration is in insertion order, so rebuild sorted.
+  const entries = Array.from(params.entries()).sort(([a], [b]) =>
+    a.localeCompare(b, 'en', { numeric: false, sensitivity: 'base' })
+  );
 
-  const candidates = [];
-  for (const ts of [tsSeconds, tsMillis]) {
-    for (const includeQuery of [false, true]) {
-      const pathForSig = includeQuery && queryString ? requestPath + '?' + queryString : requestPath;
-      const sig = generateSignature(ts, method, pathForSig, body);
-      const base = {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-        'User-Agent': USER_AGENT,
-        'PF-API-KEY': API_KEY,
-        'PF-API-SIGN': sig,
-        'PF-API-TIMESTAMP': ts,
-      };
-      if (API_PASSPHRASE) {
-        base['PF-API-PASSPHRASE'] = API_PASSPHRASE;
-      }
-      candidates.push(base);
-    }
-  }
-  return candidates;
+  // URL encode k=v pairs and join by &
+  const encodedPairs = entries.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`);
+  const paramString = encodedPairs.join('&');
+
+  const requestString = `${method}\n${accessPath}\n${paramString}`;
+  const signature = crypto.createHmac('sha256', API_SECRET).update(requestString).digest('base64');
+
+  const headers = {
+    Accept: 'application/json',
+    'Content-Type': 'application/json',
+    'User-Agent': USER_AGENT,
+    key: API_KEY,
+    signTimestamp: tsMs,
+    signature: signature,
+    signatureMethod: SIGNATURE_METHOD,
+    signatureVersion: SIGNATURE_VERSION,
+  };
+
+  return { headers, paramString };
 }
 
 async function fetchJson(url, { headers = {}, method = 'GET', body = '' } = {}) {
@@ -102,11 +108,11 @@ async function fetchJson(url, { headers = {}, method = 'GET', body = '' } = {}) 
     try {
       preview = await res.text();
     } catch {}
-    throw new Error(`HTTP ${res.status} for ${url} :: ${preview.slice(0, 200)}`);
+    throw new Error(`HTTP ${res.status} for ${url} :: ${preview.slice(0, 400)}`);
   }
   if (!contentType.includes('application/json')) {
     const text = await res.text().catch(() => '');
-    throw new Error(`Non-JSON from ${url}: ${text.slice(0, 200)}`);
+    throw new Error(`Non-JSON from ${url}: ${text.slice(0, 400)}`);
   }
   return res.json();
 }
@@ -130,7 +136,6 @@ function isRetryableError(err) {
 }
 
 function backoffDelay(attempt, baseMs = 500, maxMs = 5000) {
-  // Exponential backoff with jitter
   const exp = Math.min(maxMs, baseMs * Math.pow(2, attempt));
   const jitter = Math.floor(Math.random() * (exp / 2));
   return Math.min(maxMs, exp - Math.floor(exp / 4) + jitter);
@@ -139,47 +144,42 @@ function backoffDelay(attempt, baseMs = 500, maxMs = 5000) {
 async function fetchFromCandidates(relativePath, { signed = false, method = 'GET', params } = {}) {
   const errors = [];
   for (const { host, prefix } of BASE_CANDIDATES) {
-    const requestPath = prefix + relativePath;
-    const url = new URL(host + requestPath);
+    const accessPath = prefix + relativePath;
+    const url = new URL(host + accessPath);
     if (params && method === 'GET') {
       for (const [k, v] of Object.entries(params)) {
         if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
       }
     }
-    let body = '';
-    // Build header variants (signed or unsigned)
-    const headerVariants = signed && hasCredentials()
-      ? buildSignedHeadersVariants(
-          method,
-          requestPath,
-          body,
-          url.searchParams.toString()
-        )
-      : [
-          {
+
+    const maxAttempts = 4;
+    let attempt = 0;
+    while (attempt < maxAttempts) {
+      try {
+        let headers = {};
+        if (signed && hasCredentials()) {
+          const { headers: signedHeaders } = buildV3Headers(method, accessPath, url.searchParams.toString());
+          headers = signedHeaders;
+        } else {
+          headers = {
             Accept: 'application/json',
             'Content-Type': 'application/json',
             'User-Agent': USER_AGENT,
-          },
-        ];
-
-    const maxAttempts = 4;
-    for (const variant of headerVariants) {
-      for (let attempt = 0; attempt < maxAttempts; attempt++) {
-        try {
-          const json = await fetchJson(url.toString(), { headers: variant, method, body });
-          return json;
-        } catch (e) {
-          const retryable = isRetryableError(e);
-          const variantInfo = variant['PF-API-TIMESTAMP'] ? `signed ts=${variant['PF-API-TIMESTAMP']}` : 'unsigned';
-          const attemptInfo = `${url.toString()} [${variantInfo}] [attempt ${attempt + 1}/${maxAttempts}]`;
-          console.warn(`Fetch failed: ${attemptInfo} :: ${e.message}${retryable ? ' (retrying)' : ''}`);
-          if (!retryable || attempt === maxAttempts - 1) {
-            errors.push(e);
-            break; // move to next variant or next candidate
-          }
-          await sleep(backoffDelay(attempt));
+          };
         }
+
+        const json = await fetchJson(url.toString(), { headers, method });
+        return json;
+      } catch (e) {
+        const retryable = isRetryableError(e);
+        const attemptInfo = `${url.toString()} [${signed ? 'signed' : 'unsigned'}] [attempt ${attempt + 1}/${maxAttempts}]`;
+        console.warn(`Fetch failed: ${attemptInfo} :: ${e.message}${retryable ? ' (retrying)' : ''}`);
+        if (!retryable || attempt === maxAttempts - 1) {
+          errors.push(e);
+          break; // move to next candidate
+        }
+        await sleep(backoffDelay(attempt));
+        attempt++;
       }
     }
   }
@@ -208,20 +208,30 @@ function inferPrecisionsFromTickLot(tickSize, lotSize) {
 function extractProductsCommon(list) {
   return list
     .map((p) => {
-      const symbol = upperNoDash(p?.symbol || p?.contract || p?.instId || p?.name);
-      const base = String(p?.baseCurrency || p?.base || '').toUpperCase();
-      const quote = String(p?.quoteCurrency || p?.quote || '').toUpperCase();
+      const rawSymbol = String(p?.symbol || p?.contract || p?.instId || p?.name || '');
+      const symbol = upperNoDash(rawSymbol);
+      let base = String(p?.baseCurrency || p?.base || p?.baseCcy || '').toUpperCase();
+      let quote = String(p?.quoteCurrency || p?.quote || p?.quoteCcy || '').toUpperCase();
+      // Fallback: derive base/quote from symbol like BTC_USDT_PERP
+      if ((!base || !quote) && rawSymbol) {
+        const m = rawSymbol.toUpperCase().match(/^([A-Z0-9]+)_([A-Z0-9]+)_(?:PERP|SWAP|FUT|FUTURES)?$/);
+        if (m) {
+          base = base || m[1];
+          quote = quote || m[2];
+        }
+      }
 
-      const tickSize =
-        safeNumber(p?.tickSize) ?? safeNumber(p?.priceTick) ?? safeNumber(p?.priceTickSize) ?? null;
+      let tickSize =
+        safeNumber(p?.tickSize) ?? safeNumber(p?.priceTick) ?? safeNumber(p?.priceTickSize) ?? safeNumber(p?.priceIncrement) ?? safeNumber(p?.priceStep) ?? safeNumber(p?.tick) ?? null;
 
-      const lotSize =
-        safeNumber(p?.lotSize) ?? safeNumber(p?.qtyStep) ?? safeNumber(p?.quantityStep) ?? null;
+      let lotSize =
+        safeNumber(p?.lotSize) ?? safeNumber(p?.qtyStep) ?? safeNumber(p?.quantityStep) ?? safeNumber(p?.quantityIncrement) ?? safeNumber(p?.stepSize) ?? null;
 
       const minNotional =
         safeNumber(p?.minNotional) ?? safeNumber(p?.minValue) ?? safeNumber(p?.minTradeValue) ?? null;
 
-      const maxLeverage = safeNumber(p?.maxLeverage) ?? safeNumber(p?.lever || p?.leverage) ?? null;
+      const maxLeverage =
+        safeNumber(p?.maxLeverage) ?? safeNumber(p?.lever || p?.leverage) ?? null;
 
       const statusRaw = String(p?.status || p?.state || '').toLowerCase();
       const status =
@@ -233,13 +243,23 @@ function extractProductsCommon(list) {
           ? 'delisted'
           : 'trading';
 
-      let pricePrecision = safeNumber(p?.pricePrecision);
-      let quantityPrecision = safeNumber(p?.quantityPrecision ?? p?.qtyPrecision);
+      let pricePrecision = safeNumber(p?.pricePrecision ?? p?.priceScale);
+      let quantityPrecision = safeNumber(p?.quantityPrecision ?? p?.qtyPrecision ?? p?.quantityScale);
 
       if (pricePrecision == null || quantityPrecision == null) {
         const inferred = inferPrecisionsFromTickLot(tickSize, lotSize);
         if (pricePrecision == null) pricePrecision = inferred.pricePrecision ?? null;
         if (quantityPrecision == null) quantityPrecision = inferred.quantityPrecision ?? null;
+      }
+      // Fallback: derive tick/lot from precisions if increments are not provided
+      if (tickSize == null && pricePrecision != null) {
+        const ts = Math.pow(10, -Number(pricePrecision));
+        // limit to 8 decimals to avoid FP noise
+        tickSize = Number(ts.toFixed(Math.min(8, Number(pricePrecision))));
+      }
+      if (lotSize == null && quantityPrecision != null) {
+        const ls = Math.pow(10, -Number(quantityPrecision));
+        lotSize = Number(ls.toFixed(Math.min(8, Number(quantityPrecision))));
       }
 
       const contractType = String(p?.contractType || p?.type || 'perpetual').toLowerCase();
@@ -270,10 +290,9 @@ function extractProductsFromAllProductInfo(json) {
   return extractProductsCommon(data);
 }
 
-function extractProductsFromMarketInfo(json) {
-  const candidates = [json?.data?.symbols, json?.symbols, json?.data, json].filter((x) =>
-    Array.isArray(x)
-  )[0] || [];
+// /v3/market/tickers shape can vary; this is used only as fallback if allInstruments fails.
+function extractProductsFromTickers(json) {
+  const candidates = (Array.isArray(json?.data) && json.data) || (Array.isArray(json) && json) || [];
   return extractProductsCommon(candidates);
 }
 
@@ -311,11 +330,7 @@ function buildRiskMap(riskData) {
         initialMarginRate: safeNumber(item?.initialMarginRate, null),
         maintenanceMarginRate: safeNumber(item?.maintenanceMarginRate, null),
       };
-      if (
-        t.maxPosition !== null ||
-        t.initialMarginRate !== null ||
-        t.maintenanceMarginRate !== null
-      ) {
+      if (t.maxPosition !== null || t.initialMarginRate !== null || t.maintenanceMarginRate !== null) {
         tiers = [t];
       }
     }
@@ -375,66 +390,51 @@ async function saveCatalog(catalog) {
 }
 
 async function getProductsResilient() {
-  // Prefer signed fetch if credentials provided (400 observed unauthenticated)
+  // Prefer signed fetch if credentials provided
   if (hasCredentials()) {
     try {
       const allInfo = await fetchFromCandidates(PATHS.ALL_PRODUCT_INFO, { signed: true });
       const products = extractProductsFromAllProductInfo(allInfo);
-      if (products.length) {
-        return products;
-      }
-    } catch (e) {
-      // continue to fallback
-    }
+      if (products.length) return products;
+    } catch {}
   }
 
-  // Unsigned attempt
+  // Fallback: signed tickers (structure may be less rich)
+  if (hasCredentials()) {
+    try {
+      const tickers = await fetchFromCandidates(PATHS.MARKET_TICKERS, { signed: true });
+      const products = extractProductsFromTickers(tickers);
+      if (products.length) return products;
+    } catch {}
+  }
+
+  // As last resort, try unsigned (some market endpoints may be public)
   try {
     const allInfo = await fetchFromCandidates(PATHS.ALL_PRODUCT_INFO, { signed: false });
     const products = extractProductsFromAllProductInfo(allInfo);
-    if (products.length) {
-      return products;
-    }
-  } catch (e) {
-    // continue
-  }
+    if (products.length) return products;
+  } catch {}
 
-  // Fallback to market info (try signed first if creds)
-  if (hasCredentials()) {
-    try {
-      const marketInfo = await fetchFromCandidates(PATHS.MARKET_INFO, { signed: true });
-      const products = extractProductsFromMarketInfo(marketInfo);
-      if (products.length) {
-        return products;
-      }
-    } catch (e) {
-      // continue
-    }
-  }
   try {
-    const marketInfo = await fetchFromCandidates(PATHS.MARKET_INFO, { signed: false });
-    const products = extractProductsFromMarketInfo(marketInfo);
-    if (products.length) {
-      return products;
-    }
-  } catch (e) {
-    // continue
-  }
+    const tickers = await fetchFromCandidates(PATHS.MARKET_TICKERS, { signed: false });
+    const products = extractProductsFromTickers(tickers);
+    if (products.length) return products;
+  } catch {}
 
   return [];
 }
 
 async function getRiskResilient() {
+  // Prefer signed
   if (hasCredentials()) {
     try {
       return await fetchFromCandidates(PATHS.FUTURES_RISK_LIMIT, { signed: true });
-    } catch (e) {
-      // fallback unsigned
-    }
+    } catch {}
   }
+  // Try unsigned
   try {
     return await fetchFromCandidates(PATHS.FUTURES_RISK_LIMIT, { signed: false });
-  } catch (e) {
+  } catch {
     return null;
   }
 }
@@ -443,7 +443,7 @@ async function main() {
   console.log('Syncing Poloniex Futures v3 markets catalog...');
   if (!hasCredentials()) {
     console.warn(
-      'Warning: POLONIEX_API_KEY/SECRET not set. Some endpoints may return 400 and markets could remain empty.'
+      'Warning: POLONIEX_API_KEY/SECRET not set. Private endpoints may return 400 and markets could remain empty.'
     );
   }
 
@@ -473,7 +473,7 @@ async function main() {
   );
 }
 
-// Node ESM-compatible direct-run check (import.meta.main is not available in Node)
+// Node ESM-compatible direct-run check
 const isDirectRun = process.argv[1] && path.resolve(process.argv[1]) === __filename;
 if (isDirectRun) {
   main().catch((err) => {
