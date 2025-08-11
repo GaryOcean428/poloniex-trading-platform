@@ -18,6 +18,7 @@ import autonomousTradingRoutes from './routes/autonomousTrading.js';
 import confidenceScoringRoutes from './routes/confidenceScoring.js';
 import strategiesRoutes from './routes/strategies.js';
 import statusRoutes from './routes/status.js';
+import marketsRoutes from './routes/markets.js';
 
 // Import services
 import { logger } from './utils/logger.js';
@@ -94,6 +95,7 @@ app.get('/api/health', (req: Request, res: Response) => {
 // API routes
 app.use('/api/auth', authRoutes);
 app.use('/api/api-keys', apiKeyRoutes);
+app.use('/api/markets', marketsRoutes);
 app.use('/api/futures', futuresRoutes);
 app.use('/api/backtesting', backtestingRoutes);
 app.use('/api/paper-trading', paperTradingRoutes);

@@ -3,9 +3,8 @@
   "_note": "Canonical, programmatically consumable catalog of ALL Poloniex Futures v3 markets. Policy: include all markets; use exchange max leverage and exchange fees.",
   "version": 1,
   "source": "../railway-poloniex-docs.md",
-  "lastSynced": "",
-  "markets": [
-  ],
+  "lastSynced": "2025-08-11T12:32:00.448Z",
+  "markets": [],
   "schema": {
     "symbol": "string",
     "base": "string",
@@ -25,10 +24,21 @@
       }
     ],
     "riskLimits": [
-      { "tier": "number", "maxPosition": "number", "initialMarginRate": "number", "maintenanceMarginRate": "number" }
+      {
+        "tier": "number",
+        "maxPosition": "number",
+        "initialMarginRate": "number",
+        "maintenanceMarginRate": "number"
+      }
     ],
-    "feesBps": { "maker": "number", "taker": "number" },
-    "funding": { "intervalHours": 8, "rateCap": "number | null" },
+    "feesBps": {
+      "maker": "number",
+      "taker": "number"
+    },
+    "funding": {
+      "intervalHours": 8,
+      "rateCap": "number | null"
+    },
     "endpoints": {
       "marketInfo": "https://api-docs.poloniex.com/v3/futures/market",
       "ticker": "https://api-docs.poloniex.com/v3/futures/market/get-ticker",
@@ -52,13 +62,27 @@
       "minNotional": 5,
       "maxLeverage": 100,
       "maintenanceMarginTable": [
-        { "notionalFloor": 0, "maintenanceMarginRate": 0.004 }
+        {
+          "notionalFloor": 0,
+          "maintenanceMarginRate": 0.004
+        }
       ],
       "riskLimits": [
-        { "tier": 1, "maxPosition": 100000, "initialMarginRate": 0.01, "maintenanceMarginRate": 0.004 }
+        {
+          "tier": 1,
+          "maxPosition": 100000,
+          "initialMarginRate": 0.01,
+          "maintenanceMarginRate": 0.004
+        }
       ],
-      "feesBps": { "maker": 2, "taker": 5 },
-      "funding": { "intervalHours": 8, "rateCap": null }
+      "feesBps": {
+        "maker": 2,
+        "taker": 5
+      },
+      "funding": {
+        "intervalHours": 8,
+        "rateCap": null
+      }
     }
   ]
 }
