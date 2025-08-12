@@ -15,7 +15,10 @@
     },
     "build": {
       "inputs": [{"step": "install", "include": ["."]}],
-      "commands": ["yarn build"]
+      "commands": ["yarn build"],
+      "deployOutputs": [
+        {"include": ["dist", "serve.js", "package.json"]}
+      ]
     }
   },
   "caches": {
@@ -25,9 +28,6 @@
     }
   },
   "deploy": {
-    "inputs": [
-      {"step": "build", "include": ["dist", "serve.js", "package.json"]}
-    ],
     "startCommand": "node serve.js",
     "variables": {
       "NODE_ENV": "production",
