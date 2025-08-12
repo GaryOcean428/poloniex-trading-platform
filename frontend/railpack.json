@@ -15,7 +15,7 @@
     },
     "build": {
       "inputs": [{"step": "install"}],
-      "commands": ["yarn build"]
+      "commands": ["yarn build:deploy"]
     }
   },
   "caches": {
