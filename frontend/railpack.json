@@ -6,7 +6,6 @@
   },
   "steps": {
     "install": {
-      "inputs": [{"local": true, "include": ["."]}],
       "commands": [
         "corepack enable",
         "corepack prepare yarn@4.9.2 --activate",
@@ -29,6 +28,10 @@
     "inputs": [
       {"step": "build", "include": ["dist", "serve.js", "package.json", "node_modules"]}
     ],
-    "startCommand": "node serve.js"
+    "startCommand": "node serve.js",
+    "variables": {
+      "NODE_ENV": "production",
+      "PORT": "${PORT}"
+    }
   }
 }
