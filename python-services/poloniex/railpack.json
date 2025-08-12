@@ -5,7 +5,13 @@
     "python": "3.13"
   },
   "steps": {
+    "copy": {
+      "commands": [
+        {"src": ".", "dest": "."}
+      ]
+    },
     "install": {
+      "inputs": [{"step": "copy", "include": ["."]}],
       "commands": [
         "pip install --upgrade pip",
         "pip install -r requirements.txt"
@@ -21,7 +27,6 @@
   },
   "deploy": {
     "inputs": [
-      {"local": true, "include": ["."]},
       {"step": "install", "include": ["."]}
     ],
     "startCommand": "uvicorn health:app --host 0.0.0.0 --port ${PORT}"
