@@ -14,7 +14,7 @@
       "caches": ["yarn-cache"]
     },
     "build": {
-      "inputs": [{"step": "install", "include": ["."]}],
+      "inputs": [{"step": "install"}],
       "commands": ["yarn build"],
       "deployOutputs": [
         {"include": ["dist", "serve.js", "package.json"]}
