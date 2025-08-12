@@ -31,7 +31,7 @@
         "include": ["dist", "node_modules", "package.json"]
       }
     ],
-    "startCommand": "node dist/backend/src/index.js",
+    "startCommand": "node dist/src/index.js",
     "variables": {
       "NODE_ENV": "production",
       "PORT": "${PORT}"
