@@ -2,40 +2,33 @@
   "$schema": "https://schema.railpack.com",
   "provider": "node",
   "packages": {
-    "node": "20",
-    "yarn": "4.9.2"
+    "node": "20"
   },
   "steps": {
-    "setup": {
+    "install": {
+      "inputs": [{"local": true, "include": ["."]}],
       "commands": [
         "corepack enable",
-        "corepack prepare yarn@4.9.2 --activate"
-      ]
-    },
-    "install": {
-      "inputs": [{"step": "setup"}],
-      "commands": ["yarn install --immutable"],
+        "corepack prepare yarn@4.9.2 --activate",
+        "yarn install --immutable"
+      ],
       "caches": ["yarn-cache"]
     },
     "build": {
-      "inputs": [{"step": "install"}],
-      "commands": ["yarn build"],
-      "deployOutputs": [
-        {"include": ["dist", "node_modules", "package.json"]}
-      ]
+      "inputs": [{"step": "install", "include": ["."]}],
+      "commands": ["yarn build"]
     }
   },
   "caches": {
     "yarn-cache": {
-      "directory": "/usr/local/share/.cache/yarn",
+      "directory": "/root/.cache/yarn",
       "type": "shared"
     }
   },
   "deploy": {
-    "startCommand": "yarn start",
-    "variables": {
-      "NODE_ENV": "production",
-      "PORT": "${PORT}"
-    }
+    "inputs": [
+      {"step": "build", "include": ["dist", "node_modules", "package.json"]}
+    ],
+    "startCommand": "node dist/src/index.js"
   }
 }
