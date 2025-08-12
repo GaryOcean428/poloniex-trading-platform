@@ -28,7 +28,7 @@
     "inputs": [
       {"step": "build", "include": ["dist", "node_modules", "package.json"]}
     ],
-    "startCommand": "node dist/src/index.js",
+    "startCommand": "node dist/backend/src/index.js",
     "variables": {
       "NODE_ENV": "production",
       "PORT": "${PORT}"

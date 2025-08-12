@@ -26,7 +26,7 @@
   },
   "deploy": {
     "inputs": [
-      {"step": "build", "include": ["dist", "serve.js", "package.json", "node_modules"]}
+      {"step": "build", "include": ["dist", "serve.js", "package.json"]}
     ],
     "startCommand": "node serve.js",
     "variables": {
