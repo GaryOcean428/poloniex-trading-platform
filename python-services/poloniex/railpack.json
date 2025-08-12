@@ -8,16 +8,9 @@
     "install": {
       "commands": [
         "pip install --upgrade pip",
-        "pip install -r requirements.txt"
+        "pip install fastapi==0.112.0 uvicorn==0.30.1 requests==2.32.4"
       ],
       "caches": ["pip-cache"]
-    },
-    "prepare": {
-      "inputs": [{"step": "install"}],
-      "commands": ["echo 'Preparing deployment files'"],
-      "deployOutputs": [
-        {"include": ["health.py", "ingest_markets.py"]}
-      ]
     }
   },
   "caches": {
