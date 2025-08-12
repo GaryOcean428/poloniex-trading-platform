@@ -105,6 +105,17 @@ const server = http.createServer((req, res) => {
       return res.end('Not Found');
     }
 
+    // Special-case favicon to avoid noisy 500s if missing
+    if (reqPath === '/favicon.ico') {
+      const icoPath = path.join(DIST_ROOT, 'favicon.ico');
+      if (existsSafe(icoPath)) {
+        res.statusCode = 200;
+        return serveFile(res, icoPath);
+      }
+      res.statusCode = 204; // No Content
+      return res.end();
+    }
+
     // Try to serve exact static file first
     const staticPath = path.join(DIST_ROOT, reqPath);
     if (existsSafe(staticPath)) {
