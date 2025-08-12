@@ -17,7 +17,9 @@
       "inputs": [{"step": "install"}],
       "commands": ["yarn build"],
       "deployOutputs": [
-        {"include": ["dist", "serve.js", "package.json"]}
+        {"include": ["dist"]},
+        {"include": ["serve.js"]},
+        {"include": ["package.json"]}
       ]
     }
   },
