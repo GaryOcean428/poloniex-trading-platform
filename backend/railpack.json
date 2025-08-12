@@ -7,15 +7,15 @@
   "steps": {
     "install": {
       "commands": [
-        "cd backend && corepack enable",
-        "cd backend && corepack prepare yarn@4.9.2 --activate",
-        "cd backend && yarn install --immutable"
+        "corepack enable",
+        "corepack prepare yarn@4.9.2 --activate",
+        "yarn install --immutable"
       ],
       "caches": ["yarn-cache"]
     },
     "build": {
       "inputs": [{"step": "install"}],
-      "commands": ["cd backend && yarn build"]
+      "commands": ["yarn build"]
     }
   },
   "caches": {
@@ -28,10 +28,10 @@
     "inputs": [
       {
         "step": "build",
-        "include": ["backend/dist", "backend/package.json"]
+        "include": ["dist", "package.json"]
       }
     ],
-    "startCommand": "cd backend && node dist/src/index.js",
+    "startCommand": "node dist/src/index.js",
     "variables": {
       "NODE_ENV": "production",
       "PORT": "${PORT}"
