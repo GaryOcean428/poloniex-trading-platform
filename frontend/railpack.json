@@ -7,15 +7,15 @@
   "steps": {
     "install": {
       "commands": [
-        "cd frontend && corepack enable",
-        "cd frontend && corepack prepare yarn@4.9.2 --activate",
-        "cd frontend && yarn install --immutable"
+        "corepack enable",
+        "corepack prepare yarn@4.9.2 --activate",
+        "yarn install --immutable"
       ],
       "caches": ["yarn-cache"]
     },
     "build": {
       "inputs": [{"step": "install"}],
-      "commands": ["cd frontend && yarn build:deploy"]
+      "commands": ["yarn build:deploy"]
     }
   },
   "caches": {
@@ -28,10 +28,10 @@
     "inputs": [
       {
         "step": "build",
-        "include": ["frontend/dist", "frontend/serve.js", "frontend/package.json"]
+        "include": ["dist", "serve.js", "package.json"]
       }
     ],
-    "startCommand": "cd frontend && node serve.js",
+    "startCommand": "node serve.js",
     "variables": {
       "NODE_ENV": "production",
       "PORT": "${PORT}"
