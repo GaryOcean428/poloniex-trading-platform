@@ -1,6 +1,5 @@
 {
   "$schema": "https://schema.railpack.com",
-  "workingDirectory": ".",
   "provider": "python",
   "packages": {
     "python": "3.13"
@@ -8,8 +7,8 @@
   "steps": {
     "install": {
       "commands": [
-        "pip install --upgrade pip",
-        "pip install -r requirements.txt"
+        "cd python-services/poloniex && pip install --upgrade pip",
+        "cd python-services/poloniex && pip install -r requirements.txt"
       ],
       "caches": ["pip-cache"]
     }
@@ -26,7 +25,7 @@
         "step": "install"
       }
     ],
-    "startCommand": "uvicorn health:app --host 0.0.0.0 --port ${PORT}",
+    "startCommand": "cd python-services/poloniex && uvicorn health:app --host 0.0.0.0 --port ${PORT}",
     "variables": {
       "PYTHONUNBUFFERED": "1"
     }

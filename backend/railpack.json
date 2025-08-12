@@ -1,6 +1,5 @@
 {
   "$schema": "https://schema.railpack.com",
-  "workingDirectory": ".",
   "provider": "node",
   "packages": {
     "node": "20"
@@ -8,15 +7,15 @@
   "steps": {
     "install": {
       "commands": [
-        "corepack enable",
-        "corepack prepare yarn@4.9.2 --activate",
-        "yarn install --immutable"
+        "cd backend && corepack enable",
+        "cd backend && corepack prepare yarn@4.9.2 --activate",
+        "cd backend && yarn install --immutable"
       ],
       "caches": ["yarn-cache"]
     },
     "build": {
       "inputs": [{"step": "install"}],
-      "commands": ["yarn build"]
+      "commands": ["cd backend && yarn build"]
     }
   },
   "caches": {
@@ -29,10 +28,10 @@
     "inputs": [
       {
         "step": "build",
-        "include": ["dist", "package.json"]
+        "include": ["backend/dist", "backend/package.json"]
       }
     ],
-    "startCommand": "node dist/src/index.js",
+    "startCommand": "cd backend && node dist/src/index.js",
     "variables": {
       "NODE_ENV": "production",
       "PORT": "${PORT}"
