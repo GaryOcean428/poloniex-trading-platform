@@ -15,10 +15,7 @@
     },
     "build": {
       "inputs": [{"step": "install"}],
-      "commands": ["yarn build"],
-      "deployOutputs": [
-        {"include": ["dist", "node_modules", "package.json"]}
-      ]
+      "commands": ["yarn build"]
     }
   },
   "caches": {
@@ -28,6 +25,12 @@
     }
   },
   "deploy": {
+    "inputs": [
+      {
+        "step": "build",
+        "include": ["dist", "node_modules", "package.json"]
+      }
+    ],
     "startCommand": "node dist/backend/src/index.js",
     "variables": {
       "NODE_ENV": "production",
