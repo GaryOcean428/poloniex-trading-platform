@@ -17,6 +17,13 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Optional env-driven locations (for Railway shared volume)
+const ENV_CATALOG_PATH = process.env.CATALOG_PATH || '';
+const ENV_SHARED_DIR = process.env.SHARED_DIR || '';
+const SHARED_CATALOG_PATH = ENV_SHARED_DIR
+  ? path.resolve(ENV_SHARED_DIR, 'catalogs/poloniex-futures-v3.json')
+  : '';
+
 /**
  * Resolve catalog JSON relative to this file.
  * In dev (ts-node), __dirname ~= backend/src/services
@@ -38,12 +45,32 @@ let catalogCache: MarketCatalog | null = null;
 let etagCache: string | null = null;
 
 async function resolveCatalogPath(): Promise<string> {
+  // 1) Explicit env override
+  if (ENV_CATALOG_PATH) {
+    try {
+      await fs.stat(ENV_CATALOG_PATH);
+      return ENV_CATALOG_PATH;
+    } catch {
+      // continue
+    }
+  }
+
+  // 2) Shared volume convention
+  if (SHARED_CATALOG_PATH) {
+    try {
+      await fs.stat(SHARED_CATALOG_PATH);
+      return SHARED_CATALOG_PATH;
+    } catch {
+      // continue
+    }
+  }
+
+  // 3) Repo-relative canonical path
   try {
-    // Test primary path
     await fs.stat(CATALOG_PATH);
     return CATALOG_PATH;
   } catch {
-    // Fallback to CWD-based path
+    // 4) CWD fallback
     return ALT_CATALOG_PATH;
   }
 }
@@ -52,23 +79,41 @@ async function resolveCatalogPath(): Promise<string> {
  * Debug helper: return candidate file paths and whether they exist.
  */
 export async function getCatalogDebugInfo(): Promise<{
+  envCatalogPath: string;
+  envCatalogExists: boolean;
+  sharedCatalogPath: string;
+  sharedCatalogExists: boolean;
   primaryPath: string;
   primaryExists: boolean;
   altPath: string;
   altExists: boolean;
 }> {
+  const envCatalogPath = ENV_CATALOG_PATH;
+  const sharedCatalogPath = SHARED_CATALOG_PATH;
   const primaryPath = CATALOG_PATH;
   const altPath = ALT_CATALOG_PATH;
-  const primaryExists = await fs
-    .stat(primaryPath)
-    .then(() => true)
-    .catch(() => false);
-  const altExists = await fs
-    .stat(altPath)
-    .then(() => true)
-    .catch(() => false);
 
-  return { primaryPath, primaryExists, altPath, altExists };
+  const [envCatalogExists, sharedCatalogExists, primaryExists, altExists] = await Promise.all([
+    envCatalogPath
+      ? fs.stat(envCatalogPath).then(() => true).catch(() => false)
+      : Promise.resolve(false),
+    sharedCatalogPath
+      ? fs.stat(sharedCatalogPath).then(() => true).catch(() => false)
+      : Promise.resolve(false),
+    fs.stat(primaryPath).then(() => true).catch(() => false),
+    fs.stat(altPath).then(() => true).catch(() => false),
+  ]);
+
+  return {
+    envCatalogPath,
+    envCatalogExists,
+    sharedCatalogPath,
+    sharedCatalogExists,
+    primaryPath,
+    primaryExists,
+    altPath,
+    altExists,
+  };
 }
 
 function computeETag(payload: unknown): string {
