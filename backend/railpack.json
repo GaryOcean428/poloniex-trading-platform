@@ -1,5 +1,6 @@
 {
   "$schema": "https://schema.railpack.com",
+  "workingDirectory": ".",
   "provider": "node",
   "packages": {
     "node": "20"
