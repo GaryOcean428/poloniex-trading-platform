@@ -1,83 +1,28 @@
 {
-  "version": 1,
-  "packages": [
-    {
-      "name": "polytrade-be",
-      "path": "backend",
-      "env": {
-        "PORT": "$PORT",
-        "NODE_ENV": "production"
-      },
-      "steps": {
-        "install": [
-          "corepack enable",
-          "yarn --immutable"
-        ],
-        "build": [
-          "yarn build"
-        ],
-        "start": [
-          "node railway-start.js"
-        ]
-      },
-      "procfile": {
-        "web": "node railway-start.js"
-      },
-      "health": {
-        "path": "/api/health",
-        "timeout": 300
-      }
+  "$schema": "https://schema.railpack.com",
+  "steps": {
+    "install": {
+      "inputs": [{ "local": true, "include": ["."] }],
+      "commands": [
+        "bash -lc 'if [ -f requirements.txt ]; then python3 -m ensurepip --upgrade || true; fi'",
+        "bash -lc 'if [ -f requirements.txt ]; then python3 -m pip install --upgrade pip; fi'",
+        "bash -lc 'if [ -f requirements.txt ]; then python3 -m pip install -r requirements.txt; fi'",
+        "bash -lc 'if [ -f package.json ]; then corepack enable || true; fi'",
+        "bash -lc 'if [ -f package.json ]; then yarn --immutable || yarn install; fi'"
+      ]
     },
-    {
-      "name": "ml-worker",
-      "path": "python-services/poloniex",
-      "env": {
-        "PORT": "$PORT",
-        "PYTHONUNBUFFERED": "1"
-      },
-      "steps": {
-        "install": [
-          "python3 -m ensurepip --upgrade || true",
-          "python3 -m pip install --upgrade pip",
-          "python3 -m pip install -r requirements.txt"
-        ],
-        "start": [
-          "uvicorn health:app --host 0.0.0.0 --port $PORT"
-        ]
-      },
-      "procfile": {
-        "web": "uvicorn health:app --host 0.0.0.0 --port $PORT"
-      },
-      "health": {
-        "path": "/health",
-        "timeout": 30
-      }
-    },
-    {
-      "name": "frontend",
-      "path": "frontend",
-      "env": {
-        "PORT": "$PORT"
-      },
-      "steps": {
-        "install": [
-          "corepack enable",
-          "yarn --immutable"
-        ],
-        "build": [
-          "yarn build"
-        ],
-        "start": [
-          "node serve.js"
-        ]
-      },
-      "procfile": {
-        "web": "node serve.js"
-      },
-      "health": {
-        "path": "/",
-        "timeout": 120
-      }
+    "build": {
+      "inputs": [{ "step": "install", "include": ["."] }],
+      "commands": [
+        "bash -lc 'if [ -f package.json ]; then yarn build || true; fi'"
+      ]
     }
-  ]
+  },
+  "deploy": {
+    "inputs": [{ "step": "build", "include": ["."] }],
+    "paths": [],
+    "variables": {
+      "PORT": "$PORT"
+    }
+  }
 }
