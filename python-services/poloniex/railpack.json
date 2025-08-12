@@ -13,7 +13,7 @@
       "caches": ["pip-cache"]
     },
     "prepare": {
-      "inputs": [{"step": "install", "include": ["."]}],
+      "inputs": [{"step": "install"}],
       "commands": ["echo 'Preparing deployment files'"],
       "deployOutputs": [
         {"include": ["health.py", "ingest_markets.py"]}
