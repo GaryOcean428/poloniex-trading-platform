@@ -4,6 +4,7 @@ import helmet from 'helmet';
 import compression from 'compression';
 import dotenv from 'dotenv';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { createServer } from 'http';
 import { Server as SocketIOServer } from 'socket.io';
@@ -104,35 +105,49 @@ app.use('/api/confidence-scoring', confidenceScoringRoutes);
 app.use('/api/strategies', strategiesRoutes);
 app.use('/api/status', statusRoutes);
 
-// Serve static files in production
+/**
+ * Serve static frontend only when running as a combined service and the dist exists.
+ * In Railpack split deployments the frontend runs as its own service, so skip here.
+ */
 if (process.env.NODE_ENV === 'production') {
-  // Serve frontend static files with proper MIME types
-  app.use(express.static(path.join(__dirname, '../../frontend/dist'), {
-    setHeaders: (res, path) => {
-      // Ensure JavaScript files are served with correct MIME type
-      if (path.endsWith('.js')) {
-        res.set('Content-Type', 'application/javascript');
-      }
-      // Ensure service worker is served with proper headers
-      if (path.endsWith('sw.js')) {
-        res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
-        res.set('Service-Worker-Allowed', '/');
-      }
-      // Ensure PNG files are served with correct MIME type
-      if (path.endsWith('.png')) {
-        res.set('Content-Type', 'image/png');
-      }
-      // Ensure manifest.json is served with correct MIME type
-      if (path.endsWith('manifest.json')) {
-        res.set('Content-Type', 'application/manifest+json');
-      }
-    }
-  }));
+  if (process.env.FRONTEND_STANDALONE === 'true') {
+    logger.warn('FRONTEND_STANDALONE=true: skipping static frontend serving in backend');
+  } else {
+    const distPath = path.resolve(__dirname, '../../frontend/dist');
+    if (fs.existsSync(distPath)) {
+      // Serve frontend static files with proper MIME types
+      app.use(
+        express.static(distPath, {
+          setHeaders: (res, p) => {
+            // Ensure JavaScript files are served with correct MIME type
+            if (p.endsWith('.js')) {
+              res.set('Content-Type', 'application/javascript');
+            }
+            // Ensure service worker is served with proper headers
+            if (p.endsWith('sw.js')) {
+              res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+              res.set('Service-Worker-Allowed', '/');
+            }
+            // Ensure PNG files are served with correct MIME type
+            if (p.endsWith('.png')) {
+              res.set('Content-Type', 'image/png');
+            }
+            // Ensure manifest.json is served with correct MIME type
+            if (p.endsWith('manifest.json')) {
+              res.set('Content-Type', 'application/manifest+json');
+            }
+          },
+        })
+      );
 
-  // Serve index.html for all other routes (SPA support)
-  app.get('*', (req: Request, res: Response) => {
-    res.sendFile(path.join(__dirname, '../../frontend/dist/index.html'));
-  });
+      // Serve index.html for all other routes (SPA support)
+      app.get('*', (_req: Request, res: Response) => {
+        res.sendFile(path.join(distPath, 'index.html'));
+      });
+    } else {
+      logger.warn(`Frontend dist not found at ${distPath}; skipping static frontend serving`);
+    }
+  }
 }
 
 // Error handling middleware
