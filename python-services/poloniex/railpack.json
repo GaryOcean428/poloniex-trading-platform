@@ -1,5 +1,6 @@
 {
   "$schema": "https://schema.railpack.com",
+  "workingDirectory": ".",
   "provider": "python",
   "packages": {
     "python": "3.13"
