@@ -6,12 +6,15 @@
   },
   "steps": {
     "install": {
-      "inputs": [{"include": ["."]}],
       "commands": [
         "pip install --upgrade pip",
         "pip install -r requirements.txt"
       ],
-      "caches": ["pip-cache"],
+      "caches": ["pip-cache"]
+    },
+    "prepare": {
+      "inputs": [{"step": "install", "include": ["."]}],
+      "commands": ["echo 'Preparing deployment files'"],
       "deployOutputs": [
         {"include": ["health.py", "ingest_markets.py"]}
       ]
