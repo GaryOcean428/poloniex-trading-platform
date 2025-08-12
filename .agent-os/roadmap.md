@@ -95,6 +95,9 @@ Goal: 24/7 live operation with resilience, portfolio constraints, and compliance
 - CI/CD
   - [ ] Lint, test (Vitest), security audit, dependency health, build, deploy.
   - [ ] Canary deploy + auto-rollback.
+  - [ ] Railpack build validation (corepack enable, yarn install --immutable, yarn build).
+  - [ ] Frontend Dockerfile build test (docker build -f frontend/Dockerfile .).
+  - [ ] Single start path per service (no conflicting Procfiles/scripts at runtime).
 
 - Testing
   - [ ] Unit (indicators, risk, OMS), integration (data->exec), e2e (paper mode), chaos (fault injection).
@@ -103,6 +106,12 @@ Goal: 24/7 live operation with resilience, portfolio constraints, and compliance
   - [ ] Catalog sync procedure and validation.
   - [ ] Backtest/optimize workflow; promotion and rollback.
   - [ ] Live ops: on-call, dashboards, alert matrix.
+
+## Deployment Stability (P0 acceptance)
+- Both services deploy with Yarn 4.9+ via Corepack; no "yarn: command not found".
+- Frontend is built with a multi-stage Dockerfile (node:20-alpine), no COPY shell redirection, serves on 0.0.0.0:$PORT via serve.js.
+- Backend is compiled with tsc and started with "yarn start" (node dist/backend/src/index.js); no alternative startup scripts at runtime.
+- Healthchecks pass; cold-start logs contain no start/port binding errors.
 
 ## Links to Specs
 - Autonomous Bot Spec: `.agent-os/specs/autonomous-poloniex-futures-bot.md`

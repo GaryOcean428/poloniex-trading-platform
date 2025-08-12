@@ -150,6 +150,25 @@ if (process.env.NODE_ENV === 'production') {
   }
 }
 
+/**
+ * Redirect root to frontend when running standalone API to avoid "Cannot GET /"
+ */
+if (process.env.NODE_ENV === 'production' && process.env.FRONTEND_STANDALONE === 'true') {
+  const feUrl = process.env.FRONTEND_URL;
+  app.get('/', (_req: Request, res: Response) => {
+    if (feUrl) {
+      return res.redirect(302, feUrl);
+    }
+    return res
+      .status(200)
+      .send(
+        'Polytrade API is running. FRONTEND_STANDALONE=true; set FRONTEND_URL to enable redirect.'
+      );
+  });
+  // Quiet favicon when API is standalone
+  app.get('/favicon.ico', (_req: Request, res: Response) => res.status(204).end());
+}
+
 // Error handling middleware
 app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
   logger.error('Unhandled error:', err);

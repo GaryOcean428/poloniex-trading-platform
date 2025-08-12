@@ -1,53 +1,56 @@
-# Use an official Node.js runtime as a parent image
-FROM node:20-alpine AS base
+# syntax=docker/dockerfile:1
 
-# Set working directory
+# Multi-stage Dockerfile for frontend build and runtime
+# IMPORTANT: Build context should be the repository root so that `shared/` is available.
+
+########## Builder ##########
+FROM node:20-alpine AS builder
+
 WORKDIR /app
 
-# Enable corepack for Yarn 4.9.2
+# Enable Yarn 4.x via Corepack
 RUN corepack enable && corepack prepare yarn@4.9.2 --activate
 
 # Copy root workspace files
 COPY package.json yarn.lock .yarnrc.yml ./
 
-# Copy frontend files
-COPY frontend/package.json ./frontend/
+# Copy workspace manifests to allow deterministic install
+COPY frontend/package.json ./frontend/package.json
+COPY backend/package.json ./backend/package.json
+# shared is a TS source folder (no package.json); sources are copied later during build
 
-# Install dependencies
-RUN yarn workspaces focus --all --production
+# Install full dependencies (dev + prod) for build
+RUN yarn install --immutable
 
-# Copy the rest of the frontend code
-COPY frontend/ ./frontend/
+# Copy source
+COPY frontend ./frontend
+COPY shared ./shared
 
-# Copy shared code if it exists
-COPY shared/ ./shared/ 2>/dev/null || true
+# Build the frontend
+WORKDIR /app/frontend
+ENV NODE_ENV=production
+RUN yarn build
 
-# Build-time environment variables for Railway deployment
-ARG VITE_BACKEND_URL
-ARG VITE_WS_URL
-ARG VITE_RAILWAY_PUBLIC_DOMAIN
-ARG VITE_RAILWAY_PRIVATE_DOMAIN
+########## Runtime ##########
+FROM node:20-alpine AS runner
 
-# Set environment variables during build
-ENV VITE_BACKEND_URL=$VITE_BACKEND_URL
-ENV VITE_WS_URL=$VITE_WS_URL
-ENV VITE_RAILWAY_PUBLIC_DOMAIN=$VITE_RAILWAY_PUBLIC_DOMAIN
-ENV VITE_RAILWAY_PRIVATE_DOMAIN=$VITE_RAILWAY_PRIVATE_DOMAIN
+WORKDIR /app
 
-# Build the frontend application
-RUN cd frontend && yarn build
+# Create non-root user
+RUN addgroup -g 1001 -S nodejs && adduser -S nodejs -u 1001 -G nodejs
 
-# Create non-root user for security
-RUN addgroup -g 1001 -S nodejs && \
-    adduser -S nodejs -u 1001 -G nodejs
+ENV NODE_ENV=production
+# Default PORT; Railway will inject its own and our server reads $PORT
+ENV PORT=5675
 
-# Set proper permissions
-RUN chown -R nodejs:nodejs /app
+# Copy built assets and static server
+COPY --from=builder /app/frontend/dist ./dist
+COPY --from=builder /app/frontend/serve.js ./serve.js
+
 USER nodejs
 
-# Expose the port the app runs on
-EXPOSE 3000
+# Expose the app port (aligned with .clinerules)
+EXPOSE 5675
 
-# Define the command to run the app
-WORKDIR /app/frontend
-CMD ["yarn", "start"]
+# Start static server
+CMD ["node", "serve.js"]
