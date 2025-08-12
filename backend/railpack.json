@@ -1,0 +1,41 @@
+{
+  "$schema": "https://schema.railpack.com",
+  "provider": "node",
+  "packages": {
+    "node": "20",
+    "yarn": "4.9.2"
+  },
+  "steps": {
+    "setup": {
+      "commands": [
+        "corepack enable",
+        "corepack prepare yarn@4.9.2 --activate"
+      ]
+    },
+    "install": {
+      "inputs": [{"step": "setup"}],
+      "commands": ["yarn install --immutable"],
+      "caches": ["yarn-cache"]
+    },
+    "build": {
+      "inputs": [{"step": "install"}],
+      "commands": ["yarn build"],
+      "deployOutputs": [
+        {"include": ["dist", "node_modules", "package.json"]}
+      ]
+    }
+  },
+  "caches": {
+    "yarn-cache": {
+      "directory": "/usr/local/share/.cache/yarn",
+      "type": "shared"
+    }
+  },
+  "deploy": {
+    "startCommand": "yarn start",
+    "variables": {
+      "NODE_ENV": "production",
+      "PORT": "${PORT}"
+    }
+  }
+}
