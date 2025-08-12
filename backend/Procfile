@@ -1,1 +1,1 @@
-web: node railway-start.js
+web: yarn start
