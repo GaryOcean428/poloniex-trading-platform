@@ -6,15 +6,9 @@
   },
   "steps": {
     "install": {
-      "inputs": [
-        {
-          "local": true,
-          "include": ["python-services/poloniex/requirements.txt"]
-        }
-      ],
       "commands": [
         "pip install --upgrade pip",
-        "pip install -r python-services/poloniex/requirements.txt"
+        "cd python-services/poloniex && pip install -r requirements.txt"
       ],
       "caches": ["pip-cache"]
     }
