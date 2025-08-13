@@ -544,6 +544,42 @@ Approach problems methodically. Your expertise turns complex failure scenarios i
 
 _These rules must remain synchronized with CLAUDE.md and serve as core development guidelines for the Gary8D multi-agent AI system._
 
+## Railway + Railpack Configuration Standards ✅
+
+### Verified Best Practices for Monorepo Deployments
+
+Your current configuration follows **verified best practices** for Railway + Railpack monorepo deployments:
+
+#### Verified Architecture ✅
+```
+polytrade/
+├── railpack.json                           # ✅ Root coordination file  
+├── frontend/railpack.json                  # ✅ Service-specific config
+├── backend/railpack.json                   # ✅ Service-specific config
+└── python-services/poloniex/railpack.json  # ✅ Service-specific config
+```
+
+### Railway UI Configuration Requirements
+
+#### Critical Settings (Manual Configuration):
+1. **✅ Root Directory**: Set to service-specific path:
+   - Frontend: `./frontend` 
+   - Backend: `./backend`
+   - Python Service: `./python-services/poloniex`
+
+2. **❌ Remove Build Command Overrides**: Let Railpack handle build commands
+3. **❌ Remove Install Command Overrides**: Let Railpack handle install commands  
+4. **✅ Keep Environment Variables**: PORT, NODE_ENV, DATABASE_URL, etc.
+5. **❌ Clear Root Directory Overrides**: Only use service-specific paths
+
+### Service Configuration Checklist
+
+| Service | Railway Service ID | Root Directory | Config File |
+|---------|-------------------|----------------|-------------|
+| polytrade-fe | c81963d4-f110-49cf-8dc0-311d1e3dcf7e | `./frontend` | `frontend/railpack.json` |
+| polytrade-be | e473a919-acf9-458b-ade3-82119e4fabf6 | `./backend` | `backend/railpack.json` |
+| ml-worker | 86494460-6c19-4861-859b-3f4bd76cb652 | `./python-services/poloniex` | `python-services/poloniex/railpack.json` |
+
 ## Railway Config Quick-Check (reference variable Cheat-Sheet)
 
 Follow this 8-step checklist every time you push or deploy a Railway project.
@@ -560,7 +596,8 @@ git pull origin main
 
 ### 2. Open the three files that matter
 
-- `railway.json`
+- `railpack.json` (service-specific)
+- `railway.json` (if used)
 - `Dockerfile` (if you use one)
 - Your main entry file (`server.js`, `app.py`, etc.)
 
@@ -658,14 +695,30 @@ CMD ["node", "server.js"]
 
 ```bash
 railway up
+# OR for Railpack projects:
+railpack build --dry-run  # Test configuration
+railway up
 ```
 
 After each deploy:
 
 - Open the **Railway dashboard → Service → Logs**
 - Confirm: `Listening on 0.0.0.0:<PORT>` (or `[::]:<PORT>`)
+- Look for: "Successfully prepared Railpack plan"
 - Hit the public URL or internal endpoint and verify 200/101 responses
 - Check browser console for CORS or WebSocket errors
+
+### Deployment Success Indicators
+
+#### ✅ Expected Success Indicators:
+- "Successfully prepared Railpack plan"
+- Service-specific builds complete successfully
+- No schema violations
+
+#### ❌ Error Patterns (Should NOT appear):
+- "Install inputs must be an image or step input"
+- "No project found in /app"
+- Path resolution errors in yarn/npm commands
 
 ---
 
