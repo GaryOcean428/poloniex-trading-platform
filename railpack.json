@@ -1,22 +1,9 @@
 {
   "$schema": "https://schema.railpack.com",
   "version": "1",
-  "packages": {
-    "node": "20",
-    "yarn": "4.9.2"
-  },
-  "install": {
-    "commands": [
-      "corepack enable",
-      "yarn install --no-immutable"
-    ]
-  },
-  "build": {
-    "commands": [
-      "yarn workspaces foreach --all run build"
-    ]
-  },
-  "deploy": {
-    "command": "echo 'Please use service-specific deployments'"
+  "services": {
+    "frontend": "./frontend",
+    "backend": "./backend",
+    "ml-worker": "./python-services/poloniex"
   }
 }
