@@ -4,7 +4,7 @@
     "frontend": {
       "install": {
         "commands": [
-          "yarn install --frozen-lockfile"
+          "yarn install --immutable=false"
         ]
       },
       "build": {
@@ -19,11 +19,12 @@
     "backend": {
       "install": {
         "commands": [
-          "yarn install --frozen-lockfile"
+          "yarn install --immutable=false"
         ]
       },
       "build": {
         "commands": [
+          "cp -r shared backend/",
           "yarn workspace backend build"
         ]
       },
@@ -34,11 +35,11 @@
     "poloniex-ml": {
       "install": {
         "commands": [
-          "cd python-services/poloniex && pip install -r requirements.txt"
+          "pip install -r python-services/poloniex/requirements.txt"
         ]
       },
       "start": {
-        "command": "cd python-services/poloniex && python main.py"
+        "command": "cd python-services/poloniex && uvicorn health:app --host 0.0.0.0 --port ${PORT:-8000}"
       }
     }
   }
