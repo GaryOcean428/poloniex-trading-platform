@@ -54,6 +54,13 @@ coverage/
 *.lcov
 .nyc_output
 
+# Python files
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
 # Security and dependency files
 package-lock.json
 
