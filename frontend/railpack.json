@@ -7,12 +7,12 @@
   },
   "install": {
     "commands": [
-      "cd .. && yarn install --no-immutable"
+      "yarn install --check-cache"
     ]
   },
   "build": {
     "commands": [
-      "cd .. && yarn workspace frontend build"
+      "yarn run build"
     ]
   },
   "deploy": {
