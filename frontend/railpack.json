@@ -2,11 +2,19 @@
   "$schema": "https://schema.railpack.com",
   "provider": "node",
   "packages": {
-    "node": "20"
+    "node": "20",
+    "yarn": "4.9.2"
   },
   "steps": {
     "install": {
+      "inputs": [
+        {
+          "local": true,
+          "include": ["frontend/package.json", "frontend/.yarnrc.yml", "yarn.lock", ".yarnrc.yml"]
+        }
+      ],
       "commands": [
+        "cd frontend",
         "corepack enable",
         "corepack prepare yarn@4.9.2 --activate",
         "yarn --version",
@@ -15,8 +23,17 @@
       "caches": ["yarn-cache"]
     },
     "build": {
-      "inputs": [{"step": "install"}],
-      "commands": ["yarn build:deploy"]
+      "inputs": [
+        { "step": "install" },
+        {
+          "local": true,
+          "include": ["frontend"]
+        }
+      ],
+      "commands": [
+        "cd frontend",
+        "yarn build:deploy"
+      ]
     }
   },
   "caches": {
@@ -29,10 +46,10 @@
     "inputs": [
       {
         "step": "build",
-        "include": ["dist", "serve.js", "package.json"]
+        "include": ["frontend/dist", "frontend/serve.js", "frontend/package.json"]
       }
     ],
-    "startCommand": "node serve.js",
+    "startCommand": "cd frontend && node serve.js",
     "variables": {
       "NODE_ENV": "production",
       "PORT": "${PORT}"

@@ -6,9 +6,15 @@
   },
   "steps": {
     "install": {
+      "inputs": [
+        {
+          "local": true,
+          "include": ["python-services/poloniex/requirements.txt"]
+        }
+      ],
       "commands": [
         "pip install --upgrade pip",
-        "pip install -r requirements.txt"
+        "pip install -r python-services/poloniex/requirements.txt"
       ],
       "caches": ["pip-cache"]
     }
@@ -23,9 +29,13 @@
     "inputs": [
       {
         "step": "install"
+      },
+      {
+        "local": true,
+        "include": ["python-services/poloniex"]
       }
     ],
-    "startCommand": "uvicorn health:app --host 0.0.0.0 --port ${PORT}",
+    "startCommand": "cd python-services/poloniex && uvicorn health:app --host 0.0.0.0 --port ${PORT}",
     "variables": {
       "PYTHONUNBUFFERED": "1"
     }

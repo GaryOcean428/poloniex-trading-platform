@@ -2,21 +2,40 @@
   "$schema": "https://schema.railpack.com",
   "provider": "node",
   "packages": {
-    "node": "20"
+    "node": "20",
+    "yarn": "4.9.2"
   },
   "steps": {
     "install": {
+      "inputs": [
+        {
+          "local": true,
+          "include": ["backend/package.json", "yarn.lock", ".yarnrc.yml"]
+        }
+      ],
       "commands": [
+        "cd backend",
         "corepack enable",
         "corepack prepare yarn@4.9.2 --activate",
-        "yarn --version",
-        "yarn install --immutable"
+        "export PATH=\"/root/.yarn/berry/bin:$PATH\"",
+        "yarn --version || /root/.yarn/berry/bin/yarn --version",
+        "yarn install --immutable || /root/.yarn/berry/bin/yarn install --immutable"
       ],
       "caches": ["yarn-cache"]
     },
     "build": {
-      "inputs": [{"step": "install"}],
-      "commands": ["yarn build"]
+      "inputs": [
+        { "step": "install" },
+        {
+          "local": true,
+          "include": ["backend"]
+        }
+      ],
+      "commands": [
+        "cd backend",
+        "export PATH=\"/root/.yarn/berry/bin:$PATH\"",
+        "yarn build || /root/.yarn/berry/bin/yarn build"
+      ]
     }
   },
   "caches": {
@@ -29,10 +48,10 @@
     "inputs": [
       {
         "step": "build",
-        "include": ["dist", "package.json"]
+        "include": ["backend/dist", "backend/package.json"]
       }
     ],
-    "startCommand": "node dist/src/index.js",
+    "startCommand": "cd backend && node dist/src/index.js",
     "variables": {
       "NODE_ENV": "production",
       "PORT": "${PORT}"
