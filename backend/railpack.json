@@ -19,11 +19,7 @@
     },
     "build": {
       "inputs": [
-        { "step": "install" },
-        {
-          "local": true,
-          "include": ["backend"]
-        }
+        { "step": "install" }
       ],
       "commands": [
         "cd backend",
