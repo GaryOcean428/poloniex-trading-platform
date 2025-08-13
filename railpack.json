@@ -1,0 +1,17 @@
+{
+  "$schema": "https://schema.railpack.com",
+  "services": {
+    "frontend": {
+      "path": "./frontend",
+      "configFile": "./frontend/railpack.json"
+    },
+    "backend": {
+      "path": "./backend", 
+      "configFile": "./backend/railpack.json"
+    },
+    "python-service": {
+      "path": "./python-services/poloniex",
+      "configFile": "./python-services/poloniex/railpack.json"
+    }
+  }
+}
