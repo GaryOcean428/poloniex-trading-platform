@@ -21,13 +21,7 @@
   },
   "deploy": {
     "inputs": [
-      {
-        "step": "install"
-      },
-      {
-        "local": true,
-        "include": ["python-services/poloniex"]
-      }
+      { "step": "install" }
     ],
     "startCommand": "cd python-services/poloniex && uvicorn health:app --host 0.0.0.0 --port ${PORT}",
     "variables": {
