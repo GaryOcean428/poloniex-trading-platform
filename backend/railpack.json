@@ -8,7 +8,6 @@
   "steps": {
     "install": {
       "commands": [
-        "cd backend",
         "corepack enable",
         "corepack prepare yarn@4.9.2 --activate",
         "export PATH=\"/root/.yarn/berry/bin:$PATH\"",
@@ -22,7 +21,6 @@
         { "step": "install" }
       ],
       "commands": [
-        "cd backend",
         "export PATH=\"/root/.yarn/berry/bin:$PATH\"",
         "yarn build || /root/.yarn/berry/bin/yarn build"
       ]
@@ -38,10 +36,10 @@
     "inputs": [
       {
         "step": "build",
-        "include": ["backend/dist", "backend/package.json"]
+        "include": ["dist", "package.json"]
       }
     ],
-    "startCommand": "cd backend && node dist/backend/src/index.js",
+    "startCommand": "node dist/src/index.js",
     "variables": {
       "NODE_ENV": "production",
       "PORT": "${PORT}"
