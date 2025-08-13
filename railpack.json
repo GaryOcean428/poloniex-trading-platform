@@ -1,46 +1,21 @@
 {
   "$schema": "https://schema.railpack.com",
-  "services": {
-    "frontend": {
-      "install": {
-        "commands": [
-          "yarn install --immutable=false"
-        ]
-      },
-      "build": {
-        "commands": [
-          "yarn workspace frontend build"
-        ]
-      },
-      "start": {
-        "command": "yarn workspace frontend start"
-      }
-    },
-    "backend": {
-      "install": {
-        "commands": [
-          "yarn install --immutable=false"
-        ]
-      },
-      "build": {
-        "commands": [
-          "cp -r shared backend/",
-          "yarn workspace backend build"
-        ]
-      },
-      "start": {
-        "command": "yarn workspace backend start"
-      }
-    },
-    "poloniex-ml": {
-      "install": {
-        "commands": [
-          "pip install -r python-services/poloniex/requirements.txt"
-        ]
-      },
-      "start": {
-        "command": "cd python-services/poloniex && uvicorn health:app --host 0.0.0.0 --port ${PORT:-8000}"
-      }
-    }
+  "version": "1",
+  "packages": {
+    "node": "20",
+    "yarn": "4.9.2"
+  },
+  "install": {
+    "commands": [
+      "yarn install --no-immutable"
+    ]
+  },
+  "build": {
+    "commands": [
+      "yarn build"
+    ]
+  },
+  "deploy": {
+    "command": "yarn start"
   }
 }
