@@ -10,31 +10,39 @@ Fixed incorrect dist paths in backend/package.json to match actual TypeScript ou
 
 ## 🚀 Railway UI Configuration Required
 
+⚠️ **CRITICAL**: Railway UI settings override railpack.json! You MUST clear these fields.
+
 For each service in Railway UI, you need to configure the following settings:
 
 ### Frontend Service (polytrade-fe)
 **Service ID**: c81963d4-f110-49cf-8dc0-311d1e3dcf7e
 
 1. **Root Directory**: `./frontend`
-2. **Remove any Build Command overrides** (let Railpack handle it)
-3. **Remove any Install Command overrides** (let Railpack handle it)
-4. **Environment Variables**:
+2. **Build Command**: **MUST BE EMPTY** (clear this field completely)
+3. **Install Command**: **MUST BE EMPTY** (clear this field completely)
+4. **Watch Paths**: **MUST BE EMPTY** (clear this field completely)
+5. **Environment Variables**:
    - `PORT` (Railway provides this)
    - `NODE_ENV=production`
    - `VITE_API_BASE_URL` (your backend URL)
 
-### Backend Service (polytrade-be)
+### Backend Service (polytrade-be) ⚠️ CURRENTLY FAILING
 **Service ID**: e473a919-acf9-458b-ade3-82119e4fabf6
 
 1. **Root Directory**: `./backend`
-2. **Remove any Build Command overrides** (let Railpack handle it)
-3. **Remove any Install Command overrides** (let Railpack handle it)
-4. **Environment Variables**:
+2. **Build Command**: **MUST BE EMPTY** (clear this field completely - Railway is using npm instead of yarn!)
+3. **Install Command**: **MUST BE EMPTY** (clear this field completely - Railway is using npm instead of yarn!)
+4. **Watch Paths**: **MUST BE EMPTY** (clear this field completely)
+5. **Environment Variables**:
    - `PORT` (Railway provides this)
    - `NODE_ENV=production`
    - `DATABASE_URL` (your PostgreSQL connection string)
    - `JWT_SECRET` (your JWT secret)
    - `REDIS_URL` (if using Redis)
+
+**If clearing doesn't work**, explicitly set:
+- **Install Command**: `yarn install --check-cache`
+- **Build Command**: `yarn run build`
 
 ### ML Worker Service (ml-worker)
 **Service ID**: 86494460-6c19-4861-859b-3f4bd76cb652
