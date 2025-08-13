@@ -1,24 +1,46 @@
-1. [https://railpack.com/getting-started](https://railpack.com/getting-started)
-2. [https://railpack.com/installation](https://railpack.com/installation)
-3. [https://railpack.com/guides/installing-packages](https://railpack.com/guides/installing-packages)
-4. [https://railpack.com/guides/adding-steps](https://railpack.com/guides/adding-steps)
-5. [https://railpack.com/guides/developing-locally](https://railpack.com/guides/developing-locally)
-6. [https://railpack.com/guides/running-railpack-in-production](https://railpack.com/guides/running-railpack-in-production)
-7. [https://railpack.com/config/file](https://railpack.com/config/file)
-8. [https://railpack.com/config/environment-variables](https://railpack.com/config/environment-variables)
-9. [https://railpack.com/config/procfile](https://railpack.com/config/procfile)
-10. [https://railpack.com/languages/node](https://railpack.com/languages/node)
-11. [https://railpack.com/languages/python](https://railpack.com/languages/python)
-12. [https://railpack.com/languages/golang](https://railpack.com/languages/golang)
-13. [https://railpack.com/languages/php](https://railpack.com/languages/php)
-14. [https://railpack.com/languages/java](https://railpack.com/languages/java)
-15. [https://railpack.com/languages/ruby](https://railpack.com/languages/ruby)
-16. [https://railpack.com/reference/cli](https://railpack.com/reference/cli)
-17. [https://railpack.com/reference/frontend](https://railpack.com/reference/frontend)
-18. [https://railpack.com/architecture/overview](https://railpack.com/architecture/overview)
-19. [https://railpack.com/architecture/package-resolution](https://railpack.com/architecture/package-resolution)
-20. [https://railpack.com/architecture/secrets](https://railpack.com/architecture/secrets)
-21. [https://railpack.com/architecture/buildkit](https://railpack.com/architecture/buildkit)
-22. [https://railpack.com/architecture/caching](https://railpack.com/architecture/caching)
-23. [https://railpack.com/architecture/user-config](https://railpack.com/architecture/user-config)
-24. [https://railpack.com/contributing](https://railpack.com/contributing)
+# Railpack Documentation Links
+
+## Core Documentation
+1. [Getting Started](https://railpack.com/getting-started) - Initial setup and basic concepts
+2. [Installation](https://railpack.com/installation) - Installation instructions
+3. [Installing Packages](https://railpack.com/guides/installing-packages) - Package management
+4. [Adding Steps](https://railpack.com/guides/adding-steps) - Build step configuration
+5. [Developing Locally](https://railpack.com/guides/developing-locally) - Local development workflow
+6. [Running in Production](https://railpack.com/guides/running-railpack-in-production) - Production deployment best practices
+
+## Configuration
+7. [Configuration File](https://railpack.com/config/file) - railpack.json structure and options
+8. [Environment Variables](https://railpack.com/config/environment-variables) - Environment variable handling
+9. [Procfile](https://railpack.com/config/procfile) - Process configuration
+
+## Language Support
+10. [Node.js](https://railpack.com/languages/node) - Node.js specific configuration
+11. [Python](https://railpack.com/languages/python) - Python specific configuration
+12. [Go](https://railpack.com/languages/golang) - Go specific configuration
+13. [PHP](https://railpack.com/languages/php) - PHP specific configuration
+14. [Java](https://railpack.com/languages/java) - Java specific configuration
+15. [Ruby](https://railpack.com/languages/ruby) - Ruby specific configuration
+
+## Reference
+16. [CLI Reference](https://railpack.com/reference/cli) - Command line interface documentation
+17. [Frontend](https://railpack.com/reference/frontend) - Frontend integration
+18. [Architecture Overview](https://railpack.com/architecture/overview) - System architecture
+19. [Package Resolution](https://railpack.com/architecture/package-resolution) - How packages are resolved
+20. [Secrets](https://railpack.com/architecture/secrets) - Secret management
+21. [BuildKit](https://railpack.com/architecture/buildkit) - BuildKit integration
+22. [Caching](https://railpack.com/architecture/caching) - Build caching strategies
+23. [User Config](https://railpack.com/architecture/user-config) - User configuration options
+24. [Contributing](https://railpack.com/contributing) - How to contribute
+
+## Best Practices for Monorepos
+
+### Recommended Configuration Structure:
+- **Root railpack.json**: Coordination file for service discovery
+- **Service-specific railpack.json**: Individual build configurations per service
+- **Railway Root Directory**: Set to specific service directory (e.g., `./frontend`, `./backend`)
+
+### Key Principles:
+1. Use isolated monorepo pattern with Railway
+2. Set root directories in Railway UI for each service
+3. Maintain service-specific railpack.json files for build isolation
+4. Root coordination file references individual service configs
