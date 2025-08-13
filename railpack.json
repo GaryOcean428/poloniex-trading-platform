@@ -1,41 +1,45 @@
 {
   "$schema": "https://schema.railpack.com",
-  "layers": {
-    "workspace": {
-      "commands": [
-        "copy package.json yarn.lock .yarnrc.yml ./",
-        "copy shared ./shared/",
-        "yarn install --frozen-lockfile"
-      ]
-    }
-  },
   "services": {
     "frontend": {
-      "path": "./frontend",
-      "inputs": [
-        { "layer": "workspace" }
-      ],
-      "commands": [
-        "yarn workspace frontend build"
-      ],
-      "startCommand": "node serve.js"
+      "install": {
+        "commands": [
+          "yarn install --frozen-lockfile"
+        ]
+      },
+      "build": {
+        "commands": [
+          "yarn workspace frontend build"
+        ]
+      },
+      "start": {
+        "command": "yarn workspace frontend start"
+      }
     },
     "backend": {
-      "path": "./backend", 
-      "inputs": [
-        { "layer": "workspace" }
-      ],
-      "commands": [
-        "yarn workspace backend build"
-      ],
-      "startCommand": "yarn workspace backend start"
+      "install": {
+        "commands": [
+          "yarn install --frozen-lockfile"
+        ]
+      },
+      "build": {
+        "commands": [
+          "yarn workspace backend build"
+        ]
+      },
+      "start": {
+        "command": "yarn workspace backend start"
+      }
     },
-    "python-service": {
-      "path": "./python-services/poloniex",
-      "commands": [
-        "pip install -r requirements.txt"
-      ],
-      "startCommand": "uvicorn health:app --host 0.0.0.0 --port $PORT"
+    "poloniex-ml": {
+      "install": {
+        "commands": [
+          "cd python-services/poloniex && pip install -r requirements.txt"
+        ]
+      },
+      "start": {
+        "command": "cd python-services/poloniex && python main.py"
+      }
     }
   }
 }
