@@ -41,13 +41,25 @@ node_modules
 build/
 .vercel
 
-# Monorepo specific
+# Monorepo specific  
 frontend/dist/
 frontend/node_modules/
 backend/dist/
 backend/node_modules/
 backend/public/
 *.tsbuildinfo
+
+# TypeScript compilation artifacts
+tsc-output*.txt
+tsc-output.txt
+
+# Test files in root (should be in service directories)
+test-*.js
+test-*.html
+test-*.sh
+validate-*.js
+validate-*.sh
+*-helper.js
 
 # Test coverage
 coverage/
