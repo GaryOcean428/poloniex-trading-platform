@@ -7,16 +7,15 @@
   },
   "install": {
     "commands": [
-      "corepack enable",
-      "yarn install --no-immutable"
+      "cd .. && yarn install --no-immutable"
     ]
   },
   "build": {
     "commands": [
-      "yarn workspaces foreach --all run build"
+      "cd .. && yarn workspace frontend build"
     ]
   },
   "deploy": {
-    "command": "echo 'Please use service-specific deployments'"
+    "command": "node serve.js"
   }
 }
