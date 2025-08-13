@@ -9,6 +9,7 @@
       "commands": [
         "corepack enable",
         "corepack prepare yarn@4.9.2 --activate",
+        "yarn --version",
         "yarn install --immutable"
       ],
       "caches": ["yarn-cache"]
