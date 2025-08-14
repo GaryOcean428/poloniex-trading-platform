@@ -7,11 +7,17 @@
     "steps": [
       {
         "name": "install",
-        "command": "yarn install --immutable"
+        "command": "yarn install --immutable --immutable-cache"
+      },
+      {
+        "name": "copy-shared",
+        "command": "mkdir -p ./src/shared/types && mkdir -p ./src/shared/middleware && cp ../shared/types/*.ts ./src/shared/types/ && cp ../shared/*.ts ./src/shared/ && cp -r ../shared/middleware ./src/shared/ || echo 'Shared directory not found'",
+        "dependsOn": ["install"]
       },
       {
         "name": "build",
-        "command": "yarn build"
+        "command": "yarn build",
+        "dependsOn": ["copy-shared"]
       }
     ]
   },

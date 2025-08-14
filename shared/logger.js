@@ -1,10 +1,7 @@
-"use strict";
 /**
  * Structured JSON Logger
  * Provides centralized logging with consistent formatting
  */
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.Logger = exports.logger = void 0;
 class Logger {
     constructor() {
         // Determine environment based on available globals
@@ -212,6 +209,7 @@ class Logger {
         localStorage.removeItem('errorLog');
     }
 }
-exports.Logger = Logger;
 // Export singleton instance
-exports.logger = new Logger();
+export const logger = new Logger();
+// Export for testing
+export { Logger };
