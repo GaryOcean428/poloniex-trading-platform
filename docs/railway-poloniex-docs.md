@@ -3,40 +3,47 @@
 ## Core Railway Documentation
 
 ### Getting Started
+
 - [Railway.com Docs Home](https://docs.railway.com/) - Main documentation portal
 - [Quick Start](https://docs.railway.com/quick-start) - Get started quickly
 - [Railway Metal](https://docs.railway.com/railway-metal) - Next-gen platform
 
 ### Overview
+
 - [About Railway](https://docs.railway.com/overview/about-railway) - Platform overview
 - [Best Practices](https://docs.railway.com/overview/best-practices) - **⭐ ESSENTIAL FOR PRODUCTION**
 - [The Basics](https://docs.railway.com/overview/the-basics) - Core concepts
 - [Advanced Concepts](https://docs.railway.com/overview/advanced-concepts) - Deep dive topics
 
 ### Configuration & Deployment
+
 - [Config as Code](https://docs.railway.com/guides/config-as-code) - **⭐ RAILPACK INTEGRATION**
 - [Build Configuration](https://docs.railway.com/guides/build-configuration) - Build settings
 - [Monorepo Support](https://docs.railway.com/guides/monorepo) - **⭐ CRITICAL FOR YOUR SETUP**
 - [Deploying a Monorepo](https://docs.railway.com/tutorials/deploying-a-monorepo) - **⭐ STEP-BY-STEP GUIDE**
 
 ### Core Services
+
 - [Projects](https://docs.railway.com/guides/projects) - Project management
-- [Services](https://docs.railway.com/guides/services) - Service configuration  
+- [Services](https://docs.railway.com/guides/services) - Service configuration
 - [Environments](https://docs.railway.com/guides/environments) - Environment management
 - [Variables](https://docs.railway.com/guides/variables) - Environment variables
 - [Volumes](https://docs.railway.com/guides/volumes) - Persistent storage
 
-### Performance & Operations  
+### Performance & Operations
+
 - [Optimize Performance](https://docs.railway.com/guides/optimize-performance) - Performance tuning
 - [Health Checks](https://docs.railway.com/guides/healthchecks) - Service monitoring
 - [Restart Policy](https://docs.railway.com/guides/restart-policy) - Restart configuration
 - [Staged Changes](https://docs.railway.com/guides/staged-changes) - Change management
 
 ### Development Tools
+
 - [CLI](https://docs.railway.com/guides/cli) - Command line interface
 - [GitHub Auto-deploys](https://docs.railway.com/guides/github-autodeploys) - Git integration
 
 ### Framework Support
+
 - [Languages & Frameworks](https://docs.railway.com/guides/languages-frameworks) - Language overview
 - [Express](https://docs.railway.com/guides/express) - Express.js
 - [Nest](https://docs.railway.com/guides/nest) - NestJS
@@ -48,10 +55,12 @@
 - [Angular](https://docs.railway.com/guides/angular) - Angular
 
 ### Networking
+
 - [Public Networking](https://docs.railway.com/guides/public-networking) - External access
 - [Private Networking](https://docs.railway.com/guides/private-networking) - Internal communication
 
-### Advanced Deployment  
+### Advanced Deployment
+
 - [Dockerfiles](https://docs.railway.com/guides/dockerfiles) - Custom Docker builds
 - [Pre-deploy Commands](https://docs.railway.com/guides/pre-deploy-command) - Pre-deployment hooks
 - [Start Commands](https://docs.railway.com/guides/start-command) - Service startup

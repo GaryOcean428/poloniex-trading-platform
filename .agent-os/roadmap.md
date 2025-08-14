@@ -9,6 +9,7 @@ status: active
 This roadmap operationalizes the specs and canonical market catalog into a deliverable plan. It is organized by phases with clear acceptance criteria, owners (to assign), and links to tasks and scripts.
 
 ## Canonical Sources
+
 - Markets doc (authoritative): `docs/railway-poloniex-docs.md`
 - Normalized catalog (programmatic): `docs/markets/poloniex-futures-v3.json`
 - Sync script: `scripts/sync-poloniex-futures-v3.js`
@@ -16,6 +17,7 @@ This roadmap operationalizes the specs and canonical market catalog into a deliv
 - Backend routes: `backend/src/routes/markets.ts`
 
 ## Phase P0 — Foundations and Parity
+
 Goal: End-to-end functionality in paper mode with catalog-driven parameters, robust data adapters, and deterministic backtests.
 
 - Markets Catalog
@@ -52,6 +54,7 @@ Goal: End-to-end functionality in paper mode with catalog-driven parameters, rob
   - Acceptance: on-call actionable alerts; SLOs documented.
 
 ## Phase P1 — Strategy and Promotion
+
 Goal: Establish profitable, risk-controlled strategies and promotion gates from research to paper to canary.
 
 - Strategies
@@ -70,6 +73,7 @@ Goal: Establish profitable, risk-controlled strategies and promotion gates from 
   - Acceptance: gated, auditable promotions with rollback plan.
 
 ## Phase P2 — Live Autonomy and Scale
+
 Goal: 24/7 live operation with resilience, portfolio constraints, and compliance.
 
 - Live OMS & Reconciliation
@@ -87,11 +91,13 @@ Goal: 24/7 live operation with resilience, portfolio constraints, and compliance
   - Acceptance: full reproducibility of any trade with lineage.
 
 ## Acceptance Targets (profitability gate)
+
 - Backtest/OOS: PF > 1.2 and Sharpe > 1 over rolling 90D after costs (targets adjustable).
 - Shadow vs Live: drift within defined tolerance for slippage/fees/funding.
 - Reliability: 24/7 autonomy with auto-recovery; incident runbooks; tested kill switch.
 
 ## Engineering Checklists
+
 - CI/CD
   - [ ] Lint, test (Vitest), security audit, dependency health, build, deploy.
   - [ ] Canary deploy + auto-rollback.
@@ -108,17 +114,20 @@ Goal: 24/7 live operation with resilience, portfolio constraints, and compliance
   - [ ] Live ops: on-call, dashboards, alert matrix.
 
 ## Deployment Stability (P0 acceptance)
+
 - Both services deploy with Yarn 4.9+ via Corepack; no "yarn: command not found".
 - Frontend is built with a multi-stage Dockerfile (node:20-alpine), no COPY shell redirection, serves on 0.0.0.0:$PORT via serve.js.
 - Backend is compiled with tsc and started with "yarn start" (node dist/backend/src/index.js); no alternative startup scripts at runtime.
 - Healthchecks pass; cold-start logs contain no start/port binding errors.
 
 ## Links to Specs
+
 - Autonomous Bot Spec: `.agent-os/specs/autonomous-poloniex-futures-bot.md`
 - Backtesting Enhancements Spec: `.agent-os/specs/backtesting-enhancements.md`
 - Sync Task: `.agent-os/tasks/sync-poloniex-futures-catalog.md`
 
 ## Next Actions (P0)
+
 1. Run `yarn sync:poloniex` with API credentials to populate catalog; verify counts and sample fields.
 2. Implement Poloniex REST/WS adapters with retries and auth; add unit tests.
 3. Align backtester with catalog (fees, funding, leverage/liquidation) and validate determinism.

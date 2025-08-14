@@ -3,9 +3,11 @@
 ## ✅ Completed Fixes
 
 ### 1. Railpack Configuration Updates
+
 All railpack.json files have been updated to use consistent package managers and correct build/deploy commands.
 
 ### 2. Backend Package.json Path Fixes
+
 Fixed incorrect dist paths in backend/package.json to match actual TypeScript output.
 
 ## 🚀 Railway UI Configuration Required
@@ -15,6 +17,7 @@ Fixed incorrect dist paths in backend/package.json to match actual TypeScript ou
 For each service in Railway UI, you need to configure the following settings:
 
 ### Frontend Service (polytrade-fe)
+
 **Service ID**: c81963d4-f110-49cf-8dc0-311d1e3dcf7e
 
 1. **Root Directory**: `./frontend`
@@ -27,6 +30,7 @@ For each service in Railway UI, you need to configure the following settings:
    - `VITE_API_BASE_URL` (your backend URL)
 
 ### Backend Service (polytrade-be) ⚠️ CURRENTLY FAILING
+
 **Service ID**: e473a919-acf9-458b-ade3-82119e4fabf6
 
 1. **Root Directory**: `./backend`
@@ -41,10 +45,12 @@ For each service in Railway UI, you need to configure the following settings:
    - `REDIS_URL` (if using Redis)
 
 **If clearing doesn't work**, explicitly set:
+
 - **Install Command**: `yarn install --check-cache`
 - **Build Command**: `yarn run build`
 
 ### ML Worker Service (ml-worker)
+
 **Service ID**: 86494460-6c19-4861-859b-3f4bd76cb652
 
 1. **Root Directory**: `./python-services/poloniex`
@@ -58,6 +64,7 @@ For each service in Railway UI, you need to configure the following settings:
 ## 📝 Fixed Configuration Files
 
 ### Root railpack.json
+
 ```json
 {
   "$schema": "https://schema.railpack.com",
@@ -71,6 +78,7 @@ For each service in Railway UI, you need to configure the following settings:
 ```
 
 ### Frontend railpack.json
+
 ```json
 {
   "$schema": "https://schema.railpack.com",
@@ -96,6 +104,7 @@ For each service in Railway UI, you need to configure the following settings:
 ```
 
 ### Backend railpack.json
+
 ```json
 {
   "$schema": "https://schema.railpack.com",
@@ -121,6 +130,7 @@ For each service in Railway UI, you need to configure the following settings:
 ```
 
 ### Python Service railpack.json
+
 ```json
 {
   "$schema": "https://schema.railpack.com",
@@ -147,6 +157,7 @@ For each service in Railway UI, you need to configure the following settings:
 ## 🔄 Deployment Steps
 
 1. **Commit and push all changes**:
+
    ```bash
    git add .
    git commit -m "Fix Railway deployment configurations"
@@ -166,6 +177,7 @@ For each service in Railway UI, you need to configure the following settings:
 ## ✅ Expected Success Indicators
 
 After these changes, you should see:
+
 - "Successfully prepared Railpack plan for build" in logs
 - Successful yarn installation with existing lock file
 - TypeScript compilation completing without errors
@@ -180,6 +192,7 @@ After these changes, you should see:
 ## 📞 Support
 
 If deployments still fail after these changes:
+
 1. Check the Railway logs for new error messages
 2. Verify environment variables are set correctly
 3. Ensure Railway service IDs match your actual services

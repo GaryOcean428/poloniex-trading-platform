@@ -34,6 +34,18 @@ polytrade/
 | polytrade-be | e473a919-acf9-458b-ade3-82119e4fabf6 | `./backend` | `backend/railpack.json` | API/Backend |
 | ml-worker | 86494460-6c19-4861-859b-3f4bd76cb652 | `./python-services/poloniex` | `python-services/poloniex/railpack.json` | ML/Analytics |
 
+### Railway Master Cheat Sheet (Summary)
+- Use Railpack v1 per service with `provider: "railway"`.
+- Do not set Install/Build/Start overrides in Railway UI; Railpack is source of truth.
+- Bind to `0.0.0.0` and read `$PORT` (Node: `process.env.PORT`; Python: `os.getenv('PORT')`).
+- Commit per-service lockfiles: `frontend/yarn.lock`, `backend/yarn.lock`.
+- Health endpoints: Backend `/api/health`, Frontend static serve 200 on `/health` or `/`, Python FastAPI `/health`.
+- Use `${{service.RAILWAY_PUBLIC_DOMAIN}}` for inter-service URLs. Avoid hardcoded domains.
+- Backend entry after build: `node dist/src/index.js` (tsc outDir `./dist`).
+- Preflight: validate JSON (`jq -e .`), check no `install.inputs` schema violations.
+- Clear any existing Railway UI overrides when switching to Railpack.
+Full checklist: see `.agent-os/specs/railway-deployment-cheatsheet.md`.
+
 ## Agent-Specific Railway Configuration
 
 ### Frontend Agent (React/TypeScript)
