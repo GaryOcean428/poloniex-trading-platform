@@ -49,10 +49,6 @@ backend/node_modules/
 backend/public/
 *.tsbuildinfo
 
-# Lockfiles
-frontend/yarn.lock
-backend/yarn.lock
-
 # TypeScript compilation artifacts
 tsc-output*.txt
 tsc-output.txt
