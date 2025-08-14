@@ -1,21 +1,18 @@
 {
   "$schema": "https://schema.railpack.com",
+  "provider": "railway",
   "version": "1",
   "packages": {
     "node": "20",
     "yarn": "4.9.2"
   },
   "install": {
-    "commands": [
-      "cd .. && yarn install --check-cache"
-    ]
+    "commands": ["cd .. && yarn install --check-cache"]
   },
   "build": {
-    "commands": [
-      "cd .. && yarn workspace backend build"
-    ]
+    "commands": ["cd .. && yarn workspace backend build"]
   },
   "deploy": {
-    "command": "node dist/backend/src/index.js"
+    "command": "node dist/src/index.js"
   }
 }
