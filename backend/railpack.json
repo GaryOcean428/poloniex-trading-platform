@@ -7,12 +7,12 @@
   },
   "install": {
     "commands": [
-      "yarn install --check-cache"
+      "cd .. && yarn install --check-cache"
     ]
   },
   "build": {
     "commands": [
-      "yarn run build"
+      "cd .. && yarn workspace backend build"
     ]
   },
   "deploy": {
