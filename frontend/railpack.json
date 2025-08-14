@@ -7,14 +7,12 @@
   },
   "install": {
     "commands": [
-      "corepack enable",
-      "corepack prepare yarn@4.9.2 --activate",
-      "yarn --cwd .. install --check-cache"
+      "cd .. && yarn install --check-cache"
     ]
   },
   "build": {
     "commands": [
-      "yarn run build"
+      "cd .. && yarn workspace frontend build"
     ]
   },
   "deploy": {
