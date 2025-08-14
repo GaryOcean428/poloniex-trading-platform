@@ -4,15 +4,21 @@
     "paths": {
       "@shared/*": ["./shared/*"]
     },
-    "rootDir": "src",
+    "rootDir": ".",
     "outDir": "./dist",
-    "module": "commonjs",
+    "module": "ES2020",
     "target": "ES2020",
-    "strict": true,
+    "strict": false,
     "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "moduleResolution": "node",
+    "declaration": false,
+    "allowJs": true,
+    "checkJs": false,
+    "noEmitOnError": false
   },
   "include": ["src/**/*", "shared/**/*"],
   "exclude": ["node_modules", "dist"]

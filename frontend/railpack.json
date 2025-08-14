@@ -6,6 +6,10 @@
     },
     "steps": [
       {
+        "name": "install",
+        "command": "yarn install --immutable"
+      },
+      {
         "name": "build",
         "command": "yarn build"
       }
