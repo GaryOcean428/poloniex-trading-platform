@@ -1,18 +1,26 @@
 {
   "$schema": "https://schema.railpack.com",
-  "provider": "railway",
-  "version": "1",
-  "packages": {
-    "node": "20",
-    "yarn": "4.9.2"
-  },
-  "install": {
-    "commands": ["cd .. && yarn install --check-cache"]
-  },
   "build": {
-    "commands": ["cd .. && yarn workspace backend build"]
+    "env": {
+      "NODE_ENV": "production"
+    },
+    "steps": [
+      {
+        "name": "install",
+        "command": "yarn install --immutable --immutable-cache"
+      },
+      {
+        "name": "build",
+        "command": "yarn build",
+        "dependsOn": ["install"]
+      }
+    ]
   },
   "deploy": {
-    "command": "node dist/src/index.js"
+    "startCommand": "node dist/index.js",
+    "healthcheckPath": "/health",
+    "healthcheckTimeout": 300,
+    "restartPolicyType": "ALWAYS",
+    "restartPolicyMaxRetries": 5
   }
 }
