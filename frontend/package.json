@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 5675",
     "build": "tsc --noEmit --skipLibCheck && vite build",
-    "build:deploy": "vite build --mode production",
+
     "preview": "vite preview --host 0.0.0.0 --port 5675",
     "lint": "eslint . --max-warnings 400",
     "lint:fix": "eslint . --fix",

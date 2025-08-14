@@ -7,7 +7,7 @@
     "steps": [
       {
         "name": "install",
-        "command": "yarn install --immutable --immutable-cache"
+        "command": "yarn install"
       },
       {
         "name": "build",
