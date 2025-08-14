@@ -7,7 +7,9 @@
   },
   "install": {
     "commands": [
-      "yarn install --check-cache"
+      "corepack enable",
+      "corepack prepare yarn@4.9.2 --activate",
+      "yarn --cwd .. install --check-cache"
     ]
   },
   "build": {

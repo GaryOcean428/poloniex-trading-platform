@@ -16,6 +16,6 @@
     ]
   },
   "deploy": {
-    "command": "node dist/index.js"
+    "command": "node dist/backend/src/index.js"
   }
 }
