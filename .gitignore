@@ -41,13 +41,17 @@ node_modules
 build/
 .vercel
 
-# Monorepo specific  
+# Monorepo
 frontend/dist/
 frontend/node_modules/
 backend/dist/
 backend/node_modules/
 backend/public/
 *.tsbuildinfo
+
+# Lockfiles
+frontend/yarn.lock
+backend/yarn.lock
 
 # TypeScript compilation artifacts
 tsc-output*.txt
