@@ -146,5 +146,4 @@ docker-compose.override.yml
 docs/env/*.env
 docs/env/**/*.env
 
-frontend/yarn.lock
-backend/yarn.lock
+
