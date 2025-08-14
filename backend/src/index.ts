@@ -43,6 +43,8 @@ const allowedOrigins = [
   'https://polytrade-red.vercel.app',
   'https://polytrade-be.up.railway.app',
   process.env.FRONTEND_URL || 'http://localhost:5675',
+  // Allow dynamic Railway domains
+  ...(process.env.RAILWAY_SERVICE_POLYTRADE_FE_URL ? [`https://${process.env.RAILWAY_SERVICE_POLYTRADE_FE_URL}`] : []),
   ...(process.env.NODE_ENV === 'production' ? [] : ['http://localhost:3000', 'http://localhost:5173'])
 ];
 
