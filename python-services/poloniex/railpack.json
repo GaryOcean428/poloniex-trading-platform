@@ -14,7 +14,7 @@
     ]
   },
   "deploy": {
-    "startCommand": "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 2 --loop uvloop --access-log",
+    "startCommand": "uvicorn health:app --host 0.0.0.0 --port ${PORT:-8000} --workers 2 --loop uvloop --access-log",
     "healthcheckPath": "/health",
     "healthcheckTimeout": 300,
     "restartPolicyType": "ALWAYS",

@@ -145,3 +145,6 @@ docker-compose.override.yml
 # Env templates for Railway (do not commit)
 docs/env/*.env
 docs/env/**/*.env
+
+frontend/yarn.lock
+backend/yarn.lock
