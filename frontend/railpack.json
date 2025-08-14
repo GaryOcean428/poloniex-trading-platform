@@ -6,13 +6,8 @@
     },
     "steps": [
       {
-        "name": "install",
-        "command": "yarn install"
-      },
-      {
         "name": "build",
         "command": "yarn build",
-        "dependsOn": ["install"]
       }
     ]
   },
