@@ -1,0 +1,55 @@
+{
+  "name": "polytrade",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
+  "scripts": {
+    "dev": "yarn workspace frontend dev",
+    "dev:backend": "yarn workspace backend dev",
+    "dev:frontend": "yarn workspace frontend dev",
+    "build": "yarn build:backend && yarn build:frontend",
+    "build:dev": "yarn build:backend && yarn workspace frontend build:dev",
+    "build:backend": "yarn workspace backend build",
+    "build:frontend": "yarn workspace frontend build",
+    "start": "yarn workspace backend start",
+    "start:frontend": "yarn workspace frontend start",
+    "start:backend": "yarn workspace backend start",
+    "lint": "yarn workspace frontend lint && yarn workspace backend lint",
+    "lint:fix": "yarn workspace frontend lint:fix && yarn workspace backend lint:fix",
+    "test": "yarn workspace frontend test && yarn workspace backend test",
+    "test:run": "yarn workspace frontend test:run && yarn workspace backend test:run",
+    "test:coverage": "yarn workspace frontend test:coverage && yarn workspace backend test:coverage",
+    "production-check": "node scripts/production-check.js",
+    "deploy": "node scripts/deploy.js",
+    "railway:help": "node railway-config-helper.js",
+    "railway:validate": "node validate-railway-config.js",
+    "workspace:health": "node scripts/workspace-health.js",
+    "security:audit": "node scripts/security-audit.js",
+    "deps:health": "node scripts/dependency-health.js",
+    "quality:check": "yarn lint && yarn test:run && yarn security:audit && yarn deps:health",
+    "hooks:install": "bash scripts/install-pre-commit-hook.sh",
+    "ci:verify": "node scripts/verify-ci-commands.js",
+    "sync:poloniex": "node scripts/sync-poloniex-futures-v3.js",
+    "py:ingest:markets": "python python-services/poloniex/ingest_markets.py"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "packageManager": "yarn@4.9.2",
+  "devDependencies": {
+    "@types/ws": "^8.18.1",
+    "glob": "^11.0.2",
+    "rimraf": "^6.0.1"
+  },
+  "dependencies": {
+    "axios": "^1.11.0",
+    "immer": "^10.1.1",
+    "node-fetch": "^3.3.2",
+    "ws": "^8.18.3",
+    "zustand": "^5.0.6"
+  }
+}

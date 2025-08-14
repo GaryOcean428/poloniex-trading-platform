@@ -1,0 +1,61 @@
+{
+  "$schema": "https://schema.railpack.com",
+  "services": {
+    "frontend": {
+      "path": "./frontend",
+      "buildpack": "node",
+      "build": {
+        "command": "yarn build",
+        "env": {
+          "NODE_ENV": "production"
+        }
+      },
+      "start": {
+        "command": "node serve.js"
+      },
+      "env": {
+        "NODE_ENV": "production"
+      }
+    },
+    "backend": {
+      "path": "./backend",
+      "buildpack": "node",
+      "build": {
+        "command": "yarn build"
+      },
+      "start": {
+        "command": "yarn start"
+      },
+      "env": {
+        "NODE_ENV": "production"
+      }
+    }
+  },
+  "steps": {
+    "install": {
+      "inputs": [{ "local": true, "include": ["."] }],
+      "commands": [
+        "bash -lc 'corepack enable'",
+        "bash -lc 'corepack prepare yarn@4.9.2 --activate'",
+        "bash -lc 'yarn install --immutable'"
+      ]
+    },
+    "build": {
+      "inputs": [{ "step": "install", "include": ["."] }],
+      "commands": [
+        "bash -lc 'yarn build'"
+      ]
+    }
+  },
+  "deploy": {
+    "inputs": [{ "step": "build", "include": ["."] }],
+    "paths": [],
+    "variables": {
+      "PORT": "$PORT"
+    }
+  },
+  "monorepo": {
+    "type": "yarn",
+    "workspaces": ["frontend", "backend", "shared"]
+  }
+}

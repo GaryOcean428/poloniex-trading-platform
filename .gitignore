@@ -1,0 +1,149 @@
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Dependencies
+node_modules
+*.local
+
+# Yarn Berry
+.yarn/
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+.yarn/install-state.gz
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Build files
+build/
+.vercel
+
+# Monorepo
+frontend/dist/
+frontend/node_modules/
+backend/dist/
+backend/node_modules/
+backend/public/
+*.tsbuildinfo
+
+# TypeScript compilation artifacts
+tsc-output*.txt
+tsc-output.txt
+
+# Test files in root (should be in service directories)
+test-*.js
+test-*.html
+test-*.sh
+validate-*.js
+validate-*.sh
+*-helper.js
+
+# Test coverage
+coverage/
+*.lcov
+.nyc_output
+
+# Python files
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Security and dependency files
+package-lock.json
+
+# Railway deployment files
+deployment-url.txt
+
+# Database files that may contain secrets
+*database_setup*.sql
+*_database_*.sql
+setup_database*.sql
+
+# Additional security files
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+credentials.json
+service-account.json
+auth-config.json
+
+# API keys and secrets
+.env.*
+!.env.example
+.secrets
+secrets.json
+config.json
+
+# Development and temp files
+temp/
+tmp/
+*.tmp
+*.bak
+*.swp
+*.swo
+*~
+
+# OS generated files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# IDE files
+.vscode/settings.json
+.vscode/launch.json
+.vscode/tasks.json
+.vscode/c_cpp_properties.json
+.vscode/extensions.json
+*.code-workspace
+
+# Logs and debugging
+debug.log
+error.log
+access.log
+combined.log
+*.log.*
+
+# Database dumps and backups
+*.dump
+*.sql.gz
+*.db
+*.sqlite
+*.sqlite3
+
+# Docker files (if containing secrets)
+.dockerignore
+docker-compose.override.yml
+
+# Env templates for Railway (do not commit)
+docs/env/*.env
+docs/env/**/*.env
+
+

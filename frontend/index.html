@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" href="/favicon.ico" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Poloniex Trading Platform</title>
+
+    <!-- Primary Meta Tags -->
+    <meta name="description" content="Advanced trading platform with backtesting, real-time data, and AI-powered insights" />
+
+    <!-- PWA Meta Tags -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Poloniex Trading" />
+    <meta name="msapplication-TileColor" content="#4a90e2" />
+    <meta name="msapplication-tap-highlight" content="no" />
+
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="./manifest.json" />
+
+    <!-- Favicon and App Icons -->
+    <link rel="icon" href="/favicon.ico" />
+    <link rel="icon" type="image/png" sizes="32x32" href="./favicon-32x32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="./favicon-16x16.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png" />
+    <link rel="shortcut icon" href="/favicon.ico" />
+
+    <!-- Preload critical resources and optimize performance -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="dns-prefetch" href="//poloniex.com" />
+    <link rel="dns-prefetch" href="//polytrade-be.up.railway.app" />
+
+    <!-- Preload removed: no font href available; avoids console warnings -->
+
+    <!-- Add resource hints for WebSocket connection -->
+    <meta name="description" content="Advanced trading platform with backtesting, real-time data, and AI-powered insights" />
+    <meta name="keywords" content="trading, cryptocurrency, poloniex, backtesting, real-time data, AI insights" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./src/main.tsx"></script>
+
+    <!-- PWA Service Worker Registration -->
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('./sw.js')
+            .then((registration) => {
+              console.log('PWA: Service Worker registered successfully:', registration);
+
+              // Check for updates periodically
+              setInterval(() => {
+                registration.update();
+              }, 60000); // Check every minute
+            })
+            .catch((error) => {
+              console.log('PWA: Service Worker registration failed:', error);
+            });
+        });
+      }
+    </script>
+  </body>
+</html>
