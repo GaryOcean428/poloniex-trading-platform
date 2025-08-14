@@ -7,7 +7,7 @@
     "steps": [
       {
         "name": "build",
-        "command": "yarn build",
+        "command": "yarn build"
       }
     ]
   },
