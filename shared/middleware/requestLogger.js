@@ -1,11 +1,8 @@
-"use strict";
 /**
  * Request/Response Logging Middleware
  * Provides structured logging for API requests and responses
  */
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.requestLogger = exports.RequestResponseLogger = void 0;
-const logger_js_1 = require("../logger.js");
+import { logger } from '../logger.js';
 const DEFAULT_CONFIG = {
     enabled: true,
     logLevel: 'info',
@@ -15,7 +12,7 @@ const DEFAULT_CONFIG = {
     excludePaths: ['/health', '/ping', '/metrics'],
     sensitiveFields: ['password', 'token', 'apiKey', 'secret', 'authorization']
 };
-class RequestResponseLogger {
+export class RequestResponseLogger {
     constructor(config = {}) {
         this.config = { ...DEFAULT_CONFIG, ...config };
     }
@@ -72,7 +69,7 @@ class RequestResponseLogger {
             catch (error) {
                 const duration = Date.now() - startTime;
                 if (this.config.enabled) {
-                    logger_js_1.logger.error('Fetch request failed', error, {
+                    logger.error('Fetch request failed', error, {
                         requestId,
                         method: init?.method || 'GET',
                         url,
@@ -107,7 +104,7 @@ class RequestResponseLogger {
                 message += ` - Body: [${bodyString.length} bytes, truncated]`;
             }
         }
-        logger_js_1.logger.info(message, context);
+        logger.info(message, context);
     }
     logResponse(req, res, body, duration, requestId) {
         const statusCode = res.statusCode;
@@ -142,13 +139,13 @@ class RequestResponseLogger {
             }
         }
         if (logLevel === 'error') {
-            logger_js_1.logger.error(message, undefined, context);
+            logger.error(message, undefined, context);
         }
         else if (logLevel === 'warn') {
-            logger_js_1.logger.warn(message, context);
+            logger.warn(message, context);
         }
         else {
-            logger_js_1.logger.info(message, context);
+            logger.info(message, context);
         }
     }
     logFetchRequest(url, init, requestId) {
@@ -177,7 +174,7 @@ class RequestResponseLogger {
                 // Body is not JSON
             }
         }
-        logger_js_1.logger.info(message, context);
+        logger.info(message, context);
     }
     async logFetchResponse(url, response, duration, requestId) {
         const statusCode = response.status;
@@ -210,13 +207,13 @@ class RequestResponseLogger {
             }
         }
         if (logLevel === 'error') {
-            logger_js_1.logger.error(message, undefined, context);
+            logger.error(message, undefined, context);
         }
         else if (logLevel === 'warn') {
-            logger_js_1.logger.warn(message, context);
+            logger.warn(message, context);
         }
         else {
-            logger_js_1.logger.info(message, context);
+            logger.info(message, context);
         }
     }
     sanitizeObject(obj) {
@@ -250,6 +247,5 @@ class RequestResponseLogger {
         return { ...this.config };
     }
 }
-exports.RequestResponseLogger = RequestResponseLogger;
 // Export singleton instance
-exports.requestLogger = new RequestResponseLogger();
+export const requestLogger = new RequestResponseLogger();
