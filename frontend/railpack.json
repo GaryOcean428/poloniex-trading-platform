@@ -1,5 +1,6 @@
 {
   "$schema": "https://schema.railpack.com",
+  "provider": "railway",
   "version": "1",
   "packages": {
     "node": "20",
