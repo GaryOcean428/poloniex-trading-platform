@@ -52,13 +52,13 @@ Now, please address the following user request:
 
 ### Approved Models (Current)
 
-- **Anthropic**: Claude-4-Opus, Claude-4-Sonnet, Claude-Code, Claude-3.7-Sonnet, Claude-3.5-Sonnet, Claude-3.5-haiku
+- **Anthropic**: Claude-4-Opus, Claude-4-Sonnet, Claude-Code, Claude-3.7-Sonnet, Claude-3.5-Sonnet, Claude-3-Opus
 - **Google**: gemini-2.5-pro-preview-06-05, gemini-2.5-flash-preview-05-20, gemini-2.5-flash-preview-tts, gemini-2.5-pro-preview-tts, gemini-2.0-flash, gemini-2.0-flash-preview-image-generation, gemini-2.0-flash-lite, gemini-2.0-pro-experimental
 - **OpenAI**: chatgpt-4.1, o1, o1-mini, o3-mini-2025-01-31, gpt-4o-realtime-preview, gpt-4.1-mini, o4-mini, o3, o3-pro, o1-pro, gpt-4.1-nano
 - **Meta**: llama-3.3-70b-versatile
-- **xAI**: grok-4, grok-3, grok-3-mini
+- **xAI**: grok-3, grok-3-mini
 - **Groq**: compound-beta
-- **Perplexity**: sonar-reasoning-pro, sonar-pro, sonar, sonar-deep-research
+- **Perplexity**: sonar-reasoning-pro, sonar-pro
 
 ### Deprecated Models (DO NOT USE)
 
@@ -73,15 +73,15 @@ Now, please address the following user request:
 ### Framework Dependencies
 
 MIN_NEXTJS_VERSION="15.1.6" or
-MIN_REACT_VERSION="react@^19.1.0"
-MIN_REACT_DOM_VERSION="react-dom@^19.1.0"
+MIN_REACT_VERSION="react@^19.0.0"
+MIN_REACT_DOM_VERSION="react-dom@^19.0.0"
 MIN_NODE_VERSION="22.x"  # Latest LTS version for stability
 MIN_TYPESCRIPT_VERSION="5.5+"
-MIN_VITE_VERSION="5.0.0"
+MIN_VITE_VERSION="4.4.7"
 
 ### Package Management Priority (monitored by {DEVOPS_ENGINEER})
 
-- **Primary**: Yarn 4.9.2 (configured in .yarnrc.yml)
+- **Primary**: Yarn 4.9.1 (configured in .yarnrc.yml)
 - **Secondary**: pnpm (alternative to yarn)
 - **Fallback**: npm (last resort)
 - **Python Primary**: uv (modern, fast Python 3 package manager)
@@ -222,14 +222,23 @@ Gary8D/
 
 #### Railway Deployment Standards
 
-railway-docs-links.md contains documentation links to railway platform for trouble shooting purposes.
+Railway deployments in this monorepo must follow these enforced rules:
+- Use Railpack v1 per service: `frontend/railpack.json`, `backend/railpack.json`, `python-services/poloniex/railpack.json` with `"provider": "railway"`.
+- No UI overrides for install/build/start in Railway. Railpack commands are the source of truth.
+- Ports must bind to `0.0.0.0` and read from `process.env.PORT` (Node) or `os.getenv('PORT')` (Python). No hardcoded localhost or ports.
+- Per-service lockfiles are required and committed: `frontend/yarn.lock`, `backend/yarn.lock`.
+- Health endpoints: Backend: `/api/health` (200 JSON); Frontend: static serve responds 200 on `/health` or `/` as configured; Python: FastAPI `/health`.
+- Reference variables: Use `${{service.RAILWAY_PUBLIC_DOMAIN}}` for intra-service URLs. Avoid hardcoded domains.
+- Monorepo root must not contain service-specific commands; each service sets its own root in Railway UI.
+- Validate before deploy: `jq -e . frontend/railpack.json backend/railpack.json python-services/poloniex/railpack.json` and ensure no `install.inputs` schema violations.
+- Clear cached UI overrides when switching to Railpack-based deploys.
 
-railway-build.sh is the build script for railway deployment.
+Quick checks:
+- Frontend server: `serve.js` uses `HOST='0.0.0.0'` and `PORT` env
+- Backend entry: `node dist/src/index.js` (tsc outDir `./dist`)
+- Python service: `uvicorn health:app --host 0.0.0.0 --port $PORT`
 
-
-nixpacks.toml is the nixpacks configuration for railway deployment.
-
-nixpacks.toml should be in the root directory of the project. Although microservices contained in this project will have their own specific setup requirements.
+See `.agent-os/specs/railway-deployment-cheatsheet.md` for the full checklist and troubleshooting playbook.
 
 #### Duplication Prevention Protocols
 
