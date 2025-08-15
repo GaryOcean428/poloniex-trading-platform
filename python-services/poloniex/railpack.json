@@ -6,22 +6,20 @@
       "PYTHONDONTWRITEBYTECODE": "1",
       "PATH": "$HOME/.local/bin:$PATH"
     },
-    "steps": [
-      {
-        "name": "install-uv",
-        "command": "curl -LsSf https://astral.sh/uv/install.sh | sh"
+    "steps": {
+      "installUV": {
+        "commands": ["curl -LsSf https://astral.sh/uv/install.sh | sh"]
       },
-      {
-        "name": "install",
-        "command": "$HOME/.local/bin/uv sync --no-dev",
-        "dependsOn": ["install-uv"]
+      "install": {
+        "commands": ["$HOME/.local/bin/uv sync --no-dev"],
+        "dependsOn": ["installUV"]
       }
-    ]
+    }
   },
   "deploy": {
     "startCommand": "uvicorn health:app --host 0.0.0.0 --port ${PORT:-8000} --workers 2 --loop uvloop --access-log",
-    "healthcheckPath": "/health",
-    "healthcheckTimeout": 300,
+    "healthCheckPath": "/healthz",
+    "healthCheckTimeout": 300,
     "restartPolicyType": "ALWAYS",
     "restartPolicyMaxRetries": 10
   }

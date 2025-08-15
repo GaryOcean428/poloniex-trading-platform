@@ -18,7 +18,12 @@ async def health():
             "PORT": os.getenv("PORT", ""),
             "PYTHONUNBUFFERED": os.getenv("PYTHONUNBUFFERED", ""),
         },
-    }
+}
+
+
+@app.get("/healthz")
+async def healthz():
+    return await health()
 
 @app.post("/run/ingest")
 async def run_ingest():
