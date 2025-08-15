@@ -3,13 +3,18 @@
   "build": {
     "env": {
       "PYTHONUNBUFFERED": "1",
-      "PIP_NO_CACHE_DIR": "1",
-      "PYTHONDONTWRITEBYTECODE": "1"
+      "PYTHONDONTWRITEBYTECODE": "1",
+      "PATH": "$HOME/.local/bin:$PATH"
     },
     "steps": [
       {
+        "name": "install-uv",
+        "command": "curl -LsSf https://astral.sh/uv/install.sh | sh"
+      },
+      {
         "name": "install",
-        "command": "pip install --no-cache-dir -r requirements.txt"
+        "command": "$HOME/.local/bin/uv sync --no-dev",
+        "dependsOn": ["install-uv"]
       }
     ]
   },
