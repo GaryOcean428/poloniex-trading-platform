@@ -2998,6 +2998,19 @@ __metadata:
   languageName: node
   linkType: hard
 
+"corepack@npm:^0.34.0":
+  version: 0.34.0
+  resolution: "corepack@npm:0.34.0"
+  bin:
+    corepack: ./dist/corepack.js
+    pnpm: ./dist/pnpm.js
+    pnpx: ./dist/pnpx.js
+    yarn: ./dist/yarn.js
+    yarnpkg: ./dist/yarnpkg.js
+  checksum: 10c0/a432dcd619aa532652177f727662c1f3117dba24613213c1c49292d1ea695832de476c43f05c262227f64f0a8cf3a02bbd6a05fa7222012b36a2fd83abc2c26a
+  languageName: node
+  linkType: hard
+
 "cors@npm:^2.8.5, cors@npm:~2.8.5":
   version: 2.8.5
   resolution: "cors@npm:2.8.5"
@@ -6059,12 +6072,15 @@ __metadata:
   dependencies:
     "@types/ws": "npm:^8.18.1"
     axios: "npm:^1.11.0"
+    corepack: "npm:^0.34.0"
     glob: "npm:^11.0.2"
     immer: "npm:^10.1.1"
     node-fetch: "npm:^3.3.2"
     rimraf: "npm:^6.0.1"
     ws: "npm:^8.18.3"
     zustand: "npm:^5.0.6"
+  peerDependencies:
+    seedrandom: "*"
   languageName: unknown
   linkType: soft
 
