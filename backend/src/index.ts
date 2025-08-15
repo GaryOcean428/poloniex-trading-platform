@@ -95,6 +95,11 @@ app.get('/api/health', (req: Request, res: Response) => {
   });
 });
 
+// Simplified health check for Railway
+app.get('/healthz', (_req: Request, res: Response) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
 // API routes
 app.use('/api/auth', authRoutes);
 app.use('/api/api-keys', apiKeyRoutes);
