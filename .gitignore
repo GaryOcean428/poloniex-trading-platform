@@ -147,3 +147,5 @@ docs/env/*.env
 docs/env/**/*.env
 
 
+frontend/src/shared/
+backend/shared/
