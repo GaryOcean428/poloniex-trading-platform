@@ -95,6 +95,10 @@ app.get('/api/health', (req: Request, res: Response) => {
   });
 });
 
+app.get('/healthz', (_req: Request, res: Response) => {
+  res.json({ status: 'healthy', timestamp: new Date().toISOString() });
+});
+
 // API routes
 app.use('/api/auth', authRoutes);
 app.use('/api/api-keys', apiKeyRoutes);

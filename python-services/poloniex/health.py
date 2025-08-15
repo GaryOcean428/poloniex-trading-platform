@@ -3,6 +3,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from datetime import datetime
 
 app = FastAPI()
 
@@ -18,6 +19,15 @@ async def health():
             "PORT": os.getenv("PORT", ""),
             "PYTHONUNBUFFERED": os.getenv("PYTHONUNBUFFERED", ""),
         },
+    }
+
+
+@app.get("/healthz")
+async def healthz():
+    return {
+        "status": "ok",
+        "service": "ml-worker",
+        "timestamp": datetime.utcnow().isoformat()
     }
 
 @app.post("/run/ingest")
