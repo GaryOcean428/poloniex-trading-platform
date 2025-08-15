@@ -1,0 +1,23 @@
+repos:
+  - repo: local
+    hooks:
+      - id: lint-check
+        name: ESLint Check
+        entry: yarn lint
+        language: system
+        pass_filenames: false
+        always_run: true
+        
+      - id: type-check
+        name: TypeScript Check
+        entry: yarn workspace poloniex-frontend tsc --noEmit
+        language: system
+        pass_filenames: false
+        files: \.(ts|tsx)$
+        
+      - id: test-check
+        name: Test Check
+        entry: yarn test --run
+        language: system
+        pass_filenames: false
+        always_run: true

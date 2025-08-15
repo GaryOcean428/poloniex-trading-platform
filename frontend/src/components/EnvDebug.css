@@ -1,0 +1,170 @@
+.env-debug {
+  position: fixed;
+  bottom: 10px;
+  right: 10px;
+  z-index: 30;
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  background-color: rgba(30, 30, 30, 0.95);
+  color: #e0e0e0;
+  border: 1px solid #444;
+  border-radius: 4px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+  transition: all 0.3s ease;
+  max-width: 300px;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.env-debug-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 10px;
+  background-color: #1e1e1e;
+  border-bottom: 1px solid #444;
+  cursor: pointer;
+}
+
+.env-debug-title {
+  margin: 0;
+  color: #4a90e2;
+  font-size: 12px;
+}
+
+.env-debug-actions {
+  display: flex;
+  gap: 5px;
+}
+
+.env-debug-button {
+  background: none;
+  border: 1px solid #444;
+  color: #e0e0e0;
+  border-radius: 3px;
+  padding: 2px 6px;
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.env-debug-button:hover {
+  background-color: #2a2a2a;
+}
+
+.env-debug-button.danger {
+  color: #ff5252;
+  border-color: #ff5252;
+}
+
+.env-debug-content {
+  padding: 10px;
+}
+
+.env-debug-section {
+  margin-bottom: 10px;
+}
+
+.env-debug-mode {
+  color: #00ff00;
+}
+
+.env-debug-mode.offline {
+  color: #ff9800;
+}
+
+.env-debug-issues {
+  margin: 5px 0;
+  padding-left: 20px;
+}
+
+.env-debug-issue {
+  color: #ff5252;
+}
+
+.env-debug-success {
+  color: #00ff00;
+}
+
+.env-debug-details summary {
+  cursor: pointer;
+  margin-bottom: 10px;
+  color: #4a90e2;
+}
+
+.env-debug-pre {
+  background-color: #1e1e1e;
+  padding: 8px;
+  border-radius: 4px;
+  overflow-x: auto;
+  font-size: 10px;
+  line-height: 1.3;
+  margin: 0;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.env-debug-footer {
+  font-size: 10px;
+  color: #888;
+  text-align: center;
+  padding: 5px;
+  border-top: 1px solid #444;
+}
+
+/* Minimized state at bottom right */
+.env-debug-minimized {
+  position: fixed;
+  bottom: 10px;
+  right: 10px;
+  z-index: 30;
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  background-color: rgba(30, 30, 30, 0.9);
+  color: #e0e0e0;
+  border: 1px solid #444;
+  border-radius: 4px;
+  padding: 5px 10px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.env-debug-minimized:hover {
+  background-color: rgba(50, 50, 50, 0.9);
+}
+
+/* Restore button for dismissed state */
+.env-debug-restore {
+  position: fixed;
+  bottom: 10px;
+  right: 10px;
+  z-index: 30;
+  background: rgba(30, 30, 30, 0.9);
+  color: #4a90e2;
+  border: 1px solid #444;
+  border-radius: 4px;
+  padding: 6px 8px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.3s ease;
+}
+
+.env-debug-restore:hover {
+  background: rgba(50, 50, 50, 0.9);
+}
+
+/* Status colors */
+.status-connected {
+  color: #00ff00;
+}
+
+.status-disconnected {
+  color: #ff5252;
+}
+
+.status-connecting {
+  color: #ff9800;
+}

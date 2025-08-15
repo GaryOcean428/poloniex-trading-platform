@@ -1,0 +1,9 @@
+{
+  "$schema": "https://schema.railpack.com",
+  "version": "1",
+  "services": {
+    "frontend": "./frontend",
+    "backend": "./backend",
+    "ml-worker": "./python-services/poloniex"
+  }
+}
