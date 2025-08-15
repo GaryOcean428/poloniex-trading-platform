@@ -92,11 +92,15 @@ const server = http.createServer((req, res) => {
       return res.end('Bad Request');
     }
 
-    // Health check endpoint
-    if (reqPath === '/api/health') {
+    // Health check endpoints
+    if (reqPath === '/api/health' || reqPath === '/healthz') {
       res.statusCode = 200;
       res.setHeader('Content-Type', 'application/json; charset=utf-8');
-      return res.end(JSON.stringify({ status: 'healthy' }));
+      return res.end(JSON.stringify({ 
+        status: 'healthy',
+        timestamp: new Date().toISOString(),
+        service: 'frontend'
+      }));
     }
 
     // Special asset handling: never SPA-fallback for /assets/*

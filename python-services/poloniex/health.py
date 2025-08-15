@@ -20,6 +20,21 @@ async def health():
         },
     }
 
+@app.get("/healthz")
+async def healthz():
+    # Unified health endpoint for Railway deployment
+    return {
+        "status": "healthy",
+        "timestamp": Path(__file__).stat().st_mtime,
+        "service": "ml-worker",
+        "python": sys.version.split()[0],
+        "cwd": str(Path.cwd()),
+        "env": {
+            "PORT": os.getenv("PORT", ""),
+            "PYTHONUNBUFFERED": os.getenv("PYTHONUNBUFFERED", ""),
+        },
+    }
+
 @app.post("/run/ingest")
 async def run_ingest():
     """
