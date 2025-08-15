@@ -1,31 +1,23 @@
 {
-  "$schema": "https://schema.railpack.com",
+  "version": "1",
   "build": {
-    "env": {
-      "NODE_ENV": "production"
-    },
-    "steps": [
-      {
-        "name": "install",
-        "command": "yarn install --immutable --immutable-cache"
-      },
-      {
-        "name": "copy-shared",
-        "command": "cp -r ../shared ./shared || echo 'Shared directory not found'",
+    "provider": "node",
+    "steps": {
+      "install": { "commands": ["yarn install --immutable --immutable-cache"] },
+      "copyShared": {
+        "commands": [
+          "rm -rf ./shared",
+          "mkdir -p ./shared",
+          "cp -r ../shared/* ./shared/ || echo 'Shared directory not found'"
+        ],
         "dependsOn": ["install"]
       },
-      {
-        "name": "build",
-        "command": "yarn build",
-        "dependsOn": ["copy-shared"]
-      }
-    ]
+      "build": { "commands": ["yarn build"], "dependsOn": ["copyShared"] }
+    }
   },
   "deploy": {
     "startCommand": "node dist/index.js",
-    "healthcheckPath": "/api/health",
-    "healthcheckTimeout": 300,
-    "restartPolicyType": "ALWAYS",
-    "restartPolicyMaxRetries": 5
+    "healthCheckPath": "/api/health",
+    "healthCheckTimeout": 300
   }
 }

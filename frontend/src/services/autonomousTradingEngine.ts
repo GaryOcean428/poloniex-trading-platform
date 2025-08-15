@@ -3,6 +3,24 @@ import { liveTradingService } from "@/services/liveTradingService";
 import { mockTradingService } from "@/services/mockTradingService";
 import { Strategy, StrategyParameters, StrategyTypeUnion } from "@/types";
 import { BacktestOptions, BacktestResult } from "@/types/backtest";
+// Import unified Strategy from @shared/types for type alias
+import type { Strategy as SharedStrategy } from '@shared/types';
+
+// Type alias for EnhancedStrategy to use unified Strategy
+type EnhancedStrategy = SharedStrategy & {
+  confidence: number;
+  profitPotential: number;
+  riskScore: number;
+  description: string;
+  backtestResults?: BacktestResult;
+  mockTradingSessionId?: string;
+  liveTradingSessionId?: string;
+  learningMetrics: LearningMetrics;
+  // For backward compatibility with direct property access
+  adaptationRate: number;
+  consistencyScore: number;
+  marketConditionPerformance: Record<string, number>;
+};
 
 // Autonomous Engine Interfaces
 export interface AutonomousSession {
@@ -16,21 +34,6 @@ export interface AutonomousSession {
   performance: AutonomousPerformance;
   settings: AutonomousSettings;
   notifications: AutonomousNotification[];
-}
-
-export interface EnhancedStrategy extends Strategy {
-  confidence: number;
-  profitPotential: number;
-  riskScore: number;
-  description: string;
-  backtestResults?: BacktestResult;
-  mockTradingSessionId?: string;
-  liveTradingSessionId?: string;
-  learningMetrics: LearningMetrics;
-  // For backward compatibility with direct property access
-  adaptationRate: number;
-  consistencyScore: number;
-  marketConditionPerformance: Record<string, number>;
 }
 
 export interface AutonomousPerformance {
