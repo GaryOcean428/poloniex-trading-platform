@@ -83,8 +83,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
-      // For local copied shared directory (Railway builds)
-      "@shared": path.resolve(__dirname, "./src/shared"),
+      "@shared": path.resolve(__dirname, "./src/shared")
     },
   },
   test: {
