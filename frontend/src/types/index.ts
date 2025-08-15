@@ -1,6 +1,6 @@
-// Re-export strategy types from shared module
-// This will work with both the copied shared directory and original location
-export * from '@shared/types/strategy';
+// Re-export strategy types from ambient module declarations
+// This ensures compatibility during Railway builds
+export * from '@shared/types';
 
 // Explicit re-exports for key types and values to ensure they're always available
 export type {
@@ -15,10 +15,10 @@ export type {
   StrategyTypeUnion,
   StrategyPerformance,
   BaseStrategyParameters
-} from '@shared/types/strategy';
+} from '@shared/types';
 
 // Export StrategyType as a value (enum)
-export { StrategyType } from '@shared/types/strategy';
+export { StrategyType } from '@shared/types';
 
 export interface MarketData {
   pair: string;
