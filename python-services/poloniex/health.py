@@ -3,8 +3,10 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from datetime import datetime
 
 app = FastAPI()
+
 
 @app.get("/health")
 async def health():
@@ -20,13 +22,14 @@ async def health():
         },
     }
 
+
 @app.get("/healthz")
 async def healthz():
     # Unified health endpoint for Railway deployment
     return {
         "status": "healthy",
-        "timestamp": Path(__file__).stat().st_mtime,
         "service": "ml-worker",
+        "timestamp": datetime.utcnow().isoformat() + "Z",
         "python": sys.version.split()[0],
         "cwd": str(Path.cwd()),
         "env": {
@@ -34,6 +37,7 @@ async def healthz():
             "PYTHONUNBUFFERED": os.getenv("PYTHONUNBUFFERED", ""),
         },
     }
+
 
 @app.post("/run/ingest")
 async def run_ingest():

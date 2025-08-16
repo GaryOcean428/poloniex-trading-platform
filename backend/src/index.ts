@@ -87,7 +87,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Health check endpoints
-app.get('/api/health', (req: Request, res: Response) => {
+app.get('/api/health', (_req: Request, res: Response) => {
   res.json({
     status: 'healthy',
     timestamp: new Date().toISOString(),
@@ -95,7 +95,7 @@ app.get('/api/health', (req: Request, res: Response) => {
   });
 });
 
-app.get('/healthz', (req: Request, res: Response) => {
+app.get('/healthz', (_req: Request, res: Response) => {
   res.json({
     status: 'healthy',
     timestamp: new Date().toISOString(),
@@ -181,7 +181,7 @@ if (process.env.NODE_ENV === 'production' && process.env.FRONTEND_STANDALONE ===
 }
 
 // Error handling middleware
-app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
+app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
   logger.error('Unhandled error:', err);
   res.status(500).json({ error: 'Internal server error' });
 });
