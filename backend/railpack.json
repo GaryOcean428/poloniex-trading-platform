@@ -4,7 +4,9 @@
     "provider": "node",
     "steps": {
       "install": {
-        "commands": ["unset YARN_PRODUCTION || true; yarn install --immutable --immutable-cache"]
+        "commands": [
+          "unset YARN_PRODUCTION || true; yarn install --immutable --immutable-cache"
+        ]
       },
       "copyShared": {
         "commands": [
@@ -14,7 +16,10 @@
         ],
         "dependsOn": ["install"]
       },
-      "build": { "commands": ["yarn build"], "dependsOn": ["copyShared"] }
+      "build": {
+        "commands": ["yarn build"],
+        "dependsOn": ["copyShared"]
+      }
     }
   },
   "deploy": {
