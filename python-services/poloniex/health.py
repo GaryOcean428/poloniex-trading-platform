@@ -20,7 +20,12 @@ async def health():
             "PORT": os.getenv("PORT", ""),
             "PYTHONUNBUFFERED": os.getenv("PYTHONUNBUFFERED", ""),
         },
-    }
+}
+
+
+@app.get("/healthz")
+async def healthz():
+    return {"status": "ok", "timestamp": __import__("datetime").datetime.utcnow().isoformat()}
 
 
 @app.get("/healthz")
