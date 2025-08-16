@@ -16,7 +16,10 @@
         ],
         "dependsOn": ["install"]
       },
-      "build": { "commands": ["yarn build"], "dependsOn": ["copyShared"] }
+      "build": {
+        "commands": ["yarn build"],
+        "dependsOn": ["copyShared"]
+      }
     }
   },
   "deploy": {

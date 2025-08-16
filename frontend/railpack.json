@@ -6,6 +6,7 @@
       "install": {
         "commands": ["yarn install --immutable --immutable-cache"]
       },
+      "install": { "commands": ["yarn install --immutable --immutable-cache"] },
       "copyShared": {
         "commands": [
           "rm -rf ./src/shared",

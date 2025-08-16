@@ -8,12 +8,12 @@
       "PATH": "$HOME/.local/bin:$PATH"
     },
     "steps": {
-      "installUv": {
+      "install-uv": {
         "commands": ["curl -LsSf https://astral.sh/uv/install.sh | sh"]
       },
       "install": {
         "commands": ["$HOME/.local/bin/uv sync --no-dev"],
-        "dependsOn": ["installUv"]
+        "dependsOn": ["install-uv"]
       }
     }
   },
