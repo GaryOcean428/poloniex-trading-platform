@@ -25,7 +25,7 @@ async def health():
 @app.get("/healthz")
 async def healthz():
     return {
-        "status": "ok",
+        "status": "healthy",
         "service": "ml-worker",
         "timestamp": datetime.utcnow().isoformat()
     }
