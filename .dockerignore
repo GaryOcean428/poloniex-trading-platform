@@ -1,0 +1,43 @@
+# Git files
+.git
+.gitignore
+
+# Node modules - crucial to prevent local modules from overwriting
+# the ones installed by 'yarn install' in the Dockerfile
+node_modules/
+
+# Yarn cache and temp files - but keep lockfile and config
+.yarn/cache
+.yarn/install-state.gz
+.yarn/build-state.yml
+.pnp.*
+
+# Package manager files that could conflict
+package-lock.json
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Local environment files
+.env
+*.env
+.env.local
+.env.development
+
+# Build artifacts and temp files
+coverage/
+*.tsbuildinfo
+
+# OS-generated files
+.DS_Store
+Thumbs.db
+
+# Scripts and documentation
+README.md
+*.md
+ENVIRONMENT_CONFIG.md
+
+# Additional optimizations for deployment
+*.patch
+vercel.json
+yarn.lock.backup

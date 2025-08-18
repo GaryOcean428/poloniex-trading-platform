@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Poloniex Trading Extension</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="extension-container">
+    <header>
+      <div class="logo">
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-zap"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+        <h1>TradingBot</h1>
+      </div>
+      <div class="actions">
+        <button id="settings-btn">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-settings"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+        </button>
+      </div>
+    </header>
+
+    <div class="account-summary">
+      <div class="balance">
+        <span class="label">Balance:</span>
+        <span class="value">$12,345.67</span>
+      </div>
+      <div class="performance">
+        <span class="profit">+2.5% today</span>
+      </div>
+    </div>
+
+    <div class="quick-trade">
+      <h2>Quick Trade</h2>
+      <div class="trading-pair">
+        <select id="pair-select">
+          <option value="BTC-USDT">BTC-USDT</option>
+          <option value="ETH-USDT">ETH-USDT</option>
+          <option value="SOL-USDT">SOL-USDT</option>
+        </select>
+      </div>
+      <div class="trade-buttons">
+        <button id="buy-btn" class="buy">Buy</button>
+        <button id="sell-btn" class="sell">Sell</button>
+      </div>
+    </div>
+
+    <div class="chat-section">
+      <h2>Community Chat</h2>
+      <div class="chat-messages" id="chat-messages">
+        <div class="message">
+          <span class="username">trading_pro:</span>
+          <span class="text">BTC looking bullish today!</span>
+        </div>
+        <div class="message">
+          <span class="username">crypto_newbie:</span>
+          <span class="text">What's everyone's thoughts on ETH?</span>
+        </div>
+      </div>
+      <div class="chat-input">
+        <input type="text" id="message-input" placeholder="Type your message...">
+        <button id="send-btn">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-send"><path d="m22 2-7 20-4-9-9-4Z"></path><path d="M22 2 11 13"></path></svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="footer">
+      <button id="open-app-btn" class="open-app">Open Trading Platform</button>
+    </div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

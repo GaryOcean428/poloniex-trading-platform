@@ -1,0 +1,496 @@
+import { usePoloniexData } from '@/hooks/usePoloniexData';
+import { default as mlTrading, MarketDataPoint } from '@/ml/mlTrading';
+import React, { useEffect, useState } from 'react';
+import { useSettings } from '../../hooks/useSettings';
+import { MarketData } from '@shared/types';
+
+interface MLModelConfig {
+  modelType: 'randomforest' | 'gradientboosting' | 'svm' | 'neuralnetwork';
+  featureSet: 'basic' | 'technical' | 'advanced' | 'custom';
+  predictionTarget: 'price_direction' | 'price_change' | 'volatility';
+  timeHorizon: number;
+  hyperParameters?: {
+    learningRate?: number;
+    maxDepth?: number;
+    numEstimators?: number;
+    epochs?: number;
+    batchSize?: number;
+  };
+}
+
+interface MLModelInfo {
+  id: string;
+  name: string;
+  description: string;
+  config: MLModelConfig;
+  performance: {
+    accuracy: number;
+    precision: number;
+    recall: number;
+    f1Score: number;
+    trainingSamples: number;
+    validationSamples: number;
+  };
+  createdAt: number;
+  updatedAt: number;
+  lastTrainedAt: number;
+  status: 'training' | 'ready' | 'error';
+  filePath?: string;
+}
+
+interface MLPrediction {
+  timestamp: number;
+  symbol: string;
+  prediction: number;
+  confidence: number;
+}
+
+const MLTradingPanel: React.FC = () => {
+  const { marketData: poloniexMarketData, fetchMarketData } = usePoloniexData();
+  const { defaultPair, timeframe } = useSettings();
+
+  const [modelConfig, setModelConfig] = useState<MLModelConfig>({
+    modelType: 'neuralnetwork',
+    featureSet: 'technical',
+    predictionTarget: 'price_direction',
+    timeHorizon: 12, // 12 candles ahead
+    hyperParameters: {
+      learningRate: 0.001,
+      epochs: 100,
+      batchSize: 32
+    }
+  });
+
+  const [modelInfo, setModelInfo] = useState<MLModelInfo | null>(null);
+  const [predictions, setPredictions] = useState<MLPrediction[]>([]);
+  const [isTraining, setIsTraining] = useState(false);
+  const [isPredicting, setIsPredicting] = useState(false);
+  const [isOptimizing, setIsOptimizing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [marketData, setMarketData] = useState<MarketData[]>([]);
+  const [modelName, setModelName] = useState('My ML Model');
+
+  // Helper function to convert MarketData to MarketDataPoint
+  const convertToMarketDataPoints = (data: MarketData[]): MarketDataPoint[] => {
+    return data.map(item => ({
+      timestamp: item.timestamp,
+      open: item.open,
+      high: item.high,
+      low: item.low,
+      close: item.close,
+      volume: item.volume,
+      symbol: item.pair // Convert 'pair' to 'symbol'
+    }));
+  };
+
+  // Fetch market data
+  useEffect(() => {
+    const fetchData = async () => {
+      try
+      {
+        // Get market data for training
+        await fetchMarketData(defaultPair);
+        setMarketData(poloniexMarketData);
+      } catch (err)
+      {
+        setError('Failed to fetch market data');
+        console.error(err);
+      }
+    };
+
+    fetchData();
+  }, [defaultPair, timeframe, fetchMarketData, poloniexMarketData]);
+
+  // Train model
+  const handleTrainModel = async () => {
+    if (marketData.length === 0)
+    {
+      setError('No market data available for training');
+      return;
+    }
+
+    setIsTraining(true);
+    setError(null);
+
+    try
+    {
+      const marketDataPoints = convertToMarketDataPoints(marketData);
+      const info = await mlTrading.trainMLModel(marketDataPoints, modelConfig, modelName);
+      setModelInfo(info);
+      setIsTraining(false);
+    } catch (err)
+    {
+      setError('Failed to train model');
+      console.error(err);
+      setIsTraining(false);
+    }
+  };
+
+  // Make predictions
+  const handlePredict = async () => {
+    if (!modelInfo)
+    {
+      setError('No trained model available');
+      return;
+    }
+
+    if (marketData.length === 0)
+    {
+      setError('No market data available for prediction');
+      return;
+    }
+
+    setIsPredicting(true);
+    setError(null);
+
+    try
+    {
+      const marketDataPoints = convertToMarketDataPoints(marketData);
+      const preds = await mlTrading.predictWithMLModel(modelInfo, marketDataPoints);
+      setPredictions(preds);
+      setIsPredicting(false);
+    } catch (err)
+    {
+      setError('Failed to make predictions');
+      console.error(err);
+      setIsPredicting(false);
+    }
+  };
+
+  // Optimize model
+  const handleOptimizeModel = async () => {
+    if (marketData.length === 0)
+    {
+      setError('No market data available for optimization');
+      return;
+    }
+
+    setIsOptimizing(true);
+    setError(null);
+
+    try
+    {
+      const marketDataPoints = convertToMarketDataPoints(marketData);
+      const info = await mlTrading.optimizeMLModel(marketDataPoints, modelConfig, `${modelName} (Optimized)`);
+      setModelInfo(info);
+      setIsOptimizing(false);
+    } catch (err)
+    {
+      setError('Failed to optimize model');
+      console.error(err);
+      setIsOptimizing(false);
+    }
+  };
+
+  // Execute trades based on predictions
+  const handleExecuteTrades = () => {
+    if (predictions.length === 0)
+    {
+      setError('No predictions available');
+      return;
+    }
+
+    // Get the latest prediction
+    const latestPrediction = predictions[0];
+
+    if (latestPrediction.prediction === 1 && latestPrediction.confidence > 0.6)
+    {
+      // Execute buy strategy
+      // TODO: Implement executeStrategy functionality
+      console.log('ML Strategy - BUY signal:', {
+        type: 'ML_STRATEGY',
+        action: 'BUY',
+        symbol: defaultPair,
+        amount: 0.01, // Small fixed amount
+        confidence: latestPrediction.confidence,
+        modelId: modelInfo?.id
+      });
+    } else if (latestPrediction.prediction === 0 && latestPrediction.confidence > 0.6)
+    {
+      // Execute sell strategy
+      // TODO: Implement executeStrategy functionality
+      console.log('ML Strategy - SELL signal:', {
+        type: 'ML_STRATEGY',
+        action: 'SELL',
+        symbol: defaultPair,
+        amount: 0.01, // Small fixed amount
+        confidence: latestPrediction.confidence,
+        modelId: modelInfo?.id
+      });
+    }
+  };
+
+  return (
+    <div className="bg-white dark:bg-neutral-800 rounded-lg shadow p-6">
+      <h2 className="text-xl font-semibold mb-4 text-neutral-800 dark:text-white">ML Trading</h2>
+
+      {error && (
+        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
+          {error}
+        </div>
+      )}
+
+      <div className="mb-6">
+        <h3 className="text-lg font-medium mb-2 text-neutral-700 dark:text-neutral-300">Model Configuration</h3>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">
+              Model Name
+            </label>
+            <input
+              type="text"
+              value={modelName}
+              onChange={(e) => setModelName(e.target.value)}
+              className="w-full px-3 py-2 border border-neutral-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-neutral-700 dark:border-neutral-600 dark:text-white"
+              title="Enter model name"
+              placeholder="My ML Model"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">
+              Model Type
+            </label>
+            <select
+              value={modelConfig.modelType}
+              onChange={(e) => setModelConfig({ ...modelConfig, modelType: e.target.value as MLModelConfig['modelType'] })}
+              className="w-full px-3 py-2 border border-neutral-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-neutral-700 dark:border-neutral-600 dark:text-white"
+              title="Select model type"
+            >
+              <option value="randomforest">Random Forest</option>
+              <option value="gradientboosting">Gradient Boosting</option>
+              <option value="svm">Support Vector Machine</option>
+              <option value="neuralnetwork">Neural Network</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">
+              Feature Set
+            </label>
+            <select
+              value={modelConfig.featureSet}
+              onChange={(e) => setModelConfig({ ...modelConfig, featureSet: e.target.value as MLModelConfig['featureSet'] })}
+              className="w-full px-3 py-2 border border-neutral-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-neutral-700 dark:border-neutral-600 dark:text-white"
+              title="Select feature set"
+            >
+              <option value="basic">Basic</option>
+              <option value="technical">Technical</option>
+              <option value="advanced">Advanced</option>
+              <option value="custom">Custom</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">
+              Prediction Target
+            </label>
+            <select
+              value={modelConfig.predictionTarget}
+              onChange={(e) => setModelConfig({ ...modelConfig, predictionTarget: e.target.value as MLModelConfig['predictionTarget'] })}
+              className="w-full px-3 py-2 border border-neutral-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-neutral-700 dark:border-neutral-600 dark:text-white"
+              title="Select prediction target"
+            >
+              <option value="price_direction">Price Direction</option>
+              <option value="price_change">Price Change</option>
+              <option value="volatility">Volatility</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">
+              Time Horizon (candles)
+            </label>
+            <input
+              type="number"
+              min="1"
+              max="100"
+              value={modelConfig.timeHorizon}
+              onChange={(e) => setModelConfig({ ...modelConfig, timeHorizon: parseInt(e.target.value) })}
+              className="w-full px-3 py-2 border border-neutral-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-neutral-700 dark:border-neutral-600 dark:text-white"
+              title="Time horizon in candles"
+              placeholder="12"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">
+              Learning Rate
+            </label>
+            <input
+              type="number"
+              min="0.0001"
+              max="0.1"
+              step="0.0001"
+              value={modelConfig.hyperParameters?.learningRate || 0.001}
+              onChange={(e) => setModelConfig({
+                ...modelConfig,
+                hyperParameters: {
+                  ...modelConfig.hyperParameters,
+                  learningRate: parseFloat(e.target.value)
+                }
+              })}
+              className="w-full px-3 py-2 border border-neutral-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-neutral-700 dark:border-neutral-600 dark:text-white"
+              title="Learning rate for model training"
+              placeholder="0.001"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">
+              Epochs
+            </label>
+            <input
+              type="number"
+              min="10"
+              max="1000"
+              step="10"
+              value={modelConfig.hyperParameters?.epochs || 100}
+              onChange={(e) => setModelConfig({
+                ...modelConfig,
+                hyperParameters: {
+                  ...modelConfig.hyperParameters,
+                  epochs: parseInt(e.target.value)
+                }
+              })}
+              className="w-full px-3 py-2 border border-neutral-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-neutral-700 dark:border-neutral-600 dark:text-white"
+              title="Number of training epochs"
+              placeholder="100"
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-4 mb-6">
+        <button
+          onClick={handleTrainModel}
+          disabled={isTraining || marketData.length === 0}
+          className={`px-4 py-2 rounded-md text-white ${isTraining ? 'bg-neutral-400' : 'bg-blue-600 hover:bg-blue-700'}`}
+        >
+          {isTraining ? 'Training...' : 'Train Model'}
+        </button>
+
+        <button
+          onClick={handleOptimizeModel}
+          disabled={isOptimizing || marketData.length === 0}
+          className={`px-4 py-2 rounded-md text-white ${isOptimizing ? 'bg-neutral-400' : 'bg-green-600 hover:bg-green-700'}`}
+        >
+          {isOptimizing ? 'Optimizing...' : 'Optimize Model'}
+        </button>
+
+        <button
+          onClick={handlePredict}
+          disabled={isPredicting || !modelInfo}
+          className={`px-4 py-2 rounded-md text-white ${isPredicting || !modelInfo ? 'bg-neutral-400' : 'bg-purple-600 hover:bg-purple-700'}`}
+        >
+          {isPredicting ? 'Predicting...' : 'Make Predictions'}
+        </button>
+
+        <button
+          onClick={handleExecuteTrades}
+          disabled={predictions.length === 0}
+          className={`px-4 py-2 rounded-md text-white ${predictions.length === 0 ? 'bg-neutral-400' : 'bg-red-600 hover:bg-red-700'}`}
+        >
+          Execute Trades
+        </button>
+      </div>
+
+      {modelInfo && (
+        <div className="mb-6">
+          <h3 className="text-lg font-medium mb-2 text-neutral-700 dark:text-neutral-300">Model Information</h3>
+
+          <div className="bg-neutral-100 dark:bg-neutral-700 p-4 rounded-md">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <p className="text-sm font-medium text-neutral-500 dark:text-neutral-400">Name</p>
+                <p className="text-neutral-800 dark:text-white">{modelInfo.name}</p>
+              </div>
+
+              <div>
+                <p className="text-sm font-medium text-neutral-500 dark:text-neutral-400">Type</p>
+                <p className="text-neutral-800 dark:text-white">{modelInfo.config.modelType}</p>
+              </div>
+
+              <div>
+                <p className="text-sm font-medium text-neutral-500 dark:text-neutral-400">Accuracy</p>
+                <p className="text-neutral-800 dark:text-white">{(modelInfo.performance.accuracy * 100).toFixed(2)}%</p>
+              </div>
+
+              <div>
+                <p className="text-sm font-medium text-neutral-500 dark:text-neutral-400">F1 Score</p>
+                <p className="text-neutral-800 dark:text-white">{(modelInfo.performance.f1Score * 100).toFixed(2)}%</p>
+              </div>
+
+              <div>
+                <p className="text-sm font-medium text-neutral-500 dark:text-neutral-400">Training Samples</p>
+                <p className="text-neutral-800 dark:text-white">{modelInfo.performance.trainingSamples}</p>
+              </div>
+
+              <div>
+                <p className="text-sm font-medium text-neutral-500 dark:text-neutral-400">Last Trained</p>
+                <p className="text-neutral-800 dark:text-white">
+                  {new Date(modelInfo.lastTrainedAt).toLocaleString()}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {predictions.length > 0 && (
+        <div>
+          <h3 className="text-lg font-medium mb-2 text-neutral-700 dark:text-neutral-300">Latest Predictions</h3>
+
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-neutral-200 dark:divide-neutral-700">
+              <thead className="bg-neutral-50 dark:bg-neutral-800">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-neutral-500 dark:text-neutral-300 uppercase tracking-wider">
+                    Time
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-neutral-500 dark:text-neutral-300 uppercase tracking-wider">
+                    Symbol
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-neutral-500 dark:text-neutral-300 uppercase tracking-wider">
+                    Prediction
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-neutral-500 dark:text-neutral-300 uppercase tracking-wider">
+                    Confidence
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-neutral-200 dark:bg-neutral-900 dark:divide-neutral-700">
+                {predictions.slice(0, 10).map((pred, index) => (
+                  <tr key={index}>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-500 dark:text-neutral-400">
+                      {new Date(pred.timestamp).toLocaleString()}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-500 dark:text-neutral-400">
+                      {pred.symbol}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span
+                        className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${pred.prediction === 1
+                          ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
+                          : 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
+                          }`}
+                      >
+                        {pred.prediction === 1 ? 'UP' : 'DOWN'}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-neutral-500 dark:text-neutral-400">
+                      {(pred.confidence * 100).toFixed(2)}%
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export { MLTradingPanel };

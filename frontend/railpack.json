@@ -1,0 +1,28 @@
+{
+  "version": "1",
+  "build": {
+    "provider": "node",
+    "steps": {
+      "install": {
+        "commands": ["yarn install --immutable --immutable-cache"]
+      },
+      "install": { "commands": ["yarn install --immutable --immutable-cache"] },
+      "copyShared": {
+        "commands": [
+          "rm -rf ./src/shared",
+          "mkdir -p ./src/shared/types ./src/shared/middleware",
+          "cp ../shared/types/*.ts ./src/shared/types/ || echo 'No shared types'",
+          "cp ../shared/*.ts ./src/shared/ || echo 'No shared index'",
+          "cp -r ../shared/middleware ./src/shared/ || echo 'No shared middleware'"
+        ],
+        "dependsOn": ["install"]
+      },
+      "build": { "commands": ["yarn build"], "dependsOn": ["copyShared"] }
+    }
+  },
+  "deploy": {
+    "startCommand": "node serve.js",
+    "healthCheckPath": "/healthz",
+    "healthCheckTimeout": 300
+  }
+}
