@@ -86,8 +86,13 @@ app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+<<<<<<< HEAD
 // Health check endpoint
 app.get('/api/health', (req: Request, res: Response) => {
+=======
+// Health check endpoints
+app.get('/api/health', (_req: Request, res: Response) => {
+>>>>>>> origin/main
   res.json({
     status: 'healthy',
     timestamp: new Date().toISOString(),
@@ -95,6 +100,18 @@ app.get('/api/health', (req: Request, res: Response) => {
   });
 });
 
+<<<<<<< HEAD
+=======
+app.get('/healthz', (_req: Request, res: Response) => {
+  res.json({
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development',
+    service: 'backend'
+  });
+});
+
+>>>>>>> origin/main
 // API routes
 app.use('/api/auth', authRoutes);
 app.use('/api/api-keys', apiKeyRoutes);
@@ -172,7 +189,11 @@ if (process.env.NODE_ENV === 'production' && process.env.FRONTEND_STANDALONE ===
 }
 
 // Error handling middleware
+<<<<<<< HEAD
 app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
+=======
+app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
+>>>>>>> origin/main
   logger.error('Unhandled error:', err);
   res.status(500).json({ error: 'Internal server error' });
 });

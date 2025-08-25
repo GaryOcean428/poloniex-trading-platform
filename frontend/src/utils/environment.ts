@@ -128,12 +128,22 @@ export const getBackendUrl = (): string => {
   // Priority 3: Environment detection
   if (typeof window !== 'undefined' && window.location) {
     const hostname = window.location.hostname;
+<<<<<<< HEAD
     const protocol = window.location.protocol;
     
     // Local development
     if (hostname === 'localhost' || hostname === '127.0.0.1') {
       // Use .clinerules compliant backend port range (8765-8799)
       return `${protocol}//localhost:8765`;
+=======
+    const protocol = window.location.protocol || 'http:';
+
+    // Local development
+    if (hostname === 'localhost' || hostname === '127.0.0.1') {
+      // Use the current origin when running locally so the backend and
+      // frontend can communicate without CORS issues during development.
+      return window.location.origin;
+>>>>>>> origin/main
     }
     
     // Railway deployment detection

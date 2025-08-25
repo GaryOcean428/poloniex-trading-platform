@@ -1,5 +1,29 @@
+<<<<<<< HEAD
 // Re-export strategy types from shared module
 export * from '@shared/types/strategy';
+=======
+// Re-export strategy types from ambient module declarations
+// This ensures compatibility during Railway builds
+export * from '@shared/types';
+
+// Explicit re-exports for key types and values to ensure they're always available
+export type {
+  Strategy,
+  StrategyParameters,
+  TradingStrategy,
+  MovingAverageCrossoverParameters,
+  RSIParameters,
+  MACDParameters,
+  BollingerBandsParameters,
+  BreakoutParameters,
+  StrategyTypeUnion,
+  StrategyPerformance,
+  BaseStrategyParameters
+} from '@shared/types';
+
+// Export StrategyType as a value (enum)
+export { StrategyType } from '@shared/types';
+>>>>>>> origin/main
 
 export interface MarketData {
   pair: string;

@@ -49,10 +49,13 @@ backend/node_modules/
 backend/public/
 *.tsbuildinfo
 
+<<<<<<< HEAD
 # Lockfiles
 frontend/yarn.lock
 backend/yarn.lock
 
+=======
+>>>>>>> origin/main
 # TypeScript compilation artifacts
 tsc-output*.txt
 tsc-output.txt
@@ -151,3 +154,8 @@ docs/env/*.env
 docs/env/**/*.env
 
 
+<<<<<<< HEAD
+=======
+frontend/src/shared/
+backend/shared/
+>>>>>>> origin/main
