@@ -3,9 +3,17 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+<<<<<<< HEAD
 
 app = FastAPI()
 
+=======
+from datetime import datetime
+
+app = FastAPI()
+
+
+>>>>>>> origin/main
 @app.get("/health")
 async def health():
     # Basic liveness/readiness endpoint for Railway
@@ -20,6 +28,26 @@ async def health():
         },
     }
 
+<<<<<<< HEAD
+=======
+
+@app.get("/healthz")
+async def healthz():
+    # Unified health endpoint for Railway deployment
+    return {
+        "status": "healthy",
+        "service": "ml-worker",
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "python": sys.version.split()[0],
+        "cwd": str(Path.cwd()),
+        "env": {
+            "PORT": os.getenv("PORT", ""),
+            "PYTHONUNBUFFERED": os.getenv("PYTHONUNBUFFERED", ""),
+        },
+    }
+
+
+>>>>>>> origin/main
 @app.post("/run/ingest")
 async def run_ingest():
     """

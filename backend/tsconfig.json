@@ -2,6 +2,7 @@
   "compilerOptions": {
     "baseUrl": ".",
     "paths": {
+<<<<<<< HEAD
       "@shared/*": ["./shared/*"]
     },
     "rootDir": "src",
@@ -15,5 +16,25 @@
     "resolveJsonModule": true
   },
   "include": ["src/**/*", "shared/**/*"],
+=======
+      "@shared/*": ["../shared/*"]
+    },
+    "outDir": "./dist",
+    "module": "ES2020",
+    "target": "ES2020",
+    "strict": false,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "moduleResolution": "node",
+    "declaration": false,
+    "allowJs": true,
+    "checkJs": false,
+    "noEmitOnError": false
+  },
+  "include": ["src/**/*", "../shared/**/*"],
+>>>>>>> origin/main
   "exclude": ["node_modules", "dist"]
 }
