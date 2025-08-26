@@ -1,31 +1,11 @@
 {
-<<<<<<< HEAD
-  "$schema": "https://schema.railpack.com",
-  "build": {
-    "env": {
-      "NODE_ENV": "production"
-    },
-    "steps": [
-      {
-        "name": "build",
-        "command": "yarn build"
-      }
-    ]
-  },
-  "deploy": {
-    "startCommand": "node serve.js",
-    "healthcheckPath": "/",
-    "restartPolicyType": "ON_FAILURE",
-    "restartPolicyMaxRetries": 3
-=======
   "version": "1",
   "build": {
     "provider": "node",
     "steps": {
       "install": {
-        "commands": ["yarn install --immutable --immutable-cache"]
+        "commands": ["yarn install --immutable"]
       },
-      "install": { "commands": ["yarn install --immutable --immutable-cache"] },
       "copyShared": {
         "commands": [
           "rm -rf ./src/shared",
@@ -36,13 +16,15 @@
         ],
         "dependsOn": ["install"]
       },
-      "build": { "commands": ["yarn build"], "dependsOn": ["copyShared"] }
+      "build": {
+        "commands": ["yarn build"],
+        "dependsOn": ["copyShared"]
+      }
     }
   },
   "deploy": {
-    "startCommand": "node serve.js",
+    "startCommand": "node frontend/serve.js",
     "healthCheckPath": "/healthz",
     "healthCheckTimeout": 300
->>>>>>> origin/main
   }
 }

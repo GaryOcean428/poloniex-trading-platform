@@ -1,7 +1,7 @@
 /// <reference types="vitest" />
 import react from "@vitejs/plugin-react";
 import path from "path";
-import { defineConfig } from "vite";
+import { defineConfig } from "vitest/config";
 import tsconfigPaths from 'vite-tsconfig-paths';
 
 // https://vitejs.dev/config/
@@ -84,21 +84,27 @@ export default defineConfig({
     alias: {
       "@": path.resolve(__dirname, "./src"),
       "@shared": path.resolve(__dirname, "../shared"),
-<<<<<<< HEAD
-=======
       "@components": path.resolve(__dirname, "./src/components"),
       "@hooks": path.resolve(__dirname, "./src/hooks"),
       "@utils": path.resolve(__dirname, "./src/utils"),
       "@store": path.resolve(__dirname, "./src/store"),
       "@types": path.resolve(__dirname, "./src/types"),
->>>>>>> origin/main
     },
   },
   test: {
     environment: 'jsdom',
     globals: true,
     setupFiles: './src/test/setup.ts',
+    pool: 'forks',
+    reporters: ['dot'],
+    // Allow narrowing the loaded test files to a single file or glob via env
+    // Example: VITEST_INCLUDE=src/tests/comprehensive-simple.test.tsx
+    // Always provide an array to avoid startup errors in some Vitest versions
+    include: process.env.VITEST_INCLUDE
+      ? [process.env.VITEST_INCLUDE]
+      : ['src/**/*.test.{ts,tsx}', 'src/**/*.spec.{ts,tsx}'],
     coverage: {
+      enabled: process.env.VITEST_COVERAGE === 'false' ? false : undefined,
       provider: 'v8',
       reporter: ['text', 'json', 'html'],
       exclude: [

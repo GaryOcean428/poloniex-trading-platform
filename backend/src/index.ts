@@ -8,6 +8,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { createServer } from 'http';
 import { Server as SocketIOServer } from 'socket.io';
+import type { CorsOptions } from 'cors';
 
 // Import routes
 import authRoutes from './routes/auth.js';
@@ -37,21 +38,35 @@ const server = createServer(app);
 const PORT = parseInt(process.env.PORT || '8765', 10);
 
 // CORS configuration with support for multiple origins and Railway deployment
-const allowedOrigins = [
-  'https://healthcheck.railway.app',
-  'https://poloniex-trading-platform-production.up.railway.app',
-  'https://polytrade-red.vercel.app',
-  'https://polytrade-be.up.railway.app',
-  process.env.FRONTEND_URL || 'http://localhost:5675',
-  // Allow dynamic Railway domains
-  ...(process.env.RAILWAY_SERVICE_POLYTRADE_FE_URL ? [`https://${process.env.RAILWAY_SERVICE_POLYTRADE_FE_URL}`] : []),
-  ...(process.env.NODE_ENV === 'production' ? [] : ['http://localhost:3000', 'http://localhost:5173'])
+// Prefer explicit configuration from env: CORS_ALLOWED_ORIGINS (comma-separated) and FRONTEND_URL.
+const parsedCorsEnv = (process.env.CORS_ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+const defaultLocalOrigins = process.env.NODE_ENV === 'production' ? [] : [
+  'http://localhost:3000',
+  'http://localhost:5173',
+  'http://localhost:5675'
 ];
+
+const baseAllowedOrigins = [
+  'https://healthcheck.railway.app',
+  // Prefer FRONTEND_URL when provided
+  ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL] : []),
+  // Custom set via env variable
+  ...parsedCorsEnv,
+  // Local development fallbacks when not in production
+  ...defaultLocalOrigins
+];
+
+// De-duplicate entries and freeze set for quick lookup
+const allowedOriginsSet = new Set(baseAllowedOrigins);
 
 // Socket.IO server setup with Railway-compatible CORS
 const io = new SocketIOServer(server, {
   cors: {
-    origin: allowedOrigins,
+    origin: Array.from(allowedOriginsSet),
     credentials: true,
     methods: ['GET', 'POST']
   },
@@ -68,12 +83,12 @@ app.use(helmet());
 app.use(compression());
 
 // CORS configuration with support for multiple origins and Railway deployment
-const corsOptions = {
+const corsOptions: CorsOptions = {
   origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
 
-    if (allowedOrigins.includes(origin)) {
+    if (allowedOriginsSet.has(origin)) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));
@@ -86,13 +101,8 @@ app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-<<<<<<< HEAD
-// Health check endpoint
-app.get('/api/health', (req: Request, res: Response) => {
-=======
 // Health check endpoints
 app.get('/api/health', (_req: Request, res: Response) => {
->>>>>>> origin/main
   res.json({
     status: 'healthy',
     timestamp: new Date().toISOString(),
@@ -100,8 +110,6 @@ app.get('/api/health', (_req: Request, res: Response) => {
   });
 });
 
-<<<<<<< HEAD
-=======
 app.get('/healthz', (_req: Request, res: Response) => {
   res.json({
     status: 'healthy',
@@ -111,7 +119,6 @@ app.get('/healthz', (_req: Request, res: Response) => {
   });
 });
 
->>>>>>> origin/main
 // API routes
 app.use('/api/auth', authRoutes);
 app.use('/api/api-keys', apiKeyRoutes);
@@ -189,11 +196,7 @@ if (process.env.NODE_ENV === 'production' && process.env.FRONTEND_STANDALONE ===
 }
 
 // Error handling middleware
-<<<<<<< HEAD
-app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
-=======
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
->>>>>>> origin/main
   logger.error('Unhandled error:', err);
   res.status(500).json({ error: 'Internal server error' });
 });

@@ -23,6 +23,8 @@ interface ErrorBoundaryProps {
 
 export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   private resetTimeoutId: number | null = null;
+  private onWindowError?: (event: ErrorEvent) => void;
+  private onUnhandledRejection?: (event: PromiseRejectionEvent) => void;
 
   constructor(props: ErrorBoundaryProps) {
     super(props);
@@ -33,6 +35,36 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
       errorCount: 0,
       errorId: ''
     };
+  }
+
+  componentDidMount(): void {
+    // Capture errors thrown in event handlers or other async contexts
+    this.onWindowError = (event: ErrorEvent) => {
+      if (!this.state.hasError) {
+        this.setState({
+          hasError: true,
+          error: event.error instanceof Error ? event.error : new Error(event.message || 'Unknown error'),
+          errorInfo: null,
+          errorId: `error-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+        });
+      }
+    };
+
+    this.onUnhandledRejection = (event: PromiseRejectionEvent) => {
+      const reason = event.reason;
+      const err = reason instanceof Error ? reason : new Error(typeof reason === 'string' ? reason : 'Unhandled rejection');
+      if (!this.state.hasError) {
+        this.setState({
+          hasError: true,
+          error: err,
+          errorInfo: null,
+          errorId: `error-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+        });
+      }
+    };
+
+    window.addEventListener('error', this.onWindowError);
+    window.addEventListener('unhandledrejection', this.onUnhandledRejection as EventListener);
   }
 
   static getDerivedStateFromError(error: Error): Partial<ErrorBoundaryState> {
@@ -65,6 +97,12 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     if (this.resetTimeoutId)
     {
       clearTimeout(this.resetTimeoutId);
+    }
+    if (this.onWindowError) {
+      window.removeEventListener('error', this.onWindowError);
+    }
+    if (this.onUnhandledRejection) {
+      window.removeEventListener('unhandledrejection', this.onUnhandledRejection as EventListener);
     }
   }
 
