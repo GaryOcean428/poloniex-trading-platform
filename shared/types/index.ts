@@ -1,19 +1,6 @@
-<<<<<<< HEAD
-// Shared types for the Poloniex Trading Platform
-
-export interface MarketData {
-  pair: string;
-  timestamp: number;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
-}
-
-=======
 // Shared type definitions for Poloniex Trading Platform
 
+// Core domain types
 export interface TradeSignal {
   id: string;
   symbol: string;
@@ -26,10 +13,15 @@ export interface TradeSignal {
   metadata?: Record<string, any>;
 }
 
+export type PositionSide = 'long' | 'short';
+export type OrderSide = 'buy' | 'sell';
+export type OrderType = 'market' | 'limit' | 'stop' | 'stop-limit';
+export type Timeframe = '1m' | '5m' | '15m' | '30m' | '1h' | '4h' | '1d' | '1w' | '1M';
+
 export interface Position {
   id: string;
   symbol: string;
-  side: 'long' | 'short';
+  side: PositionSide;
   entryPrice: number;
   currentPrice: number;
   quantity: number;
@@ -53,6 +45,7 @@ export interface RiskMetrics {
   alpha?: number;
 }
 
+// Market data (current snapshot)
 export interface MarketData {
   symbol: string;
   price: number;
@@ -70,8 +63,8 @@ export interface MarketData {
 export interface Order {
   id: string;
   symbol: string;
-  side: 'buy' | 'sell';
-  type: 'market' | 'limit' | 'stop' | 'stop-limit';
+  side: OrderSide;
+  type: OrderType;
   quantity: number;
   price?: number;
   stopPrice?: number;
@@ -81,17 +74,6 @@ export interface Order {
   createdAt: number;
   updatedAt: number;
   executedAt?: number;
-}
-
-export interface Portfolio {
-  id: string;
-  userId: string;
-  totalValue: number;
-  availableBalance: number;
-  positions: Position[];
-  performance: PerformanceMetrics;
-  riskMetrics: RiskMetrics;
-  lastUpdated: number;
 }
 
 export interface PerformanceMetrics {
@@ -106,16 +88,6 @@ export interface PerformanceMetrics {
   currentDrawdown: number;
 }
 
-export interface Strategy {
-  id: string;
-  name: string;
-  type: 'momentum' | 'mean-reversion' | 'arbitrage' | 'ml-based' | 'hybrid';
-  status: 'active' | 'paused' | 'backtesting';
-  parameters: Record<string, any>;
-  performance: PerformanceMetrics;
-  riskLimits: RiskLimits;
-}
-
 export interface RiskLimits {
   maxPositionSize: number;
   maxDrawdown: number;
@@ -126,15 +98,25 @@ export interface RiskLimits {
   maxOpenPositions: number;
 }
 
-export interface User {
+export interface Strategy {
   id: string;
-  email: string;
-  username: string;
-  apiAccess: boolean;
-  tier: 'basic' | 'pro' | 'institutional';
-  createdAt: number;
-  lastLogin: number;
-  settings: UserSettings;
+  name: string;
+  type: 'momentum' | 'mean-reversion' | 'arbitrage' | 'ml-based' | 'hybrid';
+  status: 'active' | 'paused' | 'backtesting';
+  parameters: Record<string, any>;
+  performance: PerformanceMetrics;
+  riskLimits: RiskLimits;
+}
+
+export interface Portfolio {
+  id: string;
+  userId: string;
+  totalValue: number;
+  availableBalance: number;
+  positions: Position[];
+  performance: PerformanceMetrics;
+  riskMetrics: RiskMetrics;
+  lastUpdated: number;
 }
 
 export interface UserSettings {
@@ -153,6 +135,17 @@ export interface NotificationSettings {
   priceAlerts: boolean;
   systemAlerts: boolean;
   weeklyReports: boolean;
+}
+
+export interface User {
+  id: string;
+  email: string;
+  username: string;
+  apiAccess: boolean;
+  tier: 'basic' | 'pro' | 'institutional';
+  createdAt: number;
+  lastLogin: number;
+  settings: UserSettings;
 }
 
 export interface WebSocketMessage {
@@ -178,18 +171,11 @@ export interface ApiError {
   statusCode: number;
 }
 
-// Utility types
-export type Timeframe = '1m' | '5m' | '15m' | '30m' | '1h' | '4h' | '1d' | '1w' | '1M';
-export type OrderSide = 'buy' | 'sell';
-export type OrderType = 'market' | 'limit' | 'stop' | 'stop-limit';
-export type PositionSide = 'long' | 'short';
-
-// Legacy types for backward compatibility
->>>>>>> origin/main
+// Legacy/backtest and ticker types for compatibility
 export interface Trade {
   id: string;
   symbol: string;
-  side: 'buy' | 'sell';
+  side: OrderSide;
   quantity: number;
   price: number;
   timestamp: number;
@@ -201,7 +187,7 @@ export interface TradeData {
   symbol: string;
   price: number;
   quantity: number;
-  side: 'buy' | 'sell';
+  side: OrderSide;
   timestamp: number;
 }
 
@@ -219,24 +205,13 @@ export interface TickerData {
   timestamp: number;
 }
 
-<<<<<<< HEAD
-// Re-export strategy types from strategy module
-export * from './strategy';
-
-// Legacy interface for backward compatibility
-export interface LegacyStrategyParameters {
-  [key: string]: number | string | boolean;
-}
-
-=======
->>>>>>> origin/main
 export interface BacktestTrade {
   id: string;
   entryPrice: number;
   exitPrice: number | null;
   entryTime: string;
   exitTime: string | null;
-  side: 'long' | 'short';
+  side: PositionSide;
   status: 'open' | 'closed' | 'stopped';
   pnl: number;
   pnlPercent: number;
@@ -245,11 +220,7 @@ export interface BacktestTrade {
   fee: number;
   reason?: string;
   metadata?: Record<string, unknown>;
-<<<<<<< HEAD
-  highestProfit?: number; // Compatibility with strategyTester.ts
-=======
   highestProfit?: number;
->>>>>>> origin/main
   entryDate?: Date;
   exitDate?: Date | null;
   type?: 'BUY' | 'SELL';
@@ -259,20 +230,6 @@ export interface BacktestTrade {
   confidence?: number;
 }
 
-<<<<<<< HEAD
-export interface Position {
-  id: string;
-  symbol: string;
-  side: 'long' | 'short';
-  size: number;
-  entryPrice: number;
-  markPrice: number;
-  unrealizedPnl: number;
-  timestamp: number;
-}
-
-=======
->>>>>>> origin/main
 export interface OrderBookEntry {
   price: number;
   quantity: number;
@@ -283,9 +240,6 @@ export interface OrderBook {
   bids: OrderBookEntry[];
 }
 
-<<<<<<< HEAD
-// TradingStrategy and Strategy are now exported from ./strategy module
-=======
 // Re-export strategy types from strategy module
 export * from './strategy';
 
@@ -293,4 +247,3 @@ export * from './strategy';
 export interface LegacyStrategyParameters {
   [key: string]: number | string | boolean;
 }
->>>>>>> origin/main

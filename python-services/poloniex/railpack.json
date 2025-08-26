@@ -1,24 +1,4 @@
 {
-  "$schema": "https://schema.railpack.com",
-<<<<<<< HEAD
-  "build": {
-    "env": {
-      "PYTHONUNBUFFERED": "1",
-      "PIP_NO_CACHE_DIR": "1",
-      "PYTHONDONTWRITEBYTECODE": "1"
-    },
-    "steps": [
-      {
-        "name": "install",
-        "command": "pip install --no-cache-dir -r requirements.txt"
-      }
-    ]
-  },
-  "deploy": {
-    "startCommand": "uvicorn health:app --host 0.0.0.0 --port ${PORT:-8000} --workers 2 --loop uvloop --access-log",
-    "healthcheckPath": "/health",
-    "healthcheckTimeout": 300,
-=======
   "version": "1",
   "build": {
     "env": {
@@ -40,7 +20,6 @@
     "startCommand": "uvicorn health:app --host 0.0.0.0 --port ${PORT:-8000} --workers 2 --loop uvloop --access-log",
     "healthCheckPath": "/healthz",
     "healthCheckTimeout": 300,
->>>>>>> origin/main
     "restartPolicyType": "ALWAYS",
     "restartPolicyMaxRetries": 10
   }

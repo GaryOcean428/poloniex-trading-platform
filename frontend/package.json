@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 5675",
     "build": "tsc --noEmit --skipLibCheck && vite build",
@@ -13,7 +16,6 @@
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",
     "serve": "node serve.js",
-<<<<<<< HEAD
     "start": "node serve.js"
   },
   "dependencies": {
@@ -58,7 +60,6 @@
     "@types/seedrandom": "^3.0.8",
     "@types/socket.io-client": "^3.0.0",
     "@types/stylus": "^0.48.43",
-    "@types/supports-color": "^10.0.0",
     "@types/terser": "^3.12.0",
     "@types/yaml": "^1.9.7",
     "@typescript-eslint/eslint-plugin": "^8.39.1",
@@ -87,64 +88,5 @@
     "vite-tsconfig-paths": "^5.1.4",
     "vitest": "^3.2.4",
     "yaml": "^2.8.1"
-=======
-    "start": "node serve.js",
-    "next:dev": "next dev -p 5675",
-    "next:build": "next build",
-    "next:start": "next start -p 5675",
-    "next:lint": "next lint"
-  },
-  "dependencies": {
-    "@next/eslint-plugin-next": "^15.4.6",
-    "@tanstack/react-query": "^4.32.0",
-    "axios": "^1.11.0",
-    "chart.js": "^4.5.0",
-    "clsx": "^2.0.0",
-    "crypto-js": "^4.2.0",
-    "eslint-config-next": "^15.4.6",
-    "file-saver": "^2.0.5",
-    "jszip": "^3.10.1",
-    "lucide-react": "^0.263.1",
-    "next": "15.4.0",
-    "react": "^18.3.0",
-    "react-chartjs-2": "^5.3.0",
-    "react-dom": "^18.3.0",
-    "react-router-dom": "^6.14.2",
-    "recharts": "^2.8.0",
-    "seedrandom": "^3.0.5",
-    "socket.io-client": "^4.8.1",
-    "tailwind-merge": "^1.14.0",
-    "zustand": "^4.4.1"
-  },
-  "devDependencies": {
-    "@tensorflow/tfjs": "^4.22.0",
-    "@testing-library/dom": "^10.4.0",
-    "@testing-library/jest-dom": "^6.6.3",
-    "@testing-library/react": "^16.3.0",
-    "@types/chrome": "^0.1.1",
-    "@types/crypto-js": "^4.2.2",
-    "@types/file-saver": "^2.0.7",
-    "@types/jest": "^30.0.0",
-    "@types/jszip": "^3.4.1",
-    "@types/react": "^18.2.15",
-    "@types/react-dom": "^18.2.7",
-    "@types/seedrandom": "^3.0.8",
-    "@types/socket.io-client": "^3.0.0",
-    "@typescript-eslint/eslint-plugin": "^6.0.0",
-    "@typescript-eslint/parser": "^6.0.0",
-    "@vitejs/plugin-react": "^4.0.3",
-    "autoprefixer": "^10.4.14",
-    "eslint": "^8.45.0",
-    "eslint-plugin-react-hooks": "^4.6.0",
-    "eslint-plugin-react-refresh": "^0.4.3",
-    "jsdom": "^25.0.1",
-    "openai": "^5.10.1",
-    "postcss": "^8.4.27",
-    "tailwindcss": "^3.3.3",
-    "typescript": "^5.7.0",
-    "vite": "^6.0.0",
-    "vite-tsconfig-paths": "^5.1.4",
-    "vitest": "^3.2.4"
->>>>>>> origin/main
   }
 }

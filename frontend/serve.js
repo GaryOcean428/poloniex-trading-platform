@@ -86,14 +86,6 @@ const server = http.createServer((req, res) => {
     const parsed = url.parse(req.url || '/');
     let reqPath = decodeURIComponent(parsed.pathname || '/');
 
-    // Normalize path traversal
-    if (reqPath.includes('..')) {
-      res.statusCode = 400;
-      return res.end('Bad Request');
-    }
-
-<<<<<<< HEAD
-=======
     // Health check endpoints
     if (reqPath === '/api/health' || reqPath === '/healthz') {
       res.statusCode = 200;
@@ -105,7 +97,12 @@ const server = http.createServer((req, res) => {
       }));
     }
 
->>>>>>> origin/main
+    // Normalize path traversal
+    if (reqPath.includes('..')) {
+      res.statusCode = 400;
+      return res.end('Bad Request');
+    }
+
     // Special asset handling: never SPA-fallback for /assets/*
     if (reqPath.startsWith('/assets/')) {
       const assetPath = path.join(DIST_ROOT, reqPath);

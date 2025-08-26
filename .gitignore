@@ -49,13 +49,6 @@ backend/node_modules/
 backend/public/
 *.tsbuildinfo
 
-<<<<<<< HEAD
-# Lockfiles
-frontend/yarn.lock
-backend/yarn.lock
-
-=======
->>>>>>> origin/main
 # TypeScript compilation artifacts
 tsc-output*.txt
 tsc-output.txt
@@ -153,9 +146,6 @@ docker-compose.override.yml
 docs/env/*.env
 docs/env/**/*.env
 
-
-<<<<<<< HEAD
-=======
+# Generated shared copies in services
 frontend/src/shared/
 backend/shared/
->>>>>>> origin/main
