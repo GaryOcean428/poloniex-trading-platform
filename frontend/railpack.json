@@ -1,18 +1,26 @@
 {
   "version": "1",
   "build": {
-    "provider": "node",
+    "provider": "nodejs",
+    "nodejs": {
+      "version": "22",
+      "packageManager": "yarn"
+    },
+    "install": {
+      "commands": [
+        "corepack enable",
+        "corepack prepare yarn@4.9.2 --activate",
+        "yarn install --immutable"
+      ]
+    },
     "steps": {
-      "install": {
-        "commands": ["yarn install --immutable"]
-      },
       "copyShared": {
         "commands": [
           "rm -rf ./src/shared",
           "mkdir -p ./src/shared/types ./src/shared/middleware",
-          "cp ../shared/types/*.ts ./src/shared/types/ || echo 'No shared types'",
-          "cp ../shared/*.ts ./src/shared/ || echo 'No shared index'",
-          "cp -r ../shared/middleware ./src/shared/ || echo 'No shared middleware'"
+          "cp ../shared/types/*.ts ./src/shared/types/ 2>/dev/null || echo 'No shared types'",
+          "cp ../shared/*.ts ./src/shared/ 2>/dev/null || echo 'No shared index'",
+          "cp -r ../shared/middleware ./src/shared/ 2>/dev/null || echo 'No shared middleware'"
         ],
         "dependsOn": ["install"]
       },
@@ -23,8 +31,9 @@
     }
   },
   "deploy": {
-    "startCommand": "node frontend/serve.js",
+    "startCommand": "node serve.js",
     "healthCheckPath": "/healthz",
-    "healthCheckTimeout": 300
+    "healthCheckTimeout": 300,
+    "port": 5675
   }
 }
