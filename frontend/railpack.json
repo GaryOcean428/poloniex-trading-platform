@@ -17,7 +17,7 @@
         "dependsOn": ["install"]
       },
       "build": {
-        "commands": ["yarn build"],
+        "commands": ["yarn build:railway"],
         "dependsOn": ["copyShared"]
       }
     }
