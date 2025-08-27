@@ -57,7 +57,7 @@ const ModelRecalibrationPanel: React.FC = () => {
   const [cleanupFunction, setCleanupFunction] = useState<(() => void) | null>(null);
 
   // Load models from storage
-  useEffect(() => {
+  useEffect((): void => {
     const loadModels = async () => {
       try
       {
@@ -75,7 +75,7 @@ const ModelRecalibrationPanel: React.FC = () => {
         {
           setDqnModels(JSON.parse(dqnModelsJson));
         }
-      } catch (err)
+      } catch
       {
         // console.error('Error loading models:', err);
         setError('Failed to load models');
@@ -86,7 +86,7 @@ const ModelRecalibrationPanel: React.FC = () => {
   }, []);
 
   // Fetch market data
-  useEffect(() => {
+  useEffect((): () => void => {
     const fetchData = async () => {
       try
       {
@@ -99,7 +99,7 @@ const ModelRecalibrationPanel: React.FC = () => {
           volume: data.volume
         }));
         setMarketData(convertedData);
-      } catch (err)
+      } catch
       {
         // console.error('Error fetching market data:', err);
         setError('Failed to fetch market data');
@@ -115,7 +115,7 @@ const ModelRecalibrationPanel: React.FC = () => {
   }, [fetchMarketData, poloniexMarketData]);
 
   // Monitor model performance
-  const handleMonitorPerformance = async () => {
+  const handleMonitorPerformance = async (): Promise<void> => {
     if (!selectedModel)
     {
       setError('No model selected');
@@ -133,7 +133,7 @@ const ModelRecalibrationPanel: React.FC = () => {
 
     try
     {
-      let metrics;
+      let metrics: ModelPerformanceMetrics;
 
       if (selectedModel.config?.modelType)
       {
@@ -151,7 +151,7 @@ const ModelRecalibrationPanel: React.FC = () => {
       setPerformanceHistory(prev => [...prev, metrics]);
 
       setIsMonitoring(false);
-    } catch (err)
+    } catch
     {
       // console.error('Error monitoring performance:', err);
       setError('Failed to monitor performance');
@@ -160,7 +160,7 @@ const ModelRecalibrationPanel: React.FC = () => {
   };
 
   // Recalibrate model
-  const handleRecalibrate = async () => {
+  const handleRecalibrate = async (): Promise<void> => {
     if (!selectedModel)
     {
       setError('No model selected');
@@ -178,7 +178,7 @@ const ModelRecalibrationPanel: React.FC = () => {
 
     try
     {
-      let result;
+      let result: RecalibrationResult;
 
       if (selectedModel.config?.modelType)
       {
@@ -219,7 +219,7 @@ const ModelRecalibrationPanel: React.FC = () => {
       }
 
       setIsRecalibrating(false);
-    } catch (err)
+    } catch
     {
       // console.error('Error recalibrating model:', err);
       setError('Failed to recalibrate model');
@@ -228,7 +228,7 @@ const ModelRecalibrationPanel: React.FC = () => {
   };
 
   // Toggle auto-recalibration
-  const handleToggleAutoRecalibration = () => {
+  const handleToggleAutoRecalibration = (): void => {
     if (autoRecalibrationEnabled)
     {
       // Disable auto-recalibration
@@ -247,12 +247,12 @@ const ModelRecalibrationPanel: React.FC = () => {
         return;
       }
 
-      const getNewData = async () => {
+      const getNewData = async (): Promise<typeof poloniexMarketData> => {
         try
         {
           await fetchMarketData('BTC_USDT');
           return poloniexMarketData;
-        } catch (err)
+        } catch
         {
           // console.error('Error fetching new data for auto-recalibration:', err);
           return [];
@@ -260,7 +260,7 @@ const ModelRecalibrationPanel: React.FC = () => {
       };
 
       // Schedule recalibration
-      const scheduleRecalibration = async () => {
+      const scheduleRecalibration = async (): Promise<void> => {
         try
         {
           const newData = await getNewData();
@@ -300,7 +300,7 @@ const ModelRecalibrationPanel: React.FC = () => {
               }]);
             }
           }
-        } catch (err)
+        } catch
         {
           // console.error('Error in scheduled recalibration:', err);
         }
@@ -324,7 +324,7 @@ const ModelRecalibrationPanel: React.FC = () => {
       const intervalId = setInterval(scheduleRecalibration, intervalMs);
 
       // Cleanup function
-      const cleanup = () => clearInterval(intervalId);
+      const cleanup = (): void => clearInterval(intervalId);
 
       setCleanupFunction(() => cleanup);
       setAutoRecalibrationEnabled(true);
@@ -332,8 +332,8 @@ const ModelRecalibrationPanel: React.FC = () => {
   };
 
   // Format performance metrics for display
-  const formatMetrics = (metrics: ModelPerformanceMetrics) => {
-    const result = [];
+  const formatMetrics = (metrics: ModelPerformanceMetrics): Array<{ name: string; value: string }> => {
+    const result: Array<{ name: string; value: string }> = [];
 
     for (const [key, value] of Object.entries(metrics))
     {
@@ -350,7 +350,15 @@ const ModelRecalibrationPanel: React.FC = () => {
   };
 
   // Prepare performance history data for chart
-  const prepareChartData = () => {
+  const prepareChartData = (): Array<{
+    index: number;
+    timestamp: string;
+    driftScore?: number;
+    accuracy?: number;
+    f1Score?: number;
+    sharpeRatio?: number;
+    winRate?: number;
+  }> => {
     return performanceHistory.map((metrics, index) => ({
       index,
       timestamp: new Date(metrics.timestamp).toLocaleDateString(),

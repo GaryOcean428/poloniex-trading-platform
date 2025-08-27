@@ -29,7 +29,7 @@ const MockTradingDashboard: React.FC<MockTradingDashboardProps> = ({ strategies 
     useEffect(() => {
         if (strategies.length > 0 && !selectedStrategy)
         {
-            setSelectedStrategy(strategies[0]);
+            setSelectedStrategy(strategies[0] ?? null);
         }
     }, [strategies, selectedStrategy]);
 

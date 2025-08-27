@@ -192,6 +192,10 @@ const MLTradingPanel: React.FC = () => {
 
     // Get the latest prediction
     const latestPrediction = predictions[0];
+    if (!latestPrediction) {
+      setError('No predictions available');
+      return;
+    }
 
     if (latestPrediction.prediction === 1 && latestPrediction.confidence > 0.6)
     {

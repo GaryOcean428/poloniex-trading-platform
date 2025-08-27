@@ -8,12 +8,12 @@ export const usePageVisibility = (
   onVisible: () => void,
   onHidden: () => void,
   gracePeriod: number = 30000 // 30 seconds grace period
-) => {
+): void => {
   // In the browser, setTimeout returns a number, not NodeJS.Timeout
   const timeoutRef = useRef<number | undefined>(undefined);
   
   useEffect(() => {
-    const handleVisibilityChange = () => {
+    const handleVisibilityChange = (): void => {
       if (document.hidden) {
         // Page is hidden - delay the onHidden callback to handle quick tab switches
         timeoutRef.current = window.setTimeout(() => {
@@ -21,7 +21,7 @@ export const usePageVisibility = (
         }, gracePeriod);
       } else {
         // Page is visible - clear any pending onHidden callback and call onVisible
-        if (timeoutRef.current) {
+        if (timeoutRef.current !== undefined) {
           window.clearTimeout(timeoutRef.current);
           timeoutRef.current = undefined;
         }

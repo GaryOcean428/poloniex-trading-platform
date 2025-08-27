@@ -56,13 +56,11 @@ const LiveTradingDashboard: React.FC = () => {
     // marketData,
     strategies,
     // activeStrategies,
-    trades,
-    isMockMode
+    trades
   } = useTradingContext();
 
   const {
     connectionState: _connectionState,
-    isMockMode: wsIsMockMode,
     isConnected,
     on,
     off
@@ -106,7 +104,7 @@ const LiveTradingDashboard: React.FC = () => {
   }, [selectedPair]);
 
   // Handle real-time trade execution
-  const handleTradeExecuted = useCallback((tradeData: unknown) => {
+  const handleTradeExecuted = useCallback((_tradeData: unknown) => {
     // This will be handled by the RealTimeAlerts component
     // console.log('Trade executed:', tradeData);
   }, []);
