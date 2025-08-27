@@ -69,15 +69,16 @@ class LiveAutonomousTradingEngine {
       : def;
   }
   private toStr(v: unknown, def = ""): string {
-    return typeof v === "string" ? v : v != null ? String(v) : def;
+    return typeof v === "string" ? v : (v !== null && v !== undefined) ? String(v) : def;
   }
 
   // Initialize WebSocket connection for real-time updates
   private initializeWebSocketConnection(): void {
     if (!this.useBackend) return;
 
-    autonomousTradingWebSocket.on("connectionStateChanged", (state: string) => {
-      this.isConnected = state === "connected";
+    autonomousTradingWebSocket.on("connectionStateChanged", (state: unknown) => {
+      const s = typeof state === "string" ? state : String(state);
+      this.isConnected = s === "connected";
       this.notifyListeners("connectionStateChanged", {
         connected: this.isConnected,
       });

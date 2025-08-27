@@ -287,7 +287,7 @@ export class AuthService {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
-        ...(data && { data })
+        ...(data !== undefined ? { data } : {})
       };
 
       const response = await axios(config);
@@ -308,7 +308,7 @@ export class AuthService {
                 'Authorization': `Bearer ${newToken}`,
                 'Content-Type': 'application/json'
               },
-              ...(data && { data })
+              ...(data !== undefined ? { data } : {})
             };
 
             const response = await axios(config);
