@@ -152,7 +152,7 @@ export const liveDataEvents = new BrowserEventEmitter();
 export class LiveDataService {
   private config: LiveDataConfig;
   private websockets: Map<string, WebSocket> = new Map();
-  private poloniexRestClient: AxiosInstance;
+  private poloniexRestClient!: AxiosInstance;
   private isRunning = false;
   private retryCount = new Map<string, number>();
   private dataBuffer = new Map<string, MarketDataPoint[]>();
@@ -366,7 +366,11 @@ export class LiveDataService {
       this.dataBuffer.set(key, []);
     }
 
-    const buffer = this.dataBuffer.get(key);
+    let buffer = this.dataBuffer.get(key);
+    if (!buffer) {
+      buffer = [] as MarketDataPoint[];
+      this.dataBuffer.set(key, buffer);
+    }
     buffer.push(dataPoint);
 
     if (buffer.length > 100) {

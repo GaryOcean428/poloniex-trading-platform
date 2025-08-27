@@ -307,33 +307,38 @@ export class ErrorHandler {
     operationType: string,
     context: Partial<ErrorContext>
   ): Promise<T> {
-    const retryConfig =
-      this.retryConfigs.get(operationType) || this.retryConfigs.get("default");
-    let lastError: Error;
+    const fallback = this.retryConfigs.get("default");
+    const retryConfig = this.retryConfigs.get(operationType) || fallback;
+    const cfg: RetryConfig = retryConfig || {
+      maxAttempts: 3,
+      baseDelay: 1000,
+      maxDelay: 30000,
+      backoffMultiplier: 2,
+      retryableErrors: ["NetworkError", "TimeoutError", "ConnectionError"],
+    };
 
-    for (let attempt = 1; attempt <= retryConfig.maxAttempts; attempt++) {
+    let lastError: Error | null = null;
+
+    for (let attempt = 1; attempt <= cfg.maxAttempts; attempt++) {
       try {
         return await operation();
       } catch (error) {
         lastError = error as Error;
 
         // Check if error is retryable
-        if (
-          !this.isRetryableError(error as Error, retryConfig.retryableErrors)
-        ) {
+        if (!this.isRetryableError(error as Error, cfg.retryableErrors)) {
           throw error;
         }
 
         // Don't retry on last attempt
-        if (attempt === retryConfig.maxAttempts) {
+        if (attempt === cfg.maxAttempts) {
           break;
         }
 
         // Calculate delay with exponential backoff
         const delay = Math.min(
-          retryConfig.baseDelay *
-            Math.pow(retryConfig.backoffMultiplier, attempt - 1),
-          retryConfig.maxDelay
+          cfg.baseDelay * Math.pow(cfg.backoffMultiplier, attempt - 1),
+          cfg.maxDelay
         );
 
         await this.sleep(delay);
@@ -341,10 +346,10 @@ export class ErrorHandler {
     }
 
     // All retries failed
-    throw this.enhanceError(lastError, {
+    throw this.enhanceError(lastError ?? new Error("Unknown error"), {
       ...context,
       action: `${context.action}_retry_exhausted`,
-      metadata: { attempts: retryConfig.maxAttempts },
+      metadata: { attempts: cfg.maxAttempts },
     });
   }
 
@@ -880,32 +885,33 @@ export const errorUtils = {
    * Create error boundary component
    */
   createErrorBoundary: (
-    fallbackComponent: unknown,
+    fallbackComponent: React.ReactNode,
     context: Partial<ErrorContext>
   ) => {
-    return class ErrorBoundary extends React.Component {
-      constructor(props: unknown) {
+    type EBState = { hasError: boolean; error: Error | null };
+    return class ErrorBoundary extends React.Component<React.PropsWithChildren<{}>, EBState> {
+      constructor(props: React.PropsWithChildren<{}>) {
         super(props);
         this.state = { hasError: false, error: null };
       }
 
-      static getDerivedStateFromError(error: Error) {
+      static getDerivedStateFromError(error: Error): EBState {
         return { hasError: true, error };
       }
 
-      componentDidCatch(error: Error, errorInfo: unknown) {
+      componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
         errorHandler.handleError(error, {
           ...context,
           action: "component_error",
-          metadata: errorInfo,
+          metadata: errorInfo as unknown as Record<string, unknown>,
         });
       }
 
       render() {
-        if ((this.state as any).hasError) {
+        if (this.state.hasError) {
           return fallbackComponent;
         }
-        return (this.props as any).children;
+        return this.props.children as React.ReactNode;
       }
     };
   },

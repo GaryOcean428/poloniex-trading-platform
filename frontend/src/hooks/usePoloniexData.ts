@@ -36,23 +36,24 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
     fetchMarketData: (pair: string) => Promise<void>;
     fetchTrades: (pair: string) => Promise<void>;
     fetchAccountBalance: () => Promise<void>;
-  }>();
+  } | null>(null);
 
   // Helper function to map Poloniex data to MarketData format
 
   const mapPoloniexDataToMarketData = useCallback((data: unknown[]): MarketData[] => {
     try {
-      return data.map(item => ({
-        pair: initialPair,
-        timestamp: new Date(item[0]).getTime(),
-        open: parseFloat(item[1]),
-        high: parseFloat(item[2]),
-        low: parseFloat(item[3]),
-        close: parseFloat(item[4]),
-        volume: parseFloat(item[5])
-      }));
-    } catch (err) {
-      // console.error('Error mapping Poloniex data:', err instanceof Error ? err.message : String(err));
+      return data
+        .filter((item): item is Array<string | number> => Array.isArray(item) && item.length >= 6)
+        .map((item) => ({
+          pair: initialPair,
+          timestamp: new Date(item[0] as string | number).getTime(),
+          open: typeof item[1] === 'number' ? item[1] : parseFloat(String(item[1])),
+          high: typeof item[2] === 'number' ? item[2] : parseFloat(String(item[2])),
+          low: typeof item[3] === 'number' ? item[3] : parseFloat(String(item[3])),
+          close: typeof item[4] === 'number' ? item[4] : parseFloat(String(item[4])),
+          volume: typeof item[5] === 'number' ? item[5] : parseFloat(String(item[5]))
+        }));
+    } catch {
       return [];
     }
   }, [initialPair]);
@@ -60,8 +61,6 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
   const mapPoloniexTradeToTrade = useCallback((tradeInput: unknown): Trade => {
     try {
       const t = (tradeInput || {}) as Record<string, unknown>;
-      const toStr = (v: unknown): string =>
-        typeof v === 'string' ? v : typeof v === 'number' ? String(v) : '';
       const toNum = (v: unknown): number => {
         if (typeof v === 'number') return v;
         if (typeof v === 'string') {
@@ -329,7 +328,8 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
     }
 
     // Connect to WebSocket for non-WebContainer environments
-    webSocketService.connect()
+    // Support both Promise-returning and void-returning connect implementations
+    Promise.resolve(webSocketService.connect())
       .then(() => {
         if (import.meta.env.DEV) {
           console.info('WebSocket setup complete');
@@ -350,7 +350,7 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
           setTrades(mockTrades);
         }
       })
-      .catch(err => {
+      .catch(_err => {
         // console.error('Error connecting to WebSocket:', err instanceof Error ? err.message : String(err));
         setIsMockMode(true);
         setMarketData(mockMarketData);

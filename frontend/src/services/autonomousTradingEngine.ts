@@ -3,6 +3,24 @@ import { liveTradingService } from "@/services/liveTradingService";
 import { mockTradingService } from "@/services/mockTradingService";
 import { Strategy, StrategyParameters, StrategyTypeUnion } from "@/types";
 import { BacktestOptions, BacktestResult } from "@/types/backtest";
+// Import unified Strategy from @shared/types for type alias
+import type { Strategy as SharedStrategy } from '@shared/types';
+
+// Type alias for EnhancedStrategy to use unified Strategy
+type EnhancedStrategy = SharedStrategy & {
+  confidence: number;
+  profitPotential: number;
+  riskScore: number;
+  description: string;
+  backtestResults?: BacktestResult;
+  mockTradingSessionId?: string;
+  liveTradingSessionId?: string;
+  learningMetrics: LearningMetrics;
+  // For backward compatibility with direct property access
+  adaptationRate: number;
+  consistencyScore: number;
+  marketConditionPerformance: Record<string, number>;
+};
 
 // Autonomous Engine Interfaces
 export interface AutonomousSession {
@@ -16,21 +34,6 @@ export interface AutonomousSession {
   performance: AutonomousPerformance;
   settings: AutonomousSettings;
   notifications: AutonomousNotification[];
-}
-
-export interface EnhancedStrategy extends Strategy {
-  confidence: number;
-  profitPotential: number;
-  riskScore: number;
-  description: string;
-  backtestResults?: BacktestResult;
-  mockTradingSessionId?: string;
-  liveTradingSessionId?: string;
-  learningMetrics: LearningMetrics;
-  // For backward compatibility with direct property access
-  adaptationRate: number;
-  consistencyScore: number;
-  marketConditionPerformance: Record<string, number>;
 }
 
 export interface AutonomousPerformance {
@@ -406,6 +409,10 @@ export class AutonomousTradingEngine {
     // Run backtests for each strategy
     for (let i = 0; i < session.strategies.length; i++) {
       const strategy = session.strategies[i];
+      // Guard against possibly undefined when using indexed access under noUncheckedIndexedAccess
+      if (!strategy) {
+        continue;
+      }
 
       try {
         const result = await advancedBacktestService.runAdvancedBacktest(
@@ -454,13 +461,14 @@ export class AutonomousTradingEngine {
       return scoreB - scoreA;
     });
 
+    const topStrategy = session.strategies[0];
     this.addNotification(sessionId, {
       type: "SUCCESS",
       phase: "BACKTESTING",
       title: "Backtesting Complete",
-      message: `Best strategy: ${session.strategies[0].name} with ${(
-        session.strategies[0].profitPotential * 100
-      ).toFixed(2)}% potential return.`,
+      message: topStrategy
+        ? `Best strategy: ${topStrategy.name} with ${(topStrategy.profitPotential * 100).toFixed(2)}% potential return.`
+        : "No strategies passed backtesting.",
     });
 
     session.currentPhase = "STRATEGY_OPTIMIZATION";
@@ -511,6 +519,17 @@ export class AutonomousTradingEngine {
 
     // Start mock trading for best strategy
     const bestStrategy = session.strategies[0];
+    if (!bestStrategy) {
+      this.addNotification(sessionId, {
+        type: "WARNING",
+        phase: "MOCK_TRADING",
+        title: "No Strategy Available",
+        message:
+          "No strategies available to start mock trading. Regenerating strategies.",
+      });
+      session.currentPhase = "STRATEGY_GENERATION";
+      return;
+    }
 
     try {
       const mockSessionId = await mockTradingService.startMockSession(
@@ -557,6 +576,16 @@ export class AutonomousTradingEngine {
   private async evaluateConfidence(sessionId: string): Promise<void> {
     const session = this.activeSessions.get(sessionId)!;
     const bestStrategy = session.strategies[0];
+    if (!bestStrategy) {
+      this.addNotification(sessionId, {
+        type: "WARNING",
+        phase: "CONFIDENCE_EVALUATION",
+        title: "No Strategy to Evaluate",
+        message: "No strategy available for confidence evaluation. Returning to generation phase.",
+      });
+      session.currentPhase = "STRATEGY_GENERATION";
+      return;
+    }
 
     if (!bestStrategy.mockTradingSessionId) {
       session.currentPhase = "MOCK_TRADING";
@@ -643,6 +672,16 @@ export class AutonomousTradingEngine {
   private async manageLiveTrading(sessionId: string): Promise<void> {
     const session = this.activeSessions.get(sessionId)!;
     const bestStrategy = session.strategies[0];
+    if (!bestStrategy) {
+      this.addNotification(sessionId, {
+        type: "WARNING",
+        phase: "LIVE_TRADING",
+        title: "No Active Strategy",
+        message: "No strategy available for live trading. Regenerating strategies.",
+      });
+      session.currentPhase = "STRATEGY_GENERATION";
+      return;
+    }
 
     if (!bestStrategy.liveTradingSessionId) {
       await this.initiateLiveTrading(sessionId);
@@ -733,6 +772,15 @@ export class AutonomousTradingEngine {
   private async initiateLiveTrading(sessionId: string): Promise<void> {
     const session = this.activeSessions.get(sessionId)!;
     const bestStrategy = session.strategies[0];
+    if (!bestStrategy) {
+      this.addNotification(sessionId, {
+        type: "CRITICAL",
+        phase: "READY_FOR_LIVE",
+        title: "Live Trading Not Possible",
+        message: "No strategy found to initiate live trading.",
+      });
+      return;
+    }
 
     try {
       const liveTradingSessionId = await liveTradingService.startLiveTrading({

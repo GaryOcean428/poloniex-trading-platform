@@ -45,6 +45,12 @@ const TradeHistory: React.FC = () => {
 
   // Generate mock trade data
   useEffect(() => {
+    const pickOne = <T,>(arr: readonly T[], fallback: T): T => {
+      if (arr.length === 0) return fallback;
+      const idx = Math.floor(Math.random() * arr.length);
+      return arr[idx] ?? fallback;
+    };
+
     const generateMockTrades = (): TradeHistoryItem[] => {
       const mockData: TradeHistoryItem[] = [];
       const pairs = ['BTC-USDT', 'ETH-USDT', 'ADA-USDT', 'DOT-USDT', 'SOL-USDT'];
@@ -54,14 +60,14 @@ const TradeHistory: React.FC = () => {
       const statuses: TradeHistoryItem['status'][] = ['filled', 'partial', 'cancelled'];
 
       for (let i = 0; i < 200; i++) {
-        const pair = pairs[Math.floor(Math.random() * pairs.length)];
-        const side = sides[Math.floor(Math.random() * sides.length)];
-        const type = types[Math.floor(Math.random() * types.length)];
+        const pair = pickOne<string>(pairs, 'BTC-USDT');
+        const side = pickOne<'buy' | 'sell'>(sides, 'buy');
+        const type = pickOne<'market' | 'limit'>(types, 'market');
         const amount = Math.random() * 10;
         const price = getBasePrice(pair) * (0.9 + Math.random() * 0.2);
         const total = amount * price;
         const fee = total * 0.001; // 0.1% fee
-        const strategy = strategies[Math.floor(Math.random() * strategies.length)];
+        const strategy = pickOne<string>(strategies, 'Manual');
         const timestamp = new Date(Date.now() - Math.random() * 60 * 24 * 60 * 60 * 1000);
 
         mockData.push({
@@ -78,7 +84,7 @@ const TradeHistory: React.FC = () => {
           pnl: (Math.random() - 0.5) * total * 0.1, // Random P&L
           strategy,
           orderId: `order_${Math.random().toString(36).substr(2, 9)}`,
-          status: statuses[Math.floor(Math.random() * statuses.length)]
+          status: pickOne<TradeHistoryItem['status']>(statuses, 'filled')
         });
       }
 
@@ -209,10 +215,10 @@ const TradeHistory: React.FC = () => {
       Status: trade.status
     }));
 
-    const csvContent = [
-      Object.keys(csvData[0]).join(','),
-      ...csvData.map(row => Object.values(row).join(','))
-    ].join('\n');
+    if (csvData.length === 0) return;
+    const header = Object.keys(csvData[0] ?? {}).join(',');
+    const rows = csvData.map(row => Object.values(row).join(','));
+    const csvContent = [header, ...rows].join('\n');
 
     const blob = new Blob([csvContent], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);

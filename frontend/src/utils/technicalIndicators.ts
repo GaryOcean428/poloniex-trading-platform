@@ -20,19 +20,22 @@ export function calculateSMA(data: MarketData[], period: number): TechnicalIndic
   values.push(sum / period);
 
   for (let i = period; i < prices.length; i++) {
-    sum = sum - prices[i - period] + prices[i];
+    const leaving = prices[i - period] ?? 0;
+    const entering = prices[i] ?? leaving;
+    sum = sum - leaving + entering;
     values.push(sum / period);
   }
 
-  const currentValue = values[values.length - 1];
-  const previousValue = values[values.length - 2] || currentValue;
+  const currentValue = values[values.length - 1] ?? 0;
+  const previousValue = values[values.length - 2] ?? currentValue;
+  const denom = currentValue === 0 ? 1 : currentValue;
 
   return {
     values,
     currentValue,
     previousValue,
     signal: currentValue > previousValue ? "BUY" : currentValue < previousValue ? "SELL" : "HOLD",
-    strength: Math.abs(currentValue - previousValue) / currentValue,
+    strength: Math.abs(currentValue - previousValue) / denom,
   };
 }
 
@@ -49,19 +52,22 @@ export function calculateEMA(data: MarketData[], period: number): TechnicalIndic
   values.push(initialSMA);
 
   for (let i = period; i < prices.length; i++) {
-    const ema = prices[i] * smoothing + values[values.length - 1] * (1 - smoothing);
+    const price = prices[i] ?? prices[i - 1] ?? initialSMA;
+    const prev = values[values.length - 1] ?? initialSMA;
+    const ema = price * smoothing + prev * (1 - smoothing);
     values.push(ema);
   }
 
-  const currentValue = values[values.length - 1];
-  const previousValue = values[values.length - 2] || currentValue;
+  const currentValue = values[values.length - 1] ?? initialSMA;
+  const previousValue = values[values.length - 2] ?? currentValue;
+  const denom = currentValue === 0 ? 1 : currentValue;
 
   return {
     values,
     currentValue,
     previousValue,
     signal: currentValue > previousValue ? "BUY" : currentValue < previousValue ? "SELL" : "HOLD",
-    strength: Math.abs(currentValue - previousValue) / currentValue,
+    strength: Math.abs(currentValue - previousValue) / denom,
   };
 }
 
@@ -75,17 +81,20 @@ export function calculateRSI(data: MarketData[], period: number = 14): Technical
 
   const changes: number[] = [];
   for (let i = 1; i < prices.length; i++) {
-    changes.push(prices[i] - prices[i - 1]);
+    const curr = prices[i] ?? prices[i - 1] ?? 0;
+    const prev = prices[i - 1] ?? curr;
+    changes.push(curr - prev);
   }
 
   let avgGain = 0;
   let avgLoss = 0;
 
   for (let i = 0; i < period; i++) {
-    if (changes[i] > 0) {
-      avgGain += changes[i];
+    const ch = changes[i] ?? 0;
+    if (ch > 0) {
+      avgGain += ch;
     } else {
-      avgLoss += Math.abs(changes[i]);
+      avgLoss += Math.abs(ch);
     }
   }
 
@@ -96,8 +105,9 @@ export function calculateRSI(data: MarketData[], period: number = 14): Technical
   values.push(100 - 100 / (1 + rs));
 
   for (let i = period; i < changes.length; i++) {
-    const gain = changes[i] > 0 ? changes[i] : 0;
-    const loss = changes[i] < 0 ? Math.abs(changes[i]) : 0;
+    const change = changes[i] ?? 0;
+    const gain = change > 0 ? change : 0;
+    const loss = change < 0 ? Math.abs(change) : 0;
 
     avgGain = (avgGain * (period - 1) + gain) / period;
     avgLoss = (avgLoss * (period - 1) + loss) / period;
@@ -106,8 +116,8 @@ export function calculateRSI(data: MarketData[], period: number = 14): Technical
     values.push(100 - 100 / (1 + rs));
   }
 
-  const currentValue = values[values.length - 1];
-  const previousValue = values[values.length - 2] || currentValue;
+  const currentValue = values[values.length - 1] ?? 50;
+  const previousValue = values[values.length - 2] ?? currentValue;
 
   let signal: "BUY" | "SELL" | "HOLD" = "HOLD";
   let strength = 0;
@@ -145,29 +155,43 @@ export function calculateMACD(
 
   const macd: number[] = [];
   const startIndex = slowPeriod - fastPeriod;
-
+  // Build MACD only when both EMA samples are available
   for (let i = startIndex; i < fastEMA.values.length; i++) {
-    macd.push(fastEMA.values[i] - slowEMA.values[i - startIndex]);
+    const fast = fastEMA.values[i];
+    const slow = slowEMA.values[i - startIndex];
+    if (fast === undefined || slow === undefined) continue;
+    macd.push(fast - slow);
   }
 
   const signal: number[] = [];
   const smoothing = 2 / (signalPeriod + 1);
 
+  if (macd.length < signalPeriod) {
+    throw new Error(`Insufficient data for MACD signal: need ${signalPeriod} macd samples`);
+  }
+
   const initialSignalSMA = macd.slice(0, signalPeriod).reduce((a, b) => a + b, 0) / signalPeriod;
   signal.push(initialSignalSMA);
 
   for (let i = signalPeriod; i < macd.length; i++) {
-    const signalEMA = macd[i] * smoothing + signal[signal.length - 1] * (1 - smoothing);
+    const macdVal = macd[i];
+    const prevSignal = signal[signal.length - 1];
+    if (macdVal === undefined || prevSignal === undefined) continue;
+    const signalEMA = macdVal * smoothing + prevSignal * (1 - smoothing);
     signal.push(signalEMA);
   }
 
   const histogram: number[] = [];
   for (let i = 0; i < signal.length; i++) {
-    histogram.push(macd[i + (macd.length - signal.length)] - signal[i]);
+    const mIdx = i + (macd.length - signal.length);
+    const m = macd[mIdx];
+    const s = signal[i];
+    if (m === undefined || s === undefined) continue;
+    histogram.push(m - s);
   }
 
-  const currentHistogram = histogram[histogram.length - 1];
-  const previousHistogram = histogram[histogram.length - 2] || 0;
+  const currentHistogram = histogram[histogram.length - 1] ?? 0;
+  const previousHistogram = histogram[histogram.length - 2] ?? 0;
 
   let currentSignal: "BULLISH" | "BEARISH" | "NEUTRAL" = "NEUTRAL";
   if (previousHistogram <= 0 && currentHistogram > 0) {
@@ -192,9 +216,12 @@ export function calculateATR(data: MarketData[], period: number = 14): Technical
   const trueRanges: number[] = [];
 
   for (let i = 1; i < data.length; i++) {
-    const high = data[i].high;
-    const low = data[i].low;
-    const prevClose = data[i - 1].close;
+    const current = data[i];
+    const previous = data[i - 1];
+    if (!current || !previous) continue;
+    const high = current.high;
+    const low = current.low;
+    const prevClose = previous.close;
 
     const tr1 = high - low;
     const tr2 = Math.abs(high - prevClose);
@@ -206,6 +233,9 @@ export function calculateATR(data: MarketData[], period: number = 14): Technical
   const values: number[] = [];
 
   // Calculate initial ATR using SMA
+  if (trueRanges.length < period) {
+    throw new Error(`Insufficient true range data: need ${period}`);
+  }
   const sum = trueRanges.slice(0, period).reduce((a, b) => a + b, 0);
   values.push(sum / period);
 
@@ -213,19 +243,21 @@ export function calculateATR(data: MarketData[], period: number = 14): Technical
   for (let i = period; i < trueRanges.length; i++) {
     const prevATR = values[values.length - 1];
     const currentTR = trueRanges[i];
+    if (prevATR === undefined || currentTR === undefined) continue;
     const atr = (prevATR * (period - 1) + currentTR) / period;
     values.push(atr);
   }
 
-  const currentValue = values[values.length - 1];
-  const previousValue = values[values.length - 2] || currentValue;
+  const currentValue = values[values.length - 1] ?? 0;
+  const previousValue = values[values.length - 2] ?? currentValue;
+  const lastPrice = data[data.length - 1]?.close ?? currentValue;
 
   return {
     values,
     currentValue,
     previousValue,
     signal: "HOLD", // ATR is typically used for volatility, not signals
-    strength: currentValue / data[data.length - 1].close, // ATR as percentage of price
+    strength: lastPrice === 0 ? 0 : currentValue / lastPrice, // ATR as percentage of price
   };
 }
 
@@ -253,6 +285,7 @@ export function calculateBollingerBands(
 
     if (slice.length === period) {
       const mean = sma.values[i];
+      if (mean === undefined) continue;
       const variance = slice.reduce((sum, price) => sum + Math.pow(price - mean, 2), 0) / period;
       const standardDeviation = Math.sqrt(variance);
 
@@ -261,9 +294,9 @@ export function calculateBollingerBands(
     }
   }
 
-  const currentPrice = prices[prices.length - 1];
-  const currentUpper = upper[upper.length - 1];
-  const currentLower = lower[lower.length - 1];
+  const currentPrice = prices[prices.length - 1] ?? 0;
+  const currentUpper = upper[upper.length - 1] ?? 0;
+  const currentLower = lower[lower.length - 1] ?? 0;
 
   let currentPosition: "ABOVE_UPPER" | "BELOW_LOWER" | "BETWEEN_BANDS" = "BETWEEN_BANDS";
   if (currentPrice > currentUpper) {
