@@ -328,7 +328,8 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
     }
 
     // Connect to WebSocket for non-WebContainer environments
-    webSocketService.connect()
+    // Support both Promise-returning and void-returning connect implementations
+    Promise.resolve(webSocketService.connect())
       .then(() => {
         if (import.meta.env.DEV) {
           console.info('WebSocket setup complete');

@@ -164,7 +164,12 @@ export const ConnectionTest: React.FC = () => {
     });
 
     return () => {
-      newSocket.disconnect();
+      const anySocket = newSocket as unknown as { disconnect?: () => void; close?: () => void };
+      if (typeof anySocket.disconnect === 'function') {
+        anySocket.disconnect();
+      } else if (typeof anySocket.close === 'function') {
+        anySocket.close();
+      }
     };
   }, [apiUrl, wsUrl, addToast]);
 

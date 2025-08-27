@@ -21,7 +21,7 @@ interface ErrorBoundaryProps {
 }
 
 export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
-  private resetTimeoutId: number | null = null;
+  private resetTimeoutId: ReturnType<typeof setTimeout> | null = null;
   private onWindowError?: (event: ErrorEvent) => void;
   private onUnhandledRejection?: (event: PromiseRejectionEvent) => void;
 
@@ -88,7 +88,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     // Auto-reset after 30 seconds for non-critical errors, but only for first few errors
     if (this.state.errorCount < 3 && !this.isInitializationError(error))
     {
-      this.resetTimeoutId = window.setTimeout(() => {
+      this.resetTimeoutId = globalThis.setTimeout(() => {
         this.handleReset();
       }, 30000);
     }

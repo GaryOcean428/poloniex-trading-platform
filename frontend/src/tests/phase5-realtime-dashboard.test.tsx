@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { BrowserRouter } from 'react-router-dom';
 import LiveTradingDashboard from '@/pages/LiveTradingDashboard';
@@ -26,52 +27,60 @@ vi.mock('chart.js', () => {
   } as any;
 });
 
-// Mock the WebSocket service for both alias and relative imports
-const baseWsMock = {
-  on: vi.fn(),
-  off: vi.fn(),
-  connect: vi.fn(),
-  disconnect: vi.fn(),
-  subscribe: vi.fn(),
-  unsubscribe: vi.fn(),
-  send: vi.fn(),
-  getStats: vi.fn(() => ({
-    connectTime: Date.now(),
-    disconnectTime: null,
-    reconnectAttempts: 0,
-    totalDisconnects: 0
-  })),
-  getHealth: vi.fn(() => ({
-    isHealthy: true,
-    uptime: 1000,
-    latency: 5,
-    reconnectAttempts: 0
-  })),
-  getConnectionHealth: vi.fn(() => ({
-    isHealthy: true,
-    uptime: 1000,
-    latency: 5,
-    reconnectAttempts: 0
-  })),
-  getConnectionStatus: vi.fn(() => 'connected'),
-  isConnected: vi.fn(() => true),
-  isMockMode: vi.fn(() => false)
-};
+// Mock the WebSocket service for both alias and relative imports using hoisted vars
+const { baseWsMock, useWebSocketMock } = vi.hoisted(() => {
+  const base = {
+    on: vi.fn(),
+    off: vi.fn(),
+    connect: vi.fn(),
+    disconnect: vi.fn(),
+    subscribe: vi.fn(),
+    unsubscribe: vi.fn(),
+    subscribeToMarket: vi.fn(),
+    unsubscribeFromMarket: vi.fn(),
+    subscribeToPoloniexV3: vi.fn(),
+    unsubscribeFromPoloniexV3: vi.fn(),
+    send: vi.fn(),
+    getStats: vi.fn(() => ({
+      connectTime: Date.now(),
+      disconnectTime: null,
+      reconnectAttempts: 0,
+      totalDisconnects: 0
+    })),
+    getHealth: vi.fn(() => ({
+      isHealthy: true,
+      uptime: 1000,
+      latency: 5,
+      reconnectAttempts: 0
+    })),
+    getConnectionHealth: vi.fn(() => ({
+      isHealthy: true,
+      uptime: 1000,
+      latency: 5,
+      reconnectAttempts: 0
+    })),
+    getConnectionStatus: vi.fn(() => 'connected'),
+    isConnected: vi.fn(() => true),
+    isMockMode: vi.fn(() => false)
+  } as const;
 
-const useWebSocketMock = vi.fn(() => ({
-  connectionState: 'connected',
-  isMockMode: false,
-  isConnected: true,
-  on: baseWsMock.on,
-  off: baseWsMock.off,
-  connect: baseWsMock.connect,
-  disconnect: baseWsMock.disconnect,
-  subscribe: baseWsMock.subscribe,
-  unsubscribe: baseWsMock.unsubscribe,
-  send: baseWsMock.send,
-  getStats: baseWsMock.getStats,
-  getHealth: baseWsMock.getHealth
-}));
+  const hookMock = vi.fn(() => ({
+    connectionState: 'connected',
+    isMockMode: false,
+    isConnected: true,
+    on: base.on,
+    off: base.off,
+    connect: base.connect,
+    disconnect: base.disconnect,
+    subscribe: base.subscribe,
+    unsubscribe: base.unsubscribe,
+    send: base.send,
+    getStats: base.getStats,
+    getHealth: base.getHealth
+  }));
+
+  return { baseWsMock: base, useWebSocketMock: hookMock };
+});
 
 vi.mock('@/services/websocketService', () => ({
   webSocketService: baseWsMock,
@@ -375,6 +384,7 @@ describe('Phase 5: Real-time WebSocket Trading Dashboard', () => {
     it('should handle WebSocket disconnection gracefully', () => {
       // Mock disconnected state
       (useWebSocket as unknown as Mock).mockReturnValue({
+      (useWebSocket as unknown as Mock).mockReturnValue({
         connectionState: 'disconnected',
         isMockMode: false,
         isConnected: false,
@@ -389,6 +399,7 @@ describe('Phase 5: Real-time WebSocket Trading Dashboard', () => {
 
     it('should handle mock mode appropriately', () => {
       // Mock mock mode
+      (useWebSocket as unknown as Mock).mockReturnValue({
       (useWebSocket as unknown as Mock).mockReturnValue({
         connectionState: 'connected',
         isMockMode: true,
