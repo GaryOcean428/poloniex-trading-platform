@@ -41,7 +41,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     () => {
       // Page visible - ensure connection
       if (!webSocketService.isConnected()) {
-        webSocketService.connect().catch(console.error);
+        Promise.resolve(webSocketService.connect()).catch(console.error);
       }
     },
     () => {
@@ -76,7 +76,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     webSocketService.on('error', handleError);
 
     // Initialize connection
-    webSocketService.connect().catch(console.error);
+    Promise.resolve(webSocketService.connect()).catch(console.error);
 
     // Update connection health periodically
     const healthInterval = setInterval(() => {
