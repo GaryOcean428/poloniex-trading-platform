@@ -1,0 +1,17 @@
+# Railway Service Configuration
+# Forces correct root directories and Railpack builder
+
+version: 1
+
+services:
+  - name: polytrade-fe
+    root: frontend
+    builder: RAILPACK
+    
+  - name: polytrade-be  
+    root: backend
+    builder: RAILPACK
+    
+  - name: ml-worker
+    root: python-services/poloniex
+    builder: RAILPACK
