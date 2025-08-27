@@ -13,7 +13,11 @@ const hoisted = vi.hoisted(() => ({
     connect: vi.fn(),
     disconnect: vi.fn(),
     subscribe: vi.fn(),
-    unsubscribe: vi.fn()
+    unsubscribe: vi.fn(),
+    on: vi.fn(),
+    off: vi.fn(),
+    getConnectionHealth: vi.fn(() => ({ isHealthy: true, uptime: 1000, latency: 5, reconnectAttempts: 0 })),
+    getConnectionStats: vi.fn(() => ({ connectTime: Date.now(), disconnectTime: null, reconnectAttempts: 0, totalDisconnects: 0 })),
   }
 }));
 

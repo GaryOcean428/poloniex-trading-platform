@@ -27,6 +27,6 @@
     }
   },
   "deploy": {
-    "startCommand": "yarn start"
+    "startCommand": "node dist/index.js"
   }
 }
