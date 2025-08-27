@@ -94,7 +94,7 @@ export interface RiskAssessmentAlert {
 }
 
 // Event listener types
-export type EventListener<T = any> = (data: T) => void;
+export type EventListener = (data: unknown) => void;
 
 // Connection state
 export enum ConnectionState {
@@ -163,8 +163,8 @@ class AutonomousTradingWebSocket {
       this.setupEventHandlers();
       this.startConnectionTimeout();
 
-    } catch (error) {
-      // console.error('Error connecting to autonomous trading WebSocket:', error);
+    } catch {
+      // console.error('Error connecting to autonomous trading WebSocket:', _error);
       this.handleConnectionError();
     }
   }
@@ -189,14 +189,14 @@ class AutonomousTradingWebSocket {
   }
 
   // Event Management
-  public on<T = any>(event: string, listener: EventListener<T>): void {
+  public on(event: string, listener: EventListener): void {
     if (!this.listeners.has(event)) {
       this.listeners.set(event, new Set());
     }
     this.listeners.get(event)!.add(listener);
   }
 
-  public off<T = any>(event: string, listener: EventListener<T>): void {
+  public off(event: string, listener: EventListener): void {
     if (this.listeners.has(event)) {
       this.listeners.get(event)!.delete(listener);
     }
@@ -225,20 +225,20 @@ class AutonomousTradingWebSocket {
       this.notifyListeners('connectionStateChanged', this.connectionState);
     });
 
-    this.socket.on('disconnect', (reason: string) => {
+    this.socket.on('disconnect', (_reason: string) => {
       // console.log('Disconnected from autonomous trading WebSocket:', reason);
       this.connectionState = ConnectionState.DISCONNECTED;
       this.clearTimers();
       this.notifyListeners('connectionStateChanged', this.connectionState);
       
       // Attempt reconnection if not manually disconnected
-      if (reason !== 'client namespace disconnect') {
+      if (_reason !== 'client namespace disconnect') {
         this.scheduleReconnect();
       }
     });
 
-    this.socket.on('connect_error', (error: unknown) => {
-      // console.error('Connection error:', error);
+    this.socket.on('connect_error', () => {
+      // console.error('Connection error');
       this.handleConnectionError();
     });
 
@@ -321,15 +321,16 @@ class AutonomousTradingWebSocket {
   private notifyListeners(event: string, data: unknown): void {
     const listeners = this.listeners.get(event);
     if (listeners) {
-      listeners.forEach(listener => {
+      listeners.forEach((listener) => {
         try {
           listener(data);
-        } catch (error) {
-          // console.error(`Error in listener for event ${event}:`, error);
+        } catch {
+          // console.error(`Error in listener for event ${event}`);
         }
       });
     }
   }
+  
 
   private handleConnectionError(): void {
     this.isConnecting = false;

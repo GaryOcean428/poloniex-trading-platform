@@ -51,7 +51,7 @@ class OpenAITradingService {
       });
       this.isConfigured = true;
       // console.log('OpenAI client initialized successfully');
-    } catch (error) {
+    } catch {
       // console.error('Failed to initialize OpenAI client:', error);
     }
   }
@@ -68,7 +68,7 @@ class OpenAITradingService {
       const prompt = this.buildTradingPrompt(tradingData, userQuery);
       
       const completion = await this.client.chat.completions.create({
-        model: "gpt-4.1-nano", // Using the new GPT-4.1 model as specified
+        model: "gpt-4-turbo", // Approved model per project rules
         messages: [
           {
             role: "system",
@@ -101,7 +101,7 @@ class OpenAITradingService {
         createdAt: new Date()
       };
 
-    } catch (error) {
+    } catch {
       // console.error('OpenAI API error:', error);
       return this.getMockInsight(tradingData, userQuery);
     }
@@ -117,7 +117,7 @@ class OpenAITradingService {
       Provide a brief market outlook, key trends, and overall sentiment. Include any significant market-moving events or technical patterns.`;
 
       const completion = await this.client.chat.completions.create({
-        model: "gpt-4.1-nano",
+        model: "gpt-4-turbo",
         messages: [
           {
             role: "system",
@@ -143,7 +143,7 @@ class OpenAITradingService {
         createdAt: new Date()
       };
 
-    } catch (error) {
+    } catch {
       // console.error('OpenAI API error:', error);
       return this.getMockMarketAnalysis(symbols);
     }
@@ -193,8 +193,10 @@ class OpenAITradingService {
     // Look for confidence indicators in the text
     const confidenceRegex = /confidence[:\s]+(\d+)%?/i;
     const match = content.match(confidenceRegex);
-    if (match) {
-      return parseInt(match[1]);
+    const group = match?.[1];
+    if (group) {
+      const parsed = parseInt(group, 10);
+      if (!Number.isNaN(parsed)) return parsed;
     }
     
     // Fallback: estimate confidence based on language
@@ -231,7 +233,30 @@ class OpenAITradingService {
       }
     ];
 
-    return mockInsights[Math.floor(Math.random() * mockInsights.length)];
+    if (mockInsights.length === 0) {
+      return {
+        type: 'analysis',
+        title: `${data.symbol} Analysis`,
+        content: `Analysis unavailable. Current price: $${data.price.toFixed(2)}.`,
+        confidence: 70,
+        timeframe: '24-48h',
+        createdAt: new Date(),
+      };
+    }
+    const idx = Math.floor(Math.random() * mockInsights.length);
+    const chosen = mockInsights.at(idx);
+    if (chosen) return chosen;
+    const first = mockInsights[0];
+    if (first) return first;
+    // Should be unreachable due to length check above, but keep a defensive default
+    return {
+      type: 'analysis',
+      title: `${data.symbol} Analysis`,
+      content: `Analysis unavailable. Current price: $${data.price.toFixed(2)}.`,
+      confidence: 70,
+      timeframe: '24-48h',
+      createdAt: new Date(),
+    };
   }
 
   private getMockMarketAnalysis(symbols: string[]): TradingInsight {

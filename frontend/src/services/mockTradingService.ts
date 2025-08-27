@@ -857,7 +857,39 @@ export class MockTradingService {
     const avgConfidence = totalTrades > 0 ? totalScore / totalTrades : 0;
 
     // Use the most recent session's detailed breakdown
-    const latestSession = sessions[sessions.length - 1];
+    const latestSession = sessions.at(-1);
+    if (!latestSession) return {
+      overall: Math.round(avgConfidence),
+      profitability: 0,
+      consistency: 0,
+      riskManagement: 0,
+      executionQuality: 0,
+      marketAdaptability: 0,
+      timeStability: 0,
+      components: {
+        winRate: { score: 0, weight: 0.15, value: 0 },
+        profitFactor: { score: 0, weight: 0.2, value: 0 },
+        sharpeRatio: { score: 0, weight: 0.18, value: 0 },
+        maxDrawdown: { score: 0, weight: 0.15, value: 0 },
+        consistency: { score: 0, weight: 0.12, value: 0 },
+        riskAdjustedReturn: { score: 0, weight: 0.1, value: 0 },
+        executionLatency: { score: 0, weight: 0.05, value: 0 },
+        slippageControl: { score: 0, weight: 0.05, value: 0 },
+      },
+      recommendation: "INSUFFICIENT_DATA",
+      requiredConfidence: 75,
+      timeInMockMode: 0,
+      minimumTimeRequired: 7,
+      readinessChecklist: {
+        profitabilityTest: false,
+        riskManagementTest: false,
+        consistencyTest: false,
+        executionTest: false,
+        timeTest: false,
+        drawdownTest: false,
+      },
+    };
+
     const latestConfidence = this.calculateConfidenceScore(latestSession);
 
     return {
