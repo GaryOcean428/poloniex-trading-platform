@@ -104,10 +104,12 @@ const Backtesting: React.FC = () => {
   // Initialize with sample session for demo
   useEffect(() => {
     if (strategies.length > 0 && sessions.length === 0) {
+      const firstStrategy = strategies[0];
+      if (!firstStrategy) return; // Satisfy noUncheckedIndexedAccess
       const sampleSession: BacktestSession = {
         id: '1',
         name: 'Sample Backtest',
-        strategy: strategies[0],
+        strategy: firstStrategy,
         options: backtestOptions,
         result: null,
         advancedMetrics: {
@@ -208,13 +210,13 @@ const Backtesting: React.FC = () => {
 
       setSessions(prev => prev.map(s => s.id === sessionId ? updatedSession : s));
       setActiveSession(updatedSession);
-      setActiveTab('results');
-    } catch (error) {
-      // console.error('Backtest failed:', error);
-      const failedSession = {
-        ...newSession,
-        status: 'failed' as const
-      };
+      setActiveTab('results' as 'setup' | 'data' | 'results' | 'analysis' | 'reports');
+    } catch (_error) {
+    // console.error('Backtest failed:', error);
+    const failedSession = {
+      ...newSession,
+      status: 'failed' as const
+    };
       setSessions(prev => prev.map(s => s.id === sessionId ? failedSession : s));
     } finally {
       setIsRunning(false);
@@ -287,7 +289,7 @@ const Backtesting: React.FC = () => {
   };
   */
 
-  const exportResults = async (format: 'csv' | 'pdf' | 'excel') => {
+  const exportResults = async (_format: 'csv' | 'pdf' | 'excel') => {
     if (!activeSession?.result) return;
     
     // Implement export functionality
@@ -680,7 +682,7 @@ const Backtesting: React.FC = () => {
   const renderDataTab = () => (
     <div className="space-y-6">
       <HistoricalDataManager 
-        onDataLoaded={(data) => {
+        onDataLoaded={(_data) => {
           setHistoricalDataLoaded(true);
           // console.log('Historical data loaded:', data);
         }}
@@ -898,7 +900,7 @@ const Backtesting: React.FC = () => {
             ].map(({ id, label, icon: Icon }) => (
               <button
                 key={id}
-                onClick={() => setActiveTab(id as any)}
+                onClick={() => setActiveTab(id as 'setup' | 'data' | 'results' | 'analysis' | 'reports')}
                 className={`py-2 px-1 border-b-2 font-medium text-sm flex items-center ${
                   activeTab === id
                     ? 'border-blue-500 text-blue-600'

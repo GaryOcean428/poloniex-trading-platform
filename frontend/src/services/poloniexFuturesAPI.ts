@@ -17,7 +17,6 @@ function resolveFuturesBase(raw: string): { baseHost: string; apiPrefix: string 
   try {
     const u = new URL(raw);
     const host = u.origin; // protocol + host
-    const path = u.pathname || "";
 
     // Primary: standard API host
     if (host.includes("api.poloniex.com")) {

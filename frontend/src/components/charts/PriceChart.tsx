@@ -79,6 +79,9 @@ const PriceChart: React.FC<PriceChartProps> = ({ data, pair }) => {
           label: function(context) {
             const dataIndex = context.dataIndex;
             const dataPoint = filteredData[dataIndex];
+            if (!dataPoint) {
+              return [`${pair}: No data`];
+            }
             return [
               `Price: $${dataPoint.close.toFixed(2)}`,
               `High: $${dataPoint.high.toFixed(2)}`,

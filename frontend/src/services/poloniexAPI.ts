@@ -106,14 +106,16 @@ class PoloniexApiClient {
     const queue = this.rateLimitQueue.get(key)!;
     const oneSecondAgo = now - 1000;
 
-    while (queue.length > 0 && queue[0] < oneSecondAgo) {
+    while (queue.length > 0 && queue[0]! < oneSecondAgo) {
       queue.shift();
     }
 
     if (queue.length >= limit) {
-      const oldestRequest = queue[0];
-      const waitTime = 1000 - (now - oldestRequest);
-      await new Promise((resolve) => setTimeout(resolve, waitTime));
+      const oldestRequest = queue[0] ?? now;
+      const waitTime = Math.max(0, 1000 - (now - oldestRequest));
+      if (waitTime > 0) {
+        await new Promise((resolve) => setTimeout(resolve, waitTime));
+      }
     }
 
     queue.push(now);

@@ -23,6 +23,34 @@ const mockEnv = vi.hoisted(() => ({
 
 vi.mock('@/utils/environment', () => ({
   getEnvVariable: (key: string, fallback = '') => mockEnv[key as keyof typeof mockEnv] || fallback,
+  getBackendUrl: () => {
+    const envUrl = mockEnv.VITE_BACKEND_URL;
+    if (envUrl) return envUrl;
+
+    if (mockEnv.VITE_RAILWAY_PUBLIC_DOMAIN) {
+      return `https://${mockEnv.VITE_RAILWAY_PUBLIC_DOMAIN}`;
+    }
+    if (mockEnv.VITE_RAILWAY_PRIVATE_DOMAIN) {
+      return `https://${mockEnv.VITE_RAILWAY_PRIVATE_DOMAIN}`;
+    }
+
+    if (typeof window !== 'undefined' && (window as any).location) {
+      const hostname = window.location.hostname as string;
+      const protocol = (window.location.protocol as string) || 'http:';
+
+      if (hostname === 'localhost' || hostname === '127.0.0.1') {
+        return `${protocol}//${hostname}:8765`;
+      }
+
+      if (hostname.includes('railway.app') || hostname.includes('up.railway.app')) {
+        return 'https://polytrade-be.up.railway.app';
+      }
+
+      return `${protocol}//${hostname}`;
+    }
+
+    return 'http://localhost:8765';
+  },
 }));
 
 describe('WebSocket Configuration', () => {
@@ -129,7 +157,8 @@ describe('WebSocket Configuration', () => {
   describe('getConnectionStrategy', () => {
     it('should return Railway production strategy', () => {
       // Mock production environment and Railway domain
-      vi.stubGlobal('import', { meta: { env: { PROD: true } } });
+      const prevNodeEnv = process.env.NODE_ENV;
+      process.env.NODE_ENV = 'production';
       mockEnv.VITE_RAILWAY_PUBLIC_DOMAIN = 'polytrade-be.up.railway.app';
       
       const strategy = getConnectionStrategy();
@@ -139,9 +168,8 @@ describe('WebSocket Configuration', () => {
         preferWebSocket: true,
         maxRetries: 3,
       });
-      
-      // Restore the global
-      vi.unstubAllGlobals();
+      // Restore env
+      process.env.NODE_ENV = prevNodeEnv;
     });
 
     it('should return development strategy', () => {

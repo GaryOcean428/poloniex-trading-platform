@@ -39,7 +39,6 @@ export class BacktestService {
     strategy: Strategy,
     options: BacktestOptions
   ): Promise<BacktestResult> {
-    try {
       // Load historical data
       const data = await this.getHistoricalData(
         strategy.parameters.pair,
@@ -57,9 +56,11 @@ export class BacktestService {
       for (let i = 50; i < data.length; i++) {
         const marketData = data.slice(0, i + 1);
         const signal = executeStrategy(strategy, marketData);
+        const candle = data[i];
+        if (!candle) continue;
         
         if (signal.signal) {
-          const price = data[i].close;
+          const price = candle.close;
           const amount = this.calculatePositionSize(balance, price);
           
           // Execute trade
@@ -70,7 +71,7 @@ export class BacktestService {
             balance,
             options.feeRate,
             options.slippage,
-            data[i].timestamp
+            candle.timestamp ?? Date.now()
           );
           
           // Update state
@@ -100,10 +101,6 @@ export class BacktestService {
         trades,
         metrics
       };
-    } catch (error) {
-      // console.error('Backtest failed:', error);
-      throw error;
-    }
   }
   
   /**
@@ -286,9 +283,10 @@ export class BacktestService {
     
     trades.forEach(trade => {
       const timestamp = trade.timestamp ?? Date.now();
-      const date = new Date(timestamp).toISOString().split('T')[0];
-      const currentPnL = dailyPnL.get(date) || 0;
-      dailyPnL.set(date, currentPnL + trade.pnl);
+      const [datePart] = new Date(timestamp).toISOString().split('T');
+      if (!datePart) return; // safety for strict indexing
+      const currentPnL = dailyPnL.get(datePart) || 0;
+      dailyPnL.set(datePart, currentPnL + trade.pnl);
     });
     
     return Array.from(dailyPnL.values());
@@ -360,9 +358,12 @@ export class BacktestService {
     let positions = 0;
     
     for (let i = 0; i < trades.length - 1; i++) {
-      if (trades[i].type === 'BUY' && trades[i + 1].type === 'SELL') {
-        const currentTimestamp = trades[i].timestamp ?? Date.now();
-        const nextTimestamp = trades[i + 1].timestamp ?? Date.now();
+      const currentTrade = trades[i];
+      const nextTrade = trades[i + 1];
+      if (!currentTrade || !nextTrade) continue;
+      if (currentTrade.type === 'BUY' && nextTrade.type === 'SELL') {
+        const currentTimestamp = currentTrade.timestamp ?? Date.now();
+        const nextTimestamp = nextTrade.timestamp ?? Date.now();
         totalHoldingTime += nextTimestamp - currentTimestamp;
         positions++;
       }
@@ -391,9 +392,20 @@ export class BacktestService {
       }
       
       const param = parameters[paramIndex];
-      const [min, max, step] = ranges[param];
+      if (param === undefined) {
+        generateCombination(current, paramIndex + 1);
+        return;
+      }
+      const tuple = ranges[param];
+      if (!tuple) {
+        // Skip unknown parameter key
+        generateCombination(current, paramIndex + 1);
+        return;
+      }
+      const [min, max, step] = tuple;
       
       for (let value = min; value <= max; value += step) {
+        // safe assignment into current params map
         current[param] = value;
         generateCombination(current, paramIndex + 1);
       }

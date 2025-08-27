@@ -146,6 +146,10 @@ docker-compose.override.yml
 docs/env/*.env
 docs/env/**/*.env
 
-
+# Generated shared copies in services
 frontend/src/shared/
 backend/shared/
+
+# CodeQL databases and local tooling
+codeql-dbs/
+tools/

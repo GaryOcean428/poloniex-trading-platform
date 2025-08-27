@@ -104,18 +104,20 @@ export class DQNAgent {
 
   private createModel(): tf.LayersModel {
     const model = tf.sequential();
+    const firstUnits = this.config.hiddenLayers[0] ?? 64;
     model.add(
       tf.layers.dense({
-        units: this.config.hiddenLayers[0],
+        units: firstUnits,
         activation: this.config.activationFunction as any,
         inputShape: [this.config.stateDimension],
       })
     );
 
     for (let i = 1; i < this.config.hiddenLayers.length; i++) {
+      const units = this.config.hiddenLayers[i] ?? 32;
       model.add(
         tf.layers.dense({
-          units: this.config.hiddenLayers[i],
+          units,
           activation: this.config.activationFunction as any,
         })
       );
@@ -165,8 +167,8 @@ export class DQNAgent {
     return tf.tidy(() => {
       const stateTensor = tf.tensor2d([state]);
       const prediction = this.mainModel.predict(stateTensor) as tf.Tensor;
-      const action = tf.argMax(prediction, 1).dataSync()[0];
-      return action;
+      const computed = tf.argMax(prediction, 1).dataSync()[0];
+      return computed ?? 0;
     });
   }
 
@@ -186,20 +188,23 @@ export class DQNAgent {
     const currentQs = this.mainModel.predict(statesTensor) as tf.Tensor;
     const nextQs = this.targetModel.predict(nextStatesTensor) as tf.Tensor;
 
-    const currentQsArray = currentQs.arraySync() as number[][];
-    const nextQsArray = nextQs.arraySync() as number[][];
-    const targetQsArray = [...currentQsArray];
+    const currentQsArray = (currentQs.arraySync() as number[][]) ?? [];
+    const nextQsArray = (nextQs.arraySync() as number[][]) ?? [];
+    const targetQsArray: number[][] = currentQsArray.map((row) => row ? [...row] : []);
 
     for (let i = 0; i < batch.length; i++) {
-      const action = actions[i];
-      const reward = rewards[i];
-      const done = dones[i];
+      const row = targetQsArray[i];
+      if (!row) continue;
+      const act = actions[i] ?? 0;
+      const rew = rewards[i] ?? 0;
+      const done = dones[i] ?? false;
+      const nextRow = nextQsArray[i] ?? [];
 
       if (done) {
-        targetQsArray[i][action] = reward;
+        row[act] = rew;
       } else {
-        const maxNextQ = Math.max(...nextQsArray[i]);
-        targetQsArray[i][action] = reward + this.config.gamma * maxNextQ;
+        const maxNextQ = Math.max(...(nextRow.length ? nextRow : [0]));
+        row[act] = rew + this.config.gamma * maxNextQ;
       }
     }
 
@@ -230,7 +235,9 @@ export class DQNAgent {
       }
     }
 
-    return indices.map((index) => this.memory[index]);
+    return indices
+      .map((index) => this.memory[index])
+      .filter((e): e is Experience => e !== undefined);
   }
 
   async saveModel(path: string): Promise<void> {

@@ -12,6 +12,28 @@ export interface AISignal {
   takeProfit?: number;
 }
 
+// Explicit feature set to satisfy strict typing
+interface FeatureSet {
+  currentPrice: number;
+  priceChange: number;
+  volatility: number;
+  sma5: number;
+  sma10: number;
+  sma20: number;
+  rsi: number;
+  macdLine: number;
+  macdSignal: number;
+  macdHistogram: number;
+  bbUpper: number;
+  bbMiddle: number;
+  bbLower: number;
+  avgVolume: number;
+  volumeRatio: number;
+  momentum: number;
+  pricePosition: number;
+  [key: string]: number;
+}
+
 export interface AISignalConfig {
   lookbackPeriod: number;
   confidenceThreshold: number;
@@ -88,14 +110,16 @@ export class AISignalGenerator {
   /**
    * Extract relevant features from market data
    */
-  private extractFeatures(marketData: MarketData[]): Record<string, number> {
+  private extractFeatures(marketData: MarketData[]): FeatureSet {
     const recent = marketData.slice(-this.config.lookbackPeriod);
-    const prices = recent.map(d => d.close);
-    const volumes = recent.map(d => d.volume);
+    const prices = recent.map(d => d.close ?? 0);
+    const volumes = recent.map(d => d.volume ?? 0);
 
     // Price-based features
-    const currentPrice = prices[prices.length - 1];
-    const priceChange = (currentPrice - prices[0]) / prices[0];
+    const currentPrice = prices[prices.length - 1] ?? 0;
+    const firstPrice = prices[0] ?? currentPrice;
+    const denomPC = firstPrice !== 0 ? firstPrice : 1;
+    const priceChange = (currentPrice - firstPrice) / denomPC;
     const volatility = this.calculateVolatility(prices);
 
     // Moving averages
@@ -109,11 +133,16 @@ export class AISignalGenerator {
     const bbands = this.calculateBollingerBands(prices, 20);
 
     // Volume features
-    const avgVolume = volumes.reduce((a, b) => a + b, 0) / volumes.length;
-    const volumeRatio = volumes[volumes.length - 1] / avgVolume;
+    const avgVolume = volumes.length > 0 ? volumes.reduce((a, b) => a + b, 0) / volumes.length : 0;
+    const lastVol = volumes[volumes.length - 1] ?? 0;
+    const volumeRatio = avgVolume !== 0 ? lastVol / avgVolume : 0;
 
     // Momentum features
-    const momentum = (prices[prices.length - 1] - prices[prices.length - 5]) / prices[prices.length - 5];
+    const lastPrice = prices[prices.length - 1] ?? 0;
+    const lookbackIdx = prices.length - 5;
+    const refPrice = prices[lookbackIdx] ?? (prices[0] ?? lastPrice);
+    const denomMom = refPrice !== 0 ? refPrice : 1;
+    const momentum = (lastPrice - refPrice) / denomMom;
 
     return {
       currentPrice,
@@ -132,14 +161,14 @@ export class AISignalGenerator {
       avgVolume,
       volumeRatio,
       momentum,
-      pricePosition: (currentPrice - bbands.lower) / (bbands.upper - bbands.lower)
+      pricePosition: (bbands.upper - bbands.lower) !== 0 ? (currentPrice - bbands.lower) / (bbands.upper - bbands.lower) : 0
     };
   }
 
   /**
    * Calculate technical analysis signal
    */
-  private calculateTechnicalSignal(features: Record<string, number>): AISignal {
+  private calculateTechnicalSignal(features: FeatureSet): AISignal {
     let score = 0;
     let confidence = 0;
     const reasons: string[] = [];
@@ -218,7 +247,7 @@ export class AISignalGenerator {
   /**
    * Calculate ML prediction (simplified implementation)
    */
-  private calculateMLPrediction(features: Record<string, number>): AISignal {
+  private calculateMLPrediction(features: FeatureSet): AISignal {
     // This is a simplified ML prediction
     // In a real implementation, this would use trained models
 
@@ -233,9 +262,8 @@ export class AISignalGenerator {
 
     let mlScore = 0;
     Object.entries(weights).forEach(([feature, weight]) => {
-      if (features[feature] !== undefined) {
-        mlScore += this.normalizeFeature(features[feature], feature) * weight;
-      }
+      const val = features[feature] ?? 0;
+      mlScore += this.normalizeFeature(val, feature) * weight;
     });
 
     const confidence = Math.min(Math.abs(mlScore), 1);
@@ -296,7 +324,7 @@ export class AISignalGenerator {
   /**
    * Apply risk management rules
    */
-  private applyRiskManagement(signal: AISignal, features: Record<string, number>): AISignal {
+  private applyRiskManagement(signal: AISignal, features: FeatureSet): AISignal {
     // Adjust for risk tolerance
     const riskMultiplier = {
       'CONSERVATIVE': 0.5,
@@ -337,7 +365,7 @@ export class AISignalGenerator {
 
   // Technical indicator calculations
   private calculateSMA(prices: number[], period: number): number {
-    if (prices.length < period) return prices[prices.length - 1];
+    if (prices.length < period) return prices[prices.length - 1] ?? 0;
     const recent = prices.slice(-period);
     return recent.reduce((a, b) => a + b, 0) / recent.length;
   }
@@ -347,7 +375,9 @@ export class AISignalGenerator {
 
     const changes = [];
     for (let i = 1; i < prices.length; i++) {
-      changes.push(prices[i] - prices[i - 1]);
+      const curr = prices[i] ?? prices[i - 1] ?? 0;
+      const prev = prices[i - 1] ?? curr;
+      changes.push(curr - prev);
     }
 
     const recentChanges = changes.slice(-period);
@@ -376,13 +406,14 @@ export class AISignalGenerator {
 
   private calculateEMA(prices: number[], period: number): number {
     if (prices.length === 0) return 0;
-    if (prices.length === 1) return prices[0];
+    if (prices.length === 1) return prices[0] ?? 0;
 
     const multiplier = 2 / (period + 1);
-    let ema = prices[0];
+    let ema = prices[0] ?? 0;
 
     for (let i = 1; i < prices.length; i++) {
-      ema = (prices[i] * multiplier) + (ema * (1 - multiplier));
+      const price = prices[i] ?? ema;
+      ema = (price * multiplier) + (ema * (1 - multiplier));
     }
 
     return ema;
@@ -408,7 +439,11 @@ export class AISignalGenerator {
 
     const returns = [];
     for (let i = 1; i < prices.length; i++) {
-      returns.push((prices[i] - prices[i - 1]) / prices[i - 1]);
+      const curr = prices[i] ?? prices[i - 1] ?? 0;
+      const prevRaw = prices[i - 1];
+      const prev = prevRaw !== undefined ? prevRaw : curr;
+      const denom = prev !== 0 ? prev : 1;
+      returns.push((curr - prev) / denom);
     }
 
     const avgReturn = returns.reduce((a, b) => a + b, 0) / returns.length;
@@ -417,7 +452,7 @@ export class AISignalGenerator {
     return Math.sqrt(variance);
   }
 
-  private calculateRiskLevel(features: Record<string, number>): 'LOW' | 'MEDIUM' | 'HIGH' {
+  private calculateRiskLevel(features: FeatureSet): 'LOW' | 'MEDIUM' | 'HIGH' {
     const volatility = features.volatility;
     const volumeRatio = features.volumeRatio;
 
@@ -429,7 +464,7 @@ export class AISignalGenerator {
     return 'LOW';
   }
 
-  private calculateExpectedReturn(score: number, features: Record<string, number>): number {
+  private calculateExpectedReturn(score: number, features: FeatureSet): number {
     // Base expected return on signal strength and market conditions
     const baseReturn = Math.abs(score) * 0.02; // 2% max base return
     const volatilityAdjustment = Math.min(features.volatility * 5, 0.03); // Volatility can add up to 3%

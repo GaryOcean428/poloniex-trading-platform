@@ -36,13 +36,19 @@ const PWAInstallPrompt: React.FC<PWAInstallPromptProps> = ({
   useEffect(() => {
     // Check if app is running in standalone mode
     const checkStandaloneMode = () => {
-      const nav = window.navigator as Navigator & {
-        standalone?: boolean;
-      };
+      const nav = (typeof window !== 'undefined' ? window.navigator : undefined) as (Navigator & { standalone?: boolean }) | undefined;
 
-      const standalone = window.matchMedia('(display-mode: standalone)').matches ||
-        nav.standalone === true ||
-        document.referrer.includes('android-app://');
+      const isStandaloneMatchMedia = typeof window !== 'undefined'
+        && typeof window.matchMedia === 'function'
+        && window.matchMedia('(display-mode: standalone)').matches;
+
+      const isNavigatorStandalone = Boolean(nav && (nav as any).standalone === true);
+
+      const isAndroidReferrer = typeof document !== 'undefined'
+        && typeof document.referrer === 'string'
+        && document.referrer.includes('android-app://');
+
+      const standalone = Boolean(isStandaloneMatchMedia || isNavigatorStandalone || isAndroidReferrer);
 
       setIsStandalone(standalone);
       logger.info('Standalone mode checked', {
@@ -88,30 +94,36 @@ const PWAInstallPrompt: React.FC<PWAInstallPromptProps> = ({
       onInstall?.();
     };
 
-    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-    window.addEventListener('appinstalled', handleAppInstalled);
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+      window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+      window.addEventListener('appinstalled', handleAppInstalled);
+    }
 
     // Check if already installed (with type assertion for getInstalledRelatedApps)
-    const nav = window.navigator as Navigator & {
-      getInstalledRelatedApps?: () => Promise<InstalledApp[]>;
-    };
+    if (typeof window !== 'undefined' && typeof window.navigator !== 'undefined') {
+      const nav = window.navigator as Navigator & {
+        getInstalledRelatedApps?: () => Promise<InstalledApp[]>;
+      };
 
-    if (nav.getInstalledRelatedApps) {
-      nav.getInstalledRelatedApps().then((apps: InstalledApp[]) => {
-        if (apps.length > 0)
-        {
-          logger.info('PWA already installed', {
-            component: 'PWAInstallPrompt',
-            metadata: { appsCount: apps.length }
-          });
-          setShowPrompt(false);
-        }
-      });
+      if (typeof nav.getInstalledRelatedApps === 'function') {
+        nav.getInstalledRelatedApps().then((apps: InstalledApp[]) => {
+          if (apps.length > 0)
+          {
+            logger.info('PWA already installed', {
+              component: 'PWAInstallPrompt',
+              metadata: { appsCount: apps.length }
+            });
+            setShowPrompt(false);
+          }
+        });
+      }
     }
 
     return () => {
-      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-      window.removeEventListener('appinstalled', handleAppInstalled);
+      if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
+        window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+        window.removeEventListener('appinstalled', handleAppInstalled);
+      }
     };
   }, []);
 

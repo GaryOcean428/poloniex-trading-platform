@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { render, screen, within, cleanup } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { BrowserRouter } from 'react-router-dom';
 import SkipLinks from '@/components/SkipLinks';
@@ -19,6 +19,9 @@ vi.mock('@/hooks/useResponsiveNav', () => ({
     screenSize: 'desktop'
   })
 }));
+
+// Ensure each test starts with a clean DOM
+afterEach(() => cleanup());
 
 describe('Quality Improvements - Accessibility & Responsiveness', () => {
   describe('Skip Links', () => {
@@ -125,6 +128,8 @@ describe('Quality Improvements - Accessibility & Responsiveness', () => {
     });
 
     it('should not render when closed', () => {
+      // Ensure previous render (open state) is fully unmounted
+      cleanup();
       const mockOnClose = vi.fn();
       
       render(
@@ -133,7 +138,7 @@ describe('Quality Improvements - Accessibility & Responsiveness', () => {
         </BrowserRouter>
       );
       
-      const nav = screen.queryByRole('dialog');
+      const nav = screen.queryByRole('dialog', { name: /mobile navigation menu/i });
       expect(nav).not.toBeInTheDocument();
     });
   });
@@ -172,7 +177,7 @@ describe('Quality Improvements - Performance', () => {
       );
       
       const status = screen.getByRole('status');
-      const loadingText = screen.getByText('Loading...');
+      const loadingText = within(status).getByText('Loading...');
       
       expect(status).toBeInTheDocument();
       expect(status).toHaveAttribute('aria-label', 'Loading application');

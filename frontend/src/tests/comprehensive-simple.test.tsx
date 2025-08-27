@@ -1,3 +1,5 @@
+import { useState } from 'react';
+import { MemoryRouter } from 'react-router-dom';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { MockModeContext } from '@/context/MockModeContext';
 import { useErrorHandler } from '@/hooks/useErrorHandler';
@@ -18,30 +20,40 @@ describe('Comprehensive System Testing', () => {
   // Error Recovery Mechanisms
   describe('Error Recovery Mechanisms', () => {
     const TestComponent = () => {
-      const throwError = () => {
+      const [shouldThrow, setShouldThrow] = useState(false);
+
+      if (shouldThrow) {
+        // Throw during render so ErrorBoundary can catch it
         throw new Error('Test error');
-      };
+      }
 
       return (
         <div>
-          <button onClick={throwError}>Throw Error</button>
+          <button onClick={() => setShouldThrow(true)}>Throw Error</button>
         </div>
       );
     };
 
     it('should catch and display errors with retry option', async () => {
       render(
-        <ErrorBoundary>
-          <TestComponent />
-        </ErrorBoundary>
+        <MemoryRouter>
+          <ErrorBoundary>
+            <TestComponent />
+          </ErrorBoundary>
+        </MemoryRouter>
       );
 
       // Trigger error
       fireEvent.click(screen.getByText('Throw Error'));
 
-      // Error boundary should display error message
+      // Error boundary should display generic message
       expect(screen.getByText(/Something went wrong/i)).toBeInTheDocument();
-      expect(screen.getByText(/Test error/i)).toBeInTheDocument();
+
+      // Reveal error details toggle before asserting specific message
+      const toggle = screen.getByRole('button', { name: /show.*error details/i });
+      fireEvent.click(toggle);
+      const errorMatches = screen.getAllByText(/Test error/i);
+      expect(errorMatches.length).toBeGreaterThan(0);
 
       // Retry button should be available
       const retryButton = screen.getByText(/Try Again/i);
