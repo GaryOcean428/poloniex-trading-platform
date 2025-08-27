@@ -3,14 +3,12 @@ import {
   Activity, 
   AlertTriangle, 
   CheckCircle2, 
-  Clock, 
   Database, 
   Globe, 
   Info, 
   RefreshCw,
   Server,
   Wifi,
-  Chrome,
   ExternalLink
 } from 'lucide-react';
 import { Link } from 'react-router-dom';

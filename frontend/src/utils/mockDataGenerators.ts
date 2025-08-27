@@ -103,7 +103,8 @@ export const generateRandomMarketData = (
       const reversion = (basePrice - lastClose) * meanReversionFactor;
 
       // Momentum component (continue in same direction)
-      const momentum = (i > 0 ? (lastClose - data[i-1]?.close || 0) : 0) * momentumFactor;
+      const prevClose = i > 0 ? (data[i-1]?.close ?? lastClose) : lastClose;
+      const momentum = (i > 0 ? (lastClose - prevClose) : 0) * momentumFactor;
 
       // Random component
       const random = (Math.random() * 2 - 1) * scaledVolatility * randomFactor;

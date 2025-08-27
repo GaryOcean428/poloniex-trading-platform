@@ -99,7 +99,7 @@ const ExtensionSettings: React.FC<ExtensionSettingsProps> = ({ onClose }) => {
             riskLimit: formData.riskLimit
           }
         },
-        (response: ExtensionResponse) => {
+        (_response: ExtensionResponse) => {
           // console.log('Extension settings updated:', response);
         }
       );
@@ -114,7 +114,7 @@ const ExtensionSettings: React.FC<ExtensionSettingsProps> = ({ onClose }) => {
             apiSecret: formData.apiSecret
           }
         },
-        (response: ExtensionResponse) => {
+        (_response: ExtensionResponse) => {
           // console.log('Extension API credentials updated:', response);
         }
       );

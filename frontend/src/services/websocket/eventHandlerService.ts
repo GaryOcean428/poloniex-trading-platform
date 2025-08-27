@@ -331,7 +331,7 @@ export class EventHandlerService {
       this.notifyListeners("connectionStateChanged", "connected");
     });
 
-    this.socket.on("disconnect", (reason: unknown) => {
+    this.socket.on("disconnect", (_reason: unknown) => {
       // console.log("Socket.IO disconnected:", reason);
       this.notifyListeners("connectionStateChanged", "disconnected");
     });

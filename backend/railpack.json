@@ -1,36 +1,32 @@
 {
-  "version": "1",
-  "build": {
-    "provider": "nodejs",
-    "nodejs": {
-      "version": "22",
-      "packageManager": "yarn"
-    },
+  "$schema": "https://schema.railpack.com",
+  "provider": "node",
+  "steps": {
     "install": {
       "commands": [
-        "corepack enable",
-        "corepack prepare yarn@4.9.2 --activate",
-        "yarn install --immutable"
+        "bash -lc 'corepack enable'",
+        "bash -lc 'corepack prepare yarn@4.3.1 --activate'",
+        "unset YARN_PRODUCTION || true; yarn install --immutable"
       ]
     },
-    "steps": {
-      "copyShared": {
-        "commands": [
-          "rm -rf ./shared",
-          "mkdir -p ./shared",
-          "cp -r ../shared/* ./shared/ 2>/dev/null || echo 'Shared directory not found'"
-        ],
-        "dependsOn": ["install"]
-      },
-      "build": {
-        "commands": ["yarn build"],
-        "dependsOn": ["copyShared"]
-      }
+    "copyShared": {
+      "inputs": [
+        { "step": "install", "include": ["."] }
+      ],
+      "commands": [
+        "rm -rf ./shared",
+        "mkdir -p ./shared",
+        "cp -r ../shared/* ./shared/ || echo 'Shared directory not found'"
+      ]
+    },
+    "build": {
+      "inputs": [
+        { "step": "copyShared", "include": ["."] }
+      ],
+      "commands": ["yarn build"]
     }
   },
   "deploy": {
-    "startCommand": "yarn start",
-    "healthCheckPath": "/healthz",
-    "healthCheckTimeout": 300
+    "startCommand": "yarn start"
   }
 }

@@ -165,7 +165,10 @@ export class PerformanceOptimizer {
         id: `${type}_${Date.now()}_${Math.random()}`,
         type,
         params,
-        resolve,
+        // Wrap to satisfy BatchRequest.resolve: (result: unknown) => void
+        resolve: (result: unknown) => {
+          resolve(result as T);
+        },
         reject,
         timestamp: Date.now()
       };
@@ -380,8 +383,13 @@ export class PerformanceOptimizer {
     const timestamps = this.rateLimiter.get(type)!;
 
     // Remove old timestamps
-    while (timestamps.length > 0 && timestamps[0] < windowStart) {
-      timestamps.shift();
+    while (timestamps.length > 0) {
+      const first = timestamps[0];
+      if (first !== undefined && first < windowStart) {
+        timestamps.shift();
+      } else {
+        break;
+      }
     }
 
     if (timestamps.length >= this.config.maxRequestsPerSecond) {
@@ -419,10 +427,8 @@ export class PerformanceOptimizer {
 
     // Group requests by type
     const grouped = batch.reduce((acc, req) => {
-      if (!acc[req.type]) {
-        acc[req.type] = [];
-      }
-      acc[req.type].push(req);
+      const list = acc[req.type] ?? (acc[req.type] = []);
+      list.push(req);
       return acc;
     }, {} as Record<string, BatchRequest[]>);
 
@@ -435,7 +441,8 @@ export class PerformanceOptimizer {
         });
       } catch (error) {
         requests.forEach(req => {
-          req.reject(error);
+          const err = error instanceof Error ? error : new Error(String(error));
+          req.reject(err);
         });
       }
     }
@@ -668,12 +675,12 @@ export class OptimizedWebSocket {
         this.attemptReconnect();
       };
 
-      this.ws.onerror = (error) => {
+      this.ws.onerror = (_error) => {
         // console.error('WebSocket error:', error);
         this.attemptReconnect();
       };
 
-    } catch (error) {
+    } catch (_error) {
       // console.error('Failed to create WebSocket:', error);
       this.attemptReconnect();
     }

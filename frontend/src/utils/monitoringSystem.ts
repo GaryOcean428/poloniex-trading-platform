@@ -213,6 +213,7 @@ export class MonitoringSystem {
     if (priceHistory.length >= 2) {
       const currentPrice = data.close;
       const previousPrice = priceHistory[priceHistory.length - 2];
+      if (previousPrice === undefined) return;
       const changePercent = ((currentPrice - previousPrice) / previousPrice) * 100;
       
       if (Math.abs(changePercent) > 5) {
@@ -356,7 +357,7 @@ export class MonitoringSystem {
     const cutoff = Date.now() - (hours * 60 * 60 * 1000);
     return this.performanceHistory.filter(m => m.timestamp >= cutoff);
   }
-
+  
   /**
    * Generate performance report
    */
@@ -366,15 +367,21 @@ export class MonitoringSystem {
     
     const latest = metrics[metrics.length - 1];
     const oldest = metrics[0];
+    if (!latest || !oldest) return null;
+    
+    const winRateAvg = metrics.reduce((sum, m) => sum + m.winRate, 0) / metrics.length;
+    const drawdownAvg = metrics.reduce((sum, m) => sum + m.currentDrawdown, 0) / metrics.length;
+    const latencyAvg = metrics.reduce((sum, m) => sum + m.apiLatency, 0) / metrics.length;
+    const uptimePct = (metrics.filter(m => m.successRate > 0.95).length / metrics.length) * 100;
     
     return {
       period: `${hours} hours`,
       totalPnLChange: latest.totalPnL - oldest.totalPnL,
-      avgWinRate: metrics.reduce((sum, m) => sum + m.winRate, 0) / metrics.length,
-      avgDrawdown: metrics.reduce((sum, m) => sum + m.currentDrawdown, 0) / metrics.length,
+      avgWinRate: winRateAvg,
+      avgDrawdown: drawdownAvg,
       maxDrawdown: Math.max(...metrics.map(m => m.currentDrawdown)),
-      avgLatency: metrics.reduce((sum, m) => sum + m.apiLatency, 0) / metrics.length,
-      uptime: (metrics.filter(m => m.successRate > 0.95).length / metrics.length) * 100,
+      avgLatency: latencyAvg,
+      uptime: uptimePct,
       alertsTriggered: this.alerts.filter(a => a.timestamp >= Date.now() - (hours * 60 * 60 * 1000)).length
     };
   }
@@ -438,7 +445,7 @@ export class MonitoringSystem {
    */
   private setupNotificationHandlers(): void {
     // Toast notifications
-    this.notificationHandlers.set('toast', async (alert: Alert) => {
+    this.notificationHandlers.set('toast', async (_alert: Alert) => {
       // This would integrate with your toast system
       // console.log(`Toast: ${alert.title} - ${alert.message}`);
     });
@@ -460,15 +467,15 @@ export class MonitoringSystem {
         // Play alert sound
         try {
           const audio = new Audio('/alert-sound.mp3');
-          audio.play().catch(e => console.warn('Could not play alert sound:', e));
-        } catch (error) {
-          // console.warn('Alert sound not available');
+          audio.play().catch(e => logger.warn('Could not play alert sound', 'NotificationService', undefined, e));
+        } catch {
+          // Alert sound not available
         }
       }
     });
     
     // Webhook notifications (placeholder)
-    this.notificationHandlers.set('webhook', async (alert: Alert) => {
+    this.notificationHandlers.set('webhook', async (_alert: Alert) => {
       // This would send to configured webhook URL
       // console.log(`Webhook: ${JSON.stringify(alert)}`);
     });
@@ -579,7 +586,9 @@ export class MonitoringSystem {
    * Get metric value from performance metrics
    */
   private getMetricValue(metrics: PerformanceMetrics, metricName: string): number | undefined {
-    return (metrics as any)[metricName];
+    const key = metricName as keyof PerformanceMetrics;
+    const value = metrics[key];
+    return typeof value === 'number' ? value : undefined;
   }
 
   /**
@@ -603,8 +612,11 @@ export class MonitoringSystem {
   /**
    * Update component status
    */
-  private updateComponentStatus(component: keyof SystemStatus['components'], status: string): void {
-    (this.systemStatus.components as any)[component] = status;
+  private updateComponentStatus<K extends keyof SystemStatus['components']>(
+    component: K,
+    status: SystemStatus['components'][K]
+  ): void {
+    this.systemStatus.components[component] = status;
     this.updateOverallStatus();
   }
 
@@ -666,6 +678,7 @@ export class MonitoringSystem {
   private checkAlertRules(): void {
     if (this.performanceHistory.length > 0) {
       const latestMetrics = this.performanceHistory[this.performanceHistory.length - 1];
+      if (!latestMetrics) return;
       this.checkMetricAlerts(latestMetrics);
     }
   }
@@ -700,10 +713,14 @@ export class MonitoringSystem {
   private calculateVolatility(prices: number[]): number {
     if (prices.length < 2) return 0;
     
-    const returns = [];
+    const returns: number[] = [];
     for (let i = 1; i < prices.length; i++) {
-      returns.push((prices[i] - prices[i - 1]) / prices[i - 1]);
+      const curr = prices[i];
+      const prev = prices[i - 1];
+      if (curr === undefined || prev === undefined) continue;
+      returns.push((curr - prev) / prev);
     }
+    if (returns.length === 0) return 0;
     
     const mean = returns.reduce((sum, ret) => sum + ret, 0) / returns.length;
     const variance = returns.reduce((sum, ret) => sum + Math.pow(ret - mean, 2), 0) / returns.length;
