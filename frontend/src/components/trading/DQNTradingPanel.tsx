@@ -244,6 +244,10 @@ const DQNTradingPanel: React.FC = () => {
 
     // Get the latest action
     const latestAction = actions[0];
+    if (!latestAction) {
+      setError('No actions available');
+      return;
+    }
 
     if (latestAction.action === 'buy')
     {

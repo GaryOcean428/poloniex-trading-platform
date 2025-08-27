@@ -69,15 +69,16 @@ class LiveAutonomousTradingEngine {
       : def;
   }
   private toStr(v: unknown, def = ""): string {
-    return typeof v === "string" ? v : v != null ? String(v) : def;
+    return typeof v === "string" ? v : (v !== null && v !== undefined) ? String(v) : def;
   }
 
   // Initialize WebSocket connection for real-time updates
   private initializeWebSocketConnection(): void {
     if (!this.useBackend) return;
 
-    autonomousTradingWebSocket.on("connectionStateChanged", (state: string) => {
-      this.isConnected = state === "connected";
+    autonomousTradingWebSocket.on("connectionStateChanged", (state: unknown) => {
+      const s = typeof state === "string" ? state : String(state);
+      this.isConnected = s === "connected";
       this.notifyListeners("connectionStateChanged", {
         connected: this.isConnected,
       });
@@ -703,13 +704,15 @@ class LiveAutonomousTradingEngine {
     if (!this.listeners.has(event)) {
       this.listeners.set(event, new Set());
     }
-    this.listeners.get(event).add(listener);
+    const set = this.listeners.get(event);
+    if (set) {
+      set.add(listener);
+    }
   }
 
   public off(event: string, listener: (data: unknown) => void): void {
-    if (this.listeners.has(event)) {
-      this.listeners.get(event).delete(listener);
-    }
+    const set = this.listeners.get(event);
+    if (set) set.delete(listener);
   }
 
   private notifyListeners(event: string, data: unknown): void {

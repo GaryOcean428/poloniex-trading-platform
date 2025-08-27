@@ -106,7 +106,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     }
   }
 
-  private logError = (error: Error, errorInfo: ErrorInfo) => {
+  private logError = (error: Error, _errorInfo: ErrorInfo) => {
     // Log to console for development
     // console.error('ErrorBoundary caught an error:', error);
     // console.error('Error info:', errorInfo);

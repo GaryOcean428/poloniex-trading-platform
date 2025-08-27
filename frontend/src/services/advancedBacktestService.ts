@@ -157,7 +157,9 @@ export class AdvancedBacktestService {
       const signal = executeStrategy(strategy, marketData);
 
       if (signal.signal) {
-        const price = primaryData[i].close;
+        const candle = primaryData[i];
+        if (!candle) continue;
+        const price = candle.close;
         const amount = this.calculateOptimalPositionSize(
           balance,
           price,
@@ -171,7 +173,7 @@ export class AdvancedBacktestService {
           amount,
           balance,
           options,
-          marketData[marketData.length - 1]
+          marketData[marketData.length - 1] as MarketData
         );
 
         trades.push(trade);
@@ -184,7 +186,7 @@ export class AdvancedBacktestService {
 
         const drawdown = (highWaterMark - balance) / highWaterMark;
         equityCurve.push({
-          timestamp: primaryData[i].timestamp,
+          timestamp: candle.timestamp,
           balance,
           drawdown,
         });
@@ -345,16 +347,16 @@ export class AdvancedBacktestService {
     marketData: MarketData[]
   ): number {
     // Calculate recent volatility
-    const returns = marketData
-      .slice(-20)
-      .map((candle, i) => {
-        if (i === 0) return 0;
-        return (
-          (candle.close - marketData[marketData.length - 20 + i - 1].close) /
-          marketData[marketData.length - 20 + i - 1].close
-        );
-      })
-      .slice(1);
+    const window = marketData.slice(-20);
+    const returns: number[] = [];
+    for (let i = 1; i < window.length; i++) {
+      const prev = window[i - 1];
+      const cur = window[i];
+      if (!prev || !cur) continue;
+      const denom = prev.close || 0;
+      const r = denom !== 0 ? (cur.close - prev.close) / denom : 0;
+      returns.push(r);
+    }
 
     const volatility = Math.sqrt(
       returns.reduce((sum, r) => sum + r * r, 0) / returns.length
@@ -508,11 +510,12 @@ export class AdvancedBacktestService {
       monthlyReturns,
       volatility: stdDev,
       profitFactor: this.calculateProfitFactor(trades),
-      recoveryFactor:
-        maxDrawdown > 0
-          ? (trades[trades.length - 1]?.balance - initialBalance) /
-            (maxDrawdown * initialBalance)
-          : 0,
+      recoveryFactor: (() => {
+        if (maxDrawdown <= 0) return 0;
+        const last = trades.length > 0 ? trades[trades.length - 1] : undefined;
+        const lastBalance = last ? last.balance : initialBalance;
+        return (lastBalance - initialBalance) / (maxDrawdown * initialBalance);
+      })(),
       averageWin:
         positiveReturns.reduce((sum, r) => sum + r, 0) /
           positiveReturns.length || 0,
@@ -666,11 +669,13 @@ export class AdvancedBacktestService {
       monthlyReturns,
       volatility: this.calculateVolatility(dailyReturns),
       profitFactor: this.calculateProfitFactor(trades),
-      recoveryFactor:
-        this.calculateMaxDrawdown(trades) > 0
-          ? (trades[trades.length - 1]?.balance - initialBalance) /
-            (this.calculateMaxDrawdown(trades) * initialBalance)
-          : 0,
+      recoveryFactor: (() => {
+        const mdd = this.calculateMaxDrawdown(trades);
+        if (mdd <= 0) return 0;
+        const last = trades.length > 0 ? trades[trades.length - 1] : undefined;
+        const lastBalance = last ? last.balance : initialBalance;
+        return (lastBalance - initialBalance) / (mdd * initialBalance);
+      })(),
       averageWin:
         positiveReturns.reduce((sum, t) => sum + t.pnl, 0) /
           positiveReturns.length || 0,
@@ -703,9 +708,9 @@ export class AdvancedBacktestService {
     trades.forEach((trade) => {
       // Add null safety for timestamp
       if (trade.timestamp) {
-        const date = new Date(trade.timestamp).toISOString().split("T")[0];
-        const currentPnL = dailyPnL.get(date) || 0;
-        dailyPnL.set(date, currentPnL + trade.pnl);
+        const date: string = (new Date(trade.timestamp).toISOString().split("T")[0]) ?? "";
+        const currentPnL = dailyPnL.get(date) ?? 0;
+        dailyPnL.set(date, currentPnL + (trade.pnl ?? 0));
       }
     });
 
@@ -719,9 +724,9 @@ export class AdvancedBacktestService {
       // Add null safety for timestamp
       if (trade.timestamp) {
         const date = new Date(trade.timestamp);
-        const monthKey = `${date.getFullYear()}-${date.getMonth() + 1}`;
-        const currentPnL = monthlyPnL.get(monthKey) || 0;
-        monthlyPnL.set(monthKey, currentPnL + trade.pnl);
+        const monthKey: string = `${date.getFullYear()}-${date.getMonth() + 1}`;
+        const currentPnL = monthlyPnL.get(monthKey) ?? 0;
+        monthlyPnL.set(monthKey, currentPnL + (trade.pnl ?? 0));
       }
     });
 
@@ -772,10 +777,13 @@ export class AdvancedBacktestService {
     let positions = 0;
 
     for (let i = 0; i < trades.length - 1; i++) {
-      if (trades[i].type === "BUY" && trades[i + 1].type === "SELL") {
+      const t = trades[i];
+      const tNext = trades[i + 1];
+      if (!t || !tNext) continue;
+      if (t.type === "BUY" && tNext.type === "SELL") {
         // Add null safety for timestamps
-        if (trades[i + 1].timestamp && trades[i].timestamp) {
-          totalHoldingTime += (trades[i + 1]?.timestamp ?? 0) - (trades[i]?.timestamp ?? 0);
+        if (tNext.timestamp && t.timestamp) {
+          totalHoldingTime += (tNext.timestamp ?? 0) - (t.timestamp ?? 0);
           positions++;
         }
       }
@@ -794,14 +802,14 @@ export class AdvancedBacktestService {
     for (let i = 0; i < n; i++) {
       for (let j = 0; j < n; j++) {
         if (i === j) {
-          correlationMatrix[i][j] = 1;
+          (correlationMatrix[i] ?? (correlationMatrix[i] = [] as number[]))[j] = 1;
         } else {
-          const returns1 = results[i].trades.map((t) => t.pnlPercent);
-          const returns2 = results[j].trades.map((t) => t.pnlPercent);
-          correlationMatrix[i][j] = this.calculateCorrelation(
-            returns1,
-            returns2
-          );
+          const resI = results[i];
+          const resJ = results[j];
+          const returns1 = resI?.trades?.map((t) => t.pnlPercent) ?? [];
+          const returns2 = resJ?.trades?.map((t) => t.pnlPercent) ?? [];
+          (correlationMatrix[i] ?? (correlationMatrix[i] = [] as number[]))[j] =
+            this.calculateCorrelation(returns1, returns2);
         }
       }
     }
@@ -821,8 +829,11 @@ export class AdvancedBacktestService {
     let sumSq2 = 0;
 
     for (let i = 0; i < n; i++) {
-      const diff1 = returns1[i] - mean1;
-      const diff2 = returns2[i] - mean2;
+      const v1 = returns1.at(i);
+      const v2 = returns2.at(i);
+      if (v1 === undefined || v2 === undefined) continue;
+      const diff1 = v1 - mean1;
+      const diff2 = v2 - mean2;
       numerator += diff1 * diff2;
       sumSq1 += diff1 * diff1;
       sumSq2 += diff2 * diff2;
@@ -842,9 +853,11 @@ export class AdvancedBacktestService {
     for (let i = 0; i < maxLength; i++) {
       let weightedReturn = 0;
       for (let j = 0; j < results.length; j++) {
-        const trade = results[j].trades[i];
+        const res = results[j];
+        const trade = res?.trades?.[i];
+        const w = weights[j] ?? 0;
         if (trade) {
-          weightedReturn += (trade.pnlPercent / 100) * weights[j];
+          weightedReturn += (trade.pnlPercent / 100) * w;
         }
       }
       portfolioReturns.push(weightedReturn);
@@ -860,9 +873,12 @@ export class AdvancedBacktestService {
   ): number {
     // Simplified diversification ratio calculation
     const weightedVolatility = weights.reduce((sum, w, i) => {
+      const resI = results[i];
+      const tradesI = resI?.trades ?? [];
+      if (tradesI.length === 0) return sum;
       const volatility = Math.sqrt(
-        results[i].trades.reduce((s, t) => s + t.pnlPercent * t.pnlPercent, 0) /
-          results[i].trades.length
+        tradesI.reduce((s, t) => s + t.pnlPercent * t.pnlPercent, 0) /
+          tradesI.length
       );
       return sum + w * volatility;
     }, 0);
@@ -871,20 +887,25 @@ export class AdvancedBacktestService {
     let portfolioVariance = 0;
     for (let i = 0; i < weights.length; i++) {
       for (let j = 0; j < weights.length; j++) {
+        const resI = results[i];
+        const resJ = results[j];
+        const tradesI = resI?.trades ?? [];
+        const tradesJ = resJ?.trades ?? [];
+        if (tradesI.length === 0 || tradesJ.length === 0) continue;
+
         const vol_i = Math.sqrt(
-          results[i].trades.reduce(
-            (s, t) => s + t.pnlPercent * t.pnlPercent,
-            0
-          ) / results[i].trades.length
+          tradesI.reduce((s, t) => s + t.pnlPercent * t.pnlPercent, 0) /
+            tradesI.length
         );
         const vol_j = Math.sqrt(
-          results[j].trades.reduce(
-            (s, t) => s + t.pnlPercent * t.pnlPercent,
-            0
-          ) / results[j].trades.length
+          tradesJ.reduce((s, t) => s + t.pnlPercent * t.pnlPercent, 0) /
+            tradesJ.length
         );
-        portfolioVariance +=
-          weights[i] * weights[j] * correlationMatrix[i][j] * vol_i * vol_j;
+        const corrRow = correlationMatrix[i] ?? [];
+        const corr = corrRow[j] ?? 0;
+        const wi = weights[i] ?? 0;
+        const wj = weights[j] ?? 0;
+        portfolioVariance += wi * wj * corr * vol_i * vol_j;
       }
     }
 

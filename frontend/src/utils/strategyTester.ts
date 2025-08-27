@@ -91,6 +91,39 @@ export function backtestStrategy(
   marketData: MarketData[],
   options: Partial<StrategyTestOptions> = {}
 ): BacktestResult {
+  // Handle empty data safely
+  if (!marketData || marketData.length === 0) {
+    const now = new Date();
+    return {
+      strategy,
+      startDate: now,
+      endDate: now,
+      initialBalance: DEFAULT_TEST_OPTIONS.initialBalance,
+      finalBalance: DEFAULT_TEST_OPTIONS.initialBalance,
+      totalTrades: 0,
+      winningTrades: 0,
+      losingTrades: 0,
+      winRate: 0,
+      profitFactor: 0,
+      maxDrawdown: 0,
+      maxDrawdownPercent: 0,
+      sharpeRatio: 0,
+      trades: [],
+      equityCurve: [],
+      parameters: strategy.parameters,
+      marketData: [],
+      metrics: {
+        totalProfit: 0,
+        totalLoss: 0,
+        netProfit: 0,
+        averageProfit: 0,
+        averageLoss: 0,
+        averageTrade: 0,
+        returnPercent: 0,
+        annualizedReturn: 0,
+      },
+    };
+  }
   // Merge default options with provided options
   const testOptions: StrategyTestOptions = {
     ...DEFAULT_TEST_OPTIONS,
@@ -99,6 +132,8 @@ export function backtestStrategy(
 
   // Sort market data by timestamp
   const sortedData = [...marketData].sort((a, b) => a.timestamp - b.timestamp);
+  const firstCandle = sortedData[0];
+  const lastCandleInitial = sortedData[sortedData.length - 1];
 
   // Initialize backtest state
   const balance = testOptions.initialBalance;
@@ -119,12 +154,15 @@ export function backtestStrategy(
   // Daily returns for Sharpe ratio
   const dailyReturns: number[] = [];
   let lastDayEquity = balance;
-  let lastDay = new Date(sortedData[0].timestamp).toDateString();
+  let lastDay = (
+    firstCandle ? new Date(firstCandle.timestamp) : new Date(0)
+  ).toDateString();
 
   // Process each candle
   for (let i = 50; i < sortedData.length; i++) {
     // Start at 50 to have enough data for indicators
     const currentCandle = sortedData[i];
+    if (!currentCandle) continue;
     const currentDate = new Date(currentCandle.timestamp);
     const currentPrice = currentCandle.close;
 
@@ -184,11 +222,17 @@ export function backtestStrategy(
   }
 
   // Close any remaining open positions at the last price
-  const lastCandle = sortedData[sortedData.length - 1];
-  closeAllPositions(openPositions, trades, lastCandle);
+  const lastCandle = lastCandleInitial;
+  if (lastCandle) {
+    closeAllPositions(openPositions, trades, lastCandle);
+  }
 
   // Recalculate final equity
-  const finalEquity = calculateEquity(balance, [], lastCandle.close);
+  const finalEquity = calculateEquity(
+    balance,
+    [],
+    lastCandle ? lastCandle.close : equity
+  );
 
   // Calculate metrics
   const winRate = trades.length > 0 ? (winningTrades / trades.length) * 100 : 0;
@@ -215,8 +259,12 @@ export function backtestStrategy(
 
   return {
     strategy,
-    startDate: new Date(sortedData[0].timestamp),
-    endDate: new Date(sortedData[sortedData.length - 1].timestamp),
+    startDate: firstCandle
+      ? new Date(firstCandle.timestamp)
+      : new Date(0),
+    endDate: lastCandleInitial
+      ? new Date(lastCandleInitial.timestamp)
+      : new Date(0),
     initialBalance: testOptions.initialBalance,
     finalBalance: finalEquity,
     totalTrades: trades.length,
@@ -246,8 +294,8 @@ export function backtestStrategy(
       annualizedReturn: calculateAnnualizedReturn(
         testOptions.initialBalance,
         finalEquity,
-        sortedData[0].timestamp,
-        sortedData[sortedData.length - 1].timestamp
+        firstCandle ? firstCandle.timestamp : 0,
+        lastCandleInitial ? lastCandleInitial.timestamp : 0
       ),
     },
   };
@@ -265,21 +313,15 @@ function checkExitConditions(
   const currentDate = new Date(currentCandle.timestamp);
 
   for (let i = openPositions.length - 1; i >= 0; i--) {
-    const position = openPositions[i];
-    const entryPrice = position.entryPrice;
+    const pos = openPositions[i];
+    if (!pos) continue;
+    const entryPrice = pos.entryPrice;
 
-    // Calculate current profit/loss
-    const isProfitable =
-      position.type === "BUY"
-        ? currentPrice > entryPrice
-        : currentPrice < entryPrice;
-
+    // Calculate profit/loss for this open position
     const priceDiff =
-      position.type === "BUY"
-        ? currentPrice - entryPrice
-        : entryPrice - currentPrice;
-
+      pos.type === "BUY" ? currentPrice - entryPrice : entryPrice - currentPrice;
     const profitPercent = (priceDiff / entryPrice) * 100;
+    const isProfitable = profitPercent > 0;
 
     // Check stop loss
     if (
@@ -287,11 +329,11 @@ function checkExitConditions(
       !isProfitable &&
       Math.abs(profitPercent) >= (options.stopLossPercent || 0)
     ) {
-      position.exitDate = currentDate;
-      position.exitPrice = currentPrice;
-      position.profit = priceDiff * (position.quantity ?? 0);
-      position.profitPercent = profitPercent;
-      position.reason += " (Stop Loss)";
+      pos.exitDate = currentDate;
+      pos.exitPrice = currentPrice;
+      pos.profit = priceDiff * (pos.quantity ?? 0);
+      pos.profitPercent = profitPercent;
+      pos.reason += " (Stop Loss)";
 
       // Remove from open positions
       openPositions.splice(i, 1);
@@ -304,11 +346,11 @@ function checkExitConditions(
       isProfitable &&
       profitPercent >= (options.takeProfitPercent || 0)
     ) {
-      position.exitDate = currentDate;
-      position.exitPrice = currentPrice;
-      position.profit = priceDiff * (position.quantity ?? 0);
-      position.profitPercent = profitPercent;
-      position.reason += " (Take Profit)";
+      pos.exitDate = currentDate;
+      pos.exitPrice = currentPrice;
+      pos.profit = priceDiff * (pos.quantity ?? 0);
+      pos.profitPercent = profitPercent;
+      pos.reason += " (Take Profit)";
 
       // Remove from open positions
       openPositions.splice(i, 1);
@@ -318,15 +360,13 @@ function checkExitConditions(
     // Check trailing stop
     if (
       options.useTrailingStop &&
-      position.highestProfit &&
-      position.highestProfit - profitPercent >=
-        (options.trailingStopPercent || 0)
+      (pos.highestProfit ?? 0) - profitPercent >= (options.trailingStopPercent || 0)
     ) {
-      position.exitDate = currentDate;
-      position.exitPrice = currentPrice;
-      position.profit = priceDiff * (position.quantity ?? 0);
-      position.profitPercent = profitPercent;
-      position.reason += " (Trailing Stop)";
+      pos.exitDate = currentDate;
+      pos.exitPrice = currentPrice;
+      pos.profit = priceDiff * (pos.quantity ?? 0);
+      pos.profitPercent = profitPercent;
+      pos.reason += " (Trailing Stop)";
 
       // Remove from open positions
       openPositions.splice(i, 1);
@@ -335,10 +375,7 @@ function checkExitConditions(
 
     // Update highest profit for trailing stop
     if (options.useTrailingStop && isProfitable) {
-      position.highestProfit = Math.max(
-        position.highestProfit || 0,
-        profitPercent
-      );
+      pos.highestProfit = Math.max(pos.highestProfit || 0, profitPercent);
     }
   }
 }
@@ -421,34 +458,34 @@ function closeAllPositions(
   const currentDate = new Date(lastCandle.timestamp);
 
   for (let i = openPositions.length - 1; i >= 0; i--) {
-    const position = openPositions[i];
-    const entryPrice = position.entryPrice;
+    const pos = openPositions[i];
+    if (!pos) continue;
+    const entryPrice = pos.entryPrice;
 
     // Calculate profit/loss
     const priceDiff =
-      position.type === "BUY"
-        ? currentPrice - entryPrice
-        : entryPrice - currentPrice;
+      pos.type === "BUY" ? currentPrice - entryPrice : entryPrice - currentPrice;
 
     const profitPercent = (priceDiff / entryPrice) * 100;
 
     // Update trade
-    position.exitDate = currentDate;
-    position.exitPrice = currentPrice;
-    position.profit = priceDiff * (position.quantity ?? 0);
-    position.profitPercent = profitPercent;
-    position.reason += " (End of Test)";
+    pos.exitDate = currentDate;
+    pos.exitPrice = currentPrice;
+    pos.profit = priceDiff * (pos.quantity ?? 0);
+    pos.profitPercent = profitPercent;
+    pos.reason += " (End of Test)";
 
     // Update corresponding trade in trades array
     const tradeIndex = trades.findIndex(
       (t) =>
-        t.entryDate === position.entryDate &&
-        t.entryPrice === position.entryPrice &&
-        t.type === position.type
+        t.entryDate === pos.entryDate &&
+        t.entryPrice === pos.entryPrice &&
+        t.type === pos.type
     );
 
     if (tradeIndex !== -1) {
-      trades[tradeIndex] = { ...position };
+      // Assign the same BacktestTrade object to preserve exact type
+      trades[tradeIndex] = pos;
     }
 
     // Remove from open positions
@@ -540,7 +577,10 @@ export function optimizeStrategy(
   });
 
   const bestResult = sortedResults[0];
-  const bestParameters = bestResult.parameters;
+  // Fallback if no results produced
+  const bestParameters = bestResult
+    ? bestResult.parameters
+    : (strategy.parameters as StrategyParameters);
 
   // Generate parameter heatmap
   const parameterHeatmap = generateParameterHeatmap(
@@ -551,7 +591,38 @@ export function optimizeStrategy(
 
   return {
     bestParameters,
-    bestResult,
+    // If bestResult is undefined, synthesize a neutral BacktestResult
+    bestResult:
+      bestResult ??
+      {
+        strategy: { ...strategy, parameters: bestParameters },
+        startDate: new Date(0),
+        endDate: new Date(0),
+        initialBalance: DEFAULT_TEST_OPTIONS.initialBalance,
+        finalBalance: DEFAULT_TEST_OPTIONS.initialBalance,
+        totalTrades: 0,
+        winningTrades: 0,
+        losingTrades: 0,
+        winRate: 0,
+        profitFactor: 0,
+        maxDrawdown: 0,
+        maxDrawdownPercent: 0,
+        sharpeRatio: 0,
+        trades: [],
+        equityCurve: [],
+        parameters: bestParameters,
+        marketData: data,
+        metrics: {
+          totalProfit: 0,
+          totalLoss: 0,
+          netProfit: 0,
+          averageProfit: 0,
+          averageLoss: 0,
+          averageTrade: 0,
+          returnPercent: 0,
+          annualizedReturn: 0,
+        },
+      },
     allResults: results,
     optimizationMetric: optimizationMetric,
     optimizationTime: Date.now() - startTime,
@@ -580,7 +651,10 @@ function generateParameterCombinations(
     }
 
     const paramName = parameterNames[index];
-    const [min, max, step] = parameterRanges[paramName];
+    if (paramName === undefined) return;
+    const range = parameterRanges[paramName];
+    if (!range) return;
+    const [min, max, step] = range;
 
     for (let value = min; value <= max; value += step) {
       generateCombination(index + 1, { ...currentParams, [paramName]: value });
@@ -668,7 +742,11 @@ function generateParameterHeatmap(
 
       for (const part of keyParts) {
         const [paramName, valueStr] = part.split(":");
-        parameters[paramName] = parseFloat(valueStr);
+        if (!paramName || valueStr === undefined) continue;
+        const parsed = Number.parseFloat(valueStr);
+        if (Number.isFinite(parsed)) {
+          parameters[paramName] = parsed;
+        }
       }
 
       const avgValue =
@@ -692,8 +770,8 @@ function calculateCorrelation(x: number[], y: number[]): number {
   const n = x.length;
 
   // Calculate means
-  const xMean = x.reduce((sum, val) => sum + val, 0) / n;
-  const yMean = y.reduce((sum, val) => sum + val, 0) / n;
+  const xMean = x.reduce((sum, val) => sum + val, 0) / (n || 1);
+  const yMean = y.reduce((sum, val) => sum + val, 0) / (n || 1);
 
   // Calculate covariance and variances
   let covariance = 0;
@@ -701,8 +779,11 @@ function calculateCorrelation(x: number[], y: number[]): number {
   let yVariance = 0;
 
   for (let i = 0; i < n; i++) {
-    const xDiff = x[i] - xMean;
-    const yDiff = y[i] - yMean;
+    const xi = x[i];
+    const yi = y[i];
+    if (xi === undefined || yi === undefined) continue;
+    const xDiff = xi - xMean;
+    const yDiff = yi - yMean;
 
     covariance += xDiff * yDiff;
     xVariance += xDiff * xDiff;
@@ -710,7 +791,8 @@ function calculateCorrelation(x: number[], y: number[]): number {
   }
 
   // Calculate correlation coefficient
-  return covariance / (Math.sqrt(xVariance) * Math.sqrt(yVariance));
+  const denom = Math.sqrt(xVariance) * Math.sqrt(yVariance);
+  return denom === 0 ? 0 : covariance / denom;
 }
 
 /**
@@ -727,7 +809,14 @@ export function monteCarloSimulation(
   distributions: Record<string, number[]>;
 } {
   const { trades } = backtestResult;
-  const distributions: Record<string, number[]> = {
+  type DistributionMap = {
+    finalBalance: number[];
+    maxDrawdownPercent: number[];
+    winRate: number[];
+    profitFactor: number[];
+    sharpeRatio: number[];
+  };
+  const distributions: DistributionMap = {
     finalBalance: [],
     maxDrawdownPercent: [],
     winRate: [],
@@ -771,10 +860,12 @@ export function monteCarloSimulation(
     const lowerIndex = Math.floor(values.length * 0.025);
     const upperIndex = Math.floor(values.length * 0.975);
 
-    confidenceIntervals[key] = [values[lowerIndex], values[upperIndex]];
-    worstCase[key] = values[0];
-    bestCase[key] = values[values.length - 1];
-    medianCase[key] = values[Math.floor(values.length / 2)];
+    const lower = values[lowerIndex] ?? 0;
+    const upper = values[upperIndex] ?? 0;
+    confidenceIntervals[key] = [lower, upper];
+    worstCase[key] = values[0] ?? 0;
+    bestCase[key] = values[values.length - 1] ?? 0;
+    medianCase[key] = values[Math.floor(values.length / 2)] ?? 0;
   }
 
   return {
@@ -794,7 +885,12 @@ function shuffleArray<T>(array: T[]): T[] {
 
   for (let i = result.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
-    [result[i], result[j]] = [result[j], result[i]];
+    const tempI = result[i];
+    const tempJ = result[j];
+    if (tempI !== undefined && tempJ !== undefined) {
+      result[i] = tempJ;
+      result[j] = tempI;
+    }
   }
 
   return result;
@@ -823,10 +919,8 @@ function simulateEquityCurve(
   // Daily returns for Sharpe ratio
   const dailyReturns: number[] = [];
   let lastDayEquity = initialBalance;
-  let lastDay =
-    trades.length > 0 && trades[0].entryDate
-      ? trades[0].entryDate.toDateString()
-      : "";
+  const firstTrade = trades[0];
+  let lastDay = firstTrade?.entryDate ? firstTrade.entryDate.toDateString() : "";
 
   // Process each trade
   for (const trade of trades) {
@@ -1009,8 +1103,8 @@ export function walkForwardAnalysis(
     });
 
     // Accumulate profits for robustness calculation
-    totalInSampleProfit += inSampleResult.metrics.netProfit;
-    totalOutOfSampleProfit += outOfSampleResult.metrics.netProfit;
+    totalInSampleProfit += inSampleResult.metrics.netProfit ?? 0;
+    totalOutOfSampleProfit += outOfSampleResult.metrics.netProfit ?? 0;
   }
 
   // Calculate aggregate metrics
@@ -1036,15 +1130,17 @@ export function walkForwardAnalysis(
   // Calculate average metrics
   for (const fold of foldResults) {
     for (const key of metricKeys) {
-      inSampleMetrics[key] += fold.inSample.metrics[key] || 0;
-      outOfSampleMetrics[key] += fold.outOfSample.metrics[key] || 0;
+      inSampleMetrics[key] = (inSampleMetrics[key] ?? 0) + (fold.inSample.metrics[key] ?? 0);
+      outOfSampleMetrics[key] = (outOfSampleMetrics[key] ?? 0) + (fold.outOfSample.metrics[key] ?? 0);
     }
   }
 
   // Calculate averages
   for (const key of metricKeys) {
-    inSampleMetrics[key] /= foldResults.length;
-    outOfSampleMetrics[key] /= foldResults.length;
+    if (foldResults.length > 0) {
+      inSampleMetrics[key] = (inSampleMetrics[key] ?? 0) / foldResults.length;
+      outOfSampleMetrics[key] = (outOfSampleMetrics[key] ?? 0) / foldResults.length;
+    }
   }
 
   // Calculate robustness score (ratio of out-of-sample to in-sample performance)

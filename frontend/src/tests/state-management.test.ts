@@ -97,13 +97,14 @@ describe('Zustand State Management', () => {
       
       const toasts = useAppStore.getState().toasts;
       expect(toasts).toHaveLength(1);
-      expect(toasts[0].message).toBe('Test notification');
-      expect(toasts[0].type).toBe('success');
-      expect(toasts[0]).toHaveProperty('id');
-      expect(toasts[0]).toHaveProperty('timestamp');
+      const first = toasts[0]!;
+      expect(first.message).toBe('Test notification');
+      expect(first.type).toBe('success');
+      expect(first).toHaveProperty('id');
+      expect(first).toHaveProperty('timestamp');
       
       // Remove the toast
-      removeToast(toasts[0].id);
+      removeToast(first.id);
       expect(useAppStore.getState().toasts).toHaveLength(0);
     });
 
@@ -116,9 +117,10 @@ describe('Zustand State Management', () => {
       
       const toasts = useAppStore.getState().toasts;
       expect(toasts).toHaveLength(3);
-      expect(toasts[0].message).toBe('First toast');
-      expect(toasts[1].message).toBe('Second toast');
-      expect(toasts[2].message).toBe('Third toast');
+      const [t1, t2, t3] = toasts as [typeof toasts[number], typeof toasts[number], typeof toasts[number]];
+      expect(t1!.message).toBe('First toast');
+      expect(t2!.message).toBe('Second toast');
+      expect(t3!.message).toBe('Third toast');
     });
 
     it('should clear all toasts', () => {
