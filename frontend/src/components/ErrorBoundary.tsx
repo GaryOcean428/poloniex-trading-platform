@@ -1,7 +1,6 @@
 import React, { Component, type ErrorInfo, type ReactNode } from 'react';
 import { ErrorFallback } from './ErrorFallback';
-
-/* eslint-disable no-console */
+import { logger } from '@shared/logger';
 
 interface ErrorBoundaryState {
   hasError: boolean;
@@ -63,8 +62,10 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
       }
     };
 
-    window.addEventListener('error', this.onWindowError);
-    window.addEventListener('unhandledrejection', this.onUnhandledRejection as EventListener);
+    if (typeof window.addEventListener === 'function') {
+      window.addEventListener('error', this.onWindowError as any);
+      window.addEventListener('unhandledrejection', this.onUnhandledRejection as unknown as EventListener);
+    }
   }
 
   static getDerivedStateFromError(error: Error): Partial<ErrorBoundaryState> {
@@ -98,31 +99,32 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     {
       clearTimeout(this.resetTimeoutId);
     }
-    if (this.onWindowError) {
-      window.removeEventListener('error', this.onWindowError);
-    }
-    if (this.onUnhandledRejection) {
-      window.removeEventListener('unhandledrejection', this.onUnhandledRejection as EventListener);
+    if (typeof window.removeEventListener === 'function') {
+      if (this.onWindowError) {
+        window.removeEventListener('error', this.onWindowError as any);
+      }
+      if (this.onUnhandledRejection) {
+        window.removeEventListener('unhandledrejection', this.onUnhandledRejection as unknown as EventListener);
+      }
     }
   }
 
   private logError = (error: Error, _errorInfo: ErrorInfo) => {
-    // Log to console for development
-    // console.error('ErrorBoundary caught an error:', error);
-    // console.error('Error info:', errorInfo);
+    // Centralized logging
+    const context = {
+      component: 'ErrorBoundary',
+      errorCount: this.state.errorCount,
+      errorId: this.state.errorId,
+    } as const;
 
-    // Check for initialization errors
-    if (this.isInitializationError(error))
-    {
-      // console.error('Initialization error detected - this may require a page refresh');
+    if (this.isInitializationError(error)) {
+      logger.critical('Initialization error detected - may require page refresh', error, context);
+    } else {
+      logger.error('ErrorBoundary caught an error', error, context);
     }
 
-    // In production, this would send to a logging service
-    if (process.env.NODE_ENV === 'production')
-    {
-      // Example: Send to monitoring service
-      // logErrorToService(error, errorInfo, this.state.errorCount);
-    }
+    // Hook: place to forward to monitoring service in production if needed
+    // e.g., send to Sentry/DataDog here using error and _errorInfo
   };
 
   private isInitializationError = (error: Error): boolean => {
