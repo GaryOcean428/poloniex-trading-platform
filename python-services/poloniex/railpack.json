@@ -1,26 +1,16 @@
 {
-  "version": "1",
-  "build": {
-    "env": {
-      "PYTHONUNBUFFERED": "1",
-      "PYTHONDONTWRITEBYTECODE": "1",
-      "PATH": "$HOME/.local/bin:$PATH"
-    },
-    "steps": {
-      "install-uv": {
-        "commands": ["curl -LsSf https://astral.sh/uv/install.sh | sh"]
-      },
-      "install": {
-        "commands": ["$HOME/.local/bin/uv sync --no-dev"],
-        "dependsOn": ["install-uv"]
-      }
+  "$schema": "https://schema.railpack.com",
+  "provider": "python",
+  "steps": {
+    "install": {
+      "commands": [
+        "python -m pip install --upgrade pip",
+        "pip install -r requirements.txt",
+        "bash -lc 'command -v uv >/dev/null 2>&1 && echo \"uv found, attempting uv sync (non-fatal)\" && uv sync --no-dev || echo \"uv not found, skipping\"'"
+      ]
     }
   },
   "deploy": {
-    "startCommand": "uvicorn health:app --host 0.0.0.0 --port ${PORT:-8000} --workers 2 --loop uvloop --access-log",
-    "healthCheckPath": "/healthz",
-    "healthCheckTimeout": 300,
-    "restartPolicyType": "ALWAYS",
-    "restartPolicyMaxRetries": 10
+    "startCommand": "uvicorn health:app --host 0.0.0.0 --port ${PORT:-8000} --workers 2 --loop uvloop --access-log"
   }
 }
