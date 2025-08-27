@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { BrowserRouter } from 'react-router-dom';
 import LiveTradingDashboard from '@/pages/LiveTradingDashboard';
@@ -383,6 +384,7 @@ describe('Phase 5: Real-time WebSocket Trading Dashboard', () => {
     it('should handle WebSocket disconnection gracefully', () => {
       // Mock disconnected state
       (useWebSocket as unknown as Mock).mockReturnValue({
+      (useWebSocket as unknown as Mock).mockReturnValue({
         connectionState: 'disconnected',
         isMockMode: false,
         isConnected: false,
@@ -397,6 +399,7 @@ describe('Phase 5: Real-time WebSocket Trading Dashboard', () => {
 
     it('should handle mock mode appropriately', () => {
       // Mock mock mode
+      (useWebSocket as unknown as Mock).mockReturnValue({
       (useWebSocket as unknown as Mock).mockReturnValue({
         connectionState: 'connected',
         isMockMode: true,
