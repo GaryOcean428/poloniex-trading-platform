@@ -3,28 +3,37 @@ export function calculateMeanAndStd(data: number[][]): { mean: number[]; std: nu
     return { mean: [], std: [] };
   }
 
-  const numFeatures = data[0].length;
+  const firstRow = data[0] ?? [];
+  const numFeatures = firstRow.length;
   const mean: number[] = new Array(numFeatures).fill(0);
   const std: number[] = new Array(numFeatures).fill(0);
 
   // Calculate means
   for (let i = 0; i < data.length; i++) {
     for (let j = 0; j < numFeatures; j++) {
-      mean[j] += data[i][j];
+      const row = data[i] ?? [];
+      const current = mean[j] ?? 0;
+      const val = row[j] ?? 0;
+      mean[j] = current + val;
     }
   }
   for (let j = 0; j < numFeatures; j++) {
-    mean[j] /= data.length;
+    mean[j] = (mean[j] ?? 0) / data.length;
   }
 
   // Calculate standard deviations
   for (let i = 0; i < data.length; i++) {
     for (let j = 0; j < numFeatures; j++) {
-      std[j] += Math.pow(data[i][j] - mean[j], 2);
+      const row = data[i] ?? [];
+      const m = mean[j] ?? 0;
+      const val = row[j] ?? 0;
+      const cur = std[j] ?? 0;
+      std[j] = cur + Math.pow(val - m, 2);
     }
   }
   for (let j = 0; j < numFeatures; j++) {
-    std[j] = Math.sqrt(std[j] / data.length);
+    const cur = std[j] ?? 0;
+    std[j] = Math.sqrt(cur / data.length);
   }
 
   return { mean, std };
@@ -32,19 +41,22 @@ export function calculateMeanAndStd(data: number[][]): { mean: number[]; std: nu
 
 export function standardizeFeatures(data: number[][], mean: number[], std: number[]): number[][] {
   return data.map(row =>
-    row.map((val, j) => std[j] === 0 ? 0 : (val - mean[j]) / std[j])
+    row.map((val, j) => {
+      const s = std[j] ?? 0;
+      const m = mean[j] ?? 0;
+      return s === 0 ? 0 : (val - m) / s;
+    })
   );
 }
 
 // Fix function signature mismatch in modelRecalibration.ts
 export function recalibrateModel(
   modelData: unknown,
-  newData: unknown
+  _newData: unknown
   // Removed third parameter to match expected signature
-): Promise<any> {
+): Promise<{ status: 'success'; accuracy: number; precision: number; modelData: Record<string, unknown> }>{
   // Process newData for recalibration (placeholder implementation)
-  const dataLength = Array.isArray(newData) ? newData.length : Object.keys(newData || {}).length;
-  // console.log('Processing data for recalibration:', dataLength, 'data points');
+  // Intentionally avoid reading dataLength to satisfy noUnusedLocals
 
   // Basic implementation for compatibility
   const safeModelData =
@@ -56,6 +68,6 @@ export function recalibrateModel(
     status: 'success',
     accuracy: 0.85,
     precision: 0.82,
-    modelData: safeModelData
+    modelData: safeModelData as Record<string, unknown>,
   });
 }

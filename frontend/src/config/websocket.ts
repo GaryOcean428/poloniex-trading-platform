@@ -113,7 +113,12 @@ export const getConnectionStrategy = (): {
   preferWebSocket: boolean;
   maxRetries: number;
 } => {
-  const isProduction = import.meta.env.PROD;
+  const metaEnv = (typeof import.meta !== 'undefined')
+    ? (import.meta as unknown as { env?: { PROD?: boolean } })
+    : undefined;
+  const isProdMeta = !!metaEnv?.env?.PROD;
+  const isProdNode = (typeof process !== 'undefined') && !!process.env && process.env.NODE_ENV === 'production';
+  const isProduction = isProdMeta || isProdNode;
   const isRailway = getEnvVariable('VITE_RAILWAY_PUBLIC_DOMAIN') !== '';
 
   if (isProduction && isRailway) {

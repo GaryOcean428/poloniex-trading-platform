@@ -197,15 +197,18 @@ describe('Advanced Backtesting Service', () => {
       const result = await advancedBacktestService.runPortfolioBacktest(portfolioOptions);
 
       // Correlation matrix should be symmetric
-      expect(result.correlationMatrix[0][1]).toBe(result.correlationMatrix[1][0]);
+      expect(result.correlationMatrix).toHaveLength(2);
+      const row0 = result.correlationMatrix[0]!;
+      const row1 = result.correlationMatrix[1]!;
+      expect(row0[1]).toBe(row1[0]);
       
       // Diagonal should be 1 (perfect self-correlation)
-      expect(result.correlationMatrix[0][0]).toBe(1);
-      expect(result.correlationMatrix[1][1]).toBe(1);
+      expect(row0[0]).toBe(1);
+      expect(row1[1]).toBe(1);
       
       // Correlations should be between -1 and 1
-      expect(result.correlationMatrix[0][1]).toBeGreaterThanOrEqual(-1);
-      expect(result.correlationMatrix[0][1]).toBeLessThanOrEqual(1);
+      expect(row0[1]).toBeGreaterThanOrEqual(-1);
+      expect(row0[1]).toBeLessThanOrEqual(1);
     });
   });
 

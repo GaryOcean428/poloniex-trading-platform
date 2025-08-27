@@ -1,0 +1,17 @@
+# Railway Configuration - Service Routing
+# This file ensures proper service detection and deployment
+
+[build]
+# No global build settings - each service has its own railpack.json
+
+[[services]]
+name = "polytrade-fe"
+root = "frontend"
+
+[[services]]
+name = "polytrade-be"
+root = "backend"
+
+[[services]]
+name = "ml-worker"
+root = "python-services/poloniex"

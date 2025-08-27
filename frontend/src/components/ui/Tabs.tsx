@@ -59,9 +59,10 @@ const TabsList = ({ className, children, activeTab, onTabChange }: TabsListProps
     <div className={cn("flex border-b", className)}>
       {React.Children.map(children, (child) => {
         if (React.isValidElement(child) && child.type === TabsTrigger) {
-          return React.cloneElement(child as React.ReactElement<TabsTriggerProps>, {
-            active: activeTab === child.props.value,
-            onSelect: () => onTabChange && onTabChange(child.props.value),
+          const typedChild = child as React.ReactElement<TabsTriggerProps>;
+          return React.cloneElement(typedChild, {
+            active: activeTab === typedChild.props.value,
+            onSelect: () => onTabChange && onTabChange(typedChild.props.value),
           });
         }
         return child;

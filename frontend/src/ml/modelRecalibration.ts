@@ -1,6 +1,6 @@
 import * as tf from "@tensorflow/tfjs";
-import type { DQNModelInfo } from "./dqnTrading";
-import type { MLModelInfo } from "./mlTrading";
+import type { DQNModelInfo, MarketCandle } from "./dqnTrading";
+import type { MLModelInfo, MarketDataPoint } from "./mlTrading";
 import { calculateMeanAndStd, standardizeFeatures } from "./mlUtils";
 
 /**
@@ -10,6 +10,8 @@ import { calculateMeanAndStd, standardizeFeatures } from "./mlUtils";
  * detecting drift, and automatically recalibrating ML and DQN models
  * to prevent overfitting and maintain accuracy over time.
  */
+
+// Note: we use domain types from mlTrading and dqnTrading for strict safety.
 
 // Types for model recalibration
 export interface RecalibrationConfig {
@@ -174,7 +176,7 @@ export const calculateDrift = (
 
     // Normalize to [0, 1] range
     return Math.min(1, Math.max(0, driftScore));
-  } catch (error) {
+  } catch {
     // console.error('Error calculating drift:', error);
     return 0;
   }
@@ -200,12 +202,12 @@ export const monitorMLModelPerformance = async (
 
     // Prepare features and labels for evaluation
     const { features: _features, labels } = prepareFeatures(
-      data as any[],
+      data as MarketDataPoint[],
       mi.config
     );
 
     // Get predictions
-    const predictions = await predictWithMLModel(mi, data as any[]);
+    const predictions = await predictWithMLModel(mi, data as MarketDataPoint[]);
 
     // Calculate performance metrics
     const predictedLabels = predictions.map((p) => p.prediction);
@@ -251,9 +253,9 @@ export const monitorMLModelPerformance = async (
       winRate,
       driftScore,
     };
-  } catch (error) {
+  } catch {
     // console.error('Error monitoring ML model performance:', error);
-    throw error;
+    throw new Error('monitorMLModelPerformance failed');
   }
 };
 
@@ -281,7 +283,7 @@ export const monitorDQNModelPerformance = async (
         : 0;
 
     // Get actions from model
-    const actions = await getDQNActions(mi, data as any[]);
+    const actions = await getDQNActions(mi, data as unknown[]);
 
     // Simulate trading with these actions
     let balance = 10000;
@@ -289,8 +291,9 @@ export const monitorDQNModelPerformance = async (
     const trades: Array<{ type: string; price: number; return: number }> = [];
     const returns: number[] = [];
 
-    for (let i = 0; i < actions.length - 1; i++) {
+    for (let i = 0; i < Math.max(0, actions.length - 1); i++) {
       const action = actions[i];
+      if (!action) continue;
       const price = asNum((data[i] as Record<string, unknown>)?.close);
 
       if (action.action === "buy" && position === 0) {
@@ -354,7 +357,7 @@ export const monitorDQNModelPerformance = async (
     const profitFactor = grossProfit / (grossLoss + 1e-8);
 
     // Calculate expected value
-    const expectedValue = meanReturn * trades.length;
+    const expectedValue = meanReturn * (trades.length || 0);
 
     // Calculate drift score
     const driftScore = calculateDrift(
@@ -374,9 +377,9 @@ export const monitorDQNModelPerformance = async (
       expectedValue,
       driftScore,
     };
-  } catch (error) {
+  } catch {
     // console.error('Error monitoring DQN model performance:', error);
-    throw error;
+    throw new Error('monitorDQNModelPerformance failed');
   }
 };
 
@@ -396,20 +399,15 @@ export const recalibrateMLModel = async (
     // Import ML trading functions
     const { trainMLModel, optimizeMLModel } = await import("./mlTrading");
 
-    const mi = modelInfo as {
-      id: string;
-      name: string;
-      config: any;
-      filePath?: string;
-    };
-    let newModelInfo: any;
+    const mi = modelInfo as MLModelInfo & { filePath?: string };
+    let newModelInfo: MLModelInfo;
     const recalibrationStrategy = strategy;
 
     switch (strategy) {
       case "full":
         // Full retraining from scratch
         newModelInfo = await trainMLModel(
-          newData as any[],
+          newData as MarketDataPoint[],
           mi.config,
           `${mi.name} (Recalibrated)`
         );
@@ -425,7 +423,7 @@ export const recalibrateMLModel = async (
         // Prepare new data
         const { prepareFeatures } = await import("./mlTrading");
         const { features, labels } = prepareFeatures(
-          newData as any[],
+          newData as MarketDataPoint[],
           mi.config
         );
 
@@ -458,7 +456,7 @@ export const recalibrateMLModel = async (
             mean = result.mean;
             std = result.std;
           }
-        } catch (error) {
+        } catch {
           // console.error('Error loading model stats:', error);
           // Fallback to calculating from features
           const result = calculateMeanAndStd(features);
@@ -500,18 +498,23 @@ export const recalibrateMLModel = async (
               JSON.stringify({ mean, std })
             );
           }
-        } catch (error) {
+        } catch {
           // console.error('Error saving model stats:', error);
         }
 
-        // Create new model info
+        // Create new model info (preserve existing metadata and update essentials)
         newModelInfo = {
-          ...(mi as Record<string, unknown>),
+          ...mi,
           id: newModelId,
           name: `${mi.name} (Recalibrated)`,
-          filePath: newModelPath,
+          description: mi.description,
+          config: mi.config,
+          performance: mi.performance,
+          createdAt: mi.createdAt,
           updatedAt: Date.now(),
           lastTrainedAt: Date.now(),
+          status: "ready",
+          filePath: newModelPath,
         };
 
         // Clean up tensors
@@ -522,7 +525,7 @@ export const recalibrateMLModel = async (
       case "transfer":
         // Transfer learning: optimize hyperparameters with new data
         newModelInfo = await optimizeMLModel(
-          newData as any[],
+          newData as MarketDataPoint[],
           mi.config,
           `${mi.name} (Transfer Recalibrated)`
         );
@@ -535,31 +538,29 @@ export const recalibrateMLModel = async (
     // Calculate performance improvement
     const originalPerformance = await monitorMLModelPerformance(
       mi,
-      newData as any[]
+      newData as MarketDataPoint[]
     );
     const newPerformance = await monitorMLModelPerformance(
       newModelInfo,
-      newData as any[]
+      newData as MarketDataPoint[]
     );
 
     // Use F1 score for performance comparison
-    const performanceImprovement =
-      (newPerformance.f1Score - originalPerformance.f1Score) /
-      (originalPerformance.f1Score + 1e-8);
+    const originalF1 = originalPerformance.f1Score ?? 0;
+    const newF1 = newPerformance.f1Score ?? 0;
+    const performanceImprovement = (newF1 - originalF1) / (Math.abs(originalF1) + 1e-8);
 
     return {
       originalModelId: mi.id,
       newModelId: newModelInfo.id,
       timestamp: Date.now(),
-      reason: `Drift score: ${originalPerformance.driftScore.toFixed(
-        4
-      )}, F1 score: ${originalPerformance.f1Score.toFixed(4)}`,
+      reason: `Drift score: ${(originalPerformance.driftScore ?? 0).toFixed(4)}, F1 score: ${(originalPerformance.f1Score ?? 0).toFixed(4)}`,
       performanceImprovement,
       recalibrationStrategy,
     };
-  } catch (error) {
+  } catch {
     // console.error('Error recalibrating ML model:', error);
-    throw error;
+    throw new Error('recalibrateMLModel failed');
   }
 };
 
@@ -580,14 +581,14 @@ export const recalibrateDQNModel = async (
     const { trainDQNModel, continueDQNTraining } = await import("./dqnTrading");
 
     const mi = modelInfo as DQNModelInfo;
-    let newModelInfo: any;
+    let newModelInfo: DQNModelInfo;
     const recalibrationStrategy = strategy;
 
     switch (strategy) {
       case "full":
         // Full retraining from scratch
         newModelInfo = await trainDQNModel(
-          newData as any[],
+          newData as MarketCandle[],
           mi.config,
           `${mi.name} (Recalibrated)`,
           100 // Default episodes
@@ -598,7 +599,7 @@ export const recalibrateDQNModel = async (
         // Incremental training with new data
         newModelInfo = await continueDQNTraining(
           mi,
-          newData as any[]
+          newData as unknown[]
           // Removed third parameter to match function signature
         );
         break;
@@ -613,7 +614,7 @@ export const recalibrateDQNModel = async (
         };
 
         newModelInfo = await trainDQNModel(
-          newData as any[],
+          newData as MarketCandle[],
           transferConfig,
           `${mi.name} (Transfer Recalibrated)`,
           75 // Default episodes
@@ -627,31 +628,29 @@ export const recalibrateDQNModel = async (
     // Calculate performance improvement
     const originalPerformance = await monitorDQNModelPerformance(
       mi,
-      newData as any[]
+      newData as unknown[]
     );
     const newPerformance = await monitorDQNModelPerformance(
       newModelInfo,
-      newData as any[]
+      newData as unknown[]
     );
 
     // Use Sharpe ratio for performance comparison
-    const performanceImprovement =
-      (newPerformance.sharpeRatio - originalPerformance.sharpeRatio) /
-      (Math.abs(originalPerformance.sharpeRatio) + 1e-8);
+    const originalSharpe = originalPerformance.sharpeRatio ?? 0;
+    const newSharpe = newPerformance.sharpeRatio ?? 0;
+    const performanceImprovement = (newSharpe - originalSharpe) / (Math.abs(originalSharpe) + 1e-8);
 
     return {
       originalModelId: mi.id,
       newModelId: newModelInfo.id,
       timestamp: Date.now(),
-      reason: `Drift score: ${originalPerformance.driftScore.toFixed(
-        4
-      )}, Sharpe ratio: ${originalPerformance.sharpeRatio.toFixed(4)}`,
+      reason: `Drift score: ${(originalPerformance.driftScore ?? 0).toFixed(4)}, Sharpe ratio: ${(originalPerformance.sharpeRatio ?? 0).toFixed(4)}`,
       performanceImprovement,
       recalibrationStrategy,
     };
-  } catch (error) {
+  } catch {
     // console.error('Error recalibrating DQN model:', error);
-    throw error;
+    throw new Error('recalibrateDQNModel failed');
   }
 };
 
@@ -683,49 +682,39 @@ export const scheduleModelRecalibration = async (
     };
 
     if (mi.modelType === "ml" || mi.config?.modelType === "ml") {
-      performance = await monitorMLModelPerformance(mi, newData as any[]);
+      performance = await monitorMLModelPerformance(mi, newData as MarketDataPoint[]);
     } else {
-      performance = await monitorDQNModelPerformance(mi, newData as any[]);
+      performance = await monitorDQNModelPerformance(mi, newData as unknown[]);
     }
 
     // Check if recalibration is needed
     let needsRecalibration = false;
-    let recalibrationReason = "";
+    let _recalibrationReason = "";
 
     // Check drift threshold
-    if (performance.driftScore > fullConfig.driftThreshold) {
+    if ((performance.driftScore ?? 0) > fullConfig.driftThreshold) {
       needsRecalibration = true;
-      recalibrationReason = `Drift score ${performance.driftScore.toFixed(
-        4
-      )} exceeds threshold ${fullConfig.driftThreshold}`;
+      _recalibrationReason = `Drift score ${(performance.driftScore ?? 0).toFixed(4)} exceeds threshold ${fullConfig.driftThreshold}`;
     }
 
     // Check performance metrics
     if (performance.modelType === "ml") {
-      if (performance.accuracy < 0.55) {
+      if ((performance.accuracy ?? 0) < 0.55) {
         needsRecalibration = true;
-        recalibrationReason += ` Accuracy ${performance.accuracy.toFixed(
-          4
-        )} below threshold`;
+        _recalibrationReason += ` Accuracy ${(performance.accuracy ?? 0).toFixed(4)} below threshold`;
       }
-      if (performance.f1Score < 0.5) {
+      if ((performance.f1Score ?? 0) < 0.5) {
         needsRecalibration = true;
-        recalibrationReason += ` F1 score ${performance.f1Score.toFixed(
-          4
-        )} below threshold`;
+        _recalibrationReason += ` F1 score ${(performance.f1Score ?? 0).toFixed(4)} below threshold`;
       }
     } else {
-      if (performance.sharpeRatio < 0.2) {
+      if ((performance.sharpeRatio ?? 0) < 0.2) {
         needsRecalibration = true;
-        recalibrationReason += ` Sharpe ratio ${performance.sharpeRatio.toFixed(
-          4
-        )} below threshold`;
+        _recalibrationReason += ` Sharpe ratio ${(performance.sharpeRatio ?? 0).toFixed(4)} below threshold`;
       }
-      if (performance.winRate < 0.45) {
+      if ((performance.winRate ?? 0) < 0.45) {
         needsRecalibration = true;
-        recalibrationReason += ` Win rate ${performance.winRate.toFixed(
-          4
-        )} below threshold`;
+        _recalibrationReason += ` Win rate ${(performance.winRate ?? 0).toFixed(4)} below threshold`;
       }
     }
 
@@ -749,7 +738,7 @@ export const scheduleModelRecalibration = async (
     }
 
     return null;
-  } catch (error) {
+  } catch {
     // console.error('Error scheduling model recalibration:', error);
     return null;
   }
@@ -841,7 +830,7 @@ export const evaluateModelHistory = async (
         recommendedAction: "monitor",
       };
     }
-  } catch (error) {
+  } catch {
     // console.error('Error evaluating model history:', error);
     return {
       modelId,

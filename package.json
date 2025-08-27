@@ -37,12 +37,12 @@
     "py:ingest:markets": "python python-services/poloniex/ingest_markets.py"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.0.0"
   },
   "packageManager": "yarn@4.9.2",
   "devDependencies": {
     "@types/ws": "^8.18.1",
-    "glob": "^11.0.2",
+    "glob": "^11.0.3",
     "rimraf": "^6.0.1"
   },
   "dependencies": {
@@ -50,6 +50,6 @@
     "immer": "^10.1.1",
     "node-fetch": "^3.3.2",
     "ws": "^8.18.3",
-    "zustand": "^5.0.6"
+    "zustand": "^5.0.7"
   }
 }

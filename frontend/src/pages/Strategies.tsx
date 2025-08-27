@@ -27,7 +27,7 @@ const Strategies: React.FC = () => {
         useHistoricalData: true
       });
       setBacktestResults(result);
-    } catch (error) {
+    } catch (_error) {
       // console.error('Backtest failed:', error);
     } finally {
       setIsBacktesting(false);
@@ -59,12 +59,13 @@ const Strategies: React.FC = () => {
       // Update strategy with best parameters
       if (results.length > 0) {
         const bestResult = results[0];
+        if (!bestResult) return; // Satisfy noUncheckedIndexedAccess
         strategy.parameters = {
           ...strategy.parameters,
           ...bestResult.parameters
         };
       }
-    } catch (error) {
+    } catch (_error) {
       // console.error('Optimization failed:', error);
     } finally {
       setIsOptimizing(false);

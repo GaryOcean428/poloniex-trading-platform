@@ -1,4 +1,4 @@
-import { MarketData } from '../../../shared/types';
+import { MarketData } from '@/types';
 import { calculateATR } from './technicalIndicators';
 
 /**
@@ -456,11 +456,17 @@ export class RiskManager {
     if (marketData.length < 20) return 1;
 
     // Calculate recent volatility (20-period)
-    const returns = [];
-    for (let i = 1; i < Math.min(marketData.length, 21); i++) {
-      const return_ = (marketData[i].close - marketData[i - 1].close) / marketData[i - 1].close;
-      returns.push(return_);
+    const returns: number[] = [];
+    const limit = Math.min(marketData.length, 21);
+    for (let i = 1; i < limit; i++) {
+      const curr = marketData[i]?.close;
+      const prev = marketData[i - 1]?.close;
+      if (curr === undefined || prev === undefined || prev === 0) continue;
+      const r = (curr - prev) / prev;
+      returns.push(r);
     }
+
+    if (returns.length === 0) return 1;
 
     const meanReturn = returns.reduce((sum, ret) => sum + ret, 0) / returns.length;
     const variance = returns.reduce((sum, ret) => sum + Math.pow(ret - meanReturn, 2), 0) / returns.length;
@@ -499,8 +505,12 @@ export class RiskManager {
     let count = 0;
 
     for (let i = 0; i < pairs.length; i++) {
+      const p1 = pairs[i];
+      if (p1 === undefined) continue;
       for (let j = i + 1; j < pairs.length; j++) {
-        const correlation = this.correlationMatrix.get(pairs[i])?.get(pairs[j]) || 0;
+        const p2 = pairs[j];
+        if (p2 === undefined) continue;
+        const correlation = this.correlationMatrix.get(p1)?.get(p2) ?? 0;
         totalCorrelation += Math.abs(correlation);
         count++;
       }
@@ -541,8 +551,11 @@ export function calculateCorrelation(series1: number[], series2: number[]): numb
   let sumSq2 = 0;
 
   for (let i = 0; i < n; i++) {
-    const diff1 = series1[i] - mean1;
-    const diff2 = series2[i] - mean2;
+    const v1 = series1[i];
+    const v2 = series2[i];
+    if (v1 === undefined || v2 === undefined) continue;
+    const diff1 = v1 - mean1;
+    const diff2 = v2 - mean2;
     numerator += diff1 * diff2;
     sumSq1 += diff1 * diff1;
     sumSq2 += diff2 * diff2;

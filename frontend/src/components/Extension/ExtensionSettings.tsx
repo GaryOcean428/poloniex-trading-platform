@@ -3,7 +3,6 @@ import { useState, useEffect } from 'react';
 import { Shield, Lock, TerminalSquare, Zap } from 'lucide-react';
 import { useSettings } from '../../hooks/useSettings';
 
-/* eslint-disable no-console */
 
 interface ExtensionSettingsProps {
   onClose?: () => void;
@@ -99,7 +98,7 @@ const ExtensionSettings: React.FC<ExtensionSettingsProps> = ({ onClose }) => {
             riskLimit: formData.riskLimit
           }
         },
-        (response: ExtensionResponse) => {
+        (_response: ExtensionResponse) => {
           // console.log('Extension settings updated:', response);
         }
       );
@@ -114,7 +113,7 @@ const ExtensionSettings: React.FC<ExtensionSettingsProps> = ({ onClose }) => {
             apiSecret: formData.apiSecret
           }
         },
-        (response: ExtensionResponse) => {
+        (_response: ExtensionResponse) => {
           // console.log('Extension API credentials updated:', response);
         }
       );

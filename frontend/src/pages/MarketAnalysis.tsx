@@ -4,7 +4,7 @@ import PriceChart from '../components/charts/PriceChart';
 import { BarChart2, TrendingUp, TrendingDown, Volume2, ArrowRight } from 'lucide-react';
 
 const MarketAnalysis: React.FC = () => {
-  const { marketData, isMockMode } = useTradingContext();
+  const { marketData } = useTradingContext();
   const [selectedPair, setSelectedPair] = useState('BTC-USDT');
   
   // Filter data for selected pair

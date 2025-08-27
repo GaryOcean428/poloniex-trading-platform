@@ -8,16 +8,18 @@ import { default as mlTrading } from '@/ml/mlTrading';
 import * as dqnTrading from '@/ml/dqnTrading';
 
 // Mock dependencies
-const mockWebSocketService = {
-  connect: vi.fn(),
-  disconnect: vi.fn(),
-  subscribe: vi.fn(),
-  unsubscribe: vi.fn()
-};
+const hoisted = vi.hoisted(() => ({
+  mockWebSocketService: {
+    connect: vi.fn(),
+    disconnect: vi.fn(),
+    subscribe: vi.fn(),
+    unsubscribe: vi.fn()
+  }
+}));
 
 vi.mock('@/services/websocketService', () => ({
-  default: mockWebSocketService,
-  webSocketService: mockWebSocketService
+  default: hoisted.mockWebSocketService,
+  webSocketService: hoisted.mockWebSocketService
 }));
 vi.mock('@/services/advancedLiveData');
 vi.mock('@/ml/mlTrading');
@@ -135,7 +137,7 @@ describe('Integration Tests', () => {
     
     // Wait for app to load and verify WebSocket connection
     await waitFor(() => {
-      expect(mockWebSocketService.connect).toHaveBeenCalled();
+      expect(hoisted.mockWebSocketService.connect).toHaveBeenCalled();
     });
   });
   

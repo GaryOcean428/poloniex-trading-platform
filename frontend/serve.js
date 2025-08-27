@@ -86,6 +86,17 @@ const server = http.createServer((req, res) => {
     const parsed = url.parse(req.url || '/');
     let reqPath = decodeURIComponent(parsed.pathname || '/');
 
+    // Health check endpoints
+    if (reqPath === '/api/health' || reqPath === '/healthz') {
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      return res.end(JSON.stringify({
+        status: 'healthy',
+        timestamp: new Date().toISOString(),
+        service: 'frontend'
+      }));
+    }
+
     // Normalize path traversal
     if (reqPath.includes('..')) {
       res.statusCode = 400;

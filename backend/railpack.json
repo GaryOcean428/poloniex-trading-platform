@@ -1,23 +1,32 @@
 {
-  "version": "1",
-  "build": {
-    "provider": "node",
-    "steps": {
-      "install": { "commands": ["yarn install --immutable --immutable-cache"] },
-      "copyShared": {
-        "commands": [
-          "rm -rf ./shared",
-          "mkdir -p ./shared",
-          "cp -r ../shared/* ./shared/ || echo 'Shared directory not found'"
-        ],
-        "dependsOn": ["install"]
-      },
-      "build": { "commands": ["yarn build"], "dependsOn": ["copyShared"] }
+  "$schema": "https://schema.railpack.com",
+  "provider": "node",
+  "steps": {
+    "install": {
+      "commands": [
+        "bash -lc 'corepack enable'",
+        "bash -lc 'corepack prepare yarn@4.3.1 --activate'",
+        "unset YARN_PRODUCTION || true; yarn install --immutable"
+      ]
+    },
+    "copyShared": {
+      "inputs": [
+        { "step": "install", "include": ["."] }
+      ],
+      "commands": [
+        "rm -rf ./shared",
+        "mkdir -p ./shared",
+        "cp -r ../shared/* ./shared/ || echo 'Shared directory not found'"
+      ]
+    },
+    "build": {
+      "inputs": [
+        { "step": "copyShared", "include": ["."] }
+      ],
+      "commands": ["yarn build"]
     }
   },
   "deploy": {
-    "startCommand": "node dist/index.js",
-    "healthCheckPath": "/api/health",
-    "healthCheckTimeout": 300
+    "startCommand": "node dist/index.js"
   }
 }
