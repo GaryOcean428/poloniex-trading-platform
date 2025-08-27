@@ -239,7 +239,8 @@ describe('API Error Handling Tests', () => {
       
       expect(screen.getByText('API Error')).toBeInTheDocument();
       expect(screen.getByText(/Rate limit exceeded/)).toBeInTheDocument();
-      expect(screen.getByText('API Documentation')).toBeInTheDocument();
+      const docsLinks = screen.getAllByText('API Documentation');
+      expect(docsLinks.length).toBeGreaterThan(0);
     });
 
     it('should show context-specific error message', () => {

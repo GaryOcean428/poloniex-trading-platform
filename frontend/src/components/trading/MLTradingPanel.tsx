@@ -3,6 +3,7 @@ import { default as mlTrading, MarketDataPoint } from '@/ml/mlTrading';
 import React, { useEffect, useState } from 'react';
 import { useSettings } from '../../hooks/useSettings';
 import { MarketData } from '@shared/types';
+import { logger } from '@shared/logger';
 
 interface MLModelConfig {
   modelType: 'randomforest' | 'gradientboosting' | 'svm' | 'neuralnetwork';
@@ -94,7 +95,11 @@ const MLTradingPanel: React.FC = () => {
       } catch (err)
       {
         setError('Failed to fetch market data');
-        console.error(err);
+        logger.error('Failed to fetch market data', err instanceof Error ? err : new Error(String(err)), {
+          component: 'MLTradingPanel',
+          action: 'fetch_market_data',
+          pair: defaultPair
+        });
       }
     };
 
@@ -121,7 +126,11 @@ const MLTradingPanel: React.FC = () => {
     } catch (err)
     {
       setError('Failed to train model');
-      console.error(err);
+      logger.error('Failed to train ML model', err instanceof Error ? err : new Error(String(err)), {
+        component: 'MLTradingPanel',
+        action: 'train_model',
+        modelType: modelConfig.modelType
+      });
       setIsTraining(false);
     }
   };
@@ -152,7 +161,11 @@ const MLTradingPanel: React.FC = () => {
     } catch (err)
     {
       setError('Failed to make predictions');
-      console.error(err);
+      logger.error('Failed to make ML predictions', err instanceof Error ? err : new Error(String(err)), {
+        component: 'MLTradingPanel',
+        action: 'predict',
+        modelId: modelInfo?.id
+      });
       setIsPredicting(false);
     }
   };
@@ -177,7 +190,11 @@ const MLTradingPanel: React.FC = () => {
     } catch (err)
     {
       setError('Failed to optimize model');
-      console.error(err);
+      logger.error('Failed to optimize ML model', err instanceof Error ? err : new Error(String(err)), {
+        component: 'MLTradingPanel',
+        action: 'optimize_model',
+        modelType: modelConfig.modelType
+      });
       setIsOptimizing(false);
     }
   };
@@ -201,11 +218,12 @@ const MLTradingPanel: React.FC = () => {
     {
       // Execute buy strategy
       // TODO: Implement executeStrategy functionality
-      console.log('ML Strategy - BUY signal:', {
+      logger.info('ML Strategy - BUY signal', {
+        component: 'MLTradingPanel',
         type: 'ML_STRATEGY',
         action: 'BUY',
         symbol: defaultPair,
-        amount: 0.01, // Small fixed amount
+        amount: 0.01,
         confidence: latestPrediction.confidence,
         modelId: modelInfo?.id
       });
@@ -213,11 +231,12 @@ const MLTradingPanel: React.FC = () => {
     {
       // Execute sell strategy
       // TODO: Implement executeStrategy functionality
-      console.log('ML Strategy - SELL signal:', {
+      logger.info('ML Strategy - SELL signal', {
+        component: 'MLTradingPanel',
         type: 'ML_STRATEGY',
         action: 'SELL',
         symbol: defaultPair,
-        amount: 0.01, // Small fixed amount
+        amount: 0.01,
         confidence: latestPrediction.confidence,
         modelId: modelInfo?.id
       });

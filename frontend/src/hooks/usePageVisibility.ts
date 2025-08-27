@@ -13,8 +13,13 @@ export const usePageVisibility = (
   const timeoutRef = useRef<number | undefined>(undefined);
   
   useEffect(() => {
+    // SSR/Non-DOM environments guard
+    if (typeof document === 'undefined' || typeof window === 'undefined') {
+      return;
+    }
+
     const handleVisibilityChange = (): void => {
-      if (document.hidden) {
+      if (document.hidden || document.visibilityState === 'hidden') {
         // Page is hidden - delay the onHidden callback to handle quick tab switches
         timeoutRef.current = window.setTimeout(() => {
           onHidden();
@@ -31,6 +36,8 @@ export const usePageVisibility = (
     
     // Listen for visibility changes
     document.addEventListener('visibilitychange', handleVisibilityChange);
+    // Invoke once on mount to sync with current state
+    handleVisibilityChange();
     
     // Cleanup
     return () => {
