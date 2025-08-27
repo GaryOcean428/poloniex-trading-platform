@@ -91,9 +91,12 @@ export const generateSignal = async (
   if (data.length < 2) {
     return { signal: 'HOLD', confidence: 0.5 };
   }
-  
+  // noUncheckedIndexedAccess-safe
   const latest = data[data.length - 1];
   const previous = data[data.length - 2];
+  if (!latest || !previous) {
+    return { signal: 'HOLD', confidence: 0.5 };
+  }
   const priceChange = (latest.close - previous.close) / previous.close;
   
   if (priceChange > 0.02) {
@@ -138,26 +141,42 @@ export const prepareFeatures = (
   const labels: number[] = [];
 
   for (let i = 0; i < data.length; i++) {
+    const row = data[i];
+    if (!row) {
+      featureMatrix.push([0, 0, 0]);
+      labels.push(0);
+      continue;
+    }
+
+    const refRow = data[Math.max(0, i - 10)];
+    const refVolume = refRow?.volume ?? 1;
+    const close = row.close ?? 0;
+    const open = row.open ?? 1;
+    const high = row.high ?? close;
+    const low = row.low ?? close;
+
     const featureVector: number[] = [
-      data[i].close / data[i].open - 1,
-      data[i].volume / (data[Math.max(0, i - 10)]?.volume || 1),
-      (data[i].high - data[i].low) / data[i].close
+      open !== 0 ? close / open - 1 : 0,
+      refVolume !== 0 ? (row.volume ?? 0) / refVolume : 0,
+      close !== 0 ? (high - low) / close : 0,
     ];
 
     featureMatrix.push(featureVector);
 
     // Create labels based on prediction target
     if (i < data.length - config.timeHorizon) {
+      const future = data[i + config.timeHorizon];
+      const baseClose = row.close ?? 0;
+      const futureClose = future?.close ?? baseClose;
       switch (config.predictionTarget) {
         case 'price_direction':
           labels.push(
-            data[i + config.timeHorizon].close > data[i].close ? 1 : 0
+            futureClose > baseClose ? 1 : 0
           );
           break;
         case 'price_change':
-          const change =
-            (data[i + config.timeHorizon].close - data[i].close) /
-            data[i].close;
+          const denom = baseClose !== 0 ? baseClose : 1;
+          const change = (futureClose - baseClose) / denom;
           labels.push(change > 0.01 ? 1 : change < -0.01 ? -1 : 0);
           break;
         case 'volatility':
