@@ -2,7 +2,7 @@
   "compilerOptions": {
     "baseUrl": ".",
     "paths": {
-      "@shared/*": ["../shared/*"]
+      "@shared/*": ["shared/*"]
     },
     "outDir": "./dist",
     "module": "ES2020",
@@ -19,6 +19,6 @@
     "checkJs": false,
     "noEmitOnError": false
   },
-  "include": ["src/**/*", "../shared/**/*"],
+  "include": ["src/**/*", "shared/**/*"],
   "exclude": ["node_modules", "dist"]
 }

@@ -21,7 +21,7 @@
     "baseUrl": ".",
     "paths": {
       "@/*": ["src/*"],
-      "@shared/*": ["../shared/*"],
+      "@shared/*": ["shared/*"],
       "@components/*": ["src/components/*"],
       "@hooks/*": ["src/hooks/*"],
       "@utils/*": ["src/utils/*"],
@@ -29,6 +29,6 @@
       "@types/*": ["src/types/*"]
     }
   },
-  "include": ["src", "../shared/types"],
+  "include": ["src", "shared/**/*"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }
