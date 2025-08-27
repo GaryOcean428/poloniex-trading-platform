@@ -3,7 +3,6 @@ import { useState, useEffect } from 'react';
 import { Shield, Lock, TerminalSquare, Zap } from 'lucide-react';
 import { useSettings } from '../../hooks/useSettings';
 
-/* eslint-disable no-console */
 
 interface ExtensionSettingsProps {
   onClose?: () => void;
