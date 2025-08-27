@@ -233,7 +233,7 @@ export class HealthService {
    */
   monitorConnectionHealth(): void {
     setInterval(() => {
-      const health = this.getConnectionHealth();
+      this.getConnectionHealth();
 
       if (!this.isConnectionHealthy()) {
         // console.warn("Connection health is poor:", health);

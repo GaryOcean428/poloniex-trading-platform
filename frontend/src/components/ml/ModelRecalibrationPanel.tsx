@@ -528,18 +528,18 @@ const ModelRecalibrationPanel: React.FC = () => {
               <div className="flex items-center mt-1">
                 <div className="w-full bg-neutral-200 rounded-full h-2.5 dark:bg-neutral-700">
                   <div
-                    className={`h-2.5 rounded-full ${performanceMetrics.driftScore > recalibrationConfig.driftThreshold
+                    className={`h-2.5 rounded-full ${(performanceMetrics?.driftScore ?? 0) > recalibrationConfig.driftThreshold
                         ? 'bg-red-600'
                         : 'bg-green-600'
                       }`}
-                    style={{ width: `${performanceMetrics.driftScore * 100}%` }}
+                    style={{ width: `${(performanceMetrics?.driftScore ?? 0) * 100}%` }}
                   ></div>
                 </div>
                 <span className="ml-2 text-sm text-neutral-700 dark:text-neutral-300">
-                  {(performanceMetrics.driftScore * 100).toFixed(1)}%
+                  {(((performanceMetrics?.driftScore ?? 0) * 100).toFixed(1))}%
                 </span>
               </div>
-              {performanceMetrics.driftScore > recalibrationConfig.driftThreshold && (
+              {(performanceMetrics?.driftScore ?? 0) > recalibrationConfig.driftThreshold && (
                 <p className="mt-1 text-sm text-red-600">
                   Significant drift detected. Recalibration recommended.
                 </p>
