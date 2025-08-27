@@ -207,6 +207,7 @@ export function decodeJWTPayload(token: string): unknown | null {
     if (parts.length !== 3) return null;
     
     const payload = parts[1];
+    if (!payload) return null;
     const decoded = atob(payload.replace(/-/g, '+').replace(/_/g, '/'));
     return JSON.parse(decoded);
   } catch (error) {

@@ -1,4 +1,4 @@
-import axios, { AxiosResponse } from 'axios';
+import axios, { AxiosError, AxiosResponse } from 'axios';
 import { getAccessToken, getRefreshToken, storeAuthData, clearAuthData, shouldRefreshToken } from '@/utils/auth';
 
 // Get the backend URL from environment
@@ -48,6 +48,16 @@ function isUser(value: unknown): value is User {
     'email' in value &&
     'role' in value
   );
+}
+
+// Local, safe Axios error type guard for tests and runtime
+function isAxiosError(error: unknown): error is AxiosError {
+  return typeof error === 'object' && error !== null && (error as any).isAxiosError === true;
+}
+
+// Handle mocked errors that look like Axios errors but lack isAxiosError flag
+function hasAxiosLikeResponse(error: unknown): error is { response: { data?: any; status?: number } } {
+  return typeof error === 'object' && error !== null && 'response' in (error as any);
 }
 
 /**
@@ -107,11 +117,11 @@ export class AuthService {
 
       return { success: false, error: 'Login failed' };
     } catch (error: unknown) {
-      if (axios.isAxiosError(error) && error.response?.data) {
+      if ((isAxiosError(error) || hasAxiosLikeResponse(error)) && (error as any).response?.data) {
         return {
           success: false,
-          error: (error.response.data as any).error || 'Login failed',
-          code: (error.response.data as any).code
+          error: ((error as any).response.data as any).error || 'Login failed',
+          code: ((error as any).response.data as any).code
         };
       }
 
@@ -171,7 +181,7 @@ export class AuthService {
       return null;
     } catch (error: unknown) {
       // If refresh fails, clear auth data and redirect to login
-      if (axios.isAxiosError(error) && (error.response?.status === 403 || error.response?.status === 401)) {
+      if (isAxiosError(error) && (error.response?.status === 403 || error.response?.status === 401)) {
         this.logout();
       }
 
@@ -229,7 +239,7 @@ export class AuthService {
       return !!response.data?.success;
     } catch (error) {
       // If verify endpoint is not implemented on the backend, treat as valid to avoid false logouts
-      if (axios.isAxiosError(error)) {
+      if (isAxiosError(error)) {
         const status = error.response?.status;
         if (status === 404 || status === 405 || status === 501) {
           return true;
@@ -287,7 +297,7 @@ export class AuthService {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
-        ...(data && { data })
+        ...(data !== undefined ? { data } : {})
       };
 
       const response = await axios(config);
@@ -296,7 +306,7 @@ export class AuthService {
       // console.error('Authenticated request error:', error);
 
       // If token is invalid, try to refresh once
-      if (axios.isAxiosError(error) && (error.response?.status === 401 || error.response?.status === 403)) {
+      if (isAxiosError(error) && (error.response?.status === 401 || error.response?.status === 403)) {
         const newToken = await this.refreshToken();
         if (newToken) {
           // Retry the request with new token
@@ -308,7 +318,7 @@ export class AuthService {
                 'Authorization': `Bearer ${newToken}`,
                 'Content-Type': 'application/json'
               },
-              ...(data && { data })
+              ...(data !== undefined ? { data } : {})
             };
 
             const response = await axios(config);
@@ -317,7 +327,7 @@ export class AuthService {
             // console.error('Retry request error:', retryError);
             return {
               success: false,
-              error: (axios.isAxiosError(retryError) && retryError.response?.data?.error) || 'Request failed'
+              error: (isAxiosError(retryError) && retryError.response?.data?.error) || 'Request failed'
             };
           }
         } else {
@@ -327,7 +337,7 @@ export class AuthService {
 
       return {
         success: false,
-        error: (axios.isAxiosError(error) && error.response?.data?.error) || 'Request failed'
+        error: (isAxiosError(error) && error.response?.data?.error) || 'Request failed'
       };
     }
   }

@@ -3,6 +3,7 @@ import * as dqnTrading from '@/ml/dqnTrading';
 import React, { useEffect, useState } from 'react';
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { useSettings } from '../../hooks/useSettings';
+import { logger } from '@shared/logger';
 
 interface DQNConfig {
   stateDimension: number;
@@ -94,7 +95,11 @@ const DQNTradingPanel: React.FC = () => {
       } catch (err)
       {
         setError('Failed to fetch market data');
-        console.error(err);
+        logger.error('Failed to fetch market data', err instanceof Error ? err : new Error(String(err)), {
+          component: 'DQNTradingPanel',
+          action: 'fetch_market_data',
+          pair: defaultPair
+        });
       }
     };
 
@@ -139,7 +144,11 @@ const DQNTradingPanel: React.FC = () => {
     } catch (err)
     {
       setError('Failed to train model');
-      console.error(err);
+      logger.error('Failed to train DQN model', err instanceof Error ? err : new Error(String(err)), {
+        component: 'DQNTradingPanel',
+        action: 'train_model',
+        episodes
+      });
       setIsTraining(false);
     }
   };
@@ -180,7 +189,11 @@ const DQNTradingPanel: React.FC = () => {
     } catch (err)
     {
       setError('Failed to get trading actions');
-      console.error(err);
+      logger.error('Failed to get DQN actions', err instanceof Error ? err : new Error(String(err)), {
+        component: 'DQNTradingPanel',
+        action: 'get_actions',
+        modelId: modelInfo?.id
+      });
       setIsGettingActions(false);
     }
   };
@@ -229,7 +242,11 @@ const DQNTradingPanel: React.FC = () => {
     } catch (err)
     {
       setError('Failed to continue training');
-      console.error(err);
+      logger.error('Failed to continue DQN training', err instanceof Error ? err : new Error(String(err)), {
+        component: 'DQNTradingPanel',
+        action: 'continue_training',
+        modelId: modelInfo?.id
+      });
       setIsContinuingTraining(false);
     }
   };
@@ -244,16 +261,21 @@ const DQNTradingPanel: React.FC = () => {
 
     // Get the latest action
     const latestAction = actions[0];
+    if (!latestAction) {
+      setError('No actions available');
+      return;
+    }
 
     if (latestAction.action === 'buy')
     {
       // Execute buy strategy
       // TODO: Implement executeStrategy functionality
-      console.log('DQN Strategy - BUY signal:', {
+      logger.info('DQN Strategy - BUY signal', {
+        component: 'DQNTradingPanel',
         type: 'DQN_STRATEGY',
         action: 'BUY',
         symbol: defaultPair,
-        amount: 0.01, // Small fixed amount
+        amount: 0.01,
         confidence: latestAction.confidence,
         modelId: modelInfo?.id
       });
@@ -261,11 +283,12 @@ const DQNTradingPanel: React.FC = () => {
     {
       // Execute sell strategy
       // TODO: Implement executeStrategy functionality
-      console.log('DQN Strategy - SELL signal:', {
+      logger.info('DQN Strategy - SELL signal', {
+        component: 'DQNTradingPanel',
         type: 'DQN_STRATEGY',
         action: 'SELL',
         symbol: defaultPair,
-        amount: 0.01, // Small fixed amount
+        amount: 0.01,
         confidence: latestAction.confidence,
         modelId: modelInfo?.id
       });

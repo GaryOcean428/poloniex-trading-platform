@@ -71,6 +71,7 @@ export class EnhancedBacktester {
 
     for (let i = 50; i < marketData.length; i++) {
       const currentCandle = marketData[i];
+      if (!currentCandle) continue;
 
       if (position) {
         const exitPrice = currentCandle.close;

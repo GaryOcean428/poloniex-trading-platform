@@ -23,7 +23,7 @@ export class TradingEngine {
     return this.isRunning;
   }
 
-  async switchMode(mode: string): Promise<void> {
+  async switchMode(_mode: string): Promise<void> {
     // TODO: Implement mode switching
     // console.log(`Switching to mode: ${mode}`);
   }

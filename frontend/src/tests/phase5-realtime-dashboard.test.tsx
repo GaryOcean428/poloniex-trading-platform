@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { BrowserRouter } from 'react-router-dom';
 import LiveTradingDashboard from '@/pages/LiveTradingDashboard';
@@ -8,27 +8,81 @@ import { TradingProvider } from '@/context/TradingContext';
 import { WebSocketProvider } from '@/context/WebSocketContext';
 import { SettingsProvider } from '@/context/SettingsContext';
 
-// Mock the WebSocket service
-vi.mock('@/services/websocketService', () => ({
-  useWebSocket: () => ({
-    connectionState: 'connected',
-    isMockMode: false,
-    isConnected: true,
-    on: vi.fn(),
-    off: vi.fn(),
-    connect: vi.fn(),
-    disconnect: vi.fn(),
-    subscribe: vi.fn(),
-    unsubscribe: vi.fn(),
-    send: vi.fn(),
-    getStats: vi.fn(() => ({
-      connectTime: Date.now(),
-      disconnectTime: null,
-      reconnectAttempts: 0,
-      totalDisconnects: 0
-    }))
-  })
+// Mock Chart.js (must provide named exports used by LiveTradingDashboard)
+vi.mock('chart.js', () => {
+  //
+  // Provide a minimal Chart class with static register
+  class ChartJSClass {}
+  (ChartJSClass as any).register = vi.fn();
+  return {
+    CategoryScale: {},
+    LinearScale: {},
+    PointElement: {},
+    LineElement: {},
+    Title: {},
+    Tooltip: {},
+    Legend: {},
+    Chart: ChartJSClass,
+  } as any;
+});
+
+// Mock the WebSocket service for both alias and relative imports
+const baseWsMock = {
+  on: vi.fn(),
+  off: vi.fn(),
+  connect: vi.fn(),
+  disconnect: vi.fn(),
+  subscribe: vi.fn(),
+  unsubscribe: vi.fn(),
+  send: vi.fn(),
+  getStats: vi.fn(() => ({
+    connectTime: Date.now(),
+    disconnectTime: null,
+    reconnectAttempts: 0,
+    totalDisconnects: 0
+  })),
+  getHealth: vi.fn(() => ({
+    isHealthy: true,
+    uptime: 1000,
+    latency: 5,
+    reconnectAttempts: 0
+  })),
+  getConnectionHealth: vi.fn(() => ({
+    isHealthy: true,
+    uptime: 1000,
+    latency: 5,
+    reconnectAttempts: 0
+  })),
+  getConnectionStatus: vi.fn(() => 'connected'),
+  isConnected: vi.fn(() => true),
+  isMockMode: vi.fn(() => false)
+};
+
+const useWebSocketMock = vi.fn(() => ({
+  connectionState: 'connected',
+  isMockMode: false,
+  isConnected: true,
+  on: baseWsMock.on,
+  off: baseWsMock.off,
+  connect: baseWsMock.connect,
+  disconnect: baseWsMock.disconnect,
+  subscribe: baseWsMock.subscribe,
+  unsubscribe: baseWsMock.unsubscribe,
+  send: baseWsMock.send,
+  getStats: baseWsMock.getStats,
+  getHealth: baseWsMock.getHealth
 }));
+
+vi.mock('@/services/websocketService', () => ({
+  webSocketService: baseWsMock,
+  useWebSocket: useWebSocketMock
+}));
+
+vi.mock('../services/websocketService', () => ({
+  webSocketService: baseWsMock,
+  useWebSocket: useWebSocketMock
+}));
+import { useWebSocket } from '@/services/websocketService';
 
 // Mock the trading context
 vi.mock('@/hooks/useTradingContext', () => ({
@@ -261,7 +315,6 @@ describe('Phase 5: Real-time WebSocket Trading Dashboard', () => {
 
     it('should handle market data updates', () => {
       // This tests the integration with WebSocket service
-      const { useWebSocket } = require('@/services/websocketService');
       const mockWebSocket = useWebSocket();
 
       renderWithProviders(<LiveTradingDashboard />);
@@ -275,7 +328,6 @@ describe('Phase 5: Real-time WebSocket Trading Dashboard', () => {
 
   describe('Real-time Features', () => {
     it('should setup event listeners when live mode is enabled', async () => {
-      const { useWebSocket } = require('@/services/websocketService');
       const mockWebSocket = useWebSocket();
 
       renderWithProviders(<LiveTradingDashboard />);
@@ -290,7 +342,6 @@ describe('Phase 5: Real-time WebSocket Trading Dashboard', () => {
     });
 
     it('should cleanup event listeners when component unmounts', () => {
-      const { useWebSocket } = require('@/services/websocketService');
       const mockWebSocket = useWebSocket();
 
       const { unmount } = renderWithProviders(<LiveTradingDashboard />);
@@ -323,7 +374,7 @@ describe('Phase 5: Real-time WebSocket Trading Dashboard', () => {
   describe('Error Handling', () => {
     it('should handle WebSocket disconnection gracefully', () => {
       // Mock disconnected state
-      vi.mocked(require('@/services/websocketService').useWebSocket).mockReturnValue({
+      (useWebSocket as unknown as Mock).mockReturnValue({
         connectionState: 'disconnected',
         isMockMode: false,
         isConnected: false,
@@ -338,7 +389,7 @@ describe('Phase 5: Real-time WebSocket Trading Dashboard', () => {
 
     it('should handle mock mode appropriately', () => {
       // Mock mock mode
-      vi.mocked(require('@/services/websocketService').useWebSocket).mockReturnValue({
+      (useWebSocket as unknown as Mock).mockReturnValue({
         connectionState: 'connected',
         isMockMode: true,
         isConnected: false,

@@ -1,7 +1,6 @@
 import React, { Component, type ErrorInfo, type ReactNode } from 'react';
 import { ErrorFallback } from './ErrorFallback';
-
-/* eslint-disable no-console */
+import { logger } from '@shared/logger';
 
 interface ErrorBoundaryState {
   hasError: boolean;
@@ -23,6 +22,8 @@ interface ErrorBoundaryProps {
 
 export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   private resetTimeoutId: number | null = null;
+  private onWindowError?: (event: ErrorEvent) => void;
+  private onUnhandledRejection?: (event: PromiseRejectionEvent) => void;
 
   constructor(props: ErrorBoundaryProps) {
     super(props);
@@ -33,6 +34,38 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
       errorCount: 0,
       errorId: ''
     };
+  }
+
+  componentDidMount(): void {
+    // Capture errors thrown in event handlers or other async contexts
+    this.onWindowError = (event: ErrorEvent) => {
+      if (!this.state.hasError) {
+        this.setState({
+          hasError: true,
+          error: event.error instanceof Error ? event.error : new Error(event.message || 'Unknown error'),
+          errorInfo: null,
+          errorId: `error-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+        });
+      }
+    };
+
+    this.onUnhandledRejection = (event: PromiseRejectionEvent) => {
+      const reason = event.reason;
+      const err = reason instanceof Error ? reason : new Error(typeof reason === 'string' ? reason : 'Unhandled rejection');
+      if (!this.state.hasError) {
+        this.setState({
+          hasError: true,
+          error: err,
+          errorInfo: null,
+          errorId: `error-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+        });
+      }
+    };
+
+    if (typeof window.addEventListener === 'function') {
+      window.addEventListener('error', this.onWindowError as any);
+      window.addEventListener('unhandledrejection', this.onUnhandledRejection as unknown as EventListener);
+    }
   }
 
   static getDerivedStateFromError(error: Error): Partial<ErrorBoundaryState> {
@@ -66,25 +99,32 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     {
       clearTimeout(this.resetTimeoutId);
     }
+    if (typeof window.removeEventListener === 'function') {
+      if (this.onWindowError) {
+        window.removeEventListener('error', this.onWindowError as any);
+      }
+      if (this.onUnhandledRejection) {
+        window.removeEventListener('unhandledrejection', this.onUnhandledRejection as unknown as EventListener);
+      }
+    }
   }
 
-  private logError = (error: Error, errorInfo: ErrorInfo) => {
-    // Log to console for development
-    // console.error('ErrorBoundary caught an error:', error);
-    // console.error('Error info:', errorInfo);
+  private logError = (error: Error, _errorInfo: ErrorInfo) => {
+    // Centralized logging
+    const context = {
+      component: 'ErrorBoundary',
+      errorCount: this.state.errorCount,
+      errorId: this.state.errorId,
+    } as const;
 
-    // Check for initialization errors
-    if (this.isInitializationError(error))
-    {
-      // console.error('Initialization error detected - this may require a page refresh');
+    if (this.isInitializationError(error)) {
+      logger.critical('Initialization error detected - may require page refresh', error, context);
+    } else {
+      logger.error('ErrorBoundary caught an error', error, context);
     }
 
-    // In production, this would send to a logging service
-    if (process.env.NODE_ENV === 'production')
-    {
-      // Example: Send to monitoring service
-      // logErrorToService(error, errorInfo, this.state.errorCount);
-    }
+    // Hook: place to forward to monitoring service in production if needed
+    // e.g., send to Sentry/DataDog here using error and _errorInfo
   };
 
   private isInitializationError = (error: Error): boolean => {
