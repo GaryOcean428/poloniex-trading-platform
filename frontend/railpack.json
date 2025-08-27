@@ -29,6 +29,6 @@
     }
   },
   "deploy": {
-    "startCommand": "node frontend/serve.js"
+    "startCommand": "node serve.js"
   }
 }
