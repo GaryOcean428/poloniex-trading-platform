@@ -406,6 +406,10 @@ export class AutonomousTradingEngine {
     // Run backtests for each strategy
     for (let i = 0; i < session.strategies.length; i++) {
       const strategy = session.strategies[i];
+      // Guard against possibly undefined when using indexed access under noUncheckedIndexedAccess
+      if (!strategy) {
+        continue;
+      }
 
       try {
         const result = await advancedBacktestService.runAdvancedBacktest(
