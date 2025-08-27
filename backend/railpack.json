@@ -16,9 +16,6 @@
   },
   "build": {
     "commands": [
-      "rm -rf ./shared",
-      "mkdir -p ./shared",
-      "cp -r ../shared/* ./shared/ 2>/dev/null || true",
       "yarn build"
     ]
   },

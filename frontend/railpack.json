@@ -16,11 +16,6 @@
   },
   "build": {
     "commands": [
-      "rm -rf ./src/shared",
-      "mkdir -p ./src/shared/types ./src/shared/middleware",
-      "cp ../shared/types/*.ts ./src/shared/types/ 2>/dev/null || true",
-      "cp ../shared/*.ts ./src/shared/ 2>/dev/null || true",
-      "cp -r ../shared/middleware ./src/shared/ 2>/dev/null || true",
       "yarn build:railway"
     ]
   },
