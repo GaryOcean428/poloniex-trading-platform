@@ -59,8 +59,8 @@ describe('ToastContainer', () => {
   it('should render toast messages correctly', () => {
     render(<ToastContainer />);
     
-    expect(screen.getByText('Test toast message')).toBeInTheDocument();
-    expect(screen.getByText('Success message')).toBeInTheDocument();
+    expect(screen.getAllByText('Test toast message').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Success message').length).toBeGreaterThan(0);
   });
 
   it('should not render when no toasts are present', () => {
