@@ -1,14 +1,23 @@
-from fastapi import FastAPI
+"""Health and utility endpoints for the ML worker service.
+
+Exposes /health and /healthz for Railway liveness and readiness checks,
+and a small /run/ingest helper to invoke ingest_markets.py on demand.
+"""
+
 import os
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
+
+from fastapi import FastAPI
 
 app = FastAPI()
 
+
 @app.get("/health")
 async def health():
-    # Basic liveness/readiness endpoint for Railway
+    """Basic liveness/readiness endpoint for Railway."""
     return {
         "status": "ok",
         "service": "ml-worker",
@@ -18,12 +27,24 @@ async def health():
             "PORT": os.getenv("PORT", ""),
             "PYTHONUNBUFFERED": os.getenv("PYTHONUNBUFFERED", ""),
         },
-}
+    }
 
 
 @app.get("/healthz")
 async def healthz():
-    return await health()
+    """Unified health endpoint for Railway deployment."""
+    return {
+        "status": "healthy",
+        "service": "ml-worker",
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "python": sys.version.split()[0],
+        "cwd": str(Path.cwd()),
+        "env": {
+            "PORT": os.getenv("PORT", ""),
+            "PYTHONUNBUFFERED": os.getenv("PYTHONUNBUFFERED", ""),
+        },
+    }
+
 
 @app.post("/run/ingest")
 async def run_ingest():
@@ -44,11 +65,16 @@ async def run_ingest():
             env=os.environ.copy(),
             timeout=60 * 10,
             text=True,
+            check=True,
         )
         return {
-            "ok": proc.returncode == 0,
-            "code": proc.returncode,
+            "ok": True,
+            "code": 0,
             "output": proc.stdout[-4000:],  # return tail to limit payload size
         }
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
+    except subprocess.CalledProcessError as e:
+        return {
+            "ok": False,
+            "code": e.returncode,
+            "output": (e.stdout or "")[-4000:],
+        }

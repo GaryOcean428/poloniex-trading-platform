@@ -69,11 +69,32 @@ function executeMovingAverageCrossover(
   const fastMA = calculateSMA(marketData, fastPeriod);
   const slowMA = calculateSMA(marketData, slowPeriod);
   
+  // Guard: ensure we have at least two MA values for both series
+  if (fastMA.length < 2 || slowMA.length < 2) {
+    return {
+      signal: null,
+      reason: 'Insufficient MA history for crossover evaluation',
+      confidence: 0,
+    };
+  }
+  
   // Get current and previous values
-  const currentFastMA = fastMA[fastMA.length - 1];
-  const previousFastMA = fastMA[fastMA.length - 2];
-  const currentSlowMA = slowMA[slowMA.length - 1];
-  const previousSlowMA = slowMA[slowMA.length - 2];
+  const currentFastMA = fastMA.at(-1);
+  const previousFastMA = fastMA.at(-2);
+  const currentSlowMA = slowMA.at(-1);
+  const previousSlowMA = slowMA.at(-2);
+  if (
+    currentFastMA === undefined ||
+    previousFastMA === undefined ||
+    currentSlowMA === undefined ||
+    previousSlowMA === undefined
+  ) {
+    return {
+      signal: null,
+      reason: 'MA values unavailable for crossover evaluation',
+      confidence: 0,
+    };
+  }
   
   // Check for crossover
   const isBullishCrossover = previousFastMA <= previousSlowMA && currentFastMA > currentSlowMA;
@@ -130,8 +151,23 @@ function executeRSI(
   
   // Calculate RSI
   const rsi = calculateRSI(marketData, period);
-  const currentRSI = rsi[rsi.length - 1];
-  const previousRSI = rsi[rsi.length - 2];
+  // Guard: ensure we have at least two RSI values
+  if (rsi.length < 2) {
+    return {
+      signal: null,
+      reason: 'Insufficient RSI history for signal evaluation',
+      confidence: 0,
+    };
+  }
+  const currentRSI = rsi.at(-1);
+  const previousRSI = rsi.at(-2);
+  if (currentRSI === undefined || previousRSI === undefined) {
+    return {
+      signal: null,
+      reason: 'RSI values unavailable for evaluation',
+      confidence: 0,
+    };
+  }
   
   // Calculate confidence based on distance from thresholds
   let confidence = 0;
@@ -197,9 +233,24 @@ function executeMACD(
     slowPeriod, 
     signalPeriod
   );
-  
-  const currentHistogram = macdResult.histogram[macdResult.histogram.length - 1];
-  const previousHistogram = macdResult.histogram[macdResult.histogram.length - 2];
+  // Guard: need at least two histogram values
+  const hist = macdResult.histogram;
+  if (hist.length < 2) {
+    return {
+      signal: null,
+      reason: 'Insufficient MACD histogram history for crossover evaluation',
+      confidence: 0,
+    };
+  }
+  const currentHistogram = hist.at(-1);
+  const previousHistogram = hist.at(-2);
+  if (currentHistogram === undefined || previousHistogram === undefined) {
+    return {
+      signal: null,
+      reason: 'MACD histogram values unavailable for evaluation',
+      confidence: 0,
+    };
+  }
   
   // Calculate confidence based on histogram value
   const confidence = Math.min(0.9, Math.abs(currentHistogram) / 0.5);
@@ -250,12 +301,36 @@ function executeBollingerBands(
   
   // Calculate Bollinger Bands
   const bands = calculateBollingerBands(marketData, period, stdDev);
+  // Guard: need at least two candles to compare price movement
+  if (marketData.length < 2) {
+    return {
+      signal: null,
+      reason: 'Insufficient candles for Bollinger Bands signal evaluation',
+      confidence: 0,
+    };
+  }
   
-  const currentPrice = marketData[marketData.length - 1].close;
-  const previousPrice = marketData[marketData.length - 2].close;
+  const lastCandle = marketData.at(-1);
+  const prevCandle = marketData.at(-2);
+  if (!lastCandle || !prevCandle) {
+    return {
+      signal: null,
+      reason: 'Missing candles for Bollinger evaluation',
+      confidence: 0,
+    };
+  }
+  const currentPrice = lastCandle.close;
+  const previousPrice = prevCandle.close;
   
-  const currentUpper = bands.upper[bands.upper.length - 1];
-  const currentLower = bands.lower[bands.lower.length - 1];
+  const currentUpper = bands.upper.at(-1);
+  const currentLower = bands.lower.at(-1);
+  if (currentUpper === undefined || currentLower === undefined) {
+    return {
+      signal: null,
+      reason: 'Insufficient Bollinger Bands history for signal evaluation',
+      confidence: 0,
+    };
+  }
   // Middle band value not used in this function
   
   // Calculate confidence based on position within bands
@@ -330,16 +405,22 @@ function calculateSMA(marketData: MarketData[], period: number): number[] {
  */
 function calculateEMA(marketData: MarketData[], period: number): number[] {
   const prices = marketData.map(candle => candle.close);
-  const ema = [];
+  const ema: number[] = [];
   const multiplier = 2 / (period + 1);
   
+  if (prices.length < period || period <= 0) return ema;
+  
   // Start with SMA
-  const firstSMA = prices.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  const seedSlice = prices.slice(0, period);
+  const firstSMA = seedSlice.reduce((a, b) => a + b, 0) / period;
   ema.push(firstSMA);
   
   // Calculate EMA
   for (let i = period; i < prices.length; i++) {
-    ema.push((prices[i] - ema[ema.length - 1]) * multiplier + ema[ema.length - 1]);
+    const price = prices[i];
+    const prev = ema.at(-1);
+    if (price === undefined || prev === undefined) continue;
+    ema.push((price - prev) * multiplier + prev);
   }
   
   return ema;
@@ -356,7 +437,10 @@ function calculateRSI(marketData: MarketData[], period: number): number[] {
   
   // Calculate price changes
   for (let i = 1; i < prices.length; i++) {
-    const change = prices[i] - prices[i - 1];
+    const curr = prices[i];
+    const prev = prices[i - 1];
+    if (curr === undefined || prev === undefined) continue;
+    const change = curr - prev;
     gains.push(change > 0 ? change : 0);
     losses.push(change < 0 ? -change : 0);
   }
@@ -371,8 +455,11 @@ function calculateRSI(marketData: MarketData[], period: number): number[] {
   
   // Calculate remaining RSIs
   for (let i = period; i < gains.length; i++) {
-    avgGain = ((avgGain * (period - 1)) + gains[i]) / period;
-    avgLoss = ((avgLoss * (period - 1)) + losses[i]) / period;
+    const g = gains[i];
+    const l = losses[i];
+    if (g === undefined || l === undefined) continue;
+    avgGain = ((avgGain * (period - 1)) + g) / period;
+    avgLoss = ((avgLoss * (period - 1)) + l) / period;
     
     rs = avgGain / (avgLoss === 0 ? 0.001 : avgLoss);
     rsi.push(100 - (100 / (1 + rs)));
@@ -395,30 +482,47 @@ function calculateMACD(
   const slowEMA = calculateEMA(marketData, slowPeriod);
   
   // Calculate MACD line
-  const macd = [];
+  const macd: number[] = [];
+  const offset = slowEMA.length - fastEMA.length;
   for (let i = 0; i < fastEMA.length; i++) {
-    if (i >= slowEMA.length - fastEMA.length) {
-      macd.push(fastEMA[i] - slowEMA[i - (slowEMA.length - fastEMA.length)]);
+    if (i >= 0 && offset >= 0 && i < fastEMA.length) {
+      const fastVal = fastEMA[i];
+      const slowIdx = i + offset;
+      const slowVal = slowEMA[slowIdx];
+      if (fastVal !== undefined && slowVal !== undefined) {
+        macd.push(fastVal - slowVal);
+      }
     }
   }
   
   // Calculate signal line (EMA of MACD)
-  const signal = [];
-  const multiplier = 2 / (signalPeriod + 1);
+  const signal: number[] = [];
+  const sigMultiplier = 2 / (signalPeriod + 1);
   
-  // Start with SMA of MACD
-  const firstSignalSMA = macd.slice(0, signalPeriod).reduce((a, b) => a + b, 0) / signalPeriod;
-  signal.push(firstSignalSMA);
-  
-  // Calculate signal EMA
-  for (let i = signalPeriod; i < macd.length; i++) {
-    signal.push((macd[i] - signal[signal.length - 1]) * multiplier + signal[signal.length - 1]);
+  if (macd.length >= signalPeriod && signalPeriod > 0) {
+    // Start with SMA of MACD
+    const seed = macd.slice(0, signalPeriod);
+    const firstSignalSMA = seed.reduce((a, b) => a + b, 0) / signalPeriod;
+    signal.push(firstSignalSMA);
+    
+    // Calculate signal EMA
+    for (let i = signalPeriod; i < macd.length; i++) {
+      const macdVal = macd[i];
+      const prevSig = signal.at(-1);
+      if (macdVal === undefined || prevSig === undefined) continue;
+      signal.push((macdVal - prevSig) * sigMultiplier + prevSig);
+    }
   }
   
   // Calculate histogram
-  const histogram = [];
+  const histogram: number[] = [];
+  const histOffset = macd.length - signal.length;
   for (let i = 0; i < signal.length; i++) {
-    histogram.push(macd[i + (macd.length - signal.length)] - signal[i]);
+    const macdIdx = i + histOffset;
+    const macdVal = macd[macdIdx];
+    const sigVal = signal[i];
+    if (macdVal === undefined || sigVal === undefined) continue;
+    histogram.push(macdVal - sigVal);
   }
   
   return { macd, signal, histogram };
@@ -434,21 +538,26 @@ function calculateBollingerBands(
 ): { middle: number[], upper: number[], lower: number[] } {
   const prices = marketData.map(candle => candle.close);
   const middle = calculateSMA(marketData, period);
-  const upper = [];
-  const lower = [];
+  const upper: number[] = [];
+  const lower: number[] = [];
   
-  for (let i = period - 1; i < prices.length; i++) {
-    const slice = prices.slice(i - period + 1, i + 1);
-    const sum = slice.reduce((a, b) => a + b, 0);
-    const mean = sum / period;
-    
-    // Calculate standard deviation
-    const squaredDiffs = slice.map(price => Math.pow(price - mean, 2));
-    const variance = squaredDiffs.reduce((a, b) => a + b, 0) / period;
-    const standardDeviation = Math.sqrt(variance);
-    
-    upper.push(middle[i - (period - 1)] + (standardDeviation * stdDev));
-    lower.push(middle[i - (period - 1)] - (standardDeviation * stdDev));
+  if (prices.length >= period && period > 0) {
+    for (let i = period - 1; i < prices.length; i++) {
+      const slice = prices.slice(i - period + 1, i + 1);
+      const sum = slice.reduce((a, b) => a + b, 0);
+      const mean = sum / period;
+      
+      // Calculate standard deviation
+      const squaredDiffs = slice.map(price => Math.pow(price - mean, 2));
+      const variance = squaredDiffs.reduce((a, b) => a + b, 0) / period;
+      const standardDeviation = Math.sqrt(variance);
+      
+      const middleIdx = i - (period - 1);
+      const middleVal = middle[middleIdx];
+      if (middleVal === undefined) continue;
+      upper.push(middleVal + (standardDeviation * stdDev));
+      lower.push(middleVal - (standardDeviation * stdDev));
+    }
   }
   
   return { middle, upper, lower };

@@ -368,7 +368,7 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
   }, [strategy, marketData, parameterRanges, onResultsChange]);
 
   // Render backtest results
-  const renderBacktestResults = useCallback((): JSX.Element | null => {
+  const renderBacktestResults = useCallback((): React.ReactElement | null => {
     if (!backtestResult) return null;
 
     const { metrics, trades } = backtestResult;
@@ -548,7 +548,7 @@ const StrategyTester: React.FC<StrategyTesterProps> = ({
   }, [backtestResult]);
 
   // Render optimization results
-  const renderOptimizationResults = useCallback((): JSX.Element | null => {
+  const renderOptimizationResults = useCallback((): React.ReactElement | null => {
     if (!optimizationResult) return null;
 
     const { bestParameters, bestResult, optimizationTime } = optimizationResult;

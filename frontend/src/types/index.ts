@@ -1,5 +1,4 @@
-// Re-export strategy types from ambient module declarations
-// This ensures compatibility during Railway builds
+// Re-export strategy types from shared module to ensure compatibility across builds
 export * from '@shared/types';
 
 // Explicit re-exports for key types and values to ensure they're always available
@@ -90,7 +89,13 @@ export interface Ticker {
 }
 
 export interface ExchangeService {
-  placeOrder: (pair: string, side: 'BUY' | 'SELL', type: 'LIMIT' | 'MARKET', quantity: number, price?: number) => Promise<unknown>;
+  placeOrder: (
+    pair: string,
+    side: 'BUY' | 'SELL',
+    type: 'LIMIT' | 'MARKET',
+    quantity: number,
+    price?: number
+  ) => Promise<unknown>;
   errors: string[];
   addError: (error: string) => void;
   clearErrors: () => void;

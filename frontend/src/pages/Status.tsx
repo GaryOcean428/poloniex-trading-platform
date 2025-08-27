@@ -3,17 +3,16 @@ import {
   Activity, 
   AlertTriangle, 
   CheckCircle2, 
-  Clock, 
   Database, 
   Globe, 
   Info, 
   RefreshCw,
   Server,
   Wifi,
-  Chrome,
   ExternalLink
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { logger } from '@shared/logger';
 
 interface StatusNotification {
   id: string;
@@ -99,7 +98,11 @@ const Status: React.FC = () => {
     try {
       localStorage.setItem('dismissedStatusNotifications', JSON.stringify([...newDismissed]));
     } catch (error) {
-      console.warn('Failed to save dismissed notifications to localStorage:', error);
+      logger.warn('Failed to save dismissed notifications to localStorage', {
+        component: 'Status',
+        action: 'dismiss_notification',
+        errorMessage: error instanceof Error ? error.message : String(error)
+      });
     }
   };
 
