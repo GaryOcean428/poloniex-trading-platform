@@ -153,3 +153,6 @@ backend/shared/
 # CodeQL databases and local tooling
 codeql-dbs/
 tools/
+
+# CodeQL databases
+codeql-dbs/
