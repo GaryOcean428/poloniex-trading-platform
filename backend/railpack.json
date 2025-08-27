@@ -5,7 +5,7 @@
     "install": {
       "commands": [
         "bash -lc 'corepack enable'",
-        "bash -lc 'corepack prepare yarn@4.3.1 --activate'",
+        "bash -lc 'corepack prepare yarn@4.9.2.1 --activate'",
         "unset YARN_PRODUCTION || true; yarn install --immutable"
       ]
     },
