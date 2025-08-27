@@ -40,6 +40,13 @@ const TransactionHistory: React.FC = () => {
 
   // Generate mock transaction data
   useEffect(() => {
+    const pickOne = <T,>(arr: readonly T[], fallback: T): T => {
+      if (arr.length === 0) return fallback;
+      const idx = Math.floor(Math.random() * arr.length);
+      // Guard for noUncheckedIndexedAccess returning possibly undefined
+      return arr[idx] ?? fallback;
+    };
+
     const generateMockTransactions = (): Transaction[] => {
       const mockData: Transaction[] = [];
       const types: Transaction['type'][] = ['deposit', 'withdrawal', 'trade', 'fee', 'interest'];
@@ -47,8 +54,8 @@ const TransactionHistory: React.FC = () => {
       const statuses: Transaction['status'][] = ['completed', 'pending', 'failed'];
 
       for (let i = 0; i < 150; i++) {
-        const type = types[Math.floor(Math.random() * types.length)];
-        const currency = currencies[Math.floor(Math.random() * currencies.length)];
+        const type = pickOne<Transaction['type']>(types, 'trade');
+        const currency = pickOne<string>(currencies, 'USDT');
         const amount = type === 'fee' ? -Math.random() * 10 : (Math.random() - 0.5) * 1000;
         const timestamp = new Date(Date.now() - Math.random() * 30 * 24 * 60 * 60 * 1000);
 
@@ -58,7 +65,7 @@ const TransactionHistory: React.FC = () => {
           type,
           currency,
           amount,
-          status: statuses[Math.floor(Math.random() * statuses.length)],
+          status: pickOne<Transaction['status']>(statuses, 'completed'),
           txHash: type === 'deposit' || type === 'withdrawal' ? 
             `0x${Math.random().toString(16).slice(2, 42)}` : undefined,
           description: getTransactionDescription(type, currency, amount),
@@ -184,10 +191,13 @@ const TransactionHistory: React.FC = () => {
       TxHash: transaction.txHash || ''
     }));
 
-    const csvContent = [
-      Object.keys(csvData[0]).join(','),
-      ...csvData.map(row => Object.values(row).join(','))
-    ].join('\n');
+    if (csvData.length === 0) {
+      return;
+    }
+
+    const header = Object.keys(csvData[0] ?? {}).join(',');
+    const rows = csvData.map(row => Object.values(row).join(','));
+    const csvContent = [header, ...rows].join('\n');
 
     const blob = new Blob([csvContent], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
