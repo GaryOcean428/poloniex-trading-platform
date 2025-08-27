@@ -100,21 +100,23 @@ const PWAInstallPrompt: React.FC<PWAInstallPromptProps> = ({
     }
 
     // Check if already installed (with type assertion for getInstalledRelatedApps)
-    const nav = window.navigator as Navigator & {
-      getInstalledRelatedApps?: () => Promise<InstalledApp[]>;
-    };
+    if (typeof window !== 'undefined' && typeof window.navigator !== 'undefined') {
+      const nav = window.navigator as Navigator & {
+        getInstalledRelatedApps?: () => Promise<InstalledApp[]>;
+      };
 
-    if (nav.getInstalledRelatedApps) {
-      nav.getInstalledRelatedApps().then((apps: InstalledApp[]) => {
-        if (apps.length > 0)
-        {
-          logger.info('PWA already installed', {
-            component: 'PWAInstallPrompt',
-            metadata: { appsCount: apps.length }
-          });
-          setShowPrompt(false);
-        }
-      });
+      if (typeof nav.getInstalledRelatedApps === 'function') {
+        nav.getInstalledRelatedApps().then((apps: InstalledApp[]) => {
+          if (apps.length > 0)
+          {
+            logger.info('PWA already installed', {
+              component: 'PWAInstallPrompt',
+              metadata: { appsCount: apps.length }
+            });
+            setShowPrompt(false);
+          }
+        });
+      }
     }
 
     return () => {
