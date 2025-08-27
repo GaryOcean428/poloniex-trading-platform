@@ -89,8 +89,23 @@ describe('AI Signal Generator', () => {
       const signal = await aiSignalGenerator.generateSignal(mockMarketData);
       const features = signal.features;
       
-      expect(features.bbUpper).toBeGreaterThan(features.bbMiddle);
-      expect(features.bbMiddle).toBeGreaterThan(features.bbLower);
+      // Ensure band values are defined before numeric comparisons
+      expect(features.bbUpper).toBeDefined();
+      expect(features.bbMiddle).toBeDefined();
+      expect(features.bbLower).toBeDefined();
+
+      if (
+        features.bbUpper !== undefined &&
+        features.bbMiddle !== undefined &&
+        features.bbLower !== undefined
+      ) {
+        const upper = features.bbUpper;
+        const middle = features.bbMiddle;
+        const lower = features.bbLower;
+        expect(upper).toBeGreaterThan(middle);
+        expect(middle).toBeGreaterThan(lower);
+      }
+
       expect(features.pricePosition).toBeGreaterThanOrEqual(0);
       expect(features.pricePosition).toBeLessThanOrEqual(1);
     });

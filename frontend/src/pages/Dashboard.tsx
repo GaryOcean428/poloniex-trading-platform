@@ -14,7 +14,7 @@ import { mockTrades } from '../data/mockData';
 import { Activity, ArrowRight } from 'lucide-react';
 
 const Dashboard: React.FC = () => {
-  const { marketData, strategies, activeStrategies, trades, isMockMode } = useTradingContext();
+  const { marketData, strategies, activeStrategies, trades } = useTradingContext();
   
   return (
     <div className="container-responsive">
