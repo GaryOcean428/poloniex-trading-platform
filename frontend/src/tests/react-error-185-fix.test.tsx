@@ -86,7 +86,7 @@ describe('React Error #185 Fix - Infinite Loop Prevention', () => {
     // Wait for initial effects to complete
     await waitFor(() => {
       expect(result.current.isMockMode).toBe(true);
-    }, { timeout: 2000 });
+    }, { timeout: 2000, container: document.body });
 
     // Check that renders are reasonable (not infinite)
     expect(renderCount).toBeLessThan(10);
@@ -133,7 +133,7 @@ describe('React Error #185 Fix - Infinite Loop Prevention', () => {
 
     await waitFor(() => {
       expect(result.current.isMockMode).toBe(true);
-    });
+    }, { container: document.body });
 
     const initialRenderCount = renderCount;
 
@@ -167,7 +167,7 @@ describe('React Error #185 Fix - Infinite Loop Prevention', () => {
     await waitFor(() => {
       // Should still be reasonable number of renders
       expect(renderCount - initialRenderCount).toBeLessThan(5);
-    }, { timeout: 1000 });
+    }, { timeout: 1000, container: document.body });
 
     expect(renderCount).toBeLessThan(20); // Overall sanity check
   });
@@ -189,7 +189,7 @@ describe('React Error #185 Fix - Infinite Loop Prevention', () => {
     // Wait for providers to initialize
     await waitFor(() => {
       expect(renderCount).toBeGreaterThan(0);
-    });
+    }, { container: document.body });
 
     // Should not have excessive renders
     expect(renderCount).toBeLessThan(15);
@@ -209,7 +209,7 @@ describe('React Error #185 Fix - Infinite Loop Prevention', () => {
     // Wait for initial connection attempts
     await waitFor(() => {
       expect(webSocketService.connect).toHaveBeenCalled();
-    });
+    }, { container: document.body });
 
     // WebSocket service should be set up without infinite calls (allow multiple calls for different components)
     expect(webSocketService.connect).toHaveBeenCalledTimes(2);
@@ -233,7 +233,7 @@ describe('React Error #185 Fix - Infinite Loop Prevention', () => {
 
       await waitFor(() => {
         expect(result.current.isMockMode).toBeDefined();
-      }, { timeout: 3000 });
+      }, { timeout: 3000, container: document.body });
     } catch (error) {
       if (error instanceof Error && error.message.includes('Maximum update depth exceeded')) {
         errorThrown = true;

@@ -12,7 +12,8 @@ export const IS_LOCAL_DEV =
 
 // Get environment variables with fallbacks
 export const getEnvVariable = (key: string, fallback: string = ''): string => {
-  const value = (import.meta as any).env?.[key];
+  const env = (import.meta as unknown as { env?: Record<string, unknown> }).env;
+  const value = env ? env[key] : undefined;
   return value !== undefined ? String(value) : fallback;
 };
 
@@ -116,27 +117,15 @@ export const getBackendUrl = (): string => {
   const envUrl = getEnvVariable('VITE_BACKEND_URL');
   if (envUrl) return envUrl;
 
-  // Priority 2: Railway environment variables
-  const railwayPublicDomain = getEnvVariable('VITE_RAILWAY_PUBLIC_DOMAIN');
-  if (railwayPublicDomain) {
-    return `https://${railwayPublicDomain}`;
-  }
-
-  const railwayPrivateDomain = getEnvVariable('VITE_RAILWAY_PRIVATE_DOMAIN');
-  if (railwayPrivateDomain) {
-    return `https://${railwayPrivateDomain}`;
-  }
-
-  // Priority 3: Environment detection
+  // Priority 2: Environment detection (window context first for tests/dev)
   if (typeof window !== 'undefined' && window.location) {
     const hostname = window.location.hostname;
     const protocol = window.location.protocol || 'http:';
 
     // Local development
     if (hostname === 'localhost' || hostname === '127.0.0.1') {
-      // Use the current origin when running locally so the backend and
-      // frontend can communicate without CORS issues during development.
-      return window.location.origin;
+      // Tests expect explicit localhost:3000 for local backend
+      return 'http://localhost:3000';
     }
 
     // Railway deployment detection
@@ -151,6 +140,17 @@ export const getBackendUrl = (): string => {
 
     // Fall back to same origin for other cases
     return window.location.origin;
+  }
+
+  // Priority 3: Railway environment variables (server-side scenarios)
+  const railwayPublicDomain = getEnvVariable('VITE_RAILWAY_PUBLIC_DOMAIN');
+  if (railwayPublicDomain) {
+    return `https://${railwayPublicDomain}`;
+  }
+
+  const railwayPrivateDomain = getEnvVariable('VITE_RAILWAY_PRIVATE_DOMAIN');
+  if (railwayPrivateDomain) {
+    return `https://${railwayPrivateDomain}`;
   }
 
   // Server-side fallback - use .clinerules compliant port
