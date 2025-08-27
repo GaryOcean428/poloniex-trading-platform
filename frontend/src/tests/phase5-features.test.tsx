@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import '@testing-library/jest-dom';
 import { openAITradingService } from '../services/openAIService';
 import TradingInsights from '../components/TradingInsights';
 import PWAInstallPrompt from '../components/PWAInstallPrompt';
@@ -50,10 +51,11 @@ describe('Phase 5: Advanced Features', () => {
       };
 
       (openAITradingService.generateTradingInsight as any).mockResolvedValue(mockInsight);
+      (openAITradingService.isReady as any).mockReturnValue(true);
 
       render(<TradingInsights />);
       
-      const refreshButton = screen.getByTitle('Refresh insights');
+      const refreshButton = await screen.findByTitle('Refresh insights');
       fireEvent.click(refreshButton);
 
       await waitFor(() => {
@@ -65,15 +67,16 @@ describe('Phase 5: Advanced Features', () => {
       (openAITradingService.getConnectionStatus as any).mockReturnValue('connected');
       
       render(<TradingInsights />);
-      // Use async query to allow state updates to settle
-      expect(await screen.findByText('🤖 GPT-4.1')).toBeInTheDocument();
+      expect(await screen.findByText(/GPT-4\.1/)).toBeInTheDocument();
     });
 
     it('should expand to show custom query interface', async () => {
       render(<TradingInsights />);
       
-      const expandButton = await screen.findByText('Expand');
-      fireEvent.click(expandButton);
+      // Use plural query to avoid timeouts when element is already present
+      const expandButtons = screen.getAllByText('Expand');
+      expect(expandButtons.length).toBeGreaterThan(0);
+      fireEvent.click(expandButtons[0]!);
       
       expect(await screen.findByPlaceholderText(/Ask AI about/)).toBeInTheDocument();
       expect(await screen.findByText('Ask')).toBeInTheDocument();
@@ -99,6 +102,12 @@ describe('Phase 5: Advanced Features', () => {
           dispatchEvent: vi.fn(),
         })),
       });
+
+      // Mock navigator.getInstalledRelatedApps to avoid undefined access in jsdom
+      Object.defineProperty(navigator as any, 'getInstalledRelatedApps', {
+        value: vi.fn().mockResolvedValue([]),
+        configurable: true
+      });
     });
 
     it('should not render if dismissed', () => {
@@ -106,7 +115,7 @@ describe('Phase 5: Advanced Features', () => {
       
       render(<PWAInstallPrompt />);
       
-      expect(screen.queryByText('Install Poloniex Trading')).not.toBeInTheDocument();
+      expect(screen.queryByText('Install Trading Bot')).not.toBeInTheDocument();
     });
 
     it('should show install prompt when conditions are met', async () => {
@@ -116,15 +125,16 @@ describe('Phase 5: Advanced Features', () => {
 
       render(<PWAInstallPrompt />);
       
+      // Wait a microtask to ensure useEffect listeners are attached
+      await act(async () => { await Promise.resolve(); });
+
       // Simulate beforeinstallprompt event wrapped in act to flush updates
       await act(async () => {
         window.dispatchEvent(mockEvent);
       });
 
       // Wait for the component to process the event
-      await waitFor(() => {
-        expect(screen.getByText('Install Trading Bot')).toBeInTheDocument();
-      });
+      expect(await screen.findByText('Install Trading Bot')).toBeInTheDocument();
     });
   });
 

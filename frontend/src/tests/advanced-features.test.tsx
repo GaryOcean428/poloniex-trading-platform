@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+import '@testing-library/jest-dom';
 import { MemoryRouter } from 'react-router-dom';
 import LiveDataDashboard from '@/components/dashboard/LiveDataDashboard';
 import { liveDataService } from '@/services/advancedLiveData';
@@ -131,6 +132,16 @@ describe('Advanced Features Tests', () => {
   let ioBackup: any;
 
   beforeAll(() => {
+    // Polyfill RAF/CANCEL if not present in jsdom
+    if (typeof window.requestAnimationFrame !== 'function') {
+      (window as any).requestAnimationFrame = (cb: FrameRequestCallback) =>
+        window.setTimeout(() => cb(performance.now()), 0) as unknown as number;
+    }
+    if (typeof window.cancelAnimationFrame !== 'function') {
+      (window as any).cancelAnimationFrame = (id: number) => {
+        clearTimeout(id as unknown as number);
+      };
+    }
     rafSpy = vi
       .spyOn(window, 'requestAnimationFrame')
       .mockImplementation((cb: FrameRequestCallback): number => {
