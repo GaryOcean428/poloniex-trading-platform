@@ -36,6 +36,8 @@
     "sync:poloniex": "node scripts/sync-poloniex-futures-v3.js",
     "py:ingest:markets": "python python-services/poloniex/ingest_markets.py",
     "bundle:shared": "node scripts/bundle-shared.mjs",
+    "build:frontend": "yarn bundle:shared && yarn workspace frontend build",
+    "build:backend": "yarn bundle:shared && yarn workspace backend build",
     "install:all": "yarn install"
   },
   "engines": {

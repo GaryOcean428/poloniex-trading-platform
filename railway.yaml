@@ -5,24 +5,10 @@ version: 1
 
 services:
   - name: polytrade-fe
-    builder: nixpacks
-    plan:
-      providers: ["nodejs"]
-      build:
-        install: "yarn install:all"
-        command: "yarn build:frontend"
-      start:
-        command: "yarn start:frontend"
-
-  - name: polytrade-be
-    builder: nixpacks
-    plan:
-      providers: ["nodejs"]
-      build:
-        install: "yarn install:all"
-        command: "yarn build:backend"
-      start:
-        command: "yarn start:backend"
+    builder: RAILPACK
+    
+  - name: polytrade-be  
+    builder: RAILPACK
     
   - name: ml-worker
     root: python-services/poloniex
