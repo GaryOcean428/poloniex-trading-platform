@@ -28,7 +28,7 @@
       "@store/*": ["src/store/*"],
       "@types/*": ["src/types/*"]
     },
-    "types": ["vite/client", "chrome"]
+    "types": ["vite/client"]
   },
   "include": ["src", "shared/**/*", "../shared/**/*"],
   "exclude": [
