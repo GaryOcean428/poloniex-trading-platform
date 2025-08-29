@@ -1,23 +1,26 @@
 {
   "$schema": "https://schema.railpack.com",
   "provider": "node",
-  "packageManager": "npm",
+  "packageManager": "yarn",
   "node": {
     "version": "22"
   },
   "env": {
     "NODE_ENV": "production",
-    "RAILWAY_ENVIRONMENT": "production"
+    "RAILWAY_ENVIRONMENT": "production",
+    "RAILPACK_PROVIDER": "node",
+    "RAILPACK_NODE_VERSION": "22"
   },
   "install": {
     "commands": [
-      "cd frontend && npm install"
+      "corepack enable",
+      "corepack prepare yarn@4.9.2 --activate",
+      "yarn install --immutable"
     ]
   },
   "build": {
     "commands": [
-      "node scripts/bundle-shared.mjs",
-      "cd frontend && npm run build:railway"
+      "yarn build:frontend"
     ]
   },
   "start": {
