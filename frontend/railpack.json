@@ -1,15 +1,13 @@
 {
   "$schema": "https://schema.railpack.com",
-  "provider": "railway",
+  "provider": "node",
   "packageManager": "yarn",
   "node": {
     "version": "22"
   },
   "env": {
     "NODE_ENV": "production",
-    "RAILWAY_ENVIRONMENT": "production",
-    "RAILPACK_PROVIDER": "node",
-    "RAILPACK_NODE_VERSION": "22"
+    "RAILWAY_ENVIRONMENT": "production"
   },
   "install": {
     "commands": [
@@ -24,7 +22,7 @@
     ]
   },
   "start": {
-    "command": "cd frontend && node serve.js"
+    "command": "node frontend/serve.js"
   },
   "health": {
     "path": "/healthz",
