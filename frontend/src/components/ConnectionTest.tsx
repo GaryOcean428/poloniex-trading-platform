@@ -65,7 +65,7 @@ export const ConnectionTest: React.FC = () => {
           {
             if (import.meta.env.DEV)
             {
-              // eslint-disable-next-line no-console
+               
               // console.warn('API connection failed due to CORS policy or network error. This is expected in development mode.');
             }
             setApiStatus('cors-blocked');
@@ -78,7 +78,7 @@ export const ConnectionTest: React.FC = () => {
           {
             if (import.meta.env.DEV)
             {
-              // eslint-disable-next-line no-console
+               
               // console.warn('API connection error:', error.message);
             }
             setApiStatus('failed');
@@ -134,7 +134,7 @@ export const ConnectionTest: React.FC = () => {
         {
           if (import.meta.env.DEV)
           {
-            // eslint-disable-next-line no-console
+             
             // console.warn('WebSocket connection failed due to server unavailability. This is expected in development mode.');
           }
           addToast({
@@ -146,7 +146,7 @@ export const ConnectionTest: React.FC = () => {
         {
           if (import.meta.env.DEV)
           {
-            // eslint-disable-next-line no-console
+             
             // console.warn('WebSocket error:', err.message);
           }
           addToast({

@@ -10,10 +10,9 @@ import { SettingsProvider } from '@/context/SettingsContext';
 
 // Mock Chart.js (must provide named exports used by LiveTradingDashboard)
 vi.mock('chart.js', () => {
-  //
-  // Provide a minimal Chart class with static register
+  // Provide a minimal Chart class with static register without using any
   class ChartJSClass {}
-  (ChartJSClass as any).register = vi.fn();
+  const Chart = Object.assign(ChartJSClass, { register: vi.fn() });
   return {
     CategoryScale: {},
     LinearScale: {},
@@ -22,8 +21,8 @@ vi.mock('chart.js', () => {
     Title: {},
     Tooltip: {},
     Legend: {},
-    Chart: ChartJSClass,
-  } as any;
+    Chart,
+  };
 });
 
 // Mock the WebSocket service for both alias and relative imports using hoisted vars
@@ -141,25 +140,29 @@ vi.mock('@/hooks/useTradingContext', () => ({
   })
 }));
 
-// Mock Chart.js
-vi.mock('react-chartjs-2', () => ({
-  Line: (props: { data?: any }) => {
-    const { data } = props;
-    return (
-      <div data-testid="line-chart">
-        Chart: {data?.datasets?.[0]?.label || 'Unknown'}
-      </div>
-    );
-  },
-  Bar: (props: { data?: any }) => {
-    const { data } = props;
-    return (
-      <div data-testid="bar-chart">
-        Chart: {data?.datasets?.[0]?.label || 'Unknown'}
-      </div>
-    );
-  }
-}));
+// Mock react-chartjs-2 without explicit any usage
+vi.mock('react-chartjs-2', () => {
+  type ChartDataLike = { datasets?: Array<{ label?: string }> };
+  const getLabel = (data?: unknown) =>
+    ((data as ChartDataLike | undefined)?.datasets?.[0]?.label ?? 'Unknown');
+
+  return {
+    Line: (props: { data?: unknown }) => {
+      const { data } = props;
+      const label = getLabel(data);
+      return (
+        <div data-testid="line-chart">Chart: {label}</div>
+      );
+    },
+    Bar: (props: { data?: unknown }) => {
+      const { data } = props;
+      const label = getLabel(data);
+      return (
+        <div data-testid="bar-chart">Chart: {label}</div>
+      );
+    }
+  };
+});
 
 // Mock LiveDataDashboard
 vi.mock('@/components/dashboard/LiveDataDashboard', () => ({

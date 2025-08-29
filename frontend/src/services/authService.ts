@@ -327,7 +327,7 @@ export class AuthService {
             // console.error('Retry request error:', retryError);
             return {
               success: false,
-              error: (isAxiosError(retryError) && retryError.response?.data?.error) || 'Request failed'
+              error: (isAxiosError(retryError) ? ((retryError.response?.data as any)?.error) : undefined) || 'Request failed'
             };
           }
         } else {
@@ -337,7 +337,7 @@ export class AuthService {
 
       return {
         success: false,
-        error: (isAxiosError(error) && error.response?.data?.error) || 'Request failed'
+        error: (isAxiosError(error) ? ((error.response?.data as any)?.error) : undefined) || 'Request failed'
       };
     }
   }

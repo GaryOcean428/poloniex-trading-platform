@@ -2,7 +2,7 @@ import { authService } from '@/services/authService';
 import { getUserData, isAuthenticated, storeAuthDataLegacy } from '@/utils/auth';
 import React, { ReactNode, createContext, useEffect, useState } from 'react';
 
-/* eslint-disable no-console */
+ 
 
 interface AuthContextType {
   isLoggedIn: boolean;

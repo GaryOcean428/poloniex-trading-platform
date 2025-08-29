@@ -1,7 +1,7 @@
 import { advancedBacktestService } from "@/services/advancedBacktestService";
 import { liveTradingService } from "@/services/liveTradingService";
 import { mockTradingService } from "@/services/mockTradingService";
-import { Strategy, StrategyParameters, StrategyTypeUnion } from "@/types";
+import { StrategyParameters, StrategyTypeUnion } from "@/types";
 import { BacktestOptions, BacktestResult } from "@/types/backtest";
 // Import unified Strategy from @shared/types for type alias
 import type { Strategy as SharedStrategy } from '@shared/types';

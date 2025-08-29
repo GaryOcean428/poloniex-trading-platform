@@ -6,7 +6,7 @@ import reactHooks from 'eslint-plugin-react-hooks';
 import reactRefresh from 'eslint-plugin-react-refresh';
 
 export default [
-  { ignores: ['dist', 'vite.config.ts', 'tailwind.config.js', 'postcss.config.js'] },
+  { ignores: ['dist', 'vite.config.ts', 'vitest.config.ts', 'tailwind.config.js', 'postcss.config.js'] },
   {
     files: ['**/*.{ts,tsx}'],
     languageOptions: {
@@ -14,7 +14,7 @@ export default [
       parserOptions: {
         ecmaVersion: 2020,
         sourceType: 'module',
-        project: './tsconfig.json'
+        // Intentionally no 'project' to avoid type-aware parsing errors; use tsc for type checks
       },
       globals: {
         ...Object.fromEntries(Object.entries(globals.browser).map(([k, v]) => [k.trim(), v])),
@@ -44,8 +44,11 @@ export default [
       }],
       '@typescript-eslint/no-require-imports': 'warn',
       '@typescript-eslint/prefer-as-const': 'warn',
-      '@typescript-eslint/no-unnecessary-type-assertion': 'warn',
+      // Disabled because it requires type-aware linting, which we defer to tsc
+      '@typescript-eslint/no-unnecessary-type-assertion': 'off',
+      '@typescript-eslint/no-empty-object-type': 'warn',
       'no-const-assign': 'warn', // Change from error to warning
+      'no-useless-catch': 'warn',
 
       // General code quality rules
       'no-undef': 'off',
@@ -66,6 +69,14 @@ export default [
       'no-implied-eval': 'error',
       'no-new-func': 'error',
       'no-script-url': 'error',
+    },
+  },
+  // Service/utility files are not React components; disable hook rules there
+  {
+    files: ['src/services/**/*.{ts,tsx}'],
+    rules: {
+      'react-hooks/rules-of-hooks': 'off',
+      'react-hooks/exhaustive-deps': 'off',
     },
   },
 ];

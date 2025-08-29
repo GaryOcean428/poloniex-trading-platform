@@ -16,8 +16,7 @@ export type {
   BaseStrategyParameters
 } from '@shared/types';
 
-// Export StrategyType as a value (enum)
-export { StrategyType } from '@shared/types';
+// Note: No value export here; shared strategy types are TypeScript types only
 
 export interface MarketData {
   pair: string;

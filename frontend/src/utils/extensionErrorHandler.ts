@@ -1,3 +1,4 @@
+/* eslint-disable no-console */
 /**
  * Handles browser extension communication errors
  * These errors occur when extensions try to communicate but channels close prematurely

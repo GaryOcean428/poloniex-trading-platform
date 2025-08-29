@@ -86,6 +86,18 @@ export type StrategyAlgorithm =
   | 'Custom'
   | 'Breakout';
 
+
+// Compatibility enum-like constant for UI and mock data
+// Provides both runtime values and a type alias usable in generics
+export const StrategyType = {
+  MA_CROSSOVER: 'MovingAverageCrossover',
+  RSI: 'RSI',
+  MACD: 'MACD',
+  BOLLINGER_BANDS: 'BollingerBands',
+  BREAKOUT: 'Breakout'
+} as const;
+
+
 // Unified Strategy interface
 export interface Strategy {
   id: string;

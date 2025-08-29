@@ -24,7 +24,7 @@ export const getStorageItem = <T>(key: string, defaultValue: T): T => {
   try {
     const item = localStorage.getItem(key);
     return item ? JSON.parse(item) : defaultValue;
-  } catch (error) {
+  } catch {
     // console.error(`Error getting item from storage: ${key}`, error);
     return defaultValue;
   }
@@ -36,7 +36,7 @@ export const getStorageItem = <T>(key: string, defaultValue: T): T => {
 export const setStorageItem = <T>(key: string, value: T): void => {
   try {
     localStorage.setItem(key, JSON.stringify(value));
-  } catch (error) {
+  } catch {
     // console.error(`Error setting item in storage: ${key}`, error);
   }
 };
@@ -47,7 +47,7 @@ export const setStorageItem = <T>(key: string, value: T): void => {
 export const removeStorageItem = (key: string): void => {
   try {
     localStorage.removeItem(key);
-  } catch (error) {
+  } catch {
     // console.error(`Error removing item from storage: ${key}`, error);
   }
 };
@@ -60,7 +60,7 @@ export const clearAppStorage = (): void => {
     Object.values(STORAGE_KEYS).forEach(key => {
       localStorage.removeItem(key);
     });
-  } catch (error) {
+  } catch {
     // console.error('Error clearing app storage', error);
   }
 };

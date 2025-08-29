@@ -1,7 +1,7 @@
 import { CheckCircle, RefreshCw, Shield, Signal, XCircle } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
 
-/* eslint-disable no-console */
+ 
 
 interface ExtensionStatusProps {
   onRefreshRequest?: () => void;

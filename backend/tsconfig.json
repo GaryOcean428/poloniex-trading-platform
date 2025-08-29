@@ -2,7 +2,7 @@
   "compilerOptions": {
     "baseUrl": ".",
     "paths": {
-      "@shared/*": ["shared/*"]
+      "@shared/*": ["../shared/*"]
     },
     "outDir": "./dist",
     "module": "ES2020",
@@ -15,10 +15,10 @@
     "resolveJsonModule": true,
     "moduleResolution": "node",
     "declaration": false,
-    "allowJs": true,
+    "allowJs": false,
     "checkJs": false,
     "noEmitOnError": false
   },
-  "include": ["src/**/*", "shared/**/*"],
-  "exclude": ["node_modules", "dist"]
+  "include": ["src/**/*", "../shared/**/*.ts"],
+  "exclude": ["node_modules", "dist", "../shared/**/*.js"]
 }

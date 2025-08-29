@@ -27,7 +27,7 @@ export interface ErrorContext {
   action: string;
   userId?: string;
   sessionId?: string;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
   timestamp: number;
   userAgent: string;
   url: string;

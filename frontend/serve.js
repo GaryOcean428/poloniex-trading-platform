@@ -162,6 +162,6 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
-  // eslint-disable-next-line no-console
+   
   console.log(`Static server listening on http://${HOST}:${PORT}`);
 });

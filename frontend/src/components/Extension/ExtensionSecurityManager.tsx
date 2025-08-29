@@ -5,7 +5,7 @@ import {
   getExtensionStatus
 } from '@/utils/chromeExtension';
 
-/* eslint-disable no-console */
+ 
 
 /**
  * Component that initializes and monitors extension security

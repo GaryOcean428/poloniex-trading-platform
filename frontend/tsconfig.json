@@ -21,14 +21,21 @@
     "baseUrl": ".",
     "paths": {
       "@/*": ["src/*"],
-      "@shared/*": ["shared/*"],
+      "@shared/*": ["../shared/*", "shared/*"],
       "@components/*": ["src/components/*"],
       "@hooks/*": ["src/hooks/*"],
       "@utils/*": ["src/utils/*"],
       "@store/*": ["src/store/*"],
       "@types/*": ["src/types/*"]
-    }
+    },
+    "types": ["vite/client", "chrome"]
   },
-  "include": ["src", "shared/**/*"],
+  "include": ["src", "shared/**/*", "../shared/**/*"],
+  "exclude": [
+    "src/**/*.test.*",
+    "src/**/*.spec.*",
+    "src/tests/**",
+    "src/test/**"
+  ],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

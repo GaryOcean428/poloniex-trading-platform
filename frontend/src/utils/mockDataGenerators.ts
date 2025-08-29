@@ -1,5 +1,5 @@
 import seedrandom from 'seedrandom';
-import { OrderBookEntry, TradeData, TickerData } from '@shared/types';
+import type { OrderBookEntry, TradeData, TickerData } from '@shared/types';
 
 // Mock data generators for various market data types
 // These functions generate realistic-looking mock data for testing

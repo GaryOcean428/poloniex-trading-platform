@@ -2,7 +2,7 @@ import type { ErrorInfo } from 'react';
 import React, { useState } from 'react';
 import { useErrorRecovery } from '../hooks/useErrorRecovery';
 
-/* eslint-disable @typescript-eslint/no-unused-vars */
+ 
 
 interface ErrorFallbackProps {
   error: Error | null;

@@ -3,7 +3,7 @@ import React, { useEffect, useState } from 'react';
 import { useTradingContext } from '../../hooks/useTradingContext';
 import { useWebSocket } from '../../services/websocketService';
 
-/* eslint-disable no-console */
+ 
 
 const AccountSummary: React.FC = () => {
   const { accountBalance, isLoading, isMockMode, refreshApiConnection } = useTradingContext();

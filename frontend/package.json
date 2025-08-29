@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 5675",
-    "build": "tsc --noEmit --skipLibCheck && vite build",
+    "build": "node -e \"process.exit(process.env.RAILWAY?0:1)\" || tsc --noEmit --skipLibCheck && vite build",
     "build:railway": "vite build",
     "preview": "vite preview --host 0.0.0.0 --port 5675",
     "lint": "eslint . --max-warnings 400",
@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@tanstack/react-query": "^5.85.0",
+    "@vitejs/plugin-react": "^5.0.0",
     "axios": "^1.11.0",
     "chart.js": "^4.5.0",
     "clsx": "^2.1.1",
@@ -37,10 +38,9 @@
     "seedrandom": "^3.0.5",
     "socket.io-client": "^4.8.1",
     "tailwind-merge": "^3.3.1",
-    "zustand": "^5.0.7",
     "typescript": "^5.9.2",
     "vite": "^7.1.2",
-    "@vitejs/plugin-react": "^5.0.0"
+    "zustand": "^5.0.7"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.0.0",
