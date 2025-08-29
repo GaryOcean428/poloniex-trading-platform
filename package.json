@@ -34,7 +34,11 @@
     "hooks:install": "bash scripts/install-pre-commit-hook.sh",
     "ci:verify": "node scripts/verify-ci-commands.js",
     "sync:poloniex": "node scripts/sync-poloniex-futures-v3.js",
-    "py:ingest:markets": "python python-services/poloniex/ingest_markets.py"
+    "py:ingest:markets": "python python-services/poloniex/ingest_markets.py",
+    "bundle:shared": "node scripts/bundle-shared.mjs",
+    "build:frontend": "npm run bundle:shared && cd frontend && npm run build",
+    "build:backend": "npm run bundle:shared && cd backend && npm run build",
+    "install:all": "npm install && cd frontend && npm install && cd ../backend && npm install"
   },
   "engines": {
     "node": ">=22.0.0"

@@ -1,26 +1,27 @@
 {
-  "$schema": "https://schema.railpack.com", 
+  "$schema": "https://schema.railpack.com",
   "provider": "node",
+  "packageManager": "npm",
   "node": {
     "version": "22"
   },
   "env": {
-    "NODE_ENV": "production"
+    "NODE_ENV": "production",
+    "RAILWAY_ENVIRONMENT": "production"
   },
   "install": {
     "commands": [
-      "corepack enable",
-      "corepack prepare yarn@4.9.2 --activate",
-      "yarn install --immutable"
+      "cd backend && npm install"
     ]
   },
   "build": {
     "commands": [
-      "yarn build"
+      "node scripts/bundle-shared.mjs",
+      "cd backend && npm run build"
     ]
   },
   "start": {
-    "command": "yarn start"
+    "command": "cd backend && npm run start"
   },
   "health": {
     "path": "/healthz",

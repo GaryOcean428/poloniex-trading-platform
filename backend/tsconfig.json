@@ -2,7 +2,11 @@
   "compilerOptions": {
     "baseUrl": ".",
     "paths": {
-      "@shared/*": ["../shared/*"]
+      "@shared/*": [
+        ".shared-build/*",
+        "src/shared/*",
+        "../shared/*"
+      ]
     },
     "outDir": "./dist",
     "module": "ES2020",

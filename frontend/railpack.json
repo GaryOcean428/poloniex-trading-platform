@@ -6,20 +6,22 @@
     "version": "22"
   },
   "env": {
-    "NODE_ENV": "production"
+    "NODE_ENV": "production",
+    "RAILWAY_ENVIRONMENT": "production"
   },
   "install": {
     "commands": [
-      "npm install"
+      "cd frontend && npm install"
     ]
   },
   "build": {
     "commands": [
-      "npm run build:railway"
+      "node scripts/bundle-shared.mjs",
+      "cd frontend && npm run build:railway"
     ]
   },
   "start": {
-    "command": "node serve.js"
+    "command": "cd frontend && node serve.js"
   },
   "health": {
     "path": "/healthz",

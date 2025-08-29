@@ -21,7 +21,12 @@
     "baseUrl": ".",
     "paths": {
       "@/*": ["src/*"],
-      "@shared/*": [".shared-build/*", "../shared/*", "shared/*"],
+      "@shared/*": [
+        ".shared-build/*",
+        "src/shared/*",
+        "../shared/*",
+        "shared/*"
+      ],
       "@components/*": ["src/components/*"],
       "@hooks/*": ["src/hooks/*"],
       "@utils/*": ["src/utils/*"],
@@ -30,7 +35,7 @@
     },
     "types": ["vite/client", "node"]
   },
-  "include": ["src", "shared/**/*", "../shared/**/*", "src/types/*.d.ts"],
+  "include": ["src", ".shared-build/**/*", "src/shared/**/*", "../shared/**/*"],
   "exclude": [
     "src/**/*.test.*",
     "src/**/*.spec.*",
