@@ -15,8 +15,8 @@ const REQUIRED_YARN_VERSION = '4.9.2';
 function exec(cmd, options = {}) {
   console.log(`> ${cmd}`);
   try {
-    const result = execSync(cmd, { stdio: 'inherit', ...options });
-    return result;
+    return execSync(cmd, { stdio: 'inherit', ...options });
+
   } catch (error) {
     console.error(`Failed to execute: ${cmd}`);
     throw error;
