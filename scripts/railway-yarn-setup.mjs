@@ -29,8 +29,19 @@ function setupYarn() {
   
   // Enable Corepack (Node.js package manager manager)
   console.log('\n1. Enabling Corepack...');
-  exec('corepack enable');
-  
+  try {
+    exec('corepack enable');
+  } catch (err) {
+    console.error(
+      '\nError: Corepack is not installed or not available in your PATH.\n' +
+      'Please ensure you are using Node.js >=16.10 and that Corepack is installed.\n' +
+      'You can install Corepack by running:\n\n' +
+      '  npm install -g corepack\n\n' +
+      'Or upgrade your Node.js version if necessary.\n'
+    );
+    throw err;
+  }
+
   // Prepare specific Yarn version
   console.log(`\n2. Preparing Yarn ${REQUIRED_YARN_VERSION}...`);
   exec(`corepack prepare yarn@${REQUIRED_YARN_VERSION} --activate`);
