@@ -10,15 +10,15 @@
     "strict": false,
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
-    "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "moduleResolution": "node",
     "declaration": false,
     "allowJs": false,
     "checkJs": false,
-    "noEmitOnError": false
+    "noEmitOnError": false,
+    "types": ["node"]
   },
   "include": ["src/**/*", "../shared/**/*.ts"],
-  "exclude": ["node_modules", "dist", "../shared/**/*.js"]
+  "exclude": ["node_modules", "dist", "../shared/**/*.js", "src/**/*.test.*", "src/**/*.spec.*", "src/types/jest.d.ts"]
 }
