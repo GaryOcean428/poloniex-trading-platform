@@ -6,9 +6,13 @@ version: 1
 services:
   - name: polytrade-fe
     builder: RAILPACK
+    railpack:
+      path: ./frontend/railpack.json
     
-  - name: polytrade-be  
+  - name: polytrade-be
     builder: RAILPACK
+    railpack:
+      path: ./backend/railpack.json
     
   - name: ml-worker
     root: python-services/poloniex
