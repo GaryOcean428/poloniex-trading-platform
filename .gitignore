@@ -47,6 +47,7 @@ frontend/node_modules/
 backend/dist/
 backend/node_modules/
 backend/public/
+backend/.shared-build/
 *.tsbuildinfo
 
 # TypeScript compilation artifacts
