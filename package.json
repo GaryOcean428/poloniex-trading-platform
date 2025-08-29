@@ -13,8 +13,8 @@
     "dev:frontend": "yarn workspace frontend dev",
     "build": "yarn build:backend && yarn build:frontend",
     "build:dev": "yarn build:backend && yarn workspace frontend build:dev",
-    "build:backend": "yarn workspace backend build",
-    "build:frontend": "yarn workspace frontend build",
+    "build:backend": "yarn bundle:shared && yarn workspace backend build",
+    "build:frontend": "yarn bundle:shared && yarn workspace frontend build",
     "start": "yarn workspace backend start",
     "start:frontend": "yarn workspace frontend start",
     "start:backend": "yarn workspace backend start",
@@ -36,8 +36,6 @@
     "sync:poloniex": "node scripts/sync-poloniex-futures-v3.js",
     "py:ingest:markets": "python python-services/poloniex/ingest_markets.py",
     "bundle:shared": "node scripts/bundle-shared.mjs",
-    "build:frontend": "yarn bundle:shared && yarn workspace frontend build",
-    "build:backend": "yarn bundle:shared && yarn workspace backend build",
     "install:all": "yarn install"
   },
   "engines": {

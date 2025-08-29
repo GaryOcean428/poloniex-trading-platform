@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.railpack.com",
-  "provider": "python",
+  "provider": "railway",
   "python": {
     "version": "3.11"
   },

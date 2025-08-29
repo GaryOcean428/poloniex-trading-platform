@@ -33,7 +33,7 @@
       "@store/*": ["src/store/*"],
       "@types/*": ["src/types/*"]
     },
-    "types": ["vite/client", "node"]
+    "types": ["vite/client", "node", "chrome"]
   },
   "include": ["src", ".shared-build/**/*", "src/shared/**/*", "../shared/**/*"],
   "exclude": [

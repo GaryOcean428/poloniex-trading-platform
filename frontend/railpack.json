@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.railpack.com",
-  "provider": "node",
+  "provider": "railway",
   "packageManager": "yarn",
   "node": {
     "version": "22"
