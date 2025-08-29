@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.railpack.com",
   "provider": "node",
-  "packageManager": "yarn",
+  "packageManager": "npm",
   "node": {
     "version": "22"
   },
@@ -10,14 +10,12 @@
   },
   "install": {
     "commands": [
-      "corepack enable",
-      "corepack prepare yarn@4.9.2 --activate",
-      "yarn install --immutable"
+      "npm install"
     ]
   },
   "build": {
     "commands": [
-      "yarn build:railway"
+      "npm run build:railway"
     ]
   },
   "start": {
