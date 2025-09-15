@@ -2,11 +2,11 @@
   "$schema": "https://schema.railpack.com", 
   "version": "1", 
   "services": {
-    "frontend": {
+    "polytrade-fe": {
       "root": "./frontend",
       "build": {"provider": "node"}
     },
-    "backend": {
+    "polytrade-be": {
       "root": "./backend",
       "build": {"provider": "node"}
     },
