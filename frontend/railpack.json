@@ -22,10 +22,10 @@
     ]
   },
   "start": {
-    "command": "node frontend/serve.js"
+    "command": "node serve.js"
   },
   "health": {
-    "path": "/healthz",
+    "path": "/api/health",
     "timeout": 300
   }
 }
