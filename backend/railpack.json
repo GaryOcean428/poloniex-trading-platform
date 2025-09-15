@@ -12,7 +12,7 @@
   "install": {
     "commands": [
       "corepack enable",
-      "corepack prepare yarn@4.9.2 --activate",
+      "corepack prepare yarn@4.9.1 --activate",
       "yarn install --immutable"
     ]
   },
@@ -22,6 +22,10 @@
     ]
   },
   "start": {
-    "command": "yarn workspace backend start"
+    "command": "yarn start"
+  },
+  "health": {
+    "path": "/api/health",
+    "timeout": 300
   }
 }

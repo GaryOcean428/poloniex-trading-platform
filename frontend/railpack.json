@@ -12,7 +12,7 @@
   "install": {
     "commands": [
       "corepack enable",
-      "corepack prepare yarn@4.9.2 --activate",
+      "corepack prepare yarn@4.9.1 --activate",
       "yarn install --immutable"
     ]
   },
@@ -22,10 +22,10 @@
     ]
   },
   "start": {
-    "command": "node frontend/serve.js"
+    "command": "node serve.js"
   },
   "health": {
-    "path": "/healthz",
+    "path": "/api/health",
     "timeout": 300
   }
 }
