@@ -6,6 +6,7 @@
   "engines": {
     "node": ">=22.0.0"
   },
+  "packageManager": "yarn@4.9.2",
   "scripts": {
     "prebuild": "node prebuild.mjs",
     "dev": "nodemon --watch src --ext ts,js,json --exec node --loader ts-node/esm src/index.ts",

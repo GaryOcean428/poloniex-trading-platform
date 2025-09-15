@@ -22,6 +22,10 @@
     ]
   },
   "start": {
-    "command": "yarn workspace backend start"
+    "command": "yarn start"
+  },
+  "health": {
+    "path": "/api/health",
+    "timeout": 300
   }
 }
