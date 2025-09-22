@@ -18,11 +18,14 @@
   },
   "build": {
     "commands": [
-      "yarn build:backend"
+      "node prebuild.mjs",
+      "rm -rf dist",
+      "tsc -p tsconfig.build.json",
+      "rm -rf .shared-build"
     ]
   },
   "start": {
-    "command": "yarn start"
+    "command": "node dist/src/index.js"
   },
   "health": {
     "path": "/api/health",
