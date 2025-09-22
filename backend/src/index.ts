@@ -24,10 +24,20 @@ import marketsRoutes from './routes/markets.js';
 
 // Import services
 import { logger } from './utils/logger.js';
-import { pool } from './db/connection.js';
 
-// Load environment variables
+// Load environment variables and validate them
 dotenv.config();
+
+// Import environment validation after dotenv config
+import { env } from './config/env.js';
+import { 
+  securityHeaders, 
+  rateLimiter, 
+  authRateLimiter, 
+  createCorsOptions, 
+  securityLogger, 
+  sanitizeRequest 
+} from './config/security.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -36,38 +46,23 @@ const app = express();
 const server = createServer(app);
 
 // Use Railway PORT environment variable or fallback to .clinerules compliant port range (8765-8799)
-const PORT = parseInt(process.env.PORT || '8765', 10);
-
-// CORS configuration with support for multiple origins and Railway deployment
-// Prefer explicit configuration from env: CORS_ALLOWED_ORIGINS (comma-separated) and FRONTEND_URL.
-const parsedCorsEnv = (process.env.CORS_ALLOWED_ORIGINS || '')
-  .split(',')
-  .map((s) => s.trim())
-  .filter(Boolean);
-
-const defaultLocalOrigins = process.env.NODE_ENV === 'production' ? [] : [
-  'http://localhost:3000',
-  'http://localhost:5173',
-  'http://localhost:5675'
-];
-
-const baseAllowedOrigins = [
-  'https://healthcheck.railway.app',
-  // Prefer FRONTEND_URL when provided
-  ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL] : []),
-  // Custom set via env variable
-  ...parsedCorsEnv,
-  // Local development fallbacks when not in production
-  ...defaultLocalOrigins
-];
-
-// De-duplicate entries and freeze set for quick lookup
-const allowedOriginsSet = new Set(baseAllowedOrigins);
+const PORT = env.PORT;
 
 // Socket.IO server setup with Railway-compatible CORS
+const allowedOrigins = [
+  'https://healthcheck.railway.app',
+  ...(env.FRONTEND_URL ? [env.FRONTEND_URL] : []),
+  ...(env.CORS_ALLOWED_ORIGINS || []),
+  ...(env.NODE_ENV === 'production' ? [] : [
+    'http://localhost:3000',
+    'http://localhost:5173',
+    'http://localhost:5675'
+  ])
+];
+
 const io = new SocketIOServer(server, {
   cors: {
-    origin: Array.from(allowedOriginsSet),
+    origin: allowedOrigins,
     credentials: true,
     methods: ['GET', 'POST']
   },
@@ -79,47 +74,28 @@ const io = new SocketIOServer(server, {
   maxHttpBufferSize: 1e6
 });
 
-// Middleware
-app.use(helmet());
+// Enhanced security middleware
+app.use(securityHeaders);
 app.use(compression());
+app.use(securityLogger);
+app.use(sanitizeRequest);
 
-// CORS configuration with support for multiple origins and Railway deployment
-const corsOptions: CorsOptions = {
-  origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
+// Rate limiting
+app.use(rateLimiter);
 
-    if (allowedOriginsSet.has(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-  credentials: true
-};
+// Enhanced CORS configuration
+app.use(cors(createCorsOptions()));
 
-app.use(cors(corsOptions));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// Body parsing
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Health check endpoints
 app.get('/api/health', (_req: Request, res: Response) => {
   res.json({
     status: 'healthy',
     timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development',
-    service: 'polytrade-be',
-    uptime: process.uptime(),
-    version: process.env.npm_package_version || '1.0.0'
-  });
-});
-
-// Root health endpoint
-app.get('/health', (_req: Request, res: Response) => {
-  res.json({
-    status: 'healthy',
-    timestamp: new Date().toISOString(),
-    service: 'polytrade-be'
+    environment: process.env.NODE_ENV || 'development'
   });
 });
 
@@ -128,88 +104,8 @@ app.get('/healthz', (_req: Request, res: Response) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Database health check endpoint
-app.get('/health/db', async (_req: Request, res: Response) => {
-  try {
-    const client = await pool.connect();
-    await client.query('SELECT 1');
-    client.release();
-    res.status(200).json({
-      database: 'connected',
-      timestamp: new Date().toISOString()
-    });
-  } catch (error) {
-    logger.error('Database health check failed:', error);
-    res.status(503).json({
-      database: 'disconnected',
-      error: error instanceof Error ? error.message : 'Unknown error',
-      timestamp: new Date().toISOString()
-    });
-  }
-});
-
-// Services health check endpoint
-app.get('/health/services', async (_req: Request, res: Response) => {
-  const services = {
-    api: {
-      status: 'healthy',
-      uptime: process.uptime()
-    },
-    database: {
-      status: 'unknown',
-      lastCheck: new Date().toISOString()
-    }
-  };
-
-  try {
-    const client = await pool.connect();
-    await client.query('SELECT 1');
-    client.release();
-    services.database.status = 'healthy';
-  } catch (error) {
-    logger.error('Database service check failed:', error);
-    services.database.status = 'unhealthy';
-  }
-
-  const allHealthy = Object.values(services).every(service => service.status === 'healthy');
-  const httpStatus = allHealthy ? 200 : 503;
-
-  res.status(httpStatus).json({
-    status: allHealthy ? 'healthy' : 'degraded',
-    timestamp: new Date().toISOString(),
-    services
-  });
-});
-
-// API v1 status endpoint
-app.get('/api/v1/status', async (_req: Request, res: Response) => {
-  const status = {
-    service: 'polytrade-be',
-    status: 'running',
-    timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development',
-    uptime: process.uptime(),
-    version: process.env.npm_package_version || '1.0.0',
-    database: {
-      status: 'unknown'
-    }
-  };
-
-  try {
-    const client = await pool.connect();
-    await client.query('SELECT 1');
-    client.release();
-    status.database.status = 'connected';
-  } catch (error) {
-    logger.error('Database status check failed:', error);
-    status.database.status = 'disconnected';
-  }
-
-  res.json(status);
-});
-
-// API routes
-app.use('/api/auth', authRoutes);
+// API routes with rate limiting
+app.use('/api/auth', authRateLimiter, authRoutes);
 app.use('/api/api-keys', apiKeyRoutes);
 app.use('/api/markets', marketsRoutes);
 app.use('/api/futures', futuresRoutes);
