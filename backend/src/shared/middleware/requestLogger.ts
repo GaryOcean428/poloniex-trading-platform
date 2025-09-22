@@ -331,10 +331,8 @@ export class RequestResponseLogger {
     );
   }
 
-import { randomUUID } from 'crypto';
-
   private generateRequestId(): string {
-    return `req-${randomUUID()}`;
+    return `req-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
   }
 
   updateConfig(newConfig: Partial<LoggingConfig>): void {
