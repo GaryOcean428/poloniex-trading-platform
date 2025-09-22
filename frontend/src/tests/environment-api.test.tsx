@@ -263,7 +263,7 @@ describe('Production Environment Tests', () => {
     vi.clearAllMocks();
     // Mock production environment
     Object.defineProperty(window, 'location', {
-      value: { hostname: 'poloniex-trading-platform.vercel.app' },
+      value: { hostname: 'polytrade-fe.up.railway.app' },
       writable: true,
     });
   });
