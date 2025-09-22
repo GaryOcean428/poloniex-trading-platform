@@ -4,17 +4,22 @@
  * - /assets/*: immutable, long cache
  * - No SPA fallback for /assets (return 404 if missing)
  * - SPA fallback (index.html) for non-asset routes
+ * - Enhanced /healthz endpoint with comprehensive validation
  */
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
 import url from 'url';
+import { HealthChecker } from './health-utils.js';
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 const DIST_ROOT = path.join(__dirname, 'dist');
 
 const PORT = parseInt(process.env.PORT || '5675', 10);
 const HOST = '0.0.0.0';
+
+// Initialize health checker
+const healthChecker = new HealthChecker(DIST_ROOT);
 
 const MIME_MAP = {
   '.html': 'text/html; charset=utf-8',
@@ -81,22 +86,58 @@ function serveFile(res, filePath) {
     .pipe(res);
 }
 
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
   try {
     const parsed = url.parse(req.url || '/');
     let reqPath = decodeURIComponent(parsed.pathname || '/');
 
-    // Health check endpoints
+    // Enhanced health check endpoints with comprehensive validation
     if (reqPath === '/api/health' || reqPath === '/healthz') {
-      res.statusCode = 200;
-      res.setHeader('Content-Type', 'application/json; charset=utf-8');
-      return res.end(JSON.stringify({
-        status: 'healthy',
-        timestamp: new Date().toISOString(),
-        service: 'polytrade-fe',
-        version: process.env.npm_package_version || '1.0.0',
-        uptime: process.uptime()
-      }));
+      try {
+        const healthResult = await healthChecker.runComprehensiveCheck();
+        
+        res.statusCode = healthResult.httpStatus;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        
+        // Log health check failures for monitoring
+        if (healthResult.httpStatus !== 200) {
+          console.error('[HEALTH CHECK FAILED]', {
+            timestamp: new Date().toISOString(),
+            status: healthResult.httpStatus,
+            errors: healthResult.response.errors,
+            components: healthResult.response.components
+          });
+        }
+        
+        return res.end(JSON.stringify(healthResult.response, null, 2));
+      } catch (error) {
+        // Fallback health check if comprehensive check fails
+        console.error('[HEALTH CHECK ERROR]', {
+          timestamp: new Date().toISOString(),
+          error: error.message,
+          stack: error.stack
+        });
+        
+        res.statusCode = 503;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        
+        return res.end(JSON.stringify({
+          status: 'unhealthy',
+          timestamp: new Date().toISOString(),
+          service: 'polytrade-fe',
+          version: process.env.npm_package_version || '1.0.0',
+          uptime: process.uptime(),
+          components: {
+            assets: 'failed',
+            libraries: 'failed',
+            config: 'failed',
+            validation: 'failed'
+          },
+          errors: [`Health check system error: ${error.message}`]
+        }, null, 2));
+      }
     }
 
     // API status endpoint
