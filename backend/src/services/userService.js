@@ -1,6 +1,7 @@
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { query, geoQuery } from '../db/connection.js';
+import { env } from '../config/env.js';
 
 /**
  * User Service - PostGIS-based user management with location-aware features
@@ -447,7 +448,7 @@ export class UserService {
    * Get encryption key from environment
    */
   static getEncryptionKey() {
-    const key = process.env.API_ENCRYPTION_KEY || process.env.JWT_SECRET;
+    const key = env.API_ENCRYPTION_KEY || env.JWT_SECRET;
     if (!key) {
       throw new Error('API_ENCRYPTION_KEY or JWT_SECRET environment variable is required for API key encryption');
     }
