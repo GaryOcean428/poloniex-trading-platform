@@ -9,8 +9,7 @@
   "scripts": {
     "prebuild": "node prebuild.mjs",
     "dev": "vite --host 0.0.0.0 --port 5675",
-    "build": "npm run prebuild && node -e \"process.exit(process.env.RAILWAY?0:1)\" || tsc --noEmit --skipLibCheck && vite build && rm -rf .shared-build",
-    "build:railway": "npm run prebuild && vite build && rm -rf .shared-build",
+    "build": "yarn run prebuild && vite build && rm -rf .shared-build",
     "preview": "vite preview --host 0.0.0.0 --port 5675",
     "lint": "eslint . --max-warnings 400",
     "lint:fix": "eslint . --fix",

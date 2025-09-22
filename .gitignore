@@ -149,7 +149,9 @@ docs/env/**/*.env
 
 # Generated shared copies in services
 frontend/src/shared/
-backend/shared/
+frontend/.shared-build/
+backend/src/shared/
+backend/.shared-build/
 
 # CodeQL databases and local tooling
 codeql-dbs/
