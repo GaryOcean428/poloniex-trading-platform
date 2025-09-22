@@ -8,6 +8,6 @@
     "outDir": "./dist",
     "noEmitOnError": true
   },
-  "include": ["src/**/*", ".shared-build/**/*.ts", "../shared/**/*.ts"],
+  "include": ["src/**/*", ".shared-build/**/*.ts"],
   "exclude": ["node_modules", "dist", "**/*.test.*", "**/*.spec.*", "src/types/jest.d.ts"]
 }

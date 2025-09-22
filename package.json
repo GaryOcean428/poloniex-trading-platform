@@ -25,9 +25,6 @@
     "test:run": "yarn workspace frontend test:run && yarn workspace backend test:run",
     "test:coverage": "yarn workspace frontend test:coverage && yarn workspace backend test:coverage",
     "production-check": "node scripts/production-check.js",
-    "deploy": "node scripts/deploy.js",
-    "railway:help": "node railway-config-helper.js",
-    "railway:validate": "node validate-railway-config.js",
     "workspace:health": "node scripts/workspace-health.js",
     "security:audit": "node scripts/security-audit.js",
     "deps:health": "node scripts/dependency-health.js",
@@ -42,7 +39,6 @@
   "engines": {
     "node": ">=22.0.0"
   },
-  "packageManager": "yarn@4.9.1",
   "devDependencies": {
     "@testing-library/jest-dom": "^6.8.0",
     "@types/crypto-js": "^4.2.2",
@@ -53,7 +49,8 @@
     "@vitest/ui": "^3.2.4",
     "glob": "^11.0.3",
     "jsdom": "^27.0.0",
-    "rimraf": "^6.0.1"
+    "rimraf": "^6.0.1",
+    "vitest": "^3.2.4"
   },
   "dependencies": {
     "axios": "^1.11.0",

@@ -75,17 +75,9 @@ yarn build
 
 ## Deployment
 
-### Deploying to Vercel
-
-To deploy to Vercel (current default for `deploy` script):
-```bash
-yarn deploy
-```
-This uses the `scripts/deploy.js` file which is configured for Vercel deployments.
-
 ### Deploying to Railway
 
-This project supports Railway deployment using a monorepo architecture with separate frontend and backend services.
+This project is optimized for Railway deployment using a monorepo architecture with separate frontend and backend services.
 
 #### Project Structure
 ```

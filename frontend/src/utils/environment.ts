@@ -108,7 +108,8 @@ export const getBaseUrl = () => {
   if (IS_LOCAL_DEV) {
     return 'http://localhost:5675'; // .clinerules compliant frontend port
   }
-  return 'https://poloniex-trading-platform.vercel.app'; // Production URL
+  // Production URL - Railway domain or current origin
+  return typeof window !== 'undefined' ? window.location.origin : 'https://poloniex-trading-platform.up.railway.app';
 };
 
 // Get backend API URL with proper protocol and Railway support

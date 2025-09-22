@@ -1,5 +1,6 @@
 import express from 'express';
 import { logger } from '../utils/logger.js';
+import { pool } from '../db/connection.js';
 
 const router = express.Router();
 
@@ -9,6 +10,21 @@ const router = express.Router();
  */
 router.get('/', async (req, res) => {
   try {
+    // Check database connectivity
+    let databaseStatus = 'unknown';
+    let databaseNote = 'Health check not implemented';
+    try {
+      const client = await pool.connect();
+      await client.query('SELECT 1');
+      client.release();
+      databaseStatus = 'healthy';
+      databaseNote = 'Database connection successful';
+    } catch (dbError) {
+      logger.error('Database health check failed:', dbError);
+      databaseStatus = 'unhealthy';
+      databaseNote = `Database connection failed: ${dbError instanceof Error ? dbError.message : 'Unknown error'}`;
+    }
+
     const status = {
       timestamp: new Date().toISOString(),
       environment: process.env.NODE_ENV || 'development',
@@ -19,9 +35,9 @@ router.get('/', async (req, res) => {
           version: process.env.npm_package_version || '1.0.0'
         },
         database: {
-          status: 'unknown', // Placeholder - implement actual DB health check
+          status: databaseStatus,
           lastCheck: new Date().toISOString(),
-          note: 'Health check not implemented'
+          note: databaseNote
         },
         websocket: {
           status: 'unknown', // Placeholder - implement actual WS health check
@@ -86,14 +102,30 @@ router.get('/', async (req, res) => {
 
 /**
  * GET /api/status/health
- * Simple health check endpoint
+ * Simple health check endpoint with database connectivity
  */
-router.get('/health', (req, res) => {
-  res.json({
-    status: 'healthy',
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime()
-  });
+router.get('/health', async (req, res) => {
+  try {
+    const client = await pool.connect();
+    await client.query('SELECT 1');
+    client.release();
+    
+    res.json({
+      status: 'healthy',
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+      database: 'connected'
+    });
+  } catch (error) {
+    logger.error('Health check failed:', error);
+    res.status(503).json({
+      status: 'unhealthy',
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+      database: 'disconnected',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
 });
 
 export default router;

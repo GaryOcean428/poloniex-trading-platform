@@ -77,7 +77,7 @@ describe('WebSocket & API Connectivity Fix', () => {
       const allowedOrigins = [
         'https://healthcheck.railway.app',
         'https://poloniex-trading-platform-production.up.railway.app',
-        'https://polytrade-red.vercel.app',
+        'https://polytrade-fe.up.railway.app',
         'https://polytrade-be.up.railway.app', // This should be present after our fix
         'http://localhost:5173'
       ];
