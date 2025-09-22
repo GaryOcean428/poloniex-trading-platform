@@ -3,7 +3,7 @@
   "provider": "node",
   "packageManager": "yarn",
   "node": {
-    "version": "22"
+    "version": "20"
   },
   "env": {
     "NODE_ENV": "production",
@@ -12,12 +12,13 @@
   "install": {
     "commands": [
       "corepack enable",
-      "corepack prepare yarn@4.9.1 --activate",
-      "yarn install --immutable"
+      "corepack prepare yarn@4.9.2 --activate",
+      "yarn install --immutable --immutable-cache"
     ]
   },
   "build": {
     "commands": [
+      "cp -r ../shared ./shared || echo 'Shared directory not found' # copy-shared",
       "node prebuild.mjs",
       "rm -rf dist",
       "tsc -p tsconfig.build.json",
