@@ -1,4 +1,4 @@
-// Enhanced environment management for proper mock mode detection
+// Enhanced environment management for proper mock mode detection and security
 interface EnvironmentConfig {
   apiKey: string | null;
   apiSecret: string | null;
@@ -7,6 +7,81 @@ interface EnvironmentConfig {
   wsUrl: string;
   apiUrl: string;
   liveTradingEnabled: boolean;
+  backendUrl: string;
+}
+
+/**
+ * Validates frontend environment variables for security
+ */
+function validateFrontendEnvironment(): void {
+  const errors: string[] = [];
+  
+  // Check for potentially exposed backend secrets
+  const envVars = import.meta.env;
+  
+  // These should NEVER be exposed to the frontend
+  const forbiddenBackendSecrets = [
+    'JWT_SECRET',
+    'DATABASE_URL', 
+    'API_ENCRYPTION_KEY',
+    'POLONIEX_API_SECRET', // Should use VITE_POLONIEX_API_SECRET for frontend
+    'POLONIEX_API_KEY'     // Should use VITE_POLONIEX_API_KEY for frontend
+  ];
+  
+  forbiddenBackendSecrets.forEach(secret => {
+    if (envVars[secret]) {
+      errors.push(`❌ Backend secret '${secret}' is exposed to frontend. Remove it or prefix with VITE_ if needed for frontend.`);
+    }
+  });
+  
+  // Validate required frontend environment variables
+  const requiredVars = ['VITE_API_URL'];
+  
+  requiredVars.forEach(varName => {
+    if (!envVars[varName]) {
+      errors.push(`❌ Required environment variable '${varName}' is missing`);
+    }
+  });
+  
+  // Validate URLs
+  if (envVars.VITE_API_URL && !isValidUrl(envVars.VITE_API_URL)) {
+    errors.push(`❌ VITE_API_URL must be a valid URL`);
+  }
+  
+  if (envVars.VITE_WS_URL && !isValidUrl(envVars.VITE_WS_URL)) {
+    errors.push(`❌ VITE_WS_URL must be a valid URL`);
+  }
+  
+  // Production-specific validations
+  if (envVars.PROD) {
+    if (envVars.VITE_API_URL?.includes('localhost')) {
+      console.warn('⚠️  Using localhost API URL in production build');
+    }
+    
+    if (envVars.VITE_FORCE_MOCK_MODE !== 'true' && (!envVars.VITE_POLONIEX_API_KEY || !envVars.VITE_POLONIEX_API_SECRET)) {
+      console.warn('⚠️  Poloniex API credentials not set - trading features will be limited');
+    }
+  }
+  
+  if (errors.length > 0) {
+    console.error('❌ Frontend environment validation failed:');
+    errors.forEach(error => console.error(`   ${error}`));
+    throw new Error(`Frontend environment validation failed: ${errors.join(', ')}`);
+  }
+  
+  console.log('✅ Frontend environment validation passed');
+}
+
+/**
+ * Validates if a string is a valid URL
+ */
+function isValidUrl(url: string): boolean {
+  try {
+    new URL(url);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export class EnvironmentManager {
@@ -14,6 +89,9 @@ export class EnvironmentManager {
   private config: EnvironmentConfig;
   
   private constructor() {
+    // Validate environment before loading configuration
+    validateFrontendEnvironment();
+    
     this.config = this.loadConfiguration();
     this.validateConfiguration();
   }
@@ -41,6 +119,7 @@ export class EnvironmentManager {
       isProduction: import.meta.env.PROD,
       wsUrl: import.meta.env.VITE_WS_URL || 'wss://futures-apiws.poloniex.com',
       apiUrl: import.meta.env.VITE_API_URL || 'https://api.poloniex.com',
+      backendUrl: import.meta.env.VITE_BACKEND_URL || import.meta.env.VITE_API_URL || 'https://api.poloniex.com',
       liveTradingEnabled: false // Will be set after validation
     };
   }
