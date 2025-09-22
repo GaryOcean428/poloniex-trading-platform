@@ -13,11 +13,12 @@
     "commands": [
       "corepack enable",
       "corepack prepare yarn@4.9.2 --activate", 
-      "yarn install --immutable"
+      "yarn install --immutable --immutable-cache"
     ]
   },
   "build": {
     "commands": [
+      "cp -r ../shared ./shared || echo 'Shared directory not found' # copy-shared",
       "node prebuild.mjs",
       "vite build",
       "rm -rf .shared-build"
