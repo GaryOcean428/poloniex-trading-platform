@@ -18,7 +18,9 @@
   },
   "build": {
     "commands": [
-      "yarn build:frontend"
+      "node prebuild.mjs",
+      "vite build",
+      "rm -rf .shared-build"
     ]
   },
   "start": {
