@@ -25,8 +25,6 @@
     "test:run": "yarn workspace frontend test:run && yarn workspace backend test:run",
     "test:coverage": "yarn workspace frontend test:coverage && yarn workspace backend test:coverage",
     "production-check": "node scripts/production-check.js",
-    "railway:help": "node railway-config-helper.js",
-    "railway:validate": "node validate-railway-config.js",
     "workspace:health": "node scripts/workspace-health.js",
     "security:audit": "node scripts/security-audit.js",
     "deps:health": "node scripts/dependency-health.js",
