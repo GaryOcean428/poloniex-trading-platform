@@ -2,6 +2,7 @@ import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { pool } from '../db/connection.js';
+import { env } from '../config/env.js';
 
 const router = express.Router();
 
@@ -45,7 +46,7 @@ router.post('/login', async (req, res) => {
 
     const token = jwt.sign(
       { userId: user.id, email: user.email },
-      process.env.JWT_SECRET || 'your-secret-key',
+      env.JWT_SECRET,
       { expiresIn: `${process.env.JWT_ACCESS_TOKEN_EXPIRE_MINUTES || 1440}m` }
     );
 
@@ -79,14 +80,9 @@ router.get('/verify', (req, res) => {
       return res.status(401).json({ success: false, error: 'Missing token' });
     }
 
-    const secret = process.env.JWT_SECRET || 'your-secret-key';
-    if (!secret || typeof secret !== 'string' || secret.length === 0) {
-      console.error('JWT_SECRET missing or invalid; using fallback secret');
-    }
-
     let decoded;
     try {
-      decoded = jwt.verify(token, secret);
+      decoded = jwt.verify(token, env.JWT_SECRET);
     } catch (e) {
       console.warn('JWT verify failed:', e?.message || e);
       return res.status(401).json({ success: false, error: 'Invalid token' });
@@ -139,7 +135,7 @@ router.post('/register', async (req, res) => {
     const user = result.rows[0];
     const token = jwt.sign(
       { userId: user.id, email: user.email },
-      process.env.JWT_SECRET || 'your-secret-key',
+      env.JWT_SECRET,
       { expiresIn: `${process.env.JWT_ACCESS_TOKEN_EXPIRE_MINUTES || 1440}m` }
     );
 
