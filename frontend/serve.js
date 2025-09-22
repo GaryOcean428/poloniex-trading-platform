@@ -93,7 +93,23 @@ const server = http.createServer((req, res) => {
       return res.end(JSON.stringify({
         status: 'healthy',
         timestamp: new Date().toISOString(),
-        service: 'frontend'
+        service: 'polytrade-fe',
+        version: process.env.npm_package_version || '1.0.0',
+        uptime: process.uptime()
+      }));
+    }
+
+    // API status endpoint
+    if (reqPath === '/api/status') {
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      return res.end(JSON.stringify({
+        service: 'polytrade-fe',
+        status: 'running',
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime(),
+        environment: process.env.NODE_ENV || 'production',
+        version: process.env.npm_package_version || '1.0.0'
       }));
     }
 
@@ -101,15 +117,6 @@ const server = http.createServer((req, res) => {
     if (reqPath.includes('..')) {
       res.statusCode = 400;
       return res.end('Bad Request');
-    }
-
-    // Health check endpoints
-    if (reqPath === '/api/health' || reqPath === '/healthz') {
-      res.statusCode = 200;
-      res.setHeader('Content-Type', 'application/json; charset=utf-8');
-      return res.end(
-        JSON.stringify({ status: 'healthy', timestamp: new Date().toISOString() })
-      );
     }
 
     // Special asset handling: never SPA-fallback for /assets/*
