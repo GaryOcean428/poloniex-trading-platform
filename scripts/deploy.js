@@ -7,9 +7,9 @@ import path from 'path';
 // Configuration
 const config = {
   projectName: 'Poloniex Trading Platform',
-  vercelToken: process.env.VITE_VERCEL_TOKEN || 'su9ClN67y653HsAPwlN4HXcX',
-  vercelOrgId: process.env.VITE_VERCEL_ORG_ID || 'org_kg0CKm6rJ7LI185Cdv2YiITeXBQL',
-  vercelProjectId: process.env.VITE_VERCEL_PROJECT_ID || 'prj_kg0CKm6rJ7LI185Cdv2YiITeXBQL'
+  vercelToken: process.env.VITE_VERCEL_TOKEN,
+  vercelOrgId: process.env.VITE_VERCEL_ORG_ID,
+  vercelProjectId: process.env.VITE_VERCEL_PROJECT_ID
 };
 
 // ANSI color codes for terminal output
@@ -30,6 +30,11 @@ const colors = {
  */
 async function main() {
   printHeader();
+  
+  // Validate required environment variables
+  if (!config.vercelToken) {
+    throw new Error('VITE_VERCEL_TOKEN environment variable is required for deployment');
+  }
   
   try {
     // Check if Vercel CLI is installed

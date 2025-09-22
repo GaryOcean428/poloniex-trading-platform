@@ -25,8 +25,11 @@ import marketsRoutes from './routes/markets.js';
 // Import services
 import { logger } from './utils/logger.js';
 
-// Load environment variables
+// Load environment variables and validate them
 dotenv.config();
+
+// Import environment validation after dotenv config
+import { env } from './config/env.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -35,14 +38,11 @@ const app = express();
 const server = createServer(app);
 
 // Use Railway PORT environment variable or fallback to .clinerules compliant port range (8765-8799)
-const PORT = parseInt(process.env.PORT || '8765', 10);
+const PORT = env.PORT;
 
 // CORS configuration with support for multiple origins and Railway deployment
 // Prefer explicit configuration from env: CORS_ALLOWED_ORIGINS (comma-separated) and FRONTEND_URL.
-const parsedCorsEnv = (process.env.CORS_ALLOWED_ORIGINS || '')
-  .split(',')
-  .map((s) => s.trim())
-  .filter(Boolean);
+const parsedCorsEnv = env.CORS_ALLOWED_ORIGINS || [];
 
 const defaultLocalOrigins = process.env.NODE_ENV === 'production' ? [] : [
   'http://localhost:3000',
@@ -53,7 +53,7 @@ const defaultLocalOrigins = process.env.NODE_ENV === 'production' ? [] : [
 const baseAllowedOrigins = [
   'https://healthcheck.railway.app',
   // Prefer FRONTEND_URL when provided
-  ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL] : []),
+  ...(env.FRONTEND_URL ? [env.FRONTEND_URL] : []),
   // Custom set via env variable
   ...parsedCorsEnv,
   // Local development fallbacks when not in production
