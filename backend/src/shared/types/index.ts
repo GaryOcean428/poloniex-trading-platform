@@ -168,7 +168,7 @@ export interface ApiError {
   code: string;
   message: string;
   details?: Record<string, any>;
-  statusCode?: number;
+  statusCode: number;
 }
 
 // Legacy/backtest and ticker types for compatibility
