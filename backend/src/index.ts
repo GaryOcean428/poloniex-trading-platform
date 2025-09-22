@@ -24,6 +24,7 @@ import marketsRoutes from './routes/markets.js';
 
 // Import services
 import { logger } from './utils/logger.js';
+import { pool } from './db/connection.js';
 
 // Load environment variables
 dotenv.config();
@@ -106,13 +107,105 @@ app.get('/api/health', (_req: Request, res: Response) => {
   res.json({
     status: 'healthy',
     timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development'
+    environment: process.env.NODE_ENV || 'development',
+    service: 'polytrade-be',
+    uptime: process.uptime(),
+    version: process.env.npm_package_version || '1.0.0'
+  });
+});
+
+// Root health endpoint
+app.get('/health', (_req: Request, res: Response) => {
+  res.json({
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    service: 'polytrade-be'
   });
 });
 
 // Simplified health check for Railway
 app.get('/healthz', (_req: Request, res: Response) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// Database health check endpoint
+app.get('/health/db', async (_req: Request, res: Response) => {
+  try {
+    const client = await pool.connect();
+    await client.query('SELECT 1');
+    client.release();
+    res.status(200).json({
+      database: 'connected',
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    logger.error('Database health check failed:', error);
+    res.status(503).json({
+      database: 'disconnected',
+      error: error instanceof Error ? error.message : 'Unknown error',
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Services health check endpoint
+app.get('/health/services', async (_req: Request, res: Response) => {
+  const services = {
+    api: {
+      status: 'healthy',
+      uptime: process.uptime()
+    },
+    database: {
+      status: 'unknown',
+      lastCheck: new Date().toISOString()
+    }
+  };
+
+  try {
+    const client = await pool.connect();
+    await client.query('SELECT 1');
+    client.release();
+    services.database.status = 'healthy';
+  } catch (error) {
+    logger.error('Database service check failed:', error);
+    services.database.status = 'unhealthy';
+  }
+
+  const allHealthy = Object.values(services).every(service => service.status === 'healthy');
+  const httpStatus = allHealthy ? 200 : 503;
+
+  res.status(httpStatus).json({
+    status: allHealthy ? 'healthy' : 'degraded',
+    timestamp: new Date().toISOString(),
+    services
+  });
+});
+
+// API v1 status endpoint
+app.get('/api/v1/status', async (_req: Request, res: Response) => {
+  const status = {
+    service: 'polytrade-be',
+    status: 'running',
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development',
+    uptime: process.uptime(),
+    version: process.env.npm_package_version || '1.0.0',
+    database: {
+      status: 'unknown'
+    }
+  };
+
+  try {
+    const client = await pool.connect();
+    await client.query('SELECT 1');
+    client.release();
+    status.database.status = 'connected';
+  } catch (error) {
+    logger.error('Database status check failed:', error);
+    status.database.status = 'disconnected';
+  }
+
+  res.json(status);
 });
 
 // API routes
