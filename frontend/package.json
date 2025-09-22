@@ -17,6 +17,7 @@
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",
     "serve": "node serve.js",
+    "serve:simple": "serve -s dist -l ${PORT:-5675}",
     "start": "node serve.js"
   },
   "dependencies": {
@@ -44,6 +45,7 @@
     "react-router-dom": "^7.8.0",
     "recharts": "^3.1.2",
     "seedrandom": "^3.0.5",
+    "serve": "^14.2.5",
     "socket.io-client": "^4.8.1",
     "tailwind-merge": "^3.3.1",
     "typescript": "^5.9.2",
