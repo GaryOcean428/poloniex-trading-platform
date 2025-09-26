@@ -9,6 +9,7 @@
   ],
   "scripts": {
     "railway:setup": "node scripts/railway-yarn-setup.mjs",
+    "railway:validate": "node scripts/validate-railway-deployment.js",
     "dev": "yarn workspace frontend dev",
     "dev:backend": "yarn workspace backend dev",
     "dev:frontend": "yarn workspace frontend dev",
