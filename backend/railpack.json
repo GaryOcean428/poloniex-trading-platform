@@ -1,16 +1,21 @@
 {
   "$schema": "https://schema.railpack.com",
   "build": {
-    "env": {
-      "NODE_ENV": "production"
-    },
+    "provider": "node",
+    "nodeVersion": "20",
+    "packageManager": "yarn",
     "steps": [
       {
-        "name": "install",
-        "command": "yarn install --immutable --immutable-cache"
+        "name": "setup-node",
+        "command": "corepack enable && corepack prepare yarn@4.9.2 --activate"
       },
       {
-        "name": "build",
+        "name": "install",
+        "command": "yarn install --immutable --immutable-cache",
+        "dependsOn": ["setup-node"]
+      },
+      {
+        "name": "build", 
         "command": "yarn build",
         "dependsOn": ["install"]
       }

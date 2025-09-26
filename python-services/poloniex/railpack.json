@@ -1,11 +1,8 @@
 {
   "$schema": "https://schema.railpack.com",
   "build": {
-    "env": {
-      "PYTHONUNBUFFERED": "1",
-      "PIP_NO_CACHE_DIR": "1",
-      "PYTHONDONTWRITEBYTECODE": "1"
-    },
+    "provider": "python",
+    "pythonVersion": "3.11",
     "steps": [
       {
         "name": "install",
@@ -14,7 +11,7 @@
     ]
   },
   "deploy": {
-    "startCommand": "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 2 --loop uvloop --access-log",
+    "startCommand": "uvicorn main:app --host 0.0.0.0 --port $PORT --workers 2 --loop uvloop --access-log",
     "healthcheckPath": "/health",
     "healthcheckTimeout": 300,
     "restartPolicyType": "ALWAYS",

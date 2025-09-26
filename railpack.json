@@ -3,7 +3,7 @@
   "version": "1",
   "services": {
     "frontend": "./frontend",
-    "backend": "./backend",
+    "backend": "./backend", 
     "ml-worker": "./python-services/poloniex"
   }
 }
