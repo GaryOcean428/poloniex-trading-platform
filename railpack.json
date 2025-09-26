@@ -1,18 +1,9 @@
 {
-  "$schema": "https://schema.railpack.com", 
-  "version": "1", 
+  "$schema": "https://schema.railpack.com",
+  "version": "1",
   "services": {
-    "polytrade-fe": {
-      "root": "./frontend",
-      "build": {"provider": "node"}
-    },
-    "polytrade-be": {
-      "root": "./backend",
-      "build": {"provider": "node"}
-    },
-    "ml-worker": {
-      "root": "./python-services/poloniex",
-      "build": {"provider": "python"}
-    }
+    "frontend": "./frontend",
+    "backend": "./backend",
+    "ml-worker": "./python-services/poloniex"
   }
 }

@@ -1,34 +1,25 @@
 {
   "$schema": "https://schema.railpack.com",
-  "provider": "node",
-  "packageManager": "yarn",
-  "node": {
-    "version": "20"
-  },
-  "env": {
-    "NODE_ENV": "production",
-    "RAILWAY_ENVIRONMENT": "production"
-  },
-  "install": {
-    "commands": [
-      "corepack enable",
-      "corepack prepare yarn@4.9.2 --activate", 
-      "yarn install --immutable --immutable-cache"
-    ]
-  },
   "build": {
-    "commands": [
-      "cp -r ../shared ./shared || echo 'Shared directory not found' # copy-shared",
-      "node prebuild.mjs",
-      "vite build",
-      "rm -rf .shared-build"
+    "env": {
+      "NODE_ENV": "production"
+    },
+    "steps": [
+      {
+        "name": "install",
+        "command": "yarn install --immutable --immutable-cache"
+      },
+      {
+        "name": "build",
+        "command": "yarn build",
+        "dependsOn": ["install"]
+      }
     ]
   },
-  "start": {
-    "command": "node serve.js"
-  },
-  "health": {
-    "path": "/api/health",
-    "timeout": 300
+  "deploy": {
+    "startCommand": "node serve.js",
+    "healthcheckPath": "/",
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 3
   }
 }
