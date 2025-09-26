@@ -3,7 +3,7 @@
   "build": {
     "steps": {
       "install": {
-        "commands": ["yarn workspaces focus backend --production=false"]
+        "commands": ["yarn install"]
       },
       "build": {
         "commands": ["yarn workspace backend build"]
