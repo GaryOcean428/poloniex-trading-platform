@@ -25,4 +25,7 @@ pool.on('error', (err) => {
 // Export query function for convenience
 export const query = (text, params) => pool.query(text, params);
 
+// Export geo query function (placeholder implementation)
+export const geoQuery = (text, params) => pool.query(text, params);
+
 export { pool };
