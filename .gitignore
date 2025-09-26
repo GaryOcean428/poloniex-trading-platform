@@ -159,3 +159,7 @@ tools/
 
 # CodeQL databases
 codeql-dbs/
+-e 
+# Environment files
+*.env
+*.env.*
