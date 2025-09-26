@@ -1,31 +1,18 @@
 {
   "$schema": "https://schema.railpack.com",
   "build": {
-    "provider": "node",
-    "nodeVersion": "20",
-    "packageManager": "yarn",
-    "steps": [
-      {
-        "name": "setup-node",
-        "command": "corepack enable && corepack prepare yarn@4.9.2 --activate"
+    "steps": {
+      "install": {
+        "commands": ["corepack enable", "corepack prepare yarn@4.9.2 --activate", "yarn install --immutable"]
       },
-      {
-        "name": "install",
-        "command": "yarn install --immutable --immutable-cache",
-        "dependsOn": ["setup-node"]
-      },
-      {
-        "name": "build", 
-        "command": "yarn build",
-        "dependsOn": ["install"]
+      "build": {
+        "commands": ["yarn build"]
       }
-    ]
+    }
   },
   "deploy": {
-    "startCommand": "node dist/src/index.js",
-    "healthcheckPath": "/api/health",
-    "healthcheckTimeout": 300,
-    "restartPolicyType": "ALWAYS",
-    "restartPolicyMaxRetries": 5
+    "startCommand": "yarn start",
+    "healthCheckPath": "/api/health",
+    "healthCheckTimeout": 300
   }
 }
