@@ -74,4 +74,24 @@ router.get('/poloniex-futures-v3/:symbol', async (req, res) => {
   }
 });
 
+// Root endpoint for markets - redirect to poloniex futures
+router.get('/', async (req, res) => {
+  try {
+    const symbols = await getSymbols();
+    await setCachingHeaders(res);
+    return res.json({ 
+      status: 'ok', 
+      service: 'markets',
+      symbols: symbols,
+      endpoints: [
+        'GET /api/markets/poloniex-futures-v3',
+        'GET /api/markets/poloniex-futures-v3/symbols',
+        'GET /api/markets/poloniex-futures-v3/:symbol'
+      ]
+    });
+  } catch {
+    return res.status(500).json({ error: 'Failed to load markets data' });
+  }
+});
+
 export default router;
