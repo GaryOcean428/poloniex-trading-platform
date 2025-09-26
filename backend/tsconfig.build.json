@@ -6,7 +6,8 @@
       "@shared/*": [".shared-build/*", "../shared/*"]
     },
     "outDir": "./dist",
-    "noEmitOnError": true
+    "noEmitOnError": true,
+    "allowJs": true
   },
   "include": ["src/**/*", ".shared-build/**/*.ts"],
   "exclude": ["node_modules", "dist", "**/*.test.*", "**/*.spec.*", "src/types/jest.d.ts"]
