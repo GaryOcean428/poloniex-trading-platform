@@ -1,9 +1,27 @@
 {
   "$schema": "https://schema.railpack.com",
   "version": "1",
+  "metadata": {
+    "name": "polytrade-monorepo"
+  },
   "services": {
-    "frontend": "./frontend",
-    "backend": "./backend",
-    "ml-worker": "./python-services/poloniex"
+    "backend": {
+      "root": "./backend",
+      "build": {
+        "provider": "node"
+      }
+    },
+    "frontend": {
+      "root": "./frontend",
+      "build": {
+        "provider": "node"
+      }
+    },
+    "ml-worker": {
+      "root": "./python-services/poloniex",
+      "build": {
+        "provider": "python"
+      }
+    }
   }
 }
