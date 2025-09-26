@@ -1,9 +1,14 @@
 {
   "$schema": "https://schema.railpack.com",
+  "version": "1",
+  "metadata": {
+    "name": "polytrade-frontend"
+  },
   "build": {
+    "provider": "node",
     "steps": {
       "install": {
-        "commands": ["yarn install --immutable"]
+        "commands": ["yarn install --frozen-lockfile"]
       },
       "build": {
         "commands": ["yarn build"]
@@ -11,8 +16,10 @@
     }
   },
   "deploy": {
-    "startCommand": "yarn serve",
+    "startCommand": "yarn start",
     "healthCheckPath": "/",
-    "healthCheckTimeout": 300
+    "healthCheckTimeout": 300,
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 3
   }
 }
