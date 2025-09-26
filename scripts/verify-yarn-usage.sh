@@ -53,12 +53,18 @@ fi
 
 echo ""
 
-# Check for yarn.lock
-if [ -f "backend/yarn.lock" ]; then
-    echo "✅ backend/yarn.lock exists"
+# Check for yarn.lock (monorepo should have root yarn.lock only)
+if [ -f "yarn.lock" ]; then
+    echo "✅ Root yarn.lock exists (monorepo setup)"
 else
-    echo "⚠️  backend/yarn.lock is missing"
-    echo "   Run 'cd backend && yarn install' to generate it"
+    echo "❌ Root yarn.lock is missing!"
+fi
+
+if [ -f "backend/yarn.lock" ]; then
+    echo "⚠️  backend/yarn.lock should not exist in monorepo setup"
+    echo "   Consider removing it: rm backend/yarn.lock"
+else
+    echo "✅ No backend/yarn.lock found (good for monorepo!)"
 fi
 
 # Check for package-lock.json (should not exist)
