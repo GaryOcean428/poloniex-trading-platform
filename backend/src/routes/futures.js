@@ -9,38 +9,7 @@ const router = express.Router();
 // =================== PUBLIC ENDPOINTS ===================
 
 /**
- * GET /api/futures - Root endpoint listing available futures endpoints
- */
-router.get('/', (req, res) => {
-  res.json({ 
-    status: 'ok', 
-    service: 'futures',
-    description: 'Poloniex Futures v3 API Integration',
-    endpoints: {
-      public: [
-        'GET /api/futures/health - Service health check',
-        'GET /api/futures/products - Get all futures products',
-        'GET /api/futures/products/:symbol - Get specific product info',
-        'GET /api/futures/tickers - Get market tickers',
-        'GET /api/futures/orderbook/:symbol - Get order book',
-        'GET /api/futures/klines/:symbol - Get K-line data', 
-        'GET /api/futures/funding/:symbol - Get funding rate'
-      ],
-      authenticated: [
-        'GET /api/futures/account/balance - Get account balance',
-        'GET /api/futures/positions - Get current positions',
-        'GET /api/futures/orders - Get current orders',
-        'POST /api/futures/orders - Place new order',
-        'DELETE /api/futures/orders - Cancel order',
-        'DELETE /api/futures/orders/all - Cancel all orders',
-        'POST /api/futures/positions/leverage - Set leverage'
-      ]
-    }
-  });
-});
-
-/**
- * GET /api/futures/health - Health check for futures service
+ * GET /api/futures/health - Health check for Poloniex Futures v3 service
  */
 router.get('/health', async (req, res) => {
   try {
@@ -54,18 +23,6 @@ router.get('/health', async (req, res) => {
       service: 'PoloniexFuturesService'
     });
   }
-});
-
-/**
- * GET /api/futures/data - Legacy endpoint for compatibility
- */
-router.get('/data', (req, res) => {
-  res.json({
-    status: 'ok',
-    data: [],
-    message: 'Use /api/futures/products for product data',
-    timestamp: new Date().toISOString()
-  });
 });
 
 /**
@@ -102,9 +59,10 @@ router.get('/products/:symbol', async (req, res) => {
 });
 
 /**
- * GET /api/futures/tickers - Get market tickers
+ * GET /api/futures/ticker - Get market ticker(s)
+ * Query params: ?symbol=BTC_USDT_PERP (optional, if not provided returns all tickers)
  */
-router.get('/tickers', async (req, res) => {
+router.get('/ticker', async (req, res) => {
   try {
     const { symbol } = req.query;
     const tickers = await poloniexFuturesService.getTicker(symbol);
@@ -137,18 +95,42 @@ router.get('/orderbook/:symbol', async (req, res) => {
 });
 
 /**
- * GET /api/futures/klines/:symbol - Get K-line data
+ * GET /api/futures/klines/:symbol - Get K-line/candlestick data
  */
 router.get('/klines/:symbol', async (req, res) => {
   try {
     const { symbol } = req.params;
     const { granularity, ...params } = req.query;
+    
+    if (!granularity) {
+      return res.status(400).json({
+        error: 'Granularity parameter is required (e.g., 60, 300, 900, 1800, 3600, 14400, 86400)'
+      });
+    }
+
     const klines = await poloniexFuturesService.getKlines(symbol, granularity, params);
     res.json(klines);
   } catch (error) {
     logger.error(`Error fetching klines for ${req.params.symbol}:`, error);
     res.status(500).json({
       error: 'Failed to fetch K-line data',
+      details: error.response?.data || error.message
+    });
+  }
+});
+
+/**
+ * GET /api/futures/trades/:symbol - Get recent trades for symbol
+ */
+router.get('/trades/:symbol', async (req, res) => {
+  try {
+    const { symbol } = req.params;
+    const trades = await poloniexFuturesService.getMarketTrades(symbol);
+    res.json(trades);
+  } catch (error) {
+    logger.error(`Error fetching trades for ${req.params.symbol}:`, error);
+    res.status(500).json({
+      error: 'Failed to fetch market trades',
       details: error.response?.data || error.message
     });
   }
@@ -166,6 +148,41 @@ router.get('/funding/:symbol', async (req, res) => {
     logger.error(`Error fetching funding rate for ${req.params.symbol}:`, error);
     res.status(500).json({
       error: 'Failed to fetch funding rate',
+      details: error.response?.data || error.message
+    });
+  }
+});
+
+/**
+ * GET /api/futures/funding/:symbol/history - Get funding rate history
+ */
+router.get('/funding/:symbol/history', async (req, res) => {
+  try {
+    const { symbol } = req.params;
+    const params = req.query; // startTime, endTime, limit
+    const history = await poloniexFuturesService.getFundingRateHistory(symbol, params);
+    res.json(history);
+  } catch (error) {
+    logger.error(`Error fetching funding rate history for ${req.params.symbol}:`, error);
+    res.status(500).json({
+      error: 'Failed to fetch funding rate history',
+      details: error.response?.data || error.message
+    });
+  }
+});
+
+/**
+ * GET /api/futures/open-interest/:symbol - Get open interest
+ */
+router.get('/open-interest/:symbol', async (req, res) => {
+  try {
+    const { symbol } = req.params;
+    const openInterest = await poloniexFuturesService.getOpenInterest(symbol);
+    res.json(openInterest);
+  } catch (error) {
+    logger.error(`Error fetching open interest for ${req.params.symbol}:`, error);
+    res.status(500).json({
+      error: 'Failed to fetch open interest',
       details: error.response?.data || error.message
     });
   }
@@ -198,6 +215,55 @@ router.get('/account/balance', authenticateToken, async (req, res) => {
 });
 
 /**
+ * GET /api/futures/account/overview - Get account overview
+ */
+router.get('/account/overview', authenticateToken, async (req, res) => {
+  try {
+    const credentials = await UserService.getApiCredentials(req.user.id);
+    if (!credentials) {
+      return res.status(400).json({
+        error: 'No API credentials found. Please add your Poloniex API keys first.',
+        requiresApiKeys: true
+      });
+    }
+
+    const overview = await poloniexFuturesService.getAccountOverview(credentials);
+    res.json(overview);
+  } catch (error) {
+    logger.error('Error fetching account overview:', error);
+    res.status(error.response?.status || 500).json({
+      error: 'Failed to fetch account overview',
+      details: error.response?.data || error.message
+    });
+  }
+});
+
+/**
+ * GET /api/futures/account/bills - Get account transaction history
+ */
+router.get('/account/bills', authenticateToken, async (req, res) => {
+  try {
+    const credentials = await UserService.getApiCredentials(req.user.id);
+    if (!credentials) {
+      return res.status(400).json({
+        error: 'No API credentials found. Please add your Poloniex API keys first.',
+        requiresApiKeys: true
+      });
+    }
+
+    const params = req.query; // startTime, endTime, limit, type
+    const bills = await poloniexFuturesService.getAccountBills(credentials, params);
+    res.json(bills);
+  } catch (error) {
+    logger.error('Error fetching account bills:', error);
+    res.status(error.response?.status || 500).json({
+      error: 'Failed to fetch account bills',
+      details: error.response?.data || error.message
+    });
+  }
+});
+
+/**
  * GET /api/futures/positions - Get current positions
  */
 router.get('/positions', authenticateToken, async (req, res) => {
@@ -223,7 +289,94 @@ router.get('/positions', authenticateToken, async (req, res) => {
 });
 
 /**
- * GET /api/futures/orders - Get current orders
+ * GET /api/futures/positions/history - Get position history
+ */
+router.get('/positions/history', authenticateToken, async (req, res) => {
+  try {
+    const credentials = await UserService.getApiCredentials(req.user.id);
+    if (!credentials) {
+      return res.status(400).json({
+        error: 'No API credentials found. Please add your Poloniex API keys first.',
+        requiresApiKeys: true
+      });
+    }
+
+    const params = req.query; // symbol, startTime, endTime, limit
+    const history = await poloniexFuturesService.getPositionHistory(credentials, params);
+    res.json(history);
+  } catch (error) {
+    logger.error('Error fetching position history:', error);
+    res.status(error.response?.status || 500).json({
+      error: 'Failed to fetch position history',
+      details: error.response?.data || error.message
+    });
+  }
+});
+
+/**
+ * POST /api/futures/positions/leverage - Modify position leverage
+ */
+router.post('/positions/leverage', authenticateToken, async (req, res) => {
+  try {
+    const credentials = await UserService.getApiCredentials(req.user.id);
+    if (!credentials) {
+      return res.status(400).json({
+        error: 'No API credentials found. Please add your Poloniex API keys first.',
+        requiresApiKeys: true
+      });
+    }
+
+    const { symbol, leverage } = req.body;
+    if (!symbol || !leverage) {
+      return res.status(400).json({
+        error: 'Symbol and leverage are required'
+      });
+    }
+
+    const result = await poloniexFuturesService.modifyLeverage(credentials, symbol, leverage);
+    res.json(result);
+  } catch (error) {
+    logger.error('Error modifying leverage:', error);
+    res.status(error.response?.status || 500).json({
+      error: 'Failed to modify leverage',
+      details: error.response?.data || error.message
+    });
+  }
+});
+
+/**
+ * POST /api/futures/positions/mode - Set position mode (ONE_WAY or HEDGE)
+ */
+router.post('/positions/mode', authenticateToken, async (req, res) => {
+  try {
+    const credentials = await UserService.getApiCredentials(req.user.id);
+    if (!credentials) {
+      return res.status(400).json({
+        error: 'No API credentials found. Please add your Poloniex API keys first.',
+        requiresApiKeys: true
+      });
+    }
+
+    const { mode } = req.body;
+    if (!mode || !['ONE_WAY', 'HEDGE'].includes(mode)) {
+      return res.status(400).json({
+        error: 'Mode must be either "ONE_WAY" or "HEDGE"'
+      });
+    }
+
+    const result = await poloniexFuturesService.setPositionMode(credentials, mode);
+    res.json(result);
+  } catch (error) {
+    logger.error('Error setting position mode:', error);
+    res.status(error.response?.status || 500).json({
+      error: 'Failed to set position mode',
+      details: error.response?.data || error.message
+    });
+  }
+});
+
+/**
+ * GET /api/futures/orders - Get open orders
  */
 router.get('/orders', authenticateToken, async (req, res) => {
   try {
@@ -235,13 +388,63 @@ router.get('/orders', authenticateToken, async (req, res) => {
       });
     }
 
-    const { symbol } = req.query;
-    const orders = await poloniexFuturesService.getOpenOrders(credentials, { symbol });
+    const params = req.query; // symbol, side, type, startTime, endTime
+    const orders = await poloniexFuturesService.getOpenOrders(credentials, params);
     res.json(orders);
   } catch (error) {
     logger.error('Error fetching orders:', error);
     res.status(error.response?.status || 500).json({
       error: 'Failed to fetch orders',
+      details: error.response?.data || error.message
+    });
+  }
+});
+
+/**
+ * GET /api/futures/orders/history - Get order history
+ */
+router.get('/orders/history', authenticateToken, async (req, res) => {
+  try {
+    const credentials = await UserService.getApiCredentials(req.user.id);
+    if (!credentials) {
+      return res.status(400).json({
+        error: 'No API credentials found. Please add your Poloniex API keys first.',
+        requiresApiKeys: true
+      });
+    }
+
+    const params = req.query; // symbol, side, type, startTime, endTime, limit
+    const history = await poloniexFuturesService.getOrderHistory(credentials, params);
+    res.json(history);
+  } catch (error) {
+    logger.error('Error fetching order history:', error);
+    res.status(error.response?.status || 500).json({
+      error: 'Failed to fetch order history',
+      details: error.response?.data || error.message
+    });
+  }
+});
+
+/**
+ * GET /api/futures/orders/:orderId - Get specific order details
+ */
+router.get('/orders/:orderId', authenticateToken, async (req, res) => {
+  try {
+    const credentials = await UserService.getApiCredentials(req.user.id);
+    if (!credentials) {
+      return res.status(400).json({
+        error: 'No API credentials found. Please add your Poloniex API keys first.',
+        requiresApiKeys: true
+      });
+    }
+
+    const { orderId } = req.params;
+    const order = await poloniexFuturesService.getOrder(credentials, orderId);
+    res.json(order);
+  } catch (error) {
+    logger.error(`Error fetching order ${req.params.orderId}:`, error);
+    res.status(error.response?.status || 500).json({
+      error: 'Failed to fetch order details',
       details: error.response?.data || error.message
     });
   }
@@ -279,9 +482,9 @@ router.post('/orders', authenticateToken, async (req, res) => {
 });
 
 /**
- * DELETE /api/futures/orders - Cancel an order
+ * DELETE /api/futures/orders/:orderId - Cancel specific order
  */
-router.delete('/orders', authenticateToken, async (req, res) => {
+router.delete('/orders/:orderId', authenticateToken, async (req, res) => {
   try {
     const credentials = await UserService.getApiCredentials(req.user.id);
     if (!credentials) {
@@ -291,17 +494,11 @@ router.delete('/orders', authenticateToken, async (req, res) => {
       });
     }
 
-    const { orderId } = req.body;
-    if (!orderId) {
-      return res.status(400).json({
-        error: 'orderId is required'
-      });
-    }
-
+    const { orderId } = req.params;
     const result = await poloniexFuturesService.cancelOrder(credentials, orderId);
     res.json(result);
   } catch (error) {
-    logger.error('Error canceling order:', error);
+    logger.error(`Error canceling order ${req.params.orderId}:`, error);
     res.status(error.response?.status || 500).json({
       error: 'Failed to cancel order',
       details: error.response?.data || error.message
@@ -310,9 +507,9 @@ router.delete('/orders', authenticateToken, async (req, res) => {
 });
 
 /**
- * DELETE /api/futures/orders/all - Cancel all orders
+ * DELETE /api/futures/orders - Cancel all orders (or by symbol)
  */
-router.delete('/orders/all', authenticateToken, async (req, res) => {
+router.delete('/orders', authenticateToken, async (req, res) => {
   try {
     const credentials = await UserService.getApiCredentials(req.user.id);
     if (!credentials) {
@@ -335,9 +532,9 @@ router.delete('/orders/all', authenticateToken, async (req, res) => {
 });
 
 /**
- * POST /api/futures/positions/leverage - Set leverage
+ * GET /api/futures/trades - Get trade history
  */
-router.post('/positions/leverage', authenticateToken, async (req, res) => {
+router.get('/trades', authenticateToken, async (req, res) => {
   try {
     const credentials = await UserService.getApiCredentials(req.user.id);
     if (!credentials) {
@@ -347,19 +544,93 @@ router.post('/positions/leverage', authenticateToken, async (req, res) => {
       });
     }
 
-    const { symbol, leverage } = req.body;
-    if (!symbol || !leverage) {
+    const params = req.query; // symbol, orderId, startTime, endTime, limit
+    const trades = await poloniexFuturesService.getTradeHistory(credentials, params);
+    res.json(trades);
+  } catch (error) {
+    logger.error('Error fetching trade history:', error);
+    res.status(error.response?.status || 500).json({
+      error: 'Failed to fetch trade history',
+      details: error.response?.data || error.message
+    });
+  }
+});
+
+/**
+ * GET /api/futures/risk/:symbol - Get risk limit for symbol
+ */
+router.get('/risk/:symbol', authenticateToken, async (req, res) => {
+  try {
+    const credentials = await UserService.getApiCredentials(req.user.id);
+    if (!credentials) {
       return res.status(400).json({
-        error: 'Symbol and leverage are required'
+        error: 'No API credentials found. Please add your Poloniex API keys first.',
+        requiresApiKeys: true
       });
     }
 
-    const result = await poloniexFuturesService.modifyLeverage(credentials, symbol, leverage);
+    const { symbol } = req.params;
+    const riskLimit = await poloniexFuturesService.getRiskLimit(credentials, symbol);
+    res.json(riskLimit);
+  } catch (error) {
+    logger.error(`Error fetching risk limit for ${req.params.symbol}:`, error);
+    res.status(error.response?.status || 500).json({
+      error: 'Failed to fetch risk limit',
+      details: error.response?.data || error.message
+    });
+  }
+});
+
+/**
+ * POST /api/futures/risk - Update risk limit
+ */
+router.post('/risk', authenticateToken, async (req, res) => {
+  try {
+    const credentials = await UserService.getApiCredentials(req.user.id);
+    if (!credentials) {
+      return res.status(400).json({
+        error: 'No API credentials found. Please add your Poloniex API keys first.',
+        requiresApiKeys: true
+      });
+    }
+
+    const { symbol, level } = req.body;
+    if (!symbol || !level) {
+      return res.status(400).json({
+        error: 'Symbol and level are required'
+      });
+    }
+
+    const result = await poloniexFuturesService.updateRiskLimit(credentials, symbol, level);
     res.json(result);
   } catch (error) {
-    logger.error('Error setting leverage:', error);
+    logger.error('Error updating risk limit:', error);
     res.status(error.response?.status || 500).json({
-      error: 'Failed to set leverage',
+      error: 'Failed to update risk limit',
+      details: error.response?.data || error.message
+    });
+  }
+});
+
+/**
+ * GET /api/futures/adl - Get ADL (Auto-Deleveraging) status
+ */
+router.get('/adl', authenticateToken, async (req, res) => {
+  try {
+    const credentials = await UserService.getApiCredentials(req.user.id);
+    if (!credentials) {
+      return res.status(400).json({
+        error: 'No API credentials found. Please add your Poloniex API keys first.',
+        requiresApiKeys: true
+      });
+    }
+
+    const adlStatus = await poloniexFuturesService.getADLStatus(credentials);
+    res.json(adlStatus);
+  } catch (error) {
+    logger.error('Error fetching ADL status:', error);
+    res.status(error.response?.status || 500).json({
+      error: 'Failed to fetch ADL status',
       details: error.response?.data || error.message
     });
   }
@@ -381,6 +652,12 @@ router.use((error, req, res, next) => {
     return res.status(401).json({
       error: 'Invalid API credentials',
       requiresApiKeys: true
+    });
+  }
+
+  if (error.response?.status === 403) {
+    return res.status(403).json({
+      error: 'API access forbidden - check permissions and rate limits'
     });
   }
 
