@@ -49,16 +49,16 @@ except Exception:
 import requests
 
 
-# Hosts and prefixes (from docs/railway-poloniex-docs.md)
+# Hosts and prefixes (updated for proper v3 API)
 PRIMARY_HOST = "https://api.poloniex.com"
-PRIMARY_PREFIX = "/v3/futures/api"  # primary for futures
-FALLBACK_HOST = "https://futures-api.poloniex.com"
-FALLBACK_PREFIX = "/v3"  # sometimes futures API uses /v3 on the futures host
+PRIMARY_PREFIX = "/v3"  # correct v3 API prefix
+FALLBACK_HOST = "https://api.poloniex.com" 
+FALLBACK_PREFIX = "/v3"  # consistent v3 prefix
 
-# Endpoints
-PATH_ALL_PRODUCT_INFO = "/market/get-all-product-info"
-PATH_MARKET_INFO = "/market/get-market-info"
-PATH_FUTURES_RISK_LIMIT = "/market/get-futures-risk-limit"
+# Correct v3 API endpoints
+PATH_ALL_PRODUCT_INFO = "/market/allInstruments"
+PATH_MARKET_INFO = "/market/tickers"
+PATH_FUTURES_RISK_LIMIT = "/market/riskLimit"
 
 
 def env_str(*names: str) -> str:
@@ -80,17 +80,23 @@ def sign_message(secret: str, msg: str) -> str:
 
 def build_headers(method: str, request_path: str, body: str = "") -> Dict[str, str]:
     """
-    Poloniex Futures often expects seconds for PF-API-TIMESTAMP.
-    Signature: timestamp + method + request_path + body
+    Build Poloniex v3 API authentication headers.
+    Signature format: METHOD\n + REQUEST_PATH\n + BODY + timestamp
     """
-    ts = str(int(time.time()))
-    sig = sign_message(API_SECRET, ts + method + request_path + body)
+    timestamp = str(int(time.time() * 1000))  # v3 API expects milliseconds
+    
+    # Build signature string per v3 spec
+    message = f"{method.upper()}\n{request_path}\n{body}{timestamp}"
+    sig = sign_message(API_SECRET, message)
+    
     return {
-        "Accept": "application/json",
+        "Accept": "application/json", 
         "Content-Type": "application/json",
-        "PF-API-KEY": API_KEY,
-        "PF-API-SIGN": sig,
-        "PF-API-TIMESTAMP": ts,
+        "key": API_KEY,
+        "signature": sig,
+        "signTimestamp": timestamp,
+        "signatureMethod": "HmacSHA256",
+        "signatureVersion": "2"
     }
 
 

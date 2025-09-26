@@ -7,17 +7,20 @@ import { UserService } from '../services/userService.js';
 
 const router = express.Router();
 
-// Poloniex API URLs
+// DEPRECATED: This proxy is for legacy spot trading compatibility
+// For futures trading, use the dedicated /api/futures routes which implement v3 API properly
 const POLONIEX_PUBLIC_URL = 'https://api.poloniex.com';
 const POLONIEX_PRIVATE_URL = 'https://api.poloniex.com';
 
 /**
- * Generate HMAC signature for Poloniex API
+ * Generate HMAC signature for Poloniex v3 API
+ * Updated for proper v3 futures API authentication
  */
-function generateSignature(method, url, body, timestamp, apiSecret) {
+function generateSignature(method, requestPath, body, timestamp, apiSecret) {
   try {
+    // Use v3 API signature format: METHOD\n + PATH\n + BODY + timestamp
     const bodyStr = body ? JSON.stringify(body) : '';
-    const message = `${method.toUpperCase()}${url}${bodyStr}${timestamp}`;
+    const message = `${method.toUpperCase()}\n${requestPath}\n${bodyStr}${timestamp}`;
 
     return crypto
       .createHmac('sha256', apiSecret)
@@ -30,26 +33,34 @@ function generateSignature(method, url, body, timestamp, apiSecret) {
 }
 
 /**
- * Make authenticated request to Poloniex private API
+ * Make authenticated request to Poloniex v3 API
+ * Updated for proper v3 authentication headers
  */
 async function makeAuthenticatedRequest(credentials, method, endpoint, body = null, params = {}) {
   try {
     const timestamp = Date.now().toString();
-    const url = `${POLONIEX_PRIVATE_URL}${endpoint}`;
+    
+    // Build v3 API path
+    const requestPath = endpoint.startsWith('/v3') ? endpoint : `/v3${endpoint}`;
+    const url = `${POLONIEX_PRIVATE_URL}${requestPath}`;
 
     // Generate query string if params exist
     const queryString = Object.keys(params).length > 0
       ? '?' + new URLSearchParams(params).toString()
       : '';
 
+    const fullRequestPath = requestPath + queryString;
     const fullUrl = url + queryString;
-    const signature = generateSignature(method, endpoint + queryString, body, timestamp, credentials.apiSecret);
+    const signature = generateSignature(method, fullRequestPath, body, timestamp, credentials.apiSecret);
 
+    // Use proper v3 API headers
     const headers = {
       'Content-Type': 'application/json',
-      'Key': credentials.apiKey,
-      'Signature': signature,
-      'Timestamp': timestamp
+      'key': credentials.apiKey,
+      'signature': signature,
+      'signTimestamp': timestamp,
+      'signatureMethod': 'HmacSHA256',
+      'signatureVersion': '2'
     };
 
     const config = {
@@ -67,7 +78,7 @@ async function makeAuthenticatedRequest(credentials, method, endpoint, body = nu
       config.params = params;
     }
 
-    console.log(`Making authenticated ${method} request to ${endpoint}`);
+    console.log(`Making authenticated v3 ${method} request to ${requestPath}`);
     const response = await axios(config);
 
     return response;
@@ -109,25 +120,54 @@ async function makePublicRequest(method, endpoint, params = {}) {
 
 // =================== PUBLIC ENDPOINTS ===================
 
+// DEPRECATION NOTICE: For futures trading, use /api/futures/* endpoints instead
+router.get('/deprecation-notice', (req, res) => {
+  res.json({
+    notice: 'DEPRECATED: These proxy routes are for legacy spot trading compatibility only.',
+    recommendation: 'For futures trading, use the dedicated /api/futures/* routes which implement Poloniex v3 API properly.',
+    futuresEndpoints: {
+      products: 'GET /api/futures/products',
+      tickers: 'GET /api/futures/tickers',
+      orderbook: 'GET /api/futures/orderbook/:symbol',
+      account: 'GET /api/futures/account/balance',
+      positions: 'GET /api/futures/positions',
+      orders: 'GET /api/futures/orders',
+      placeOrder: 'POST /api/futures/orders',
+      cancelOrder: 'DELETE /api/futures/orders'
+    }
+  });
+});
+
 /**
  * GET /api/markets - Get available trading pairs
+ * DEPRECATED: Use /api/futures/products for futures markets
  */
 router.get('/markets', async (req, res) => {
+  // Add deprecation header
+  res.set('X-Deprecated', 'true');
+  res.set('X-Deprecated-Message', 'Use /api/futures/products for futures markets');
+  
   try {
     const response = await makePublicRequest('GET', '/markets', req.query);
     res.json(response.data);
   } catch (error) {
     res.status(error.response?.status || 500).json({
       error: 'Failed to fetch markets',
-      details: error.response?.data || error.message
+      details: error.response?.data || error.message,
+      suggestion: 'Consider using /api/futures/products for futures markets'
     });
   }
 });
 
 /**
  * GET /api/ticker/:symbol? - Get ticker data
+ * DEPRECATED: Use /api/futures/tickers for futures tickers
  */
 router.get('/ticker/:symbol?', async (req, res) => {
+  // Add deprecation header
+  res.set('X-Deprecated', 'true');
+  res.set('X-Deprecated-Message', 'Use /api/futures/tickers for futures tickers');
+  
   try {
     const { symbol } = req.params;
     const endpoint = symbol ? `/markets/${symbol}/ticker24hr` : '/markets/ticker24hr';
@@ -137,15 +177,21 @@ router.get('/ticker/:symbol?', async (req, res) => {
   } catch (error) {
     res.status(error.response?.status || 500).json({
       error: 'Failed to fetch ticker data',
-      details: error.response?.data || error.message
+      details: error.response?.data || error.message,
+      suggestion: 'Consider using /api/futures/tickers for futures tickers'
     });
   }
 });
 
 /**
  * GET /api/orderbook/:symbol - Get order book
+ * DEPRECATED: Use /api/futures/orderbook/:symbol for futures order books
  */
 router.get('/orderbook/:symbol', async (req, res) => {
+  // Add deprecation header
+  res.set('X-Deprecated', 'true');
+  res.set('X-Deprecated-Message', 'Use /api/futures/orderbook/:symbol for futures order books');
+  
   try {
     const { symbol } = req.params;
     const response = await makePublicRequest('GET', `/markets/${symbol}/orderBook`, req.query);
@@ -153,15 +199,21 @@ router.get('/orderbook/:symbol', async (req, res) => {
   } catch (error) {
     res.status(error.response?.status || 500).json({
       error: 'Failed to fetch order book',
-      details: error.response?.data || error.message
+      details: error.response?.data || error.message,
+      suggestion: `Consider using /api/futures/orderbook/${req.params.symbol} for futures order books`
     });
   }
 });
 
 /**
  * GET /api/klines/:symbol - Get historical candlestick data
+ * DEPRECATED: Use /api/futures/klines/:symbol for futures K-line data
  */
 router.get('/klines/:symbol', async (req, res) => {
+  // Add deprecation header
+  res.set('X-Deprecated', 'true');
+  res.set('X-Deprecated-Message', 'Use /api/futures/klines/:symbol for futures K-line data');
+  
   try {
     const { symbol } = req.params;
     const response = await makePublicRequest('GET', `/markets/${symbol}/candles`, req.query);
@@ -169,7 +221,8 @@ router.get('/klines/:symbol', async (req, res) => {
   } catch (error) {
     res.status(error.response?.status || 500).json({
       error: 'Failed to fetch candlestick data',
-      details: error.response?.data || error.message
+      details: error.response?.data || error.message,
+      suggestion: `Consider using /api/futures/klines/${req.params.symbol} for futures K-line data`
     });
   }
 });

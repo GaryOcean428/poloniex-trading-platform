@@ -21,6 +21,7 @@ import confidenceScoringRoutes from './routes/confidenceScoring.js';
 import strategiesRoutes from './routes/strategies.js';
 import statusRoutes from './routes/status.js';
 import marketsRoutes from './routes/markets.js';
+import proxyRoutes from './routes/proxy.js';
 
 // Import services
 import { logger } from './utils/logger.js';
@@ -115,6 +116,9 @@ app.use('/api/autonomous-trading', autonomousTradingRoutes);
 app.use('/api/confidence-scoring', confidenceScoringRoutes);
 app.use('/api/strategies', strategiesRoutes);
 app.use('/api/status', statusRoutes);
+
+// Legacy proxy routes (deprecated - use futures API instead)
+app.use('/api', proxyRoutes);
 
 /**
  * Serve static frontend only when running as a combined service and the dist exists.
