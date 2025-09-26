@@ -3,15 +3,15 @@
   "build": {
     "steps": {
       "install": {
-        "commands": ["corepack enable", "corepack prepare yarn@4.9.2 --activate", "yarn install --immutable"]
+        "commands": ["yarn workspaces focus backend --production=false"]
       },
       "build": {
-        "commands": ["yarn build"]
+        "commands": ["yarn workspace backend build"]
       }
     }
   },
   "deploy": {
-    "startCommand": "yarn start",
+    "startCommand": "yarn workspace backend start",
     "healthCheckPath": "/api/health",
     "healthCheckTimeout": 300
   }

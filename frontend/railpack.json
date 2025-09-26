@@ -3,15 +3,15 @@
   "build": {
     "steps": {
       "install": {
-        "commands": ["corepack enable", "corepack prepare yarn@4.9.2 --activate", "yarn install --immutable"]
+        "commands": ["yarn workspaces focus frontend --production=false"]
       },
       "build": {
-        "commands": ["yarn build"]
+        "commands": ["yarn workspace frontend build"]
       }
     }
   },
   "deploy": {
-    "startCommand": "yarn serve",
+    "startCommand": "yarn workspace frontend serve",
     "healthCheckPath": "/",
     "healthCheckTimeout": 300
   }
