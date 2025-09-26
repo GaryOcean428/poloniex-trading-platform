@@ -2,6 +2,18 @@ import express from 'express';
 
 const router = express.Router();
 
+// Root endpoint for futures
+router.get('/', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    service: 'futures',
+    endpoints: [
+      'GET /api/futures/health',
+      'GET /api/futures/data'
+    ]
+  });
+});
+
 // Health check for futures
 router.get('/health', (req, res) => {
   res.json({ status: 'ok', service: 'futures' });
