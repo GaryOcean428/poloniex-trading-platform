@@ -22,4 +22,7 @@ pool.on('error', (err) => {
   console.error('Database connection error:', err);
 });
 
+// Export query function for convenience
+export const query = (text, params) => pool.query(text, params);
+
 export { pool };
