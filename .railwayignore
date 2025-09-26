@@ -1,0 +1,70 @@
+# Railway deployment ignore file
+
+# Development files
+.git/
+.vscode/
+.idea/
+*.log
+*.tmp
+*.swp
+.DS_Store
+
+# Test files
+tests/
+test_reports/
+*.test.js
+*.test.ts
+*_test.py
+backend_test.py
+
+# Build artifacts (will be generated during build)
+node_modules/
+dist/
+build/
+.next/
+coverage/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Environment files (will be injected by Railway)
+.env
+.env.local
+.env.development
+.env.production
+
+# Documentation
+docs/
+*.md
+README.md
+CHANGELOG.md
+
+# CI/CD files
+.github/
+.gitlab-ci.yml
+.travis.yml
+
+# Package manager files
+yarn-error.log
+npm-debug.log*
+package-lock.json
+
+# IDE and editor files
+.vscode/
+.idea/
+*.sublime-*
+.editorconfig
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Backup files
+*.bak
+*.backup
