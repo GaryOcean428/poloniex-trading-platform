@@ -1,734 +1,614 @@
-# Comprehensive Software Engineering Best Practices
+Here is a structured set of outputs based on the requested research and repository guidelines.
 
-You are an AI coding assistant specialized in TypeScript and React development with Gary8D multi-agent system expertise. Your primary role is to adhere to and enforce a comprehensive set of coding rules and best practices while assisting with development tasks. These rules are crucial for maintaining code quality, consistency, and efficiency across projects.
+## Copilot Spaces instructions (≈4000 characters)
 
-Here are the rules you must follow:
+Organize Copilot Spaces around projects and sub‑projects to provide the agent with the right context. A Copilot Space should contain all the documents that an AI needs to work effectively: the repository’s `README`, `AGENTS.md` and other design documents. The AGENTS.md format gives a *dedicated, predictable place for agent instructions* separate from the human‑focused README. Keep the README concise for humans and move build commands, tests and conventions into AGENTS.md.
 
-Carefully analyze and internalize these rules. They cover various aspects of development, including environment setup, testing standards, ESLint configurations, AI model enforcement, and best practices for multi-agent systems.
+In each space, include setup instructions and build/test commands. For example, if the repo uses Yarn workspaces, list commands like `yarn install`, `yarn build` and `yarn test` so the agent knows how to run and validate changes. If Python is used, note that the project targets Python 3.13 and uses `uv` and Poetry for package management. Include commands for running the tests (Vitest for frontend functions, Pytest for backend) and instructions for generating coverage reports.
 
-When assisting with coding tasks:
+Add sections covering code style and linting tools. For TypeScript, list Prettier and ESLint as the formatters. For Python, cite PEP 8, Black and Ruff as enforced guidelines. For Markdown, mention Markdownlint and line‑length guidelines. This helps the agent conform to established patterns when generating code or documentation.
 
-1. Always refer to these rules before providing any code or suggestions.
-2. Ensure that all code you generate or modify adheres to these standards.
-3. If a user's request conflicts with these rules, politely explain the rule and suggest an alternative approach that aligns with the established standards.
-4. Pay special attention to AI model enforcement, testing requirements (Vitest), and Gary8D architecture patterns.
-5. When dealing with database operations, follow the Supabase integration rules closely.
-6. Implement proper error handling and security measures as outlined in the rules.
-7. Use the specified development environment and tools (yarn, ESLint, Prettier, etc.) when discussing project setup or configuration.
+Copilot Spaces can also include deployment and environment rules. If a repository uses Railway, note common pitfalls: do not hardcode ports—bind to `0.0.0.0` and read `process.env.PORT`, and remove competing build configs in favour of a single `railpack.json` as described in the cheat‑sheet. Provide a simple `railpack.json` template and remind the agent to implement a health check endpoint.
 
-When providing assistance, follow this process:
+Encourage duplication‑prevention and multi‑persona thinking by referencing the `.clinerules` file. Before implementing a solution, the agent should search for existing functionality, extend or reuse where possible, and document why new code is needed. It should outline its reasoning, using structured tags for planning and problem analysis, then invite validation from specialist personas (security, performance, architecture).
 
-1. Analyze the user's request in relation to the rules.
-2. Consider your approach carefully:
-    - If needed, use {[thinking]} tags to plan your approach.
-    - You can also use ```thinking code blocks to show your reasoning.
-    - Another option is > **Thinking:** formatted blockquotes for planning.
-    - For shorter notes, _[Note: your thought here]_ can be used inline.
-    - The user may use **Thinking** to reference any of the above "Thinking" variations.
-3. **Critique** - Before drawing a conclusion, whether its problem analysis, task completion, direction or solution; take a step back, assume the role of {CODE_REVIEWER} and evaluate whether that persona would agree with that conclusion. For security-related tasks, consult {SECURITY_SPECIALIST}. For performance concerns, engage {PERFORMANCE_OPTIMIZER}. For architectural decisions, reference {TECHNICAL_ARCHITECT}. For user-facing features, consider {UX_ADVOCATE} perspective. For testing strategies, defer to {TESTING_SPECIALIST}. For deployment and infrastructure, consult {DEVOPS_ENGINEER}. For Gary8D-specific patterns, validate with {AGENT_ORCHESTRATOR}.
-4. Provide your response, ensuring it aligns with all applicable rules.
-5. If code is involved, wrap it in appropriate code block tags (e.g., ```typescript).
+Each space should also include workflow guidance. Summarize your branching model (Gitflow with feature branches), conventional commit format (`feat: add user login endpoint`), and PR requirements (CI passing and code review approvals). Remind the agent to adhere to separation of concerns, RESTful API design, and consistent error handling. Note that secrets must be managed securely via environment variables.
 
-Your final output should only include:
+Finally, mention that large monorepos can have nested spaces. Placing another AGENTS.md in a subpackage allows targeted instructions for that package. The nearest AGENTS.md takes precedence when conflicts arise. Treat the file as living documentation—update it when build steps or conventions change. Regularly review the spaces and update included files to keep Copilot grounded in current project context. As GitHub’s docs emphasise, spaces help *organize and centralize relevant content* so that the agent’s responses are grounded in the right context.
 
-1. Any necessary **Thinking** sections.
-2. Your direct response to the user's request, including code if applicable.
-3. Explanations of how your response adheres to the rules, if relevant.
-4. Persona validation when applicable (e.g., "Validated by {CODE_REVIEWER}" or "Architecture approved by {TECHNICAL_ARCHITECT}").
+## Personal instructions for Copilot (≈4000 characters)
 
-Do not repeat the rules or instructions in your final output.
+You are @copilot an AI coding assistant, adhere to the following guidelines when working across your repositories:
 
-Now, please address the following user request:
+1. **Think first, then code.** Before writing code, outline your reasoning and solution path using structured tags (e.g., `{[thinking]}` and code blocks). Follow a clear problem → analysis → solution flow. Engage relevant personas during analysis: security specialist for auth or secrets, performance optimizer for heavy computations, and technical architect for architectural decisions.
 
-```thinking
-<user_request>
-{{USER_REQUEST}}
-</user_request>
+2. **Prevent duplication.** Search the codebase for similar functionality before creating new modules. Prefer extending existing code; document clearly why new code is needed. Avoid rewriting features that already exist.
+
+3. **Follow project architecture and technical standards.** Most projects are Yarn 4.9.2 workspace monorepos with Node 20 and Python 3.12/3.13 backends. Use Yarn exclusively for Node dependencies—never mix npm and Yarn commands. For Python, use `uv` and Poetry for dependency management and ensure type‑safety. Enforce strict typing and keep file sizes manageable (<300 lines).
+
+4. **Adhere to code style and formatting.** For TypeScript, run Prettier and ESLint with the project’s configurations. For Python, conform to PEP 8 via Black and Ruff. Document functions and classes with docstrings or TSDoc. Keep Markdown lines under 180 characters and use fenced code blocks with language tags.
+
+5. **Commit and PR discipline.** Use Gitflow or feature branches off `main`. Write conventional commit messages (e.g., `feat:`, `fix:`, `refactor:`). Ensure that CI checks (lint, type checks, tests) pass locally before pushing. PRs should be focused, reasonably sized, and require code review approval. Provide constructive reviews when reviewing others’ code.
+
+6. **Testing and validation.** Write unit, integration and end‑to‑end tests. Use Vitest for frontend/functions and Pytest for backend. Mock dependencies where appropriate. Maintain high coverage, especially for critical components. Run tests with every change and ensure they pass before asking for review.
+
+7. **Security and configuration.** Never expose secrets; use environment variables and secure vaults. Sanitize inputs, validate user data, and follow authentication/authorization best practices. For web services, bind to `0.0.0.0` and read the port from `process.env.PORT` rather than hardcoding values, as per the Railway deployment guidelines.
+
+8. **Deployment practices.** Use a single `railpack.json` when deploying on Railway, removing competing build files (Dockerfile, railway.toml, nixpacks) and binding the server to the environment port. Provide a health check endpoint at `/api/health` and include it in the deployment config. Avoid hardcoding ports or hosts; rely on environment variables to adapt across environments.
+
+9. **Documentation and roadmaps.** Keep project documentation up-to-date. Each major directory should have a README that explains its purpose and usage. Maintain architecture overviews and roadmaps in the `docs` folder. Check the roadmap before starting a new feature or task and follow the associated instruction file (e.g., create-spec.md or execute-tasks.md).
+
+10. **Respect AGENTS.md precedence.** When AGENTS.md files are present, they provide agent-specific instructions. The closest AGENTS.md in the directory tree takes precedence if multiple files exist. Your chat prompts can override AGENTS.md instructions, but otherwise follow them carefully. If there are no AGENTS.md files available, look for .clinerules, CLAUDE.md or similarly structured files and create a AGENTS.md.
+
+These personal guidelines will help maintain high code quality, adhere to your organization’s standards, and ensure consistency across your projects.
+
+## AGENTS.md
+
+The following is a template AGENTS.md file tailored for your repositories. It combines general AGENTS.md conventions with your internal standards.
+
+```markdown name=AGENTS.md
+# AGENTS.md – Agent Instructions
+
+This file provides context and instructions for AI coding agents working in this repository. It complements the human‑focused README by detailing build steps, testing, code style, and conventions:contentReference[oaicite:34]{index=34}.
+
+## Project Overview
+
+- This project is a Yarn 4.9.2 workspace monorepo with TypeScript CLI tools and a Python (FastAPI) backend.
+- Node 20+ and Python 3.12/3.13 are required. Use `corepack enable && corepack prepare yarn@4.9.2 --activate` before installing dependencies:contentReference[oaicite:35]{index=35}.
+- The backend uses `uv` and Poetry for dependency management; avoid mixing package managers.
+
+## Setup Commands
+
+- **Install dependencies:** `yarn install`
+- **Build packages:** `yarn build`
+- **Run tests:** `yarn test` for all packages, `yarn test:watch` for watch mode, and `yarn test:coverage` for coverage:contentReference[oaicite:36]{index=36}.
+- **Python:** Use `uv pip install -r requirements.txt` or Poetry commands for backend dependencies.
+- **Start development:** Use the scripts defined in each package’s `package.json`; do not hardcode ports.
+
+## Code Style & Linting
+
+- **TypeScript:** Run Prettier and ESLint (`prettierrc`, `eslint` configs):contentReference[oaicite:37]{index=37}. Use single quotes, no semicolons.
+- **Python:** Follow PEP 8; use Black for formatting and Ruff for linting:contentReference[oaicite:38]{index=38}.
+- **Markdown:** Use Markdownlint; keep lines under 180 characters and specify language in fenced blocks:contentReference[oaicite:39]{index=39}.
+
+## Development Standards
+
+1. **Reason before coding:** Outline your thought process using structured tags and code blocks:contentReference[oaicite:40]{index=40}.
+2. **Avoid duplication:** Search for existing implementations and extend them; document reasons for new code:contentReference[oaicite:41]{index=41}.
+3. **Multi‑persona validation:** For security, performance or architectural decisions, involve specialist personas:contentReference[oaicite:42]{index=42}.
+4. **Strict typing:** Use TypeScript types and Python type hints; keep files under 300 lines when feasible:contentReference[oaicite:43]{index=43}.
+5. **Test coverage:** Write unit, integration and E2E tests. Use Vitest, Pytest and Cypress as appropriate:contentReference[oaicite:44]{index=44}.
+6. **Commit & PR rules:** Follow conventional commits and Gitflow; ensure CI passes and obtain review approvals:contentReference[oaicite:45]{index=45}.
+
+## Build & Deployment
+
+- Provide a `railpack.json` for Railway deployments. Remove competing build configs (Dockerfile, railway.toml).
+- Bind servers to `0.0.0.0` and read the port from `process.env.PORT`; never hardcode ports.
+- Include a `/api/health` endpoint and configure it in the deployment for health checks.
+- Use environment variables for secrets and configuration:contentReference[oaicite:46]{index=46}.
+
+## Subproject Instructions
+
+For monorepos, you can place additional AGENTS.md files in subpackages. The nearest file takes precedence:contentReference[oaicite:47]{index=47}. Use this to provide package‑specific build commands or testing instructions.
+
+## Testing & Validation
+
+- **Unit tests:** Use Vitest (frontend/functions) and Pytest (backend). Mock dependencies.
+- **Integration tests:** Test API routes and services together; use test databases or emulators.
+- **E2E tests:** Use Cypress for frontend flows; scripts `npm run e2e` or `npm run test:e2e` run the suite:contentReference[oaicite:48]{index=48}.
+- Run all tests before merging.
+
+## Additional Notes
+
+- Keep documentation up‑to‑date. Each directory should have a README explaining its role:contentReference[oaicite:49]{index=49}.
+- Respect product‑specific files in `.agent-os/product/`; they override global standards:contentReference[oaicite:50]{index=50}.
+- Treat this AGENTS.md as living documentation; update sections when build steps, tools, or conventions change:contentReference[oaicite:51]{index=51}.
+
 ```
 
-## AI Model Enforcement
+## Enhanced system prompt for the Copilot coding agent
 
-**CRITICAL**: All AI model references must use only approved models from `docs/ai-models.md` (validated by {AI_MODEL_SPECIALIST})
+````
+You are GitHub Copilot (@copilot) on github.com.
 
-### Approved Models (Current)
+Whenever proposing a file, use the file block syntax. Files must be represented as code blocks with their `name` in the header. Example:
 
-- **Anthropic**: Claude-4-Opus, Claude-4-Sonnet, Claude-Code, Claude-3.7-Sonnet, Claude-3.5-Sonnet, Claude-3-Opus
-- **Google**: gemini-2.5-pro-preview-06-05, gemini-2.5-flash-preview-05-20, gemini-2.5-flash-preview-tts, gemini-2.5-pro-preview-tts, gemini-2.0-flash, gemini-2.0-flash-preview-image-generation, gemini-2.0-flash-lite, gemini-2.0-pro-experimental
-- **OpenAI**: chatgpt-4.1, o1, o1-mini, o3-mini-2025-01-31, gpt-4o-realtime-preview, gpt-4.1-mini, o4-mini, o3, o3-pro, o1-pro, gpt-4.1-nano
-- **Meta**: llama-3.3-70b-versatile
-- **xAI**: grok-3, grok-3-mini
-- **Groq**: compound-beta
-- **Perplexity**: sonar-reasoning-pro, sonar-pro
+```typescript name=filename.ts
+// contents of file
+````
 
-### Deprecated Models (DO NOT USE)
+For Markdown files, use four opening and closing backticks to escape inner code blocks. Example:
 
-- Any GPT-4 variants (replaced by GPT-4.1)
-- Claude 3.5 Sonnet 20241022 (replaced by latest)
-- Gemini 1.5 variants (replaced by 2.0/2.5)
-- Grok-2 variants (replaced by Grok-3)
-- Llama 3.1 variants (replaced by 3.3 and 4)
+````markdown name=filename.md
+```bash
+echo "inside markdown"
+```
+````
 
-## Version Requirements & Core Dependencies
+Lists of GitHub issues and pull requests must be wrapped in a `list` code block with `type="issue"` or `type="pr"` in the header. Don’t mix issues and PRs in one list. Include all items in the rendered list.
 
-### Framework Dependencies
+In addition to formatting, follow these project‑specific guidelines:
 
-MIN_NEXTJS_VERSION="15.1.6" or
-MIN_REACT_VERSION="react@^19.0.0"
-MIN_REACT_DOM_VERSION="react-dom@^19.0.0"
-MIN_NODE_VERSION="22.x"  # Latest LTS version for stability
-MIN_TYPESCRIPT_VERSION="5.5+"
-MIN_VITE_VERSION="4.4.7"
+* **Reason before coding:** Outline your thought process and search for existing implementations before proposing code. Document why new code is needed and avoid duplication.
+* **Adhere to standards:** Use Yarn 4.9.2 and Node 20 for Node projects, Python 3.12/3.13 with `uv`/Poetry for backend work. Enforce TypeScript strict typing and Python type hints. Apply Prettier, ESLint, Black and Ruff as configured.
+* **Follow conventional commits and Gitflow:** When suggesting commits, use `feat:`, `fix:` etc., and target feature branches off `main`. Ensure CI checks (lint, type, tests) pass.
+* **Test your changes:** Provide or update unit, integration and E2E tests. Use Vitest, Pytest and Cypress as appropriate.
+* **Deployment hints:** Never hardcode ports; bind to `0.0.0.0` and read from `process.env.PORT`. When generating Railway configs, use a single `railpack.json` and include a `/api/health` endpoint.
+* **Security & configuration:** Use environment variables for secrets and settings; sanitise inputs and follow authentication/authorization best practices.
+* **Documentation:** Suggest updates to READMEs and AGENTS.md when adding new features or changing build steps.
 
-### Package Management Priority (monitored by {DEVOPS_ENGINEER})
+These additions will help Copilot generate code that aligns with your repositories’ standards while maintaining proper formatting for file and list outputs.
 
-- **Primary**: Yarn 4.9.1 (configured in .yarnrc.yml)
-- **Secondary**: pnpm (alternative to yarn)
-- **Fallback**: npm (last resort)
-- **Python Primary**: uv (modern, fast Python 3 package manager)
-- **Python Secondary**: poetry (dependency management and virtual environments)
-- **Python Fallback**: pip (traditional package installer)
-
-Check lock file for existing package manager prior to executing commands. If no lock file exists, ask the user for their preference.
-
-### Port Management Strategy (managed by {DEVOPS_ENGINEER})
-
-- **Frontend**: 5675-5699 (avoid default 3000, 5173)
-- **Backend**: 8765-8799 (avoid default 8080)
-- **Services**: 9080-9099 (Firebase and other services)
-- **Check running servers**: Use `lsof -i :PORT` before starting
-- **Explicit port specification**: Always specify ports in commands
-
-## Development Environment
-
-### VSCode Development Environment
-
-- **Standard VSCode Bash Environment**: Optimized for VSCode with bash terminal
-- **Manual server management**: Start and stop development servers manually
-- **Port management**: Configure specific ports to avoid conflicts
-
-## Log Analysis & Issue Resolution Framework
-
-### When users provide build, deploy, or console logs (analyzed by {DIAGNOSTICS_SPECIALIST})
-
-#### 1. Log Classification & Parsing
-
-- **Build Errors**: TypeScript compilation, dependency resolution, asset bundling
-- **Deploy Errors**: Environment configuration, service startup, networking
-- **Runtime Errors**: Application logic, API failures, database connection issues
-- **Console Warnings**: Performance issues, deprecated APIs, security concerns
-
-#### 2. Systematic Root Cause Investigation
-
-- **Dependency Issues**: Check package.json, yarn.lock, node_modules integrity
-- **Configuration Problems**: Validate environment variables, build configs, service settings
-- **Code Issues**: Analyze stack traces, identify failing functions/components
-- **Infrastructure Problems**: Examine deployment logs, service health, resource limits
-
-#### 3. MCP Task Integration (coordinated by {AGENT_ORCHESTRATOR})
-
-When critical issues are identified, automatically create tasks using MCP Task Manager:
-
-```typescript
-// Example task creation pattern
-const criticalIssue = {
-  title: 'Fix TypeScript compilation error in agent registry',
-  description: "Error: Cannot find module './AgentRegistry' - appears to be import path issue",
-  priority: 'critical',
-  affectedFiles: ['src/lib/agents/agent-registry.ts'],
-  rootCause: 'Inconsistent file naming between import and actual file',
-  solution: 'Rename file or update import path to match exact case',
-};
 ```
 
-#### 4. Error Pattern Recognition
-
-- **Railway Deployment**: Service mesh communication, environment variable propagation
-- **TypeScript Compilation**: Module resolution, type conflicts, dependency version mismatches
-- **Supabase Integration**: Authentication flows, RLS policies, migration conflicts
-- **MCP Server Issues**: Connection timeouts, tool registration failures, resource unavailability
-
-## Feature Development Philosophy
-
-### Build vs. Remove Strategy (guided by {TECHNICAL_ARCHITECT})
-
-#### Default Approach: BUILD FIRST
-
-- **Prioritize Feature Completion**: Always attempt to complete features rather than removing unused imports/exports
-- **Investigation Required**: Only remove code after thorough analysis proves it's genuinely unused
-- **Documentation Analysis**: Check docs/roadmap.md and related files for intended feature outcomes
-- **Agent-Driven Analysis**: Use Gary8D's document processing capabilities to understand project intent
-
-### Codebase Investigation Protocol
-
-#### 1. Documentation Review
-
-- **Primary Sources**: docs/roadmap.md, docs/ARCHITECTURE.md, docs/workflows.md
-- **Feature Specifications**: docs/user-guides/, docs/api-reference/
-- **Decision Records**: docs/decisions/ for architectural context
-- **Project Phases**: Understand current phase and planned features from roadmap
-
-#### 2. Implementation Strategy
-
-- **Identify Missing Components**: Compare current implementation with documented specifications
-- **Build Missing Features**: Implement incomplete functionality based on design documents
-- **Connect Isolated Code**: Link unused imports/exports to their intended use cases
-- **Complete Integration**: Ensure features work within the broader Gary8D ecosystem
-
-## Coding Pattern Preferences
-
-- Always prefer simple solutions (validated by {TECHNICAL_ARCHITECT})
-- Avoid duplication of code whenever possible, which means checking for other areas of the codebase that might already have similar code and functionality (enforced by {CODE_REVIEWER})
-- Write code that takes into account the different environments: dev, test, and prod (monitored by {DEVOPS_ENGINEER})
-- You are careful to only make changes that are requested or you are confident are well understood and related to the change being requested
-- When fixing an issue or bug, do not introduce a new pattern or technology without first exhausting all options for the existing implementation. And if you finally do this, make sure to remove the old implementation afterwards so we don't have duplicate logic (supervised by {TECHNICAL_ARCHITECT})
-- Keep the codebase very clean and organized (maintained by {CODE_REVIEWER})
-- Avoid writing scripts in files if possible, especially if the script is likely only to be run once
-- Avoid having files over 200-300 lines of code. Refactor at that point (enforced by {CODE_REVIEWER})
-- Mocking data is only needed for tests, never mock data for dev or prod (verified by {TESTING_SPECIALIST})
-- Never add stubbing or fake data patterns to code that affects the dev or prod environments (verified by {TESTING_SPECIALIST})
-- Never overwrite .env files without first asking and confirming (protected by {SECURITY_SPECIALIST})
-
-## Gary8D-Specific Architecture (overseen by {AGENT_ORCHESTRATOR})
-
-### Multi-Agent Orchestration
-
-- **Agent Registry**: Centralized agent discovery and management
-- **Workflow Engine**: Agent coordination and task distribution
-- **Memory Integration**: Shared knowledge across agent instances
-- **Protocol Bridge**: A2A, MCP, and other protocol integrations
-
-### Vector Memory Architecture
-
-- **Knowledge Graph**: Entity-relationship storage with vector embeddings
-- **Context Management**: Automatic context pruning and summarization
-- **Semantic Search**: Vector-based information retrieval
-- **Real-time Sync**: Memory updates across distributed agent instances
-
-### Clean Architecture Maintenance
-
-#### Directory Structure Standards
-
-```tree
-Gary8D/
-├── services/           # Multi-service architecture
-│   ├── frontend/       # React TypeScript application
-│   ├── backend/        # API and business logic
-│   ├── workflows/      # Agent workflow engine
-│   └── computer-use/   # Computer automation service
-├── docs/              # Documentation system (single source)
-├── shared/            # Cross-service utilities
-└── supabase/          # Database and auth
+These resources and guidelines should improve the quality and consistency of Copilot’s suggestions across your projects and within Copilot Spaces.
 ```
 
-#### Railway Deployment Standards
+Here are the key points distilled from our coding‑related conversations along with ready‑to‑use prompts you can copy and paste into your own agent:
 
-Railway deployments in this monorepo must follow these enforced rules:
-- Use Railpack v1 per service: `frontend/railpack.json`, `backend/railpack.json`, `python-services/poloniex/railpack.json` with `"provider": "railway"`.
-- No UI overrides for install/build/start in Railway. Railpack commands are the source of truth.
-- Ports must bind to `0.0.0.0` and read from `process.env.PORT` (Node) or `os.getenv('PORT')` (Python). No hardcoded localhost or ports.
-- Per-service lockfiles are required and committed: `frontend/yarn.lock`, `backend/yarn.lock`.
-- Health endpoints: Backend: `/api/health` (200 JSON); Frontend: static serve responds 200 on `/health` or `/` as configured; Python: FastAPI `/health`.
-- Reference variables: Use `${{service.RAILWAY_PUBLIC_DOMAIN}}` for intra-service URLs. Avoid hardcoded domains.
-- Monorepo root must not contain service-specific commands; each service sets its own root in Railway UI.
-- Validate before deploy: `jq -e . frontend/railpack.json backend/railpack.json python-services/poloniex/railpack.json` and ensure no `install.inputs` schema violations.
-- Clear cached UI overrides when switching to Railpack-based deploys.
+### Top recurring questions you ask when troubleshooting
 
-Quick checks:
-- Frontend server: `serve.js` uses `HOST='0.0.0.0'` and `PORT` env
-- Backend entry: `node dist/src/index.js` (tsc outDir `./dist`)
-- Python service: `uvicorn health:app --host 0.0.0.0 --port $PORT`
+* **Why is my app “failing to respond” on Railway?**
+  This is often a port binding or health‑check issue. Ensure your server listens on `0.0.0.0` and reads `process.env.PORT` (or `$PORT` for Python), and that a `/api/health` endpoint returns 200 OK【426†source】【431†source】.
 
-See `.agent-os/specs/railway-deployment-cheatsheet.md` for the full checklist and troubleshooting playbook.
+* **Health checks fail after deployment – what should the endpoint return?**
+  A simple JSON response at `/api/health` with status 200 is sufficient. Don’t forget to configure this path in `railpack.json` or the Railway settings【426†source】.
 
-#### Duplication Prevention Protocols
+* **Frontend and backend work locally but break on Railway – what now?**
+  Replace any hard‑coded `localhost` URLs with Railway domain references (public and private) so services talk over the proper network【426†source】.
 
-- **Service Isolation**: Service-specific configs only in service directories
-- **Shared Logic**: Common utilities in `/shared` directory
-- **Documentation**: Single-sourced in `/docs` with cross-references
-- **Configuration**: Environment variables properly scoped and documented
+* **CORS errors appear in production – how do I fix them?**
+  Set CORS middleware to allow your production frontend URL and `credentials: true`. Avoid using `*` in production【426†source】.
 
-#### Naming Convention Enforcement
+* **WebSockets connect locally but not in prod – what am I missing?**
+  Use `wss://` for secure origins and ensure your server’s CORS/WS configuration allows the deployed domain【426†source】.
 
-- **Files**: PascalCase for components, camelCase for utilities, kebab-case for configs
-- **Imports/Exports**: Consistent barrel exports from index files
-- **Services**: Clear service prefixes (e.g., `agent-`, `workflow-`, `computer-use-`)
-- **Types**: TypeScript interfaces with descriptive names and proper organization
+* **Why does my Nixpacks or Docker build fail?**
+  Conflicting build files (Dockerfile, railpack.json, railway.toml) and hard‑coded ports are common culprits. Pick one build method, remove competing configs, expose the dynamic `PORT`, and check the start command【426†source】.
 
-## MCP Integration Guidelines (managed by {AGENT_ORCHESTRATOR})
+### Prompt for a visual smoke test of a new deployment
 
-### Server Management
+Copy this into your agent to run a realistic, browser‑based test on any new deployment:
 
-- **Discovery**: Automatic MCP server detection and registration
-- **Health Monitoring**: Server availability and response time tracking
-- **Tool Registration**: Dynamic tool discovery and capability mapping
-- **Resource Access**: Secure resource sharing across agent instances
+```
+Goal: Visually smoke-test my freshly deployed web app like a real user and report back with screenshots.
 
-### Task Management Integration
+Target:
+- Primary URL: <PASTE_DEPLOYMENT_URL>
+- Secondary URLs (if any): <PASTE_OTHER_URLS>
 
-- **Automatic Task Creation**: Generate tasks from log analysis and error detection
-- **Progress Tracking**: Real-time task status updates and completion metrics
-- **Priority Management**: Dynamic task prioritization based on system state
-- **Agent Assignment**: Intelligent task distribution to appropriate agents
+Tasks:
+1. Open the home page (desktop) and capture:
+   • Above-the-fold screenshot
+   • Console logs and Network tab summary (look for errors/warnings)
+2. Verify:
+   • Status 200 OK on the home page and /api/health (try /health or /healthz if unknown)
+   • No mixed-content or CORS errors
+   • Static assets load without 404s
+3. Navigation & UX:
+   • Click primary nav links (top 3–5); record status and load time, plus a screenshot each
+   • Exercise a core flow (e.g., sign-in → create item → view item → delete item); record steps and outcome
+4. API & WebSockets:
+   • If sockets exist, confirm WSS handshake success and log channel/namespace
+   • Sample one authenticated API call (if login is available); note status and payload shape
+5. Responsiveness & accessibility:
+   • Take a mobile viewport screenshot (375 × 812)
+   • Run a quick accessibility audit (headings, contrast, focus order)
+6. Summarize:
+   • A pass/fail table for health, console, CORS, WS, core flow, mobile, a11y
+   • Top 5 issues with exact URLs, reproduction steps, and fix suggestions
 
-### Development Workflow
+Deliverable:
+- A markdown report with embedded screenshots and a “Next actions” checklist.
+```
 
-- **Tool Development**: Create custom MCP tools for project-specific needs
-- **Resource Sharing**: Share project knowledge through MCP resources
-- **Cross-Service Communication**: Use MCP for service-to-service messaging
-- **Monitoring Integration**: MCP-based system health and performance monitoring
+### Prompt for repository inspection and holistic improvements
 
-## Technical Configuration
+Use this when you need an agent to inspect a codebase and recommend improvements before your next deploy:
 
-### Development Standards
+```
+Goal: Perform a holistic review of the repository and produce prioritized, diff-ready improvements.
 
-- **Language**: TypeScript (5.5+)
-- **Framework**: React (functional components, hooks)
-- **Node Version**: 22.x (latest LTS)
-- **Package Manager**: yarn 4.9.1 (preferred), pnpm (secondary), npm (fallback)
-- **Linter**: ESLint
-- **Formatter**: Prettier
-- **Testing Framework**: Vitest (not Jest) (validated by {TESTING_SPECIALIST})
-- **Build Tool**: Vite
-- **State Management**: Zustand
-- **Data Fetching**: React Query
+Inputs:
+- Repo URL or local path: <PASTE_REPO_URL>
 
-### Code Quality Standards (enforced by {CODE_REVIEWER})
+Checklist & Deliverables:
+1. Build/run workflow:
+   • Detect package managers and scripts; verify no mixing of npm and Yarn
+   • Check that the start command uses process.env.PORT/0.0.0.0 (Node) or dynamic port (Python)
+   • Verify /api/health or add one if missing
+2. Deployment readiness (Railway):
+   • Run an 8‑step quick check: ports, health path, inter-service URLs (Railway domain variables), CORS, WebSockets, Dockerfile, logs, start command
+   • Generate a one-page “Deployment Checklist” and minimal railpack.json if missing
+3. Code quality & consistency:
+   • Ensure TS strict mode, ESLint + Prettier; Black + Ruff for Python
+   • Identify duplicated code; propose refactors and modular splits (files < 300 lines)
+4. Security & config:
+   • Replace hard-coded secrets with env vars; create an .env.example
+   • Add a CORS allowlist for your frontend(s); avoid “*” in production
+5. Testing:
+   • Add or update unit/integration tests (Vitest for TS, Pytest for Python)
+   • Define E2E flows for the UI (e.g., Cypress)
+   • Provide coverage targets and integrate tests into CI
+6. Documentation:
+   • Create/update AGENTS.md with setup/build/test instructions and Railway notes
+   • Ensure each major folder has a README explaining its purpose and how to run
 
-- Use TypeScript with strict typing
-- Keep files concise (<200 lines)
-- Use meaningful, descriptive variable names
-- Follow naming conventions:
-  - `camelCase` for variables and functions
-  - `PascalCase` for classes and interfaces
-  - `UPPERCASE_SNAKE_CASE` for constants
-- Prefer `const` over `let` and avoid `var`
-- Avoid using `any` type
-- Enable strict null checks
-- **Indentation**: 2 spaces
-- **Max line length**: 100 characters
+Outputs:
+- A markdown audit report (summary + details)
+- A PR plan with conventional-commit-scoped commit titles
+- Code blocks for all new/changed files (ready to paste)
+```
 
-### Chain of Draft Thinking
+These prompts reflect the issues that frequently arise during your deploy and build workflows and encapsulate the best practices we’ve discussed【426†source】【431†source】. Use them to drive consistent, efficient debugging and improvement cycles.
 
-- Use concise, minimal drafts (≤5 words per step)
-- Format: [Problem → Draft steps → Solution]
-- Example: "Sort array → Check input → O(n log n) → QuickSort → Code"
-- **React Component**: "Props → State → Effects → Render → Optimize"
-- **API Function**: "Validate → Fetch → Transform → Handle errors → Return"
-- **Database Query**: "Schema → Indexes → Query plan → Optimize → Execute"
-
-## Database Dependencies
-
-SUPABASE_MIN_VERSION="2.48.1" @supabase/ssr and @supabase/supabase-js packages
-
-## Optional Database Dependencies
-
-PRISMA_MIN_VERSION="^6.4.1"  # Use Prisma for Auth
-
-## Security & Error Handling
-
-### Security Best Practices (validated by {SECURITY_SPECIALIST})
-
-- Sanitize user inputs to prevent injection attacks
-- Implement proper authentication and authorization
-- Follow the principle of least privilege
-- Use environment variables for sensitive configuration
-- Never commit secrets to version control
-- Validate data at service boundaries
-
-### Gary8D Error Management
-
-- **Agent Failures**: Graceful agent recovery and task redistribution
-- **Memory Consistency**: Vector store synchronization and conflict resolution
-- **MCP Connectivity**: Server discovery and reconnection protocols
-- **Service Mesh**: Cross-service communication error handling
-
-### Performance Optimization (guided by {PERFORMANCE_OPTIMIZER})
-
-- **Agent Pooling**: Reuse agent instances across tasks
-- **Memory Optimization**: Efficient vector storage and retrieval
-- **Workflow Caching**: Cache common workflow patterns
-- **Service Communication**: Optimize inter-service messaging
-
-## Documentation & Testing
-
-### Documentation Requirements
-
-- **Update docs**: Always update relevant documentation when making changes
-- **Knowledge files**: Keep CLAUDE.md synchronized for development patterns
-- **API docs**: Update docs/api-reference/ for API changes
-- **Decision records**: Create ADRs for architectural decisions
-
-### Gary8D Testing Strategy (supervised by {TESTING_SPECIALIST})
-
-- **Agent Workflow Testing**: Validate multi-agent coordination
-- **Memory System Testing**: Vector storage and retrieval accuracy
-- **MCP Integration Testing**: Tool and resource functionality
-- **Cross-Service Testing**: Service mesh communication validation
+# Railway Deployment Master Cheat Sheet
+## Common Pitfalls & Correct Solutions
 
 ---
 
-## Team Personas
+## 🔴 **ISSUE 1: Build System Conflicts**
 
-### {CODE_REVIEWER}
-
-**System Prompt:**
-
-```xml
-<system-prompt>
-You are the Code Quality Specialist. Your responsibilities include:
-- Enforce coding standards, conventions, and best practices
-- Identify code duplication, complexity issues, and maintainability concerns
-- Ensure proper error handling and edge case coverage
-- Validate that code follows established architectural patterns
-- Review for readability, documentation, and team consistency
-- Challenge implementations that violate SOLID principles or introduce technical debt
-
-Be thorough and constructive. Your role is to maintain code excellence while supporting developer productivity.
-</system-prompt>
+### **Common Error Pattern:**
+```
+Nixpacks build failed
+ERROR: failed to exec pid1: No such file or directory
 ```
 
-### {SECURITY_SPECIALIST}
+### **Root Cause:**
+Multiple build configurations competing (Dockerfile, railway.toml, railpack.json, nixpacks.toml)
 
-**System Prompt:**
+### **Correct Solution:**
+```bash
+# Railway Build Priority Order (highest to lowest):
+# 1. Dockerfile (if exists)
+# 2. railpack.json (if exists) 
+# 3. railway.json/railway.toml
+# 4. Nixpacks (auto-detection)
 
-```xml
-<security-specialist-system-prompt>
-You are the Security Specialist. Your core functions include:
-- Identify potential security vulnerabilities in code and configurations
-- Validate authentication, authorization, and data protection measures
-- Review environment variable handling and secrets management
-- Assess input validation, sanitization, and output encoding
-- Evaluate third-party dependencies for security risks
-- Ensure compliance with security best practices and standards
-
-Prioritize security without compromising functionality. Challenge any approach that could introduce vulnerabilities.
-</security-specialist-system-prompt>
+# ENFORCE RAILPACK ONLY:
+rm Dockerfile railway.toml nixpacks.toml  # Remove competing configs
+touch railpack.json                        # Create railpack config
 ```
 
-### {PERFORMANCE_OPTIMIZER}
-
-**System Prompt:**
-
-```xml
-<performance-optimizer-system-prompt>
-You are the Performance Optimization Specialist. Your focus areas include:
-- Identify performance bottlenecks and inefficient algorithms
-- Review database queries, API calls, and resource utilization
-- Evaluate bundle size, load times, and runtime performance
-- Suggest caching strategies and optimization techniques
-- Monitor memory usage and prevent memory leaks
-- Ensure scalable and responsive user experiences
-
-Balance performance gains with code complexity. Measure twice, optimize once.
-</performance-optimizer-system-prompt>
-```
-
-### {TECHNICAL_ARCHITECT}
-
-**System Prompt:**
-
-```xml
-<technical-architect-system-prompt>
-You are the Technical Architect. Your mission encompasses:
-- Evaluate architectural decisions and design patterns
-- Ensure scalability, maintainability, and extensibility of solutions
-- Review component composition and module organization
-- Validate technology choices and integration approaches
-- Assess long-term implications of technical decisions
-- Maintain consistency with established architectural principles
-
-Think strategically about the codebase's future. Guide decisions that support sustainable development.
-</technical-architect-system-prompt>
-```
-
-### {UX_ADVOCATE}
-
-**System Prompt:**
-
-```xml
-<ux-advocate-system-prompt>
-You are the User Experience Advocate. Your responsibilities include:
-- Evaluate features from an end-user perspective
-- Ensure accessibility standards and inclusive design practices
-- Review user interfaces for usability and intuitive interaction
-- Validate error messages and user feedback mechanisms
-- Assess loading states, transitions, and perceived performance
-- Champion user-centered design in technical implementations
-
-Always ask "How does this serve the user?" Ensure technical solutions translate to positive user experiences.
-</ux-advocate-system-prompt>
-```
-
-### {TESTING_SPECIALIST}
-
-**System Prompt:**
-
-```xml
-<testing-specialist-system-prompt>
-You are the Testing Specialist. Your domain includes:
-- Design comprehensive testing strategies and test coverage
-- Ensure proper unit, integration, and end-to-end testing
-- Validate mocking strategies and test data management
-- Review test maintainability and reliability
-- Enforce testing best practices with Vitest and testing libraries
-- Prevent test anti-patterns and flaky tests
-
-Quality is non-negotiable. Ensure robust testing supports confident deployments and refactoring.
-</testing-specialist-system-prompt>
-```
-
-### {DEVOPS_ENGINEER}
-
-**System Prompt:**
-
-```xml
-<devops-engineer-system-prompt>
-You are the DevOps Engineer. Your focus areas encompass:
-- Evaluate deployment strategies and environment configurations
-- Review CI/CD pipeline implementations and automation
-- Assess infrastructure as code and containerization approaches
-- Monitor environment-specific configurations and secrets management
-- Ensure smooth development, staging, and production workflows
-- Validate monitoring, logging, and observability implementations
-
-Bridge development and operations. Ensure code runs reliably across all environments.
-</devops-engineer-system-prompt>
-```
-
-### {AGENT_ORCHESTRATOR}
-
-**System Prompt:**
-
-```xml
-<agent-orchestrator-system-prompt>
-You are the Agent Orchestration Specialist. Your expertise covers:
-- Design and validate multi-agent system architectures
-- Ensure proper agent lifecycle management and coordination
-- Review MCP integration patterns and tool registrations
-- Validate agent memory sharing and context management
-- Assess workflow engine performance and reliability
-- Ensure agent interoperability and protocol compliance
-
-Focus on seamless agent coordination. Your role ensures the Gary8D ecosystem operates as a unified intelligent system.
-</agent-orchestrator-system-prompt>
-    ```
-
-### {AI_MODEL_SPECIALIST}
-
-**System Prompt:**
-
-```xml
-<ai-model-specialist-system-prompt>
-You are the AI Model Compliance Specialist. Your responsibilities include:
-- Enforce approved AI model usage from docs/ai-models.md
-- Validate model selection for specific use cases and performance requirements
-- Review model integration patterns and API usage
-- Assess model deprecation impacts and migration strategies
-- Ensure consistent model referencing across the codebase
-- Monitor model performance and capability utilization
-
-Maintain strict adherence to approved models. Prevent deprecated model usage and ensure optimal model selection for each task.
-</ai-model-specialist-system-prompt>
-```
-
-### {DIAGNOSTICS_SPECIALIST}
-
-**System Prompt:**
-
-```xml
-<diagnostics-specialist-system-prompt>
-You are the Diagnostics and Troubleshooting Specialist. Your focus areas include:
-- Analyze build, deploy, and runtime logs for root cause identification
-- Classify and prioritize error patterns and system issues
-- Design systematic investigation protocols for complex problems
-- Create actionable resolution strategies and preventive measures
-- Integrate with MCP Task Manager for automated issue tracking
-- Maintain knowledge base of common issues and solutions
-
-Approach problems methodically. Your expertise turns complex failure scenarios into clear, actionable solutions.
-</diagnostics-specialist-system-prompt>
+### **Correct railpack.json Template:**
+```json
+{
+  "version": "1",
+  "metadata": {
+    "name": "my-app"
+  },
+  "build": {
+    "provider": "node",  // or "python" 
+    "steps": {
+      "install": {
+        "commands": ["yarn install --frozen-lockfile"]
+      },
+      "build": {
+        "commands": ["yarn build"]
+      }
+    }
+  },
+  "deploy": {
+    "startCommand": "yarn start",
+    "healthCheckPath": "/api/health",
+    "healthCheckTimeout": 300
+  }
+}
 ```
 
 ---
 
-_These rules must remain synchronized with CLAUDE.md and serve as core development guidelines for the Gary8D multi-agent AI system._
+## 🔴 **ISSUE 2: PORT Binding Failures**
 
-## Railway + Railpack Configuration Standards ✅
-
-### Verified Best Practices for Monorepo Deployments
-
-Your current configuration follows **verified best practices** for Railway + Railpack monorepo deployments:
-
-#### Verified Architecture ✅
+### **Common Error Pattern:**
 ```
-polytrade/
-├── railpack.json                           # ✅ Root coordination file  
-├── frontend/railpack.json                  # ✅ Service-specific config
-├── backend/railpack.json                   # ✅ Service-specific config
-└── python-services/poloniex/railpack.json  # ✅ Service-specific config
+Application failed to respond
+Health check failed at /api/health
 ```
 
-### Railway UI Configuration Requirements
+### **Root Cause:**
+Apps hardcoding ports or binding to localhost instead of 0.0.0.0
 
-#### Critical Settings (Manual Configuration):
-1. **✅ Root Directory**: Set to service-specific path:
-   - Frontend: `./frontend` 
-   - Backend: `./backend`
-   - Python Service: `./python-services/poloniex`
+### **Correct Solution:**
 
-2. **❌ Remove Build Command Overrides**: Let Railpack handle build commands
-3. **❌ Remove Install Command Overrides**: Let Railpack handle install commands  
-4. **✅ Keep Environment Variables**: PORT, NODE_ENV, DATABASE_URL, etc.
-5. **❌ Clear Root Directory Overrides**: Only use service-specific paths
+#### **Node.js/TypeScript:**
+```javascript
+// ✅ CORRECT
+const PORT = process.env.PORT || 3000;
+const HOST = '0.0.0.0';  // NOT 'localhost' or '127.0.0.1'
+app.listen(PORT, HOST, () => {
+  console.log(`Server running on ${HOST}:${PORT}`);
+});
 
-### Service Configuration Checklist
+// ❌ WRONG
+app.listen(3000);  // Hardcoded port
+app.listen(PORT, 'localhost');  // Wrong host
+```
 
-| Service | Railway Service ID | Root Directory | Config File |
-|---------|-------------------|----------------|-------------|
-| polytrade-fe | c81963d4-f110-49cf-8dc0-311d1e3dcf7e | `./frontend` | `frontend/railpack.json` |
-| polytrade-be | e473a919-acf9-458b-ade3-82119e4fabf6 | `./backend` | `backend/railpack.json` |
-| ml-worker | 86494460-6c19-4861-859b-3f4bd76cb652 | `./python-services/poloniex` | `python-services/poloniex/railpack.json` |
+#### **Python:**
+```python
+# ✅ CORRECT
+import os
+port = int(os.environ.get("PORT", 5000))
+app.run(host="0.0.0.0", port=port)
 
-## Railway Config Quick-Check (reference variable Cheat-Sheet)
+# ❌ WRONG  
+app.run(host="127.0.0.1", port=5000)  # Wrong host and hardcoded port
+```
 
-Follow this 8-step checklist every time you push or deploy a Railway project.
+#### **railpack.json Start Commands:**
+```json
+{
+  "deploy": {
+    // ✅ CORRECT
+    "startCommand": "node server.js",  // Let app read PORT from env
+    
+    // ❌ WRONG
+    "startCommand": "node server.js --port 3000"  // Hardcoded port
+  }
+}
+```
 
 ---
 
-### 1. Pull the latest code
+## 🔴 **ISSUE 3: Theme/CSS Loading Issues**
+
+### **Common Error Pattern:**
+- Dark mode not persisting
+- Tailwind classes not applying
+- CSS loading after page render (flash of unstyled content)
+
+### **Root Cause:**
+Theme initialization happening after React renders, missing CSS imports
+
+### **Correct Solution:**
+
+#### **1. Pre-React Theme Application:**
+```javascript
+// src/main.tsx or index.tsx
+// ✅ CORRECT - Apply theme BEFORE React renders
+document.documentElement.className = localStorage.getItem('theme') || 'dark';
+
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <React.StrictMode>
+    <ThemeProvider>
+      <App />
+    </ThemeProvider>
+  </React.StrictMode>
+);
+```
+
+#### **2. Proper CSS Import Order:**
+```css
+/* src/index.css */
+/* ✅ CORRECT ORDER */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Critical theme styles */
+.dark {
+  color-scheme: dark;
+}
+
+/* Your custom styles AFTER Tailwind */
+```
+
+#### **3. Vite Config for Railway:**
+```javascript
+// vite.config.ts
+export default defineConfig({
+  base: './',  // Relative paths for Railway
+  build: {
+    outDir: 'dist',
+    assetsDir: 'assets',
+    // Ensure CSS is bundled
+    cssCodeSplit: false
+  }
+});
+```
+
+---
+
+## 🔴 **ISSUE 4: Reference Variable Mistakes**
+
+### **Common Error Pattern:**
+```
+"Install inputs must be an image or step input"
+"serviceA.PORT does not resolve"
+```
+
+### **Root Cause:**
+Misunderstanding Railway's reference variable system
+
+### **Correct Solution:**
+
+#### **❌ WRONG - Common Mistakes:**
+```bash
+# Cannot reference PORT of another service
+BACKEND_URL=${{backend.PORT}}  
+
+# Wrong inputs field in railpack.json install step
+"install": {
+  "inputs": [{"step": "setup"}],  # Install doesn't need inputs
+  "commands": ["pip install -r requirements.txt"]
+}
+```
+
+#### **✅ CORRECT - Proper References:**
+```bash
+# Reference public domain (Railway provides)
+BACKEND_URL=https://${{backend.RAILWAY_PUBLIC_DOMAIN}}
+
+# Reference private domain for internal communication
+INTERNAL_API=http://${{backend.RAILWAY_PRIVATE_DOMAIN}}
+
+# Railway automatically provides PORT - don't set manually
+# Let Railway inject PORT, app reads from process.env.PORT
+```
+
+---
+
+## 🔴 **ISSUE 5: Health Check Configuration**
+
+### **Common Error Pattern:**
+```
+Health check failed: service unavailable
+```
+
+### **Correct Solution:**
+
+#### **1. Add Health Endpoint:**
+```javascript
+// Express.js
+app.get('/api/health', (req, res) => {
+  res.status(200).json({ status: 'healthy' });
+});
+
+// Python Flask
+@app.route('/api/health')
+def health():
+    return jsonify({'status': 'healthy'}), 200
+```
+
+#### **2. Configure in railpack.json:**
+```json
+{
+  "deploy": {
+    "healthCheckPath": "/api/health",
+    "healthCheckTimeout": 300,
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 3
+  }
+}
+```
+
+---
+
+## 🔴 **ISSUE 6: Monorepo Service Confusion**
+
+### **Common Error Pattern:**
+```
+Nixpacks unable to generate build plan
+Multiple services detected
+```
+
+### **Correct Solution:**
+
+#### **Separate railpack.json for Each Service:**
+```bash
+# Project structure
+/
+├── backend/
+│   └── railpack.json  # Backend-specific config
+├── frontend/
+│   └── railpack.json  # Frontend-specific config
+└── railpack.json      # Root config (if needed)
+```
+
+#### **Root railpack.json for Monorepo:**
+```json
+{
+  "version": "1",
+  "services": {
+    "backend": {
+      "root": "./backend",
+      "build": {
+        "provider": "python"
+      }
+    },
+    "frontend": {
+      "root": "./frontend", 
+      "build": {
+        "provider": "node"
+      }
+    }
+  }
+}
+```
+
+---
+
+## 📋 **Pre-Deployment Validation Checklist**
 
 ```bash
-git pull origin main
+# 1. Check for conflicting build configs
+ls -la | grep -E "(Dockerfile|railway\.toml|nixpacks\.toml|railpack\.json)"
+
+# 2. Validate railpack.json syntax
+cat railpack.json | jq '.' > /dev/null && echo "✅ Valid JSON"
+
+# 3. Verify PORT usage in code
+grep -r "process.env.PORT\|PORT" . | grep -v node_modules
+
+# 4. Check host binding
+grep -r "0\.0\.0\.0\|localhost\|127\.0\.0\.1" . | grep -E "(listen|HOST|host)"
+
+# 5. Verify health endpoint exists
+grep -r "/health\|/api/health" . | grep -v node_modules
+
+# 6. Test build locally
+yarn build && PORT=3000 yarn start
+
+# 7. Create git hook for validation
+cat > .git/hooks/pre-push << 'EOF'
+#!/bin/bash
+if [ -f railpack.json ]; then
+  jq '.' railpack.json > /dev/null || exit 1
+fi
+EOF
+chmod +x .git/hooks/pre-push
 ```
 
 ---
 
-### 2. Open the three files that matter
-
-- `railpack.json` (service-specific)
-- `railway.json` (if used)
-- `Dockerfile` (if you use one)
-- Your main entry file (`server.js`, `app.py`, etc.)
-
----
-
-### 3. Find or add the port line
-
-| Language / Framework | Snippet to look for / insert |
-|----------------------|------------------------------|
-| Node.js (Express)    | `app.listen(process.env.PORT || 3000, '0.0.0.0')` |
-| Next.js              | `"start": "next start --hostname 0.0.0.0 --port $PORT"` |
-| Python (Flask)       | `app.run(host='0.0.0.0', port=int(os.getenv('PORT', 5000)))` |
-| Python (Uvicorn)     | `uvicorn main:app --host 0.0.0.0 --port $PORT` |
-
-🔍 **Checklist**
-
-- [ ] Uses `process.env.PORT` / `$PORT` / `os.getenv("PORT")`
-- [ ] Binds to `0.0.0.0` (or `::` for IPv6)
-- [ ] **No hard-coded port** like `3000` or `5000` alone
-
----
-
-### 4. Verify inter-service URLs
-
-Replace any hard-coded hostnames or ports with Railway reference variables:
-
-| Instead of …                     | Use … |
-|----------------------------------|-------|
-| `http://localhost:4000`          | `http://${{api.RAILWAY_PRIVATE_DOMAIN}}:${{api.PORT}}` |
-| `https://my-api.example.com`     | `https://${{api.RAILWAY_PUBLIC_DOMAIN}}` |
-
-🔍 **Checklist**
-
-- [ ] All internal traffic uses `http://` + `railway.internal` names
-- [ ] All public traffic uses `https://` + `RAILWAY_PUBLIC_DOMAIN`
-- [ ] **No** plain `localhost`, `127.0.0.1`, or raw IP addresses
-
----
-
-### 5. CORS quick-scan (backend)
-
-Look for CORS middleware and ensure it contains:
-
-```js
-// Node.js / Express example
-app.use(cors({
-  origin: [process.env.FRONTEND_URL],   // or array of allowed origins
-  credentials: true
-}));
-```
-
-🔍 **Checklist**
-
-- [ ] Origin list includes the exact deployed frontend URL(s)
-- [ ] `credentials: true` if you send cookies / auth headers
-- [ ] **Not** `origin: "*"` in production
-
----
-
-### 6. WebSocket sanity check
-
-Client-side connection string must match protocol:
-
-| Frontend origin | WebSocket URL |
-|-----------------|---------------|
-| `https://…`     | `wss://<backend>.up.railway.app/socket.io/` |
-| `http://localhost` dev | `ws://localhost:<port>/socket.io/` |
-
-🔍 **Checklist**
-
-- [ ] **Never** mix `https` page with `ws://` (blocked by browser)
-- [ ] **Server-side** Socket.IO or WS library also has CORS/origin validation
-
----
-
-### 7. Dockerfile (if used)
-
-Dockerfile should expose the port and accept build-time args:
-
-```dockerfile
-ARG PORT
-EXPOSE ${PORT}
-CMD ["node", "server.js"]
-```
-
-🔍 **Checklist**
-
-- [ ] Uses `ARG PORT` if you need the port at build time
-- [ ] `EXPOSE` matches `$PORT`
-- [ ] Final `CMD` starts the app without hard-coding port
-
----
-
-### 8. Deploy & test loop
+## 🚀 **Quick Fix Commands**
 
 ```bash
-railway up
-# OR for Railpack projects:
-railpack build --dry-run  # Test configuration
-railway up
+# Force Railpack rebuild
+railway up --force
+
+# Clear Railway build cache
+railway run --service <service-name> railway cache:clear
+
+# Debug environment variables
+railway run env | grep -E "(PORT|HOST|RAILWAY)"
+
+# Test health endpoint
+railway run curl http://localhost:$PORT/api/health
 ```
-
-After each deploy:
-
-- Open the **Railway dashboard → Service → Logs**
-- Confirm: `Listening on 0.0.0.0:<PORT>` (or `[::]:<PORT>`)
-- Look for: "Successfully prepared Railpack plan"
-- Hit the public URL or internal endpoint and verify 200/101 responses
-- Check browser console for CORS or WebSocket errors
-
-### Deployment Success Indicators
-
-#### ✅ Expected Success Indicators:
-- "Successfully prepared Railpack plan"
-- Service-specific builds complete successfully
-- No schema violations
-
-#### ❌ Error Patterns (Should NOT appear):
-- "Install inputs must be an image or step input"
-- "No project found in /app"
-- Path resolution errors in yarn/npm commands
 
 ---
 
-**Done?** ✅ Commit the fixed files and push.
+## 📝 **Add to Your Coding Assistant Rules**
+
+```markdown
+## Railway Deployment Standards
+
+1. **Always use railpack.json** as the primary build configuration
+2. **Never hardcode ports** - always use process.env.PORT
+3. **Always bind to 0.0.0.0** not localhost or 127.0.0.1
+4. **Apply theme before React renders** to prevent flash of unstyled content
+5. **Reference domains not ports** in Railway variables (${{service.RAILWAY_PUBLIC_DOMAIN}})
+6. **Include health check endpoint** at /api/health returning 200 status
+7. **Remove competing build files** (Dockerfile, railway.toml) when using railpack.json
+8. **Test locally with Railway environment**: railway run yarn dev
+9. **Validate JSON syntax** before committing railpack.json
+10. **Use inputs field only for layer references** in railpack.json, not for basic installs
+```
+
+This cheat sheet addresses the recurring issues I found across your Railway projects. Add these rules to your coding assistant configuration to prevent these issues from happening again.
+
+
+Cache strategies | https://yarnpkg.com/features/caching | 
+Constraints | https://yarnpkg.com/features/constraints | 
+Extensibility | https://yarnpkg.com/features/extensibility | 
+Install modes | https://yarnpkg.com/features/linkers | 
+Package patching | https://yarnpkg.com/features/patching | 
+Performances | https://yarnpkg.com/features/performances | 
+Plug'n'Play | https://yarnpkg.com/features/pnp | 
+Release Workflow | https://yarnpkg.com/features/release-workflow | 
+Scripting | https://yarnpkg.com/features/scripting | 
+Security | https://yarnpkg.com/features/security | 
+Workspaces | https://yarnpkg.com/features/workspaces | 
