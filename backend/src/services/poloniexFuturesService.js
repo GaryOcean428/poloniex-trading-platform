@@ -10,51 +10,62 @@ import { query } from '../db/connection.js';
  */
 class PoloniexFuturesService {
   constructor() {
-    this.baseURL = 'https://api.poloniex.com/v3/futures';
+    this.baseURL = 'https://api.poloniex.com';
     this.timeout = 30000;
   }
 
   /**
-   * Generate HMAC signature for authentication
+   * Generate HMAC-SHA256 signature for Poloniex v3 API authentication
+   * Per specification: https://api-docs.poloniex.com/v3/futures/api/#authentication
    */
-  generateSignature(method, endpoint, body, timestamp, apiSecret) {
+  generateSignature(method, requestPath, body, timestamp, apiSecret) {
     try {
+      // Build the message string for signing per Poloniex v3 spec
+      // Format: METHOD\n + ENDPOINT\n + BODY_JSON (if present) + signTimestamp
       const bodyStr = body ? JSON.stringify(body) : '';
-      const message = `${method.toUpperCase()}${endpoint}${bodyStr}${timestamp}`;
+      const message = `${method.toUpperCase()}\n${requestPath}\n${bodyStr}${timestamp}`;
       
       return crypto
         .createHmac('sha256', apiSecret)
         .update(message)
         .digest('base64');
     } catch (error) {
-      logger.error('Error generating signature:', error);
+      logger.error('Error generating Poloniex v3 signature:', error);
       throw new Error('Failed to generate API signature');
     }
   }
 
   /**
-   * Make authenticated request to Poloniex Futures API
+   * Make authenticated request to Poloniex Futures v3 API
+   * Uses proper Poloniex v3 authentication headers and endpoints
    */
   async makeRequest(credentials, method, endpoint, body = null, params = {}) {
     try {
       const timestamp = Date.now().toString();
-      const url = `${this.baseURL}${endpoint}`;
       
-      // Generate query string
+      // Build the proper v3 endpoint path
+      const requestPath = `/v3${endpoint}`;
+      const url = `${this.baseURL}${requestPath}`;
+      
+      // Generate query string and update request path if needed
       const queryString = Object.keys(params).length > 0
         ? '?' + new globalThis.URLSearchParams(params).toString()
         : '';
       
+      const fullRequestPath = requestPath + queryString;
       const fullUrl = url + queryString;
-      const signature = this.generateSignature(method, endpoint + queryString, body, timestamp, credentials.apiSecret);
       
+      // Generate signature using the full request path with query params
+      const signature = this.generateSignature(method, fullRequestPath, body, timestamp, credentials.apiSecret);
+      
+      // Use correct Poloniex v3 headers (not KuCoin headers)
       const headers = {
         'Content-Type': 'application/json',
-        'KC-API-KEY': credentials.apiKey,
-        'KC-API-SIGN': signature,
-        'KC-API-TIMESTAMP': timestamp,
-        'KC-API-PASSPHRASE': credentials.passphrase || '',
-        'KC-API-KEY-VERSION': '2'
+        'key': credentials.apiKey,
+        'signature': signature,
+        'signTimestamp': timestamp,
+        'signatureMethod': 'HmacSHA256',
+        'signatureVersion': '2'
       };
       
       const config = {
@@ -72,12 +83,17 @@ class PoloniexFuturesService {
         config.params = params;
       }
       
-      logger.info(`Making futures ${method} request to ${endpoint}`);
+      logger.info(`Making Poloniex v3 futures ${method} request to ${requestPath}`);
       const response = await axios(config);
       
       return response.data;
     } catch (error) {
-      logger.error('Futures API request error:', error.response?.data || error.message);
+      logger.error('Poloniex v3 futures API request error:', {
+        endpoint: endpoint,
+        status: error.response?.status,
+        data: error.response?.data,
+        message: error.message
+      });
       throw error;
     }
   }
@@ -86,6 +102,7 @@ class PoloniexFuturesService {
 
   /**
    * Get futures account balance
+   * Endpoint: GET /v3/account/balance
    */
   async getAccountBalance(credentials) {
     return this.makeRequest(credentials, 'GET', '/account/balance');
@@ -93,55 +110,85 @@ class PoloniexFuturesService {
 
   /**
    * Get account bills (transaction history)
+   * Endpoint: GET /v3/account/bills
    */
   async getAccountBills(credentials, params = {}) {
     return this.makeRequest(credentials, 'GET', '/account/bills', null, params);
-  }
-
-  /**
-   * Get account overview
-   */
-  async getAccountOverview(credentials) {
-    return this.makeRequest(credentials, 'GET', '/account/overview');
   }
 
   // =================== POSITION MANAGEMENT ===================
 
   /**
    * Get current positions
+   * Endpoint: GET /v3/trade/position/opens
    */
   async getPositions(credentials, symbol = null) {
     const params = symbol ? { symbol } : {};
-    return this.makeRequest(credentials, 'GET', '/positions', null, params);
+    return this.makeRequest(credentials, 'GET', '/trade/position/opens', null, params);
   }
 
   /**
    * Get position history
+   * Endpoint: GET /v3/trade/position/history
    */
   async getPositionHistory(credentials, params = {}) {
-    return this.makeRequest(credentials, 'GET', '/positions/history', null, params);
+    return this.makeRequest(credentials, 'GET', '/trade/position/history', null, params);
   }
 
   /**
-   * Modify position leverage
+   * Get leverages for positions
+   * Endpoint: GET /v3/position/leverages
    */
-  async modifyLeverage(credentials, symbol, leverage) {
+  async getLeverages(credentials, symbol = null) {
+    const params = symbol ? { symbol } : {};
+    return this.makeRequest(credentials, 'GET', '/position/leverages', null, params);
+  }
+
+  /**
+   * Set leverage for a position
+   * Endpoint: POST /v3/position/leverage
+   */
+  async setLeverage(credentials, symbol, leverage) {
     const body = { symbol, leverage };
     return this.makeRequest(credentials, 'POST', '/position/leverage', body);
   }
 
   /**
-   * Set position mode (one-way or hedge)
+   * Get position mode (isolated/cross margin)
+   * Endpoint: GET /v3/position/mode
    */
-  async setPositionMode(credentials, mode) {
-    const body = { mode }; // 'ONE_WAY' or 'HEDGE'
+  async getPositionMode(credentials, symbol) {
+    const params = { symbol };
+    return this.makeRequest(credentials, 'GET', '/position/mode', null, params);
+  }
+
+  /**
+   * Switch position mode (isolated/cross margin)
+   * Endpoint: POST /v3/position/mode
+   */
+  async switchPositionMode(credentials, symbol, mode) {
+    const body = { symbol, mode }; // mode: 'ISOLATED' or 'CROSS'
     return this.makeRequest(credentials, 'POST', '/position/mode', body);
+  }
+
+  /**
+   * Adjust margin for isolated margin trading positions
+   * Endpoint: POST /v3/trade/position/margin
+   */
+  async adjustMargin(credentials, symbol, amount, type) {
+    const body = { 
+      symbol, 
+      amount, 
+      type // 'ADD' or 'REDUCE'
+    };
+    return this.makeRequest(credentials, 'POST', '/trade/position/margin', body);
   }
 
   // =================== ORDER MANAGEMENT ===================
 
   /**
    * Place a futures order
+   * Endpoint: POST /v3/trade/order
    */
   async placeOrder(credentials, orderData) {
     const body = {
@@ -160,9 +207,7 @@ class PoloniexFuturesService {
       stopPriceType: orderData.stopPriceType || 'TP',
       reduceOnly: orderData.reduceOnly || false,
       closeOrder: orderData.closeOrder || false,
-      forceHold: orderData.forceHold || false,
-      marginMode: orderData.marginMode || 'CROSS',
-      leverage: orderData.leverage
+      forceHold: orderData.forceHold || false
     };
     
     // Remove undefined values
@@ -172,151 +217,268 @@ class PoloniexFuturesService {
       }
     });
     
-    return this.makeRequest(credentials, 'POST', '/orders', body);
+    return this.makeRequest(credentials, 'POST', '/trade/order', body);
+  }
+
+  /**
+   * Place multiple orders
+   * Endpoint: POST /v3/trade/orders
+   */
+  async placeMultipleOrders(credentials, orders) {
+    const body = { orders };
+    return this.makeRequest(credentials, 'POST', '/trade/orders', body);
   }
 
   /**
    * Cancel an order
+   * Endpoint: DELETE /v3/trade/order
    */
-  async cancelOrder(credentials, orderId) {
-    return this.makeRequest(credentials, 'DELETE', `/orders/${orderId}`);
+  async cancelOrder(credentials, orderId, clientOid = null) {
+    const body = {};
+    if (orderId) body.orderId = orderId;
+    if (clientOid) body.clientOid = clientOid;
+    
+    return this.makeRequest(credentials, 'DELETE', '/trade/order', body);
+  }
+
+  /**
+   * Cancel multiple orders
+   * Endpoint: DELETE /v3/trade/batchOrders
+   */
+  async cancelMultipleOrders(credentials, orderIds = [], clientOids = []) {
+    const body = {};
+    if (orderIds.length > 0) body.orderIds = orderIds;
+    if (clientOids.length > 0) body.clientOids = clientOids;
+    
+    return this.makeRequest(credentials, 'DELETE', '/trade/batchOrders', body);
   }
 
   /**
    * Cancel all orders
+   * Endpoint: DELETE /v3/trade/allOrders
    */
   async cancelAllOrders(credentials, symbol = null) {
     const body = symbol ? { symbol } : {};
-    return this.makeRequest(credentials, 'DELETE', '/orders', body);
+    return this.makeRequest(credentials, 'DELETE', '/trade/allOrders', body);
   }
 
   /**
-   * Get order details
+   * Get current open orders
+   * Endpoint: GET /v3/trade/order/opens
    */
-  async getOrder(credentials, orderId) {
-    return this.makeRequest(credentials, 'GET', `/orders/${orderId}`);
-  }
-
-  /**
-   * Get open orders
-   */
-  async getOpenOrders(credentials, params = {}) {
-    return this.makeRequest(credentials, 'GET', '/orders', null, params);
+  async getCurrentOrders(credentials, symbol = null) {
+    const params = symbol ? { symbol } : {};
+    return this.makeRequest(credentials, 'GET', '/trade/order/opens', null, params);
   }
 
   /**
    * Get order history
+   * Endpoint: GET /v3/trade/order/history
    */
   async getOrderHistory(credentials, params = {}) {
-    return this.makeRequest(credentials, 'GET', '/orders/history', null, params);
+    return this.makeRequest(credentials, 'GET', '/trade/order/history', null, params);
   }
 
-  // =================== TRADE MANAGEMENT ===================
-
   /**
-   * Get trade history
+   * Get execution details (fills)
+   * Endpoint: GET /v3/trade/order/trades
    */
-  async getTradeHistory(credentials, params = {}) {
-    return this.makeRequest(credentials, 'GET', '/trades', null, params);
+  async getExecutionDetails(credentials, params = {}) {
+    return this.makeRequest(credentials, 'GET', '/trade/order/trades', null, params);
   }
 
   /**
-   * Get recent trades
+   * Close position at market price
+   * Endpoint: POST /v3/trade/position
    */
-  async getRecentTrades(credentials, params = {}) {
-    return this.makeRequest(credentials, 'GET', '/trades/recent', null, params);
+  async closePosition(credentials, symbol, type = 'close_long') {
+    const body = { symbol, type }; // type: 'close_long' or 'close_short'
+    return this.makeRequest(credentials, 'POST', '/trade/position', body);
   }
 
-  // =================== MARKET DATA ===================
+  /**
+   * Close all positions at market price
+   * Endpoint: POST /v3/trade/positionAll
+   */
+  async closeAllPositions(credentials) {
+    return this.makeRequest(credentials, 'POST', '/trade/positionAll', {});
+  }
+
+  // =================== MARKET DATA (PUBLIC) ===================
 
   /**
-   * Get all futures products
+   * Make public request to Poloniex Futures v3 API (no authentication)
+   */
+  async makePublicRequest(method, endpoint, params = {}) {
+    try {
+      const requestPath = `/v3${endpoint}`;
+      const url = `${this.baseURL}${requestPath}`;
+      
+      const queryString = Object.keys(params).length > 0
+        ? '?' + new globalThis.URLSearchParams(params).toString()
+        : '';
+      
+      const fullUrl = url + queryString;
+      
+      const config = {
+        method: method.toLowerCase(),
+        url: fullUrl,
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        timeout: this.timeout
+      };
+      
+      if (Object.keys(params).length > 0 && method === 'GET') {
+        config.params = params;
+      }
+      
+      logger.info(`Making Poloniex v3 public ${method} request to ${requestPath}`);
+      const response = await axios(config);
+      
+      return response.data;
+    } catch (error) {
+      logger.error('Poloniex v3 public API request error:', {
+        endpoint: endpoint,
+        status: error.response?.status,
+        data: error.response?.data,
+        message: error.message
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Get all product info
+   * Endpoint: GET /v3/market/allInstruments
    */
   async getProducts() {
-    return this.makeRequest(null, 'GET', '/contracts/active');
+    return this.makePublicRequest('GET', '/market/allInstruments');
   }
 
   /**
-   * Get product details
+   * Get specific product info
+   * Endpoint: GET /v3/market/instruments
    */
   async getProduct(symbol) {
-    return this.makeRequest(null, 'GET', `/contracts/${symbol}`);
+    const params = { symbol };
+    return this.makePublicRequest('GET', '/market/instruments', params);
   }
 
   /**
-   * Get ticker data
+   * Get market tickers
+   * Endpoint: GET /v3/market/tickers
    */
-  async getTicker(symbol = null) {
-    const endpoint = symbol ? `/ticker/${symbol}` : '/ticker';
-    return this.makeRequest(null, 'GET', endpoint);
+  async getTickers(symbol = null) {
+    const params = symbol ? { symbol } : {};
+    return this.makePublicRequest('GET', '/market/tickers', params);
   }
 
   /**
    * Get order book
+   * Endpoint: GET /v3/market/orderBook
    */
   async getOrderBook(symbol, depth = 20) {
-    const params = { depth };
-    return this.makeRequest(null, 'GET', `/level2/snapshot/${symbol}`, null, params);
+    const params = { symbol, depth };
+    return this.makePublicRequest('GET', '/market/orderBook', params);
   }
 
   /**
-   * Get trade history for a symbol
+   * Get market trades (execution info)
+   * Endpoint: GET /v3/market/trades
    */
   async getMarketTrades(symbol) {
-    return this.makeRequest(null, 'GET', `/execution/${symbol}`);
+    const params = { symbol };
+    return this.makePublicRequest('GET', '/market/trades', params);
   }
 
   /**
-   * Get kline data
+   * Get K-line data (candlesticks)
+   * Endpoint: GET /v3/market/candles
    */
   async getKlines(symbol, granularity, params = {}) {
-    const queryParams = { granularity, ...params };
-    return this.makeRequest(null, 'GET', `/kline/query/${symbol}`, null, queryParams);
+    const queryParams = { symbol, granularity, ...params };
+    return this.makePublicRequest('GET', '/market/candles', queryParams);
   }
 
   /**
-   * Get funding rate
+   * Get mark price K-line data
+   * Endpoint: GET /v3/market/markPriceCandlesticks
+   */
+  async getMarkPriceKlines(symbol, granularity, params = {}) {
+    const queryParams = { symbol, granularity, ...params };
+    return this.makePublicRequest('GET', '/market/markPriceCandlesticks', queryParams);
+  }
+
+  /**
+   * Get index price
+   * Endpoint: GET /v3/market/indexPrice
+   */
+  async getIndexPrice(symbol) {
+    const params = { symbol };
+    return this.makePublicRequest('GET', '/market/indexPrice', params);
+  }
+
+  /**
+   * Get mark price
+   * Endpoint: GET /v3/market/markPrice
+   */
+  async getMarkPrice(symbol) {
+    const params = { symbol };
+    return this.makePublicRequest('GET', '/market/markPrice', params);
+  }
+
+  /**
+   * Get current funding rate
+   * Endpoint: GET /v3/market/fundingRate
    */
   async getFundingRate(symbol) {
-    return this.makeRequest(null, 'GET', `/funding-rate/${symbol}/current`);
+    const params = { symbol };
+    return this.makePublicRequest('GET', '/market/fundingRate', params);
   }
 
   /**
-   * Get funding rate history
+   * Get historical funding rates
+   * Endpoint: GET /v3/market/fundingRate/history
    */
   async getFundingRateHistory(symbol, params = {}) {
-    return this.makeRequest(null, 'GET', `/funding-rate/${symbol}/history`, null, params);
+    const queryParams = { symbol, ...params };
+    return this.makePublicRequest('GET', '/market/fundingRate/history', queryParams);
   }
 
   /**
-   * Get open interest
+   * Get current open positions (open interest)
+   * Endpoint: GET /v3/market/openInterest
    */
   async getOpenInterest(symbol) {
-    return this.makeRequest(null, 'GET', `/open-interest/${symbol}`);
-  }
-
-  // =================== RISK MANAGEMENT ===================
-
-  /**
-   * Get risk limit
-   */
-  async getRiskLimit(credentials, symbol) {
-    return this.makeRequest(credentials, 'GET', `/risk/limit/${symbol}`);
+    const params = { symbol };
+    return this.makePublicRequest('GET', '/market/openInterest', params);
   }
 
   /**
-   * Update risk limit
+   * Get futures risk limit information
+   * Endpoint: GET /v3/market/riskLimit
    */
-  async updateRiskLimit(credentials, symbol, level) {
-    const body = { symbol, level };
-    return this.makeRequest(credentials, 'POST', '/risk/limit', body);
+  async getRiskLimit(symbol) {
+    const params = { symbol };
+    return this.makePublicRequest('GET', '/market/riskLimit', params);
   }
 
   /**
-   * Get ADL (Auto-Deleveraging) status
+   * Get liquidation orders
+   * Endpoint: GET /v3/market/liquidationOrder
    */
-  async getADLStatus(credentials) {
-    return this.makeRequest(credentials, 'GET', '/risk/adl');
+  async getLiquidationOrders(symbol) {
+    const params = { symbol };
+    return this.makePublicRequest('GET', '/market/liquidationOrder', params);
+  }
+
+  /**
+   * Query insurance fund information
+   * Endpoint: GET /v3/market/insurance
+   */
+  async getInsuranceFund() {
+    return this.makePublicRequest('GET', '/market/insurance');
   }
 
   // =================== DATABASE INTEGRATION ===================
@@ -327,15 +489,14 @@ class PoloniexFuturesService {
   async syncAccountToDatabase(userId, credentials) {
     try {
       const accountData = await this.getAccountBalance(credentials);
-      const overview = await this.getAccountOverview(credentials);
       
       // Upsert futures account
       await query(`
         INSERT INTO futures_accounts (
           user_id, poloniex_account_id, total_equity, available_balance,
-          initial_margin, maintenance_margin, margin_ratio, position_mode,
+          initial_margin, maintenance_margin, margin_ratio,
           daily_realized_pnl, is_active, last_synced_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         ON CONFLICT (user_id, poloniex_account_id) 
         DO UPDATE SET
           total_equity = EXCLUDED.total_equity,
@@ -343,7 +504,6 @@ class PoloniexFuturesService {
           initial_margin = EXCLUDED.initial_margin,
           maintenance_margin = EXCLUDED.maintenance_margin,
           margin_ratio = EXCLUDED.margin_ratio,
-          position_mode = EXCLUDED.position_mode,
           daily_realized_pnl = EXCLUDED.daily_realized_pnl,
           last_synced_at = EXCLUDED.last_synced_at,
           updated_at = CURRENT_TIMESTAMP
@@ -355,14 +515,13 @@ class PoloniexFuturesService {
         accountData.initialMargin || 0,
         accountData.maintenanceMargin || 0,
         accountData.marginRatio || 0,
-        overview.positionMode || 'ONE_WAY',
         accountData.dailyRealizedPnl || 0,
         true,
         new Date()
       ]);
       
       logger.info(`Synced account data for user ${userId}`);
-      return { success: true, accountData, overview };
+      return { success: true, accountData };
     } catch (error) {
       logger.error(`Failed to sync account data for user ${userId}:`, error);
       throw error;
@@ -453,9 +612,9 @@ class PoloniexFuturesService {
       await query(`
         INSERT INTO futures_orders (
           user_id, account_id, poloniex_order_id, client_order_id, symbol,
-          side, type, position_side, price, size, leverage, margin_mode,
+          side, type, position_side, price, size, margin_mode,
           time_in_force, reduce_only, post_only, status, poloniex_created_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
       `, [
         userId,
         account.id,
@@ -467,7 +626,6 @@ class PoloniexFuturesService {
         orderData.positionSide?.toUpperCase() || 'BOTH',
         orderData.price || 0,
         orderData.size,
-        orderData.leverage || 1,
         orderData.marginMode || 'CROSS',
         orderData.timeInForce || 'GTC',
         orderData.reduceOnly || false,
