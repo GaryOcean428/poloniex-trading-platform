@@ -1,77 +1,133 @@
 import express from 'express';
-import {
-  getCatalog,
-  getCachedETag,
-  getSymbols,
-  getEntry,
-  getCatalogDebugInfo,
-} from '../services/marketCatalog.js';
+import { setCachingHeaders, getCachedETag } from '../middleware/caching.js';
+import { getSymbols } from '../services/marketCatalog.js';
 
 const router = express.Router();
 
-// Helper to set caching headers with ETag
-async function setCachingHeaders(res: express.Response) {
-  const etag = getCachedETag();
-  if (etag) {
-    res.setHeader('ETag', etag);
-  }
-  // Cache for 5 minutes; clients can revalidate using ETag
-  res.setHeader('Cache-Control', 'public, max-age=300, must-revalidate');
-}
-
-// GET full catalog
+/**
+ * GET /api/markets/poloniex-futures-v3 - Get all futures markets data
+ * Returns complete market catalog with symbols, contracts, and specifications
+ */
 router.get('/poloniex-futures-v3', async (req, res) => {
   try {
-    const catalog = await getCatalog();
-
-    // ETag handling (basic)
-    await setCachingHeaders(res);
-    const ifNoneMatch = req.headers['if-none-match'];
-    const currentEtag = getCachedETag();
-    if (ifNoneMatch && currentEtag && ifNoneMatch === currentEtag) {
+    // Check for conditional requests using ETag
+    const clientETag = req.headers['if-none-match'];
+    const currentETag = getCachedETag();
+    
+    if (clientETag && clientETag === currentETag) {
       return res.status(304).end();
     }
 
-    return res.json(catalog);
-  } catch (err) {
-    return res.status(500).json({ error: 'Failed to load catalog' });
+    // Get the market catalog from file or cache
+    const fs = await import('fs/promises');
+    const path = await import('path');
+    
+    // Try environment-specified path first
+    const catalogPath = process.env.CATALOG_PATH || '/app/shared/catalogs/poloniex-futures-v3.json';
+    
+    let catalogData;
+    try {
+      const catalogContent = await fs.readFile(catalogPath, 'utf-8');
+      catalogData = JSON.parse(catalogContent);
+    } catch (error) {
+      // Fallback to docs directory
+      const fallbackPath = path.join(process.cwd(), 'docs', 'markets', 'poloniex-futures-v3.json');
+      try {
+        const fallbackContent = await fs.readFile(fallbackPath, 'utf-8');
+        catalogData = JSON.parse(fallbackContent);
+      } catch (fallbackError) {
+        console.error('Failed to load market catalog from both paths:', {
+          primary: catalogPath,
+          fallback: fallbackPath,
+          primaryError: error.message,
+          fallbackError: fallbackError.message
+        });
+        return res.status(500).json({ 
+          error: 'Market catalog not available',
+          details: 'Unable to load futures market data'
+        });
+      }
+    }
+
+    // Set caching headers
+    await setCachingHeaders(res);
+    
+    return res.json(catalogData);
+  } catch (error) {
+    console.error('Error in GET /api/markets/poloniex-futures-v3:', error);
+    return res.status(500).json({ 
+      error: 'Failed to fetch market data',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 });
 
-// GET symbols list
-router.get('/poloniex-futures-v3/symbols', async (_req, res) => {
+/**
+ * GET /api/markets/poloniex-futures-v3/symbols - Get list of available symbols
+ */
+router.get('/poloniex-futures-v3/symbols', async (req, res) => {
   try {
     const symbols = await getSymbols();
     await setCachingHeaders(res);
     return res.json(symbols);
-  } catch {
-    return res.status(500).json({ error: 'Failed to load symbols' });
+  } catch (error) {
+    console.error('Error fetching symbols:', error);
+    return res.status(500).json({ 
+      error: 'Failed to fetch symbols',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 });
 
-// Debug: path resolution for catalog file
-router.get('/poloniex-futures-v3/debug', async (_req, res) => {
-  try {
-    const info = await getCatalogDebugInfo();
-    return res.json(info);
-  } catch {
-    return res.status(500).json({ error: 'debug_failed' });
-  }
-});
-
-// GET single market entry
+/**
+ * GET /api/markets/poloniex-futures-v3/:symbol - Get specific symbol data
+ */
 router.get('/poloniex-futures-v3/:symbol', async (req, res) => {
   try {
-    const symbol = req.params.symbol;
-    const entry = await getEntry(symbol);
-    await setCachingHeaders(res);
-    if (!entry) {
-      return res.status(404).json({ error: 'Symbol not found' });
+    const { symbol } = req.params;
+    const symbols = await getSymbols();
+    
+    if (!symbols.includes(symbol)) {
+      return res.status(404).json({ 
+        error: 'Symbol not found',
+        available: symbols.slice(0, 10) // Show first 10 available symbols
+      });
     }
-    return res.json(entry);
-  } catch {
-    return res.status(500).json({ error: 'Failed to load market entry' });
+    
+    await setCachingHeaders(res);
+    return res.json({ 
+      symbol,
+      status: 'active',
+      type: 'futures_perpetual',
+      exchange: 'poloniex'
+    });
+  } catch (error) {
+    console.error(`Error fetching symbol ${req.params.symbol}:`, error);
+    return res.status(500).json({ 
+      error: 'Failed to fetch symbol data',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
+});
+
+/**
+ * GET /api/markets/poloniex-futures-v3/debug - Debug endpoint for troubleshooting
+ */
+router.get('/poloniex-futures-v3/debug', (req, res) => {
+  const catalogPath = process.env.CATALOG_PATH || '/app/shared/catalogs/poloniex-futures-v3.json';
+  const fs = require('fs');
+  const path = require('path');
+  
+  const altPath = path.join(process.cwd(), 'docs', 'markets', 'poloniex-futures-v3.json');
+  
+  res.json({
+    envCatalogPath: catalogPath,
+    envCatalogExists: fs.existsSync(catalogPath),
+    altPath: altPath,
+    altExists: fs.existsSync(altPath),
+    cwd: process.cwd(),
+    timestamp: new Date().toISOString()
+  });
 });
 
 // Root endpoint for markets - redirect to poloniex futures
@@ -84,13 +140,18 @@ router.get('/', async (req, res) => {
       service: 'markets',
       symbols: symbols,
       endpoints: [
-        'GET /api/markets/poloniex-futures-v3',
-        'GET /api/markets/poloniex-futures-v3/symbols',
-        'GET /api/markets/poloniex-futures-v3/:symbol'
+        'GET /api/markets/poloniex-futures-v3 - Get all market data',
+        'GET /api/markets/poloniex-futures-v3/symbols - Get symbol list',
+        'GET /api/markets/poloniex-futures-v3/:symbol - Get specific symbol data',
+        'GET /api/markets/poloniex-futures-v3/debug - Debug information'
       ]
     });
-  } catch {
-    return res.status(500).json({ error: 'Failed to load markets data' });
+  } catch (error) {
+    console.error('Error in GET /api/markets:', error);
+    return res.status(500).json({ 
+      error: 'Failed to load markets data',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 });
 
