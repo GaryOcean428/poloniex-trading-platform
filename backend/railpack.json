@@ -3,15 +3,15 @@
   "build": {
     "steps": {
       "install": {
-        "commands": ["yarn install"]
+        "commands": ["yarn install --frozen-lockfile"]
       },
       "build": {
-        "commands": ["yarn workspace backend build"]
+        "commands": ["yarn build"]
       }
     }
   },
   "deploy": {
-    "startCommand": "yarn workspace backend start",
+    "startCommand": "yarn start",
     "healthCheckPath": "/api/health",
     "healthCheckTimeout": 300
   }
