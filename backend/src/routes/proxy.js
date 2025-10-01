@@ -142,7 +142,30 @@ router.get('/deprecation-notice', (req, res) => {
  * GET /api/markets - Get available trading pairs
  * DEPRECATED: Use /api/futures/products for futures markets
  */
-// GET /api/ticker - Get all ticker data
+router.get('/markets', async (req, res) => {
+  // Add deprecation header
+  res.set('X-Deprecated', 'true');
+  res.set('X-Deprecated-Message', 'Use /api/futures/products for futures markets');
+  
+  try {
+    const response = await makePublicRequest('GET', '/markets', req.query);
+    res.json(response.data);
+  } catch (error) {
+    res.status(error.response?.status || 500).json({
+      error: 'Failed to fetch markets',
+      details: error.response?.data || error.message,
+      suggestion: 'Consider using /api/futures/products for futures markets'
+    });
+  }
+});
+
+/**
+ * GET /api/ticker - Get all ticker data
+ * DEPRECATED: Use /api/futures/tickers for futures tickers
+ * 
+ * NOTE: Separated route for path-to-regexp v8 compatibility
+ * The :param? syntax is no longer supported
+ */
 router.get('/ticker', async (req, res) => {
   res.set('X-Deprecated', 'true');
   res.set('X-Deprecated-Message', 'Use /api/futures/tickers for futures tickers');
@@ -159,7 +182,12 @@ router.get('/ticker', async (req, res) => {
   }
 });
 
-// GET /api/ticker/:symbol - Get ticker for specific symbol
+/**
+ * GET /api/ticker/:symbol - Get ticker data for specific symbol
+ * DEPRECATED: Use /api/futures/tickers for futures tickers
+ * 
+ * NOTE: Separated route for path-to-regexp v8 compatibility
+ */
 router.get('/ticker/:symbol', async (req, res) => {
   res.set('X-Deprecated', 'true');
   res.set('X-Deprecated-Message', 'Use /api/futures/tickers for futures tickers');
@@ -167,30 +195,6 @@ router.get('/ticker/:symbol', async (req, res) => {
   try {
     const { symbol } = req.params;
     const response = await makePublicRequest('GET', `/markets/${symbol}/ticker24hr`, req.query);
-    res.json(response.data);
-  } catch (error) {
-    res.status(error.response?.status || 500).json({
-      error: 'Failed to fetch ticker data',
-      details: error.response?.data || error.message,
-      suggestion: 'Consider using /api/futures/tickers for futures tickers'
-    });
-  }
-});
-
-/**
- * GET /api/ticker/:symbol? - Get ticker data
- * DEPRECATED: Use /api/futures/tickers for futures tickers
- */
-router.get('/ticker/:symbol?', async (req, res) => {
-  // Add deprecation header
-  res.set('X-Deprecated', 'true');
-  res.set('X-Deprecated-Message', 'Use /api/futures/tickers for futures tickers');
-  
-  try {
-    const { symbol } = req.params;
-    const endpoint = symbol ? `/markets/${symbol}/ticker24hr` : '/markets/ticker24hr';
-
-    const response = await makePublicRequest('GET', endpoint, req.query);
     res.json(response.data);
   } catch (error) {
     res.status(error.response?.status || 500).json({
