@@ -142,19 +142,37 @@ router.get('/deprecation-notice', (req, res) => {
  * GET /api/markets - Get available trading pairs
  * DEPRECATED: Use /api/futures/products for futures markets
  */
-router.get('/markets', async (req, res) => {
-  // Add deprecation header
+// GET /api/ticker - Get all ticker data
+router.get('/ticker', async (req, res) => {
   res.set('X-Deprecated', 'true');
-  res.set('X-Deprecated-Message', 'Use /api/futures/products for futures markets');
+  res.set('X-Deprecated-Message', 'Use /api/futures/tickers for futures tickers');
   
   try {
-    const response = await makePublicRequest('GET', '/markets', req.query);
+    const response = await makePublicRequest('GET', '/markets/ticker24hr', req.query);
     res.json(response.data);
   } catch (error) {
     res.status(error.response?.status || 500).json({
-      error: 'Failed to fetch markets',
+      error: 'Failed to fetch ticker data',
       details: error.response?.data || error.message,
-      suggestion: 'Consider using /api/futures/products for futures markets'
+      suggestion: 'Consider using /api/futures/tickers for futures tickers'
+    });
+  }
+});
+
+// GET /api/ticker/:symbol - Get ticker for specific symbol
+router.get('/ticker/:symbol', async (req, res) => {
+  res.set('X-Deprecated', 'true');
+  res.set('X-Deprecated-Message', 'Use /api/futures/tickers for futures tickers');
+  
+  try {
+    const { symbol } = req.params;
+    const response = await makePublicRequest('GET', `/markets/${symbol}/ticker24hr`, req.query);
+    res.json(response.data);
+  } catch (error) {
+    res.status(error.response?.status || 500).json({
+      error: 'Failed to fetch ticker data',
+      details: error.response?.data || error.message,
+      suggestion: 'Consider using /api/futures/tickers for futures tickers'
     });
   }
 });
