@@ -6,17 +6,18 @@
   },
   "build": {
     "provider": "node",
+    "workingDirectory": "..",
     "steps": {
       "install": {
-        "commands": ["yarn install --frozen-lockfile"]
+        "commands": ["yarn install --immutable"]
       },
       "build": {
-        "commands": ["yarn build"]
+        "commands": ["yarn build:backend"]
       }
     }
   },
   "deploy": {
-    "startCommand": "yarn start",
+    "startCommand": "yarn workspace backend start",
     "healthCheckPath": "/api/health",
     "healthCheckTimeout": 300,
     "restartPolicyType": "ON_FAILURE",
