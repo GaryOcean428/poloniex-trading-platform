@@ -128,8 +128,8 @@ body {
 }
 
 .extension-container {
-  background-color: #f8f9fa;
-  color: #333;
+  background-color: #f5f4f2;
+  color: #1e293b;
   display: flex;
   flex-direction: column;
   max-height: 500px;
@@ -137,7 +137,7 @@ body {
 
 header {
   background-color: #1e293b;
-  color: white;
+  color: #f8fafc;
   padding: 12px 16px;
   display: flex;
   justify-content: space-between;
@@ -150,7 +150,7 @@ header {
 }
 
 .logo svg {
-  color: #3b82f6;
+  color: #06b6d4;
   margin-right: 8px;
 }
 
@@ -162,7 +162,7 @@ header {
 .actions button {
   background: none;
   border: none;
-  color: #a3a3a3; /* neutral-400 equivalent */
+  color: #94a3b8;
   cursor: pointer;
   padding: 4px;
   border-radius: 4px;
@@ -170,19 +170,19 @@ header {
 
 .actions button:hover {
   background-color: rgba(255, 255, 255, 0.1);
-  color: white;
+  color: #f8fafc;
 }
 
 .account-summary {
-  background-color: #2d3748;
-  color: white;
+  background-color: #334155;
+  color: #f8fafc;
   padding: 12px 16px;
   display: flex;
   justify-content: space-between;
 }
 
 .balance .label {
-  color: #a3a3a3; /* neutral-400 equivalent */
+  color: #94a3b8;
   font-size: 12px;
 }
 
@@ -199,23 +199,23 @@ header {
 
 .quick-trade, .chat-section {
   padding: 12px 16px;
-  border-bottom: 1px solid #e5e5e5; /* neutral-200 equivalent */
+  border-bottom: 1px solid #e2e8f0;
 }
 
 h2 {
   font-size: 14px;
   font-weight: 600;
   margin-bottom: 8px;
-  color: #525252; /* neutral-600 equivalent */
+  color: #475569;
 }
 
 .trading-pair select {
   width: 100%;
   padding: 8px;
   border-radius: 4px;
-  border: 1px solid #d4d4d4; /* neutral-300 equivalent */
+  border: 1px solid #cbd5e1;
   margin-bottom: 8px;
-  background-color: white;
+  background-color: #f8f9fa;
 }
 
 .trade-buttons {
@@ -235,7 +235,7 @@ h2 {
 
 button.buy {
   background-color: #10b981;
-  color: white;
+  color: #f8fafc;
 }
 
 button.buy:hover {
@@ -244,7 +244,7 @@ button.buy:hover {
 
 button.sell {
   background-color: #ef4444;
-  color: white;
+  color: #f8fafc;
 }
 
 button.sell:hover {
@@ -264,7 +264,7 @@ button.sell:hover {
 
 .username {
   font-weight: 600;
-  color: #525252; /* neutral-600 equivalent */
+  color: #475569;
 }
 
 .chat-input {
@@ -276,12 +276,12 @@ button.sell:hover {
   flex: 1;
   padding: 8px;
   border-radius: 4px;
-  border: 1px solid #d4d4d4; /* neutral-300 equivalent */
+  border: 1px solid #cbd5e1;
 }
 
 .chat-input button {
-  background-color: #3b82f6;
-  color: white;
+  background-color: #06b6d4;
+  color: #f8fafc;
   border: none;
   border-radius: 4px;
   padding: 0 8px;
@@ -289,7 +289,7 @@ button.sell:hover {
 }
 
 .chat-input button:hover {
-  background-color: #2563eb;
+  background-color: #0891b2;
 }
 
 .footer {
@@ -299,8 +299,8 @@ button.sell:hover {
 .open-app {
   width: 100%;
   padding: 8px 0;
-  background-color: #3b82f6;
-  color: white;
+  background-color: #06b6d4;
+  color: #f8fafc;
   border: none;
   border-radius: 4px;
   font-weight: 500;
@@ -309,7 +309,7 @@ button.sell:hover {
 }
 
 .open-app:hover {
-  background-color: #2563eb;
+  background-color: #0891b2;
 }`);
 
     // Create popup.js
@@ -398,8 +398,8 @@ button.sell:hover {
     notification.style.position = 'absolute';
     notification.style.bottom = '10px';
     notification.style.right = '10px';
-    notification.style.backgroundColor = '#4caf50';
-    notification.style.color = 'white';
+    notification.style.backgroundColor = '#10b981';
+    notification.style.color = '#f8fafc';
     notification.style.padding = '8px 12px';
     notification.style.borderRadius = '4px';
     notification.style.zIndex = '1000';
