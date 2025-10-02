@@ -155,23 +155,22 @@ const AutonomousTradingDashboard: React.FC = () => {
 
     return (
         <div className="space-y-6">
-            {/* Header */}
-            <div className="bg-gradient-to-r from-blue-600 to-purple-600 rounded-lg p-6 text-white">
+            <div className="gradient-primary rounded-lg p-8 text-text-inverse shadow-elev-3">
                 <div className="flex items-center justify-between">
                     <div>
-                        <h1 className="text-2xl font-bold flex items-center">
-                            <Brain className="h-8 w-8 mr-3" />
+                        <h1 className="text-3xl font-bold flex items-center">
+                            <Brain className="h-10 w-10 mr-4" />
                             Live Autonomous Trading System
                         </h1>
-                        <p className="mt-2 opacity-90">
+                        <p className="mt-2 opacity-90 text-lg">
                             AI-powered trading that learns, adapts, and maximizes profits autonomously
                         </p>
                     </div>
-                    <div className="flex items-center gap-2">
-                        <div className={`px-3 py-1 rounded-full text-sm font-medium ${
+                    <div className="flex items-center gap-3">
+                        <div className={`px-4 py-2 rounded-full text-sm font-semibold ${
                             connectionStatus.useBackend ?
-                                (connectionStatus.isConnected ? 'bg-green-500/20 text-green-100' : 'bg-red-500/20 text-red-100') :
-                                'bg-yellow-500/20 text-yellow-100'
+                                (connectionStatus.isConnected ? 'bg-success/20 text-text-inverse border border-success/30' : 'bg-error/20 text-text-inverse border border-error/30') :
+                                'bg-warning/20 text-text-inverse border border-warning/30'
                         }`}>
                             {connectionStatus.useBackend ?
                                 (connectionStatus.isConnected ? 'Live Connected' : 'Disconnected') :
@@ -182,7 +181,7 @@ const AutonomousTradingDashboard: React.FC = () => {
                     <div className="flex space-x-3">
                         <button
                             onClick={() => setShowSettings(!showSettings)}
-                            className="bg-white/20 hover:bg-white/30 px-4 py-2 rounded-lg flex items-center"
+                            className="bg-bg-elevated/20 hover:bg-bg-elevated/30 px-5 py-2.5 rounded-lg flex items-center font-semibold backdrop-blur-sm transition-all duration-200"
                         >
                             <Settings className="h-4 w-4 mr-2" />
                             Settings
@@ -191,7 +190,7 @@ const AutonomousTradingDashboard: React.FC = () => {
                             <button
                                 onClick={handleStartAutonomous}
                                 disabled={loading}
-                                className="bg-green-600 hover:bg-green-700 px-6 py-2 rounded-lg font-medium"
+                                className="bg-success hover:bg-success/90 px-6 py-2.5 rounded-lg font-semibold shadow-elev-2 transition-all duration-200"
                             >
                                 {loading ? 'Starting...' : 'Start Autonomous Trading'}
                             </button>
@@ -199,7 +198,7 @@ const AutonomousTradingDashboard: React.FC = () => {
                             <button
                                 onClick={handleStopAutonomous}
                                 disabled={loading}
-                                className="bg-red-600 hover:bg-red-700 px-6 py-2 rounded-lg font-medium"
+                                className="bg-error hover:bg-error/90 px-6 py-2.5 rounded-lg font-semibold shadow-elev-2 transition-all duration-200"
                             >
                                 {loading ? 'Stopping...' : 'Stop Trading'}
                             </button>
@@ -210,54 +209,53 @@ const AutonomousTradingDashboard: React.FC = () => {
 
             {/* Error Display */}
             {error && (
-                <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded-lg" role="alert">
+                <div className="bg-error/10 border-l-4 border-error p-4 rounded-lg shadow-elev-1" role="alert">
                     <div className="flex">
-                        <X className="h-5 w-5 text-red-500 mr-3" />
+                        <X className="h-5 w-5 text-error mr-3" />
                         <div>
-                            <p className="text-red-700 font-medium">Error</p>
-                            <p className="text-red-600 text-sm">{error}</p>
+                            <p className="text-error font-semibold">Error</p>
+                            <p className="text-error/80 text-sm">{error}</p>
                         </div>
                     </div>
                 </div>
             )}
 
-            {/* Settings Panel */}
             {showSettings && (
-                <div className="bg-white rounded-lg border border-gray-200 p-6">
-                    <h3 className="text-lg font-medium mb-4">Autonomous Trading Settings</h3>
+                <div className="bg-bg-elevated rounded-lg border border-border-subtle p-6 shadow-elev-2">
+                    <h3 className="text-xl font-semibold mb-6 text-text-primary">Autonomous Trading Settings</h3>
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                         <div>
-                            <label htmlFor="initialBalance" className="block text-sm font-medium mb-1">Initial Balance ($)</label>
+                            <label htmlFor="initialBalance" className="block text-sm font-semibold mb-2 text-text-secondary">Initial Balance ($)</label>
                             <input
                                 id="initialBalance"
                                 type="number"
                                 value={settings.initialBalance}
                                 onChange={(e) => setSettings({ ...settings, initialBalance: parseFloat(e.target.value) })}
-                                className="w-full border rounded-md px-3 py-2"
+                                className="w-full border border-border-moderate rounded-lg px-4 py-2.5 bg-bg-primary text-text-primary focus:border-brand-cyan focus:ring-2 focus:ring-brand-cyan/20"
                                 title="Initial trading balance in USD"
                                 placeholder="10000"
                             />
                         </div>
                         <div>
-                            <label htmlFor="maxRiskPerTrade" className="block text-sm font-medium mb-1">Max Risk Per Trade (%)</label>
+                            <label htmlFor="maxRiskPerTrade" className="block text-sm font-semibold mb-2 text-text-secondary">Max Risk Per Trade (%)</label>
                             <input
                                 id="maxRiskPerTrade"
                                 type="number"
                                 value={settings.maxRiskPerTrade * 100}
                                 onChange={(e) => setSettings({ ...settings, maxRiskPerTrade: parseFloat(e.target.value) / 100 })}
-                                className="w-full border rounded-md px-3 py-2"
+                                className="w-full border border-border-moderate rounded-lg px-4 py-2.5 bg-bg-primary text-text-primary focus:border-brand-cyan focus:ring-2 focus:ring-brand-cyan/20"
                                 title="Maximum risk per trade as percentage"
                                 placeholder="2"
                             />
                         </div>
                         <div>
-                            <label htmlFor="maxDrawdown" className="block text-sm font-medium mb-1">Max Drawdown (%)</label>
+                            <label htmlFor="maxDrawdown" className="block text-sm font-semibold mb-2 text-text-secondary">Max Drawdown (%)</label>
                             <input
                                 id="maxDrawdown"
                                 type="number"
                                 value={settings.maxDrawdown * 100}
                                 onChange={(e) => setSettings({ ...settings, maxDrawdown: parseFloat(e.target.value) / 100 })}
-                                className="w-full border rounded-md px-3 py-2"
+                                className="w-full border border-border-moderate rounded-lg px-4 py-2.5 bg-bg-primary text-text-primary focus:border-brand-cyan focus:ring-2 focus:ring-brand-cyan/20"
                                 title="Maximum acceptable drawdown percentage"
                                 placeholder="15"
                             />
@@ -269,16 +267,16 @@ const AutonomousTradingDashboard: React.FC = () => {
             {/* Session Status */}
             {session && (
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                    <div className="lg:col-span-2 bg-white rounded-lg border p-6">
-                        <h3 className="text-lg font-medium mb-4">Current Phase</h3>
+                    <div className="lg:col-span-2 bg-bg-elevated rounded-lg border border-border-subtle p-6 shadow-elev-2">
+                        <h3 className="text-xl font-semibold mb-6 text-text-primary">Current Phase</h3>
                         <div className="flex items-center justify-between">
                             <div className="flex items-center">
                                 {getPhaseIcon(session.currentPhase)}
                                 <div className="ml-3">
-                                    <h4 className="font-medium">{formatPhase(session.currentPhase)}</h4>
-                                    <p className="text-sm text-gray-500">{session.isActive ? 'Active' : 'Stopped'}</p>
+                                    <h4 className="font-semibold text-text-primary">{formatPhase(session.currentPhase)}</h4>
+                                    <p className="text-sm text-text-muted">{session.isActive ? 'Active' : 'Stopped'}</p>
                                     {session.realTimeUpdates && (
-                                        <p className="text-xs text-green-600 flex items-center">
+                                        <p className="text-xs text-success flex items-center font-medium">
                                             <Activity className="h-3 w-3 mr-1" />
                                             Live Updates
                                         </p>
@@ -286,8 +284,8 @@ const AutonomousTradingDashboard: React.FC = () => {
                                 </div>
                             </div>
                             <div className="text-right">
-                                <p className="text-2xl font-bold text-green-600">{session.performance.confidenceScore.toFixed(1)}%</p>
-                                <p className="text-sm text-gray-500">Confidence Score</p>
+                                <p className="text-3xl font-bold text-success">{session.performance.confidenceScore.toFixed(1)}%</p>
+                                <p className="text-sm text-text-muted">Confidence Score</p>
                             </div>
                         </div>
 
@@ -296,37 +294,37 @@ const AutonomousTradingDashboard: React.FC = () => {
                             <div className="mt-4 pt-4 border-t">
                                 <div className="grid grid-cols-3 gap-4 text-center">
                                     <div>
-                                        <p className="text-lg font-semibold text-gray-900">{session.backendSystemStatus.generationCount}</p>
-                                        <p className="text-sm text-gray-500">Generations</p>
+                                        <p className="text-2xl font-bold text-text-primary">{session.backendSystemStatus.generationCount}</p>
+                                        <p className="text-sm text-text-muted">Generations</p>
                                     </div>
                                     <div>
-                                        <p className="text-lg font-semibold text-gray-900">{session.backendSystemStatus.totalStrategies}</p>
-                                        <p className="text-sm text-gray-500">Total Strategies</p>
+                                        <p className="text-2xl font-bold text-text-primary">{session.backendSystemStatus.totalStrategies}</p>
+                                        <p className="text-sm text-text-muted">Total Strategies</p>
                                     </div>
                                     <div>
-                                        <p className="text-lg font-semibold text-green-600">{session.backendSystemStatus.activeStrategies}</p>
-                                        <p className="text-sm text-gray-500">Active Strategies</p>
+                                        <p className="text-2xl font-bold text-success">{session.backendSystemStatus.activeStrategies}</p>
+                                        <p className="text-sm text-text-muted">Active Strategies</p>
                                     </div>
                                 </div>
                             </div>
                         )}
                     </div>
 
-                    <div className="bg-white rounded-lg border p-6">
-                        <h3 className="text-lg font-medium mb-4">Activity Feed</h3>
+                    <div className="bg-bg-elevated rounded-lg border border-border-subtle p-6 shadow-elev-2">
+                        <h3 className="text-xl font-semibold mb-6 text-text-primary">Activity Feed</h3>
                         <div className="space-y-3 max-h-96 overflow-y-auto">
                             {session.notifications.length === 0 ? (
-                                <p className="text-sm text-gray-500 text-center">No notifications yet</p>
+                                <p className="text-sm text-text-muted text-center">No notifications yet</p>
                             ) : (
                                 session.notifications.slice(-5).map((notification) => (
-                                    <div key={notification.id} className={`text-sm p-2 rounded border-l-4 ${
-                                        notification.type === 'CRITICAL' ? 'border-red-500 bg-red-50' :
-                                        notification.type === 'WARNING' ? 'border-yellow-500 bg-yellow-50' :
-                                        notification.type === 'SUCCESS' ? 'border-green-500 bg-green-50' :
-                                        'border-blue-500 bg-blue-50'
+                                    <div key={notification.id} className={`text-sm p-3 rounded-lg border-l-4 ${
+                                        notification.type === 'CRITICAL' ? 'border-error bg-error/10' :
+                                        notification.type === 'WARNING' ? 'border-warning bg-warning/10' :
+                                        notification.type === 'SUCCESS' ? 'border-success bg-success/10' :
+                                        'border-info bg-info/10'
                                     }`}>
-                                        <div className="font-medium">{notification.title}</div>
-                                        <div className="text-xs text-gray-600 mt-1">{notification.message}</div>
+                                        <div className="font-semibold text-text-primary">{notification.title}</div>
+                                        <div className="text-xs text-text-secondary mt-1">{notification.message}</div>
                                     </div>
                                 ))
                             )}
@@ -338,53 +336,53 @@ const AutonomousTradingDashboard: React.FC = () => {
             {/* Performance Metrics */}
             {session && (
                 <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
-                    <div className="text-center">
-                        <p className="text-2xl font-bold">{session.liveStrategies.length}</p>
-                        <p className="text-sm text-gray-500">Live Strategies</p>
+                    <div className="bg-bg-elevated p-5 rounded-lg border border-border-subtle shadow-elev-1 text-center">
+                        <p className="text-3xl font-bold text-text-primary">{session.liveStrategies.length}</p>
+                        <p className="text-sm text-text-muted mt-1">Live Strategies</p>
                     </div>
-                    <div className="text-center">
-                        <p className="text-2xl font-bold text-green-600">${session.performance.totalPnL.toFixed(2)}</p>
-                        <p className="text-sm text-gray-500">Total P&L</p>
+                    <div className="bg-bg-elevated p-5 rounded-lg border border-border-subtle shadow-elev-1 text-center">
+                        <p className="text-3xl font-bold text-success">${session.performance.totalPnL.toFixed(2)}</p>
+                        <p className="text-sm text-text-muted mt-1">Total P&L</p>
                     </div>
-                    <div className="text-center">
-                        <p className="text-2xl font-bold text-blue-600">{(session.performance.winRate * 100).toFixed(1)}%</p>
-                        <p className="text-sm text-gray-500">Win Rate</p>
+                    <div className="bg-bg-elevated p-5 rounded-lg border border-border-subtle shadow-elev-1 text-center">
+                        <p className="text-3xl font-bold text-brand-cyan">{(session.performance.winRate * 100).toFixed(1)}%</p>
+                        <p className="text-sm text-text-muted mt-1">Win Rate</p>
                     </div>
-                    <div className="text-center">
-                        <p className="text-2xl font-bold text-purple-600">{session.performance.sharpeRatio.toFixed(2)}</p>
-                        <p className="text-sm text-gray-500">Sharpe Ratio</p>
+                    <div className="bg-bg-elevated p-5 rounded-lg border border-border-subtle shadow-elev-1 text-center">
+                        <p className="text-3xl font-bold text-brand-purple">{session.performance.sharpeRatio.toFixed(2)}</p>
+                        <p className="text-sm text-text-muted mt-1">Sharpe Ratio</p>
                     </div>
-                    <div className="text-center">
-                        <p className="text-2xl font-bold text-orange-600">{(session.performance.maxDrawdown * 100).toFixed(1)}%</p>
-                        <p className="text-sm text-gray-500">Max Drawdown</p>
+                    <div className="bg-bg-elevated p-5 rounded-lg border border-border-subtle shadow-elev-1 text-center">
+                        <p className="text-3xl font-bold text-warning">{(session.performance.maxDrawdown * 100).toFixed(1)}%</p>
+                        <p className="text-sm text-text-muted mt-1">Max Drawdown</p>
                     </div>
                 </div>
             )}
 
             {/* Banking Status */}
             {session?.bankingStatus && (
-                <div className="bg-white rounded-lg border p-6 mt-6">
-                    <h3 className="text-lg font-medium mb-4 flex items-center">
-                        <PiggyBank className="h-5 w-5 mr-2" />
+                <div className="bg-bg-elevated rounded-lg border border-border-subtle p-6 shadow-elev-2 mt-6">
+                    <h3 className="text-xl font-semibold mb-6 flex items-center text-text-primary">
+                        <PiggyBank className="h-6 w-6 mr-2 text-success" />
                         Profit Banking Status
                     </h3>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div className="text-center">
-                            <p className="text-2xl font-bold text-green-600">${session.bankingStatus.totalBanked.toFixed(2)}</p>
-                            <p className="text-sm text-gray-500">Total Banked</p>
+                        <div className="bg-bg-tertiary p-5 rounded-lg border border-border-subtle text-center">
+                            <p className="text-3xl font-bold text-success">${session.bankingStatus.totalBanked.toFixed(2)}</p>
+                            <p className="text-sm text-text-muted mt-1">Total Banked</p>
                         </div>
-                        <div className="text-center">
-                            <p className="text-2xl font-bold text-blue-600">{session.bankingStatus.totalTransfers}</p>
-                            <p className="text-sm text-gray-500">Total Transfers</p>
+                        <div className="bg-bg-tertiary p-5 rounded-lg border border-border-subtle text-center">
+                            <p className="text-3xl font-bold text-brand-cyan">{session.bankingStatus.totalTransfers}</p>
+                            <p className="text-sm text-text-muted mt-1">Total Transfers</p>
                         </div>
-                        <div className="text-center">
-                            <p className="text-sm text-gray-900">
+                        <div className="bg-bg-tertiary p-5 rounded-lg border border-border-subtle text-center">
+                            <p className="text-sm text-text-primary font-semibold">
                                 {session.bankingStatus.lastBankingTime ?
                                     new Date(session.bankingStatus.lastBankingTime).toLocaleString() :
                                     'Never'
                                 }
                             </p>
-                            <p className="text-sm text-gray-500">Last Banking</p>
+                            <p className="text-sm text-text-muted mt-1">Last Banking</p>
                         </div>
                     </div>
                 </div>
@@ -392,15 +390,15 @@ const AutonomousTradingDashboard: React.FC = () => {
 
             {/* Getting Started */}
             {!session && (
-                <div className="bg-white rounded-lg border p-6 text-center">
-                    <Brain className="h-16 w-16 mx-auto text-gray-400 mb-4" />
-                    <h3 className="text-lg font-medium mb-2">Ready to Start Autonomous Trading?</h3>
-                    <p className="text-gray-500 mb-6">
+                <div className="bg-bg-elevated rounded-lg border border-border-subtle p-8 text-center shadow-elev-2">
+                    <Brain className="h-20 w-20 mx-auto text-brand-purple mb-6" />
+                    <h3 className="text-2xl font-bold mb-3 text-text-primary">Ready to Start Autonomous Trading?</h3>
+                    <p className="text-text-secondary mb-8 text-lg">
                         Our AI system will analyze markets and maximize your profits.
                     </p>
                     <button
                         onClick={() => setShowSettings(true)}
-                        className="text-blue-600 hover:text-blue-800"
+                        className="text-brand-cyan hover:text-brand-cyan/80 font-semibold text-lg"
                     >
                         Configure Settings →
                     </button>
