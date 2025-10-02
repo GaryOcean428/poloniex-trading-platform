@@ -157,12 +157,12 @@ const Account: React.FC = () => {
         </button>
       </div>
 
-      <div className="bg-white rounded-lg shadow-md">
+      <div className="bg-bg-tertiary rounded-lg shadow-md">
         <div className="flex border-b">
           <button
             onClick={() => setActiveTab('overview')}
             className={`px-4 py-3 font-medium text-sm flex items-center ${
-              activeTab === 'overview' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-neutral-500 hover:text-neutral-700'
+              activeTab === 'overview' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-text-muted hover:text-text-secondary'
             }`}
           >
             <User className="h-4 w-4 mr-2" />
@@ -171,7 +171,7 @@ const Account: React.FC = () => {
           <button
             onClick={() => setActiveTab('transactions')}
             className={`px-4 py-3 font-medium text-sm flex items-center ${
-              activeTab === 'transactions' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-neutral-500 hover:text-neutral-700'
+              activeTab === 'transactions' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-text-muted hover:text-text-secondary'
             }`}
           >
             <CreditCard className="h-4 w-4 mr-2" />
@@ -180,7 +180,7 @@ const Account: React.FC = () => {
           <button
             onClick={() => setActiveTab('api')}
             className={`px-4 py-3 font-medium text-sm flex items-center ${
-              activeTab === 'api' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-neutral-500 hover:text-neutral-700'
+              activeTab === 'api' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-text-muted hover:text-text-secondary'
             }`}
           >
             <Key className="h-4 w-4 mr-2" />
@@ -189,7 +189,7 @@ const Account: React.FC = () => {
           <button
             onClick={() => setActiveTab('settings')}
             className={`px-4 py-3 font-medium text-sm flex items-center ${
-              activeTab === 'settings' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-neutral-500 hover:text-neutral-700'
+              activeTab === 'settings' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-text-muted hover:text-text-secondary'
             }`}
           >
             <Shield className="h-4 w-4 mr-2" />
@@ -202,10 +202,10 @@ const Account: React.FC = () => {
             <div className="space-y-6">
               {/* Account Summary Cards */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-lg shadow-md p-4">
+                <div className="gradient-primary text-white rounded-lg shadow-elev-2 p-4">
                   <div className="flex justify-between items-start">
                     <div>
-                      <p className="text-blue-100 text-sm">Total Balance</p>
+                      <p className="text-white/80 text-sm">Total Balance</p>
                       <p className="text-2xl font-bold mt-1">{formatCurrency(accountData.totalBalance)}</p>
                     </div>
                     <div className="bg-blue-400/30 p-2 rounded-full">
@@ -224,7 +224,7 @@ const Account: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="bg-white rounded-lg shadow-md p-4 border border-neutral-200">
+                <div className="bg-bg-tertiary rounded-lg shadow-md p-4 border border-border-subtle">
                   <div className="flex justify-between items-start">
                     <div>
                       <p className="text-neutral-500 text-sm">Profit & Loss</p>
@@ -252,7 +252,7 @@ const Account: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="bg-white rounded-lg shadow-md p-4 border border-neutral-200">
+                <div className="bg-bg-tertiary rounded-lg shadow-md p-4 border border-border-subtle">
                   <div className="flex justify-between items-start">
                     <div>
                       <p className="text-neutral-500 text-sm">Recent Activity</p>
@@ -294,8 +294,8 @@ const Account: React.FC = () => {
               </div>
 
               {/* Account Status */}
-              <div className="bg-white rounded-lg border border-neutral-200 overflow-hidden">
-                <div className="px-4 py-3 bg-neutral-50 border-b border-neutral-200">
+              <div className="bg-bg-tertiary rounded-lg border border-border-subtle overflow-hidden">
+                <div className="px-4 py-3 bg-neutral-50 border-b border-border-subtle">
                   <h3 className="font-medium">Account Status</h3>
                 </div>
                 <div className="p-4 space-y-4">
@@ -330,8 +330,8 @@ const Account: React.FC = () => {
               </div>
 
               {/* Recent Transactions Summary */}
-              <div className="bg-white rounded-lg border border-neutral-200 overflow-hidden">
-                <div className="px-4 py-3 bg-neutral-50 border-b border-neutral-200 flex justify-between items-center">
+              <div className="bg-bg-tertiary rounded-lg border border-border-subtle overflow-hidden">
+                <div className="px-4 py-3 bg-neutral-50 border-b border-border-subtle flex justify-between items-center">
                   <h3 className="font-medium">Recent Transactions</h3>
                   <button
                     onClick={() => setActiveTab('transactions')}
@@ -341,7 +341,7 @@ const Account: React.FC = () => {
                   </button>
                 </div>
                 <div className="overflow-x-auto">
-                  <table className="min-w-full divide-y divide-neutral-200">
+                  <table className="min-w-full divide-y divide-border-subtle">
                     <thead className="bg-neutral-50">
                       <tr>
                         <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-neutral-500 uppercase tracking-wider">
@@ -358,7 +358,7 @@ const Account: React.FC = () => {
                         </th>
                       </tr>
                     </thead>
-                    <tbody className="bg-white divide-y divide-neutral-200">
+                    <tbody className="bg-bg-tertiary divide-y divide-border-subtle">
                       {recentLoading && (
                         <tr>
                           <td colSpan={4} className="px-4 py-6 text-center text-sm text-neutral-500">Loading recent transactions...</td>
@@ -440,9 +440,9 @@ const Account: React.FC = () => {
 
           {activeTab === 'settings' && (
             <div className="space-y-6">
-              <div className="bg-white rounded-lg border border-neutral-200 overflow-hidden">
-                <div className="px-4 py-3 bg-neutral-50 border-b border-neutral-200">
-                  <h3 className="font-medium">Security Settings</h3>
+              <div className="bg-bg-tertiary rounded-lg border border-border-subtle overflow-hidden shadow-elev-1">
+                <div className="px-4 py-3 bg-bg-secondary border-b border-border-subtle">
+                  <h3 className="font-semibold text-text-primary">Security Settings</h3>
                 </div>
                 <div className="p-4 space-y-4">
                   <div className="flex items-center justify-between p-3 border rounded-md">

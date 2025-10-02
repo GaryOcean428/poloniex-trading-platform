@@ -238,7 +238,7 @@ const LiveTradingDashboard: React.FC = () => {
               <div className="flex items-center justify-center h-full">
                 <div className="text-center">
                   <Clock className="h-12 w-12 text-neutral-400 mx-auto mb-2" />
-                  <p className="text-neutral-500">
+                  <p className="text-text-muted">
                     {isLiveMode ? 'Waiting for real-time data...' : 'Start live mode to see real-time updates'}
                   </p>
                 </div>

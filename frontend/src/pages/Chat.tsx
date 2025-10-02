@@ -6,8 +6,8 @@ const Chat: React.FC = () => {
     <div className="space-y-6">
       <div className="text-center max-w-2xl mx-auto py-12">
         <MessageSquare className="w-16 h-16 text-blue-500 mx-auto mb-4" />
-        <h1 className="text-3xl font-bold text-gray-900 mb-4">Community Chat</h1>
-        <p className="text-lg text-gray-600 mb-8">
+        <h1 className="text-3xl font-bold text-text-primary mb-4">Community Chat</h1>
+        <p className="text-lg text-text-secondary mb-8">
           Connect with other traders, share strategies, and discuss market trends in real-time.
         </p>
         
@@ -20,26 +20,26 @@ const Chat: React.FC = () => {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-8">
-          <div className="bg-white border border-gray-200 rounded-lg p-6">
+          <div className="bg-bg-tertiary border border-border-subtle rounded-lg p-6">
             <Users className="w-8 h-8 text-blue-500 mx-auto mb-3" />
-            <h3 className="font-semibold text-gray-900 mb-2">Community Trading</h3>
-            <p className="text-gray-600 text-sm">
+            <h3 className="font-semibold text-text-primary mb-2">Community Trading</h3>
+            <p className="text-text-secondary text-sm">
               Share your trading strategies and learn from experienced traders.
             </p>
           </div>
 
-          <div className="bg-white border border-gray-200 rounded-lg p-6">
+          <div className="bg-bg-tertiary border border-border-subtle rounded-lg p-6">
             <MessageSquare className="w-8 h-8 text-green-500 mx-auto mb-3" />
-            <h3 className="font-semibold text-gray-900 mb-2">Real-time Discussion</h3>
-            <p className="text-gray-600 text-sm">
+            <h3 className="font-semibold text-text-primary mb-2">Real-time Discussion</h3>
+            <p className="text-text-secondary text-sm">
               Get instant feedback and discuss market movements as they happen.
             </p>
           </div>
 
-          <div className="bg-white border border-gray-200 rounded-lg p-6">
+          <div className="bg-bg-tertiary border border-border-subtle rounded-lg p-6">
             <Clock className="w-8 h-8 text-purple-500 mx-auto mb-3" />
-            <h3 className="font-semibold text-gray-900 mb-2">24/7 Support</h3>
-            <p className="text-gray-600 text-sm">
+            <h3 className="font-semibold text-text-primary mb-2">24/7 Support</h3>
+            <p className="text-text-secondary text-sm">
               Access community support and platform assistance around the clock.
             </p>
           </div>

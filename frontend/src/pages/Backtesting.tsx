@@ -299,7 +299,7 @@ const Backtesting: React.FC = () => {
 
   const renderSetupTab = () => (
     <div className="space-y-6">
-      <div className="bg-white p-6 rounded-lg shadow">
+      <div className="bg-bg-tertiary p-6 rounded-lg shadow">
         <h3 className="text-lg font-medium mb-4 flex items-center">
           <Settings className="w-5 h-5 mr-2" />
           Backtest Configuration
@@ -357,14 +357,14 @@ const Backtesting: React.FC = () => {
                     className={`px-3 py-1 text-xs rounded-md border transition-colors ${
                       backtestOptions.initialBalance === amount
                         ? 'bg-blue-100 border-blue-300 text-blue-700'
-                        : 'bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100'
+                        : 'bg-bg-secondary border-border-subtle text-gray-600 hover:bg-bg-tertiary'
                     }`}
                   >
                     ${amount.toLocaleString()}
                   </button>
                 ))}
               </div>
-              <p className="text-xs text-gray-500">
+              <p className="text-xs text-text-muted">
                 Choose a starting balance for your backtest simulation
               </p>
             </div>
@@ -446,7 +446,7 @@ const Backtesting: React.FC = () => {
       </div>
 
       {/* Session History */}
-      <div className="bg-white p-6 rounded-lg shadow">
+      <div className="bg-bg-tertiary p-6 rounded-lg shadow">
         <h3 className="text-lg font-medium mb-4">Recent Sessions</h3>
         <div className="space-y-3">
           {sessions.slice(0, 5).map(session => (
@@ -456,7 +456,7 @@ const Backtesting: React.FC = () => {
               className={`p-4 border rounded-md cursor-pointer transition-colors ${
                 activeSession?.id === session.id
                   ? 'border-blue-500 bg-blue-50'
-                  : 'border-gray-200 hover:border-gray-300'
+                  : 'border-border-subtle hover:border-gray-300'
               }`}
             >
               <div className="flex items-center justify-between">
@@ -494,9 +494,9 @@ const Backtesting: React.FC = () => {
   const renderResultsTab = () => {
     if (!activeSession?.result) {
       return (
-        <div className="bg-white p-8 rounded-lg shadow text-center">
+        <div className="bg-bg-tertiary p-8 rounded-lg shadow text-center">
           <TrendingUp className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">No Results Available</h3>
+          <h3 className="text-lg font-medium text-text-primary mb-2">No Results Available</h3>
           <p className="text-gray-600">Run a backtest to see results here.</p>
         </div>
       );
@@ -509,7 +509,7 @@ const Backtesting: React.FC = () => {
       <div className="space-y-6">
         {/* Key Performance Metrics */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="bg-white p-4 rounded-lg shadow">
+          <div className="bg-bg-tertiary p-4 rounded-lg shadow">
             <div className="flex items-center">
               <TrendingUp className="w-8 h-8 text-green-500 mr-3" />
               <div>
@@ -521,7 +521,7 @@ const Backtesting: React.FC = () => {
             </div>
           </div>
 
-          <div className="bg-white p-4 rounded-lg shadow">
+          <div className="bg-bg-tertiary p-4 rounded-lg shadow">
             <div className="flex items-center">
               <BarChart3 className="w-8 h-8 text-blue-500 mr-3" />
               <div>
@@ -531,7 +531,7 @@ const Backtesting: React.FC = () => {
             </div>
           </div>
 
-          <div className="bg-white p-4 rounded-lg shadow">
+          <div className="bg-bg-tertiary p-4 rounded-lg shadow">
             <div className="flex items-center">
               <AlertTriangle className="w-8 h-8 text-red-500 mr-3" />
               <div>
@@ -541,7 +541,7 @@ const Backtesting: React.FC = () => {
             </div>
           </div>
 
-          <div className="bg-white p-4 rounded-lg shadow">
+          <div className="bg-bg-tertiary p-4 rounded-lg shadow">
             <div className="flex items-center">
               <Activity className="w-8 h-8 text-purple-500 mr-3" />
               <div>
@@ -554,7 +554,7 @@ const Backtesting: React.FC = () => {
 
         {/* Advanced Risk Metrics */}
         {metrics && (
-          <div className="bg-white p-6 rounded-lg shadow">
+          <div className="bg-bg-tertiary p-6 rounded-lg shadow">
             <h3 className="text-lg font-medium mb-4">Advanced Risk Metrics</h3>
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
               <div className="text-center p-3 bg-gray-50 rounded">
@@ -706,7 +706,7 @@ const Backtesting: React.FC = () => {
       return (
         <div className="bg-white p-8 rounded-lg shadow text-center">
           <PieChart className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">Advanced Analysis</h3>
+          <h3 className="text-lg font-medium text-text-primary mb-2">Advanced Analysis</h3>
           <p className="text-gray-600">Run a backtest to see advanced analysis and risk metrics.</p>
         </div>
       );
@@ -752,11 +752,11 @@ const Backtesting: React.FC = () => {
               <h4 className="font-medium text-blue-800 mb-2">Advanced Ratios</h4>
               <div className="space-y-2">
                 <div className="flex justify-between">
-                  <span className="text-sm text-blue-600">Calmar Ratio</span>
+                  <span className="text-sm text-brand-cyan">Calmar Ratio</span>
                   <span className="font-bold text-blue-800">{metrics.calmarRatio.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-sm text-blue-600">Sortino Ratio</span>
+                  <span className="text-sm text-brand-cyan">Sortino Ratio</span>
                   <span className="font-bold text-blue-800">{metrics.sortinoRatio.toFixed(2)}</span>
                 </div>
               </div>
@@ -833,9 +833,9 @@ const Backtesting: React.FC = () => {
         <div className="bg-white p-6 rounded-lg shadow">
           <h3 className="text-lg font-medium mb-4">Performance Attribution</h3>
           <div className="bg-blue-50 p-4 rounded-lg text-center">
-            <PieChart className="w-8 h-8 text-blue-600 mx-auto mb-2" />
+            <PieChart className="w-8 h-8 text-brand-cyan mx-auto mb-2" />
             <p className="text-blue-700 font-medium">Factor Analysis</p>
-            <p className="text-sm text-blue-600 mt-1">
+            <p className="text-sm text-brand-cyan mt-1">
               Factor decomposition and performance attribution analysis coming in next update
             </p>
           </div>
@@ -878,8 +878,8 @@ const Backtesting: React.FC = () => {
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 flex items-center">
-          <Zap className="w-8 h-8 mr-3 text-blue-600" />
+        <h1 className="text-3xl font-bold text-text-primary flex items-center">
+          <Zap className="w-8 h-8 mr-3 text-brand-cyan" />
           Advanced Backtesting Engine
         </h1>
         <p className="mt-2 text-gray-600">
@@ -889,7 +889,7 @@ const Backtesting: React.FC = () => {
 
       {/* Tabs */}
       <div className="mb-6">
-        <div className="border-b border-gray-200">
+        <div className="border-b border-border-subtle">
           <nav className="-mb-px flex space-x-8">
             {[
               { id: 'setup', label: 'Setup', icon: Settings },
@@ -904,7 +904,7 @@ const Backtesting: React.FC = () => {
                 className={`py-2 px-1 border-b-2 font-medium text-sm flex items-center ${
                   activeTab === id
                     ? 'border-blue-500 text-blue-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                    : 'border-transparent text-text-muted hover:text-text-secondary hover:border-border-moderate'
                 }`}
               >
                 <Icon className="w-4 h-4 mr-2" />

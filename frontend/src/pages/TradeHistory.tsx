@@ -236,58 +236,58 @@ const TradeHistory: React.FC = () => {
       case 'partial':
         return 'bg-yellow-100 text-yellow-800';
       case 'cancelled':
-        return 'bg-red-100 text-red-800';
+        return 'bg-error/10 text-error border border-error/20';
       default:
-        return 'bg-gray-100 text-gray-800';
+        return 'bg-bg-secondary text-text-secondary border border-border-subtle';
     }
   };
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 flex items-center">
-          <BarChart3 className="w-8 h-8 mr-3 text-blue-600" />
+        <h1 className="text-3xl font-bold text-text-primary flex items-center">
+          <BarChart3 className="w-8 h-8 mr-3 text-brand-cyan" />
           Trade History
         </h1>
-        <p className="mt-2 text-gray-600">
+        <p className="mt-2 text-text-secondary">
           Complete history of your trading activity and performance
         </p>
       </div>
 
       {/* Summary Statistics */}
       <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
-        <div className="bg-white p-4 rounded-lg shadow">
-          <div className="text-2xl font-bold text-gray-900">{summaryStats.totalTrades}</div>
-          <div className="text-sm text-gray-500">Total Trades</div>
+        <div className="bg-bg-tertiary p-4 rounded-lg shadow-elev-1 border border-border-subtle">
+          <div className="text-2xl font-bold text-text-primary">{summaryStats.totalTrades}</div>
+          <div className="text-sm text-text-muted">Total Trades</div>
         </div>
-        <div className="bg-white p-4 rounded-lg shadow">
-          <div className="text-2xl font-bold text-blue-600">
+        <div className="bg-bg-tertiary p-4 rounded-lg shadow-elev-1 border border-border-subtle">
+          <div className="text-2xl font-bold text-brand-cyan">
             ${summaryStats.totalVolume.toFixed(0)}
           </div>
-          <div className="text-sm text-gray-500">Total Volume</div>
+          <div className="text-sm text-text-muted">Total Volume</div>
         </div>
-        <div className="bg-white p-4 rounded-lg shadow">
-          <div className={`text-2xl font-bold ${summaryStats.totalPnL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+        <div className="bg-bg-tertiary p-4 rounded-lg shadow-elev-1 border border-border-subtle">
+          <div className={`text-2xl font-bold ${summaryStats.totalPnL >= 0 ? 'text-success' : 'text-error'}`}>
             {summaryStats.totalPnL >= 0 ? '+' : ''}${summaryStats.totalPnL.toFixed(2)}
           </div>
-          <div className="text-sm text-gray-500">Total P&L</div>
+          <div className="text-sm text-text-muted">Total P&L</div>
         </div>
-        <div className="bg-white p-4 rounded-lg shadow">
+        <div className="bg-bg-tertiary p-4 rounded-lg shadow">
           <div className="text-2xl font-bold text-orange-600">
             ${summaryStats.totalFees.toFixed(2)}
           </div>
-          <div className="text-sm text-gray-500">Total Fees</div>
+          <div className="text-sm text-text-muted">Total Fees</div>
         </div>
-        <div className="bg-white p-4 rounded-lg shadow">
+        <div className="bg-bg-tertiary p-4 rounded-lg shadow">
           <div className={`text-2xl font-bold ${summaryStats.winRate >= 50 ? 'text-green-600' : 'text-red-600'}`}>
             {summaryStats.winRate.toFixed(1)}%
           </div>
-          <div className="text-sm text-gray-500">Win Rate</div>
+          <div className="text-sm text-text-muted">Win Rate</div>
         </div>
       </div>
 
       {/* Search and Filters */}
-      <div className="bg-white p-6 rounded-lg shadow mb-6">
+      <div className="bg-bg-tertiary p-6 rounded-lg shadow mb-6">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
           <div className="flex-1 relative">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
@@ -302,7 +302,7 @@ const TradeHistory: React.FC = () => {
           <div className="flex gap-2">
             <button
               onClick={() => setShowFilters(!showFilters)}
-              className="flex items-center px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50"
+              className="flex items-center px-4 py-2 border border-gray-300 rounded-md hover:bg-bg-secondary"
             >
               <Filter className="w-4 h-4 mr-2" />
               Filters
@@ -389,7 +389,7 @@ const TradeHistory: React.FC = () => {
       <div className="bg-white rounded-lg shadow overflow-hidden">
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
+            <thead className="bg-bg-secondary">
               <tr>
                 {[
                   { key: 'timestamp', label: 'Date/Time' },
@@ -407,7 +407,7 @@ const TradeHistory: React.FC = () => {
                   <th
                     key={header.key}
                     onClick={() => handleSort(header.key as keyof TradeHistoryItem)}
-                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                    className="px-6 py-3 text-left text-xs font-medium text-text-muted uppercase tracking-wider cursor-pointer hover:bg-gray-100"
                   >
                     <div className="flex items-center">
                       {header.label}
@@ -419,11 +419,11 @@ const TradeHistory: React.FC = () => {
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {paginatedTrades.map((trade) => (
-                <tr key={trade.id} className="hover:bg-gray-50">
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                <tr key={trade.id} className="hover:bg-bg-secondary">
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-text-primary">
                     {trade.timestamp.toLocaleString()}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-text-primary">
                     {trade.pair}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm">
@@ -438,16 +438,16 @@ const TradeHistory: React.FC = () => {
                       </span>
                     </div>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600 capitalize">
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-text-secondary capitalize">
                     {trade.type}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-text-primary">
                     {trade.amount.toFixed(6)}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-text-primary">
                     ${trade.price.toFixed(2)}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-text-primary">
                     ${trade.total.toFixed(2)}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-orange-600">
@@ -460,7 +460,7 @@ const TradeHistory: React.FC = () => {
                       </span>
                     )}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-text-secondary">
                     {trade.strategy}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
@@ -476,19 +476,19 @@ const TradeHistory: React.FC = () => {
 
         {/* Pagination */}
         {totalPages > 1 && (
-          <div className="bg-white px-6 py-3 border-t border-gray-200 flex items-center justify-between">
+          <div className="bg-white px-6 py-3 border-t border-border-subtle flex items-center justify-between">
             <div className="flex-1 flex justify-between sm:hidden">
               <button
                 onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
                 disabled={currentPage === 1}
-                className="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
+                className="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-bg-secondary disabled:opacity-50"
               >
                 Previous
               </button>
               <button
                 onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
                 disabled={currentPage === totalPages}
-                className="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
+                className="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-bg-secondary disabled:opacity-50"
               >
                 Next
               </button>
@@ -512,7 +512,7 @@ const TradeHistory: React.FC = () => {
                   <button
                     onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
                     disabled={currentPage === 1}
-                    className="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50"
+                    className="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-text-muted hover:bg-gray-50 disabled:opacity-50"
                   >
                     Previous
                   </button>
@@ -524,7 +524,7 @@ const TradeHistory: React.FC = () => {
                         onClick={() => setCurrentPage(page)}
                         className={`relative inline-flex items-center px-4 py-2 border text-sm font-medium ${
                           currentPage === page
-                            ? 'z-10 bg-blue-50 border-blue-500 text-blue-600'
+                            ? 'z-10 bg-brand-cyan/10 border-brand-cyan text-brand-cyan'
                             : 'bg-white border-gray-300 text-gray-500 hover:bg-gray-50'
                         }`}
                       >

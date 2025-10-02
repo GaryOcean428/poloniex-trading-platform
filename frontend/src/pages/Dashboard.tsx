@@ -18,14 +18,13 @@ const Dashboard: React.FC = () => {
   
   return (
     <div className="container-responsive">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-neutral-800">Trading Dashboard</h1>
+      <div className="flex items-center justify-between mb-8">
+        <h1 className="heading-primary">Trading Dashboard</h1>
         
         <div className="flex items-center space-x-3">
-          {/* Live Trading CTA */}
           <Link
             to="/dashboard/live"
-            className="flex items-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors font-medium"
+            className="flex items-center space-x-2 px-5 py-2.5 bg-success text-text-inverse rounded-lg hover:bg-success/90 transition-all duration-200 font-semibold shadow-elev-1 hover:shadow-elev-2"
           >
             <Activity size={16} />
             <span>Go Live</span>
@@ -34,22 +33,20 @@ const Dashboard: React.FC = () => {
         </div>
       </div>
       
-      <div className="mb-4 lg:mb-6">
+      <div className="mb-6 lg:mb-8">
         <ExtensionBanner />
       </div>
       
-      {/* Real-time Market Ticker */}
-      <div className="mb-4 lg:mb-6">
+      <div className="mb-6 lg:mb-8">
         <RealTimeMarketTicker />
       </div>
 
-      {/* Autonomous Trading Dashboard */}
-      <div className="mb-4 lg:mb-6">
+      <div className="mb-6 lg:mb-8">
         <AutonomousTradingDashboard />
       </div>
       
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 lg:gap-6">
-        <div className="xl:col-span-2 space-y-4 lg:space-y-6">
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 lg:gap-8">
+        <div className="xl:col-span-2 space-y-6 lg:space-y-8">
           <section className="trading-card" aria-labelledby="market-overview-heading">
             <h2 id="market-overview-heading" className="text-lg sm:text-xl font-bold mb-4">Market Overview</h2>
             <div className="chart-container">
@@ -72,7 +69,7 @@ const Dashboard: React.FC = () => {
           </section>
         </div>
         
-        <aside className="space-y-4 lg:space-y-6" aria-label="Account information and controls">
+        <aside className="space-y-6 lg:space-y-8" aria-label="Account information and controls">
           <section className="trading-card" aria-labelledby="account-summary-heading">
             <h2 id="account-summary-heading" className="sr-only">Account Summary</h2>
             <AccountSummary />
@@ -86,21 +83,21 @@ const Dashboard: React.FC = () => {
                 .map(strategy => (
                   <div 
                     key={strategy.id} 
-                    className="p-3 sm:p-4 bg-blue-50 border border-blue-100 rounded-md"
+                    className="p-4 bg-bg-elevated border border-border-subtle rounded-lg shadow-elev-1 hover:shadow-elev-2 transition-all duration-200"
                     role="listitem"
                     aria-labelledby={`strategy-${strategy.id}-name`}
                   >
                     <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2">
                       <div className="min-w-0 flex-1">
-                        <h3 id={`strategy-${strategy.id}-name`} className="font-medium text-sm sm:text-base truncate">
+                        <h3 id={`strategy-${strategy.id}-name`} className="font-semibold text-sm sm:text-base truncate text-text-primary">
                           {strategy.name}
                         </h3>
-                        <p className="text-xs sm:text-sm text-neutral-500" aria-label={`Trading pair: ${strategy.parameters.pair}`}>
+                        <p className="text-xs sm:text-sm text-text-secondary" aria-label={`Trading pair: ${strategy.parameters.pair}`}>
                           {strategy.parameters.pair}
                         </p>
                       </div>
                       <span 
-                        className="inline-flex items-center px-2 py-1 sm:px-2.5 sm:py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 self-start sm:self-auto"
+                        className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-success/10 text-success border border-success/20 self-start sm:self-auto"
                         aria-label="Strategy status: Active"
                       >
                         Active
@@ -110,7 +107,7 @@ const Dashboard: React.FC = () => {
                 ))}
               
               {activeStrategies.length === 0 && (
-                <p className="text-neutral-500 text-sm text-center py-4" role="status" aria-live="polite">
+                <p className="text-text-muted text-sm text-center py-4" role="status" aria-live="polite">
                   No active strategies
                 </p>
               )}
