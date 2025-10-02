@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { pool } from '../db/connection.js';
 import { env } from '../config/env.js';
+import { logger } from '../utils/logger.js';
 
 const router = express.Router();
 
@@ -59,7 +60,7 @@ router.post('/login', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Login error:', error);
+    logger.error('Login error', { error: error.message, stack: error.stack });
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -84,7 +85,7 @@ router.get('/verify', (req, res) => {
     try {
       decoded = jwt.verify(token, env.JWT_SECRET);
     } catch (e) {
-      console.warn('JWT verify failed:', e?.message || e);
+      logger.warn('JWT verify failed', { error: e?.message || e });
       return res.status(401).json({ success: false, error: 'Invalid token' });
     }
 
@@ -95,7 +96,7 @@ router.get('/verify', (req, res) => {
     });
   } catch (err) {
     // Absolute fallback: never escalate to global 500
-    console.error('Verify handler error:', err);
+    logger.error('Verify handler error', { error: err.message, stack: err.stack });
     return res.status(401).json({ success: false, error: 'Invalid token' });
   }
 });
@@ -148,7 +149,7 @@ router.post('/register', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Registration error:', error);
+    logger.error('Registration error', { error: error.message, stack: error.stack });
     res.status(500).json({ error: 'Server error' });
   }
 });

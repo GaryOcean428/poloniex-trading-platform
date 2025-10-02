@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { EventEmitter } from 'events';
 import { logger } from '../utils/logger.js';
 import { pool } from '../db/connection.js';
+const alertingService = require('../services/alertingService.js');
 
 // Query helper function
 const query = async (text: string, params?: unknown[]) => {
@@ -192,6 +193,17 @@ class FuturesWebSocketClient extends EventEmitter {
         this.isConnected = false;
         this.stopPingInterval();
         this.emit('disconnected', { type: 'public', code, reason: reason.toString() });
+        
+        // Alert if multiple reconnect attempts
+        if (this.reconnectAttempts >= 3) {
+          alertingService.alertDisconnection({
+            service: 'public_websocket',
+            code,
+            reason: reason.toString(),
+            reconnectAttempts: this.reconnectAttempts
+          });
+        }
+        
         this.scheduleReconnect('public');
       });
 
@@ -234,6 +246,17 @@ class FuturesWebSocketClient extends EventEmitter {
       this.privateWS.on('close', (code: number, reason: Buffer) => {
         logger.warn(`Private WebSocket closed: ${code} - ${reason.toString()}`);
         this.emit('disconnected', { type: 'private', code, reason: reason.toString() });
+        
+        // Alert if multiple reconnect attempts
+        if (this.reconnectAttempts >= 3) {
+          alertingService.alertDisconnection({
+            service: 'private_websocket',
+            code,
+            reason: reason.toString(),
+            reconnectAttempts: this.reconnectAttempts
+          });
+        }
+        
         this.scheduleReconnect('private');
       });
 

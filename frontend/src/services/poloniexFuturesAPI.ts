@@ -37,7 +37,9 @@ function resolveFuturesBase(raw: string): { baseHost: string; apiPrefix: string 
   }
 }
 
-const { baseHost: BASE_HOST, apiPrefix: API_PREFIX } = resolveFuturesBase(RAW_BASE);
+// Always use backend proxy to avoid CORS issues
+const BASE_HOST = "";
+const API_PREFIX = "/api/futures";
 
 // Normalize symbol (UI uses BTC-USDT; API commonly expects BTCUSDT)
 const normalizeFuturesSymbol = (sym?: string): string | undefined => {

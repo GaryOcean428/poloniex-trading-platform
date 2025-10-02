@@ -46,10 +46,10 @@ export const getApiBaseUrl = (service: 'futures' | 'spot' = 'futures'): string =
     return nextPublicApiUrl;
   }
 
-  // Default to official Poloniex V3 futures API endpoints
+  // Use backend proxy endpoints to avoid CORS issues
   return service === 'futures'
-    ? 'https://api.poloniex.com/v3/futures'
-    : 'https://api.poloniex.com/v3';
+    ? '/api/futures'
+    : '/api/spot';
 };
 
 // Get WebSocket URLs for V3 futures

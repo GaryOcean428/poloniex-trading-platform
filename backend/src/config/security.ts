@@ -10,6 +10,7 @@ import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import type { CorsOptions } from 'cors';
 import { env } from './env.js';
+import { logger } from '../utils/logger.js';
 
 /**
  * Enhanced security headers configuration using helmet
@@ -101,7 +102,7 @@ export function createCorsOptions(): CorsOptions {
       }
 
       // Log blocked origins for debugging
-      console.warn(`🚫 CORS blocked origin: ${origin}`);
+      logger.warn('CORS blocked origin', { origin });
       return callback(new Error('Not allowed by CORS'), false);
     },
     credentials: true,
@@ -145,7 +146,7 @@ export function securityLogger(req: any, res: any, next: any) {
   );
 
   if (isSuspicious) {
-    console.warn(`🚨 Suspicious request detected:`, {
+    logger.warn('Suspicious request detected', {
       ip: req.ip,
       method: req.method,
       url: url,
