@@ -3,8 +3,8 @@ import { authenticateToken } from '../middleware/auth.js';
 import poloniexFuturesService from '../services/poloniexFuturesService.js';
 import { UserService } from '../services/userService.js';
 import { logger } from '../utils/logger.js';
-const riskService = require('./riskService.js');
-const alertingService = require('./alertingService.js');
+const riskService = require('../services/riskService.js');
+const alertingService = require('../services/alertingService.js');
 
 const router = express.Router();
 
