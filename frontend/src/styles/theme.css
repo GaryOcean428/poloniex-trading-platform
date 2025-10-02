@@ -1,0 +1,310 @@
+/* Universal Theme System - Eye-Comfort Optimized Design */
+
+:root {
+  /* === Background Colors === */
+  --bg-primary: #fafaf9;        /* Warm off-white, not pure white */
+  --bg-secondary: #f5f4f2;      /* Slightly darker warm grey */
+  --bg-tertiary: #edecea;       /* Card backgrounds */
+  --bg-elevated: #f8f9fa;       /* Reserved for modals/popovers only */
+  --bg-overlay: rgba(15, 23, 42, 0.75);  /* Modal overlays */
+  
+  /* === Text Colors === */
+  --text-primary: #1e293b;      /* High contrast primary text */
+  --text-secondary: #475569;    /* Secondary text */
+  --text-muted: #64748b;        /* Muted text, metadata */
+  --text-inverse: #f8fafc;      /* Text on dark backgrounds */
+  
+  /* === Border Colors === */
+  --border-subtle: #e2e8f0;     /* Subtle borders */
+  --border-moderate: #cbd5e1;   /* Default borders */
+  --border-strong: #94a3b8;     /* Strong borders */
+  
+  /* === Brand Colors === */
+  --brand-cyan: #06b6d4;        /* Primary brand color */
+  --brand-purple: #8b5cf6;      /* Secondary brand color */
+  
+  /* === Semantic Colors === */
+  --success: #10b981;
+  --success-bg: #d1fae5;
+  --warning: #f59e0b;
+  --warning-bg: #fef3c7;
+  --error: #ef4444;
+  --error-bg: #fee2e2;
+  --info: #3b82f6;
+  --info-bg: #dbeafe;
+  
+  /* === Interactive States === */
+  --interactive-primary: #0891b2;
+  --interactive-primary-hover: #0e7490;
+  --interactive-secondary: #6366f1;
+  --interactive-secondary-hover: #4f46e5;
+  
+  /* === Elevation (Shadows) === */
+  --shadow-elev-0: none;
+  --shadow-elev-1: 0 1px 3px rgba(15, 23, 42, 0.08), 0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow-elev-2: 0 4px 6px rgba(15, 23, 42, 0.08), 0 2px 4px rgba(15, 23, 42, 0.04);
+  --shadow-elev-3: 0 10px 15px rgba(15, 23, 42, 0.1), 0 4px 6px rgba(15, 23, 42, 0.05);
+  --shadow-elev-4: 0 20px 25px rgba(15, 23, 42, 0.12), 0 10px 10px rgba(15, 23, 42, 0.04);
+  
+  /* === Focus States === */
+  --focus-ring: 0 0 0 3px rgba(6, 182, 212, 0.4);
+  --focus-ring-offset: 2px;
+  
+  /* === Glow Effects === */
+  --glow-cyan: 0 0 12px rgba(6, 182, 212, 0.25), 0 0 24px rgba(6, 182, 212, 0.12);
+  --glow-purple: 0 0 12px rgba(139, 92, 246, 0.25), 0 0 24px rgba(139, 92, 246, 0.12);
+}
+
+/* Dark Mode Variables */
+.dark, [data-theme="dark"] {
+  --bg-primary: #0f172a;
+  --bg-secondary: #1e293b;
+  --bg-tertiary: #334155;
+  --bg-elevated: #475569;
+  --bg-overlay: rgba(0, 0, 0, 0.85);
+  
+  --text-primary: #f1f5f9;
+  --text-secondary: #cbd5e1;
+  --text-muted: #94a3b8;
+  --text-inverse: #1e293b;
+  
+  --border-subtle: #334155;
+  --border-moderate: #475569;
+  --border-strong: #64748b;
+  
+  /* Semantic colors adjusted for dark mode */
+  --success: #34d399;
+  --success-bg: #064e3b;
+  --warning: #fbbf24;
+  --warning-bg: #78350f;
+  --error: #f87171;
+  --error-bg: #7f1d1d;
+  --info: #60a5fa;
+  --info-bg: #1e3a8a;
+}
+
+/* === Utility Classes === */
+
+/* Cards */
+.card {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.75rem;
+  box-shadow: var(--shadow-elev-1);
+  padding: 1.5rem;
+}
+
+.card--elevated {
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-elev-2);
+}
+
+.card--interactive:hover {
+  box-shadow: var(--shadow-elev-3);
+  transform: translateY(-1px);
+  transition: all 0.2s ease;
+}
+
+/* Buttons */
+.btn-primary {
+  background: var(--brand-cyan);
+  color: var(--text-inverse);
+  border: none;
+  padding: 0.625rem 1.25rem;
+  border-radius: 0.5rem;
+  font-weight: 500;
+  transition: all 0.15s ease;
+  cursor: pointer;
+}
+
+.btn-primary:hover {
+  background: var(--interactive-primary-hover);
+  box-shadow: var(--glow-cyan);
+}
+
+.btn-primary:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.btn-secondary {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-moderate);
+  padding: 0.625rem 1.25rem;
+  border-radius: 0.5rem;
+  font-weight: 500;
+  transition: all 0.15s ease;
+  cursor: pointer;
+}
+
+.btn-secondary:hover {
+  background: var(--bg-tertiary);
+  border-color: var(--border-strong);
+}
+
+.btn-danger {
+  background: var(--error);
+  color: var(--text-inverse);
+  border: none;
+  padding: 0.625rem 1.25rem;
+  border-radius: 0.5rem;
+  font-weight: 500;
+  transition: all 0.15s ease;
+  cursor: pointer;
+}
+
+.btn-danger:hover {
+  opacity: 0.9;
+}
+
+/* Connection Status Widget */
+.connection-status-widget {
+  position: fixed;
+  bottom: 10px;
+  left: 10px;
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  padding: 15px;
+  border-radius: 8px;
+  font-size: 12px;
+  z-index: 40;
+  max-width: 350px;
+  border: 1px solid var(--border-moderate);
+  box-shadow: var(--shadow-elev-3);
+}
+
+.connection-status-widget__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 10px;
+}
+
+.connection-status-widget__title {
+  margin: 0 0 5px 0;
+  color: var(--brand-cyan);
+}
+
+.connection-status-widget__close-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 16px;
+  padding: 0;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.connection-status-widget__close-btn:hover {
+  color: var(--text-primary);
+}
+
+.connection-status-widget__section {
+  margin-bottom: 15px;
+}
+
+.connection-status-widget__row {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.connection-status-widget__url {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.connection-status-widget__status {
+  font-weight: bold;
+}
+
+.connection-status-widget__status--connected {
+  color: var(--success);
+}
+
+.connection-status-widget__status--failed {
+  color: var(--error);
+}
+
+.connection-status-widget__status--warning {
+  color: var(--warning);
+}
+
+.connection-status-widget__pre {
+  background: var(--bg-primary);
+  padding: 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  margin-top: 8px;
+}
+
+.connection-status-widget__refresh-btn {
+  width: 100%;
+  padding: 8px;
+  background: var(--brand-cyan);
+  color: var(--text-inverse);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.connection-status-widget__refresh-btn:hover {
+  background: var(--interactive-primary-hover);
+}
+
+.connection-status-widget__toggle-btn {
+  position: fixed;
+  bottom: 10px;
+  left: 10px;
+  background: var(--bg-elevated);
+  color: var(--brand-cyan);
+  border: 1px solid var(--border-moderate);
+  border-radius: 4px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  z-index: 40;
+}
+
+.connection-status-widget__toggle-btn:hover {
+  background: var(--bg-tertiary);
+}
+
+/* Focus Indicators */
+*:focus-visible {
+  outline: 2px solid var(--brand-cyan);
+  outline-offset: var(--focus-ring-offset);
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--brand-cyan);
+  outline-offset: 2px;
+}
+
+/* Reduced Motion Support */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Chart Theme Context */
+[data-theme-context="charts"] {
+  --recharts-stroke: var(--brand-cyan);
+  --recharts-fill: var(--brand-purple);
+}
