@@ -126,18 +126,18 @@ const RealTimeMarketTicker: React.FC = () => {
   };
 
   return (
-    <div className="bg-white rounded-lg shadow p-4">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold flex items-center">
-          <Activity className="w-5 h-5 mr-2 text-blue-600" />
-          Market Ticker
+    <div className="bg-bg-tertiary rounded-lg shadow-elev-2 p-6">
+      <div className="flex items-center justify-between mb-6">
+        <h3 className="text-xl font-semibold flex items-center">
+          <Activity className="w-5 h-5 mr-2 text-brand-cyan" />
+          Live Market Data
         </h3>
         <div className="flex items-center space-x-2">
           <div className={`w-2 h-2 rounded-full ${getConnectionStatusColor()} animate-pulse`}></div>
-          <span className="text-xs text-gray-600">{getConnectionStatusText()}</span>
+          <span className="text-xs text-text-muted">{getConnectionStatusText()}</span>
           {isConnected ?
-            <Wifi className="w-4 h-4 text-green-600" /> :
-            <WifiOff className="w-4 h-4 text-red-600" />
+            <Wifi className="w-4 h-4 text-success" /> :
+            <WifiOff className="w-4 h-4 text-error" />
           }
         </div>
       </div>
@@ -146,47 +146,46 @@ const RealTimeMarketTicker: React.FC = () => {
         {tickerData.map((ticker) => (
           <div
             key={ticker.symbol}
-            className="border border-gray-200 rounded-md p-3 hover:border-blue-300 transition-colors"
+            className="border border-border-subtle rounded-lg p-4 hover:border-brand-cyan hover:shadow-elev-2 transition-all duration-200 bg-bg-elevated"
           >
-            <div className="flex items-center justify-between mb-2">
-              <span className="font-medium text-gray-900">{ticker.symbol}</span>
+            <div className="flex items-center justify-between mb-3">
+              <span className="font-semibold text-text-primary">{ticker.symbol}</span>
               {ticker.changePercent24h >= 0 ? (
-                <TrendingUp className="w-4 h-4 text-green-600" />
+                <TrendingUp className="w-4 h-4 text-success" />
               ) : (
-                <TrendingDown className="w-4 h-4 text-red-600" />
+                <TrendingDown className="w-4 h-4 text-error" />
               )}
             </div>
 
-            <div className="space-y-1">
-              <div className="text-xl font-bold text-gray-900">
+            <div className="space-y-2">
+              <div className="text-2xl font-extrabold text-text-primary">
                 ${formatPrice(ticker.price, ticker.symbol)}
               </div>
 
-              <div className={`text-sm font-medium ${ticker.changePercent24h >= 0 ? 'text-green-600' : 'text-red-600'
+              <div className={`text-sm font-semibold ${ticker.changePercent24h >= 0 ? 'text-success' : 'text-error'
                 }`}>
                 {ticker.changePercent24h >= 0 ? '+' : ''}{ticker.changePercent24h.toFixed(2)}%
-                <span className="ml-1 text-gray-500">
+                <span className="ml-1 text-text-muted font-normal">
                   ({ticker.change24h >= 0 ? '+' : ''}${ticker.change24h.toFixed(2)})
                 </span>
               </div>
 
-              <div className="text-xs text-gray-500 space-y-0.5">
+              <div className="text-xs text-text-muted space-y-0.5">
                 <div>Vol: {formatVolume(ticker.volume24h)}</div>
                 <div>H: ${formatPrice(ticker.high24h, ticker.symbol)} L: ${formatPrice(ticker.low24h, ticker.symbol)}</div>
               </div>
             </div>
 
-            <div className="mt-2 text-xs text-gray-400">
+            <div className="mt-3 text-xs text-text-muted">
               {ticker.lastUpdateTime.toLocaleTimeString()}
             </div>
           </div>
         ))}
       </div>
 
-      {/* Real-time status indicator */}
-      <div className="mt-4 flex items-center justify-center text-xs text-gray-500">
+      <div className="mt-6 flex items-center justify-center text-xs text-text-muted">
         <div className="flex items-center space-x-1">
-          <div className="w-1 h-1 bg-blue-500 rounded-full animate-pulse"></div>
+          <div className="w-1 h-1 bg-brand-cyan rounded-full animate-pulse"></div>
           <span>Updates every 2 seconds</span>
         </div>
       </div>

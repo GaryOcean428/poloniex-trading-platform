@@ -64,9 +64,9 @@ const AccountSummary: React.FC = () => {
 
   const getConnectionStatusIcon = () => {
     if (isConnected) {
-      return <Wifi className="h-4 w-4 text-green-600" aria-label="Connected" />;
+      return <Wifi className="h-4 w-4 text-success" aria-label="Connected" />;
     } else {
-      return <WifiOff className="h-4 w-4 text-red-600" aria-label="Disconnected" />;
+      return <WifiOff className="h-4 w-4 text-error" aria-label="Disconnected" />;
     }
   };
 
@@ -77,90 +77,87 @@ const AccountSummary: React.FC = () => {
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-xl font-bold flex items-center">
+        <h2 className="text-xl font-bold flex items-center text-text-primary">
           Account Summary
-          {isLoading && <span className="text-sm text-neutral-500 ml-2">Loading...</span>}
+          {isLoading && <span className="text-sm text-text-muted ml-2">Loading...</span>}
         </h2>
         <div className="flex items-center space-x-2">
           {getConnectionStatusIcon()}
           <button
             onClick={handleRefresh}
             disabled={isRefreshing}
-            className="p-1 rounded-md hover:bg-gray-100 disabled:opacity-50"
+            className="p-1 rounded-md hover:bg-bg-secondary disabled:opacity-50 transition-colors"
             title="Refresh account data"
           >
-            <RefreshCw className={`h-4 w-4 text-gray-600 ${isRefreshing ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`h-4 w-4 text-text-secondary ${isRefreshing ? 'animate-spin' : ''}`} />
           </button>
         </div>
       </div>
 
       {/* Connection Status Bar */}
       <div className={`mb-4 p-2 rounded-md text-xs flex items-center justify-between ${
-        isConnected ? 'bg-green-50 text-green-700' : 'bg-yellow-50 text-yellow-700'
+        isConnected ? 'bg-success/10 text-success border border-success/20' : 'bg-warning/10 text-warning border border-warning/20'
       }`}>
         <span className="flex items-center">
           {getConnectionStatusIcon()}
-          <span className="ml-1">
+          <span className="ml-1 font-medium">
             {isMockMode ? 'Mock Mode' : isConnected ? 'Live Data' : 'Offline'}
           </span>
         </span>
-        <span>
+        <span className="text-text-muted">
           Last updated: {formatTime(lastUpdateTime)}
         </span>
       </div>
 
       <div className="space-y-4">
         <div className="grid grid-cols-2 gap-4">
-          <div className="bg-neutral-50 p-3 rounded-md relative">
-            <div className="text-sm text-neutral-500">Total Balance</div>
-            <div className="text-xl font-bold flex items-center">
-              <DollarSign className="h-4 w-4 mr-1 text-neutral-500" />
+          <div className="bg-bg-secondary p-4 rounded-lg relative border border-border-subtle shadow-elev-1">
+            <div className="text-sm text-text-muted font-medium">Total Balance</div>
+            <div className="text-2xl font-bold flex items-center mt-1 text-text-primary">
+              <DollarSign className="h-5 w-5 mr-1 text-text-secondary" />
               {accountData.balance?.toFixed(2)}
             </div>
-            {/* Real-time indicator */}
             {isConnected && !isMockMode && (
-              <div className="absolute top-2 right-2 w-2 h-2 bg-green-500 rounded-full animate-pulse"
+              <div className="absolute top-3 right-3 w-2 h-2 bg-success rounded-full animate-pulse"
                 title="Live data"></div>
             )}
           </div>
 
-          <div className="bg-neutral-50 p-3 rounded-md relative">
-            <div className="text-sm text-neutral-500">Available</div>
-            <div className="text-xl font-bold flex items-center">
-              <DollarSign className="h-4 w-4 mr-1 text-neutral-500" />
+          <div className="bg-bg-secondary p-4 rounded-lg relative border border-border-subtle shadow-elev-1">
+            <div className="text-sm text-text-muted font-medium">Available</div>
+            <div className="text-2xl font-bold flex items-center mt-1 text-text-primary">
+              <DollarSign className="h-5 w-5 mr-1 text-text-secondary" />
               {accountData.availableBalance?.toFixed(2)}
             </div>
-            {/* Real-time indicator */}
             {isConnected && !isMockMode && (
-              <div className="absolute top-2 right-2 w-2 h-2 bg-green-500 rounded-full animate-pulse"
+              <div className="absolute top-3 right-3 w-2 h-2 bg-success rounded-full animate-pulse"
                 title="Live data"></div>
             )}
           </div>
         </div>
 
-        <div className="bg-neutral-50 p-3 rounded-md relative">
-          <div className="text-sm text-neutral-500">Equity</div>
-          <div className="text-xl font-bold">${accountData.equity.toFixed(2)}</div>
-          <div className="text-sm mt-1">
-            Unrealized P&L:
-            <span className={`font-medium ml-1 ${(accountData.unrealizedPnL || 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+        <div className="bg-bg-secondary p-4 rounded-lg relative border border-border-subtle shadow-elev-1">
+          <div className="text-sm text-text-muted font-medium">Equity</div>
+          <div className="text-2xl font-bold mt-1 text-text-primary">${accountData.equity.toFixed(2)}</div>
+          <div className="text-sm mt-2">
+            <span className="text-text-secondary">Unrealized P&L:</span>
+            <span className={`font-semibold ml-1 ${(accountData.unrealizedPnL || 0) >= 0 ? 'text-success' : 'text-error'}`}>
               {(accountData.unrealizedPnL || 0) >= 0 ? '+' : ''}{accountData.unrealizedPnL?.toFixed(2)}
             </span>
           </div>
-          {/* Real-time indicator */}
           {isConnected && !isMockMode && (
-            <div className="absolute top-2 right-2 w-2 h-2 bg-green-500 rounded-full animate-pulse"
+            <div className="absolute top-3 right-3 w-2 h-2 bg-success rounded-full animate-pulse"
               title="Live data"></div>
           )}
         </div>
 
-        <div className="bg-neutral-50 p-3 rounded-md relative">
-          <div className="text-sm text-neutral-500">Today's P&L</div>
-          <div className="flex items-center">
-            <span className={`text-xl font-bold ${(accountData.todayPnL || 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+        <div className="bg-bg-secondary p-4 rounded-lg relative border border-border-subtle shadow-elev-1">
+          <div className="text-sm text-text-muted font-medium">Today's P&L</div>
+          <div className="flex items-center mt-1">
+            <span className={`text-2xl font-bold ${(accountData.todayPnL || 0) >= 0 ? 'text-success' : 'text-error'}`}>
               {(accountData.todayPnL || 0) >= 0 ? '+' : ''}{accountData.todayPnL?.toFixed(2)}
             </span>
-            <span className={`ml-2 flex items-center text-sm ${(accountData.todayPnLPercentage || 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+            <span className={`ml-3 flex items-center text-sm font-semibold ${(accountData.todayPnLPercentage || 0) >= 0 ? 'text-success' : 'text-error'}`}>
               {(accountData.todayPnLPercentage || 0) >= 0 ? (
                 <TrendingUp className="h-4 w-4 mr-1" />
               ) : (
@@ -169,9 +166,8 @@ const AccountSummary: React.FC = () => {
               {accountData.todayPnLPercentage?.toFixed(2)}%
             </span>
           </div>
-          {/* Real-time indicator */}
           {isConnected && !isMockMode && (
-            <div className="absolute top-2 right-2 w-2 h-2 bg-green-500 rounded-full animate-pulse"
+            <div className="absolute top-3 right-3 w-2 h-2 bg-success rounded-full animate-pulse"
               title="Live data"></div>
           )}
         </div>

@@ -322,14 +322,14 @@ const RealTimeAlerts: React.FC<RealTimeAlertsProps> = ({
   const getPriorityColor = (priority: RealTimeAlert['priority']) => {
     switch (priority) {
       case 'critical':
-        return 'bg-red-100 text-red-800';
+        return 'bg-error/10 text-error border border-error/20';
       case 'high':
-        return 'bg-orange-100 text-orange-800';
+        return 'bg-warning/10 text-warning border border-warning/20';
       case 'medium':
-        return 'bg-yellow-100 text-yellow-800';
+        return 'bg-warning/10 text-warning border border-warning/20';
       case 'low':
       default:
-        return 'bg-gray-100 text-gray-800';
+        return 'bg-bg-secondary text-text-secondary border border-border-subtle';
     }
   };
 
@@ -340,10 +340,10 @@ const RealTimeAlerts: React.FC<RealTimeAlertsProps> = ({
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center space-x-2">
-          <Bell className="h-5 w-5 text-neutral-600" />
-          <h3 className="text-lg font-medium text-neutral-800">Real-time Alerts</h3>
+          <Bell className="h-5 w-5 text-text-secondary" />
+          <h3 className="text-lg font-semibold text-text-primary">Real-time Alerts</h3>
           {unacknowledgedCount > 0 && (
-            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
+            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-error/10 text-error border border-error/20">
               {unacknowledgedCount} new
             </span>
           )}
@@ -355,8 +355,8 @@ const RealTimeAlerts: React.FC<RealTimeAlertsProps> = ({
             onClick={() => setSoundEnabled(!soundEnabled)}
             className={`p-2 rounded-md transition-colors ${
               soundEnabled 
-                ? 'bg-blue-100 text-blue-600 hover:bg-blue-200' 
-                : 'bg-gray-100 text-gray-400 hover:bg-gray-200'
+                ? 'bg-brand-cyan/10 text-brand-cyan hover:bg-brand-cyan/20' 
+                : 'bg-bg-secondary text-text-muted hover:bg-bg-tertiary'
             }`}
             title={soundEnabled ? 'Disable sound' : 'Enable sound'}
           >
@@ -366,7 +366,7 @@ const RealTimeAlerts: React.FC<RealTimeAlertsProps> = ({
           {/* Settings */}
           <button
             onClick={() => setShowSettings(!showSettings)}
-            className="p-2 rounded-md bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors"
+            className="p-2 rounded-md bg-bg-secondary text-text-secondary hover:bg-bg-tertiary transition-colors"
             title="Alert settings"
           >
             <Settings className="h-4 w-4" />
@@ -376,7 +376,7 @@ const RealTimeAlerts: React.FC<RealTimeAlertsProps> = ({
           {unacknowledgedCount > 0 && (
             <button
               onClick={acknowledgeAllAlerts}
-              className="px-3 py-1 text-sm bg-blue-100 text-blue-600 rounded-md hover:bg-blue-200 transition-colors"
+              className="px-3 py-1 text-sm bg-brand-cyan/10 text-brand-cyan rounded-md hover:bg-brand-cyan/20 transition-colors font-medium"
             >
               Acknowledge All
             </button>
@@ -386,7 +386,7 @@ const RealTimeAlerts: React.FC<RealTimeAlertsProps> = ({
           {alerts.length > 0 && (
             <button
               onClick={clearAllAlerts}
-              className="px-3 py-1 text-sm bg-red-100 text-red-600 rounded-md hover:bg-red-200 transition-colors"
+              className="px-3 py-1 text-sm bg-error/10 text-error rounded-md hover:bg-error/20 transition-colors font-medium"
             >
               Clear All
             </button>
@@ -396,8 +396,8 @@ const RealTimeAlerts: React.FC<RealTimeAlertsProps> = ({
 
       {/* Settings Panel */}
       {showSettings && (
-        <div className="p-4 bg-neutral-50 rounded-md border">
-          <h4 className="text-md font-medium mb-3">Alert Settings</h4>
+        <div className="p-4 bg-bg-secondary rounded-md border border-border-subtle">
+          <h4 className="text-md font-semibold mb-3 text-text-primary">Alert Settings</h4>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="flex items-center space-x-2">
@@ -422,7 +422,7 @@ const RealTimeAlerts: React.FC<RealTimeAlertsProps> = ({
                     ...prev,
                     priceChange: { ...prev.priceChange, threshold: parseFloat(e.target.value) }
                   }))}
-                  className="mt-1 block w-full px-3 py-1 border border-gray-300 rounded-md text-sm"
+                  className="mt-1 block w-full px-3 py-1 border border-border-moderate rounded-md text-sm focus:ring-2 focus:ring-brand-cyan focus:outline-none"
                   placeholder="Threshold %"
                 />
               )}
@@ -497,17 +497,17 @@ const RealTimeAlerts: React.FC<RealTimeAlertsProps> = ({
                   {getAlertIcon(alert)}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center space-x-2">
-                      <h4 className="text-sm font-medium text-neutral-800 truncate">
+                      <h4 className="text-sm font-semibold text-text-primary truncate">
                         {alert.title}
                       </h4>
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${getPriorityColor(alert.priority)}`}>
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${getPriorityColor(alert.priority)}`}>
                         {alert.priority}
                       </span>
                     </div>
-                    <p className="text-sm text-neutral-600 mt-1">
+                    <p className="text-sm text-text-secondary mt-1">
                       {alert.message}
                     </p>
-                    <p className="text-xs text-neutral-400 mt-1">
+                    <p className="text-xs text-text-muted mt-1">
                       {new Date(alert.timestamp).toLocaleTimeString()}
                     </p>
                   </div>
@@ -517,7 +517,7 @@ const RealTimeAlerts: React.FC<RealTimeAlertsProps> = ({
                     e.stopPropagation();
                     removeAlert(alert.id);
                   }}
-                  className="ml-2 p-1 text-neutral-400 hover:text-neutral-600 transition-colors"
+                  className="ml-2 p-1 text-text-muted hover:text-text-secondary transition-colors"
                 >
                   <X className="h-4 w-4" />
                 </button>
@@ -526,9 +526,9 @@ const RealTimeAlerts: React.FC<RealTimeAlertsProps> = ({
           ))
         ) : (
           <div className="text-center py-8">
-            <Bell className="h-12 w-12 text-neutral-300 mx-auto mb-4" />
-            <p className="text-neutral-500">No alerts yet</p>
-            <p className="text-sm text-neutral-400 mt-1">
+            <Bell className="h-12 w-12 text-text-muted mx-auto mb-4" />
+            <p className="text-text-secondary">No alerts yet</p>
+            <p className="text-sm text-text-muted mt-1">
               Real-time alerts will appear here
             </p>
           </div>
