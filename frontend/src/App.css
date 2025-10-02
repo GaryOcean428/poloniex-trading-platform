@@ -10,13 +10,14 @@ body {
   background-color: var(--bg-tertiary);
   border: 1px solid var(--border-subtle);
   border-radius: 0.75rem;
-  box-shadow: var(--shadow-elev-1);
+  box-shadow: var(--shadow-elev-2);
   padding: 1.5rem;
-  transition: all 200ms;
+  transition: all 200ms ease;
 }
 
 .trading-card:hover {
-  box-shadow: var(--shadow-elev-2);
+  box-shadow: var(--shadow-elev-3);
+  transform: translateY(-1px);
 }
 
 .btn {
