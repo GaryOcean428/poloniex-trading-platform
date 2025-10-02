@@ -114,10 +114,10 @@ router.get('/poloniex-futures-v3/:symbol', async (req, res) => {
 /**
  * GET /api/markets/poloniex-futures-v3/debug - Debug endpoint for troubleshooting
  */
-router.get('/poloniex-futures-v3/debug', (req, res) => {
+router.get('/poloniex-futures-v3/debug', async (req, res) => {
   const catalogPath = process.env.CATALOG_PATH || '/app/shared/catalogs/poloniex-futures-v3.json';
-  const fs = require('fs');
-  const path = require('path');
+  const fs = await import('fs');
+  const path = await import('path');
   
   const altPath = path.join(process.cwd(), 'docs', 'markets', 'poloniex-futures-v3.json');
   
