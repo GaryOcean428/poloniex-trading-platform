@@ -2,6 +2,7 @@ import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { query, geoQuery } from '../db/connection.js';
 import { env } from '../config/env.js';
+import { logger } from '../utils/logger.js';
 
 /**
  * User Service - PostGIS-based user management with location-aware features
@@ -628,7 +629,12 @@ export class UserService {
 
         return decryptedCredential;
       } catch (decryptError) {
-        console.error('Failed to decrypt API credentials:', decryptError);
+        logger.error('Failed to decrypt API credentials', { 
+          userId, 
+          exchange, 
+          credentialName, 
+          error: decryptError.message 
+        });
 
         // Log security event for failed decryption
         await this.logSecurityEvent({
@@ -642,7 +648,7 @@ export class UserService {
         throw new Error('Failed to decrypt API credentials. They may be corrupted.');
       }
     } catch (error) {
-      console.error('Error getting API credentials:', error);
+      logger.error('Error getting API credentials', { userId, error: error.message });
       throw error;
     }
   }
@@ -664,7 +670,7 @@ export class UserService {
       const result = await query(queryText, [userId]);
       return result.rows;
     } catch (error) {
-      console.error('Error listing API credentials:', error);
+      logger.error('Error listing API credentials', { userId, error: error.message });
       throw error;
     }
   }
@@ -682,7 +688,7 @@ export class UserService {
 
       await query(queryText, [credentialId]);
     } catch (error) {
-      console.error('Error updating API credentials last used:', error);
+      logger.error('Error updating API credentials last used', { credentialId, error: error.message });
       // Don't throw as this is non-critical
     }
   }
@@ -717,7 +723,7 @@ export class UserService {
 
       return deleted;
     } catch (error) {
-      console.error('Error deleting API credentials:', error);
+      logger.error('Error deleting API credentials', { userId, credentialId, error: error.message });
       throw error;
     }
   }
@@ -764,7 +770,7 @@ export class UserService {
         permissions: credentials.permissions
       };
     } catch (error) {
-      console.error('Error testing API credentials:', error);
+      logger.error('Error testing API credentials', { userId, credentialId, error: error.message });
 
       // Log failed test
       await this.logSecurityEvent({
