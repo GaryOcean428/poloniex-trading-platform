@@ -38,6 +38,12 @@ const LiveDataDashboard: React.FC = () => {
     logLevel: 'info'
   });
 
+  const CHART_COLORS = {
+    primary: '#06b6d4',
+    secondary: '#9ca3af',
+    error: '#ef4444'
+  };
+
   // Available symbols
   const symbols = [
     'BTC_USDT', 'ETH_USDT', 'SOL_USDT', 'XRP_USDT', 'ADA_USDT',
@@ -348,7 +354,7 @@ const LiveDataDashboard: React.FC = () => {
                   yAxisId="left"
                   type="monotone"
                   dataKey="close"
-                  stroke="#2563eb"
+                  stroke={CHART_COLORS.primary}
                   dot={false}
                   activeDot={{ r: 8 }}
                 />
@@ -356,16 +362,16 @@ const LiveDataDashboard: React.FC = () => {
                   yAxisId="right"
                   type="monotone"
                   dataKey="volume"
-                  stroke="#9ca3af"
+                  stroke={CHART_COLORS.secondary}
                   dot={false}
                 />
                 <Line
                   yAxisId="left"
                   type="monotone"
                   dataKey="isAnomaly"
-                  stroke="#ef4444"
+                  stroke={CHART_COLORS.error}
                   strokeWidth={0}
-                  dot={{ r: 6, fill: '#ef4444' }}
+                  dot={{ r: 6, fill: CHART_COLORS.error }}
                 />
               </LineChart>
             </ResponsiveContainer>

@@ -5,11 +5,11 @@
   z-index: 30;
   font-family: 'Courier New', monospace;
   font-size: 11px;
-  background-color: rgba(30, 30, 30, 0.95);
-  color: #e0e0e0;
-  border: 1px solid #444;
+  background-color: var(--bg-elevated);
+  color: var(--text-primary);
+  border: 1px solid var(--border-moderate);
   border-radius: 4px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-elev-3);
   overflow: hidden;
   transition: all 0.3s ease;
   max-width: 300px;
@@ -22,14 +22,14 @@
   justify-content: space-between;
   align-items: center;
   padding: 6px 10px;
-  background-color: #1e1e1e;
-  border-bottom: 1px solid #444;
+  background-color: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-moderate);
   cursor: pointer;
 }
 
 .env-debug-title {
   margin: 0;
-  color: #4a90e2;
+  color: var(--brand-cyan);
   font-size: 12px;
 }
 
@@ -40,8 +40,8 @@
 
 .env-debug-button {
   background: none;
-  border: 1px solid #444;
-  color: #e0e0e0;
+  border: 1px solid var(--border-moderate);
+  color: var(--text-primary);
   border-radius: 3px;
   padding: 2px 6px;
   font-size: 10px;
@@ -50,12 +50,12 @@
 }
 
 .env-debug-button:hover {
-  background-color: #2a2a2a;
+  background-color: var(--bg-tertiary);
 }
 
 .env-debug-button.danger {
-  color: #ff5252;
-  border-color: #ff5252;
+  color: var(--error);
+  border-color: var(--error);
 }
 
 .env-debug-content {
@@ -67,11 +67,11 @@
 }
 
 .env-debug-mode {
-  color: #00ff00;
+  color: var(--success);
 }
 
 .env-debug-mode.offline {
-  color: #ff9800;
+  color: var(--warning);
 }
 
 .env-debug-issues {
@@ -80,21 +80,21 @@
 }
 
 .env-debug-issue {
-  color: #ff5252;
+  color: var(--error);
 }
 
 .env-debug-success {
-  color: #00ff00;
+  color: var(--success);
 }
 
 .env-debug-details summary {
   cursor: pointer;
   margin-bottom: 10px;
-  color: #4a90e2;
+  color: var(--brand-cyan);
 }
 
 .env-debug-pre {
-  background-color: #1e1e1e;
+  background-color: var(--bg-secondary);
   padding: 8px;
   border-radius: 4px;
   overflow-x: auto;
@@ -109,10 +109,10 @@
 
 .env-debug-footer {
   font-size: 10px;
-  color: #888;
+  color: var(--text-muted);
   text-align: center;
   padding: 5px;
-  border-top: 1px solid #444;
+  border-top: 1px solid var(--border-moderate);
 }
 
 /* Minimized state at bottom right */
@@ -123,9 +123,9 @@
   z-index: 30;
   font-family: 'Courier New', monospace;
   font-size: 11px;
-  background-color: rgba(30, 30, 30, 0.9);
-  color: #e0e0e0;
-  border: 1px solid #444;
+  background-color: var(--bg-elevated);
+  color: var(--text-primary);
+  border: 1px solid var(--border-moderate);
   border-radius: 4px;
   padding: 5px 10px;
   cursor: pointer;
@@ -133,7 +133,7 @@
 }
 
 .env-debug-minimized:hover {
-  background-color: rgba(50, 50, 50, 0.9);
+  background-color: var(--bg-tertiary);
 }
 
 /* Restore button for dismissed state */
@@ -142,9 +142,9 @@
   bottom: 10px;
   right: 10px;
   z-index: 30;
-  background: rgba(30, 30, 30, 0.9);
-  color: #4a90e2;
-  border: 1px solid #444;
+  background: var(--bg-elevated);
+  color: var(--brand-cyan);
+  border: 1px solid var(--border-moderate);
   border-radius: 4px;
   padding: 6px 8px;
   cursor: pointer;
@@ -153,18 +153,18 @@
 }
 
 .env-debug-restore:hover {
-  background: rgba(50, 50, 50, 0.9);
+  background: var(--bg-tertiary);
 }
 
 /* Status colors */
 .status-connected {
-  color: #00ff00;
+  color: var(--success);
 }
 
 .status-disconnected {
-  color: #ff5252;
+  color: var(--error);
 }
 
 .status-connecting {
-  color: #ff9800;
+  color: var(--warning);
 }

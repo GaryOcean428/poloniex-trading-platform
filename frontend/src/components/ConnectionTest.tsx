@@ -173,13 +173,13 @@ export const ConnectionTest: React.FC = () => {
     };
   }, [apiUrl, wsUrl, addToast]);
 
-  const getStatusColor = (status: string) => {
+  const getStatusClass = (status: string) => {
     switch (status)
     {
-      case 'connected': return '#4caf50';
-      case 'failed': return '#f44336';
-      case 'cors-blocked': return '#ff9800';
-      default: return '#ff9800';
+      case 'connected': return 'connection-status-widget__status--connected';
+      case 'failed': return 'connection-status-widget__status--failed';
+      case 'cors-blocked': return 'connection-status-widget__status--warning';
+      default: return 'connection-status-widget__status--warning';
     }
   };
 
@@ -197,91 +197,52 @@ export const ConnectionTest: React.FC = () => {
   return (
     <>
       {isVisible && (
-        <div style={{
-          position: 'fixed',
-          bottom: '10px',
-          left: '10px',
-          background: '#1a1a1a',
-          color: '#fff',
-          padding: '15px',
-          borderRadius: '8px',
-          fontSize: '12px',
-          zIndex: 40,
-          maxWidth: '350px',
-          border: '1px solid #333'
-        }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '10px' }}>
-            <h3 style={{ margin: '0 0 5px 0', color: '#4a90e2' }}>
+        <div className="connection-status-widget">
+          <div className="connection-status-widget__header">
+            <h3 className="connection-status-widget__title">
               🔌 Connection Status
             </h3>
             <button
               onClick={() => setIsVisible(false)}
-              style={{
-                background: 'none',
-                border: 'none',
-                color: '#999',
-                cursor: 'pointer',
-                fontSize: '16px',
-                padding: '0',
-                width: '20px',
-                height: '20px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center'
-              }}
+              className="connection-status-widget__close-btn"
               title="Hide connection status"
             >
               ×
             </button>
           </div>
 
-          <div style={{ marginBottom: '15px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+          <div className="connection-status-widget__section">
+            <div className="connection-status-widget__row">
               <span>API Connection:</span>
-              <span style={{ color: getStatusColor(apiStatus), fontWeight: 'bold' }}>
+              <span className={`connection-status-widget__status ${getStatusClass(apiStatus)}`}>
                 {getStatusText(apiStatus)}
               </span>
             </div>
-            <div style={{ fontSize: '12px', color: '#888' }}>
+            <div className="connection-status-widget__url">
               {apiUrl}
             </div>
             {apiData && (
-              <pre style={{
-                background: '#0a0a0a',
-                padding: '8px',
-                borderRadius: '4px',
-                fontSize: '11px',
-                marginTop: '8px'
-              }}>
+              <pre className="connection-status-widget__pre">
                 {JSON.stringify(apiData, null, 2)}
               </pre>
             )}
           </div>
 
-          <div style={{ marginBottom: '15px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+          <div className="connection-status-widget__section">
+            <div className="connection-status-widget__row">
               <span>WebSocket:</span>
-              <span style={{ color: getStatusColor(wsStatus), fontWeight: 'bold' }}>
+              <span className={`connection-status-widget__status ${getStatusClass(wsStatus)}`}>
                 {getStatusText(wsStatus)}
               </span>
             </div>
-            <div style={{ fontSize: '12px', color: '#888' }}>
+            <div className="connection-status-widget__url">
               {wsUrl}
             </div>
           </div>
 
           <button
             onClick={() => window.location.reload()}
-            style={{
-              width: '100%',
-              padding: '8px',
-              background: '#4a90e2',
-              color: '#fff',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: 'pointer',
-              fontSize: '14px'
-            }}
+            className="connection-status-widget__refresh-btn"
           >
             Refresh
           </button>
@@ -291,19 +252,7 @@ export const ConnectionTest: React.FC = () => {
       {!isVisible && (
         <button
           onClick={() => setIsVisible(true)}
-          style={{
-            position: 'fixed',
-            bottom: '10px',
-            left: '10px',
-            background: '#1a1a1a',
-            color: '#4a90e2',
-            border: '1px solid #333',
-            borderRadius: '4px',
-            padding: '8px 12px',
-            cursor: 'pointer',
-            fontSize: '12px',
-            zIndex: 40
-          }}
+          className="connection-status-widget__toggle-btn"
           title="Show connection status"
         >
           🔌 Status
