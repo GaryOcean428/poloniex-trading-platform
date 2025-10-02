@@ -1,4 +1,4 @@
-# Railway deployment ignore file
+# Railway deployment ignore file - Optimized for Backend Deployment
 
 # Development files
 .git/
@@ -8,58 +8,48 @@
 *.tmp
 *.swp
 .DS_Store
+.editorconfig
 
 # Test files
 tests/
 test_reports/
 *.test.js
 *.test.ts
+*.spec.ts
+*.spec.js
 *_test.py
 backend_test.py
-
-# Build artifacts (will be generated during build)
-node_modules/
-dist/
-build/
-.next/
 coverage/
+.vitest/
 
-# Python cache
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.Python
-pip-log.txt
-pip-delete-this-directory.txt
+# Frontend (not needed for backend deployment)
+frontend/
+extension/
 
-# Environment files (will be injected by Railway)
-.env
-.env.local
-.env.development
-.env.production
+# Python services (deploy separately if needed)
+python-services/
 
-# Documentation
+# Documentation (keep only essential docs)
 docs/
 *.md
-README.md
-CHANGELOG.md
+!README.md
 
 # CI/CD files
 .github/
 .gitlab-ci.yml
 .travis.yml
+.pre-commit-config.yaml
 
-# Package manager files
+# Package manager files (yarn.lock is needed!)
 yarn-error.log
 npm-debug.log*
 package-lock.json
+pnpm-lock.yaml
 
 # IDE and editor files
 .vscode/
 .idea/
 *.sublime-*
-.editorconfig
 
 # OS files
 .DS_Store
@@ -68,3 +58,25 @@ Thumbs.db
 # Backup files
 *.bak
 *.backup
+
+# Build artifacts from OTHER workspaces
+frontend/dist/
+frontend/build/
+frontend/.next/
+
+# Keep backend build artifacts - they're needed!
+# backend/dist/ - DO NOT IGNORE
+# backend/node_modules/ - DO NOT IGNORE (will be installed)
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+pip-log.txt
+
+# Environment files (Railway injects these)
+.env.local
+.env.development
+.env.test
