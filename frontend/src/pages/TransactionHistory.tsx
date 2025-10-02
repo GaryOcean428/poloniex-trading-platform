@@ -228,30 +228,30 @@ const TransactionHistory: React.FC = () => {
       case 'withdrawal':
         return 'text-red-600';
       case 'trade':
-        return 'text-blue-600';
+        return 'text-brand-cyan';
       case 'fee':
         return 'text-orange-600';
       case 'interest':
         return 'text-purple-600';
       default:
-        return 'text-gray-600';
+        return 'text-text-secondary';
     }
   };
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 flex items-center">
-          <FileText className="w-8 h-8 mr-3 text-blue-600" />
+        <h1 className="text-3xl font-bold text-text-primary flex items-center">
+          <FileText className="w-8 h-8 mr-3 text-brand-cyan" />
           Transaction History
         </h1>
-        <p className="mt-2 text-gray-600">
+        <p className="mt-2 text-text-secondary">
           View and manage your complete transaction history
         </p>
       </div>
 
       {/* Search and Filters */}
-      <div className="bg-white p-6 rounded-lg shadow mb-6">
+      <div className="bg-bg-tertiary p-6 rounded-lg shadow mb-6">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
           <div className="flex-1 relative">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
@@ -266,7 +266,7 @@ const TransactionHistory: React.FC = () => {
           <div className="flex gap-2">
             <button
               onClick={() => setShowFilters(!showFilters)}
-              className="flex items-center px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50"
+              className="flex items-center px-4 py-2 border border-gray-300 rounded-md hover:bg-bg-secondary"
             >
               <Filter className="w-4 h-4 mr-2" />
               Filters
@@ -351,10 +351,10 @@ const TransactionHistory: React.FC = () => {
       </div>
 
       {/* Transaction Table */}
-      <div className="bg-white rounded-lg shadow overflow-hidden">
+      <div className="bg-bg-tertiary rounded-lg shadow overflow-hidden">
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
+            <thead className="bg-bg-secondary">
               <tr>
                 {[
                   { key: 'timestamp', label: 'Date/Time' },
@@ -368,7 +368,7 @@ const TransactionHistory: React.FC = () => {
                   <th
                     key={header.key}
                     onClick={() => handleSort(header.key as keyof Transaction)}
-                    className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                    className="px-6 py-3 text-left text-xs font-medium text-text-muted uppercase tracking-wider cursor-pointer hover:bg-gray-100"
                   >
                     <div className="flex items-center">
                       {header.label}
@@ -378,13 +378,13 @@ const TransactionHistory: React.FC = () => {
                 ))}
               </tr>
             </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
+            <tbody className="bg-bg-tertiary divide-y divide-gray-200">
               {paginatedTransactions.map((transaction) => (
-                <tr key={transaction.id} className="hover:bg-gray-50">
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                <tr key={transaction.id} className="hover:bg-bg-secondary">
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-text-primary">
                     {transaction.timestamp.toLocaleString()}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-600">
+                  <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-text-secondary">
                     {transaction.id}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm">
@@ -392,7 +392,7 @@ const TransactionHistory: React.FC = () => {
                       {transaction.type}
                     </span>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-text-primary">
                     {transaction.currency}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm">
@@ -405,7 +405,7 @@ const TransactionHistory: React.FC = () => {
                       {transaction.status}
                     </span>
                   </td>
-                  <td className="px-6 py-4 text-sm text-gray-600">
+                  <td className="px-6 py-4 text-sm text-text-secondary">
                     {transaction.description}
                   </td>
                 </tr>
@@ -416,19 +416,19 @@ const TransactionHistory: React.FC = () => {
 
         {/* Pagination */}
         {totalPages > 1 && (
-          <div className="bg-white px-6 py-3 border-t border-gray-200 flex items-center justify-between">
+          <div className="bg-bg-tertiary px-6 py-3 border-t border-border-subtle flex items-center justify-between">
             <div className="flex-1 flex justify-between sm:hidden">
               <button
                 onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
                 disabled={currentPage === 1}
-                className="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
+                className="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-bg-elevated hover:bg-bg-secondary disabled:opacity-50"
               >
                 Previous
               </button>
               <button
                 onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
                 disabled={currentPage === totalPages}
-                className="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
+                className="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-bg-elevated hover:bg-bg-secondary disabled:opacity-50"
               >
                 Next
               </button>
@@ -452,7 +452,7 @@ const TransactionHistory: React.FC = () => {
                   <button
                     onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
                     disabled={currentPage === 1}
-                    className="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50"
+                    className="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-bg-elevated text-sm font-medium text-text-muted hover:bg-gray-50 disabled:opacity-50"
                   >
                     Previous
                   </button>
@@ -464,8 +464,8 @@ const TransactionHistory: React.FC = () => {
                         onClick={() => setCurrentPage(page)}
                         className={`relative inline-flex items-center px-4 py-2 border text-sm font-medium ${
                           currentPage === page
-                            ? 'z-10 bg-blue-50 border-blue-500 text-blue-600'
-                            : 'bg-white border-gray-300 text-gray-500 hover:bg-gray-50'
+                            ? 'z-10 bg-brand-cyan/10 border-brand-cyan text-brand-cyan'
+                            : 'bg-white border-gray-300 text-text-muted hover:bg-gray-50'
                         }`}
                       >
                         {page}
@@ -475,7 +475,7 @@ const TransactionHistory: React.FC = () => {
                   <button
                     onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
                     disabled={currentPage === totalPages}
-                    className="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50"
+                    className="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-text-muted hover:bg-gray-50 disabled:opacity-50"
                   >
                     Next
                   </button>
@@ -488,10 +488,10 @@ const TransactionHistory: React.FC = () => {
 
       {/* Summary Stats */}
       <div className="mt-6 bg-white p-6 rounded-lg shadow">
-        <h3 className="text-lg font-medium text-gray-900 mb-4">Summary</h3>
+        <h3 className="text-lg font-medium text-text-primary mb-4">Summary</h3>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div className="text-center">
-            <div className="text-2xl font-bold text-gray-900">{filteredTransactions.length}</div>
+            <div className="text-2xl font-bold text-text-primary">{filteredTransactions.length}</div>
             <div className="text-sm text-gray-500">Total Transactions</div>
           </div>
           <div className="text-center">

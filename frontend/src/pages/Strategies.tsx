@@ -115,7 +115,7 @@ const Strategies: React.FC = () => {
                 className={`border rounded-md p-3 cursor-pointer transition-colors duration-200 ${
                   selectedStrategy?.id === strategy.id 
                     ? 'border-blue-500 bg-blue-50' 
-                    : 'border-neutral-200 hover:border-blue-300'
+                    : 'border-border-subtle hover:border-blue-300'
                 }`}
                 onClick={() => handleSelectStrategy(strategy)}
               >

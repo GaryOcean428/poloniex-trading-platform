@@ -154,7 +154,7 @@ const Settings: React.FC = () => {
                 <Check className="h-4 w-4 mr-1" />
                 Credentials Stored
               </div>
-              <p className="text-blue-600">
+              <p className="text-brand-cyan">
                 {isMockMode 
                   ? "Using stored credentials in demo mode" 
                   : "Using stored credentials for live trading"}
@@ -222,7 +222,7 @@ const Settings: React.FC = () => {
                     className="mt-1 block w-full input"
                     placeholder="Enter your API secret"
                   />
-                  <p className="mt-1 text-sm text-neutral-500">
+                  <p className="mt-1 text-sm text-text-muted">
                     Your API keys are stored securely in your browser's local storage and never shared.
                   </p>
                 </div>
@@ -234,7 +234,7 @@ const Settings: React.FC = () => {
                     type="checkbox"
                     checked={formData.isLiveTrading}
                     onChange={handleChange}
-                    className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-neutral-300 rounded"
+                    className="h-4 w-4 text-brand-cyan focus:ring-brand-cyan border-border-moderate rounded"
                   />
                   <label htmlFor="isLiveTrading" className="ml-2 block text-sm text-neutral-700">
                     Enable live trading
@@ -256,7 +256,7 @@ const Settings: React.FC = () => {
                 <div className="flex items-center justify-between">
                   <div>
                     <h3 className="font-medium">Email Notifications</h3>
-                    <p className="text-sm text-neutral-500">Receive important account updates via email</p>
+                    <p className="text-sm text-text-muted">Receive important account updates via email</p>
                   </div>
                   <div className="ml-4">
                     <input
@@ -265,7 +265,7 @@ const Settings: React.FC = () => {
                       name="emailNotifications"
                       checked={formData.emailNotifications}
                       onChange={handleChange}
-                      className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-neutral-300 rounded"
+                      className="h-4 w-4 text-brand-cyan focus:ring-brand-cyan border-border-moderate rounded"
                     />
                   </div>
                 </div>
@@ -273,7 +273,7 @@ const Settings: React.FC = () => {
                 <div className="flex items-center justify-between">
                   <div>
                     <h3 className="font-medium">Trade Notifications</h3>
-                    <p className="text-sm text-neutral-500">Get notified when trades are executed</p>
+                    <p className="text-sm text-text-muted">Get notified when trades are executed</p>
                   </div>
                   <div className="ml-4">
                     <input
@@ -282,7 +282,7 @@ const Settings: React.FC = () => {
                       name="tradeNotifications"
                       checked={formData.tradeNotifications}
                       onChange={handleChange}
-                      className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-neutral-300 rounded"
+                      className="h-4 w-4 text-brand-cyan focus:ring-brand-cyan border-border-moderate rounded"
                     />
                   </div>
                 </div>
@@ -290,7 +290,7 @@ const Settings: React.FC = () => {
                 <div className="flex items-center justify-between">
                   <div>
                     <h3 className="font-medium">Price Alerts</h3>
-                    <p className="text-sm text-neutral-500">Receive alerts when prices reach set thresholds</p>
+                    <p className="text-sm text-text-muted">Receive alerts when prices reach set thresholds</p>
                   </div>
                   <div className="ml-4">
                     <input
@@ -299,7 +299,7 @@ const Settings: React.FC = () => {
                       name="priceAlerts"
                       checked={formData.priceAlerts}
                       onChange={handleChange}
-                      className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-neutral-300 rounded"
+                      className="h-4 w-4 text-brand-cyan focus:ring-brand-cyan border-border-moderate rounded"
                     />
                   </div>
                 </div>
@@ -316,7 +316,7 @@ const Settings: React.FC = () => {
                 <div className="flex items-center justify-between">
                   <div>
                     <h3 className="font-medium">Show Extension Icon</h3>
-                    <p className="text-sm text-neutral-500">Display the extension icon in your browser</p>
+                    <p className="text-sm text-text-muted">Display the extension icon in your browser</p>
                   </div>
                   <div className="ml-4">
                     <input
@@ -333,7 +333,7 @@ const Settings: React.FC = () => {
                 <div className="flex items-center justify-between">
                   <div>
                     <h3 className="font-medium">Chat Notifications</h3>
-                    <p className="text-sm text-neutral-500">Receive notifications for new chat messages</p>
+                    <p className="text-sm text-text-muted">Receive notifications for new chat messages</p>
                   </div>
                   <div className="ml-4">
                     <input

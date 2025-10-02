@@ -115,7 +115,7 @@ const Status: React.FC = () => {
       case 'error':
         return <AlertTriangle className="w-5 h-5 text-red-600" />;
       default:
-        return <Info className="w-5 h-5 text-gray-600" />;
+        return <Info className="w-5 h-5 text-text-secondary" />;
     }
   };
 
@@ -128,7 +128,7 @@ const Status: React.FC = () => {
       case 'error':
         return <AlertTriangle className="w-5 h-5 text-red-600" />;
       default:
-        return <Info className="w-5 h-5 text-blue-600" />;
+        return <Info className="w-5 h-5 text-brand-cyan" />;
     }
   };
 
@@ -192,8 +192,8 @@ const Status: React.FC = () => {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">System Status</h1>
-          <p className="text-gray-600 mt-1">
+          <h1 className="text-3xl font-bold text-text-primary">System Status</h1>
+          <p className="text-text-secondary mt-1">
             Last updated: {new Date(statusData.timestamp).toLocaleString()}
           </p>
         </div>
@@ -209,7 +209,7 @@ const Status: React.FC = () => {
       {/* Status Notifications */}
       {visibleNotifications.length > 0 && (
         <div className="space-y-4">
-          <h2 className="text-xl font-semibold text-gray-900">Current Notices</h2>
+          <h2 className="text-xl font-semibold text-text-primary">Current Notices</h2>
           {visibleNotifications.map((notification) => (
             <div
               key={notification.id}
@@ -219,14 +219,14 @@ const Status: React.FC = () => {
                 <div className="flex items-start space-x-3">
                   {getNotificationIcon(notification.type)}
                   <div className="flex-1">
-                    <h3 className="text-sm font-medium text-gray-900">
+                    <h3 className="text-sm font-medium text-text-primary">
                       {notification.title}
                     </h3>
                     <p className="text-sm text-gray-700 mt-1">
                       {notification.message}
                     </p>
                     {notification.details.length > 0 && (
-                      <ul className="text-sm text-gray-600 mt-2 space-y-1">
+                      <ul className="text-sm text-text-secondary mt-2 space-y-1">
                         {notification.details.map((detail, index) => (
                           <li key={index} className="flex items-center space-x-2">
                             <span className="w-1 h-1 bg-current rounded-full"></span>
@@ -238,7 +238,7 @@ const Status: React.FC = () => {
                     {notification.actionUrl && (
                       <Link
                         to={notification.actionUrl}
-                        className="inline-flex items-center text-sm text-blue-600 hover:text-blue-800 mt-2"
+                        className="inline-flex items-center text-sm text-brand-cyan hover:text-brand-cyan/80 mt-2"
                       >
                         View Details
                         <ExternalLink className="w-4 h-4 ml-1" />
@@ -249,7 +249,7 @@ const Status: React.FC = () => {
                 {notification.dismissible && (
                   <button
                     onClick={() => dismissNotification(notification.id)}
-                    className="text-gray-400 hover:text-gray-600 transition-colors"
+                    className="text-text-muted hover:text-text-secondary transition-colors"
                   >
                     ×
                   </button>
@@ -262,15 +262,15 @@ const Status: React.FC = () => {
 
       {/* Services Status */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-white border border-gray-200 rounded-lg p-6">
+        <div className="bg-bg-tertiary border border-border-subtle rounded-lg p-6 shadow-elev-1">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center">
-              <Server className="w-6 h-6 text-gray-600 mr-2" />
+              <Server className="w-6 h-6 text-text-secondary mr-2" />
               <h3 className="text-lg font-semibold">API Server</h3>
             </div>
             {getStatusIcon(statusData.services.api.status)}
           </div>
-          <div className="space-y-2 text-sm text-gray-600">
+          <div className="space-y-2 text-sm text-text-secondary">
             <div className="flex justify-between">
               <span>Status:</span>
               <span className="capitalize">{statusData.services.api.status}</span>
@@ -286,7 +286,7 @@ const Status: React.FC = () => {
           </div>
         </div>
 
-        <div className="bg-white border border-gray-200 rounded-lg p-6">
+        <div className="bg-bg-tertiary border border-border-subtle rounded-lg p-6 shadow-elev-1">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center">
               <Database className="w-6 h-6 text-gray-600 mr-2" />
@@ -306,7 +306,7 @@ const Status: React.FC = () => {
           </div>
         </div>
 
-        <div className="bg-white border border-gray-200 rounded-lg p-6">
+        <div className="bg-bg-tertiary border border-border-subtle rounded-lg p-6 shadow-elev-1">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center">
               <Wifi className="w-6 h-6 text-gray-600 mr-2" />
@@ -328,13 +328,13 @@ const Status: React.FC = () => {
       </div>
 
       {/* Feature Status */}
-      <div className="bg-white border border-gray-200 rounded-lg p-6">
+      <div className="bg-bg-tertiary border border-border-subtle rounded-lg p-6 shadow-elev-1">
         <h3 className="text-lg font-semibold mb-4 flex items-center">
           <Activity className="w-6 h-6 text-gray-600 mr-2" />
           Feature Status
         </h3>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="flex items-center justify-between p-3 bg-gray-50 rounded-md">
+          <div className="flex items-center justify-between p-3 bg-bg-secondary rounded-md">
             <span className="text-sm font-medium">Live Trading</span>
             {statusData.features.liveTradingEnabled ? (
               <CheckCircle2 className="w-5 h-5 text-green-600" />
@@ -342,7 +342,7 @@ const Status: React.FC = () => {
               <AlertTriangle className="w-5 h-5 text-yellow-600" />
             )}
           </div>
-          <div className="flex items-center justify-between p-3 bg-gray-50 rounded-md">
+          <div className="flex items-center justify-between p-3 bg-bg-secondary rounded-md">
             <span className="text-sm font-medium">Mock Mode</span>
             {statusData.features.mockMode ? (
               <AlertTriangle className="w-5 h-5 text-yellow-600" />
@@ -350,7 +350,7 @@ const Status: React.FC = () => {
               <CheckCircle2 className="w-5 h-5 text-green-600" />
             )}
           </div>
-          <div className="flex items-center justify-between p-3 bg-gray-50 rounded-md">
+          <div className="flex items-center justify-between p-3 bg-bg-secondary rounded-md">
             <span className="text-sm font-medium">Extension Support</span>
             {statusData.features.extensionSupported ? (
               <CheckCircle2 className="w-5 h-5 text-green-600" />
@@ -358,7 +358,7 @@ const Status: React.FC = () => {
               <AlertTriangle className="w-5 h-5 text-red-600" />
             )}
           </div>
-          <div className="flex items-center justify-between p-3 bg-gray-50 rounded-md">
+          <div className="flex items-center justify-between p-3 bg-bg-secondary rounded-md">
             <span className="text-sm font-medium">WebSocket</span>
             {statusData.features.webSocketConnected ? (
               <CheckCircle2 className="w-5 h-5 text-green-600" />
@@ -370,7 +370,7 @@ const Status: React.FC = () => {
       </div>
 
       {/* Environment Information */}
-      <div className="bg-white border border-gray-200 rounded-lg p-6">
+      <div className="bg-bg-tertiary border border-border-subtle rounded-lg p-6 shadow-elev-1">
         <h3 className="text-lg font-semibold mb-4 flex items-center">
           <Globe className="w-6 h-6 text-gray-600 mr-2" />
           Environment Information

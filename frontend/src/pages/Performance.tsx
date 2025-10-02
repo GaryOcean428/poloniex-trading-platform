@@ -73,7 +73,7 @@ const Performance: React.FC = () => {
           
           <div className="bg-bg-tertiary rounded-lg p-4 border border-border-subtle shadow-elev-1">
             <h3 className="text-sm font-medium text-text-muted mb-1">Win Rate</h3>
-            <p className="text-2xl font-bold text-blue-600">
+            <p className="text-2xl font-bold text-brand-cyan">
               {metrics.winRate.toFixed(1)}%
             </p>
           </div>
@@ -218,7 +218,7 @@ const Performance: React.FC = () => {
                       <td className="text-right py-2 text-text-primary">
                         {strategy.trades}
                       </td>
-                      <td className="text-right py-2 text-blue-600">
+                      <td className="text-right py-2 text-brand-cyan">
                         {(strategy.value / strategy.trades).toFixed(2)}%
                       </td>
                     </tr>

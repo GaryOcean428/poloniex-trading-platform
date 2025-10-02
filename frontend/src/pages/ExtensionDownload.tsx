@@ -258,7 +258,7 @@ const ExtensionDownload: React.FC = () => {
               </h2>
               <button 
                 onClick={() => setShowAdvancedInfo(!showAdvancedInfo)}
-                className="flex items-center text-sm text-blue-600"
+                className="flex items-center text-sm text-brand-cyan"
               >
                 {showAdvancedInfo ? (
                   <>

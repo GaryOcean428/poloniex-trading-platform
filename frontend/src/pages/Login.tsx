@@ -9,7 +9,7 @@ const LoginPage: React.FC = () => {
   // Show loading state while checking authentication
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <div className="min-h-screen flex items-center justify-center bg-bg-secondary">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
       </div>
     );
@@ -21,13 +21,13 @@ const LoginPage: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
+    <div className="min-h-screen flex items-center justify-center bg-bg-secondary py-12 px-4 sm:px-6 lg:px-8">
       <div className="max-w-md w-full space-y-8">
         <div>
-          <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
+          <h2 className="mt-6 text-center text-3xl font-extrabold text-text-primary">
             Welcome to Poloniex Trading
           </h2>
-          <p className="mt-2 text-center text-sm text-gray-600">
+          <p className="mt-2 text-center text-sm text-text-secondary">
             Sign in to access your trading dashboard
           </p>
         </div>
@@ -40,9 +40,9 @@ const LoginPage: React.FC = () => {
         />
         
         <div className="text-center">
-          <p className="text-sm text-gray-600">
+          <p className="text-sm text-text-secondary">
             Don't have an account?{' '}
-            <button className="font-medium text-blue-600 hover:text-blue-500">
+            <button className="font-medium text-brand-cyan hover:text-brand-cyan/90">
               Contact us for access
             </button>
           </p>
