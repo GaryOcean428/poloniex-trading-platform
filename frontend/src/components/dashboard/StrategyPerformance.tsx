@@ -12,24 +12,24 @@ const StrategyPerformance: React.FC<StrategyPerformanceProps> = ({ strategies })
       {strategies.map(strategy => (
         <div 
           key={strategy.id} 
-          className="bg-white border border-neutral-200 rounded-lg p-4 hover:shadow-md transition-shadow duration-200"
+          className="bg-bg-tertiary border border-border-subtle rounded-lg p-4 hover:shadow-elev-2 transition-all duration-200 shadow-elev-1"
         >
-          <div className="flex items-start justify-between mb-2">
+          <div className="flex items-start justify-between mb-3">
             <div>
-              <h3 className="font-semibold">{strategy.name}</h3>
-              <p className="text-xs text-neutral-500">{strategy.parameters.pair}</p>
+              <h3 className="font-semibold text-text-primary">{strategy.name}</h3>
+              <p className="text-xs text-text-muted mt-0.5">{strategy.parameters.pair}</p>
             </div>
-            <div className="p-2 rounded-full bg-blue-50">
-              <BarChart2 className="h-5 w-5 text-blue-500" />
+            <div className="p-2 rounded-full bg-brand-cyan/10">
+              <BarChart2 className="h-5 w-5 text-brand-cyan" />
             </div>
           </div>
           
           {strategy.performance && (
             <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <span className="text-sm text-neutral-500">Total P&L</span>
-                <span className={`font-medium ${
-                  strategy.performance.totalPnL >= 0 ? 'text-green-600' : 'text-red-600'
+                <span className="text-sm text-text-secondary">Total P&L</span>
+                <span className={`font-semibold ${
+                  strategy.performance.totalPnL >= 0 ? 'text-success' : 'text-error'
                 }`}>
                   {strategy.performance.totalPnL >= 0 ? '+' : ''}
                   {strategy.performance.totalPnL.toFixed(2)}
@@ -37,20 +37,20 @@ const StrategyPerformance: React.FC<StrategyPerformanceProps> = ({ strategies })
               </div>
               
               <div className="flex items-center justify-between">
-                <span className="text-sm text-neutral-500">Win Rate</span>
-                <span className="font-medium flex items-center">
+                <span className="text-sm text-text-secondary">Win Rate</span>
+                <span className="font-semibold flex items-center text-text-primary">
                   {(strategy.performance.winRate * 100).toFixed(1)}%
                   {strategy.performance.winRate >= 0.5 ? (
-                    <TrendingUp className="h-4 w-4 ml-1 text-green-500" />
+                    <TrendingUp className="h-4 w-4 ml-1 text-success" />
                   ) : (
-                    <TrendingDown className="h-4 w-4 ml-1 text-red-500" />
+                    <TrendingDown className="h-4 w-4 ml-1 text-error" />
                   )}
                 </span>
               </div>
               
               <div className="flex items-center justify-between">
-                <span className="text-sm text-neutral-500">Trades</span>
-                <span className="font-medium">{strategy.performance.tradesCount}</span>
+                <span className="text-sm text-text-secondary">Trades</span>
+                <span className="font-semibold text-text-primary">{strategy.performance.tradesCount}</span>
               </div>
             </div>
           )}

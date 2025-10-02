@@ -217,7 +217,7 @@ const LiveDataDashboard: React.FC = () => {
   };
 
   return (
-    <div className="bg-white dark:bg-neutral-800 rounded-lg shadow p-6">
+    <div className="bg-bg-tertiary rounded-lg shadow-elev-2 p-6">
       <div className="flex justify-between items-center mb-6">
         <h2 className="text-xl font-semibold text-neutral-800 dark:text-white">Advanced Live Data Dashboard</h2>
 
@@ -411,7 +411,7 @@ const LiveDataDashboard: React.FC = () => {
                         </th>
                       </tr>
                     </thead>
-                    <tbody className="bg-white divide-y divide-neutral-200 dark:bg-neutral-900 dark:divide-neutral-700">
+                    <tbody className="bg-bg-tertiary divide-y divide-border-subtle">
                       {orderBook.bids.map((bid, index) => (
                         <tr key={index}>
                           <td className="px-6 py-2 whitespace-nowrap text-sm font-medium text-green-600">
@@ -447,7 +447,7 @@ const LiveDataDashboard: React.FC = () => {
                         </th>
                       </tr>
                     </thead>
-                    <tbody className="bg-white divide-y divide-neutral-200 dark:bg-neutral-900 dark:divide-neutral-700">
+                    <tbody className="bg-bg-tertiary divide-y divide-border-subtle">
                       {orderBook.asks.map((ask, index) => (
                         <tr key={index}>
                           <td className="px-6 py-2 whitespace-nowrap text-sm font-medium text-red-600">
@@ -493,7 +493,7 @@ const LiveDataDashboard: React.FC = () => {
                     </th>
                   </tr>
                 </thead>
-                <tbody className="bg-white divide-y divide-neutral-200 dark:bg-neutral-900 dark:divide-neutral-700">
+                <tbody className="bg-bg-tertiary divide-y divide-border-subtle">
                   {trades.map((trade) => (
                     <tr key={trade.id}>
                       <td className="px-6 py-2 whitespace-nowrap text-sm text-neutral-500 dark:text-neutral-400">
@@ -546,7 +546,7 @@ const LiveDataDashboard: React.FC = () => {
                     </th>
                   </tr>
                 </thead>
-                <tbody className="bg-white divide-y divide-neutral-200 dark:bg-neutral-900 dark:divide-neutral-700">
+                <tbody className="bg-bg-tertiary divide-y divide-border-subtle">
                   {anomalies.map((anomaly, index) => (
                     <tr key={index}>
                       <td className="px-6 py-2 whitespace-nowrap text-sm text-neutral-500 dark:text-neutral-400">

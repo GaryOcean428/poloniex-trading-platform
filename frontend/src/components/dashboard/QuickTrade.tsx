@@ -38,9 +38,9 @@ const QuickTrade: React.FC = () => {
   
   return (
     <form onSubmit={handleSubmit}>
-      <div className="space-y-3">
+      <div className="space-y-4">
         <div>
-          <label className="block text-sm font-medium text-neutral-700">Pair</label>
+          <label className="block text-sm font-semibold text-text-primary mb-1.5">Pair</label>
           <select
             value={pair}
             onChange={(e) => setPair(e.target.value)}
@@ -53,9 +53,9 @@ const QuickTrade: React.FC = () => {
           </select>
         </div>
         
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="block text-sm font-medium text-neutral-700">Type</label>
+            <label className="block text-sm font-semibold text-text-primary mb-1.5">Type</label>
             <select
               value={orderType}
               onChange={(e) => setOrderType(e.target.value)}
@@ -68,14 +68,14 @@ const QuickTrade: React.FC = () => {
           </div>
           
           <div>
-            <label className="block text-sm font-medium text-neutral-700">Side</label>
+            <label className="block text-sm font-semibold text-text-primary mb-1.5">Side</label>
             <div className="mt-1 grid grid-cols-2 gap-2">
               <button
                 type="button"
-                className={`py-2 text-center rounded-md ${
+                className={`py-2 text-center rounded-md font-semibold transition-all ${
                   side === 'BUY'
-                    ? 'bg-green-600 text-white'
-                    : 'bg-neutral-200 text-neutral-700'
+                    ? 'bg-success text-text-inverse shadow-elev-1'
+                    : 'bg-bg-secondary text-text-secondary hover:bg-bg-tertiary'
                 }`}
                 onClick={() => setSide('BUY')}
                 disabled={isLoading}
@@ -84,10 +84,10 @@ const QuickTrade: React.FC = () => {
               </button>
               <button
                 type="button"
-                className={`py-2 text-center rounded-md ${
+                className={`py-2 text-center rounded-md font-semibold transition-all ${
                   side === 'SELL'
-                    ? 'bg-red-600 text-white'
-                    : 'bg-neutral-200 text-neutral-700'
+                    ? 'bg-error text-text-inverse shadow-elev-1'
+                    : 'bg-bg-secondary text-text-secondary hover:bg-bg-tertiary'
                 }`}
                 onClick={() => setSide('SELL')}
                 disabled={isLoading}
@@ -99,20 +99,20 @@ const QuickTrade: React.FC = () => {
         </div>
         
         <div>
-          <label className="block text-sm font-medium text-neutral-700">Amount</label>
-          <div className="mt-1 flex rounded-md shadow-sm">
+          <label className="block text-sm font-semibold text-text-primary mb-1.5">Amount</label>
+          <div className="mt-1 flex rounded-md">
             <input
               type="number"
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
-              className="flex-1 min-w-0 input"
+              className="flex-1 min-w-0 input rounded-r-none"
               placeholder="0.00"
               step="0.0001"
               min="0"
               required
               disabled={isLoading}
             />
-            <span className="inline-flex items-center px-3 rounded-r-md border border-l-0 border-neutral-300 bg-neutral-50 text-neutral-500 text-sm">
+            <span className="inline-flex items-center px-3 rounded-r-md border-2 border-l-0 border-border-moderate bg-bg-secondary text-text-secondary text-sm font-medium">
               {pair.split('-')[0]}
             </span>
           </div>
@@ -120,20 +120,20 @@ const QuickTrade: React.FC = () => {
         
         {orderType === 'LIMIT' && (
           <div>
-            <label className="block text-sm font-medium text-neutral-700">Price</label>
-            <div className="mt-1 flex rounded-md shadow-sm">
+            <label className="block text-sm font-semibold text-text-primary mb-1.5">Price</label>
+            <div className="mt-1 flex rounded-md">
               <input
                 type="number"
                 value={price}
                 onChange={(e) => setPrice(e.target.value)}
-                className="flex-1 min-w-0 input"
+                className="flex-1 min-w-0 input rounded-r-none"
                 placeholder="0.00"
                 step="0.01"
                 min="0"
                 required
                 disabled={isLoading}
               />
-              <span className="inline-flex items-center px-3 rounded-r-md border border-l-0 border-neutral-300 bg-neutral-50 text-neutral-500 text-sm">
+              <span className="inline-flex items-center px-3 rounded-r-md border-2 border-l-0 border-border-moderate bg-bg-secondary text-text-secondary text-sm font-medium">
                 USDT
               </span>
             </div>
@@ -141,10 +141,10 @@ const QuickTrade: React.FC = () => {
         )}
         
         {orderStatus && (
-          <div className={`text-sm p-2 rounded ${
+          <div className={`text-sm p-3 rounded-lg font-medium ${
             orderStatus.includes('failed') || orderStatus.includes('Failed') 
-              ? 'bg-red-100 text-red-700' 
-              : 'bg-green-100 text-green-700'
+              ? 'bg-error/10 text-error border border-error/20' 
+              : 'bg-success/10 text-success border border-success/20'
           }`}>
             {orderStatus}
           </div>
@@ -153,9 +153,9 @@ const QuickTrade: React.FC = () => {
         <div className="pt-2">
           <button
             type="submit"
-            className={`w-full btn ${
-              side === 'BUY' ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'
-            } text-white`}
+            className={`w-full btn py-3 rounded-lg font-semibold shadow-elev-1 hover:shadow-elev-2 transition-all ${
+              side === 'BUY' ? 'bg-success hover:bg-success/90 text-text-inverse' : 'bg-error hover:bg-error/90 text-text-inverse'
+            }`}
             disabled={isLoading}
           >
             {isLoading ? 'Processing...' : `${side === 'BUY' ? 'Buy' : 'Sell'} ${pair.split('-')[0]}`}
