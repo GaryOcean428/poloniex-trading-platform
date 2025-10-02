@@ -4,10 +4,22 @@
 
 This is the definitive guide for Railway deployment of the Poloniex Trading Platform. All previous Railway documentation has been consolidated here.
 
-## Current Status: ✅ RESOLVED
+## Current Status: ✅ CODE READY - USER ACTION REQUIRED
 
-**Issue**: Railway builds were failing with Yarn Berry configuration conflicts  
+**Latest Issue (October 2, 2025)**: ES Module syntax error causing app startup failure  
+**Resolution**: Fixed `require()` in ES module context in `backend/src/middleware/auth.js`  
+
+**Previous Issue**: Railway builds were failing with Yarn Berry configuration conflicts  
 **Resolution**: All build issues have been resolved with proper Corepack integration and environment configuration.
+
+### Current Deployment Blocker
+**Railway service configuration** must be updated manually in Railway Dashboard:
+- Root Directory: Change from `/` to `backend`
+- Build Command: Update to optimized command
+- Start Command: Update to `node dist/src/index.js`
+- Health Check Path: Change from `/healthz` to `/api/health`
+
+See [RAILWAY_DEPLOYMENT_CHECKLIST.md](../RAILWAY_DEPLOYMENT_CHECKLIST.md) for complete instructions.
 
 ---
 
