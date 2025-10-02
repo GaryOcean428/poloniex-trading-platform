@@ -33,7 +33,9 @@
     "sync:poloniex": "node scripts/sync-poloniex-futures-v3.js",
     "py:ingest:markets": "python python-services/poloniex/ingest_markets.py",
     "bundle:shared": "node scripts/bundle-shared.mjs",
-    "install:all": "yarn install"
+    "install:all": "yarn install",
+    "railway:validate": "node scripts/validate-railway-deployment.mjs",
+    "railway:deploy": "yarn railway:validate && git push origin main"
   },
   "engines": {
     "node": ">=20.0.0"
