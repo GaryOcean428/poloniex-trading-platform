@@ -3,7 +3,7 @@
 /* Progress Bar Styles */
 .progress-bar-container {
   width: 100%;
-  background-color: #e5e5e5; /* neutral-200 */
+  background-color: var(--bg-secondary);
   border-radius: 9999px; /* rounded-full */
   height: 0.5rem; /* h-2 */
   overflow: hidden;
@@ -16,15 +16,15 @@
 }
 
 .progress-bar-fill.green {
-  background-color: #22c55e; /* green-500 */
+  background-color: var(--success);
 }
 
 .progress-bar-fill.yellow {
-  background-color: #eab308; /* yellow-500 */
+  background-color: var(--warning);
 }
 
 .progress-bar-fill.red {
-  background-color: #ef4444; /* red-500 */
+  background-color: var(--error);
 }
 
 /* Dynamic width support using CSS custom properties */
@@ -72,7 +72,7 @@
   grid-template-columns: repeat(3, 1fr);
   gap: 1rem;
   padding-top: 1rem;
-  border-top: 1px solid #e5e5e5;
+  border-top: 1px solid var(--border-subtle);
 }
 
 @media (max-width: 768px) {
@@ -100,13 +100,13 @@
 .readiness-checklist {
   margin-top: 1rem;
   padding-top: 0.75rem;
-  border-top: 1px solid #e5e5e5;
+  border-top: 1px solid var(--border-subtle);
 }
 
 .readiness-checklist .checklist-title {
   font-size: 0.75rem;
   font-weight: 500;
-  color: #374151;
+  color: var(--text-secondary);
   margin-bottom: 0.5rem;
 }
 
@@ -129,11 +129,11 @@
 
 /* Strategy card styles */
 .strategy-card {
-  background: white;
-  border: 1px solid #e5e5e5;
-  border-radius: 0.5rem;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 0.75rem;
   padding: 1.5rem;
-  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-elev-1);
 }
 
 .strategy-card .card-header {
@@ -146,7 +146,7 @@
 .strategy-card .card-title {
   font-size: 1.125rem;
   font-weight: 500;
-  color: #1f2937;
+  color: var(--text-primary);
 }
 
 .strategy-card .card-status {
@@ -174,21 +174,21 @@
 }
 
 .live-data-indicator.green {
-  background-color: #dcfce7;
-  color: #166534;
-  border: 1px solid #bbf7d0;
+  background-color: var(--success-bg);
+  color: var(--success);
+  border: 1px solid var(--success);
 }
 
 .live-data-indicator.yellow {
-  background-color: #fef3c7;
-  color: #a16207;
-  border: 1px solid #fde68a;
+  background-color: var(--warning-bg);
+  color: var(--warning);
+  border: 1px solid var(--warning);
 }
 
 .live-data-indicator.red {
-  background-color: #fee2e2;
-  color: #991b1b;
-  border: 1px solid #fecaca;
+  background-color: var(--error-bg);
+  color: var(--error);
+  border: 1px solid var(--error);
 }
 
 /* Responsive grid for different screen sizes */
