@@ -200,7 +200,7 @@ export class RequestResponseLogger {
       action: 'response'
     };
 
-    let message = `${req.method} ${req.originalUrl || req.url} ${statusCode} (${duration}ms)`;
+    const message = `${req.method} ${req.originalUrl || req.url} ${statusCode} (${duration}ms)`;
 
     if (this.config.logResponseBody && body && logLevel !== 'error') {
       try {
@@ -240,7 +240,7 @@ export class RequestResponseLogger {
       action: 'request'
     };
 
-    let message = `${method} ${url}`;
+    const message = `${method} ${url}`;
 
     if (this.config.logRequestBody && init?.body) {
       try {
@@ -275,7 +275,7 @@ export class RequestResponseLogger {
       action: 'response'
     };
 
-    let message = `Response ${url} ${statusCode} (${duration}ms)`;
+    const message = `Response ${url} ${statusCode} (${duration}ms)`;
 
     if (this.config.logResponseBody && logLevel !== 'error') {
       try {
