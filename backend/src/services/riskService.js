@@ -3,8 +3,8 @@
  * Enforces position limits, leverage caps, stop loss/take profit, and account-level risk controls
  */
 
-const { logger } = require('../utils/logger.js');
-const { pool } = require('../db/connection.js');
+import { logger } from '../utils/logger.js';
+import { pool } from '../db/connection.js';
 
 class RiskService {
   constructor() {
@@ -344,4 +344,4 @@ class RiskService {
   }
 }
 
-module.exports = new RiskService();
+export default new RiskService();
