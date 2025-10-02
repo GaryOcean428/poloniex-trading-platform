@@ -55,6 +55,15 @@ const ModelRecalibrationPanel: React.FC = () => {
   const [recalibrationHistory, _setRecalibrationHistory] = useState<RecalibrationResult[]>([]);
   const [autoRecalibrationEnabled, setAutoRecalibrationEnabled] = useState(false);
   const [cleanupFunction, setCleanupFunction] = useState<(() => void) | null>(null);
+  const CHART_COLORS = {
+    driftScore: '#ef4444',
+    accuracy: '#10b981',
+    f1Score: '#3b82f6',
+    sharpeRatio: '#8b5cf6',
+    winRate: '#06b6d4'
+  };
+
+
 
   // Load models from storage
   useEffect((): void => {
@@ -624,11 +633,11 @@ const ModelRecalibrationPanel: React.FC = () => {
                 <YAxis />
                 <Tooltip />
                 <Legend />
-                <Line type="monotone" dataKey="driftScore" stroke="#ff0000" name="Drift Score" />
-                <Line type="monotone" dataKey="accuracy" stroke="#00ff00" name="Accuracy" />
-                <Line type="monotone" dataKey="f1Score" stroke="#0000ff" name="F1 Score" />
-                <Line type="monotone" dataKey="sharpeRatio" stroke="#ff00ff" name="Sharpe Ratio" />
-                <Line type="monotone" dataKey="winRate" stroke="#00ffff" name="Win Rate" />
+                <Line type="monotone" dataKey="driftScore" stroke={CHART_COLORS.driftScore} name="Drift Score" />
+                <Line type="monotone" dataKey="accuracy" stroke={CHART_COLORS.accuracy} name="Accuracy" />
+                <Line type="monotone" dataKey="f1Score" stroke={CHART_COLORS.f1Score} name="F1 Score" />
+                <Line type="monotone" dataKey="sharpeRatio" stroke={CHART_COLORS.sharpeRatio} name="Sharpe Ratio" />
+                <Line type="monotone" dataKey="winRate" stroke={CHART_COLORS.winRate} name="Win Rate" />
               </LineChart>
             </ResponsiveContainer>
           </div>

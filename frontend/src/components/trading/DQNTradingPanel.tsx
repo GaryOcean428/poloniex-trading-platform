@@ -492,7 +492,7 @@ const DQNTradingPanel: React.FC = () => {
                     <YAxis />
                     <Tooltip />
                     <Legend />
-                    <Line type="monotone" dataKey="reward" stroke="#8884d8" activeDot={{ r: 8 }} />
+                    <Line type="monotone" dataKey="reward" stroke="#06b6d4" activeDot={{ r: 8 }} />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
