@@ -17,6 +17,7 @@ import Integration from './components/Integration';
 import ToastContainer from './components/ToastContainer';
 import RouteGuard from './components/RouteGuard';
 import { BrowserCompatibility } from './utils/extensionErrorHandler';
+import './styles/theme.css';
 import './App.css';
 
 // Lazy load page components
@@ -52,10 +53,15 @@ const LoadingSpinner = () => (
 );
 
 function App() {
-  // Initialize browser compatibility and extension error handling after React mounts
   useEffect(() => {
     BrowserCompatibility.setupExtensionCompatibility();
+    
+    const darkMode = (window as any).useAppStore?.getState?.()?.ui?.darkMode;
+    if (darkMode) {
+      document.documentElement.classList.add('dark');
+    }
   }, []);
+
   return (
     <>
       <SkipLinks />

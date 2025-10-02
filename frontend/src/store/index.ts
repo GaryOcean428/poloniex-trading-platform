@@ -194,6 +194,11 @@ export const useAppStore = create<AppState & AppActions>()(
       setDarkMode: (enabled) =>
         set((state) => {
           state.ui.darkMode = enabled;
+          if (enabled) {
+            document.documentElement.classList.add('dark');
+          } else {
+            document.documentElement.classList.remove('dark');
+          }
         }),
 
       setShowExtension: (show) =>
