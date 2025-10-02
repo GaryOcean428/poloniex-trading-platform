@@ -3,7 +3,7 @@
  * Handles critical alerts for disconnections, order failures, and loss breaches
  */
 
-const { logger } = require('../utils/logger.js');
+import { logger } from '../utils/logger.js';
 
 class AlertingService {
   constructor() {
@@ -196,4 +196,4 @@ class AlertingService {
   }
 }
 
-module.exports = new AlertingService();
+export default new AlertingService();

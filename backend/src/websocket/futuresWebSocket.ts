@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import { EventEmitter } from 'events';
 import { logger } from '../utils/logger.js';
 import { pool } from '../db/connection.js';
-const alertingService = require('../services/alertingService.js');
+import alertingService from '../services/alertingService.js';
 
 // Query helper function
 const query = async (text: string, params?: unknown[]) => {
