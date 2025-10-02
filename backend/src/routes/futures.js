@@ -65,7 +65,7 @@ router.get('/products/:symbol', async (req, res) => {
 router.get('/ticker', async (req, res) => {
   try {
     const { symbol } = req.query;
-    const tickers = await poloniexFuturesService.getTicker(symbol);
+    const tickers = await poloniexFuturesService.getTickers(symbol);
     res.json(tickers);
   } catch (error) {
     logger.error('Error fetching tickers:', error);
