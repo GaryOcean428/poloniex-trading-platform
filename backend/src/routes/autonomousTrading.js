@@ -1,4 +1,5 @@
 import express from 'express';
+const { logger } = require('../utils/logger.js');
 
 const router = express.Router();
 
@@ -41,7 +42,7 @@ router.post('/start', (req, res) => {
       timestamp: new Date().toISOString()
     });
   } catch (error) {
-    console.error('Error starting autonomous trading:', error);
+    logger.error('Error starting autonomous trading', { error: error.message, stack: error.stack });
     res.status(500).json({
       error: 'Failed to start autonomous trading',
       details: process.env.NODE_ENV === 'development' ? error.message : undefined
@@ -60,7 +61,7 @@ router.post('/stop', (req, res) => {
       timestamp: new Date().toISOString()
     });
   } catch (error) {
-    console.error('Error stopping autonomous trading:', error);
+    logger.error('Error stopping autonomous trading', { error: error.message, stack: error.stack });
     res.status(500).json({
       error: 'Failed to stop autonomous trading',
       details: process.env.NODE_ENV === 'development' ? error.message : undefined

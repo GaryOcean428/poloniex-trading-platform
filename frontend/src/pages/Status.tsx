@@ -183,7 +183,7 @@ const Status: React.FC = () => {
     return null;
   }
 
-  const visibleNotifications = statusData.notifications.filter(
+  const visibleNotifications = (statusData.notifications || []).filter(
     notification => !dismissedNotifications.has(notification.id)
   );
 

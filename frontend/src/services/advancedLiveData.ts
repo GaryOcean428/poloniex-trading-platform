@@ -186,7 +186,7 @@ export class LiveDataService {
 
   private initializePoloniexClient(): void {
     this.poloniexRestClient = axios.create({
-      baseURL: "https://api.poloniex.com/markets",
+      baseURL: "/api/futures",
       timeout: 10000,
       headers: {
         "Content-Type": "application/json",

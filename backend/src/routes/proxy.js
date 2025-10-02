@@ -4,6 +4,7 @@ import express from 'express';
 import { URLSearchParams } from 'url';
 import { authenticateToken } from '../middleware/auth.js';
 import { UserService } from '../services/userService.js';
+import { logger } from '../utils/logger.js';
 
 const router = express.Router();
 
@@ -27,7 +28,7 @@ function generateSignature(method, requestPath, body, timestamp, apiSecret) {
       .update(message)
       .digest('base64');
   } catch (error) {
-    console.error('Error generating signature:', error);
+    logger.error('Error generating signature', { error: error.message, stack: error.stack });
     throw new Error('Failed to generate API signature');
   }
 }
@@ -78,12 +79,16 @@ async function makeAuthenticatedRequest(credentials, method, endpoint, body = nu
       config.params = params;
     }
 
-    console.log(`Making authenticated v3 ${method} request to ${requestPath}`);
+    logger.info('Making authenticated v3 request', { method, requestPath });
     const response = await axios(config);
 
     return response;
   } catch (error) {
-    console.error('Authenticated request error:', error.response?.data || error.message);
+    logger.error('Authenticated request error', { 
+      error: error.response?.data || error.message,
+      method,
+      requestPath
+    });
     throw error;
   }
 }
@@ -108,12 +113,16 @@ async function makePublicRequest(method, endpoint, params = {}) {
       config.params = params;
     }
 
-    console.log(`Making public ${method} request to ${endpoint}`);
+    logger.info('Making public request', { method, endpoint });
     const response = await axios(config);
 
     return response;
   } catch (error) {
-    console.error('Public request error:', error.response?.data || error.message);
+    logger.error('Public request error', { 
+      error: error.response?.data || error.message,
+      method,
+      endpoint
+    });
     throw error;
   }
 }
@@ -516,7 +525,12 @@ router.get('/trades', async (req, res) => {
  * Error handling middleware
  */
 router.use((error, req, res) => {
-  console.error('Proxy route error:', error);
+  logger.error('Proxy route error', { 
+    error: error.message, 
+    stack: error.stack,
+    code: error.code,
+    path: req.path
+  });
 
   if (error.code === 'ECONNREFUSED') {
     return res.status(503).json({

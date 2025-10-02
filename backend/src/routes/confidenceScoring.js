@@ -1,4 +1,5 @@
 import express from 'express';
+import { logger } from '../utils/logger.js';
 
 const router = express.Router();
 
@@ -30,7 +31,7 @@ router.get('/scores', (req, res) => {
       timestamp: new Date().toISOString()
     });
   } catch (error) {
-    console.error('Error fetching confidence scores:', error);
+    logger.error('Error fetching confidence scores', { error: error.message, stack: error.stack });
     res.status(500).json({
       error: 'Failed to fetch confidence scores',
       details: process.env.NODE_ENV === 'development' ? error.message : undefined
@@ -59,7 +60,7 @@ router.post('/calculate', (req, res) => {
       timestamp: new Date().toISOString()
     });
   } catch (error) {
-    console.error('Error calculating confidence score:', error);
+    logger.error('Error calculating confidence score', { error: error.message, stack: error.stack });
     res.status(500).json({
       error: 'Failed to calculate confidence score',
       details: process.env.NODE_ENV === 'development' ? error.message : undefined

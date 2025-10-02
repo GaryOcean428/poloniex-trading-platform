@@ -56,7 +56,7 @@ export class UserService {
 
       return user;
     } catch (error) {
-      console.error('Error creating user:', error);
+      logger.error('Error creating user', { error: error.message, stack: error.stack });
       throw error;
     }
   }
@@ -84,7 +84,7 @@ export class UserService {
       const result = await query(queryText, [identifier]);
       return result.rows[0] || null;
     } catch (error) {
-      console.error('Error finding user:', error);
+      logger.error('Error finding user', { error: error.message, identifier });
       throw error;
     }
   }
@@ -112,7 +112,7 @@ export class UserService {
       const result = await query(queryText, [userId]);
       return result.rows[0] || null;
     } catch (error) {
-      console.error('Error finding user by ID:', error);
+      logger.error('Error finding user by ID', { error: error.message, userId });
       throw error;
     }
   }
@@ -124,7 +124,7 @@ export class UserService {
     try {
       return await bcrypt.compare(password, user.password_hash);
     } catch (error) {
-      console.error('Error verifying password:', error);
+      logger.error('Error verifying password', { error: error.message });
       return false;
     }
   }
@@ -151,7 +151,7 @@ export class UserService {
       // For now, we'll just update the login time
 
     } catch (error) {
-      console.error('Error updating last login:', error);
+      logger.error('Error updating last login', { error: error.message });
       throw error;
     }
   }
@@ -213,7 +213,7 @@ export class UserService {
 
       return session;
     } catch (error) {
-      console.error('Error creating session:', error);
+      logger.error('Error creating session', { error: error.message });
       throw error;
     }
   }
@@ -238,7 +238,7 @@ export class UserService {
       const result = await query(queryText, [sessionToken]);
       return result.rows[0] || null;
     } catch (error) {
-      console.error('Error finding session:', error);
+      logger.error('Error finding session', { error: error.message });
       throw error;
     }
   }
@@ -256,7 +256,7 @@ export class UserService {
 
       await query(queryText, [sessionId]);
     } catch (error) {
-      console.error('Error updating session access:', error);
+      logger.error('Error updating session access', { error: error.message, sessionId });
       throw error;
     }
   }
@@ -274,7 +274,7 @@ export class UserService {
 
       await query(queryText, [sessionId, reason]);
     } catch (error) {
-      console.error('Error invalidating session:', error);
+      logger.error('Error invalidating session', { error: error.message, sessionId, reason });
       throw error;
     }
   }
@@ -291,10 +291,10 @@ export class UserService {
       `;
 
       const result = await query(queryText);
-      console.log(`Cleaned up ${result.rowCount} expired sessions`);
+      logger.info('Cleaned up expired sessions', { count: result.rowCount });
       return result.rowCount;
     } catch (error) {
-      console.error('Error cleaning up sessions:', error);
+      logger.error('Error cleaning up sessions', { error: error.message });
       throw error;
     }
   }
@@ -329,8 +329,7 @@ export class UserService {
 
       await query(queryText, params);
     } catch (error) {
-      console.error('Error logging security event:', error);
-      // Don't throw here as security logging shouldn't break the main flow
+      logger.error('Error logging security event', { error: error.message });
     }
   }
 
@@ -347,7 +346,7 @@ export class UserService {
 
       await query(queryText, [userId]);
     } catch (error) {
-      console.error('Error creating user preferences:', error);
+      logger.error('Error creating user preferences', { error: error.message, userId });
       throw error;
     }
   }
@@ -364,7 +363,7 @@ export class UserService {
       const result = await query(queryText, [userId]);
       return result.rows[0] || null;
     } catch (error) {
-      console.error('Error getting user preferences:', error);
+      logger.error('Error getting user preferences', { error: error.message, userId });
       throw error;
     }
   }
@@ -413,7 +412,7 @@ export class UserService {
         jurisdiction: user.country_code
       };
     } catch (error) {
-      console.error('Error checking jurisdiction compliance:', error);
+      logger.error('Error checking jurisdiction compliance', { error: error.message });
       throw error;
     }
   }
@@ -437,7 +436,7 @@ export class UserService {
       const result = await query(queryText, [userId, limit]);
       return result.rows;
     } catch (error) {
-      console.error('Error getting login activity:', error);
+      logger.error('Error getting login activity', { error: error.message, userId });
       throw error;
     }
   }
@@ -476,7 +475,7 @@ export class UserService {
       // Return iv + authTag + encrypted data
       return iv.toString('hex') + ':' + authTag.toString('hex') + ':' + encrypted;
     } catch (error) {
-      console.error('Error encrypting data:', error);
+      logger.error('Error encrypting data', { error: error.message });
       throw new Error('Failed to encrypt data');
     }
   }
@@ -507,7 +506,7 @@ export class UserService {
 
       return decrypted;
     } catch (error) {
-      console.error('Error decrypting data:', error);
+      logger.error('Error decrypting data', { error: error.message });
       throw new Error('Failed to decrypt data');
     }
   }
@@ -570,7 +569,7 @@ export class UserService {
 
       return result.rows[0];
     } catch (error) {
-      console.error('Error storing API credentials:', error);
+      logger.error('Error storing API credentials', { error: error.message });
       throw error;
     }
   }

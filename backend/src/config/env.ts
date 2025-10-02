@@ -5,6 +5,8 @@
  * for the backend service.
  */
 
+import { logger } from '../utils/logger.js';
+
 export interface EnvironmentConfig {
   NODE_ENV: string;
   PORT: number;
@@ -76,23 +78,22 @@ export function validateEnvironment(): EnvironmentConfig {
     }
 
     if (!API_ENCRYPTION_KEY) {
-      console.warn('⚠️  API_ENCRYPTION_KEY not set - using JWT_SECRET for API key encryption');
+      logger.warn('API_ENCRYPTION_KEY not set - using JWT_SECRET for API key encryption');
     }
 
     if (!POLONIEX_API_KEY || !POLONIEX_API_SECRET) {
-      console.warn('⚠️  Poloniex API credentials not set - trading features will be limited');
+      logger.warn('Poloniex API credentials not set - trading features will be limited');
     }
   }
 
   // Throw error if validation fails
   if (errors.length > 0) {
-    console.error('❌ Environment validation failed:');
-    errors.forEach(error => console.error(`   - ${error}`));
+    logger.error('Environment validation failed', { errors });
     throw new Error(`Environment validation failed: ${errors.join(', ')}`);
   }
 
   // Log successful validation
-  console.log('✅ Environment validation passed');
+  logger.info('Environment validation passed');
   
   return {
     NODE_ENV,

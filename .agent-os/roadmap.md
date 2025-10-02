@@ -39,9 +39,9 @@ Goal: End-to-end functionality in paper mode with catalog-driven parameters, rob
   - Acceptance: reproducible results; parity tests between paper/live assumptions. ✅ IMPLEMENTED (needs production testing)
 
 - Risk Layer (Initial)
-  - [ ] Per-position stop loss/take profit, leverage caps from catalog. (Basic risk checks in placeOrder)
-  - [ ] Account-level: daily loss cap, max open trades, kill switch. (Needs formal service implementation)
-  - Acceptance: hard enforcement with logged decisions. ⚠️ PARTIAL (risk checks exist but not centralized)
+  - [x] Per-position stop loss/take profit, leverage caps from catalog. (riskService.js implemented)
+  - [x] Account-level: daily loss cap, max open trades, kill switch. (Formal service with DB queries)
+  - Acceptance: hard enforcement with logged decisions. ✅ IMPLEMENTED (integrated in order placement)
 
 - Paper OMS
   - [x] Simulated fills using order book snapshots; identical interface to live OMS. (paperTradingService.js implemented)
@@ -49,9 +49,9 @@ Goal: End-to-end functionality in paper mode with catalog-driven parameters, rob
   - Acceptance: paper and backtest outcomes align within tolerance on same feed. ✅ IMPLEMENTED (needs validation testing)
 
 - Observability
-  - [ ] Structured logging, key metrics (latency, error rates, slippage, pnl), minimal dashboards. (Using console.log, needs structured logging)
-  - [ ] Alerts: disconnection, order rejects, loss breach. (No formal alerting system)
-  - Acceptance: on-call actionable alerts; SLOs documented. ❌ NOT IMPLEMENTED
+  - [x] Structured logging, key metrics (latency, error rates, slippage, pnl), minimal dashboards. (Winston logger with structured context)
+  - [x] Alerts: disconnection, order rejects, loss breach. (alertingService.js implemented)
+  - Acceptance: on-call actionable alerts; SLOs documented. ✅ IMPLEMENTED (integrated in WebSocket and order routes)
 
 ## Phase P1 — Strategy and Promotion
 

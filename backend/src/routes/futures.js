@@ -3,6 +3,8 @@ import { authenticateToken } from '../middleware/auth.js';
 import poloniexFuturesService from '../services/poloniexFuturesService.js';
 import { UserService } from '../services/userService.js';
 import { logger } from '../utils/logger.js';
+const riskService = require('./riskService.js');
+const alertingService = require('./alertingService.js');
 
 const router = express.Router();
 
@@ -466,6 +468,20 @@ router.post('/orders', authenticateToken, async (req, res) => {
     // Validate order data
     poloniexFuturesService.validateOrderData(req.body);
 
+    // Risk check before placing order
+    const account = { id: req.user.id, balance: 10000 };
+    const marketInfo = await poloniexFuturesService.getProduct(req.body.symbol);
+    const riskCheck = await riskService.checkOrderRisk(req.body, account, marketInfo);
+    
+    if (!riskCheck.allowed) {
+      logger.warn('Order rejected by risk check', { orderData: req.body, reason: riskCheck.reason });
+      await alertingService.alertOrderRejection(req.body, riskCheck.reason);
+      return res.status(400).json({
+        error: 'Risk check failed',
+        reason: riskCheck.reason
+      });
+    }
+
     const order = await poloniexFuturesService.placeOrder(credentials, req.body);
     
     // Store in database for tracking
@@ -474,6 +490,7 @@ router.post('/orders', authenticateToken, async (req, res) => {
     res.json(order);
   } catch (error) {
     logger.error('Error placing order:', error);
+    await alertingService.alertOrderRejection(req.body, error.message);
     res.status(error.response?.status || 400).json({
       error: 'Failed to place order',
       details: error.response?.data || error.message

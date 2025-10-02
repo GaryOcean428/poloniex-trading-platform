@@ -1,4 +1,5 @@
 import redisService from '../services/redisService.js';
+import { logger } from '../utils/logger.js';
 
 export class RedisRateLimiter {
   constructor(options = {}) {
@@ -41,7 +42,7 @@ export class RedisRateLimiter {
         next();
       } catch (error) {
         // If Redis is down, allow the request but log the error
-        console.warn('Rate limiting disabled due to Redis error:', error);
+        logger.warn('Rate limiting disabled due to Redis error', { error: error.message, stack: error.stack });
         next();
       }
     };
