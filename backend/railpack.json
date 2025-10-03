@@ -2,17 +2,24 @@
   "$schema": "https://schema.railpack.com",
   "version": "1",
   "metadata": {
-    "name": "polytrade-backend"
+    "name": "polytrade-backend",
+    "description": "Poloniex Trading Platform Backend API"
   },
   "build": {
     "provider": "node",
     "workingDirectory": "..",
     "steps": {
       "install": {
-        "commands": ["yarn install --immutable"]
+        "commands": [
+          "corepack enable",
+          "yarn install --immutable"
+        ]
       },
       "build": {
-        "commands": ["yarn build:backend"]
+        "commands": [
+          "yarn bundle:shared",
+          "yarn workspace backend build:railway"
+        ]
       }
     }
   },
@@ -22,5 +29,9 @@
     "healthCheckTimeout": 300,
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 3
+  },
+  "env": {
+    "NODE_ENV": "production",
+    "YARN_ENABLE_STRICT_SETTINGS": "false"
   }
 }
