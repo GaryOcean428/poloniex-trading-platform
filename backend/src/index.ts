@@ -100,7 +100,7 @@ app.get('/api/health', (_req: Request, res: Response) => {
   });
 });
 
-// Simplified health check for Railway
+// Simplified health check for Railway (backward compatibility)
 app.get('/healthz', (_req: Request, res: Response) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
@@ -129,7 +129,11 @@ if (process.env.NODE_ENV === 'production') {
     logger.warn('FRONTEND_STANDALONE=true: skipping static frontend serving in backend');
   } else {
     const distPath = path.resolve(__dirname, '../../frontend/dist');
+    logger.info(`Checking for frontend dist at: ${distPath}`);
+    
     if (fs.existsSync(distPath)) {
+      logger.info('Frontend dist found, serving static files');
+      
       // Serve frontend static files with proper MIME types
       app.use(
         express.static(distPath, {
@@ -155,12 +159,21 @@ if (process.env.NODE_ENV === 'production') {
         })
       );
 
-      // Serve index.html for all other routes (SPA support)
-      app.get('*', (_req: Request, res: Response) => {
-        res.sendFile(path.join(distPath, 'index.html'));
+      // SPA fallback: Serve index.html for all non-API, non-static-file routes
+      // This ensures routes like /dashboard/live, /strategies, etc. work correctly
+      app.get('*', (req: Request, res: Response) => {
+        // Only serve index.html for non-API routes
+        if (!req.path.startsWith('/api')) {
+          logger.debug(`SPA fallback: serving index.html for ${req.path}`);
+          res.sendFile(path.join(distPath, 'index.html'));
+        } else {
+          // API routes that didn't match should return 404
+          res.status(404).json({ error: 'API endpoint not found' });
+        }
       });
     } else {
       logger.warn(`Frontend dist not found at ${distPath}; skipping static frontend serving`);
+      logger.warn('Run "yarn build:frontend" to generate frontend build');
     }
   }
 }

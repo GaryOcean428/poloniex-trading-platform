@@ -2,26 +2,30 @@
   "$schema": "https://schema.railpack.com",
   "version": "1",
   "metadata": {
-    "name": "polytrade-monorepo"
+    "name": "polytrade-monorepo",
+    "description": "Poloniex Trading Platform - Monorepo coordination file"
   },
   "services": {
     "backend": {
       "root": "./backend",
       "build": {
         "provider": "node"
-      }
+      },
+      "description": "Backend API service (polytrade-be)"
     },
     "frontend": {
       "root": "./frontend",
       "build": {
         "provider": "node"
-      }
+      },
+      "description": "Frontend SPA service (polytrade-fe)"
     },
     "ml-worker": {
       "root": "./python-services/poloniex",
       "build": {
         "provider": "python"
-      }
+      },
+      "description": "ML worker service for market data ingestion"
     }
   }
 }
