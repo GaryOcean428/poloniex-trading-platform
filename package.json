@@ -35,7 +35,8 @@
     "bundle:shared": "node scripts/bundle-shared.mjs",
     "install:all": "yarn install",
     "railway:validate": "node scripts/validate-railway-deployment.mjs",
-    "railway:deploy": "yarn railway:validate && git push origin main"
+    "railway:deploy": "yarn railway:validate && git push origin main",
+    "deploy:check": "node scripts/validate-deployment-readiness.mjs"
   },
   "engines": {
     "node": ">=20.0.0"
