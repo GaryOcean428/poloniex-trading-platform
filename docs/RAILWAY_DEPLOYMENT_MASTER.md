@@ -4,22 +4,40 @@
 
 This is the definitive guide for Railway deployment of the Poloniex Trading Platform. All previous Railway documentation has been consolidated here.
 
-## Current Status: ✅ CODE READY - USER ACTION REQUIRED
+## Current Status: ✅ CODE READY - DEPLOYMENT OPTIMIZED
 
-**Latest Issue (October 2, 2025)**: ES Module syntax error causing app startup failure  
-**Resolution**: Fixed `require()` in ES module context in `backend/src/middleware/auth.js`  
+**Latest Updates (January 2025)**:
+- ✅ Fixed SPA routing fallback for all non-API routes
+- ✅ Enhanced environment variable documentation
+- ✅ Optimized railpack.json configurations with corepack
+- ✅ Added comprehensive troubleshooting guide
+- ✅ Improved logging for deployment issues
 
-**Previous Issue**: Railway builds were failing with Yarn Berry configuration conflicts  
-**Resolution**: All build issues have been resolved with proper Corepack integration and environment configuration.
+**Previous Issues**: All build and configuration issues have been resolved with proper Corepack integration and environment configuration.
 
-### Current Deployment Blocker
+## 📚 Documentation Navigation
+
+| Document | Purpose | When to Use |
+|----------|---------|-------------|
+| **This Guide** | Complete deployment reference | First-time setup, comprehensive overview |
+| [Environment Setup](deployment/ENVIRONMENT_SETUP.md) | Environment variables guide | Setting up secrets and configuration |
+| [Troubleshooting](deployment/DEPLOYMENT_TROUBLESHOOTING.md) | Common issues and solutions | When deployment fails or shows errors |
+| [Deployment Checklist](../RAILWAY_DEPLOYMENT_CHECKLIST.md) | Quick deployment steps | Pre-deployment verification |
+| [Service Configuration](deployment/RAILWAY_SERVICE_CONFIG.md) | Railway service settings | Configuring Railway dashboard |
+
+### Quick Start
+1. **New to Railway?** Start with [Environment Setup](deployment/ENVIRONMENT_SETUP.md)
+2. **Having Issues?** Check [Troubleshooting](deployment/DEPLOYMENT_TROUBLESHOOTING.md)
+3. **Ready to Deploy?** Follow [Deployment Checklist](../RAILWAY_DEPLOYMENT_CHECKLIST.md)
+
+### Current Deployment Requirements
 **Railway service configuration** must be updated manually in Railway Dashboard:
-- Root Directory: Change from `/` to `backend`
-- Build Command: Update to optimized command
-- Start Command: Update to `node dist/src/index.js`
-- Health Check Path: Change from `/healthz` to `/api/health`
+- Root Directory: Change from `/` to `backend` (for polytrade-be)
+- Root Directory: Change from `/` to `frontend` (for polytrade-fe)
+- Health Check Path: `/api/health` (backend) or `/healthz` (frontend)
+- Environment Variables: See [Environment Setup](deployment/ENVIRONMENT_SETUP.md) for complete list
 
-See [RAILWAY_DEPLOYMENT_CHECKLIST.md](../RAILWAY_DEPLOYMENT_CHECKLIST.md) for complete instructions.
+See [RAILWAY_DEPLOYMENT_CHECKLIST.md](../RAILWAY_DEPLOYMENT_CHECKLIST.md) for step-by-step instructions.
 
 ---
 
