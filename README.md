@@ -2,6 +2,15 @@
 
 A comprehensive trading platform for Poloniex with advanced features including automated trading, machine learning strategies, and Chrome extension integration.
 
+## 🚀 Quick Start
+
+**New to the project?** Start here:
+- 📖 **[QUICK_START.md](QUICK_START.md)** - Get up and running in minutes
+- ✅ **Deployment Validation:** Run `yarn deploy:check` to verify readiness
+- 📋 **Implementation Status:** See [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) for complete assessment response
+
+**Production Ready:** All deployment requirements validated ✅
+
 ## Features
 
 - **Live Data Integration**: Real-time market data with WebSocket connections and fallback mechanisms
@@ -74,6 +83,16 @@ yarn build
 ```
 
 ## Deployment
+
+### Pre-Deployment Validation
+
+Before deploying, verify all requirements are met:
+
+```bash
+yarn deploy:check
+```
+
+✅ All 28 validation checks should pass. See [QUICK_START.md](QUICK_START.md) for deployment guide and [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) for detailed implementation status.
 
 ### Deploying to Railway
 
