@@ -158,10 +158,9 @@ tools/
 
 # CodeQL databases
 codeql-dbs/
--e 
-# Environment files
-*.env
-*.env.*
+
+# Build metrics (local only)
+.metrics/
 -e 
 # Environment files
 *.env
