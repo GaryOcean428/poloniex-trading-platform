@@ -3,29 +3,24 @@
   "version": "1",
   "metadata": {
     "name": "polytrade-monorepo",
-    "description": "Poloniex Trading Platform - Monorepo coordination file"
+    "description": "Poloniex Trading Platform - Monorepo structure documentation"
   },
+  "_comment": "This file documents the monorepo structure. Each service has its own railpack.json in its directory. Railway services should point to their respective service directories, not the root.",
   "services": {
     "backend": {
       "root": "./backend",
-      "build": {
-        "provider": "node"
-      },
-      "description": "Backend API service (polytrade-be)"
+      "config": "./backend/railpack.json",
+      "description": "Backend API service (polytrade-be) - Node.js/TypeScript"
     },
     "frontend": {
       "root": "./frontend",
-      "build": {
-        "provider": "node"
-      },
-      "description": "Frontend SPA service (polytrade-fe)"
+      "config": "./frontend/railpack.json",
+      "description": "Frontend SPA service (polytrade-fe) - React/Vite"
     },
     "ml-worker": {
       "root": "./python-services/poloniex",
-      "build": {
-        "provider": "python"
-      },
-      "description": "ML worker service for market data ingestion"
+      "config": "./python-services/poloniex/railpack.json",
+      "description": "ML worker service - Python/FastAPI"
     }
   }
 }
