@@ -7,18 +7,20 @@
   },
   "build": {
     "provider": "node",
-    "workingDirectory": ".",
+    "packages": {
+      "node": "20.19.5"
+    },
+    "workingDirectory": "..",
     "steps": {
       "install": {
         "commands": [
-          "cd ..",
           "corepack enable",
+          "corepack prepare yarn@4.9.2 --activate",
           "yarn install --immutable"
         ]
       },
       "build": {
         "commands": [
-          "cd ..",
           "node scripts/bundle-shared.mjs backend",
           "yarn workspace backend build:railway"
         ]
@@ -26,7 +28,7 @@
     }
   },
   "deploy": {
-    "startCommand": "cd .. && yarn workspace backend start",
+    "startCommand": "yarn workspace backend start",
     "healthCheckPath": "/api/health",
     "healthCheckTimeout": 300,
     "restartPolicyType": "ON_FAILURE",
