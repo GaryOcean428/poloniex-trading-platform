@@ -1,24 +1,40 @@
 {
+  "$schema": "https://schema.railpack.com",
   "version": "1",
   "metadata": {
-    "name": "poloniex-trading-platform",
-    "description": "Monorepo orchestration config - DO NOT use for individual service builds"
+    "name": "polytrade-backend",
+    "description": "Poloniex Trading Platform Backend API - Yarn Workspace Build"
   },
-  "services": {
-    "backend": {
-      "root": "./backend",
-      "config": "./backend/railpack.json",
-      "description": "API service - Node/TypeScript/Express"
+  "build": {
+    "provider": "node",
+    "packages": {
+      "node": "20.19.5"
     },
-    "frontend": {
-      "root": "./frontend",
-      "config": "./frontend/railpack.json",
-      "description": "SPA service - React/Vite"
-    },
-    "ml-worker": {
-      "root": "./python-services/poloniex",
-      "config": "./python-services/poloniex/railpack.json",
-      "description": "ML worker service - Python/FastAPI"
+    "steps": {
+      "install": {
+        "commands": [
+          "corepack enable",
+          "corepack prepare yarn@4.9.2 --activate",
+          "yarn install --immutable"
+        ]
+      },
+      "build": {
+        "commands": [
+          "node scripts/bundle-shared.mjs backend",
+          "yarn workspace backend build:railway"
+        ]
+      }
     }
+  },
+  "deploy": {
+    "startCommand": "yarn workspace backend start",
+    "healthCheckPath": "/api/health",
+    "healthCheckTimeout": 300,
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 3
+  },
+  "env": {
+    "NODE_ENV": "production",
+    "YARN_ENABLE_STRICT_SETTINGS": "false"
   }
 }
