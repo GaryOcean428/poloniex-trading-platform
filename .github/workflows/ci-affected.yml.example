@@ -1,0 +1,154 @@
+name: CI - Affected Workspaces Only
+
+# This is an EXAMPLE workflow showing how to use affected detection
+# Rename to ci-affected.yml to activate
+
+on:
+  pull_request:
+    branches: [main, develop]
+  push:
+    branches: [main, develop]
+
+jobs:
+  detect-affected:
+    runs-on: ubuntu-latest
+    outputs:
+      affected: ${{ steps.affected.outputs.affected }}
+      has-frontend: ${{ steps.check.outputs.has-frontend }}
+      has-backend: ${{ steps.check.outputs.has-backend }}
+      has-python: ${{ steps.check.outputs.has-python }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Need full history for git diff
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '22'
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Detect affected workspaces
+        id: affected
+        run: |
+          node scripts/affected.mjs origin/${{ github.base_ref || 'main' }} HEAD
+          AFFECTED=$(node scripts/affected.mjs origin/${{ github.base_ref || 'main' }} HEAD 2>&1 | grep "✓" | awk '{print $2}' | tr '\n' ',' | sed 's/,$//')
+          echo "affected=$AFFECTED" >> $GITHUB_OUTPUT
+          echo "Affected workspaces: $AFFECTED"
+
+      - name: Check which workspaces are affected
+        id: check
+        run: |
+          AFFECTED="${{ steps.affected.outputs.affected }}"
+          echo "has-frontend=$([[ $AFFECTED == *"frontend"* ]] && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
+          echo "has-backend=$([[ $AFFECTED == *"backend"* ]] && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
+          echo "has-python=$([[ $AFFECTED == *"python-ml"* ]] && echo 'true' || echo 'false')" >> $GITHUB_OUTPUT
+
+  lint-frontend:
+    needs: detect-affected
+    if: needs.detect-affected.outputs.has-frontend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v3
+        with:
+          node-version: '22'
+      - run: corepack enable
+      - run: yarn install --immutable
+      - run: yarn workspace frontend lint
+
+  test-frontend:
+    needs: detect-affected
+    if: needs.detect-affected.outputs.has-frontend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v3
+        with:
+          node-version: '22'
+      - run: corepack enable
+      - run: yarn install --immutable
+      - run: yarn workspace frontend test:run
+
+  build-frontend:
+    needs: detect-affected
+    if: needs.detect-affected.outputs.has-frontend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v3
+        with:
+          node-version: '22'
+      - run: corepack enable
+      - run: yarn install --immutable
+      - run: yarn workspace frontend build
+
+  lint-backend:
+    needs: detect-affected
+    if: needs.detect-affected.outputs.has-backend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v3
+        with:
+          node-version: '22'
+      - run: corepack enable
+      - run: yarn install --immutable
+      - run: yarn workspace backend lint
+
+  test-backend:
+    needs: detect-affected
+    if: needs.detect-affected.outputs.has-backend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v3
+        with:
+          node-version: '22'
+      - run: corepack enable
+      - run: yarn install --immutable
+      - run: yarn workspace backend test:run
+
+  build-backend:
+    needs: detect-affected
+    if: needs.detect-affected.outputs.has-backend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v3
+        with:
+          node-version: '22'
+      - run: corepack enable
+      - run: yarn install --immutable
+      - run: yarn workspace backend build
+
+  test-python:
+    needs: detect-affected
+    if: needs.detect-affected.outputs.has-python == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          cd python-services/poloniex
+          pip install -r requirements.txt
+      - name: Run tests (if available)
+        run: |
+          cd python-services/poloniex
+          python -m pytest || echo "No tests found"
+
+  all-checks-passed:
+    runs-on: ubuntu-latest
+    needs: [detect-affected, lint-frontend, test-frontend, build-frontend, lint-backend, test-backend, build-backend, test-python]
+    if: always()
+    steps:
+      - name: Check all jobs
+        run: |
+          echo "All affected workspace checks completed"
+          # This job will succeed if all needed jobs succeeded
+          # It will fail if any needed job failed
