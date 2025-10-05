@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "type": "module",
   "main": "dist/index.js",
+  "packageManager": "yarn@4.9.2",
   "engines": {
     "node": ">=20.0.0"
   },
