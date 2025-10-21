@@ -1,5 +1,5 @@
 import express from 'express';
-const { logger } = require('../utils/logger.js');
+import { logger } from '../utils/logger.js';
 
 const router = express.Router();
 

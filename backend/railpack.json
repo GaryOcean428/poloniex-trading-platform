@@ -1,5 +1,29 @@
 {
-  "builder": "RAILPACK",
-  "buildCommand": "yarn workspace backend build",
-  "startCommand": "yarn workspace backend start"
+  "version": "1",
+  "metadata": {
+    "name": "polytrade-backend"
+  },
+  "build": {
+    "provider": "node",
+    "steps": {
+      "install": {
+        "commands": [
+          "npm i -g corepack@latest",
+          "corepack enable",
+          "corepack prepare yarn@4.9.2 --activate",
+          "yarn install --immutable"
+        ]
+      },
+      "build": {
+        "commands": ["yarn workspace backend build"]
+      }
+    }
+  },
+  "deploy": {
+    "startCommand": "yarn workspace backend start",
+    "healthCheckPath": "/api/health",
+    "healthCheckTimeout": 300,
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 3
+  }
 }

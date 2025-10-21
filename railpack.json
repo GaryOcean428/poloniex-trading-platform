@@ -1,4 +1,17 @@
 {
-  "builder": "RAILPACK",
-  "$schema": "https://railway.app/railways.schema.json"
+  "version": "1",
+  "metadata": {
+    "name": "polytrade-monorepo"
+  },
+  "services": {
+    "frontend": {
+      "root": "./frontend"
+    },
+    "backend": {
+      "root": "./backend"
+    },
+    "ml-worker": {
+      "root": "./python-services/poloniex"
+    }
+  }
 }
