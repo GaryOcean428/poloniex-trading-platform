@@ -65,19 +65,40 @@ for (const file of railpackFiles) {
   try {
     const content = JSON.parse(readFileSync(path, 'utf-8'));
     
-    // Check for Railpack v1 format
-    if (content.version === '1') {
-      checkPassed(`${file} uses Railpack v1 format`);
-    } else if (content.builder === 'RAILPACK') {
-      checkWarning(`${file} uses old RAILPACK format, should migrate to v1`);
+    // Check for proper schema URL
+    if (content.$schema === 'https://schema.railpack.com') {
+      checkPassed(`${file} uses correct Railpack schema`);
+    } else if (content.$schema) {
+      checkWarning(`${file} has $schema but may be incorrect: ${content.$schema}`);
     } else {
-      checkFailed(`${file} doesn't specify Railpack version`);
+      checkWarning(`${file} missing $schema property`);
     }
 
     // Check service-specific files for proper structure
     if (file.includes('frontend') || file.includes('backend')) {
-      if (content.build && content.build.provider === 'node') {
+      if (content.provider === 'node') {
         checkPassed(`${file} specifies Node provider`);
+      }
+      
+      if (content.packages) {
+        if (content.packages.node) {
+          checkPassed(`${file} specifies Node version in packages`);
+        }
+        if (content.packages.yarn) {
+          checkPassed(`${file} specifies Yarn version in packages`);
+        }
+      }
+      
+      if (content.steps) {
+        if (content.steps.install) {
+          checkPassed(`${file} has install step`);
+        }
+        if (content.steps.build) {
+          checkPassed(`${file} has build step`);
+          if (content.steps.build.inputs) {
+            checkPassed(`${file} build step has inputs dependency`);
+          }
+        }
       }
       
       if (content.deploy) {
@@ -89,6 +110,13 @@ for (const file of railpackFiles) {
         } else {
           checkWarning(`${file} missing healthCheckPath`);
         }
+      }
+    }
+    
+    // Check root railpack.json for services
+    if (file === 'railpack.json') {
+      if (content.services) {
+        checkPassed(`${file} defines services for monorepo`);
       }
     }
   } catch (error) {
