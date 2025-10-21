@@ -1,6 +1,6 @@
 {
   "builder": "RAILPACK",
-  "buildCommand": "yarn workspace frontend build",
-  "startCommand": "yarn workspace frontend start",
+  "buildCommand": "yarn run prebuild && vite build && rm -rf .shared-build",
+  "startCommand": "node serve.js",
   "installCommand": "npm i -g corepack@latest && corepack enable && corepack prepare yarn@4.9.2 --activate && yarn install --immutable"
 }
