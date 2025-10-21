@@ -139,7 +139,6 @@ combined.log
 *.sqlite3
 
 # Docker files (if containing secrets)
-.dockerignore
 docker-compose.override.yml
 
 # Env templates for Railway (do not commit)
