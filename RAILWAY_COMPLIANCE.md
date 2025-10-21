@@ -17,17 +17,18 @@ This repository has been updated to comply with Railway + Yarn 4.9.2 + Railpack 
 - **Impact**: Consistent build execution regardless of Railway's package manager detection
 
 ### 3. Railpack v1 Format Migration
-- **Issue**: Old `railpack.json` files used deprecated format
-- **Fix**: Migrated all railpack configs to Railpack v1 format with proper structure:
-  - Explicit install steps with Yarn 4.9.2 setup
-  - Clear build commands
-  - Health check endpoints configured
-  - Restart policies defined
-- **Impact**: Better Railway integration, clearer build process
+- **Issue**: Old `railpack.json` files used incorrect format without proper schema
+- **Fix**: Migrated all railpack configs to proper Railpack v1 format:
+  - **Schema URL**: `https://schema.railpack.com`
+  - **Structure**: `provider`, `packages`, `steps`, `deploy`
+  - **Build Dependencies**: Proper `inputs` linking install to build steps
+  - **Health Checks**: `/api/health` (backend), `/healthz` (frontend)
+  - **Restart Policies**: Automatic restart on failure
+- **Impact**: Proper schema validation, better Railway integration, clearer build process
 
 ### 4. Monorepo Service Structure
-- **Issue**: Root railpack.json didn't define service locations
-- **Fix**: Added explicit service definitions for frontend, backend, and ml-worker
+- **Issue**: Root railpack.json didn't have proper schema and service definitions
+- **Fix**: Added correct Railpack schema with explicit service definitions
 - **Impact**: Railway can properly detect and build each service independently
 
 ## Railway Configuration

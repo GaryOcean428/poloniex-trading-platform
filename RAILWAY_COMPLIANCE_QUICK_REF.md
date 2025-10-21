@@ -83,16 +83,17 @@ Port: $PORT (binds 0.0.0.0)
 **Cause**: `autonomousTrading.js` used `require()` in ES module
 **Fix**: Changed to `import { logger } from '../utils/logger.js'`
 
-### Issue 3: Old Railpack Format
-**Error**: Deprecated railpack.json format
-**Fix**: Migrated to Railpack v1 with explicit steps:
-- Install commands with corepack setup
-- Build commands
-- Deploy configuration with health checks
+### Issue 3: Incorrect Railpack Schema
+**Error**: Wrong schema URL and format
+**Fix**: Updated to proper Railpack v1 format:
+- **Schema**: `https://schema.railpack.com`
+- **Structure**: `provider`, `packages`, `steps`, `deploy`
+- **Build Dependencies**: Proper `inputs` in build steps
+- **Health Checks**: Configured for all services
 
 ## 📊 Test Results
 
-### Compliance Check: ✅ PASSED (26/26 checks)
+### Compliance Check: ✅ PASSED (37/37 checks)
 - Build configs: ✅ Clean
 - Railpack format: ✅ v1 compliant
 - Package.json: ✅ Yarn 4.9.2
@@ -111,12 +112,15 @@ Port: $PORT (binds 0.0.0.0)
 ### Why node instead of yarn run?
 Railway may detect npm as the package manager. Using `node` directly avoids package manager mixing and ensures consistent execution.
 
-### Why Railpack v1?
-Railpack v1 provides:
-- Explicit install/build/deploy phases
+### Why Railpack v1 with proper schema?
+Railpack v1 with correct schema (`https://schema.railpack.com`) provides:
+- Proper schema validation
+- Explicit package version declarations
+- Install/build/deploy phase separation
 - Better control over build environment
 - Health check integration
 - Restart policy configuration
+- Build step dependency tracking with `inputs`
 
 ### Why corepack setup in install?
 Ensures Yarn 4.9.2 is available regardless of Railway's default package manager detection.

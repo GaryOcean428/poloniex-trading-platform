@@ -1,22 +1,26 @@
 {
-  "version": "1",
-  "metadata": {
-    "name": "polytrade-frontend"
+  "$schema": "https://schema.railpack.com",
+  "provider": "node",
+  "packages": {
+    "node": "20",
+    "yarn": "4.9.2"
   },
-  "build": {
-    "provider": "node",
-    "steps": {
-      "install": {
-        "commands": [
-          "npm i -g corepack@latest",
-          "corepack enable",
-          "corepack prepare yarn@4.9.2 --activate",
-          "yarn install --immutable"
-        ]
-      },
-      "build": {
-        "commands": ["yarn build"]
-      }
+  "steps": {
+    "install": {
+      "commands": [
+        "npm i -g corepack@latest",
+        "corepack enable",
+        "corepack prepare yarn@4.9.2 --activate",
+        "yarn install --immutable"
+      ]
+    },
+    "build": {
+      "commands": [
+        "node prebuild.mjs",
+        "vite build",
+        "rm -rf .shared-build"
+      ],
+      "inputs": [{"step": "install"}]
     }
   },
   "deploy": {
