@@ -1,37 +1,6 @@
 {
-  "$schema": "https://schema.railpack.com",
-  "version": "1",
-  "metadata": {
-    "name": "polytrade-frontend",
-    "description": "Poloniex Trading Platform Frontend SPA"
-  },
-  "build": {
-    "provider": "node",
-    "workingDirectory": "..",
-    "steps": {
-      "install": {
-        "commands": [
-          "corepack enable",
-          "yarn install --immutable"
-        ]
-      },
-      "build": {
-        "commands": [
-          "yarn bundle:shared",
-          "yarn workspace frontend build"
-        ]
-      }
-    }
-  },
-  "deploy": {
-    "startCommand": "yarn workspace frontend start",
-    "healthCheckPath": "/healthz",
-    "healthCheckTimeout": 300,
-    "restartPolicyType": "ON_FAILURE",
-    "restartPolicyMaxRetries": 3
-  },
-  "env": {
-    "NODE_ENV": "production",
-    "YARN_ENABLE_STRICT_SETTINGS": "false"
-  }
+  "builder": "RAILPACK",
+  "buildCommand": "yarn workspace frontend build",
+  "startCommand": "yarn workspace frontend start",
+  "installCommand": "npm i -g corepack@latest && corepack enable && corepack prepare yarn@4.9.2 --activate && yarn install --immutable"
 }
