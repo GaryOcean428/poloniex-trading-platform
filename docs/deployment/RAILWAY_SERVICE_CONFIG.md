@@ -10,6 +10,42 @@ Railway deployment fails during Docker image export with "context canceled" erro
 
 ## Solution: Configure Railway Service Settings
 
+### Frontend Service Configuration (polytrade-fe)
+
+Navigate to Railway project → `polytrade-fe` service:
+
+#### Required Settings
+
+1. **Root Directory**: `frontend`
+   - Railway executes from this context
+
+2. **Build & Deploy Fields**: **CLEAR ALL**
+   - Leave Install Command, Build Command, Start Command blank
+   - Railway will use `frontend/railpack.json`:
+     - Install: `npm i -g corepack@latest && corepack enable && corepack prepare yarn@4.9.2 --activate && yarn install --immutable`
+     - Build: `yarn run prebuild && vite build && rm -rf .shared-build`
+     - Start: `node serve.js`
+
+3. **Environment Variables**:
+   ```bash
+   NODE_ENV=production
+   PORT=${{PORT}}
+   VITE_API_URL=<backend-url>
+   ```
+
+#### Troubleshooting - Yarn Not Found
+
+**Symptom**: `sh: 1: yarn: not found` during build
+
+**Root Cause**: Railway UI overrides ignoring railpack.json
+
+**Fix**: 
+1. Clear all Build & Deploy fields in Railway UI
+2. Force cache clear: `git commit --allow-empty -m "chore: rebuild" && git push`
+3. Verify logs show corepack installation
+
+---
+
 ### Step 1: Configure Backend Service in Railway Dashboard
 
 Navigate to your Railway project and configure the `polytrade-be` service with these settings:
