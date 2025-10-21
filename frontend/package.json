@@ -9,7 +9,7 @@
   "scripts": {
     "prebuild": "node prebuild.mjs",
     "dev": "vite --host 0.0.0.0 --port 5675",
-    "build": "yarn run prebuild && vite build && rm -rf .shared-build",
+    "build": "node prebuild.mjs && vite build && rm -rf .shared-build",
     "preview": "vite preview --host 0.0.0.0 --port 5675",
     "lint": "eslint . --max-warnings 400",
     "lint:fix": "eslint . --fix",
