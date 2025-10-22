@@ -1,5 +1,13 @@
 # Railway Root Directory Fix - Yarn Workspaces
 
+**⚠️ HISTORICAL DOCUMENT**: This document describes an older configuration approach where services run from `/app` without using root railpack.json service definitions.
+
+**Current Configuration**: The project now uses a root `railpack.json` with service definitions (`"frontend": { "root": "./frontend" }`), so services run from their respective service roots. See `RAILWAY_CONFIGURATION.md` for current best practices.
+
+**This document is kept for reference but the current approach is different.**
+
+---
+
 ## The Problem
 
 **Backend Error:**
