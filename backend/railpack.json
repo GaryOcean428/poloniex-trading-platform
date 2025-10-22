@@ -16,16 +16,16 @@
     },
     "build": {
       "commands": [
-        "cd backend && node prebuild.mjs",
-        "cd backend && rm -rf dist",
-        "cd backend && yarn workspace backend run tsc -p tsconfig.build.json",
-        "cd backend && rm -rf .shared-build"
+        "node prebuild.mjs",
+        "rm -rf dist",
+        "tsc -p tsconfig.build.json",
+        "rm -rf .shared-build"
       ],
       "inputs": [{"step": "install"}]
     }
   },
   "deploy": {
-    "startCommand": "node backend/dist/src/index.js",
+    "startCommand": "node dist/src/index.js",
     "healthCheckPath": "/api/health",
     "healthCheckTimeout": 300,
     "restartPolicyType": "ON_FAILURE",
