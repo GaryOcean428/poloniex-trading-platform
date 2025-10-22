@@ -90,9 +90,18 @@ Before deploying, verify all requirements are met:
 
 ```bash
 yarn deploy:check
+yarn deploy:check:frontend  # Frontend-specific validation
 ```
 
-✅ All 28 validation checks should pass. See [QUICK_START.md](QUICK_START.md) for deployment guide and [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) for detailed implementation status.
+✅ All validation checks should pass. See [QUICK_START.md](QUICK_START.md) for deployment guide and [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) for detailed implementation status.
+
+### Troubleshooting
+
+If you encounter a **blank page in production**, see the comprehensive troubleshooting guide:
+- [TROUBLESHOOTING_BLANK_PAGE.md](TROUBLESHOOTING_BLANK_PAGE.md) - Solutions for blank page issues
+
+For Railway configuration issues:
+- [RAILWAY_CONFIGURATION.md](RAILWAY_CONFIGURATION.md) - Complete Railway setup guide
 
 ### Deploying to Railway
 
