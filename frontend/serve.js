@@ -209,7 +209,59 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+// Startup validation
+function validateSetup() {
+  console.log('='.repeat(60));
+  console.log('Frontend Static Server - Startup Validation');
+  console.log('='.repeat(60));
+  console.log(`Working Directory: ${process.cwd()}`);
+  console.log(`Script Location: ${__dirname}`);
+  console.log(`Dist Root: ${DIST_ROOT}`);
+  console.log(`Port: ${PORT}`);
+  console.log(`Host: ${HOST}`);
+  console.log('-'.repeat(60));
+
+  // Check if dist folder exists
+  if (!fs.existsSync(DIST_ROOT)) {
+    console.error('❌ ERROR: dist folder not found!');
+    console.error(`   Expected location: ${DIST_ROOT}`);
+    console.error('   This usually means the build step did not run.');
+    console.error('   Please run "yarn build" or "vite build" first.');
+    console.error('='.repeat(60));
+    process.exit(1);
+  }
+
+  // Check if index.html exists in dist
+  const indexPath = path.join(DIST_ROOT, 'index.html');
+  if (!fs.existsSync(indexPath)) {
+    console.error('❌ ERROR: dist/index.html not found!');
+    console.error(`   Expected location: ${indexPath}`);
+    console.error('   The build may have failed or produced files in the wrong location.');
+    console.error('='.repeat(60));
+    process.exit(1);
+  }
+
+  // Check if assets folder exists
+  const assetsPath = path.join(DIST_ROOT, 'assets');
+  if (!fs.existsSync(assetsPath)) {
+    console.warn('⚠️  WARNING: dist/assets folder not found!');
+    console.warn(`   Expected location: ${assetsPath}`);
+    console.warn('   The application may not load correctly.');
+  } else {
+    const assetFiles = fs.readdirSync(assetsPath);
+    console.log(`✅ Found ${assetFiles.length} asset files in dist/assets/`);
+  }
+
+  console.log('✅ Validation passed - all required files present');
+  console.log('='.repeat(60));
+}
+
+// Run validation before starting server
+validateSetup();
+
 server.listen(PORT, HOST, () => {
-   
-  console.log(`Static server listening on http://${HOST}:${PORT}`);
+  console.log(`🚀 Static server listening on http://${HOST}:${PORT}`);
+  console.log(`📁 Serving files from: ${DIST_ROOT}`);
+  console.log(`🏥 Health check available at: http://${HOST}:${PORT}/healthz`);
+  console.log('='.repeat(60));
 });
