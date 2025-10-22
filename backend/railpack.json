@@ -11,7 +11,7 @@
         "cd .. && npm i -g corepack@latest",
         "corepack enable",
         "corepack prepare yarn@4.9.2 --activate",
-        "yarn install --frozen-lockfile"
+        "yarn install --immutable"
       ]
     },
     "build": {
