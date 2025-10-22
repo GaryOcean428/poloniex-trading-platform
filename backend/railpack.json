@@ -8,10 +8,10 @@
   "steps": {
     "install": {
       "commands": [
-        "cd /app && npm i -g corepack@latest",
-        "cd /app && corepack enable",
-        "cd /app && corepack prepare yarn@4.9.2 --activate",
-        "cd /app && yarn install --frozen-lockfile"
+        "cd .. && npm i -g corepack@latest",
+        "corepack enable",
+        "corepack prepare yarn@4.9.2 --activate",
+        "yarn install --frozen-lockfile"
       ]
     },
     "build": {
