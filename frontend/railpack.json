@@ -8,10 +8,10 @@
   "steps": {
     "install": {
       "commands": [
-        "npm i -g corepack@latest",
-        "corepack enable",
-        "corepack prepare yarn@4.9.2 --activate",
-        "yarn install --check-cache"
+        "cd /app && npm i -g corepack@latest",
+        "cd /app && corepack enable",
+        "cd /app && corepack prepare yarn@4.9.2 --activate",
+        "cd /app && yarn install --frozen-lockfile"
       ]
     },
     "build": {
@@ -24,7 +24,7 @@
     }
   },
   "deploy": {
-    "startCommand": "node frontend/serve.js",
+    "startCommand": "node serve.js",
     "healthCheckPath": "/healthz",
     "healthCheckTimeout": 300,
     "restartPolicyType": "ON_FAILURE",
