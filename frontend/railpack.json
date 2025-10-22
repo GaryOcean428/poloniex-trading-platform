@@ -11,14 +11,13 @@
         "npm i -g corepack@latest",
         "corepack enable",
         "corepack prepare yarn@4.9.2 --activate",
-        "yarn install --immutable"
+        "cd .. && yarn install --immutable"
       ]
     },
     "build": {
       "commands": [
         "node prebuild.mjs",
-        "vite build",
-        "rm -rf .shared-build"
+        "yarn build"
       ],
       "inputs": [{"step": "install"}]
     }
