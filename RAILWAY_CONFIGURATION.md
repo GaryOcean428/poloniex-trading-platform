@@ -55,21 +55,38 @@ Minimal root configuration; services handle their own builds.
 
 ## Railway Service Configuration
 
+**IMPORTANT**: This project uses a monorepo structure with a root `railpack.json` that defines service roots. Railway should automatically detect and use these settings.
+
 ### For polytrade-fe Service:
+
+**Critical Settings**:
 ```
-Root Directory: /
-Build Command: (handled by railpack.json)
-Start Command: (handled by railpack.json)
+Root Directory: (leave empty or blank - let railpack.json handle it)
+Build Command: (leave empty - handled by frontend/railpack.json)
+Start Command: (leave empty - handled by frontend/railpack.json)
+Install Command: (leave empty - handled by frontend/railpack.json)
 Watch Paths: frontend/**
 ```
 
+**Why**: The root `/railpack.json` defines `"frontend": { "root": "./frontend" }`, which tells Railway that the frontend service root is `./frontend`. Railway will automatically:
+1. Run install commands from the monorepo root (`/app`) to install all workspace dependencies
+2. Run build commands from the service root (`/app/frontend`)
+3. Run the start command from the service root (`/app/frontend`)
+
+**DO NOT** set Root Directory to `/` or `/app` - this will break the Railpack service root configuration.
+
 ### For polytrade-be Service:
+
+**Critical Settings**:
 ```
-Root Directory: /
-Build Command: (handled by railpack.json)
-Start Command: (handled by railpack.json)
+Root Directory: (leave empty or blank - let railpack.json handle it)
+Build Command: (leave empty - handled by backend/railpack.json)
+Start Command: (leave empty - handled by backend/railpack.json)
+Install Command: (leave empty - handled by backend/railpack.json)
 Watch Paths: backend/**
 ```
+
+**Why**: Same as frontend - the root railpack.json defines the service root as `./backend`.
 
 ## Package Scripts
 
@@ -95,39 +112,131 @@ Watch Paths: backend/**
 
 ## Expected Deployment Flow
 
-### Frontend Deployment:
-1. Install corepack globally
-2. Enable corepack
-3. Prepare and activate yarn@4.9.2
-4. Run `yarn install --immutable`
-5. Run `yarn workspace frontend build` (includes prebuild step)
-6. Start with `yarn workspace frontend start` (runs serve.js)
+### Frontend Deployment (using frontend/railpack.json):
 
-### Backend Deployment:
-1. Corepack enabled by Railway
-2. Run `yarn workspace backend build` (includes prebuild step)
-3. TypeScript compilation to dist/
-4. Start with `yarn workspace backend start` (runs node dist/src/index.js)
+**Install Step** (runs from /app - monorepo root):
+1. `cd /app && npm i -g corepack@latest` - Install corepack globally
+2. `cd /app && corepack enable` - Enable corepack
+3. `cd /app && corepack prepare yarn@4.9.2 --activate` - Activate Yarn 4.9.2
+4. `cd /app && yarn install --frozen-lockfile` - Install all workspace dependencies
+
+**Build Step** (runs from /app/frontend - service root):
+1. `node prebuild.mjs` - Copy shared modules
+2. `vite build` - Build React app to dist/ folder
+3. `rm -rf .shared-build` - Cleanup temporary build files
+
+**Deploy Step** (runs from /app/frontend - service root):
+1. `node serve.js` - Start static file server
+2. Server validates dist/ folder exists with proper files
+3. Server listens on PORT (from Railway) at 0.0.0.0
+4. Health check available at /healthz
+
+**Expected Log Output**:
+```
+============================================================
+Frontend Static Server - Startup Validation
+============================================================
+Working Directory: /app/frontend
+Script Location: /app/frontend
+Dist Root: /app/frontend/dist
+Port: [Railway PORT]
+Host: 0.0.0.0
+------------------------------------------------------------
+✅ Found 50+ asset files in dist/assets/
+✅ Validation passed - all required files present
+============================================================
+🚀 Static server listening on http://0.0.0.0:[PORT]
+📁 Serving files from: /app/frontend/dist
+🏥 Health check available at: http://0.0.0.0:[PORT]/healthz
+============================================================
+```
+
+### Backend Deployment (using backend/railpack.json):
+
+**Install Step** (runs from /app - monorepo root):
+1. Same as frontend - installs all workspace dependencies
+
+**Build Step** (runs from /app/backend - service root):
+1. `node prebuild.mjs` - Copy shared modules
+2. `rm -rf dist` - Clean old build
+3. `tsc -p tsconfig.build.json` - Compile TypeScript
+4. `rm -rf .shared-build` - Cleanup temporary files
+
+**Deploy Step** (runs from /app/backend - service root):
+1. `node dist/src/index.js` - Start backend server
 
 ## Troubleshooting
 
+### Issue: Blank page in production (UI not loading)
+
+**Symptoms**: 
+- Production URL shows a blank white screen
+- No errors in browser console, or errors about missing modules
+- Health check may or may not be working
+
+**Root Causes & Solutions**:
+
+1. **Build step didn't run or failed**
+   - Check Railway build logs for errors during `vite build`
+   - Ensure frontend/railpack.json has proper build commands
+   - Verify prebuild.mjs can find the shared folder
+   
+2. **Wrong Root Directory setting in Railway UI**
+   - ❌ **INCORRECT**: Setting Root Directory to `/` or `/app`
+   - ✅ **CORRECT**: Leave Root Directory empty (blank) so railpack.json handles it
+   - The root railpack.json defines `"frontend": { "root": "./frontend" }`
+   - Railway should automatically use this and run commands from the correct directories
+   
+3. **Missing dist folder**
+   - The serve.js requires a `dist` folder with built files
+   - If build didn't complete, dist won't exist
+   - Check the build logs for "vite build" completion
+   - Look for "✓ built in X.XXs" message in logs
+   
+4. **Start command running from wrong directory**
+   - If Root Directory is misconfigured, `node serve.js` won't find the script
+   - Ensure Railway uses the railpack.json start command
+   - Don't override the start command in Railway UI settings
+
+5. **Missing environment variables**
+   - Check that required VITE_ prefixed variables are set in Railway
+   - Minimum required: `NODE_ENV=production`
+   - Optional but recommended: `VITE_BACKEND_URL`, `VITE_API_URL`
+
+**Quick Fix**:
+1. In Railway UI, go to polytrade-fe service settings
+2. Ensure Root Directory field is **completely empty** (not `/`, not `./`, just blank)
+3. Ensure Build Command field is **empty** (let railpack.json handle it)
+4. Ensure Install Command field is **empty** (let railpack.json handle it)
+5. Ensure Start Command field is **empty** (let railpack.json handle it)
+6. Set Watch Paths to `frontend/**`
+7. Trigger a new deployment
+
 ### Issue: "yarn not found"
-**Solution**: Ensure `installCommand` in frontend/railpack.json includes:
+**Solution**: The frontend/railpack.json install commands should handle this automatically:
 ```bash
 npm i -g corepack@latest && corepack enable && corepack prepare yarn@4.9.2 --activate
 ```
+If still getting this error, Railway may not be using the railpack.json install commands.
 
 ### Issue: Build timeout (4h 36m)
-**Solution**: Ensure `.dockerignore` file exists in project root with proper exclusions.
+**Solution**: Ensure `.dockerignore` file exists in project root with proper exclusions to avoid uploading massive files.
 
 ### Issue: Workspace not found
 **Solution**: Verify:
-- Root directory is `/` in Railway service settings
+- Root directory is **empty/blank** in Railway service settings (not `/`)
 - `package.json` has correct workspaces: `["frontend", "backend"]`
-- `packageManager: "yarn@4.9.2"` is set
+- `packageManager: "yarn@4.9.2"` is set in root package.json
+
+### Issue: "Build output not found" error message
+**Solution**: This error from serve.js means the `dist` folder is missing:
+1. Check if `vite build` ran in the Railway logs
+2. Verify the build step in frontend/railpack.json
+3. Ensure build didn't fail due to TypeScript errors or missing dependencies
+4. The enhanced serve.js now provides detailed validation messages at startup
 
 ### Issue: Schema violations
-**Solution**: Use simplified `builder: "RAILPACK"` format instead of complex schema-based format.
+**Solution**: Use simplified format - the current railpack.json files use the correct format with `"provider": "node"` and proper steps structure.
 
 ## Verification Commands
 
