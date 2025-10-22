@@ -38,6 +38,7 @@
     "railway:compliance": "node scripts/railway-compliance-check.mjs",
     "railway:deploy": "yarn railway:validate && git push origin main",
     "deploy:check": "node scripts/validate-deployment-readiness.mjs",
+    "deploy:check:frontend": "node scripts/verify-frontend-deployment.js",
     "affected": "node scripts/affected.mjs",
     "build:metrics": "node scripts/build-metrics.mjs",
     "metrics:analyze": "node scripts/build-metrics.mjs analyze"
