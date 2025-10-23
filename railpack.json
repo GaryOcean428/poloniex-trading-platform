@@ -4,6 +4,9 @@
     "frontend": {
       "root": "./frontend"
     },
+    "backend": {
+      "root": "./backend"
+    },
     "ml-worker": {
       "root": "./python-services/poloniex"
     }
