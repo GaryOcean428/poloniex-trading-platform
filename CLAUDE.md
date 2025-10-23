@@ -28,23 +28,30 @@ polytrade/
 ## Railway UI Configuration Requirements
 
 ### Critical Settings (Manual Configuration):
-1. **✅ Root Directory**: Set to service-specific path:
-   - Frontend: `./frontend` 
-   - Backend: `./backend`
-   - Python Service: `./python-services/poloniex`
+
+**IMPORTANT: For Yarn Workspaces Monorepo - DO NOT SET Root Directory**
+
+Since this is a Yarn workspaces monorepo, services must deploy from the repository root to access shared dependencies.
+
+1. **❌ Root Directory**: LEAVE EMPTY (do not set)
+   - Railway will use root railpack.json to coordinate services
+   - Each service's railpack.json runs from monorepo root
+   - This allows access to root package.json, yarn.lock, .yarnrc.yml
 
 2. **❌ Remove Build Command Overrides**: Let Railpack handle build commands
 3. **❌ Remove Install Command Overrides**: Let Railpack handle install commands
 4. **✅ Keep Environment Variables**: PORT, NODE_ENV, DATABASE_URL, etc.
-5. **❌ Clear Root Directory Overrides**: Only use service-specific paths
+5. **❌ Clear Start Command Overrides**: Let Railpack handle start commands
 
 ### Service Configuration Checklist
 
 | Service | Railway Service ID | Root Directory | Config File |
 |---------|-------------------|----------------|-------------|
-| polytrade-fe | c81963d4-f110-49cf-8dc0-311d1e3dcf7e | `./frontend` | `frontend/railpack.json` |
-| polytrade-be | e473a919-acf9-458b-ade3-82119e4fabf6 | `./backend` | `backend/railpack.json` |
-| ml-worker | 86494460-6c19-4861-859b-3f4bd76cb652 | `./python-services/poloniex` | `python-services/poloniex/railpack.json` |
+| polytrade-fe | c81963d4-f110-49cf-8dc0-311d1e3dcf7e | **(empty)** | `frontend/railpack.json` |
+| polytrade-be | e473a919-acf9-458b-ade3-82119e4fabf6 | **(empty)** | `backend/railpack.json` |
+| ml-worker | 86494460-6c19-4861-859b-3f4bd76cb652 | **(empty)** | `python-services/poloniex/railpack.json` |
+
+**Note**: The root `railpack.json` defines service roots. Railway reads this and routes each service appropriately.
 
 ## Deployment Success Indicators
 
