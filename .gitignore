@@ -11,11 +11,10 @@ lerna-debug.log*
 node_modules
 *.local
 
-# Yarn Berry
+# Yarn Berry (using Corepack - no releases directory needed)
 .yarn/
 !.yarn/patches
 !.yarn/plugins
-!.yarn/releases
 !.yarn/versions
 .yarn/install-state.gz
 
