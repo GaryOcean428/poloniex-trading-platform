@@ -11,18 +11,18 @@
         "npm i -g corepack@latest",
         "corepack enable",
         "corepack prepare yarn@4.9.2 --activate",
-        "cd .. && yarn install --immutable"
+        "yarn install --immutable"
       ]
     },
     "build": {
       "commands": [
-        "cd .. && yarn workspace backend run build:railway"
+        "yarn workspace backend run build:railway"
       ],
       "inputs": [{"step": "install"}]
     }
   },
   "deploy": {
-    "startCommand": "node dist/src/index.js",
+    "startCommand": "node backend/dist/src/index.js",
     "healthCheckPath": "/api/health",
     "healthCheckTimeout": 300,
     "restartPolicyType": "ON_FAILURE",
