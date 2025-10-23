@@ -2626,6 +2626,7 @@ __metadata:
     dotenv: "npm:^17.2.1"
     eslint: "npm:^9.33.0"
     express: "npm:^5.1.0"
+    express-rate-limit: "npm:^8.1.0"
     globals: "npm:^16.3.0"
     helmet: "npm:^8.1.0"
     jiti: "npm:^2.5.1"
