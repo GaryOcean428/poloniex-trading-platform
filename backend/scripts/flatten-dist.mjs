@@ -30,5 +30,10 @@ for (const entry of readdirSync(distSrcDir)) {
   renameSync(fromPath, toPath);
 }
 
-rmSync(distSrcDir, { recursive: true, force: true });
+try {
+  rmSync(distSrcDir, { recursive: true, force: true });
+} catch (error) {
+  console.warn(`Warning: Failed to remove ${distSrcDir}:`, error.message);
+  console.warn('This may occur if files are locked or in use. The directory will remain.');
+}
 console.log('Flattened dist/src into dist/.');
