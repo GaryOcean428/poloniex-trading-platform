@@ -30,10 +30,33 @@ for (const entry of readdirSync(distSrcDir)) {
   renameSync(fromPath, toPath);
 }
 
-try {
-  rmSync(distSrcDir, { recursive: true, force: true });
-} catch (error) {
-  console.warn(`Warning: Failed to remove ${distSrcDir}:`, error.message);
-  console.warn('This may occur if files are locked or in use. The directory will remain.');
+// Remove the now-empty dist/src directory with retry logic for file locks
+let removed = false;
+let lastError = null;
+
+for (let attempt = 1; attempt <= 3; attempt++) {
+  try {
+    rmSync(distSrcDir, { recursive: true, force: true });
+    removed = true;
+    break;
+  } catch (error) {
+    lastError = error;
+    if (attempt < 3) {
+      console.warn(`Attempt ${attempt}/3: Failed to remove ${distSrcDir} (${error.message}). Retrying...`);
+      // Brief pause before retry (synchronous)
+      const start = Date.now();
+      while (Date.now() - start < 100 * attempt) {
+        // Busy wait for 100ms * attempt
+      }
+    }
+  }
 }
+
+if (!removed) {
+  console.error(`Error: Failed to remove ${distSrcDir} after 3 attempts:`, lastError.message);
+  console.error('The dist/src directory could not be removed. Build output may be incorrect.');
+  console.error('This will cause the application to fail at startup.');
+  process.exit(1);
+}
+
 console.log('Flattened dist/src into dist/.');
