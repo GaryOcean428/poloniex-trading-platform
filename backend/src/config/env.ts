@@ -5,7 +5,13 @@
  * for the backend service.
  */
 
+import dotenv from 'dotenv';
 import { logger } from '../utils/logger.js';
+
+// Load environment variables before validation
+// This is necessary because ES module imports are hoisted, so we need to
+// ensure dotenv is configured before validateEnvironment() is called
+dotenv.config();
 
 export interface EnvironmentConfig {
   NODE_ENV: string;
