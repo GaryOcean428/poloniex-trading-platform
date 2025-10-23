@@ -8,18 +8,15 @@
   "steps": {
     "install": {
       "commands": [
-        "cd .. && npm i -g corepack@latest",
+        "npm i -g corepack@latest",
         "corepack enable",
         "corepack prepare yarn@4.9.2 --activate",
-        "yarn install --immutable"
+        "cd .. && yarn install --immutable"
       ]
     },
     "build": {
       "commands": [
-        "node prebuild.mjs",
-        "rm -rf dist",
-        "tsc -p tsconfig.build.json",
-        "rm -rf .shared-build"
+        "cd .. && yarn workspace backend run build:railway"
       ],
       "inputs": [{"step": "install"}]
     }

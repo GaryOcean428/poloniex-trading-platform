@@ -1,4 +1,10 @@
-# Railway deployment ignore file - Optimized for Backend Deployment
+# Railway deployment ignore file - Monorepo Support
+
+# IMPORTANT: Keep these files for monorepo workspace support
+# - package.json (root)
+# - yarn.lock (root)
+# - .yarnrc.yml (root)
+# - .yarn/ directory (with patches/plugins)
 
 # Development files
 .git/
@@ -22,11 +28,15 @@ backend_test.py
 coverage/
 .vitest/
 
-# Frontend (not needed for backend deployment)
-frontend/
-extension/
+# Frontend source (not needed for backend deployment, but node_modules needed for workspace)
+frontend/src/
+frontend/public/
+frontend/.vscode/
+frontend/index.html
+frontend/vite.config.ts
+frontend/tsconfig*.json
 
-# Python services (deploy separately if needed)
+# Python services (deploy separately)
 python-services/
 
 # Documentation (keep only essential docs)
