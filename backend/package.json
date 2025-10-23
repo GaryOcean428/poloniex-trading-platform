@@ -10,9 +10,9 @@
   "scripts": {
     "prebuild": "node prebuild.mjs",
     "dev": "nodemon --watch src --ext ts,js,json --exec node --loader ts-node/esm src/index.ts",
-    "start": "node dist/src/index.js",
-    "build": "node prebuild.mjs && rm -rf dist && tsc -p tsconfig.build.json && rm -rf .shared-build",
-    "build:railway": "node prebuild.mjs && rm -rf dist && tsc -p tsconfig.build.json --incremental false --sourceMap false --removeComments true && rm -rf .shared-build",
+    "start": "node dist/index.js",
+    "build": "node prebuild.mjs && rm -rf dist && tsc -p tsconfig.build.json && node scripts/flatten-dist.mjs && rm -rf .shared-build",
+    "build:railway": "node prebuild.mjs && rm -rf dist && tsc -p tsconfig.build.json --incremental false --sourceMap false --removeComments true && node scripts/flatten-dist.mjs && rm -rf .shared-build",
     "test": "vitest",
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",
