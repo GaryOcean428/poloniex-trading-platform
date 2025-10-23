@@ -2,7 +2,6 @@ import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import compression from 'compression';
-import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -26,10 +25,7 @@ import proxyRoutes from './routes/proxy.js';
 // Import services
 import { logger } from './utils/logger.js';
 
-// Load environment variables and validate them
-dotenv.config();
-
-// Import environment validation after dotenv config
+// Import environment configuration (dotenv.config() is called inside env.ts)
 import { env } from './config/env.js';
 import { 
   securityHeaders, 
