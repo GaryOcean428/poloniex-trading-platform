@@ -134,15 +134,21 @@ openssl rand -base64 32
 - **Health Check Timeout**: `300` seconds
 
 #### Verify railpack.json:
+
+**⚠️ OUTDATED EXAMPLE** - This does NOT match the official Railpack schema. 
+For CORRECT structure, see:
+- [Railway Deployment Cheat Sheet](../../.agent-os/specs/railway-deployment-cheatsheet.md)
+- Actual working file: `backend/railpack.json`
+
 Ensure `backend/railpack.json` exists with:
 ```json
 {
   "$schema": "https://schema.railpack.com",
-  "version": "1",
-  "build": {
-    "provider": "node",
+  "version": "1",                              // ❌ Field doesn't exist in schema
+  "build": {                                   // ❌ Wrong nesting
+    "provider": "node",                        // ❌ Should be at root level
     "workingDirectory": "..",
-    "steps": {
+    "steps": {                                 // ❌ Should be at root level
       "install": {
         "commands": [
           "corepack enable",
@@ -159,7 +165,7 @@ Ensure `backend/railpack.json` exists with:
   },
   "deploy": {
     "startCommand": "yarn workspace backend start",
-    "healthCheckPath": "/api/health"
+    "healthCheckPath": "/api/health"          // ❌ Not in schema (use Railway UI)
   }
 }
 ```

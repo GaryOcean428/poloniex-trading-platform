@@ -215,7 +215,7 @@ Expected response:
 ### Health Check Fails
 - Verify backend binds to `0.0.0.0:${PORT}` (already configured)
 - Check health endpoint returns 200 status
-- Confirm healthCheckPath is `/api/health`
+- Confirm health check path is `/api/health` in Railway UI (not railpack.json)
 
 ### Service Won't Start
 - Verify start command is `node dist/src/index.js`
