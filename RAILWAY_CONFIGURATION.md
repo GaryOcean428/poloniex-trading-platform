@@ -1,5 +1,7 @@
 # Railway Deployment Configuration Guide
 
+**✅ VERIFIED**: This guide has been updated to reflect the official Railpack schema from https://schema.railpack.com
+
 ## Overview
 This guide documents the Railway deployment configuration for the Poloniex Trading Platform using Yarn 4.9.2 workspaces and Railpack.
 
@@ -23,35 +25,101 @@ Created comprehensive `.dockerignore` file to prevent the 4h 36m file transfer i
 
 ### 3. Railpack Configuration
 
+**⚠️ IMPORTANT**: This section shows the CORRECT Railpack v1 schema format based on official documentation from https://schema.railpack.com
+
 #### Root `railpack.json`
 ```json
 {
-  "builder": "RAILPACK",
-  "$schema": "https://railway.app/railways.schema.json"
+  "$schema": "https://schema.railpack.com",
+  "services": {
+    "frontend": {
+      "root": "./frontend"
+    },
+    "backend": {
+      "root": "./backend"
+    },
+    "ml-worker": {
+      "root": "./python-services/poloniex"
+    }
+  }
 }
 ```
-Minimal root configuration; services handle their own builds.
+Root configuration defines service locations for monorepo deployments.
 
 #### Backend `backend/railpack.json`
 ```json
 {
-  "builder": "RAILPACK",
-  "buildCommand": "yarn workspace backend build",
-  "startCommand": "yarn workspace backend start"
+  "$schema": "https://schema.railpack.com",
+  "provider": "node",
+  "packages": {
+    "node": "20",
+    "yarn": "4.9.2"
+  },
+  "steps": {
+    "install": {
+      "commands": [
+        "npm i -g corepack@latest",
+        "corepack enable",
+        "corepack prepare yarn@4.9.2 --activate",
+        "yarn install --immutable"
+      ]
+    },
+    "build": {
+      "commands": [
+        "yarn workspace backend run build:railway"
+      ],
+      "inputs": [{"step": "install"}]
+    }
+  },
+  "deploy": {
+    "startCommand": "node backend/dist/index.js",
+    "inputs": [{"step": "build"}]
+  }
 }
 ```
 
 #### Frontend `frontend/railpack.json`
 ```json
 {
-  "builder": "RAILPACK",
-  "buildCommand": "yarn workspace frontend build",
-  "startCommand": "yarn workspace frontend start",
-  "installCommand": "npm i -g corepack@latest && corepack enable && corepack prepare yarn@4.9.2 --activate && yarn install --immutable"
+  "$schema": "https://schema.railpack.com",
+  "provider": "node",
+  "packages": {
+    "node": "20",
+    "yarn": "4.9.2"
+  },
+  "steps": {
+    "install": {
+      "commands": [
+        "cd /app && npm i -g corepack@latest",
+        "cd /app && corepack enable",
+        "cd /app && corepack prepare yarn@4.9.2 --activate",
+        "cd /app && yarn install --frozen-lockfile"
+      ]
+    },
+    "build": {
+      "commands": [
+        "node prebuild.mjs",
+        "vite build",
+        "rm -rf .shared-build"
+      ],
+      "inputs": [{"step": "install"}]
+    }
+  },
+  "deploy": {
+    "startCommand": "node serve.js",
+    "inputs": [{"step": "build"}]
+  }
 }
 ```
 
-**Key Fix**: Added complete corepack installation chain to resolve "yarn not found" error.
+**Key Points**:
+- ✅ `provider` at root level (not nested under `build`)
+- ✅ `steps` at root level with `install` and `build` steps
+- ✅ `packages` object specifies exact versions
+- ✅ `deploy.inputs` references previous steps for proper layer composition
+- ❌ Health check fields (`healthCheckPath`, `healthCheckTimeout`) are NOT part of railpack.json schema
+- ❌ Restart policy fields (`restartPolicyType`, `restartPolicyMaxRetries`) are NOT part of railpack.json schema
+- 💡 Health checks should be configured in Railway UI, not railpack.json
 
 ## Railway Service Configuration
 
@@ -282,7 +350,22 @@ Ensure these are set in Railway dashboard:
 - `PORT` (auto-set by Railway)
 - Any service-specific API keys or credentials
 
-## Health Check Endpoints
+## Health Check Configuration
+
+**⚠️ IMPORTANT**: Health check fields are NOT part of the railpack.json schema. Configure health checks in Railway UI.
+
+### Health Check Endpoints
 
 - Backend: `/api/health`
 - Frontend: `/healthz` or `/` (static serve responds with 200)
+- Python: `/health` (FastAPI endpoint)
+
+### Railway UI Health Check Settings
+
+Configure in Railway dashboard under service settings:
+- **Backend**: Set health check path to `/api/health`
+- **Frontend**: Set health check path to `/healthz` or `/`
+- **Python**: Set health check path to `/health`
+- **Timeout**: 300 seconds (recommended)
+
+**Note**: Previously, these settings were incorrectly documented as railpack.json fields. They are Railway platform-specific settings and should be configured through the Railway UI or railway.json, not railpack.json.
