@@ -41,7 +41,7 @@ polytrade/
 - Commit per-service lockfiles: `frontend/yarn.lock`, `backend/yarn.lock`.
 - Health endpoints: Backend `/api/health`, Frontend static serve 200 on `/health` or `/`, Python FastAPI `/health`.
 - Use `${{service.RAILWAY_PUBLIC_DOMAIN}}` for inter-service URLs. Avoid hardcoded domains.
-- Backend entry after build: `node dist/src/index.js` (tsc outDir `./dist`).
+- Backend entry after build: `node dist/index.js` (tsc outDir `./dist`, flattened by `flatten-dist.mjs`).
 - Preflight: validate JSON (`jq -e .`), check no `install.inputs` schema violations.
 - Clear any existing Railway UI overrides when switching to Railpack.
 Full checklist: see `.agent-os/specs/railway-deployment-cheatsheet.md`.

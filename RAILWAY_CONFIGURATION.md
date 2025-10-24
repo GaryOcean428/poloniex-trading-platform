@@ -94,11 +94,14 @@ Watch Paths: backend/**
 ```json
 {
   "scripts": {
-    "build": "yarn run prebuild && rm -rf dist && tsc -p tsconfig.build.json && rm -rf .shared-build",
-    "start": "node dist/src/index.js"
+    "build": "node prebuild.mjs && rm -rf dist && tsc -p tsconfig.build.json && node scripts/flatten-dist.mjs && rm -rf .shared-build",
+    "build:railway": "node prebuild.mjs && rm -rf dist && tsc -p tsconfig.build.json --incremental false --sourceMap false --removeComments true && node scripts/flatten-dist.mjs && rm -rf .shared-build",
+    "start": "node dist/index.js"
   }
 }
 ```
+
+**Note**: The build process includes a `flatten-dist.mjs` script that moves files from `dist/src/` to `dist/` for cleaner deployment paths.
 
 ### Frontend (`frontend/package.json`)
 ```json
@@ -163,7 +166,7 @@ Host: 0.0.0.0
 4. `rm -rf .shared-build` - Cleanup temporary files
 
 **Deploy Step** (runs from /app/backend - service root):
-1. `node dist/src/index.js` - Start backend server
+1. `node dist/index.js` - Start backend server (flattened by `flatten-dist.mjs` script)
 
 ## Troubleshooting
 

@@ -24,9 +24,9 @@ Navigate to Railway Dashboard → polytrade-be service → Settings:
 
 #### Required Settings:
 
-- [ ] **Root Directory**: Set to `backend`
-- [ ] **Build Command**: `yarn install --immutable && yarn bundle:shared && yarn workspace backend build:railway`
-- [ ] **Start Command**: `node dist/src/index.js`
+- [ ] **Root Directory**: Leave empty (Railpack handles service root via root railpack.json)
+- [ ] **Build Command**: Leave empty (Handled by backend/railpack.json)
+- [ ] **Start Command**: Leave empty (Handled by backend/railpack.json: `node dist/index.js`)
 - [ ] **Healthcheck Path**: `/api/health`
 - [ ] **Healthcheck Timeout**: `300` seconds
 
@@ -136,9 +136,10 @@ curl https://your-service.railway.app/api/health
 3. Confirm healthCheckPath is `/api/health`
 
 ### Service Won't Start
-1. Verify start command is `node dist/src/index.js`
+1. Verify start command in backend/railpack.json is `node dist/index.js`
 2. Check all required environment variables are set
 3. Review service logs for error messages
+4. Verify build output contains `dist/index.js` (check build logs)
 
 ## Quick Links
 
