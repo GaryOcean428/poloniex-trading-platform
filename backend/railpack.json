@@ -16,13 +16,17 @@
     },
     "build": {
       "commands": [
-        "yarn workspace backend run build:railway"
+        "yarn workspace backend run build:railway",
+        "echo '=== Build output verification ==='",
+        "ls -la dist/",
+        "echo '=== Checking for index.js ==='",
+        "find dist -name 'index.js' -type f"
       ],
       "inputs": [{"step": "install"}]
     }
   },
   "deploy": {
-    "startCommand": "node backend/dist/index.js",
+    "startCommand": "node dist/index.js",
     "healthCheckPath": "/api/health",
     "healthCheckTimeout": 300,
     "restartPolicyType": "ON_FAILURE",
