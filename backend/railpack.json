@@ -23,10 +23,6 @@
   },
   "deploy": {
     "startCommand": "node backend/dist/index.js",
-    "healthCheckPath": "/api/health",
-    "healthCheckTimeout": 300,
-    "restartPolicyType": "ON_FAILURE",
-    "restartPolicyMaxRetries": 3,
     "inputs": [{"step": "build"}]
   }
 }
