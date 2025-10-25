@@ -6,6 +6,8 @@ description: Railway Deployment Master Cheat Sheet (Polytrade Monorepo)
 
 Authoritative checklist and troubleshooting guide for deploying the Polytrade multi-service monorepo to Railway using Railpack v1.
 
+**✅ VERIFIED**: This cheat sheet follows the official Railpack schema from https://schema.railpack.com
+
 Applies to services:
 - Frontend: `frontend/railpack.json`
 - Backend: `backend/railpack.json`
@@ -13,17 +15,24 @@ Applies to services:
 
 ## Golden Rules
 
-- One Railpack per service with `provider: "railway"`.
+- One Railpack per service with `provider: "node"` or `provider: "python"` (NOT "railway").
 - Do NOT set install/build/start overrides in Railway UI (Railpack is source of truth).
 - Always bind to `0.0.0.0` and read from `$PORT`.
 - Commit per-service lockfiles (`frontend/yarn.lock`, `backend/yarn.lock`).
 - Use `${{service.RAILWAY_PUBLIC_DOMAIN}}` for inter-service URLs.
+- **IMPORTANT**: Health check and restart policy fields are NOT part of railpack.json schema - they may be Railway-specific configuration.
 
 ## Pre-Deployment Checklist
 
-- Railpack schema (v1):
-  - provider present: `"provider": "railway"`
-  - keys limited to allowed fields for v1 (install/build/deploy sections using images/steps as per spec)
+- Railpack schema (official structure):
+  - ✅ `$schema: "https://schema.railpack.com"` at top level
+  - ✅ `provider` at root level: `"provider": "node"` or `"provider": "python"`
+  - ✅ `packages` object for version control (e.g., `{ "node": "22", "yarn": "4.9.2" }`)
+  - ✅ `steps` object at root level (NOT nested under `build`)
+  - ✅ `deploy` object for deployment configuration
+  - ❌ NO `version` field (doesn't exist in schema)
+  - ❌ NO `metadata` object (not part of schema)
+  - ❌ NO nested `build` object wrapping provider/steps
 - Service root in Railway UI points to service directory:
   - Frontend: `./frontend`
   - Backend: `./backend`
@@ -40,6 +49,84 @@ Applies to services:
   - Python: `GET /health` → 200
 - No hardcoded domains/ports; use Railway reference vars
 - UI overrides cleared for Install/Build/Start
+
+## Correct Railpack.json Structure
+
+### ✅ Official Schema Format (Node.js Service)
+
+```json
+{
+  "$schema": "https://schema.railpack.com",
+  "provider": "node",
+  "packages": {
+    "node": "22",
+    "yarn": "4.9.2"
+  },
+  "steps": {
+    "install": {
+      "commands": [
+        "corepack enable",
+        "yarn install --frozen-lockfile"
+      ]
+    },
+    "build": {
+      "inputs": [{ "step": "install" }],
+      "commands": ["yarn build"]
+    }
+  },
+  "deploy": {
+    "startCommand": "yarn start",
+    "inputs": [{ "step": "build" }]
+  }
+}
+```
+
+### ✅ Official Schema Format (Python Service)
+
+```json
+{
+  "$schema": "https://schema.railpack.com",
+  "provider": "python",
+  "packages": {
+    "python": "3.13.2"
+  },
+  "steps": {
+    "install": {
+      "commands": [
+        "pip install -r requirements.txt"
+      ]
+    }
+  },
+  "deploy": {
+    "startCommand": "uvicorn main:app --host 0.0.0.0 --port $PORT",
+    "inputs": [{ "step": "install" }]
+  }
+}
+```
+
+### ⚠️ Unsupported Fields (Not in Official Schema)
+
+The following fields do NOT exist in the official Railpack schema and should NOT be used in railpack.json:
+- ❌ `healthCheckPath` - May be Railway UI or railway.json specific
+- ❌ `healthCheckTimeout` - May be Railway UI or railway.json specific
+- ❌ `restartPolicyType` - Not part of Railpack schema
+- ❌ `restartPolicyMaxRetries` - Not part of Railpack schema
+- ❌ `version` - Field doesn't exist
+- ❌ `metadata` - Object doesn't exist
+
+**Note**: Health check configuration may be handled by Railway's platform settings or a separate railway.json file, not railpack.json.
+
+### 📋 Key Schema Points
+
+1. **provider** is at root level, not nested under `build`
+2. **steps** is at root level, not nested under `build`
+3. **packages** specifies exact versions (e.g., "node": "22", "python": "3.13.2")
+4. **steps.install** and **steps.build** use `commands` arrays
+5. **deploy.inputs** references previous steps for layer composition
+6. **buildAptPackages** (root level) for build-time apt packages
+7. **deploy.aptPackages** for runtime apt packages
+8. **deploy.variables** for environment variables
+9. **deploy.paths** for PATH additions
 
 ## Service-Specific Patterns
 
@@ -66,10 +153,21 @@ Applies to services:
 
 ### Python (FastAPI/Uvicorn)
 
-- Python 3.11
+- Python 3.13.2 (official default, not 3.13+)
 - Install: `pip install -r requirements.txt`
 - Start: `uvicorn health:app --host 0.0.0.0 --port $PORT`
 - Health: FastAPI `/health`
+- Version managed by Mise (Railpack's version manager)
+
+## Build System Priority (Verified)
+
+Railway determines which build system to use in this order:
+
+1. **Dockerfile** (if exists in project)
+2. **railway.json** with builder config (if exists)
+3. **Railpack** (auto-detection)
+
+Since this project uses Railpack, ensure no Dockerfile or railway.json with builder config exists, or they will take precedence.
 
 ## Reference Variables
 
@@ -92,11 +190,19 @@ Applies to services:
 
 - Error: "Install inputs must be an image or step input"
   - Cause: invalid railpack install schema (local inputs)
-  - Fix: conform to v1 schema; use supported image/step inputs only
+  - Fix: conform to official schema; use supported image/step inputs only
 
 - Error: "No project found in /app"
   - Cause: Wrong Root Directory in Railway UI
   - Fix: Set per-service root (frontend/backend/python-service)
+
+- Error: Railpack validation fails with unknown fields
+  - Cause: Using unsupported fields like `healthCheckPath`, `restartPolicyType`, `version`, or `metadata`
+  - Fix: Remove these fields from railpack.json; they are not part of the official schema
+
+- Error: Provider or steps not found
+  - Cause: Nested `build` object wrapping provider/steps (incorrect structure)
+  - Fix: Move `provider` and `steps` to root level of railpack.json
 
 - Backend starts but 404 on health
   - Cause: Wrong path or CORS/host binding
@@ -122,8 +228,11 @@ Applies to services:
 
 - Logs show:
   - "Successfully prepared Railpack plan"
+  - Provider detection (e.g., "Detected Node.js provider")
+  - Package version info (e.g., "Using Node 22", "Using Yarn 4.9.2")
   - Listening on 0.0.0.0:$PORT
   - Health check responses OK (200)
+- Health checks must be configured in Railway UI or platform settings (not railpack.json)
 
 ## Quick Fix Commands
 

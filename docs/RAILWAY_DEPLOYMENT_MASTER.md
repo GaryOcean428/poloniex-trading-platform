@@ -1,5 +1,24 @@
 # Railway Deployment Master Guide
 
+## ⚠️ IMPORTANT: Schema Update Required
+
+**This document contains OUTDATED railpack.json examples that do not match the official Railpack schema.**
+
+For the CORRECT and VERIFIED Railpack configuration, please refer to:
+- **Primary Reference**: [Railway Deployment Cheat Sheet](../.agent-os/specs/railway-deployment-cheatsheet.md)
+- **Configuration Guide**: [RAILWAY_CONFIGURATION.md](../RAILWAY_CONFIGURATION.md)
+- **Official Schema**: https://schema.railpack.com
+
+**Key Issues in this document's examples:**
+- ❌ Uses `version` field (doesn't exist in schema)
+- ❌ Uses `metadata` object (not part of schema)
+- ❌ Nests `provider` under `build` (should be at root level)
+- ❌ Includes unsupported fields: `healthCheckPath`, `healthCheckTimeout`, `restartPolicyType`, `restartPolicyMaxRetries`
+
+**This document is kept for historical reference but should NOT be used for new configurations.**
+
+---
+
 ## Overview
 
 This is the definitive guide for Railway deployment of the Poloniex Trading Platform. All previous Railway documentation has been consolidated here.
@@ -58,20 +77,30 @@ Add these to **both** Railway services:
 3. Deploy
 
 ### 2. Service Configuration
+
+**⚠️ OUTDATED EXAMPLES BELOW** - These do NOT match the official Railpack schema.
+
+For CORRECT examples, see:
+- [Railway Deployment Cheat Sheet](../.agent-os/specs/railway-deployment-cheatsheet.md)
+- [RAILWAY_CONFIGURATION.md](../RAILWAY_CONFIGURATION.md)
+- Actual working files: `frontend/railpack.json`, `backend/railpack.json`
+
+---
+
 Each service uses its own `railpack.json`:
 
-**Backend** (`backend/railpack.json`):
+**Backend** (`backend/railpack.json`) - **OUTDATED EXAMPLE**:
 ```json
 {
   "$schema": "https://schema.railpack.com",
-  "version": "1",
-  "metadata": {
+  "version": "1",                                    // ❌ Field doesn't exist
+  "metadata": {                                      // ❌ Object doesn't exist
     "name": "polytrade-backend"
   },
-  "build": {
-    "provider": "node",
+  "build": {                                         // ❌ Wrong nesting
+    "provider": "node",                              // ❌ Should be at root
     "workingDirectory": "..",
-    "steps": {
+    "steps": {                                       // ❌ Should be at root
       "install": {
         "commands": ["yarn install --immutable"]
       },
@@ -82,26 +111,26 @@ Each service uses its own `railpack.json`:
   },
   "deploy": {
     "startCommand": "yarn workspace backend start",
-    "healthCheckPath": "/api/health",
-    "healthCheckTimeout": 300,
-    "restartPolicyType": "ON_FAILURE",
-    "restartPolicyMaxRetries": 3
+    "healthCheckPath": "/api/health",                // ❌ Not in schema
+    "healthCheckTimeout": 300,                       // ❌ Not in schema
+    "restartPolicyType": "ON_FAILURE",               // ❌ Not in schema
+    "restartPolicyMaxRetries": 3                     // ❌ Not in schema
   }
 }
 ```
 
-**Frontend** (`frontend/railpack.json`):
+**Frontend** (`frontend/railpack.json`) - **OUTDATED EXAMPLE**:
 ```json
 {
   "$schema": "https://schema.railpack.com",
-  "version": "1",
-  "metadata": {
+  "version": "1",                                    // ❌ Field doesn't exist
+  "metadata": {                                      // ❌ Object doesn't exist
     "name": "polytrade-frontend"
   },
-  "build": {
-    "provider": "node",
+  "build": {                                         // ❌ Wrong nesting
+    "provider": "node",                              // ❌ Should be at root
     "workingDirectory": "..",
-    "steps": {
+    "steps": {                                       // ❌ Should be at root
       "install": {
         "commands": ["yarn install --immutable"]
       },
@@ -112,10 +141,10 @@ Each service uses its own `railpack.json`:
   },
   "deploy": {
     "startCommand": "yarn workspace frontend start",
-    "healthCheckPath": "/",
-    "healthCheckTimeout": 300,
-    "restartPolicyType": "ON_FAILURE",
-    "restartPolicyMaxRetries": 3
+    "healthCheckPath": "/",                          // ❌ Not in schema
+    "healthCheckTimeout": 300,                       // ❌ Not in schema
+    "restartPolicyType": "ON_FAILURE",               // ❌ Not in schema
+    "restartPolicyMaxRetries": 3                     // ❌ Not in schema
   }
 }
 ```

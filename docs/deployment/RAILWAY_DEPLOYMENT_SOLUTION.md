@@ -254,7 +254,7 @@ openssl rand -base64 32
 **Solution:**
 - Verify backend binds to `0.0.0.0:${PORT}` (already configured)
 - Check health endpoint at `/api/health` returns 200
-- Confirm healthCheckPath in Railway is `/api/health`
+- Confirm health check path in Railway UI is `/api/health` (not in railpack.json)
 
 ### Service Won't Start
 **Symptom:** Service crashes on startup

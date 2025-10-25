@@ -133,7 +133,7 @@ curl https://your-service.railway.app/api/health
 ### Health Check Fails
 1. Verify backend binds to `0.0.0.0:${PORT}`
 2. Check `/api/health` endpoint returns 200 status
-3. Confirm healthCheckPath is `/api/health`
+3. Confirm health check path is `/api/health` (configured in Railway UI, not railpack.json)
 
 ### Service Won't Start
 1. Verify start command in backend/railpack.json is `node dist/index.js`
