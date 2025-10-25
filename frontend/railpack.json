@@ -8,10 +8,10 @@
   "steps": {
     "install": {
       "commands": [
-        "cd /app && npm i -g corepack@latest",
-        "cd /app && corepack enable",
-        "cd /app && corepack prepare yarn@4.9.2 --activate",
-        "cd /app && yarn install --frozen-lockfile"
+        "npm i -g corepack@latest",
+        "corepack enable",
+        "corepack prepare yarn@4.9.2 --activate",
+        "yarn install --immutable"
       ]
     },
     "build": {
@@ -28,6 +28,7 @@
     "healthCheckPath": "/healthz",
     "healthCheckTimeout": 300,
     "restartPolicyType": "ON_FAILURE",
-    "restartPolicyMaxRetries": 3
+    "restartPolicyMaxRetries": 3,
+    "inputs": [{"step": "build"}]
   }
 }
