@@ -1,10 +1,16 @@
 # Railway Root Directory Fix - Yarn Workspaces
 
-**⚠️ HISTORICAL DOCUMENT**: This document describes an older configuration approach where services run from `/app` without using root railpack.json service definitions.
+**⚠️ HISTORICAL DOCUMENT - OUTDATED**: This document describes an older configuration approach where services run from `/app` without using root railpack.json service definitions.
 
-**Current Configuration**: The project now uses a root `railpack.json` with service definitions (`"frontend": { "root": "./frontend" }`), so services run from their respective service roots. See `RAILWAY_CONFIGURATION.md` for current best practices.
+**Current Configuration**: The project now uses:
+- Root `railpack.json` with service definitions (`"backend": { "root": "./backend" }`)
+- Services run from their respective service roots (e.g., backend runs from `/app/backend`)
+- Start command is `node dist/index.js` (NOT `node backend/dist/src/index.js`)
+- Build output is flattened by `flatten-dist.mjs` script
 
-**This document is kept for reference but the current approach is different.**
+See `RAILWAY_CONFIGURATION.md` and `CLAUDE.md` for current best practices.
+
+**This document is kept for reference only. The paths shown here are INCORRECT for the current configuration.**
 
 ---
 

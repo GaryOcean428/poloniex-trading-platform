@@ -38,6 +38,7 @@ node_modules
 
 # Build files
 build/
+dist/
 .vercel
 
 # Monorepo
