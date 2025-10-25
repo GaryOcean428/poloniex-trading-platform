@@ -25,10 +25,6 @@
   },
   "deploy": {
     "startCommand": "node serve.js",
-    "healthCheckPath": "/healthz",
-    "healthCheckTimeout": 300,
-    "restartPolicyType": "ON_FAILURE",
-    "restartPolicyMaxRetries": 3,
     "inputs": [{"step": "build"}]
   }
 }

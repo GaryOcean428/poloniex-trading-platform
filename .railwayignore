@@ -36,8 +36,8 @@ frontend/index.html
 frontend/vite.config.ts
 frontend/tsconfig*.json
 
-# Python services (deploy separately)
-python-services/
+# Python services - DO NOT ignore the directory itself, Railway needs it for ml-worker service
+# Individual services will be deployed via root railpack.json service definitions
 
 # Documentation (keep only essential docs)
 docs/
