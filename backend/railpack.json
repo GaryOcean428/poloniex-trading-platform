@@ -11,7 +11,7 @@
         "npm i -g corepack@latest",
         "corepack enable",
         "corepack prepare yarn@4.9.2 --activate",
-        "cd /app && yarn install --immutable --immutable-cache"
+        "cd .. && yarn install --immutable --immutable-cache"
       ]
     },
     "build": {
@@ -19,16 +19,14 @@
         "node prebuild.mjs",
         "rm -rf dist",
         "tsc -p tsconfig.build.json",
+        "node scripts/flatten-dist.mjs",
         "rm -rf .shared-build"
       ],
       "inputs": [{"step": "install"}]
     }
   },
   "deploy": {
-    "startCommand": "node backend/dist/src/index.js",
-    "healthCheckPath": "/api/health",
-    "healthCheckTimeout": 300,
-    "restartPolicyType": "ON_FAILURE",
-    "restartPolicyMaxRetries": 3
+    "startCommand": "node dist/index.js",
+    "inputs": [{"step": "build"}]
   }
 }
