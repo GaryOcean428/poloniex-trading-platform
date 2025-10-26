@@ -11,7 +11,7 @@
         "npm i -g corepack@latest",
         "corepack enable",
         "corepack prepare yarn@4.9.2 --activate",
-        "cd /app && yarn install --immutable --immutable-cache"
+        "cd .. && yarn install --immutable --immutable-cache"
       ]
     },
     "build": {
