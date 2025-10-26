@@ -11,20 +11,20 @@
         "npm i -g corepack@latest",
         "corepack enable",
         "corepack prepare yarn@4.9.2 --activate",
-        "cd .. && yarn install --immutable --immutable-cache"
+        "yarn install --immutable --immutable-cache"
       ]
     },
     "build": {
       "commands": [
-        "node prebuild.mjs",
-        "vite build",
-        "rm -rf .shared-build"
+        "yarn workspace frontend run prebuild",
+        "yarn workspace frontend run vite build",
+        "yarn workspace frontend exec rm -rf .shared-build"
       ],
       "inputs": [{"step": "install"}]
     }
   },
   "deploy": {
-    "startCommand": "node serve.js",
+    "startCommand": "yarn workspace frontend run start",
     "inputs": [{"step": "build"}]
   }
 }

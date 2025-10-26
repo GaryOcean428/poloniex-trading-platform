@@ -1,11 +1,11 @@
 {
   "$schema": "https://schema.railpack.com",
   "services": {
-    "frontend": {
-      "root": "./frontend"
+    "polytrade-fe": {
+      "root": "./"
     },
-    "backend": {
-      "root": "./backend"
+    "polytrade-be": {
+      "root": "./"
     },
     "ml-worker": {
       "root": "./python-services/poloniex"
