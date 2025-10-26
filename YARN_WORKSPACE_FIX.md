@@ -157,11 +157,11 @@ You can test this fix locally by simulating the Railway build process:
 
 ```bash
 # From the service directory, test the install command
-cd /home/runner/work/poloniex-trading-platform/poloniex-trading-platform/backend
+cd /path/to/project/backend
 npm i -g corepack@latest
 corepack enable
 corepack prepare yarn@4.9.2 --activate
-cd /app && yarn install --check-cache
+cd /path/to/project && yarn install --immutable --immutable-cache
 
 # Should complete without errors
 ```
