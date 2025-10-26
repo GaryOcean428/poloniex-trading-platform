@@ -8,10 +8,12 @@ Authoritative checklist and troubleshooting guide for deploying the Polytrade mu
 
 **✅ VERIFIED**: This cheat sheet follows the official Railpack schema from https://schema.railpack.com
 
+**📚 COMPREHENSIVE GUIDE**: For detailed examples, troubleshooting, and complete configuration reference, see [docs/RAILWAY_RAILPACK_CHEATSHEET.md](../../docs/RAILWAY_RAILPACK_CHEATSHEET.md)
+
 Applies to services:
-- Frontend: `frontend/railpack.json`
-- Backend: `backend/railpack.json`
-- Python (ML): `python-services/poloniex/railpack.json`
+- Frontend: `frontend/railpack.json` (React 19 + Vite, Node 20, Yarn 4.9.2)
+- Backend: `backend/railpack.json` (Node 20 + Express + TypeScript, Yarn 4.9.2)
+- Python (ML): `python-services/poloniex/railpack.json` (Python 3.13.2 + FastAPI)
 
 ## Golden Rules
 
@@ -20,6 +22,8 @@ Applies to services:
 - Always bind to `0.0.0.0` and read from `$PORT`.
 - Commit per-service lockfiles (`frontend/yarn.lock`, `backend/yarn.lock`).
 - Use `${{service.RAILWAY_PUBLIC_DOMAIN}}` for inter-service URLs.
+- Use Corepack for Yarn 4.9.2 management (NOT `yarnPath` in `.yarnrc.yml`).
+- Always run `node prebuild.mjs` before builds to bundle shared dependencies.
 - **IMPORTANT**: Health check and restart policy fields are NOT part of railpack.json schema - they may be Railway-specific configuration.
 
 ## Pre-Deployment Checklist
@@ -27,27 +31,29 @@ Applies to services:
 - Railpack schema (official structure):
   - ✅ `$schema: "https://schema.railpack.com"` at top level
   - ✅ `provider` at root level: `"provider": "node"` or `"provider": "python"`
-  - ✅ `packages` object for version control (e.g., `{ "node": "22", "yarn": "4.9.2" }`)
+  - ✅ `packages` object for version control (e.g., `{ "node": "20", "yarn": "4.9.2" }`)
   - ✅ `steps` object at root level (NOT nested under `build`)
   - ✅ `deploy` object for deployment configuration
   - ❌ NO `version` field (doesn't exist in schema)
   - ❌ NO `metadata` object (not part of schema)
   - ❌ NO nested `build` object wrapping provider/steps
 - Service root in Railway UI points to service directory:
-  - Frontend: `./frontend`
-  - Backend: `./backend`
-  - Python: `./python-services/poloniex`
+  - Frontend (polytrade-fe, ID: c81963d4-f110-49cf-8dc0-311d1e3dcf7e): `./frontend`
+  - Backend (polytrade-be, ID: e473a919-acf9-458b-ade3-82119e4fabf6): `./backend`
+  - Python (ml-worker, ID: 86494460-6c19-4861-859b-3f4bd76cb652): `./python-services/poloniex`
 - Lockfiles present and tracked:
   - `frontend/yarn.lock`
   - `backend/yarn.lock`
 - Port binding:
-  - Node: `server.listen(process.env.PORT, '0.0.0.0')`
-  - Python: `uvicorn ... --host 0.0.0.0 --port $PORT`
+  - Frontend: `server.listen(parseInt(process.env.PORT || '5675', 10), '0.0.0.0')`
+  - Backend: `app.listen(process.env.PORT || 8765, '0.0.0.0')`
+  - Python: `uvicorn main:app --host 0.0.0.0 --port $PORT`
 - Health endpoints reachable:
-  - Backend: `GET /api/health` → 200 JSON
-  - Frontend: `GET /health` (or `/`) → 200
-  - Python: `GET /health` → 200
+  - Backend: `GET /api/health` → 200 JSON with { status, timestamp, uptime }
+  - Frontend: `GET /healthz` or `GET /api/health` → 200 JSON with comprehensive validation
+  - Python: `GET /health` → 200 JSON with { status, service, environment }
 - No hardcoded domains/ports; use Railway reference vars
+- Shared dependencies bundled via `prebuild.mjs` script
 - UI overrides cleared for Install/Build/Start
 
 ## Correct Railpack.json Structure
@@ -251,7 +257,24 @@ Since this project uses Railpack, ensure no Dockerfile or railway.json with buil
 
 ## Ports Policy (Gary8D)
 
-- Frontend: 5675–5699
-- Backend: 8765–8799
-- Services: 9080–9099
+- Frontend: 5675–5699 (default: 5675)
+- Backend: 8765–8799 (default: 8765)
+- Services: 9080–9099 (default: 9080)
 - Always read `$PORT` on Railway; local dev may default within these ranges
+
+---
+
+## Additional Documentation
+
+For comprehensive guides and examples:
+
+- **📚 Complete Cheatsheet**: [docs/RAILWAY_RAILPACK_CHEATSHEET.md](../../docs/RAILWAY_RAILPACK_CHEATSHEET.md) - Detailed examples, troubleshooting, health checks
+- **🔧 Configuration**: [RAILWAY_CONFIGURATION.md](../../RAILWAY_CONFIGURATION.md) - Railway-specific settings
+- **✅ Deployment Checklist**: [RAILWAY_DEPLOYMENT_CHECKLIST.md](../../RAILWAY_DEPLOYMENT_CHECKLIST.md) - Step-by-step deployment guide
+- **📖 Official Schema**: https://schema.railpack.com - Authoritative Railpack specification
+
+---
+
+**Last Updated:** October 2025  
+**Project:** Poloniex Trading Platform (Polytrade Monorepo)  
+**Stack:** Node 20, Yarn 4.9.2, React 19, Python 3.13.2, Railpack v1
