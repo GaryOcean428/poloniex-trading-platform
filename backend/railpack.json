@@ -11,22 +11,22 @@
         "npm i -g corepack@latest",
         "corepack enable",
         "corepack prepare yarn@4.9.2 --activate",
-        "cd .. && yarn install --immutable --immutable-cache"
+        "yarn install --immutable --immutable-cache"
       ]
     },
     "build": {
       "commands": [
-        "node prebuild.mjs",
-        "rm -rf dist",
-        "tsc -p tsconfig.build.json",
-        "node scripts/flatten-dist.mjs",
-        "rm -rf .shared-build"
+        "yarn workspace backend run prebuild",
+        "yarn workspace backend exec rm -rf dist",
+        "yarn workspace backend run tsc -p tsconfig.build.json",
+        "yarn workspace backend run node scripts/flatten-dist.mjs",
+        "yarn workspace backend exec rm -rf .shared-build"
       ],
       "inputs": [{"step": "install"}]
     }
   },
   "deploy": {
-    "startCommand": "node dist/index.js",
+    "startCommand": "yarn workspace backend run start",
     "inputs": [{"step": "build"}]
   }
 }
