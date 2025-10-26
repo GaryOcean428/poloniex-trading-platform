@@ -17,10 +17,10 @@ The railpack.json files had commands that assumed they were running from the rep
 **Changed:**
 - Install command: `cd /app && yarn install` → `cd .. && yarn install`
   - Now correctly goes up one level to find the root package.json with workspace definitions
-- Start command: `node backend/dist/src/index.js` → `node dist/index.js`
-  - Now runs from the service root directory
+- Start command: `node dist/src/index.js` → `node dist/index.js`
+  - Now runs from the flattened dist directory (after flatten-dist.mjs processes the build output)
 - Added: `node scripts/flatten-dist.mjs` to build commands
-  - Ensures dist files are properly flattened
+  - Ensures dist files are properly flattened from dist/src/ to dist/
 - Removed: Non-schema fields (healthCheckPath, healthCheckTimeout, restartPolicy)
   - These should be configured in Railway UI, not railpack.json
 
@@ -95,7 +95,7 @@ After deploying, check the Railway logs for:
 ### Backend Success Indicators:
 ```
 ✅ Successfully prepared Railpack plan
-✅ yarn@4.9.2 activated
+✅ Yarn package manager activated
 ✅ yarn install completed
 ✅ TypeScript compilation completed
 ✅ Flattened dist/src into dist/
@@ -105,7 +105,7 @@ After deploying, check the Railway logs for:
 ### Frontend Success Indicators:
 ```
 ✅ Successfully prepared Railpack plan
-✅ yarn@4.9.2 activated
+✅ Yarn package manager activated
 ✅ yarn install completed
 ✅ Vite build completed
 ✅ Starting: node serve.js
@@ -114,7 +114,7 @@ After deploying, check the Railway logs for:
 ### ML Worker Success Indicators:
 ```
 ✅ Successfully prepared Railpack plan
-✅ python@3.13.2 installed
+✅ Python environment installed
 ✅ Created virtual environment
 ✅ pip install from requirements.txt completed
 ✅ Starting: uvicorn main:app
