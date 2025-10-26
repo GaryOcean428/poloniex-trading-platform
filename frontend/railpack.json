@@ -16,9 +16,7 @@
     },
     "build": {
       "commands": [
-        "yarn workspace frontend run prebuild",
-        "yarn workspace frontend run vite build",
-        "yarn workspace frontend exec rm -rf .shared-build"
+        "yarn workspace frontend run build"
       ],
       "inputs": [{"step": "install"}]
     }
