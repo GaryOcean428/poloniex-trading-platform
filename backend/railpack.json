@@ -16,11 +16,7 @@
     },
     "build": {
       "commands": [
-        "yarn workspace backend run prebuild",
-        "yarn workspace backend exec rm -rf dist",
-        "yarn workspace backend run tsc -p tsconfig.build.json",
-        "yarn workspace backend run node scripts/flatten-dist.mjs",
-        "yarn workspace backend exec rm -rf .shared-build"
+        "yarn workspace backend run build"
       ],
       "inputs": [{"step": "install"}]
     }
