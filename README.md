@@ -6,6 +6,7 @@ A comprehensive trading platform for Poloniex with advanced features including a
 
 **New to the project?** Start here:
 - 📖 **[QUICK_START.md](QUICK_START.md)** - Get up and running in minutes
+- 🚂 **[RAILWAY_QUICK_REFERENCE.md](RAILWAY_QUICK_REFERENCE.md)** - Railway deployment quick reference
 - ✅ **Deployment Validation:** Run `yarn deploy:check` to verify readiness
 - 📋 **Implementation Status:** See [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) for complete assessment response
 
@@ -100,135 +101,131 @@ yarn deploy:check:frontend  # Frontend-specific validation
 If you encounter a **blank page in production**, see the comprehensive troubleshooting guide:
 - [TROUBLESHOOTING_BLANK_PAGE.md](TROUBLESHOOTING_BLANK_PAGE.md) - Solutions for blank page issues
 
-For Railway configuration issues:
+For Railway deployment issues:
+- **[RAILWAY_QUICK_REFERENCE.md](RAILWAY_QUICK_REFERENCE.md)** - Quick reference for common Railway tasks
+- **[docs/RAILWAY_RAILPACK_CHEATSHEET.md](docs/RAILWAY_RAILPACK_CHEATSHEET.md)** - Comprehensive Railway + Railpack deployment guide
 - [RAILWAY_CONFIGURATION.md](RAILWAY_CONFIGURATION.md) - Complete Railway setup guide
+- [RAILWAY_DEPLOYMENT_CHECKLIST.md](RAILWAY_DEPLOYMENT_CHECKLIST.md) - Step-by-step deployment checklist
 
 ### Deploying to Railway
 
-This project is optimized for Railway deployment using a monorepo architecture with separate frontend and backend services.
+This project is optimized for Railway deployment using **Railpack v1** in a monorepo architecture with three separate services:
 
-#### Project Structure
+#### 📚 Railway Documentation
+
+- **[RAILWAY_QUICK_REFERENCE.md](RAILWAY_QUICK_REFERENCE.md)** - Quick reference for common Railway tasks and troubleshooting
+- **[docs/RAILWAY_RAILPACK_CHEATSHEET.md](docs/RAILWAY_RAILPACK_CHEATSHEET.md)** - Comprehensive Railway + Railpack deployment guide with:
+  - Verified railpack.json configurations
+  - Port binding patterns and health check implementations
+  - Common issues and solutions with code examples
+  - Performance optimization and security best practices
+- **[RAILWAY_DEPLOYMENT_CHECKLIST.md](RAILWAY_DEPLOYMENT_CHECKLIST.md)** - Step-by-step deployment checklist
+- **[RAILWAY_CONFIGURATION.md](RAILWAY_CONFIGURATION.md)** - Detailed Railway settings and environment variables
+
+#### Project Structure (Railpack v1)
 ```
 poloniex-trading-platform/
-├── frontend/
+├── railpack.json                        # Root coordination file
+├── frontend/                            # React 19 + Vite frontend
+│   ├── railpack.json                    # Frontend Railpack config
 │   ├── src/
 │   ├── public/
 │   ├── package.json
 │   ├── yarn.lock
-│   ├── vite.config.ts
-│   ├── tsconfig.json
-│   ├── railway.json
-│   ├── nixpacks.toml
-│   └── Dockerfile (optional)
-├── backend/
+│   ├── serve.js                         # Production static server
+│   └── vite.config.ts
+├── backend/                             # Node.js + Express backend
+│   ├── railpack.json                    # Backend Railpack config
 │   ├── src/
 │   ├── package.json
 │   ├── yarn.lock
-│   ├── railway.json
-│   ├── nixpacks.toml
-│   └── Dockerfile (optional)
-├── shared/
+│   ├── tsconfig.json
+│   └── dist/                           # TypeScript build output
+├── python-services/
+│   └── poloniex/                       # Python 3.13.2 + FastAPI ML worker
+│       ├── railpack.json               # Python Railpack config
+│       ├── main.py
+│       └── requirements.txt
+├── shared/                             # Shared types and utilities
 │   └── types/
-├── railway.json (monorepo config)
-├── package.json (root workspace)
-└── yarn.lock (root)
+├── package.json                        # Root workspace
+└── yarn.lock                           # Root lockfile
 ```
 
-#### Railway Configuration Options
+#### Railway Service Configuration
 
-**Option 1: Single Configuration File (Recommended)**
+| Service | Root Directory | Port | Health Endpoint | Railway Service ID |
+|---------|---------------|------|-----------------|-------------------|
+| **Frontend (polytrade-fe)** | `./frontend` | 5675 | `/healthz`, `/api/health` | c81963d4-f110-49cf-8dc0-311d1e3dcf7e |
+| **Backend (polytrade-be)** | `./backend` | 8765 | `/api/health` | e473a919-acf9-458b-ade3-82119e4fabf6 |
+| **ML Worker (ml-worker)** | `./python-services/poloniex` | 9080 | `/health` | 86494460-6c19-4861-859b-3f4bd76cb652 |
 
-Uses the root `railway.json` with multi-service configuration:
-
-1. **Frontend Service Settings**:
-   - Service Name: `poloniex-frontend`
-   - Root Directory: `/frontend`
-   - Config Path: `/railway.json`
-   - Builder: NIXPACKS
-
-2. **Backend Service Settings**:
-   - Service Name: `poloniex-backend`
-   - Root Directory: `/backend`
-   - Config Path: `/railway.json`
-   - Builder: NIXPACKS
-
-**Option 2: Separate Service Configurations**
-
-Each service has its own `railway.json`:
-
-1. **Frontend Service**:
-   - Root Directory: `/frontend`
-   - Config Path: `/frontend/railway.json`
-
-2. **Backend Service**:
-   - Root Directory: `/backend`
-   - Config Path: `/backend/railway.json`
+**Technology Stack:**
+- Node.js: 20.x LTS (managed by Railpack)
+- Yarn: 4.9.2 (managed by Corepack)
+- Python: 3.13.2 (exact version)
+- React: 19.x
+- TypeScript: 5.9+
 
 #### Environment Variables
 
-**Frontend Variables**:
+**Frontend Service (polytrade-fe):**
 ```bash
-# Railway System Variables (auto-generated)
-PORT=
-RAILWAY_PUBLIC_DOMAIN=
-
-# Application Variables
+PORT=${{PORT}}                           # Auto-provided by Railway
 NODE_ENV=production
-VITE_API_URL=${{backend.RAILWAY_PUBLIC_DOMAIN}}
-VITE_WS_URL=wss://${{backend.RAILWAY_PUBLIC_DOMAIN}}
-VITE_POLONIEX_API_KEY=your-key
-VITE_POLONIEX_API_SECRET=your-secret
-VITE_POLONIEX_PASSPHRASE=your-passphrase
+VITE_API_URL=${{polytrade-be.RAILWAY_PUBLIC_DOMAIN}}
+VITE_WS_URL=wss://${{polytrade-be.RAILWAY_PUBLIC_DOMAIN}}
 ```
 
-**Backend Variables**:
+**Backend Service (polytrade-be):**
 ```bash
-# Railway System Variables (auto-generated)
-PORT=
-RAILWAY_PUBLIC_DOMAIN=
-
-# Application Variables
+PORT=${{PORT}}                           # Auto-provided by Railway
 NODE_ENV=production
-FRONTEND_URL=https://${{frontend.RAILWAY_PUBLIC_DOMAIN}}
-POLONIEX_API_KEY=your-key
-POLONIEX_SECRET=your-secret
-JWT_SECRET=generate-secure-secret
-SESSION_SECRET=generate-secure-secret
+DATABASE_URL=${{Postgres.DATABASE_URL}}
+JWT_SECRET=<generate-secure-secret>
+FRONTEND_URL=${{polytrade-fe.RAILWAY_PUBLIC_DOMAIN}}
+CORS_ORIGIN=${{polytrade-fe.RAILWAY_PUBLIC_DOMAIN}}
+```
+
+**Python Service (ml-worker):**
+```bash
+PORT=${{PORT}}                           # Auto-provided by Railway
+PYTHONUNBUFFERED=1
+BACKEND_URL=${{polytrade-be.RAILWAY_PRIVATE_DOMAIN}}
 ```
 
 #### Deployment Steps
 
-1. **Create Services**: Create two services in Railway project
-2. **Connect Repository**: Connect GitHub repository to both services
-3. **Configure Root Directories**:
-   - Frontend: Set to `/frontend`
-   - Backend: Set to `/backend`
-4. **Set Environment Variables**: Add required variables per service
-5. **Deploy**: Deploy backend first, then frontend
+For complete deployment instructions, see **[RAILWAY_QUICK_REFERENCE.md](RAILWAY_QUICK_REFERENCE.md)** or **[docs/RAILWAY_RAILPACK_CHEATSHEET.md](docs/RAILWAY_RAILPACK_CHEATSHEET.md)**.
+
+**Quick Steps:**
+1. **Pre-deployment validation**: Run `yarn railway:validate`
+2. **Configure Railway services**: Set root directories for each service
+3. **Set environment variables**: Add required variables per service
+4. **Deploy**: Push to GitHub - Railway auto-deploys from main branch
 
 #### Build Commands
 
 The workspace includes optimized build commands:
-- `yarn build` - Builds both services
+- `yarn build` - Builds both frontend and backend
 - `yarn build:frontend` - Builds frontend only
 - `yarn build:backend` - Builds backend only
-- `yarn start:frontend` - Starts frontend preview
-- `yarn start:backend` - Starts backend server
-- `yarn railway:help` - Get Railway configuration guidance
-- `yarn railway:validate` - Validate Railway configuration files
+- `yarn railway:validate` - Validate Railway/Railpack configuration files
+- `yarn deploy:check` - Verify deployment readiness
 
 #### Railway Troubleshooting
 
-If you encounter Railway deployment issues, especially "config file does not exist" errors:
+For Railway deployment issues:
+1. **Quick Reference**: See [RAILWAY_QUICK_REFERENCE.md](RAILWAY_QUICK_REFERENCE.md)
+2. **Comprehensive Guide**: See [docs/RAILWAY_RAILPACK_CHEATSHEET.md](docs/RAILWAY_RAILPACK_CHEATSHEET.md)
+3. **Step-by-step**: See [RAILWAY_DEPLOYMENT_CHECKLIST.md](RAILWAY_DEPLOYMENT_CHECKLIST.md)
+4. **Validate Configs**: Run `yarn railway:validate` to check configuration files
 
-1. **Quick Help**: Run `yarn railway:help` for configuration guidance
-2. **Detailed Guide**: See [RAILWAY_TROUBLESHOOTING_GUIDE.md](./RAILWAY_TROUBLESHOOTING_GUIDE.md)
-3. **Validate Configs**: Run `yarn railway:validate` to check configuration files
-
-Common solutions:
-- Set Config Path to `/railway.json` with Root Directory `/backend` (recommended)
-- Or set Config Path to `/backend/railway.json` with Root Directory `/backend`
-- Or clear Config Path completely and use Railway UI configuration
+Common solutions in the comprehensive guide include:
+- Fixing "Install inputs must be an image or step input" errors
+- Resolving "No project found in /app" issues
+- Health check timeout configuration
+- Port binding patterns for all services
 
 ## Architecture
 
