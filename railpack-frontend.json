@@ -1,0 +1,20 @@
+{
+  "$schema": "https://schema.railpack.com",
+  "provider": "node",
+  "packages": { "node": "20" },
+  "steps": {
+    "install": {
+      "commands": [
+        "npm i -g corepack@latest && corepack enable",
+        "corepack prepare yarn@4.9.2 --activate",
+        "yarn install --immutable"
+      ]
+    },
+    "build": {
+      "commands": ["yarn workspace frontend run build"]
+    }
+  },
+  "deploy": {
+    "startCommand": "node frontend/serve.js"
+  }
+}
