@@ -7,14 +7,13 @@
   "steps": {
     "install": {
       "commands": [
-        "python -m venv .venv",
-        ".venv/bin/pip install --upgrade pip",
-        ".venv/bin/pip install -r requirements.txt"
+        "pip install uv",
+        "uv sync --frozen"
       ]
     }
   },
   "deploy": {
-    "startCommand": ".venv/bin/python -m uvicorn main:app --host 0.0.0.0 --port $PORT",
+    "startCommand": "uv run uvicorn main:app --host 0.0.0.0 --port $PORT",
     "healthCheckPath": "/health",
     "healthCheckTimeout": 300,
     "restartPolicyType": "ON_FAILURE",
