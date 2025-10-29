@@ -8,8 +8,21 @@ const __dirname = path.dirname(__filename);
 const logFormat = winston.format.combine(
   winston.format.timestamp(),
   winston.format.errors({ stack: true }),
-  winston.format.printf(({ timestamp, level, message, stack }) => {
-    return `${timestamp} [${level.toUpperCase()}]: ${stack || message}`;
+  winston.format.printf(({ timestamp, level, message, stack, ...metadata }) => {
+    let logMessage = `${timestamp} [${level.toUpperCase()}]: ${stack || message}`;
+    
+    // Add metadata if present (for structured logging)
+    const metadataKeys = Object.keys(metadata);
+    if (metadataKeys.length > 0 && metadataKeys.some(key => key !== 'level' && key !== 'message' && key !== 'timestamp')) {
+      const cleanMetadata = Object.fromEntries(
+        Object.entries(metadata).filter(([key]) => key !== 'level' && key !== 'message' && key !== 'timestamp')
+      );
+      if (Object.keys(cleanMetadata).length > 0) {
+        logMessage += ` ${JSON.stringify(cleanMetadata)}`;
+      }
+    }
+    
+    return logMessage;
   })
 );
 
