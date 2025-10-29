@@ -1,0 +1,21 @@
+[phases.setup]
+nixPkgs = ['...', 'caddy']
+nixpkgsArchive = '31ffc50144dd7c03d0c3ccacea09ef8a9e2ca1dd'
+
+[phases.install]
+cmds = [
+    'npm i -g corepack@latest',
+    'corepack enable', 
+    'corepack prepare yarn@4.9.2 --activate',
+    'yarn install --immutable --immutable-cache'
+]
+
+[phases.build]
+cmds = [
+    'yarn workspace frontend build',
+    'ls -la frontend/dist/',
+    'ls -la frontend/dist/assets/'
+]
+
+[start]
+cmd = 'caddy run --config frontend/Caddyfile --adapter caddyfile'
