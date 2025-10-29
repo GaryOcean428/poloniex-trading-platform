@@ -98,8 +98,18 @@ export function validateEnvironment(): EnvironmentConfig {
     throw new Error(`Environment validation failed: ${errors.join(', ')}`);
   }
 
-  // Log successful validation
-  logger.info('Environment validation passed');
+  // Log successful validation with Railway deployment info
+  logger.info('Environment validation passed', {
+    NODE_ENV,
+    PORT,
+    FRONTEND_URL: FRONTEND_URL || 'not set',
+    HAS_DATABASE: !!DATABASE_URL,
+    HAS_JWT_SECRET: !!JWT_SECRET,
+    HAS_API_ENCRYPTION_KEY: !!API_ENCRYPTION_KEY,
+    HAS_POLONIEX_CREDENTIALS: !!(POLONIEX_API_KEY && POLONIEX_API_SECRET),
+    HAS_REDIS: !!REDIS_URL,
+    CORS_ORIGINS_COUNT: CORS_ALLOWED_ORIGINS?.length || 0
+  });
   
   return {
     NODE_ENV,

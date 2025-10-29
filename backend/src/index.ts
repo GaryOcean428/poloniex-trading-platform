@@ -199,6 +199,40 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
   res.status(500).json({ error: 'Internal server error' });
 });
 
+// Process-level error handlers for stability
+process.on('unhandledRejection', (reason, promise) => {
+  logger.error('Unhandled Promise Rejection:', {
+    reason,
+    promise,
+    stack: reason instanceof Error ? reason.stack : undefined
+  });
+  // Don't exit - log and continue for better stability
+});
+
+process.on('uncaughtException', (error) => {
+  logger.error('Uncaught Exception:', {
+    error: error.message,
+    stack: error.stack
+  });
+  // Log but don't exit immediately to allow cleanup
+});
+
+process.on('SIGTERM', () => {
+  logger.info('SIGTERM signal received: closing HTTP server');
+  server.close(() => {
+    logger.info('HTTP server closed');
+    process.exit(0);
+  });
+});
+
+process.on('SIGINT', () => {
+  logger.info('SIGINT signal received: closing HTTP server');
+  server.close(() => {
+    logger.info('HTTP server closed');
+    process.exit(0);
+  });
+});
+
 // Socket.IO connection handling
 io.on('connection', (socket) => {
   logger.info(`Client connected: ${socket.id}`);
@@ -231,7 +265,30 @@ io.on('connection', (socket) => {
 
 // Start server
 server.listen(PORT, '0.0.0.0', () => {
+  logger.info(`✅ Backend startup complete`, {
+    port: PORT,
+    env: process.env.NODE_ENV || 'development',
+    timestamp: new Date().toISOString(),
+    nodeVersion: process.version,
+    platform: process.platform
+  });
   logger.info(`Server running on port ${PORT}`);
   logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
   logger.info(`Socket.IO server initialized`);
+  
+  // Health heartbeat for production monitoring
+  if (process.env.NODE_ENV === 'production') {
+    setInterval(() => {
+      const memUsage = process.memoryUsage();
+      logger.info('💓 Backend heartbeat', {
+        uptime: Math.floor(process.uptime()),
+        memory: {
+          heapUsed: Math.round(memUsage.heapUsed / 1024 / 1024),
+          heapTotal: Math.round(memUsage.heapTotal / 1024 / 1024),
+          rss: Math.round(memUsage.rss / 1024 / 1024)
+        },
+        timestamp: new Date().toISOString()
+      });
+    }, 60000); // Every 60 seconds
+  }
 });
