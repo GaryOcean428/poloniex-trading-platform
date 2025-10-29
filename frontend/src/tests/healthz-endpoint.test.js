@@ -6,7 +6,7 @@ import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const frontendDir = join(__dirname, '..');
+const frontendDir = join(__dirname, '..', '..');
 
 // Helper function to make HTTP requests
 async function makeRequest(url, options = {}) {
