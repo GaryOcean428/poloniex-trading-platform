@@ -5,6 +5,9 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Keys to exclude from metadata logging
+const EXCLUDED_METADATA_KEYS = ['level', 'message', 'timestamp'];
+
 const logFormat = winston.format.combine(
   winston.format.timestamp(),
   winston.format.errors({ stack: true }),
@@ -13,9 +16,9 @@ const logFormat = winston.format.combine(
     
     // Add metadata if present (for structured logging)
     const metadataKeys = Object.keys(metadata);
-    if (metadataKeys.length > 0 && metadataKeys.some(key => key !== 'level' && key !== 'message' && key !== 'timestamp')) {
+    if (metadataKeys.length > 0 && metadataKeys.some(key => !EXCLUDED_METADATA_KEYS.includes(key))) {
       const cleanMetadata = Object.fromEntries(
-        Object.entries(metadata).filter(([key]) => key !== 'level' && key !== 'message' && key !== 'timestamp')
+        Object.entries(metadata).filter(([key]) => !EXCLUDED_METADATA_KEYS.includes(key))
       );
       if (Object.keys(cleanMetadata).length > 0) {
         logMessage += ` ${JSON.stringify(cleanMetadata)}`;

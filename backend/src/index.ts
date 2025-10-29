@@ -45,6 +45,9 @@ const server = createServer(app);
 // Use Railway PORT environment variable or fallback to .clinerules compliant port range (8765-8799)
 const PORT = env.PORT;
 
+// Production monitoring configuration
+const HEARTBEAT_INTERVAL_MS = 60000; // 60 seconds
+
 // Socket.IO server setup with Railway-compatible CORS
 const allowedOrigins = [
   'https://healthcheck.railway.app',
@@ -214,7 +217,11 @@ process.on('uncaughtException', (error) => {
     error: error.message,
     stack: error.stack
   });
-  // Log but don't exit immediately to allow cleanup
+  // Log and exit gracefully - uncaught exceptions leave app in undefined state
+  logger.error('Process will exit due to uncaught exception');
+  setTimeout(() => {
+    process.exit(1);
+  }, 1000); // Give time for logs to flush
 });
 
 process.on('SIGTERM', () => {
@@ -289,6 +296,6 @@ server.listen(PORT, '0.0.0.0', () => {
         },
         timestamp: new Date().toISOString()
       });
-    }, 60000); // Every 60 seconds
+    }, HEARTBEAT_INTERVAL_MS);
   }
 });
