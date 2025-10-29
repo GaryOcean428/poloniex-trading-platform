@@ -8,9 +8,9 @@
   },
   "scripts": {
     "prebuild": "node prebuild.mjs",
-    "dev": "vite --host 0.0.0.0 --port 5675",
-    "build": "node prebuild.mjs && vite build && rm -rf .shared-build",
-    "preview": "vite preview --host 0.0.0.0 --port 5675",
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
     "lint": "eslint . --max-warnings 400",
     "lint:fix": "eslint . --fix",
     "test": "vitest",
