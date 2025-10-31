@@ -1,86 +1,55 @@
-import { Activity, TrendingDown, TrendingUp, Wifi, WifiOff } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
 import { useTradingContext } from '../../hooks/useTradingContext';
 import { useWebSocket } from '../../services/websocketService';
-
-interface TickerData {
-  symbol: string;
-  price: number;
-  change24h: number;
-  changePercent24h: number;
-  volume24h: number;
-  high24h: number;
-  low24h: number;
-  lastUpdateTime: Date;
-}
+import { TickerService, type TickerData } from '../../services/tickerService';
 
 const RealTimeMarketTicker: React.FC = () => {
   const { isConnected, isMockMode } = useWebSocket();
   const { isMockMode: contextMockMode } = useTradingContext();
   const [tickerData, setTickerData] = useState<TickerData[]>([]);
   const [selectedPairs] = useState(['BTC-USDT', 'ETH-USDT', 'ADA-USDT', 'DOT-USDT']);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  // Generate mock ticker data for demonstration
+  // Fetch real ticker data from backend
   useEffect(() => {
-    const generateMockTickerData = (): TickerData[] => {
-      const mockPairs = selectedPairs.map(pair => {
-        const basePrices: Record<string, number> = {
-          'BTC-USDT': 43000,
-          'ETH-USDT': 2500,
-          'ADA-USDT': 0.45,
-          'DOT-USDT': 6.5,
-          'SOL-USDT': 100,
-          'MATIC-USDT': 1.0,
-          'AVAX-USDT': 35,
-          'LINK-USDT': 15
-        };
-        return { symbol: pair, basePrice: basePrices[pair] || 100 };
-      });
+    let cleanup: (() => void) | null = null;
 
-      return mockPairs.map(pair => {
-        const variance = (Math.random() - 0.5) * 0.1; // ±5% variance
-        const price = pair.basePrice * (1 + variance);
-        const change24h = pair.basePrice * (Math.random() - 0.5) * 0.2; // ±10% daily change
-        const changePercent24h = (change24h / pair.basePrice) * 100;
+    const initializeTickers = async () => {
+      try {
+        setIsLoading(true);
+        setError(null);
 
-        return {
-          symbol: pair.symbol,
-          price,
-          change24h,
-          changePercent24h,
-          volume24h: Math.random() * 1000000,
-          high24h: price * (1 + Math.random() * 0.05),
-          low24h: price * (1 - Math.random() * 0.05),
-          lastUpdateTime: new Date()
-        };
-      });
+        // Subscribe to ticker updates (polls every 2 seconds)
+        cleanup = TickerService.subscribeTickers(
+          selectedPairs,
+          (tickers) => {
+            if (tickers.length > 0) {
+              setTickerData(tickers);
+              setIsLoading(false);
+            } else {
+              setError('No ticker data available');
+              setIsLoading(false);
+            }
+          },
+          2000 // Update every 2 seconds
+        );
+      } catch (err) {
+        console.error('Failed to initialize tickers:', err);
+        setError('Failed to load market data');
+        setIsLoading(false);
+      }
     };
 
-    // Set initial mock data
-    setTickerData(generateMockTickerData());
+    initializeTickers();
 
-    // Update ticker data every 2 seconds to simulate real-time updates
-    const interval = setInterval(() => {
-      setTickerData(prevData =>
-        prevData.map(ticker => {
-          const priceChange = (Math.random() - 0.5) * ticker.price * 0.001; // ±0.1% change
-          const newPrice = Math.max(0.01, ticker.price + priceChange);
-          const change24h = ticker.change24h + priceChange;
-          const changePercent24h = (change24h / (newPrice - change24h)) * 100;
-
-          return {
-            ...ticker,
-            price: newPrice,
-            change24h,
-            changePercent24h,
-            lastUpdateTime: new Date()
-          };
-        })
-      );
-    }, 2000);
-
-    return () => clearInterval(interval);
-  }, []);
+    // Cleanup subscription on unmount
+    return () => {
+      if (cleanup) {
+        cleanup();
+      }
+    };
+  }, [selectedPairs]);
 
   const formatPrice = (price: number, symbol: string) => {
     if (symbol.includes('BTC')) return price.toFixed(0);
@@ -89,105 +58,113 @@ const RealTimeMarketTicker: React.FC = () => {
   };
 
   const formatVolume = (volume: number) => {
-    if (volume >= 1000000)
-    {
+    if (volume >= 1000000) {
       return `${(volume / 1000000).toFixed(1)}M`;
-    } else if (volume >= 1000)
-    {
+    } else if (volume >= 1000) {
       return `${(volume / 1000).toFixed(1)}K`;
     }
     return volume.toFixed(0);
   };
 
-  const getConnectionStatusColor = () => {
-    if (isConnected && !isMockMode && !contextMockMode)
-    {
-      return 'bg-green-500';
-    } else if (isMockMode || contextMockMode)
-    {
-      return 'bg-yellow-500';
-    } else
-    {
-      return 'bg-red-500';
-    }
+  const formatChange = (change: number) => {
+    const sign = change >= 0 ? '+' : '';
+    return `${sign}${change.toFixed(2)}`;
   };
 
-  const getConnectionStatusText = () => {
-    if (isConnected && !isMockMode && !contextMockMode)
-    {
-      return 'Live Data';
-    } else if (isMockMode || contextMockMode)
-    {
-      return 'Mock Data';
-    } else
-    {
-      return 'Offline';
-    }
+  const formatPercent = (percent: number) => {
+    const sign = percent >= 0 ? '+' : '';
+    return `${sign}${percent.toFixed(2)}%`;
   };
 
   return (
-    <div className="bg-bg-tertiary rounded-lg shadow-elev-2 p-6">
-      <div className="flex items-center justify-between mb-6">
-        <h3 className="text-xl font-semibold flex items-center">
-          <Activity className="w-5 h-5 mr-2 text-brand-cyan" />
+    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100 flex items-center">
+          <span className="mr-2">📊</span>
           Live Market Data
-        </h3>
+        </h2>
         <div className="flex items-center space-x-2">
-          <div className={`w-2 h-2 rounded-full ${getConnectionStatusColor()} animate-pulse`}></div>
-          <span className="text-xs text-text-muted">{getConnectionStatusText()}</span>
-          {isConnected ?
-            <Wifi className="w-4 h-4 text-success" /> :
-            <WifiOff className="w-4 h-4 text-error" />
-          }
+          <div className="flex items-center">
+            <div className={`w-2 h-2 rounded-full mr-2 ${isConnected ? 'bg-green-500' : 'bg-red-500'} animate-pulse`}></div>
+            <span className="text-sm text-gray-600 dark:text-gray-400">
+              {isLoading ? 'Loading...' : 'Live Data'}
+            </span>
+          </div>
+          {isConnected && (
+            <svg className="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0" />
+            </svg>
+          )}
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {tickerData.map((ticker) => (
-          <div
-            key={ticker.symbol}
-            className="border border-border-subtle rounded-lg p-4 hover:border-brand-cyan hover:shadow-elev-2 transition-all duration-200 bg-bg-elevated"
-          >
-            <div className="flex items-center justify-between mb-3">
-              <span className="font-semibold text-text-primary">{ticker.symbol}</span>
-              {ticker.changePercent24h >= 0 ? (
-                <TrendingUp className="w-4 h-4 text-success" />
-              ) : (
-                <TrendingDown className="w-4 h-4 text-error" />
-              )}
-            </div>
+      {error && (
+        <div className="mb-4 p-3 bg-red-100 dark:bg-red-900/30 border border-red-300 dark:border-red-700 rounded-md">
+          <p className="text-sm text-red-800 dark:text-red-200">{error}</p>
+        </div>
+      )}
 
-            <div className="space-y-2">
-              <div className="text-2xl font-extrabold text-text-primary">
-                ${formatPrice(ticker.price, ticker.symbol)}
+      {isLoading && tickerData.length === 0 ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          {selectedPairs.map((pair) => (
+            <div key={pair} className="bg-gray-100 dark:bg-gray-700 rounded-lg p-4 animate-pulse">
+              <div className="h-4 bg-gray-300 dark:bg-gray-600 rounded w-24 mb-2"></div>
+              <div className="h-6 bg-gray-300 dark:bg-gray-600 rounded w-32 mb-2"></div>
+              <div className="h-4 bg-gray-300 dark:bg-gray-600 rounded w-20"></div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          {tickerData.map((ticker) => (
+            <div
+              key={ticker.symbol}
+              className="bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-700 dark:to-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-600 hover:shadow-lg transition-shadow duration-200"
+            >
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">{ticker.symbol}</h3>
+                <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                </svg>
               </div>
 
-              <div className={`text-sm font-semibold ${ticker.changePercent24h >= 0 ? 'text-success' : 'text-error'
-                }`}>
-                {ticker.changePercent24h >= 0 ? '+' : ''}{ticker.changePercent24h.toFixed(2)}%
-                <span className="ml-1 text-text-muted font-normal">
-                  ({ticker.change24h >= 0 ? '+' : ''}${ticker.change24h.toFixed(2)})
+              <div className="mb-2">
+                <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+                  ${formatPrice(ticker.price, ticker.symbol)}
+                </div>
+              </div>
+
+              <div className="flex items-center space-x-2 mb-2">
+                <span className={`text-sm font-medium ${ticker.changePercent24h >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                  {formatPercent(ticker.changePercent24h)}
+                </span>
+                <span className={`text-xs ${ticker.changePercent24h >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                  ({formatChange(ticker.change24h)})
                 </span>
               </div>
 
-              <div className="text-xs text-text-muted space-y-0.5">
+              <div className="text-xs text-gray-600 dark:text-gray-400 space-y-1">
                 <div>Vol: {formatVolume(ticker.volume24h)}</div>
-                <div>H: ${formatPrice(ticker.high24h, ticker.symbol)} L: ${formatPrice(ticker.low24h, ticker.symbol)}</div>
+                <div className="flex justify-between">
+                  <span>H: ${formatPrice(ticker.high24h, ticker.symbol)}</span>
+                  <span>L: ${formatPrice(ticker.low24h, ticker.symbol)}</span>
+                </div>
+              </div>
+
+              <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-600">
+                <div className="text-xs text-gray-500 dark:text-gray-400">
+                  {ticker.lastUpdateTime.toLocaleTimeString()}
+                </div>
               </div>
             </div>
-
-            <div className="mt-3 text-xs text-text-muted">
-              {ticker.lastUpdateTime.toLocaleTimeString()}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <div className="mt-6 flex items-center justify-center text-xs text-text-muted">
-        <div className="flex items-center space-x-1">
-          <div className="w-1 h-1 bg-brand-cyan rounded-full animate-pulse"></div>
-          <span>Updates every 2 seconds</span>
+          ))}
         </div>
+      )}
+
+      <div className="mt-4 text-center">
+        <p className="text-xs text-gray-500 dark:text-gray-400">
+          Updates every 2 seconds
+        </p>
       </div>
     </div>
   );
