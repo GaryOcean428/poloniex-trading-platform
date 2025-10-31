@@ -58,7 +58,7 @@ const Login: React.FC<LoginProps> = ({ onSuccess }) => {
         )}
         <form onSubmit={handleSubmit}>
           <div className="mb-4">
-            <label htmlFor="username" className="block text-sm font-medium mb-1">
+            <label htmlFor="username" className="block text-sm font-medium mb-1 text-gray-900 dark:text-gray-100">
               Username
             </label>
             <Input
@@ -72,7 +72,7 @@ const Login: React.FC<LoginProps> = ({ onSuccess }) => {
             />
           </div>
           <div className="mb-4">
-            <label htmlFor="password" className="block text-sm font-medium mb-1">
+            <label htmlFor="password" className="block text-sm font-medium mb-1 text-gray-900 dark:text-gray-100">
               Password
             </label>
             <Input
@@ -85,7 +85,7 @@ const Login: React.FC<LoginProps> = ({ onSuccess }) => {
               autoComplete="current-password"
             />
           </div>
-          <div className="mt-2 text-sm text-neutral-500">
+          <div className="mt-2 text-sm text-gray-600 dark:text-gray-400">
             <p>Demo credentials: username: <strong>demo</strong>, password: <strong>password</strong></p>
             <p>Or try: username: <strong>trader</strong>, password: <strong>password</strong></p>
           </div>
