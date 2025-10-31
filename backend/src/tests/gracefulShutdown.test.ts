@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { EventEmitter } from 'events';
 
 /**
  * Test suite for graceful shutdown functionality
@@ -12,9 +11,27 @@ import { EventEmitter } from 'events';
 describe('Graceful Shutdown', () => {
   let mockIo: { close: ReturnType<typeof vi.fn> };
   let mockServer: { close: ReturnType<typeof vi.fn> };
-  let mockProcess: EventEmitter;
   let originalExit: typeof process.exit;
   let exitSpy: ReturnType<typeof vi.fn>;
+
+  // Helper function to create graceful shutdown with provided mocks
+  const createGracefulShutdown = (
+    io: { close: (callback?: () => void) => void },
+    server: { close: (callback?: () => void) => void }
+  ) => {
+    return (signal: string): void => {
+      const forceExitTimeout = setTimeout(() => {
+        process.exit(1);
+      }, 10000);
+      
+      io.close(() => {
+        server.close(() => {
+          clearTimeout(forceExitTimeout);
+          process.exit(0);
+        });
+      });
+    };
+  };
 
   beforeEach(() => {
     // Mock Socket.IO server
@@ -30,9 +47,6 @@ describe('Graceful Shutdown', () => {
         if (callback) callback();
       })
     };
-
-    // Mock process
-    mockProcess = new EventEmitter();
     
     // Mock process.exit
     originalExit = process.exit;
@@ -50,18 +64,7 @@ describe('Graceful Shutdown', () => {
   it('should close Socket.IO server before HTTP server on SIGTERM', async () => {
     vi.useFakeTimers();
     
-    const gracefulShutdown = (signal: string): void => {
-      const forceExitTimeout = setTimeout(() => {
-        process.exit(1);
-      }, 10000);
-      
-      mockIo.close(() => {
-        mockServer.close(() => {
-          clearTimeout(forceExitTimeout);
-          process.exit(0);
-        });
-      });
-    };
+    const gracefulShutdown = createGracefulShutdown(mockIo, mockServer);
 
     // Trigger shutdown
     gracefulShutdown('SIGTERM');
@@ -79,18 +82,7 @@ describe('Graceful Shutdown', () => {
   it('should close Socket.IO server before HTTP server on SIGINT', async () => {
     vi.useFakeTimers();
     
-    const gracefulShutdown = (signal: string): void => {
-      const forceExitTimeout = setTimeout(() => {
-        process.exit(1);
-      }, 10000);
-      
-      mockIo.close(() => {
-        mockServer.close(() => {
-          clearTimeout(forceExitTimeout);
-          process.exit(0);
-        });
-      });
-    };
+    const gracefulShutdown = createGracefulShutdown(mockIo, mockServer);
 
     // Trigger shutdown
     gracefulShutdown('SIGINT');
@@ -115,18 +107,7 @@ describe('Graceful Shutdown', () => {
       })
     };
 
-    const gracefulShutdown = (signal: string): void => {
-      const forceExitTimeout = setTimeout(() => {
-        process.exit(1);
-      }, 10000);
-      
-      hangingIo.close(() => {
-        mockServer.close(() => {
-          clearTimeout(forceExitTimeout);
-          process.exit(0);
-        });
-      });
-    };
+    const gracefulShutdown = createGracefulShutdown(hangingIo, mockServer);
 
     // Trigger shutdown
     gracefulShutdown('SIGTERM');
@@ -168,18 +149,7 @@ describe('Graceful Shutdown', () => {
     });
     process.exit = trackedExit as unknown as typeof process.exit;
 
-    const gracefulShutdown = (signal: string): void => {
-      const forceExitTimeout = setTimeout(() => {
-        process.exit(1);
-      }, 10000);
-      
-      trackedIo.close(() => {
-        trackedServer.close(() => {
-          clearTimeout(forceExitTimeout);
-          process.exit(0);
-        });
-      });
-    };
+    const gracefulShutdown = createGracefulShutdown(trackedIo, trackedServer);
 
     // Trigger shutdown
     gracefulShutdown('SIGTERM');
