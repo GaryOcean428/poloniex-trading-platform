@@ -1,5 +1,5 @@
 import express from 'express';
-import { llmStrategyGenerator, type MarketContext } from '../services/llmStrategyGenerator.js';
+import { getLLMStrategyGenerator, type MarketContext } from '../services/llmStrategyGenerator.js';
 import { logger } from '../utils/logger.js';
 import { authenticateToken } from '../middleware/auth.js';
 
@@ -17,9 +17,18 @@ router.post('/generate', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Market context with symbol is required' });
     }
 
+    const generator = getLLMStrategyGenerator();
+    
+    if (!generator.isAvailable()) {
+      return res.status(503).json({
+        error: 'LLM service unavailable',
+        message: 'ANTHROPIC_API_KEY is not configured. Please contact administrator.'
+      });
+    }
+
     logger.info(`Generating LLM strategy for ${marketContext.symbol}`);
 
-    const strategy = await llmStrategyGenerator.generateStrategy(marketContext);
+    const strategy = await generator.generateStrategy(marketContext);
 
     res.json({
       success: true,
@@ -51,9 +60,18 @@ router.post('/generate-variations', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Count must be between 1 and 5' });
     }
 
+    const generator = getLLMStrategyGenerator();
+    
+    if (!generator.isAvailable()) {
+      return res.status(503).json({
+        error: 'LLM service unavailable',
+        message: 'ANTHROPIC_API_KEY is not configured. Please contact administrator.'
+      });
+    }
+
     logger.info(`Generating ${count} LLM strategy variations for ${marketContext.symbol}`);
 
-    const strategies = await llmStrategyGenerator.generateStrategyVariations(marketContext, count);
+    const strategies = await generator.generateStrategyVariations(marketContext, count);
 
     res.json({
       success: true,
@@ -84,9 +102,18 @@ router.post('/optimize', authenticateToken, async (req, res) => {
       });
     }
 
+    const generator = getLLMStrategyGenerator();
+    
+    if (!generator.isAvailable()) {
+      return res.status(503).json({
+        error: 'LLM service unavailable',
+        message: 'ANTHROPIC_API_KEY is not configured. Please contact administrator.'
+      });
+    }
+
     logger.info(`Optimizing strategy ${strategy.name} using LLM`);
 
-    const optimizedStrategy = await llmStrategyGenerator.optimizeStrategy(
+    const optimizedStrategy = await generator.optimizeStrategy(
       strategy,
       performanceData,
       marketContext

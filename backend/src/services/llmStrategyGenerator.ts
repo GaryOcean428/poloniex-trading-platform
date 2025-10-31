@@ -53,21 +53,42 @@ export interface GeneratedStrategy {
 }
 
 export class LLMStrategyGenerator {
-  private client: Anthropic;
+  private client: Anthropic | null = null;
   private model = 'claude-sonnet-4-5-20250929'; // Latest Claude model (September 29, 2025)
+  private apiKey: string | undefined;
 
   constructor() {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) {
-      throw new Error('ANTHROPIC_API_KEY environment variable is required');
+    this.apiKey = process.env.ANTHROPIC_API_KEY;
+    // Don't throw error on missing API key - allow lazy initialization
+    if (this.apiKey) {
+      this.client = new Anthropic({ apiKey: this.apiKey });
+      logger.info('LLM Strategy Generator initialized with Claude Sonnet 4.5');
+    } else {
+      logger.warn('ANTHROPIC_API_KEY not set - LLM strategy generation will be unavailable');
     }
-    this.client = new Anthropic({ apiKey });
+  }
+
+  /**
+   * Check if LLM service is available
+   */
+  isAvailable(): boolean {
+    return this.client !== null;
+  }
+
+  /**
+   * Ensure client is initialized before use
+   */
+  private ensureClient(): void {
+    if (!this.client) {
+      throw new Error('LLM Strategy Generator is not available. Please set ANTHROPIC_API_KEY environment variable.');
+    }
   }
 
   /**
    * Generate a novel trading strategy using LLM
    */
   async generateStrategy(marketContext: MarketContext): Promise<GeneratedStrategy> {
+    this.ensureClient();
     try {
       logger.info(`Generating strategy for ${marketContext.symbol} using LLM...`);
 
@@ -109,6 +130,7 @@ export class LLMStrategyGenerator {
     marketContext: MarketContext,
     count: number = 3
   ): Promise<GeneratedStrategy[]> {
+    this.ensureClient();
     const strategies: GeneratedStrategy[] = [];
     
     for (let i = 0; i < count; i++) {
@@ -140,6 +162,7 @@ export class LLMStrategyGenerator {
     },
     marketContext: MarketContext
   ): Promise<GeneratedStrategy> {
+    this.ensureClient();
     try {
       logger.info(`Optimizing strategy ${strategy.name} using LLM...`);
 
@@ -375,4 +398,15 @@ Generate an optimized version of this strategy as JSON (follow the exact format 
   }
 }
 
-export const llmStrategyGenerator = new LLMStrategyGenerator();
+// Singleton instance - lazy loaded
+let llmStrategyGeneratorInstance: LLMStrategyGenerator | null = null;
+
+/**
+ * Get or create the LLM strategy generator singleton
+ */
+export function getLLMStrategyGenerator(): LLMStrategyGenerator {
+  if (!llmStrategyGeneratorInstance) {
+    llmStrategyGeneratorInstance = new LLMStrategyGenerator();
+  }
+  return llmStrategyGeneratorInstance;
+}
