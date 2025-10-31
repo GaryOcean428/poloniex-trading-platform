@@ -224,21 +224,31 @@ process.on('uncaughtException', (error) => {
   }, 1000); // Give time for logs to flush
 });
 
-process.on('SIGTERM', () => {
-  logger.info('SIGTERM signal received: closing HTTP server');
-  server.close(() => {
-    logger.info('HTTP server closed');
-    process.exit(0);
+// Graceful shutdown handler
+const gracefulShutdown = (signal: string): void => {
+  logger.info(`${signal} signal received: starting graceful shutdown`);
+  
+  // Set a timeout to force exit if graceful shutdown takes too long
+  const forceExitTimeout = setTimeout(() => {
+    logger.error('Graceful shutdown timeout exceeded, forcing exit');
+    process.exit(1);
+  }, 10000); // 10 second timeout
+  
+  // First, close Socket.IO to disconnect all websocket connections
+  io.close(() => {
+    logger.info('Socket.IO server closed');
+    
+    // Then close the HTTP server
+    server.close(() => {
+      logger.info('HTTP server closed');
+      clearTimeout(forceExitTimeout);
+      process.exit(0);
+    });
   });
-});
+};
 
-process.on('SIGINT', () => {
-  logger.info('SIGINT signal received: closing HTTP server');
-  server.close(() => {
-    logger.info('HTTP server closed');
-    process.exit(0);
-  });
-});
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 // Socket.IO connection handling
 io.on('connection', (socket) => {
