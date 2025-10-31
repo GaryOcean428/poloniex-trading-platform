@@ -54,7 +54,7 @@ export interface GeneratedStrategy {
 
 export class LLMStrategyGenerator {
   private client: Anthropic;
-  private model = 'claude-3-5-sonnet-20241022'; // Latest Claude model
+  private model = 'claude-sonnet-4-5-20250929'; // Latest Claude model (September 29, 2025)
 
   constructor() {
     const apiKey = process.env.ANTHROPIC_API_KEY;
