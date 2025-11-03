@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Download, Upload, RefreshCw, Search, Filter, Download as DownloadIcon } from 'lucide-react';
 import PoloniexFuturesAPI, { AccountBill } from '../../services/poloniexFuturesAPI';
+import { formatTransactionDate, getUserDateFormat } from '../../utils/dateFormatter';
 
 const TransactionHistory: React.FC = () => {
   const [filter, setFilter] = useState<'all' | 'deposit' | 'withdrawal' | 'trade'>('all');
@@ -18,25 +19,12 @@ const TransactionHistory: React.FC = () => {
     }).format(numValue);
   };
 
-  // Format date for display
+  // Format date for display - now uses AU/US format based on user preference
   const formatDate = (timestamp: number | string) => {
     try {
-      const date = new Date(typeof timestamp === 'string' ? parseInt(timestamp) : timestamp);
-      
-      // Check if date is valid
-      if (isNaN(date.getTime())) {
-        return 'Invalid Date';
-      }
-      
-      // Return formatted date and time
-      return date.toLocaleString('en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: true
-      });
+      const date = typeof timestamp === 'string' ? parseInt(timestamp) : timestamp;
+      const userFormat = getUserDateFormat();
+      return formatTransactionDate(date, userFormat);
     } catch (error) {
       // console.error('Error formatting date:', error);
       return 'Invalid Date';

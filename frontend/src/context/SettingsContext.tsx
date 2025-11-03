@@ -20,6 +20,7 @@ interface SettingsContextType {
   takeProfitPercent: number;
   trailingStopPercent: number;
   autoTradingEnabled: boolean;
+  dateFormat: 'AU' | 'US';
   updateSettings: (settings: Partial<SettingsState>) => void;
   resetSettings: () => void;
   hasStoredCredentials: boolean;
@@ -47,6 +48,7 @@ interface SettingsState {
   takeProfitPercent: number;
   trailingStopPercent: number;
   autoTradingEnabled: boolean;
+  dateFormat: 'AU' | 'US';
 }
 
 const defaultSettings: SettingsState = {
@@ -67,7 +69,8 @@ const defaultSettings: SettingsState = {
   stopLossPercent: 2,
   takeProfitPercent: 4,
   trailingStopPercent: 1,
-  autoTradingEnabled: false
+  autoTradingEnabled: false,
+  dateFormat: 'AU'
 };
 
 // Define storage keys
@@ -80,7 +83,8 @@ const EXTENDED_STORAGE_KEYS = {
   STOP_LOSS_PERCENT: 'poloniex_stop_loss_percent',
   TAKE_PROFIT_PERCENT: 'poloniex_take_profit_percent',
   TRAILING_STOP_PERCENT: 'poloniex_trailing_stop_percent',
-  AUTO_TRADING_ENABLED: 'poloniex_auto_trading_enabled'
+  AUTO_TRADING_ENABLED: 'poloniex_auto_trading_enabled',
+  DATE_FORMAT: 'dateFormat'
 };
 
 const SettingsContext = createContext<SettingsContextType | undefined>(undefined);
@@ -123,7 +127,8 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
       stopLossPercent: getStorageItem(EXTENDED_STORAGE_KEYS.STOP_LOSS_PERCENT, 2),
       takeProfitPercent: getStorageItem(EXTENDED_STORAGE_KEYS.TAKE_PROFIT_PERCENT, 4),
       trailingStopPercent: getStorageItem(EXTENDED_STORAGE_KEYS.TRAILING_STOP_PERCENT, 1),
-      autoTradingEnabled: getStorageItem(EXTENDED_STORAGE_KEYS.AUTO_TRADING_ENABLED, false)
+      autoTradingEnabled: getStorageItem(EXTENDED_STORAGE_KEYS.AUTO_TRADING_ENABLED, false),
+      dateFormat: getStorageItem(EXTENDED_STORAGE_KEYS.DATE_FORMAT, 'AU')
     };
   };
 

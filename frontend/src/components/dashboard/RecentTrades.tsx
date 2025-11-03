@@ -1,5 +1,6 @@
 import React from 'react';
 import { Trade } from '../../types';
+import { formatDate, getUserDateFormat } from '../../utils/dateFormatter';
 
 interface RecentTradesProps {
   trades: Trade[];
@@ -65,7 +66,7 @@ const RecentTrades: React.FC<RecentTradesProps> = ({ trades }) => {
                 </span>
               </td>
               <td className="px-4 py-3 whitespace-nowrap text-sm text-text-secondary">
-                {new Date(trade.timestamp).toLocaleTimeString()}
+                {formatDate(trade.timestamp, { format: getUserDateFormat(), includeTime: true })}
               </td>
             </tr>
           ))}
