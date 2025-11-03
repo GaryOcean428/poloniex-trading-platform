@@ -47,22 +47,12 @@ router.get('/', async (req, res) => {
       },
       features: {
         liveTradingEnabled: process.env.LIVE_TRADING_ENABLED === 'true',
-        mockMode: process.env.MOCK_MODE === 'true' || process.env.NODE_ENV !== 'production',
+        mockMode: false, // Always use real data
         extensionSupported: true,
         webSocketConnected: true
       },
       notifications: [
-        ...(process.env.NODE_ENV !== 'production' ? [{
-          id: 'demo-mode',
-          type: 'warning',
-          title: 'Demo Mode Active',
-          message: 'Using simulated trading data',
-          details: [
-            'No real trades will be executed',
-            'All data is simulated for testing purposes'
-          ],
-          dismissible: true
-        }] : []),
+        // Removed demo mode notification - always using real data
         ...(process.env.LIVE_TRADING_ENABLED !== 'true' ? [{
           id: 'live-trading-disabled',
           type: 'info',

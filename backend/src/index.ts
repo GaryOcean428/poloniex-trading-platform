@@ -108,6 +108,7 @@ app.get('/healthz', (_req: Request, res: Response) => {
 // API routes with rate limiting
 app.use('/api/auth', authRateLimiter, authRoutes);
 app.use('/api/api-keys', apiKeyRoutes);
+app.use('/api/keys', apiKeyRoutes); // Alias for frontend compatibility
 app.use('/api/markets', marketsRoutes);
 app.use('/api/futures', futuresRoutes);
 app.use('/api/backtesting', backtestingRoutes);
