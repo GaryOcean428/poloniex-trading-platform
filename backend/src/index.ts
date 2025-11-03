@@ -23,9 +23,11 @@ import marketsRoutes from './routes/markets.js';
 import proxyRoutes from './routes/proxy.js';
 import llmStrategiesRoutes from './routes/llmStrategies.js';
 import credentialsRoutes from './routes/credentials.js';
+import tradingSessionsRoutes from './routes/tradingSessions.js';
 
 // Import services
 import { logger } from './utils/logger.js';
+import { persistentTradingEngine } from './services/persistentTradingEngine.js';
 
 // Import environment configuration (dotenv.config() is called inside env.ts)
 import { env } from './config/env.js';
@@ -119,6 +121,7 @@ app.use('/api/confidence-scoring', confidenceScoringRoutes);
 app.use('/api/strategies', strategiesRoutes);
 app.use('/api/llm-strategies', llmStrategiesRoutes);
 app.use('/api/credentials', credentialsRoutes);
+app.use('/api/trading-sessions', tradingSessionsRoutes);
 app.use('/api/status', statusRoutes);
 
 // Legacy proxy routes (deprecated - use futures API instead)
@@ -239,16 +242,24 @@ const gracefulShutdown = (signal: string): void => {
     process.exit(1);
   }, 10000); // 10 second timeout
   
-  // First, close Socket.IO to disconnect all websocket connections
-  io.close(() => {
-    logger.info('Socket.IO server closed');
+  // First, stop the trading engine
+  persistentTradingEngine.stop().then(() => {
+    logger.info('Trading engine stopped');
     
-    // Then close the HTTP server
-    server.close(() => {
-      logger.info('HTTP server closed');
-      clearTimeout(forceExitTimeout);
-      process.exit(0);
+    // Then close Socket.IO to disconnect all websocket connections
+    io.close(() => {
+      logger.info('Socket.IO server closed');
+    
+      // Then close the HTTP server
+      server.close(() => {
+        logger.info('HTTP server closed');
+        clearTimeout(forceExitTimeout);
+        process.exit(0);
+      });
     });
+  }).catch(error => {
+    logger.error('Error stopping trading engine:', error);
+    process.exit(1);
   });
 };
 
@@ -297,6 +308,11 @@ server.listen(PORT, '0.0.0.0', () => {
   logger.info(`Server running on port ${PORT}`);
   logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
   logger.info(`Socket.IO server initialized`);
+  
+  // Start persistent trading engine
+  persistentTradingEngine.start().catch(error => {
+    logger.error('Failed to start trading engine:', error);
+  });
   
   // Health heartbeat for production monitoring
   if (process.env.NODE_ENV === 'production') {
