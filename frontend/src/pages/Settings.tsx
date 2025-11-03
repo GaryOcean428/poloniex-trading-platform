@@ -10,7 +10,8 @@ import {
   X
 } from 'lucide-react';
 import { useSettings } from '../hooks/useSettings';
-import { usePoloniexData } from '../hooks/usePoloniexData'; 
+import { usePoloniexData } from '../hooks/usePoloniexData';
+import { useDateFormatter } from '../hooks/useDateFormatter'; 
 
 // Check if we're running in a WebContainer environment
 const IS_WEBCONTAINER = typeof window !== 'undefined' && window.location && window.location.hostname.includes('webcontainer-api.io');
@@ -34,6 +35,8 @@ const Settings: React.FC = () => {
   const { refreshApiConnection, isMockMode } = usePoloniexData();
   
   // Local state for the form
+  const { locale, setLocale } = useDateFormatter();
+
   const [formData, setFormData] = useState({
     apiKey: '',
     apiSecret: '',
@@ -42,7 +45,8 @@ const Settings: React.FC = () => {
     tradeNotifications: true,
     priceAlerts: false,
     chatNotifications: true,
-    showExtension: true
+    showExtension: true,
+    dateLocale: locale
   });
 
   // Save status feedback
@@ -302,6 +306,39 @@ const Settings: React.FC = () => {
                       className="h-4 w-4 text-brand-cyan focus:ring-brand-cyan border-border-moderate rounded"
                     />
                   </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Date & Locale Preferences */}
+            <div className="trading-card">
+              <div className="flex items-center mb-4">
+                <User className="h-6 w-6 text-blue-500 mr-2" />
+                <h2 className="text-xl font-bold">Regional Preferences</h2>
+              </div>
+              
+              <div className="space-y-3">
+                <div>
+                  <label htmlFor="dateLocale" className="block text-sm font-medium mb-2">
+                    Date Format
+                  </label>
+                  <select
+                    id="dateLocale"
+                    name="dateLocale"
+                    value={formData.dateLocale}
+                    onChange={(e) => {
+                      const newLocale = e.target.value as 'en-AU' | 'en-US';
+                      setFormData(prev => ({ ...prev, dateLocale: newLocale }));
+                      setLocale(newLocale);
+                    }}
+                    className="mt-1 block w-full rounded-md border-border-moderate bg-surface-elevated text-text-primary shadow-sm focus:border-brand-cyan focus:ring-brand-cyan sm:text-sm p-2"
+                  >
+                    <option value="en-AU">Australian (DD/MM/YYYY)</option>
+                    <option value="en-US">US (MM/DD/YYYY)</option>
+                  </select>
+                  <p className="text-sm text-text-muted mt-1">
+                    Current format: {locale === 'en-AU' ? 'DD/MM/YYYY' : 'MM/DD/YYYY'}
+                  </p>
                 </div>
               </div>
             </div>
