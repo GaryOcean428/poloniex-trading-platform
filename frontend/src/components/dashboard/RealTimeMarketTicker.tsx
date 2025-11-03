@@ -7,7 +7,7 @@ const RealTimeMarketTicker: React.FC = () => {
   const { isConnected, isMockMode } = useWebSocket();
   const { isMockMode: contextMockMode } = useTradingContext();
   const [tickerData, setTickerData] = useState<TickerData[]>([]);
-  const [selectedPairs] = useState(['BTC-USDT', 'ETH-USDT', 'ADA-USDT', 'DOT-USDT']);
+  const [selectedPairs] = useState(['BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'BNB-USDT']);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 

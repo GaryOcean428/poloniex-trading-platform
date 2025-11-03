@@ -22,6 +22,7 @@ import statusRoutes from './routes/status.js';
 import marketsRoutes from './routes/markets.js';
 import proxyRoutes from './routes/proxy.js';
 import llmStrategiesRoutes from './routes/llmStrategies.js';
+import credentialsRoutes from './routes/credentials.js';
 
 // Import services
 import { logger } from './utils/logger.js';
@@ -117,6 +118,7 @@ app.use('/api/autonomous-trading', autonomousTradingRoutes);
 app.use('/api/confidence-scoring', confidenceScoringRoutes);
 app.use('/api/strategies', strategiesRoutes);
 app.use('/api/llm-strategies', llmStrategiesRoutes);
+app.use('/api/credentials', credentialsRoutes);
 app.use('/api/status', statusRoutes);
 
 // Legacy proxy routes (deprecated - use futures API instead)
