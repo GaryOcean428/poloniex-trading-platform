@@ -190,7 +190,6 @@ export class LiveDataService {
       timeout: 10000,
       headers: {
         "Content-Type": "application/json",
-        "User-Agent": "PoloniexTradingPlatform/1.0",
       },
     });
   }
