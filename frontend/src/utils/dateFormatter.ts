@@ -182,6 +182,11 @@ export function parseDate(dateStr: string, format: DateFormat = 'AU'): Date | nu
 
   const [first, second, third] = parts.map(p => parseInt(p, 10));
 
+  // Check for NaN values from parseInt
+  if (isNaN(first) || isNaN(second) || isNaN(third)) {
+    return null;
+  }
+
   let day: number, month: number, year: number;
 
   if (format === 'AU') {
@@ -196,21 +201,45 @@ export function parseDate(dateStr: string, format: DateFormat = 'AU'): Date | nu
     year = third;
   }
 
-  // Validate
+  // Basic range validation
   if (month < 1 || month > 12 || day < 1 || day > 31 || year < 1900) {
     return null;
   }
 
+  // Create date and validate it constructed correctly
+  // JavaScript Date will normalize invalid dates (e.g., Feb 30 -> Mar 2)
   const date = new Date(year, month - 1, day);
+  
+  // Verify the date components match what we provided
+  // This catches cases like February 30th which would normalize to March
+  if (date.getFullYear() !== year || 
+      date.getMonth() !== month - 1 || 
+      date.getDate() !== day) {
+    return null;
+  }
   
   // Add time if present
   if (parts.length >= 5) {
     const hours = parseInt(parts[3], 10);
     const minutes = parseInt(parts[4], 10);
+    
+    if (isNaN(hours) || isNaN(minutes)) {
+      return null;
+    }
+    
+    if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+      return null;
+    }
+    
     date.setHours(hours, minutes);
     
     if (parts.length >= 6) {
       const seconds = parseInt(parts[5], 10);
+      
+      if (isNaN(seconds) || seconds < 0 || seconds > 59) {
+        return null;
+      }
+      
       date.setSeconds(seconds);
     }
   }
