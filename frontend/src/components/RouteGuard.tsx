@@ -24,6 +24,7 @@ const RouteGuard: React.FC<RouteGuardProps> = ({ children }) => {
     const validRoutes = [
       '/', 
       '/strategies', 
+      '/ai-strategies',
       '/backtesting',
       '/charts', 
       '/performance', 
