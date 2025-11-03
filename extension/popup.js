@@ -9,8 +9,8 @@ document.addEventListener('DOMContentLoaded', function() {
   const openAppBtn = document.getElementById('open-app-btn');
   const settingsBtn = document.getElementById('settings-btn');
 
-  // Get base URL from storage or default to a placeholder
-  let appURL = 'https://your-deployed-frontend-url.railway.app'; // Placeholder for Railway URL
+  // Get base URL from storage or default to production URL
+  let appURL = 'https://poloniex-trading-platform-production.up.railway.app'; // Production Railway URL
 
   // Retrieve appURL from storage
   chrome.storage.sync.get(['frontendUrl'], (result) => {

@@ -26,7 +26,8 @@ export const createExtensionZip = async (): Promise<void> => {
         "alarms"
       ],
       "host_permissions": [
-        "http://localhost:*/*"
+        "https://*.railway.app/*",
+        "https://poloniex-trading-platform-production.up.railway.app/*"
       ],
       "background": {
         "service_worker": "background.js"
@@ -325,7 +326,7 @@ button.sell:hover {
   const settingsBtn = document.getElementById('settings-btn');
 
   // App URL - change this to your production URL when deployed
-  const appURL = 'http://localhost:5173';
+  const appURL = 'https://poloniex-trading-platform-production.up.railway.app';
 
   // Mock username
   const username = 'user_' + Math.floor(Math.random() * 1000);
