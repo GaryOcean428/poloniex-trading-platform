@@ -43,55 +43,12 @@ const TradeHistory: React.FC = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage] = useState(20);
 
-  // Generate mock trade data
+  // Fetch real trade data from API
+  // TODO: Replace with actual API call when available
   useEffect(() => {
-    const pickOne = <T,>(arr: readonly T[], fallback: T): T => {
-      if (arr.length === 0) return fallback;
-      const idx = Math.floor(Math.random() * arr.length);
-      return arr[idx] ?? fallback;
-    };
-
-    const generateMockTrades = (): TradeHistoryItem[] => {
-      const mockData: TradeHistoryItem[] = [];
-      const pairs = ['BTC-USDT', 'ETH-USDT', 'ADA-USDT', 'DOT-USDT', 'SOL-USDT'];
-      const strategies = ['MA Crossover', 'RSI Divergence', 'Breakout', 'Mean Reversion', 'Manual'];
-      const sides: ('buy' | 'sell')[] = ['buy', 'sell'];
-      const types: ('market' | 'limit')[] = ['market', 'limit'];
-      const statuses: TradeHistoryItem['status'][] = ['filled', 'partial', 'cancelled'];
-
-      for (let i = 0; i < 200; i++) {
-        const pair = pickOne<string>(pairs, 'BTC-USDT');
-        const side = pickOne<'buy' | 'sell'>(sides, 'buy');
-        const type = pickOne<'market' | 'limit'>(types, 'market');
-        const amount = Math.random() * 10;
-        const price = getBasePrice(pair) * (0.9 + Math.random() * 0.2);
-        const total = amount * price;
-        const fee = total * 0.001; // 0.1% fee
-        const strategy = pickOne<string>(strategies, 'Manual');
-        const timestamp = new Date(Date.now() - Math.random() * 60 * 24 * 60 * 60 * 1000);
-
-        mockData.push({
-          id: `trade_${i.toString().padStart(6, '0')}`,
-          timestamp,
-          pair,
-          side,
-          type,
-          amount,
-          price,
-          total,
-          fee,
-          feeCurrency: 'USDT',
-          pnl: (Math.random() - 0.5) * total * 0.1, // Random P&L
-          strategy,
-          orderId: `order_${Math.random().toString(36).substr(2, 9)}`,
-          status: pickOne<TradeHistoryItem['status']>(statuses, 'filled')
-        });
-      }
-
-      return mockData.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
-    };
-
-    setTrades(generateMockTrades());
+    // For now, start with empty trades
+    // In production, this should fetch from the backend API
+    setTrades([]);
   }, []);
 
   const getBasePrice = (pair: string): number => {

@@ -18,19 +18,10 @@ const AccountSummary: React.FC = () => {
     }
   }, [accountBalance]);
 
-  // Default values if data is not available
-  const defaultAccountData = {
-    balance: 15478.23,
-    availableBalance: 12345.67,
-    equity: 15820.45,
-    unrealizedPnL: 342.22,
-    todayPnL: 156.78,
-    todayPnLPercentage: 1.02
-  };
-
   // Process account data from API if available
   const processAccountData = () => {
-    if (!accountBalance || isLoading) return defaultAccountData;
+    // Return null if no data available - don't show fake values
+    if (!accountBalance || isLoading) return null;
 
     try {
       // Map Futures API response structure: { eq: string; isoEq: string; im: string; mm: string; state: string; }
@@ -64,11 +55,60 @@ const AccountSummary: React.FC = () => {
       };
     } catch (error) {
       console.error('Error processing account data:', error);
-      return defaultAccountData;
+      return null;
     }
   };
 
   const accountData = processAccountData();
+
+  // If no account data available, show message instead of fake values
+  if (!accountData) {
+    return (
+      <div>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-xl font-bold flex items-center text-text-primary">
+            Account Summary
+            {isLoading && <span className="text-sm text-text-muted ml-2">Loading...</span>}
+          </h2>
+          <div className="flex items-center space-x-2">
+            {getConnectionStatusIcon()}
+            <button
+              onClick={handleRefresh}
+              disabled={isRefreshing}
+              className="p-1 rounded-md hover:bg-bg-secondary disabled:opacity-50 transition-colors"
+              title="Refresh account data"
+            >
+              <RefreshCw className={`h-4 w-4 text-text-secondary ${isRefreshing ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
+        </div>
+
+        {/* Connection Status Bar */}
+        <div className={`mb-4 p-2 rounded-md text-xs flex items-center justify-between ${
+          isConnected ? 'bg-success/10 text-success border border-success/20' : 'bg-warning/10 text-warning border border-warning/20'
+        }`}>
+          <span className="flex items-center">
+            {getConnectionStatusIcon()}
+            <span className="ml-1 font-medium">
+              {isMockMode ? 'Mock Mode' : isConnected ? 'Live Data' : 'Offline'}
+            </span>
+          </span>
+          <span className="text-text-muted">
+            Last updated: {formatTime(lastUpdateTime)}
+          </span>
+        </div>
+
+        <div className="bg-bg-secondary p-6 rounded-lg border border-border-subtle text-center">
+          <p className="text-text-muted mb-2">
+            {isLoading ? 'Loading account data...' : isMockMode ? 'Mock mode - Configure API credentials in Settings for real data' : 'No account data available'}
+          </p>
+          <p className="text-sm text-text-secondary">
+            {!isMockMode && !isLoading && 'Please check your API credentials in Settings'}
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
