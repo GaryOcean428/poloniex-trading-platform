@@ -78,6 +78,8 @@ export function createCorsOptions(): CorsOptions {
 
   const allowedOrigins = [
     'https://healthcheck.railway.app',
+    // Production frontend URL (hardcoded fallback)
+    'https://poloniex-trading-platform-production.up.railway.app',
     // Prefer FRONTEND_URL when provided
     ...(env.FRONTEND_URL ? [env.FRONTEND_URL] : []),
     // Custom set via env variable
