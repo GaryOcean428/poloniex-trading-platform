@@ -285,3 +285,70 @@ export function setUserDateFormat(format: DateFormat): void {
     localStorage.setItem('dateFormat', format);
   }
 }
+
+/**
+ * DateLocale type - maps to DateFormat for compatibility
+ */
+export type DateLocale = 'en-AU' | 'en-US';
+
+/**
+ * Convert DateLocale to DateFormat
+ */
+function localeToFormat(locale: DateLocale): DateFormat {
+  return locale === 'en-AU' ? 'AU' : 'US';
+}
+
+/**
+ * Format just the time part of a date
+ * @param date - Date to format
+ * @param locale - Locale for formatting (en-AU or en-US)
+ * @returns Formatted time string
+ */
+export function formatTime(
+  date: Date | string | number,
+  locale: DateLocale = 'en-AU'
+): string {
+  const dateObj = date instanceof Date ? date : new Date(date);
+
+  if (isNaN(dateObj.getTime())) {
+    return 'Invalid Time';
+  }
+
+  const hours = dateObj.getHours().toString().padStart(2, '0');
+  const minutes = dateObj.getMinutes().toString().padStart(2, '0');
+  const seconds = dateObj.getSeconds().toString().padStart(2, '0');
+
+  return `${hours}:${minutes}:${seconds}`;
+}
+
+/**
+ * Format both date and time
+ * @param date - Date to format
+ * @param locale - Locale for formatting (en-AU or en-US)
+ * @returns Formatted date and time string
+ */
+export function formatDateTime(
+  date: Date | string | number,
+  locale: DateLocale = 'en-AU'
+): string {
+  const format = localeToFormat(locale);
+  return formatDate(date, {
+    format,
+    includeTime: true,
+    includeSeconds: true,
+    use24Hour: true
+  });
+}
+
+/**
+ * Format relative time (alias for getRelativeTime for compatibility)
+ * @param date - Date to format
+ * @param locale - Locale for formatting (not used, kept for API compatibility)
+ * @returns Relative time string (e.g., "2 hours ago")
+ */
+export function formatRelativeTime(
+  date: Date | string | number,
+  locale?: DateLocale
+): string {
+  return getRelativeTime(date);
+}
