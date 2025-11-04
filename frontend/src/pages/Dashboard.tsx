@@ -10,7 +10,6 @@ import RealTimeMarketTicker from '../components/dashboard/RealTimeMarketTicker';
 import TradingInsights from '../components/TradingInsights';
 import ExtensionBanner from '../components/dashboard/ExtensionBanner';
 import AutonomousTradingDashboard from '../components/trading/AutonomousTradingDashboard';
-import { mockTrades } from '../data/mockData';
 import { Activity, ArrowRight } from 'lucide-react';
 
 const Dashboard: React.FC = () => {
@@ -64,7 +63,7 @@ const Dashboard: React.FC = () => {
           <section className="trading-card" aria-labelledby="recent-trades-heading">
             <h2 id="recent-trades-heading" className="text-lg sm:text-xl font-bold mb-4">Recent Trades</h2>
             <div className="table-responsive">
-              <RecentTrades trades={trades.length > 0 ? trades : mockTrades} />
+              <RecentTrades trades={trades} />
             </div>
           </section>
         </div>
