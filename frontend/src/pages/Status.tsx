@@ -70,7 +70,8 @@ const Status: React.FC = () => {
   const fetchStatus = async () => {
     try {
       setLoading(true);
-      const response = await fetch('/api/status');
+      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+      const response = await fetch(`${API_URL}/api/status`);
       if (!response.ok) {
         const errorMessage = response.status === 404 
           ? 'Status endpoint not found' 
@@ -268,20 +269,20 @@ const Status: React.FC = () => {
               <Server className="w-6 h-6 text-text-secondary mr-2" />
               <h3 className="text-lg font-semibold">API Server</h3>
             </div>
-            {getStatusIcon(statusData.services.api.status)}
+            {statusData.services?.api ? getStatusIcon(statusData.services.api.status) : getStatusIcon('unknown')}
           </div>
           <div className="space-y-2 text-sm text-text-secondary">
             <div className="flex justify-between">
               <span>Status:</span>
-              <span className="capitalize">{statusData.services.api.status}</span>
+              <span className="capitalize">{statusData.services?.api?.status || 'unknown'}</span>
             </div>
             <div className="flex justify-between">
               <span>Uptime:</span>
-              <span>{formatUptime(statusData.services.api.uptime)}</span>
+              <span>{statusData.services?.api?.uptime ? formatUptime(statusData.services.api.uptime) : 'N/A'}</span>
             </div>
             <div className="flex justify-between">
               <span>Version:</span>
-              <span>{statusData.services.api.version}</span>
+              <span>{statusData.services?.api?.version || 'N/A'}</span>
             </div>
           </div>
         </div>
@@ -292,16 +293,16 @@ const Status: React.FC = () => {
               <Database className="w-6 h-6 text-gray-600 mr-2" />
               <h3 className="text-lg font-semibold">Database</h3>
             </div>
-            {getStatusIcon(statusData.services.database.status)}
+            {statusData.services?.database ? getStatusIcon(statusData.services.database.status) : getStatusIcon('unknown')}
           </div>
           <div className="space-y-2 text-sm text-gray-600">
             <div className="flex justify-between">
               <span>Status:</span>
-              <span className="capitalize">{statusData.services.database.status}</span>
+              <span className="capitalize">{statusData.services?.database?.status || 'unknown'}</span>
             </div>
             <div className="flex justify-between">
               <span>Last Check:</span>
-              <span>{new Date(statusData.services.database.lastCheck).toLocaleTimeString()}</span>
+              <span>{statusData.services?.database?.lastCheck ? new Date(statusData.services.database.lastCheck).toLocaleTimeString() : 'N/A'}</span>
             </div>
           </div>
         </div>
@@ -312,16 +313,16 @@ const Status: React.FC = () => {
               <Wifi className="w-6 h-6 text-gray-600 mr-2" />
               <h3 className="text-lg font-semibold">WebSocket</h3>
             </div>
-            {getStatusIcon(statusData.services.websocket.status)}
+            {statusData.services?.websocket ? getStatusIcon(statusData.services.websocket.status) : getStatusIcon('unknown')}
           </div>
           <div className="space-y-2 text-sm text-gray-600">
             <div className="flex justify-between">
               <span>Status:</span>
-              <span className="capitalize">{statusData.services.websocket.status}</span>
+              <span className="capitalize">{statusData.services?.websocket?.status || 'unknown'}</span>
             </div>
             <div className="flex justify-between">
               <span>Connections:</span>
-              <span>{statusData.services.websocket.connections}</span>
+              <span>{statusData.services?.websocket?.connections ?? 0}</span>
             </div>
           </div>
         </div>
