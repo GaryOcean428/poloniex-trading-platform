@@ -26,6 +26,7 @@ const Settings: React.FC = () => {
     priceAlerts, 
     chatNotifications, 
     showExtension,
+    dateFormat,
     updateSettings,
     resetSettings,
     hasStoredCredentials
@@ -46,7 +47,7 @@ const Settings: React.FC = () => {
     priceAlerts: false,
     chatNotifications: true,
     showExtension: true,
-    dateLocale: locale
+    dateFormat: 'AU' as 'AU' | 'US'
   });
 
   // Save status feedback
@@ -70,13 +71,15 @@ const Settings: React.FC = () => {
       tradeNotifications,
       priceAlerts,
       chatNotifications,
-      showExtension
+      showExtension,
+      dateFormat
     });
-  }, [apiKey, apiSecret, isLiveTrading, emailNotifications, tradeNotifications, priceAlerts, chatNotifications, showExtension]);
+  }, [apiKey, apiSecret, isLiveTrading, emailNotifications, tradeNotifications, priceAlerts, chatNotifications, showExtension, dateFormat]);
 
   // Handle form input changes
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value, type, checked } = e.target;
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    const { name, value, type } = e.target;
+    const checked = (e.target as HTMLInputElement).checked;
     setFormData(prev => ({
       ...prev,
       [name]: type === 'checkbox' ? checked : value
@@ -338,6 +341,34 @@ const Settings: React.FC = () => {
                   </select>
                   <p className="text-sm text-text-muted mt-1">
                     Current format: {locale === 'en-AU' ? 'DD/MM/YYYY' : 'MM/DD/YYYY'}
+                  </p>
+                </div>
+              </div>
+            </div>
+            
+            <div id="regional" className="trading-card">
+              <div className="flex items-center mb-4">
+                <User className="h-6 w-6 text-blue-500 mr-2" />
+                <h2 className="text-xl font-bold">Regional Settings</h2>
+              </div>
+              
+              <div className="space-y-3">
+                <div>
+                  <label htmlFor="dateFormat" className="block text-sm font-medium text-neutral-700 mb-2">
+                    Date Format
+                  </label>
+                  <select
+                    id="dateFormat"
+                    name="dateFormat"
+                    value={formData.dateFormat}
+                    onChange={handleChange}
+                    className="mt-1 block w-full input"
+                  >
+                    <option value="AU">Australian (DD/MM/YYYY)</option>
+                    <option value="US">US (MM/DD/YYYY)</option>
+                  </select>
+                  <p className="mt-1 text-sm text-text-muted">
+                    Choose how dates are displayed throughout the application
                   </p>
                 </div>
               </div>
