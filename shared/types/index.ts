@@ -241,7 +241,7 @@ export interface OrderBook {
 }
 
 // Re-export strategy types from strategy module
-export * from './strategy';
+export * from './strategy.js';
 
 // Legacy interface for backward compatibility
 export interface LegacyStrategyParameters {

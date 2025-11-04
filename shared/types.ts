@@ -2,4 +2,4 @@
 // and receive the full consolidated type surface from 'shared/types/index.ts'.
 // This avoids ambiguous imports between 'shared/types.ts' and 'shared/types/index.ts'.
 
-export * from './types/index';
+export * from './types/index.js';
