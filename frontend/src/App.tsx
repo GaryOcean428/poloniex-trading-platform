@@ -33,6 +33,7 @@ const Performance = lazy(() => import('./pages/Performance'));
 const Settings = lazy(() => import('./pages/Settings'));
 const Chat = lazy(() => import('./pages/Chat'));
 const ExtensionDownload = lazy(() => import('./pages/ExtensionDownload'));
+const AIStrategyGenerator = lazy(() => import('./pages/AIStrategyGenerator'));
 const Status = lazy(() => import('./pages/Status'));
 const Login = lazy(() => import('./pages/Login'));
 const NotFound = lazy(() => import('./pages/NotFound'));
@@ -88,6 +89,7 @@ function App() {
                             <Route path="/" element={<Dashboard />} />
                             <Route path="/dashboard/live" element={<LiveTradingDashboard />} />
                             <Route path="/strategies" element={<Strategies />} />
+                            <Route path="/ai-strategies" element={<AIStrategyGenerator />} />
                             <Route path="/backtesting" element={<Backtesting />} />
                             <Route path="/charts" element={<MarketAnalysis />} />
                             <Route path="/performance" element={<Performance />} />

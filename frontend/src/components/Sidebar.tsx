@@ -13,7 +13,8 @@ import {
   TrendingUp,
   User,
   Zap,
-  AlertCircle
+  AlertCircle,
+  Sparkles
 } from 'lucide-react';
 import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
@@ -30,6 +31,7 @@ const Sidebar: React.FC = () => {
     { path: '/', label: 'Dashboard', icon: <LayoutDashboard size={20} /> },
     { path: '/dashboard/live', label: 'Live Trading', icon: <Activity size={20} /> },
     { path: '/strategies', label: 'Trading Strategies', icon: <Zap size={20} /> },
+    { path: '/ai-strategies', label: 'AI Strategy Generator', icon: <Sparkles size={20} /> },
     { path: '/backtesting', label: 'Advanced Backtesting', icon: <TrendingUp size={20} /> },
     { path: '/account', label: 'Account', icon: <User size={20} /> },
     { path: '/transactions', label: 'Transaction History', icon: <Receipt size={20} /> },

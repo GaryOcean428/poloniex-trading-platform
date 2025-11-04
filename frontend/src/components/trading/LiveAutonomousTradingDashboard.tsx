@@ -258,9 +258,7 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
 
   // Get connection status badge
   const getConnectionBadge = () => {
-    if (!connectionStatus.useBackend) {
-      return <Badge variant="warning" className="bg-yellow-50">Mock Mode</Badge>;
-    }
+    // Always use live data - no mock mode
     if (connectionStatus.isConnected) {
       return <Badge variant="success" className="bg-green-50 text-green-700">Live Connected</Badge>;
     }
@@ -602,10 +600,7 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
                   <div>
                     <div className="text-sm text-gray-600">Connection Status</div>
                     <div className="font-medium">
-                      {connectionStatus.useBackend ?
-                        (connectionStatus.isConnected ? 'Connected to Backend' : 'Disconnected') :
-                        'Mock Mode'
-                      }
+                      {connectionStatus.isConnected ? 'Connected to Backend' : 'Disconnected'}
                     </div>
                   </div>
                   <div>
