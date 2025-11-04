@@ -21,15 +21,17 @@ interface PoloniexDataHook {
 
 export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataHook => {
   const { apiKey, apiSecret, isLiveTrading } = useSettings();
-  const [marketData, setMarketData] = useState<MarketData[]>(mockMarketData);
-  const [trades, setTrades] = useState<Trade[]>(mockTrades);
-  const [accountBalance, setAccountBalance] = useState<any>(null);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [error, setError] = useState<Error | null>(null);
-
+  
   // Determine mock mode based on environment and credentials
   const hasCredentials = Boolean(apiKey && apiSecret);
   const [isMockMode, setIsMockMode] = useState<boolean>(shouldUseMockMode(hasCredentials));
+  
+  // Initialize with empty arrays or mock data based on mock mode
+  const [marketData, setMarketData] = useState<MarketData[]>(isMockMode ? mockMarketData : []);
+  const [trades, setTrades] = useState<Trade[]>(isMockMode ? mockTrades : []);
+  const [accountBalance, setAccountBalance] = useState<any>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [error, setError] = useState<Error | null>(null);
 
   // Create refs to hold latest function references to avoid dependency issues
   const fetchFunctionsRef = useRef<{

@@ -119,17 +119,25 @@ const Dashboard: React.FC = () => {
           </section>
 
           {/* AI Trading Insights */}
-          {marketData && marketData.length > 0 && (
-            <section aria-labelledby="ai-insights-heading">
-              <h2 id="ai-insights-heading" className="sr-only">AI Trading Insights</h2>
-              <TradingInsights
-                symbol="BTC-USDT"
-                price={marketData[marketData.length - 1]?.close ?? 0}
-                change24h={marketData.length >= 2 ? ((marketData[marketData.length - 1]?.close - marketData[marketData.length - 2]?.close) / marketData[marketData.length - 2]?.close * 100) : 0}
-                volume={marketData[marketData.length - 1]?.volume ?? 0}
-              />
-            </section>
-          )}
+          {marketData && marketData.length > 0 && (() => {
+            const latestPrice = marketData[marketData.length - 1]?.close ?? 0;
+            const previousPrice = marketData[marketData.length - 2]?.close ?? 0;
+            const change24h = marketData.length >= 2 && previousPrice > 0 
+              ? ((latestPrice - previousPrice) / previousPrice * 100) 
+              : 0;
+            
+            return (
+              <section aria-labelledby="ai-insights-heading">
+                <h2 id="ai-insights-heading" className="sr-only">AI Trading Insights</h2>
+                <TradingInsights
+                  symbol="BTC-USDT"
+                  price={latestPrice}
+                  change24h={change24h}
+                  volume={marketData[marketData.length - 1]?.volume ?? 0}
+                />
+              </section>
+            );
+          })()}
         </aside>
       </div>
     </div>
