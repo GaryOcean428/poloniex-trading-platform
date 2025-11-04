@@ -3,10 +3,10 @@
  * Automatically tests AI-generated strategies and evaluates performance
  */
 
-import backtestingEngine from './backtestingEngine';
-import { getLLMStrategyGenerator } from './llmStrategyGenerator';
-import { pool } from '../db/connection';
-import logger from '../utils/logger';
+import backtestingEngine from './backtestingEngine.js';
+import { getLLMStrategyGenerator } from './llmStrategyGenerator.js';
+import { pool } from '../db/connection.js';
+import logger from '../utils/logger.js';
 
 export interface BacktestConfig {
   symbol: string;

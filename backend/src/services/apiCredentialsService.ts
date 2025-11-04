@@ -3,8 +3,8 @@
  * Manages encrypted storage and retrieval of user API credentials
  */
 
-import { pool } from '../db/connection';
-import { encryptionService } from './encryptionService';
+import { pool } from '../db/connection.js';
+import { encryptionService } from './encryptionService.js';
 
 export interface ApiCredentials {
   id: string;

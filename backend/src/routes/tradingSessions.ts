@@ -4,9 +4,9 @@
  */
 
 import express from 'express';
-import { persistentTradingEngine } from '../services/persistentTradingEngine';
-import { authenticateToken } from '../middleware/auth';
-import { pool } from '../db/connection';
+import { persistentTradingEngine } from '../services/persistentTradingEngine.js';
+import { authenticateToken } from '../middleware/auth.js';
+import { pool } from '../db/connection.js';
 
 const router = express.Router();
 

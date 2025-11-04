@@ -4,8 +4,8 @@
  */
 
 import express from 'express';
-import { apiCredentialsService } from '../services/apiCredentialsService';
-import { authenticateToken } from '../middleware/auth';
+import { apiCredentialsService } from '../services/apiCredentialsService.js';
+import { authenticateToken } from '../middleware/auth.js';
 
 const router = express.Router();
 

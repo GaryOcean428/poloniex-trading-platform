@@ -5,10 +5,10 @@
  */
 
 import { EventEmitter } from 'events';
-import { apiCredentialsService } from './apiCredentialsService';
-import { PoloniexFuturesService } from './poloniexFuturesService';
-import { pool } from '../db/connection';
-import { logger } from '../utils/logger';
+import { apiCredentialsService } from './apiCredentialsService.js';
+import { PoloniexFuturesService } from './poloniexFuturesService.js';
+import { pool } from '../db/connection.js';
+import { logger } from '../utils/logger.js';
 
 export interface TradingSession {
   id: string;
