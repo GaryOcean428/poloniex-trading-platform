@@ -33,17 +33,37 @@ const AccountSummary: React.FC = () => {
     if (!accountBalance || isLoading) return defaultAccountData;
 
     try {
-      // Map the actual account balance structure: { available: number; total: number; currency: string; }
+      // Map Futures API response structure: { eq: string; isoEq: string; im: string; mm: string; state: string; }
+      const balance = accountBalance as any;
+      
+      // Check if this is Futures API format (has 'eq' field)
+      if (balance.eq !== undefined) {
+        const equity = parseFloat(balance.eq || "0");
+        const initialMargin = parseFloat(balance.im || "0");
+        const maintenanceMargin = parseFloat(balance.mm || "0");
+        const available = equity - initialMargin; // Available = Equity - Initial Margin
+        
+        return {
+          balance: equity,
+          availableBalance: Math.max(0, available), // Ensure non-negative
+          equity: equity,
+          unrealizedPnL: 0, // Would need position data to calculate
+          todayPnL: 0, // Would need historical data to calculate
+          todayPnLPercentage: 0 // Would need historical data to calculate
+        };
+      }
+      
+      // Fallback to old structure: { available: number; total: number; currency: string; }
       return {
-        balance: parseFloat(accountBalance.total?.toString() || "0"),
-        availableBalance: parseFloat(accountBalance.available?.toString() || "0"),
-        equity: parseFloat(accountBalance.total?.toString() || "0"), // Use total as equity fallback
-        unrealizedPnL: 0, // Not available in current structure
-        todayPnL: 0, // Not available in current structure
-        todayPnLPercentage: 0 // Not available in current structure
+        balance: parseFloat(balance.total?.toString() || "0"),
+        availableBalance: parseFloat(balance.available?.toString() || "0"),
+        equity: parseFloat(balance.total?.toString() || "0"),
+        unrealizedPnL: 0,
+        todayPnL: 0,
+        todayPnLPercentage: 0
       };
     } catch (error) {
-      // console.error('Error processing account data:', error);
+      console.error('Error processing account data:', error);
       return defaultAccountData;
     }
   };

@@ -1,6 +1,15 @@
-// Content script for Poloniex pages
+// Content // Poloniex content script
 console.log('Poloniex content script loaded');
 
+// Inject extension marker for detection
+(function injectExtensionMarker() {
+  const marker = document.createElement('div');
+  marker.setAttribute('data-poloniex-extension', 'true');
+  marker.setAttribute('data-version', chrome.runtime.getManifest().version);
+  marker.style.display = 'none';
+  document.documentElement.appendChild(marker);
+  console.log('Poloniex extension marker injected');
+})();
 // Initialize variables
 let isExtractingData = false;
 let accountData = {};

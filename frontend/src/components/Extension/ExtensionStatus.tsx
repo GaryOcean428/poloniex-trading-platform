@@ -24,40 +24,49 @@ const ExtensionStatus: React.FC<ExtensionStatusProps> = ({ onRefreshRequest }) =
   const checkExtensionStatus = async () => {
     setIsLoading(true);
 
-    if (window.chrome && chrome.runtime && chrome.runtime.sendMessage)
+    // Check if Chrome extension APIs are available
+    if (window.chrome && chrome.runtime)
     {
       try
       {
-        // Extension ID will need to be updated with your actual extension ID
-        const extensionId = 'jcdmopolmojdhpclfbemdpcdneobmnje';
+        // Check if we're running inside an extension context
+        if (chrome.runtime.id) {
+          // We're inside the extension - it's definitely installed
+          setStatus('Extension active');
+          setConnected(true);
+          setVersion(chrome.runtime.getManifest?.()?.version || 'Unknown');
+          setLastUpdate('Just now');
+          setIsLoading(false);
+          return;
+        }
 
-        chrome.runtime.sendMessage(
-          extensionId,
-          { type: 'STATUS_CHECK' },
-          (response: ExtensionResponse) => {
-            if (response)
-            {
-              setStatus(response.status);
-              setConnected(response.connected);
-              setVersion(response.version || 'Unknown');
-              setLastUpdate(response.lastUpdate || 'Just now');
-            } else
-            {
-              setStatus('Not responding');
-              setConnected(false);
-            }
-            setIsLoading(false);
-          }
-        );
+        // Try to detect extension by checking for injected content scripts
+        // Most extensions inject a marker into the page
+        const extensionMarker = document.querySelector('[data-poloniex-extension]');
+        if (extensionMarker) {
+          setStatus('Extension detected');
+          setConnected(true);
+          setVersion(extensionMarker.getAttribute('data-version') || 'Unknown');
+          setLastUpdate('Just now');
+          setIsLoading(false);
+          return;
+        }
+
+        // Fallback: Extension APIs exist but no clear detection
+        // This is common when extension is installed but not active on this page
+        setStatus('Extension may be installed');
+        setConnected(false);
+        setIsLoading(false);
       } catch (error)
       {
         // console.error('Error checking extension status:', error);
-        setStatus('Error connecting');
+        setStatus('Error detecting extension');
         setConnected(false);
         setIsLoading(false);
       }
     } else
     {
+      // Chrome extension APIs not available
       setStatus('Extension not detected');
       setConnected(false);
       setIsLoading(false);

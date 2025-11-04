@@ -38,6 +38,11 @@
       "matches": ["https://poloniex.com/*", "https://futures.poloniex.com/*"],
       "js": ["content/poloniex.js"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://poloniex-trading-platform-production.up.railway.app/*"],
+      "js": ["content/webapp.js"],
+      "run_at": "document_start"
     }
   ],
   "icons": {
