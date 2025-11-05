@@ -181,38 +181,120 @@ export class PersistentTradingEngine extends EventEmitter {
     const { session, poloniexService } = context;
     const { strategyConfig, positionState } = session;
 
-    // This is where strategy logic would be executed
-    // For now, we'll just log and update heartbeat
-    
     logger.debug(`Executing strategy for session ${session.id}: ${session.sessionName || 'Unnamed'}`);
 
-    // Example: Check account balance
     try {
+      // 1. Get current account balance and positions
       const accountInfo = await poloniexService.getAccountBalance({
         apiKey: context.credentials.apiKey,
         apiSecret: context.credentials.apiSecret
       });
-      
-      // Update performance metrics
+
+      const positions = await poloniexService.getPositions(
+        { apiKey: context.credentials.apiKey, apiSecret: context.credentials.apiSecret },
+        strategyConfig.symbol
+      );
+
+      // 2. Analyze market conditions (get current market data)
+      const marketData = await this.getMarketData(strategyConfig.symbol);
+      if (!marketData) {
+        logger.debug(`No market data available for ${strategyConfig.symbol}`);
+        return;
+      }
+
+      // 3. Generate trading signals based on strategy type
+      const signal = await this.generateTradingSignal(
+        strategyConfig,
+        marketData,
+        positions,
+        positionState
+      );
+
+      // 4. Execute trades if signal is valid
+      if (signal && signal.action !== 'HOLD') {
+        await this.executeTrade(context, signal, marketData);
+      }
+
+      // 5. Update performance metrics
       const updatedMetrics = {
         ...session.performanceMetrics,
-        lastBalance: accountInfo.data.accountEquity,
-        lastCheckTime: new Date().toISOString()
+        lastBalance: accountInfo.data?.accountEquity || 0,
+        lastCheckTime: new Date().toISOString(),
+        lastSignal: signal?.action || 'HOLD',
+        lastPrice: marketData.price
       };
 
-      // Save updated metrics
       await this.updateSessionMetrics(session.id, updatedMetrics);
       
     } catch (error) {
-      logger.error(`Error checking account for session ${session.id}:`, error);
+      logger.error(`Error executing strategy for session ${session.id}:`, error);
+      this.emit('error', { sessionId: session.id, error });
     }
+  }
 
-    // TODO: Implement actual strategy execution logic
-    // - Analyze market conditions
-    // - Check strategy signals
-    // - Execute trades if conditions met
-    // - Update positions
-    // - Calculate P&L
+  /**
+   * Get current market data for a symbol
+   */
+  private async getMarketData(symbol: string): Promise<any> {
+    try {
+      // This would integrate with the market data service or WebSocket
+      // For now, return a placeholder that indicates we need market data
+      return {
+        symbol,
+        price: 0,
+        timestamp: new Date()
+      };
+    } catch (error) {
+      logger.error(`Error getting market data for ${symbol}:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Generate trading signal based on strategy configuration
+   */
+  private async generateTradingSignal(
+    strategyConfig: any,
+    marketData: any,
+    positions: any,
+    positionState: any
+  ): Promise<any> {
+    // This would implement the actual strategy logic
+    // For now, return HOLD to prevent unintended trades
+    return { action: 'HOLD' };
+  }
+
+  /**
+   * Execute a trade based on signal
+   */
+  private async executeTrade(
+    context: StrategyExecutionContext,
+    signal: any,
+    marketData: any
+  ): Promise<void> {
+    const { poloniexService, credentials, session } = context;
+    
+    try {
+      logger.info(`Executing trade for session ${session.id}: ${signal.action}`);
+      
+      // Place order through Poloniex API
+      const orderData = {
+        symbol: session.strategyConfig.symbol,
+        side: signal.action === 'BUY' ? 'buy' : 'sell',
+        type: 'market',
+        size: signal.size || session.strategyConfig.defaultSize,
+        leverage: session.strategyConfig.leverage || 1
+      };
+
+      const result = await poloniexService.placeOrder(credentials, orderData);
+      
+      logger.info(`Trade executed successfully for session ${session.id}:`, result);
+      this.emit('trade-executed', { sessionId: session.id, signal, result });
+      
+    } catch (error) {
+      logger.error(`Error executing trade for session ${session.id}:`, error);
+      throw error;
+    }
   }
 
   /**
