@@ -297,7 +297,7 @@ io.on('connection', (socket) => {
 });
 
 // Start server
-server.listen(PORT, '0.0.0.0', () => {
+server.listen(PORT, '::', () => {
   logger.info(`✅ Backend startup complete`, {
     port: PORT,
     env: process.env.NODE_ENV || 'development',
