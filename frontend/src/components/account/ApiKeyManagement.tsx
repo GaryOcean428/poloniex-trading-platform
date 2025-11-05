@@ -258,6 +258,26 @@ const ApiKeyManagement: React.FC = () => {
         </div>
       </div>
 
+      {/* How to Get API Keys */}
+      <div className="bg-amber-50 border-l-4 border-amber-500 p-4 text-amber-800">
+        <div className="flex">
+          <svg className="h-6 w-6 mr-3 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+            <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+          </svg>
+          <div>
+            <h3 className="font-medium">How to Get Your Poloniex API Keys</h3>
+            <ol className="mt-2 text-sm space-y-1 list-decimal list-inside">
+              <li>Log in to your <a href="https://poloniex.com" target="_blank" rel="noopener noreferrer" className="underline font-medium">Poloniex account</a></li>
+              <li>Navigate to Settings → API Management</li>
+              <li>Click "Create New API Key" for Futures trading</li>
+              <li>Enable "Read" and "Trade" permissions (withdraw is optional)</li>
+              <li>Copy your API Key and Secret, then paste them here</li>
+            </ol>
+            <p className="mt-2 text-sm font-medium">⚠️ Save your API Secret securely - it won't be shown again!</p>
+          </div>
+        </div>
+      </div>
+
       {/* Header */}
       <div className="flex justify-between items-center">
         <h2 className="text-lg font-medium">Your API Keys</h2>
