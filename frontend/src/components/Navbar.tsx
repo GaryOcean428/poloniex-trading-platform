@@ -13,7 +13,7 @@ const Navbar: React.FC = () => {
   const [notifications] = useState<number>(3);
   const { hasStoredCredentials } = useSettings();
   const { isMobile } = useResponsiveNav();
-  const { toggleMobileMenu, isMobileMenuOpen } = useMobileMenu();
+  const { toggleMobileMenu, isMobileMenuOpen, closeMobileMenu } = useMobileMenu();
   const { isLoggedIn, loading } = useAuth();
   
   return (
