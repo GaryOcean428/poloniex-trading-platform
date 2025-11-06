@@ -26,6 +26,7 @@ import credentialsRoutes from './routes/credentials.js';
 import tradingSessionsRoutes from './routes/tradingSessions.js';
 import debugRoutes from './routes/debug.js';
 import agentRoutes from './routes/agent.js';
+import monitoringRoutes from './routes/monitoring.js';
 
 // Import services
 import { logger } from './utils/logger.js';
@@ -130,6 +131,7 @@ app.use('/api/trading-sessions', tradingSessionsRoutes);
 app.use('/api/status', statusRoutes);
 app.use('/api/debug', debugRoutes); // Debug routes for database inspection
 app.use('/api/agent', agentRoutes); // Autonomous trading agent routes
+app.use('/api/monitoring', monitoringRoutes); // Monitoring and error tracking routes
 
 // Legacy proxy routes (deprecated - use futures API instead)
 app.use('/api', proxyRoutes);

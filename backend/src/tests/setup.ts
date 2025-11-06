@@ -9,15 +9,22 @@ process.env.MOCK_MODE = 'true';
 process.env.JWT_SECRET = 'test-jwt-secret-key-for-testing-only';
 
 // Increase timeout for integration tests
-jest.setTimeout(30000);
+// @ts-ignore
+if (typeof jest !== 'undefined') jest.setTimeout(30000);
 
 // Suppress console logs during tests (optional)
-if (process.env.SUPPRESS_TEST_LOGS === 'true') {
+// @ts-ignore
+if (process.env.SUPPRESS_TEST_LOGS === 'true' && typeof jest !== 'undefined') {
+  // @ts-ignore
   global.console = {
     ...console,
+    // @ts-ignore
     log: jest.fn(),
+    // @ts-ignore
     info: jest.fn(),
+    // @ts-ignore
     warn: jest.fn(),
+    // @ts-ignore
     error: jest.fn(),
   };
 }
