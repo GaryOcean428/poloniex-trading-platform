@@ -1,9 +1,9 @@
 import { EventEmitter } from 'events';
 import { pool } from '../db/connection.js';
 import { getLLMStrategyGenerator } from './llmStrategyGenerator.js';
-import { backtestingEngine } from './backtestingEngine.js';
-import { paperTradingService } from './paperTradingService.js';
-import { automatedTradingService } from './automatedTradingService.js';
+import backtestingEngine from './backtestingEngine.js';
+import paperTradingService from './paperTradingService.js';
+import automatedTradingService from './automatedTradingService.js';
 import { apiCredentialsService } from './apiCredentialsService.js';
 
 interface AgentConfig {
