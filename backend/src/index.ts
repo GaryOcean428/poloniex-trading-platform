@@ -82,18 +82,21 @@ const io = new SocketIOServer(server, {
 // Enhanced security middleware
 app.use(securityHeaders);
 app.use(compression());
+
+// CORS MUST be early in the middleware stack to ensure headers are added to ALL responses
+// including error responses from rate limiter, auth failures, etc.
+app.use(cors(createCorsOptions()));
+
+// Body parsing (before rate limiting so rate limiter can inspect body if needed)
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Security logging and sanitization
 app.use(securityLogger);
 app.use(sanitizeRequest);
 
-// Rate limiting
+// Rate limiting (after CORS so rate-limited responses still have CORS headers)
 app.use(rateLimiter);
-
-// Enhanced CORS configuration
-app.use(cors(createCorsOptions()));
-
-// Body parsing
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Health check endpoints
 app.get('/api/health', (_req: Request, res: Response) => {
