@@ -47,7 +47,7 @@ export class ApiCredentialsService {
       
       // Store in database (upsert)
       await pool.query(
-        `INSERT INTO user_api_credentials (
+        `INSERT INTO api_credentials (
           user_id, exchange, api_key_encrypted, api_secret_encrypted, encryption_iv, is_active
         ) VALUES ($1, $2, $3, $4, $5, true)
         ON CONFLICT (user_id, exchange)
@@ -73,7 +73,7 @@ export class ApiCredentialsService {
   async getCredentials(userId: string, exchange: string = 'poloniex'): Promise<ApiCredentials | null> {
     try {
       const result = await pool.query<StoredCredentials>(
-        `SELECT * FROM user_api_credentials
+        `SELECT * FROM api_credentials
          WHERE user_id = $1 AND exchange = $2 AND is_active = true
          LIMIT 1`,
         [userId, exchange]
@@ -119,7 +119,7 @@ export class ApiCredentialsService {
   async deleteCredentials(userId: string, exchange: string = 'poloniex'): Promise<void> {
     try {
       await pool.query(
-        `DELETE FROM user_api_credentials WHERE user_id = $1 AND exchange = $2`,
+        `DELETE FROM api_credentials WHERE user_id = $1 AND exchange = $2`,
         [userId, exchange]
       );
       
@@ -136,7 +136,7 @@ export class ApiCredentialsService {
   async deactivateCredentials(userId: string, exchange: string = 'poloniex'): Promise<void> {
     try {
       await pool.query(
-        `UPDATE user_api_credentials SET is_active = false, updated_at = CURRENT_TIMESTAMP
+        `UPDATE api_credentials SET is_active = false, updated_at = CURRENT_TIMESTAMP
          WHERE user_id = $1 AND exchange = $2`,
         [userId, exchange]
       );
@@ -154,7 +154,7 @@ export class ApiCredentialsService {
   async hasCredentials(userId: string, exchange: string = 'poloniex'): Promise<boolean> {
     try {
       const result = await pool.query(
-        `SELECT COUNT(*) as count FROM user_api_credentials
+        `SELECT COUNT(*) as count FROM api_credentials
          WHERE user_id = $1 AND exchange = $2 AND is_active = true`,
         [userId, exchange]
       );
@@ -172,7 +172,7 @@ export class ApiCredentialsService {
   private async updateLastUsed(credentialId: string): Promise<void> {
     try {
       await pool.query(
-        `UPDATE user_api_credentials SET last_used_at = CURRENT_TIMESTAMP WHERE id = $1`,
+        `UPDATE api_credentials SET last_used_at = CURRENT_TIMESTAMP WHERE id = $1`,
         [credentialId]
       );
     } catch (error) {
@@ -187,7 +187,7 @@ export class ApiCredentialsService {
   async getAllActiveUsers(exchange: string = 'poloniex'): Promise<string[]> {
     try {
       const result = await pool.query(
-        `SELECT DISTINCT user_id FROM user_api_credentials
+        `SELECT DISTINCT user_id FROM api_credentials
          WHERE exchange = $1 AND is_active = true`,
         [exchange]
       );
