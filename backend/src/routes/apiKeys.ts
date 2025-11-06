@@ -111,6 +111,53 @@ router.post('/', authenticateToken, async (req, res) => {
 });
 
 /**
+ * Get active decrypted API credentials for the authenticated user
+ * GET /api/keys/active
+ * Returns decrypted API key and secret for use in trading operations
+ */
+router.get('/active', authenticateToken, async (req, res) => {
+  try {
+    const userId = (req as any).user.userId;
+    const exchange = req.query.exchange as string || 'poloniex';
+
+    // Get decrypted credentials
+    const credentials = await apiCredentialsService.getCredentials(userId, exchange);
+
+    if (!credentials) {
+      return res.status(404).json({
+        success: false,
+        error: 'No active API credentials found',
+        hasCredentials: false
+      });
+    }
+
+    logger.info('API credentials retrieved for trading', {
+      userId,
+      exchange,
+      timestamp: new Date().toISOString()
+    });
+
+    res.json({
+      success: true,
+      hasCredentials: true,
+      credentials: {
+        apiKey: credentials.apiKey,
+        apiSecret: credentials.apiSecret,
+        exchange: exchange
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error: any) {
+    logger.error('Error retrieving active API credentials:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to retrieve API credentials',
+      hasCredentials: false
+    });
+  }
+});
+
+/**
  * Delete API credentials
  * DELETE /api/keys/:id
  */
