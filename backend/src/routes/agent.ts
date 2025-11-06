@@ -1,6 +1,7 @@
 import express from 'express';
 import { authenticateToken } from '../middleware/auth.js';
 import { autonomousTradingAgent } from '../services/autonomousTradingAgent.js';
+import type { Request, Response } from 'express';
 import { pool } from '../db/connection.js';
 
 const router = express.Router();
