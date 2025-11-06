@@ -379,12 +379,11 @@ class AutonomousTradingAgent extends EventEmitter {
       try {
         const strategyData = JSON.parse(strategy.strategyCode);
         
-        const result = await backtestingEngine.runBacktest({
-          strategy: strategyData,
+        const result = await backtestingEngine.runBacktest(strategy.strategyName, {
           symbol: session.config.preferredPairs[0],
           startDate: new Date(Date.now() - session.config.backtestPeriodDays * 24 * 60 * 60 * 1000),
           endDate: new Date(),
-          initialBalance: 10000,
+          initialCapital: 10000,
           feeRate: 0.075 // Poloniex taker fee
         });
 
