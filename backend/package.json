@@ -13,13 +13,14 @@
     "start": "node dist/index.js",
     "build": "node prebuild.mjs && rm -rf dist && tsc -p tsconfig.build.json && node scripts/flatten-dist.mjs && rm -rf .shared-build",
     "build:railway": "node prebuild.mjs && rm -rf dist && tsc -p tsconfig.build.json --incremental false --sourceMap false --removeComments true && node scripts/flatten-dist.mjs && rm -rf .shared-build",
-    "test": "vitest",
+    "test": "jest",
     "test:run": "vitest run",
-    "test:coverage": "vitest run --coverage",
+    "test:coverage": "jest --coverage",
     "lint": "eslint src/**/*.ts",
     "lint:fix": "eslint src/**/*.ts --fix",
     "check:catalog": "node ../scripts/check-catalog.mjs",
-    "migrate": "node --loader ts-node/esm src/scripts/runMigration.ts"
+    "migrate": "node --loader ts-node/esm src/scripts/runMigration.ts",
+    "test:watch": "jest --watch"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",
