@@ -24,6 +24,7 @@ import proxyRoutes from './routes/proxy.js';
 import llmStrategiesRoutes from './routes/llmStrategies.js';
 import credentialsRoutes from './routes/credentials.js';
 import tradingSessionsRoutes from './routes/tradingSessions.js';
+import debugRoutes from './routes/debug.js';
 
 // Import services
 import { logger } from './utils/logger.js';
@@ -123,6 +124,7 @@ app.use('/api/llm-strategies', llmStrategiesRoutes);
 app.use('/api/credentials', credentialsRoutes);
 app.use('/api/trading-sessions', tradingSessionsRoutes);
 app.use('/api/status', statusRoutes);
+app.use('/api/debug', debugRoutes); // Debug routes for database inspection
 
 // Legacy proxy routes (deprecated - use futures API instead)
 app.use('/api', proxyRoutes);
