@@ -1,4 +1,4 @@
-const CACHE_NAME = 'poloniex-trading-v1.2';
+const CACHE_NAME = 'poloniex-trading-v2.0-cors-fix';
 const STATIC_ASSETS = [
   '/',
   '/manifest.json',
@@ -11,7 +11,7 @@ const STATIC_ASSETS = [
 ];
 
 // Cache trading data for offline access
-const TRADING_DATA_CACHE = 'trading-data-v1';
+const TRADING_DATA_CACHE = 'trading-data-v2';
 const OFFLINE_FALLBACK_DATA = {
   markets: [],
   lastUpdate: new Date().toISOString(),
