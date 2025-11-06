@@ -104,7 +104,7 @@ const Sidebar: React.FC = () => {
                 {isLoading ? (
                   <div className="animate-pulse bg-neutral-700 h-8 w-32 rounded"></div>
                 ) : (
-                  `$${accountBalance.toFixed(2)} USDT`
+                  `$${(accountBalance || 0).toFixed(2)} USDT`
                 )}
               </div>
               <div className="text-xs text-neutral-500 mt-1">USDT</div>
@@ -194,7 +194,7 @@ const Sidebar: React.FC = () => {
               {isLoading ? (
                 <div className="animate-pulse bg-neutral-700 h-8 w-32 rounded"></div>
               ) : (
-                `$${accountBalance.toFixed(2)} USDT`
+                `$${(accountBalance || 0).toFixed(2)} USDT`
               )}
             </div>
             <div className="text-xs text-neutral-500 mt-1">USDT</div>
