@@ -34,7 +34,7 @@ const Settings = lazy(() => import('./pages/Settings'));
 const Chat = lazy(() => import('./pages/Chat'));
 const ExtensionDownload = lazy(() => import('./pages/ExtensionDownload'));
 const AIStrategyGenerator = lazy(() => import('./pages/AIStrategyGenerator'));
-const AutonomousAgent = lazy(() => import('./pages/AutonomousAgent'));
+const AutonomousAgent = lazy(() => import('./pages/AutonomousAgent')); // AI-powered autonomous trading
 const Status = lazy(() => import('./pages/Status'));
 const Login = lazy(() => import('./pages/Login'));
 const NotFound = lazy(() => import('./pages/NotFound'));
