@@ -18,11 +18,15 @@ export class EncryptionService {
   private masterKey: Buffer;
 
   constructor() {
-    // Use encryption key from environment or generate one
-    const encryptionKey = env.API_ENCRYPTION_KEY;
+    // Use encryption key from environment, fallback to JWT_SECRET in production
+    const encryptionKey = env.API_ENCRYPTION_KEY || env.JWT_SECRET;
     
     if (!encryptionKey) {
-      throw new Error('ENCRYPTION_KEY or API_ENCRYPTION_KEY must be set in environment variables');
+      throw new Error('API_ENCRYPTION_KEY or JWT_SECRET must be set in environment variables');
+    }
+
+    if (!env.API_ENCRYPTION_KEY && env.NODE_ENV === 'production') {
+      console.warn('API_ENCRYPTION_KEY not set - using JWT_SECRET for API key encryption (not recommended for production)');
     }
 
     // Derive a consistent key from the master secret
