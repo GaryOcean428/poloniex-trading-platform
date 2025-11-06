@@ -18,18 +18,17 @@ import {
   Brain,
   X
 } from 'lucide-react';
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useResponsiveNav } from '../hooks/useResponsiveNav';
 import { useTradingContext } from '../hooks/useTradingContext';
-import { useMobileMenu } from '../context/MobileMenuContext';
 
 const Sidebar: React.FC = () => {
   const location = useLocation();
   const { accountBalance, isLoading } = useTradingContext();
   const { isDesktop } = useResponsiveNav();
   const [isCollapsed, setIsCollapsed] = useState(false);
-  const { isMobileMenuOpen, closeMobileMenu } = useMobileMenu();
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   const navItems = [
     { path: '/', label: 'Dashboard', icon: <LayoutDashboard size={20} /> },
@@ -53,6 +52,54 @@ const Sidebar: React.FC = () => {
     setIsCollapsed(!isCollapsed);
   };
 
+  const toggleMobileMenu = () => {
+    setIsMobileMenuOpen(!isMobileMenuOpen);
+  };
+
+  const closeMobileMenu = () => {
+    setIsMobileMenuOpen(false);
+  };
+
+  // Close mobile menu when route changes
+  useEffect(() => {
+    closeMobileMenu();
+  }, [location.pathname]);
+
+  // Close mobile menu on escape key
+  useEffect(() => {
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isMobileMenuOpen) {
+        closeMobileMenu();
+      }
+    };
+    document.addEventListener('keydown', handleEscape);
+    return () => document.removeEventListener('keydown', handleEscape);
+  }, [isMobileMenuOpen]);
+
+  // Prevent body scroll when mobile menu is open
+  useEffect(() => {
+    if (isMobileMenuOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [isMobileMenuOpen]);
+
+  // Mobile hamburger button (shown in Navbar on mobile)
+  const MobileMenuButton = () => (
+    <button
+      onClick={toggleMobileMenu}
+      className="lg:hidden p-2 rounded-md text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 transition-colors"
+      aria-label="Open navigation menu"
+      aria-expanded={isMobileMenuOpen}
+    >
+      <Menu size={24} />
+    </button>
+  );
+
   // Desktop sidebar
   if (isDesktop) {
     return (
@@ -69,32 +116,19 @@ const Sidebar: React.FC = () => {
         <div className="p-4">
           {/* Header with toggle */}
           <div className="flex items-center justify-between mb-6 mt-2">
-            <div className={`flex items-center ${isCollapsed ? 'justify-center w-full' : ''}`}>
+            <div className={`flex items-center ${isCollapsed ? 'justify-center' : ''}`}>
               <Zap className="h-8 w-8 text-blue-400 mr-2" aria-hidden="true" />
               {!isCollapsed && <h2 className="text-xl font-bold">TradingBot</h2>}
             </div>
-            {!isCollapsed && (
-              <button
-                onClick={toggleSidebar}
-                className="p-1 rounded-md text-neutral-400 hover:text-white hover:bg-neutral-700 transition-colors"
-                aria-label="Collapse sidebar"
-                aria-expanded="true"
-              >
-                <ArrowLeft size={20} aria-hidden="true" />
-              </button>
-            )}
-          </div>
-
-          {isCollapsed && (
             <button
               onClick={toggleSidebar}
-              className="w-full mb-6 p-2 rounded-md text-neutral-400 hover:text-white hover:bg-neutral-700 transition-colors"
-              aria-label="Expand sidebar"
-              aria-expanded="false"
+              className="p-1 rounded-md text-neutral-400 hover:text-white hover:bg-neutral-700 transition-colors"
+              aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              aria-expanded={isCollapsed ? 'false' : 'true'}
             >
-              <Menu size={20} className="mx-auto" aria-hidden="true" />
+              {isCollapsed ? <Menu size={20} aria-hidden="true" /> : <ArrowLeft size={20} aria-hidden="true" />}
             </button>
-          )}
+          </div>
 
           {/* Account Balance */}
           {!isCollapsed && (
@@ -128,7 +162,6 @@ const Sidebar: React.FC = () => {
                         }
                         ${isCollapsed ? 'justify-center' : ''}
                       `}
-                      title={isCollapsed ? item.label : undefined}
                       aria-current={isActive ? 'page' : undefined}
                     >
                       <span className="flex-shrink-0" aria-hidden="true">{item.icon}</span>
@@ -180,7 +213,7 @@ const Sidebar: React.FC = () => {
             </div>
             <button
               onClick={closeMobileMenu}
-              className="p-2 rounded-md text-neutral-400 hover:text-white hover:bg-neutral-700 transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center"
+              className="p-1 rounded-md text-neutral-400 hover:text-white hover:bg-neutral-700 transition-colors"
               aria-label="Close navigation menu"
             >
               <X size={24} aria-hidden="true" />
@@ -211,7 +244,6 @@ const Sidebar: React.FC = () => {
                       to={item.path}
                       className={`
                         flex items-center px-3 py-3 rounded-lg transition-all duration-200
-                        min-h-[44px]
                         ${isActive 
                           ? 'bg-blue-600 text-white shadow-lg' 
                           : 'text-neutral-300 hover:bg-neutral-700 hover:text-white'
@@ -234,4 +266,6 @@ const Sidebar: React.FC = () => {
   );
 };
 
+// Export the mobile menu button for use in Navbar
+export { MobileMenuButton };
 export default Sidebar;

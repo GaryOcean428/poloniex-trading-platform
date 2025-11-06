@@ -12,6 +12,7 @@ import { TradingProvider } from './context/TradingContext';
 import { SettingsProvider } from './context/SettingsContext';
 import { WebSocketProvider } from './context/WebSocketContext';
 import { AuthProvider } from './context/AuthContext';
+import { MobileMenuProvider } from './context/MobileMenuContext';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import Integration from './components/Integration';
 import ToastContainer from './components/ToastContainer';
@@ -73,6 +74,7 @@ function App() {
             <SettingsProvider>
               <WebSocketProvider>
                 <TradingProvider>
+                <MobileMenuProvider>
                 <div className="flex h-screen bg-neutral-100 overflow-hidden">
                   <Sidebar />
                   <div className="flex-1 flex flex-col min-w-0">
@@ -114,10 +116,16 @@ function App() {
                 <Integration />
                 <ToastContainer />
 
-                <ConnectionHealth />
-                <EnvDebug />
-                <ConnectionTest />
+                {/* Debug components - only in development */}
+                {import.meta.env.DEV && (
+                  <>
+                    <ConnectionHealth />
+                    <EnvDebug />
+                    <ConnectionTest />
+                  </>
+                )}
                 <PWAInstallPrompt />
+                </MobileMenuProvider>
                 </TradingProvider>
               </WebSocketProvider>
             </SettingsProvider>
