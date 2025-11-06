@@ -18,7 +18,8 @@
     "test:coverage": "vitest run --coverage",
     "lint": "eslint src/**/*.ts",
     "lint:fix": "eslint src/**/*.ts --fix",
-    "check:catalog": "node ../scripts/check-catalog.mjs"
+    "check:catalog": "node ../scripts/check-catalog.mjs",
+    "migrate": "node --loader ts-node/esm src/scripts/runMigration.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",
