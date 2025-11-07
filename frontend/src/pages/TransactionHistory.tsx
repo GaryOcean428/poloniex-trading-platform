@@ -38,45 +38,12 @@ const TransactionHistory: React.FC = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage] = useState(20);
 
-  // Generate mock transaction data
+  // Fetch real transaction data from API
+  // TODO: Replace with actual API call when available
   useEffect(() => {
-    const pickOne = <T,>(arr: readonly T[], fallback: T): T => {
-      if (arr.length === 0) return fallback;
-      const idx = Math.floor(Math.random() * arr.length);
-      // Guard for noUncheckedIndexedAccess returning possibly undefined
-      return arr[idx] ?? fallback;
-    };
-
-    const generateMockTransactions = (): Transaction[] => {
-      const mockData: Transaction[] = [];
-      const types: Transaction['type'][] = ['deposit', 'withdrawal', 'trade', 'fee', 'interest'];
-      const currencies = ['USDT', 'BTC', 'ETH', 'ADA', 'DOT'];
-      const statuses: Transaction['status'][] = ['completed', 'pending', 'failed'];
-
-      for (let i = 0; i < 150; i++) {
-        const type = pickOne<Transaction['type']>(types, 'trade');
-        const currency = pickOne<string>(currencies, 'USDT');
-        const amount = type === 'fee' ? -Math.random() * 10 : (Math.random() - 0.5) * 1000;
-        const timestamp = new Date(Date.now() - Math.random() * 30 * 24 * 60 * 60 * 1000);
-
-        mockData.push({
-          id: `txn_${i.toString().padStart(6, '0')}`,
-          timestamp,
-          type,
-          currency,
-          amount,
-          status: pickOne<Transaction['status']>(statuses, 'completed'),
-          txHash: type === 'deposit' || type === 'withdrawal' ? 
-            `0x${Math.random().toString(16).slice(2, 42)}` : undefined,
-          description: getTransactionDescription(type, currency, amount),
-          balance: 10000 + Math.random() * 50000
-        });
-      }
-
-      return mockData.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
-    };
-
-    setTransactions(generateMockTransactions());
+    // For now, start with empty transactions
+    // In production, this should fetch from the backend API
+    setTransactions([]);
   }, []);
 
   // Helper function to generate transaction descriptions

@@ -12,9 +12,9 @@ interface TradingInsightsProps {
 
 const TradingInsights: React.FC<TradingInsightsProps> = ({
   symbol = 'BTC-USDT',
-  price = 41704,
-  change24h = -5.91,
-  volume = 569500,
+  price = 0,
+  change24h = 0,
+  volume = 0,
   className = ''
 }) => {
   const [insights, setInsights] = useState<TradingInsight[]>([]);
@@ -23,10 +23,15 @@ const TradingInsights: React.FC<TradingInsightsProps> = ({
   const [isExpanded, setIsExpanded] = useState(false);
   const [userQuery, setUserQuery] = useState('');
 
-  // Load initial insights
+  // Don't load insights if there's no real data
+  const hasValidData = price > 0;
+
+  // Load initial insights only if we have valid data
   useEffect(() => {
-    generateInsight();
-  }, [symbol, price]);
+    if (hasValidData) {
+      generateInsight();
+    }
+  }, [symbol, price, hasValidData]);
 
   const generateInsight = async (customQuery?: string) => {
     setLoading(true);
@@ -84,6 +89,11 @@ const TradingInsights: React.FC<TradingInsightsProps> = ({
   };
 
   const connectionStatus = claudeTradingService.getConnectionStatus();
+
+  // Don't render if no valid data
+  if (!hasValidData) {
+    return null;
+  }
 
   return (
     <div className={`bg-white rounded-lg shadow-sm border border-gray-200 ${className}`}>

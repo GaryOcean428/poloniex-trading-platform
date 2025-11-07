@@ -10,7 +10,6 @@ import RealTimeMarketTicker from '../components/dashboard/RealTimeMarketTicker';
 import TradingInsights from '../components/TradingInsights';
 import ExtensionBanner from '../components/dashboard/ExtensionBanner';
 import AutonomousTradingDashboard from '../components/trading/AutonomousTradingDashboard';
-import { mockTrades } from '../data/mockData';
 import { Activity, ArrowRight } from 'lucide-react';
 
 const Dashboard: React.FC = () => {
@@ -64,7 +63,7 @@ const Dashboard: React.FC = () => {
           <section className="trading-card" aria-labelledby="recent-trades-heading">
             <h2 id="recent-trades-heading" className="text-lg sm:text-xl font-bold mb-4">Recent Trades</h2>
             <div className="table-responsive">
-              <RecentTrades trades={trades.length > 0 ? trades : mockTrades} />
+              <RecentTrades trades={trades} />
             </div>
           </section>
         </div>
@@ -120,15 +119,25 @@ const Dashboard: React.FC = () => {
           </section>
 
           {/* AI Trading Insights */}
-          <section aria-labelledby="ai-insights-heading">
-            <h2 id="ai-insights-heading" className="sr-only">AI Trading Insights</h2>
-            <TradingInsights
-              symbol="BTC-USDT"
-              price={marketData && marketData.length > 0 ? (marketData[marketData.length - 1]?.close ?? 41704) : 41704}
-              change24h={-5.91}
-              volume={569500}
-            />
-          </section>
+          {marketData && marketData.length > 0 && (() => {
+            const latestPrice = marketData[marketData.length - 1]?.close ?? 0;
+            const previousPrice = marketData[marketData.length - 2]?.close ?? 0;
+            const change24h = marketData.length >= 2 && previousPrice > 0 
+              ? ((latestPrice - previousPrice) / previousPrice * 100) 
+              : 0;
+            
+            return (
+              <section aria-labelledby="ai-insights-heading">
+                <h2 id="ai-insights-heading" className="sr-only">AI Trading Insights</h2>
+                <TradingInsights
+                  symbol="BTC-USDT"
+                  price={latestPrice}
+                  change24h={change24h}
+                  volume={marketData[marketData.length - 1]?.volume ?? 0}
+                />
+              </section>
+            );
+          })()}
         </aside>
       </div>
     </div>

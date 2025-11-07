@@ -21,15 +21,17 @@ interface PoloniexDataHook {
 
 export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataHook => {
   const { apiKey, apiSecret, isLiveTrading } = useSettings();
-  const [marketData, setMarketData] = useState<MarketData[]>(mockMarketData);
-  const [trades, setTrades] = useState<Trade[]>(mockTrades);
-  const [accountBalance, setAccountBalance] = useState<any>(null);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [error, setError] = useState<Error | null>(null);
-
+  
   // Determine mock mode based on environment and credentials
   const hasCredentials = Boolean(apiKey && apiSecret);
   const [isMockMode, setIsMockMode] = useState<boolean>(shouldUseMockMode(hasCredentials));
+  
+  // Initialize with empty arrays or mock data based on mock mode
+  const [marketData, setMarketData] = useState<MarketData[]>(isMockMode ? mockMarketData : []);
+  const [trades, setTrades] = useState<Trade[]>(isMockMode ? mockTrades : []);
+  const [accountBalance, setAccountBalance] = useState<any>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [error, setError] = useState<Error | null>(null);
 
   // Create refs to hold latest function references to avoid dependency issues
   const fetchFunctionsRef = useRef<{
@@ -204,35 +206,21 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
   }, [isMockMode, mapPoloniexTradeToTrade]);
 
   const fetchAccountBalance = useCallback(async () => {
-    // If in mock mode, use mock data immediately
+    // If in mock mode, set account balance to null to indicate no real data
     if (isMockMode) {
       if (import.meta.env.DEV) {
-        console.info('Mock mode active, using mock account data');
+        console.info('Mock mode active, no account balance available');
       }
-      setAccountBalance({
-        totalAmount: "15478.23",
-        availableAmount: "12345.67",
-        accountEquity: "15820.45",
-        unrealizedPnL: "342.22",
-        todayPnL: "156.78",
-        todayPnLPercentage: "1.02"
-      });
+      setAccountBalance(null);
       return;
     }
 
-    // In WebContainer, use mock data for development
+    // In WebContainer, set account balance to null to indicate no real data
     if (IS_WEBCONTAINER) {
       if (import.meta.env.DEV) {
-        console.info('WebContainer environment detected, using mock account data');
+        console.info('WebContainer environment detected, no account balance available');
       }
-      setAccountBalance({
-        totalAmount: "15478.23",
-        availableAmount: "12345.67",
-        accountEquity: "15820.45",
-        unrealizedPnL: "342.22",
-        todayPnL: "156.78",
-        todayPnLPercentage: "1.02"
-      });
+      setAccountBalance(null);
       return;
     }
 

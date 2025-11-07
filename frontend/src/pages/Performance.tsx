@@ -18,31 +18,11 @@ interface TradePerformanceData {
 }
 
 const Performance: React.FC = () => {
-  const [metrics, _setMetrics] = useState<PerformanceMetrics>({
-    totalPnL: 1247.89,
-    winRate: 68.5,
-    totalTrades: 127,
-    sharpeRatio: 1.42,
-    maxDrawdown: -8.3,
-    avgTradeReturn: 0.85
-  });
-
-  const [performanceData, _setPerformanceData] = useState<TradePerformanceData[]>([
-    { date: '2024-01-01', pnl: 45.23, cumulativePnL: 45.23, trades: 3 },
-    { date: '2024-01-02', pnl: -12.45, cumulativePnL: 32.78, trades: 2 },
-    { date: '2024-01-03', pnl: 78.92, cumulativePnL: 111.70, trades: 4 },
-    { date: '2024-01-04', pnl: 23.15, cumulativePnL: 134.85, trades: 3 },
-    { date: '2024-01-05', pnl: -34.67, cumulativePnL: 100.18, trades: 2 },
-    { date: '2024-01-06', pnl: 156.43, cumulativePnL: 256.61, trades: 5 },
-    { date: '2024-01-07', pnl: 89.76, cumulativePnL: 346.37, trades: 4 }
-  ]);
-
-  const strategyBreakdown = [
-    { name: 'Moving Average', value: 45.2, trades: 58 },
-    { name: 'RSI Divergence', value: 28.7, trades: 34 },
-    { name: 'Breakout', value: 18.3, trades: 22 },
-    { name: 'Mean Reversion', value: 7.8, trades: 13 }
-  ];
+  // Initialize with null to indicate no data available
+  // In production, this should fetch from API
+  const [metrics, _setMetrics] = useState<PerformanceMetrics | null>(null);
+  const [performanceData, _setPerformanceData] = useState<TradePerformanceData[]>([]);
+  const [strategyBreakdown] = useState<{ name: string; value: number; trades: number }[]>([]);
 
   const CHART_COLORS = {
     primary: '#06b6d4',
@@ -52,6 +32,32 @@ const Performance: React.FC = () => {
     success: '#10b981',
     info: '#3b82f6'
   };
+
+  // Show message if no data available
+  if (!metrics || performanceData.length === 0) {
+    return (
+      <div className="min-h-screen bg-bg-primary p-6">
+        <div className="max-w-7xl mx-auto">
+          {/* Header */}
+          <div className="mb-8">
+            <h1 className="text-3xl font-bold text-text-primary mb-2">Performance Analytics</h1>
+            <p className="text-text-secondary">Comprehensive trading performance analysis and metrics</p>
+          </div>
+
+          {/* No Data Message */}
+          <div className="bg-bg-tertiary rounded-lg p-12 border border-border-subtle shadow-elev-1 text-center">
+            <h2 className="text-2xl font-semibold text-text-primary mb-4">No Performance Data Available</h2>
+            <p className="text-text-secondary mb-6">
+              Performance metrics will appear here once you have completed trades with real or paper trading accounts.
+            </p>
+            <p className="text-sm text-text-muted">
+              Configure your API credentials in Settings to enable live or paper trading.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-bg-primary p-6">

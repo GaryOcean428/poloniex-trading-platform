@@ -54,47 +54,33 @@ export const TradingProvider: React.FC<TradingProviderProps> = ({
 
   const normalizedAccountBalance = isValidAccountBalance(accountBalance) ? accountBalance : null;
 
-  const [marketData, setMarketData] = useState<MarketData[]>(mockMarketData);
-  const [trades, setTrades] = useState<Trade[]>(mockTrades);
+  // Use real data or fallback to mock only in mock mode, otherwise use empty arrays
+  const [marketData, setMarketData] = useState<MarketData[]>(isMockMode ? mockMarketData : []);
+  const [trades, setTrades] = useState<Trade[]>(isMockMode ? mockTrades : []);
 
   // Update state when real data is available
   useEffect(() => {
     if (realMarketData.length > 0) {
       setMarketData(realMarketData);
+    } else if (!isMockMode) {
+      // Clear mock data when not in mock mode and no real data
+      setMarketData([]);
     }
-  }, [realMarketData]);
+  }, [realMarketData, isMockMode]);
 
   useEffect(() => {
     if (realTrades.length > 0) {
       setTrades(realTrades);
+    } else if (!isMockMode) {
+      // Clear mock trades when not in mock mode and no real data
+      setTrades([]);
     }
-  }, [realTrades]);
+  }, [realTrades, isMockMode]);
 
-  // Strategy management
-  const [strategies, setStrategies] = useState<Strategy[]>([
-    {
-      id: '1',
-      name: 'Moving Average Crossover',
-      type: 'automated',
-      algorithm: 'MovingAverageCrossover',
-      active: true,
-      parameters: {
-        fastPeriod: 10,
-        slowPeriod: 50,
-        pair: 'BTC-USDT',
-        timeframe: '1d'
-      } as MovingAverageCrossoverParameters,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      performance: {
-        totalPnL: 12.5,
-        winRate: 0.65,
-        tradesCount: 24
-      }
-    }
-  ]);
+  // Strategy management - start with empty array, strategies should be created/loaded from API
+  const [strategies, setStrategies] = useState<Strategy[]>([]);
 
-  const [activeStrategies, setActiveStrategies] = useState<string[]>(['1']);
+  const [activeStrategies, setActiveStrategies] = useState<string[]>([]);
   const [errors, setErrors] = useState<string[]>([]);
 
   const addError = useCallback((error: string) => {

@@ -135,14 +135,8 @@ class PoloniexApiClient {
 
     try {
       if (this.mockMode) {
-        return {
-          totalAmount: "15478.23",
-          availableAmount: "12345.67",
-          accountEquity: "15820.45",
-          unrealizedPnL: "342.22",
-          todayPnL: "156.78",
-          todayPnLPercentage: "1.02",
-        };
+        // In mock mode, return null to indicate no real data available
+        return null;
       }
 
       const api = createAuthenticatedAxios();
