@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Brain, TrendingUp, AlertTriangle, Clock, Zap, RefreshCw } from 'lucide-react';
-import { openAITradingService, TradingInsight, TradingData } from '../services/openAIService';
+import { claudeTradingService, TradingInsight, TradingData } from '../services/claudeTradingService';
 
 interface TradingInsightsProps {
   symbol?: string;
@@ -44,7 +44,7 @@ const TradingInsights: React.FC<TradingInsightsProps> = ({
         }
       };
 
-      const insight = await openAITradingService.generateTradingInsight(
+      const insight = await claudeTradingService.generateTradingInsight(
         tradingData,
         customQuery
       );
@@ -83,7 +83,7 @@ const TradingInsights: React.FC<TradingInsightsProps> = ({
     return 'text-red-600';
   };
 
-  const connectionStatus = openAITradingService.getConnectionStatus();
+  const connectionStatus = claudeTradingService.getConnectionStatus();
 
   return (
     <div className={`bg-white rounded-lg shadow-sm border border-gray-200 ${className}`}>
@@ -120,7 +120,7 @@ const TradingInsights: React.FC<TradingInsightsProps> = ({
 
         {connectionStatus === 'mock' && (
           <p className="text-xs text-gray-500 mt-2">
-            Add VITE_OPENAI_API_KEY to enable real GPT-4.1 insights
+            AI insights powered by Claude Sonnet 4.5 via Autonomous Agent
           </p>
         )}
       </div>

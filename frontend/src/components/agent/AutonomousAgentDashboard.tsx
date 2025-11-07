@@ -2,7 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { Play, Pause, Square, Activity, Brain, TrendingUp, AlertCircle } from 'lucide-react';
 import axios from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
+// Auto-detect API URL based on environment
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 
+  (window.location.hostname.includes('railway.app') 
+    ? 'https://polytrade-be.up.railway.app' 
+    : 'http://localhost:3000');
 
 interface AgentStatus {
   id: string;
