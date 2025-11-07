@@ -17,7 +17,7 @@ const Login: React.FC<LoginProps> = ({ onSuccess }) => {
     e.preventDefault();
     
     if (!username || !password) {
-      setError('Please enter both username and password');
+      setError('Please enter both email/username and password');
       return;
     }
     
@@ -34,7 +34,7 @@ const Login: React.FC<LoginProps> = ({ onSuccess }) => {
           onSuccess();
         }
       } else {
-        setError('Invalid username or password. Try demo/password');
+        setError('Invalid email/username or password. Try demo/password');
       }
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : 'Login failed. Please try again.';
@@ -59,14 +59,14 @@ const Login: React.FC<LoginProps> = ({ onSuccess }) => {
         <form onSubmit={handleSubmit}>
           <div className="mb-4">
             <label htmlFor="username" className="block text-sm font-medium mb-1 text-gray-900 dark:text-gray-100">
-              Username
+              Email or Username
             </label>
             <Input
               id="username"
               type="text"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              placeholder="Enter your username"
+              placeholder="Enter your email or username"
               disabled={isLoading}
               autoComplete="username"
             />

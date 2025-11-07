@@ -25,6 +25,7 @@ const RouteGuard: React.FC<RouteGuardProps> = ({ children }) => {
       '/', 
       '/strategies', 
       '/ai-strategies',
+      '/autonomous-agent',
       '/backtesting',
       '/charts', 
       '/performance', 

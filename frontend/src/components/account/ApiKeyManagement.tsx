@@ -1,5 +1,5 @@
 import { AlertTriangle, CheckCircle, Plus, RefreshCw, Shield, Trash2, XCircle } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, useRef } from 'react';
 import { getAccessToken } from '@/utils/auth';
 
 interface ApiCredential {
@@ -20,7 +20,6 @@ interface NewCredentialForm {
   credentialName: string;
   apiKey: string;
   apiSecret: string;
-  passphrase: string;
   permissions: {
     read: boolean;
     trade: boolean;
@@ -41,7 +40,6 @@ const ApiKeyManagement: React.FC = () => {
     credentialName: '',
     apiKey: '',
     apiSecret: '',
-    passphrase: '',
     permissions: {
       read: true,
       trade: false,
@@ -63,8 +61,17 @@ const ApiKeyManagement: React.FC = () => {
     }
   }, [successMessage, error]);
 
-  const loadApiCredentials = async () => {
+  const loadingRef = useRef(false); // Prevent concurrent loads
+
+  const loadApiCredentials = useCallback(async () => {
+    // Prevent concurrent API calls
+    if (loadingRef.current) {
+      console.warn('API call already in progress, skipping');
+      return;
+    }
+
     try {
+      loadingRef.current = true;
       setLoading(true);
       setError(null);
 
@@ -96,8 +103,9 @@ const ApiKeyManagement: React.FC = () => {
       setError(err instanceof Error ? err.message : 'Failed to load API credentials');
     } finally {
       setLoading(false);
+      loadingRef.current = false; // Allow future calls
     }
-  };
+  }, [API_BASE]); // Only recreate if API_BASE changes
 
   // Load API credentials on component mount
   useEffect(() => {
@@ -147,7 +155,6 @@ const ApiKeyManagement: React.FC = () => {
           credentialName: newCredentialForm.credentialName,
           apiKey: newCredentialForm.apiKey,
           apiSecret: newCredentialForm.apiSecret,
-          passphrase: newCredentialForm.passphrase || undefined,
           permissions: newCredentialForm.permissions
         }),
       });
@@ -165,7 +172,6 @@ const ApiKeyManagement: React.FC = () => {
           credentialName: '',
           apiKey: '',
           apiSecret: '',
-          passphrase: '',
           permissions: {
             read: true,
             trade: false,
@@ -262,6 +268,26 @@ const ApiKeyManagement: React.FC = () => {
         </div>
       </div>
 
+      {/* How to Get API Keys */}
+      <div className="bg-amber-50 border-l-4 border-amber-500 p-4 text-amber-800">
+        <div className="flex">
+          <svg className="h-6 w-6 mr-3 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+            <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+          </svg>
+          <div>
+            <h3 className="font-medium">How to Get Your Poloniex API Keys</h3>
+            <ol className="mt-2 text-sm space-y-1 list-decimal list-inside">
+              <li>Log in to your <a href="https://poloniex.com" target="_blank" rel="noopener noreferrer" className="underline font-medium">Poloniex account</a></li>
+              <li>Navigate to Settings → API Management</li>
+              <li>Click "Create New API Key" for Futures trading</li>
+              <li>Enable "Read" and "Trade" permissions (withdraw is optional)</li>
+              <li>Copy your API Key and Secret, then paste them here</li>
+            </ol>
+            <p className="mt-2 text-sm font-medium">⚠️ Save your API Secret securely - it won't be shown again!</p>
+          </div>
+        </div>
+      </div>
+
       {/* Header */}
       <div className="flex justify-between items-center">
         <h2 className="text-lg font-medium">Your API Keys</h2>
@@ -334,20 +360,6 @@ const ApiKeyManagement: React.FC = () => {
                 className="mt-1 block w-full border border-neutral-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 font-mono"
                 placeholder="Enter your Poloniex API Secret"
                 required
-              />
-            </div>
-
-            <div>
-              <label htmlFor="passphrase" className="block text-sm font-medium text-neutral-700">
-                Passphrase (Optional)
-              </label>
-              <input
-                type="password"
-                id="passphrase"
-                value={newCredentialForm.passphrase}
-                onChange={(e) => handleFormChange('passphrase', e.target.value)}
-                className="mt-1 block w-full border border-neutral-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 font-mono"
-                placeholder="Enter passphrase if required"
               />
             </div>
 

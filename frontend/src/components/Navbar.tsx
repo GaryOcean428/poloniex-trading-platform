@@ -3,6 +3,7 @@ import { Bell, User, Menu, LogIn } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useSettings } from '../hooks/useSettings';
 import { useResponsiveNav } from '../hooks/useResponsiveNav';
+import { useMobileMenu } from '../context/MobileMenuContext';
 import { useAuth } from '../hooks/useAuth';
 import UserProfile from './auth/UserProfile';
 import LogoutButton from './auth/LogoutButton';
@@ -11,7 +12,8 @@ import MobileNavigation from './MobileNavigation';
 const Navbar: React.FC = () => {
   const [notifications] = useState<number>(3);
   const { hasStoredCredentials } = useSettings();
-  const { isMobileMenuOpen, toggleMobileMenu, closeMobileMenu, isMobile } = useResponsiveNav();
+  const { isMobile } = useResponsiveNav();
+  const { toggleMobileMenu, isMobileMenuOpen, closeMobileMenu } = useMobileMenu();
   const { isLoggedIn, loading } = useAuth();
   
   return (

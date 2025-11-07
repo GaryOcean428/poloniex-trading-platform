@@ -6,6 +6,32 @@ import { authenticateToken } from '../middleware/auth.js';
 const router = express.Router();
 
 /**
+ * GET /api/llm-strategies/status
+ * Check if LLM service is available (public endpoint, no auth required)
+ */
+router.get('/status', async (req, res) => {
+  try {
+    const generator = getLLMStrategyGenerator();
+    const isAvailable = generator.isAvailable();
+
+    res.json({
+      available: isAvailable,
+      message: isAvailable 
+        ? 'LLM strategy generation is available' 
+        : 'ANTHROPIC_API_KEY is not configured',
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    logger.error('Error checking LLM status:', error);
+    res.status(500).json({
+      available: false,
+      message: 'Error checking LLM service status',
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+});
+
+/**
  * POST /api/llm-strategies/generate
  * Generate a new trading strategy using LLM
  */

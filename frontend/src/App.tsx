@@ -12,6 +12,7 @@ import { TradingProvider } from './context/TradingContext';
 import { SettingsProvider } from './context/SettingsContext';
 import { WebSocketProvider } from './context/WebSocketContext';
 import { AuthProvider } from './context/AuthContext';
+import { MobileMenuProvider } from './context/MobileMenuContext';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import Integration from './components/Integration';
 import ToastContainer from './components/ToastContainer';
@@ -34,6 +35,7 @@ const Settings = lazy(() => import('./pages/Settings'));
 const Chat = lazy(() => import('./pages/Chat'));
 const ExtensionDownload = lazy(() => import('./pages/ExtensionDownload'));
 const AIStrategyGenerator = lazy(() => import('./pages/AIStrategyGenerator'));
+const AutonomousAgent = lazy(() => import('./pages/AutonomousAgent')); // AI-powered autonomous trading
 const Status = lazy(() => import('./pages/Status'));
 const Login = lazy(() => import('./pages/Login'));
 const NotFound = lazy(() => import('./pages/NotFound'));
@@ -72,6 +74,7 @@ function App() {
             <SettingsProvider>
               <WebSocketProvider>
                 <TradingProvider>
+                <MobileMenuProvider>
                 <div className="flex h-screen bg-neutral-100 overflow-hidden">
                   <Sidebar />
                   <div className="flex-1 flex flex-col min-w-0">
@@ -90,6 +93,7 @@ function App() {
                             <Route path="/dashboard/live" element={<LiveTradingDashboard />} />
                             <Route path="/strategies" element={<Strategies />} />
                             <Route path="/ai-strategies" element={<AIStrategyGenerator />} />
+                            <Route path="/autonomous-agent" element={<AutonomousAgent />} />
                             <Route path="/backtesting" element={<Backtesting />} />
                             <Route path="/charts" element={<MarketAnalysis />} />
                             <Route path="/performance" element={<Performance />} />
@@ -112,10 +116,16 @@ function App() {
                 <Integration />
                 <ToastContainer />
 
-                <ConnectionHealth />
-                <EnvDebug />
-                <ConnectionTest />
+                {/* Debug components - only in development */}
+                {import.meta.env.DEV && (
+                  <>
+                    <ConnectionHealth />
+                    <EnvDebug />
+                    <ConnectionTest />
+                  </>
+                )}
                 <PWAInstallPrompt />
+                </MobileMenuProvider>
                 </TradingProvider>
               </WebSocketProvider>
             </SettingsProvider>
@@ -127,3 +137,4 @@ function App() {
 }
 
 export default App;
+// Force rebuild Thu Nov  6 01:20:18 EST 2025

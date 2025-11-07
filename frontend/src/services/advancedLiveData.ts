@@ -478,7 +478,18 @@ export class LiveDataService {
         throw new Error("No data received from API");
       }
 
-      const marketData: MarketDataPoint[] = response.data.map(
+      // Handle different response structures
+      let rawData = response.data;
+      if (typeof rawData === 'object' && rawData !== null && 'data' in rawData) {
+        rawData = (rawData as any).data;
+      }
+
+      // Ensure rawData is an array
+      if (!Array.isArray(rawData)) {
+        throw new Error("Invalid data format: expected array");
+      }
+
+      const marketData: MarketDataPoint[] = rawData.map(
         (candle: Record<string, string | number>) => ({
           symbol,
           timestamp: Number(candle.timestamp),

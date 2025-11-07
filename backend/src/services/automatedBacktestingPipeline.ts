@@ -78,19 +78,26 @@ export class AutomatedBacktestingPipeline {
     const strategyId = `ai-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const backtestResults: BacktestResult[] = [];
 
-    // Run backtests across multiple configurations
-    for (const config of configs) {
-      try {
-        const result = await this.runSingleBacktest(
-          strategyId,
-          strategyName,
-          strategyCode,
-          config
-        );
-        backtestResults.push(result);
-      } catch (error) {
+    // Run backtests across multiple configurations in parallel
+    const backtestPromises = configs.map(config => 
+      this.runSingleBacktest(
+        strategyId,
+        strategyName,
+        strategyCode,
+        config
+      ).catch(error => {
         logger.error('Backtest failed for config', { config, error });
-      }
+        return null; // Return null for failed backtests
+      })
+    );
+
+    const results = await Promise.all(backtestPromises);
+    
+    // Filter out null results from failed backtests
+    backtestResults.push(...results.filter(r => r !== null));
+
+    if (backtestResults.length === 0) {
+      throw new Error('All backtests failed');
     }
 
     // Calculate average score

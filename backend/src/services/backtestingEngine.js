@@ -756,11 +756,17 @@ class BacktestingEngine extends EventEmitter {
   }
 
   /**
-   * Calculate trading fees
+   * Calculate trading fees based on order type
+   * Poloniex Futures fees: 0.01% maker / 0.075% taker
    */
-  calculateTradingFees(size, price) {
-    const tradingFeeRate = 0.001; // 0.1% trading fee
-    return size * price * tradingFeeRate;
+  calculateTradingFees(size, price, orderType = 'market') {
+    // Maker fee: 0.01% for limit orders that add liquidity
+    // Taker fee: 0.075% for market orders that remove liquidity
+    const makerFeeRate = 0.0001; // 0.01%
+    const takerFeeRate = 0.00075; // 0.075%
+    
+    const feeRate = orderType === 'limit' ? makerFeeRate : takerFeeRate;
+    return size * price * feeRate;
   }
 
   /**

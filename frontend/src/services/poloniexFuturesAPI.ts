@@ -6,36 +6,10 @@ import {
 import crypto from "crypto";
 
 /**
- * Resolve Poloniex Futures REST base and API prefix
- * We avoid brittle string replaces and instead derive a canonical host + prefix.
- * Docs reference paths like: /v3/futures/api/market/get-*
- * - For hosts under api.poloniex.com we use baseHost=https://api.poloniex.com and apiPrefix=/v3/futures/api
- * - If a custom base explicitly targets a futures host, we fall back to /v3 by default
+ * Poloniex Futures API Configuration
+ * Using backend proxy to avoid CORS issues
+ * Backend proxy endpoints: /api/futures/*
  */
-const RAW_BASE = getApiBaseUrl("futures");
-function resolveFuturesBase(raw: string): { baseHost: string; apiPrefix: string } {
-  try {
-    const u = new URL(raw);
-    const host = u.origin; // protocol + host
-
-    // Primary: standard API host
-    if (host.includes("api.poloniex.com")) {
-      return { baseHost: "https://api.poloniex.com", apiPrefix: "/v3/futures/api" };
-    }
-
-    // Secondary: futures-dedicated host
-    if (host.includes("futures-api.poloniex.com")) {
-      // Some deployments use /v3 on this host
-      return { baseHost: host, apiPrefix: "/v3" };
-    }
-
-    // Fallback: default to api.poloniex.com
-    return { baseHost: "https://api.poloniex.com", apiPrefix: "/v3/futures/api" };
-  } catch {
-    // If RAW_BASE isn't a valid URL, use canonical default
-    return { baseHost: "https://api.poloniex.com", apiPrefix: "/v3/futures/api" };
-  }
-}
 
 // Always use backend proxy to avoid CORS issues
 const BASE_HOST = "";

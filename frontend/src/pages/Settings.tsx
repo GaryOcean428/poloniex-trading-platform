@@ -205,50 +205,18 @@ const Settings: React.FC = () => {
               </div>
               
               <div className="space-y-4">
-                <div>
-                  <label htmlFor="apiKey" className="block text-sm font-medium text-neutral-700">Poloniex API Key</label>
-                  <input
-                    type="password"
-                    id="apiKey"
-                    name="apiKey"
-                    value={formData.apiKey}
-                    onChange={handleChange}
-                    className="mt-1 block w-full input"
-                    placeholder="Enter your API key"
-                  />
-                </div>
-                
-                <div>
-                  <label htmlFor="apiSecret" className="block text-sm font-medium text-neutral-700">API Secret</label>
-                  <input
-                    type="password"
-                    id="apiSecret"
-                    name="apiSecret"
-                    value={formData.apiSecret}
-                    onChange={handleChange}
-                    className="mt-1 block w-full input"
-                    placeholder="Enter your API secret"
-                  />
-                  <p className="mt-1 text-sm text-text-muted">
-                    Your API keys are stored securely in your browser's local storage and never shared.
-                  </p>
-                </div>
-                
-                <div className="flex items-center">
-                  <input
-                    id="isLiveTrading"
-                    name="isLiveTrading"
-                    type="checkbox"
-                    checked={formData.isLiveTrading}
-                    onChange={handleChange}
-                    className="h-4 w-4 text-brand-cyan focus:ring-brand-cyan border-border-moderate rounded"
-                  />
-                  <label htmlFor="isLiveTrading" className="ml-2 block text-sm text-neutral-700">
-                    Enable live trading
-                  </label>
-                </div>
-                <p className="text-sm text-yellow-600">
-                  <strong>Warning:</strong> Live trading will execute real trades with real funds.
+                <p className="text-neutral-600">
+                  Manage your Poloniex API keys and trading permissions in the Account page.
+                </p>
+                <a
+                  href="/account"
+                  className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+                >
+                  <Key className="h-4 w-4 mr-2" />
+                  Manage API Keys
+                </a>
+                <p className="text-sm text-neutral-500">
+                  Your API credentials are stored securely in the database and encrypted.
                 </p>
               </div>
             </div>

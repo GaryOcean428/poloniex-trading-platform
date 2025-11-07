@@ -54,7 +54,7 @@ export interface GeneratedStrategy {
 
 export class LLMStrategyGenerator {
   private client: Anthropic | null = null;
-  private model = 'claude-sonnet-4-5-20250929'; // Latest Claude model (September 29, 2025)
+  private model = 'claude-sonnet-4-5'; // Claude Sonnet 4.5 (latest version)
   private apiKey: string | undefined;
 
   constructor() {

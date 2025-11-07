@@ -803,9 +803,13 @@ class PaperTradingService extends EventEmitter {
     return false;
   }
 
-  calculateTradingFees(size, price) {
-    const tradingFeeRate = 0.001; // 0.1% trading fee
-    return size * price * tradingFeeRate;
+  calculateTradingFees(size, price, orderType = 'market') {
+    // Poloniex Futures fees: 0.01% maker / 0.075% taker
+    const makerFeeRate = 0.0001; // 0.01%
+    const takerFeeRate = 0.00075; // 0.075%
+    
+    const feeRate = orderType === 'limit' ? makerFeeRate : takerFeeRate;
+    return size * price * feeRate;
   }
 
   /**
