@@ -402,6 +402,70 @@ class PoloniexFuturesService {
   }
 
   /**
+   * Get historical OHLCV data for ML training and analysis
+   * @param {string} symbol - Trading symbol (e.g., 'BTCUSDTPERP')
+   * @param {string} interval - Candle interval ('1m', '5m', '15m', '30m', '1h', '4h', '1d')
+   * @param {number} limit - Number of candles to fetch (max 1500)
+   * @returns {Promise<Array>} Array of OHLCV data [{timestamp, open, high, low, close, volume}]
+   */
+  async getHistoricalData(symbol, interval = '1h', limit = 200) {
+    try {
+      // Map interval to Poloniex granularity (in seconds)
+      const granularityMap = {
+        '1m': 60,
+        '5m': 300,
+        '15m': 900,
+        '30m': 1800,
+        '1h': 3600,
+        '1H': 3600,
+        '4h': 14400,
+        '4H': 14400,
+        '1d': 86400,
+        '1D': 86400
+      };
+
+      const granularity = granularityMap[interval];
+      if (!granularity) {
+        throw new Error(`Invalid interval: ${interval}. Use 1m, 5m, 15m, 30m, 1h, 4h, or 1d`);
+      }
+
+      // Poloniex limits to 1500 candles per request
+      const actualLimit = Math.min(limit, 1500);
+
+      // Calculate time range
+      const endTime = Date.now();
+      const startTime = endTime - (granularity * 1000 * actualLimit);
+
+      // Fetch candles
+      const params = {
+        from: Math.floor(startTime / 1000),
+        to: Math.floor(endTime / 1000)
+      };
+
+      const candles = await this.getKlines(symbol, granularity, params);
+
+      // Transform to standard OHLCV format
+      if (!candles || !Array.isArray(candles)) {
+        logger.warn(`No historical data returned for ${symbol}`);
+        return [];
+      }
+
+      return candles.map(candle => ({
+        timestamp: candle[0] * 1000, // Convert to milliseconds
+        open: parseFloat(candle[1]),
+        high: parseFloat(candle[2]),
+        low: parseFloat(candle[3]),
+        close: parseFloat(candle[4]),
+        volume: parseFloat(candle[5])
+      }));
+
+    } catch (error) {
+      logger.error(`Error fetching historical data for ${symbol}:`, error);
+      throw error;
+    }
+  }
+
+  /**
    * Get mark price K-line data
    * Endpoint: GET /v3/market/markPriceCandlesticks
    */

@@ -312,13 +312,13 @@ class AutonomousTradingAgent extends EventEmitter {
     // Get ML predictions for enhanced strategy generation
     let mlPredictions = null;
     try {
-      // TODO: Implement historical data fetching for ML predictions
-      // const ohlcvData = await this.getHistoricalData(config.preferredPairs[0], '1h', 200);
-      // mlPredictions = await mlPredictionService.getMultiHorizonPredictions(
-      //   config.preferredPairs[0],
-      //   ohlcvData
-      // );
-      console.log(`[Agent ${session.id}] ML predictions temporarily disabled - awaiting historical data implementation`);
+      const poloniexService = (await import('./poloniexFuturesService.js')).default;
+      const ohlcvData = await poloniexService.getHistoricalData(config.preferredPairs[0], '1h', 200);
+      mlPredictions = await mlPredictionService.getMultiHorizonPredictions(
+        config.preferredPairs[0],
+        ohlcvData
+      );
+      console.log(`[Agent ${session.id}] ML predictions obtained:`, mlPredictions);
     } catch (mlError: any) {
       console.warn(`[Agent ${session.id}] ML predictions unavailable:`, mlError.message);
     }

@@ -10,6 +10,10 @@ import RealTimeMarketTicker from '../components/dashboard/RealTimeMarketTicker';
 import TradingInsights from '../components/TradingInsights';
 import ExtensionBanner from '../components/dashboard/ExtensionBanner';
 import AutonomousTradingDashboard from '../components/trading/AutonomousTradingDashboard';
+import MLModelPerformance from '../components/ml/MLModelPerformance';
+import AccountBalanceWidget from '../components/dashboard/AccountBalanceWidget';
+import ActivePositionsWidget from '../components/dashboard/ActivePositionsWidget';
+import RecentTradesWidget from '../components/dashboard/RecentTradesWidget';
 import { Activity, ArrowRight } from 'lucide-react';
 
 const Dashboard: React.FC = () => {
@@ -42,6 +46,24 @@ const Dashboard: React.FC = () => {
 
       <div className="mb-6 lg:mb-8">
         <AutonomousTradingDashboard />
+      </div>
+
+      {/* ML Model Performance */}
+      <div className="mb-6 lg:mb-8">
+        <MLModelPerformance symbol="BTCUSDTPERP" />
+      </div>
+
+      {/* Account Balance & Positions */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6 lg:mb-8">
+        <AccountBalanceWidget />
+        <div className="lg:col-span-2">
+          <ActivePositionsWidget />
+        </div>
+      </div>
+
+      {/* Recent Trades from API */}
+      <div className="mb-6 lg:mb-8">
+        <RecentTradesWidget />
       </div>
       
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 lg:gap-8">

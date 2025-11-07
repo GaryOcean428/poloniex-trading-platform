@@ -18,8 +18,7 @@ router.get('/performance/:symbol', authenticateToken, async (req, res) => {
     }
 
     // Get historical OHLCV data (last 200 candles, 1h timeframe)
-    // Note: This is a placeholder - implement actual historical data fetching
-    const ohlcvData: any[] = []; // TODO: Implement historical data fetching
+    const ohlcvData = await poloniexFuturesService.getHistoricalData(symbol, '1h', 200);
     
     if (!ohlcvData || ohlcvData.length === 0) {
       return res.status(404).json({ error: 'No historical data available' });
@@ -66,8 +65,7 @@ router.post('/train/:symbol', authenticateToken, async (req, res) => {
     }
 
     // Get historical data for training (last 1000 candles)
-    // Note: This is a placeholder - implement actual historical data fetching
-    const ohlcvData: any[] = []; // TODO: Implement historical data fetching
+    const ohlcvData = await poloniexFuturesService.getHistoricalData(symbol, '1h', 1000);
     
     if (!ohlcvData || ohlcvData.length < 100) {
       return res.status(400).json({ error: 'Insufficient historical data for training' });
