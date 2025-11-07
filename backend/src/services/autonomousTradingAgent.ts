@@ -5,6 +5,7 @@ import backtestingEngine from './backtestingEngine.js';
 import paperTradingService from './paperTradingService.js';
 import automatedTradingService from './automatedTradingService.js';
 import { apiCredentialsService } from './apiCredentialsService.js';
+import mlPredictionService from './mlPredictionService.js';
 
 interface AgentConfig {
   userId: string;
@@ -308,6 +309,20 @@ class AutonomousTradingAgent extends EventEmitter {
     // Get market context for strategy generation
     const marketContext = await this.getMarketContext(config.preferredPairs[0]);
 
+    // Get ML predictions for enhanced strategy generation
+    let mlPredictions = null;
+    try {
+      // TODO: Implement historical data fetching for ML predictions
+      // const ohlcvData = await this.getHistoricalData(config.preferredPairs[0], '1h', 200);
+      // mlPredictions = await mlPredictionService.getMultiHorizonPredictions(
+      //   config.preferredPairs[0],
+      //   ohlcvData
+      // );
+      console.log(`[Agent ${session.id}] ML predictions temporarily disabled - awaiting historical data implementation`);
+    } catch (mlError: any) {
+      console.warn(`[Agent ${session.id}] ML predictions unavailable:`, mlError.message);
+    }
+
     // Generate 5-10 strategy variations
     const numStrategies = 5;
 
@@ -316,7 +331,7 @@ class AutonomousTradingAgent extends EventEmitter {
         const prompt = this.buildStrategyGenerationPrompt(config, marketContext, i);
         
         const llmStrategyGenerator = getLLMStrategyGenerator();
-        // Build market context for LLM
+        // Build market context for LLM with ML predictions
         const llmMarketContext = {
           symbol: config.preferredPairs[0],
           currentPrice: marketContext.price || 0,
@@ -325,7 +340,8 @@ class AutonomousTradingAgent extends EventEmitter {
           technicalIndicators: {},
           marketRegime: marketContext.trend === 'up' ? 'trending_up' as const : 
                        marketContext.trend === 'down' ? 'trending_down' as const : 
-                       'ranging' as const
+                       'ranging' as const,
+          mlPredictions: mlPredictions // Add ML predictions to context
         };
         const strategyData = await llmStrategyGenerator.generateStrategy(llmMarketContext);
 
