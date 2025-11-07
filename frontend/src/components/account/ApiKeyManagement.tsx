@@ -1,5 +1,5 @@
 import { AlertTriangle, CheckCircle, Plus, RefreshCw, Shield, Trash2, XCircle } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, useRef } from 'react';
 import { getAccessToken } from '@/utils/auth';
 
 interface ApiCredential {
@@ -61,8 +61,17 @@ const ApiKeyManagement: React.FC = () => {
     }
   }, [successMessage, error]);
 
-  const loadApiCredentials = async () => {
+  const loadingRef = useRef(false); // Prevent concurrent loads
+
+  const loadApiCredentials = useCallback(async () => {
+    // Prevent concurrent API calls
+    if (loadingRef.current) {
+      console.warn('API call already in progress, skipping');
+      return;
+    }
+
     try {
+      loadingRef.current = true;
       setLoading(true);
       setError(null);
 
@@ -94,8 +103,9 @@ const ApiKeyManagement: React.FC = () => {
       setError(err instanceof Error ? err.message : 'Failed to load API credentials');
     } finally {
       setLoading(false);
+      loadingRef.current = false; // Allow future calls
     }
-  };
+  }, [API_BASE]); // Only recreate if API_BASE changes
 
   // Load API credentials on component mount
   useEffect(() => {

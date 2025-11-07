@@ -5,11 +5,28 @@
  */
 
 import express from 'express';
+import rateLimit from 'express-rate-limit';
 import { apiCredentialsService } from '../services/apiCredentialsService.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { logger } from '../utils/logger.js';
 
 const router = express.Router();
+
+// Specific rate limiter for API keys endpoint (more lenient for authenticated users)
+const apiKeysRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 200, // More lenient for authenticated users
+  message: {
+    error: 'Too many API key requests, please try again later.',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  // Rate limit by token if available, else IP
+  keyGenerator: (req) => {
+    const token = req.headers.authorization?.split(' ')[1];
+    return token || req.ip || 'unknown';
+  }
+});
 
 /**
  * Health check for API keys
@@ -23,7 +40,7 @@ router.get('/health', (req, res) => {
  * Get all API credentials for the authenticated user
  * GET /api/keys
  */
-router.get('/', authenticateToken, async (req, res) => {
+router.get('/', apiKeysRateLimiter, authenticateToken, async (req, res) => {
   try {
     const userId = (req as any).user.userId;
     
