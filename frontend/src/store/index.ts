@@ -164,7 +164,7 @@ const defaultState: AppState = {
   },
   trading: {
     defaultPair: "BTC_USDT",
-    mockMode: true,
+    mockMode: false,  // Production default: use real trading
   },
   toasts: [],
 };

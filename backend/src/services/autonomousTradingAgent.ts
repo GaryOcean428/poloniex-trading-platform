@@ -94,7 +94,7 @@ class AutonomousTradingAgent extends EventEmitter {
       maxConcurrentPositions: 3,
       stopLossPercentage: 5,
       tradingStyle: 'day_trading',
-      preferredPairs: ['BTC-USDT', 'ETH-USDT'],
+      preferredPairs: ['BTCUSDTPERP', 'ETHUSDTPERP'],  // Futures symbols for Poloniex
       preferredTimeframes: ['15m', '1h', '4h'],
       automationLevel: 'fully_autonomous',
       strategyGenerationInterval: 24, // Generate new strategies every 24 hours

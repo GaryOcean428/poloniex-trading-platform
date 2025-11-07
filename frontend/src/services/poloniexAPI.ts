@@ -62,7 +62,7 @@ const safeErrorHandler = (error: unknown): Error => {
 // Singleton API client
 class PoloniexApiClient {
   private static instance: PoloniexApiClient;
-  private mockMode: boolean = true;
+  private mockMode: boolean = false;  // Production default: use real API
   private lastBalanceUpdate: number = 0;
   private cachedBalance = null;
   private historicalData: Map<string, MarketData[]> = new Map();

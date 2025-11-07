@@ -21,8 +21,13 @@ interface UpdateStrategyRequest extends Partial<CreateStrategyRequest> {
   active?: boolean;
 }
 
-// Mock in-memory storage for demo purposes
-// In a real application, this would be backed by a database (Prisma/ORM)
+// Mock in-memory storage for development/testing only
+// TODO: Replace with database queries for production
+// This mock data should only be used when NODE_ENV !== 'production'
+if (process.env.NODE_ENV === 'production') {
+  console.warn('WARNING: Mock strategies data should not be used in production. Implement database-backed storage.');
+}
+
 const strategies: Strategy[] = [
   {
     id: '1',

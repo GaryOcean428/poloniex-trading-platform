@@ -28,7 +28,7 @@ export interface MockModeContextType {
 
 // Default mock mode settings
 const defaultMockSettings = {
-  isMockMode: true,
+  isMockMode: false,  // Production default: use real data
   mockDataSource: 'historical' as const,
   mockDataDelay: 1000,
   mockVolatility: 0.5,
