@@ -84,8 +84,36 @@ export interface DashboardResponse {
 }
 
 class DashboardService {
-  private getAuthHeaders() {
-    const token = localStorage.getItem('token');
+  private async getAuthHeaders() {
+    let token = localStorage.getItem('token');
+    
+    // Check if token is expired (basic check - decode JWT and check exp)
+    if (token) {
+      try {
+        const payload = JSON.parse(atob(token.split('.')[1]));
+        const isExpired = payload.exp * 1000 < Date.now();
+        
+        if (isExpired) {
+          console.log('Token expired, attempting refresh...');
+          // Try to refresh token
+          const refreshToken = localStorage.getItem('refreshToken');
+          if (refreshToken) {
+            const response = await axios.post(`${API_BASE_URL}/api/auth/refresh`, {
+              refreshToken
+            });
+            token = response.data.token;
+            localStorage.setItem('token', token);
+          } else {
+            // No refresh token, redirect to login
+            console.warn('No refresh token available, user needs to re-login');
+            // Don't redirect automatically, just use expired token and let backend handle it
+          }
+        }
+      } catch (error) {
+        console.error('Error checking token expiration:', error);
+      }
+    }
+    
     return {
       'Authorization': `Bearer ${token}`,
       'Content-Type': 'application/json'

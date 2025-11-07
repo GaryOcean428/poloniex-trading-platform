@@ -45,9 +45,24 @@ router.get('/performance/:symbol', authenticateToken, async (req, res) => {
 
   } catch (error: any) {
     console.error('ML performance endpoint error:', error);
-    res.status(500).json({ 
-      error: 'Failed to get ML performance',
-      message: error.message 
+    
+    // Return fallback data when ML models unavailable
+    res.json({
+      symbol: req.params.symbol,
+      predictions: {
+        '1h': { price: 0, confidence: 0, direction: 'NEUTRAL' },
+        '4h': { price: 0, confidence: 0, direction: 'NEUTRAL' },
+        '24h': { price: 0, confidence: 0, direction: 'NEUTRAL' }
+      },
+      signal: {
+        action: 'HOLD',
+        confidence: 0,
+        reason: 'ML models not available - Python dependencies need to be installed on Railway'
+      },
+      currentPrice: 0,
+      timestamp: new Date().toISOString(),
+      error: 'ML models unavailable',
+      message: error.message
     });
   }
 });
