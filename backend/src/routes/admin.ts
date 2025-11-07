@@ -139,3 +139,83 @@ router.get('/db-status', async (req, res) => {
 });
 
 export default router;
+
+// Endpoint to reset demo user password
+router.post('/reset-demo-password', async (req, res) => {
+  try {
+    console.log('🔐 Resetting demo user password...');
+    
+    const bcrypt = await import('bcryptjs');
+    const passwordHash = await bcrypt.hash('password', 12);
+    
+    // Update demo user password
+    const result = await pool.query(`
+      UPDATE users 
+      SET password_hash = $1 
+      WHERE username = 'demo' OR email = 'demo@polytrade.com'
+      RETURNING id, username, email;
+    `, [passwordHash]);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Demo user not found'
+      });
+    }
+    
+    console.log('✅ Demo user password reset successfully');
+    
+    res.json({
+      success: true,
+      message: 'Demo user password reset to "password"',
+      user: result.rows[0]
+    });
+    
+  } catch (error) {
+    console.error('❌ Password reset failed:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Endpoint to reset GaryOcean user password
+router.post('/reset-gary-password', async (req, res) => {
+  try {
+    console.log('🔐 Resetting GaryOcean user password...');
+    
+    const bcrypt = await import('bcryptjs');
+    const passwordHash = await bcrypt.hash('I.Am.Dev.1', 12);
+    
+    // Update GaryOcean user password
+    const result = await pool.query(`
+      UPDATE users 
+      SET password_hash = $1 
+      WHERE username = 'GaryOcean' OR email = 'braden.lang77@gmail.com'
+      RETURNING id, username, email;
+    `, [passwordHash]);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'GaryOcean user not found'
+      });
+    }
+    
+    console.log('✅ GaryOcean user password reset successfully');
+    
+    res.json({
+      success: true,
+      message: 'GaryOcean user password reset to "I.Am.Dev.1"',
+      user: result.rows[0]
+    });
+    
+  } catch (error) {
+    console.error('❌ Password reset failed:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});

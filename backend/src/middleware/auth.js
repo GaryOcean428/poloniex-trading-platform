@@ -76,9 +76,7 @@ export const generateToken = (payload, expiresIn = '1h') => {
   }
   
   return jwt.sign(payload, jwtSecret, {
-    expiresIn,
-    issuer: 'poloniex-trading-platform',
-    audience: 'poloniex-trading-app'
+    expiresIn
   });
 };
 

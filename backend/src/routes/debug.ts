@@ -167,3 +167,87 @@ router.post('/test-api-creds', async (req, res) => {
 });
 
 export default router;
+
+/**
+ * Check users table and demo user
+ * GET /api/debug/users
+ */
+router.get('/users', async (req, res) => {
+  try {
+    // Check if users table exists
+    const tableExists = await pool.query(`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables 
+        WHERE table_schema = 'public' 
+        AND table_name = 'users'
+      );
+    `);
+    
+    if (!tableExists.rows[0].exists) {
+      return res.json({
+        success: false,
+        error: 'users table does not exist',
+        suggestion: 'Run database migrations'
+      });
+    }
+    
+    // Get user count
+    const countResult = await pool.query('SELECT COUNT(*) as count FROM users');
+    
+    // Check if demo user exists
+    const demoUserResult = await pool.query(
+      'SELECT id, username, email, created_at FROM users WHERE LOWER(username) = $1 OR LOWER(email) = $1',
+      ['demo']
+    );
+    
+    // Check if GaryOcean user exists
+    const garyUserResult = await pool.query(
+      'SELECT id, username, email, created_at FROM users WHERE LOWER(username) = $1',
+      ['garyocean']
+    );
+    
+    // Get all usernames (without sensitive data)
+    const allUsersResult = await pool.query(
+      'SELECT id, username, email, created_at FROM users ORDER BY created_at DESC LIMIT 10'
+    );
+    
+    res.json({
+      success: true,
+      totalUsers: parseInt(countResult.rows[0].count),
+      demoUserExists: demoUserResult.rows.length > 0,
+      demoUser: demoUserResult.rows[0] || null,
+      garyUserExists: garyUserResult.rows.length > 0,
+      garyUser: garyUserResult.rows[0] || null,
+      recentUsers: allUsersResult.rows
+    });
+  } catch (error: any) {
+    logger.error('Error checking users:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * Test database connection
+ * GET /api/debug/db-connection
+ */
+router.get('/db-connection', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT NOW() as current_time, version() as pg_version');
+    res.json({
+      success: true,
+      connected: true,
+      timestamp: result.rows[0].current_time,
+      postgresVersion: result.rows[0].pg_version
+    });
+  } catch (error: any) {
+    logger.error('Database connection test failed:', error);
+    res.status(500).json({
+      success: false,
+      connected: false,
+      error: error.message
+    });
+  }
+});
