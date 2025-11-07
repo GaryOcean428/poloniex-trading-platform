@@ -18,6 +18,31 @@ const AccountSummary: React.FC = () => {
     }
   }, [accountBalance]);
 
+  // Helper functions defined before use
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await refreshApiConnection();
+      setLastUpdateTime(new Date());
+    } catch (error) {
+      // console.error('Failed to refresh account data:', error);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  const getConnectionStatusIcon = () => {
+    if (isConnected) {
+      return <Wifi className="h-4 w-4 text-success" aria-label="Connected" />;
+    } else {
+      return <WifiOff className="h-4 w-4 text-error" aria-label="Disconnected" />;
+    }
+  };
+
+  const formatTime = (date: Date) => {
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  };
+
   // Process account data from API if available
   const processAccountData = () => {
     // Return null if no data available - don't show fake values
@@ -109,30 +134,6 @@ const AccountSummary: React.FC = () => {
       </div>
     );
   }
-
-  const handleRefresh = async () => {
-    setIsRefreshing(true);
-    try {
-      await refreshApiConnection();
-      setLastUpdateTime(new Date());
-    } catch (error) {
-      // console.error('Failed to refresh account data:', error);
-    } finally {
-      setIsRefreshing(false);
-    }
-  };
-
-  const getConnectionStatusIcon = () => {
-    if (isConnected) {
-      return <Wifi className="h-4 w-4 text-success" aria-label="Connected" />;
-    } else {
-      return <WifiOff className="h-4 w-4 text-error" aria-label="Disconnected" />;
-    }
-  };
-
-  const formatTime = (date: Date) => {
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-  };
 
   return (
     <div>
