@@ -19,7 +19,7 @@ export default defineConfig({
   },
   build: {
     target: 'es2020',
-    // Force cache busting for Railway deployment - 2025-11-06
+    // Force cache busting for Railway deployment - 2025-11-07T04:48:00Z
     assetsDir: 'assets',
     cssCodeSplit: true,
     // Skip TypeScript checking during build to avoid deployment failures
