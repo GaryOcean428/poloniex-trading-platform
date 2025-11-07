@@ -5,6 +5,7 @@ import { defineConfig } from "vitest/config";
 import tsconfigPaths from 'vite-tsconfig-paths';
 
 // https://vitejs.dev/config/
+// Build with production env vars - 2025-11-07
 export default defineConfig({
   plugins: [react(), tsconfigPaths()],
   optimizeDeps: {
