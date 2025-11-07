@@ -200,8 +200,28 @@ docs/
 │       ├── RAILWAY_SERVICE_CONFIG.md
 │       └── RAILWAY_DEPLOYMENT_MASTER.md
 │
+├── Development
+│   ├── agents.md
+│   └── claude-integration.md
+│
+├── Deployment
+│   ├── railway-configuration.md
+│   ├── railway-compliance.md
+│   ├── railway-port-config.md
+│   └── deployment/
+│       ├── RAILWAY_BACKEND_FIX.md
+│       ├── RAILWAY_FIXES_IMPLEMENTATION.md
+│       ├── RAILWAY_SERVICE_CONFIG.md
+│       └── RAILWAY_DEPLOYMENT_MASTER.md
+│
+├── Guides
+│   └── quick-start.md
+│
 ├── Security
-│   └── SECURITY_GUIDE.md
+│   └── security-guide.md
+│
+├── Status
+│   └── implementation-status.md
 │
 └── Archive
     └── archive/ (old documentation)
