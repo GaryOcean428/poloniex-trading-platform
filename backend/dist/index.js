@@ -30,6 +30,7 @@ import dashboardRoutes from './routes/dashboard.js';
 import mlRoutes from './routes/ml.js';
 import publicAdminRoutes from './routes/public-admin.js';
 import versionCheckRoutes from './routes/version-check.js';
+import deployVersionRoutes from './routes/deploy-version.js';
 // Import services
 import { logger } from './utils/logger.js';
 import { persistentTradingEngine } from './services/persistentTradingEngine.js';
@@ -96,6 +97,7 @@ app.get('/healthz', (_req, res) => {
 });
 // Version check endpoint (no auth required)
 app.use('/api/version-check', versionCheckRoutes);
+app.use('/api/deploy', deployVersionRoutes);
 // API routes with rate limiting
 app.use('/api/auth', authRateLimiter, authRoutes);
 app.use('/api/api-keys', apiKeyRoutes);
