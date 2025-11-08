@@ -73,7 +73,9 @@ export class ApiCredentialsService {
   async getCredentials(userId: string, exchange: string = 'poloniex'): Promise<ApiCredentials | null> {
     try {
       const result = await pool.query<StoredCredentials>(
-        `SELECT * FROM api_credentials
+        `SELECT id, user_id, exchange, api_key_encrypted, api_secret_encrypted, 
+                encryption_iv, is_active, last_used_at, created_at, updated_at
+         FROM api_credentials
          WHERE user_id = $1 AND exchange = $2 AND is_active = true
          LIMIT 1`,
         [userId, exchange]
