@@ -8,7 +8,7 @@ cmds = [
 ]
 
 [phases.build]
-cmds = ["npm run build:railway"]
+cmds = ["echo 'Using pre-built dist folder'"]
 
 [start]
 cmd = "npm start"
