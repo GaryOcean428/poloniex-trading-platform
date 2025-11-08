@@ -584,7 +584,7 @@ export class UserService {
         SELECT
           id, user_id, exchange, credential_name,
           api_key_encrypted, api_secret_encrypted, passphrase_encrypted,
-          permissions, is_active, last_used_at, created_at, updated_at
+          is_active, last_used_at, created_at, updated_at
         FROM user_api_credentials
         WHERE user_id = $1 AND exchange = $2 AND is_active = true
       `;
