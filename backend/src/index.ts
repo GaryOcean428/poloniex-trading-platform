@@ -120,6 +120,9 @@ app.get('/healthz', (_req: Request, res: Response) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Version check endpoint (no auth required)
+app.use('/api/version-check', versionCheckRoutes);
+
 // API routes with rate limiting
 app.use('/api/auth', authRateLimiter, authRoutes);
 app.use('/api/api-keys', apiKeyRoutes);
@@ -143,7 +146,6 @@ app.use('/api/ai', aiRoutes); // AI-powered trading insights using Claude Sonnet
 app.use('/api/dashboard', dashboardRoutes); // Unified dashboard data endpoint
 app.use('/api/ml', mlRoutes);
 app.use('/api/public-admin', publicAdminRoutes); // Public admin routes for password reset // ML model predictions and performance
-app.use('/api/version-check', versionCheckRoutes); // Debug endpoint to check deployed code version
 
 // Legacy proxy routes (deprecated - use futures API instead)
 app.use('/api', proxyRoutes);
