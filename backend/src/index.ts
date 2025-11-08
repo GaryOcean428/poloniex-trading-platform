@@ -32,6 +32,7 @@ import aiRoutes from './routes/ai.js';
 import dashboardRoutes from './routes/dashboard.js';
 import mlRoutes from './routes/ml.js';
 import publicAdminRoutes from './routes/public-admin.js';
+import versionCheckRoutes from './routes/version-check.js';
 
 // Import services
 import { logger } from './utils/logger.js';
@@ -142,6 +143,7 @@ app.use('/api/ai', aiRoutes); // AI-powered trading insights using Claude Sonnet
 app.use('/api/dashboard', dashboardRoutes); // Unified dashboard data endpoint
 app.use('/api/ml', mlRoutes);
 app.use('/api/public-admin', publicAdminRoutes); // Public admin routes for password reset // ML model predictions and performance
+app.use('/api/version-check', versionCheckRoutes); // Debug endpoint to check deployed code version
 
 // Legacy proxy routes (deprecated - use futures API instead)
 app.use('/api', proxyRoutes);
