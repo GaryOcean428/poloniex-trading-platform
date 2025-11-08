@@ -5,6 +5,7 @@
     "buildCommand": "npm install && pip3.11 install -r backend/src/ml/requirements.txt"
   },
   "deploy": {
+    "numReplicas": 1,
     "startCommand": "npm start",
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10
