@@ -16,6 +16,14 @@ router.post('/reset-password', async (req, res) => {
       return res.status(403).json({ error: 'Invalid admin key' });
     }
     
+    // Run migration 005 first
+    try {
+      await pool.query(`ALTER TABLE api_credentials ADD COLUMN IF NOT EXISTS permissions JSONB DEFAULT '{"read": true, "trade": true, "withdraw": false}'::jsonb;`);
+      console.log('✅ Migration 005: permissions column added/verified');
+    } catch (migError: any) {
+      console.log('Migration note:', migError.message);
+    }
+    
     if (!username || !password) {
       return res.status(400).json({ error: 'Username and password required' });
     }
