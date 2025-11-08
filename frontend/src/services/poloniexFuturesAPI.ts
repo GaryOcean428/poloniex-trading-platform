@@ -2,6 +2,7 @@ import {
   getApiBaseUrl,
   getPoloniexApiKey,
   getPoloniexApiSecret,
+  getBackendUrl,
 } from "@/utils/environment";
 import crypto from "crypto";
 
@@ -12,7 +13,8 @@ import crypto from "crypto";
  */
 
 // Always use backend proxy to avoid CORS issues
-const BASE_HOST = "";
+// Use getBackendUrl() to get proper base URL (fixes "Failed to construct 'URL': Invalid URL" error)
+const BASE_HOST = typeof window !== 'undefined' ? window.location.origin : '';
 const API_PREFIX = "/api/futures";
 
 // Normalize symbol (UI uses BTC-USDT; API commonly expects BTCUSDT)
@@ -36,7 +38,8 @@ const ENDPOINTS = {
   PLACE_ORDER: `${API_PREFIX}/trade/order`,
   CANCEL_ORDER: `${API_PREFIX}/trade/cancel-order`,
   CANCEL_ALL_ORDERS: `${API_PREFIX}/trade/cancel-all-orders`,
-  ORDER_HISTORY: `${API_PREFIX}/trade/history-orders`,
+  ORDER_HISTORY: `${API_PREFIX}/trade/order/history`, // Fixed to match V3 spec: /v3/trade/order/history
+  EXECUTION_DETAILS: `${API_PREFIX}/trade/order/trades`, // Added from V3 spec: /v3/trade/order/trades
   OPEN_ORDERS: `${API_PREFIX}/trade/open-orders`,
 
   // Market data (public)
