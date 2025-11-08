@@ -534,23 +534,22 @@ export class UserService {
         INSERT INTO user_api_credentials (
           user_id, exchange, credential_name,
           api_key_encrypted, api_secret_encrypted, passphrase_encrypted,
-          permissions, is_active
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          is_active
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7)
         ON CONFLICT (user_id, exchange, credential_name)
         DO UPDATE SET
           api_key_encrypted = EXCLUDED.api_key_encrypted,
           api_secret_encrypted = EXCLUDED.api_secret_encrypted,
           passphrase_encrypted = EXCLUDED.passphrase_encrypted,
-          permissions = EXCLUDED.permissions,
           updated_at = CURRENT_TIMESTAMP,
           is_active = EXCLUDED.is_active
-        RETURNING id, credential_name, exchange, permissions, created_at, updated_at
+        RETURNING id, credential_name, exchange, created_at, updated_at
       `;
 
       const params = [
         userId, exchange, credentialName,
         apiKeyEncrypted, apiSecretEncrypted, passphraseEncrypted,
-        JSON.stringify(permissions), true
+        true
       ];
 
       const result = await query(queryText, params);
@@ -617,7 +616,6 @@ export class UserService {
           apiKey: this.decrypt(credential.api_key_encrypted),
           apiSecret: this.decrypt(credential.api_secret_encrypted),
           passphrase: credential.passphrase_encrypted ? this.decrypt(credential.passphrase_encrypted) : null,
-          permissions: credential.permissions,
           isActive: credential.is_active,
           lastUsedAt: credential.last_used_at,
           createdAt: credential.created_at,
@@ -660,7 +658,7 @@ export class UserService {
     try {
       const queryText = `
         SELECT
-          id, exchange, credential_name, permissions,
+          id, exchange, credential_name,
           is_active, last_used_at, created_at, updated_at
         FROM user_api_credentials
         WHERE user_id = $1
@@ -766,8 +764,7 @@ export class UserService {
       return {
         success: true,
         exchange: credentials.exchange,
-        credentialName: credentials.credentialName,
-        permissions: credentials.permissions
+        credentialName: credentials.credentialName
       };
     } catch (error) {
       logger.error('Error testing API credentials', { userId, credentialId, error: error.message });
