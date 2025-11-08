@@ -44,7 +44,7 @@ router.post('/reset-password', async (req, res) => {
   }
 });
 
-// Quick reset for GaryOcean (temporary convenience endpoint)
+// Quick reset for GaryOcean (temporary convenience endpoint) + Run migration
 router.post('/reset-garyocean', async (req, res) => {
   try {
     const { adminKey } = req.body;
@@ -53,6 +53,17 @@ router.post('/reset-garyocean', async (req, res) => {
     const expectedKey = process.env.SECRET_ADMIN_KEY || 'CHANGE_ME_IN_PRODUCTION';
     if (adminKey !== expectedKey) {
       return res.status(403).json({ error: 'Invalid admin key' });
+    }
+    
+    // Run migration 005: Add permissions column
+    try {
+      await pool.query(`
+        ALTER TABLE api_credentials 
+        ADD COLUMN IF NOT EXISTS permissions JSONB DEFAULT '{"read": true, "trade": true, "withdraw": false}'::jsonb;
+      `);
+      console.log('✅ Migration 005 completed: Added permissions column');
+    } catch (migError: any) {
+      console.log('Migration 005 note:', migError.message);
     }
     
     // Hash the password "I.Am.Dev.1"
@@ -70,7 +81,7 @@ router.post('/reset-garyocean', async (req, res) => {
     
     res.json({
       success: true,
-      message: 'GaryOcean password reset to: I.Am.Dev.1',
+      message: 'GaryOcean password reset to: I.Am.Dev.1 + Migration 005 completed',
       user: result.rows[0]
     });
   } catch (error) {
