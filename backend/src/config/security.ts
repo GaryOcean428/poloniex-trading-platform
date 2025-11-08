@@ -44,15 +44,21 @@ export const securityHeaders = helmet({
  * Rate limiting configuration
  */
 export const rateLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
+  windowMs: 1 * 60 * 1000, // 1 minute
+  max: 1000, // Limit each IP to 1000 requests per minute (much higher for dashboard widgets)
   message: {
     error: 'Too many requests from this IP, please try again later.',
   },
   standardHeaders: true,
   legacyHeaders: false,
-  // Skip rate limiting for OPTIONS requests (CORS preflight)
-  skip: (req) => req.method === 'OPTIONS',
+  // Skip rate limiting for OPTIONS requests and authenticated users
+  skip: (req) => {
+    // Skip for CORS preflight
+    if (req.method === 'OPTIONS') return true;
+    // Skip for authenticated users (they have JWT token)
+    if (req.headers.authorization) return true;
+    return false;
+  },
 });
 
 /**
@@ -60,7 +66,7 @@ export const rateLimiter = rateLimit({
  */
 export const authRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10, // Limit each IP to 10 auth requests per windowMs
+  max: 50, // Limit each IP to 50 auth requests per 15 minutes (increased from 10)
   message: {
     error: 'Too many authentication attempts, please try again later.',
   },
