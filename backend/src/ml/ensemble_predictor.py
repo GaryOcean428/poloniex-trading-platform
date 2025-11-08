@@ -10,11 +10,11 @@ import logging
 from datetime import datetime, timedelta
 
 # Import all ML models
-from .models.LSTM_model import LSTMModel
-from .models.Transformer_model import TransformerModel  
-from .models.GBM_model import GBMModel
-from .models.ARIMA_model import ARIMAModel
-from .models.Prophet_model import ProphetModel
+from models.LSTM_model import LSTMPredictor
+from models.Transformer_model import TransformerModel  
+from models.GBM_model import GBMModel
+from models.ARIMA_model import ARIMAModel
+from models.Prophet_model import ProphetModel
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ class EnsemblePredictor:
             model_weights: Optional weights for each model. If None, uses equal weights.
         """
         self.models = {
-            'lstm': LSTMModel(),
+            'lstm': LSTMPredictor(),
             'transformer': TransformerModel(),
             'gbm': GBMModel(),
             'arima': ARIMAModel(),

@@ -19,7 +19,7 @@ from tensorflow.keras.callbacks import EarlyStopping
 # --- Configuration ---
 # Set up basic logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__getLogger(__name__))
+logger = logging.getLogger(__name__)
 
 # Define the prediction horizons in hours
 PREDICTION_HORIZONS = [1, 4, 24]
