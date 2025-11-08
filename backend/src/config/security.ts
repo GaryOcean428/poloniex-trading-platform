@@ -51,14 +51,8 @@ export const rateLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
-  // Skip rate limiting for OPTIONS requests and authenticated users
-  skip: (req) => {
-    // Skip for CORS preflight
-    if (req.method === 'OPTIONS') return true;
-    // Skip for authenticated users (they have JWT token)
-    if (req.headers.authorization) return true;
-    return false;
-  },
+  // TEMPORARILY DISABLE ALL RATE LIMITING FOR TESTING
+  skip: () => true,
 });
 
 /**
