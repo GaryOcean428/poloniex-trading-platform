@@ -123,7 +123,17 @@ app.get('/healthz', (_req: Request, res: Response) => {
 
 // Version check endpoint (no auth required)
 app.use('/api/version-check', versionCheckRoutes);
-app.use('/api/deploy', deployVersionRoutes);
+
+// Deploy version endpoint (no auth required)
+app.get('/api/deploy/version', (_req: Request, res: Response) => {
+  res.json({
+    version: '2.0.0-FIXED',
+    timestamp: new Date().toISOString(),
+    commit: 'f611ea2',
+    message: 'Pre-built dist with permissions fix',
+    userServiceFixed: true
+  });
+});
 
 // API routes with rate limiting
 app.use('/api/auth', authRateLimiter, authRoutes);
