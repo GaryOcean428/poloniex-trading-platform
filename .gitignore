@@ -201,4 +201,4 @@ codeql-dbs/
 
 # Build output
 frontend/dist/
-backend/dist/
+# backend/dist/ - temporarily committing for Railway deployment
