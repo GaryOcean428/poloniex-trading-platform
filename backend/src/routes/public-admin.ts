@@ -79,4 +79,41 @@ router.post('/reset-garyocean', async (req, res) => {
   }
 });
 
+// Run database migration endpoint
+router.post('/run-migration', async (req, res) => {
+  try {
+    const { migrationNumber, adminKey } = req.body;
+    
+    // Check admin key
+    const expectedKey = process.env.SECRET_ADMIN_KEY || 'CHANGE_ME_IN_PRODUCTION';
+    if (adminKey !== expectedKey) {
+      return res.status(403).json({ error: 'Invalid admin key' });
+    }
+    
+    if (!migrationNumber) {
+      return res.status(400).json({ error: 'Migration number required' });
+    }
+    
+    // Run migration 005: Add permissions column
+    if (migrationNumber === '005') {
+      await pool.query(`
+        ALTER TABLE api_credentials 
+        ADD COLUMN IF NOT EXISTS permissions JSONB DEFAULT '{"read": true, "trade": true, "withdraw": false}'::jsonb;
+        
+        CREATE INDEX IF NOT EXISTS idx_api_credentials_permissions ON api_credentials USING gin(permissions);
+      `);
+      
+      res.json({
+        success: true,
+        message: 'Migration 005 completed: Added permissions column to api_credentials table'
+      });
+    } else {
+      res.status(400).json({ error: 'Unknown migration number' });
+    }
+  } catch (error: any) {
+    console.error('Migration error:', error);
+    res.status(500).json({ error: 'Failed to run migration', details: error.message });
+  }
+});
+
 export default router;
