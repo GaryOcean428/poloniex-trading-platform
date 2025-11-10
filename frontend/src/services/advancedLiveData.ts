@@ -217,70 +217,63 @@ export class LiveDataService {
 
   private initializeWebSockets(): void {
     try {
-      // Get bullet token for V3 WebSocket connection
       // V3 API: Direct connection to public WebSocket, no token required
-      try {
-        const poloniexWs = new WebSocket('wss://ws.poloniex.com/ws/v3/public');
+      const poloniexWs = new WebSocket('wss://ws.poloniex.com/ws/v3/public');
 
-          poloniexWs.onopen = () => {
-            this.log("info", "Poloniex V3 WebSocket connected");
+      poloniexWs.onopen = () => {
+        this.log("info", "Poloniex V3 WebSocket connected");
 
-            // Subscribe to ticker using V3 format
-            poloniexWs.send(
-              JSON.stringify({
-                id: Date.now(),
-                type: "subscribe",
-                topic: "/contractMarket/ticker:BTCUSDTPERP",
-                response: true,
-              })
-            );
+        // Subscribe to ticker using V3 format
+        poloniexWs.send(
+          JSON.stringify({
+            id: Date.now(),
+            type: "subscribe",
+            topic: "/contractMarket/ticker:BTCUSDTPERP",
+            response: true,
+          })
+        );
 
-            this.websockets.set("poloniex", poloniexWs);
-            liveDataEvents.emit("websocket_connected", "poloniex");
-          };
+        this.websockets.set("poloniex", poloniexWs);
+        liveDataEvents.emit("websocket_connected", "poloniex");
+      };
 
-          poloniexWs.onmessage = (event: MessageEvent) => {
-            try {
-              const parsedData = JSON.parse(event.data);
-              this.handleWebSocketMessage("poloniex", parsedData);
-            } catch (error) {
-              this.log("error", `Error parsing WebSocket message: ${error}`);
-            }
-          };
-
-          poloniexWs.onerror = (event: Event) => {
-            const error =
-              event instanceof ErrorEvent ? event.error : "WebSocket error";
-            this.log("error", `WebSocket error: ${error}`);
-            liveDataEvents.emit("connection_error", {
-              source: "poloniex",
-              error,
-            });
-          };
-
-          poloniexWs.onclose = () => {
-            this.log("info", "Poloniex V3 WebSocket disconnected");
-            this.websockets.delete("poloniex");
-
-            if (this.isRunning) {
-              const retryCount = (this.retryCount.get("poloniex") || 0) + 1;
-              this.retryCount.set("poloniex", retryCount);
-
-              if (retryCount <= this.config.maxRetries) {
-                setTimeout(
-                  () => this.initializeWebSockets(),
-                  this.config.retryDelay * retryCount
-                );
-              } else {
-                liveDataEvents.emit("max_retries_reached", "poloniex");
-              }
-            }
-          };
+      poloniexWs.onmessage = (event: MessageEvent) => {
+        try {
+          const parsedData = JSON.parse(event.data);
+          this.handleWebSocketMessage("poloniex", parsedData);
+        } catch (error) {
+          this.log("error", `Error parsing WebSocket message: ${error}`);
         }
-      } catch (error) {
-        this.log("error", `Error connecting to Poloniex WebSocket: ${error}`);
-        liveDataEvents.emit("initialization_error", { error });
-      }
+      };
+
+      poloniexWs.onerror = (event: Event) => {
+        const error =
+          event instanceof ErrorEvent ? event.error : "WebSocket error";
+        this.log("error", `WebSocket error: ${error}`);
+        liveDataEvents.emit("connection_error", {
+          source: "poloniex",
+          error,
+        });
+      };
+
+      poloniexWs.onclose = () => {
+        this.log("info", "Poloniex V3 WebSocket disconnected");
+        this.websockets.delete("poloniex");
+
+        if (this.isRunning) {
+          const retryCount = (this.retryCount.get("poloniex") || 0) + 1;
+          this.retryCount.set("poloniex", retryCount);
+
+          if (retryCount <= this.config.maxRetries) {
+            setTimeout(
+              () => this.initializeWebSockets(),
+              this.config.retryDelay * retryCount
+            );
+          } else {
+            liveDataEvents.emit("max_retries_reached", "poloniex");
+          }
+        }
+      };
     } catch (error) {
       this.log("error", `Error initializing WebSockets: ${error}`);
       liveDataEvents.emit("initialization_error", { error });
