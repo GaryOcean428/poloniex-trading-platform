@@ -15,9 +15,20 @@ import {
 } from 'lucide-react';
 import { useTradingContext } from '../hooks/useTradingContext';
 import { poloniexApi } from '../services/poloniexAPI';
-import PoloniexFuturesAPI, { AccountBill } from '../services/poloniexFuturesAPI';
 import TransactionHistory from '../components/account/TransactionHistory';
 import ApiKeyManagement from '../components/account/ApiKeyManagement';
+
+// Type definition for account bills from Poloniex API
+interface AccountBill {
+  billId: string;
+  type: string;
+  symbol?: string;
+  currency?: string;
+  amount: number;
+  fee?: number;
+  ts: number;
+}
+
 // Remove mock data usage
 
 const Account: React.FC = () => {
@@ -104,14 +115,39 @@ const Account: React.FC = () => {
     };
   };
 
-  // Load recent 5 transactions from API
+  // Load recent 5 transactions from backend API
   useEffect(() => {
     let mounted = true;
     const load = async () => {
       setRecentLoading(true);
       setRecentError(null);
       try {
-        const bills = await new PoloniexFuturesAPI().getAccountBills({ limit: 5 });
+        // Get JWT token from localStorage
+        const token = localStorage.getItem('token');
+        if (!token) {
+          throw new Error('Not authenticated');
+        }
+
+        // Call backend API endpoint
+        const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 
+          (window.location.hostname.includes('railway.app') 
+            ? 'https://polytrade-be.up.railway.app'
+            : 'http://localhost:3000');
+        
+        const response = await fetch(`${API_BASE_URL}/api/dashboard/bills?limit=5`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || 'Failed to load transactions');
+        }
+
+        const result = await response.json();
+        const bills = result.data;
         const rows = bills.map(mapBillToTx);
         if (mounted) setRecent(rows);
       } catch (e) {

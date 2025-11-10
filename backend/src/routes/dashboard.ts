@@ -193,4 +193,37 @@ router.get('/positions', authenticateToken, async (req: Request, res: Response) 
   }
 });
 
+/**
+ * GET /api/dashboard/bills
+ * Get account transaction bills/history
+ */
+router.get('/bills', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const credentials = await apiCredentialsService.getCredentials(String(req.user.id));
+    
+    if (!credentials) {
+      return res.status(400).json({
+        error: 'No API credentials found. Please add your Poloniex API keys first.',
+        requiresApiKeys: true
+      });
+    }
+
+    const limit = parseInt(req.query.limit as string) || 10;
+    const bills = await poloniexFuturesService.getAccountBills(credentials, { limit });
+
+    res.json({
+      success: true,
+      data: bills
+    });
+
+  } catch (error: any) {
+    logger.error('Error fetching account bills:', error);
+    res.status(error.response?.status || 500).json({
+      success: false,
+      error: 'Failed to fetch account bills',
+      details: error.response?.data || error.message
+    });
+  }
+});
+
 export default router;
