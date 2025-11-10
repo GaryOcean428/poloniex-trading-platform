@@ -73,9 +73,10 @@ const Settings: React.FC = () => {
       priceAlerts,
       chatNotifications,
       showExtension,
-      dateFormat
+      dateFormat,
+      dateLocale: locale // Use current locale from useDateFormatter
     });
-  }, [apiKey, apiSecret, isLiveTrading, emailNotifications, tradeNotifications, priceAlerts, chatNotifications, showExtension, dateFormat]);
+  }, [apiKey, apiSecret, isLiveTrading, emailNotifications, tradeNotifications, priceAlerts, chatNotifications, showExtension, dateFormat, locale]);
 
   // Handle form input changes
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {

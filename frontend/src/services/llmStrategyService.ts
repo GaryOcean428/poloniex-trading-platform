@@ -66,7 +66,7 @@ export async function generateStrategy(
   request: StrategyGenerationRequest
 ): Promise<GeneratedStrategy> {
   try {
-    const response = await apiClient.post('/llm-strategies/generate', request);
+    const response = await apiClient.post<{ strategy: GeneratedStrategy }>('/llm-strategies/generate', request);
     return response.data.strategy;
   } catch (error: any) {
     if (error.response?.status === 503) {
@@ -83,7 +83,7 @@ export async function generateStrategyVariations(
   request: StrategyVariationsRequest
 ): Promise<GeneratedStrategy[]> {
   try {
-    const response = await apiClient.post('/llm-strategies/generate-variations', request);
+    const response = await apiClient.post<{ strategies: GeneratedStrategy[] }>('/llm-strategies/generate-variations', request);
     return response.data.strategies;
   } catch (error: any) {
     if (error.response?.status === 503) {
@@ -100,7 +100,7 @@ export async function optimizeStrategy(
   request: StrategyOptimizationRequest
 ): Promise<GeneratedStrategy> {
   try {
-    const response = await apiClient.post('/llm-strategies/optimize', request);
+    const response = await apiClient.post<{ optimizedStrategy: GeneratedStrategy }>('/llm-strategies/optimize', request);
     return response.data.optimizedStrategy;
   } catch (error: any) {
     if (error.response?.status === 503) {
@@ -118,7 +118,7 @@ export async function analyzeMarket(
   timeframe: string = '1h'
 ): Promise<MarketAnalysis> {
   try {
-    const response = await apiClient.post('/llm-strategies/analyze-market', {
+    const response = await apiClient.post<{ analysis: MarketAnalysis }>('/llm-strategies/analyze-market', {
       tradingPair,
       timeframe
     });
@@ -136,7 +136,7 @@ export async function analyzeMarket(
  */
 export async function checkLLMAvailability(): Promise<boolean> {
   try {
-    const response = await apiClient.get('/llm-strategies/status');
+    const response = await apiClient.get<{ available: boolean }>('/llm-strategies/status');
     return response.data.available === true;
   } catch (error) {
     return false;

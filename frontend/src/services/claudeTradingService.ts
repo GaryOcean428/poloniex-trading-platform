@@ -98,7 +98,21 @@ class ClaudeTradingService {
       }
     ];
 
-    const selectedInsight = insights[Math.floor(Math.random() * insights.length)];
+    const index = Math.floor(Math.random() * insights.length);
+    const selectedInsight = insights[index];
+    
+    if (!selectedInsight) {
+      // Fallback in case of unexpected error
+      return {
+        type: 'analysis',
+        title: 'Market Analysis',
+        content: 'Market data analysis in progress.',
+        confidence: 50,
+        timeframe: 'Current',
+        createdAt: new Date()
+      };
+    }
+    
     return {
       type: selectedInsight.type,
       title: selectedInsight.title,

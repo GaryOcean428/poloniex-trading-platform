@@ -183,7 +183,7 @@ export function parseDate(dateStr: string, format: DateFormat = 'AU'): Date | nu
   const [first, second, third] = parts.map(p => parseInt(p, 10));
 
   // Check for NaN values from parseInt
-  if (isNaN(first) || isNaN(second) || isNaN(third)) {
+  if (isNaN(first as number) || isNaN(second as number) || isNaN(third as number)) {
     return null;
   }
 

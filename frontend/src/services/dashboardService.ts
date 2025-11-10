@@ -91,7 +91,7 @@ class DashboardService {
     if (token) {
       try {
         const tokenParts = token.split('.');
-        if (tokenParts.length === 3) {
+        if (tokenParts.length === 3 && tokenParts[1]) {
           const payload = JSON.parse(atob(tokenParts[1]));
           const isExpired = payload.exp * 1000 < Date.now();
           
@@ -103,8 +103,11 @@ class DashboardService {
               const response = await axios.post(`${API_BASE_URL}/api/auth/refresh`, {
                 refreshToken
               });
-              token = response.data.token;
-              localStorage.setItem('token', token);
+              const newToken = response.data.token;
+              if (newToken) {
+                token = newToken;
+                localStorage.setItem('token', newToken);
+              }
             } else {
               // No refresh token, redirect to login
               console.warn('No refresh token available, user needs to re-login');
@@ -199,10 +202,11 @@ class DashboardService {
    */
   async getOpenOrders(symbol?: string): Promise<Order[]> {
     try {
+      const headers = await this.getAuthHeaders();
       const response = await axios.get(
         `${API_BASE_URL}/api/futures/orders`,
         { 
-          headers: this.getAuthHeaders(),
+          headers,
           params: { status: 'NEW', symbol }
         }
       );
