@@ -187,18 +187,18 @@ export function parseDate(dateStr: string, format: DateFormat = 'AU'): Date | nu
     return null;
   }
 
-  let day: number, month: number, year: number;
+  let day: number = 0, month: number = 0, year: number = 0;
 
   if (format === 'AU') {
     // DD/MM/YYYY
-    day = first;
-    month = second;
-    year = third;
+    day = first as number;
+    month = second as number;
+    year = third as number;
   } else {
     // MM/DD/YYYY
-    month = first;
-    day = second;
-    year = third;
+    month = first as number;
+    day = second as number;
+    year = third as number;
   }
 
   // Basic range validation
@@ -220,8 +220,8 @@ export function parseDate(dateStr: string, format: DateFormat = 'AU'): Date | nu
   
   // Add time if present
   if (parts.length >= 5) {
-    const hours = parseInt(parts[3], 10);
-    const minutes = parseInt(parts[4], 10);
+    const hours = parseInt(parts[3] || '0', 10);
+    const minutes = parseInt(parts[4] || '0', 10);
     
     if (isNaN(hours) || isNaN(minutes)) {
       return null;
@@ -234,7 +234,7 @@ export function parseDate(dateStr: string, format: DateFormat = 'AU'): Date | nu
     date.setHours(hours, minutes);
     
     if (parts.length >= 6) {
-      const seconds = parseInt(parts[5], 10);
+      const seconds = parseInt(parts[5] || '0', 10);
       
       if (isNaN(seconds) || seconds < 0 || seconds > 59) {
         return null;

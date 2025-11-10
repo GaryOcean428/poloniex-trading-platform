@@ -88,8 +88,9 @@ const Sidebar: React.FC = () => {
     };
   }, [isMobileMenuOpen]);
 
-  // Mobile hamburger button (shown in Navbar on mobile)
-  const MobileMenuButton = () => (
+  // Mobile hamburger button (shown in Navbar on mobile) - Unused, exported for compatibility
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const _MobileMenuButton = () => (
     <button
       onClick={toggleMobileMenu}
       className="lg:hidden p-2 rounded-md text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 transition-colors"
@@ -138,7 +139,7 @@ const Sidebar: React.FC = () => {
                 {isLoading ? (
                   <div className="animate-pulse bg-neutral-700 h-8 w-32 rounded"></div>
                 ) : (
-                  `$${accountBalance.toFixed(2)} USDT`
+                  `$${typeof accountBalance === 'object' ? accountBalance.total.toFixed(2) : accountBalance ? accountBalance.toFixed(2) : '0.00'} USDT`
                 )}
               </div>
               <div className="text-xs text-neutral-500 mt-1">USDT</div>
@@ -227,7 +228,7 @@ const Sidebar: React.FC = () => {
               {isLoading ? (
                 <div className="animate-pulse bg-neutral-700 h-8 w-32 rounded"></div>
               ) : (
-                `$${accountBalance.toFixed(2)} USDT`
+                `$${typeof accountBalance === 'object' ? accountBalance.total.toFixed(2) : accountBalance ? accountBalance.toFixed(2) : '0.00'} USDT`
               )}
             </div>
             <div className="text-xs text-neutral-500 mt-1">USDT</div>

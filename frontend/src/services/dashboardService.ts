@@ -84,29 +84,32 @@ export interface DashboardResponse {
 }
 
 class DashboardService {
-  private async getAuthHeaders() {
+  private async getAuthHeaders(): Promise<Record<string, string>> {
     let token = localStorage.getItem('token');
     
     // Check if token is expired (basic check - decode JWT and check exp)
     if (token) {
       try {
-        const payload = JSON.parse(atob(token.split('.')[1]));
-        const isExpired = payload.exp * 1000 < Date.now();
-        
-        if (isExpired) {
-          console.log('Token expired, attempting refresh...');
-          // Try to refresh token
-          const refreshToken = localStorage.getItem('refreshToken');
-          if (refreshToken) {
-            const response = await axios.post(`${API_BASE_URL}/api/auth/refresh`, {
-              refreshToken
-            });
-            token = response.data.token;
-            localStorage.setItem('token', token);
-          } else {
-            // No refresh token, redirect to login
-            console.warn('No refresh token available, user needs to re-login');
-            // Don't redirect automatically, just use expired token and let backend handle it
+        const tokenParts = token.split('.');
+        if (tokenParts.length === 3) {
+          const payload = JSON.parse(atob(tokenParts[1]));
+          const isExpired = payload.exp * 1000 < Date.now();
+          
+          if (isExpired) {
+            console.log('Token expired, attempting refresh...');
+            // Try to refresh token
+            const refreshToken = localStorage.getItem('refreshToken');
+            if (refreshToken) {
+              const response = await axios.post(`${API_BASE_URL}/api/auth/refresh`, {
+                refreshToken
+              });
+              token = response.data.token;
+              localStorage.setItem('token', token);
+            } else {
+              // No refresh token, redirect to login
+              console.warn('No refresh token available, user needs to re-login');
+              // Don't redirect automatically, just use expired token and let backend handle it
+            }
           }
         }
       } catch (error) {
@@ -115,7 +118,7 @@ class DashboardService {
     }
     
     return {
-      'Authorization': `Bearer ${token}`,
+      'Authorization': `Bearer ${token || ''}`,
       'Content-Type': 'application/json'
     };
   }
@@ -125,9 +128,10 @@ class DashboardService {
    */
   async getOverview(): Promise<DashboardResponse> {
     try {
+      const headers = await this.getAuthHeaders();
       const response = await axios.get<DashboardResponse>(
         `${API_BASE_URL}/api/dashboard/overview`,
-        { headers: this.getAuthHeaders() }
+        { headers }
       );
       return response.data;
     } catch (error: any) {
@@ -141,9 +145,10 @@ class DashboardService {
    */
   async getBalance(): Promise<Balance> {
     try {
+      const headers = await this.getAuthHeaders();
       const response = await axios.get(
         `${API_BASE_URL}/api/dashboard/balance`,
-        { headers: this.getAuthHeaders() }
+        { headers }
       );
       return response.data.data;
     } catch (error: any) {
@@ -157,9 +162,10 @@ class DashboardService {
    */
   async getPositions(): Promise<{ positions: Position[]; summary: any }> {
     try {
+      const headers = await this.getAuthHeaders();
       const response = await axios.get(
         `${API_BASE_URL}/api/dashboard/positions`,
-        { headers: this.getAuthHeaders() }
+        { headers }
       );
       return response.data.data;
     } catch (error: any) {
@@ -173,10 +179,11 @@ class DashboardService {
    */
   async getTrades(params?: { symbol?: string; limit?: number }): Promise<Trade[]> {
     try {
+      const headers = await this.getAuthHeaders();
       const response = await axios.get(
         `${API_BASE_URL}/api/futures/trades`,
         { 
-          headers: this.getAuthHeaders(),
+          headers,
           params
         }
       );

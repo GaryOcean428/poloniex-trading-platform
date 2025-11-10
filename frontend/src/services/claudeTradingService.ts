@@ -98,8 +98,13 @@ class ClaudeTradingService {
       }
     ];
 
+    const selectedInsight = insights[Math.floor(Math.random() * insights.length)];
     return {
-      ...insights[Math.floor(Math.random() * insights.length)],
+      type: selectedInsight.type,
+      title: selectedInsight.title,
+      content: selectedInsight.content,
+      confidence: selectedInsight.confidence,
+      timeframe: selectedInsight.timeframe,
       createdAt: new Date()
     };
   }
