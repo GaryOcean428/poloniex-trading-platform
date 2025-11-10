@@ -153,6 +153,20 @@ class FuturesWebSocketClient extends EventEmitter {
         }
     }
     /**
+     * Generate HMAC-SHA256 signature for private WebSocket messages
+     * @private
+     */
+    generatePrivateSignature(timestamp) {
+        if (!this.credentials) {
+            throw new Error('No credentials available for signature generation');
+        }
+        const message = `${timestamp}GET/users/self/verify`;
+        return crypto
+            .createHmac('sha256', this.credentials.apiSecret)
+            .update(message)
+            .digest('base64');
+    }
+    /**
      * Authenticate private WebSocket connection
      */
     authenticatePrivate() {
@@ -162,11 +176,7 @@ class FuturesWebSocketClient extends EventEmitter {
         }
         try {
             const timestamp = Date.now().toString();
-            const message = `${timestamp}GET/users/self/verify`;
-            const signature = crypto
-                .createHmac('sha256', this.credentials.apiSecret)
-                .update(message)
-                .digest('base64');
+            const signature = this.generatePrivateSignature(timestamp);
             const authMessage = {
                 id: Date.now(),
                 type: 'subscribe',
@@ -543,11 +553,15 @@ class FuturesWebSocketClient extends EventEmitter {
         });
     }
     /**
-     * Subscribe to private channels
+     * Subscribe to private channels with HMAC-SHA256 authentication
      */
     subscribeToPrivateChannels(channels = ['wallet', 'position', 'orders', 'trades']) {
         if (!this.privateWS || this.privateWS.readyState !== WebSocket.OPEN) {
             logger.warn('Private WebSocket not connected, cannot subscribe to private channels');
+            return;
+        }
+        if (!this.credentials) {
+            logger.error('No credentials available for private channel subscription');
             return;
         }
         channels.forEach(channel => {
@@ -556,16 +570,28 @@ class FuturesWebSocketClient extends EventEmitter {
                 logger.debug(`Already subscribed to ${topic}`);
                 return;
             }
-            const message = {
-                id: Date.now(),
-                type: 'subscribe',
-                topic: topic,
-                privateChannel: true,
-                response: true
-            };
-            this.privateWS?.send(JSON.stringify(message));
-            this.privateSubscriptions.add(channel);
-            logger.info(`Subscribed to ${topic}`);
+            try {
+                const timestamp = Date.now().toString();
+                const signature = this.generatePrivateSignature(timestamp);
+                const message = {
+                    id: Date.now(),
+                    type: 'subscribe',
+                    topic: topic,
+                    privateChannel: true,
+                    response: true,
+                    apiKey: this.credentials.apiKey,
+                    sign: signature,
+                    timestamp: timestamp,
+                    passphrase: this.credentials.passphrase || ''
+                };
+                this.privateWS?.send(JSON.stringify(message));
+                this.privateSubscriptions.add(channel);
+                logger.info(`Subscribed to ${topic} with authentication`);
+            }
+            catch (error) {
+                logger.error(`Failed to subscribe to ${topic}:`, error);
+                this.emit('error', { type: 'private', error });
+            }
         });
     }
     /**
