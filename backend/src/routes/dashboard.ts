@@ -1,7 +1,7 @@
 import express, { Request, Response } from 'express';
 import { authenticateToken } from '../middleware/auth.js';
 import poloniexFuturesService from '../services/poloniexFuturesService.js';
-import { UserService } from '../services/userService.js';
+import { apiCredentialsService } from '../services/apiCredentialsService.js';
 import { logger } from '../utils/logger.js';
 
 const router = express.Router();
@@ -12,7 +12,7 @@ const router = express.Router();
  */
 router.get('/overview', authenticateToken, async (req: Request, res: Response) => {
   try {
-    const credentials = await UserService.getApiCredentials(req.user.id);
+    const credentials = await apiCredentialsService.getCredentials(req.user.id);
     
     if (!credentials) {
       return res.status(400).json({
@@ -118,7 +118,7 @@ router.get('/overview', authenticateToken, async (req: Request, res: Response) =
  */
 router.get('/balance', authenticateToken, async (req: Request, res: Response) => {
   try {
-    const credentials = await UserService.getApiCredentials(req.user.id);
+    const credentials = await apiCredentialsService.getCredentials(req.user.id);
     
     if (!credentials) {
       return res.status(400).json({
@@ -149,7 +149,7 @@ router.get('/balance', authenticateToken, async (req: Request, res: Response) =>
  */
 router.get('/positions', authenticateToken, async (req: Request, res: Response) => {
   try {
-    const credentials = await UserService.getApiCredentials(req.user.id);
+    const credentials = await apiCredentialsService.getCredentials(req.user.id);
     
     if (!credentials) {
       return res.status(400).json({
