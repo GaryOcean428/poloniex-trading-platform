@@ -12,18 +12,69 @@ const router = express.Router();
  */
 router.get('/overview', authenticateToken, async (req: Request, res: Response) => {
   try {
-    const credentials = await apiCredentialsService.getCredentials(String(req.user.id));
+    let credentials;
+    try {
+      credentials = await apiCredentialsService.getCredentials(String(req.user.id));
+    } catch (credError) {
+      // No credentials found - return mock data for demo users
+      return res.json({
+        success: true,
+        timestamp: new Date().toISOString(),
+        data: {
+          balance: {
+            availableBalance: '10000.00',
+            totalEquity: '10000.00',
+            unrealizedPnL: '0.00',
+            currency: 'USDT'
+          },
+          positions: [],
+          positionsSummary: {
+            totalPositions: 0,
+            totalValue: 0,
+            totalPnL: 0
+          },
+          recentTrades: [],
+          tradesSummary: {
+            count: 0,
+            last24h: 0
+          },
+          openOrders: [],
+          ordersSummary: {
+            count: 0
+          }
+        },
+        mock: true
+      });
+    }
     
     if (!credentials) {
-      return res.status(400).json({
-        error: 'No API credentials found. Please add your Poloniex API keys first.',
-        requiresApiKeys: true,
+      return res.json({
+        success: true,
+        timestamp: new Date().toISOString(),
         data: {
-          balance: null,
+          balance: {
+            availableBalance: '10000.00',
+            totalEquity: '10000.00',
+            unrealizedPnL: '0.00',
+            currency: 'USDT'
+          },
           positions: [],
+          positionsSummary: {
+            totalPositions: 0,
+            totalValue: 0,
+            totalPnL: 0
+          },
           recentTrades: [],
-          openOrders: []
-        }
+          tradesSummary: {
+            count: 0,
+            last24h: 0
+          },
+          openOrders: [],
+          ordersSummary: {
+            count: 0
+          }
+        },
+        mock: true
       });
     }
 
@@ -118,12 +169,41 @@ router.get('/overview', authenticateToken, async (req: Request, res: Response) =
  */
 router.get('/balance', authenticateToken, async (req: Request, res: Response) => {
   try {
-    const credentials = await apiCredentialsService.getCredentials(String(req.user.id));
+    let credentials;
+    try {
+      credentials = await apiCredentialsService.getCredentials(String(req.user.id));
+    } catch (credError) {
+      // No credentials found - return mock data for demo users
+      return res.json({
+        success: true,
+        data: {
+          availableBalance: '10000.00',
+          totalEquity: '10000.00',
+          unrealizedPnL: '0.00',
+          marginBalance: '10000.00',
+          positionMargin: '0.00',
+          orderMargin: '0.00',
+          frozenFunds: '0.00',
+          currency: 'USDT'
+        },
+        mock: true
+      });
+    }
     
     if (!credentials) {
-      return res.status(400).json({
-        error: 'No API credentials found',
-        requiresApiKeys: true
+      return res.json({
+        success: true,
+        data: {
+          availableBalance: '10000.00',
+          totalEquity: '10000.00',
+          unrealizedPnL: '0.00',
+          marginBalance: '10000.00',
+          positionMargin: '0.00',
+          orderMargin: '0.00',
+          frozenFunds: '0.00',
+          currency: 'USDT'
+        },
+        mock: true
       });
     }
 
@@ -149,12 +229,37 @@ router.get('/balance', authenticateToken, async (req: Request, res: Response) =>
  */
 router.get('/positions', authenticateToken, async (req: Request, res: Response) => {
   try {
-    const credentials = await apiCredentialsService.getCredentials(String(req.user.id));
+    let credentials;
+    try {
+      credentials = await apiCredentialsService.getCredentials(String(req.user.id));
+    } catch (credError) {
+      // No credentials found - return empty positions for demo users
+      return res.json({
+        success: true,
+        data: {
+          positions: [],
+          summary: {
+            count: 0,
+            totalPnL: 0,
+            totalValue: 0
+          }
+        },
+        mock: true
+      });
+    }
     
     if (!credentials) {
-      return res.status(400).json({
-        error: 'No API credentials found',
-        requiresApiKeys: true
+      return res.json({
+        success: true,
+        data: {
+          positions: [],
+          summary: {
+            count: 0,
+            totalPnL: 0,
+            totalValue: 0
+          }
+        },
+        mock: true
       });
     }
 
