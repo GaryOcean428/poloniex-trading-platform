@@ -101,7 +101,20 @@ router.get('/klines/:symbol', async (req: Request, res: Response) => {
   try {
     const { symbol } = req.params;
     const { interval = '1h', limit = '100' } = req.query;
-    const klines = await poloniexFuturesService.getKlines(symbol, interval as string, parseInt(limit as string));
+    
+    // Convert interval to granularity in seconds
+    const granularityMap: Record<string, number> = {
+      '1m': 60,
+      '5m': 300,
+      '15m': 900,
+      '30m': 1800,
+      '1h': 3600,
+      '4h': 14400,
+      '1d': 86400
+    };
+    
+    const granularity = granularityMap[interval as string] || 3600; // Default to 1h
+    const klines = await poloniexFuturesService.getKlines(symbol, granularity.toString(), { limit: parseInt(limit as string) });
     res.json(klines);
   } catch (error: any) {
     logger.error(`Error fetching klines for ${req.params.symbol}:`, error);
