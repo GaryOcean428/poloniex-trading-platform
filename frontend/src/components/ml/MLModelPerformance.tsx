@@ -3,10 +3,14 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Responsi
 import axios from 'axios';
 
 // Auto-detect API base URL based on environment
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 
-  (window.location.hostname.includes('railway.app') 
-    ? 'https://polytrade-be.up.railway.app'
-    : 'http://localhost:3000');
+const getApiBaseUrl = () => {
+  if (typeof window !== 'undefined' && window.location.hostname.includes('railway.app')) {
+    return 'https://polytrade-be.up.railway.app';
+  }
+  return 'http://localhost:3000';
+};
+
+const API_BASE_URL = getApiBaseUrl();
 
 interface ModelPrediction {
   model: string;
