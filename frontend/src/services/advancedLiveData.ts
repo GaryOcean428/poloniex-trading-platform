@@ -437,7 +437,7 @@ export class LiveDataService {
         return cached;
       }
 
-      const response = await this.poloniexRestClient.get(`/${symbol}/candles`, {
+      const response = await this.poloniexRestClient.get(`/klines/${symbol}`, {
         params: { interval, limit },
       });
 

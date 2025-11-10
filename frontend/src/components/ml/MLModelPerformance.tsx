@@ -1,5 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import axios from 'axios';
+
+// Auto-detect API base URL based on environment
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 
+  (window.location.hostname.includes('railway.app') 
+    ? 'https://polytrade-be.up.railway.app'
+    : 'http://localhost:3000');
 
 interface ModelPrediction {
   model: string;
@@ -37,11 +44,14 @@ const MLModelPerformance: React.FC<{ symbol: string }> = ({ symbol }) => {
   const fetchMLPerformance = async () => {
     try {
       setLoading(true);
-      // This endpoint will be created in the backend
-      const response = await fetch(`/api/ml/performance/${symbol}`);
-      if (!response.ok) throw new Error('Failed to fetch ML performance');
-      const data = await response.json();
-      setPerformanceData(data);
+      const token = localStorage.getItem('access_token') || localStorage.getItem('token');
+      const response = await axios.get(
+        `${API_BASE_URL}/api/ml/performance/${symbol}`,
+        {
+          headers: token ? { Authorization: `Bearer ${token}` } : {}
+        }
+      );
+      setPerformanceData(response.data);
       setError(null);
     } catch (err: any) {
       setError(err.message);

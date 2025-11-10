@@ -11,8 +11,8 @@ const RecentTradesWidget: React.FC = () => {
   const fetchTrades = async () => {
     try {
       setError(null);
-      const data = await dashboardService.getTrades({ limit: 10 });
-      setTrades(data);
+      const overview = await dashboardService.getOverview();
+      setTrades(overview.data.recentTrades || []);
     } catch (err: any) {
       setError(err.message);
       console.error('Failed to fetch trades:', err);
