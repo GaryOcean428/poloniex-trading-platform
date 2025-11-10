@@ -91,9 +91,9 @@ class FuturesWebSocketClient extends EventEmitter {
   private credentials: ConnectionCredentials | null = null;
   private subscriptions: Map<string, any> = new Map();
   
-  // WebSocket URLs - Updated to correct Poloniex V3 API endpoints
-  private readonly publicURL: string = 'wss://futures-apiws.poloniex.com/endpoint';
-  private readonly privateURL: string = 'wss://futures-apiws.poloniex.com/endpoint';
+  // WebSocket URLs - Correct Poloniex V3 API endpoints (per official docs)
+  private readonly publicURL: string = 'wss://ws.poloniex.com/ws/v3/public';
+  private readonly privateURL: string = 'wss://ws.poloniex.com/ws/v3/private';
   
   // Subscription tracking
   private marketDataSubscriptions: Set<string> = new Set();
@@ -126,32 +126,11 @@ class FuturesWebSocketClient extends EventEmitter {
   }
 
   /**
-   * Get WebSocket token for V3 API
+   * NOTE: Poloniex V3 API does not require token endpoint.
+   * Public WebSocket connects directly without authentication.
+   * Private WebSocket uses HMAC-SHA256 signed subscription messages.
+   * Removed deprecated getWebSocketToken() method.
    */
-  private async getWebSocketToken(): Promise<string> {
-    try {
-      const response = await globalThis.fetch('https://futures-api.poloniex.com/api/v1/bullet-public', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        }
-      });
-      
-      if (!response.ok) {
-        throw new Error(`Failed to get WebSocket token: ${response.status}`);
-      }
-      
-      const data = await response.json();
-      if (data?.data?.token) {
-        return data.data.token;
-      } else {
-        throw new Error('Invalid token response format');
-      }
-    } catch (error) {
-      logger.error('Failed to get WebSocket token:', error);
-      throw error;
-    }
-  }
 
   /**
    * Connect to public WebSocket
@@ -163,12 +142,9 @@ class FuturesWebSocketClient extends EventEmitter {
         return;
       }
 
-      logger.info('Getting WebSocket token...');
-      const token = await this.getWebSocketToken();
-      
       logger.info('Connecting to Poloniex Futures public WebSocket...');
-      const wsUrl = `${this.publicURL}?token=${token}`;
-      this.publicWS = new WebSocket(wsUrl);
+      // V3 API: Direct connection, no token required for public channel
+      this.publicWS = new WebSocket(this.publicURL);
       
       // Properly typed event handlers following @types/ws
       this.publicWS.on('open', () => {

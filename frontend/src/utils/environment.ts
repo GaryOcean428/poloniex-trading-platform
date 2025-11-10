@@ -59,10 +59,10 @@ export const getPoloniexWebSocketUrl = (type: 'public' | 'private' = 'public'): 
     return customWsUrl;
   }
 
-  // Default Poloniex V3 futures WebSocket endpoints
+  // Default Poloniex V3 futures WebSocket endpoints (per official docs)
   return type === 'public'
-    ? 'wss://futures-apiws.poloniex.com'
-    : 'wss://futures-apiws.poloniex.com';
+    ? 'wss://ws.poloniex.com/ws/v3/public'
+    : 'wss://ws.poloniex.com/ws/v3/private';
 };
 
 // Mock mode configuration

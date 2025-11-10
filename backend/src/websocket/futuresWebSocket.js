@@ -2,8 +2,78 @@ import WebSocket from 'ws';
 import crypto from 'crypto';
 import { EventEmitter } from 'events';
 import { logger } from '../utils/logger.js';
-import { query } from '../db/connection.js';
+import { pool } from '../db/connection.js';
+import alertingService from '../services/alertingService.js';
+
+// Query helper function
+const query = async (text: string, params?: unknown[]) => {
+  return await pool.query(text, params);
+};
 import poloniexFuturesService from '../services/poloniexFuturesService.js';
+import { WebSocketEvents, PoloniexEvents, PoloniexTopics, MessageTypes } from '../types/websocketEvents.js';
+import { 
+  AccountData, 
+  PositionData, 
+  OrderData, 
+  TradeExecutionData, 
+  TickerData,
+  WebSocketData,
+  isAccountData,
+  isPositionData,
+  isOrderData,
+  isTradeExecutionData
+} from '../types/websocketData.js';
+
+// WebSocket event handler type definitions aligned with @types/ws
+type WebSocketEventHandler = (ws: WebSocket, message: Buffer) => void | Promise<void>;
+type WebSocketErrorHandler = (ws: WebSocket, error: Error) => void | Promise<void>;
+type WebSocketConnectionHandler = (ws: WebSocket) => void | Promise<void>;
+type WebSocketCloseHandler = (ws: WebSocket, code: number, reason: Buffer) => void | Promise<void>;
+
+// Message interfaces for type safety
+interface PoloniexMessage {
+  type: string;
+  topic?: string;
+  subject?: string;
+  data?: unknown;
+  id?: number;
+}
+
+interface SubscriptionMessage {
+  id: number;
+  type: 'subscribe' | 'unsubscribe';
+  topic: string;
+  privateChannel?: boolean;
+  response?: boolean;
+  apiKey?: string;
+  sign?: string;
+  timestamp?: string;
+  passphrase?: string;
+}
+
+interface ConnectionCredentials {
+  apiKey: string;
+  apiSecret: string;
+  passphrase?: string;
+}
+
+interface ConnectionStatus {
+  public: {
+    connected: boolean;
+    subscriptions: string[];
+  };
+  private: {
+    connected: boolean;
+    subscriptions: string[];
+  };
+  reconnectAttempts: number;
+}
+
+interface HealthCheckResult {
+  healthy: boolean;
+  details: ConnectionStatus;
+  timestamp: string;
+}
 
 /**
  * Poloniex Futures WebSocket Client
@@ -11,25 +81,26 @@ import poloniexFuturesService from '../services/poloniexFuturesService.js';
  * Based on https://api-docs.poloniex.com/v3/futures/websocket
  */
 class FuturesWebSocketClient extends EventEmitter {
+  private publicWS: WebSocket | null = null;
+  private privateWS: WebSocket | null = null;
+  private isConnected: boolean = false;
+  private reconnectAttempts: number = 0;
+  private readonly maxReconnectAttempts: number = 5;
+  private readonly reconnectDelay: number = 5000;
+  private pingInterval: NodeJS.Timeout | null = null;
+  private credentials: ConnectionCredentials | null = null;
+  private subscriptions: Map<string, any> = new Map();
+  
+  // WebSocket URLs - Correct Poloniex V3 API endpoints (per official docs)
+  private readonly publicURL: string = 'wss://ws.poloniex.com/ws/v3/public';
+  private readonly privateURL: string = 'wss://ws.poloniex.com/ws/v3/private';
+  
+  // Subscription tracking
+  private marketDataSubscriptions: Set<string> = new Set();
+  private privateSubscriptions: Set<string> = new Set();
+
   constructor() {
     super();
-    this.publicWS = null;
-    this.privateWS = null;
-    this.isConnected = false;
-    this.reconnectAttempts = 0;
-    this.maxReconnectAttempts = 5;
-    this.reconnectDelay = 5000;
-    this.pingInterval = null;
-    this.credentials = null;
-    this.subscriptions = new Map();
-    
-    // WebSocket URLs - Updated to correct Poloniex V3 API endpoints
-    this.publicURL = 'wss://futures-apiws.poloniex.com/endpoint';
-    this.privateURL = 'wss://futures-apiws.poloniex.com/endpoint';
-    
-    // Subscription tracking
-    this.marketDataSubscriptions = new Set();
-    this.privateSubscriptions = new Set();
   }
 
   // =================== CONNECTION MANAGEMENT ===================
@@ -37,10 +108,10 @@ class FuturesWebSocketClient extends EventEmitter {
   /**
    * Connect to WebSocket (general method)
    */
-  async connect() {
+  async connect(): Promise<void> {
     try {
       // Add error handler to prevent uncaught errors
-      this.on('error', (errorInfo) => {
+      this.on('error', (errorInfo: { type: string; error: Error }) => {
         logger.error(`WebSocket ${errorInfo.type} error:`, errorInfo.error);
         // Don't crash the application, just log the error
       });
@@ -55,50 +126,27 @@ class FuturesWebSocketClient extends EventEmitter {
   }
 
   /**
-   * Get WebSocket token for V3 API
+   * NOTE: Poloniex V3 API does not require token endpoint.
+   * Public WebSocket connects directly without authentication.
+   * Private WebSocket uses HMAC-SHA256 signed subscription messages.
+   * Removed deprecated getWebSocketToken() method.
    */
-  async getWebSocketToken() {
-    try {
-      const response = await globalThis.fetch('https://futures-api.poloniex.com/api/v1/bullet-public', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        }
-      });
-      
-      if (!response.ok) {
-        throw new Error(`Failed to get WebSocket token: ${response.status}`);
-      }
-      
-      const data = await response.json();
-      if (data && data.data && data.data.token) {
-        return data.data.token;
-      } else {
-        throw new Error('Invalid token response format');
-      }
-    } catch (error) {
-      logger.error('Failed to get WebSocket token:', error);
-      throw error;
-    }
-  }
 
   /**
    * Connect to public WebSocket
    */
-  async connectPublic() {
+  private async connectPublic(): Promise<void> {
     try {
-      if (this.publicWS && this.publicWS.readyState === WebSocket.OPEN) {
+      if (this.publicWS?.readyState === WebSocket.OPEN) {
         logger.info('Public WebSocket already connected');
         return;
       }
 
-      logger.info('Getting WebSocket token...');
-      const token = await this.getWebSocketToken();
-      
       logger.info('Connecting to Poloniex Futures public WebSocket...');
-      const wsUrl = `${this.publicURL}?token=${token}`;
-      this.publicWS = new WebSocket(wsUrl);
+      // V3 API: Direct connection, no token required for public channel
+      this.publicWS = new WebSocket(this.publicURL);
       
+      // Properly typed event handlers following @types/ws
       this.publicWS.on('open', () => {
         logger.info('✅ Public WebSocket connected');
         this.isConnected = true;
@@ -107,20 +155,31 @@ class FuturesWebSocketClient extends EventEmitter {
         this.emit('connected', { type: 'public' });
       });
 
-      this.publicWS.on('message', (data) => {
+      this.publicWS.on('message', (data: Buffer) => {
         this.handleMessage(data, 'public');
       });
 
-      this.publicWS.on('error', (error) => {
+      this.publicWS.on('error', (error: Error) => {
         logger.error('Public WebSocket error:', error);
         this.emit('error', { type: 'public', error });
       });
 
-      this.publicWS.on('close', (code, reason) => {
-        logger.warn(`Public WebSocket closed: ${code} - ${reason}`);
+      this.publicWS.on('close', (code: number, reason: Buffer) => {
+        logger.warn(`Public WebSocket closed: ${code} - ${reason.toString()}`);
         this.isConnected = false;
         this.stopPingInterval();
-        this.emit('disconnected', { type: 'public', code, reason });
+        this.emit('disconnected', { type: 'public', code, reason: reason.toString() });
+        
+        // Alert if multiple reconnect attempts
+        if (this.reconnectAttempts >= 3) {
+          alertingService.alertDisconnection({
+            service: 'public_websocket',
+            code,
+            reason: reason.toString(),
+            reconnectAttempts: this.reconnectAttempts
+          });
+        }
+        
         this.scheduleReconnect('public');
       });
 
@@ -133,9 +192,9 @@ class FuturesWebSocketClient extends EventEmitter {
   /**
    * Connect to private WebSocket with authentication
    */
-  async connectPrivate(credentials) {
+  async connectPrivate(credentials: ConnectionCredentials): Promise<void> {
     try {
-      if (this.privateWS && this.privateWS.readyState === WebSocket.OPEN) {
+      if (this.privateWS?.readyState === WebSocket.OPEN) {
         logger.info('Private WebSocket already connected');
         return;
       }
@@ -145,23 +204,35 @@ class FuturesWebSocketClient extends EventEmitter {
       
       this.privateWS = new WebSocket(this.privateURL);
       
+      // Properly typed event handlers following @types/ws
       this.privateWS.on('open', () => {
         logger.info('✅ Private WebSocket connected, authenticating...');
         this.authenticatePrivate();
       });
 
-      this.privateWS.on('message', (data) => {
+      this.privateWS.on('message', (data: Buffer) => {
         this.handleMessage(data, 'private');
       });
 
-      this.privateWS.on('error', (error) => {
+      this.privateWS.on('error', (error: Error) => {
         logger.error('Private WebSocket error:', error);
         this.emit('error', { type: 'private', error });
       });
 
-      this.privateWS.on('close', (code, reason) => {
-        logger.warn(`Private WebSocket closed: ${code} - ${reason}`);
-        this.emit('disconnected', { type: 'private', code, reason });
+      this.privateWS.on('close', (code: number, reason: Buffer) => {
+        logger.warn(`Private WebSocket closed: ${code} - ${reason.toString()}`);
+        this.emit('disconnected', { type: 'private', code, reason: reason.toString() });
+        
+        // Alert if multiple reconnect attempts
+        if (this.reconnectAttempts >= 3) {
+          alertingService.alertDisconnection({
+            service: 'private_websocket',
+            code,
+            reason: reason.toString(),
+            reconnectAttempts: this.reconnectAttempts
+          });
+        }
+        
         this.scheduleReconnect('private');
       });
 
@@ -174,7 +245,7 @@ class FuturesWebSocketClient extends EventEmitter {
   /**
    * Authenticate private WebSocket connection
    */
-  authenticatePrivate() {
+  private authenticatePrivate(): void {
     if (!this.credentials) {
       logger.error('No credentials provided for private WebSocket authentication');
       return;
@@ -189,7 +260,7 @@ class FuturesWebSocketClient extends EventEmitter {
         .update(message)
         .digest('base64');
 
-      const authMessage = {
+      const authMessage: SubscriptionMessage = {
         id: Date.now(),
         type: 'subscribe',
         topic: '/contractAccount/wallet',
@@ -201,7 +272,7 @@ class FuturesWebSocketClient extends EventEmitter {
         passphrase: this.credentials.passphrase || ''
       };
 
-      this.privateWS.send(JSON.stringify(authMessage));
+      this.privateWS?.send(JSON.stringify(authMessage));
       logger.info('Private WebSocket authentication sent');
 
     } catch (error) {
@@ -213,7 +284,7 @@ class FuturesWebSocketClient extends EventEmitter {
   /**
    * Disconnect WebSocket connections
    */
-  disconnect() {
+  disconnect(): void {
     this.stopPingInterval();
     
     if (this.publicWS) {
@@ -238,10 +309,12 @@ class FuturesWebSocketClient extends EventEmitter {
 
   /**
    * Handle incoming WebSocket messages
+   * @param data - Raw message data from WebSocket (Buffer type from @types/ws)
+   * @param type - Connection type ('public' or 'private')
    */
-  handleMessage(data, type) {
+  private handleMessage(data: Buffer, type: string): void {
     try {
-      const message = JSON.parse(data.toString());
+      const message: PoloniexMessage = JSON.parse(data.toString());
       
       // Handle different message types
       switch (message.type) {
@@ -278,7 +351,7 @@ class FuturesWebSocketClient extends EventEmitter {
   /**
    * Handle welcome message
    */
-  handleWelcome(message, type) {
+  private handleWelcome(message: PoloniexMessage, type: string): void {
     logger.info(`${type} WebSocket welcome received`);
     this.emit('welcome', { type, message });
   }
@@ -286,7 +359,7 @@ class FuturesWebSocketClient extends EventEmitter {
   /**
    * Handle acknowledgment message
    */
-  handleAck(message, type) {
+  private handleAck(message: PoloniexMessage, type: string): void {
     logger.debug(`${type} WebSocket ack received:`, message);
     this.emit('ack', { type, message });
   }
@@ -294,7 +367,7 @@ class FuturesWebSocketClient extends EventEmitter {
   /**
    * Handle error message
    */
-  handleError(message, type) {
+  private handleError(message: PoloniexMessage, type: string): void {
     logger.error(`${type} WebSocket error:`, message);
     this.emit('error', { type, message });
   }
@@ -302,7 +375,7 @@ class FuturesWebSocketClient extends EventEmitter {
   /**
    * Handle data message
    */
-  async handleDataMessage(message, type) {
+  private async handleDataMessage(message: PoloniexMessage, type: string): Promise<void> {
     try {
       const { topic, subject, data } = message;
       
@@ -357,8 +430,11 @@ class FuturesWebSocketClient extends EventEmitter {
   /**
    * Handle ticker updates
    */
-  async handleTickerUpdate(data) {
+  private async handleTickerUpdate(data: unknown): Promise<void> {
     try {
+      // Type assertion for ticker data
+      const tickerData = data as TickerData;
+
       await query(`
         INSERT INTO futures_market_data (
           symbol, last_price, mark_price, index_price, best_bid, best_ask,
@@ -381,21 +457,21 @@ class FuturesWebSocketClient extends EventEmitter {
           open_interest = EXCLUDED.open_interest,
           updated_at = CURRENT_TIMESTAMP
       `, [
-        data.symbol,
-        data.price || data.lastPrice || 0,
-        data.markPrice || 0,
-        data.indexPrice || 0,
-        data.bestBid || 0,
-        data.bestAsk || 0,
-        data.high24h || 0,
-        data.low24h || 0,
-        data.volume24h || 0,
-        data.turnover24h || 0,
-        data.change24h || 0,
-        data.fundingRate || 0,
-        data.nextFundingTime ? new Date(data.nextFundingTime) : null,
-        data.openInterest || 0,
-        new Date(data.ts || Date.now())
+        tickerData.symbol,
+        tickerData.price || tickerData.lastPrice || 0,
+        tickerData.markPrice || 0,
+        tickerData.indexPrice || 0,
+        tickerData.bestBid || 0,
+        tickerData.bestAsk || 0,
+        tickerData.high24h || 0,
+        tickerData.low24h || 0,
+        tickerData.volume24h || 0,
+        tickerData.turnover24h || 0,
+        tickerData.change24h || 0,
+        tickerData.fundingRate || 0,
+        tickerData.nextFundingTime ? new Date(tickerData.nextFundingTime) : null,
+        tickerData.openInterest || 0,
+        new Date(tickerData.ts || Date.now())
       ]);
       
       this.emit('ticker', data);
@@ -408,7 +484,7 @@ class FuturesWebSocketClient extends EventEmitter {
   /**
    * Handle order book updates
    */
-  async handleOrderBookUpdate(data) {
+  private async handleOrderBookUpdate(data: unknown): Promise<void> {
     // Store in memory or cache for real-time access
     this.emit('orderbook', data);
   }
@@ -416,15 +492,23 @@ class FuturesWebSocketClient extends EventEmitter {
   /**
    * Handle trade updates
    */
-  async handleTradeUpdate(data) {
+  private async handleTradeUpdate(data: unknown): Promise<void> {
     this.emit('trade', data);
   }
 
   /**
    * Handle account updates
    */
-  async handleAccountUpdate(data) {
+  private async handleAccountUpdate(data: unknown): Promise<void> {
     try {
+      // Type assertion for account data with validation
+      if (!isAccountData(data)) {
+        logger.warn('Invalid account data format:', data);
+        return;
+      }
+      
+      const accountData = data as AccountData;
+      
       // Update account balance in database
       await query(`
         UPDATE futures_accounts 
@@ -433,12 +517,12 @@ class FuturesWebSocketClient extends EventEmitter {
             margin_ratio = $5, last_synced_at = CURRENT_TIMESTAMP
         WHERE poloniex_account_id = $6
       `, [
-        data.equity || 0,
-        data.availableBalance || 0,
-        data.initialMargin || 0,
-        data.maintenanceMargin || 0,
-        data.marginRatio || 0,
-        data.accountId || 'default'
+        accountData.equity || 0,
+        accountData.availableBalance || 0,
+        accountData.initialMargin || 0,
+        accountData.maintenanceMargin || 0,
+        accountData.marginRatio || 0,
+        accountData.accountId || 'default'
       ]);
       
       this.emit('account', data);
@@ -451,8 +535,16 @@ class FuturesWebSocketClient extends EventEmitter {
   /**
    * Handle position updates
    */
-  async handlePositionUpdate(data) {
+  private async handlePositionUpdate(data: unknown): Promise<void> {
     try {
+      // Type assertion for position data with validation
+      if (!isPositionData(data)) {
+        logger.warn('Invalid position data format:', data);
+        return;
+      }
+      
+      const positionData = data as PositionData;
+      
       // Update position in database
       await query(`
         UPDATE futures_positions 
@@ -461,13 +553,13 @@ class FuturesWebSocketClient extends EventEmitter {
             last_updated_at = CURRENT_TIMESTAMP
         WHERE symbol = $6 AND position_side = $7
       `, [
-        data.currentQty || 0,
-        data.availableQty || 0,
-        data.markPrice || 0,
-        data.unrealisedPnl || 0,
-        data.liquidationPrice || 0,
-        data.symbol,
-        data.side?.toUpperCase() || 'BOTH'
+        positionData.currentQty || 0,
+        positionData.availableQty || 0,
+        positionData.markPrice || 0,
+        positionData.unrealisedPnl || 0,
+        positionData.liquidationPrice || 0,
+        positionData.symbol,
+        positionData.side?.toUpperCase() || 'BOTH'
       ]);
       
       this.emit('position', data);
@@ -480,8 +572,16 @@ class FuturesWebSocketClient extends EventEmitter {
   /**
    * Handle order updates
    */
-  async handleOrderUpdate(data) {
+  private async handleOrderUpdate(data: unknown): Promise<void> {
     try {
+      // Type assertion for order data with validation
+      if (!isOrderData(data)) {
+        logger.warn('Invalid order data format:', data);
+        return;
+      }
+      
+      const orderData = data as OrderData;
+      
       // Update order status in database
       await query(`
         UPDATE futures_orders 
@@ -489,12 +589,12 @@ class FuturesWebSocketClient extends EventEmitter {
             avg_filled_price = $4, fee = $5, updated_at = CURRENT_TIMESTAMP
         WHERE poloniex_order_id = $6
       `, [
-        data.status?.toUpperCase() || 'UNKNOWN',
-        data.filledSize || 0,
-        data.filledValue || 0,
-        data.avgPrice || 0,
-        data.fee || 0,
-        data.orderId
+        orderData.status?.toUpperCase() || 'UNKNOWN',
+        orderData.filledSize || 0,
+        orderData.filledValue || 0,
+        orderData.avgPrice || 0,
+        orderData.fee || 0,
+        orderData.orderId
       ]);
       
       this.emit('order', data);
@@ -507,12 +607,20 @@ class FuturesWebSocketClient extends EventEmitter {
   /**
    * Handle trade execution updates
    */
-  async handleTradeExecutionUpdate(data) {
+  private async handleTradeExecutionUpdate(data: unknown): Promise<void> {
     try {
+      // Type assertion for trade execution data with validation
+      if (!isTradeExecutionData(data)) {
+        logger.warn('Invalid trade execution data format:', data);
+        return;
+      }
+      
+      const tradeData = data as TradeExecutionData;
+      
       // Store trade execution in database
       const orderResult = await query(
         'SELECT id, user_id, account_id FROM futures_orders WHERE poloniex_order_id = $1',
-        [data.orderId]
+        [tradeData.orderId]
       );
       
       if (orderResult.rows.length > 0) {
@@ -529,17 +637,17 @@ class FuturesWebSocketClient extends EventEmitter {
           order.user_id,
           order.account_id,
           order.id,
-          data.tradeId,
-          data.symbol,
-          data.side?.toUpperCase(),
-          data.side?.toUpperCase() || 'BOTH',
-          data.price || 0,
-          data.size || 0,
-          data.value || 0,
-          data.fee || 0,
-          data.liquidity || 'TAKER',
+          tradeData.tradeId,
+          tradeData.symbol,
+          tradeData.side?.toUpperCase(),
+          tradeData.side?.toUpperCase() || 'BOTH',
+          tradeData.price || 0,
+          tradeData.size || 0,
+          tradeData.value || 0,
+          tradeData.fee || 0,
+          tradeData.liquidity || 'TAKER',
           new Date(),
-          new Date(data.ts || Date.now())
+          new Date(tradeData.ts || Date.now())
         ]);
       }
       
@@ -553,7 +661,7 @@ class FuturesWebSocketClient extends EventEmitter {
   /**
    * Handle funding updates
    */
-  async handleFundingUpdate(data) {
+  private async handleFundingUpdate(data: unknown): Promise<void> {
     this.emit('funding', data);
   }
 
@@ -562,7 +670,7 @@ class FuturesWebSocketClient extends EventEmitter {
   /**
    * Subscribe to market data
    */
-  subscribeToMarketData(symbol, channels = ['ticker', 'level2', 'execution']) {
+  subscribeToMarketData(symbol: string, channels: string[] = ['ticker', 'level2', 'execution']): void {
     if (!this.publicWS || this.publicWS.readyState !== WebSocket.OPEN) {
       logger.warn('Public WebSocket not connected, cannot subscribe to market data');
       return;
@@ -577,14 +685,14 @@ class FuturesWebSocketClient extends EventEmitter {
         return;
       }
 
-      const message = {
+      const message: SubscriptionMessage = {
         id: Date.now(),
         type: 'subscribe',
         topic: topic,
         response: true
       };
 
-      this.publicWS.send(JSON.stringify(message));
+      this.publicWS?.send(JSON.stringify(message));
       this.marketDataSubscriptions.add(subscriptionId);
       
       logger.info(`Subscribed to ${topic}`);
@@ -594,7 +702,7 @@ class FuturesWebSocketClient extends EventEmitter {
   /**
    * Subscribe to private channels
    */
-  subscribeToPrivateChannels(channels = ['wallet', 'position', 'orders', 'trades']) {
+  subscribeToPrivateChannels(channels: string[] = ['wallet', 'position', 'orders', 'trades']): void {
     if (!this.privateWS || this.privateWS.readyState !== WebSocket.OPEN) {
       logger.warn('Private WebSocket not connected, cannot subscribe to private channels');
       return;
@@ -608,7 +716,7 @@ class FuturesWebSocketClient extends EventEmitter {
         return;
       }
 
-      const message = {
+      const message: SubscriptionMessage = {
         id: Date.now(),
         type: 'subscribe',
         topic: topic,
@@ -616,7 +724,7 @@ class FuturesWebSocketClient extends EventEmitter {
         response: true
       };
 
-      this.privateWS.send(JSON.stringify(message));
+      this.privateWS?.send(JSON.stringify(message));
       this.privateSubscriptions.add(channel);
       
       logger.info(`Subscribed to ${topic}`);
@@ -626,7 +734,7 @@ class FuturesWebSocketClient extends EventEmitter {
   /**
    * Unsubscribe from topic
    */
-  unsubscribe(topic) {
+  unsubscribe(topic: string): void {
     const ws = topic.includes('contractAccount') ? this.privateWS : this.publicWS;
     
     if (!ws || ws.readyState !== WebSocket.OPEN) {
@@ -634,7 +742,7 @@ class FuturesWebSocketClient extends EventEmitter {
       return;
     }
 
-    const message = {
+    const message: SubscriptionMessage = {
       id: Date.now(),
       type: 'unsubscribe',
       topic: topic,
@@ -655,13 +763,13 @@ class FuturesWebSocketClient extends EventEmitter {
   /**
    * Start ping interval to keep connection alive
    */
-  startPingInterval() {
+  private startPingInterval(): void {
     this.pingInterval = setInterval(() => {
-      if (this.publicWS && this.publicWS.readyState === WebSocket.OPEN) {
+      if (this.publicWS?.readyState === WebSocket.OPEN) {
         this.publicWS.send(JSON.stringify({ type: 'ping' }));
       }
       
-      if (this.privateWS && this.privateWS.readyState === WebSocket.OPEN) {
+      if (this.privateWS?.readyState === WebSocket.OPEN) {
         this.privateWS.send(JSON.stringify({ type: 'ping' }));
       }
     }, 30000); // Ping every 30 seconds
@@ -670,7 +778,7 @@ class FuturesWebSocketClient extends EventEmitter {
   /**
    * Stop ping interval
    */
-  stopPingInterval() {
+  private stopPingInterval(): void {
     if (this.pingInterval) {
       clearInterval(this.pingInterval);
       this.pingInterval = null;
@@ -680,7 +788,7 @@ class FuturesWebSocketClient extends EventEmitter {
   /**
    * Schedule reconnection
    */
-  scheduleReconnect(type) {
+  private scheduleReconnect(type: 'public' | 'private'): void {
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
       logger.error(`Max reconnection attempts reached for ${type} WebSocket`);
       return;
@@ -695,7 +803,7 @@ class FuturesWebSocketClient extends EventEmitter {
       if (type === 'public') {
         this.connectPublic();
       } else {
-        this.connectPrivate(this.credentials);
+        this.connectPrivate(this.credentials!);
       }
     }, delay);
   }
@@ -703,14 +811,14 @@ class FuturesWebSocketClient extends EventEmitter {
   /**
    * Get connection status
    */
-  getConnectionStatus() {
+  getConnectionStatus(): ConnectionStatus {
     return {
       public: {
-        connected: this.publicWS && this.publicWS.readyState === WebSocket.OPEN,
+        connected: this.publicWS?.readyState === WebSocket.OPEN || false,
         subscriptions: Array.from(this.marketDataSubscriptions)
       },
       private: {
-        connected: this.privateWS && this.privateWS.readyState === WebSocket.OPEN,
+        connected: this.privateWS?.readyState === WebSocket.OPEN || false,
         subscriptions: Array.from(this.privateSubscriptions)
       },
       reconnectAttempts: this.reconnectAttempts
@@ -720,7 +828,7 @@ class FuturesWebSocketClient extends EventEmitter {
   /**
    * Health check
    */
-  healthCheck() {
+  healthCheck(): HealthCheckResult {
     const status = this.getConnectionStatus();
     
     return {
@@ -734,5 +842,5 @@ class FuturesWebSocketClient extends EventEmitter {
 // Create singleton instance
 const futuresWebSocket = new FuturesWebSocketClient();
 
-export { FuturesWebSocketClient };
+export { FuturesWebSocketClient, type ConnectionCredentials, type ConnectionStatus, type HealthCheckResult };
 export default futuresWebSocket;

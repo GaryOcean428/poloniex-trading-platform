@@ -218,9 +218,9 @@ export class LiveDataService {
   private initializeWebSockets(): void {
     try {
       // Get bullet token for V3 WebSocket connection
-      this.getBulletToken()
-        .then(({ token, endpoint }) => {
-          const poloniexWs = new WebSocket(`${endpoint}?token=${token}`);
+      // V3 API: Direct connection to public WebSocket, no token required
+      try {
+        const poloniexWs = new WebSocket('wss://ws.poloniex.com/ws/v3/public');
 
           poloniexWs.onopen = () => {
             this.log("info", "Poloniex V3 WebSocket connected");
@@ -276,48 +276,22 @@ export class LiveDataService {
               }
             }
           };
-        })
-        .catch((error) => {
-          this.log("error", `Error getting bullet token: ${error}`);
-          liveDataEvents.emit("initialization_error", { error });
-        });
+        }
+      } catch (error) {
+        this.log("error", `Error connecting to Poloniex WebSocket: ${error}`);
+        liveDataEvents.emit("initialization_error", { error });
+      }
     } catch (error) {
       this.log("error", `Error initializing WebSockets: ${error}`);
       liveDataEvents.emit("initialization_error", { error });
     }
   }
 
-  // Add bullet token getter method
-  private async getBulletToken(): Promise<{ token: string; endpoint: string }> {
-    try {
-      const response = await fetch(
-        "https://futures-api.poloniex.com/api/v1/bullet-public",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-        }
-      );
-
-      if (!response.ok) {
-        throw new Error(`Failed to get bullet token: ${response.status}`);
-      }
-
-      const data = await response.json();
-      if (data && data.data && data.data.token) {
-        return {
-          token: data.data.token,
-          endpoint: data.data.instanceServers[0].endpoint,
-        };
-      } else {
-        throw new Error("Invalid bullet token response format");
-      }
-    } catch (error) {
-      this.log("error", `Failed to get bullet token: ${error}`);
-      throw error;
-    }
-  }
+  /**
+   * NOTE: Poloniex V3 API does not require token endpoint.
+   * Public WebSocket connects directly without authentication.
+   * Removed deprecated getBulletToken() method.
+   */
 
   private handleWebSocketMessage(source: string, message: unknown): void {
     try {
