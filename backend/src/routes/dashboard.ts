@@ -12,7 +12,7 @@ const router = express.Router();
  */
 router.get('/overview', authenticateToken, async (req: Request, res: Response) => {
   try {
-    const credentials = await apiCredentialsService.getCredentials(req.user.id);
+    const credentials = await apiCredentialsService.getCredentials(String(req.user.id));
     
     if (!credentials) {
       return res.status(400).json({
@@ -118,7 +118,7 @@ router.get('/overview', authenticateToken, async (req: Request, res: Response) =
  */
 router.get('/balance', authenticateToken, async (req: Request, res: Response) => {
   try {
-    const credentials = await apiCredentialsService.getCredentials(req.user.id);
+    const credentials = await apiCredentialsService.getCredentials(String(req.user.id));
     
     if (!credentials) {
       return res.status(400).json({
@@ -149,7 +149,7 @@ router.get('/balance', authenticateToken, async (req: Request, res: Response) =>
  */
 router.get('/positions', authenticateToken, async (req: Request, res: Response) => {
   try {
-    const credentials = await apiCredentialsService.getCredentials(req.user.id);
+    const credentials = await apiCredentialsService.getCredentials(String(req.user.id));
     
     if (!credentials) {
       return res.status(400).json({
