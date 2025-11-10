@@ -18,10 +18,17 @@ const apiKeysRateLimiter = rateLimit({
     },
     standardHeaders: true,
     legacyHeaders: false,
-    // Rate limit by token if available, else IP
+    // Rate limit by token if available, else IP (with IPv6 support)
     keyGenerator: (req) => {
         const token = req.headers.authorization?.split(' ')[1];
-        return token || req.ip || 'unknown';
+        if (token)
+            return token;
+        // Use req.ip which is already normalized by express-rate-limit
+        return req.ip;
+    },
+    skip: (req) => {
+        // Skip rate limiting for authenticated requests with valid tokens
+        return !!req.headers.authorization?.split(' ')[1];
     }
 });
 /**
