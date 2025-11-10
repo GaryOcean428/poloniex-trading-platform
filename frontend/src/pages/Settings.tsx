@@ -47,7 +47,8 @@ const Settings: React.FC = () => {
     priceAlerts: false,
     chatNotifications: true,
     showExtension: true,
-    dateFormat: 'AU' as 'AU' | 'US'
+    dateFormat: 'AU' as 'AU' | 'US',
+    dateLocale: 'en-AU' as 'en-AU' | 'en-US'
   });
 
   // Save status feedback

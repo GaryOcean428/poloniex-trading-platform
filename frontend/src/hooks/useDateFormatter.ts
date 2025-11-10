@@ -20,7 +20,8 @@ export function useDateFormatter() {
   }, []);
 
   const formatDateFn = useCallback((date: Date | string | number) => {
-    return formatDate(date, locale);
+    const format = locale === 'en-AU' ? 'AU' : 'US';
+    return formatDate(date, { format });
   }, [locale]);
 
   const formatTimeFn = useCallback((date: Date | string | number) => {
