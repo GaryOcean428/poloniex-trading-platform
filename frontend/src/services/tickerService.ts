@@ -101,7 +101,13 @@ export const TickerService = {
         return null;
       }
 
-      return parseTickerData(data.data[0]);
+      const tickerData = data.data[0];
+      if (!tickerData) {
+        console.error(`No ticker data found for ${symbol}`);
+        return null;
+      }
+
+      return parseTickerData(tickerData);
     } catch (error) {
       console.error(`Error fetching ticker for ${symbol}:`, error);
       return null;

@@ -138,8 +138,10 @@ const Sidebar: React.FC = () => {
               <div className="text-2xl font-bold">
                 {isLoading ? (
                   <div className="animate-pulse bg-neutral-700 h-8 w-32 rounded"></div>
+                ) : accountBalance ? (
+                  `$${accountBalance.total.toFixed(2)} USDT`
                 ) : (
-                  `$${typeof accountBalance === 'object' ? accountBalance.total.toFixed(2) : accountBalance ? accountBalance.toFixed(2) : '0.00'} USDT`
+                  '$0.00 USDT'
                 )}
               </div>
               <div className="text-xs text-neutral-500 mt-1">USDT</div>
@@ -227,8 +229,10 @@ const Sidebar: React.FC = () => {
             <div className="text-2xl font-bold">
               {isLoading ? (
                 <div className="animate-pulse bg-neutral-700 h-8 w-32 rounded"></div>
+              ) : accountBalance ? (
+                `$${accountBalance.total.toFixed(2)} USDT`
               ) : (
-                `$${typeof accountBalance === 'object' ? accountBalance.total.toFixed(2) : accountBalance ? accountBalance.toFixed(2) : '0.00'} USDT`
+                '$0.00 USDT'
               )}
             </div>
             <div className="text-xs text-neutral-500 mt-1">USDT</div>
@@ -267,6 +271,6 @@ const Sidebar: React.FC = () => {
   );
 };
 
-// Export the mobile menu button for use in Navbar
-export { MobileMenuButton };
+// Export placeholder for compatibility - the actual component is now internal
+export const MobileMenuButton = () => null;
 export default Sidebar;
