@@ -85,7 +85,7 @@ export interface DashboardResponse {
 
 class DashboardService {
   private async getAuthHeaders(): Promise<Record<string, string>> {
-    let token = localStorage.getItem('token');
+    let token = localStorage.getItem('access_token') || localStorage.getItem('token');
     
     // Check if token is expired (basic check - decode JWT and check exp)
     if (token) {
