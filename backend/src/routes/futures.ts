@@ -3,8 +3,6 @@ import { authenticateToken } from '../middleware/auth.js';
 import poloniexFuturesService from '../services/poloniexFuturesService.js';
 import { apiCredentialsService } from '../services/apiCredentialsService.js';
 import { logger } from '../utils/logger.js';
-import riskService from '../services/riskService.js';
-import alertingService from '../services/alertingService.js';
 
 const router = express.Router();
 
@@ -121,7 +119,7 @@ router.get('/trades/:symbol', async (req: Request, res: Response) => {
   try {
     const { symbol } = req.params;
     const { limit = '50' } = req.query;
-    const trades = await poloniexFuturesService.getRecentTrades(symbol, parseInt(limit as string));
+    const trades = await poloniexFuturesService.getMarketTrades(symbol);
     res.json(trades);
   } catch (error: any) {
     logger.error(`Error fetching trades for ${req.params.symbol}:`, error);
@@ -200,7 +198,7 @@ router.get('/trades', authenticateToken, async (req: Request, res: Response) => 
     }
 
     const params = req.query; // symbol, orderId, startTime, endTime, limit
-    const trades = await poloniexFuturesService.getTradeHistory(credentials, params);
+    const trades = await poloniexFuturesService.getExecutionDetails(credentials, params);
     res.json(trades);
   } catch (error: any) {
     logger.error('Error fetching trade history:', error);
@@ -260,28 +258,7 @@ router.post('/order', authenticateToken, async (req: Request, res: Response) => 
       });
     }
 
-    // Check risk limits before placing order
-    const riskCheck = await riskService.checkOrderRisk(req.user.id, orderParams);
-    if (!riskCheck.allowed) {
-      return res.status(403).json({
-        error: 'Order rejected by risk management',
-        reason: riskCheck.reason,
-        details: riskCheck.details
-      });
-    }
-
     const order = await poloniexFuturesService.placeOrder(credentials, orderParams);
-    
-    // Send alert for large orders
-    if (orderParams.quantity && parseFloat(orderParams.quantity) > 1) {
-      await alertingService.sendAlert({
-        type: 'ORDER_PLACED',
-        severity: 'INFO',
-        message: `Large order placed: ${orderParams.side} ${orderParams.quantity} ${orderParams.symbol}`,
-        userId: req.user.id,
-        data: order
-      });
-    }
 
     res.json(order);
   } catch (error: any) {
@@ -375,7 +352,7 @@ router.get('/leverage/:symbol', authenticateToken, async (req: Request, res: Res
     }
 
     const { symbol } = req.params;
-    const leverage = await poloniexFuturesService.getLeverage(credentials, symbol);
+    const leverage = await poloniexFuturesService.getLeverages(credentials, symbol);
     res.json(leverage);
   } catch (error: any) {
     logger.error('Error fetching leverage:', error);
