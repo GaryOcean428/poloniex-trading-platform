@@ -25,6 +25,7 @@ export interface StoredCredentials {
   api_key_encrypted: string;
   api_secret_encrypted: string;
   encryption_iv: string;
+  encryption_tag: string;
   is_active: boolean;
   last_used_at: Date | null;
   created_at: Date;
@@ -48,16 +49,17 @@ export class ApiCredentialsService {
       // Store in database (upsert)
       await pool.query(
         `INSERT INTO api_credentials (
-          user_id, exchange, api_key_encrypted, api_secret_encrypted, encryption_iv, is_active
-        ) VALUES ($1, $2, $3, $4, $5, true)
+          user_id, exchange, api_key_encrypted, api_secret_encrypted, encryption_iv, encryption_tag, is_active
+        ) VALUES ($1, $2, $3, $4, $5, $6, true)
         ON CONFLICT (user_id, exchange)
         DO UPDATE SET
           api_key_encrypted = EXCLUDED.api_key_encrypted,
           api_secret_encrypted = EXCLUDED.api_secret_encrypted,
           encryption_iv = EXCLUDED.encryption_iv,
+          encryption_tag = EXCLUDED.encryption_tag,
           is_active = true,
           updated_at = CURRENT_TIMESTAMP`,
-        [userId, exchange, encrypted.apiKeyEncrypted, encrypted.apiSecretEncrypted, encrypted.encryptionIv]
+        [userId, exchange, encrypted.apiKeyEncrypted, encrypted.apiSecretEncrypted, encrypted.encryptionIv, encrypted.tag]
       );
       
       console.log(`API credentials stored for user ${userId} on ${exchange}`);
@@ -74,7 +76,7 @@ export class ApiCredentialsService {
     try {
       const result = await pool.query<StoredCredentials>(
         `SELECT id, user_id, exchange, api_key_encrypted, api_secret_encrypted, 
-                encryption_iv, is_active, last_used_at, created_at, updated_at
+                encryption_iv, encryption_tag, is_active, last_used_at, created_at, updated_at
          FROM api_credentials
          WHERE user_id = $1 AND exchange = $2 AND is_active = true
          LIMIT 1`,
@@ -87,12 +89,18 @@ export class ApiCredentialsService {
       
       const stored = result.rows[0];
       
+      // Check if encryption_tag exists (for backward compatibility with old data)
+      if (!stored.encryption_tag) {
+        console.warn(`API credentials for user ${userId} missing encryption tag - user needs to re-enter credentials`);
+        return null;
+      }
+      
       // Decrypt credentials
       const decrypted = encryptionService.decryptCredentials(
         stored.api_key_encrypted,
         stored.api_secret_encrypted,
         stored.encryption_iv,
-        stored.api_key_encrypted // Using encrypted key as tag for simplicity
+        stored.encryption_tag
       );
       
       // Update last used timestamp
