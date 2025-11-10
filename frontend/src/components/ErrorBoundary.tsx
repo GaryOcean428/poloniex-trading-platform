@@ -39,6 +39,15 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   componentDidMount(): void {
     // Capture errors thrown in event handlers or other async contexts
     this.onWindowError = (event: ErrorEvent) => {
+      // Ignore ResizeObserver errors - they're benign and don't affect functionality
+      const message = event.message || (event.error && event.error.message) || '';
+      if (message.includes('ResizeObserver loop')) {
+        event.preventDefault();
+        event.stopPropagation();
+        console.warn('ResizeObserver error suppressed:', message);
+        return;
+      }
+      
       if (!this.state.hasError) {
         this.setState({
           hasError: true,
