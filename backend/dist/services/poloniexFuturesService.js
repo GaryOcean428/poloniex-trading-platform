@@ -255,6 +255,13 @@ class PoloniexFuturesService {
         return this.makeRequest(credentials, 'GET', '/trade/order/trades', null, params);
     }
     /**
+     * Get trade history (alias for getExecutionDetails)
+     * Endpoint: GET /v3/trade/order/trades
+     */
+    async getTradeHistory(credentials, params = {}) {
+        return this.getExecutionDetails(credentials, params);
+    }
+    /**
      * Close position at market price
      * Endpoint: POST /v3/trade/position
      */

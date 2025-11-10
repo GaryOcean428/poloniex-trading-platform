@@ -1,7 +1,7 @@
 import express from 'express';
 import { authenticateToken } from '../middleware/auth.js';
 import poloniexFuturesService from '../services/poloniexFuturesService.js';
-import { UserService } from '../services/userService.js';
+import { apiCredentialsService } from '../services/apiCredentialsService.js';
 import { logger } from '../utils/logger.js';
 import riskService from '../services/riskService.js';
 import alertingService from '../services/alertingService.js';
@@ -197,7 +197,7 @@ router.get('/open-interest/:symbol', async (req, res) => {
  */
 router.get('/account/balance', authenticateToken, async (req, res) => {
   try {
-    const credentials = await UserService.getApiCredentials(req.user.id);
+    const credentials = await apiCredentialsService.getCredentials(String(req.user.id));
     if (!credentials) {
       return res.status(400).json({
         error: 'No API credentials found. Please add your Poloniex API keys first.',
@@ -221,7 +221,7 @@ router.get('/account/balance', authenticateToken, async (req, res) => {
  */
 router.get('/account/overview', authenticateToken, async (req, res) => {
   try {
-    const credentials = await UserService.getApiCredentials(req.user.id);
+    const credentials = await apiCredentialsService.getCredentials(String(req.user.id));
     if (!credentials) {
       return res.status(400).json({
         error: 'No API credentials found. Please add your Poloniex API keys first.',
@@ -245,7 +245,7 @@ router.get('/account/overview', authenticateToken, async (req, res) => {
  */
 router.get('/account/bills', authenticateToken, async (req, res) => {
   try {
-    const credentials = await UserService.getApiCredentials(req.user.id);
+    const credentials = await apiCredentialsService.getCredentials(String(req.user.id));
     if (!credentials) {
       return res.status(400).json({
         error: 'No API credentials found. Please add your Poloniex API keys first.',
@@ -270,7 +270,7 @@ router.get('/account/bills', authenticateToken, async (req, res) => {
  */
 router.get('/positions', authenticateToken, async (req, res) => {
   try {
-    const credentials = await UserService.getApiCredentials(req.user.id);
+    const credentials = await apiCredentialsService.getCredentials(String(req.user.id));
     if (!credentials) {
       return res.status(400).json({
         error: 'No API credentials found. Please add your Poloniex API keys first.',
@@ -295,7 +295,7 @@ router.get('/positions', authenticateToken, async (req, res) => {
  */
 router.get('/positions/history', authenticateToken, async (req, res) => {
   try {
-    const credentials = await UserService.getApiCredentials(req.user.id);
+    const credentials = await apiCredentialsService.getCredentials(String(req.user.id));
     if (!credentials) {
       return res.status(400).json({
         error: 'No API credentials found. Please add your Poloniex API keys first.',
@@ -320,7 +320,7 @@ router.get('/positions/history', authenticateToken, async (req, res) => {
  */
 router.post('/positions/leverage', authenticateToken, async (req, res) => {
   try {
-    const credentials = await UserService.getApiCredentials(req.user.id);
+    const credentials = await apiCredentialsService.getCredentials(String(req.user.id));
     if (!credentials) {
       return res.status(400).json({
         error: 'No API credentials found. Please add your Poloniex API keys first.',
@@ -351,7 +351,7 @@ router.post('/positions/leverage', authenticateToken, async (req, res) => {
  */
 router.post('/positions/mode', authenticateToken, async (req, res) => {
   try {
-    const credentials = await UserService.getApiCredentials(req.user.id);
+    const credentials = await apiCredentialsService.getCredentials(String(req.user.id));
     if (!credentials) {
       return res.status(400).json({
         error: 'No API credentials found. Please add your Poloniex API keys first.',
@@ -382,7 +382,7 @@ router.post('/positions/mode', authenticateToken, async (req, res) => {
  */
 router.get('/orders', authenticateToken, async (req, res) => {
   try {
-    const credentials = await UserService.getApiCredentials(req.user.id);
+    const credentials = await apiCredentialsService.getCredentials(String(req.user.id));
     if (!credentials) {
       return res.status(400).json({
         error: 'No API credentials found. Please add your Poloniex API keys first.',
@@ -407,7 +407,7 @@ router.get('/orders', authenticateToken, async (req, res) => {
  */
 router.get('/orders/history', authenticateToken, async (req, res) => {
   try {
-    const credentials = await UserService.getApiCredentials(req.user.id);
+    const credentials = await apiCredentialsService.getCredentials(String(req.user.id));
     if (!credentials) {
       return res.status(400).json({
         error: 'No API credentials found. Please add your Poloniex API keys first.',
@@ -432,7 +432,7 @@ router.get('/orders/history', authenticateToken, async (req, res) => {
  */
 router.get('/orders/:orderId', authenticateToken, async (req, res) => {
   try {
-    const credentials = await UserService.getApiCredentials(req.user.id);
+    const credentials = await apiCredentialsService.getCredentials(String(req.user.id));
     if (!credentials) {
       return res.status(400).json({
         error: 'No API credentials found. Please add your Poloniex API keys first.',
@@ -457,7 +457,7 @@ router.get('/orders/:orderId', authenticateToken, async (req, res) => {
  */
 router.post('/orders', authenticateToken, async (req, res) => {
   try {
-    const credentials = await UserService.getApiCredentials(req.user.id);
+    const credentials = await apiCredentialsService.getCredentials(String(req.user.id));
     if (!credentials) {
       return res.status(400).json({
         error: 'No API credentials found. Please add your Poloniex API keys first.',
@@ -503,7 +503,7 @@ router.post('/orders', authenticateToken, async (req, res) => {
  */
 router.delete('/orders/:orderId', authenticateToken, async (req, res) => {
   try {
-    const credentials = await UserService.getApiCredentials(req.user.id);
+    const credentials = await apiCredentialsService.getCredentials(String(req.user.id));
     if (!credentials) {
       return res.status(400).json({
         error: 'No API credentials found. Please add your Poloniex API keys first.',
@@ -528,7 +528,7 @@ router.delete('/orders/:orderId', authenticateToken, async (req, res) => {
  */
 router.delete('/orders', authenticateToken, async (req, res) => {
   try {
-    const credentials = await UserService.getApiCredentials(req.user.id);
+    const credentials = await apiCredentialsService.getCredentials(String(req.user.id));
     if (!credentials) {
       return res.status(400).json({
         error: 'No API credentials found. Please add your Poloniex API keys first.',
@@ -553,7 +553,7 @@ router.delete('/orders', authenticateToken, async (req, res) => {
  */
 router.get('/trades', authenticateToken, async (req, res) => {
   try {
-    const credentials = await UserService.getApiCredentials(req.user.id);
+    const credentials = await apiCredentialsService.getCredentials(String(req.user.id));
     if (!credentials) {
       return res.status(400).json({
         error: 'No API credentials found. Please add your Poloniex API keys first.',
@@ -578,7 +578,7 @@ router.get('/trades', authenticateToken, async (req, res) => {
  */
 router.get('/risk/:symbol', authenticateToken, async (req, res) => {
   try {
-    const credentials = await UserService.getApiCredentials(req.user.id);
+    const credentials = await apiCredentialsService.getCredentials(String(req.user.id));
     if (!credentials) {
       return res.status(400).json({
         error: 'No API credentials found. Please add your Poloniex API keys first.',
@@ -603,7 +603,7 @@ router.get('/risk/:symbol', authenticateToken, async (req, res) => {
  */
 router.post('/risk', authenticateToken, async (req, res) => {
   try {
-    const credentials = await UserService.getApiCredentials(req.user.id);
+    const credentials = await apiCredentialsService.getCredentials(String(req.user.id));
     if (!credentials) {
       return res.status(400).json({
         error: 'No API credentials found. Please add your Poloniex API keys first.',
@@ -634,7 +634,7 @@ router.post('/risk', authenticateToken, async (req, res) => {
  */
 router.get('/adl', authenticateToken, async (req, res) => {
   try {
-    const credentials = await UserService.getApiCredentials(req.user.id);
+    const credentials = await apiCredentialsService.getCredentials(String(req.user.id));
     if (!credentials) {
       return res.status(400).json({
         error: 'No API credentials found. Please add your Poloniex API keys first.',
