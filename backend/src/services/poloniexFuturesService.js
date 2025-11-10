@@ -404,8 +404,8 @@ class PoloniexFuturesService {
    * Get K-line data (candlesticks)
    * Endpoint: GET /v3/market/candles
    */
-  async getKlines(symbol, granularity, params = {}) {
-    const queryParams = { symbol, granularity, ...params };
+  async getKlines(symbol, interval, params = {}) {
+    const queryParams = { symbol, interval, ...params };
     return this.makePublicRequest('GET', '/market/candles', queryParams);
   }
 

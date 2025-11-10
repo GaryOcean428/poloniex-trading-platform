@@ -437,7 +437,7 @@ export class LiveDataService {
         return cached;
       }
 
-      const response = await this.poloniexRestClient.get(`/${symbol}/candles`, {
+      const response = await this.poloniexRestClient.get(`/klines/${symbol}`, {
         params: { interval, limit },
       });
 
@@ -456,18 +456,38 @@ export class LiveDataService {
         throw new Error("Invalid data format: expected array");
       }
 
+      // Poloniex returns data as arrays: [low, high, open, close, volume, trades, count, startTime, endTime]
       const marketData: MarketDataPoint[] = rawData.map(
-        (candle: Record<string, string | number>) => ({
-          symbol,
-          timestamp: Number(candle.timestamp),
-          open: parseFloat(String(candle.open || "0")),
-          high: parseFloat(String(candle.high || "0")),
-          low: parseFloat(String(candle.low || "0")),
-          close: parseFloat(String(candle.close || "0")),
-          volume: parseFloat(String(candle.volume || "0")),
-          quoteVolume: parseFloat(String(candle.quoteVolume || "0")),
-          source: "poloniex_rest",
-        })
+        (candle: any) => {
+          // Handle both array format (Poloniex) and object format
+          if (Array.isArray(candle)) {
+            // Poloniex format: [low, high, open, close, amt, qty, tC, sT, cT]
+            return {
+              symbol,
+              timestamp: Number(candle[7]), // sT (start time)
+              open: parseFloat(String(candle[2] || "0")),
+              high: parseFloat(String(candle[1] || "0")),
+              low: parseFloat(String(candle[0] || "0")),
+              close: parseFloat(String(candle[3] || "0")),
+              volume: parseFloat(String(candle[5] || "0")), // qty
+              quoteVolume: parseFloat(String(candle[4] || "0")), // amt
+              source: "poloniex_rest",
+            };
+          } else {
+            // Object format (fallback)
+            return {
+              symbol,
+              timestamp: Number(candle.timestamp),
+              open: parseFloat(String(candle.open || "0")),
+              high: parseFloat(String(candle.high || "0")),
+              low: parseFloat(String(candle.low || "0")),
+              close: parseFloat(String(candle.close || "0")),
+              volume: parseFloat(String(candle.volume || "0")),
+              quoteVolume: parseFloat(String(candle.quoteVolume || "0")),
+              source: "poloniex_rest",
+            };
+          }
+        }
       );
 
       const processedData = marketData.map((point) => {
