@@ -108,11 +108,22 @@ app.use(sanitizeRequest);
 app.use(rateLimiter);
 
 // Health check endpoints
-app.get('/api/health', (_req: Request, res: Response) => {
+app.get('/api/health', async (_req: Request, res: Response) => {
+  // Get server's public IP address
+  let publicIP = 'unknown';
+  try {
+    const response = await fetch('https://api.ipify.org?format=json');
+    const data = await response.json();
+    publicIP = data.ip;
+  } catch (error) {
+    logger.error('Failed to fetch public IP:', error);
+  }
+  
   res.json({
     status: 'healthy',
     timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development'
+    environment: process.env.NODE_ENV || 'development',
+    publicIP: publicIP
   });
 });
 
