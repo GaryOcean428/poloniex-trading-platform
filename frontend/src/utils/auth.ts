@@ -175,16 +175,7 @@ export function getUserData(): unknown | null {
   }
 }
 
-/**
- * Get authentication token (legacy method for backward compatibility)
- */
-export function getAuthToken(): string | null {
-  if (!isAuthenticated()) {
-    return null;
-  }
-  
-  return getAccessToken();
-}
+
 
 /**
  * Get authorization header value
