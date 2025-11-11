@@ -58,7 +58,9 @@ class PoloniexFuturesService {
       // Generate signature using the full request path with query params
       const signature = this.generateSignature(method, fullRequestPath, body, timestamp, credentials.apiSecret);
       
-      // Use correct Poloniex v3 headers (not KuCoin headers)
+      // Use correct Poloniex V3 Futures API headers per official documentation
+      // https://api-docs.poloniex.com/v3/futures/api/
+      // V3 API uses: key, signature, signTimestamp (NO PF- prefix, NO passphrase)
       const headers = {
         'Content-Type': 'application/json',
         'key': credentials.apiKey,
