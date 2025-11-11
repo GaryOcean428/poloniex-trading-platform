@@ -18,10 +18,23 @@ router.get('/performance/:symbol', authenticateToken, async (req, res) => {
     }
 
     // Get historical OHLCV data (last 200 candles, 1h timeframe)
-    const ohlcvData = await poloniexFuturesService.getHistoricalData(symbol, '1h', 200);
+    let ohlcvData;
+    try {
+      ohlcvData = await poloniexFuturesService.getHistoricalData(symbol, '1h', 200);
+    } catch (dataError: any) {
+      console.error('Failed to fetch historical data:', dataError.message);
+      return res.status(503).json({ 
+        error: 'ML models unavailable', 
+        message: 'Unable to fetch market data. Please ensure API credentials are configured.',
+        details: dataError.message 
+      });
+    }
     
     if (!ohlcvData || ohlcvData.length === 0) {
-      return res.status(404).json({ error: 'No historical data available' });
+      return res.status(503).json({ 
+        error: 'ML models unavailable',
+        message: 'No historical data available for predictions'
+      });
     }
 
     // Get current price
