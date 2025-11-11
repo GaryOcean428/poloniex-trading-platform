@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { getToken, getRefreshToken, storeToken } from '@/utils/tokenHelper';
 
 // Auto-detect API base URL based on environment
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 
@@ -85,43 +86,51 @@ export interface DashboardResponse {
 
 class DashboardService {
   private async getAuthHeaders(): Promise<Record<string, string>> {
-    let token = localStorage.getItem('access_token') || localStorage.getItem('token');
+    // Use centralized token helper with correct localStorage keys
+    let token = getToken();
+    
+    // If no token found, throw error immediately
+    if (!token) {
+      throw new Error('Access token required');
+    }
     
     // Check if token is expired (basic check - decode JWT and check exp)
-    if (token) {
-      try {
-        const tokenParts = token.split('.');
-        if (tokenParts.length === 3 && tokenParts[1]) {
-          const payload = JSON.parse(atob(tokenParts[1]));
-          const isExpired = payload.exp * 1000 < Date.now();
+    try {
+      const tokenParts = token.split('.');
+      if (tokenParts.length === 3 && tokenParts[1]) {
+        const payload = JSON.parse(atob(tokenParts[1]));
+        const isExpired = payload.exp * 1000 < Date.now();
+        
+        if (isExpired) {
+          console.log('Token expired, attempting refresh...');
+          // Try to refresh token using correct key
+          const refreshToken = getRefreshToken();
           
-          if (isExpired) {
-            console.log('Token expired, attempting refresh...');
-            // Try to refresh token
-            const refreshToken = localStorage.getItem('refreshToken');
-            if (refreshToken) {
-              const response = await axios.post(`${API_BASE_URL}/api/auth/refresh`, {
-                refreshToken
-              });
-              const newToken = response.data.token;
-              if (newToken) {
-                token = newToken;
-                localStorage.setItem('token', newToken);
-              }
-            } else {
-              // No refresh token, redirect to login
-              console.warn('No refresh token available, user needs to re-login');
-              // Don't redirect automatically, just use expired token and let backend handle it
+          if (refreshToken) {
+            const response = await axios.post(`${API_BASE_URL}/api/auth/refresh`, {
+              refreshToken
+            });
+            const newToken = response.data.accessToken || response.data.token;
+            if (newToken) {
+              token = newToken;
+              storeToken(newToken);
             }
+          } else {
+            console.warn('No refresh token available, user needs to re-login');
+            throw new Error('Access token required');
           }
         }
-      } catch (error) {
-        console.error('Error checking token expiration:', error);
       }
+    } catch (error) {
+      console.error('Error checking token expiration:', error);
+      if (error instanceof Error && error.message === 'Access token required') {
+        throw error;
+      }
+      // If other error, continue with existing token
     }
     
     return {
-      'Authorization': `Bearer ${token || ''}`,
+      'Authorization': `Bearer ${token}`,
       'Content-Type': 'application/json'
     };
   }
@@ -156,7 +165,7 @@ class DashboardService {
       return response.data.data;
     } catch (error: any) {
       console.error('Error fetching balance:', error);
-      throw new Error(error.response?.data?.error || 'Failed to fetch balance');
+      throw new Error(error.response?.data?.error || 'Access token required');
     }
   }
 
@@ -173,7 +182,7 @@ class DashboardService {
       return response.data.data;
     } catch (error: any) {
       console.error('Error fetching positions:', error);
-      throw new Error(error.response?.data?.error || 'Failed to fetch positions');
+      throw new Error(error.response?.data?.error || 'Access token required');
     }
   }
 
@@ -193,7 +202,7 @@ class DashboardService {
       return response.data;
     } catch (error: any) {
       console.error('Error fetching trades:', error);
-      throw new Error(error.response?.data?.error || 'Failed to fetch trades');
+      throw new Error(error.response?.data?.error || 'Access token required');
     }
   }
 
