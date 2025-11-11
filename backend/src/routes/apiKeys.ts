@@ -48,7 +48,7 @@ router.get('/health', (req, res) => {
  */
 router.get('/', apiKeysRateLimiter, authenticateToken, async (req, res) => {
   try {
-    const userId = (req as any).user.userId;
+    const userId = String((req as any).user.id);
     
     // Check if user has credentials for Poloniex
     const hasCredentials = await apiCredentialsService.hasCredentials(userId, 'poloniex');
@@ -89,7 +89,7 @@ router.get('/', apiKeysRateLimiter, authenticateToken, async (req, res) => {
  */
 router.post('/', authenticateToken, async (req, res) => {
   try {
-    const userId = (req as any).user.userId;
+    const userId = String((req as any).user.id);
     const { apiKey, apiSecret, credentialName, passphrase, permissions } = req.body;
 
     if (!apiKey || !apiSecret) {
@@ -140,7 +140,7 @@ router.post('/', authenticateToken, async (req, res) => {
  */
 router.get('/active', authenticateToken, async (req, res) => {
   try {
-    const userId = (req as any).user.userId;
+    const userId = String((req as any).user.id);
     const exchange = req.query.exchange as string || 'poloniex';
 
     // Get decrypted credentials
@@ -186,7 +186,7 @@ router.get('/active', authenticateToken, async (req, res) => {
  */
 router.delete('/:id', authenticateToken, async (req, res) => {
   try {
-    const userId = (req as any).user.userId;
+    const userId = String((req as any).user.id);
     const { id } = req.params;
 
     // Extract exchange from ID (format: userId-exchange)
@@ -219,7 +219,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
  */
 router.patch('/:id', authenticateToken, async (req, res) => {
   try {
-    const userId = (req as any).user.userId;
+    const userId = String((req as any).user.id);
     const { id } = req.params;
     const { isActive } = req.body;
 
