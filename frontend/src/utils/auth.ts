@@ -138,10 +138,13 @@ export function clearAuthData(): void {
 }
 
 /**
- * Get access token
+ * Get access token with sessionStorage fallback
+ * Used by all services for consistent token retrieval
  */
 export function getAccessToken(): string | null {
-  return localStorage.getItem('access_token') || localStorage.getItem('auth_token');
+  return localStorage.getItem('access_token') ||
+         localStorage.getItem('auth_token') ||
+         sessionStorage.getItem('token');
 }
 
 /**
@@ -150,6 +153,12 @@ export function getAccessToken(): string | null {
 export function getRefreshToken(): string | null {
   return localStorage.getItem('refresh_token');
 }
+
+/**
+ * Get access token (alias for service compatibility)
+ * @deprecated Use getAccessToken() instead
+ */
+export const getAuthToken = getAccessToken;
 
 /**
  * Get stored user data

@@ -1,16 +1,12 @@
 import { useAppStore } from "@/store";
 import { MarketData } from "@/types";
 import { getApiBaseUrl, shouldUseMockMode } from "@/utils/environment";
+import { getAccessToken } from "@/utils/auth";
 import axios from "axios";
-
-// Authentication token for backend API
-const getAuthToken = (): string | null => {
-  return localStorage.getItem("access_token") || localStorage.getItem("auth_token") || sessionStorage.getItem("token");
-};
 
 // Create axios instance with authentication
 const createAuthenticatedAxios = () => {
-  const token = getAuthToken();
+  const token = getAccessToken();
   return axios.create({
     baseURL: getApiBaseUrl(),
     timeout: 30000,

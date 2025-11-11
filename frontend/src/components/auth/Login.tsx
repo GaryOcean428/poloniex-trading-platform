@@ -83,20 +83,28 @@ const Login: React.FC<LoginProps> = ({ onSuccess }) => {
               placeholder="Enter your password"
               disabled={isLoading}
               autoComplete="current-password"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  handleSubmit(e as unknown as React.FormEvent);
+                }
+              }}
             />
           </div>
           <div className="mt-2 text-sm text-gray-600 dark:text-gray-400">
             <p>Demo credentials: username: <strong>demo</strong>, password: <strong>password</strong></p>
             <p>Or try: username: <strong>trader</strong>, password: <strong>password</strong></p>
           </div>
+
+          {/* Hidden submit button for Enter key accessibility */}
+          <button type="submit" className="hidden" aria-hidden="true" tabIndex={-1}>Submit</button>
         </form>
       </CardBody>
       <CardFooter className="flex justify-between">
         <Button variant="outline" disabled={isLoading}>
           Register
         </Button>
-        <Button 
-          type="submit" 
+        <Button
+          type="button"
           onClick={handleSubmit}
           disabled={isLoading}
         >

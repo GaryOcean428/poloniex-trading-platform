@@ -1,5 +1,6 @@
 import { io, Socket } from 'socket.io-client';
 import { getBackendUrl } from '@/utils/environment';
+import { getAccessToken } from '@/utils/auth';
 import { AutonomousStrategy } from './autonomousTradingAPI';
 
 // Autonomous Trading WebSocket Events
@@ -105,11 +106,6 @@ export enum ConnectionState {
   FAILED = 'failed'
 }
 
-// Authentication helper
-const getAuthToken = (): string | null => {
-  return localStorage.getItem('access_token') || localStorage.getItem('auth_token') || sessionStorage.getItem('token');
-};
-
 class AutonomousTradingWebSocket {
   private static instance: AutonomousTradingWebSocket;
   private socket: Socket | null = null;
@@ -147,7 +143,7 @@ class AutonomousTradingWebSocket {
     this.notifyListeners('connectionStateChanged', this.connectionState);
 
     try {
-      const token = getAuthToken();
+      const token = getAccessToken();
       const backendUrl = getBackendUrl();
 
       this.socket = io(backendUrl, {

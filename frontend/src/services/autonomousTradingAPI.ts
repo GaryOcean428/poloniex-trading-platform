@@ -1,5 +1,6 @@
 import axios, { AxiosInstance } from 'axios';
 import { getBackendUrl } from '@/utils/environment';
+import { getAccessToken } from '@/utils/auth';
 
 // Types for autonomous trading API
 export interface AutonomousSystemStatus {
@@ -96,14 +97,9 @@ export interface PerformanceAnalytics {
   activeStrategies: number;
 }
 
-// Authentication helper
-const getAuthToken = (): string | null => {
-  return localStorage.getItem('access_token') || localStorage.getItem('auth_token') || sessionStorage.getItem('token');
-};
-
 // Create authenticated axios instance
 const createAuthenticatedAxios = (): AxiosInstance => {
-  const token = getAuthToken();
+  const token = getAccessToken();
   return axios.create({
     baseURL: `${getBackendUrl()}/api/autonomous-trading`,
     timeout: 30000,

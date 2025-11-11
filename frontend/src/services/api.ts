@@ -4,6 +4,7 @@
  */
 
 import { getBackendUrl } from '@/utils/environment';
+import { getAccessToken } from '@/utils/auth';
 
 const BASE_URL = getBackendUrl();
 
@@ -29,7 +30,7 @@ class APIClient {
     };
 
     // Add auth token if available
-    const token = localStorage.getItem('access_token') || localStorage.getItem('auth_token');
+    const token = getAccessToken();
     if (token) {
       headers['Authorization'] = `Bearer ${token}`;
     }
