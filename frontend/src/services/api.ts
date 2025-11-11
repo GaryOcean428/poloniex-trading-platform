@@ -4,6 +4,7 @@
  */
 
 import { getBackendUrl } from '@/utils/environment';
+import { getAuthHeader } from '@/utils/tokenHelper';
 
 const BASE_URL = getBackendUrl();
 
@@ -28,10 +29,10 @@ class APIClient {
       ...options.headers,
     };
 
-    // Add auth token if available
-    const token = localStorage.getItem('token');
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
+    // Add auth token if available using centralized helper
+    const authHeader = getAuthHeader();
+    if (authHeader) {
+      headers['Authorization'] = authHeader;
     }
 
     const config: RequestInit = {
