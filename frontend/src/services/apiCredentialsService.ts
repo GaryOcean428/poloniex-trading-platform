@@ -18,8 +18,8 @@ export interface ApiCredentials {
  */
 export const getActiveCredentials = async (): Promise<ApiCredentials | null> => {
   try {
-    const token = localStorage.getItem('token');
-    
+    const token = localStorage.getItem('access_token') || localStorage.getItem('auth_token');
+
     if (!token) {
       console.warn('No authentication token found');
       return null;

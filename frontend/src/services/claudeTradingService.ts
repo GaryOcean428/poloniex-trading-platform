@@ -40,7 +40,7 @@ class ClaudeTradingService {
     userQuery?: string
   ): Promise<TradingInsight> {
     try {
-      const token = localStorage.getItem('token');
+      const token = localStorage.getItem('access_token') || localStorage.getItem('auth_token');
       
       // Call backend API which uses Claude Sonnet 4.5
       const response = await axios.post(

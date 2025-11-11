@@ -5,7 +5,7 @@ import axios from "axios";
 
 // Authentication token for backend API
 const getAuthToken = (): string | null => {
-  return localStorage.getItem("token") || sessionStorage.getItem("token");
+  return localStorage.getItem("access_token") || localStorage.getItem("auth_token") || sessionStorage.getItem("token");
 };
 
 // Create axios instance with authentication

@@ -123,7 +123,7 @@ const Account: React.FC = () => {
       setRecentError(null);
       try {
         // Get JWT token from localStorage
-        const token = localStorage.getItem('token');
+        const token = localStorage.getItem('access_token') || localStorage.getItem('auth_token');
         if (!token) {
           throw new Error('Not authenticated');
         }

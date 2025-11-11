@@ -107,7 +107,7 @@ export enum ConnectionState {
 
 // Authentication helper
 const getAuthToken = (): string | null => {
-  return localStorage.getItem('token') || sessionStorage.getItem('token');
+  return localStorage.getItem('access_token') || localStorage.getItem('auth_token') || sessionStorage.getItem('token');
 };
 
 class AutonomousTradingWebSocket {

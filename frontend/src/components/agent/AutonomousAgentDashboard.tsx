@@ -74,7 +74,7 @@ const AutonomousAgentDashboard: React.FC = () => {
 
   const fetchAgentStatus = async () => {
     try {
-      const token = localStorage.getItem('token');
+      const token = localStorage.getItem('access_token') || localStorage.getItem('auth_token');
       const response = await axios.get(`${API_BASE_URL}/api/agent/status`, {
         headers: { Authorization: `Bearer ${token}` }
       });

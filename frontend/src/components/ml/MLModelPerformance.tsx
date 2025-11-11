@@ -48,7 +48,7 @@ const MLModelPerformance: React.FC<{ symbol: string }> = ({ symbol }) => {
   const fetchMLPerformance = async () => {
     try {
       setLoading(true);
-      const token = localStorage.getItem('access_token') || localStorage.getItem('token');
+      const token = localStorage.getItem('access_token') || localStorage.getItem('auth_token');
       const response = await axios.get(
         `${API_BASE_URL}/api/ml/performance/${symbol}`,
         {
