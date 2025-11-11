@@ -54,7 +54,7 @@ export interface GeneratedStrategy {
 
 export class LLMStrategyGenerator {
   private client: Anthropic | null = null;
-  private model = 'claude-sonnet-4-5'; // Claude Sonnet 4.5 (latest version)
+  private model = 'claude-sonnet-4-5-20250929'; // Claude Sonnet 4.5 (full model ID)
   private apiKey: string | undefined;
 
   constructor() {
@@ -62,7 +62,7 @@ export class LLMStrategyGenerator {
     // Don't throw error on missing API key - allow lazy initialization
     if (this.apiKey) {
       this.client = new Anthropic({ apiKey: this.apiKey });
-      logger.info('LLM Strategy Generator initialized with Claude Sonnet 4.5');
+      logger.info('LLM Strategy Generator initialized with Claude Sonnet 4.5 (claude-sonnet-4-5-20250929)');
     } else {
       logger.warn('ANTHROPIC_API_KEY not set - LLM strategy generation will be unavailable');
     }
@@ -93,11 +93,16 @@ export class LLMStrategyGenerator {
       logger.info(`Generating strategy for ${marketContext.symbol} using LLM...`);
 
       const prompt = this.buildStrategyGenerationPrompt(marketContext);
-      
+
+      // Use extended thinking for complex strategy generation
       const response = await this.client.messages.create({
         model: this.model,
-        max_tokens: 4096,
+        max_tokens: 8192, // Increased for detailed strategies
         temperature: 0.7,
+        thinking: {
+          type: 'enabled' as const,
+          budget_tokens: 4000 // Reserve tokens for deep reasoning about strategy design
+        },
         system: this.getSystemPrompt(),
         messages: [
           {
@@ -107,12 +112,18 @@ export class LLMStrategyGenerator {
         ]
       });
 
-      const content = response.content[0];
-      if (content.type !== 'text') {
-        throw new Error('Unexpected response type from Claude');
+      // Handle refusal stop reason
+      if (response.stop_reason === 'refusal') {
+        throw new Error('Claude declined to generate this strategy for safety reasons');
       }
 
-      const strategy = this.parseStrategyResponse(content.text, marketContext);
+      // Extract text content (skip thinking blocks)
+      const textBlocks = response.content.filter(block => block.type === 'text');
+      if (textBlocks.length === 0 || textBlocks[0].type !== 'text') {
+        throw new Error('No text content in Claude response');
+      }
+
+      const strategy = this.parseStrategyResponse(textBlocks[0].text, marketContext);
       
       logger.info(`Successfully generated strategy: ${strategy.name}`);
       return strategy;
@@ -168,10 +179,15 @@ export class LLMStrategyGenerator {
 
       const prompt = this.buildOptimizationPrompt(strategy, performanceData, marketContext);
       
+      // Use extended thinking for strategy optimization
       const response = await this.client.messages.create({
         model: this.model,
-        max_tokens: 4096,
+        max_tokens: 8192,
         temperature: 0.6,
+        thinking: {
+          type: 'enabled' as const,
+          budget_tokens: 4000 // Reserve tokens for analyzing performance and optimizing
+        },
         system: this.getSystemPrompt(),
         messages: [
           {
@@ -181,10 +197,17 @@ export class LLMStrategyGenerator {
         ]
       });
 
-      const content = response.content[0];
-      if (content.type !== 'text') {
-        throw new Error('Unexpected response type from Claude');
+      // Handle refusal stop reason
+      if (response.stop_reason === 'refusal') {
+        throw new Error('Claude declined to optimize this strategy for safety reasons');
       }
+
+      // Extract text content (skip thinking blocks)
+      const textBlocks = response.content.filter(block => block.type === 'text');
+      if (textBlocks.length === 0 || textBlocks[0].type !== 'text') {
+        throw new Error('No text content in Claude response');
+      }
+      const content = textBlocks[0];
 
       const optimizedStrategy = this.parseStrategyResponse(content.text, marketContext);
       
