@@ -97,17 +97,19 @@ export class EncryptionService {
     encryptionIv: string;
     tag: string;
   } {
-    // Use same IV for both to reduce storage
-    const iv = crypto.randomBytes(IV_LENGTH).toString('hex');
+    // Combine both credentials into a single JSON string to encrypt together
+    // This ensures we only have one tag for both values
+    const combined = JSON.stringify({ apiKey, apiSecret });
+    const result = this.encrypt(combined);
     
-    const keyResult = this.encryptWithIv(apiKey, iv);
-    const secretResult = this.encryptWithIv(apiSecret, iv);
-    
+    // Store the encrypted combined value in both fields for backward compatibility
+    // The apiKeyEncrypted will contain the full encrypted JSON
+    // The apiSecretEncrypted will be empty but we keep the field for schema compatibility
     return {
-      apiKeyEncrypted: keyResult.encrypted,
-      apiSecretEncrypted: secretResult.encrypted,
-      encryptionIv: iv,
-      tag: keyResult.tag // Use same tag approach
+      apiKeyEncrypted: result.encrypted,
+      apiSecretEncrypted: '', // Empty - not used in new approach
+      encryptionIv: result.iv,
+      tag: result.tag
     };
   }
 
@@ -123,10 +125,23 @@ export class EncryptionService {
     apiKey: string;
     apiSecret: string;
   } {
-    return {
-      apiKey: this.decrypt(apiKeyEncrypted, encryptionIv, tag),
-      apiSecret: this.decrypt(apiSecretEncrypted, encryptionIv, tag)
-    };
+    // Check if this is new format (combined encryption) or old format (separate)
+    if (apiSecretEncrypted === '' || !apiSecretEncrypted) {
+      // New format: decrypt the combined JSON
+      const decrypted = this.decrypt(apiKeyEncrypted, encryptionIv, tag);
+      const parsed = JSON.parse(decrypted);
+      return {
+        apiKey: parsed.apiKey,
+        apiSecret: parsed.apiSecret
+      };
+    } else {
+      // Old format: decrypt separately (this will fail with mismatched tags)
+      // This is kept for backward compatibility but will likely throw an error
+      return {
+        apiKey: this.decrypt(apiKeyEncrypted, encryptionIv, tag),
+        apiSecret: this.decrypt(apiSecretEncrypted, encryptionIv, tag)
+      };
+    }
   }
 
   /**
