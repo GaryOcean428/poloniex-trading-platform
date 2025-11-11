@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { getAccessToken } from '@/utils/auth';
 
 export interface TradingInsight {
   type: 'analysis' | 'recommendation' | 'risk_assessment' | 'market_outlook';
@@ -40,7 +41,7 @@ class ClaudeTradingService {
     userQuery?: string
   ): Promise<TradingInsight> {
     try {
-      const token = localStorage.getItem('token');
+      const token = getAccessToken();
       
       // Call backend API which uses Claude Sonnet 4.5
       const response = await axios.post(

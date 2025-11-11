@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { useTradingContext } from '../hooks/useTradingContext';
 import { poloniexApi } from '../services/poloniexAPI';
+import { getAccessToken } from '../utils/auth';
 import TransactionHistory from '../components/account/TransactionHistory';
 import ApiKeyManagement from '../components/account/ApiKeyManagement';
 
@@ -123,7 +124,7 @@ const Account: React.FC = () => {
       setRecentError(null);
       try {
         // Get JWT token from localStorage
-        const token = localStorage.getItem('token');
+        const token = getAccessToken();
         if (!token) {
           throw new Error('Not authenticated');
         }

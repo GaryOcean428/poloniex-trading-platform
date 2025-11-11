@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { getAccessToken, getRefreshToken } from '@/utils/auth';
 
 // Auto-detect API base URL based on environment
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 
@@ -85,8 +86,8 @@ export interface DashboardResponse {
 
 class DashboardService {
   private async getAuthHeaders(): Promise<Record<string, string>> {
-    let token = localStorage.getItem('access_token') || localStorage.getItem('token');
-    
+    let token = getAccessToken();
+
     // Check if token is expired (basic check - decode JWT and check exp)
     if (token) {
       try {
@@ -94,24 +95,45 @@ class DashboardService {
         if (tokenParts.length === 3 && tokenParts[1]) {
           const payload = JSON.parse(atob(tokenParts[1]));
           const isExpired = payload.exp * 1000 < Date.now();
-          
+
           if (isExpired) {
             console.log('Token expired, attempting refresh...');
             // Try to refresh token
-            const refreshToken = localStorage.getItem('refreshToken');
+            const refreshToken = getRefreshToken();
             if (refreshToken) {
-              const response = await axios.post(`${API_BASE_URL}/api/auth/refresh`, {
-                refreshToken
-              });
-              const newToken = response.data.token;
-              if (newToken) {
-                token = newToken;
-                localStorage.setItem('token', newToken);
+              try {
+                const response = await axios.post(`${API_BASE_URL}/api/auth/refresh`, {
+                  refreshToken
+                });
+
+                // Handle refresh response - supports both formats
+                const { token: newToken, accessToken, refreshToken: newRefreshToken } = response.data;
+                const actualNewToken = newToken || accessToken;
+
+                if (actualNewToken) {
+                  token = actualNewToken;
+                  // Store new tokens
+                  localStorage.setItem('access_token', actualNewToken);
+                  // Clean up legacy token key
+                  localStorage.removeItem('auth_token');
+                  // Update refresh token if provided
+                  if (newRefreshToken) {
+                    localStorage.setItem('refresh_token', newRefreshToken);
+                  }
+                } else {
+                  console.error('Token refresh failed: no token in response');
+                  token = null;
+                }
+              } catch (refreshError) {
+                console.error('Token refresh request failed:', refreshError);
+                token = null;
               }
             } else {
-              // No refresh token, redirect to login
+              // No refresh token, clear expired token
               console.warn('No refresh token available, user needs to re-login');
-              // Don't redirect automatically, just use expired token and let backend handle it
+              localStorage.removeItem('access_token');
+              localStorage.removeItem('auth_token');
+              token = null;
             }
           }
         }

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import axios from 'axios';
+import { getAccessToken } from '@/utils/auth';
 
 // Auto-detect API base URL based on environment
 const getApiBaseUrl = () => {
@@ -48,7 +49,7 @@ const MLModelPerformance: React.FC<{ symbol: string }> = ({ symbol }) => {
   const fetchMLPerformance = async () => {
     try {
       setLoading(true);
-      const token = localStorage.getItem('access_token') || localStorage.getItem('token');
+      const token = getAccessToken();
       const response = await axios.get(
         `${API_BASE_URL}/api/ml/performance/${symbol}`,
         {

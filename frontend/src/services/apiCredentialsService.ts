@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { getAccessToken } from '@/utils/auth';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://polytrade-be.up.railway.app';
 
@@ -18,8 +19,8 @@ export interface ApiCredentials {
  */
 export const getActiveCredentials = async (): Promise<ApiCredentials | null> => {
   try {
-    const token = localStorage.getItem('token');
-    
+    const token = getAccessToken();
+
     if (!token) {
       console.warn('No authentication token found');
       return null;

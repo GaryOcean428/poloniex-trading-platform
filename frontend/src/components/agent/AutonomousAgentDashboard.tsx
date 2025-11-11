@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Play, Pause, Square, Activity, Brain, TrendingUp, AlertCircle } from 'lucide-react';
 import axios from 'axios';
+import { getAccessToken } from '@/utils/auth';
 
 // Auto-detect API URL based on environment
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 
@@ -74,7 +75,7 @@ const AutonomousAgentDashboard: React.FC = () => {
 
   const fetchAgentStatus = async () => {
     try {
-      const token = localStorage.getItem('token');
+      const token = getAccessToken();
       const response = await axios.get(`${API_BASE_URL}/api/agent/status`, {
         headers: { Authorization: `Bearer ${token}` }
       });
