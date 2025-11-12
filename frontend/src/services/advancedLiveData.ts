@@ -530,7 +530,7 @@ export class LiveDataService {
       }
 
       const response = await this.poloniexRestClient.get(
-        `/${symbol}/orderBook`,
+        `/orderbook/${symbol}`,
         {
           params: { limit },
         }
@@ -576,7 +576,7 @@ export class LiveDataService {
         return cached;
       }
 
-      const response = await this.poloniexRestClient.get(`/${symbol}/trades`, {
+      const response = await this.poloniexRestClient.get(`/trades/${symbol}`, {
         params: { limit },
       });
 
@@ -619,20 +619,24 @@ export class LiveDataService {
       }
 
       const response = await this.poloniexRestClient.get(
-        `/${symbol}/ticker24h`
+        `/ticker`,
+        { params: { symbol } }
       );
+
+      // Response is an array, get first element
+      const tickerData = Array.isArray(response.data) ? response.data[0] : response.data;
 
       const summary: MarketSummary = {
         symbol,
         timestamp: Date.now(),
-        lastPrice: parseFloat(String(response.data.close || "0")),
-        bidPrice: parseFloat(String(response.data.markPrice || "0")),
-        askPrice: parseFloat(String(response.data.markPrice || "0")),
-        high24h: parseFloat(String(response.data.high || "0")),
-        low24h: parseFloat(String(response.data.low || "0")),
-        volume24h: parseFloat(String(response.data.volume || "0")),
-        quoteVolume24h: parseFloat(String(response.data.quoteVolume || "0")),
-        percentChange24h: parseFloat(String(response.data.change || "0")) * 100,
+        lastPrice: parseFloat(String(tickerData.c || "0")), // close price
+        bidPrice: parseFloat(String(tickerData.bPx || "0")), // bid price
+        askPrice: parseFloat(String(tickerData.aPx || "0")), // ask price
+        high24h: parseFloat(String(tickerData.h || "0")), // high
+        low24h: parseFloat(String(tickerData.l || "0")), // low
+        volume24h: parseFloat(String(tickerData.qty || "0")), // quantity
+        quoteVolume24h: parseFloat(String(tickerData.amt || "0")), // amount
+        percentChange24h: parseFloat(String(tickerData.dC || "0")) * 100, // daily change
         source: "poloniex_rest",
       };
 
