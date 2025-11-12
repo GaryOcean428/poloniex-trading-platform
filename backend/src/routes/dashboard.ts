@@ -1,6 +1,7 @@
 import express, { Request, Response } from 'express';
 import { authenticateToken } from '../middleware/auth.js';
 import poloniexFuturesService from '../services/poloniexFuturesService.js';
+import poloniexSpotService from '../services/poloniexSpotService.js';
 import { apiCredentialsService } from '../services/apiCredentialsService.js';
 import { logger } from '../utils/logger.js';
 
@@ -224,6 +225,11 @@ router.get('/balance', authenticateToken, async (req: Request, res: Response) =>
     let balance;
     try {
       balance = await poloniexFuturesService.getAccountBalance(credentials);
+      logger.info('Futures balance fetched successfully:', { 
+        eq: balance.eq, 
+        availMgn: balance.availMgn,
+        rawBalance: JSON.stringify(balance)
+      });
     } catch (apiError: any) {
       // API call failed - return mock data with warning
       logger.warn('Poloniex API call failed, returning mock data:', apiError.message);
@@ -246,15 +252,17 @@ router.get('/balance', authenticateToken, async (req: Request, res: Response) =>
     
     // Transform Poloniex V3 balance format to our format
     const transformedBalance = {
-      availableBalance: balance.availMgn || '0',
-      totalEquity: balance.eq || '0',
-      unrealizedPnL: balance.upl || '0',
-      marginBalance: balance.eq || '0',
-      positionMargin: balance.im || '0',
+      availableBalance: balance.availMgn || balance.availableBalance || '0',
+      totalEquity: balance.eq || balance.totalEquity || '0',
+      unrealizedPnL: balance.upl || balance.unrealizedPnL || '0',
+      marginBalance: balance.eq || balance.totalEquity || '0',
+      positionMargin: balance.im || balance.positionMargin || '0',
       orderMargin: '0',
       frozenFunds: '0',
       currency: 'USDT'
     };
+    
+    logger.info('Transformed balance:', transformedBalance);
     
     res.json({
       success: true,
@@ -423,6 +431,185 @@ router.get('/bills', authenticateToken, async (req: Request, res: Response) => {
     res.status(500).json({
       success: false,
       error: 'Internal server error',
+      details: error.message
+    });
+  }
+});
+
+/**
+ * GET /api/dashboard/balance/all
+ * Get combined balance from both Spot and Futures accounts
+ */
+router.get('/balance/all', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const credentials = await apiCredentialsService.getCredentials(String(req.user.id));
+    
+    if (!credentials) {
+      return res.json({
+        success: true,
+        data: {
+          spot: { total: 0, available: 0, balances: [] },
+          futures: { totalEquity: 0, availableBalance: 0 },
+          combined: { total: 0 }
+        },
+        mock: true,
+        message: 'No API credentials configured'
+      });
+    }
+
+    // Fetch both balances in parallel
+    const [spotBalances, futuresBalance] = await Promise.allSettled([
+      poloniexSpotService.getAccountBalances(credentials),
+      poloniexFuturesService.getAccountBalance(credentials)
+    ]);
+
+    // Process Spot balances
+    let spotData = { total: 0, available: 0, balances: [] };
+    if (spotBalances.status === 'fulfilled' && Array.isArray(spotBalances.value)) {
+      const balances = spotBalances.value.map((bal: any) => ({
+        currency: bal.currency,
+        available: parseFloat(bal.available || '0'),
+        hold: parseFloat(bal.hold || '0'),
+        total: parseFloat(bal.available || '0') + parseFloat(bal.hold || '0')
+      }));
+      
+      spotData = {
+        total: balances.reduce((sum, b) => sum + b.total, 0),
+        available: balances.reduce((sum, b) => sum + b.available, 0),
+        balances: balances.filter(b => b.total > 0)
+      };
+    }
+
+    // Process Futures balance
+    let futuresData: any = { totalEquity: 0, availableBalance: 0 };
+    if (futuresBalance.status === 'fulfilled') {
+      const bal: any = futuresBalance.value;
+      futuresData = {
+        totalEquity: parseFloat(bal.eq || bal.totalEquity || '0'),
+        availableBalance: parseFloat(bal.availMgn || bal.availableBalance || '0'),
+        unrealizedPnL: parseFloat(bal.upl || bal.unrealizedPnL || '0'),
+        positionMargin: parseFloat(bal.im || bal.positionMargin || '0')
+      };
+    }
+
+    // Combined total (in USDT equivalent)
+    const combinedTotal = spotData.total + futuresData.totalEquity;
+
+    res.json({
+      success: true,
+      data: {
+        spot: spotData,
+        futures: futuresData,
+        combined: {
+          total: combinedTotal,
+          currency: 'USDT'
+        }
+      }
+    });
+  } catch (error: any) {
+    logger.error('Error fetching combined balance:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch combined balance',
+      details: error.message
+    });
+  }
+});
+
+/**
+ * POST /api/dashboard/transfer
+ * Transfer funds between Spot and Futures accounts
+ */
+router.post('/transfer', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const credentials = await apiCredentialsService.getCredentials(String(req.user.id));
+    
+    if (!credentials) {
+      return res.status(400).json({
+        success: false,
+        error: 'No API credentials found'
+      });
+    }
+
+    const { currency, amount, fromAccount, toAccount } = req.body;
+
+    // Validate inputs
+    if (!currency || !amount || !fromAccount || !toAccount) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: currency, amount, fromAccount, toAccount'
+      });
+    }
+
+    // Validate account types
+    const validAccounts = ['SPOT', 'FUTURES'];
+    if (!validAccounts.includes(fromAccount) || !validAccounts.includes(toAccount)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid account type. Use SPOT or FUTURES'
+      });
+    }
+
+    if (fromAccount === toAccount) {
+      return res.status(400).json({
+        success: false,
+        error: 'Cannot transfer to the same account'
+      });
+    }
+
+    // Execute transfer
+    const result = await poloniexSpotService.transferBetweenAccounts(credentials, {
+      currency,
+      amount: parseFloat(amount),
+      fromAccount,
+      toAccount
+    });
+
+    logger.info(`Transfer completed for user ${req.user.id}: ${amount} ${currency} from ${fromAccount} to ${toAccount}`);
+
+    res.json({
+      success: true,
+      message: `Successfully transferred ${amount} ${currency} from ${fromAccount} to ${toAccount}`,
+      data: result
+    });
+  } catch (error: any) {
+    logger.error('Error transferring funds:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to transfer funds',
+      details: error.response?.data || error.message
+    });
+  }
+});
+
+/**
+ * GET /api/dashboard/transfer/history
+ * Get transfer history between accounts
+ */
+router.get('/transfer/history', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const credentials = await apiCredentialsService.getCredentials(String(req.user.id));
+    
+    if (!credentials) {
+      return res.json({
+        success: true,
+        data: [],
+        message: 'No API credentials configured'
+      });
+    }
+
+    const limit = parseInt(req.query.limit as string) || 50;
+    const history = await poloniexSpotService.getTransferHistory(credentials, { limit });
+
+    res.json({
+      success: true,
+      data: history
+    });
+  } catch (error: any) {
+    logger.error('Error fetching transfer history:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch transfer history',
       details: error.message
     });
   }
