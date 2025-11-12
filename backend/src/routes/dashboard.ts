@@ -375,17 +375,43 @@ router.get('/positions', authenticateToken, async (req: Request, res: Response) 
  */
 router.get('/bills', authenticateToken, async (req: Request, res: Response) => {
   try {
-    const credentials = await apiCredentialsService.getCredentials(String(req.user.id));
+    let credentials;
+    try {
+      credentials = await apiCredentialsService.getCredentials(String(req.user.id));
+    } catch (credError) {
+      // No credentials found - return empty bills for demo users
+      return res.json({
+        success: true,
+        data: [],
+        mock: true,
+        message: 'No API credentials configured. Add your Poloniex API keys to view transaction history.'
+      });
+    }
     
     if (!credentials) {
-      return res.status(400).json({
-        error: 'No API credentials found. Please add your Poloniex API keys first.',
-        requiresApiKeys: true
+      return res.json({
+        success: true,
+        data: [],
+        mock: true,
+        message: 'No API credentials configured. Add your Poloniex API keys to view transaction history.'
       });
     }
 
     const limit = parseInt(req.query.limit as string) || 10;
-    const bills = await poloniexFuturesService.getAccountBills(credentials, { limit });
+    
+    let bills;
+    try {
+      bills = await poloniexFuturesService.getAccountBills(credentials, { limit });
+    } catch (apiError: any) {
+      // API call failed - return empty bills with warning
+      logger.warn('Poloniex API call failed, returning empty bills:', apiError.message);
+      return res.json({
+        success: true,
+        data: [],
+        mock: true,
+        warning: 'Unable to fetch transaction history. Please check API credentials and IP whitelist.'
+      });
+    }
 
     res.json({
       success: true,
@@ -394,10 +420,10 @@ router.get('/bills', authenticateToken, async (req: Request, res: Response) => {
 
   } catch (error: any) {
     logger.error('Error fetching account bills:', error);
-    res.status(error.response?.status || 500).json({
+    res.status(500).json({
       success: false,
-      error: 'Failed to fetch account bills',
-      details: error.response?.data || error.message
+      error: 'Internal server error',
+      details: error.message
     });
   }
 });
