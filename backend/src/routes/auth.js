@@ -45,14 +45,25 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    const token = jwt.sign(
+    // Generate access token (short-lived)
+    const accessToken = jwt.sign(
       { id: user.id, userId: user.id, email: user.email },
       env.JWT_SECRET,
-      { expiresIn: `${process.env.JWT_ACCESS_TOKEN_EXPIRE_MINUTES || 1440}m` }
+      { expiresIn: '1h' } // 1 hour
+    );
+
+    // Generate refresh token (long-lived)
+    const refreshToken = jwt.sign(
+      { id: user.id, userId: user.id, email: user.email, type: 'refresh' },
+      env.JWT_SECRET,
+      { expiresIn: '7d' } // 7 days
     );
 
     res.json({
-      token,
+      token: accessToken, // For backward compatibility
+      accessToken,
+      refreshToken,
+      expiresIn: 3600, // 1 hour in seconds
       user: {
         id: user.id,
         email: user.email,
@@ -109,11 +120,67 @@ router.post('/logout', async (_req, res) => {
 });
 
 /**
- * Refresh endpoint (not implemented)
- * If you later add refresh tokens, implement here and update the frontend accordingly.
+ * Refresh endpoint - exchange refresh token for new access token
  */
-router.post('/refresh', async (_req, res) => {
-  return res.status(501).json({ success: false, error: 'Not implemented' });
+router.post('/refresh', async (req, res) => {
+  try {
+    const { refreshToken } = req.body;
+
+    if (!refreshToken) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Refresh token required' 
+      });
+    }
+
+    // Verify refresh token
+    let decoded;
+    try {
+      decoded = jwt.verify(refreshToken, env.JWT_SECRET);
+    } catch (err) {
+      logger.warn('Refresh token verification failed', { error: err.message });
+      return res.status(401).json({ 
+        success: false, 
+        error: 'Invalid or expired refresh token' 
+      });
+    }
+
+    // Ensure it's a refresh token
+    if (decoded.type !== 'refresh') {
+      return res.status(401).json({ 
+        success: false, 
+        error: 'Invalid token type' 
+      });
+    }
+
+    // Generate new access token
+    const newAccessToken = jwt.sign(
+      { id: decoded.id, userId: decoded.userId, email: decoded.email },
+      env.JWT_SECRET,
+      { expiresIn: '1h' }
+    );
+
+    // Optionally generate new refresh token (rotation)
+    const newRefreshToken = jwt.sign(
+      { id: decoded.id, userId: decoded.userId, email: decoded.email, type: 'refresh' },
+      env.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    res.json({
+      success: true,
+      token: newAccessToken, // For backward compatibility
+      accessToken: newAccessToken,
+      refreshToken: newRefreshToken,
+      expiresIn: 3600 // 1 hour in seconds
+    });
+  } catch (error) {
+    logger.error('Refresh token error', { error: error.message, stack: error.stack });
+    res.status(500).json({ 
+      success: false, 
+      error: 'Server error' 
+    });
+  }
 });
 
 // Register endpoint
@@ -134,14 +201,26 @@ router.post('/register', async (req, res) => {
     );
 
     const user = result.rows[0];
-    const token = jwt.sign(
+    
+    // Generate access token (short-lived)
+    const accessToken = jwt.sign(
       { id: user.id, userId: user.id, email: user.email },
       env.JWT_SECRET,
-      { expiresIn: `${process.env.JWT_ACCESS_TOKEN_EXPIRE_MINUTES || 1440}m` }
+      { expiresIn: '1h' }
+    );
+
+    // Generate refresh token (long-lived)
+    const refreshToken = jwt.sign(
+      { id: user.id, userId: user.id, email: user.email, type: 'refresh' },
+      env.JWT_SECRET,
+      { expiresIn: '7d' }
     );
 
     res.json({
-      token,
+      token: accessToken, // For backward compatibility
+      accessToken,
+      refreshToken,
+      expiresIn: 3600, // 1 hour in seconds
       user: {
         id: user.id,
         email: user.email,

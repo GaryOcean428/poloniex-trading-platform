@@ -215,3 +215,81 @@ export function decodeJWTPayload(token: string): unknown | null {
     return null;
   }
 }
+
+/**
+ * Refresh access token using refresh token
+ * Returns new access token or null if refresh fails
+ */
+export async function refreshAccessToken(): Promise<string | null> {
+  const refreshToken = getRefreshToken();
+  if (!refreshToken) {
+    console.warn('No refresh token available');
+    return null;
+  }
+
+  try {
+    // Get backend URL from environment or use default
+    const backendUrl = import.meta.env.VITE_API_BASE_URL || 
+      (window.location.hostname.includes('railway.app') 
+        ? 'https://polytrade-be.up.railway.app'
+        : 'http://localhost:3000');
+
+    const response = await fetch(`${backendUrl}/api/auth/refresh`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ refreshToken }),
+    });
+
+    if (!response.ok) {
+      console.warn('Token refresh failed:', response.status);
+      // Clear auth data if refresh fails
+      clearAuthData();
+      return null;
+    }
+
+    const data = await response.json();
+    
+    if (data.success && data.accessToken) {
+      // Store new tokens
+      localStorage.setItem('access_token', data.accessToken);
+      if (data.refreshToken) {
+        localStorage.setItem('refresh_token', data.refreshToken);
+      }
+      if (data.expiresIn) {
+        const expiryTime = Date.now() + data.expiresIn * 1000;
+        localStorage.setItem('auth_expiry', expiryTime.toString());
+      }
+      
+      console.log('Token refreshed successfully');
+      return data.accessToken;
+    }
+
+    return null;
+  } catch (error) {
+    console.error('Error refreshing token:', error);
+    return null;
+  }
+}
+
+/**
+ * Get access token with automatic refresh if needed
+ * This should be used by all API calls
+ */
+export async function getAccessTokenWithRefresh(): Promise<string | null> {
+  const currentToken = getAccessToken();
+  
+  if (!currentToken) {
+    return null;
+  }
+
+  // Check if token needs refresh
+  if (shouldRefreshToken()) {
+    console.log('Token expiring soon, refreshing...');
+    const newToken = await refreshAccessToken();
+    return newToken || currentToken; // Return new token or fallback to current
+  }
+
+  return currentToken;
+}

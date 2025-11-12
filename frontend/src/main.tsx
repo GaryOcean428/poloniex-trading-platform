@@ -2,6 +2,10 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
 import './index.css'  // ✅ Must be imported
+import { setupAxiosInterceptors } from './utils/axiosInterceptor'
+
+// Setup automatic token refresh for all axios requests
+setupAxiosInterceptors();
 
 // Suppress ResizeObserver errors that don't affect functionality
 // This is a known issue with React and certain UI libraries
