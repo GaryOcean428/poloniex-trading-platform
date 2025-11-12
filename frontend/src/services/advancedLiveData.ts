@@ -185,8 +185,13 @@ export class LiveDataService {
   }
 
   private initializePoloniexClient(): void {
+    // Get backend URL from environment utility
+    const backendUrl = typeof window !== 'undefined' && window.location.hostname.includes('railway.app')
+      ? 'https://polytrade-be.up.railway.app'
+      : '';
+    
     this.poloniexRestClient = axios.create({
-      baseURL: "/api/futures",
+      baseURL: `${backendUrl}/api/futures`,
       timeout: 10000,
       headers: {
         "Content-Type": "application/json",
