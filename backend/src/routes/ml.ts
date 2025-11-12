@@ -19,34 +19,66 @@ router.get('/performance/:symbol', authenticateToken, async (req, res) => {
 
     // Get historical OHLCV data (last 200 candles, 1h timeframe)
     let ohlcvData;
+    let currentPrice = 0;
+    
     try {
       ohlcvData = await poloniexFuturesService.getHistoricalData(symbol, '1h', 200);
+      
+      if (!ohlcvData || ohlcvData.length === 0) {
+        throw new Error('No historical data available');
+      }
+      
+      // Get current price from ticker
+      const tickers = await poloniexFuturesService.getTickers(symbol);
+      const ticker = Array.isArray(tickers) ? tickers[0] : tickers;
+      currentPrice = parseFloat(ticker?.markPx || ticker?.markPrice || ticker?.lastPx || ticker?.lastPrice || '0');
+      
+      // If ticker fails, use last candle close price
+      if (!currentPrice && ohlcvData.length > 0) {
+        currentPrice = ohlcvData[ohlcvData.length - 1].close;
+      }
     } catch (dataError: any) {
       console.error('Failed to fetch historical data:', dataError.message);
-      return res.status(503).json({ 
-        error: 'ML models unavailable', 
-        message: 'Unable to fetch market data. Please ensure API credentials are configured.',
-        details: dataError.message 
+      // Return fallback data instead of 503
+      return res.json({
+        symbol,
+        predictions: {
+          '1h': { price: 0, confidence: 0, direction: 'NEUTRAL' },
+          '4h': { price: 0, confidence: 0, direction: 'NEUTRAL' },
+          '24h': { price: 0, confidence: 0, direction: 'NEUTRAL' }
+        },
+        signal: {
+          action: 'HOLD',
+          confidence: 0,
+          reason: 'Unable to fetch market data. Please check API credentials.'
+        },
+        currentPrice: 0,
+        timestamp: new Date().toISOString(),
+        error: 'Data unavailable',
+        message: dataError.message
       });
     }
-    
-    if (!ohlcvData || ohlcvData.length === 0) {
-      return res.status(503).json({ 
-        error: 'ML models unavailable',
-        message: 'No historical data available for predictions'
-      });
-    }
-
-    // Get current price
-    const tickers = await poloniexFuturesService.getTickers(symbol);
-    const ticker = Array.isArray(tickers) ? tickers[0] : tickers;
-    const currentPrice = parseFloat(ticker?.markPrice || ticker?.lastPrice || '0');
 
     // Get multi-horizon predictions
-    const predictions = await mlPredictionService.getMultiHorizonPredictions(symbol, ohlcvData);
-
-    // Get trading signal
-    const signal = await mlPredictionService.getTradingSignal(symbol, ohlcvData, currentPrice);
+    let predictions, signal;
+    
+    try {
+      predictions = await mlPredictionService.getMultiHorizonPredictions(symbol, ohlcvData);
+      signal = await mlPredictionService.getTradingSignal(symbol, ohlcvData, currentPrice);
+    } catch (mlError: any) {
+      console.error('ML service error:', mlError.message);
+      // Return data with fallback predictions
+      predictions = {
+        '1h': { price: currentPrice, confidence: 0, direction: 'NEUTRAL' },
+        '4h': { price: currentPrice, confidence: 0, direction: 'NEUTRAL' },
+        '24h': { price: currentPrice, confidence: 0, direction: 'NEUTRAL' }
+      };
+      signal = {
+        action: 'HOLD',
+        confidence: 0,
+        reason: 'ML models not available - Python dependencies need to be installed'
+      };
+    }
 
     res.json({
       symbol,

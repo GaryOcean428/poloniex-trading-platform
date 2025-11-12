@@ -87,22 +87,36 @@ router.get('/overview', authenticateToken, async (req: Request, res: Response) =
     ]);
 
     // Extract data or null if failed
-    const balanceData = balance.status === 'fulfilled' ? balance.value : null;
+    const rawBalanceData = balance.status === 'fulfilled' ? balance.value : null;
     const positionsData = positions.status === 'fulfilled' ? positions.value : [];
     const tradesData = recentTrades.status === 'fulfilled' ? recentTrades.value : [];
     const ordersData = openOrders.status === 'fulfilled' ? openOrders.value : [];
 
-    // Calculate summary statistics
+    // Transform balance data to our format
+    const balanceData = rawBalanceData ? {
+      availableBalance: rawBalanceData.availMgn || '0',
+      totalEquity: rawBalanceData.eq || '0',
+      unrealizedPnL: rawBalanceData.upl || '0',
+      marginBalance: rawBalanceData.eq || '0',
+      positionMargin: rawBalanceData.im || '0',
+      currency: 'USDT'
+    } : null;
+
+    // Calculate summary statistics - Poloniex V3 format
     const totalPositionValue = Array.isArray(positionsData) 
-      ? positionsData.reduce((sum: number, pos: any) => sum + (parseFloat(pos.notionalValue) || 0), 0)
+      ? positionsData.reduce((sum: number, pos: any) => {
+          const qty = parseFloat(pos.qty || pos.positionAmt || '0');
+          const markPrice = parseFloat(pos.markPx || pos.markPrice || '0');
+          return sum + (qty * markPrice);
+        }, 0)
       : 0;
 
     const totalPnL = Array.isArray(positionsData)
-      ? positionsData.reduce((sum: number, pos: any) => sum + (parseFloat(pos.unrealizedPnl) || 0), 0)
+      ? positionsData.reduce((sum: number, pos: any) => sum + (parseFloat(pos.upl || pos.unrealizedPnl || '0')), 0)
       : 0;
 
     const activePositionsCount = Array.isArray(positionsData)
-      ? positionsData.filter((pos: any) => parseFloat(pos.positionAmt) !== 0).length
+      ? positionsData.filter((pos: any) => parseFloat(pos.qty || pos.positionAmt || '0') !== 0).length
       : 0;
 
     res.json({
@@ -208,9 +222,22 @@ router.get('/balance', authenticateToken, async (req: Request, res: Response) =>
     }
 
     const balance = await poloniexFuturesService.getAccountBalance(credentials);
+    
+    // Transform Poloniex V3 balance format to our format
+    const transformedBalance = {
+      availableBalance: balance.availMgn || '0',
+      totalEquity: balance.eq || '0',
+      unrealizedPnL: balance.upl || '0',
+      marginBalance: balance.eq || '0',
+      positionMargin: balance.im || '0',
+      orderMargin: '0',
+      frozenFunds: '0',
+      currency: 'USDT'
+    };
+    
     res.json({
       success: true,
-      data: balance
+      data: transformedBalance
     });
 
   } catch (error: any) {
@@ -265,16 +292,20 @@ router.get('/positions', authenticateToken, async (req: Request, res: Response) 
 
     const positions = await poloniexFuturesService.getPositions(credentials);
     
-    // Calculate summary
+    // Calculate summary - Poloniex V3 uses 'qty' for position amount
     const activePositions = Array.isArray(positions)
-      ? positions.filter((pos: any) => parseFloat(pos.positionAmt) !== 0)
+      ? positions.filter((pos: any) => parseFloat(pos.qty || pos.positionAmt || '0') !== 0)
       : [];
 
     const totalPnL = activePositions.reduce((sum: number, pos: any) => 
-      sum + (parseFloat(pos.unrealizedPnl) || 0), 0);
+      sum + (parseFloat(pos.upl || pos.unrealizedPnl || '0')), 0);
 
-    const totalValue = activePositions.reduce((sum: number, pos: any) => 
-      sum + (parseFloat(pos.notionalValue) || 0), 0);
+    // Calculate notional value: qty * markPx
+    const totalValue = activePositions.reduce((sum: number, pos: any) => {
+      const qty = parseFloat(pos.qty || pos.positionAmt || '0');
+      const markPrice = parseFloat(pos.markPx || pos.markPrice || '0');
+      return sum + (qty * markPrice);
+    }, 0);
 
     res.json({
       success: true,
