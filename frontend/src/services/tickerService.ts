@@ -13,30 +13,29 @@ export interface TickerData {
   lastUpdateTime: Date;
 }
 
-export interface PoloniexTickerResponse {
-  code: number;
-  msg: string;
-  data: Array<{
-    s: string;        // symbol (e.g., "BTC_USDT_PERP")
-    o: string;        // open price
-    l: string;        // low price
-    h: string;        // high price
-    c: string;        // close/current price
-    qty: string;      // quantity
-    amt: string;      // amount
-    tC: number;       // trade count
-    sT: number;       // start time
-    cT: number;       // current time
-    dN: string;       // display name
-    dC: string;       // daily change
-    bPx: string;      // bid price
-    bSz: string;      // bid size
-    aPx: string;      // ask price
-    aSz: string;      // ask size
-    mPx: string;      // mark price
-    iPx: string;      // index price
-  }>;
+export interface PoloniexTickerData {
+  s: string;        // symbol (e.g., "BTC_USDT_PERP")
+  o: string;        // open price
+  l: string;        // low price
+  h: string;        // high price
+  c: string;        // close/current price
+  qty: string;      // quantity
+  amt: string;      // amount
+  tC: number;       // trade count
+  sT: number;       // start time
+  cT: number;       // current time
+  dN: string;       // display name
+  dC: string;       // daily change
+  bPx: string;      // bid price
+  bSz: string;      // bid size
+  aPx: string;      // ask price
+  aSz: string;      // ask size
+  mPx: string;      // mark price
+  iPx: string;      // index price
 }
+
+// Backend returns unwrapped array after V3 API fix
+export type PoloniexTickerResponse = PoloniexTickerData[];
 
 /**
  * Convert Poloniex symbol format to display format
@@ -57,7 +56,7 @@ function convertToPoloniexFormat(displaySymbol: string): string {
 /**
  * Parse Poloniex ticker response to TickerData format
  */
-function parseTickerData(data: PoloniexTickerResponse['data'][0]): TickerData {
+function parseTickerData(data: PoloniexTickerData): TickerData {
   const currentPrice = parseFloat(data.c);
   const openPrice = parseFloat(data.o);
   const change24h = currentPrice - openPrice;
@@ -96,12 +95,13 @@ export const TickerService = {
 
       const data: PoloniexTickerResponse = await response.json();
       
-      if (data.code !== 200 || !data.data || data.data.length === 0) {
+      // Backend returns unwrapped array after V3 API fix
+      if (!Array.isArray(data) || data.length === 0) {
         console.error(`Invalid ticker response for ${symbol}:`, data);
         return null;
       }
 
-      const tickerData = data.data[0];
+      const tickerData = data[0];
       if (!tickerData) {
         console.error(`No ticker data found for ${symbol}`);
         return null;
@@ -145,12 +145,13 @@ export const TickerService = {
 
       const data: PoloniexTickerResponse = await response.json();
       
-      if (data.code !== 200 || !data.data) {
+      // Backend returns unwrapped array after V3 API fix
+      if (!Array.isArray(data)) {
         console.error('Invalid ticker response:', data);
         return [];
       }
 
-      return data.data.map(parseTickerData);
+      return data.map(parseTickerData);
     } catch (error) {
       console.error('Error fetching all tickers:', error);
       return [];
