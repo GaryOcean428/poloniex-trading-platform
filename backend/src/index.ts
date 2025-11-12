@@ -34,9 +34,11 @@ import mlRoutes from './routes/ml.js';
 import publicAdminRoutes from './routes/public-admin.js';
 import versionCheckRoutes from './routes/version-check.js';
 import deployVersionRoutes from './routes/deploy-version.js';
+import autonomousTraderRoutes from './routes/autonomousTrader.js';
 
 // Import services
 import { logger } from './utils/logger.js';
+import fullyAutonomousTrader from './services/fullyAutonomousTrader.js';
 import { persistentTradingEngine } from './services/persistentTradingEngine.js';
 
 // Import environment configuration (dotenv.config() is called inside env.ts)
@@ -163,6 +165,7 @@ app.use('/api/trading-sessions', tradingSessionsRoutes);
 app.use('/api/status', statusRoutes);
 app.use('/api/debug', debugRoutes); // Debug routes for database inspection
 app.use('/api/agent', agentRoutes); // Autonomous trading agent routes
+app.use('/api/autonomous', autonomousTraderRoutes); // Fully autonomous trading system
 app.use('/api/monitoring', monitoringRoutes); // Monitoring and error tracking routes
 app.use('/api/admin', adminRoutes); // Admin routes for migrations
 app.use('/api/ai', aiRoutes); // AI-powered trading insights using Claude Sonnet 4.5

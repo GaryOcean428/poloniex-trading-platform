@@ -50,7 +50,9 @@ class PoloniexFuturesService {
             const fullUrl = url + queryString;
             // Generate signature using the full request path with query params
             const signature = this.generateSignature(method, fullRequestPath, body, timestamp, credentials.apiSecret);
-            // Use correct Poloniex v3 headers (not KuCoin headers)
+            // Use correct Poloniex V3 Futures API headers per official documentation
+            // https://api-docs.poloniex.com/v3/futures/api/
+            // V3 API uses: key, signature, signTimestamp (NO PF- prefix, NO passphrase)
             const headers = {
                 'Content-Type': 'application/json',
                 'key': credentials.apiKey,
@@ -73,6 +75,11 @@ class PoloniexFuturesService {
             }
             logger.info(`Making Poloniex v3 futures ${method} request to ${requestPath}`);
             const response = await axios(config);
+            // Poloniex V3 API returns: { code: 200, data: {...}, msg: "Success" }
+            // Extract the data field if present, otherwise return the full response
+            if (response.data && typeof response.data === 'object' && 'data' in response.data) {
+                return response.data.data;
+            }
             return response.data;
         }
         catch (error) {
@@ -301,6 +308,11 @@ class PoloniexFuturesService {
             }
             logger.info(`Making Poloniex v3 public ${method} request to ${requestPath}`);
             const response = await axios(config);
+            // Poloniex V3 API returns: { code: 200, data: [...], msg: "Success" }
+            // Extract the data field if present, otherwise return the full response
+            if (response.data && typeof response.data === 'object' && 'data' in response.data) {
+                return response.data.data;
+            }
             return response.data;
         }
         catch (error) {
@@ -356,8 +368,8 @@ class PoloniexFuturesService {
      * Get K-line data (candlesticks)
      * Endpoint: GET /v3/market/candles
      */
-    async getKlines(symbol, granularity, params = {}) {
-        const queryParams = { symbol, granularity, ...params };
+    async getKlines(symbol, interval, params = {}) {
+        const queryParams = { symbol, interval, ...params };
         return this.makePublicRequest('GET', '/market/candles', queryParams);
     }
     /**
@@ -369,46 +381,51 @@ class PoloniexFuturesService {
      */
     async getHistoricalData(symbol, interval = '1h', limit = 200) {
         try {
-            // Map interval to Poloniex granularity (in seconds)
-            const granularityMap = {
-                '1m': 60,
-                '5m': 300,
-                '15m': 900,
-                '30m': 1800,
-                '1h': 3600,
-                '1H': 3600,
-                '4h': 14400,
-                '4H': 14400,
-                '1d': 86400,
-                '1D': 86400
+            // Map interval to Poloniex V3 format and seconds for time calculation
+            const intervalMap = {
+                '1m': { format: 'MINUTE_1', seconds: 60 },
+                '5m': { format: 'MINUTE_5', seconds: 300 },
+                '15m': { format: 'MINUTE_15', seconds: 900 },
+                '30m': { format: 'MINUTE_30', seconds: 1800 },
+                '1h': { format: 'HOUR_1', seconds: 3600 },
+                '1H': { format: 'HOUR_1', seconds: 3600 },
+                '2h': { format: 'HOUR_2', seconds: 7200 },
+                '4h': { format: 'HOUR_4', seconds: 14400 },
+                '4H': { format: 'HOUR_4', seconds: 14400 },
+                '12h': { format: 'HOUR_12', seconds: 43200 },
+                '1d': { format: 'DAY_1', seconds: 86400 },
+                '1D': { format: 'DAY_1', seconds: 86400 }
             };
-            const granularity = granularityMap[interval];
-            if (!granularity) {
-                throw new Error(`Invalid interval: ${interval}. Use 1m, 5m, 15m, 30m, 1h, 4h, or 1d`);
+            const intervalConfig = intervalMap[interval];
+            if (!intervalConfig) {
+                throw new Error(`Invalid interval: ${interval}. Use 1m, 5m, 15m, 30m, 1h, 2h, 4h, 12h, or 1d`);
             }
-            // Poloniex limits to 1500 candles per request
-            const actualLimit = Math.min(limit, 1500);
+            // Poloniex limits to 500 candles per request (not 1500)
+            const actualLimit = Math.min(limit, 500);
             // Calculate time range
             const endTime = Date.now();
-            const startTime = endTime - (granularity * 1000 * actualLimit);
-            // Fetch candles
+            const startTime = endTime - (intervalConfig.seconds * 1000 * actualLimit);
+            // Fetch candles using V3 format
             const params = {
-                from: Math.floor(startTime / 1000),
-                to: Math.floor(endTime / 1000)
+                limit: actualLimit,
+                sTime: Math.floor(startTime),
+                eTime: Math.floor(endTime)
             };
-            const candles = await this.getKlines(symbol, granularity, params);
+            const candles = await this.getKlines(symbol, intervalConfig.format, params);
             // Transform to standard OHLCV format
             if (!candles || !Array.isArray(candles)) {
-                logger.warn(`No historical data returned for ${symbol}`);
+                logger.warn(`No historical data returned for ${symbol}`, { candles });
                 return [];
             }
+            // Poloniex V3 candles format: [low, high, open, close, amt, qty, tC, sT, cT]
+            // Indices: [0=low, 1=high, 2=open, 3=close, 4=amt, 5=qty, 6=tC, 7=sT, 8=cT]
             return candles.map(candle => ({
-                timestamp: candle[0] * 1000, // Convert to milliseconds
-                open: parseFloat(candle[1]),
-                high: parseFloat(candle[2]),
-                low: parseFloat(candle[3]),
-                close: parseFloat(candle[4]),
-                volume: parseFloat(candle[5])
+                timestamp: parseInt(candle[7]), // sT (start time) in milliseconds
+                open: parseFloat(candle[2]), // open
+                high: parseFloat(candle[1]), // high
+                low: parseFloat(candle[0]), // low
+                close: parseFloat(candle[3]), // close
+                volume: parseFloat(candle[5]) // qty (base currency volume)
             }));
         }
         catch (error) {

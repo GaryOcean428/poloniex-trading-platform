@@ -44,7 +44,7 @@ router.get('/health', (req, res) => {
  */
 router.get('/', apiKeysRateLimiter, authenticateToken, async (req, res) => {
     try {
-        const userId = req.user.userId;
+        const userId = String(req.user.id);
         // Check if user has credentials for Poloniex
         const hasCredentials = await apiCredentialsService.hasCredentials(userId, 'poloniex');
         // Return credentials list (without exposing actual keys)
@@ -82,7 +82,7 @@ router.get('/', apiKeysRateLimiter, authenticateToken, async (req, res) => {
  */
 router.post('/', authenticateToken, async (req, res) => {
     try {
-        const userId = req.user.userId;
+        const userId = String(req.user.id);
         const { apiKey, apiSecret, credentialName, passphrase, permissions } = req.body;
         if (!apiKey || !apiSecret) {
             return res.status(400).json({
@@ -129,7 +129,7 @@ router.post('/', authenticateToken, async (req, res) => {
  */
 router.get('/active', authenticateToken, async (req, res) => {
     try {
-        const userId = req.user.userId;
+        const userId = String(req.user.id);
         const exchange = req.query.exchange || 'poloniex';
         // Get decrypted credentials
         const credentials = await apiCredentialsService.getCredentials(userId, exchange);
@@ -171,7 +171,7 @@ router.get('/active', authenticateToken, async (req, res) => {
  */
 router.delete('/:id', authenticateToken, async (req, res) => {
     try {
-        const userId = req.user.userId;
+        const userId = String(req.user.id);
         const { id } = req.params;
         // Extract exchange from ID (format: userId-exchange)
         const exchange = id.split('-')[1] || 'poloniex';
@@ -200,7 +200,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
  */
 router.patch('/:id', authenticateToken, async (req, res) => {
     try {
-        const userId = req.user.userId;
+        const userId = String(req.user.id);
         const { id } = req.params;
         const { isActive } = req.body;
         // Extract exchange from ID

@@ -30,6 +30,7 @@ import dashboardRoutes from './routes/dashboard.js';
 import mlRoutes from './routes/ml.js';
 import publicAdminRoutes from './routes/public-admin.js';
 import versionCheckRoutes from './routes/version-check.js';
+import autonomousTraderRoutes from './routes/autonomousTrader.js';
 // Import services
 import { logger } from './utils/logger.js';
 import { persistentTradingEngine } from './services/persistentTradingEngine.js';
@@ -83,11 +84,22 @@ app.use(sanitizeRequest);
 // Rate limiting (after CORS so rate-limited responses still have CORS headers)
 app.use(rateLimiter);
 // Health check endpoints
-app.get('/api/health', (_req, res) => {
+app.get('/api/health', async (_req, res) => {
+    // Get server's public IP address
+    let publicIP = 'unknown';
+    try {
+        const response = await fetch('https://api.ipify.org?format=json');
+        const data = await response.json();
+        publicIP = data.ip;
+    }
+    catch (error) {
+        logger.error('Failed to fetch public IP:', error);
+    }
     res.json({
         status: 'healthy',
         timestamp: new Date().toISOString(),
-        environment: process.env.NODE_ENV || 'development'
+        environment: process.env.NODE_ENV || 'development',
+        publicIP: publicIP
     });
 });
 // Simplified health check for Railway (backward compatibility)
@@ -123,6 +135,7 @@ app.use('/api/trading-sessions', tradingSessionsRoutes);
 app.use('/api/status', statusRoutes);
 app.use('/api/debug', debugRoutes); // Debug routes for database inspection
 app.use('/api/agent', agentRoutes); // Autonomous trading agent routes
+app.use('/api/autonomous', autonomousTraderRoutes); // Fully autonomous trading system
 app.use('/api/monitoring', monitoringRoutes); // Monitoring and error tracking routes
 app.use('/api/admin', adminRoutes); // Admin routes for migrations
 app.use('/api/ai', aiRoutes); // AI-powered trading insights using Claude Sonnet 4.5

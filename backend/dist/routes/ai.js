@@ -8,11 +8,11 @@ const anthropic = new Anthropic({
 });
 /**
  * POST /api/ai/trading-insight
- * Generate trading insights using Claude Sonnet 4.5
+ * Generate trading insights using Claude Sonnet 4.5 with extended thinking
  */
 router.post('/trading-insight', authenticateToken, async (req, res) => {
     try {
-        const { tradingData, userQuery } = req.body;
+        const { tradingData, userQuery, enableThinking = true } = req.body;
         if (!tradingData) {
             return res.status(400).json({
                 success: false,
@@ -21,10 +21,17 @@ router.post('/trading-insight', authenticateToken, async (req, res) => {
         }
         // Build prompt for Claude
         const prompt = buildTradingPrompt(tradingData, userQuery);
-        // Call Claude Sonnet 4.5
+        // Call Claude Sonnet 4.5 with extended thinking for better trading analysis
         const message = await anthropic.messages.create({
-            model: 'claude-sonnet-4-20250514',
-            max_tokens: 1024,
+            model: 'claude-sonnet-4-5-20250929',
+            max_tokens: 4096, // Increased from 1024 for more detailed analysis
+            // Enable extended thinking for complex trading analysis (can be disabled for speed)
+            ...(enableThinking && {
+                thinking: {
+                    type: 'enabled',
+                    budget_tokens: 2000 // Reserve tokens for reasoning about market conditions
+                }
+            }),
             messages: [
                 {
                     role: 'user',
@@ -32,14 +39,30 @@ router.post('/trading-insight', authenticateToken, async (req, res) => {
                 }
             ]
         });
-        // Parse Claude's response
-        const content = message.content[0];
-        const responseText = content.type === 'text' ? content.text : '';
+        // Handle refusal stop reason (Claude 4.5 feature)
+        if (message.stop_reason === 'refusal') {
+            return res.status(400).json({
+                success: false,
+                error: 'Request declined by AI for safety reasons',
+                refusal: true
+            });
+        }
+        // Parse Claude's response (skip thinking blocks, use text content)
+        const textContent = message.content.filter(block => block.type === 'text');
+        const responseText = textContent.length > 0 && textContent[0].type === 'text'
+            ? textContent[0].text
+            : '';
         // Extract structured insight from response
         const insight = parseClaudeResponse(responseText, tradingData);
         res.json({
             success: true,
-            insight
+            insight,
+            // Include metadata about thinking usage
+            meta: {
+                thinkingEnabled: enableThinking,
+                inputTokens: message.usage.input_tokens,
+                outputTokens: message.usage.output_tokens
+            }
         });
     }
     catch (error) {
