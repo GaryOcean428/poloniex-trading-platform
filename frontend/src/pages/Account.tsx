@@ -72,24 +72,36 @@ const Account: React.FC = () => {
     }).format(numValue);
   };
 
-  // Format date for display
+  // Format date for display (Australian format)
   const formatDate = (timestamp: number | string) => {
     try {
-      const date = new Date(typeof timestamp === 'string' ? parseInt(timestamp) : timestamp);
+      // Handle both Unix timestamps (milliseconds) and ISO strings
+      let date: Date;
+      if (typeof timestamp === 'string') {
+        // Try parsing as ISO string first
+        date = new Date(timestamp);
+        // If invalid, try parsing as number
+        if (isNaN(date.getTime())) {
+          date = new Date(parseInt(timestamp));
+        }
+      } else {
+        date = new Date(timestamp);
+      }
 
       // Validate date
       if (isNaN(date.getTime())) {
         return 'Invalid Date';
       }
 
-      // Return formatted date-time string
-      return date.toLocaleString('en-US', {
+      // Return Australian formatted date-time string (DD/MM/YYYY HH:mm:ss)
+      return date.toLocaleString('en-AU', {
         year: 'numeric',
-        month: 'short',
-        day: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
         hour: '2-digit',
         minute: '2-digit',
-        hour12: true
+        second: '2-digit',
+        hour12: false
       });
     } catch {
       return 'Invalid Date';

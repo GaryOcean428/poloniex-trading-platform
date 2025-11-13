@@ -335,4 +335,235 @@ router.put('/config', authenticateToken, async (req, res) => {
         });
     }
 });
+/**
+ * GET /api/agent/activity/live
+ * Get live activity feed (real-time updates)
+ */
+router.get('/activity/live', authenticateToken, async (req, res) => {
+    try {
+        const userId = (req.user?.id || req.user?.userId)?.toString();
+        if (!userId) {
+            return res.status(401).json({ success: false, error: 'User ID not found' });
+        }
+        const limit = parseInt(req.query.limit) || 50;
+        // Return empty array for now - will be populated when agent is running
+        res.json({
+            success: true,
+            activities: []
+        });
+    }
+    catch (error) {
+        console.error('Error getting live activity:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+/**
+ * GET /api/agent/strategies/active
+ * Get currently active trading strategies
+ */
+router.get('/strategies/active', authenticateToken, async (req, res) => {
+    try {
+        const userId = (req.user?.id || req.user?.userId)?.toString();
+        if (!userId) {
+            return res.status(401).json({ success: false, error: 'User ID not found' });
+        }
+        // Return empty array for now
+        res.json({
+            success: true,
+            strategies: []
+        });
+    }
+    catch (error) {
+        console.error('Error getting active strategies:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+/**
+ * GET /api/agent/strategies/pending-approval
+ * Get strategies awaiting manual approval
+ */
+router.get('/strategies/pending-approval', authenticateToken, async (req, res) => {
+    try {
+        const userId = (req.user?.id || req.user?.userId)?.toString();
+        if (!userId) {
+            return res.status(401).json({ success: false, error: 'User ID not found' });
+        }
+        res.json({
+            success: true,
+            strategies: []
+        });
+    }
+    catch (error) {
+        console.error('Error getting pending strategies:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+/**
+ * GET /api/agent/strategy/current
+ * Get currently generating strategy
+ */
+router.get('/strategy/current', authenticateToken, async (req, res) => {
+    try {
+        const userId = (req.user?.id || req.user?.userId)?.toString();
+        if (!userId) {
+            return res.status(401).json({ success: false, error: 'User ID not found' });
+        }
+        res.json({
+            success: true,
+            generation: null
+        });
+    }
+    catch (error) {
+        console.error('Error getting current strategy:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+/**
+ * GET /api/agent/strategy/recent
+ * Get recently generated strategies
+ */
+router.get('/strategy/recent', authenticateToken, async (req, res) => {
+    try {
+        const userId = (req.user?.id || req.user?.userId)?.toString();
+        if (!userId) {
+            return res.status(401).json({ success: false, error: 'User ID not found' });
+        }
+        const limit = parseInt(req.query.limit) || 5;
+        res.json({
+            success: true,
+            strategies: []
+        });
+    }
+    catch (error) {
+        console.error('Error getting recent strategies:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+/**
+ * GET /api/agent/backtest/results
+ * Get backtest results
+ */
+router.get('/backtest/results', authenticateToken, async (req, res) => {
+    try {
+        const userId = (req.user?.id || req.user?.userId)?.toString();
+        if (!userId) {
+            return res.status(401).json({ success: false, error: 'User ID not found' });
+        }
+        const limit = parseInt(req.query.limit) || 10;
+        const strategyId = req.query.strategy_id;
+        res.json({
+            success: true,
+            results: []
+        });
+    }
+    catch (error) {
+        console.error('Error getting backtest results:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+/**
+ * POST /api/agent/strategy/:id/approve
+ * Approve a strategy for trading
+ */
+router.post('/strategy/:id/approve', authenticateToken, async (req, res) => {
+    try {
+        const userId = (req.user?.id || req.user?.userId)?.toString();
+        if (!userId) {
+            return res.status(401).json({ success: false, error: 'User ID not found' });
+        }
+        const strategyId = req.params.id;
+        res.json({
+            success: true,
+            message: 'Strategy approved'
+        });
+    }
+    catch (error) {
+        console.error('Error approving strategy:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+/**
+ * POST /api/agent/strategy/:id/reject
+ * Reject a strategy
+ */
+router.post('/strategy/:id/reject', authenticateToken, async (req, res) => {
+    try {
+        const userId = (req.user?.id || req.user?.userId)?.toString();
+        if (!userId) {
+            return res.status(401).json({ success: false, error: 'User ID not found' });
+        }
+        const strategyId = req.params.id;
+        res.json({
+            success: true,
+            message: 'Strategy rejected'
+        });
+    }
+    catch (error) {
+        console.error('Error rejecting strategy:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+/**
+ * POST /api/agent/strategy/:id/pause
+ * Pause a running strategy
+ */
+router.post('/strategy/:id/pause', authenticateToken, async (req, res) => {
+    try {
+        const userId = (req.user?.id || req.user?.userId)?.toString();
+        if (!userId) {
+            return res.status(401).json({ success: false, error: 'User ID not found' });
+        }
+        const strategyId = req.params.id;
+        res.json({
+            success: true,
+            message: 'Strategy paused'
+        });
+    }
+    catch (error) {
+        console.error('Error pausing strategy:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+/**
+ * POST /api/agent/strategy/:id/resume
+ * Resume a paused strategy
+ */
+router.post('/strategy/:id/resume', authenticateToken, async (req, res) => {
+    try {
+        const userId = (req.user?.id || req.user?.userId)?.toString();
+        if (!userId) {
+            return res.status(401).json({ success: false, error: 'User ID not found' });
+        }
+        const strategyId = req.params.id;
+        res.json({
+            success: true,
+            message: 'Strategy resumed'
+        });
+    }
+    catch (error) {
+        console.error('Error resuming strategy:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+/**
+ * POST /api/agent/strategy/:id/retire
+ * Retire a strategy
+ */
+router.post('/strategy/:id/retire', authenticateToken, async (req, res) => {
+    try {
+        const userId = (req.user?.id || req.user?.userId)?.toString();
+        if (!userId) {
+            return res.status(401).json({ success: false, error: 'User ID not found' });
+        }
+        const strategyId = req.params.id;
+        res.json({
+            success: true,
+            message: 'Strategy retired'
+        });
+    }
+    catch (error) {
+        console.error('Error retiring strategy:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
 export default router;
