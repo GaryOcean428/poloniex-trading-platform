@@ -1,6 +1,7 @@
 import { AlertTriangle, CheckCircle, Plus, RefreshCw, Shield, Trash2, XCircle } from 'lucide-react';
 import { useCallback, useEffect, useState, useRef } from 'react';
 import { getAccessToken } from '@/utils/auth';
+import { apiCredentialsSchema, validateSchema } from '@/utils/validationSchemas';
 
 interface ApiCredential {
   id: string;
@@ -145,22 +146,12 @@ const ApiKeyManagement: React.FC = () => {
   };
 
   const handleCreateCredentials = async () => {
-    if (!newCredentialForm.credentialName.trim() || !newCredentialForm.apiKey.trim() || !newCredentialForm.apiSecret.trim()) {
-      setError('Please fill in all required fields');
-      return;
-    }
-
-    // Validate API key format (Poloniex format: XXXXXXXX-XXXXXXXX-XXXXXXXX-XXXXXXXX)
-    const apiKeyPattern = /^[A-Z0-9]{8}-[A-Z0-9]{8}-[A-Z0-9]{8}-[A-Z0-9]{8}$/;
-    if (!apiKeyPattern.test(newCredentialForm.apiKey.trim())) {
-      setError('Invalid API key format. Expected: XXXXXXXX-XXXXXXXX-XXXXXXXX-XXXXXXXX (uppercase letters and numbers)');
-      return;
-    }
-
-    // Validate API secret format (128 hex characters)
-    const apiSecretPattern = /^[a-f0-9]{128}$/;
-    if (!apiSecretPattern.test(newCredentialForm.apiSecret.trim())) {
-      setError('Invalid API secret format. Expected 128 lowercase hexadecimal characters');
+    // Validate using Zod schema
+    const validation = validateSchema(apiCredentialsSchema, newCredentialForm);
+    
+    if (!validation.success) {
+      const firstError = Object.values(validation.errors)[0];
+      setError(firstError);
       return;
     }
 
