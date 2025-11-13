@@ -85,6 +85,12 @@ app.use(sanitizeRequest);
 // Rate limiting (after CORS so rate-limited responses still have CORS headers)
 app.use(rateLimiter);
 // Health check endpoints
+const healthResponse = { status: 'ok', timestamp: new Date().toISOString() };
+// Root health check (for exec_preview)
+app.get('/health', (_req, res) => {
+    res.json(healthResponse);
+});
+// API health check
 app.get('/api/health', async (_req, res) => {
     // Get server's public IP address
     let publicIP = 'unknown';

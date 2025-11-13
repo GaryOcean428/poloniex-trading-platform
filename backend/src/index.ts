@@ -111,6 +111,14 @@ app.use(sanitizeRequest);
 app.use(rateLimiter);
 
 // Health check endpoints
+const healthResponse = { status: 'ok', timestamp: new Date().toISOString() };
+
+// Root health check (for exec_preview)
+app.get('/health', (_req: Request, res: Response) => {
+  res.json(healthResponse);
+});
+
+// API health check
 app.get('/api/health', async (_req: Request, res: Response) => {
   // Get server's public IP address
   let publicIP = 'unknown';
