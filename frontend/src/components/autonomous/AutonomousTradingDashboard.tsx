@@ -517,7 +517,7 @@ export default function AutonomousTradingDashboard() {
 
       {/* Paper vs Live Trading Info */}
       {!enabled && (
-        <>
+        <div className="space-y-4">
           <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-6">
             <h3 className="text-lg font-semibold text-blue-900 dark:text-blue-100 mb-3">
               How Autonomous Trading Works
@@ -595,7 +595,7 @@ export default function AutonomousTradingDashboard() {
               </div>
             </div>
           )}
-        </>
+        </div>
       )}
     </div>
   );
