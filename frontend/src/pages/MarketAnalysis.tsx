@@ -123,7 +123,13 @@ const MarketAnalysis: React.FC = () => {
       <div className="bg-bg-tertiary rounded-lg shadow-elev-2 p-6 border border-border-subtle">
         <h2 className="heading-secondary mb-4">Price Chart</h2>
         <div className="h-[400px]">
-          <PriceChart data={marketData} pair={selectedPair} />
+          {pairData.length > 0 ? (
+            <PriceChart data={pairData} pair={selectedPair.replace('_', '-')} />
+          ) : (
+            <div className="flex items-center justify-center h-full text-text-secondary">
+              {loading ? 'Loading chart data...' : 'No chart data available'}
+            </div>
+          )}
         </div>
       </div>
       

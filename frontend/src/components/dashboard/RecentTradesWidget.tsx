@@ -46,8 +46,15 @@ const RecentTradesWidget: React.FC = () => {
     }).format(num);
   };
 
-  const formatTime = (timestamp: number) => {
-    const date = new Date(timestamp);
+  const formatTime = (timestamp: number | string) => {
+    if (!timestamp) return 'N/A';
+    
+    // Handle both milliseconds and seconds timestamps
+    const ts = typeof timestamp === 'string' ? parseInt(timestamp) : timestamp;
+    const date = new Date(ts > 10000000000 ? ts : ts * 1000);
+    
+    if (isNaN(date.getTime())) return 'Invalid Date';
+    
     return date.toLocaleTimeString('en-US', {
       hour: '2-digit',
       minute: '2-digit',

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useTradingContext } from '../hooks/useTradingContext';
 import PriceChart from '../components/charts/PriceChart';
@@ -15,9 +15,33 @@ import AccountBalanceWidget from '../components/dashboard/AccountBalanceWidget';
 import ActivePositionsWidget from '../components/dashboard/ActivePositionsWidget';
 import RecentTradesWidget from '../components/dashboard/RecentTradesWidget';
 import { Activity, ArrowRight } from 'lucide-react';
+import { liveDataService } from '../services/advancedLiveData';
 
 const Dashboard: React.FC = () => {
-  const { marketData, strategies, activeStrategies, trades } = useTradingContext();
+  const { marketData: contextMarketData, strategies, activeStrategies, trades } = useTradingContext();
+  const [liveMarketData, setLiveMarketData] = useState<any[]>([]);
+  const [loadingMarket, setLoadingMarket] = useState(true);
+  
+  // Fetch live market data for chart
+  useEffect(() => {
+    const fetchMarketData = async () => {
+      try {
+        const candles = await liveDataService.getCandles('BTC_USDT', '1h', 100);
+        setLiveMarketData(candles || []);
+      } catch (error) {
+        console.error('Error fetching market data:', error);
+        setLiveMarketData(contextMarketData);
+      } finally {
+        setLoadingMarket(false);
+      }
+    };
+
+    fetchMarketData();
+    const interval = setInterval(fetchMarketData, 60000); // Update every minute
+    return () => clearInterval(interval);
+  }, [contextMarketData]);
+  
+  const marketData = liveMarketData.length > 0 ? liveMarketData : contextMarketData;
   
   return (
     <div className="container-responsive">
