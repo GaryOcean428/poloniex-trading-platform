@@ -2,6 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { Play, Pause, Square, Activity, Brain, TrendingUp, AlertCircle } from 'lucide-react';
 import axios from 'axios';
 import { getAccessToken } from '@/utils/auth';
+import StrategyGenerationDisplay from './StrategyGenerationDisplay';
+import ActiveStrategiesPanel from './ActiveStrategiesPanel';
+import BacktestResultsVisualization from './BacktestResultsVisualization';
+import StrategyApprovalQueue from './StrategyApprovalQueue';
+import LiveTradingActivityFeed from './LiveTradingActivityFeed';
+import PerformanceAnalytics from './PerformanceAnalytics';
 
 // Auto-detect API URL based on environment
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 
@@ -278,6 +284,15 @@ const AutonomousAgentDashboard: React.FC = () => {
         </div>
       )}
 
+      {/* Real-Time Strategy Generation Display */}
+      <StrategyGenerationDisplay agentStatus={agentStatus?.status} />
+
+      {/* Strategy Approval Queue */}
+      <StrategyApprovalQueue agentStatus={agentStatus?.status} />
+
+      {/* Active Strategies with Performance Metrics */}
+      <ActiveStrategiesPanel agentStatus={agentStatus?.status} />
+
       {/* Status Overview - White Cards with Shadows */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <div 
@@ -336,6 +351,12 @@ const AutonomousAgentDashboard: React.FC = () => {
           </p>
         </div>
       </div>
+
+      {/* Performance Analytics */}
+      <PerformanceAnalytics agentStatus={agentStatus?.status} />
+
+      {/* Backtest Results Visualization */}
+      <BacktestResultsVisualization />
 
       {/* Strategies Table - White Card */}
       <div className="bg-white rounded-lg shadow-lg overflow-hidden">
@@ -416,6 +437,9 @@ const AutonomousAgentDashboard: React.FC = () => {
           )}
         </div>
       </div>
+
+      {/* Live Trading Activity Feed */}
+      <LiveTradingActivityFeed agentStatus={agentStatus?.status} />
 
       {/* Activity Log - White Card */}
       <div className="bg-white rounded-lg shadow-lg overflow-hidden">

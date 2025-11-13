@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS autonomous_trading_configs (
   target_daily_return DECIMAL(5, 2) NOT NULL DEFAULT 1.0,
   symbols TEXT[] NOT NULL DEFAULT ARRAY['BTC_USDT_PERP', 'ETH_USDT_PERP'],
   enabled BOOLEAN NOT NULL DEFAULT false,
+  paper_trading BOOLEAN NOT NULL DEFAULT true,
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW()
 );

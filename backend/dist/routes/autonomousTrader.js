@@ -83,7 +83,8 @@ router.get('/status', authenticateToken, async (req, res) => {
                 maxRiskPerTrade: parseFloat(config.max_risk_per_trade),
                 maxDrawdown: parseFloat(config.max_drawdown),
                 targetDailyReturn: parseFloat(config.target_daily_return),
-                symbols: config.symbols
+                symbols: config.symbols,
+                paperTrading: config.paper_trading
             },
             metrics: metrics || {
                 currentEquity: parseFloat(config.initial_capital),

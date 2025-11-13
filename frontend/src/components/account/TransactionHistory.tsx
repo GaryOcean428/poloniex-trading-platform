@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Download, Upload, RefreshCw, Search, Filter, Download as DownloadIcon } from 'lucide-react';
-import PoloniexFuturesAPI, { AccountBill } from '../../services/poloniexFuturesAPI';
 import { formatTransactionDate, getUserDateFormat } from '../../utils/dateFormatter';
+import { getAccessToken } from '@/utils/auth';
+import { getBackendUrl } from '@/utils/environment';
 
 const TransactionHistory: React.FC = () => {
   const [filter, setFilter] = useState<'all' | 'deposit' | 'withdrawal' | 'trade'>('all');
@@ -43,23 +44,24 @@ const TransactionHistory: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Map AccountBill to UI row
-  const mapBillToRow = (b: AccountBill) => {
+  // Map backend bill to UI row
+  const mapBillToRow = (b: any) => {
     const typeMap: Record<string, 'DEPOSIT' | 'WITHDRAWAL' | 'TRADE'> = {
       deposit: 'DEPOSIT',
       withdrawal: 'WITHDRAWAL',
       trade: 'TRADE',
       fee: 'TRADE',
       funding: 'TRADE',
+      transfer: 'TRADE',
     };
     const t = typeMap[b.type?.toLowerCase?.() || 'trade'] || 'TRADE';
     return {
-      id: b.billId,
+      id: b.id || b.billId || String(Math.random()),
       type: t,
-      description: `${b.symbol || b.currency || ''} ${b.type}`.trim(),
-      amount: parseFloat(b.amount || '0'),
+      description: `${b.symbol || b.currency || ''} ${b.type || 'Transaction'}`.trim(),
+      amount: parseFloat(b.amount || b.amt || '0'),
       status: 'COMPLETED' as const,
-      timestamp: typeof b.ts === 'number' && b.ts < 1e12 ? b.ts * 1000 : b.ts,
+      timestamp: b.timestamp || b.ts || Date.now(),
     };
   };
 
@@ -81,9 +83,46 @@ const TransactionHistory: React.FC = () => {
           params.startTime = start;
           params.endTime = now;
         }
-        const bills = await new PoloniexFuturesAPI().getAccountBills(params);
-        const mapped = bills.map(mapBillToRow);
-        if (mounted) setRows(mapped);
+        const token = getAccessToken();
+        if (!token) {
+          if (mounted) {
+            setError('Please log in to view transactions');
+            setLoading(false);
+          }
+          return;
+        }
+
+        const backendUrl = getBackendUrl();
+        const queryParams = new URLSearchParams({ limit: params.limit?.toString() || '200' });
+        
+        if (params.startTime) queryParams.append('startTime', params.startTime.toString());
+        if (params.endTime) queryParams.append('endTime', params.endTime.toString());
+
+        const response = await fetch(`${backendUrl}/api/dashboard/bills?${queryParams}`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        if (!response.ok) {
+          throw new Error(`Failed to fetch transactions: ${response.statusText}`);
+        }
+
+        const result = await response.json();
+        
+        if (result.success && Array.isArray(result.data)) {
+          const mapped = result.data.map(mapBillToRow);
+          if (mounted) setRows(mapped);
+        } else if (result.mock) {
+          // No API credentials - show empty state
+          if (mounted) {
+            setRows([]);
+            setError('Add your Poloniex API keys in Account → API Keys to view transaction history');
+          }
+        } else {
+          throw new Error(result.error || 'Failed to load transactions');
+        }
       } catch (e) {
         if (mounted) setError(e instanceof Error ? e.message : 'Failed to load transactions');
       } finally {

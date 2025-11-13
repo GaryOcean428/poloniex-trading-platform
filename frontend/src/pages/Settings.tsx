@@ -89,15 +89,47 @@ const Settings: React.FC = () => {
   };
 
   // Handle form submission
-  const handleSaveSettings = (e: React.FormEvent) => {
+  const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
 
     // Clear previous status
     setSaveStatus({ show: false, success: false, message: '' });
 
     try {
-      // Update settings in context
+      // Update settings in context (localStorage)
       updateSettings(formData);
+
+      // If API credentials are provided, save them to the backend
+      if (formData.apiKey && formData.apiSecret) {
+        const token = localStorage.getItem('access_token') || localStorage.getItem('auth_token');
+        
+        if (token) {
+          try {
+            const response = await fetch('https://polytrade-be.up.railway.app/api/credentials', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+              },
+              body: JSON.stringify({
+                apiKey: formData.apiKey,
+                apiSecret: formData.apiSecret,
+                exchange: 'poloniex'
+              })
+            });
+
+            if (!response.ok) {
+              const error = await response.json();
+              throw new Error(error.error || 'Failed to save credentials to server');
+            }
+
+            console.log('✅ API credentials saved to backend database');
+          } catch (backendError: any) {
+            console.warn('⚠️ Failed to save credentials to backend:', backendError.message);
+            // Don't fail the entire save operation if backend save fails
+          }
+        }
+      }
 
       // Refresh API connection with new credentials
       refreshApiConnection();

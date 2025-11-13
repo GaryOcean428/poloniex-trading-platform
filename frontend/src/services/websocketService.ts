@@ -47,7 +47,8 @@ class WebSocketService implements WebSocketServiceInterface {
 
   private initializeService(): void {
     // Determine connection strategy
-const hasCredentials = getPoloniexApiKey() !== undefined && getPoloniexApiSecret() !== undefined;
+    // Note: Frontend no longer uses API keys directly - all auth goes through backend
+    const hasCredentials = false; // Always use backend authentication
     this.useMockData = shouldUseMockMode(hasCredentials);
 
     // console.log("WebSocket Service V3 initialized:", {

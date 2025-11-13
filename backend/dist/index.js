@@ -31,6 +31,7 @@ import mlRoutes from './routes/ml.js';
 import publicAdminRoutes from './routes/public-admin.js';
 import versionCheckRoutes from './routes/version-check.js';
 import autonomousTraderRoutes from './routes/autonomousTrader.js';
+import diagnosticRoutes from './routes/diagnostic.js';
 // Import services
 import { logger } from './utils/logger.js';
 import { persistentTradingEngine } from './services/persistentTradingEngine.js';
@@ -134,6 +135,7 @@ app.use('/api/credentials', credentialsRoutes);
 app.use('/api/trading-sessions', tradingSessionsRoutes);
 app.use('/api/status', statusRoutes);
 app.use('/api/debug', debugRoutes); // Debug routes for database inspection
+app.use('/api/diagnostic', diagnosticRoutes); // Diagnostic routes for troubleshooting
 app.use('/api/agent', agentRoutes); // Autonomous trading agent routes
 app.use('/api/autonomous', autonomousTraderRoutes); // Fully autonomous trading system
 app.use('/api/monitoring', monitoringRoutes); // Monitoring and error tracking routes

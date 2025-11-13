@@ -1,10 +1,8 @@
 import {
   getApiBaseUrl,
-  getPoloniexApiKey,
-  getPoloniexApiSecret,
   getBackendUrl,
 } from "@/utils/environment";
-import crypto from "crypto";
+import { getAccessToken } from "@/utils/auth";
 
 /**
  * Poloniex Futures API Configuration
@@ -236,41 +234,13 @@ export interface FuturesOrder {
   clientOrderId?: string;
 }
 
-// Generate HMAC-SHA256 signature
-const generateSignature = (
-  timestamp: string,
-  method: string,
-  requestPath: string,
-  body: string = ""
-): string => {
-  const apiSecret = getPoloniexApiSecret();
-  if (!apiSecret) {
-    throw new Error("VITE_POLONIEX_API_SECRET is not defined");
-  }
-  const message = timestamp + method + requestPath + body;
-  return crypto
-    .createHmac("sha256", apiSecret)
-    .update(message)
-    .digest("base64");
-};
-
-// Create auth headers
-const createAuthHeaders = (
-  method: string,
-  endpoint: string,
-  body: string = ""
-): Record<string, string> => {
-  const apiKey = getPoloniexApiKey();
-  if (!apiKey) {
-    throw new Error("VITE_POLONIEX_API_KEY is not defined");
-  }
-  const timestamp = Date.now().toString();
-  const signature = generateSignature(timestamp, method, endpoint, body);
+// Create auth headers for backend proxy
+// Backend handles Poloniex API authentication, frontend just needs JWT
+const createAuthHeaders = (): Record<string, string> => {
+  const token = getAccessToken();
   return {
     "Content-Type": "application/json",
-    "PF-API-KEY": apiKey,
-    "PF-API-SIGN": signature,
-    "PF-API-TIMESTAMP": timestamp,
+    ...(token && { "Authorization": `Bearer ${token}` }),
   };
 };
 
@@ -308,7 +278,7 @@ class PoloniexFuturesAPI {
     }
 
     const headers = authenticated
-      ? createAuthHeaders(method, endpoint, body)
+      ? createAuthHeaders()
       : { "Content-Type": "application/json" };
 
     const response = await fetch(url.toString(), {

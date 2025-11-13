@@ -15,13 +15,48 @@ class PoloniexFuturesService {
     /**
      * Generate HMAC-SHA256 signature for Poloniex v3 API authentication
      * Per specification: https://api-docs.poloniex.com/v3/futures/api/#authentication
+     *
+     * Format for GET/DELETE with query params:
+     *   METHOD\n
+     *   /path\n
+     *   param1=value1&param2=value2&signTimestamp=123456
+     *
+     * Format for POST/PUT with body:
+     *   METHOD\n
+     *   /path\n
+     *   requestBody={"key":"value"}&signTimestamp=123456
+     *
+     * Format for DELETE with no params:
+     *   METHOD\n
+     *   /path\n
+     *   signTimestamp=123456
      */
-    generateSignature(method, requestPath, body, timestamp, apiSecret) {
+    generateSignature(method, requestPath, params, body, timestamp, apiSecret) {
         try {
-            // Build the message string for signing per Poloniex v3 spec
-            // Format: METHOD\n + ENDPOINT\n + BODY_JSON (if present) + signTimestamp
-            const bodyStr = body ? JSON.stringify(body) : '';
-            const message = `${method.toUpperCase()}\n${requestPath}\n${bodyStr}${timestamp}`;
+            const methodUpper = method.toUpperCase();
+            // Build parameter string
+            let paramString = '';
+            if (body && (methodUpper === 'POST' || methodUpper === 'PUT')) {
+                // For POST/PUT with body
+                const bodyJson = JSON.stringify(body);
+                paramString = `requestBody=${bodyJson}&signTimestamp=${timestamp}`;
+            }
+            else if (params && Object.keys(params).length > 0) {
+                // For GET/DELETE with query params
+                // Sort parameters by ASCII order and add timestamp
+                const allParams = { ...params, signTimestamp: timestamp };
+                const sortedKeys = Object.keys(allParams).sort();
+                paramString = sortedKeys
+                    .map(key => `${encodeURIComponent(key)}=${encodeURIComponent(allParams[key])}`)
+                    .join('&');
+            }
+            else {
+                // For DELETE/GET with no params, just timestamp
+                paramString = `signTimestamp=${timestamp}`;
+            }
+            // Build the message string with actual newlines (not escaped)
+            const message = `${methodUpper}\n${requestPath}\n${paramString}`;
+            logger.debug('Signature message:', { message, timestamp });
             return crypto
                 .createHmac('sha256', apiSecret)
                 .update(message)
@@ -39,17 +74,16 @@ class PoloniexFuturesService {
     async makeRequest(credentials, method, endpoint, body = null, params = {}) {
         try {
             const timestamp = Date.now().toString();
-            // Build the proper v3 endpoint path
+            // Build the proper v3 endpoint path (without query string for signature)
             const requestPath = `/v3${endpoint}`;
             const url = `${this.baseURL}${requestPath}`;
-            // Generate query string and update request path if needed
+            // Generate signature with params (signature includes params but not in URL path)
+            const signature = this.generateSignature(method, requestPath, params, body, timestamp, credentials.apiSecret);
+            // Build query string for actual request URL
             const queryString = Object.keys(params).length > 0
                 ? '?' + new globalThis.URLSearchParams(params).toString()
                 : '';
-            const fullRequestPath = requestPath + queryString;
             const fullUrl = url + queryString;
-            // Generate signature using the full request path with query params
-            const signature = this.generateSignature(method, fullRequestPath, body, timestamp, credentials.apiSecret);
             // Use correct Poloniex V3 Futures API headers per official documentation
             // https://api-docs.poloniex.com/v3/futures/api/
             // V3 API uses: key, signature, signTimestamp (NO PF- prefix, NO passphrase)
@@ -58,7 +92,7 @@ class PoloniexFuturesService {
                 'key': credentials.apiKey,
                 'signature': signature,
                 'signTimestamp': timestamp,
-                'signatureMethod': 'HmacSHA256',
+                'signatureMethod': 'hmacSHA256',
                 'signatureVersion': '2'
             };
             const config = {
@@ -73,8 +107,18 @@ class PoloniexFuturesService {
             if (Object.keys(params).length > 0 && method === 'GET') {
                 config.params = params;
             }
-            logger.info(`Making Poloniex v3 futures ${method} request to ${requestPath}`);
+            logger.info(`Making Poloniex v3 futures ${method} request to ${requestPath}`, {
+                url: fullUrl,
+                hasApiKey: !!credentials.apiKey,
+                timestamp
+            });
             const response = await axios(config);
+            logger.info('Poloniex API response received', {
+                endpoint: requestPath,
+                status: response.status,
+                hasData: !!response.data,
+                dataKeys: response.data ? Object.keys(response.data) : []
+            });
             // Poloniex V3 API returns: { code: 200, data: {...}, msg: "Success" }
             // Extract the data field if present, otherwise return the full response
             if (response.data && typeof response.data === 'object' && 'data' in response.data) {
@@ -86,8 +130,10 @@ class PoloniexFuturesService {
             logger.error('Poloniex v3 futures API request error:', {
                 endpoint: endpoint,
                 status: error.response?.status,
+                statusText: error.response?.statusText,
                 data: error.response?.data,
-                message: error.message
+                message: error.message,
+                headers: error.config?.headers
             });
             throw error;
         }

@@ -37,7 +37,8 @@ class FullyAutonomousTrader extends EventEmitter {
                     maxDrawdown: parseFloat(row.max_drawdown),
                     targetDailyReturn: parseFloat(row.target_daily_return),
                     symbols: row.symbols,
-                    enabled: row.enabled
+                    enabled: row.enabled,
+                    paperTrading: row.paper_trading !== false // Default to true if not set
                 };
                 this.configs.set(config.userId, config);
                 await this.startTrading(config.userId);
@@ -63,17 +64,18 @@ class FullyAutonomousTrader extends EventEmitter {
         // Create default config
         const tradingConfig = {
             userId,
-            initialCapital: availableBalance,
+            initialCapital: config?.paperTrading ? 10000 : availableBalance, // Use virtual capital for paper trading
             maxRiskPerTrade: config?.maxRiskPerTrade || 2, // 2% per trade
             maxDrawdown: config?.maxDrawdown || 10, // 10% max drawdown
             targetDailyReturn: config?.targetDailyReturn || 1, // 1% daily target
             symbols: config?.symbols || ['BTC_USDT_PERP', 'ETH_USDT_PERP', 'SOL_USDT_PERP'],
-            enabled: true
+            enabled: true,
+            paperTrading: config?.paperTrading !== undefined ? config.paperTrading : true // Default to paper trading for safety
         };
         // Save to database
         await pool.query(`INSERT INTO autonomous_trading_configs 
-       (user_id, initial_capital, max_risk_per_trade, max_drawdown, target_daily_return, symbols, enabled)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       (user_id, initial_capital, max_risk_per_trade, max_drawdown, target_daily_return, symbols, enabled, paper_trading)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        ON CONFLICT (user_id) DO UPDATE SET
          initial_capital = $2,
          max_risk_per_trade = $3,
@@ -81,6 +83,7 @@ class FullyAutonomousTrader extends EventEmitter {
          target_daily_return = $5,
          symbols = $6,
          enabled = $7,
+         paper_trading = $8,
          updated_at = NOW()`, [
             userId,
             tradingConfig.initialCapital,
@@ -88,7 +91,8 @@ class FullyAutonomousTrader extends EventEmitter {
             tradingConfig.maxDrawdown,
             tradingConfig.targetDailyReturn,
             tradingConfig.symbols,
-            tradingConfig.enabled
+            tradingConfig.enabled,
+            tradingConfig.paperTrading
         ]);
         this.configs.set(userId, tradingConfig);
         await this.startTrading(userId);
@@ -389,31 +393,47 @@ class FullyAutonomousTrader extends EventEmitter {
         const config = this.configs.get(userId);
         if (!config || signals.length === 0)
             return;
-        const credentials = await apiCredentialsService.getCredentials(userId);
-        if (!credentials)
-            return;
-        // Get current positions
-        const currentPositions = await poloniexFuturesService.getPositions(credentials);
-        const positionCount = currentPositions.filter((p) => parseFloat(p.qty || p.positionAmt || '0') !== 0).length;
-        // Limit concurrent positions
-        const maxPositions = 3;
-        if (positionCount >= maxPositions) {
-            logger.info(`Max positions reached for user ${userId}`);
-            return;
-        }
         // Execute top signal
         const signal = signals[0];
         try {
-            logger.info(`Executing signal for ${signal.symbol}: ${signal.action} at ${signal.entryPrice}`);
-            // Place order
-            const order = await poloniexFuturesService.placeOrder(credentials, {
-                symbol: signal.symbol,
-                side: signal.side === 'long' ? 'BUY' : 'SELL',
-                type: 'MARKET',
-                quantity: signal.positionSize / signal.entryPrice,
-                leverage: signal.leverage
-            });
-            // Log trade
+            logger.info(`${config.paperTrading ? '[PAPER]' : '[LIVE]'} Executing signal for ${signal.symbol}: ${signal.action} at ${signal.entryPrice}`);
+            let orderId = `paper_${Date.now()}`;
+            // Only execute real trades if not in paper trading mode
+            if (!config.paperTrading) {
+                const credentials = await apiCredentialsService.getCredentials(userId);
+                if (!credentials) {
+                    logger.warn(`No credentials for user ${userId}, cannot execute live trade`);
+                    return;
+                }
+                // Get current positions
+                const currentPositions = await poloniexFuturesService.getPositions(credentials);
+                const positionCount = currentPositions.filter((p) => parseFloat(p.qty || p.positionAmt || '0') !== 0).length;
+                // Limit concurrent positions
+                const maxPositions = 3;
+                if (positionCount >= maxPositions) {
+                    logger.info(`Max positions reached for user ${userId}`);
+                    return;
+                }
+                // Place real order
+                const order = await poloniexFuturesService.placeOrder(credentials, {
+                    symbol: signal.symbol,
+                    side: signal.side === 'long' ? 'BUY' : 'SELL',
+                    type: 'MARKET',
+                    quantity: signal.positionSize / signal.entryPrice,
+                    leverage: signal.leverage
+                });
+                orderId = order.orderId;
+            }
+            else {
+                // Paper trading - check virtual position limits
+                const openPaperTrades = await pool.query(`SELECT COUNT(*) as count FROM autonomous_trades 
+           WHERE user_id = $1 AND status = 'open' AND order_id LIKE 'paper_%'`, [userId]);
+                if (parseInt(openPaperTrades.rows[0].count) >= 3) {
+                    logger.info(`Max paper positions reached for user ${userId}`);
+                    return;
+                }
+            }
+            // Log trade (both paper and live)
             await pool.query(`INSERT INTO autonomous_trades 
          (user_id, symbol, side, entry_price, quantity, stop_loss, take_profit, confidence, reason, order_id)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`, [
@@ -426,10 +446,10 @@ class FullyAutonomousTrader extends EventEmitter {
                 signal.takeProfit,
                 signal.confidence,
                 signal.reason,
-                order.orderId
+                orderId
             ]);
-            this.emit('trade_executed', { userId, signal, order });
-            logger.info(`Trade executed for user ${userId}: ${signal.symbol} ${signal.side}`);
+            this.emit('trade_executed', { userId, signal, orderId, paperTrading: config.paperTrading });
+            logger.info(`${config.paperTrading ? '[PAPER]' : '[LIVE]'} Trade executed for user ${userId}: ${signal.symbol} ${signal.side}`);
         }
         catch (error) {
             logger.error(`Error executing signal for user ${userId}:`, error);

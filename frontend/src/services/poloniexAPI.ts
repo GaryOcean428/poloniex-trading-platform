@@ -136,9 +136,13 @@ class PoloniexApiClient {
       }
 
       const api = createAuthenticatedAxios();
-      const response = await api.get("/account/balances");
+      // Use the correct backend endpoint for balance
+      const response = await api.get("/api/dashboard/balance");
 
-      this.cachedBalance = response.data;
+      // Extract balance data from response
+      const balanceData = response.data.balance || response.data;
+      
+      this.cachedBalance = balanceData;
       this.lastBalanceUpdate = Date.now();
 
       return this.cachedBalance;

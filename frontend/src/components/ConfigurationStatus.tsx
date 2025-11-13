@@ -98,8 +98,9 @@ export const ConfigurationStatus: React.FC = () => {
             {!isLiveMode && (
               <div className="mt-2 p-2 bg-yellow-200 rounded text-xs">
                 <strong>To enable live trading:</strong><br />
-                1. Set VITE_POLONIEX_API_KEY and VITE_POLONIEX_SECRET<br />
-                2. Ensure VITE_FORCE_MOCK_MODE is not set to "true"
+                1. Go to Account → API Keys<br />
+                2. Enter your Poloniex API credentials<br />
+                3. Save and refresh the page
               </div>
             )}
           </div>

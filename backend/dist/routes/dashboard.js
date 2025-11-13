@@ -171,22 +171,27 @@ router.get('/overview', authenticateToken, async (req, res) => {
  */
 router.get('/balance', authenticateToken, async (req, res) => {
     try {
+        const userId = String(req.user.id);
+        logger.info('Balance request received', { userId });
         let credentials;
         try {
-            credentials = await apiCredentialsService.getCredentials(String(req.user.id));
+            credentials = await apiCredentialsService.getCredentials(userId);
+            logger.info('Credentials retrieved', {
+                userId,
+                hasCredentials: !!credentials,
+                exchange: credentials?.exchange
+            });
         }
         catch (credError) {
+            logger.warn('No credentials found for user', { userId, error: credError.message });
             // No credentials found - return mock data for demo users
             return res.json({
                 success: true,
                 data: {
-                    availableBalance: '10000.00',
-                    totalEquity: '10000.00',
-                    unrealizedPnL: '0.00',
-                    marginBalance: '10000.00',
-                    positionMargin: '0.00',
-                    orderMargin: '0.00',
-                    frozenFunds: '0.00',
+                    totalBalance: 10000.00,
+                    availableBalance: 10000.00,
+                    marginBalance: 10000.00,
+                    unrealizedPnL: 0.00,
                     currency: 'USDT'
                 },
                 mock: true
@@ -196,13 +201,10 @@ router.get('/balance', authenticateToken, async (req, res) => {
             return res.json({
                 success: true,
                 data: {
-                    availableBalance: '10000.00',
-                    totalEquity: '10000.00',
-                    unrealizedPnL: '0.00',
-                    marginBalance: '10000.00',
-                    positionMargin: '0.00',
-                    orderMargin: '0.00',
-                    frozenFunds: '0.00',
+                    totalBalance: 10000.00,
+                    availableBalance: 10000.00,
+                    marginBalance: 10000.00,
+                    unrealizedPnL: 0.00,
                     currency: 'USDT'
                 },
                 mock: true
@@ -218,33 +220,26 @@ router.get('/balance', authenticateToken, async (req, res) => {
             });
         }
         catch (apiError) {
-            // API call failed - return mock data with warning
-            logger.warn('Poloniex API call failed, returning mock data:', apiError.message);
-            return res.json({
-                success: true,
-                data: {
-                    availableBalance: '10000.00',
-                    totalEquity: '10000.00',
-                    unrealizedPnL: '0.00',
-                    marginBalance: '10000.00',
-                    positionMargin: '0.00',
-                    orderMargin: '0.00',
-                    frozenFunds: '0.00',
-                    currency: 'USDT'
-                },
-                mock: true,
-                warning: 'Unable to fetch real balance. Please check API credentials and IP whitelist.'
+            // API call failed - log the actual error and return it
+            logger.error('Poloniex API call failed:', {
+                error: apiError.message,
+                status: apiError.response?.status,
+                data: apiError.response?.data
+            });
+            return res.status(500).json({
+                success: false,
+                error: 'Failed to fetch balance from Poloniex',
+                details: apiError.message,
+                poloniexError: apiError.response?.data
             });
         }
-        // Transform Poloniex V3 balance format to our format
+        // Transform Poloniex V3 balance format to frontend format
+        // Frontend expects: totalBalance, availableBalance, marginBalance, unrealizedPnL (all as numbers)
         const transformedBalance = {
-            availableBalance: balance.availMgn || balance.availableBalance || '0',
-            totalEquity: balance.eq || balance.totalEquity || '0',
-            unrealizedPnL: balance.upl || balance.unrealizedPnL || '0',
-            marginBalance: balance.eq || balance.totalEquity || '0',
-            positionMargin: balance.im || balance.positionMargin || '0',
-            orderMargin: '0',
-            frozenFunds: '0',
+            totalBalance: parseFloat(balance.eq || balance.totalEquity || '0'),
+            availableBalance: parseFloat(balance.availMgn || balance.availableBalance || '0'),
+            marginBalance: parseFloat(balance.eq || balance.totalEquity || '0'),
+            unrealizedPnL: parseFloat(balance.upl || balance.unrealizedPnL || '0'),
             currency: 'USDT'
         };
         logger.info('Transformed balance:', transformedBalance);
