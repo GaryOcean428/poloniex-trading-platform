@@ -1,26 +1,51 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useTradingContext } from '../hooks/useTradingContext';
 import PriceChart from '../components/charts/PriceChart';
 import { BarChart2, TrendingUp, TrendingDown, Volume2, ArrowRight } from 'lucide-react';
+import { liveDataService } from '../services/advancedLiveData';
 
 const MarketAnalysis: React.FC = () => {
-  const { marketData } = useTradingContext();
-  const [selectedPair, setSelectedPair] = useState('BTC-USDT');
+  const { marketData: contextMarketData } = useTradingContext();
+  const [selectedPair, setSelectedPair] = useState('BTC_USDT');
+  const [liveData, setLiveData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
   
-  // Filter data for selected pair
-  const pairData = marketData.filter(data => data.pair === selectedPair);
+  // Fetch live market data
+  useEffect(() => {
+    const fetchLiveData = async () => {
+      try {
+        setLoading(true);
+        const [ticker, candles] = await Promise.all([
+          liveDataService.getTicker(selectedPair),
+          liveDataService.getCandles(selectedPair, '1h', 100)
+        ]);
+        setLiveData({ ticker, candles });
+      } catch (error) {
+        console.error('Error fetching live data:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchLiveData();
+    const interval = setInterval(fetchLiveData, 30000); // Update every 30 seconds
+    return () => clearInterval(interval);
+  }, [selectedPair]);
   
-  // Calculate market metrics
-  const latestPrice = pairData[pairData.length - 1]?.close || 0;
-  const previousPrice = pairData[pairData.length - 2]?.close || 0;
+  // Use live data if available, otherwise fall back to context data
+  const pairData = liveData?.candles || contextMarketData.filter(data => data.pair === selectedPair.replace('_', '-'));
+  
+  // Calculate market metrics from live ticker or candles
+  const latestPrice = liveData?.ticker?.last ? parseFloat(liveData.ticker.last) : (pairData[pairData.length - 1]?.close || 0);
+  const previousPrice = pairData[pairData.length - 2]?.close || latestPrice;
   const priceChange = latestPrice - previousPrice;
-  const priceChangePercent = (priceChange / previousPrice) * 100;
+  const priceChangePercent = previousPrice > 0 ? (priceChange / previousPrice) * 100 : 0;
   
-  const volume24h = pairData.reduce((sum, data) => sum + data.volume, 0);
+  const volume24h = liveData?.ticker?.volume ? parseFloat(liveData.ticker.volume) : pairData.reduce((sum, data) => sum + (data.volume || 0), 0);
   
   // Calculate price ranges
-  const high24h = Math.max(...pairData.map(data => data.high));
-  const low24h = Math.min(...pairData.map(data => data.low));
+  const high24h = liveData?.ticker?.high ? parseFloat(liveData.ticker.high) : (pairData.length > 0 ? Math.max(...pairData.map(data => data.high)) : 0);
+  const low24h = liveData?.ticker?.low ? parseFloat(liveData.ticker.low) : (pairData.length > 0 ? Math.min(...pairData.map(data => data.low)) : 0);
   
   return (
     <div className="space-y-6">
@@ -31,11 +56,19 @@ const MarketAnalysis: React.FC = () => {
           onChange={(e) => setSelectedPair(e.target.value)}
           className="px-3 py-2 border border-border-moderate rounded-md focus:outline-none focus:ring-2 focus:ring-brand-cyan"
         >
-          <option value="BTC-USDT">BTC/USDT</option>
-          <option value="ETH-USDT">ETH/USDT</option>
-          <option value="SOL-USDT">SOL/USDT</option>
+          <option value="BTC_USDT">BTC/USDT</option>
+          <option value="ETH_USDT">ETH/USDT</option>
+          <option value="SOL_USDT">SOL/USDT</option>
+          <option value="XRP_USDT">XRP/USDT</option>
+          <option value="ADA_USDT">ADA/USDT</option>
         </select>
       </div>
+      
+      {loading && (
+        <div className="bg-bg-tertiary rounded-lg shadow-elev-2 p-8 border border-border-subtle text-center">
+          <div className="animate-pulse">Loading market data...</div>
+        </div>
+      )}
       
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="bg-bg-tertiary rounded-lg shadow-elev-2 p-4 border border-border-subtle">
