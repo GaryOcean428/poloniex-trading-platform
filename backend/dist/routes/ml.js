@@ -1,8 +1,11 @@
 import express from 'express';
 import { authenticateToken } from '../middleware/auth.js';
 import mlPredictionService from '../services/mlPredictionService.js';
+import simpleMlService from '../services/simpleMlService.js';
 import poloniexFuturesService from '../services/poloniexFuturesService.js';
 const router = express.Router();
+// Flag to use simple ML service if Python ML fails
+let usePythonML = true;
 /**
  * Get ML model performance and predictions
  */
@@ -54,22 +57,27 @@ router.get('/performance/:symbol', authenticateToken, async (req, res) => {
         // Get multi-horizon predictions
         let predictions, signal;
         try {
-            predictions = await mlPredictionService.getMultiHorizonPredictions(symbol, ohlcvData);
-            signal = await mlPredictionService.getTradingSignal(symbol, ohlcvData, currentPrice);
+            // Try Python ML first if enabled
+            if (usePythonML) {
+                try {
+                    predictions = await mlPredictionService.getMultiHorizonPredictions(symbol, ohlcvData);
+                    signal = await mlPredictionService.getTradingSignal(symbol, ohlcvData, currentPrice);
+                }
+                catch (pythonError) {
+                    console.warn('Python ML failed, falling back to simple ML:', pythonError.message);
+                    usePythonML = false; // Disable Python ML for subsequent requests
+                    throw pythonError; // Re-throw to use fallback
+                }
+            }
+            else {
+                throw new Error('Python ML disabled, using simple ML');
+            }
         }
         catch (mlError) {
-            console.error('ML service error:', mlError.message);
-            // Return data with fallback predictions
-            predictions = {
-                '1h': { price: currentPrice, confidence: 0, direction: 'NEUTRAL' },
-                '4h': { price: currentPrice, confidence: 0, direction: 'NEUTRAL' },
-                '24h': { price: currentPrice, confidence: 0, direction: 'NEUTRAL' }
-            };
-            signal = {
-                action: 'HOLD',
-                confidence: 0,
-                reason: 'ML models not available - Python dependencies need to be installed'
-            };
+            console.log('Using simple ML service for predictions');
+            // Use JavaScript-based simple ML service
+            predictions = await simpleMlService.getMultiHorizonPredictions(symbol, ohlcvData);
+            signal = await simpleMlService.getTradingSignal(symbol, ohlcvData, currentPrice);
         }
         res.json({
             symbol,

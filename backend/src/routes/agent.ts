@@ -247,56 +247,68 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
       });
     }
 
+    // Default performance metrics
+    const defaultPerformance = {
+      totalPnl: 0,
+      winRate: 0,
+      totalTrades: 0,
+      winningTrades: 0,
+      losingTrades: 0,
+      averageWin: 0,
+      averageLoss: 0,
+      sharpeRatio: 0,
+      maxDrawdown: 0
+    };
+
     const status = await autonomousTradingAgent.getAgentStatus(userId);
     if (!status) {
       return res.json({
         success: true,
-        performance: {
-          totalPnl: 0,
-          winRate: 0,
-          totalTrades: 0,
-          winningTrades: 0,
-          losingTrades: 0,
-          averageWin: 0,
-          averageLoss: 0,
-          sharpeRatio: 0,
-          maxDrawdown: 0
-        }
+        performance: defaultPerformance
       });
     }
 
     // Calculate performance metrics from trades
-    const tradesResult = await pool.query(
-      `SELECT 
-        COUNT(*) as total_trades,
-        SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as winning_trades,
-        SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END) as losing_trades,
-        SUM(pnl) as total_pnl,
-        AVG(CASE WHEN pnl > 0 THEN pnl END) as avg_win,
-        AVG(CASE WHEN pnl < 0 THEN pnl END) as avg_loss
-      FROM trades 
-      WHERE user_id = $1 AND created_at >= $2`,
-      [userId, status.startedAt]
-    );
+    try {
+      const tradesResult = await pool.query(
+        `SELECT 
+          COUNT(*) as total_trades,
+          SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as winning_trades,
+          SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END) as losing_trades,
+          SUM(pnl) as total_pnl,
+          AVG(CASE WHEN pnl > 0 THEN pnl END) as avg_win,
+          AVG(CASE WHEN pnl < 0 THEN pnl END) as avg_loss
+        FROM trades 
+        WHERE user_id = $1 AND created_at >= $2`,
+        [userId, status.startedAt]
+      );
 
-    const metrics = tradesResult.rows[0];
+      const metrics = tradesResult.rows[0];
 
-    res.json({
-      success: true,
-      performance: {
-        totalPnl: parseFloat(metrics.total_pnl || 0),
-        winRate: metrics.total_trades > 0 
-          ? (parseFloat(metrics.winning_trades || 0) / parseFloat(metrics.total_trades)) * 100 
-          : 0,
-        totalTrades: parseInt(metrics.total_trades || 0),
-        winningTrades: parseInt(metrics.winning_trades || 0),
-        losingTrades: parseInt(metrics.losing_trades || 0),
-        averageWin: parseFloat(metrics.avg_win || 0),
-        averageLoss: parseFloat(metrics.avg_loss || 0),
-        sharpeRatio: 0, // TODO: Calculate Sharpe ratio
-        maxDrawdown: 0 // TODO: Calculate max drawdown
-      }
-    });
+      res.json({
+        success: true,
+        performance: {
+          totalPnl: parseFloat(metrics.total_pnl || 0),
+          winRate: metrics.total_trades > 0 
+            ? (parseFloat(metrics.winning_trades || 0) / parseFloat(metrics.total_trades)) * 100 
+            : 0,
+          totalTrades: parseInt(metrics.total_trades || 0),
+          winningTrades: parseInt(metrics.winning_trades || 0),
+          losingTrades: parseInt(metrics.losing_trades || 0),
+          averageWin: parseFloat(metrics.avg_win || 0),
+          averageLoss: parseFloat(metrics.avg_loss || 0),
+          sharpeRatio: 0, // TODO: Calculate Sharpe ratio
+          maxDrawdown: 0 // TODO: Calculate max drawdown
+        }
+      });
+    } catch (dbError: any) {
+      console.warn('Trades table query failed, returning default performance:', dbError.message);
+      // Return default performance if trades table doesn't exist
+      res.json({
+        success: true,
+        performance: defaultPerformance
+      });
+    }
   } catch (error: any) {
     console.error('Error getting performance:', error);
     res.status(500).json({
