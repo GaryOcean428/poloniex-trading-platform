@@ -300,6 +300,33 @@ const PerformanceAnalytics: React.FC<PerformanceAnalyticsProps> = ({
     );
   }
 
+  if (loading) {
+    return (
+      <div className="bg-white rounded-lg shadow-lg p-6">
+        <div className="animate-pulse space-y-4">
+          <div className="h-8 bg-gray-200 rounded w-1/3"></div>
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+            {[...Array(6)].map((_, i) => (
+              <div key={i} className="h-24 bg-gray-200 rounded"></div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!data) {
+    return (
+      <div className="bg-white rounded-lg shadow-lg p-6">
+        <div className="text-center py-12">
+          <BarChart3 className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+          <h3 className="text-lg font-semibold text-gray-700 mb-2">No Performance Data</h3>
+          <p className="text-gray-500">Start trading to see performance analytics</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       {/* Header with Time Range Selector */}
@@ -330,39 +357,39 @@ const PerformanceAnalytics: React.FC<PerformanceAnalyticsProps> = ({
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
           <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-lg p-4 border border-green-200">
             <p className="text-xs text-green-700 font-semibold mb-1">Total P&L</p>
-            <p className={`text-2xl font-bold ${getPnLColor(data.total_pnl)}`}>
-              ${data.total_pnl.toFixed(2)}
+            <p className={`text-2xl font-bold ${getPnLColor(data.total_pnl || 0)}`}>
+              ${(data.total_pnl || 0).toFixed(2)}
             </p>
-            <p className={`text-xs ${getPnLColor(data.total_pnl)} mt-1`}>
-              {data.total_pnl_percent >= 0 ? '+' : ''}{data.total_pnl_percent.toFixed(2)}%
+            <p className={`text-xs ${getPnLColor(data.total_pnl || 0)} mt-1`}>
+              {(data.total_pnl_percent || 0) >= 0 ? '+' : ''}{(data.total_pnl_percent || 0).toFixed(2)}%
             </p>
           </div>
           <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
             <p className="text-xs text-gray-600 font-semibold mb-1">Total Trades</p>
-            <p className="text-2xl font-bold text-gray-900">{data.total_trades}</p>
+            <p className="text-2xl font-bold text-gray-900">{data.total_trades || 0}</p>
           </div>
           <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
             <p className="text-xs text-gray-600 font-semibold mb-1">Win Rate</p>
-            <p className={`text-2xl font-bold ${data.win_rate >= 50 ? 'text-green-600' : 'text-red-600'}`}>
-              {data.win_rate.toFixed(1)}%
+            <p className={`text-2xl font-bold ${(data.win_rate || 0) >= 50 ? 'text-green-600' : 'text-red-600'}`}>
+              {(data.win_rate || 0).toFixed(1)}%
             </p>
           </div>
           <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
             <p className="text-xs text-gray-600 font-semibold mb-1">Profit Factor</p>
-            <p className={`text-2xl font-bold ${data.profit_factor >= 1.5 ? 'text-green-600' : 'text-orange-600'}`}>
-              {data.profit_factor.toFixed(2)}
+            <p className={`text-2xl font-bold ${(data.profit_factor || 0) >= 1.5 ? 'text-green-600' : 'text-orange-600'}`}>
+              {(data.profit_factor || 0).toFixed(2)}
             </p>
           </div>
           <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
             <p className="text-xs text-gray-600 font-semibold mb-1">Sharpe Ratio</p>
-            <p className={`text-2xl font-bold ${data.sharpe_ratio >= 1 ? 'text-green-600' : 'text-orange-600'}`}>
-              {data.sharpe_ratio.toFixed(2)}
+            <p className={`text-2xl font-bold ${(data.sharpe_ratio || 0) >= 1 ? 'text-green-600' : 'text-orange-600'}`}>
+              {(data.sharpe_ratio || 0).toFixed(2)}
             </p>
           </div>
           <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
             <p className="text-xs text-gray-600 font-semibold mb-1">Max Drawdown</p>
             <p className="text-2xl font-bold text-red-600">
-              {data.max_drawdown.toFixed(1)}%
+              {(data.max_drawdown || 0).toFixed(1)}%
             </p>
           </div>
         </div>
@@ -382,21 +409,21 @@ const PerformanceAnalytics: React.FC<PerformanceAnalyticsProps> = ({
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div className="bg-green-50 border border-green-200 rounded-lg p-4">
             <p className="text-xs text-green-700 font-semibold mb-1">Winning Trades</p>
-            <p className="text-2xl font-bold text-green-600">{data.winning_trades}</p>
-            <p className="text-xs text-green-600 mt-1">Avg: ${data.avg_win.toFixed(2)}</p>
+            <p className="text-2xl font-bold text-green-600">{data.winning_trades || 0}</p>
+            <p className="text-xs text-green-600 mt-1">Avg: ${(data.avg_win || 0).toFixed(2)}</p>
           </div>
           <div className="bg-red-50 border border-red-200 rounded-lg p-4">
             <p className="text-xs text-red-700 font-semibold mb-1">Losing Trades</p>
-            <p className="text-2xl font-bold text-red-600">{data.losing_trades}</p>
-            <p className="text-xs text-red-600 mt-1">Avg: ${Math.abs(data.avg_loss).toFixed(2)}</p>
+            <p className="text-2xl font-bold text-red-600">{data.losing_trades || 0}</p>
+            <p className="text-xs text-red-600 mt-1">Avg: ${Math.abs(data.avg_loss || 0).toFixed(2)}</p>
           </div>
           <div className="bg-green-50 border border-green-200 rounded-lg p-4">
             <p className="text-xs text-green-700 font-semibold mb-1">Best Trade</p>
-            <p className="text-2xl font-bold text-green-600">${data.best_trade.toFixed(2)}</p>
+            <p className="text-2xl font-bold text-green-600">${(data.best_trade || 0).toFixed(2)}</p>
           </div>
           <div className="bg-red-50 border border-red-200 rounded-lg p-4">
             <p className="text-xs text-red-700 font-semibold mb-1">Worst Trade</p>
-            <p className="text-2xl font-bold text-red-600">${Math.abs(data.worst_trade).toFixed(2)}</p>
+            <p className="text-2xl font-bold text-red-600">${Math.abs(data.worst_trade || 0).toFixed(2)}</p>
           </div>
         </div>
       </div>
