@@ -111,6 +111,21 @@ router.get('/overview', authenticateToken, async (req, res) => {
         const activePositionsCount = Array.isArray(positionsData)
             ? positionsData.filter((pos) => parseFloat(pos.qty || pos.positionAmt || '0') !== 0).length
             : 0;
+        // Transform Poloniex trade data to frontend format
+        const transformedTrades = Array.isArray(tradesData)
+            ? tradesData.map((trade) => ({
+                id: trade.tradeId || trade.id || String(Math.random()),
+                pair: trade.symbol || 'UNKNOWN',
+                timestamp: trade.ts || trade.time || Date.now(),
+                type: trade.side === 'buy' || trade.side === 'BUY' ? 'BUY' : 'SELL',
+                price: parseFloat(trade.fillPx || trade.price || '0'),
+                amount: parseFloat(trade.fillSz || trade.qty || trade.amount || '0'),
+                total: parseFloat(trade.fillPx || trade.price || '0') * parseFloat(trade.fillSz || trade.qty || trade.amount || '0'),
+                status: 'COMPLETED',
+                fee: parseFloat(trade.fee || '0'),
+                orderId: trade.ordId || trade.orderId || ''
+            }))
+            : [];
         res.json({
             success: true,
             timestamp: new Date().toISOString(),
@@ -125,16 +140,14 @@ router.get('/overview', authenticateToken, async (req, res) => {
                     totalPnL: totalPnL
                 },
                 // Recent trades
-                recentTrades: tradesData,
+                recentTrades: transformedTrades,
                 tradesSummary: {
-                    count: Array.isArray(tradesData) ? tradesData.length : 0,
-                    last24h: Array.isArray(tradesData)
-                        ? tradesData.filter((t) => {
-                            const tradeTime = new Date(t.time).getTime();
-                            const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
-                            return tradeTime > dayAgo;
-                        }).length
-                        : 0
+                    count: transformedTrades.length,
+                    last24h: transformedTrades.filter((t) => {
+                        const tradeTime = t.timestamp;
+                        const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
+                        return tradeTime > dayAgo;
+                    }).length
                 },
                 // Open orders
                 openOrders: ordersData,
