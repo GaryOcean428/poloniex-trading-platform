@@ -1,5 +1,6 @@
 import axios, { AxiosError, AxiosResponse } from 'axios';
 import { getAccessToken, getRefreshToken, storeAuthData, clearAuthData, shouldRefreshToken } from '@/utils/auth';
+import { auditLogger, AuditEventType } from '@/utils/auditLogger';
 
 // Get the backend URL from environment
 const API_BASE_URL = import.meta.env.VITE_BACKEND_URL ||
@@ -92,6 +93,11 @@ export class AuthService {
       // Backend may return { success, accessToken, refreshToken, expiresIn, user }
       if (response.data?.success) {
         storeAuthData(response.data as LoginResponse);
+        // Audit log successful login
+        await auditLogger.logAuth(AuditEventType.LOGIN_SUCCESS, {
+          username: credentials.username,
+          userId: response.data.user?.id
+        });
         return { success: true, data: response.data as LoginResponse };
       }
 
@@ -112,9 +118,19 @@ export class AuthService {
           }
         };
         storeAuthData(mapped);
+        // Audit log successful login
+        await auditLogger.logAuth(AuditEventType.LOGIN_SUCCESS, {
+          username: credentials.username,
+          userId: mapped.user.id
+        });
         return { success: true, data: mapped };
       }
 
+      // Audit log failed login
+      await auditLogger.logAuth(AuditEventType.LOGIN_FAILURE, {
+        username: credentials.username,
+        reason: 'Invalid response format'
+      });
       return { success: false, error: 'Login failed' };
     } catch (error: unknown) {
       if ((isAxiosError(error) || hasAxiosLikeResponse(error)) && (error as any).response?.data) {
@@ -194,6 +210,9 @@ export class AuthService {
    */
   async logout(): Promise<void> {
     try {
+      // Audit log logout before clearing data
+      await auditLogger.logAuth(AuditEventType.LOGOUT, {});
+      
       const refreshToken = getRefreshToken();
 
       if (refreshToken) {
