@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Activity, TrendingUp, TrendingDown, DollarSign, Target, Zap, Play, Pause, Settings, BarChart3, Brain, AlertCircle, TestTube, Rocket } from 'lucide-react';
 import { getAccessToken } from '@/utils/auth';
 import { getBackendUrl } from '@/utils/environment';
+import { ConfirmationModal } from '../ui/ConfirmationModal';
 
 interface AutonomousConfig {
   initialCapital: number;
@@ -48,6 +49,7 @@ interface Statistics {
 
 export default function AutonomousTradingDashboard() {
   const [enabled, setEnabled] = useState(false);
+  const [showLiveConfirmation, setShowLiveConfirmation] = useState(false);
   const [loading, setLoading] = useState(true);
   const [config, setConfig] = useState<AutonomousConfig | null>(null);
   const [metrics, setMetrics] = useState<PerformanceMetrics | null>(null);
@@ -120,6 +122,15 @@ export default function AutonomousTradingDashboard() {
     }
   };
 
+  const handleToggleClick = () => {
+    // If enabling and in live mode, show confirmation
+    if (!enabled && !paperTrading) {
+      setShowLiveConfirmation(true);
+    } else {
+      toggleAutonomousTrading();
+    }
+  };
+
   const toggleAutonomousTrading = async () => {
     try {
       const token = getAccessToken();
@@ -145,6 +156,7 @@ export default function AutonomousTradingDashboard() {
 
       if (response.ok) {
         await fetchStatus();
+        setShowLiveConfirmation(false);
       } else {
         const data = await response.json();
         setError(data.error || 'Failed to toggle autonomous trading');
@@ -239,7 +251,7 @@ export default function AutonomousTradingDashboard() {
             )}
             
             <button
-            onClick={toggleAutonomousTrading}
+            onClick={handleToggleClick}
             className={`flex items-center space-x-2 px-6 py-3 rounded-lg font-semibold transition-colors ${
               enabled
                 ? 'bg-red-500 hover:bg-red-600 text-white'
@@ -597,6 +609,41 @@ export default function AutonomousTradingDashboard() {
           )}
         </div>
       )}
+
+      {/* Live Trading Confirmation Modal */}
+      <ConfirmationModal
+        isOpen={showLiveConfirmation}
+        onClose={() => setShowLiveConfirmation(false)}
+        onConfirm={toggleAutonomousTrading}
+        title="⚠️ Start LIVE Trading?"
+        message={`You are about to start LIVE autonomous trading with real money. Current balance: $${performance.currentEquity.toFixed(2)}`}
+        confirmText="Start Live Trading"
+        cancelText="Cancel"
+        requireTyping={true}
+        typingText="START LIVE TRADING"
+        danger={true}
+      >
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
+          <h4 className="font-semibold text-red-900 mb-2">⚠️ Critical Warnings:</h4>
+          <ul className="list-disc list-inside space-y-1 text-sm text-red-800">
+            <li>You can lose ALL your capital</li>
+            <li>Cryptocurrency markets are highly volatile</li>
+            <li>Past performance does not guarantee future results</li>
+            <li>The bot operates 24/7 and will execute trades automatically</li>
+            <li>You are responsible for monitoring and stopping the bot</li>
+          </ul>
+        </div>
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+          <h4 className="font-semibold text-blue-900 mb-2">✅ Before You Start:</h4>
+          <ul className="list-disc list-inside space-y-1 text-sm text-blue-800">
+            <li>You have tested strategies in Paper Trading mode</li>
+            <li>Your Poloniex Futures account is funded</li>
+            <li>Your API keys have trading permissions</li>
+            <li>You can afford to lose the capital you're risking</li>
+            <li>You understand how to stop the bot if needed</li>
+          </ul>
+        </div>
+      </ConfirmationModal>
     </div>
   );
 }

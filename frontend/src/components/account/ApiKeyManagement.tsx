@@ -33,6 +33,7 @@ const ApiKeyManagement: React.FC = () => {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [currentIP, setCurrentIP] = useState<string>('Loading...');
 
   const [apiCredentials, setApiCredentials] = useState<ApiCredential[]>([]);
 
@@ -46,6 +47,20 @@ const ApiKeyManagement: React.FC = () => {
       withdraw: false
     }
   });
+
+  // Fetch current IP address
+  useEffect(() => {
+    const fetchIP = async () => {
+      try {
+        const response = await fetch('https://api.ipify.org?format=json');
+        const data = await response.json();
+        setCurrentIP(data.ip);
+      } catch {
+        setCurrentIP('Unable to detect');
+      }
+    };
+    fetchIP();
+  }, []);
 
   // API base URL
   const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3000';
@@ -132,6 +147,20 @@ const ApiKeyManagement: React.FC = () => {
   const handleCreateCredentials = async () => {
     if (!newCredentialForm.credentialName.trim() || !newCredentialForm.apiKey.trim() || !newCredentialForm.apiSecret.trim()) {
       setError('Please fill in all required fields');
+      return;
+    }
+
+    // Validate API key format (Poloniex format: XXXXXXXX-XXXXXXXX-XXXXXXXX-XXXXXXXX)
+    const apiKeyPattern = /^[A-Z0-9]{8}-[A-Z0-9]{8}-[A-Z0-9]{8}-[A-Z0-9]{8}$/;
+    if (!apiKeyPattern.test(newCredentialForm.apiKey.trim())) {
+      setError('Invalid API key format. Expected: XXXXXXXX-XXXXXXXX-XXXXXXXX-XXXXXXXX (uppercase letters and numbers)');
+      return;
+    }
+
+    // Validate API secret format (128 hex characters)
+    const apiSecretPattern = /^[a-f0-9]{128}$/;
+    if (!apiSecretPattern.test(newCredentialForm.apiSecret.trim())) {
+      setError('Invalid API secret format. Expected 128 lowercase hexadecimal characters');
       return;
     }
 
@@ -361,6 +390,26 @@ const ApiKeyManagement: React.FC = () => {
                 placeholder="Enter your Poloniex API Secret"
                 required
               />
+            </div>
+
+            {/* IP Whitelist Information */}
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+              <div className="flex items-start space-x-3">
+                <Shield className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <h4 className="text-sm font-semibold text-blue-900 mb-2">IP Whitelist Configuration</h4>
+                  <p className="text-sm text-blue-800 mb-2">
+                    For security, Poloniex may require you to whitelist IP addresses that can use your API keys.
+                  </p>
+                  <div className="bg-white rounded border border-blue-300 p-3 mb-2">
+                    <p className="text-xs font-medium text-neutral-600 mb-1">Your Current IP Address:</p>
+                    <code className="text-sm font-mono text-blue-600 font-semibold">{currentIP}</code>
+                  </div>
+                  <p className="text-xs text-blue-700">
+                    💡 <strong>Tip:</strong> Add this IP to your Poloniex API key whitelist settings to avoid "Illegal of ip" errors.
+                  </p>
+                </div>
+              </div>
             </div>
 
             <div>
