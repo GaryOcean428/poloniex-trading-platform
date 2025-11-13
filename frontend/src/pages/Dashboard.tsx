@@ -15,7 +15,7 @@ import AccountBalanceWidget from '../components/dashboard/AccountBalanceWidget';
 import ActivePositionsWidget from '../components/dashboard/ActivePositionsWidget';
 import RecentTradesWidget from '../components/dashboard/RecentTradesWidget';
 import { Activity, ArrowRight } from 'lucide-react';
-import { liveDataService } from '../services/advancedLiveData';
+import { poloniexApi } from '../services/poloniexAPI';
 
 const Dashboard: React.FC = () => {
   const { marketData: contextMarketData, strategies, activeStrategies, trades } = useTradingContext();
@@ -26,8 +26,8 @@ const Dashboard: React.FC = () => {
   useEffect(() => {
     const fetchMarketData = async () => {
       try {
-        const candles = await liveDataService.getCandles('BTC_USDT', '1h', 100);
-        setLiveMarketData(candles || []);
+        const data = await poloniexApi.getHistoricalData('BTC-USDT', '1h', 100);
+        setLiveMarketData(data || []);
       } catch (error) {
         console.error('Error fetching market data:', error);
         setLiveMarketData(contextMarketData);

@@ -2,11 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { useTradingContext } from '../hooks/useTradingContext';
 import PriceChart from '../components/charts/PriceChart';
 import { BarChart2, TrendingUp, TrendingDown, Volume2, ArrowRight } from 'lucide-react';
-import { liveDataService } from '../services/advancedLiveData';
+import { poloniexApi } from '../services/poloniexAPI';
 
 const MarketAnalysis: React.FC = () => {
   const { marketData: contextMarketData } = useTradingContext();
-  const [selectedPair, setSelectedPair] = useState('BTC_USDT');
+  const [selectedPair, setSelectedPair] = useState('BTC-USDT');
   const [liveData, setLiveData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   
@@ -15,11 +15,14 @@ const MarketAnalysis: React.FC = () => {
     const fetchLiveData = async () => {
       try {
         setLoading(true);
-        const [ticker, candles] = await Promise.all([
-          liveDataService.getTicker(selectedPair),
-          liveDataService.getCandles(selectedPair, '1h', 100)
+        const [marketData, candles] = await Promise.all([
+          poloniexApi.getMarketData(selectedPair),
+          poloniexApi.getHistoricalData(selectedPair, '1h', 100)
         ]);
-        setLiveData({ ticker, candles });
+        setLiveData({ 
+          ticker: marketData, 
+          candles: candles 
+        });
       } catch (error) {
         console.error('Error fetching live data:', error);
       } finally {
@@ -33,19 +36,19 @@ const MarketAnalysis: React.FC = () => {
   }, [selectedPair]);
   
   // Use live data if available, otherwise fall back to context data
-  const pairData = liveData?.candles || contextMarketData.filter(data => data.pair === selectedPair.replace('_', '-'));
+  const pairData = liveData?.candles || contextMarketData.filter(data => data.pair === selectedPair);
   
   // Calculate market metrics from live ticker or candles
-  const latestPrice = liveData?.ticker?.last ? parseFloat(liveData.ticker.last) : (pairData[pairData.length - 1]?.close || 0);
+  const latestPrice = liveData?.ticker?.price ? parseFloat(liveData.ticker.price) : (pairData[pairData.length - 1]?.close || 0);
   const previousPrice = pairData[pairData.length - 2]?.close || latestPrice;
   const priceChange = latestPrice - previousPrice;
   const priceChangePercent = previousPrice > 0 ? (priceChange / previousPrice) * 100 : 0;
   
-  const volume24h = liveData?.ticker?.volume ? parseFloat(liveData.ticker.volume) : pairData.reduce((sum, data) => sum + (data.volume || 0), 0);
+  const volume24h = liveData?.ticker?.volume24h ? parseFloat(liveData.ticker.volume24h) : pairData.reduce((sum, data) => sum + (data.volume || 0), 0);
   
   // Calculate price ranges
-  const high24h = liveData?.ticker?.high ? parseFloat(liveData.ticker.high) : (pairData.length > 0 ? Math.max(...pairData.map(data => data.high)) : 0);
-  const low24h = liveData?.ticker?.low ? parseFloat(liveData.ticker.low) : (pairData.length > 0 ? Math.min(...pairData.map(data => data.low)) : 0);
+  const high24h = liveData?.ticker?.high24h ? parseFloat(liveData.ticker.high24h) : (pairData.length > 0 ? Math.max(...pairData.map(data => data.high)) : 0);
+  const low24h = liveData?.ticker?.low24h ? parseFloat(liveData.ticker.low24h) : (pairData.length > 0 ? Math.min(...pairData.map(data => data.low)) : 0);
   
   return (
     <div className="space-y-6">
@@ -56,11 +59,11 @@ const MarketAnalysis: React.FC = () => {
           onChange={(e) => setSelectedPair(e.target.value)}
           className="px-3 py-2 border border-border-moderate rounded-md focus:outline-none focus:ring-2 focus:ring-brand-cyan"
         >
-          <option value="BTC_USDT">BTC/USDT</option>
-          <option value="ETH_USDT">ETH/USDT</option>
-          <option value="SOL_USDT">SOL/USDT</option>
-          <option value="XRP_USDT">XRP/USDT</option>
-          <option value="ADA_USDT">ADA/USDT</option>
+          <option value="BTC-USDT">BTC/USDT</option>
+          <option value="ETH-USDT">ETH/USDT</option>
+          <option value="SOL-USDT">SOL/USDT</option>
+          <option value="XRP-USDT">XRP/USDT</option>
+          <option value="ADA-USDT">ADA/USDT</option>
         </select>
       </div>
       
@@ -124,7 +127,7 @@ const MarketAnalysis: React.FC = () => {
         <h2 className="heading-secondary mb-4">Price Chart</h2>
         <div className="h-[400px]">
           {pairData.length > 0 ? (
-            <PriceChart data={pairData} pair={selectedPair.replace('_', '-')} />
+            <PriceChart data={pairData} pair={selectedPair} />
           ) : (
             <div className="flex items-center justify-center h-full text-text-secondary">
               {loading ? 'Loading chart data...' : 'No chart data available'}
