@@ -1,0 +1,50 @@
+FROM texlive/texlive:latest
+
+# Install dependencies for web interface
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create working directory
+WORKDIR /latex
+
+# Copy paper source
+COPY QIG_Complete_Paper.tex .
+COPY compile_paper.sh .
+RUN chmod +x compile_paper.sh
+
+# Install simple web server for serving PDFs
+RUN pip3 install --no-cache-dir flask
+
+# Create simple Flask app to trigger compilation
+RUN echo 'from flask import Flask, send_file, jsonify\n\
+import subprocess\n\
+import os\n\
+\n\
+app = Flask(__name__)\n\
+\n\
+@app.route("/compile")\n\
+def compile_paper():\n\
+    try:\n\
+        result = subprocess.run(["./compile_paper.sh"], capture_output=True, text=True)\n\
+        return jsonify({"status": "success", "output": result.stdout})\n\
+    except Exception as e:\n\
+        return jsonify({"status": "error", "message": str(e)}), 500\n\
+\n\
+@app.route("/download")\n\
+def download_pdf():\n\
+    if os.path.exists("QIG_Complete_Paper.pdf"):\n\
+        return send_file("QIG_Complete_Paper.pdf", as_attachment=True)\n\
+    return jsonify({"error": "PDF not found"}), 404\n\
+\n\
+@app.route("/health")\n\
+def health():\n\
+    return jsonify({"status": "healthy"})\n\
+\n\
+if __name__ == "__main__":\n\
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))' > app.py
+
+EXPOSE 5000
+CMD ["python3", "app.py"]
