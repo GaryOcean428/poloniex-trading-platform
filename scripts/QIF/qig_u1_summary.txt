@@ -1,0 +1,3 @@
+Computed Berry connections on 5x5 grid for N=6.
+Interior curvature samples: 9.
+Check: Bianchi identity on small plaquettes can be tested by summing F around loops (not included here).
