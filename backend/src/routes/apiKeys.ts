@@ -100,7 +100,13 @@ router.post('/', authenticateToken, async (req, res) => {
     }
 
     // Store credentials using the credentials service
-    await apiCredentialsService.storeCredentials(userId, apiKey, apiSecret, 'poloniex');
+    await apiCredentialsService.storeCredentials(
+      userId, 
+      apiKey, 
+      apiSecret, 
+      'poloniex',
+      credentialName || 'Poloniex API'
+    );
 
     logger.info('API credentials stored successfully', {
       userId,

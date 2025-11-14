@@ -40,18 +40,22 @@ export class ApiCredentialsService {
     userId: string,
     apiKey: string,
     apiSecret: string,
-    exchange: string = 'poloniex'
+    exchange: string = 'poloniex',
+    credentialName?: string
   ): Promise<void> {
     try {
       // Encrypt credentials
       const encrypted = encryptionService.encryptCredentials(apiKey, apiSecret);
       
+      // Default credential name if not provided
+      const name = credentialName || `${exchange.charAt(0).toUpperCase() + exchange.slice(1)} API`;
+      
       // Store in database (upsert)
       await pool.query(
         `INSERT INTO user_api_credentials (
-          user_id, exchange, api_key_encrypted, api_secret_encrypted, encryption_iv, encryption_tag, is_active
-        ) VALUES ($1, $2, $3, $4, $5, $6, true)
-        ON CONFLICT (user_id, exchange)
+          user_id, exchange, credential_name, api_key_encrypted, api_secret_encrypted, encryption_iv, encryption_tag, is_active
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, true)
+        ON CONFLICT (user_id, exchange, credential_name)
         DO UPDATE SET
           api_key_encrypted = EXCLUDED.api_key_encrypted,
           api_secret_encrypted = EXCLUDED.api_secret_encrypted,
@@ -59,7 +63,7 @@ export class ApiCredentialsService {
           encryption_tag = EXCLUDED.encryption_tag,
           is_active = true,
           updated_at = CURRENT_TIMESTAMP`,
-        [userId, exchange, encrypted.apiKeyEncrypted, encrypted.apiSecretEncrypted, encrypted.encryptionIv, encrypted.tag]
+        [userId, exchange, name, encrypted.apiKeyEncrypted, encrypted.apiSecretEncrypted, encrypted.encryptionIv, encrypted.tag]
       );
       
       console.log(`API credentials stored for user ${userId} on ${exchange}`);
