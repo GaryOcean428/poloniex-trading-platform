@@ -104,12 +104,14 @@ const Sidebar: React.FC = () => {
                 {isLoading ? (
                   <div className="animate-pulse bg-neutral-700 h-8 w-32 rounded"></div>
                 ) : accountBalance && typeof accountBalance.total === 'number' ? (
-                  `$${accountBalance.total.toFixed(2)} USDT`
+                  `$${accountBalance.total.toFixed(2)}`
                 ) : (
-                  '$0.00 USDT'
+                  <span className="text-neutral-500 text-base">Connect API</span>
                 )}
               </div>
-              <div className="text-xs text-neutral-500 mt-1">USDT</div>
+              <div className="text-xs text-neutral-500 mt-1">
+                {accountBalance && typeof accountBalance.total === 'number' ? 'USDT' : 'No credentials'}
+              </div>
             </div>
           )}
 
@@ -196,12 +198,14 @@ const Sidebar: React.FC = () => {
               {isLoading ? (
                 <div className="animate-pulse bg-neutral-700 h-8 w-32 rounded"></div>
               ) : accountBalance && typeof accountBalance.total === 'number' ? (
-                `$${accountBalance.total.toFixed(2)} USDT`
+                `$${accountBalance.total.toFixed(2)}`
               ) : (
-                '$0.00 USDT'
+                <span className="text-neutral-500 text-base">Connect API</span>
               )}
             </div>
-            <div className="text-xs text-neutral-500 mt-1">USDT</div>
+            <div className="text-xs text-neutral-500 mt-1">
+              {accountBalance && typeof accountBalance.total === 'number' ? 'USDT' : 'No credentials'}
+            </div>
           </div>
 
           {/* Navigation Items */}

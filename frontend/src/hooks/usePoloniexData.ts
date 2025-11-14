@@ -206,21 +206,29 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
   }, [isMockMode, mapPoloniexTradeToTrade]);
 
   const fetchAccountBalance = useCallback(async () => {
-    // If in mock mode, set account balance to null to indicate no real data
+    // If in mock mode, provide mock account balance
     if (isMockMode) {
       if (import.meta.env.DEV) {
-        console.info('Mock mode active, no account balance available');
+        console.info('Mock mode active, using mock account balance');
       }
-      setAccountBalance(null);
+      setAccountBalance({
+        available: 10000,
+        total: 10000,
+        currency: 'USDT'
+      });
       return;
     }
 
-    // In WebContainer, set account balance to null to indicate no real data
+    // In WebContainer, provide mock account balance
     if (IS_WEBCONTAINER) {
       if (import.meta.env.DEV) {
-        console.info('WebContainer environment detected, no account balance available');
+        console.info('WebContainer environment detected, using mock account balance');
       }
-      setAccountBalance(null);
+      setAccountBalance({
+        available: 10000,
+        total: 10000,
+        currency: 'USDT'
+      });
       return;
     }
 
