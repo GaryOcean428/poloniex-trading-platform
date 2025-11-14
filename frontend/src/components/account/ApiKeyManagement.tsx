@@ -337,7 +337,7 @@ const ApiKeyManagement: React.FC = () => {
           <div className="px-4 py-3 bg-neutral-50 border-b border-neutral-200">
             <h3 className="font-medium">Add Poloniex API Keys</h3>
           </div>
-          <div className="p-4 space-y-4">
+          <form onSubmit={(e) => { e.preventDefault(); handleCreateCredentials(); }} className="p-4 space-y-4">
             <div>
               <label htmlFor="credential-name" className="block text-sm font-medium text-neutral-700">
                 Credential Name *
@@ -365,6 +365,7 @@ const ApiKeyManagement: React.FC = () => {
                 className="mt-1 block w-full border border-neutral-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 font-mono"
                 placeholder="Enter your Poloniex API Key"
                 required
+                autoComplete="username"
               />
             </div>
 
@@ -380,6 +381,7 @@ const ApiKeyManagement: React.FC = () => {
                 className="mt-1 block w-full border border-neutral-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-blue-500 focus:border-blue-500 font-mono"
                 placeholder="Enter your Poloniex API Secret"
                 required
+                autoComplete="current-password"
               />
             </div>
 
@@ -461,15 +463,14 @@ const ApiKeyManagement: React.FC = () => {
                 Cancel
               </button>
               <button
-                type="button"
-                onClick={handleCreateCredentials}
+                type="submit"
                 disabled={submitting || !newCredentialForm.credentialName.trim() || !newCredentialForm.apiKey.trim() || !newCredentialForm.apiSecret.trim()}
                 className="px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
               >
                 {submitting ? 'Creating...' : 'Create Credentials'}
               </button>
             </div>
-          </div>
+          </form>
         </div>
       )}
 

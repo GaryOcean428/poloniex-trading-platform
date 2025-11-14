@@ -55,13 +55,41 @@ const TransactionHistory: React.FC = () => {
       transfer: 'TRADE',
     };
     const t = typeMap[b.type?.toLowerCase?.() || 'trade'] || 'TRADE';
+    
+    // Parse timestamp - handle various formats
+    let timestamp = Date.now();
+    if (b.timestamp) {
+      timestamp = typeof b.timestamp === 'string' ? parseInt(b.timestamp) : b.timestamp;
+    } else if (b.ts) {
+      timestamp = typeof b.ts === 'string' ? parseInt(b.ts) : b.ts;
+    } else if (b.createdAt) {
+      timestamp = typeof b.createdAt === 'string' ? parseInt(b.createdAt) : b.createdAt;
+    } else if (b.time) {
+      timestamp = typeof b.time === 'string' ? parseInt(b.time) : b.time;
+    }
+    
+    // Convert seconds to milliseconds if needed
+    if (timestamp < 10000000000) {
+      timestamp = timestamp * 1000;
+    }
+    
+    // Parse amount - handle various formats
+    let amount = 0;
+    if (b.amount) {
+      amount = typeof b.amount === 'string' ? parseFloat(b.amount) : b.amount;
+    } else if (b.amt) {
+      amount = typeof b.amt === 'string' ? parseFloat(b.amt) : b.amt;
+    } else if (b.size) {
+      amount = typeof b.size === 'string' ? parseFloat(b.size) : b.size;
+    }
+    
     return {
-      id: b.id || b.billId || String(Math.random()),
+      id: b.id || b.billId || b.orderId || String(Math.random()),
       type: t,
-      description: `${b.symbol || b.currency || ''} ${b.type || 'Transaction'}`.trim(),
-      amount: parseFloat(b.amount || b.amt || '0'),
+      description: `${b.symbol || b.currency || b.instId || ''} ${b.type || b.side || 'Transaction'}`.trim(),
+      amount: Math.abs(amount), // Always show positive amounts
       status: 'COMPLETED' as const,
-      timestamp: b.timestamp || b.ts || Date.now(),
+      timestamp,
     };
   };
 
