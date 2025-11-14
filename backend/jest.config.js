@@ -13,8 +13,12 @@ export default {
       },
     ],
   },
+  transformIgnorePatterns: [
+    'node_modules/(?!(winston)/)'
+  ],
   testMatch: [
-    '**/src/tests/**/*.test.ts'
+    '**/src/tests/**/*.test.ts',
+    '**/__tests__/**/*.test.ts'
   ],
   collectCoverageFrom: [
     'src/**/*.{ts,js}',
