@@ -35,6 +35,7 @@ const Settings = lazy(() => import('./pages/Settings'));
 const Chat = lazy(() => import('./pages/Chat'));
 const ExtensionDownload = lazy(() => import('./pages/ExtensionDownload'));
 const AIStrategyGenerator = lazy(() => import('./pages/AIStrategyGenerator'));
+const StrategyDashboard = lazy(() => import('./pages/StrategyDashboard')); // AI strategy visualization
 const AutonomousAgent = lazy(() => import('./pages/AutonomousAgent')); // AI-powered autonomous trading
 const Status = lazy(() => import('./pages/Status'));
 const Login = lazy(() => import('./pages/Login'));
@@ -93,6 +94,7 @@ function App() {
                             <Route path="/dashboard/live" element={<LiveTradingDashboard />} />
                             <Route path="/strategies" element={<Strategies />} />
                             <Route path="/ai-strategies" element={<AIStrategyGenerator />} />
+                            <Route path="/strategy-dashboard" element={<StrategyDashboard />} />
                             <Route path="/autonomous-agent" element={<AutonomousAgent />} />
                             <Route path="/backtesting" element={<Backtesting />} />
                             <Route path="/charts" element={<MarketAnalysis />} />

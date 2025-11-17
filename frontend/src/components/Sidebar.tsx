@@ -36,6 +36,7 @@ const Sidebar: React.FC = () => {
     { path: '/dashboard/live', label: 'Live Trading', icon: <Activity size={20} /> },
     { path: '/strategies', label: 'Trading Strategies', icon: <Zap size={20} /> },
     { path: '/ai-strategies', label: 'AI Strategy Generator', icon: <Sparkles size={20} /> },
+    { path: '/strategy-dashboard', label: 'Strategy Dashboard', icon: <BarChart4 size={20} /> },
     { path: '/autonomous-agent', label: 'Autonomous Agent', icon: <Brain size={20} /> },
     { path: '/backtesting', label: 'Advanced Backtesting', icon: <TrendingUp size={20} /> },
     { path: '/account', label: 'Account', icon: <User size={20} /> },
