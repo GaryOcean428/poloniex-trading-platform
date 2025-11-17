@@ -2,6 +2,7 @@ import { AlertTriangle, CheckCircle, Plus, RefreshCw, Shield, Trash2, XCircle } 
 import { useCallback, useEffect, useState, useRef } from 'react';
 import { getAccessToken } from '@/utils/auth';
 import { apiCredentialsSchema, validateSchema } from '@/utils/validationSchemas';
+import { useTradingContext } from '@/hooks/useTradingContext';
 
 interface ApiCredential {
   id: string;
@@ -29,6 +30,7 @@ interface NewCredentialForm {
 }
 
 const ApiKeyManagement: React.FC = () => {
+  const { refreshApiConnection } = useTradingContext();
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -200,6 +202,8 @@ const ApiKeyManagement: React.FC = () => {
         });
         // Reload credentials
         await loadApiCredentials();
+        // Refresh API connection to update sidebar balance
+        refreshApiConnection();
       } else {
         throw new Error(data.error || 'Failed to create API credentials');
       }
@@ -240,6 +244,8 @@ const ApiKeyManagement: React.FC = () => {
         setSuccessMessage('API credentials deleted successfully');
         // Reload credentials
         await loadApiCredentials();
+        // Refresh API connection to update sidebar balance
+        refreshApiConnection();
       } else {
         throw new Error(data.error || 'Failed to delete API credentials');
       }
