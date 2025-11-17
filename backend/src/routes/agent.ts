@@ -2,6 +2,7 @@ import express from 'express';
 import { authenticateToken } from '../middleware/auth.js';
 import { autonomousTradingAgent } from '../services/autonomousTradingAgent.js';
 import { enhancedAutonomousAgent } from '../services/enhancedAutonomousAgent.js';
+import { agentSettingsService } from '../services/agentSettingsService.js';
 import type { Request, Response } from 'express';
 import { pool } from '../db/connection.js';
 
@@ -746,6 +747,86 @@ router.get('/strategies/:sessionId', authenticateToken, async (req: Request, res
     res.status(500).json({
       success: false,
       error: error.message || 'Failed to get strategies'
+    });
+  }
+});
+
+/**
+ * GET /api/agent/settings
+ * Get agent settings for the user
+ */
+router.get('/settings', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const userId = (req.user?.id || req.user?.userId)?.toString();
+    
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        error: 'User ID not found in token'
+      });
+    }
+
+    const settings = await agentSettingsService.getSettings(userId);
+
+    res.json({
+      success: true,
+      settings: settings || {
+        runMode: 'manual',
+        autoStartOnLogin: false,
+        continueWhenLoggedOut: false,
+        config: {}
+      }
+    });
+  } catch (error: any) {
+    console.error('Error getting agent settings:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to get agent settings'
+    });
+  }
+});
+
+/**
+ * POST /api/agent/settings
+ * Save agent settings
+ */
+router.post('/settings', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const userId = (req.user?.id || req.user?.userId)?.toString();
+    
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        error: 'User ID not found in token'
+      });
+    }
+
+    const { runMode, autoStartOnLogin, continueWhenLoggedOut, config } = req.body;
+
+    // Validate run mode
+    if (!['never', 'manual', 'always'].includes(runMode)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid run mode. Must be: never, manual, or always'
+      });
+    }
+
+    const settings = await agentSettingsService.saveSettings(userId, {
+      runMode,
+      autoStartOnLogin: autoStartOnLogin || false,
+      continueWhenLoggedOut: continueWhenLoggedOut || false,
+      config: config || {}
+    });
+
+    res.json({
+      success: true,
+      settings
+    });
+  } catch (error: any) {
+    console.error('Error saving agent settings:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to save agent settings'
     });
   }
 });
