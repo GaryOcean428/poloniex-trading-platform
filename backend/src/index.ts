@@ -42,6 +42,7 @@ import diagnosticRoutes from './routes/diagnostic.js';
 import { logger } from './utils/logger.js';
 import fullyAutonomousTrader from './services/fullyAutonomousTrader.js';
 import { persistentTradingEngine } from './services/persistentTradingEngine.js';
+import { agentScheduler } from './services/agentScheduler.js';
 
 // Import environment configuration (dotenv.config() is called inside env.ts)
 import { env } from './config/env.js';
@@ -372,6 +373,11 @@ server.listen(PORT, '::', () => {
   
   // Start persistent trading engine
   persistentTradingEngine.start().catch(error => {
+    logger.error('Failed to start persistent trading engine:', error);
+  });
+  
+  // Start agent scheduler
+  agentScheduler.start().catch(error => {
     logger.error('Failed to start trading engine:', error);
   });
   
