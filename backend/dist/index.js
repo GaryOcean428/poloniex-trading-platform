@@ -28,13 +28,16 @@ import adminRoutes from './routes/admin.js';
 import aiRoutes from './routes/ai.js';
 import dashboardRoutes from './routes/dashboard.js';
 import mlRoutes from './routes/ml.js';
+import qigRoutes from './routes/qig.js';
 import publicAdminRoutes from './routes/public-admin.js';
 import versionCheckRoutes from './routes/version-check.js';
 import autonomousTraderRoutes from './routes/autonomousTrader.js';
 import diagnosticRoutes from './routes/diagnostic.js';
+import testBalanceRoutes from './routes/test-balance.js';
 // Import services
 import { logger } from './utils/logger.js';
 import { persistentTradingEngine } from './services/persistentTradingEngine.js';
+import { agentScheduler } from './services/agentScheduler.js';
 // Import environment configuration (dotenv.config() is called inside env.ts)
 import { env } from './config/env.js';
 import { securityHeaders, rateLimiter, authRateLimiter, createCorsOptions, securityLogger, sanitizeRequest } from './config/security.js';
@@ -142,14 +145,16 @@ app.use('/api/trading-sessions', tradingSessionsRoutes);
 app.use('/api/status', statusRoutes);
 app.use('/api/debug', debugRoutes); // Debug routes for database inspection
 app.use('/api/diagnostic', diagnosticRoutes); // Diagnostic routes for troubleshooting
+app.use('/api/test-balance', testBalanceRoutes); // Test balance endpoint with detailed logging
 app.use('/api/agent', agentRoutes); // Autonomous trading agent routes
 app.use('/api/autonomous', autonomousTraderRoutes); // Fully autonomous trading system
 app.use('/api/monitoring', monitoringRoutes); // Monitoring and error tracking routes
 app.use('/api/admin', adminRoutes); // Admin routes for migrations
 app.use('/api/ai', aiRoutes); // AI-powered trading insights using Claude Sonnet 4.5
 app.use('/api/dashboard', dashboardRoutes); // Unified dashboard data endpoint
-app.use('/api/ml', mlRoutes);
-app.use('/api/public-admin', publicAdminRoutes); // Public admin routes for password reset // ML model predictions and performance
+app.use('/api/ml', mlRoutes); // ML model predictions and performance
+app.use('/api/qig', qigRoutes); // QIG-enhanced predictions with information geometry
+app.use('/api/public-admin', publicAdminRoutes); // Public admin routes for password reset
 // Legacy proxy routes (deprecated - use futures API instead)
 app.use('/api', proxyRoutes);
 /**
@@ -315,6 +320,10 @@ server.listen(PORT, '::', () => {
     logger.info(`Socket.IO server initialized`);
     // Start persistent trading engine
     persistentTradingEngine.start().catch(error => {
+        logger.error('Failed to start persistent trading engine:', error);
+    });
+    // Start agent scheduler
+    agentScheduler.start().catch(error => {
         logger.error('Failed to start trading engine:', error);
     });
     // Health heartbeat for production monitoring

@@ -259,14 +259,13 @@ class EnhancedAutonomousAgent extends EventEmitter {
     const llmGenerator = getLLMStrategyGenerator();
     
     const aiStrategy = await llmGenerator.generateStrategy({
-      userId: session.userId,
       symbol,
       timeframe: session.config.preferredTimeframes[0],
       strategyType,
       riskTolerance: 'moderate',
       indicators,
       description
-    });
+    } as any);
     
     const strategy: Strategy = {
       id: `strategy_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
@@ -276,7 +275,7 @@ class EnhancedAutonomousAgent extends EventEmitter {
       symbol,
       timeframe: session.config.preferredTimeframes[0],
       indicators,
-      code: aiStrategy.code || '',
+      code: (aiStrategy as any).code || JSON.stringify(aiStrategy),
       description,
       status: 'generated',
       performance: {
@@ -322,7 +321,6 @@ Generate the combination logic as executable JavaScript code.
 `;
     
     const aiCombo = await llmGenerator.generateStrategy({
-      userId: session.userId,
       symbol,
       timeframe: session.config.preferredTimeframes[0],
       strategyType: 'multi_strategy_combo',
@@ -330,7 +328,7 @@ Generate the combination logic as executable JavaScript code.
       indicators: ['SMA', 'EMA', 'RSI', 'MACD', 'Volume', 'OBV'],
       description: `Multi-strategy combination for ${symbol}`,
       customPrompt: comboPrompt
-    });
+    } as any);
     
     const comboStrategy: Strategy = {
       id: `combo_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
@@ -340,7 +338,7 @@ Generate the combination logic as executable JavaScript code.
       symbol,
       timeframe: session.config.preferredTimeframes[0],
       indicators: ['SMA', 'EMA', 'RSI', 'MACD', 'Volume', 'OBV'],
-      code: aiCombo.code || '',
+      code: (aiCombo as any).code || JSON.stringify(aiCombo),
       description: `Multi-strategy combination for ${symbol}`,
       status: 'generated',
       performance: {
@@ -370,14 +368,16 @@ Generate the combination logic as executable JavaScript code.
       // 1. Backtest
       logger.info(`Starting backtest for strategy ${strategy.name}`);
       
-      const backtestResult = await backtestingEngine.runBacktest({
-        strategy: {
-          id: strategy.id,
-          name: strategy.name,
-          type: 'custom',
-          parameters: {},
-          code: strategy.code
-        },
+      // Register strategy first
+      backtestingEngine.registerStrategy(strategy.id, {
+        id: strategy.id,
+        name: strategy.name,
+        type: 'custom',
+        parameters: {},
+        code: strategy.code
+      });
+      
+      const backtestResult = await backtestingEngine.runBacktest(strategy.id, {
         symbol: strategy.symbol,
         startDate: new Date(Date.now() - session.config.backtestPeriodDays * 24 * 60 * 60 * 1000),
         endDate: new Date(),
@@ -445,7 +445,12 @@ Generate the combination logic as executable JavaScript code.
    */
   private async checkPaperTradingResults(session: AgentSession, strategy: Strategy): Promise<void> {
     try {
-      const paperResults = await paperTradingService.getSessionResults(strategy.id);
+      const paperSession = paperTradingService.getSession(strategy.id);
+      const paperResults = paperSession ? {
+        winRate: paperSession.totalTrades > 0 ? (paperSession.winningTrades / paperSession.totalTrades) : 0,
+        profitFactor: paperSession.losingTrades > 0 ? 
+          Math.abs(paperSession.winningTrades / paperSession.losingTrades) : 0
+      } : null;
       
       if (paperResults && paperResults.winRate > 0.60 && paperResults.profitFactor > 2.0) {
         await this.promoteToLiveTrading(session, strategy);
@@ -468,9 +473,9 @@ Generate the combination logic as executable JavaScript code.
     strategy.promotedAt = new Date();
     await this.saveStrategy(strategy);
     
-    // Activate strategy for live trading
-    await automatedTradingService.activateStrategy({
-      userId: session.userId,
+    // Register strategy for live trading
+    await automatedTradingService.registerStrategy(session.userId, {
+      id: strategy.id,
       strategyId: strategy.id,
       symbol: strategy.symbol,
       positionSize: session.config.positionSize / 100,

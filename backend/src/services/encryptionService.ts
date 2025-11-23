@@ -90,6 +90,7 @@ export class EncryptionService {
   /**
    * Encrypt API credentials
    * Returns object ready for database storage
+   * Stores both credentials in a combined JSON format with single encryption
    */
   encryptCredentials(apiKey: string, apiSecret: string): {
     apiKeyEncrypted: string;
@@ -97,17 +98,15 @@ export class EncryptionService {
     encryptionIv: string;
     tag: string;
   } {
-    // Combine both credentials into a single JSON string to encrypt together
-    // This ensures we only have one tag for both values
+    // Combine both credentials into a single JSON string
     const combined = JSON.stringify({ apiKey, apiSecret });
     const result = this.encrypt(combined);
     
-    // Store the encrypted combined value in both fields for backward compatibility
-    // The apiKeyEncrypted will contain the full encrypted JSON
-    // The apiSecretEncrypted will be empty but we keep the field for schema compatibility
+    // Store the encrypted combined value in api_key_encrypted
+    // Store a marker in api_secret_encrypted to indicate new format
     return {
       apiKeyEncrypted: result.encrypted,
-      apiSecretEncrypted: '', // Empty - not used in new approach
+      apiSecretEncrypted: 'COMBINED_FORMAT', // Marker to indicate new format
       encryptionIv: result.iv,
       tag: result.tag
     };
@@ -125,29 +124,25 @@ export class EncryptionService {
     apiKey: string;
     apiSecret: string;
   } {
-    // Check if this is new format (combined encryption) or old format (separate)
-    if (apiSecretEncrypted === '' || !apiSecretEncrypted) {
-      // New format: decrypt the combined JSON
+    // Check if this is new combined format
+    if (apiSecretEncrypted === 'COMBINED_FORMAT' || apiSecretEncrypted === '' || !apiSecretEncrypted) {
+      // Decrypt the combined JSON from api_key_encrypted
       const decrypted = this.decrypt(apiKeyEncrypted, encryptionIv, tag);
       const parsed = JSON.parse(decrypted);
       return {
         apiKey: parsed.apiKey,
         apiSecret: parsed.apiSecret
       };
-    } else {
-      // Old format: decrypt separately (this will fail with mismatched tags)
-      // This is kept for backward compatibility but will likely throw an error
-      return {
-        apiKey: this.decrypt(apiKeyEncrypted, encryptionIv, tag),
-        apiSecret: this.decrypt(apiSecretEncrypted, encryptionIv, tag)
-      };
     }
+    
+    // Legacy format: both fields encrypted separately (not supported anymore)
+    throw new Error('Legacy separate encryption format is no longer supported. Please re-save your credentials.');
   }
 
   /**
    * Helper: Encrypt with specific IV
    */
-  private encryptWithIv(plaintext: string, ivHex: string): { encrypted: string; tag: string } {
+  encryptWithIv(plaintext: string, ivHex: string): { encrypted: string; tag: string } {
     const iv = Buffer.from(ivHex, 'hex');
     const cipher = crypto.createCipheriv(ALGORITHM, this.masterKey, iv);
     

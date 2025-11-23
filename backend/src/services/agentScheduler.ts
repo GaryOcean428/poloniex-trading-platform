@@ -7,14 +7,14 @@
  * - Monitors agent health
  */
 
-import cron from 'node-cron';
+import * as cron from 'node-cron';
 import { pool } from '../db/connection.js';
 import { enhancedAutonomousAgent } from './enhancedAutonomousAgent.js';
 import { agentSettingsService } from './agentSettingsService.js';
 import { logger } from '../utils/logger.js';
 
 class AgentScheduler {
-  private jobs: Map<string, cron.ScheduledTask> = new Map();
+  private jobs: Map<string, any> = new Map();
   private isRunning = false;
 
   /**

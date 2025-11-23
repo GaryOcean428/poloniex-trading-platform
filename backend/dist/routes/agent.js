@@ -1,6 +1,8 @@
 import express from 'express';
 import { authenticateToken } from '../middleware/auth.js';
 import { autonomousTradingAgent } from '../services/autonomousTradingAgent.js';
+import { enhancedAutonomousAgent } from '../services/enhancedAutonomousAgent.js';
+import { agentSettingsService } from '../services/agentSettingsService.js';
 import { pool } from '../db/connection.js';
 const router = express.Router();
 /**
@@ -14,11 +16,27 @@ router.post('/start', authenticateToken, async (req, res) => {
         if (!userId) {
             return res.status(401).json({
                 success: false,
-                error: 'User ID not found in token'
+                error: 'User ID not found in token',
+                code: 'NO_USER_ID'
+            });
+        }
+        // Check for API credentials first
+        const { apiCredentialsService } = await import('../services/apiCredentialsService.js');
+        const hasCredentials = await apiCredentialsService.hasCredentials(userId);
+        if (!hasCredentials) {
+            return res.status(400).json({
+                success: false,
+                error: 'No API credentials found. Please add your Poloniex API keys first.',
+                code: 'NO_CREDENTIALS',
+                action: 'redirect_to_api_keys'
             });
         }
         const config = req.body;
-        const session = await autonomousTradingAgent.startAgent(userId, config);
+        // Use enhanced agent if AI strategies are enabled
+        const useEnhancedAgent = config.enableAIStrategies !== false;
+        const session = useEnhancedAgent
+            ? await enhancedAutonomousAgent.startAgent(userId, config)
+            : await autonomousTradingAgent.startAgent(userId, config);
         res.json({
             success: true,
             session
@@ -26,9 +44,25 @@ router.post('/start', authenticateToken, async (req, res) => {
     }
     catch (error) {
         console.error('Error starting agent:', error);
-        res.status(500).json({
+        // Provide specific error codes
+        let errorCode = 'UNKNOWN_ERROR';
+        let statusCode = 500;
+        if (error.message.includes('credentials')) {
+            errorCode = 'CREDENTIALS_ERROR';
+            statusCode = 400;
+        }
+        else if (error.message.includes('already running')) {
+            errorCode = 'ALREADY_RUNNING';
+            statusCode = 409;
+        }
+        else if (error.message.includes('API')) {
+            errorCode = 'API_ERROR';
+            statusCode = 503;
+        }
+        res.status(statusCode).json({
             success: false,
-            error: error.message || 'Failed to start agent'
+            error: error.message || 'Failed to start agent',
+            code: errorCode
         });
     }
 });
@@ -576,6 +610,133 @@ router.post('/strategy/:id/retire', authenticateToken, async (req, res) => {
     catch (error) {
         console.error('Error retiring strategy:', error);
         res.status(500).json({ success: false, error: error.message });
+    }
+});
+/**
+ * GET /api/agent/strategies
+ * Get all strategies for the user
+ */
+router.get('/strategies', authenticateToken, async (req, res) => {
+    try {
+        const userId = (req.user?.id || req.user?.userId)?.toString();
+        if (!userId) {
+            return res.status(401).json({
+                success: false,
+                error: 'User ID not found in token'
+            });
+        }
+        const strategies = await enhancedAutonomousAgent.getUserStrategies(userId);
+        res.json({
+            success: true,
+            strategies
+        });
+    }
+    catch (error) {
+        console.error('Error getting strategies:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message || 'Failed to get strategies'
+        });
+    }
+});
+/**
+ * GET /api/agent/strategies/:sessionId
+ * Get strategies for a specific session
+ */
+router.get('/strategies/:sessionId', authenticateToken, async (req, res) => {
+    try {
+        const userId = (req.user?.id || req.user?.userId)?.toString();
+        if (!userId) {
+            return res.status(401).json({
+                success: false,
+                error: 'User ID not found in token'
+            });
+        }
+        const { sessionId } = req.params;
+        const strategies = await enhancedAutonomousAgent.getStrategies(sessionId);
+        res.json({
+            success: true,
+            strategies
+        });
+    }
+    catch (error) {
+        console.error('Error getting session strategies:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message || 'Failed to get strategies'
+        });
+    }
+});
+/**
+ * GET /api/agent/settings
+ * Get agent settings for the user
+ */
+router.get('/settings', authenticateToken, async (req, res) => {
+    try {
+        const userId = (req.user?.id || req.user?.userId)?.toString();
+        if (!userId) {
+            return res.status(401).json({
+                success: false,
+                error: 'User ID not found in token'
+            });
+        }
+        const settings = await agentSettingsService.getSettings(userId);
+        res.json({
+            success: true,
+            settings: settings || {
+                runMode: 'manual',
+                autoStartOnLogin: false,
+                continueWhenLoggedOut: false,
+                config: {}
+            }
+        });
+    }
+    catch (error) {
+        console.error('Error getting agent settings:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message || 'Failed to get agent settings'
+        });
+    }
+});
+/**
+ * POST /api/agent/settings
+ * Save agent settings
+ */
+router.post('/settings', authenticateToken, async (req, res) => {
+    try {
+        const userId = (req.user?.id || req.user?.userId)?.toString();
+        if (!userId) {
+            return res.status(401).json({
+                success: false,
+                error: 'User ID not found in token'
+            });
+        }
+        const { runMode, autoStartOnLogin, continueWhenLoggedOut, config } = req.body;
+        // Validate run mode
+        if (!['never', 'manual', 'always'].includes(runMode)) {
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid run mode. Must be: never, manual, or always'
+            });
+        }
+        const settings = await agentSettingsService.saveSettings(userId, {
+            runMode,
+            autoStartOnLogin: autoStartOnLogin || false,
+            continueWhenLoggedOut: continueWhenLoggedOut || false,
+            config: config || {}
+        });
+        res.json({
+            success: true,
+            settings
+        });
+    }
+    catch (error) {
+        console.error('Error saving agent settings:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message || 'Failed to save agent settings'
+        });
     }
 });
 export default router;
