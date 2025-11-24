@@ -221,6 +221,234 @@ class PoloniexFuturesService {
         };
         return this.makeRequest(credentials, 'POST', '/trade/position/margin', body);
     }
+    // =================== MARKET DATA ===================
+    /**
+     * Get 24h trading statistics
+     * Endpoint: GET /v3/market/get-trading-info
+     */
+    async getTradingInfo(symbol = null) {
+        try {
+            const params = symbol ? { symbol } : {};
+            const url = `${this.baseURL}/v3/market/get-trading-info`;
+            const queryString = Object.keys(params).length > 0
+                ? '?' + new URLSearchParams(params).toString()
+                : '';
+            const response = await axios.get(url + queryString, { timeout: this.timeout });
+            return response.data;
+        }
+        catch (error) {
+            logger.error('Error fetching trading info:', error);
+            throw error;
+        }
+    }
+    /**
+     * Get kline/candlestick data
+     * Endpoint: GET /v3/market/get-kline-data
+     *
+     * @param {string} symbol - Trading pair
+     * @param {string} granularity - Candle interval (1, 5, 15, 30, 60, 120, 240, 480, 720, 1440, 10080)
+     * @param {Object} [params] - Additional parameters
+     * @param {number} [params.from] - Start timestamp
+     * @param {number} [params.to] - End timestamp
+     */
+    async getKlineData(symbol, granularity, params = {}) {
+        try {
+            if (!symbol || !granularity) {
+                throw new Error('Symbol and granularity are required');
+            }
+            const queryParams = {
+                symbol,
+                granularity,
+                ...params
+            };
+            const url = `${this.baseURL}/v3/market/get-kline-data`;
+            const queryString = new URLSearchParams(queryParams).toString();
+            const response = await axios.get(`${url}?${queryString}`, { timeout: this.timeout });
+            return response.data;
+        }
+        catch (error) {
+            logger.error('Error fetching kline data:', error);
+            throw error;
+        }
+    }
+    /**
+     * Get order book (Level 2)
+     * Endpoint: GET /v3/market/get-order-book
+     *
+     * @param {string} symbol - Trading pair
+     * @param {number} [depth] - Depth (20 or 100, default: 20)
+     */
+    async getOrderBook(symbol, depth = 20) {
+        try {
+            if (!symbol) {
+                throw new Error('Symbol is required');
+            }
+            const url = `${this.baseURL}/v3/market/get-order-book`;
+            const queryString = new URLSearchParams({ symbol, depth }).toString();
+            const response = await axios.get(`${url}?${queryString}`, { timeout: this.timeout });
+            return response.data;
+        }
+        catch (error) {
+            logger.error('Error fetching order book:', error);
+            throw error;
+        }
+    }
+    /**
+     * Get recent execution/trade data
+     * Endpoint: GET /v3/market/get-execution-info
+     *
+     * @param {string} symbol - Trading pair
+     */
+    async getExecutionInfo(symbol) {
+        try {
+            if (!symbol) {
+                throw new Error('Symbol is required');
+            }
+            const url = `${this.baseURL}/v3/market/get-execution-info`;
+            const queryString = new URLSearchParams({ symbol }).toString();
+            const response = await axios.get(`${url}?${queryString}`, { timeout: this.timeout });
+            return response.data;
+        }
+        catch (error) {
+            logger.error('Error fetching execution info:', error);
+            throw error;
+        }
+    }
+    /**
+     * Get funding rate
+     * Endpoint: GET /v3/market/get-funding-rate
+     *
+     * @param {string} symbol - Trading pair
+     */
+    async getFundingRate(symbol) {
+        try {
+            if (!symbol) {
+                throw new Error('Symbol is required');
+            }
+            const url = `${this.baseURL}/v3/market/get-funding-rate`;
+            const queryString = new URLSearchParams({ symbol }).toString();
+            const response = await axios.get(`${url}?${queryString}`, { timeout: this.timeout });
+            return response.data;
+        }
+        catch (error) {
+            logger.error('Error fetching funding rate:', error);
+            throw error;
+        }
+    }
+    /**
+     * Get funding rate history
+     * Endpoint: GET /v3/market/get-funding-rate-history
+     *
+     * @param {string} symbol - Trading pair
+     * @param {Object} [params] - Additional parameters
+     * @param {number} [params.from] - Start timestamp
+     * @param {number} [params.to] - End timestamp
+     * @param {number} [params.offset] - Offset for pagination
+     * @param {number} [params.limit] - Limit (max 100)
+     */
+    async getFundingRateHistory(symbol, params = {}) {
+        try {
+            if (!symbol) {
+                throw new Error('Symbol is required');
+            }
+            const queryParams = {
+                symbol,
+                ...params
+            };
+            const url = `${this.baseURL}/v3/market/get-funding-rate-history`;
+            const queryString = new URLSearchParams(queryParams).toString();
+            const response = await axios.get(`${url}?${queryString}`, { timeout: this.timeout });
+            return response.data;
+        }
+        catch (error) {
+            logger.error('Error fetching funding rate history:', error);
+            throw error;
+        }
+    }
+    /**
+     * Get mark price
+     * Endpoint: GET /v3/market/get-mark-price
+     *
+     * @param {string} symbol - Trading pair
+     */
+    async getMarkPrice(symbol) {
+        try {
+            if (!symbol) {
+                throw new Error('Symbol is required');
+            }
+            const url = `${this.baseURL}/v3/market/get-mark-price`;
+            const queryString = new URLSearchParams({ symbol }).toString();
+            const response = await axios.get(`${url}?${queryString}`, { timeout: this.timeout });
+            return response.data;
+        }
+        catch (error) {
+            logger.error('Error fetching mark price:', error);
+            throw error;
+        }
+    }
+    /**
+     * Get index price
+     * Endpoint: GET /v3/market/get-index-price
+     *
+     * @param {string} symbol - Trading pair
+     */
+    async getIndexPrice(symbol) {
+        try {
+            if (!symbol) {
+                throw new Error('Symbol is required');
+            }
+            const url = `${this.baseURL}/v3/market/get-index-price`;
+            const queryString = new URLSearchParams({ symbol }).toString();
+            const response = await axios.get(`${url}?${queryString}`, { timeout: this.timeout });
+            return response.data;
+        }
+        catch (error) {
+            logger.error('Error fetching index price:', error);
+            throw error;
+        }
+    }
+    /**
+     * Get open interest
+     * Endpoint: GET /v3/market/get-open-interest
+     *
+     * @param {string} symbol - Trading pair
+     */
+    async getOpenInterest(symbol) {
+        try {
+            if (!symbol) {
+                throw new Error('Symbol is required');
+            }
+            const url = `${this.baseURL}/v3/market/get-open-interest`;
+            const queryString = new URLSearchParams({ symbol }).toString();
+            const response = await axios.get(`${url}?${queryString}`, { timeout: this.timeout });
+            return response.data;
+        }
+        catch (error) {
+            logger.error('Error fetching open interest:', error);
+            throw error;
+        }
+    }
+    /**
+     * Get contract information
+     * Endpoint: GET /v3/market/get-contract-info
+     *
+     * @param {string} [symbol] - Trading pair (optional, returns all if not provided)
+     */
+    async getContractInfo(symbol = null) {
+        try {
+            const params = symbol ? { symbol } : {};
+            const url = `${this.baseURL}/v3/market/get-contract-info`;
+            const queryString = Object.keys(params).length > 0
+                ? '?' + new URLSearchParams(params).toString()
+                : '';
+            const response = await axios.get(url + queryString, { timeout: this.timeout });
+            return response.data;
+        }
+        catch (error) {
+            logger.error('Error fetching contract info:', error);
+            throw error;
+        }
+    }
     // =================== ORDER MANAGEMENT ===================
     /**
      * Place a futures order
