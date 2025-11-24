@@ -11,13 +11,25 @@ setupAxiosInterceptors();
 // Global error handlers
 // 1. Handle unhandled Promise rejections
 window.addEventListener('unhandledrejection', (event) => {
+  const errorMessage = event.reason?.message || String(event.reason) || 'An unexpected error occurred';
+  
+  // Suppress browser extension errors (message channel, chrome runtime, etc.)
+  if (
+    errorMessage.includes('message channel closed') ||
+    errorMessage.includes('Extension context invalidated') ||
+    errorMessage.includes('chrome.runtime') ||
+    errorMessage.includes('asynchronous response')
+  ) {
+    // These are browser extension errors, not our app errors
+    event.preventDefault();
+    return;
+  }
+  
   logger.error('Unhandled Promise Rejection:', {
     reason: event.reason,
     promise: event.promise
   });
   
-  // Show user-friendly error message
-  const errorMessage = event.reason?.message || 'An unexpected error occurred';
   console.error('Unhandled Promise Rejection:', errorMessage);
   
   // Prevent default browser error handling
@@ -51,6 +63,17 @@ window.onerror = (message, source, lineno, colno, error) => {
 
 // 3. Handle resource loading errors
 window.addEventListener('error', (event) => {
+  // Suppress browser extension errors
+  const errorMessage = event.message || (event.error && event.error.message) || '';
+  if (
+    errorMessage.includes('message channel closed') ||
+    errorMessage.includes('Extension context invalidated') ||
+    errorMessage.includes('chrome.runtime')
+  ) {
+    event.preventDefault();
+    return;
+  }
+  
   if (event.target !== window) {
     logger.error('Resource Loading Error:', {
       target: event.target,

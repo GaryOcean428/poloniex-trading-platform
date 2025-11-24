@@ -1,327 +1,153 @@
-# Documentation Index
+# Poloniex Trading Platform - Documentation Index
 
-This directory contains comprehensive documentation for the Poloniex Trading Platform monorepo.
+**Last Updated:** 2025-11-24  
+**Version:** 2.0.0  
+**Organization Standard:** ISO/IEC/IEEE 26515:2018
 
-## 📚 Start Here
-
-### New to the Project?
-**Read in this order:**
-1. **`MONOREPO_QUICKSTART.md`** (5 min) - Quick start guide ⚡
-2. **`BUILD_ARCHITECTURE.md`** (20 min) - How everything works 🏗️
-3. **`../README.md`** - Project README
-
-### Evaluating Build Tools?
-**Read in this order:**
-1. **`DECISION_TREE.md`** (5 min) - Visual decision guide 🌳
-2. **`TOOLING_RECOMMENDATIONS_SUMMARY.md`** (10 min) - Executive summary 📋
-3. **`MONOREPO_TOOLING_ANALYSIS.md`** (30 min) - Deep dive 📚
+Welcome to the comprehensive documentation for the Poloniex Trading Platform - an industry-leading autonomous trading system exclusively for Poloniex exchange.
 
 ---
 
-## 📖 Documentation Files
+## 📚 Documentation Structure
 
-### Monorepo & Build System
+### 🔌 API Documentation
+**Location:** `docs/api/`
 
-#### `MONOREPO_QUICKSTART.md` ⚡
-**5-minute quick start**
-- What's new in this repository
-- Quick commands (affected detection, metrics)
-- When to reconsider tooling decisions
-- **Start here** if you're new!
+- [API Keys Guide](api/API_KEYS_GUIDE.md) - Managing Poloniex API credentials
+- [API Compliance](api/POLONIEX_API_COMPLIANCE_FIXES.md) - Latest API specification compliance
 
-#### `DECISION_TREE.md` 🌳
-**Visual decision guide**
-- ASCII decision tree diagrams
-- Quick lookup tables
-- Cost comparison charts
-- Red flags and triggers
-- **Best for**: Visual learners and quick decisions
+### 🏗️ Architecture
+**Location:** `docs/architecture/`
 
-#### `TOOLING_RECOMMENDATIONS_SUMMARY.md` 📋
-**Executive summary (10-minute read)**
-- Clear recommendation: Stick with Yarn Workspaces
-- When to consider Nx (5+ services)
-- When to consider Bazel/Pants (20+ services)
-- Cost-benefit analysis
-- Implementation timelines
-- **Best for**: Managers and decision makers
+- [Build Architecture](architecture/BUILD_ARCHITECTURE.md) - Build system and tooling
+- [Decision Tree](architecture/DECISION_TREE.md) - Trading decision logic
 
-#### `MONOREPO_TOOLING_ANALYSIS.md` 📚
-**Comprehensive analysis (30-minute read)**
-- 20,000 words of detailed comparison
-- Nx vs Bazel/Pants vs Yarn Workspaces
-- Feature matrices and comparisons
-- Migration paths (if ever needed)
-- Industry best practices
-- **Best for**: Build engineers and architects
+### 🚀 Deployment
+**Location:** `docs/deployment/`
 
-#### `BUILD_ARCHITECTURE.md` 🏗️
-**Technical reference (20-minute read)**
-- 16,000 words of build system documentation
-- Local development workflows
-- Railway production builds
-- Shared code bundling strategy
-- Troubleshooting guide
-- Adding new services
-- **Best for**: Developers working on the build system
+- [Deployment Guide](deployment/DEPLOYMENT_GUIDE.md) - Production deployment
+- [Environment Setup](deployment/ENVIRONMENT_SETUP.md) - Configuration guide
+- [Troubleshooting](deployment/DEPLOYMENT_TROUBLESHOOTING.md) - Common issues
+- [Railway Deployment](deployment/RAILWAY_DEPLOYMENT_MASTER.md) - Railway-specific guide
 
----
+### 💻 Development
+**Location:** `docs/development/`
 
-### Deployment
+- [Monorepo Guide](development/monorepo-guide.md) - Monorepo structure
+- [Agents](development/agents.md) - AI agent integration
+- [Claude Integration](development/claude-integration.md) - Claude AI setup
 
-#### `deployment/`
-Contains Railway and deployment-specific documentation:
-- `RAILWAY_BACKEND_FIX.md` - Backend build isolation
-- `RAILWAY_FIXES_IMPLEMENTATION.md` - Implementation details
-- `RAILWAY_SERVICE_CONFIG.md` - Service configuration guide
-- `RAILWAY_DEPLOYMENT_MASTER.md` - Master deployment guide
+### ✨ Features
+**Location:** `docs/features/`
 
-#### Root Level Deployment Docs
-- `../CLAUDE.md` - Railway + Railpack best practices
-- `../DEPLOYMENT_READY.md` - Deployment readiness checklist
-- `../RAILWAY_DEPLOYMENT_CHECKLIST.md` - Pre-deployment checks
+- [Autonomous Trading](features/FULLY_AUTONOMOUS_TRADING.md) - Autonomous agent system
+- [Autonomous Agent Architecture](features/autonomous-agent.md) - Agent design
+- [Risk Management](features/RISK_MANAGEMENT.md) - Risk controls
 
----
+### 🔒 Security
+**Location:** `docs/security/`
 
-### Security & Quality
+- [Security Guide](security/SECURITY_GUIDE.md) - Security overview
+- [Encryption](security/ENCRYPTION_KEY_MANAGEMENT.md) - Key management
+- [Token Refresh](security/TOKEN_REFRESH_SYSTEM.md) - Authentication system
+- [Security Best Practices](security/security-guide.md) - Security standards
 
-#### `SECURITY_GUIDE.md`
-Security best practices and guidelines
+### 📖 User Guides
+**Location:** `docs/user-guides/`
+
+- [Quick Start](guides/quick-start.md) - Getting started guide
+
+### 🧪 Quality Assurance
+**Location:** `docs/qa/`
+
+- [Comprehensive Test Plan](qa/QA_COMPREHENSIVE_PLAN.md) - Full testing strategy
+
+### 🗺️ Roadmap
+**Location:** `docs/roadmap/`
+
+- [Current Roadmap](roadmap/current-roadmap.md) - Active development roadmap
+
+### 📦 Archive
+**Location:** `docs/archive/`
+
+- [Historical Documents](archive/historical/) - Past fixes and reports
+- [Old Railway Docs](archive/old-railway-docs/) - Legacy deployment docs
 
 ---
 
-## 🎯 Common Tasks
+## 🎯 Quick Links
 
-### "I want to understand if we should adopt Nx or Bazel"
-👉 Read:
-1. `DECISION_TREE.md` (5 min visual guide)
-2. `TOOLING_RECOMMENDATIONS_SUMMARY.md` (10 min summary)
-3. **Answer**: No, stick with current setup until you have 5+ services
+### For New Users
+1. [Quick Start Guide](guides/quick-start.md)
+2. [Setup Guide](../SETUP_GUIDE.md)
+3. [API Keys Guide](api/API_KEYS_GUIDE.md)
 
-### "How do I add a new service?"
-👉 Read: `BUILD_ARCHITECTURE.md` → "Adding New Services"
+### For Developers
+1. [Monorepo Guide](development/monorepo-guide.md)
+2. [Build Architecture](architecture/BUILD_ARCHITECTURE.md)
+3. [Development Setup](../SETUP_GUIDE.md)
 
-### "Why are builds slow?"
-👉 Read: `BUILD_ARCHITECTURE.md` → "Troubleshooting"
-👉 Use: `yarn build:metrics analyze`
+### For DevOps
+1. [Deployment Guide](deployment/DEPLOYMENT_GUIDE.md)
+2. [Environment Setup](deployment/ENVIRONMENT_SETUP.md)
+3. [Troubleshooting](deployment/DEPLOYMENT_TROUBLESHOOTING.md)
 
-### "How does shared code work?"
-👉 Read: `BUILD_ARCHITECTURE.md` → "Shared Code Strategy"
-
-### "What's the deployment process?"
-👉 Read: `deployment/RAILWAY_DEPLOYMENT_MASTER.md`
-
-### "How do I detect affected workspaces?"
-👉 Use: `yarn affected`
-👉 Read: `MONOREPO_QUICKSTART.md`
+### For Security
+1. [Security Guide](security/SECURITY_GUIDE.md)
+2. [Encryption Guide](security/ENCRYPTION_KEY_MANAGEMENT.md)
+3. [Security Policy](../SECURITY.md)
 
 ---
 
-## 🛠️ New Scripts & Tools
+## 📋 Documentation Standards
 
-### Affected Detection
-```bash
-yarn affected
-```
-Detects which workspaces changed based on git diff.
+### File Naming Convention
+- Use lowercase with hyphens: `poloniex-api-guide.md`
+- Be descriptive and specific
+- Avoid abbreviations unless standard (API, FAQ, QA)
 
-**Implementation**: `../scripts/affected.mjs`  
-**Documentation**: `MONOREPO_QUICKSTART.md`
+### Document Structure
+- Start with H1 title
+- Include "Last Updated" date
+- Add table of contents for long documents
+- Use consistent heading hierarchy (H1 → H2 → H3)
+- Include "Related Documents" section
 
-### Build Metrics
-```bash
-yarn build:metrics frontend
-yarn build:metrics backend
-yarn metrics:analyze
-```
-Tracks build performance and analyzes trends.
-
-**Implementation**: `../scripts/build-metrics.mjs`  
-**Documentation**: `MONOREPO_QUICKSTART.md`
-
----
-
-## 📊 Key Statistics
-
-### Repository
-- **Files**: 325 TypeScript/JavaScript, 6 Python
-- **Services**: 3 (frontend, backend, ml-worker)
-- **Size**: ~11MB
-- **Build Time**: 2-5 minutes
-
-### Documentation
-- **Total Word Count**: 60,000+
-- **Files**: 6 core documents
-- **Scripts**: 2 utility scripts
-- **Examples**: 1 CI workflow
+### Content Guidelines
+- Write in present tense
+- Use active voice
+- Include code examples with syntax highlighting
+- Add diagrams where helpful
+- Keep sections focused and concise
+- Link to related documents
 
 ---
 
-## 🎓 Key Recommendations
+## 🔄 Recent Updates
 
-### Current State: ✅ OPTIMAL
-Your setup is perfect for your scale:
-- 3 services (small enough for simple tools)
-- Small team (familiar with standard tools)
-- Railway deployment (optimized with Railpack)
-- Fast builds (2-5 minutes)
-
-### When to Reconsider: 🟡 MONITOR
-Evaluate Nx if:
-- Service count reaches 5+
-- Team size reaches 5+ developers
-- Build time exceeds 5 minutes consistently
-
-### Never Consider: ❌ OVERKILL
-Don't adopt Bazel/Pants unless:
-- Service count exceeds 20
-- Need hermetic multi-language builds
-- Have dedicated build engineering team
+**2025-11-24:**
+- ✅ Consolidated root documentation (29 → 5 files)
+- ✅ Implemented ISO-compliant folder structure
+- ✅ Archived historical fix/debug documents
+- ✅ Created comprehensive documentation index
+- ✅ Updated API compliance documentation
+- ✅ Organized docs by ISO/IEC/IEEE 26515:2018 standard
 
 ---
 
-## 🗂️ Full Documentation Tree
+## 📞 Support
 
-```
-docs/
-├── README.md (this file)
-│
-├── Monorepo & Build System
-│   ├── MONOREPO_QUICKSTART.md           ⚡ Start here (5 min)
-│   ├── DECISION_TREE.md                 🌳 Visual guide (5 min)
-│   ├── TOOLING_RECOMMENDATIONS_SUMMARY.md  📋 Summary (10 min)
-│   ├── MONOREPO_TOOLING_ANALYSIS.md     📚 Deep dive (30 min)
-│   └── BUILD_ARCHITECTURE.md            🏗️ Technical (20 min)
-│
-├── Deployment
-│   └── deployment/
-│       ├── RAILWAY_BACKEND_FIX.md
-│       ├── RAILWAY_FIXES_IMPLEMENTATION.md
-│       ├── RAILWAY_SERVICE_CONFIG.md
-│       └── RAILWAY_DEPLOYMENT_MASTER.md
-│
-├── Development
-│   ├── agents.md
-│   └── claude-integration.md
-│
-├── Deployment
-│   ├── railway-configuration.md
-│   ├── railway-compliance.md
-│   ├── railway-port-config.md
-│   └── deployment/
-│       ├── RAILWAY_BACKEND_FIX.md
-│       ├── RAILWAY_FIXES_IMPLEMENTATION.md
-│       ├── RAILWAY_SERVICE_CONFIG.md
-│       └── RAILWAY_DEPLOYMENT_MASTER.md
-│
-├── Guides
-│   └── quick-start.md
-│
-├── Security
-│   └── security-guide.md
-│
-├── Status
-│   └── implementation-status.md
-│
-└── Archive
-    └── archive/ (old documentation)
-```
+For questions or issues:
+- Check [Troubleshooting Guide](deployment/DEPLOYMENT_TROUBLESHOOTING.md)
+- Review [Test Plan](qa/QA_COMPREHENSIVE_PLAN.md)
+- Review [Audit Report](../AUDIT_REPORT.md)
 
 ---
 
-## 🔗 External Resources
+## 📄 License
 
-### Tools
-- [Yarn Workspaces](https://yarnpkg.com/features/workspaces)
-- [Railway](https://railway.app)
-- [Railpack](https://docs.railway.com/reference/railpack)
-- [Nx](https://nx.dev) (for future reference)
-- [Bazel](https://bazel.build) (for future reference)
-
-### Repository
-- [GitHub Repository](https://github.com/GaryOcean428/poloniex-trading-platform)
-- [Issues](https://github.com/GaryOcean428/poloniex-trading-platform/issues)
-- [Pull Requests](https://github.com/GaryOcean428/poloniex-trading-platform/pulls)
+See LICENSE file for details.
 
 ---
 
-## 💡 Quick Tips
-
-### For New Developers
-1. Start with `MONOREPO_QUICKSTART.md`
-2. Reference `BUILD_ARCHITECTURE.md` as needed
-3. Use `yarn affected` to see what changed
-4. Use `yarn build:metrics` to track performance
-
-### For Team Leads
-1. Read `TOOLING_RECOMMENDATIONS_SUMMARY.md`
-2. Review quarterly using `DECISION_TREE.md`
-3. Monitor build metrics
-4. Revisit when service count changes
-
-### For Build Engineers
-1. Deep dive into `MONOREPO_TOOLING_ANALYSIS.md`
-2. Maintain `BUILD_ARCHITECTURE.md`
-3. Monitor build performance
-4. Plan migrations only when triggered
-
----
-
-## 🎯 Document Maintenance
-
-### When to Update
-
-**Immediate Updates Required**:
-- Adding/removing services
-- Changing build system
-- Updating Railway configuration
-
-**Quarterly Review**:
-- Build metrics analysis
-- Service count evaluation
-- Team size assessment
-- Tooling decision review
-
-**Annual Review**:
-- Complete documentation audit
-- Archive outdated docs
-- Update external links
-- Refresh examples
-
-### How to Contribute
-
-1. Keep documentation up-to-date
-2. Add examples for common tasks
-3. Document troubleshooting steps
-4. Update metrics and statistics
-
----
-
-## 📧 Support
-
-### Questions?
-1. Check the relevant documentation
-2. Search existing issues
-3. Ask in team chat
-4. Create a new issue if needed
-
-### Documentation Issues?
-- File an issue with label `documentation`
-- Include which doc needs updating
-- Suggest improvements
-
----
-
-## ✅ Version History
-
-- **v1.0** (2025-01) - Initial comprehensive documentation
-  - Monorepo tooling analysis
-  - Build architecture documentation
-  - Decision trees and guides
-  - Utility scripts
-
----
-
-**Last Updated**: January 2025  
-**Maintained By**: Development Team  
-**Review Frequency**: Quarterly or when service count changes
+**Navigation:** [← Back to Project Root](../README.md)

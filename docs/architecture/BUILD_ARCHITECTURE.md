@@ -1,4 +1,7 @@
-# Build Architecture Documentation
+# Build Architecture
+
+**Last Updated:** 2025-11-24  
+**Location:** `docs/architecture/build-architecture.md` Documentation
 
 **Repository**: Poloniex Trading Platform  
 **Build System**: Yarn Workspaces + Railpack  
