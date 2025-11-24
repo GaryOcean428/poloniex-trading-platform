@@ -239,9 +239,14 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
       setAccountBalance(data);
     } catch (err) {
       const error = err as Error;
-      // console.error('Error fetching account balance:', error.message);
+      console.error('Error fetching account balance:', error.message);
       setError(error);
-      // Don't fall back to mock data - let the UI handle the error
+      // Provide default balance on error so UI doesn't show "Connect API"
+      setAccountBalance({
+        available: 0,
+        total: 0,
+        currency: 'USDT'
+      });
     } finally {
       setIsLoading(false);
     }

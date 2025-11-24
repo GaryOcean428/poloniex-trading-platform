@@ -104,14 +104,20 @@ const Sidebar: React.FC = () => {
               <div className="text-2xl font-bold">
                 {isLoading ? (
                   <div className="animate-pulse bg-neutral-700 h-8 w-32 rounded"></div>
-                ) : accountBalance && typeof accountBalance.total === 'number' ? (
-                  `$${accountBalance.total.toFixed(2)}`
+                ) : accountBalance ? (
+                  typeof accountBalance.total === 'number' ? (
+                    `$${accountBalance.total.toFixed(2)}`
+                  ) : typeof accountBalance.totalAmount === 'string' ? (
+                    `$${parseFloat(accountBalance.totalAmount).toFixed(2)}`
+                  ) : (
+                    <span className="text-neutral-500 text-base">$0.00</span>
+                  )
                 ) : (
-                  <span className="text-neutral-500 text-base">Connect API</span>
+                  <span className="text-neutral-500 text-base">$0.00</span>
                 )}
               </div>
               <div className="text-xs text-neutral-500 mt-1">
-                {accountBalance && typeof accountBalance.total === 'number' ? 'USDT' : 'No credentials'}
+                {accountBalance ? 'USDT' : 'Add API keys in Settings'}
               </div>
             </div>
           )}
