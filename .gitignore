@@ -72,7 +72,9 @@ __pycache__/
 .Python
 
 # Security and dependency files
+# Only use yarn.lock (project uses Yarn 4.9.2)
 package-lock.json
+pnpm-lock.yaml
 
 # Railway deployment files
 deployment-url.txt
