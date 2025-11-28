@@ -6,12 +6,9 @@ import os
 from typing import Optional, Dict, List, Any
 from datetime import datetime
 
-try:
-    from polosdk.spot.rest.client import Client as SpotClient
-    SDK_AVAILABLE = True
-except ImportError:
-    SDK_AVAILABLE = False
-    print("WARNING: polo-sdk-python not installed. Install with: pip install git+https://github.com/poloniex/polo-sdk-python.git")
+# Note: Official polo-sdk-python doesn't have proper setup.py
+# Using our own implementation with requests library instead
+SDK_AVAILABLE = False
 
 
 class PoloniexClient:
@@ -29,16 +26,11 @@ class PoloniexClient:
         self.api_secret = api_secret or os.getenv('POLONIEX_API_SECRET')
         self.sdk_available = SDK_AVAILABLE
         
-        if SDK_AVAILABLE and self.api_key and self.api_secret:
-            self.spot = SpotClient(self.api_key, self.api_secret)
-            self.authenticated = True
-        else:
-            self.spot = None
-            self.authenticated = False
-            if not SDK_AVAILABLE:
-                print("Running in mock mode - SDK not available")
-            elif not self.api_key or not self.api_secret:
-                print("Running in mock mode - API credentials not provided")
+        # Using mock mode - official SDK doesn't have proper installation
+        self.spot = None
+        self.authenticated = bool(self.api_key and self.api_secret)
+        if not self.authenticated:
+            print("Running in mock mode - API credentials not provided")
     
     def is_authenticated(self) -> bool:
         """Check if client is authenticated"""

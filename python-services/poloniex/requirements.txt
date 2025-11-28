@@ -1,6 +1,3 @@
-# Official Poloniex SDK
-git+https://github.com/poloniex/polo-sdk-python.git
-
 # Web Framework
 uvicorn[standard]>=0.30.0
 fastapi>=0.111.0
