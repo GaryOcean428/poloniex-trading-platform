@@ -7,6 +7,8 @@
 import React, { useState, useEffect } from 'react';
 import { Brain, TrendingUp, Activity, CheckCircle, XCircle, RefreshCw, BarChart3 } from 'lucide-react';
 import { getAccessToken } from '@/utils/auth';
+import BacktestRunner from '@/components/backtest/BacktestRunner';
+import PaperTradingToggle from '@/components/paper-trading/PaperTradingToggle';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8765';
 
@@ -278,6 +280,27 @@ const StrategyDashboard: React.FC = () => {
                     • Promoted {new Date(strategy.promotedAt).toLocaleDateString()}
                   </span>
                 )}
+              </div>
+              
+              {/* Action Buttons */}
+              <div className="mt-3 pt-3 border-t space-y-2">
+                <details className="group">
+                  <summary className="cursor-pointer text-sm font-medium text-blue-600 hover:text-blue-700 flex items-center gap-2">
+                    <BarChart3 size={16} />
+                    <span>Backtest Strategy</span>
+                  </summary>
+                  <div className="mt-3">
+                    <BacktestRunner 
+                      strategyId={strategy.id} 
+                      strategyName={strategy.name}
+                    />
+                  </div>
+                </details>
+                
+                <PaperTradingToggle 
+                  strategyId={strategy.id}
+                  strategyName={strategy.name}
+                />
               </div>
             </div>
           ))}

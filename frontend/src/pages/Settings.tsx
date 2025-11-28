@@ -7,8 +7,11 @@ import {
   Save,
   AlertTriangle,
   Check,
-  X
+  X,
+  Shield
 } from 'lucide-react';
+import RiskSettings from '@/components/risk/RiskSettings';
+import RiskMeter from '@/components/risk/RiskMeter';
 import { useSettings } from '../hooks/useSettings';
 import { usePoloniexData } from '../hooks/usePoloniexData';
 import { useDateFormatter } from '../hooks/useDateFormatter'; 
@@ -178,6 +181,12 @@ const Settings: React.FC = () => {
                 <a href="#extension" className="flex items-center py-2 px-3 rounded-md text-neutral-700 hover:bg-neutral-50">
                   <MessageSquare className="h-5 w-5 mr-3" />
                   Extension Settings
+                </a>
+              </li>
+              <li>
+                <a href="#risk" className="flex items-center py-2 px-3 rounded-md text-neutral-700 hover:bg-neutral-50">
+                  <Shield className="h-5 w-5 mr-3" />
+                  Risk Management
                 </a>
               </li>
               <li>
@@ -436,6 +445,22 @@ const Settings: React.FC = () => {
                 <Save className="h-4 w-4 mr-2" />
                 Save Settings
               </button>
+            </div>
+            
+            {/* Risk Management Section */}
+            <div id="risk" className="trading-card mt-6">
+              <div className="flex items-center gap-2 mb-4">
+                <Shield className="h-6 w-6 text-blue-600" />
+                <h2 className="text-xl font-bold">Risk Management</h2>
+              </div>
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div className="lg:col-span-2">
+                  <RiskSettings />
+                </div>
+                <div>
+                  <RiskMeter />
+                </div>
+              </div>
             </div>
           </div>
         </form>
