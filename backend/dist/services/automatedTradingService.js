@@ -701,7 +701,7 @@ class AutomatedTradingService extends EventEmitter {
     async loadUserCredentials(userId) {
         const result = await query(`
       SELECT api_key_encrypted, api_secret_encrypted, passphrase_encrypted
-      FROM user_api_credentials
+      FROM api_credentials
       WHERE user_id = $1 AND exchange = 'poloniex' AND is_active = true
       LIMIT 1
     `, [userId]);

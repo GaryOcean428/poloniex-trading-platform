@@ -20,10 +20,10 @@ router.get('/', async (req, res) => {
     // Check if permissions column exists in SELECT queries
     const hasPermissionsInSelect = userServiceContent.includes('permissions,') || 
                                    userServiceContent.includes('permissions ') &&
-                                   userServiceContent.includes('FROM user_api_credentials');
+                                   userServiceContent.includes('FROM api_credentials');
     
     // Extract the getApiCredentials SELECT query
-    const selectQueryMatch = userServiceContent.match(/getApiCredentials\(userId[^}]+?SELECT[\s\S]+?FROM user_api_credentials[\s\S]+?WHERE/);
+    const selectQueryMatch = userServiceContent.match(/getApiCredentials\(userId[^}]+?SELECT[\s\S]+?FROM api_credentials[\s\S]+?WHERE/);
     const selectQuery = selectQueryMatch ? selectQueryMatch[0].substring(0, 500) : 'Not found';
     
     res.json({

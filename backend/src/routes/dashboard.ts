@@ -201,6 +201,20 @@ router.get('/balance', authenticateToken, async (req: Request, res: Response) =>
     const userId = String(req.user.id);
     logger.info('Balance request received', { userId });
     
+    // Import mock mode
+    const { MOCK_MODE, MOCK_BALANCE } = await import('../middleware/mockMode.js');
+    
+    // MOCK MODE - Return mock data immediately
+    if (MOCK_MODE) {
+      logger.info('Mock mode active - returning mock balance', { userId });
+      return res.json({
+        success: true,
+        data: MOCK_BALANCE,
+        mock: true,
+        message: 'Using mock data - database unavailable or in development mode'
+      });
+    }
+    
     let credentials;
     try {
       credentials = await apiCredentialsService.getCredentials(userId);
@@ -221,7 +235,8 @@ router.get('/balance', authenticateToken, async (req: Request, res: Response) =>
           unrealizedPnL: 0.00,
           currency: 'USDT'
         },
-        mock: true
+        mock: true,
+        message: 'No API credentials configured - add them in Settings'
       });
     }
     
@@ -235,41 +250,82 @@ router.get('/balance', authenticateToken, async (req: Request, res: Response) =>
           unrealizedPnL: 0.00,
           currency: 'USDT'
         },
-        mock: true
+        mock: true,
+        message: 'No API credentials configured - add them in Settings'
       });
     }
 
-    let balance;
+    // Try both Spot and Futures APIs
+    let totalBalance = 0;
+    let availableBalance = 0;
+    let unrealizedPnL = 0;
+    let balanceSource = 'none';
+
+    // Try Futures first
     try {
-      balance = await poloniexFuturesService.getAccountBalance(credentials);
+      const futuresBalance = await poloniexFuturesService.getAccountBalance(credentials);
       logger.info('Futures balance fetched successfully:', { 
-        eq: balance.eq, 
-        availMgn: balance.availMgn,
-        rawBalance: JSON.stringify(balance)
+        eq: futuresBalance.eq, 
+        availMgn: futuresBalance.availMgn,
+        rawBalance: JSON.stringify(futuresBalance)
       });
-    } catch (apiError: any) {
-      // API call failed - log the actual error and return it
-      logger.error('Poloniex API call failed:', {
-        error: apiError.message,
-        status: apiError.response?.status,
-        data: apiError.response?.data
+      
+      totalBalance = parseFloat(futuresBalance.eq || futuresBalance.totalEquity || '0');
+      availableBalance = parseFloat(futuresBalance.availMgn || futuresBalance.availableBalance || '0');
+      unrealizedPnL = parseFloat(futuresBalance.upl || futuresBalance.unrealizedPnL || '0');
+      balanceSource = 'futures';
+    } catch (futuresError: any) {
+      logger.warn('Futures balance fetch failed, trying Spot:', {
+        error: futuresError.message,
+        status: futuresError.response?.status
       });
-      return res.status(500).json({
-        success: false,
-        error: 'Failed to fetch balance from Poloniex',
-        details: apiError.message,
-        poloniexError: apiError.response?.data
-      });
+      
+      // Try Spot API
+      try {
+        const spotBalances = await poloniexSpotService.getAccountBalances(credentials);
+        logger.info('Spot balances fetched successfully:', { 
+          count: spotBalances?.length,
+          rawBalances: JSON.stringify(spotBalances)
+        });
+        
+        if (Array.isArray(spotBalances)) {
+          // Sum up all balances
+          totalBalance = spotBalances.reduce((sum, bal: any) => {
+            const available = parseFloat(bal.available || '0');
+            const hold = parseFloat(bal.hold || '0');
+            return sum + available + hold;
+          }, 0);
+          
+          availableBalance = spotBalances.reduce((sum, bal: any) => {
+            return sum + parseFloat(bal.available || '0');
+          }, 0);
+          
+          balanceSource = 'spot';
+        }
+      } catch (spotError: any) {
+        logger.error('Both Spot and Futures balance fetch failed:', {
+          futuresError: futuresError.message,
+          spotError: spotError.message
+        });
+        
+        return res.status(500).json({
+          success: false,
+          error: 'Failed to fetch balance from Poloniex',
+          details: 'Both Spot and Futures API calls failed',
+          futuresError: futuresError.message,
+          spotError: spotError.message
+        });
+      }
     }
     
-    // Transform Poloniex V3 balance format to frontend format
-    // Frontend expects: totalBalance, availableBalance, marginBalance, unrealizedPnL (all as numbers)
+    // Transform to frontend format
     const transformedBalance = {
-      totalBalance: parseFloat(balance.eq || balance.totalEquity || '0'),
-      availableBalance: parseFloat(balance.availMgn || balance.availableBalance || '0'),
-      marginBalance: parseFloat(balance.eq || balance.totalEquity || '0'),
-      unrealizedPnL: parseFloat(balance.upl || balance.unrealizedPnL || '0'),
-      currency: 'USDT'
+      totalBalance,
+      availableBalance,
+      marginBalance: totalBalance,
+      unrealizedPnL,
+      currency: 'USDT',
+      source: balanceSource
     };
     
     logger.info('Transformed balance:', transformedBalance);

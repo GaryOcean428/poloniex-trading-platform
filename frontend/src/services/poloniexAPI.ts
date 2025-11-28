@@ -140,9 +140,20 @@ class PoloniexApiClient {
       const response = await api.get("/api/dashboard/balance");
 
       // Extract balance data from response
-      const balanceData = response.data.balance || response.data;
+      // Backend returns: { success: true, data: { totalBalance, availableBalance, ... } }
+      const balanceData = response.data.data || response.data.balance || response.data;
       
-      this.cachedBalance = balanceData;
+      // Transform to expected format
+      const transformedBalance = {
+        totalAmount: balanceData.totalBalance?.toString() || '0',
+        availableAmount: balanceData.availableBalance?.toString() || '0',
+        accountEquity: balanceData.totalBalance?.toString() || '0',
+        unrealizedPnL: balanceData.unrealizedPnL?.toString() || '0',
+        todayPnL: '0',
+        todayPnLPercentage: '0'
+      };
+      
+      this.cachedBalance = transformedBalance;
       this.lastBalanceUpdate = Date.now();
 
       return this.cachedBalance;

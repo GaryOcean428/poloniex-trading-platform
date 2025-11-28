@@ -531,7 +531,7 @@ export class UserService {
       const passphraseEncrypted = passphrase ? this.encrypt(passphrase) : null;
 
       const queryText = `
-        INSERT INTO user_api_credentials (
+        INSERT INTO api_credentials (
           user_id, exchange, credential_name,
           api_key_encrypted, api_secret_encrypted, passphrase_encrypted,
           is_active
@@ -584,7 +584,7 @@ export class UserService {
           id, user_id, exchange, credential_name,
           api_key_encrypted, api_secret_encrypted, passphrase_encrypted,
           is_active, last_used_at, created_at, updated_at
-        FROM user_api_credentials
+        FROM api_credentials
         WHERE user_id = $1 AND exchange = $2 AND is_active = true
       `;
 
@@ -660,7 +660,7 @@ export class UserService {
         SELECT
           id, exchange, credential_name,
           is_active, last_used_at, created_at, updated_at
-        FROM user_api_credentials
+        FROM api_credentials
         WHERE user_id = $1
         ORDER BY exchange, credential_name
       `;
@@ -679,7 +679,7 @@ export class UserService {
   static async updateApiCredentialsLastUsed(credentialId) {
     try {
       const queryText = `
-        UPDATE user_api_credentials
+        UPDATE api_credentials
         SET last_used_at = CURRENT_TIMESTAMP
         WHERE id = $1
       `;
@@ -697,7 +697,7 @@ export class UserService {
   static async deleteApiCredentials(userId, credentialId) {
     try {
       const queryText = `
-        DELETE FROM user_api_credentials
+        DELETE FROM api_credentials
         WHERE id = $1 AND user_id = $2
         RETURNING exchange, credential_name
       `;
@@ -735,7 +735,7 @@ export class UserService {
       // For now, just verify the credentials exist and are decryptable
       const queryText = `
         SELECT id, exchange, credential_name
-        FROM user_api_credentials
+        FROM api_credentials
         WHERE id = $1 AND user_id = $2 AND is_active = true
       `;
 

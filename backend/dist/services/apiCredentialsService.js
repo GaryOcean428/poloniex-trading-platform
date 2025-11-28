@@ -15,17 +15,17 @@ export class ApiCredentialsService {
             // Default credential name if not provided
             const name = credentialName || `${exchange.charAt(0).toUpperCase() + exchange.slice(1)} API`;
             // Store in database (upsert)
-            await pool.query(`INSERT INTO user_api_credentials (
-          user_id, exchange, credential_name, api_key_encrypted, api_secret_encrypted, encryption_iv, encryption_tag, is_active
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, true)
-        ON CONFLICT (user_id, exchange, credential_name)
+            await pool.query(`INSERT INTO api_credentials (
+          user_id, exchange, api_key_encrypted, api_secret_encrypted, encryption_iv, encryption_tag, is_active
+        ) VALUES ($1, $2, $3, $4, $5, $6, true)
+        ON CONFLICT (user_id, exchange)
         DO UPDATE SET
           api_key_encrypted = EXCLUDED.api_key_encrypted,
           api_secret_encrypted = EXCLUDED.api_secret_encrypted,
           encryption_iv = EXCLUDED.encryption_iv,
           encryption_tag = EXCLUDED.encryption_tag,
           is_active = true,
-          updated_at = CURRENT_TIMESTAMP`, [userId, exchange, name, encrypted.apiKeyEncrypted, encrypted.apiSecretEncrypted, encrypted.encryptionIv, encrypted.tag]);
+          updated_at = CURRENT_TIMESTAMP`, [userId, exchange, encrypted.apiKeyEncrypted, encrypted.apiSecretEncrypted, encrypted.encryptionIv, encrypted.tag]);
             console.log(`API credentials stored for user ${userId} on ${exchange}`);
         }
         catch (error) {
@@ -40,7 +40,7 @@ export class ApiCredentialsService {
         try {
             const result = await pool.query(`SELECT id, user_id, exchange, api_key_encrypted, api_secret_encrypted, 
                 encryption_iv, encryption_tag, is_active, last_used_at, created_at, updated_at
-         FROM user_api_credentials
+         FROM api_credentials
          WHERE user_id = $1 AND exchange = $2 AND is_active = true
          LIMIT 1`, [userId, exchange]);
             if (result.rows.length === 0) {
@@ -78,7 +78,7 @@ export class ApiCredentialsService {
      */
     async deleteCredentials(userId, exchange = 'poloniex') {
         try {
-            await pool.query(`DELETE FROM user_api_credentials WHERE user_id = $1 AND exchange = $2`, [userId, exchange]);
+            await pool.query(`DELETE FROM api_credentials WHERE user_id = $1 AND exchange = $2`, [userId, exchange]);
             console.log(`API credentials deleted for user ${userId} on ${exchange}`);
         }
         catch (error) {
@@ -91,7 +91,7 @@ export class ApiCredentialsService {
      */
     async deactivateCredentials(userId, exchange = 'poloniex') {
         try {
-            await pool.query(`UPDATE user_api_credentials SET is_active = false, updated_at = CURRENT_TIMESTAMP
+            await pool.query(`UPDATE api_credentials SET is_active = false, updated_at = CURRENT_TIMESTAMP
          WHERE user_id = $1 AND exchange = $2`, [userId, exchange]);
             console.log(`API credentials deactivated for user ${userId} on ${exchange}`);
         }
@@ -105,7 +105,7 @@ export class ApiCredentialsService {
      */
     async hasCredentials(userId, exchange = 'poloniex') {
         try {
-            const result = await pool.query(`SELECT COUNT(*) as count FROM user_api_credentials
+            const result = await pool.query(`SELECT COUNT(*) as count FROM api_credentials
          WHERE user_id = $1 AND exchange = $2 AND is_active = true`, [userId, exchange]);
             return parseInt(result.rows[0].count) > 0;
         }
@@ -119,7 +119,7 @@ export class ApiCredentialsService {
      */
     async updateLastUsed(credentialId) {
         try {
-            await pool.query(`UPDATE user_api_credentials SET last_used_at = CURRENT_TIMESTAMP WHERE id = $1`, [credentialId]);
+            await pool.query(`UPDATE api_credentials SET last_used_at = CURRENT_TIMESTAMP WHERE id = $1`, [credentialId]);
         }
         catch (error) {
             // Non-critical error, just log it
@@ -131,7 +131,7 @@ export class ApiCredentialsService {
      */
     async getAllActiveUsers(exchange = 'poloniex') {
         try {
-            const result = await pool.query(`SELECT DISTINCT user_id FROM user_api_credentials
+            const result = await pool.query(`SELECT DISTINCT user_id FROM api_credentials
          WHERE exchange = $1 AND is_active = true`, [exchange]);
             return result.rows.map(row => row.user_id);
         }
