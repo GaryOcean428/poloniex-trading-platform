@@ -1,4 +1,4 @@
-import { logger } from '@/services/logger';
+import { logger } from '@/utils/logger';
 import React, { useEffect, useState } from 'react';
 
 // Extend the Window interface to include PWA-related properties

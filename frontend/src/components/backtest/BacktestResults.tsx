@@ -1,7 +1,7 @@
 import React from 'react';
 import { TrendingUp, TrendingDown, DollarSign, Activity, Target, AlertTriangle } from 'lucide-react';
 
-interface BacktestResults {
+interface BacktestResultsData {
   winRate: number;
   profitFactor: number;
   totalReturn: number;
@@ -24,7 +24,7 @@ interface BacktestResults {
 }
 
 interface Props {
-  results: BacktestResults;
+  results: BacktestResultsData;
   strategyName: string;
   symbol: string;
 }
