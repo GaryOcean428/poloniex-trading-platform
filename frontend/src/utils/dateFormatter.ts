@@ -174,7 +174,7 @@ export function getRelativeTime(date: Date | string | number): string {
  * @returns Date object or null if invalid
  */
 export function parseDate(dateStr: string, format: DateFormat = 'AU'): Date | null {
-  const parts = dateStr.split(/[\/\-\s:]+/);
+  const parts = dateStr.split(/[/\-\s:]+/);
   
   if (parts.length < 3) {
     return null;

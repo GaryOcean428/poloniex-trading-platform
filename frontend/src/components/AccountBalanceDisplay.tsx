@@ -1,6 +1,6 @@
 import APIErrorBoundary from '@/components/APIErrorBoundary';
 import useAPICall from '@/hooks/useAPICall';
-import { logger } from '@/services/logger';
+import { logger } from '@/utils/logger';
 import { poloniexApi } from '@/services/poloniexAPI';
 import React, { useEffect, useState } from 'react';
 
