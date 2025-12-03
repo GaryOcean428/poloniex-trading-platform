@@ -185,8 +185,7 @@ class FuturesWebSocketClient extends EventEmitter {
                 response: true,
                 apiKey: this.credentials.apiKey,
                 sign: signature,
-                timestamp: timestamp,
-                passphrase: this.credentials.passphrase || ''
+                timestamp: timestamp
             };
             this.privateWS?.send(JSON.stringify(authMessage));
             logger.info('Private WebSocket authentication sent');
@@ -581,8 +580,7 @@ class FuturesWebSocketClient extends EventEmitter {
                     response: true,
                     apiKey: this.credentials.apiKey,
                     sign: signature,
-                    timestamp: timestamp,
-                    passphrase: this.credentials.passphrase || ''
+                    timestamp: timestamp
                 };
                 this.privateWS?.send(JSON.stringify(message));
                 this.privateSubscriptions.add(channel);

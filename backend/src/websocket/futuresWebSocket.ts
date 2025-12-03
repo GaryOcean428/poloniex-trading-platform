@@ -272,7 +272,7 @@ class FuturesWebSocketClient extends EventEmitter {
       const timestamp = Date.now().toString();
       const signature = this.generatePrivateSignature(timestamp);
 
-      const authMessage: SubscriptionMessage = {
+      const authMessage = {
         id: Date.now(),
         type: 'subscribe',
         topic: '/contractAccount/wallet',
@@ -280,10 +280,8 @@ class FuturesWebSocketClient extends EventEmitter {
         response: true,
         apiKey: this.credentials.apiKey,
         sign: signature,
-        timestamp: timestamp,
-        passphrase: this.credentials.passphrase || ''
+        timestamp: timestamp
       };
-
       this.privateWS?.send(JSON.stringify(authMessage));
       logger.info('Private WebSocket authentication sent');
 
@@ -737,7 +735,7 @@ class FuturesWebSocketClient extends EventEmitter {
         const timestamp = Date.now().toString();
         const signature = this.generatePrivateSignature(timestamp);
 
-        const message: SubscriptionMessage = {
+        const message = {
           id: Date.now(),
           type: 'subscribe',
           topic: topic,
@@ -745,8 +743,7 @@ class FuturesWebSocketClient extends EventEmitter {
           response: true,
           apiKey: this.credentials.apiKey,
           sign: signature,
-          timestamp: timestamp,
-          passphrase: this.credentials.passphrase || ''
+          timestamp: timestamp
         };
 
         this.privateWS?.send(JSON.stringify(message));
