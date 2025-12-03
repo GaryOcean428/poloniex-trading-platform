@@ -218,40 +218,34 @@ router.get('/balance', authenticateToken, async (req: Request, res: Response) =>
     let credentials;
     try {
       credentials = await apiCredentialsService.getCredentials(userId);
-      logger.info('Credentials retrieved', { 
+      logger.info('Credentials retrieved successfully', { 
         userId, 
         hasCredentials: !!credentials,
-        exchange: credentials?.exchange 
+        exchange: credentials?.exchange,
+        apiKeyPrefix: credentials?.apiKey?.substring(0, 8) 
       });
     } catch (credError: any) {
-      logger.warn('No credentials found for user', { userId, error: credError.message });
-      // No credentials found - return mock data for demo users
-      return res.json({
-        success: true,
-        data: {
-          totalBalance: 10000.00,
-          availableBalance: 10000.00,
-          marginBalance: 10000.00,
-          unrealizedPnL: 0.00,
-          currency: 'USDT'
-        },
-        mock: true,
-        message: 'No API credentials configured - add them in Settings'
+      logger.error('Error retrieving credentials from database', { 
+        userId, 
+        error: credError.message,
+        stack: credError.stack 
+      });
+      // Return error instead of mock data
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to retrieve API credentials from database',
+        details: credError.message,
+        requiresApiKeys: false // Credentials exist but can't be retrieved
       });
     }
     
     if (!credentials) {
-      return res.json({
-        success: true,
-        data: {
-          totalBalance: 10000.00,
-          availableBalance: 10000.00,
-          marginBalance: 10000.00,
-          unrealizedPnL: 0.00,
-          currency: 'USDT'
-        },
-        mock: true,
-        message: 'No API credentials configured - add them in Settings'
+      logger.warn('No API credentials found for user', { userId });
+      return res.status(400).json({
+        success: false,
+        error: 'No API credentials configured',
+        message: 'Please add your Poloniex API keys in Settings',
+        requiresApiKeys: true
       });
     }
 
@@ -263,10 +257,19 @@ router.get('/balance', authenticateToken, async (req: Request, res: Response) =>
 
     // Try Futures first
     try {
+      logger.info('Attempting to fetch Futures balance...', { 
+        userId,
+        exchange: credentials.exchange,
+        apiKeyPrefix: credentials.apiKey.substring(0, 8)
+      });
+      
       const futuresBalance = await poloniexFuturesService.getAccountBalance(credentials);
+      
       logger.info('Futures balance fetched successfully:', { 
+        userId,
         eq: futuresBalance.eq, 
         availMgn: futuresBalance.availMgn,
+        upl: futuresBalance.upl,
         rawBalance: JSON.stringify(futuresBalance)
       });
       
@@ -274,6 +277,13 @@ router.get('/balance', authenticateToken, async (req: Request, res: Response) =>
       availableBalance = parseFloat(futuresBalance.availMgn || futuresBalance.availableBalance || '0');
       unrealizedPnL = parseFloat(futuresBalance.upl || futuresBalance.unrealizedPnL || '0');
       balanceSource = 'futures';
+      
+      logger.info('Parsed Futures balance values:', {
+        userId,
+        totalBalance,
+        availableBalance,
+        unrealizedPnL
+      });
     } catch (futuresError: any) {
       logger.warn('Futures balance fetch failed, trying Spot:', {
         error: futuresError.message,
