@@ -1,4 +1,4 @@
-export const MOCK_MODE = process.env.MOCK_MODE === 'true' || !process.env.DATABASE_URL || process.env.DATABASE_URL.includes('railway');
+export const MOCK_MODE = process.env.MOCK_MODE === 'true';
 export function mockModeMiddleware(req, res, next) {
     if (MOCK_MODE) {
         req.mockMode = true;

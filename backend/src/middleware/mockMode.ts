@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 
-export const MOCK_MODE = process.env.MOCK_MODE === 'true' || !process.env.DATABASE_URL || process.env.DATABASE_URL.includes('railway');
+export const MOCK_MODE = process.env.MOCK_MODE === 'true';
 
 export function mockModeMiddleware(req: Request, res: Response, next: NextFunction) {
   if (MOCK_MODE) {
