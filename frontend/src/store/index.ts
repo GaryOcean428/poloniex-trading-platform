@@ -40,6 +40,16 @@ export interface AppState {
     timestamp: number;
     dismissible: boolean;
   }>;
+
+  // App Notifications
+  appNotifications: Array<{
+    id: string;
+    type: "success" | "error" | "warning" | "info";
+    title: string;
+    message: string;
+    timestamp: number;
+    read: boolean;
+  }>;
 }
 
 // Define store actions interface
@@ -63,6 +73,11 @@ export interface AppActions {
   addToast: (toast: Omit<AppState["toasts"][0], "id" | "timestamp">) => void;
   removeToast: (id: string) => void;
   clearToasts: () => void;
+
+  // App Notification Actions
+  addNotification: (notification: Omit<AppState["appNotifications"][0], "id" | "timestamp">) => void;
+  markNotificationAsRead: (id: string) => void;
+  clearAllNotifications: () => void;
 }
 
 // Encryption key for sensitive data
@@ -167,6 +182,32 @@ const defaultState: AppState = {
     mockMode: false,  // Production default: use real trading
   },
   toasts: [],
+  appNotifications: [
+    {
+      id: "1",
+      type: "success",
+      title: "System Ready",
+      message: "Trading platform is connected and ready to use.",
+      timestamp: Date.now() - 3600000,
+      read: false
+    },
+    {
+      id: "2",
+      type: "info",
+      title: "Market Update",
+      message: "BTC/USDT market data is now streaming.",
+      timestamp: Date.now() - 7200000,
+      read: false
+    },
+    {
+      id: "3",
+      type: "warning",
+      title: "API Rate Limit",
+      message: "Approaching API rate limit. Consider reducing frequency.",
+      timestamp: Date.now() - 10800000,
+      read: false
+    }
+  ]
 };
 
 // Create the store
@@ -245,6 +286,30 @@ export const useAppStore = create<AppState & AppActions>()(
         set((state) => {
           state.toasts = [];
         }),
+
+      // App Notification Actions
+      addNotification: (notification) =>
+        set((state) => {
+          const newNotification = {
+            ...notification,
+            id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+            timestamp: Date.now(),
+          };
+          state.appNotifications.unshift(newNotification);
+        }),
+
+      markNotificationAsRead: (id) =>
+        set((state) => {
+          const notification = state.appNotifications.find((n) => n.id === id);
+          if (notification) {
+            notification.read = true;
+          }
+        }),
+
+      clearAllNotifications: () =>
+        set((state) => {
+          state.appNotifications = [];
+        }),
     })),
     {
       name: "poloniex-app-storage",
@@ -265,6 +330,7 @@ export const useApiCredentials = () =>
 export const useUISettings = () => useAppStore((state) => state.ui);
 export const useTradingSettings = () => useAppStore((state) => state.trading);
 export const useToasts = () => useAppStore((state) => state.toasts);
+export const useAppNotifications = () => useAppStore((state) => state.appNotifications);
 
 // Action hooks
 export const useApiActions = () =>
@@ -291,4 +357,11 @@ export const useToastActions = () =>
     addToast: state.addToast,
     removeToast: state.removeToast,
     clearToasts: state.clearToasts,
+  }));
+
+export const useNotificationActions = () =>
+  useAppStore((state) => ({
+    addNotification: state.addNotification,
+    markNotificationAsRead: state.markNotificationAsRead,
+    clearAllNotifications: state.clearAllNotifications,
   }));

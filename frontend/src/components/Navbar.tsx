@@ -8,13 +8,19 @@ import { useAuth } from '../hooks/useAuth';
 import UserProfile from './auth/UserProfile';
 import LogoutButton from './auth/LogoutButton';
 import MobileNavigation from './MobileNavigation';
+import NotificationPanel from './NotificationPanel';
+import { useAppNotifications, useNotificationActions } from '../store';
 
 const Navbar: React.FC = () => {
-  const [notifications] = useState<number>(3);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const notifications = useAppNotifications();
+  const { markNotificationAsRead, clearAllNotifications } = useNotificationActions();
   const { hasStoredCredentials } = useSettings();
   const { isMobile } = useResponsiveNav();
   const { toggleMobileMenu, isMobileMenuOpen, closeMobileMenu } = useMobileMenu();
   const { isLoggedIn, loading } = useAuth();
+  
+  const unreadCount = notifications.filter(n => !n.read).length;
   
   return (
     <>
@@ -44,19 +50,27 @@ const Navbar: React.FC = () => {
         <div className="flex items-center space-x-2 sm:space-x-4">
           <div className="relative">
             <button 
+              onClick={() => setShowNotifications(!showNotifications)}
               className="p-2 text-neutral-500 hover:text-neutral-700 hover:bg-neutral-100 rounded-md transition-colors touch-target"
-              aria-label={`Notifications${notifications > 0 ? ` (${notifications} new)` : ' (none)'}`}
+              aria-label={`Notifications${unreadCount > 0 ? ` (${unreadCount} new)` : ' (none)'}`}
             >
               <Bell className="h-5 w-5 sm:h-6 sm:w-6" aria-hidden="true" />
-              {notifications > 0 && (
+              {unreadCount > 0 && (
                 <span 
                   className="absolute -top-1 -right-1 inline-flex items-center justify-center px-1.5 py-0.5 text-xs font-bold leading-none text-white bg-red-600 rounded-full min-w-[1.25rem]"
                   aria-hidden="true"
                 >
-                  {notifications > 99 ? '99+' : notifications}
+                  {unreadCount > 99 ? '99+' : unreadCount}
                 </span>
               )}
             </button>
+            <NotificationPanel
+              isOpen={showNotifications}
+              onClose={() => setShowNotifications(false)}
+              notifications={notifications}
+              onMarkAsRead={markNotificationAsRead}
+              onClearAll={clearAllNotifications}
+            />
           </div>
           
           {/* Authentication Section */}
