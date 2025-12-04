@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Bell, User, Menu, LogIn } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useSettings } from '../hooks/useSettings';
@@ -9,16 +9,26 @@ import UserProfile from './auth/UserProfile';
 import LogoutButton from './auth/LogoutButton';
 import MobileNavigation from './MobileNavigation';
 import NotificationPanel from './NotificationPanel';
-import { useAppNotifications, useNotificationActions } from '../store';
+import { useAppStore, initializeSampleNotifications } from '../store';
 
 const Navbar: React.FC = () => {
   const [showNotifications, setShowNotifications] = useState(false);
-  const notifications = useAppNotifications();
-  const { markNotificationAsRead, clearAllNotifications } = useNotificationActions();
+  const notifications = useAppStore(state => state.appNotifications);
+  const markNotificationAsRead = useAppStore(state => state.markNotificationAsRead);
+  const clearAllNotifications = useAppStore(state => state.clearAllNotifications);
   const { hasStoredCredentials } = useSettings();
   const { isMobile } = useResponsiveNav();
   const { toggleMobileMenu, isMobileMenuOpen, closeMobileMenu } = useMobileMenu();
   const { isLoggedIn, loading } = useAuth();
+  const initialized = useRef(false);
+  
+  // Initialize sample notifications on first mount only
+  useEffect(() => {
+    if (!initialized.current) {
+      initialized.current = true;
+      initializeSampleNotifications();
+    }
+  }, []);
   
   const unreadCount = notifications.filter(n => !n.read).length;
   

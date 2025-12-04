@@ -182,32 +182,7 @@ const defaultState: AppState = {
     mockMode: false,  // Production default: use real trading
   },
   toasts: [],
-  appNotifications: [
-    {
-      id: "1",
-      type: "success",
-      title: "System Ready",
-      message: "Trading platform is connected and ready to use.",
-      timestamp: Date.now() - 3600000,
-      read: false
-    },
-    {
-      id: "2",
-      type: "info",
-      title: "Market Update",
-      message: "BTC/USDT market data is now streaming.",
-      timestamp: Date.now() - 7200000,
-      read: false
-    },
-    {
-      id: "3",
-      type: "warning",
-      title: "API Rate Limit",
-      message: "Approaching API rate limit. Consider reducing frequency.",
-      timestamp: Date.now() - 10800000,
-      read: false
-    }
-  ]
+  appNotifications: []
 };
 
 // Create the store
@@ -365,3 +340,29 @@ export const useNotificationActions = () =>
     markNotificationAsRead: state.markNotificationAsRead,
     clearAllNotifications: state.clearAllNotifications,
   }));
+
+// Helper to initialize sample notifications
+export const initializeSampleNotifications = () => {
+  const store = useAppStore.getState();
+  if (store.appNotifications.length === 0) {
+    const baseTimestamp = Date.now();
+    store.addNotification({
+      type: "warning",
+      title: "API Rate Limit",
+      message: "Approaching API rate limit. Consider reducing frequency.",
+      read: false
+    });
+    store.addNotification({
+      type: "info",
+      title: "Market Update",
+      message: "BTC/USDT market data is now streaming.",
+      read: false
+    });
+    store.addNotification({
+      type: "success",
+      title: "System Ready",
+      message: "Trading platform is connected and ready to use.",
+      read: false
+    });
+  }
+};
