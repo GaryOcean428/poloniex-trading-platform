@@ -374,7 +374,7 @@ class QIGEnhancedMLService {
     const baseConfidence = metrics.confidence * 50; // 50% penalty
     
     // Very conservative price predictions (near current price)
-    const direction: 'NEUTRAL' = 'NEUTRAL';
+    const direction = 'NEUTRAL' as const;
     
     return {
       '1h': {
