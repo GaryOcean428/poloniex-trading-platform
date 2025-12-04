@@ -70,7 +70,7 @@ export const clearAppStorage = (): void => {
  */
 export const isStorageAvailable = (): boolean => {
   try {
-    const test = '__storage_test__';
+    const test = '_storage_test_';
     localStorage.setItem(test, test);
     localStorage.removeItem(test);
     return true;

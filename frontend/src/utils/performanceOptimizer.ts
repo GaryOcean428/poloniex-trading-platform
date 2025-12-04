@@ -680,7 +680,7 @@ export class OptimizedWebSocket {
         this.attemptReconnect();
       };
 
-    } catch (__error) {
+    } catch (_error) {
       // console.error('Failed to create WebSocket:', error);
       this.attemptReconnect();
     }

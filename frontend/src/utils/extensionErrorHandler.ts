@@ -157,7 +157,7 @@ export class BrowserCompatibility {
     const conflictingExtensions = [
       { name: 'MetaMask', check: () => !!(window as unknown as { ethereum?: unknown }).ethereum },
       { name: 'AdBlock', check: () => !!(window as unknown as { adblockDetected?: unknown }).adblockDetected },
-      { name: 'React DevTools', check: () => !!(window as unknown as { __REACT_DEVTOOLS_GLOBAL_HOOK__?: unknown }).__REACT_DEVTOOLS_GLOBAL_HOOK__ },
+      { name: 'React DevTools', check: () => !!(window as unknown as { _REACT_DEVTOOLS_GLOBAL_HOOK_?: unknown })._REACT_DEVTOOLS_GLOBAL_HOOK_ },
     ];
     
     conflictingExtensions.forEach(ext => {

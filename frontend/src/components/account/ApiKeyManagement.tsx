@@ -215,6 +215,7 @@ const ApiKeyManagement: React.FC = () => {
   };
 
   const handleDeleteCredentials = async (id: string) => {
+    // eslint-disable-next-line no-alert
     if (!confirm('Are you sure you want to delete these API credentials? This action cannot be undone.')) {
       return;
     }
