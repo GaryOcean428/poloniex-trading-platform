@@ -236,7 +236,31 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
 
     try {
       const data = await poloniexApi.getAccountBalance();
-      setAccountBalance(data);
+      
+      // Transform Poloniex Futures API response to expected format
+      // Futures API returns: { eq: string, im: string, mm: string, ... }
+      // Expected format: { total: number, available: number, currency: string }
+      if (data && typeof data === 'object') {
+        const futuresData = data as any;
+        
+        // Check if this is Futures API format (has 'eq' field)
+        if (futuresData.eq !== undefined) {
+          const equity = parseFloat(futuresData.eq || "0");
+          const initialMargin = parseFloat(futuresData.im || "0");
+          const available = equity - initialMargin;
+          
+          setAccountBalance({
+            total: equity,
+            available: Math.max(0, available),
+            currency: 'USDT'
+          });
+        } else {
+          // Already in expected format or unknown format
+          setAccountBalance(data);
+        }
+      } else {
+        setAccountBalance(data);
+      }
     } catch (err) {
       const error = err as Error;
       console.error('Error fetching account balance:', error.message);
