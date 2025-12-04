@@ -107,7 +107,7 @@ const TradingInsights: React.FC<TradingInsightsProps> = ({
                 ? 'bg-green-100 text-green-800' 
                 : 'bg-yellow-100 text-yellow-800'
             }`}>
-              {connectionStatus === 'connected' ? '🤖 GPT-4.1' : '🧪 Mock'}
+              {connectionStatus === 'connected' ? '🤖 Claude Sonnet 4.5' : '🧪 Mock'}
             </div>
           </div>
           <div className="flex items-center space-x-2">

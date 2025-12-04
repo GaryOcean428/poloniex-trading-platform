@@ -124,7 +124,7 @@ const Account: React.FC = () => {
       description: `${b.symbol || b.currency || ''} ${b.type}`.trim(),
       amount: parseFloat(b.amount || '0'),
       status: 'COMPLETED' as const,
-      timestamp: typeof b.ts === 'number' && b.ts < 1e12 ? b.ts * 1000 : b.ts,
+      timestamp: typeof b.ts === 'number' ? b.ts : Date.now(),
     };
   };
 

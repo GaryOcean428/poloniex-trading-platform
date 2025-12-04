@@ -158,7 +158,7 @@ const RecentTradesWidget: React.FC = () => {
                 </div>
                 <div>
                   <p className="text-xs text-gray-600">Quantity</p>
-                  <p className="font-medium">{parseFloat(trade.qty).toFixed(4)}</p>
+                  <p className="font-medium">{trade.qty && !isNaN(parseFloat(trade.qty)) ? parseFloat(trade.qty).toFixed(4) : '0.0000'}</p>
                 </div>
                 <div>
                   <p className="text-xs text-gray-600">P&L</p>
