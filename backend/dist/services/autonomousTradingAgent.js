@@ -346,20 +346,32 @@ class AutonomousTradingAgent extends EventEmitter {
                         if (matchingSession) {
                             // Calculate score based on paper trading performance
                             const winRate = matchingSession.winRate / 100; // Convert to 0-1 range
-                            // Calculate profit factor properly: total winnings / total losses
-                            let profitFactor = 0;
-                            if (matchingSession.losingTrades > 0 && matchingSession.winningTrades > 0) {
-                                const avgWin = matchingSession.realizedPnl > 0 ?
-                                    matchingSession.realizedPnl / matchingSession.winningTrades : 0;
-                                const estimatedWinnings = avgWin * matchingSession.winningTrades;
-                                const estimatedLosses = Math.abs(matchingSession.currentValue - matchingSession.initialCapital - estimatedWinnings);
-                                profitFactor = estimatedLosses > 0 ? estimatedWinnings / estimatedLosses : 0;
+                            // Calculate profit factor: Use a simplified approach
+                            // If we have winning and losing trades, estimate profit factor
+                            let profitFactor = 1.0; // Default neutral
+                            if (matchingSession.totalTrades > 0) {
+                                // Use win rate and realized PnL to estimate profit factor
+                                // Higher win rate + positive PnL = higher profit factor
+                                const returnPercent = ((matchingSession.currentValue - matchingSession.initialCapital) / matchingSession.initialCapital) * 100;
+                                if (returnPercent > 0 && winRate > 0) {
+                                    // Profitable strategy: estimate profit factor based on win rate
+                                    profitFactor = 1 + (winRate * 2); // Range: 1.0 to 3.0
+                                }
+                                else if (returnPercent < 0) {
+                                    // Losing strategy: low profit factor
+                                    profitFactor = 0.5;
+                                }
                             }
                             const totalReturn = ((matchingSession.currentValue - matchingSession.initialCapital) / matchingSession.initialCapital) * 100;
-                            // Weighted score: 40% return, 30% win rate, 30% profit factor
-                            // Normalize: return is scaled by 0.01, win rate is 0-1, profit factor capped at 3
-                            paperTradingScore = (totalReturn * 0.01 * 0.4) + (winRate * 0.3) + (Math.min(profitFactor, 3) / 3 * 0.3);
-                            logger.info(`Paper trading results for ${row.strategy_name}: score=${paperTradingScore.toFixed(2)}, winRate=${winRate.toFixed(2)}, return=${totalReturn.toFixed(2)}%, profitFactor=${profitFactor.toFixed(2)}`);
+                            // Weighted score calculation:
+                            // - Return: 40% weight, scale 10% return to 0.4 contribution
+                            // - Win Rate: 30% weight, 100% win rate = 0.3 contribution  
+                            // - Profit Factor: 30% weight, profit factor of 3 = 0.3 contribution
+                            const returnScore = Math.max(-1, Math.min(1, totalReturn / 25)) * 0.4; // Scale -25% to +25% return to -0.4 to +0.4
+                            const winRateScore = winRate * 0.3; // 0 to 0.3
+                            const profitFactorScore = (Math.min(profitFactor, 3) / 3) * 0.3; // 0 to 0.3
+                            paperTradingScore = returnScore + winRateScore + profitFactorScore;
+                            logger.info(`Paper trading results for ${row.strategy_name}: score=${paperTradingScore.toFixed(2)}, return=${totalReturn.toFixed(2)}%, winRate=${(winRate * 100).toFixed(1)}%, profitFactor=${profitFactor.toFixed(2)}`);
                         }
                         else {
                             logger.warn(`No paper trading session found for strategy ${row.strategy_name}`);
