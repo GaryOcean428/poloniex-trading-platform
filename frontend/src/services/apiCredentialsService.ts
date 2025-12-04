@@ -22,7 +22,7 @@ export const getActiveCredentials = async (): Promise<ApiCredentials | null> => 
     const token = getAccessToken();
 
     if (!token) {
-      console.warn('No authentication token found');
+      // console.warn('No authentication token found');
       return null;
     }
 
@@ -40,11 +40,11 @@ export const getActiveCredentials = async (): Promise<ApiCredentials | null> => 
     return null;
   } catch (error: any) {
     if (error.response?.status === 404) {
-      console.warn('No active API credentials found');
+      // console.warn('No active API credentials found');
       return null;
     }
     
-    console.error('Error fetching API credentials:', error.message);
+    // console.error('Error fetching API credentials:', error.message);
     throw error;
   }
 };
@@ -56,7 +56,7 @@ export const hasActiveCredentials = async (): Promise<boolean> => {
   try {
     const credentials = await getActiveCredentials();
     return credentials !== null;
-  } catch (error) {
+  } catch (_error) {
     return false;
   }
 };

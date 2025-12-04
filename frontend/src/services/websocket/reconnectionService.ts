@@ -84,9 +84,9 @@ export class ReconnectionService {
 
     // Check if we've reached the maximum number of reconnect attempts
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      console.log(
-        `Max reconnection attempts (${this.maxReconnectAttempts}) reached, staying in mock mode`
-      );
+      // console.log(
+      //   `Max reconnection attempts (${this.maxReconnectAttempts}) reached, staying in mock mode`
+      // );
       this.connectionStats.failedReconnects++;
       this.onConnectionFailed();
       return;
@@ -106,9 +106,9 @@ export class ReconnectionService {
     this.reconnectAttempts++;
     this.connectionStats.reconnectAttempts++;
 
-    console.log(
-      `Attempting reconnect ${this.reconnectAttempts}/${this.maxReconnectAttempts} in ${delay}ms`
-    );
+    // console.log(
+    //   `Attempting reconnect ${this.reconnectAttempts}/${this.maxReconnectAttempts} in ${delay}ms`
+    // );
 
     // Schedule reconnect attempt
     this.reconnectTimer = setTimeout(async () => {
@@ -116,7 +116,7 @@ export class ReconnectionService {
         await this.onReconnect();
         this.connectionStats.successfulReconnects++;
         this.resetReconnectAttempts();
-      } catch (error) {
+      } catch (_error) {
         // console.log("Reconnect attempt failed:", error);
         this.connectionStats.failedReconnects++;
         // Continue with reconnection attempts

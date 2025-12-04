@@ -67,7 +67,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             await logout();
           }
         }
-      } catch (error)
+      } catch (_error)
       {
         // console.error('Auth check error:', error);
         await logout();
@@ -121,7 +121,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
         return true;
       }
-    } catch (error)
+    } catch (_error)
     {
       // console.error('Login error:', error);
       return false;
@@ -132,7 +132,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     try
     {
       await authService.logout();
-    } catch (error)
+    } catch (_error)
     {
       // console.error('Logout error:', error);
     } finally
@@ -156,7 +156,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         await logout();
         return false;
       }
-    } catch (error)
+    } catch (_error)
     {
       // console.error('Token refresh error:', error);
       await logout();

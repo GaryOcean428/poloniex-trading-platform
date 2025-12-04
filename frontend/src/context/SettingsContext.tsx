@@ -201,7 +201,7 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
       });
       
       return JSON.stringify(exportableSettings);
-    } catch (error) {
+    } catch (_error) {
       // console.error('Error exporting settings:', error);
       return '';
     }
@@ -228,7 +228,7 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
       // Update settings
       updateSettings(importedSettings);
       return true;
-    } catch (error) {
+    } catch (_error) {
       // console.error('Error importing settings:', error);
       return false;
     }

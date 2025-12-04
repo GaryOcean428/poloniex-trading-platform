@@ -44,7 +44,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
       if (message.includes('ResizeObserver loop')) {
         event.preventDefault();
         event.stopPropagation();
-        console.warn('ResizeObserver error suppressed:', message);
+        // console.warn('ResizeObserver error suppressed:', message);
         return;
       }
       

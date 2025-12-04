@@ -420,7 +420,7 @@ class LiveAutonomousTradingEngine {
         sessionId,
         performance: session.performance,
       });
-    } catch (error) {
+    } catch (_error) {
       // console.error('Error updating performance metrics:', error);
     }
   }
@@ -443,7 +443,7 @@ class LiveAutonomousTradingEngine {
         sessionId,
         status: session.backendSystemStatus,
       });
-    } catch (error) {
+    } catch (_error) {
       // console.error('Error updating system status:', error);
     }
   }
@@ -493,7 +493,7 @@ class LiveAutonomousTradingEngine {
         sessionId,
         strategies: session.strategies,
       });
-    } catch (error) {
+    } catch (_error) {
       // console.error('Error loading strategies:', error);
     }
   }
@@ -721,7 +721,7 @@ class LiveAutonomousTradingEngine {
       listeners.forEach((listener) => {
         try {
           listener(data);
-        } catch (error) {
+        } catch (_error) {
           // console.error(`Error in listener for event ${event}:`, error);
         }
       });

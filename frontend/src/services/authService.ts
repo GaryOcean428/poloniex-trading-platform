@@ -227,7 +227,7 @@ export class AuthService {
           }
         );
       }
-    } catch (error) {
+    } catch (_error) {
       // console.error('Logout error:', error);
     } finally {
       // Always clear local auth data

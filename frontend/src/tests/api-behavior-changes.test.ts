@@ -17,7 +17,7 @@ describe('API Behavior Changes - No Mock Fallbacks', () => {
       const oldBehavior = () => {
         try {
           throw apiError;
-        } catch (error) {
+        } catch (_error) {
           // Silent fallback to mock data (BAD)
           return {
             totalAmount: "15478.23", // Mock data

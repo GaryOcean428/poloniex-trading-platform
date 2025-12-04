@@ -97,7 +97,7 @@ class DashboardService {
           const isExpired = payload.exp * 1000 < Date.now();
 
           if (isExpired) {
-            console.log('Token expired, attempting refresh...');
+            // console.log('Token expired, attempting refresh...');
             // Try to refresh token
             const refreshToken = getRefreshToken();
             if (refreshToken) {
@@ -121,24 +121,24 @@ class DashboardService {
                     localStorage.setItem('refresh_token', newRefreshToken);
                   }
                 } else {
-                  console.error('Token refresh failed: no token in response');
+                  // console.error('Token refresh failed: no token in response');
                   token = null;
                 }
-              } catch (refreshError) {
-                console.error('Token refresh request failed:', refreshError);
+              } catch (_refreshError) {
+                // console.error('Token refresh request failed:', refreshError);
                 token = null;
               }
             } else {
               // No refresh token, clear expired token
-              console.warn('No refresh token available, user needs to re-login');
+              // console.warn('No refresh token available, user needs to re-login');
               localStorage.removeItem('access_token');
               localStorage.removeItem('auth_token');
               token = null;
             }
           }
         }
-      } catch (error) {
-        console.error('Error checking token expiration:', error);
+      } catch (_error) {
+        // console.error('Error checking token expiration:', error);
       }
     }
     
@@ -160,7 +160,7 @@ class DashboardService {
       );
       return response.data;
     } catch (error: any) {
-      console.error('Error fetching dashboard overview:', error);
+      // console.error('Error fetching dashboard overview:', error);
       throw new Error(error.response?.data?.error || 'Failed to fetch dashboard data');
     }
   }
@@ -177,7 +177,7 @@ class DashboardService {
       );
       return response.data.data;
     } catch (error: any) {
-      console.error('Error fetching balance:', error);
+      // console.error('Error fetching balance:', error);
       throw new Error(error.response?.data?.error || 'Failed to fetch balance');
     }
   }
@@ -194,7 +194,7 @@ class DashboardService {
       );
       return response.data.data;
     } catch (error: any) {
-      console.error('Error fetching positions:', error);
+      // console.error('Error fetching positions:', error);
       throw new Error(error.response?.data?.error || 'Failed to fetch positions');
     }
   }
@@ -214,7 +214,7 @@ class DashboardService {
       );
       return response.data;
     } catch (error: any) {
-      console.error('Error fetching trades:', error);
+      // console.error('Error fetching trades:', error);
       throw new Error(error.response?.data?.error || 'Failed to fetch trades');
     }
   }
@@ -234,7 +234,7 @@ class DashboardService {
       );
       return response.data;
     } catch (error: any) {
-      console.error('Error fetching open orders:', error);
+      // console.error('Error fetching open orders:', error);
       throw new Error(error.response?.data?.error || 'Failed to fetch open orders');
     }
   }

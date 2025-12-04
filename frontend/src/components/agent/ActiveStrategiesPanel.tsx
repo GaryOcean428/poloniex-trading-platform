@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { TrendingUp, TrendingDown, Activity, DollarSign, Target, AlertTriangle, CheckCircle, XCircle } from 'lucide-react';
+import { TrendingUp, TrendingDown, Activity, _DollarSign, Target, _AlertTriangle, CheckCircle, XCircle } from 'lucide-react';
 import axios from 'axios';
 import { getAccessToken } from '@/utils/auth';
 
@@ -74,8 +74,8 @@ const ActiveStrategiesPanel: React.FC<ActiveStrategiesPanelProps> = ({ agentStat
       if (response.data.success) {
         setStrategies(response.data.strategies);
       }
-    } catch (err: any) {
-      console.error('Error fetching active strategies:', err);
+    } catch (_err: any) {
+      // console.error('Error fetching active strategies:', err);
     } finally {
       setLoading(false);
     }

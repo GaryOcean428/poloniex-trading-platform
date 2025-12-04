@@ -55,21 +55,21 @@ function validateFrontendEnvironment(): void {
   // Production-specific validations
   if (envVars.PROD) {
     if (envVars.VITE_API_URL?.includes('localhost')) {
-      console.warn('⚠️  Using localhost API URL in production build');
+      // console.warn('⚠️  Using localhost API URL in production build');
     }
     
     if (envVars.VITE_FORCE_MOCK_MODE !== 'true' && (!envVars.VITE_POLONIEX_API_KEY || !envVars.VITE_POLONIEX_API_SECRET)) {
-      console.warn('⚠️  Poloniex API credentials not set - trading features will be limited');
+      // console.warn('⚠️  Poloniex API credentials not set - trading features will be limited');
     }
   }
   
   if (errors.length > 0) {
-    console.error('❌ Frontend environment validation failed:');
+    // console.error('❌ Frontend environment validation failed:');
     errors.forEach(error => console.error(`   ${error}`));
     throw new Error(`Frontend environment validation failed: ${errors.join(', ')}`);
   }
   
-  console.log('✅ Frontend environment validation passed');
+  // console.log('✅ Frontend environment validation passed');
 }
 
 /**
@@ -144,13 +144,13 @@ export class EnvironmentManager {
     
     // Log configuration status (only in development)
     if (import.meta.env.DEV) {
-      console.info('Environment Configuration:', {
-        hasApiKey: !!apiKey,
-        hasApiSecret: !!apiSecret,
-        forceMockMode: isExplicitlyMocked,
-        liveTradingEnabled: this.config.liveTradingEnabled,
-        mode: this.config.liveTradingEnabled ? 'LIVE' : 'MOCK'
-      });
+      // console.info('Environment Configuration:', {
+      //   hasApiKey: !!apiKey,
+      //   hasApiSecret: !!apiSecret,
+      //   forceMockMode: isExplicitlyMocked,
+      //   liveTradingEnabled: this.config.liveTradingEnabled,
+      //   mode: this.config.liveTradingEnabled ? 'LIVE' : 'MOCK'
+      // });
     }
     
     // Warn about configuration issues

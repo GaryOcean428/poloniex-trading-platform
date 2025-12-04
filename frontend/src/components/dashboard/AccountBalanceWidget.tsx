@@ -15,7 +15,7 @@ const AccountBalanceWidget: React.FC = () => {
       setBalance(data);
     } catch (err: any) {
       setError(err.message);
-      console.error('Failed to fetch balance:', err);
+      // console.error('Failed to fetch balance:', err);
     } finally {
       setLoading(false);
       setRefreshing(false);

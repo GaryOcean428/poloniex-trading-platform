@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { TrendingUp, TrendingDown, RefreshCw, AlertCircle, Activity } from 'lucide-react';
+import { _TrendingUp, _TrendingDown, RefreshCw, AlertCircle, Activity } from 'lucide-react';
 import { dashboardService, Position } from '../../services/dashboardService';
 
 const ActivePositionsWidget: React.FC = () => {
@@ -17,7 +17,7 @@ const ActivePositionsWidget: React.FC = () => {
       setSummary(data.summary);
     } catch (err: any) {
       setError(err.message);
-      console.error('Failed to fetch positions:', err);
+      // console.error('Failed to fetch positions:', err);
     } finally {
       setLoading(false);
       setRefreshing(false);

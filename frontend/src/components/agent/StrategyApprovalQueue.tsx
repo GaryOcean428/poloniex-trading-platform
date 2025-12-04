@@ -50,8 +50,8 @@ const StrategyApprovalQueue: React.FC<StrategyApprovalQueueProps> = ({ agentStat
       if (response.data.success) {
         setPendingStrategies(response.data.strategies);
       }
-    } catch (err: any) {
-      console.error('Error fetching pending strategies:', err);
+    } catch (_err: any) {
+      // console.error('Error fetching pending strategies:', err);
     } finally {
       setLoading(false);
     }

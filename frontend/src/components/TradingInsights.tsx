@@ -55,7 +55,7 @@ const TradingInsights: React.FC<TradingInsightsProps> = ({
       );
 
       setInsights(prev => [insight, ...prev.slice(0, 4)]); // Keep last 5 insights
-    } catch (err) {
+    } catch (_err) {
       setError('Failed to generate trading insight');
       // console.error('Trading insight error:', err);
     } finally {

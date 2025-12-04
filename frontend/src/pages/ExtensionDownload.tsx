@@ -34,7 +34,7 @@ const ExtensionDownload: React.FC = () => {
       await createExtensionZip();
       
       setDownloadComplete(true);
-    } catch (error) {
+    } catch (_error) {
       // console.error('Error downloading extension:', error);
     } finally {
       setIsDownloading(false);

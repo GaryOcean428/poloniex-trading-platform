@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   generateStrategy, 
   generateStrategyVariations, 
-  optimizeStrategy,
+  _optimizeStrategy,
   analyzeMarket,
   checkLLMAvailability,
   type GeneratedStrategy,

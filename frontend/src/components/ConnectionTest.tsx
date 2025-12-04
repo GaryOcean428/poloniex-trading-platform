@@ -38,7 +38,7 @@ export const ConnectionTest: React.FC = () => {
         if (!response.ok)
         {
           let preview = '';
-          try { preview = await response.text(); } catch (_e) { preview = ''; }
+          try { preview = await response.text(); } catch (__e) { preview = ''; }
           throw new Error(`HTTP ${response.status}: ${response.statusText} (${url}) ${preview.slice(0, 200)}`);
         }
 
@@ -117,8 +117,8 @@ export const ConnectionTest: React.FC = () => {
     newSocket.on('connect', () => {
       if (import.meta.env.DEV)
       {
-        // eslint-disable-next-line no-console
-        console.info('WebSocket connected!');
+         
+        // console.info('WebSocket connected!');
       }
       setWsStatus('connected');
       wsErrorNotifiedRef.current = false; // Reset error notification flag on success

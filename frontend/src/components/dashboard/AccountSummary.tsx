@@ -24,7 +24,7 @@ const AccountSummary: React.FC = () => {
     try {
       await refreshApiConnection();
       setLastUpdateTime(new Date());
-    } catch (error) {
+    } catch (_error) {
       // console.error('Failed to refresh account data:', error);
     } finally {
       setIsRefreshing(false);
@@ -78,8 +78,8 @@ const AccountSummary: React.FC = () => {
         todayPnL: 0,
         todayPnLPercentage: 0
       };
-    } catch (error) {
-      console.error('Error processing account data:', error);
+    } catch (_error) {
+      // console.error('Error processing account data:', error);
       return null;
     }
   };

@@ -138,7 +138,7 @@ export async function checkLLMAvailability(): Promise<boolean> {
   try {
     const response = await apiClient.get<{ available: boolean }>('/llm-strategies/status');
     return response.data.available === true;
-  } catch (error) {
+  } catch (_error) {
     return false;
   }
 }

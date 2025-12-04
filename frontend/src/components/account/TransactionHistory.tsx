@@ -26,7 +26,7 @@ const TransactionHistory: React.FC = () => {
       const date = typeof timestamp === 'string' ? parseInt(timestamp) : timestamp;
       const userFormat = getUserDateFormat();
       return formatTransactionDate(date, userFormat);
-    } catch (error) {
+    } catch (_error) {
       // console.error('Error formatting date:', error);
       return 'Invalid Date';
     }

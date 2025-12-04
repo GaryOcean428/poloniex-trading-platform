@@ -100,15 +100,15 @@ class AuditLogger {
 
     // Log to console in development
     if (import.meta.env.DEV) {
-      console.log(`[AUDIT] ${eventType}:`, entry);
+      // console.log(`[AUDIT] ${eventType}:`, entry);
     }
 
     // Log using standard logger
     logger.info(`Audit: ${eventType}`, entry);
 
     // Send to backend (fire and forget)
-    this.sendToBackend(entry).catch((error) => {
-      console.error('Failed to send audit log to backend:', error);
+    this.sendToBackend(entry).catch((_error) => {
+      // console.error('Failed to send audit log to backend:', error);
     });
   }
 
@@ -270,9 +270,9 @@ class AuditLogger {
         body: JSON.stringify(entry),
         signal: AbortSignal.timeout(5000) // 5 second timeout
       });
-    } catch (error) {
+    } catch (_error) {
       // Silently fail - audit logs shouldn't break the app
-      console.debug('Audit log backend send failed:', error);
+      // console.debug('Audit log backend send failed:', error);
     }
   }
 }

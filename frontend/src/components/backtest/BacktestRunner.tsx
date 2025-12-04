@@ -95,8 +95,8 @@ export default function BacktestRunner({ strategyId, strategyName, onComplete }:
             setError(status.error || 'Backtest failed');
             setRunning(false);
           }
-        } catch (pollError) {
-          console.error('Error polling backtest status:', pollError);
+        } catch (_pollError) {
+          // console.error('Error polling backtest status:', pollError);
         }
       }, 1000);
       

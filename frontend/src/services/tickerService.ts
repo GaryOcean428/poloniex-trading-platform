@@ -89,7 +89,7 @@ export const TickerService = {
       
       const response = await fetch(url);
       if (!response.ok) {
-        console.error(`Failed to fetch ticker for ${symbol}:`, response.statusText);
+        // console.error(`Failed to fetch ticker for ${symbol}:`, response.statusText);
         return null;
       }
 
@@ -97,19 +97,19 @@ export const TickerService = {
       
       // Backend returns unwrapped array after V3 API fix
       if (!Array.isArray(data) || data.length === 0) {
-        console.error(`Invalid ticker response for ${symbol}:`, data);
+        // console.error(`Invalid ticker response for ${symbol}:`, data);
         return null;
       }
 
       const tickerData = data[0];
       if (!tickerData) {
-        console.error(`No ticker data found for ${symbol}`);
+        // console.error(`No ticker data found for ${symbol}`);
         return null;
       }
 
       return parseTickerData(tickerData);
-    } catch (error) {
-      console.error(`Error fetching ticker for ${symbol}:`, error);
+    } catch (_error) {
+      // console.error(`Error fetching ticker for ${symbol}:`, error);
       return null;
     }
   },
@@ -124,8 +124,8 @@ export const TickerService = {
       
       // Filter out null values (failed fetches)
       return tickers.filter((ticker): ticker is TickerData => ticker !== null);
-    } catch (error) {
-      console.error('Error fetching multiple tickers:', error);
+    } catch (_error) {
+      // console.error('Error fetching multiple tickers:', error);
       return [];
     }
   },
@@ -139,7 +139,7 @@ export const TickerService = {
       
       const response = await fetch(url);
       if (!response.ok) {
-        console.error('Failed to fetch all tickers:', response.statusText);
+        // console.error('Failed to fetch all tickers:', response.statusText);
         return [];
       }
 
@@ -147,13 +147,13 @@ export const TickerService = {
       
       // Backend returns unwrapped array after V3 API fix
       if (!Array.isArray(data)) {
-        console.error('Invalid ticker response:', data);
+        // console.error('Invalid ticker response:', data);
         return [];
       }
 
       return data.map(parseTickerData);
-    } catch (error) {
-      console.error('Error fetching all tickers:', error);
+    } catch (_error) {
+      // console.error('Error fetching all tickers:', error);
       return [];
     }
   },

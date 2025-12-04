@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Activity, TrendingUp, TrendingDown, DollarSign, Target, AlertTriangle, CheckCircle, XCircle, Clock } from 'lucide-react';
+import { Activity, TrendingUp, TrendingDown, _DollarSign, Target, AlertTriangle, CheckCircle, XCircle, Clock } from 'lucide-react';
 import axios from 'axios';
 import { getAccessToken } from '@/utils/auth';
 
@@ -68,8 +68,8 @@ const LiveTradingActivityFeed: React.FC<LiveTradingActivityFeedProps> = ({
       if (response.data.success) {
         setActivities(response.data.activities);
       }
-    } catch (err: any) {
-      console.error('Error fetching live activities:', err);
+    } catch (_err: any) {
+      // console.error('Error fetching live activities:', err);
     }
   };
 

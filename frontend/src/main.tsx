@@ -30,7 +30,7 @@ window.addEventListener('unhandledrejection', (event) => {
     promise: event.promise
   });
   
-  console.error('Unhandled Promise Rejection:', errorMessage);
+  // console.error('Unhandled Promise Rejection:', errorMessage);
   
   // Prevent default browser error handling
   event.preventDefault();
@@ -42,7 +42,7 @@ const originalError = window.onerror;
 window.onerror = (message, source, lineno, colno, error) => {
   // Suppress ResizeObserver errors (known React issue, non-critical)
   if (message && typeof message === 'string' && resizeObserverErrRe.test(message)) {
-    console.warn('ResizeObserver error suppressed:', message);
+    // console.warn('ResizeObserver error suppressed:', message);
     return true;
   }
   

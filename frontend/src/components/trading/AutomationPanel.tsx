@@ -37,7 +37,7 @@ const AutomationPanel: React.FC = () => {
     if (savedStrategies) {
       try {
         setStrategies(JSON.parse(savedStrategies));
-      } catch (err) {
+      } catch (_err) {
         // console.error('Failed to parse saved strategies:', err);
       }
     }

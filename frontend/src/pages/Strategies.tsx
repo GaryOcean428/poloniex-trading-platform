@@ -30,7 +30,7 @@ const Strategies: React.FC = () => {
         useHistoricalData: true
       });
       setBacktestResults(result);
-    } catch (_error) {
+    } catch (__error) {
       // console.error('Backtest failed:', error);
     } finally {
       setIsBacktesting(false);
@@ -71,7 +71,7 @@ const Strategies: React.FC = () => {
           ...bestResult.parameters
         };
       }
-    } catch (_error) {
+    } catch (__error) {
       // console.error('Optimization failed:', error);
     } finally {
       setIsOptimizing(false);
