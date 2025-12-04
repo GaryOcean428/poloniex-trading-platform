@@ -330,7 +330,7 @@ server.listen(PORT, '::', () => {
     });
     // Start agent scheduler
     agentScheduler.start().catch(error => {
-        logger.error('Failed to start trading engine:', error);
+        logger.error('Failed to start agent scheduler:', error);
     });
     // Health heartbeat for production monitoring
     if (process.env.NODE_ENV === 'production') {
