@@ -38,7 +38,7 @@ export const ConnectionTest: React.FC = () => {
         if (!response.ok)
         {
           let preview = '';
-          try { preview = await response.text(); } catch (__e) { preview = ''; }
+          try { preview = await response.text(); } catch (_e) { preview = ''; }
           throw new Error(`HTTP ${response.status}: ${response.statusText} (${url}) ${preview.slice(0, 200)}`);
         }
 
@@ -176,10 +176,10 @@ export const ConnectionTest: React.FC = () => {
   const getStatusClass = (status: string) => {
     switch (status)
     {
-      case 'connected': return 'connection-status-widget__status--connected';
-      case 'failed': return 'connection-status-widget__status--failed';
-      case 'cors-blocked': return 'connection-status-widget__status--warning';
-      default: return 'connection-status-widget__status--warning';
+      case 'connected': return 'connection-status-widget_status--connected';
+      case 'failed': return 'connection-status-widget_status--failed';
+      case 'cors-blocked': return 'connection-status-widget_status--warning';
+      default: return 'connection-status-widget_status--warning';
     }
   };
 
@@ -198,51 +198,51 @@ export const ConnectionTest: React.FC = () => {
     <>
       {isVisible && (
         <div className="connection-status-widget">
-          <div className="connection-status-widget__header">
-            <h3 className="connection-status-widget__title">
+          <div className="connection-status-widget_header">
+            <h3 className="connection-status-widget_title">
               🔌 Connection Status
             </h3>
             <button
               onClick={() => setIsVisible(false)}
-              className="connection-status-widget__close-btn"
+              className="connection-status-widget_close-btn"
               title="Hide connection status"
             >
               ×
             </button>
           </div>
 
-          <div className="connection-status-widget__section">
-            <div className="connection-status-widget__row">
+          <div className="connection-status-widget_section">
+            <div className="connection-status-widget_row">
               <span>API Connection:</span>
-              <span className={`connection-status-widget__status ${getStatusClass(apiStatus)}`}>
+              <span className={`connection-status-widget_status ${getStatusClass(apiStatus)}`}>
                 {getStatusText(apiStatus)}
               </span>
             </div>
-            <div className="connection-status-widget__url">
+            <div className="connection-status-widget_url">
               {apiUrl}
             </div>
             {apiData && (
-              <pre className="connection-status-widget__pre">
+              <pre className="connection-status-widget_pre">
                 {JSON.stringify(apiData, null, 2)}
               </pre>
             )}
           </div>
 
-          <div className="connection-status-widget__section">
-            <div className="connection-status-widget__row">
+          <div className="connection-status-widget_section">
+            <div className="connection-status-widget_row">
               <span>WebSocket:</span>
-              <span className={`connection-status-widget__status ${getStatusClass(wsStatus)}`}>
+              <span className={`connection-status-widget_status ${getStatusClass(wsStatus)}`}>
                 {getStatusText(wsStatus)}
               </span>
             </div>
-            <div className="connection-status-widget__url">
+            <div className="connection-status-widget_url">
               {wsUrl}
             </div>
           </div>
 
           <button
             onClick={() => window.location.reload()}
-            className="connection-status-widget__refresh-btn"
+            className="connection-status-widget_refresh-btn"
           >
             Refresh
           </button>
@@ -252,7 +252,7 @@ export const ConnectionTest: React.FC = () => {
       {!isVisible && (
         <button
           onClick={() => setIsVisible(true)}
-          className="connection-status-widget__toggle-btn"
+          className="connection-status-widget_toggle-btn"
           title="Show connection status"
         >
           🔌 Status
