@@ -82,7 +82,9 @@ const AIStrategyGenerator: React.FC = () => {
     
     try {
       const analysis = await analyzeMarket(tradingPair, timeframe);
-      alert(`Market Analysis:\n\nTrend: ${analysis.trend}\nVolatility: ${analysis.volatility}\n\nRecommendations:\n${analysis.recommendations.join('\n')}`);
+      // TODO: Replace with modal component to show analysis results
+      // alert(`Market Analysis:\n\nTrend: ${analysis.trend}\nVolatility: ${analysis.volatility}\n\nRecommendations:\n${analysis.recommendations.join('\n')}`);
+      setError(`Analysis: ${analysis.trend}, ${analysis.volatility}`);
     } catch (err: any) {
       setError(err.message);
     } finally {

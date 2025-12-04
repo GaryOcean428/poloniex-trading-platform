@@ -93,12 +93,8 @@ class WebSocketService implements WebSocketServiceInterface {
   }
 
   private async reconnect(): Promise<void> {
-    try {
-      await this.connect();
-    } catch (error) {
-      // console.error("Reconnection failed:", error);
-      throw error;
-    }
+    // console.error("Reconnection failed:", error);
+    await this.connect();
   }
 
   private handleConnectionFailed(): void {
@@ -133,43 +129,33 @@ class WebSocketService implements WebSocketServiceInterface {
   }
 
   private async connectToPoloniexV3(): Promise<void> {
-    try {
-      const ws = await this.connectionManager.connect();
+    const ws = await this.connectionManager.connect();
 
-      this.eventHandlerService = new EventHandlerService(null, ws);
-      this.healthService = new HealthService(null, ws);
+    this.eventHandlerService = new EventHandlerService(null, ws);
+    this.healthService = new HealthService(null, ws);
 
-      this.eventHandlerService.setupSocketIOHandlers();
-      this.healthService.startPoloniexV3PingTimer();
+    this.eventHandlerService.setupSocketIOHandlers();
+    this.healthService.startPoloniexV3PingTimer();
 
-      this.connectionState = ConnectionState.CONNECTED;
-      this.useMockData = false;
+    this.connectionState = ConnectionState.CONNECTED;
+    this.useMockData = false;
 
-      // console.log("Connected to Poloniex V3 WebSocket");
-    } catch (error) {
-      // console.error("Failed to connect to Poloniex V3:", error);
-      throw error;
-    }
+    // console.log("Connected to Poloniex V3 WebSocket");
   }
 
   private async connectToBackend(token?: string): Promise<void> {
-    try {
-      const socket = await this.connectionManager.connectToBackend(token);
+    const socket = await this.connectionManager.connectToBackend(token);
 
-      this.eventHandlerService = new EventHandlerService(null, socket);
-      this.healthService = new HealthService(null, socket);
+    this.eventHandlerService = new EventHandlerService(null, socket);
+    this.healthService = new HealthService(null, socket);
 
-      this.eventHandlerService.setupSocketIOHandlers();
-      this.healthService.startPingTimer();
+    this.eventHandlerService.setupSocketIOHandlers();
+    this.healthService.startPingTimer();
 
-      this.connectionState = ConnectionState.CONNECTED;
-      this.useMockData = false;
+    this.connectionState = ConnectionState.CONNECTED;
+    this.useMockData = false;
 
-      // console.log("Connected to backend WebSocket");
-    } catch (error) {
-      // console.error("Failed to connect to backend:", error);
-      throw error;
-    }
+    // console.log("Connected to backend WebSocket");
   }
 
   disconnect(): void {

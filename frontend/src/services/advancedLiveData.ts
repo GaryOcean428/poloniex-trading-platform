@@ -658,7 +658,7 @@ export class LiveDataService {
   ): void {
     const levels = { debug: 0, info: 1, warn: 2, error: 3 };
     if (levels[level] >= levels[this.config.logLevel]) {
-      console[level](`[LiveData] ${message}`);
+      // console[level](`[LiveData] ${message}`);
     }
   }
 }

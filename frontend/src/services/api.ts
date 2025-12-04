@@ -45,24 +45,20 @@ class APIClient {
       config.body = JSON.stringify(options.body);
     }
 
-    try {
-      const response = await fetch(url, config);
+    const response = await fetch(url, config);
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw {
-          response: {
-            status: response.status,
-            data: errorData,
-          },
-        };
-      }
-
-      const data = await response.json();
-      return { data };
-    } catch (error) {
-      throw error;
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw {
+        response: {
+          status: response.status,
+          data: errorData,
+        },
+      };
     }
+
+    const data = await response.json();
+    return { data };
   }
 
   async get<T>(endpoint: string, headers?: Record<string, string>): Promise<{ data: T }> {

@@ -65,7 +65,7 @@ function validateFrontendEnvironment(): void {
   
   if (errors.length > 0) {
     // console.error('❌ Frontend environment validation failed:');
-    errors.forEach(error => console.error(`   ${error}`));
+    // errors.forEach(error => console.error(`   ${error}`));
     throw new Error(`Frontend environment validation failed: ${errors.join(', ')}`);
   }
   
