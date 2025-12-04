@@ -6,6 +6,7 @@ import paperTradingService from './paperTradingService.js';
 import automatedTradingService from './automatedTradingService.js';
 import { apiCredentialsService } from './apiCredentialsService.js';
 import mlPredictionService from './mlPredictionService.js';
+import { logger } from '../utils/logger.js';
 
 interface AgentConfig {
   userId: string;
@@ -501,39 +502,120 @@ class AutonomousTradingAgent extends EventEmitter {
       const hoursPassed = (Date.now() - createdAt.getTime()) / (1000 * 60 * 60);
 
       if (hoursPassed >= session.config.paperTradingDurationHours) {
-        // Evaluate performance
-        // TODO: Get actual paper trading results
-        const paperTradingScore = Math.random() * 2; // Placeholder
+        try {
+          // Get actual paper trading results from paper trading service
+          const strategyData = JSON.parse(row.strategy_code);
+          let paperTradingScore = 0;
+          
+          try {
+            // Get all active paper trading sessions
+            const activeSessions = paperTradingService.getActiveSessions();
+            
+            // Find session matching this strategy
+            const matchingSession = activeSessions.find((s: any) => 
+              s.strategyName === row.strategy_name
+            );
+            
+            if (matchingSession) {
+              // Calculate score based on paper trading performance
+              const winRate = matchingSession.winRate / 100; // Convert to 0-1 range
+              const profitFactor = matchingSession.realizedPnl / Math.abs(Math.min(matchingSession.realizedPnl, 1)); // Avoid division by zero
+              const totalReturn = ((matchingSession.currentValue - matchingSession.initialCapital) / matchingSession.initialCapital) * 100;
+              
+              // Weighted score: 40% return, 30% win rate, 30% profit factor
+              paperTradingScore = (totalReturn * 0.04) + (winRate * 0.3) + (Math.min(profitFactor, 3) * 0.1);
+              
+              logger.info(`Paper trading results for ${row.strategy_name}: score=${paperTradingScore.toFixed(2)}, winRate=${winRate.toFixed(2)}, return=${totalReturn.toFixed(2)}%`);
+            } else {
+              logger.warn(`No paper trading session found for strategy ${row.strategy_name}`);
+              // Use a neutral score if we can't find the session
+              paperTradingScore = 0.8;
+            }
+          } catch (paperError: any) {
+            logger.error(`Error fetching paper trading results: ${paperError.message}`);
+            // Use a conservative score if we can't get results
+            paperTradingScore = 0.8;
+          }
 
-        if (paperTradingScore > 1.2) {
-          // Promote to live trading
-          await pool.query(
-            `UPDATE agent_strategies 
-             SET status = $1, paper_trading_score = $2, promoted_at = NOW()
-             WHERE id = $3`,
-            ['live', paperTradingScore, row.id]
-          );
+          // Threshold for promotion: score must be > 1.2 (positive returns with good metrics)
+          if (paperTradingScore > 1.2) {
+            // Promote to live trading
+            await pool.query(
+              `UPDATE agent_strategies 
+               SET status = $1, paper_trading_score = $2, promoted_at = NOW()
+               WHERE id = $3`,
+              ['live', paperTradingScore, row.id]
+            );
 
+            await this.logActivity(
+              session.id,
+              'strategy_promoted',
+              `Strategy ${row.strategy_name} promoted to live trading (score: ${paperTradingScore.toFixed(2)})`
+            );
+
+            // Start live trading by registering strategy with automated trading service
+            try {
+              await automatedTradingService.registerStrategy(session.userId, {
+                id: row.id,
+                name: row.strategy_name,
+                type: 'autonomous_ai', // Mark as AI-generated strategy
+                symbol: session.config.preferredPairs[0],
+                parameters: strategyData,
+                accountId: null // Will use user's default account
+              });
+
+              logger.info(`Started live trading for strategy ${row.strategy_name}`);
+              
+              await this.logActivity(
+                session.id,
+                'live_trading_started',
+                `Live trading started for strategy ${row.strategy_name}`
+              );
+
+              // Update session stats
+              session.liveTradesExecuted += 1;
+              await pool.query(
+                `UPDATE agent_sessions SET live_trades_executed = live_trades_executed + 1 WHERE id = $1`,
+                [session.id]
+              );
+
+            } catch (tradingError: any) {
+              logger.error(`Failed to start live trading for ${row.strategy_name}:`, tradingError);
+              
+              // Rollback strategy to paper trading status
+              await pool.query(
+                `UPDATE agent_strategies SET status = 'paper_trading' WHERE id = $1`,
+                [row.id]
+              );
+              
+              await this.logActivity(
+                session.id,
+                'live_trading_failed',
+                `Failed to start live trading for ${row.strategy_name}: ${tradingError.message}`
+              );
+            }
+
+          } else {
+            // Retire strategy due to poor performance
+            await pool.query(
+              `UPDATE agent_strategies 
+               SET status = $1, paper_trading_score = $2, retired_at = NOW()
+               WHERE id = $3`,
+              ['retired', paperTradingScore, row.id]
+            );
+
+            await this.logActivity(
+              session.id,
+              'strategy_retired',
+              `Strategy ${row.strategy_name} retired (score: ${paperTradingScore.toFixed(2)} < 1.2 threshold)`
+            );
+          }
+        } catch (err: any) {
+          logger.error(`Error evaluating paper trading for strategy ${row.strategy_name}:`, err);
           await this.logActivity(
             session.id,
-            'strategy_promoted',
-            `Strategy ${row.strategy_name} promoted to live trading`
-          );
-
-          // TODO: Start live trading
-        } else {
-          // Retire strategy
-          await pool.query(
-            `UPDATE agent_strategies 
-             SET status = $1, paper_trading_score = $2, retired_at = NOW()
-             WHERE id = $3`,
-            ['retired', paperTradingScore, row.id]
-          );
-
-          await this.logActivity(
-            session.id,
-            'strategy_retired',
-            `Strategy ${row.strategy_name} retired (poor paper trading performance)`
+            'evaluation_error',
+            `Error evaluating ${row.strategy_name}: ${err.message}`
           );
         }
       }
@@ -597,12 +679,75 @@ class AutonomousTradingAgent extends EventEmitter {
    * Helper: Get market context
    */
   private async getMarketContext(pair: string): Promise<any> {
-    // TODO: Fetch real market data
-    return {
-      trend: 'bullish',
-      volatility: 'medium',
-      volume: 'high'
-    };
+    try {
+      // Fetch real market data from Poloniex
+      const poloniexService = (await import('./poloniexFuturesService.js')).default;
+      
+      // Get recent candlesticks to determine trend
+      const candles = await poloniexService.getHistoricalData(pair, '1h', 24);
+      
+      if (!candles || candles.length === 0) {
+        logger.warn(`No market data available for ${pair}, using defaults`);
+        return {
+          pair,
+          price: 0,
+          trend: 'neutral',
+          volatility: 'medium',
+          volume: 'medium'
+        };
+      }
+
+      // Calculate trend (comparing first and last price)
+      const firstPrice = parseFloat(candles[0].close);
+      const lastPrice = parseFloat(candles[candles.length - 1].close);
+      const priceChange = ((lastPrice - firstPrice) / firstPrice) * 100;
+      
+      let trend = 'neutral';
+      if (priceChange > 2) trend = 'bullish';
+      else if (priceChange < -2) trend = 'bearish';
+
+      // Calculate volatility (standard deviation of closes)
+      const closes = candles.map((c: any) => parseFloat(c.close));
+      const avg = closes.reduce((a: number, b: number) => a + b, 0) / closes.length;
+      const variance = closes.reduce((sum: number, price: number) => 
+        sum + Math.pow(price - avg, 2), 0) / closes.length;
+      const stdDev = Math.sqrt(variance);
+      const volatilityPercent = (stdDev / avg) * 100;
+      
+      let volatility = 'medium';
+      if (volatilityPercent > 5) volatility = 'high';
+      else if (volatilityPercent < 2) volatility = 'low';
+
+      // Calculate volume
+      const volumes = candles.map((c: any) => parseFloat(c.volume));
+      const avgVolume = volumes.reduce((a: number, b: number) => a + b, 0) / volumes.length;
+      const recentVolume = volumes.slice(-6).reduce((a: number, b: number) => a + b, 0) / 6;
+      
+      let volume = 'medium';
+      if (recentVolume > avgVolume * 1.5) volume = 'high';
+      else if (recentVolume < avgVolume * 0.5) volume = 'low';
+
+      return {
+        pair,
+        price: lastPrice,
+        trend,
+        volatility,
+        volume,
+        priceChange24h: priceChange,
+        avgPrice: avg,
+        volatilityPercent
+      };
+    } catch (error: any) {
+      logger.error(`Error fetching market context for ${pair}:`, error);
+      // Return defaults on error
+      return {
+        pair,
+        price: 0,
+        trend: 'neutral',
+        volatility: 'medium',
+        volume: 'medium'
+      };
+    }
   }
 
   /**
