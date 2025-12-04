@@ -113,7 +113,7 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
     // If in mock mode, use mock data immediately
     if (isMockMode) {
       if (import.meta.env.DEV) {
-        console.info('Mock mode active, using mock market data');
+        // console.info('Mock mode active, using mock market data');
       }
       setMarketData(mockMarketData);
       return;
@@ -122,7 +122,7 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
     // In WebContainer, use mock data for development
     if (IS_WEBCONTAINER) {
       if (import.meta.env.DEV) {
-        console.info('WebContainer environment detected, using mock market data');
+        // console.info('WebContainer environment detected, using mock market data');
       }
       setMarketData(mockMarketData);
       return;
@@ -158,7 +158,7 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
     // If in mock mode, use mock data immediately
     if (isMockMode) {
       if (import.meta.env.DEV) {
-        console.info('Mock mode active, using mock trades data');
+        // console.info('Mock mode active, using mock trades data');
       }
       setTrades(mockTrades);
       return;
@@ -167,7 +167,7 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
     // In WebContainer, use mock data for development
     if (IS_WEBCONTAINER) {
       if (import.meta.env.DEV) {
-        console.info('WebContainer environment detected, using mock trades data');
+        // console.info('WebContainer environment detected, using mock trades data');
       }
       setTrades(mockTrades);
       return;
@@ -209,7 +209,7 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
     // If in mock mode, provide mock account balance
     if (isMockMode) {
       if (import.meta.env.DEV) {
-        console.info('Mock mode active, using mock account balance');
+        // console.info('Mock mode active, using mock account balance');
       }
       setAccountBalance({
         available: 10000,
@@ -222,7 +222,7 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
     // In WebContainer, provide mock account balance
     if (IS_WEBCONTAINER) {
       if (import.meta.env.DEV) {
-        console.info('WebContainer environment detected, using mock account balance');
+        // console.info('WebContainer environment detected, using mock account balance');
       }
       setAccountBalance({
         available: 10000,
@@ -263,7 +263,7 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
       }
     } catch (err) {
       const error = err as Error;
-      console.error('Error fetching account balance:', error.message);
+      // console.error('Error fetching account balance:', error.message);
       setError(error);
       // Provide default balance on error so UI doesn't show "Connect API"
       setAccountBalance({
@@ -286,7 +286,7 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
   // Function to refresh API connection when settings change - defined after all dependencies
   const refreshApiConnection = useCallback(() => {
     if (import.meta.env.DEV) {
-      console.info('Refreshing API connection with new credentials');
+      // console.info('Refreshing API connection with new credentials');
     }
     setIsLoading(true);
     poloniexApi.loadCredentials();
@@ -312,7 +312,7 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
 
     if (isLiveTrading && newHasCredentials && !newMockMode) {
       if (import.meta.env.DEV) {
-        console.info('Live trading enabled with credentials, refreshing API connection');
+        // console.info('Live trading enabled with credentials, refreshing API connection');
       }
       poloniexApi.loadCredentials();
 
@@ -332,7 +332,7 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
       }
     } else {
       if (import.meta.env.DEV) {
-        console.info('Using mock mode - live trading disabled or missing credentials');
+        // console.info('Using mock mode - live trading disabled or missing credentials');
       }
     }
   }, [isLiveTrading, apiKey, apiSecret, initialPair]);
@@ -342,7 +342,7 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
     // In WebContainer, skip WebSocket connection and use mock data immediately
     if (IS_WEBCONTAINER) {
       if (import.meta.env.DEV) {
-        console.info('WebContainer environment detected, using mock data instead of WebSocket');
+        // console.info('WebContainer environment detected, using mock data instead of WebSocket');
       }
       setIsMockMode(true);
       setMarketData(mockMarketData);
@@ -357,7 +357,7 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
     Promise.resolve(webSocketService.connect())
       .then(() => {
         if (import.meta.env.DEV) {
-          console.info('WebSocket setup complete');
+          // console.info('WebSocket setup complete');
         }
 
         // Check if we're in mock mode from the WebSocket service
@@ -368,7 +368,7 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
           webSocketService.subscribeToMarket(initialPair);
         } else {
           if (import.meta.env.DEV) {
-            console.info('Using mock data mode');
+            // console.info('Using mock data mode');
           }
           // Initialize with mock data if WebSocket connection failed
           setMarketData(mockMarketData);

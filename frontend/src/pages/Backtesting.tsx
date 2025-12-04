@@ -211,7 +211,7 @@ const Backtesting: React.FC = () => {
       setSessions(prev => prev.map(s => s.id === sessionId ? updatedSession : s));
       setActiveSession(updatedSession);
       setActiveTab('results' as 'setup' | 'data' | 'results' | 'analysis' | 'reports');
-    } catch (_error) {
+    } catch (__error) {
     // console.error('Backtest failed:', error);
     const failedSession = {
       ...newSession,

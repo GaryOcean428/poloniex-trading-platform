@@ -40,12 +40,12 @@ function startBackgroundTokenRefresh() {
 
         // Refresh if token expires in less than 10 minutes
         if (expiresAt - now < 10 * 60 * 1000) {
-          console.log('Background token refresh triggered');
+          // console.log('Background token refresh triggered');
           await refreshAccessToken();
         }
       }
-    } catch (error) {
-      console.error('Error checking token expiry:', error);
+    } catch (_error) {
+      // console.error('Error checking token expiry:', error);
     }
   };
 

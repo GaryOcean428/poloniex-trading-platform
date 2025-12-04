@@ -82,7 +82,7 @@ const LiveDataDashboard: React.FC = () => {
     {
       const book = await liveDataService.fetchOrderBook(selectedSymbol);
       setOrderBook(book);
-    } catch (err)
+    } catch (_err)
     {
       // console.error('Error fetching order book:', err);
       // Don't set error state to avoid disrupting the UI
@@ -95,7 +95,7 @@ const LiveDataDashboard: React.FC = () => {
     {
       const tradeData = await liveDataService.fetchTrades(selectedSymbol, 50);
       setTrades(tradeData);
-    } catch (err)
+    } catch (_err)
     {
       // console.error('Error fetching trades:', err);
       // Don't set error state to avoid disrupting the UI
@@ -108,7 +108,7 @@ const LiveDataDashboard: React.FC = () => {
     {
       const summary = await liveDataService.fetchMarketSummary(selectedSymbol);
       setMarketSummary(summary);
-    } catch (err)
+    } catch (_err)
     {
       // console.error('Error fetching market summary:', err);
       // Don't set error state to avoid disrupting the UI

@@ -81,7 +81,7 @@ export const useAccessibility = () => {
     if (element && typeof element.focus === 'function') {
       try {
         element.focus();
-      } catch (error) {
+      } catch (_error) {
         // console.warn('Failed to set focus:', error);
       }
     }

@@ -66,8 +66,8 @@ class ClaudeTradingService {
       }
 
       throw new Error('Failed to generate insight');
-    } catch (error) {
-      console.error('Error generating trading insight:', error);
+    } catch (_error) {
+      // console.error('Error generating trading insight:', error);
       return this.getMockInsight(tradingData, userQuery);
     }
   }

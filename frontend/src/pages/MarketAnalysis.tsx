@@ -23,8 +23,8 @@ const MarketAnalysis: React.FC = () => {
           ticker: marketData, 
           candles: candles 
         });
-      } catch (error) {
-        console.error('Error fetching live data:', error);
+      } catch (_error) {
+        // console.error('Error fetching live data:', error);
       } finally {
         setLoading(false);
       }

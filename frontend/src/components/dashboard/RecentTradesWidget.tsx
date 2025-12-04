@@ -15,7 +15,7 @@ const RecentTradesWidget: React.FC = () => {
       setTrades(overview.data.recentTrades || []);
     } catch (err: any) {
       setError(err.message);
-      console.error('Failed to fetch trades:', err);
+      // console.error('Failed to fetch trades:', err);
     } finally {
       setLoading(false);
       setRefreshing(false);

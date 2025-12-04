@@ -3,7 +3,7 @@
  * Provides structured logging with different levels and proper error handling
  */
 
-/* eslint-disable no-console */
+ 
 
 export type LogLevel = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR' | 'FATAL';
 
@@ -67,10 +67,10 @@ export class Logger {
 
     switch (entry.level) {
       case 'DEBUG':
-        console.debug(formatted);
+        // console.debug(formatted);
         break;
       case 'INFO':
-        console.info(formatted);
+        // console.info(formatted);
         break;
       case 'WARN':
         // console.warn(formatted);

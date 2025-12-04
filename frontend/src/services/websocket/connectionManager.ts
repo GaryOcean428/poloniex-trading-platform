@@ -1,4 +1,4 @@
-import { getWebSocketConfig, getWebSocketDebugInfo, validateWebSocketUrl } from "@/config/websocket";
+import { getWebSocketConfig, _getWebSocketDebugInfo, validateWebSocketUrl } from "@/config/websocket";
 import { io, Socket } from "socket.io-client";
 
 export class ConnectionManager {
@@ -16,9 +16,9 @@ export class ConnectionManager {
     }
 
     if (!validateWebSocketUrl(wsConfig.url)) {
-      console.error("Invalid WebSocket URL format:", wsConfig.url);
+      // console.error("Invalid WebSocket URL format:", wsConfig.url);
       // Log debug info for troubleshooting
-      console.debug("WebSocket Debug Info:", getWebSocketDebugInfo());
+      // console.debug("WebSocket Debug Info:", getWebSocketDebugInfo());
       throw new Error("Invalid WebSocket URL format");
     }
 
@@ -32,31 +32,31 @@ export class ConnectionManager {
 
     // Log connection attempt for debugging
     if (import.meta.env.DEV) {
-      console.log("Attempting WebSocket connection to:", wsConfig.url);
-      console.debug("Connection options:", socketOptions);
+      // console.log("Attempting WebSocket connection to:", wsConfig.url);
+      // console.debug("Connection options:", socketOptions);
     }
 
     this.socket = io(wsConfig.url, socketOptions);
 
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
-        console.error("WebSocket connection timeout to:", wsConfig.url);
+        // console.error("WebSocket connection timeout to:", wsConfig.url);
         reject(new Error(`Connection timeout to ${wsConfig.url}`));
       }, wsConfig.options.timeout);
 
       this.socket!.on("connect", () => {
         clearTimeout(timeout);
         if (import.meta.env.DEV) {
-          console.log("WebSocket connected successfully to:", wsConfig.url);
+          // console.log("WebSocket connected successfully to:", wsConfig.url);
         }
         resolve(this.socket!);
       });
 
       this.socket!.on("connect_error", (error) => {
         clearTimeout(timeout);
-        console.error("WebSocket connection error:", error.message);
-        console.debug("Failed URL:", wsConfig.url);
-        console.debug("Debug Info:", getWebSocketDebugInfo());
+        // console.error("WebSocket connection error:", error.message);
+        // console.debug("Failed URL:", wsConfig.url);
+        // console.debug("Debug Info:", getWebSocketDebugInfo());
         reject(new Error(`Connection error: ${error.message}`));
       });
     });

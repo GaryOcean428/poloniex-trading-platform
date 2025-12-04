@@ -84,7 +84,7 @@ const ApiKeyManagement: React.FC = () => {
   const loadApiCredentials = useCallback(async () => {
     // Prevent concurrent API calls
     if (loadingRef.current) {
-      console.warn('API call already in progress, skipping');
+      // console.warn('API call already in progress, skipping');
       return;
     }
 

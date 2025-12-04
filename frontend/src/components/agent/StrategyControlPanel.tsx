@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { CheckCircle, XCircle, Pause, Play, AlertTriangle, Settings, Shield } from 'lucide-react';
+import { CheckCircle, XCircle, Pause, Play, AlertTriangle, _Settings, Shield } from 'lucide-react';
 import axios from 'axios';
 import { getAccessToken } from '@/utils/auth';
 

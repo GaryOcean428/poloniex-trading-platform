@@ -106,7 +106,7 @@ class BrowserEventEmitter {
     this.events[event].forEach((callback) => {
       try {
         callback(data);
-      } catch (error) {
+      } catch (_error) {
         // console.error("Error in event handler:", error);
       }
     });

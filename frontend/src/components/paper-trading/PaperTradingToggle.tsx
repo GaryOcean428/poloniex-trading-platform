@@ -51,8 +51,8 @@ export default function PaperTradingToggle({ strategyId, strategyName, onStatusC
         setStatus(response.data.status);
         setActive(response.data.status.active);
       }
-    } catch (err) {
-      console.error('Error fetching paper trading status:', err);
+    } catch (_err) {
+      // console.error('Error fetching paper trading status:', err);
     }
   };
 
@@ -95,7 +95,7 @@ export default function PaperTradingToggle({ strategyId, strategyName, onStatusC
       
     } catch (err: any) {
       setError(err.response?.data?.error || 'Failed to toggle paper trading');
-      console.error('Error toggling paper trading:', err);
+      // console.error('Error toggling paper trading:', err);
     } finally {
       setLoading(false);
     }

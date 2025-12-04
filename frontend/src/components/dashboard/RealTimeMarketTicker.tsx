@@ -34,8 +34,8 @@ const RealTimeMarketTicker: React.FC = () => {
           },
           2000 // Update every 2 seconds
         );
-      } catch (err) {
-        console.error('Failed to initialize tickers:', err);
+      } catch (_err) {
+        // console.error('Failed to initialize tickers:', err);
         setError('Failed to load market data');
         setIsLoading(false);
       }

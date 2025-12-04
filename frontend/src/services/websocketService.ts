@@ -4,8 +4,8 @@ import {
   WebSocketServiceInterface,
 } from "@/types/websocketTypes";
 import {
-  getPoloniexApiKey,
-  getPoloniexApiSecret,
+  _getPoloniexApiKey,
+  _getPoloniexApiSecret,
   shouldUseMockMode,
 } from "@/utils/environment";
 import React from "react";
@@ -125,7 +125,7 @@ class WebSocketService implements WebSocketServiceInterface {
       } else {
         await this.connectToBackend(token);
       }
-    } catch (error) {
+    } catch (_error) {
       // console.error("Connection failed, using mock mode:", error);
       this.useMockData = true;
       this.connectionState = ConnectionState.FAILED;

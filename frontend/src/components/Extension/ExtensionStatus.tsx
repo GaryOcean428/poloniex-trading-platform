@@ -57,7 +57,7 @@ const ExtensionStatus: React.FC<ExtensionStatusProps> = ({ onRefreshRequest }) =
         setStatus('Extension may be installed');
         setConnected(false);
         setIsLoading(false);
-      } catch (error)
+      } catch (_error)
       {
         // console.error('Error checking extension status:', error);
         setStatus('Error detecting extension');

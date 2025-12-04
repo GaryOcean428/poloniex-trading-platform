@@ -61,7 +61,7 @@ const FuturesTradingPanel: React.FC<FuturesTradingPanelProps> = ({ symbol }) => 
     
     try {
       await setLeverage(symbol, newLeverage, marginMode);
-    } catch (err) {
+    } catch (_err) {
       // console.error('Failed to set leverage:', err);
     }
   };

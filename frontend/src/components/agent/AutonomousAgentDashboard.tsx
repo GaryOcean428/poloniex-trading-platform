@@ -89,8 +89,8 @@ const AutonomousAgentDashboard: React.FC = () => {
       if (response.data.success) {
         setAgentStatus(response.data.status);
       }
-    } catch (err: any) {
-      console.error('Error fetching agent status:', err);
+    } catch (_err: any) {
+      // console.error('Error fetching agent status:', err);
     }
   };
 
@@ -104,8 +104,8 @@ const AutonomousAgentDashboard: React.FC = () => {
       if (response.data.success) {
         setActivity(response.data.activity);
       }
-    } catch (err: any) {
-      console.error('Error fetching activity:', err);
+    } catch (_err: any) {
+      // console.error('Error fetching activity:', err);
     }
   };
 
@@ -119,8 +119,8 @@ const AutonomousAgentDashboard: React.FC = () => {
       if (response.data.success) {
         setStrategies(response.data.strategies);
       }
-    } catch (err: any) {
-      console.error('Error fetching strategies:', err);
+    } catch (_err: any) {
+      // console.error('Error fetching strategies:', err);
     }
   };
 

@@ -169,7 +169,7 @@ export function getUserData(): unknown | null {
   
   try {
     return JSON.parse(userData);
-  } catch (error) {
+  } catch (_error) {
     // console.error('Error parsing user data:', error);
     return null;
   }
@@ -210,7 +210,7 @@ export function decodeJWTPayload(token: string): unknown | null {
     if (!payload) return null;
     const decoded = atob(payload.replace(/-/g, '+').replace(/_/g, '/'));
     return JSON.parse(decoded);
-  } catch (error) {
+  } catch (_error) {
     // console.error('Error decoding JWT:', error);
     return null;
   }
@@ -223,7 +223,7 @@ export function decodeJWTPayload(token: string): unknown | null {
 export async function refreshAccessToken(): Promise<string | null> {
   const refreshToken = getRefreshToken();
   if (!refreshToken) {
-    console.warn('No refresh token available');
+    // console.warn('No refresh token available');
     return null;
   }
 
@@ -243,7 +243,7 @@ export async function refreshAccessToken(): Promise<string | null> {
     });
 
     if (!response.ok) {
-      console.warn('Token refresh failed:', response.status);
+      // console.warn('Token refresh failed:', response.status);
       // Clear auth data if refresh fails
       clearAuthData();
       return null;
@@ -262,13 +262,13 @@ export async function refreshAccessToken(): Promise<string | null> {
         localStorage.setItem('auth_expiry', expiryTime.toString());
       }
       
-      console.log('Token refreshed successfully');
+      // console.log('Token refreshed successfully');
       return data.accessToken;
     }
 
     return null;
-  } catch (error) {
-    console.error('Error refreshing token:', error);
+  } catch (_error) {
+    // console.error('Error refreshing token:', error);
     return null;
   }
 }
@@ -286,7 +286,7 @@ export async function getAccessTokenWithRefresh(): Promise<string | null> {
 
   // Check if token needs refresh
   if (shouldRefreshToken()) {
-    console.log('Token expiring soon, refreshing...');
+    // console.log('Token expiring soon, refreshing...');
     const newToken = await refreshAccessToken();
     return newToken || currentToken; // Return new token or fallback to current
   }

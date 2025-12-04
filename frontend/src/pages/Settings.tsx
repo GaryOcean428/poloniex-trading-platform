@@ -126,9 +126,9 @@ const Settings: React.FC = () => {
               throw new Error(error.error || 'Failed to save credentials to server');
             }
 
-            console.log('✅ API credentials saved to backend database');
-          } catch (backendError: any) {
-            console.warn('⚠️ Failed to save credentials to backend:', backendError.message);
+            // console.log('✅ API credentials saved to backend database');
+          } catch (_backendError: any) {
+            // console.warn('⚠️ Failed to save credentials to backend:', backendError.message);
             // Don't fail the entire save operation if backend save fails
           }
         }
@@ -148,7 +148,7 @@ const Settings: React.FC = () => {
       setTimeout(() => {
         setSaveStatus(prev => ({ ...prev, show: false }));
       }, 3000);
-    } catch (error) {
+    } catch (_error) {
       // Show error message
       setSaveStatus({
         show: true,

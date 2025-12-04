@@ -116,15 +116,15 @@ export const useErrorHandler = (options: ErrorHandlerOptions = {}) => {
   // Log error to server
   const logErrorToServer = useCallback((error: Error, type: ErrorType, severity: ErrorSeverity) => {
     // In production, this would send to a logging service
-    console.error('Error logged to server:', {
-      message: error.message,
-      stack: error.stack,
-      type,
-      severity,
-      timestamp: new Date().toISOString(),
-      userAgent: navigator.userAgent,
-      url: window.location.href
-    });
+    // console.error('Error logged to server:', {
+    //   message: error.message,
+    //   stack: error.stack,
+    //   type,
+    //   severity,
+    //   timestamp: new Date().toISOString(),
+    //   userAgent: navigator.userAgent,
+    //   url: window.location.href
+    // });
     
     // Store in localStorage for diagnostics
     try {
@@ -140,7 +140,7 @@ export const useErrorHandler = (options: ErrorHandlerOptions = {}) => {
       // Keep only the last 20 errors
       if (errorLog.length > 20) errorLog.shift();
       localStorage.setItem('errorLog', JSON.stringify(errorLog));
-    } catch (e) {
+    } catch (_e) {
       // console.error('Failed to log error to localStorage', e);
     }
   }, []);

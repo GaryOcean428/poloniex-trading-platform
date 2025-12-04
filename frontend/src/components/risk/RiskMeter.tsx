@@ -41,8 +41,8 @@ export default function RiskMeter() {
         setStatus(response.data.status);
       }
       setLoading(false);
-    } catch (err) {
-      console.error('Error fetching risk status:', err);
+    } catch (_err) {
+      // console.error('Error fetching risk status:', err);
       setLoading(false);
     }
   };

@@ -56,8 +56,8 @@ export default function PaperTradingDashboard({ strategyId }: Props) {
       }
       
       setLoading(false);
-    } catch (err) {
-      console.error('Error fetching paper trading data:', err);
+    } catch (_err) {
+      // console.error('Error fetching paper trading data:', err);
       setLoading(false);
     }
   };

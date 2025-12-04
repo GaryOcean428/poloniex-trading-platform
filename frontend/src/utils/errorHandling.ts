@@ -504,7 +504,7 @@ export class ErrorHandler {
     this.errorListeners.forEach((listener) => {
       try {
         listener(errorInfo);
-      } catch (listenerError) {
+      } catch (_listenerError) {
         // console.error('Error in error listener:', listenerError);
       }
     });
@@ -521,7 +521,7 @@ export class ErrorHandler {
         // console.warn('MEDIUM SEVERITY ERROR:', error);
         break;
       case ErrorSeverity.LOW:
-        console.info("LOW SEVERITY ERROR:", error);
+        // console.info("LOW SEVERITY ERROR:", error);
         break;
     }
   }
@@ -541,7 +541,7 @@ export class ErrorHandler {
 
     try {
       return await operation();
-    } catch (retryError) {
+    } catch (_retryError) {
       if (error.retryCount < error.maxRetries) {
         return this.attemptRecovery(error, operation);
       } else {

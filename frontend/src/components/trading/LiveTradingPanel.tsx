@@ -30,7 +30,7 @@ const LiveTradingPanel: React.FC = () => {
         if (!isLiveTrading) {
           setBalance(10000); // Default paper trading balance
         }
-      } catch (err) {
+      } catch (_err) {
         setError('Failed to initialize trading engine');
         // console.error(err);
       }

@@ -28,8 +28,8 @@ const Dashboard: React.FC = () => {
       try {
         const data = await poloniexApi.getHistoricalData('BTC-USDT', '1h', 100);
         setLiveMarketData(data || []);
-      } catch (error) {
-        console.error('Error fetching market data:', error);
+      } catch (_error) {
+        // console.error('Error fetching market data:', error);
         setLiveMarketData(contextMarketData);
       } finally {
         setLoadingMarket(false);

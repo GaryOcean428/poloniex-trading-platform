@@ -81,8 +81,8 @@ export default function RiskSettings() {
         setSettings(response.data.settings);
       }
       setLoading(false);
-    } catch (err) {
-      console.error('Error fetching risk settings:', err);
+    } catch (_err) {
+      // console.error('Error fetching risk settings:', err);
       setLoading(false);
     }
   };

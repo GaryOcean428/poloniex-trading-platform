@@ -163,7 +163,7 @@ const RealTimeAlerts: React.FC<RealTimeAlertsProps> = ({
 
       oscillator.start(audioContext.currentTime);
       oscillator.stop(audioContext.currentTime + 0.5);
-    } catch (error) {
+    } catch (_error) {
       // console.warn('Could not play alert sound:', error);
     }
   };

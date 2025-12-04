@@ -27,7 +27,7 @@ const ExtensionSecurityManager: React.FC = () => {
       const checkStatus = async () => {
         try {
           await getExtensionStatus();
-        } catch (error: unknown) {
+        } catch (_error: unknown) {
           // console.error('Extension status check failed:', error);
         }
       };

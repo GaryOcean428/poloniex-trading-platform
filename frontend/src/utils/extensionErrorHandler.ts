@@ -104,10 +104,10 @@ export class ExtensionErrorHandler {
     
     // Log once every 10 errors to avoid spam
     if (this.errorCount === 1 || this.errorCount % 10 === 0) {
-      console.warn(
-        `Browser extension communication error (${this.errorCount} occurrences). ` +
-        'This is likely caused by a browser extension and can be safely ignored.'
-      );
+      // console.warn(
+      //   `Browser extension communication error (${this.errorCount} occurrences). ` +
+      //   'This is likely caused by a browser extension and can be safely ignored.'
+      // );
     }
     
     // Start suppressing after too many errors
@@ -176,10 +176,10 @@ export class BrowserCompatibility {
     // Detect and warn about conflicts
     const conflicts = this.detectConflictingExtensions();
     if (conflicts.length > 0) {
-      console.info(
-        `Detected browser extensions: ${conflicts.join(', ')}. ` +
-        'Some console errors may appear due to extension communication.'
-      );
+      // console.info(
+      //   `Detected browser extensions: ${conflicts.join(', ')}. ` +
+      //   'Some console errors may appear due to extension communication.'
+      // );
     }
     
     // Set up message channel protection

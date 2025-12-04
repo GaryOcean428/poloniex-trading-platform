@@ -133,7 +133,7 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
           maxDrawdown: config.riskTolerance.maxDrawdown
         }));
       }
-    } catch (error) {
+    } catch (_error) {
       // console.error('Failed to load configuration:', error);
     }
   };

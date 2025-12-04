@@ -78,7 +78,7 @@ export const QIGPredictionCard: React.FC<QIGPredictionCardProps> = ({
       setData(result);
     } catch (err: any) {
       setError(err.message);
-      console.error('QIG prediction fetch error:', err);
+      // console.error('QIG prediction fetch error:', err);
     } finally {
       setLoading(false);
     }
