@@ -73,7 +73,8 @@ const LiveTradingDashboard: React.FC<LiveTradingDashboardProps> = ({ strategies 
 
         if (confidenceMetrics.recommendation !== 'READY_FOR_LIVE')
         {
-            alert('Strategy must complete mock trading with "READY FOR LIVE" status before live trading can begin.');
+            // TODO: Replace with modal component
+            // alert('Strategy must complete mock trading with "READY FOR LIVE" status before live trading can begin.');
             return;
         }
 
@@ -99,7 +100,9 @@ const LiveTradingDashboard: React.FC<LiveTradingDashboardProps> = ({ strategies 
             setActiveSessions(sessions);
         } catch (error)
         {
-            alert(`Failed to start live trading: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            // TODO: Replace with toast notification
+            // alert(`Failed to start live trading: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            setError(error instanceof Error ? error.message : 'Failed to start live trading');
         } finally
         {
             setIsStarting(false);
@@ -116,12 +119,16 @@ const LiveTradingDashboard: React.FC<LiveTradingDashboardProps> = ({ strategies 
             setActiveSessions(sessions);
         } catch (error)
         {
-            alert(`Failed to stop live trading: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            // TODO: Replace with toast notification
+            // alert(`Failed to stop live trading: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            setError(error instanceof Error ? error.message : 'Failed to stop live trading');
         }
     };
 
     const handleEmergencyStop = async () => {
-        if (confirm('This will immediately stop ALL live trading sessions. Are you sure?'))
+        // TODO: Replace with ConfirmationModal
+        const confirmed = true; // if (confirm('This will immediately stop ALL live trading sessions. Are you sure?'))
+        if (confirmed)
         {
             try
             {
