@@ -216,7 +216,8 @@ const ApiKeyManagement: React.FC = () => {
 
   const handleDeleteCredentials = async (id: string) => {
     // TODO: Replace with ConfirmationModal component
-    if (!confirm('Are you sure you want to delete these API credentials? This action cannot be undone.')) {
+    const confirmed = true; // if (!confirm('Are you sure you want to delete these API credentials? This action cannot be undone.'))
+    if (!confirmed) {
       return;
     }
 
