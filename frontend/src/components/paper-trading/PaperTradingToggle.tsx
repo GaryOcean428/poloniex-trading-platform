@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Play, Square, Loader, TrendingUp, DollarSign } from 'lucide-react';
 import axios from 'axios';
 import { getAccessToken } from '@/utils/auth';
+import { useTradingContext } from '@/hooks/useTradingContext';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
 
@@ -30,6 +31,7 @@ export default function PaperTradingToggle({ strategyId, strategyName, onStatusC
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<PaperTradingStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { accountBalance } = useTradingContext();
 
   useEffect(() => {
     fetchStatus();
@@ -71,13 +73,16 @@ export default function PaperTradingToggle({ strategyId, strategyName, onStatusC
         setActive(false);
         if (onStatusChange) onStatusChange(false);
       } else {
-        // Start paper trading
+        // Start paper trading with real account balance
+        // Use total balance from account, fallback to 10000 if not available
+        const initialCapital = accountBalance?.total || 10000;
+        
         await axios.post(
           `${API_BASE_URL}/api/paper-trading-v2/start`,
           { 
             strategyId,
             symbol: 'BTC_USDT',
-            initialCapital: 10000
+            initialCapital
           },
           { headers: { Authorization: `Bearer ${token}` } }
         );

@@ -8,7 +8,7 @@ import { backtestService } from '../services/backtestService';
 import { BacktestResult } from '../types/backtest';
 
 const Strategies: React.FC = () => {
-  const { strategies, activeStrategies, toggleStrategyActive, removeStrategy } = useTradingContext();
+  const { strategies, activeStrategies, toggleStrategyActive, removeStrategy, accountBalance } = useTradingContext();
   const [showNewStrategyForm, setShowNewStrategyForm] = useState(false);
   const [selectedStrategy, setSelectedStrategy] = useState<Strategy | null>(null);
   const [backtestResults, setBacktestResults] = useState<BacktestResult | null>(null);
@@ -18,10 +18,13 @@ const Strategies: React.FC = () => {
   const runBacktest = async (strategy: Strategy) => {
     setIsBacktesting(true);
     try {
+      // Use real account balance for backtesting, fallback to 10000 if not available
+      const initialBalance = accountBalance?.total || 10000;
+      
       const result = await backtestService.runBacktest(strategy, {
         startDate: '2023-01-01',
         endDate: '2024-01-01',
-        initialBalance: 10000,
+        initialBalance,
         feeRate: 0.001,
         slippage: 0.001,
         useHistoricalData: true
@@ -37,6 +40,9 @@ const Strategies: React.FC = () => {
   const optimizeStrategy = async (strategy: Strategy) => {
     setIsOptimizing(true);
     try {
+      // Use real account balance for optimization, fallback to 10000 if not available
+      const initialBalance = accountBalance?.total || 10000;
+      
       // Fix the parameter ranges to match the expected type
       const parameterRanges: Record<string, [number, number, number]> = {
         shortPeriod: [5, 20, 5],
@@ -48,7 +54,7 @@ const Strategies: React.FC = () => {
         {
           startDate: '2023-01-01',
           endDate: '2024-01-01',
-          initialBalance: 10000,
+          initialBalance,
           feeRate: 0.001,
           slippage: 0.001,
           useHistoricalData: true

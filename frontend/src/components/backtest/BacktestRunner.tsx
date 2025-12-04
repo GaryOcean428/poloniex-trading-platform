@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Play, Loader, TrendingUp, TrendingDown, BarChart3, Calendar } from 'lucide-react';
 import axios from 'axios';
 import { getAccessToken } from '@/utils/auth';
+import { useTradingContext } from '@/hooks/useTradingContext';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
 
@@ -35,18 +36,22 @@ interface Props {
 }
 
 export default function BacktestRunner({ strategyId, strategyName, onComplete }: Props) {
+  const { accountBalance } = useTradingContext();
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState(0);
   const [results, setResults] = useState<BacktestResults | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [backtestId, setBacktestId] = useState<string | null>(null);
   
+  // Use real account balance for initial capital, fallback to 10000 if not available
+  const defaultInitialCapital = accountBalance?.total || 10000;
+  
   const [config, setConfig] = useState<BacktestConfig>({
     strategyId,
     symbol: 'BTC_USDT',
     startDate: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
     endDate: new Date().toISOString().split('T')[0],
-    initialCapital: 10000,
+    initialCapital: defaultInitialCapital,
     timeframe: '1h'
   });
 
