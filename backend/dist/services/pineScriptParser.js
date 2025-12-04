@@ -214,7 +214,7 @@ export class PineScriptParser {
     }
     static parseCondition(line) {
         // Remove 'if ' and clean up
-        let condition = line.replace(/^if\s+/, '').replace(/\s*then\s*$/, '').trim();
+        const condition = line.replace(/^if\s+/, '').replace(/\s*then\s*$/, '').trim();
         // Crossover
         if (condition.includes('ta.crossover(') || condition.includes('crossover(')) {
             const match = condition.match(/(?:ta\.)?crossover\(([^,]+),\s*([^)]+)\)/);
@@ -266,17 +266,17 @@ export class PineScriptParser {
     static parseExitCondition(line) {
         const result = {};
         // Stop loss
-        const stopMatch = line.match(/stop\s*=\s*([^,\)]+)/);
+        const stopMatch = line.match(/stop\s*=\s*([^,)]+)/);
         if (stopMatch) {
             result.stopLoss = stopMatch[1].trim();
         }
         // Take profit
-        const profitMatch = line.match(/limit\s*=\s*([^,\)]+)/);
+        const profitMatch = line.match(/limit\s*=\s*([^,)]+)/);
         if (profitMatch) {
             result.takeProfit = profitMatch[1].trim();
         }
         // Trailing stop
-        const trailMatch = line.match(/trail_(?:price|points|offset)\s*=\s*([^,\)]+)/);
+        const trailMatch = line.match(/trail_(?:price|points|offset)\s*=\s*([^,)]+)/);
         if (trailMatch) {
             result.trailingStop = trailMatch[1].trim();
         }

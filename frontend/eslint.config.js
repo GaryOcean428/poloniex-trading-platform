@@ -6,7 +6,7 @@ import reactHooks from 'eslint-plugin-react-hooks';
 import reactRefresh from 'eslint-plugin-react-refresh';
 
 export default [
-  { ignores: ['dist', 'vite.config.ts', 'vitest.config.ts', 'tailwind.config.js', 'postcss.config.js'] },
+  { ignores: ['dist', 'vite.config.ts', 'vitest.config.ts', 'tailwind.config.js', 'postcss.config.js', 'src/shared/**', '.shared-build/**'] },
   {
     files: ['**/*.{ts,tsx}'],
     languageOptions: {

@@ -33,6 +33,6 @@ export default [
     },
   },
   {
-    ignores: ["dist/**", "node_modules/**", "*.js", "*.mjs"],
+    ignores: ["dist/**", "node_modules/**", "*.js", "*.mjs", "src/shared/**", ".shared-build/**", "**/*.test.ts", "**/*.spec.ts", "**/__tests__/**"],
   },
 ];
