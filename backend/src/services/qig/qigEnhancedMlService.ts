@@ -220,6 +220,20 @@ class QIGEnhancedMLService {
   }
 
   /**
+   * Normalize confidence value to 0-100 range
+   * Handles both 0-1 (decimal) and 0-100 (percentage) inputs
+   */
+  private normalizeConfidence(confidence: number): number {
+    let normalized = confidence;
+    if (normalized <= 1) {
+      // Confidence is 0-1, convert to percentage
+      normalized = normalized * 100;
+    }
+    // Clamp to 0-100 range
+    return Math.min(100, Math.max(0, normalized));
+  }
+
+  /**
    * Linear regime: Simple trend following with high confidence
    */
   private linearRegimePrediction(
@@ -235,14 +249,7 @@ class QIGEnhancedMLService {
       bullish ? 'BULLISH' : (currentPrice < sma20 && currentPrice < ema12 ? 'BEARISH' : 'NEUTRAL');
     
     // High confidence in linear regime
-    // Handle both 0-1 and 0-100 ranges, normalize to 0-100
-    let baseConfidence = metrics.confidence;
-    if (baseConfidence <= 1) {
-      // Confidence is 0-1, convert to percentage
-      baseConfidence = baseConfidence * 100;
-    }
-    // Clamp to 0-100 range
-    baseConfidence = Math.min(100, Math.max(0, baseConfidence));
+    const baseConfidence = this.normalizeConfidence(metrics.confidence);
     
     // Conservative price changes in linear regime
     const priceChange1h = direction === 'BULLISH' ? 0.003 : (direction === 'BEARISH' ? -0.003 : 0);
@@ -328,14 +335,7 @@ class QIGEnhancedMLService {
       netScore > 0.15 ? 'BULLISH' : (netScore < -0.15 ? 'BEARISH' : 'NEUTRAL');
     
     // Confidence modulated by integration
-    // Handle both 0-1 and 0-100 ranges, normalize to 0-100
-    let baseConfidence = metrics.confidence * metrics.integration;
-    if (baseConfidence <= 1) {
-      // Confidence is 0-1, convert to percentage
-      baseConfidence = baseConfidence * 100;
-    }
-    // Clamp to 0-100 range
-    baseConfidence = Math.min(100, Math.max(0, baseConfidence));
+    const baseConfidence = this.normalizeConfidence(metrics.confidence * metrics.integration);
     
     // Price changes based on net score magnitude
     const magnitude = Math.abs(netScore);
