@@ -1,10 +1,22 @@
 # Railway Service Configuration Update Guide
 
-## Required After Monorepo Migration
+## Overview
 
-After migrating to the clean monorepo structure, Railway service settings must be updated to point to the new directory locations.
+After migrating to the clean monorepo structure, Railway services need their **Root Directory** settings updated in the Railway Dashboard to point to the new locations.
 
-## Services to Update
+## Configuration File Structure
+
+**One railpack.json per service**, located in each service's directory:
+
+| Service | railpack.json Location | Railway Root Directory |
+|---------|----------------------|------------------------|
+| polytrade-fe | `apps/web/railpack.json` | `apps/web` |
+| polytrade-be | `apps/api/railpack.json` | `apps/api` |
+| ml-worker | `kernels/core/railpack.json` | `kernels/core` |
+
+## Required Updates
+
+### Railway Dashboard Settings (MANUAL UPDATE REQUIRED)
 
 ### 1. ml-worker Service
 
@@ -67,23 +79,25 @@ After migrating to the clean monorepo structure, Railway service settings must b
 
 ---
 
-## Configuration Files Available
+## Configuration Files Structure
 
-Each service has configuration files in multiple locations for flexibility:
+Each service has **one** railpack.json file in its directory:
 
 ### ML Worker
-- Root-level: `railpack-ml-worker.json` (if root directory is `.`)
-- Service-level: `kernels/core/railpack.json` (if root directory is `kernels/core`)
-- Service-level: `kernels/core/railway.json` (Railway config file)
+- Configuration: `kernels/core/railpack.json`
+- Railway metadata: `kernels/core/railway.json`
+- Root Directory: `kernels/core`
 
 ### Frontend (Web)
-- Root-level: `railpack-frontend.json` (if root directory is `.`)
-- Service-level: `apps/web/railpack.json` (if root directory is `apps/web`)
-- Service-level: `apps/web/railway.json` (Railway config file)
+- Configuration: `apps/web/railpack.json`
+- Railway metadata: `apps/web/railway.json`
+- Root Directory: `apps/web`
 
 ### Backend (API)
-- Root-level: `railpack-backend.json` (if root directory is `.`)
-- Service-level: `apps/api/railpack.json` (if root directory is `apps/api`)
+- Configuration: `apps/api/railpack.json`
+- Root Directory: `apps/api`
+
+**Note:** Root-level railpack files (railpack-*.json) have been removed to eliminate confusion.
 
 ---
 
@@ -173,10 +187,34 @@ poloniex-trading-platform/
 
 ---
 
+## Configuration Files Explained
+
+### Single railpack.json per Service
+
+Each service has **one** railpack.json file located in its directory:
+- `apps/web/railpack.json` - Frontend configuration
+- `apps/api/railpack.json` - Backend configuration  
+- `kernels/core/railpack.json` - ML Worker configuration
+
+### How Railway Uses These Files
+
+1. You set **Root Directory** in Railway Dashboard (e.g., `apps/web`)
+2. Railway looks for `railpack.json` in that directory
+3. Railway uses that configuration to build and deploy
+
+### No Root-Level Files Needed
+
+Previously, there were duplicate files at the root level (`railpack-backend.json`, etc.). These have been **removed** to eliminate confusion. 
+
+**One configuration file per service, in that service's directory.**
+
+---
+
 ## Need Help?
 
 If you continue to experience issues after following this guide:
 1. Check the Railway build logs for specific errors
 2. Verify all three services have updated Root Directory settings
-3. Ensure railpack.json files exist in the new locations
-4. Contact Railway support if the issue persists
+3. Ensure railpack.json files exist in the new locations (see above)
+4. Review `RAILWAY_CONFIG_FILES.md` for detailed configuration reference
+5. Contact Railway support if the issue persists
