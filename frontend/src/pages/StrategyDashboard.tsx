@@ -5,7 +5,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Brain, _TrendingUp, Activity, CheckCircle, XCircle, RefreshCw, BarChart3 } from 'lucide-react';
+import { Brain, TrendingUp, Activity, CheckCircle, XCircle, RefreshCw, BarChart3 } from 'lucide-react';
 import { getAccessToken } from '@/utils/auth';
 import BacktestRunner from '@/components/backtest/BacktestRunner';
 import PaperTradingToggle from '@/components/paper-trading/PaperTradingToggle';
