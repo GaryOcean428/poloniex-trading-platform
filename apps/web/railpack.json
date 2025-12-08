@@ -17,16 +17,16 @@
     },
     "build": {
       "commands": [
-        "yarn workspace frontend run build",
+        "yarn workspace @poloniex-platform/web run build",
         "echo '=== Verifying build output ==='",
-        "ls -la frontend/dist/",
-        "ls -la frontend/dist/assets/"
+        "ls -la apps/web/dist/",
+        "ls -la apps/web/dist/assets/"
       ],
       "inputs": [{"step": "install"}]
     }
   },
   "deploy": {
-    "startCommand": "caddy run --config frontend/Caddyfile --adapter caddyfile",
+    "startCommand": "caddy run --config apps/web/Caddyfile --adapter caddyfile",
     "inputs": [{"step": "build"}]
   }
 }
