@@ -7,12 +7,13 @@ interface ExtensionStatusProps {
   onRefreshRequest?: () => void;
 }
 
-interface ExtensionResponse {
+// Interface used for extension API responses
+type _ExtensionResponse = {
   status: string;
   connected: boolean;
   version?: string;
   lastUpdate?: string;
-}
+};
 
 const ExtensionStatus: React.FC<ExtensionStatusProps> = ({ onRefreshRequest }) => {
   const [status, setStatus] = useState<string>('Checking...');

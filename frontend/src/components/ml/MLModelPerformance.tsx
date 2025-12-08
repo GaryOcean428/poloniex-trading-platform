@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+// Recharts imports available when chart features are implemented
+// import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import axios from 'axios';
 import { getAccessToken } from '@/utils/auth';
 
@@ -13,12 +14,13 @@ const getApiBaseUrl = () => {
 
 const API_BASE_URL = getApiBaseUrl();
 
-interface ModelPrediction {
-  model: string;
-  prediction: number;
-  confidence: number;
-  timestamp: string;
-}
+// Interface available when prediction features are implemented
+// interface ModelPrediction {
+//   model: string;
+//   prediction: number;
+//   confidence: number;
+//   timestamp: string;
+// }
 
 interface MLPerformanceData {
   symbol: string;

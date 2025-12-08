@@ -50,7 +50,7 @@ interface ActiveStrategiesPanelProps {
 const ActiveStrategiesPanel: React.FC<ActiveStrategiesPanelProps> = ({ agentStatus }) => {
   const [strategies, setStrategies] = useState<ActiveStrategy[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedStrategy, setSelectedStrategy] = useState<string | null>(null);
+  const [_selectedStrategy, _setSelectedStrategy] = useState<string | null>(null);
 
   useEffect(() => {
     if (agentStatus === 'running') {
@@ -74,7 +74,7 @@ const ActiveStrategiesPanel: React.FC<ActiveStrategiesPanelProps> = ({ agentStat
       if (response.data.success) {
         setStrategies(response.data.strategies);
       }
-    } catch (_err: any) {
+    } catch (_err: unknown) {
       // console.error('Error fetching active strategies:', err);
     } finally {
       setLoading(false);
