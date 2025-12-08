@@ -24,9 +24,9 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["proprietary_core"]
 
-[project.scripts]
-# Entry points for the kernel library
-ml-worker = "proprietary_core.main:app"
+# Note: The FastAPI application is in health.py at the root level
+# Run with: uvicorn health:app --host 0.0.0.0 --port 9080
+# or: python main.py
 
 [project.optional-dependencies]
 dev = [
