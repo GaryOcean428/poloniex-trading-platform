@@ -9,7 +9,7 @@
         format console
     }
 
-    root * /app/frontend/dist
+    root * /app/apps/web/dist
     encode gzip
     file_server
     

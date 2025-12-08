@@ -11,10 +11,10 @@
       ]
     },
     "build": {
-      "commands": ["yarn workspace backend run build"]
+      "commands": ["yarn workspace @poloniex-platform/api run build"]
     }
   },
   "deploy": {
-    "startCommand": "yarn workspace backend run start"
+    "startCommand": "yarn workspace @poloniex-platform/api run start"
   }
 }

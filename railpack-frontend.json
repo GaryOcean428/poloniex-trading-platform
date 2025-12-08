@@ -11,10 +11,10 @@
       ]
     },
     "build": {
-      "commands": ["yarn workspace frontend run build"]
+      "commands": ["yarn workspace @poloniex-platform/web run build"]
     }
   },
   "deploy": {
-    "startCommand": "node frontend/serve.js"
+    "startCommand": "node apps/web/serve.js"
   }
 }
