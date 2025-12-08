@@ -11,10 +11,10 @@ const sharedSource = join(rootDir, 'shared');
 
 // Get target service from command line args, or bundle all if not specified
 const targetService = process.argv[2];
-const services = targetService ? [targetService] : ['frontend', 'backend'];
+const services = targetService ? [targetService] : ['web', 'api'];
 
 for (const service of services) {
-  const destPath = join(rootDir, service, 'src', 'shared');
+  const destPath = join(rootDir, 'apps', service, 'src', 'shared');
   
   if (!existsSync(sharedSource)) {
     console.error(`Shared source not found at ${sharedSource}`);

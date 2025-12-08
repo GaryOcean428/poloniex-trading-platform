@@ -4,15 +4,6 @@
 packages:
   # Application packages
   - "apps/*"
-  - "apps/web"
-  - "apps/api"
   
   # Shared packages
   - "packages/*"
-  - "packages/ui"
-  - "packages/ts-types"
-  - "packages/database"
-  
-  # Legacy paths (for gradual migration)
-  - "frontend"
-  - "backend"

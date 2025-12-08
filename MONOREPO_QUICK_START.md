@@ -31,11 +31,11 @@ yarn docker:down        # Stop all services
 
 **Start services individually:**
 ```bash
-# Terminal 1: Frontend
-yarn dev:frontend
+# Terminal 1: Web Frontend
+yarn dev:web
 
-# Terminal 2: Backend  
-yarn dev:backend
+# Terminal 2: API Backend
+yarn dev:api
 
 # Terminal 3: Python ML Worker
 cd kernels/core
@@ -48,8 +48,8 @@ uvicorn health:app --reload --port 9080
 
 **To a workspace package:**
 ```bash
-yarn workspace frontend add <package>
-yarn workspace backend add <package>
+yarn workspace @poloniex-platform/web add <package>
+yarn workspace @poloniex-platform/api add <package>
 yarn workspace @poloniex-platform/ui add <package>
 ```
 
@@ -71,8 +71,8 @@ yarn workspace @poloniex-platform/database build
 yarn build:packages
 
 # Build applications
-yarn build:frontend
-yarn build:backend
+yarn build:web
+yarn build:api
 ```
 
 ## 🔄 Type Generation
@@ -113,10 +113,10 @@ import { Login, ProtectedRoute } from '@/components/auth';
 
 ```typescript
 // 1. Create component file
-// frontend/src/components/feature/MyComponent.tsx
+// apps/web/src/components/feature/MyComponent.tsx
 
 // 2. Add to barrel file
-// frontend/src/components/feature/index.ts
+// apps/web/src/components/feature/index.ts
 export { default as MyComponent } from './MyComponent';
 
 // 3. Import cleanly
@@ -333,8 +333,8 @@ yarn railway:validate
 yarn build
 
 # Or build individually
-yarn build:backend
-yarn build:frontend
+yarn build:api
+yarn build:web
 ```
 
 ## 📚 Documentation
@@ -390,13 +390,18 @@ yarn install
 6. **Use shared configs** from `tooling/` for consistency
 7. **Document new packages** with README files
 
-## 🎯 Next Steps
+## 🎯 Architecture Complete
 
-- Migrate `frontend/` → `apps/web/` (optional)
-- Migrate `backend/` → `apps/api/` (optional)
-- Add Turborepo/Nx for build caching (optional)
-- Setup Storybook for UI components (optional)
-- Add E2E tests with Playwright/Cypress (optional)
+The monorepo is fully migrated and production-ready:
+- ✅ Clean structure with `apps/`, `packages/`, `kernels/`
+- ✅ No legacy directories
+- ✅ Unified workspace configuration
+- ✅ All builds working
+
+Optional enhancements:
+- Add Turborepo/Nx for build caching
+- Setup Storybook for UI components
+- Add E2E tests with Playwright/Cypress
 
 ## 🤝 Contributing
 
