@@ -500,7 +500,9 @@ Generate the combination logic as executable JavaScript code.
                 .filter(m => m.sharpeRatio > 0.5) // Only keep strategies with positive risk-adjusted returns
                 .sort((a, b) => b.sharpeRatio - a.sharpeRatio);
             // Calculate optimal allocation using Kelly Criterion for top performers
-            const totalCapital = session.config.positionSize * 100; // Convert percentage to units
+            // totalCapital is the total capital available for allocation across all strategies
+            // positionSize is stored as a decimal (e.g., 0.1 = 10%), multiply by 1000 for dollar amount
+            const totalCapital = session.config.positionSize * 1000; // e.g., 0.1 * 1000 = $100
             const allocations = this.calculateKellyAllocations(rankedStrategies, totalCapital);
             // Update strategy position sizes in automated trading service
             for (const allocation of allocations) {
@@ -533,7 +535,10 @@ Generate the combination logic as executable JavaScript code.
             const q = 1 - p;
             const b = metric.profitFactor; // Average win / average loss
             // Calculate Kelly fraction (cap at 25% for safety)
-            const kellyFraction = Math.max(0, Math.min(0.25, (p * b - q) / b));
+            // Guard against division by zero when profit factor is 0
+            const kellyFraction = b > 0
+                ? Math.max(0, Math.min(0.25, (p * b - q) / b))
+                : 0;
             // Apply fractional Kelly (50% of full Kelly for more conservative sizing)
             const fractionalKelly = kellyFraction * 0.5;
             // Calculate position size with remaining capital
@@ -573,14 +578,18 @@ Generate the combination logic as executable JavaScript code.
             const totalTrades = parseInt(row.total_trades) || 0;
             const winningTrades = parseInt(row.winning_trades) || 0;
             const avgWin = parseFloat(row.avg_win) || 0;
-            const avgLoss = Math.abs(parseFloat(row.avg_loss)) || 1;
+            const avgLoss = Math.abs(parseFloat(row.avg_loss)) || 0; // Don't default to 1
             const totalPnl = parseFloat(row.total_pnl) || 0;
             const pnlStddev = parseFloat(row.pnl_stddev) || 1;
             const winRate = totalTrades > 0 ? winningTrades / totalTrades : 0;
-            const profitFactor = avgLoss > 0 ? avgWin / avgLoss : 1;
+            // Calculate profit factor, handling edge cases properly
+            const profitFactor = (avgLoss > 0 && avgWin > 0) ? avgWin / avgLoss :
+                (avgWin > 0 ? 2.0 : 0.5); // Assume 2:1 if only wins, 0.5 if only losses
             const returnRate = totalPnl; // Absolute return in last 30 days
-            // Calculate Sharpe ratio: (average return) / (standard deviation of returns)
-            const sharpeRatio = pnlStddev > 0 ? (totalPnl / totalTrades) / pnlStddev : 0;
+            // Calculate Sharpe ratio: (average return per trade) / (standard deviation of returns)
+            // Fixed: properly calculate average return before dividing by stddev
+            const avgReturnPerTrade = totalTrades > 0 ? totalPnl / totalTrades : 0;
+            const sharpeRatio = (pnlStddev > 0 && totalTrades > 0) ? avgReturnPerTrade / pnlStddev : 0;
             // Calculate max drawdown (simplified)
             const maxDrawdown = await this.calculateMaxDrawdown(strategyId);
             return {
@@ -650,11 +659,8 @@ Generate the combination logic as executable JavaScript code.
                 logger.error('Error in allocation optimization loop:', error);
             }
         }, 60 * 60 * 1000); // Run every hour
-        // Store interval for cleanup
-        const existingInterval = this.runningIntervals.get(session.id);
-        if (existingInterval) {
-            clearInterval(existingInterval);
-        }
+        // Store interval for cleanup with a unique key
+        // Use a separate tracking map or consistent naming to avoid conflicts
         this.runningIntervals.set(`${session.id}_optimization`, optimizationInterval);
         logger.info(`Started allocation optimization for session ${session.id}`);
     }
