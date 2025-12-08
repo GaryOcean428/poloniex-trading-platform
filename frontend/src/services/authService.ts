@@ -132,7 +132,7 @@ export class AuthService {
         reason: 'Invalid response format'
       });
       return { success: false, error: 'Login failed' };
-    } catch (error: unknown) {
+    } catch (error: any) {
       if ((isAxiosError(error) || hasAxiosLikeResponse(error)) && (error as any).response?.data) {
         return {
           success: false,
@@ -195,7 +195,7 @@ export class AuthService {
       }
 
       return null;
-    } catch (error: unknown) {
+    } catch (error: any) {
       // If refresh fails, clear auth data and redirect to login
       if (isAxiosError(error) && (error.response?.status === 403 || error.response?.status === 401)) {
         this.logout();
@@ -321,7 +321,7 @@ export class AuthService {
 
       const response = await axios(config);
       return { success: true, data: response.data };
-    } catch (error: unknown) {
+    } catch (error: any) {
       // console.error('Authenticated request error:', error);
 
       // If token is invalid, try to refresh once

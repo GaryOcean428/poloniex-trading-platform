@@ -143,7 +143,7 @@ class AutomatedTradingService {
               parseFloat(balance.availableAmount)
             );
           }
-        } catch (error: unknown) {
+        } catch (error: any) {
           logger.error(
             `Error processing strategy ${strategy.id}:`,
             error instanceof Error ? error.message : String(error)
@@ -153,7 +153,7 @@ class AutomatedTradingService {
 
       // Also run pure AI trading for configured pairs
       await this.executeAITradingSignals();
-    } catch (error: unknown) {
+    } catch (error: any) {
       logger.error(
         "Error in automated trading update:",
         error instanceof Error ? error.message : String(error)
@@ -207,7 +207,7 @@ class AutomatedTradingService {
           );
         }
       }
-    } catch (error: unknown) {
+    } catch (error: any) {
       logger.error(
         "Error in AI trading signals:",
         error instanceof Error ? error.message : String(error)
@@ -335,7 +335,7 @@ class AutomatedTradingService {
           quantity,
           stopPrice
         );
-      } catch (error: unknown) {
+      } catch (error: any) {
         logger.warn(
           "Failed to place stop loss order:",
           error instanceof Error ? error.message : String(error)
@@ -362,7 +362,7 @@ class AutomatedTradingService {
           quantity,
           takeProfitPrice
         );
-      } catch (error: unknown) {
+      } catch (error: any) {
         logger.warn(
           "Failed to place take profit order:",
           error instanceof Error ? error.message : String(error)
@@ -408,7 +408,7 @@ class AutomatedTradingService {
           reason,
         })
       );
-    } catch (error: unknown) {
+    } catch (error: any) {
       logger.error(
         "Error executing trade:",
         error instanceof Error ? error.message : String(error)

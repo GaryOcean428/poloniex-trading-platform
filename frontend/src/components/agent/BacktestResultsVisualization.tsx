@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { BarChart3, TrendingUp, TrendingDown, DollarSign, Percent, Activity, Calendar } from 'lucide-react';
+import { BarChart3, TrendingUp, TrendingDown, DollarSign, Activity } from 'lucide-react';
 import axios from 'axios';
 import { getAccessToken } from '@/utils/auth';
 
@@ -76,7 +76,7 @@ const BacktestResultsVisualization: React.FC<BacktestResultsVisualizationProps> 
           setSelectedResult(response.data.results[0]);
         }
       }
-    } catch (_err: any) {
+    } catch (_err: unknown) {
       // console.error('Error fetching backtest results:', err);
     } finally {
       setLoading(false);

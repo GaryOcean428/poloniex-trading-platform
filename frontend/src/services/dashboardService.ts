@@ -161,7 +161,8 @@ class DashboardService {
       return response.data;
     } catch (error: any) {
       // console.error('Error fetching dashboard overview:', error);
-      throw new Error(error.response?.data?.error || 'Failed to fetch dashboard data');
+      const message = error instanceof Error ? error.message : 'Failed to fetch dashboard data';
+      throw new Error(message);
     }
   }
 
@@ -178,7 +179,8 @@ class DashboardService {
       return response.data.data;
     } catch (error: any) {
       // console.error('Error fetching balance:', error);
-      throw new Error(error.response?.data?.error || 'Failed to fetch balance');
+      const message = error instanceof Error ? error.message : 'Failed to fetch balance';
+      throw new Error(message);
     }
   }
 
@@ -195,7 +197,8 @@ class DashboardService {
       return response.data.data;
     } catch (error: any) {
       // console.error('Error fetching positions:', error);
-      throw new Error(error.response?.data?.error || 'Failed to fetch positions');
+      const message = error instanceof Error ? error.message : 'Failed to fetch positions';
+      throw new Error(message);
     }
   }
 
@@ -215,7 +218,8 @@ class DashboardService {
       return response.data;
     } catch (error: any) {
       // console.error('Error fetching trades:', error);
-      throw new Error(error.response?.data?.error || 'Failed to fetch trades');
+      const message = error instanceof Error ? error.message : 'Failed to fetch trades';
+      throw new Error(message);
     }
   }
 
@@ -235,7 +239,8 @@ class DashboardService {
       return response.data;
     } catch (error: any) {
       // console.error('Error fetching open orders:', error);
-      throw new Error(error.response?.data?.error || 'Failed to fetch open orders');
+      const message = error instanceof Error ? error.message : 'Failed to fetch open orders';
+      throw new Error(message);
     }
   }
 }

@@ -3,6 +3,7 @@
  * Frontend service for AI-powered strategy generation using Claude
  */
 
+import axios from 'axios';
 import { apiClient } from './api';
 
 export interface StrategyGenerationRequest {
@@ -69,10 +70,11 @@ export async function generateStrategy(
     const response = await apiClient.post<{ strategy: GeneratedStrategy }>('/llm-strategies/generate', request);
     return response.data.strategy;
   } catch (error: any) {
-    if (error.response?.status === 503) {
+    if (axios.isAxiosError(error) && error.response?.status === 503) {
       throw new Error('LLM strategy generation is not available. Please add ANTHROPIC_API_KEY to enable this feature.');
     }
-    throw new Error(error.response?.data?.error || 'Failed to generate strategy');
+    const message = axios.isAxiosError(error) ? error.response?.data?.error : (error instanceof Error ? error.message : 'Unknown error');
+    throw new Error(message || 'Failed to generate strategy');
   }
 }
 
@@ -86,10 +88,11 @@ export async function generateStrategyVariations(
     const response = await apiClient.post<{ strategies: GeneratedStrategy[] }>('/llm-strategies/generate-variations', request);
     return response.data.strategies;
   } catch (error: any) {
-    if (error.response?.status === 503) {
+    if (axios.isAxiosError(error) && error.response?.status === 503) {
       throw new Error('LLM strategy generation is not available. Please add ANTHROPIC_API_KEY to enable this feature.');
     }
-    throw new Error(error.response?.data?.error || 'Failed to generate strategy variations');
+    const message = axios.isAxiosError(error) ? error.response?.data?.error : (error instanceof Error ? error.message : 'Unknown error');
+    throw new Error(message || 'Failed to generate strategy variations');
   }
 }
 
@@ -103,10 +106,11 @@ export async function optimizeStrategy(
     const response = await apiClient.post<{ optimizedStrategy: GeneratedStrategy }>('/llm-strategies/optimize', request);
     return response.data.optimizedStrategy;
   } catch (error: any) {
-    if (error.response?.status === 503) {
+    if (axios.isAxiosError(error) && error.response?.status === 503) {
       throw new Error('LLM strategy optimization is not available. Please add ANTHROPIC_API_KEY to enable this feature.');
     }
-    throw new Error(error.response?.data?.error || 'Failed to optimize strategy');
+    const message = axios.isAxiosError(error) ? error.response?.data?.error : (error instanceof Error ? error.message : 'Unknown error');
+    throw new Error(message || 'Failed to optimize strategy');
   }
 }
 
@@ -124,10 +128,11 @@ export async function analyzeMarket(
     });
     return response.data.analysis;
   } catch (error: any) {
-    if (error.response?.status === 503) {
+    if (axios.isAxiosError(error) && error.response?.status === 503) {
       throw new Error('LLM market analysis is not available. Please add ANTHROPIC_API_KEY to enable this feature.');
     }
-    throw new Error(error.response?.data?.error || 'Failed to analyze market');
+    const message = axios.isAxiosError(error) ? error.response?.data?.error : (error instanceof Error ? error.message : 'Unknown error');
+    throw new Error(message || 'Failed to analyze market');
   }
 }
 

@@ -70,7 +70,7 @@ const StrategyGenerationDisplay: React.FC<StrategyGenerationDisplayProps> = ({ a
         setCurrentGeneration(null);
         setIsGenerating(false);
       }
-    } catch (_err: any) {
+    } catch (_err: unknown) {
       // console.error('Error fetching current generation:', err);
       setIsGenerating(false);
     }
@@ -86,7 +86,7 @@ const StrategyGenerationDisplay: React.FC<StrategyGenerationDisplayProps> = ({ a
       if (response.data.success) {
         setRecentStrategies(response.data.strategies);
       }
-    } catch (_err: any) {
+    } catch (_err: unknown) {
       // console.error('Error fetching recent strategies:', err);
     }
   };

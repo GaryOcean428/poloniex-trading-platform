@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { BarChart3, TrendingUp, PieChart, Calendar, DollarSign, Percent, Target } from 'lucide-react';
+import { BarChart3, TrendingUp, PieChart, Target } from 'lucide-react';
 import axios from 'axios';
 import { getAccessToken } from '@/utils/auth';
 
@@ -64,7 +64,7 @@ const PerformanceAnalytics: React.FC<PerformanceAnalyticsProps> = ({
       if (response.data.success) {
         setData(response.data.performance);
       }
-    } catch (_err: any) {
+    } catch (_err: unknown) {
       // console.error('Error fetching performance data:', err);
     } finally {
       setLoading(false);
