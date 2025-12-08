@@ -631,7 +631,7 @@ class AutonomousTradingAgent extends EventEmitter {
             await this.logActivity(
               session.id,
               'strategy_retired',
-              `Strategy ${row.strategy_name} retired (score: ${paperTradingScore.toFixed(2)} < 1.2 threshold)`
+              `Strategy ${row.strategy_name} retired (score: ${paperTradingScore.toFixed(2)} < 0.6 threshold)`
             );
           }
         } catch (err: any) {
