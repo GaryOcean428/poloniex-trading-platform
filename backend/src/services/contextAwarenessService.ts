@@ -25,12 +25,12 @@ export interface ContextDecision {
   priority: 'low' | 'medium' | 'high' | 'critical';
 }
 
-// Model context window sizes (from Claude 4.5 docs)
+// Model context window sizes (from Claude API docs)
 const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
-  'claude-sonnet-4-5-20250929': 200000,
-  'claude-haiku-4-5-20251001': 200000,
-  'claude-sonnet-4-20250514': 200000,
-  'claude-opus-4-1-20250805': 200000
+  'claude-3-5-sonnet-20241022': 200000,
+  'claude-3-5-haiku-20241022': 200000,
+  'claude-3-opus-20240229': 200000,
+  'claude-3-sonnet-20240229': 200000
 };
 
 export class ContextAwarenessService {

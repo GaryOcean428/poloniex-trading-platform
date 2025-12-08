@@ -31,14 +31,14 @@ export interface RiskCheck {
 
 export class HaikuOptimizationService {
   private client: Anthropic | null = null;
-  private model = 'claude-haiku-4-5-20251001';
+  private model = 'claude-3-5-haiku-20241022'; // Claude 3.5 Haiku (latest stable)
   private apiKey: string | undefined;
 
   constructor() {
     this.apiKey = process.env.ANTHROPIC_API_KEY;
     if (this.apiKey) {
       this.client = new Anthropic({ apiKey: this.apiKey });
-      logger.info('Haiku Optimization Service initialized with Claude Haiku 4.5');
+      logger.info('Haiku Optimization Service initialized with Claude 3.5 Haiku');
     } else {
       logger.warn('ANTHROPIC_API_KEY not set - Haiku optimization will be unavailable');
     }
