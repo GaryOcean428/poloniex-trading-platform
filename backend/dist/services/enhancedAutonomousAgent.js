@@ -99,41 +99,55 @@ class EnhancedAutonomousAgent extends EventEmitter {
             }
         }, session.config.strategyGenerationInterval * 60 * 60 * 1000);
         this.runningIntervals.set(session.id, interval);
+        // Start profit maximization through dynamic allocation optimization
+        this.startAllocationOptimization(session);
+        logger.info(`Agent loop started for session ${session.id} with profit maximization enabled`);
     }
     /**
      * Generate AI-powered trading strategies
      */
     async generateStrategies(session) {
-        logger.info(`Generating strategies for session ${session.id}`);
+        logger.info(`Generating strategies for session ${session.id} - using parallel execution`);
         const strategies = [];
         const llmGenerator = getLLMStrategyGenerator();
-        for (const symbol of session.config.preferredPairs) {
+        // Process multiple symbols in parallel for faster strategy generation
+        const symbolPromises = session.config.preferredPairs.map(async (symbol) => {
             try {
-                // Generate single-indicator strategies
-                const trendStrategy = await this.generateSingleStrategy(session, symbol, 'trend_following', ['SMA', 'EMA'], 'Trend following strategy using moving averages');
-                const momentumStrategy = await this.generateSingleStrategy(session, symbol, 'momentum', ['RSI', 'MACD'], 'Momentum strategy using RSI and MACD');
-                const volumeStrategy = await this.generateSingleStrategy(session, symbol, 'volume_analysis', ['Volume', 'OBV'], 'Volume analysis strategy');
-                strategies.push(trendStrategy, momentumStrategy, volumeStrategy);
+                // Generate single-indicator strategies IN PARALLEL
+                const [trendStrategy, momentumStrategy, volumeStrategy] = await Promise.all([
+                    this.generateSingleStrategy(session, symbol, 'trend_following', ['SMA', 'EMA'], 'Trend following strategy using moving averages'),
+                    this.generateSingleStrategy(session, symbol, 'momentum', ['RSI', 'MACD'], 'Momentum strategy using RSI and MACD'),
+                    this.generateSingleStrategy(session, symbol, 'volume_analysis', ['Volume', 'OBV'], 'Volume analysis strategy')
+                ]);
+                const symbolStrategies = [trendStrategy, momentumStrategy, volumeStrategy];
                 // Generate multi-strategy combination if enabled
                 if (session.config.enableMultiStrategyCombo) {
-                    const comboStrategy = await this.createMultiStrategyCombo(session, symbol, [trendStrategy, momentumStrategy, volumeStrategy]);
-                    strategies.push(comboStrategy);
+                    const comboStrategy = await this.createMultiStrategyCombo(session, symbol, symbolStrategies);
+                    symbolStrategies.push(comboStrategy);
                 }
-                // Update session stats
-                session.strategiesGenerated += strategies.length;
-                await this.saveSession(session);
+                return symbolStrategies;
             }
             catch (error) {
                 logger.error(`Error generating strategies for ${symbol}:`, error);
+                return [];
             }
-        }
-        // Start strategy lifecycle for each strategy
-        for (const strategy of strategies) {
-            this.runStrategyLifecycle(session, strategy).catch(error => {
-                logger.error(`Error in strategy lifecycle for ${strategy.name}:`, error);
-            });
-        }
-        logger.info(`Generated ${strategies.length} strategies for session ${session.id}`);
+        });
+        // Wait for all symbols to complete
+        const symbolResults = await Promise.all(symbolPromises);
+        strategies.push(...symbolResults.flat());
+        // Update session stats
+        session.strategiesGenerated += strategies.length;
+        await this.saveSession(session);
+        // Start strategy lifecycle for ALL strategies IN PARALLEL
+        // This allows backtesting, paper trading, and evaluation to run concurrently
+        const lifecyclePromises = strategies.map(strategy => this.runStrategyLifecycle(session, strategy).catch(error => {
+            logger.error(`Error in strategy lifecycle for ${strategy.name}:`, error);
+        }));
+        // Fire and forget - strategies will progress through their lifecycle independently
+        Promise.all(lifecyclePromises).then(() => {
+            logger.info(`All ${strategies.length} strategies have completed their lifecycle for session ${session.id}`);
+        });
+        logger.info(`Generated ${strategies.length} strategies for session ${session.id} using parallel execution`);
         this.emit('strategies:generated', { sessionId: session.id, count: strategies.length });
         return strategies;
     }
@@ -456,6 +470,193 @@ Generate the combination logic as executable JavaScript code.
         catch (error) {
             logger.error('Error saving strategy:', error);
         }
+    }
+    /**
+     * PROFIT MAXIMIZATION: Optimize strategy allocation based on real-time performance
+     * Dynamically adjusts position sizes to maximize returns while managing risk
+     */
+    async optimizeStrategyAllocation(session) {
+        try {
+            // Get all live strategies for this session
+            const liveStrategies = Array.from(this.strategies.values()).filter(s => s.sessionId === session.id && s.status === 'live');
+            if (liveStrategies.length === 0) {
+                return;
+            }
+            logger.info(`Optimizing allocation for ${liveStrategies.length} live strategies`);
+            // Calculate performance metrics for each strategy
+            const strategyMetrics = await Promise.all(liveStrategies.map(async (strategy) => {
+                const recentPerformance = await this.getStrategyRecentPerformance(strategy.id);
+                return {
+                    strategy,
+                    sharpeRatio: recentPerformance.sharpeRatio,
+                    returnRate: recentPerformance.returnRate,
+                    winRate: recentPerformance.winRate,
+                    profitFactor: recentPerformance.profitFactor,
+                    maxDrawdown: recentPerformance.maxDrawdown
+                };
+            }));
+            // Sort strategies by risk-adjusted returns (Sharpe ratio)
+            const rankedStrategies = strategyMetrics
+                .filter(m => m.sharpeRatio > 0.5) // Only keep strategies with positive risk-adjusted returns
+                .sort((a, b) => b.sharpeRatio - a.sharpeRatio);
+            // Calculate optimal allocation using Kelly Criterion for top performers
+            const totalCapital = session.config.positionSize * 100; // Convert percentage to units
+            const allocations = this.calculateKellyAllocations(rankedStrategies, totalCapital);
+            // Update strategy position sizes in automated trading service
+            for (const allocation of allocations) {
+                await automatedTradingService.updateStrategyAllocation(session.userId, allocation.strategyId, allocation.positionSize);
+                logger.info(`Optimized allocation for ${allocation.strategyName}: ` +
+                    `${(allocation.positionSize * 100).toFixed(2)}% ` +
+                    `(Sharpe: ${allocation.sharpeRatio.toFixed(2)})`);
+            }
+            this.emit('allocation:optimized', {
+                sessionId: session.id,
+                allocations,
+                timestamp: new Date()
+            });
+        }
+        catch (error) {
+            logger.error('Error optimizing strategy allocation:', error);
+        }
+    }
+    /**
+     * Calculate optimal position sizes using Kelly Criterion
+     * Maximizes long-term growth rate while managing risk
+     */
+    calculateKellyAllocations(strategies, totalCapital) {
+        const allocations = [];
+        let remainingCapital = totalCapital;
+        for (const metric of strategies) {
+            // Kelly Criterion: f* = (p * b - q) / b
+            // where p = win probability, q = loss probability, b = win/loss ratio
+            const p = metric.winRate;
+            const q = 1 - p;
+            const b = metric.profitFactor; // Average win / average loss
+            // Calculate Kelly fraction (cap at 25% for safety)
+            const kellyFraction = Math.max(0, Math.min(0.25, (p * b - q) / b));
+            // Apply fractional Kelly (50% of full Kelly for more conservative sizing)
+            const fractionalKelly = kellyFraction * 0.5;
+            // Calculate position size with remaining capital
+            const positionSize = fractionalKelly * remainingCapital;
+            if (positionSize > 0 && remainingCapital > 0) {
+                allocations.push({
+                    strategyId: metric.strategy.id,
+                    strategyName: metric.strategy.name,
+                    positionSize: positionSize / totalCapital, // As fraction of total
+                    kellyFraction: fractionalKelly,
+                    sharpeRatio: metric.sharpeRatio,
+                    expectedReturn: metric.returnRate
+                });
+                remainingCapital -= positionSize;
+            }
+        }
+        return allocations;
+    }
+    /**
+     * Get recent performance metrics for a strategy
+     */
+    async getStrategyRecentPerformance(strategyId) {
+        try {
+            // Query recent trades for this strategy (last 30 days)
+            const result = await pool.query(`SELECT 
+          COUNT(*) as total_trades,
+          SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as winning_trades,
+          AVG(CASE WHEN realized_pnl > 0 THEN realized_pnl END) as avg_win,
+          AVG(CASE WHEN realized_pnl < 0 THEN realized_pnl END) as avg_loss,
+          SUM(realized_pnl) as total_pnl,
+          STDDEV(realized_pnl) as pnl_stddev
+         FROM trades
+         WHERE strategy_id = $1 
+           AND created_at > NOW() - INTERVAL '30 days'
+           AND status = 'closed'`, [strategyId]);
+            const row = result.rows[0];
+            const totalTrades = parseInt(row.total_trades) || 0;
+            const winningTrades = parseInt(row.winning_trades) || 0;
+            const avgWin = parseFloat(row.avg_win) || 0;
+            const avgLoss = Math.abs(parseFloat(row.avg_loss)) || 1;
+            const totalPnl = parseFloat(row.total_pnl) || 0;
+            const pnlStddev = parseFloat(row.pnl_stddev) || 1;
+            const winRate = totalTrades > 0 ? winningTrades / totalTrades : 0;
+            const profitFactor = avgLoss > 0 ? avgWin / avgLoss : 1;
+            const returnRate = totalPnl; // Absolute return in last 30 days
+            // Calculate Sharpe ratio: (average return) / (standard deviation of returns)
+            const sharpeRatio = pnlStddev > 0 ? (totalPnl / totalTrades) / pnlStddev : 0;
+            // Calculate max drawdown (simplified)
+            const maxDrawdown = await this.calculateMaxDrawdown(strategyId);
+            return {
+                winRate,
+                profitFactor,
+                returnRate,
+                sharpeRatio,
+                maxDrawdown,
+                totalTrades
+            };
+        }
+        catch (error) {
+            logger.error(`Error getting performance for strategy ${strategyId}:`, error);
+            return {
+                winRate: 0.5,
+                profitFactor: 1.0,
+                returnRate: 0,
+                sharpeRatio: 0,
+                maxDrawdown: 0,
+                totalTrades: 0
+            };
+        }
+    }
+    /**
+     * Calculate maximum drawdown for a strategy
+     */
+    async calculateMaxDrawdown(strategyId) {
+        try {
+            // Get cumulative PnL over time
+            const result = await pool.query(`SELECT 
+          created_at,
+          SUM(realized_pnl) OVER (ORDER BY created_at) as cumulative_pnl
+         FROM trades
+         WHERE strategy_id = $1 
+           AND created_at > NOW() - INTERVAL '30 days'
+           AND status = 'closed'
+         ORDER BY created_at`, [strategyId]);
+            if (result.rows.length === 0)
+                return 0;
+            let maxPnl = 0;
+            let maxDrawdown = 0;
+            for (const row of result.rows) {
+                const cumulativePnl = parseFloat(row.cumulative_pnl);
+                maxPnl = Math.max(maxPnl, cumulativePnl);
+                const drawdown = maxPnl - cumulativePnl;
+                maxDrawdown = Math.max(maxDrawdown, drawdown);
+            }
+            return maxDrawdown;
+        }
+        catch (error) {
+            logger.error(`Error calculating max drawdown for strategy ${strategyId}:`, error);
+            return 0;
+        }
+    }
+    /**
+     * Start periodic allocation optimization
+     * Runs every hour to rebalance strategy allocations based on performance
+     */
+    startAllocationOptimization(session) {
+        const optimizationInterval = setInterval(async () => {
+            try {
+                if (session.status === 'running') {
+                    await this.optimizeStrategyAllocation(session);
+                }
+            }
+            catch (error) {
+                logger.error('Error in allocation optimization loop:', error);
+            }
+        }, 60 * 60 * 1000); // Run every hour
+        // Store interval for cleanup
+        const existingInterval = this.runningIntervals.get(session.id);
+        if (existingInterval) {
+            clearInterval(existingInterval);
+        }
+        this.runningIntervals.set(`${session.id}_optimization`, optimizationInterval);
+        logger.info(`Started allocation optimization for session ${session.id}`);
     }
 }
 export const enhancedAutonomousAgent = new EnhancedAutonomousAgent();
