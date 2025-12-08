@@ -13,6 +13,9 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 
+# Constants
+MAX_OUTPUT_LENGTH = 4000  # Maximum length of stdout to return in response
+
 app = FastAPI(
     title="ML Worker Service",
     description="Poloniex ML Worker with health checks and market ingestion",
@@ -105,7 +108,7 @@ async def run_ingest():
                 "ok": True,
                 "code": 0,
                 "message": "Ingestion completed successfully",
-                "output": proc.stdout[-4000:],  # return tail to limit payload size
+                "output": proc.stdout[-MAX_OUTPUT_LENGTH:],  # return tail to limit payload size
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
         )
