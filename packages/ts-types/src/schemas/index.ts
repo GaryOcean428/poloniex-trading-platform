@@ -3,12 +3,16 @@
  * 
  * Runtime validation for JSON data and API responses.
  * These schemas mirror the Pydantic models in the Python backend.
+ * 
+ * Note: Some types (MarketData, Trade, User, ApiResponse) are already
+ * defined in trading.ts. These are alternative/extended versions for
+ * specific validation use cases.
  */
 
 import { z } from 'zod';
 
-// Market Data Schema
-export const MarketDataSchema = z.object({
+// Market Data Schema (Alternative version for data ingestion)
+export const DataMarketDataSchema = z.object({
   symbol: z.string().min(1),
   timestamp: z.string().datetime(),
   price: z.number().positive(),
@@ -19,10 +23,10 @@ export const MarketDataSchema = z.object({
   close: z.number().positive().optional(),
 });
 
-export type MarketData = z.infer<typeof MarketDataSchema>;
+export type DataMarketData = z.infer<typeof DataMarketDataSchema>;
 
-// Trade Schema
-export const TradeSchema = z.object({
+// Trade Schema (Alternative version for data ingestion)
+export const DataTradeSchema = z.object({
   id: z.string().optional(),
   symbol: z.string().min(1),
   side: z.enum(['buy', 'sell']),
@@ -33,10 +37,10 @@ export const TradeSchema = z.object({
   createdAt: z.string().datetime(),
 });
 
-export type Trade = z.infer<typeof TradeSchema>;
+export type DataTrade = z.infer<typeof DataTradeSchema>;
 
-// User Schema
-export const UserSchema = z.object({
+// User Schema (Alternative version for data ingestion)
+export const DataUserSchema = z.object({
   id: z.string().optional(),
   username: z.string().min(3).max(50),
   email: z.string().email(),
@@ -44,10 +48,10 @@ export const UserSchema = z.object({
   updatedAt: z.string().datetime().optional(),
 });
 
-export type User = z.infer<typeof UserSchema>;
+export type DataUser = z.infer<typeof DataUserSchema>;
 
-// API Response Wrapper
-export const ApiResponseSchema = <T extends z.ZodTypeAny>(dataSchema: T) =>
+// API Response Wrapper (Alternative version)
+export const DataApiResponseSchema = <T extends z.ZodTypeAny>(dataSchema: T) =>
   z.object({
     success: z.boolean(),
     data: dataSchema.optional(),
@@ -55,7 +59,7 @@ export const ApiResponseSchema = <T extends z.ZodTypeAny>(dataSchema: T) =>
     message: z.string().optional(),
   });
 
-export type ApiResponse<T> = {
+export type DataApiResponse<T> = {
   success: boolean;
   data?: T;
   error?: string;
