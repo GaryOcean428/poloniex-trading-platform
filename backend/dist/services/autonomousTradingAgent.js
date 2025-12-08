@@ -420,7 +420,7 @@ class AutonomousTradingAgent extends EventEmitter {
                         await pool.query(`UPDATE agent_strategies 
                SET status = $1, paper_trading_score = $2, retired_at = NOW()
                WHERE id = $3`, ['retired', paperTradingScore, row.id]);
-                        await this.logActivity(session.id, 'strategy_retired', `Strategy ${row.strategy_name} retired (score: ${paperTradingScore.toFixed(2)} < 1.2 threshold)`);
+                        await this.logActivity(session.id, 'strategy_retired', `Strategy ${row.strategy_name} retired (score: ${paperTradingScore.toFixed(2)} < 0.6 threshold)`);
                     }
                 }
                 catch (err) {

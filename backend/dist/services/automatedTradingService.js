@@ -849,6 +849,38 @@ class AutomatedTradingService extends EventEmitter {
         this.emit('tradeExecution', data);
     }
     /**
+     * Update strategy allocation (position size) for dynamic optimization
+     * @param {string} userId - User ID
+     * @param {string} strategyId - Strategy ID
+     * @param {number} newPositionSize - New position size as fraction (0.0 to 1.0)
+     */
+    async updateStrategyAllocation(userId, strategyId, newPositionSize) {
+        try {
+            const key = `${userId}:${strategyId}`;
+            const strategy = this.activeStrategies.get(key);
+            if (!strategy) {
+                logger.warn(`Cannot update allocation: Strategy ${strategyId} not found for user ${userId}`);
+                return false;
+            }
+            // Update position size
+            strategy.positionSize = Math.max(0.01, Math.min(1.0, newPositionSize)); // Clamp between 1% and 100%
+            // Update in database if strategy is persisted
+            try {
+                await query(`UPDATE strategies SET position_size = $1, updated_at = NOW() WHERE id = $2 AND user_id = $3`, [strategy.positionSize, strategyId, userId]);
+            }
+            catch (dbError) {
+                // Database update optional - continue with in-memory update
+                logger.debug('Strategy not in database, using in-memory allocation only');
+            }
+            logger.info(`Updated allocation for strategy ${strategyId}: ${(strategy.positionSize * 100).toFixed(2)}%`);
+            return true;
+        }
+        catch (error) {
+            logger.error(`Error updating strategy allocation for ${strategyId}:`, error);
+            return false;
+        }
+    }
+    /**
      * Shutdown service
      */
     async shutdown() {
