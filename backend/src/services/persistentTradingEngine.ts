@@ -9,6 +9,7 @@ import { apiCredentialsService } from './apiCredentialsService.js';
 import { PoloniexFuturesService } from './poloniexFuturesService.js';
 import { pool } from '../db/connection.js';
 import { logger } from '../utils/logger.js';
+import automatedTradingService from './automatedTradingService.js';
 
 export interface TradingSession {
   id: string;
@@ -237,12 +238,25 @@ export class PersistentTradingEngine extends EventEmitter {
    */
   private async getMarketData(symbol: string): Promise<any> {
     try {
-      // This would integrate with the market data service or WebSocket
-      // For now, return a placeholder that indicates we need market data
+      // Get historical candles to provide current market data with context
+      const poloniexService = new PoloniexFuturesService();
+      const candles = await poloniexService.getHistoricalData(symbol, '1h', 24);
+      
+      if (!candles || candles.length === 0) {
+        logger.warn(`No market data available for ${symbol}`);
+        return null;
+      }
+      
+      const lastCandle = candles[candles.length - 1];
       return {
         symbol,
-        price: 0,
-        timestamp: new Date()
+        price: parseFloat(lastCandle.close),
+        open: parseFloat(lastCandle.open),
+        high: parseFloat(lastCandle.high),
+        low: parseFloat(lastCandle.low),
+        volume: parseFloat(lastCandle.volume),
+        timestamp: new Date(lastCandle.timestamp),
+        candles // Include recent candles for strategy analysis
       };
     } catch (error) {
       logger.error(`Error getting market data for ${symbol}:`, error);
@@ -259,9 +273,30 @@ export class PersistentTradingEngine extends EventEmitter {
     positions: any,
     positionState: any
   ): Promise<any> {
-    // This would implement the actual strategy logic
-    // For now, return HOLD to prevent unintended trades
-    return { action: 'HOLD' };
+    try {
+      if (!marketData || !marketData.price || marketData.price === 0) {
+        return { action: 'HOLD' };
+      }
+      
+      // Create a strategy object compatible with automatedTradingService
+      const strategy = {
+        strategyType: strategyConfig.type || 'MOMENTUM',
+        parameters: strategyConfig.parameters || {},
+        symbol: strategyConfig.symbol
+      };
+      
+      // Delegate to automatedTradingService for actual strategy execution
+      const signal = await automatedTradingService.executeStrategyLogic(
+        strategy,
+        marketData,
+        positions
+      );
+      
+      return signal || { action: 'HOLD' };
+    } catch (error) {
+      logger.error('Error generating trading signal:', error);
+      return { action: 'HOLD' };
+    }
   }
 
   /**

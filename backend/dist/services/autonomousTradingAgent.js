@@ -384,8 +384,9 @@ class AutonomousTradingAgent extends EventEmitter {
                         // Use a conservative score if we can't get results
                         paperTradingScore = 0.8;
                     }
-                    // Threshold for promotion: score must be > 1.2 (positive returns with good metrics)
-                    if (paperTradingScore > 1.2) {
+                    // Threshold for promotion: score must be > 0.6 (60% weighted score)
+                    // This aligns with the max possible score of ~1.0 from the weighted calculation
+                    if (paperTradingScore > 0.6) {
                         // Promote to live trading
                         await pool.query(`UPDATE agent_strategies 
                SET status = $1, paper_trading_score = $2, promoted_at = NOW()
@@ -396,7 +397,7 @@ class AutonomousTradingAgent extends EventEmitter {
                             await automatedTradingService.registerStrategy(session.userId, {
                                 id: row.id,
                                 name: row.strategy_name,
-                                type: 'autonomous_ai', // Mark as AI-generated strategy
+                                type: 'MOMENTUM', // Use recognized strategy type instead of 'autonomous_ai'
                                 symbol: session.config.preferredPairs[0],
                                 parameters: strategyData,
                                 accountId: null // Will use user's default account
