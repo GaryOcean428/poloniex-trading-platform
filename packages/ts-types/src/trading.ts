@@ -24,7 +24,7 @@ export const TradeSignalSchema = z.object({
   timestamp: z.number(),
   confidence: z.number().min(0).max(1),
   strategy: z.string(),
-  metadata: z.record(z.any()).optional(),
+  metadata: z.record(z.unknown()).optional(),
 });
 
 export type TradeSignal = z.infer<typeof TradeSignalSchema>;
@@ -181,7 +181,7 @@ export type User = z.infer<typeof UserSchema>;
 export const WebSocketMessageSchema = z.object({
   type: z.enum(['market', 'trade', 'order', 'position', 'alert', 'system']),
   action: z.enum(['update', 'create', 'delete', 'error']),
-  data: z.any(),
+  data: z.unknown(),
   timestamp: z.number(),
   sequenceId: z.number(),
 });
@@ -192,7 +192,7 @@ export type WebSocketMessage = z.infer<typeof WebSocketMessageSchema>;
 export const ApiErrorSchema = z.object({
   code: z.string(),
   message: z.string(),
-  details: z.record(z.any()).optional(),
+  details: z.record(z.unknown()).optional(),
   statusCode: z.number(),
 });
 
@@ -200,7 +200,7 @@ export type ApiError = z.infer<typeof ApiErrorSchema>;
 
 export const ApiResponseSchema = z.object({
   success: z.boolean(),
-  data: z.any().optional(),
+  data: z.unknown().optional(),
   error: ApiErrorSchema.optional(),
   timestamp: z.number(),
   requestId: z.string(),
