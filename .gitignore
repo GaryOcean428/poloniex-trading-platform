@@ -204,3 +204,23 @@ codeql-dbs/
 # Build output
 frontend/dist/
 # backend/dist/ - temporarily committing for Railway deployment
+
+# Monorepo specific
+apps/*/dist/
+apps/*/.turbo
+packages/*/dist/
+packages/*/.turbo
+.turbo
+generated/
+!generated/.gitkeep
+
+# Python specific
+kernels/core/.venv/
+kernels/core/dist/
+kernels/core/build/
+kernels/core/*.egg-info/
+uv.lock
+
+# Docker volumes
+postgres_data/
+redis_data/
