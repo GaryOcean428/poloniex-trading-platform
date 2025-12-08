@@ -41,6 +41,7 @@ import testBalanceRoutes from './routes/test-balance.js';
 import { logger } from './utils/logger.js';
 import { persistentTradingEngine } from './services/persistentTradingEngine.js';
 import { agentScheduler } from './services/agentScheduler.js';
+import automatedTradingService from './services/automatedTradingService.js';
 // Import environment configuration (dotenv.config() is called inside env.ts)
 import { env } from './config/env.js';
 import { securityHeaders, rateLimiter, authRateLimiter, createCorsOptions, securityLogger, sanitizeRequest } from './config/security.js';
@@ -324,6 +325,10 @@ server.listen(PORT, '::', () => {
     logger.info(`Server running on port ${PORT}`);
     logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
     logger.info(`Socket.IO server initialized`);
+    // Initialize and start automated trading service
+    automatedTradingService.initialize().catch(error => {
+        logger.error('Failed to initialize automated trading service:', error);
+    });
     // Start persistent trading engine
     persistentTradingEngine.start().catch(error => {
         logger.error('Failed to start persistent trading engine:', error);
