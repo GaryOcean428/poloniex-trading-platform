@@ -239,9 +239,18 @@ Before deploying, verify:
 
 | Service | Railway Service ID | Root Directory | Config File |
 |---------|-------------------|----------------|-------------|
-| polytrade-fe | c81963d4-f110-49cf-8dc0-311d1e3dcf7e | `./frontend` | `frontend/railpack.json` |
-| polytrade-be | e473a919-acf9-458b-ade3-82119e4fabf6 | `./backend` | `backend/railpack.json` |
-| ml-worker | 86494460-6c19-4861-859b-3f4bd76cb652 | `./python-services/poloniex` | `python-services/poloniex/railpack.json` |
+| polytrade-fe | c81963d4-f110-49cf-8dc0-311d1e3dcf7e | `./apps/web` | `railpack-frontend.json` or `apps/web/railpack.json` |
+| polytrade-be | e473a919-acf9-458b-ade3-82119e4fabf6 | `./apps/api` | `railpack-backend.json` or `apps/api/railpack.json` |
+| ml-worker | 86494460-6c19-4861-859b-3f4bd76cb652 | `./kernels/core` | `railpack-ml-worker.json` or `kernels/core/railpack.json` |
+
+**⚠️ IMPORTANT: After monorepo migration, you must update the Root Directory in Railway service settings:**
+1. Go to Railway Dashboard → ml-worker service → Settings
+2. Change **Root Directory** from `python-services/poloniex` to `kernels/core`
+3. Save and redeploy
+
+Similarly for other services:
+- polytrade-fe: Change from `frontend` to `apps/web`
+- polytrade-be: Change from `backend` to `apps/api`
 
 ## Additional Resources
 
