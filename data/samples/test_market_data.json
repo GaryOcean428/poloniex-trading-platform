@@ -1,0 +1,44 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Sample Market Data",
+  "description": "Sample market data for testing and development",
+  "type": "object",
+  "properties": {
+    "symbol": {
+      "type": "string",
+      "description": "Trading pair symbol"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp"
+    },
+    "price": {
+      "type": "number",
+      "description": "Current price"
+    },
+    "volume": {
+      "type": "number",
+      "description": "24h volume"
+    },
+    "high": {
+      "type": "number",
+      "description": "24h high"
+    },
+    "low": {
+      "type": "number",
+      "description": "24h low"
+    }
+  },
+  "required": ["symbol", "timestamp", "price", "volume"],
+  "examples": [
+    {
+      "symbol": "BTC_USDT",
+      "timestamp": "2024-01-01T00:00:00Z",
+      "price": 42000.50,
+      "volume": 123456.789,
+      "high": 43000.00,
+      "low": 41000.00
+    }
+  ]
+}

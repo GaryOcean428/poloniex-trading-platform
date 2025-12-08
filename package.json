@@ -12,10 +12,12 @@
     "dev": "yarn workspace frontend dev",
     "dev:backend": "yarn workspace backend dev",
     "dev:frontend": "yarn workspace frontend dev",
+    "dev:docker": "docker-compose up",
     "build": "yarn build:backend && yarn build:frontend",
     "build:dev": "yarn build:backend && yarn workspace frontend build:dev",
     "build:backend": "yarn bundle:shared && yarn workspace backend build",
     "build:frontend": "yarn bundle:shared && yarn workspace frontend build",
+    "build:packages": "yarn workspace @poloniex-platform/ts-types build && yarn workspace @poloniex-platform/ui build && yarn workspace @poloniex-platform/database build",
     "start": "yarn workspace backend start",
     "start:frontend": "yarn workspace frontend start",
     "start:backend": "yarn workspace backend start",
@@ -42,7 +44,12 @@
     "deploy:check:frontend": "node scripts/verify-frontend-deployment.js",
     "affected": "node scripts/affected.mjs",
     "build:metrics": "node scripts/build-metrics.mjs",
-    "metrics:analyze": "node scripts/build-metrics.mjs analyze"
+    "metrics:analyze": "node scripts/build-metrics.mjs analyze",
+    "codegen:types": "node scripts/codegen/generate-types.mjs",
+    "docker:up": "docker-compose up -d",
+    "docker:down": "docker-compose down",
+    "docker:logs": "docker-compose logs -f",
+    "setup:data": "node scripts/setup-data.mjs"
   },
   "engines": {
     "node": ">=20.0.0"

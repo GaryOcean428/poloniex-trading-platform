@@ -1,0 +1,147 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database (local development)
+  # Note: Use Neon DB branches for production/staging
+  postgres:
+    image: postgres:16-alpine
+    container_name: poloniex-db
+    environment:
+      POSTGRES_USER: poloniex
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-poloniex_dev}
+      POSTGRES_DB: poloniex_trading
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./packages/database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U poloniex"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - poloniex-network
+
+  # Python FastAPI Backend (ML Worker)
+  python-api:
+    build:
+      context: .
+      dockerfile: kernels/Dockerfile
+    container_name: poloniex-python-api
+    environment:
+      - PORT=9080
+      - PYTHONUNBUFFERED=1
+      - DATABASE_URL=postgresql://poloniex:${DB_PASSWORD:-poloniex_dev}@postgres:5432/poloniex_trading
+      - BACKEND_URL=http://api:8765
+    ports:
+      - "9080:9080"
+    volumes:
+      - ./kernels:/app/kernels
+      - ./data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - poloniex-network
+    restart: unless-stopped
+
+  # Node.js Express Backend API
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: poloniex-api
+    environment:
+      - NODE_ENV=development
+      - PORT=8765
+      - DATABASE_URL=postgresql://poloniex:${DB_PASSWORD:-poloniex_dev}@postgres:5432/poloniex_trading
+      - JWT_SECRET=${JWT_SECRET:-dev_secret_change_in_production}
+      - FRONTEND_URL=http://localhost:5675
+      - PYTHON_API_URL=http://python-api:9080
+      - CORS_ORIGIN=http://localhost:5675
+    ports:
+      - "8765:8765"
+    volumes:
+      - ./apps/api:/app/apps/api
+      - ./packages:/app/packages
+      - ./shared:/app/shared
+      - /app/apps/api/node_modules
+      - /app/node_modules
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8765/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - poloniex-network
+    restart: unless-stopped
+
+  # React + Vite Frontend
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      target: development
+    container_name: poloniex-web
+    environment:
+      - NODE_ENV=development
+      - VITE_API_URL=http://localhost:8765
+      - VITE_WS_URL=ws://localhost:8765
+      - VITE_BACKEND_URL=http://localhost:8765
+    ports:
+      - "5675:5675"
+    volumes:
+      - ./apps/web:/app/apps/web
+      - ./packages:/app/packages
+      - ./shared:/app/shared
+      - /app/apps/web/node_modules
+      - /app/node_modules
+    depends_on:
+      - api
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5675/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - poloniex-network
+    restart: unless-stopped
+
+  # Redis (optional, for caching and sessions)
+  redis:
+    image: redis:7-alpine
+    container_name: poloniex-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - poloniex-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  poloniex-network:
+    driver: bridge

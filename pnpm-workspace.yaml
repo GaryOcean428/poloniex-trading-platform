@@ -1,0 +1,18 @@
+# PNPM Workspace Configuration
+# Links Web, UI, and Config packages together for the monorepo
+
+packages:
+  # Application packages
+  - "apps/*"
+  - "apps/web"
+  - "apps/api"
+  
+  # Shared packages
+  - "packages/*"
+  - "packages/ui"
+  - "packages/ts-types"
+  - "packages/database"
+  
+  # Legacy paths (for gradual migration)
+  - "frontend"
+  - "backend"
