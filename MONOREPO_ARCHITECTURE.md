@@ -1,14 +1,21 @@
 # Monorepo Architecture Guide
 
-This document describes the hybrid monorepo architecture for the Poloniex Trading Platform, combining TypeScript/React frontend with Python computational backend and serverless database (Neon/Postgres).
+This document describes the clean hybrid monorepo architecture for the Poloniex Trading Platform, combining TypeScript/React frontend with Python computational backend and serverless database (Neon/Postgres).
 
 ## 📁 Directory Structure
 
 ```
 poloniex-trading-platform/
-├── apps/                           # Application packages (future)
-│   ├── web/                        # Next.js or Vite React App (migrate from frontend/)
-│   └── api/                        # Node.js Express backend (migrate from backend/)
+├── apps/                           # Application packages
+│   ├── web/                        # Vite + React 19 frontend application
+│   │   ├── src/
+│   │   ├── package.json            # @poloniex-platform/web
+│   │   ├── vite.config.ts
+│   │   └── tsconfig.json
+│   └── api/                        # Node.js + Express backend API
+│       ├── src/
+│       ├── package.json            # @poloniex-platform/api
+│       └── tsconfig.json
 │
 ├── packages/                       # Shared packages
 │   ├── ui/                         # Shared React UI components
@@ -56,45 +63,34 @@ poloniex-trading-platform/
 ├── generated/                      # Auto-generated files
 │   └── openapi.json               # API contract from FastAPI
 │
-├── frontend/                       # Current frontend (legacy location)
-├── backend/                        # Current backend (legacy location)
-├── python-services/               # Current Python services (legacy location)
-├── shared/                         # Current shared code (to be migrated)
+├── shared/                         # Shared utilities and types
+│   ├── types/                      # Shared type definitions
+│   └── middleware/                 # Shared middleware
 │
 ├── docker-compose.yml             # Local development orchestration
 ├── pnpm-workspace.yaml            # Workspace definition
 ├── package.json                   # Root package.json
-└── README.md                      # This file
+└── README.md                      # Main README
 ```
 
-## 🔄 Migration Strategy
+## 🎯 Clean Architecture Benefits
 
-The repository is currently in transition from the old structure to the new monorepo architecture:
+This is a **clean, production-ready monorepo** with:
+- ✅ `apps/web/` - React 19 + Vite frontend (@poloniex-platform/web)
+- ✅ `apps/api/` - Node.js + Express backend (@poloniex-platform/api)
+- ✅ `kernels/core/` - Python ML package (proprietary-core)
+- ✅ `packages/*` - Shared UI, types, and database packages
+- ✅ No legacy directories - single source of truth
+- ✅ Unified workspace with yarn workspaces
+- ✅ Type-safe contracts across the entire stack
 
-### Current State (Legacy)
-- `frontend/` - React + Vite application
-- `backend/` - Node.js + Express API
-- `python-services/poloniex/` - Python ML worker
-- `packages/ts-types/` - Shared types
+### Architecture Principles
 
-### Target State (New)
-- `apps/web/` - React + Vite (migrated from frontend/)
-- `apps/api/` - Node.js API (migrated from backend/)
-- `kernels/core/` - Python kernels (migrated from python-services/)
-- `packages/*` - Enhanced shared packages
-
-### Migration Path
-1. ✅ Create new directory structure
-2. ✅ Setup workspace configuration (pnpm-workspace.yaml)
-3. ✅ Create shared tooling (tsconfig.base.json, ESLint, Prettier)
-4. ✅ Setup packages (ui, database, enhanced ts-types)
-5. ✅ Create kernels structure with installable Python package
-6. ✅ Add validation layers (Zod, Pydantic)
-7. ✅ Setup docker-compose for local development
-8. ⏳ Migrate frontend to apps/web
-9. ⏳ Migrate backend to apps/api
-10. ⏳ Update imports and references
-11. ⏳ Test and validate
+1. **Single Source of Truth** - Each component has one clear location
+2. **Type Safety** - Zod, Pydantic, and TypeScript enforce contracts
+3. **Separation of Concerns** - Apps, packages, kernels clearly separated
+4. **Scalability** - Easy to add new apps or packages
+5. **Developer Experience** - Clean imports, fast builds, clear structure
 
 ## 🔗 Shared Contracts & Type Safety
 
@@ -196,15 +192,15 @@ yarn build:packages
 
 3. **Start Development Servers**
 ```bash
-# Terminal 1: Frontend
-yarn dev:frontend
+# Terminal 1: Web Frontend
+yarn dev:web
 
-# Terminal 2: Backend
-yarn dev:backend
+# Terminal 2: API Backend
+yarn dev:api
 
 # Terminal 3: Python ML Worker
 cd kernels/core
-uvicorn main:app --reload --port 9080
+uvicorn health:app --reload --port 9080
 ```
 
 ### Type Generation
@@ -221,17 +217,17 @@ This will:
 
 ## 📦 Package Management
 
-### Yarn Workspaces (Current)
+### Yarn Workspaces
 ```bash
-yarn workspace frontend add <package>
-yarn workspace backend add <package>
+yarn workspace @poloniex-platform/web add <package>
+yarn workspace @poloniex-platform/api add <package>
 yarn workspace @poloniex-platform/ui add <package>
 ```
 
-### PNPM Workspaces (Future - Optional)
+### PNPM Workspaces (Alternative)
 ```bash
 pnpm add <package> --filter @poloniex-platform/ui
-pnpm add <package> --filter frontend
+pnpm add <package> --filter @poloniex-platform/web
 ```
 
 ### Python Dependencies (uv)
@@ -258,13 +254,13 @@ Each package extends the base config:
 
 ### Build Order
 1. Shared packages first (`packages/*`)
-2. Backend (`apps/api` or `backend/`)
-3. Frontend (`apps/web` or `frontend/`)
+2. Backend API (`apps/api`)
+3. Web Frontend (`apps/web`)
 
 ```bash
 yarn build:packages
-yarn build:backend
-yarn build:frontend
+yarn build:api
+yarn build:web
 ```
 
 ## 🔒 Environment Variables
@@ -335,22 +331,24 @@ docker-compose -f docker-compose.yml -f docker-compose.prod.yml up
 
 ## 🎯 Next Steps
 
-1. Complete migration of frontend → apps/web
-2. Complete migration of backend → apps/api
-3. Implement Turborepo or Nx for parallel builds
-4. Add Storybook for UI component documentation
-5. Setup CI/CD pipelines for monorepo
-6. Add end-to-end tests with Playwright/Cypress
+The core monorepo architecture is complete. Optional enhancements:
+
+1. Implement Turborepo or Nx for parallel builds and caching
+2. Add Storybook for UI component documentation
+3. Setup CI/CD pipelines optimized for monorepo
+4. Add end-to-end tests with Playwright/Cypress
+5. Create additional apps as needed (admin panel, mobile, etc.)
 
 ## 🤝 Contributing
 
 When adding new features:
 
-1. **Frontend Component** → Add to `packages/ui` if reusable
-2. **Type Definition** → Add to `packages/ts-types`
-3. **Database Change** → Update `packages/database/schema.ts`
-4. **Python Model** → Update `kernels/core/proprietary_core/models`
-5. **API Endpoint** → Update FastAPI, run `yarn codegen:types`
+1. **Web Component** → Add to `apps/web/src/components` or `packages/ui` if reusable
+2. **API Endpoint** → Add to `apps/api/src/`
+3. **Type Definition** → Add to `packages/ts-types`
+4. **Database Change** → Update `packages/database/schema.ts`
+5. **Python Model** → Update `kernels/core/proprietary_core/models`
+6. **After API changes** → Run `yarn codegen:types`
 
 Always maintain the validation triangle:
 ```

@@ -21,7 +21,7 @@
     "baseUrl": ".",
     "paths": {
       "@/*": [
-        "frontend/src/*"
+        "apps/web/src/*"
       ],
       "@shared/*": [
         "shared/*"
@@ -35,8 +35,8 @@
     "node_modules",
     "dist",
     "build",
-    "frontend/node_modules",
-    "backend/node_modules",
+    "apps/web/node_modules",
+    "apps/api/node_modules",
     "*.js",
     "*.jsx"
   ]

@@ -42,9 +42,8 @@ build/
 
 # Monorepo
 
-frontend/node_modules/
-backend/node_modules/
-backend/.shared-build/
+apps/*/node_modules/
+apps/*/.shared-build/
 *.tsbuildinfo
 
 # TypeScript compilation artifacts
@@ -146,10 +145,10 @@ docs/env/*.env
 docs/env/**/*.env
 
 # Generated shared copies in services
-frontend/src/shared/
-frontend/.shared-build/
-backend/src/shared/
-backend/.shared-build/
+apps/web/src/shared/
+apps/web/.shared-build/
+apps/api/src/shared/
+apps/api/.shared-build/
 
 # CodeQL databases and local tooling
 codeql-dbs/
@@ -202,10 +201,10 @@ codeql-dbs/
 *.env.*
 
 # Build output
-frontend/dist/
-# backend/dist/ - temporarily committing for Railway deployment
+# apps/api/dist/ - temporarily committing for Railway deployment
 
 # Monorepo specific
+apps/web/dist/
 apps/*/dist/
 apps/*/.turbo
 packages/*/dist/
