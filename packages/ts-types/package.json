@@ -16,6 +16,10 @@
     "./trading": {
       "types": "./dist/trading.d.ts",
       "import": "./dist/trading.js"
+    },
+    "./schemas": {
+      "types": "./dist/schemas/index.d.ts",
+      "import": "./dist/schemas/index.js"
     }
   },
   "scripts": {
