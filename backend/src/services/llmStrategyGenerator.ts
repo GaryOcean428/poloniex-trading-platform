@@ -54,7 +54,7 @@ export interface GeneratedStrategy {
 
 export class LLMStrategyGenerator {
   private client: Anthropic | null = null;
-  private model = 'claude-sonnet-4-5-20250929'; // Claude Sonnet 4.5 (full model ID)
+  private model = 'claude-3-5-sonnet-20241022'; // Claude 3.5 Sonnet (latest stable)
   private apiKey: string | undefined;
 
   constructor() {
@@ -62,7 +62,7 @@ export class LLMStrategyGenerator {
     // Don't throw error on missing API key - allow lazy initialization
     if (this.apiKey) {
       this.client = new Anthropic({ apiKey: this.apiKey });
-      logger.info('LLM Strategy Generator initialized with Claude Sonnet 4.5 (claude-sonnet-4-5-20250929)');
+      logger.info('LLM Strategy Generator initialized with Claude 3.5 Sonnet (claude-3-5-sonnet-20241022)');
     } else {
       logger.warn('ANTHROPIC_API_KEY not set - LLM strategy generation will be unavailable');
     }
