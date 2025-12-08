@@ -7,6 +7,7 @@
   "steps": {
     "install": {
       "commands": [
+        "python3 -m pip install --upgrade pip",
         "pip install uv",
         "uv pip install --system -e ."
       ]
