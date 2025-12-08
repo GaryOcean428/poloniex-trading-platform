@@ -1,4 +1,4 @@
-import { getWebSocketConfig, _getWebSocketDebugInfo, validateWebSocketUrl } from "@/config/websocket";
+import { getWebSocketConfig, getWebSocketDebugInfo, validateWebSocketUrl } from "@/config/websocket";
 import { io, Socket } from "socket.io-client";
 
 export class ConnectionManager {

@@ -49,8 +49,8 @@ export default function BacktestRunner({ strategyId, strategyName, onComplete }:
   const [config, setConfig] = useState<BacktestConfig>({
     strategyId,
     symbol: 'BTC_USDT',
-    startDate: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-    endDate: new Date().toISOString().split('T')[0],
+    startDate: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] ?? '',
+    endDate: new Date().toISOString().split('T')[0] ?? '',
     initialCapital: defaultInitialCapital,
     timeframe: '1h'
   });

@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  generateStrategy, 
-  generateStrategyVariations, 
-  _optimizeStrategy,
+import {
+  generateStrategy,
+  generateStrategyVariations,
+  optimizeStrategy,
   analyzeMarket,
   checkLLMAvailability,
   type GeneratedStrategy,

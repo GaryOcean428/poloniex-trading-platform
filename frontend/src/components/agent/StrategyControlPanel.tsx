@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { CheckCircle, XCircle, Pause, Play, AlertTriangle, _Settings, Shield } from 'lucide-react';
+import { CheckCircle, XCircle, Pause, Play, AlertTriangle, Settings, Shield } from 'lucide-react';
 import axios from 'axios';
 import { getAccessToken } from '@/utils/auth';
 
@@ -241,7 +241,7 @@ const StrategyControlPanel: React.FC<StrategyControlPanelProps> = ({ strategy, o
         )}
 
         {/* Live/Paper Trading Controls */}
-        {(strategy.status === 'live' || strategy.status === 'paper_trading') && (
+        {(strategy.status === 'live' || strategy.status === 'paper_trading' || strategy.status === 'paused') && (
           <div className="flex gap-2">
             {strategy.status !== 'paused' ? (
               <button

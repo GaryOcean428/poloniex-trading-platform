@@ -12,7 +12,7 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ||
 interface Strategy {
   id: string;
   strategy_name: string;
-  status: string;
+  status: 'generated' | 'backtested' | 'paper_trading' | 'approved' | 'live' | 'paused' | 'retired';
   backtest_score: number;
   paper_trading_score?: number;
   risk_level: 'low' | 'medium' | 'high';

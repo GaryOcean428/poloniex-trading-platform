@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { _TrendingUp, _TrendingDown, RefreshCw, AlertCircle, Activity } from 'lucide-react';
+import { TrendingUp, TrendingDown, RefreshCw, AlertCircle, Activity } from 'lucide-react';
 import { dashboardService, Position } from '../../services/dashboardService';
 
 const ActivePositionsWidget: React.FC = () => {

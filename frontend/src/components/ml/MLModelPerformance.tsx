@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { _LineChart, Line, _XAxis, _YAxis, _CartesianGrid, _Tooltip, _Legend, _ResponsiveContainer} from 'recharts';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import axios from 'axios';
 import { getAccessToken } from '@/utils/auth';
 
