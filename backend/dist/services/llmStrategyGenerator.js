@@ -3,12 +3,12 @@ import { logger } from '../utils/logger.js';
 export class LLMStrategyGenerator {
     constructor() {
         this.client = null;
-        this.model = 'claude-3-5-sonnet-20241022'; // Claude 3.5 Sonnet (latest stable)
+        this.model = 'claude-sonnet-4-5-20250929'; // Claude Sonnet 4.5 (latest)
         this.apiKey = process.env.ANTHROPIC_API_KEY;
         // Don't throw error on missing API key - allow lazy initialization
         if (this.apiKey) {
             this.client = new Anthropic({ apiKey: this.apiKey });
-            logger.info('LLM Strategy Generator initialized with Claude 3.5 Sonnet (claude-3-5-sonnet-20241022)');
+            logger.info('LLM Strategy Generator initialized with Claude Sonnet 4.5 (claude-sonnet-4-5-20250929)');
         }
         else {
             logger.warn('ANTHROPIC_API_KEY not set - LLM strategy generation will be unavailable');
@@ -36,7 +36,7 @@ export class LLMStrategyGenerator {
         try {
             logger.info(`Generating strategy for ${marketContext.symbol} using LLM...`);
             const prompt = this.buildStrategyGenerationPrompt(marketContext);
-            // Use extended thinking for complex strategy generation
+            // Use extended thinking for complex strategy generation with prompt caching
             const response = await this.client.messages.create({
                 model: this.model,
                 max_tokens: 8192, // Increased for detailed strategies
@@ -45,7 +45,13 @@ export class LLMStrategyGenerator {
                     type: 'enabled',
                     budget_tokens: 4000 // Reserve tokens for deep reasoning about strategy design
                 },
-                system: this.getSystemPrompt(),
+                system: [
+                    {
+                        type: 'text',
+                        text: this.getSystemPrompt(),
+                        cache_control: { type: 'ephemeral' } // Cache the system prompt for 5 minutes
+                    }
+                ],
                 messages: [
                     {
                         role: 'user',
@@ -98,7 +104,7 @@ export class LLMStrategyGenerator {
         try {
             logger.info(`Optimizing strategy ${strategy.name} using LLM...`);
             const prompt = this.buildOptimizationPrompt(strategy, performanceData, marketContext);
-            // Use extended thinking for strategy optimization
+            // Use extended thinking for strategy optimization with prompt caching
             const response = await this.client.messages.create({
                 model: this.model,
                 max_tokens: 8192,
@@ -107,7 +113,13 @@ export class LLMStrategyGenerator {
                     type: 'enabled',
                     budget_tokens: 4000 // Reserve tokens for analyzing performance and optimizing
                 },
-                system: this.getSystemPrompt(),
+                system: [
+                    {
+                        type: 'text',
+                        text: this.getSystemPrompt(),
+                        cache_control: { type: 'ephemeral' } // Cache the system prompt for 5 minutes
+                    }
+                ],
                 messages: [
                     {
                         role: 'user',

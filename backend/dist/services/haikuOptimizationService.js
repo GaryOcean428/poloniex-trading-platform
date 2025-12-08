@@ -3,11 +3,11 @@ import { logger } from '../utils/logger.js';
 export class HaikuOptimizationService {
     constructor() {
         this.client = null;
-        this.model = 'claude-3-5-haiku-20241022'; // Claude 3.5 Haiku (latest stable)
+        this.model = 'claude-haiku-4-5-20251001'; // Claude Haiku 4.5 (latest)
         this.apiKey = process.env.ANTHROPIC_API_KEY;
         if (this.apiKey) {
             this.client = new Anthropic({ apiKey: this.apiKey });
-            logger.info('Haiku Optimization Service initialized with Claude 3.5 Haiku');
+            logger.info('Haiku Optimization Service initialized with Claude Haiku 4.5 (claude-haiku-4-5-20251001)');
         }
         else {
             logger.warn('ANTHROPIC_API_KEY not set - Haiku optimization will be unavailable');

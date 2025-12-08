@@ -185,21 +185,35 @@ ANTHROPIC_API_KEY: optional string
 'claude-haiku-4-5-20251001'   // Future date, doesn't exist
 ```
 
-**After:**
+**After (Updated to Claude 4.5):**
 ```typescript
-'claude-3-5-sonnet-20241022'  // Latest stable Claude 3.5 Sonnet
-'claude-3-5-haiku-20241022'   // Latest stable Claude 3.5 Haiku
+'claude-sonnet-4-5-20250929'  // Claude Sonnet 4.5 (latest, September 2025)
+'claude-haiku-4-5-20251001'   // Claude Haiku 4.5 (latest, October 2025)
 ```
 
 **Updated Files:**
-- `llmStrategyGenerator.ts` - Strategy generation
-- `haikuOptimizationService.ts` - Fast optimization
-- `contextAwarenessService.ts` - Context window tracking
+- `llmStrategyGenerator.ts` - Strategy generation with Claude Sonnet 4.5
+- `haikuOptimizationService.ts` - Fast optimization with Claude Haiku 4.5
+- `contextAwarenessService.ts` - Context window tracking for all Claude 4.5 models
+
+**Key Features of Claude 4.5:**
+- **Extended Thinking:** Enhanced reasoning capabilities with configurable token budgets
+- **200K Context Window:** Supports up to 200,000 tokens standard (1M in beta)
+- **Prompt Caching:** 90% cost reduction on cached prompt segments
+- **Best-in-class Coding:** Top-tier coding and agentic abilities
+- **Multilingual:** Strong support across multiple languages
+
+**Prompt Caching Implementation:**
+Added `cache_control: { type: 'ephemeral' }` to system prompts in:
+- `llmStrategyGenerator.ts` - Caches trading strategy system instructions
+- Reduces latency by up to 85% for repeated strategy generation calls
+- 5-minute cache TTL (refreshes on each hit)
 
 **Benefits:**
-- API calls will succeed instead of failing with invalid model errors
-- Using latest stable models with best performance
-- Consistent model usage across services
+- API calls use the latest Claude 4.5 models
+- Prompt caching saves costs and improves response times
+- Extended thinking provides better strategy analysis
+- Larger context window supports complex market analysis
 
 ---
 
@@ -353,9 +367,9 @@ ANTHROPIC_API_KEY: optional string
 - `backend/src/index.ts` - Added service initialization
 
 ### AI/LLM Services
-- `backend/src/services/llmStrategyGenerator.ts` - Fixed Claude model ID
-- `backend/src/services/haikuOptimizationService.ts` - Fixed Claude model ID
-- `backend/src/services/contextAwarenessService.ts` - Fixed model context windows
+- `backend/src/services/llmStrategyGenerator.ts` - Updated to Claude Sonnet 4.5 with prompt caching
+- `backend/src/services/haikuOptimizationService.ts` - Updated to Claude Haiku 4.5
+- `backend/src/services/contextAwarenessService.ts` - Updated model context windows for Claude 4.5
 
 ### Configuration
 - `backend/src/config/env.ts` - Added Zod validation
