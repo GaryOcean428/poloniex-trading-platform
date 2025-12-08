@@ -152,7 +152,7 @@ const ApiKeyManagement: React.FC = () => {
     const validation = validateSchema(apiCredentialsSchema, newCredentialForm);
     
     if (!validation.success) {
-      const firstError = Object.values(validation.errors)[0];
+      const firstError = Object.values(validation.errors)[0] ?? 'Validation failed';
       setError(firstError);
       return;
     }

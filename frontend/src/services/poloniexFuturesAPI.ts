@@ -1,6 +1,6 @@
 import {
-  _getApiBaseUrl,
-  _getBackendUrl,
+  getApiBaseUrl,
+  getBackendUrl,
 } from "@/utils/environment";
 import { getAccessToken } from "@/utils/auth";
 

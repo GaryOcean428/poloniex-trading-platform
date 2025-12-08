@@ -226,8 +226,11 @@ class AuditLogger {
     try {
       const token = localStorage.getItem('accessToken');
       if (token) {
-        const payload = JSON.parse(atob(token.split('.')[1]));
-        return payload.userId || payload.sub;
+        const parts = token.split('.');
+        if (parts.length >= 2 && parts[1]) {
+          const payload = JSON.parse(atob(parts[1]));
+          return payload.userId || payload.sub;
+        }
       }
     } catch {
       // Ignore errors

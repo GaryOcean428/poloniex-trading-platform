@@ -17,7 +17,7 @@ const MarketAnalysis: React.FC = () => {
         setLoading(true);
         const [marketData, candles] = await Promise.all([
           poloniexApi.getMarketData(selectedPair),
-          poloniexApi.getHistoricalData(selectedPair, '1h', 100)
+          poloniexApi.getHistoricalData(selectedPair, '1h', '100')
         ]);
         setLiveData({ 
           ticker: marketData, 
@@ -44,11 +44,11 @@ const MarketAnalysis: React.FC = () => {
   const priceChange = latestPrice - previousPrice;
   const priceChangePercent = previousPrice > 0 ? (priceChange / previousPrice) * 100 : 0;
   
-  const volume24h = liveData?.ticker?.volume24h ? parseFloat(liveData.ticker.volume24h) : pairData.reduce((sum, data) => sum + (data.volume || 0), 0);
-  
+  const volume24h = liveData?.ticker?.volume24h ? parseFloat(liveData.ticker.volume24h) : pairData.reduce((sum: number, data: { volume?: number }) => sum + (data.volume || 0), 0);
+
   // Calculate price ranges
-  const high24h = liveData?.ticker?.high24h ? parseFloat(liveData.ticker.high24h) : (pairData.length > 0 ? Math.max(...pairData.map(data => data.high)) : 0);
-  const low24h = liveData?.ticker?.low24h ? parseFloat(liveData.ticker.low24h) : (pairData.length > 0 ? Math.min(...pairData.map(data => data.low)) : 0);
+  const high24h = liveData?.ticker?.high24h ? parseFloat(liveData.ticker.high24h) : (pairData.length > 0 ? Math.max(...pairData.map((data: { high: number }) => data.high)) : 0);
+  const low24h = liveData?.ticker?.low24h ? parseFloat(liveData.ticker.low24h) : (pairData.length > 0 ? Math.min(...pairData.map((data: { low: number }) => data.low)) : 0);
   
   return (
     <div className="space-y-6">

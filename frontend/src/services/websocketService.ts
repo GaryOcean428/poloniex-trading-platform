@@ -4,8 +4,8 @@ import {
   WebSocketServiceInterface,
 } from "@/types/websocketTypes";
 import {
-  _getPoloniexApiKey,
-  _getPoloniexApiSecret,
+  getPoloniexApiKey,
+  getPoloniexApiSecret,
   shouldUseMockMode,
 } from "@/utils/environment";
 import React from "react";

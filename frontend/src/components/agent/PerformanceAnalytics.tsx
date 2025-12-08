@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { BarChart3, TrendingUp, PieChart, _Calendar, _DollarSign, _Percent, Target } from 'lucide-react';
+import { BarChart3, TrendingUp, PieChart, Calendar, DollarSign, Percent, Target } from 'lucide-react';
 import axios from 'axios';
 import { getAccessToken } from '@/utils/auth';
 

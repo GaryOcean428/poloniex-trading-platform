@@ -104,14 +104,8 @@ const Sidebar: React.FC = () => {
               <div className="text-2xl font-bold">
                 {isLoading ? (
                   <div className="animate-pulse bg-neutral-700 h-8 w-32 rounded"></div>
-                ) : accountBalance ? (
-                  typeof accountBalance.total === 'number' ? (
-                    `$${accountBalance.total.toFixed(2)}`
-                  ) : typeof accountBalance.totalAmount === 'string' ? (
-                    `$${parseFloat(accountBalance.totalAmount).toFixed(2)}`
-                  ) : (
-                    <span className="text-neutral-500 text-base">$0.00</span>
-                  )
+                ) : accountBalance && typeof accountBalance.total === 'number' ? (
+                  `$${accountBalance.total.toFixed(2)}`
                 ) : (
                   <span className="text-neutral-500 text-base">$0.00</span>
                 )}

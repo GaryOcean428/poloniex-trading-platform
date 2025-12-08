@@ -60,7 +60,14 @@ class PoloniexApiClient {
   private static instance: PoloniexApiClient;
   private mockMode: boolean = false;  // Production default: use real API
   private lastBalanceUpdate: number = 0;
-  private cachedBalance = null;
+  private cachedBalance: {
+    totalAmount: string;
+    availableAmount: string;
+    accountEquity: string;
+    unrealizedPnL: string;
+    todayPnL: string;
+    todayPnLPercentage: string;
+  } | null = null;
   private historicalData: Map<string, MarketData[]> = new Map();
   private rateLimitQueue: Map<string, number[]> = new Map();
 

@@ -31,6 +31,7 @@ const LiveTradingDashboard: React.FC<LiveTradingDashboardProps> = ({ strategies 
     const [confidenceMetrics, setConfidenceMetrics] = useState<ConfidenceMetrics | null>(null);
     const [isStarting, setIsStarting] = useState(false);
     const [showRiskSettings, setShowRiskSettings] = useState(false);
+    const [error, setError] = useState<string | null>(null);
     const [riskLimits, setRiskLimits] = useState<RiskLimits>({
         maxDrawdownPercent: 0.15, // 15% max drawdown
         maxDailyLossPercent: 0.05, // 5% max daily loss

@@ -122,7 +122,7 @@ const Account: React.FC = () => {
       id: b.billId,
       type: t,
       description: `${b.symbol || b.currency || ''} ${b.type}`.trim(),
-      amount: parseFloat(b.amount || '0'),
+      amount: parseFloat(String(b.amount ?? '0')),
       status: 'COMPLETED' as const,
       timestamp: typeof b.ts === 'number' ? b.ts : Date.now(),
     };

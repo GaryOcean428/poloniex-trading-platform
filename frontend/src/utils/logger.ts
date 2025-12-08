@@ -82,37 +82,47 @@ export class Logger {
     }
   }
 
-  public debug(message: string, context?: string, data?: unknown): void {
+  public debug(message: string, contextOrData?: string | object, data?: unknown): void {
     if (this.shouldLog('DEBUG')) {
-      const entry = this.createLogEntry('DEBUG', message, context, undefined, data);
+      const context = typeof contextOrData === 'string' ? contextOrData : undefined;
+      const logData = typeof contextOrData === 'object' ? contextOrData : data;
+      const entry = this.createLogEntry('DEBUG', message, context, undefined, logData);
       this.logToConsole(entry);
     }
   }
 
-  public info(message: string, context?: string, data?: unknown): void {
+  public info(message: string, contextOrData?: string | object, data?: unknown): void {
     if (this.shouldLog('INFO')) {
-      const entry = this.createLogEntry('INFO', message, context, undefined, data);
+      const context = typeof contextOrData === 'string' ? contextOrData : undefined;
+      const logData = typeof contextOrData === 'object' ? contextOrData : data;
+      const entry = this.createLogEntry('INFO', message, context, undefined, logData);
       this.logToConsole(entry);
     }
   }
 
-  public warn(message: string, context?: string, error?: Error, data?: unknown): void {
+  public warn(message: string, contextOrData?: string | object, error?: Error, data?: unknown): void {
     if (this.shouldLog('WARN')) {
-      const entry = this.createLogEntry('WARN', message, context, error, data);
+      const context = typeof contextOrData === 'string' ? contextOrData : undefined;
+      const logData = typeof contextOrData === 'object' ? contextOrData : data;
+      const entry = this.createLogEntry('WARN', message, context, error, logData);
       this.logToConsole(entry);
     }
   }
 
-  public error(message: string, context?: string, error?: Error, data?: unknown): void {
+  public error(message: string, contextOrData?: string | object, error?: Error, data?: unknown): void {
     if (this.shouldLog('ERROR')) {
-      const entry = this.createLogEntry('ERROR', message, context, error, data);
+      const context = typeof contextOrData === 'string' ? contextOrData : undefined;
+      const logData = typeof contextOrData === 'object' ? contextOrData : data;
+      const entry = this.createLogEntry('ERROR', message, context, error, logData);
       this.logToConsole(entry);
     }
   }
 
-  public fatal(message: string, context?: string, error?: Error, data?: unknown): void {
+  public fatal(message: string, contextOrData?: string | object, error?: Error, data?: unknown): void {
     if (this.shouldLog('FATAL')) {
-      const entry = this.createLogEntry('FATAL', message, context, error, data);
+      const context = typeof contextOrData === 'string' ? contextOrData : undefined;
+      const logData = typeof contextOrData === 'object' ? contextOrData : data;
+      const entry = this.createLogEntry('FATAL', message, context, error, logData);
       this.logToConsole(entry);
     }
   }
