@@ -1,6 +1,7 @@
 {
   "$schema": "https://schema.railpack.com",
   "build": {
+    "installCommand": "uv sync --no-dev --no-install-project",
     "buildCommand": "uv sync --no-dev"
   },
   "deploy": {
