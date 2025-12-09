@@ -3,8 +3,7 @@
   "provider": "node",
   "packages": {
     "node": "20",
-    "yarn": "4.9.2",
-    "caddy": "latest"
+    "yarn": "4.9.2"
   },
   "steps": {
     "install": {
@@ -17,10 +16,7 @@
     },
     "build": {
       "commands": [
-        "yarn workspace @poloniex-platform/web run build",
-        "echo '=== Verifying build output ==='",
-        "ls -la apps/web/dist/",
-        "ls -la apps/web/dist/assets/"
+        "yarn workspace @poloniex-platform/web run build"
       ],
       "inputs": [{"step": "install"}]
     }
