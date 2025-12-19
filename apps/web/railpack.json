@@ -3,7 +3,8 @@
   "provider": "node",
   "packages": {
     "node": "20",
-    "yarn": "4.9.2"
+    "yarn": "4.9.2",
+    "caddy": null
   },
   "steps": {
     "install": {
