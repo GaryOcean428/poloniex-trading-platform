@@ -22,7 +22,7 @@
     }
   },
   "deploy": {
-    "startCommand": "caddy run --config apps/web/Caddyfile --adapter caddyfile",
+    "startCommand": "node apps/web/serve.js",
     "inputs": [{"step": "build"}]
   }
 }
