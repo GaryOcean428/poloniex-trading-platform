@@ -174,12 +174,46 @@ export const RATE_LIMITS = {
 } as const;
 
 /**
- * Trading Mode Constants - "dry" mode support
+ * Trading Mode Constants
+ * 
+ * Defines the different execution modes for trading operations:
+ * 
+ * - **LIVE**: Real trading with actual funds and live market execution
+ *   - Orders are placed on the exchange
+ *   - Real money is at risk
+ *   - Requires valid API credentials
+ * 
+ * - **PAPER**: Simulated trading with virtual funds
+ *   - Orders are simulated but track real market prices
+ *   - No real money is used
+ *   - Useful for strategy testing with realistic market conditions
+ *   - Maintains a virtual portfolio
+ * 
+ * - **DRY**: Dry run mode - validation without execution
+ *   - Validates strategy logic and parameters
+ *   - Checks API connectivity and authentication
+ *   - No orders are placed (neither real nor simulated)
+ *   - Used for testing integrations and configurations
+ *   - Similar to "test mode" or "validation mode"
+ * 
+ * - **BACKTEST**: Historical data simulation
+ *   - Tests strategies against historical market data
+ *   - Uses past price data to simulate trades
+ *   - No real-time market interaction
+ *   - Useful for strategy optimization and historical analysis
+ * 
+ * **Relationship between modes:**
+ * ```
+ * DRY → Validate logic, no execution
+ * BACKTEST → Test on historical data
+ * PAPER → Test on live data with virtual funds
+ * LIVE → Execute on live market with real funds
+ * ```
  */
 export const TRADING_MODES = {
   LIVE: 'live',
   PAPER: 'paper',
-  DRY: 'dry', // dry run - no actual execution
+  DRY: 'dry',
   BACKTEST: 'backtest',
 } as const;
 
