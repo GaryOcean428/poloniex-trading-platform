@@ -243,6 +243,9 @@ export interface OrderBook {
 // Re-export strategy types from strategy module
 export * from './strategy.js';
 
+// Re-export shared constants
+export * from '../constants.js';
+
 // Legacy interface for backward compatibility
 export interface LegacyStrategyParameters {
   [key: string]: number | string | boolean;
