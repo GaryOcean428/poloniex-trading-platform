@@ -10,7 +10,7 @@ export { default as credentialsRoutes } from './credentials.js';
 
 // Trading Routes
 export { default as futuresRoutes } from './futures.js';
-export { default as futuresRoutesNew } from './futures.ts';
+export { default as futuresRoutesNew } from './futures';
 export { default as spotTradingRoutes } from './spotTrading.js';
 export { default as backtestingRoutes } from './backtesting.js';
 export { default as backtestRoutes } from './backtest.js';
