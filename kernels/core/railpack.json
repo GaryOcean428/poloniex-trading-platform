@@ -9,7 +9,7 @@
       "commands": [
         "python -m venv /app/.venv",
         "/app/.venv/bin/pip install --upgrade pip uv",
-        "/app/.venv/bin/uv sync --frozen --no-dev"
+        "/app/.venv/bin/uv sync --frozen --no-dev --no-install-project"
       ],
       "cache": {
         "paths": ["/app/.venv"]
