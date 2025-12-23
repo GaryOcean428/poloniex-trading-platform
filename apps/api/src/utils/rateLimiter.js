@@ -151,7 +151,6 @@ class RateLimiter {
     
     // Account endpoints (both spot and futures)
     if (endpoint.includes('/account') || 
-        endpoint.includes('/accounts') || 
         endpoint.includes('/wallets') || 
         endpoint.includes('/margin') ||
         endpoint.includes('/subaccounts') ||
