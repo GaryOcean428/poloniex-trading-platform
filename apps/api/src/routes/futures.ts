@@ -413,4 +413,172 @@ router.post('/leverage', authenticateToken, async (req: Request, res: Response) 
   }
 });
 
+/**
+ * POST /api/futures/position/close - Close position at market price
+ */
+router.post('/position/close', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const credentials = await apiCredentialsService.getCredentials(String(req.user.id));
+    
+    if (!credentials) {
+      return res.status(400).json({
+        error: 'No API credentials found. Please add your Poloniex API keys first.',
+        requiresApiKeys: true
+      });
+    }
+
+    const { symbol, type } = req.body;
+
+    if (!symbol || !type) {
+      return res.status(400).json({
+        error: 'Symbol and type (close_long or close_short) are required'
+      });
+    }
+
+    if (type !== 'close_long' && type !== 'close_short') {
+      return res.status(400).json({
+        error: 'Type must be either close_long or close_short'
+      });
+    }
+
+    const result = await poloniexFuturesService.closePosition(credentials, symbol, type);
+    res.json(result);
+  } catch (error: any) {
+    logger.error('Error closing position:', error);
+    res.status(error.response?.status || 500).json({
+      error: 'Failed to close position',
+      details: error.response?.data || error.message
+    });
+  }
+});
+
+/**
+ * POST /api/futures/positions/close-all - Close all positions at market price
+ */
+router.post('/positions/close-all', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const credentials = await apiCredentialsService.getCredentials(String(req.user.id));
+    
+    if (!credentials) {
+      return res.status(400).json({
+        error: 'No API credentials found. Please add your Poloniex API keys first.',
+        requiresApiKeys: true
+      });
+    }
+
+    const result = await poloniexFuturesService.closeAllPositions(credentials);
+    res.json(result);
+  } catch (error: any) {
+    logger.error('Error closing all positions:', error);
+    res.status(error.response?.status || 500).json({
+      error: 'Failed to close all positions',
+      details: error.response?.data || error.message
+    });
+  }
+});
+
+/**
+ * GET /api/futures/position-mode/:symbol - Get position mode
+ */
+router.get('/position-mode/:symbol', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const credentials = await apiCredentialsService.getCredentials(String(req.user.id));
+    
+    if (!credentials) {
+      return res.status(400).json({
+        error: 'No API credentials found. Please add your Poloniex API keys first.',
+        requiresApiKeys: true
+      });
+    }
+
+    const { symbol } = req.params;
+    const mode = await poloniexFuturesService.getPositionMode(credentials, symbol);
+    res.json(mode);
+  } catch (error: any) {
+    logger.error('Error fetching position mode:', error);
+    res.status(error.response?.status || 500).json({
+      error: 'Failed to fetch position mode',
+      details: error.response?.data || error.message
+    });
+  }
+});
+
+/**
+ * POST /api/futures/position-mode - Switch position mode
+ */
+router.post('/position-mode', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const credentials = await apiCredentialsService.getCredentials(String(req.user.id));
+    
+    if (!credentials) {
+      return res.status(400).json({
+        error: 'No API credentials found. Please add your Poloniex API keys first.',
+        requiresApiKeys: true
+      });
+    }
+
+    const { symbol, mode } = req.body;
+
+    if (!symbol || !mode) {
+      return res.status(400).json({
+        error: 'Symbol and mode are required'
+      });
+    }
+
+    if (mode !== 'ISOLATED' && mode !== 'CROSS') {
+      return res.status(400).json({
+        error: 'Mode must be either ISOLATED or CROSS'
+      });
+    }
+
+    const result = await poloniexFuturesService.switchPositionMode(credentials, symbol, mode);
+    res.json(result);
+  } catch (error: any) {
+    logger.error('Error switching position mode:', error);
+    res.status(error.response?.status || 500).json({
+      error: 'Failed to switch position mode',
+      details: error.response?.data || error.message
+    });
+  }
+});
+
+/**
+ * POST /api/futures/position/margin - Adjust margin for isolated margin position
+ */
+router.post('/position/margin', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const credentials = await apiCredentialsService.getCredentials(String(req.user.id));
+    
+    if (!credentials) {
+      return res.status(400).json({
+        error: 'No API credentials found. Please add your Poloniex API keys first.',
+        requiresApiKeys: true
+      });
+    }
+
+    const { symbol, amount, type } = req.body;
+
+    if (!symbol || !amount || !type) {
+      return res.status(400).json({
+        error: 'Symbol, amount, and type (ADD or REDUCE) are required'
+      });
+    }
+
+    if (type !== 'ADD' && type !== 'REDUCE') {
+      return res.status(400).json({
+        error: 'Type must be either ADD or REDUCE'
+      });
+    }
+
+    const result = await poloniexFuturesService.adjustMargin(credentials, symbol, amount, type);
+    res.json(result);
+  } catch (error: any) {
+    logger.error('Error adjusting margin:', error);
+    res.status(error.response?.status || 500).json({
+      error: 'Failed to adjust margin',
+      details: error.response?.data || error.message
+    });
+  }
+});
+
 export default router;
