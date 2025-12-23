@@ -581,4 +581,201 @@ router.post('/position/margin', authenticateToken, async (req: Request, res: Res
   }
 });
 
+/**
+ * GET /api/futures/mark-price/:symbol - Get mark price for symbol
+ */
+router.get('/mark-price/:symbol', async (req: Request, res: Response) => {
+  try {
+    const { symbol } = req.params;
+    const markPrice = await poloniexFuturesService.getMarkPriceV2(symbol);
+    res.json(markPrice);
+  } catch (error: any) {
+    logger.error(`Error fetching mark price for ${req.params.symbol}:`, error);
+    res.status(500).json({
+      error: 'Failed to fetch mark price',
+      details: error.response?.data || error.message
+    });
+  }
+});
+
+/**
+ * GET /api/futures/index-price/:symbol - Get index price for symbol
+ */
+router.get('/index-price/:symbol', async (req: Request, res: Response) => {
+  try {
+    const { symbol } = req.params;
+    const indexPrice = await poloniexFuturesService.getIndexPriceV2(symbol);
+    res.json(indexPrice);
+  } catch (error: any) {
+    logger.error(`Error fetching index price for ${req.params.symbol}:`, error);
+    res.status(500).json({
+      error: 'Failed to fetch index price',
+      details: error.response?.data || error.message
+    });
+  }
+});
+
+/**
+ * GET /api/futures/index-price-components/:symbol - Get index price components
+ */
+router.get('/index-price-components/:symbol', async (req: Request, res: Response) => {
+  try {
+    const { symbol } = req.params;
+    const components = await poloniexFuturesService.getIndexPriceComponents(symbol);
+    res.json(components);
+  } catch (error: any) {
+    logger.error(`Error fetching index price components for ${req.params.symbol}:`, error);
+    res.status(500).json({
+      error: 'Failed to fetch index price components',
+      details: error.response?.data || error.message
+    });
+  }
+});
+
+/**
+ * GET /api/futures/funding-rate/:symbol - Get current funding rate
+ */
+router.get('/funding-rate/:symbol', async (req: Request, res: Response) => {
+  try {
+    const { symbol } = req.params;
+    const fundingRate = await poloniexFuturesService.getCurrentFundingRate(symbol);
+    res.json(fundingRate);
+  } catch (error: any) {
+    logger.error(`Error fetching funding rate for ${req.params.symbol}:`, error);
+    res.status(500).json({
+      error: 'Failed to fetch funding rate',
+      details: error.response?.data || error.message
+    });
+  }
+});
+
+/**
+ * GET /api/futures/funding-rate-history/:symbol - Get historical funding rates
+ */
+router.get('/funding-rate-history/:symbol', async (req: Request, res: Response) => {
+  try {
+    const { symbol } = req.params;
+    const params = req.query;
+    const history = await poloniexFuturesService.getHistoricalFundingRates(symbol, params);
+    res.json(history);
+  } catch (error: any) {
+    logger.error(`Error fetching funding rate history for ${req.params.symbol}:`, error);
+    res.status(500).json({
+      error: 'Failed to fetch funding rate history',
+      details: error.response?.data || error.message
+    });
+  }
+});
+
+/**
+ * GET /api/futures/open-interest/:symbol - Get open interest
+ */
+router.get('/open-interest/:symbol', async (req: Request, res: Response) => {
+  try {
+    const { symbol } = req.params;
+    const openInterest = await poloniexFuturesService.getCurrentOpenInterest(symbol);
+    res.json(openInterest);
+  } catch (error: any) {
+    logger.error(`Error fetching open interest for ${req.params.symbol}:`, error);
+    res.status(500).json({
+      error: 'Failed to fetch open interest',
+      details: error.response?.data || error.message
+    });
+  }
+});
+
+/**
+ * GET /api/futures/risk-limit/:symbol - Get risk limit information
+ */
+router.get('/risk-limit/:symbol', async (req: Request, res: Response) => {
+  try {
+    const { symbol } = req.params;
+    const riskLimit = await poloniexFuturesService.getRiskLimit(symbol);
+    res.json(riskLimit);
+  } catch (error: any) {
+    logger.error(`Error fetching risk limit for ${req.params.symbol}:`, error);
+    res.status(500).json({
+      error: 'Failed to fetch risk limit',
+      details: error.response?.data || error.message
+    });
+  }
+});
+
+/**
+ * GET /api/futures/user-risk-limit/:symbol - Get user position risk limit
+ */
+router.get('/user-risk-limit/:symbol', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const credentials = await apiCredentialsService.getCredentials(String(req.user.id));
+    
+    if (!credentials) {
+      return res.status(400).json({
+        error: 'No API credentials found. Please add your Poloniex API keys first.',
+        requiresApiKeys: true
+      });
+    }
+
+    const { symbol } = req.params;
+    const userRiskLimit = await poloniexFuturesService.getUserRiskLimit(credentials, symbol);
+    res.json(userRiskLimit);
+  } catch (error: any) {
+    logger.error(`Error fetching user risk limit for ${req.params.symbol}:`, error);
+    res.status(error.response?.status || 500).json({
+      error: 'Failed to fetch user risk limit',
+      details: error.response?.data || error.message
+    });
+  }
+});
+
+/**
+ * GET /api/futures/insurance-fund - Get insurance fund information
+ */
+router.get('/insurance-fund', async (req: Request, res: Response) => {
+  try {
+    const insuranceFund = await poloniexFuturesService.getInsuranceFund();
+    res.json(insuranceFund);
+  } catch (error: any) {
+    logger.error('Error fetching insurance fund:', error);
+    res.status(500).json({
+      error: 'Failed to fetch insurance fund information',
+      details: error.response?.data || error.message
+    });
+  }
+});
+
+/**
+ * GET /api/futures/market-info - Get market information
+ * Query params: ?symbol=BTC_USDT_PERP (optional)
+ */
+router.get('/market-info', async (req: Request, res: Response) => {
+  try {
+    const { symbol } = req.query;
+    const marketInfo = await poloniexFuturesService.getMarketInfo(symbol as string | undefined);
+    res.json(marketInfo);
+  } catch (error: any) {
+    logger.error('Error fetching market info:', error);
+    res.status(500).json({
+      error: 'Failed to fetch market information',
+      details: error.response?.data || error.message
+    });
+  }
+});
+
+/**
+ * GET /api/futures/limit-price/:symbol - Get market limit price
+ */
+router.get('/limit-price/:symbol', async (req: Request, res: Response) => {
+  try {
+    const { symbol } = req.params;
+    const limitPrice = await poloniexFuturesService.getMarketLimitPrice(symbol);
+    res.json(limitPrice);
+  } catch (error: any) {
+    logger.error(`Error fetching limit price for ${req.params.symbol}:`, error);
+    res.status(500).json({
+      error: 'Failed to fetch limit price',
+      details: error.response?.data || error.message
+    });
+  }
+});
+
 export default router;

@@ -249,6 +249,19 @@ class PoloniexFuturesService {
     return this.makeRequest(credentials, 'POST', '/trade/position/margin', body);
   }
 
+  /**
+   * Get user position risk limit
+   * Endpoint: GET /v3/position/risk-limit
+   * 
+   * @param {Object} credentials - API credentials
+   * @param {string} symbol - Trading symbol
+   * @returns {Promise<Object>} Risk limit information
+   */
+  async getUserRiskLimit(credentials, symbol) {
+    const params = { symbol };
+    return this.makeRequest(credentials, 'GET', '/position/risk-limit', null, params);
+  }
+
   // =================== MARKET DATA ===================
 
   /**
@@ -876,6 +889,70 @@ class PoloniexFuturesService {
    */
   async getInsuranceFund() {
     return this.makePublicRequest('GET', '/market/insurance');
+  }
+
+  /**
+   * Get index price components
+   * Endpoint: GET /v3/market/indexPriceComponents
+   * 
+   * @param {string} symbol - Trading symbol
+   * @returns {Promise<Object>} Index price components with exchange weights
+   */
+  async getIndexPriceComponents(symbol) {
+    const params = { symbol };
+    return this.makePublicRequest('GET', '/market/indexPriceComponents', params);
+  }
+
+  /**
+   * Get index price K-line data
+   * Endpoint: GET /v3/market/indexPriceCandlesticks
+   * 
+   * @param {string} symbol - Trading symbol
+   * @param {string} granularity - Time granularity (e.g., 'MINUTE_1', 'HOUR_1', 'DAY_1')
+   * @param {Object} [params] - Additional parameters (from, to, limit)
+   * @returns {Promise<Array>} Index price candlestick data
+   */
+  async getIndexPriceKlines(symbol, granularity, params = {}) {
+    const queryParams = { symbol, granularity, ...params };
+    return this.makePublicRequest('GET', '/market/indexPriceCandlesticks', queryParams);
+  }
+
+  /**
+   * Get premium index K-line data
+   * Endpoint: GET /v3/market/premiumIndexCandlesticks
+   * 
+   * @param {string} symbol - Trading symbol
+   * @param {string} granularity - Time granularity
+   * @param {Object} [params] - Additional parameters (from, to, limit)
+   * @returns {Promise<Array>} Premium index candlestick data
+   */
+  async getPremiumIndexKlines(symbol, granularity, params = {}) {
+    const queryParams = { symbol, granularity, ...params };
+    return this.makePublicRequest('GET', '/market/premiumIndexCandlesticks', queryParams);
+  }
+
+  /**
+   * Get market info
+   * Endpoint: GET /v3/market/info
+   * 
+   * @param {string} [symbol] - Trading symbol (optional, returns all if not provided)
+   * @returns {Promise<Object>} Market information including status, tick size, lot size, etc.
+   */
+  async getMarketInfo(symbol = null) {
+    const params = symbol ? { symbol } : {};
+    return this.makePublicRequest('GET', '/market/info', params);
+  }
+
+  /**
+   * Get market limit price
+   * Endpoint: GET /v3/market/limitPrice
+   * 
+   * @param {string} symbol - Trading symbol
+   * @returns {Promise<Object>} Current limit price range for the symbol
+   */
+  async getMarketLimitPrice(symbol) {
+    const params = { symbol };
+    return this.makePublicRequest('GET', '/market/limitPrice', params);
   }
 
   // =================== DATABASE INTEGRATION ===================
