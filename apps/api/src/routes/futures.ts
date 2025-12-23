@@ -587,7 +587,7 @@ router.post('/position/margin', authenticateToken, async (req: Request, res: Res
 router.get('/mark-price/:symbol', async (req: Request, res: Response) => {
   try {
     const { symbol } = req.params;
-    const markPrice = await poloniexFuturesService.getMarkPriceV2(symbol);
+    const markPrice = await poloniexFuturesService.getMarkPrice(symbol);
     res.json(markPrice);
   } catch (error: any) {
     logger.error(`Error fetching mark price for ${req.params.symbol}:`, error);
@@ -604,7 +604,7 @@ router.get('/mark-price/:symbol', async (req: Request, res: Response) => {
 router.get('/index-price/:symbol', async (req: Request, res: Response) => {
   try {
     const { symbol } = req.params;
-    const indexPrice = await poloniexFuturesService.getIndexPriceV2(symbol);
+    const indexPrice = await poloniexFuturesService.getIndexPrice(symbol);
     res.json(indexPrice);
   } catch (error: any) {
     logger.error(`Error fetching index price for ${req.params.symbol}:`, error);
@@ -638,7 +638,7 @@ router.get('/index-price-components/:symbol', async (req: Request, res: Response
 router.get('/funding-rate/:symbol', async (req: Request, res: Response) => {
   try {
     const { symbol } = req.params;
-    const fundingRate = await poloniexFuturesService.getCurrentFundingRate(symbol);
+    const fundingRate = await poloniexFuturesService.getFundingRate(symbol);
     res.json(fundingRate);
   } catch (error: any) {
     logger.error(`Error fetching funding rate for ${req.params.symbol}:`, error);
@@ -656,7 +656,7 @@ router.get('/funding-rate-history/:symbol', async (req: Request, res: Response) 
   try {
     const { symbol } = req.params;
     const params = req.query;
-    const history = await poloniexFuturesService.getHistoricalFundingRates(symbol, params);
+    const history = await poloniexFuturesService.getFundingRateHistory(symbol, params);
     res.json(history);
   } catch (error: any) {
     logger.error(`Error fetching funding rate history for ${req.params.symbol}:`, error);
@@ -673,7 +673,7 @@ router.get('/funding-rate-history/:symbol', async (req: Request, res: Response) 
 router.get('/open-interest/:symbol', async (req: Request, res: Response) => {
   try {
     const { symbol } = req.params;
-    const openInterest = await poloniexFuturesService.getCurrentOpenInterest(symbol);
+    const openInterest = await poloniexFuturesService.getOpenInterest(symbol);
     res.json(openInterest);
   } catch (error: any) {
     logger.error(`Error fetching open interest for ${req.params.symbol}:`, error);
