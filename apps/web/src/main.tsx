@@ -19,7 +19,6 @@ window.addEventListener('unhandledrejection', (event) => {
     errorMessage.includes('message channel closed') ||
     errorMessage.includes('Extension context invalidated') ||
     errorMessage.includes('chrome.runtime') ||
-    errorMessage.includes('asynchronous response') ||
     errorMessage.includes('A listener indicated an asynchronous response')
   ) {
     // These are browser extension errors, not our app errors
@@ -72,7 +71,6 @@ window.addEventListener('error', (event) => {
     errorMessage.includes('message channel closed') ||
     errorMessage.includes('Extension context invalidated') ||
     errorMessage.includes('chrome.runtime') ||
-    errorMessage.includes('asynchronous response') ||
     errorMessage.includes('A listener indicated an asynchronous response')
   ) {
     event.preventDefault();
