@@ -1915,10 +1915,7 @@ __metadata:
     "@types/node": "npm:^24.2.1"
     "@types/node-cron": "npm:^3.0.11"
     "@types/pg": "npm:^8.15.5"
-    "@types/redis": "npm:^4.0.11"
     "@types/seedrandom": "npm:^3.0.8"
-    "@types/socket.io": "npm:^3.0.2"
-    "@types/socket.io-client": "npm:^3.0.0"
     "@types/ws": "npm:^8.18.1"
     "@typescript-eslint/parser": "npm:^8.39.1"
     axios: "npm:^1.11.0"
@@ -3152,15 +3149,6 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@types/redis@npm:^4.0.11":
-  version: 4.0.11
-  resolution: "@types/redis@npm:4.0.11"
-  dependencies:
-    redis: "npm:*"
-  checksum: 10c0/a543607ce2fdb8bf0352bbe5f38ae0b48a48737c497e77d9a28240c8d440c1646b191d4e09f9eb2f93753f2a2b66bb8e7009e7ececc1a29e97bbc88beea542f4
-  languageName: node
-  linkType: hard
-
 "@types/seedrandom@npm:^2.4.28":
   version: 2.4.34
   resolution: "@types/seedrandom@npm:2.4.34"
@@ -3200,15 +3188,6 @@ __metadata:
   dependencies:
     socket.io-client: "npm:*"
   checksum: 10c0/e9f6eedb5bb4621e73163fa5595eca789bc2e67e47a4bd907dbe8f5a9dcfbea35b1c4c05ede81f07d2b35487663bc41868af51208b979240d7dc5ec8d2ade63a
-  languageName: node
-  linkType: hard
-
-"@types/socket.io@npm:^3.0.2":
-  version: 3.0.2
-  resolution: "@types/socket.io@npm:3.0.2"
-  dependencies:
-    socket.io: "npm:*"
-  checksum: 10c0/581b02b3e1d9b8da726d933d373b9fa72e22440f3f71da74be98f9e0a53545918439ffcadd00e7a8a23cb98d80baf9394c9700fa55a323886ed48de6b4d45d4d
   languageName: node
   linkType: hard
 
@@ -8952,7 +8931,6 @@ __metadata:
     "@types/crypto-js": "npm:^4.2.2"
     "@types/express": "npm:^5.0.3"
     "@types/file-saver": "npm:^2.0.7"
-    "@types/jszip": "npm:^3.4.1"
     "@types/react-is": "npm:^19"
     "@types/seedrandom": "npm:^3.0.8"
     "@types/ws": "npm:^8.18.1"
@@ -9344,7 +9322,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"redis@npm:*, redis@npm:^5.10.0":
+"redis@npm:^5.10.0":
   version: 5.10.0
   resolution: "redis@npm:5.10.0"
   dependencies:
@@ -9885,7 +9863,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"socket.io@npm:*, socket.io@npm:^4.8.1":
+"socket.io@npm:^4.8.1":
   version: 4.8.1
   resolution: "socket.io@npm:4.8.1"
   dependencies:

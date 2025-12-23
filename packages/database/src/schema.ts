@@ -1,7 +1,7 @@
 // Database schema definitions using Drizzle ORM
 // This file will contain table definitions for the platform
 
-import { pgTable, serial, text, timestamp, decimal, boolean, integer } from 'drizzle-orm/pg-core';
+import { pgTable, serial, text, timestamp, decimal, integer } from 'drizzle-orm/pg-core';
 
 // Example schema - to be expanded based on actual requirements
 export const users = pgTable('users', {
