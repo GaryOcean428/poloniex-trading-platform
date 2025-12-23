@@ -2,6 +2,7 @@ import axios from 'axios';
 import crypto from 'crypto';
 import { logger } from '../utils/logger.js';
 import { query } from '../db/connection.js';
+import rateLimiter from '../utils/rateLimiter.js';
 
 /**
  * Poloniex Futures v3 API Client Service
@@ -77,90 +78,93 @@ class PoloniexFuturesService {
    * Uses proper Poloniex v3 authentication headers and endpoints
    */
   async makeRequest(credentials, method, endpoint, body = null, params = {}) {
-    try {
-      const timestamp = Date.now().toString();
-      
-      // Build the proper v3 endpoint path (without query string for signature)
-      const requestPath = `/v3${endpoint}`;
-      const url = `${this.baseURL}${requestPath}`;
-      
-      // Generate signature with params (signature includes params but not in URL path)
-      const signature = this.generateSignature(method, requestPath, params, body, timestamp, credentials.apiSecret);
-      
-      // Build query string for actual request URL
-      const queryString = Object.keys(params).length > 0
-        ? '?' + new globalThis.URLSearchParams(params).toString()
-        : '';
-      
-      const fullUrl = url + queryString;
-      
-      // Use correct Poloniex V3 Futures API headers per official documentation
-      // https://api-docs.poloniex.com/v3/futures/api/
-      // V3 API uses: key, signature, signTimestamp (NO PF- prefix, NO passphrase)
-      const headers = {
-        'Content-Type': 'application/json',
-        'key': credentials.apiKey,
-        'signature': signature,
-        'signTimestamp': timestamp,
-        'signatureMethod': 'hmacSHA256',
-        'signatureVersion': '2'
-      };
-      
-      const config = {
-        method: method.toLowerCase(),
-        url: fullUrl,
-        headers,
-        timeout: this.timeout
-      };
-      
-      if (body && (method === 'POST' || method === 'PUT' || method === 'DELETE')) {
-        config.data = body;
-      }
-      
-      if (Object.keys(params).length > 0 && method === 'GET') {
-        config.params = params;
-      }
-      
-      logger.info(`Making Poloniex v3 futures ${method} request to ${requestPath}`, {
-        url: fullUrl,
-        hasApiKey: !!credentials.apiKey,
-        apiKeyPrefix: credentials.apiKey?.substring(0, 8),
-        timestamp,
-        signaturePreview: signature.substring(0, 20) + '...',
-        headers: {
-          key: credentials.apiKey?.substring(0, 8) + '...',
-          signTimestamp: timestamp,
-          signatureMethod: headers.signatureMethod,
-          signatureVersion: headers.signatureVersion
+    // Apply rate limiting
+    return rateLimiter.execute(endpoint, async () => {
+      try {
+        const timestamp = Date.now().toString();
+        
+        // Build the proper v3 endpoint path (without query string for signature)
+        const requestPath = `/v3${endpoint}`;
+        const url = `${this.baseURL}${requestPath}`;
+        
+        // Generate signature with params (signature includes params but not in URL path)
+        const signature = this.generateSignature(method, requestPath, params, body, timestamp, credentials.apiSecret);
+        
+        // Build query string for actual request URL
+        const queryString = Object.keys(params).length > 0
+          ? '?' + new globalThis.URLSearchParams(params).toString()
+          : '';
+        
+        const fullUrl = url + queryString;
+        
+        // Use correct Poloniex V3 Futures API headers per official documentation
+        // https://api-docs.poloniex.com/v3/futures/api/
+        // V3 API uses: key, signature, signTimestamp (NO PF- prefix, NO passphrase)
+        const headers = {
+          'Content-Type': 'application/json',
+          'key': credentials.apiKey,
+          'signature': signature,
+          'signTimestamp': timestamp,
+          'signatureMethod': 'hmacSHA256',
+          'signatureVersion': '2'
+        };
+        
+        const config = {
+          method: method.toLowerCase(),
+          url: fullUrl,
+          headers,
+          timeout: this.timeout
+        };
+        
+        if (body && (method === 'POST' || method === 'PUT' || method === 'DELETE')) {
+          config.data = body;
         }
-      });
-      const response = await axios(config);
-      
-      logger.info('Poloniex API response received', {
-        endpoint: requestPath,
-        status: response.status,
-        hasData: !!response.data,
-        dataKeys: response.data ? Object.keys(response.data) : []
-      });
-      
-      // Poloniex V3 API returns: { code: 200, data: {...}, msg: "Success" }
-      // Extract the data field if present, otherwise return the full response
-      if (response.data && typeof response.data === 'object' && 'data' in response.data) {
-        return response.data.data;
+        
+        if (Object.keys(params).length > 0 && method === 'GET') {
+          config.params = params;
+        }
+        
+        logger.info(`Making Poloniex v3 futures ${method} request to ${requestPath}`, {
+          url: fullUrl,
+          hasApiKey: !!credentials.apiKey,
+          apiKeyPrefix: credentials.apiKey?.substring(0, 8),
+          timestamp,
+          signaturePreview: signature.substring(0, 20) + '...',
+          headers: {
+            key: credentials.apiKey?.substring(0, 8) + '...',
+            signTimestamp: timestamp,
+            signatureMethod: headers.signatureMethod,
+            signatureVersion: headers.signatureVersion
+          }
+        });
+        const response = await axios(config);
+        
+        logger.info('Poloniex API response received', {
+          endpoint: requestPath,
+          status: response.status,
+          hasData: !!response.data,
+          dataKeys: response.data ? Object.keys(response.data) : []
+        });
+        
+        // Poloniex V3 API returns: { code: 200, data: {...}, msg: "Success" }
+        // Extract the data field if present, otherwise return the full response
+        if (response.data && typeof response.data === 'object' && 'data' in response.data) {
+          return response.data.data;
+        }
+        
+        return response.data;
+      } catch (error) {
+        logger.error('Poloniex v3 futures API request error:', {
+          endpoint: endpoint,
+          status: error.response?.status,
+          statusText: error.response?.statusText,
+          data: error.response?.data,
+          message: error.message,
+          headers: error.config?.headers
+        });
+        throw error;
       }
-      
-      return response.data;
-    } catch (error) {
-      logger.error('Poloniex v3 futures API request error:', {
-        endpoint: endpoint,
-        status: error.response?.status,
-        statusText: error.response?.statusText,
-        data: error.response?.data,
-        message: error.message,
-        headers: error.config?.headers
-      });
-      throw error;
-    }
+    });
   }
 
   // =================== ACCOUNT MANAGEMENT ===================
@@ -317,177 +321,7 @@ class PoloniexFuturesService {
     }
   }
 
-  /**
-   * Get order book (Level 2)
-   * Endpoint: GET /v3/market/get-order-book
-   * 
-   * @param {string} symbol - Trading pair
-   * @param {number} [depth] - Depth (20 or 100, default: 20)
-   */
-  async getOrderBook(symbol, depth = 20) {
-    try {
-      if (!symbol) {
-        throw new Error('Symbol is required');
-      }
 
-      const url = `${this.baseURL}/v3/market/get-order-book`;
-      const queryString = new URLSearchParams({ symbol, depth }).toString();
-      
-      const response = await axios.get(`${url}?${queryString}`, { timeout: this.timeout });
-      return response.data;
-    } catch (error) {
-      logger.error('Error fetching order book:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Get recent execution/trade data
-   * Endpoint: GET /v3/market/get-execution-info
-   * 
-   * @param {string} symbol - Trading pair
-   */
-  async getExecutionInfo(symbol) {
-    try {
-      if (!symbol) {
-        throw new Error('Symbol is required');
-      }
-
-      const url = `${this.baseURL}/v3/market/get-execution-info`;
-      const queryString = new URLSearchParams({ symbol }).toString();
-      
-      const response = await axios.get(`${url}?${queryString}`, { timeout: this.timeout });
-      return response.data;
-    } catch (error) {
-      logger.error('Error fetching execution info:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Get funding rate
-   * Endpoint: GET /v3/market/get-funding-rate
-   * 
-   * @param {string} symbol - Trading pair
-   */
-  async getFundingRate(symbol) {
-    try {
-      if (!symbol) {
-        throw new Error('Symbol is required');
-      }
-
-      const url = `${this.baseURL}/v3/market/get-funding-rate`;
-      const queryString = new URLSearchParams({ symbol }).toString();
-      
-      const response = await axios.get(`${url}?${queryString}`, { timeout: this.timeout });
-      return response.data;
-    } catch (error) {
-      logger.error('Error fetching funding rate:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Get funding rate history
-   * Endpoint: GET /v3/market/get-funding-rate-history
-   * 
-   * @param {string} symbol - Trading pair
-   * @param {Object} [params] - Additional parameters
-   * @param {number} [params.from] - Start timestamp
-   * @param {number} [params.to] - End timestamp
-   * @param {number} [params.offset] - Offset for pagination
-   * @param {number} [params.limit] - Limit (max 100)
-   */
-  async getFundingRateHistory(symbol, params = {}) {
-    try {
-      if (!symbol) {
-        throw new Error('Symbol is required');
-      }
-
-      const queryParams = {
-        symbol,
-        ...params
-      };
-
-      const url = `${this.baseURL}/v3/market/get-funding-rate-history`;
-      const queryString = new URLSearchParams(queryParams).toString();
-      
-      const response = await axios.get(`${url}?${queryString}`, { timeout: this.timeout });
-      return response.data;
-    } catch (error) {
-      logger.error('Error fetching funding rate history:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Get mark price
-   * Endpoint: GET /v3/market/get-mark-price
-   * 
-   * @param {string} symbol - Trading pair
-   */
-  async getMarkPrice(symbol) {
-    try {
-      if (!symbol) {
-        throw new Error('Symbol is required');
-      }
-
-      const url = `${this.baseURL}/v3/market/get-mark-price`;
-      const queryString = new URLSearchParams({ symbol }).toString();
-      
-      const response = await axios.get(`${url}?${queryString}`, { timeout: this.timeout });
-      return response.data;
-    } catch (error) {
-      logger.error('Error fetching mark price:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Get index price
-   * Endpoint: GET /v3/market/get-index-price
-   * 
-   * @param {string} symbol - Trading pair
-   */
-  async getIndexPrice(symbol) {
-    try {
-      if (!symbol) {
-        throw new Error('Symbol is required');
-      }
-
-      const url = `${this.baseURL}/v3/market/get-index-price`;
-      const queryString = new URLSearchParams({ symbol }).toString();
-      
-      const response = await axios.get(`${url}?${queryString}`, { timeout: this.timeout });
-      return response.data;
-    } catch (error) {
-      logger.error('Error fetching index price:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Get open interest
-   * Endpoint: GET /v3/market/get-open-interest
-   * 
-   * @param {string} symbol - Trading pair
-   */
-  async getOpenInterest(symbol) {
-    try {
-      if (!symbol) {
-        throw new Error('Symbol is required');
-      }
-
-      const url = `${this.baseURL}/v3/market/get-open-interest`;
-      const queryString = new URLSearchParams({ symbol }).toString();
-      
-      const response = await axios.get(`${url}?${queryString}`, { timeout: this.timeout });
-      return response.data;
-    } catch (error) {
-      logger.error('Error fetching open interest:', error);
-      throw error;
-    }
-  }
 
   /**
    * Get contract information
@@ -645,48 +479,51 @@ class PoloniexFuturesService {
    * Make public request to Poloniex Futures v3 API (no authentication)
    */
   async makePublicRequest(method, endpoint, params = {}) {
-    try {
-      const requestPath = `/v3${endpoint}`;
-      const url = `${this.baseURL}${requestPath}`;
-      
-      const queryString = Object.keys(params).length > 0
-        ? '?' + new globalThis.URLSearchParams(params).toString()
-        : '';
-      
-      const fullUrl = url + queryString;
-      
-      const config = {
-        method: method.toLowerCase(),
-        url: fullUrl,
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        timeout: this.timeout
-      };
-      
-      if (Object.keys(params).length > 0 && method === 'GET') {
-        config.params = params;
+    // Apply rate limiting
+    return rateLimiter.execute(endpoint, async () => {
+      try {
+        const requestPath = `/v3${endpoint}`;
+        const url = `${this.baseURL}${requestPath}`;
+        
+        const queryString = Object.keys(params).length > 0
+          ? '?' + new globalThis.URLSearchParams(params).toString()
+          : '';
+        
+        const fullUrl = url + queryString;
+        
+        const config = {
+          method: method.toLowerCase(),
+          url: fullUrl,
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          timeout: this.timeout
+        };
+        
+        if (Object.keys(params).length > 0 && method === 'GET') {
+          config.params = params;
+        }
+        
+        logger.info(`Making Poloniex v3 public ${method} request to ${requestPath}`);
+        const response = await axios(config);
+        
+        // Poloniex V3 API returns: { code: 200, data: [...], msg: "Success" }
+        // Extract the data field if present, otherwise return the full response
+        if (response.data && typeof response.data === 'object' && 'data' in response.data) {
+          return response.data.data;
+        }
+        
+        return response.data;
+      } catch (error) {
+        logger.error('Poloniex v3 public API request error:', {
+          endpoint: endpoint,
+          status: error.response?.status,
+          data: error.response?.data,
+          message: error.message
+        });
+        throw error;
       }
-      
-      logger.info(`Making Poloniex v3 public ${method} request to ${requestPath}`);
-      const response = await axios(config);
-      
-      // Poloniex V3 API returns: { code: 200, data: [...], msg: "Success" }
-      // Extract the data field if present, otherwise return the full response
-      if (response.data && typeof response.data === 'object' && 'data' in response.data) {
-        return response.data.data;
-      }
-      
-      return response.data;
-    } catch (error) {
-      logger.error('Poloniex v3 public API request error:', {
-        endpoint: endpoint,
-        status: error.response?.status,
-        data: error.response?.data,
-        message: error.message
-      });
-      throw error;
-    }
+    });
   }
 
   /**
