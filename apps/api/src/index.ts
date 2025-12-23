@@ -12,7 +12,7 @@ import type { CorsOptions } from 'cors';
 // Import routes
 import authRoutes from './routes/auth.js';
 import apiKeyRoutes from './routes/apiKeys.js';
-import futuresRoutes from './routes/futures.ts';
+import futuresRoutes from './routes/futures.js';
 import backtestingRoutes from './routes/backtesting.js';
 import backtestRoutes from './routes/backtest.js';
 import paperTradingRoutes from './routes/paperTrading.js';
