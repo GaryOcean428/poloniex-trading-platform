@@ -21,6 +21,9 @@ Welcome to the comprehensive documentation for the Poloniex Trading Platform - a
 
 - [Build Architecture](architecture/BUILD_ARCHITECTURE.md) - Build system and tooling
 - [Decision Tree](architecture/DECISION_TREE.md) - Trading decision logic
+- [Monorepo Architecture](architecture/MONOREPO_ARCHITECTURE.md) - Monorepo structure and organization
+- [Monorepo Quick Start](architecture/MONOREPO_QUICK_START.md) - Getting started with the monorepo
+- [Quick Action Plan](architecture/QUICK_ACTION_PLAN.md) - Development quick reference
 
 ### 🚀 Deployment
 **Location:** `docs/deployment/`
@@ -29,6 +32,10 @@ Welcome to the comprehensive documentation for the Poloniex Trading Platform - a
 - [Environment Setup](deployment/ENVIRONMENT_SETUP.md) - Configuration guide
 - [Troubleshooting](deployment/DEPLOYMENT_TROUBLESHOOTING.md) - Common issues
 - [Railway Deployment](deployment/RAILWAY_DEPLOYMENT_MASTER.md) - Railway-specific guide
+- [Deployment Complete](deployment/DEPLOYMENT_COMPLETE.md) - Deployment completion checklist
+- [Railway Config Files](deployment/RAILWAY_CONFIG_FILES.md) - Railway configuration reference
+- [Railway Environment Variables](deployment/RAILWAY_ENV_VARS_REQUIRED.md) - Required environment variables
+- [Railway Update Guide](deployment/RAILWAY_UPDATE_GUIDE.md) - Railway update procedures
 
 ### 💻 Development
 **Location:** `docs/development/`
@@ -72,6 +79,30 @@ Welcome to the comprehensive documentation for the Poloniex Trading Platform - a
 
 - [Historical Documents](archive/historical/) - Past fixes and reports
 - [Old Railway Docs](archive/old-railway-docs/) - Legacy deployment docs
+
+### 📊 Status Reports
+**Location:** `docs/status/`
+
+- [Audit Report](status/AUDIT_REPORT.md) - Comprehensive platform audit
+- [Platform Assessment](status/COMPREHENSIVE_PLATFORM_ASSESSMENT.md) - Full platform assessment
+- [Platform Status](status/PLATFORM_STATUS_2025-11-24.md) - Current status snapshot
+
+### 🔧 Implementation Details
+**Location:** `docs/implementation/`
+
+- [Balance Display Analysis](implementation/BALANCE_DISPLAY_ANALYSIS.md) - Balance feature analysis
+- [Balance Fix Summary](implementation/BALANCE_FIX_SUMMARY.md) - Balance fix details
+- [Balance Flow Diagram](implementation/BALANCE_FLOW_DIAGRAM.md) - Balance flow visualization
+- [Complete Implementation](implementation/COMPLETE_IMPLEMENTATION.md) - Full implementation guide
+- [Comprehensive Fix Plan](implementation/COMPREHENSIVE_FIX_PLAN.md) - Master fix plan
+- [Final Implementation Summary](implementation/FINAL_IMPLEMENTATION_SUMMARY.md) - Implementation summary
+- [Immediate Fixes](implementation/IMMEDIATE_FIXES.md) - Quick fix guide
+- [Implementation Complete](implementation/IMPLEMENTATION_COMPLETE.md) - Completion checklist
+- [Implementation Sprint](implementation/IMPLEMENTATION_SPRINT_2025-11-24.md) - Sprint summary
+- [Implementation Summary](implementation/IMPLEMENTATION_SUMMARY.md) - Overall implementation status
+- [ML Worker Fix](implementation/ML_WORKER_FIX.md) - ML worker fixes
+- [Phase 1 Complete](implementation/PHASE_1_COMPLETE.md) - Phase 1 completion notes
+- [Work Completed](implementation/WORK_COMPLETED_2025-11-24.md) - Completed work log
 
 ---
 

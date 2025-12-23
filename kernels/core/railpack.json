@@ -1,28 +1,38 @@
 {
   "$schema": "https://schema.railpack.com",
-  "provider": "python",
-  "packages": {
-    "python": "3.13"
+  "version": "1",
+  "metadata": {
+    "name": "ml-worker",
+    "description": "ML Worker Service with UV and FastAPI"
   },
-  "steps": {
-    "install": {
-      "commands": [
-        "python -m venv /app/.venv",
-        "/app/.venv/bin/pip install --upgrade pip uv",
-        "/app/.venv/bin/uv sync --frozen --no-dev --no-install-project"
-      ],
-      "cache": {
-        "paths": ["/app/.venv"]
+  "build": {
+    "provider": "python",
+    "packages": {
+      "python": "3.13"
+    },
+    "steps": {
+      "install": {
+        "commands": [
+          "python -m venv /app/.venv",
+          "/app/.venv/bin/pip install --upgrade pip uv",
+          "/app/.venv/bin/uv sync --locked --no-dev"
+        ],
+        "cache": {
+          "paths": ["/app/.venv", "/app/.uv"]
+        }
       }
+    },
+    "env": {
+      "PYTHONUNBUFFERED": "1",
+      "VIRTUAL_ENV": "/app/.venv",
+      "PATH": "/app/.venv/bin:$PATH"
     }
-  },
-  "env": {
-    "PYTHONUNBUFFERED": "1",
-    "VIRTUAL_ENV": "/app/.venv",
-    "PATH": "/app/.venv/bin:$PATH"
   },
   "deploy": {
     "startCommand": "/app/.venv/bin/uvicorn health:app --host 0.0.0.0 --port $PORT",
-    "inputs": [{"step": "install"}]
+    "healthCheckPath": "/health",
+    "healthCheckTimeout": 120,
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 3
   }
 }

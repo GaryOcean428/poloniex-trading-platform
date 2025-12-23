@@ -14,13 +14,15 @@ window.addEventListener('unhandledrejection', (event) => {
   const errorMessage = event.reason?.message || String(event.reason) || 'An unexpected error occurred';
   
   // Suppress browser extension errors (message channel, chrome runtime, etc.)
+  // These are common when browser extensions try to communicate with the page
   if (
     errorMessage.includes('message channel closed') ||
     errorMessage.includes('Extension context invalidated') ||
     errorMessage.includes('chrome.runtime') ||
-    errorMessage.includes('asynchronous response')
+    errorMessage.includes('A listener indicated an asynchronous response')
   ) {
     // These are browser extension errors, not our app errors
+    // Prevent them from appearing in the console
     event.preventDefault();
     return;
   }
@@ -68,7 +70,8 @@ window.addEventListener('error', (event) => {
   if (
     errorMessage.includes('message channel closed') ||
     errorMessage.includes('Extension context invalidated') ||
-    errorMessage.includes('chrome.runtime')
+    errorMessage.includes('chrome.runtime') ||
+    errorMessage.includes('A listener indicated an asynchronous response')
   ) {
     event.preventDefault();
     return;
