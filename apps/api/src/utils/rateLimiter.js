@@ -139,11 +139,19 @@ class RateLimiter {
    * @returns {string} - Endpoint type
    */
   getEndpointType(endpoint) {
+    // Futures trading and position endpoints
+    if (endpoint.includes('/trade/') || endpoint.includes('/position/')) {
+      return 'orders';
+    }
+    
+    // Spot trading endpoints
     if (endpoint.includes('/orders') || endpoint.includes('/smartorders')) {
       return 'orders';
     }
     
-    if (endpoint.includes('/accounts') || 
+    // Account endpoints (both spot and futures)
+    if (endpoint.includes('/account') || 
+        endpoint.includes('/accounts') || 
         endpoint.includes('/wallets') || 
         endpoint.includes('/margin') ||
         endpoint.includes('/subaccounts') ||
@@ -151,6 +159,7 @@ class RateLimiter {
       return 'account';
     }
     
+    // Everything else is market data (default)
     return 'market';
   }
 
