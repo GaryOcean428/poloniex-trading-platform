@@ -316,7 +316,7 @@ const StrategyDashboard: React.FC = () => {
             }
           </p>
           <button
-            onClick={() => window.location.href = '/autonomous-trading'}
+            onClick={() => window.location.href = '/autonomous-agent'}
             className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
           >
             Go to Autonomous Trading
