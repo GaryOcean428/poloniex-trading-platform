@@ -72,6 +72,26 @@ describe('RateLimiter', () => {
       expect(type).toBe('market');
     });
 
+    it('should detect futures trade endpoints as orders', () => {
+      const type = rateLimiter.getEndpointType('/trade/order');
+      expect(type).toBe('orders');
+    });
+
+    it('should detect futures position endpoints as orders', () => {
+      const type = rateLimiter.getEndpointType('/position/leverage');
+      expect(type).toBe('orders');
+    });
+
+    it('should detect futures account endpoints', () => {
+      const type = rateLimiter.getEndpointType('/account/balance');
+      expect(type).toBe('account');
+    });
+
+    it('should detect futures market endpoints', () => {
+      const type = rateLimiter.getEndpointType('/market/orderBook');
+      expect(type).toBe('market');
+    });
+
     it('should default to market for unknown endpoints', () => {
       const type = rateLimiter.getEndpointType('/unknown/endpoint');
       expect(type).toBe('market');
