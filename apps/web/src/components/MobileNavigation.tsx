@@ -9,7 +9,14 @@ import {
   Zap,
   BarChart4,
   Chrome,
-  User
+  User,
+  Activity,
+  History,
+  Receipt,
+  TrendingUp,
+  AlertCircle,
+  Sparkles,
+  Brain
 } from 'lucide-react';
 
 interface MobileNavigationProps {
@@ -22,12 +29,20 @@ const MobileNavigation: React.FC<MobileNavigationProps> = ({ isOpen, onClose }) 
   
   const navItems = [
     { path: '/', label: 'Dashboard', icon: <LayoutDashboard size={20} /> },
+    { path: '/dashboard/live', label: 'Live Trading', icon: <Activity size={20} /> },
     { path: '/strategies', label: 'Trading Strategies', icon: <Zap size={20} /> },
+    { path: '/ai-strategies', label: 'AI Strategy Generator', icon: <Sparkles size={20} /> },
+    { path: '/strategy-dashboard', label: 'Strategy Dashboard', icon: <BarChart4 size={20} /> },
+    { path: '/autonomous-agent', label: 'Autonomous Agent', icon: <Brain size={20} /> },
+    { path: '/backtesting', label: 'Advanced Backtesting', icon: <TrendingUp size={20} /> },
     { path: '/account', label: 'Account', icon: <User size={20} /> },
+    { path: '/transactions', label: 'Transaction History', icon: <Receipt size={20} /> },
+    { path: '/trades', label: 'Trade History', icon: <History size={20} /> },
     { path: '/charts', label: 'Market Analysis', icon: <BarChart4 size={20} /> },
     { path: '/performance', label: 'Performance', icon: <LineChart size={20} /> },
     { path: '/chat', label: 'Community Chat', icon: <MessageSquare size={20} /> },
     { path: '/extension', label: 'Chrome Extension', icon: <Chrome size={20} /> },
+    { path: '/status', label: 'System Status', icon: <AlertCircle size={20} /> },
     { path: '/settings', label: 'Settings', icon: <Settings size={20} /> }
   ];
 
