@@ -5,6 +5,8 @@ import { webSocketService } from '@/services/websocketService';
 import { mockMarketData, mockTrades } from '@/data/mockData';
 import { useSettings } from '@/hooks/useSettings';
 import { shouldUseMockMode, IS_WEBCONTAINER } from '@/utils/environment';
+import { getAccessToken } from '@/utils/auth';
+import { getApiBaseUrl } from '@/utils/environment';
 
 interface PoloniexDataHook {
   marketData: MarketData[];
@@ -23,7 +25,10 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
   const { apiKey, apiSecret, isLiveTrading } = useSettings();
   
   // Determine mock mode based on environment and credentials
-  const hasCredentials = Boolean(apiKey && apiSecret);
+  // Check both localStorage (legacy) AND database for credentials
+  const hasLocalCredentials = Boolean(apiKey && apiSecret);
+  const [hasDbCredentials, setHasDbCredentials] = useState<boolean>(false);
+  const hasCredentials = hasLocalCredentials || hasDbCredentials;
   const [isMockMode, setIsMockMode] = useState<boolean>(shouldUseMockMode(hasCredentials));
   
   // Initialize with empty arrays or mock data based on mock mode
@@ -284,12 +289,37 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
   };
 
   // Function to refresh API connection when settings change - defined after all dependencies
-  const refreshApiConnection = useCallback(() => {
+  const refreshApiConnection = useCallback(async () => {
     if (import.meta.env.DEV) {
       // console.info('Refreshing API connection with new credentials');
     }
     setIsLoading(true);
     poloniexApi.loadCredentials();
+
+    // Re-check database credentials
+    try {
+      const token = getAccessToken();
+      if (token) {
+        const response = await fetch(`${getApiBaseUrl()}/api/keys`, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          const hasActiveCredentials = data.success && 
+            Array.isArray(data.credentials) && 
+            data.credentials.length > 0 &&
+            data.credentials.some((cred: any) => cred.isActive);
+          setHasDbCredentials(hasActiveCredentials);
+        }
+      }
+    } catch (error) {
+      // Ignore error, continue with refresh
+    }
 
     // Clear any existing errors
     setError(null);
@@ -304,9 +334,47 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
     });
   }, [initialPair, fetchMarketData, fetchTrades, fetchAccountBalance]);
 
+  // Check for database credentials on mount
+  useEffect(() => {
+    const checkDbCredentials = async () => {
+      try {
+        const token = getAccessToken();
+        if (!token) {
+          setHasDbCredentials(false);
+          return;
+        }
+
+        const response = await fetch(`${getApiBaseUrl()}/api/keys`, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          // Check if user has any active credentials in the database
+          const hasActiveCredentials = data.success && 
+            Array.isArray(data.credentials) && 
+            data.credentials.length > 0 &&
+            data.credentials.some((cred: any) => cred.isActive);
+          setHasDbCredentials(hasActiveCredentials);
+        } else {
+          setHasDbCredentials(false);
+        }
+      } catch (error) {
+        // If we can't check, assume no credentials to avoid false positives
+        setHasDbCredentials(false);
+      }
+    };
+
+    checkDbCredentials();
+  }, []); // Only run once on mount
+
   // Update mock mode when credentials change
   useEffect(() => {
-    const newHasCredentials = Boolean(apiKey && apiSecret);
+    const newHasCredentials = hasLocalCredentials || hasDbCredentials;
     const newMockMode = shouldUseMockMode(newHasCredentials) || !isLiveTrading;
     setIsMockMode(newMockMode);
 
@@ -335,7 +403,7 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
         // console.info('Using mock mode - live trading disabled or missing credentials');
       }
     }
-  }, [isLiveTrading, apiKey, apiSecret, initialPair]);
+  }, [isLiveTrading, hasLocalCredentials, hasDbCredentials, initialPair]);
 
   // Handle real-time updates via WebSocket
   useEffect(() => {
