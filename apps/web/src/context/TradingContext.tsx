@@ -25,7 +25,7 @@ interface TradingContextType {
   errors: string[];
   addError: (error: string) => void;
   clearErrors: () => void;
-  refreshApiConnection: () => void; // Changed to non-Promise return type to match implementation
+  refreshApiConnection: () => Promise<void>; // Changed to return Promise to match updated implementation
 }
 
 const TradingContext = createContext<TradingContextType | undefined>(undefined);
