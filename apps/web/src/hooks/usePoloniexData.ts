@@ -18,7 +18,19 @@ interface PoloniexDataHook {
   fetchMarketData: (pair: string) => Promise<void>;
   fetchTrades: (pair: string) => Promise<void>;
   fetchAccountBalance: () => Promise<void>;
-  refreshApiConnection: () => void;
+  refreshApiConnection: () => Promise<void>;
+}
+
+interface ApiCredential {
+  id: string;
+  exchange: string;
+  credentialName: string;
+  isActive: boolean;
+}
+
+interface ApiKeysResponse {
+  success: boolean;
+  credentials?: ApiCredential[];
 }
 
 export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataHook => {
@@ -44,6 +56,40 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
     fetchTrades: (pair: string) => Promise<void>;
     fetchAccountBalance: () => Promise<void>;
   } | null>(null);
+
+  /**
+   * Check if user has active API credentials in the database
+   */
+  const checkDbCredentials = useCallback(async (): Promise<boolean> => {
+    try {
+      const token = getAccessToken();
+      if (!token) {
+        return false;
+      }
+
+      const response = await fetch(`${getApiBaseUrl()}/api/keys`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (response.ok) {
+        const data: ApiKeysResponse = await response.json();
+        // Check if user has any active credentials in the database
+        const hasActiveCredentials = data.success && 
+          Array.isArray(data.credentials) && 
+          data.credentials.length > 0 &&
+          data.credentials.some((cred: ApiCredential) => cred.isActive);
+        return hasActiveCredentials;
+      }
+      return false;
+    } catch (error) {
+      // If we can't check, assume no credentials to avoid false positives
+      return false;
+    }
+  }, []);
 
   // Helper function to map Poloniex data to MarketData format
 
@@ -296,30 +342,9 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
     setIsLoading(true);
     poloniexApi.loadCredentials();
 
-    // Re-check database credentials
-    try {
-      const token = getAccessToken();
-      if (token) {
-        const response = await fetch(`${getApiBaseUrl()}/api/keys`, {
-          method: 'GET',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-        });
-
-        if (response.ok) {
-          const data = await response.json();
-          const hasActiveCredentials = data.success && 
-            Array.isArray(data.credentials) && 
-            data.credentials.length > 0 &&
-            data.credentials.some((cred: any) => cred.isActive);
-          setHasDbCredentials(hasActiveCredentials);
-        }
-      }
-    } catch (error) {
-      // Ignore error, continue with refresh
-    }
+    // Re-check database credentials using the reusable function
+    const hasActiveCredentials = await checkDbCredentials();
+    setHasDbCredentials(hasActiveCredentials);
 
     // Clear any existing errors
     setError(null);
@@ -332,45 +357,17 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
     ]).finally(() => {
       setIsLoading(false);
     });
-  }, [initialPair, fetchMarketData, fetchTrades, fetchAccountBalance]);
+  }, [initialPair, fetchMarketData, fetchTrades, fetchAccountBalance, checkDbCredentials]);
 
   // Check for database credentials on mount
   useEffect(() => {
-    const checkDbCredentials = async () => {
-      try {
-        const token = getAccessToken();
-        if (!token) {
-          setHasDbCredentials(false);
-          return;
-        }
-
-        const response = await fetch(`${getApiBaseUrl()}/api/keys`, {
-          method: 'GET',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-        });
-
-        if (response.ok) {
-          const data = await response.json();
-          // Check if user has any active credentials in the database
-          const hasActiveCredentials = data.success && 
-            Array.isArray(data.credentials) && 
-            data.credentials.length > 0 &&
-            data.credentials.some((cred: any) => cred.isActive);
-          setHasDbCredentials(hasActiveCredentials);
-        } else {
-          setHasDbCredentials(false);
-        }
-      } catch (error) {
-        // If we can't check, assume no credentials to avoid false positives
-        setHasDbCredentials(false);
-      }
+    const checkAndUpdateDbCredentials = async () => {
+      const hasActiveCredentials = await checkDbCredentials();
+      setHasDbCredentials(hasActiveCredentials);
     };
 
-    checkDbCredentials();
-  }, []); // Only run once on mount
+    checkAndUpdateDbCredentials();
+  }, [checkDbCredentials]); // Only run once on mount (checkDbCredentials is stable with useCallback)
 
   // Update mock mode when credentials change
   useEffect(() => {
