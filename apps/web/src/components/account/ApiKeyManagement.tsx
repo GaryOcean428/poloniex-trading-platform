@@ -203,7 +203,7 @@ const ApiKeyManagement: React.FC = () => {
         // Reload credentials
         await loadApiCredentials();
         // Refresh API connection to update sidebar balance
-        refreshApiConnection();
+        await refreshApiConnection();
       } else {
         throw new Error(data.error || 'Failed to create API credentials');
       }
@@ -247,7 +247,7 @@ const ApiKeyManagement: React.FC = () => {
         // Reload credentials
         await loadApiCredentials();
         // Refresh API connection to update sidebar balance
-        refreshApiConnection();
+        await refreshApiConnection();
       } else {
         throw new Error(data.error || 'Failed to delete API credentials');
       }
