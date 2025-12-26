@@ -135,7 +135,7 @@ const Settings: React.FC = () => {
       }
 
       // Refresh API connection with new credentials
-      refreshApiConnection();
+      await refreshApiConnection();
 
       // Show success message
       setSaveStatus({
