@@ -1,6 +1,15 @@
 -- Migration 008: Create trades table for autonomous trading
 -- This table is used by the autonomous trading system to track all trades
 
+-- Ensure the update trigger function exists (it should already exist from other migrations)
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$$ language 'plpgsql';
+
 CREATE TABLE IF NOT EXISTS trades (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
