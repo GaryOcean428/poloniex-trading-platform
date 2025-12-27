@@ -55,7 +55,7 @@ async function runMigration() {
       AND table_name = 'trades'
     `);
     
-    if (checkTrades.rows.length === 0 || migrationArg === '008') {
+    if (checkTrades.rows.length === 0) {
       const migrationPath = path.join(__dirname, 'database', 'migrations', '008_create_trades_table.sql');
       
       if (fs.existsSync(migrationPath)) {
@@ -79,6 +79,8 @@ async function runMigration() {
       } else {
         console.log('⚠️  Migration file not found, skipping\n');
       }
+    } else if (migrationArg === '008') {
+      console.log('⚠️  trades table already exists, skipping re-creation to avoid conflicts\n');
     } else {
       console.log('✅ trades table already exists\n');
     }
