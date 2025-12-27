@@ -1,10 +1,17 @@
 /**
- * Simple migration runner for Railway environment
- * Run with: node run-migration.js
+ * Comprehensive migration runner for Railway environment
+ * Run with: node run-migration.js [migration_number]
+ * Example: node run-migration.js 008
  */
 
 import pg from 'pg';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
 const { Pool } = pg;
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -15,44 +22,87 @@ async function runMigration() {
   const client = await pool.connect();
   
   try {
-    console.log('🔄 Running migration: add encryption_tag column...');
+    // Get migration number from command line args (default to 'all')
+    const migrationArg = process.argv[2];
     
-    // Check if column exists
-    const checkResult = await client.query(`
+    console.log('🔄 Starting database migrations...\n');
+    
+    // Migration 1: Add encryption_tag column to api_credentials
+    console.log('📝 Migration 1: Add encryption_tag column...');
+    const checkEncryption = await client.query(`
       SELECT column_name 
       FROM information_schema.columns 
       WHERE table_name = 'api_credentials' 
       AND column_name = 'encryption_tag'
     `);
     
-    if (checkResult.rows.length > 0) {
-      console.log('✅ encryption_tag column already exists');
-      return;
+    if (checkEncryption.rows.length === 0) {
+      await client.query(`
+        ALTER TABLE api_credentials 
+        ADD COLUMN encryption_tag TEXT
+      `);
+      console.log('✅ Added encryption_tag column\n');
+    } else {
+      console.log('✅ encryption_tag column already exists\n');
     }
     
-    // Add the column
-    await client.query(`
-      ALTER TABLE api_credentials 
-      ADD COLUMN encryption_tag TEXT
+    // Migration 2: Create trades table
+    console.log('📝 Migration 2: Create trades table...');
+    const checkTrades = await client.query(`
+      SELECT table_name 
+      FROM information_schema.tables 
+      WHERE table_schema = 'public' 
+      AND table_name = 'trades'
     `);
     
-    console.log('✅ Added encryption_tag column successfully');
+    if (checkTrades.rows.length === 0 || migrationArg === '008') {
+      const migrationPath = path.join(__dirname, 'database', 'migrations', '008_create_trades_table.sql');
+      
+      if (fs.existsSync(migrationPath)) {
+        const migrationSQL = fs.readFileSync(migrationPath, 'utf8');
+        await client.query(migrationSQL);
+        console.log('✅ Created trades table\n');
+        
+        // Verify table creation
+        const columns = await client.query(`
+          SELECT column_name, data_type 
+          FROM information_schema.columns
+          WHERE table_name = 'trades'
+          ORDER BY ordinal_position
+        `);
+        
+        console.log('📋 trades table columns:');
+        columns.rows.forEach(row => {
+          console.log(`   - ${row.column_name} (${row.data_type})`);
+        });
+        console.log('');
+      } else {
+        console.log('⚠️  Migration file not found, skipping\n');
+      }
+    } else {
+      console.log('✅ trades table already exists\n');
+    }
     
-    // Show current schema
-    const schemaResult = await client.query(`
-      SELECT column_name, data_type 
-      FROM information_schema.columns
-      WHERE table_name = 'api_credentials'
-      ORDER BY ordinal_position
+    // Summary of tables
+    console.log('📊 Database tables summary:');
+    const tables = await client.query(`
+      SELECT table_name 
+      FROM information_schema.tables 
+      WHERE table_schema = 'public' 
+      AND table_type = 'BASE TABLE'
+      ORDER BY table_name
     `);
     
-    console.log('\n📋 api_credentials table columns:');
-    schemaResult.rows.forEach(row => {
-      console.log(`   - ${row.column_name} (${row.data_type})`);
-    });
+    console.log(`Total tables: ${tables.rows.length}`);
+    if (tables.rows.length < 20) {
+      tables.rows.forEach(row => {
+        console.log(`   - ${row.table_name}`);
+      });
+    }
     
   } catch (error) {
     console.error('❌ Migration error:', error.message);
+    console.error('Stack trace:', error.stack);
     throw error;
   } finally {
     client.release();
@@ -62,10 +112,10 @@ async function runMigration() {
 
 runMigration()
   .then(() => {
-    console.log('\n✨ Migration completed!');
+    console.log('\n✨ All migrations completed successfully!');
     process.exit(0);
   })
   .catch((error) => {
-    console.error('\n💥 Failed:', error.message);
+    console.error('\n💥 Migration failed:', error.message);
     process.exit(1);
   });
