@@ -249,6 +249,6 @@ export const SettingsProvider: React.FC<SettingsProviderProps> = ({ children }) 
                         }}
                       >
                   {children}
-              </SettingsContext.Provider>SettingsContext.Provider>
+              </SettingsContext.Provider>
             );
-}; // End of component</SettingsContext.Provider>
+}; // End of component
