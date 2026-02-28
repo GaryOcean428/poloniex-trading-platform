@@ -1,6 +1,6 @@
-import axios, { AxiosInstance } from "axios";
+import/contractMarket/ticker:BTCUSDTPERP axios, { AxiosInstance } from "axios";
 
-// Type definitions for live data processing
+// Ty/v3/market/tickers/BTC_USDT_PERPpe definitions for live data processing
 export interface LiveDataConfig {
   primarySource: "poloniex" | "websocket" | "aggregated";
   fallbackSources: ("poloniex" | "websocket" | "rest")[];
