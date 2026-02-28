@@ -3,8 +3,6 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { immer } from "zustand/middleware/immer";
 
- 
-
 // Define store state interface
 export interface AppState {
   // API Configuration
@@ -13,7 +11,6 @@ export interface AppState {
     apiSecret: string;
     isLiveTrading: boolean;
   };
-
   // UI State
   ui: {
     darkMode: boolean;
@@ -25,13 +22,11 @@ export interface AppState {
       chat: boolean;
     };
   };
-
   // Trading Configuration
   trading: {
     defaultPair: string;
     mockMode: boolean;
   };
-
   // Toast Notifications
   toasts: Array<{
     id: string;
@@ -40,7 +35,6 @@ export interface AppState {
     timestamp: number;
     dismissible: boolean;
   }>;
-
   // App Notifications
   appNotifications: Array<{
     id: string;
@@ -57,23 +51,19 @@ export interface AppActions {
   // API Credentials
   setApiCredentials: (credentials: Partial<AppState["apiCredentials"]>) => void;
   clearApiCredentials: () => void;
-
   // UI Actions
   setDarkMode: (enabled: boolean) => void;
   setShowExtension: (show: boolean) => void;
   setNotifications: (
     notifications: Partial<AppState["ui"]["notifications"]>
   ) => void;
-
   // Trading Actions
   setDefaultPair: (pair: string) => void;
   setMockMode: (enabled: boolean) => void;
-
   // Toast Actions
   addToast: (toast: Omit<AppState["toasts"][0], "id" | "timestamp">) => void;
   removeToast: (id: string) => void;
   clearToasts: () => void;
-
   // App Notification Actions
   addNotification: (notification: Omit<AppState["appNotifications"][0], "id" | "timestamp">) => void;
   markNotificationAsRead: (id: string) => void;
@@ -109,7 +99,6 @@ const createEncryptedStorage = () => ({
   getItem: (name: string): string | null => {
     const item = localStorage.getItem(name);
     if (!item) return null;
-
     try {
       const parsed = JSON.parse(item);
       if (parsed.state?.apiCredentials) {
@@ -124,6 +113,8 @@ const createEncryptedStorage = () => ({
             parsed.state.apiCredentials.apiSecret
           );
         }
+        // Always enforce live trading - credentials are stored in backend DB
+        parsed.state.apiCredentials.isLiveTrading = true;
       }
       return JSON.stringify(parsed);
     } catch (_error) {
@@ -131,7 +122,6 @@ const createEncryptedStorage = () => ({
       return item;
     }
   },
-
   setItem: (name: string, value: string): void => {
     try {
       const parsed = JSON.parse(value);
@@ -154,7 +144,6 @@ const createEncryptedStorage = () => ({
       localStorage.setItem(name, value);
     }
   },
-
   removeItem: (name: string): void => {
     localStorage.removeItem(name);
   },
@@ -165,7 +154,7 @@ const defaultState: AppState = {
   apiCredentials: {
     apiKey: "",
     apiSecret: "",
-    isLiveTrading: false,
+    isLiveTrading: true, // Default to live trading - credentials stored in backend DB
   },
   ui: {
     darkMode: false,
@@ -179,7 +168,7 @@ const defaultState: AppState = {
   },
   trading: {
     defaultPair: "BTC_USDT",
-    mockMode: false,  // Production default: use real trading
+    mockMode: false, // Production default: use real trading
   },
   toasts: [],
   appNotifications: []
@@ -190,22 +179,19 @@ export const useAppStore = create<AppState & AppActions>()(
   persist(
     immer((set) => ({
       ...defaultState,
-
       // API Credentials Actions
       setApiCredentials: (credentials) =>
         set((state) => {
           Object.assign(state.apiCredentials, credentials);
         }),
-
       clearApiCredentials: () =>
         set((state) => {
           state.apiCredentials = {
             apiKey: "",
             apiSecret: "",
-            isLiveTrading: false,
+            isLiveTrading: true, // Keep live trading enabled - credentials in backend DB
           };
         }),
-
       // UI Actions
       setDarkMode: (enabled) =>
         set((state) => {
@@ -216,28 +202,23 @@ export const useAppStore = create<AppState & AppActions>()(
             document.documentElement.classList.remove('dark');
           }
         }),
-
       setShowExtension: (show) =>
         set((state) => {
           state.ui.showExtension = show;
         }),
-
       setNotifications: (notifications) =>
         set((state) => {
           Object.assign(state.ui.notifications, notifications);
         }),
-
       // Trading Actions
       setDefaultPair: (pair) =>
         set((state) => {
           state.trading.defaultPair = pair;
         }),
-
       setMockMode: (enabled) =>
         set((state) => {
           state.trading.mockMode = enabled;
         }),
-
       // Toast Actions
       addToast: (toast) =>
         set((state) => {
@@ -248,7 +229,6 @@ export const useAppStore = create<AppState & AppActions>()(
           };
           state.toasts.push(newToast);
         }),
-
       removeToast: (id) =>
         set((state) => {
           const index = state.toasts.findIndex((t) => t.id === id);
@@ -256,12 +236,10 @@ export const useAppStore = create<AppState & AppActions>()(
             state.toasts.splice(index, 1);
           }
         }),
-
       clearToasts: () =>
         set((state) => {
           state.toasts = [];
         }),
-
       // App Notification Actions
       addNotification: (notification) =>
         set((state) => {
@@ -272,7 +250,6 @@ export const useAppStore = create<AppState & AppActions>()(
           };
           state.appNotifications.unshift(newNotification);
         }),
-
       markNotificationAsRead: (id) =>
         set((state) => {
           const notification = state.appNotifications.find((n) => n.id === id);
@@ -280,7 +257,6 @@ export const useAppStore = create<AppState & AppActions>()(
             notification.read = true;
           }
         }),
-
       clearAllNotifications: () =>
         set((state) => {
           state.appNotifications = [];
@@ -300,8 +276,7 @@ export const useAppStore = create<AppState & AppActions>()(
 );
 
 // Selector hooks for better performance
-export const useApiCredentials = () =>
-  useAppStore((state) => state.apiCredentials);
+export const useApiCredentials = () => useAppStore((state) => state.apiCredentials);
 export const useUISettings = () => useAppStore((state) => state.ui);
 export const useTradingSettings = () => useAppStore((state) => state.trading);
 export const useToasts = () => useAppStore((state) => state.toasts);
