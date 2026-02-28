@@ -1,6 +1,6 @@
-import/contractMarket/ticker:BTCUSDTPERP axios, { AxiosInstance } from "axios";
+import axios, { AxiosInstance } from "axios";
 
-// Ty/v3/market/tickers/BTC_USDT_PERPpe definitions for live data processing
+// Type definitions for live data processing
 export interface LiveDataConfig {
   primarySource: "poloniex" | "websocket" | "aggregated";
   fallbackSources: ("poloniex" | "websocket" | "rest")[];
@@ -587,10 +587,7 @@ export class LiveDataService {
           timestamp: Number(trade.ts || Date.now()),
           price: parseFloat(String(trade.price || "0")),
           amount: parseFloat(String(trade.amount || "0")),
-          side:
-            String(trade.takerSide || "").toLowerCase() === "sell"
-              ? "buy"
-              : "sell",
+          side: (String(trade.takerSide || "buy").toLowerCase()) as "buy" | "sell",
           source: "poloniex_rest",
         })
       );
