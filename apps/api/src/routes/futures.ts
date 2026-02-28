@@ -778,4 +778,80 @@ router.get('/limit-price/:symbol', async (req: Request, res: Response) => {
   }
 });
 
+
+
+/**
+ * GET /api/futures/order-history - Get order history (completed/cancelled orders)
+ * Query params: symbol, startTime, endTime, limit, status
+ */
+router.get('/order-history', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const credentials = await apiCredentialsService.getCredentials(String(req.user.id));
+    if (!credentials) {
+      return res.status(400).json({
+        error: 'No API credentials found. Please add your Poloniex API keys first.',
+        requiresApiKeys: true
+      });
+    }
+    const params = req.query;
+    const orders = await poloniexFuturesService.getOrderHistory(credentials, params);
+    res.json(orders);
+  } catch (error: any) {
+    logger.error('Error fetching order history:', error);
+    res.status(error.response?.status || 500).json({
+      error: 'Failed to fetch order history',
+      details: error.response?.data || error.message
+    });
+  }
+});
+
+/**
+ * GET /api/futures/position-history - Get position history
+ * Query params: symbol, startTime, endTime, limit
+ */
+router.get('/position-history', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const credentials = await apiCredentialsService.getCredentials(String(req.user.id));
+    if (!credentials) {
+      return res.status(400).json({
+        error: 'No API credentials found. Please add your Poloniex API keys first.',
+        requiresApiKeys: true
+      });
+    }
+    const params = req.query;
+    const history = await poloniexFuturesService.getPositionHistory(credentials, params);
+    res.json(history);
+  } catch (error: any) {
+    logger.error('Error fetching position history:', error);
+    res.status(error.response?.status || 500).json({
+      error: 'Failed to fetch position history',
+      details: error.response?.data || error.message
+    });
+  }
+});
+
+/**
+ * GET /api/futures/account/bills - Get account bills/transaction history
+ * Query params: symbol, startTime, endTime, limit
+ */
+router.get('/account/bills', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const credentials = await apiCredentialsService.getCredentials(String(req.user.id));
+    if (!credentials) {
+      return res.status(400).json({
+        error: 'No API credentials found. Please add your Poloniex API keys first.',
+        requiresApiKeys: true
+      });
+    }
+    const params = req.query;
+    const bills = await poloniexFuturesService.getAccountBills(credentials, params);
+    res.json(bills);
+  } catch (error: any) {
+    logger.error('Error fetching account bills:', error);
+    res.status(error.response?.status || 500).json({
+      error: 'Failed to fetch account bills',
+      details: error.response?.data || error.message
+    });
+  }
+});
 export default router;
