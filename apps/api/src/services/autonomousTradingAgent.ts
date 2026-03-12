@@ -240,11 +240,11 @@ class AutonomousTradingAgent extends EventEmitter {
    * Main autonomous trading loop
    */
   private async startAutonomousLoop(session: AgentSession): Promise<void> {
-    console.log(`[Agent ${session.id}] Starting autonomous loop`);
+    logger.info(`[Agent ${session.id}] Starting autonomous loop`);
 
     // Run immediately on start
     this.runAutonomousCycle(session).catch(err => {
-      console.error(`[Agent ${session.id}] Error in autonomous cycle:`, err);
+      logger.error(`[Agent ${session.id}] Error in autonomous cycle:`, err);
       this.emit('agent_error', { session, error: err });
     });
 
@@ -254,7 +254,7 @@ class AutonomousTradingAgent extends EventEmitter {
       try {
         await this.runAutonomousCycle(session);
       } catch (err) {
-        console.error(`[Agent ${session.id}] Error in autonomous cycle:`, err);
+        logger.error(`[Agent ${session.id}] Error in autonomous cycle:`, err);
         this.emit('agent_error', { session, error: err });
       }
     }, intervalMs);
@@ -266,25 +266,25 @@ class AutonomousTradingAgent extends EventEmitter {
    * Run one complete autonomous trading cycle
    */
   private async runAutonomousCycle(session: AgentSession): Promise<void> {
-    console.log(`[Agent ${session.id}] Running autonomous cycle`);
+    logger.info(`[Agent ${session.id}] Running autonomous cycle`);
 
     try {
       // Step 1: Generate strategies using Claude AI
       const strategies = await this.generateStrategies(session);
-      console.log(`[Agent ${session.id}] Generated ${strategies.length} strategies`);
+      logger.info(`[Agent ${session.id}] Generated ${strategies.length} strategies`);
 
       // Step 2: Backtest all strategies in parallel
       const backtestResults = await this.backtestStrategies(session, strategies);
-      console.log(`[Agent ${session.id}] Completed ${backtestResults.length} backtests`);
+      logger.info(`[Agent ${session.id}] Completed ${backtestResults.length} backtests`);
 
       // Step 3: Select top performing strategies
       const topStrategies = this.selectTopStrategies(backtestResults, 3);
-      console.log(`[Agent ${session.id}] Selected ${topStrategies.length} top strategies`);
+      logger.info(`[Agent ${session.id}] Selected ${topStrategies.length} top strategies`);
 
       // Step 4: Start paper trading for top strategies
       if (topStrategies.length > 0) {
         await this.startPaperTrading(session, topStrategies);
-        console.log(`[Agent ${session.id}] Started paper trading for top strategies`);
+        logger.info(`[Agent ${session.id}] Started paper trading for top strategies`);
       }
 
       // Step 5: Evaluate paper trading results and promote to live if successful
@@ -294,7 +294,7 @@ class AutonomousTradingAgent extends EventEmitter {
       await this.learnAndAdapt(session);
 
     } catch (err) {
-      console.error(`[Agent ${session.id}] Error in autonomous cycle:`, err);
+      logger.error(`[Agent ${session.id}] Error in autonomous cycle:`, err);
       await this.logActivity(session.id, 'cycle_error', `Error: ${err.message}`);
       throw err;
     }
@@ -319,9 +319,9 @@ class AutonomousTradingAgent extends EventEmitter {
         config.preferredPairs[0],
         ohlcvData
       );
-      console.log(`[Agent ${session.id}] ML predictions obtained:`, mlPredictions);
+      logger.info(`[Agent ${session.id}] ML predictions obtained:`, mlPredictions);
     } catch (mlError: any) {
-      console.warn(`[Agent ${session.id}] ML predictions unavailable:`, mlError.message);
+      logger.warn(`[Agent ${session.id}] ML predictions unavailable:`, mlError.message);
     }
 
     // Generate 5-10 strategy variations
@@ -371,7 +371,7 @@ class AutonomousTradingAgent extends EventEmitter {
         await this.logActivity(session.id, 'strategy_generated', `Generated strategy: ${strategy.strategyName}`);
 
       } catch (err) {
-        console.error(`[Agent ${session.id}] Error generating strategy ${i}:`, err);
+        logger.error(`[Agent ${session.id}] Error generating strategy ${i}:`, err);
       }
     }
 
@@ -423,7 +423,7 @@ class AutonomousTradingAgent extends EventEmitter {
 
         return strategy;
       } catch (err) {
-        console.error(`[Agent ${session.id}] Error backtesting strategy ${strategy.strategyName}:`, err);
+        logger.error(`[Agent ${session.id}] Error backtesting strategy ${strategy.strategyName}:`, err);
         return null;
       }
     });
@@ -480,7 +480,7 @@ class AutonomousTradingAgent extends EventEmitter {
         );
 
       } catch (err) {
-        console.error(`[Agent ${session.id}] Error starting paper trading for ${strategy.strategyName}:`, err);
+        logger.error(`[Agent ${session.id}] Error starting paper trading for ${strategy.strategyName}:`, err);
       }
     }
   }
