@@ -1,4 +1,4 @@
-import React, { createContext, useState, useEffect, ReactNode, useCallback } from 'react';
+import React, { createContext, useState, useEffect, ReactNode, useCallback, useMemo } from 'react';
 import PoloniexFuturesAPI, { 
   PositionMode, 
   MarginMode, 
@@ -46,7 +46,7 @@ export const FuturesProvider: React.FC<FuturesProviderProps> = ({ children }) =>
   const { isAuthenticated } = useAuth();
   const { mockMode } = useSettings();
   
-  const [api] = useState<PoloniexFuturesAPI>(() => new PoloniexFuturesAPI(mockMode));
+  const api = useMemo(() => new PoloniexFuturesAPI(mockMode), [mockMode]);
   const [positions, setPositions] = useState<FuturesPosition[]>([]);
   const [accountBalance, setAccountBalance] = useState<FuturesAccountBalance | null>(null);
   const [positionMode, setPositionModeState] = useState<PositionMode>(PositionMode.ONE_WAY);

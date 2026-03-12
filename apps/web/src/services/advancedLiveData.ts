@@ -584,13 +584,10 @@ export class LiveDataService {
         (trade: Record<string, string | number>) => ({
           id: String(trade.id || ""),
           symbol,
-          timestamp: Number(trade.ts || Date.now()),
-          price: parseFloat(String(trade.price || "0")),
-          amount: parseFloat(String(trade.amount || "0")),
-          side:
-            String(trade.takerSide || "").toLowerCase() === "sell"
-              ? "buy"
-              : "sell",
+          timestamp: Number(trade.cT || trade.ts || Date.now()),
+          price: parseFloat(String(trade.px || trade.price || "0")),
+          amount: parseFloat(String(trade.qty || trade.amount || "0")),
+          side: (String(trade.side || trade.takerSide || "buy").toLowerCase()) as "buy" | "sell",
           source: "poloniex_rest",
         })
       );

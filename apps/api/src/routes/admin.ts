@@ -85,6 +85,25 @@ router.post('/migrate', async (req, res) => {
       console.log('✅ Agent tables created');
     }
 
+    // Check if autonomous trading tables exist (009)
+    const checkAutonomousTables = await pool.query(`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables 
+        WHERE table_schema = 'public' 
+        AND table_name = 'autonomous_trading_configs'
+      );
+    `);
+
+    if (!checkAutonomousTables.rows[0].exists) {
+      console.log('📝 Creating autonomous trading tables...');
+      
+      const autonomousMigrationPath = path.join(__dirname, '../../migrations/009_autonomous_trading_tables.sql');
+      const autonomousSchema = fs.readFileSync(autonomousMigrationPath, 'utf8');
+      
+      await pool.query(autonomousSchema);
+      console.log('✅ Autonomous trading tables created');
+    }
+
     // Get list of all tables
     const tablesResult = await pool.query(`
       SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename;

@@ -1,7 +1,4 @@
-import {
-  getApiBaseUrl,
-  getBackendUrl,
-} from "@/utils/environment";
+import { getBackendUrl } from "@/utils/environment";
 import { getAccessToken } from "@/utils/auth";
 
 /**
@@ -10,47 +7,48 @@ import { getAccessToken } from "@/utils/auth";
  * Backend proxy endpoints: /api/futures/*
  */
 
-// Always use backend proxy to avoid CORS issues
-// Use getBackendUrl() to get proper base URL (fixes "Failed to construct 'URL': Invalid URL" error)
-const BASE_HOST = typeof window !== 'undefined' ? window.location.origin : '';
-const API_PREFIX = "/api/futures";
-
-// Normalize symbol (UI uses BTC-USDT; API commonly expects BTCUSDT)
-const normalizeFuturesSymbol = (sym?: string): string | undefined => {
-  if (!sym) return sym;
-  return sym.replace(/-/g, "").toUpperCase();
+// Always use backend URL to route API calls to the backend service
+const getBaseHost = () => {
+  try {
+    return getBackendUrl();
+  } catch {
+    return typeof window !== 'undefined' ? window.location.origin : '';
+  }
 };
 
-// API endpoints (aligned to documented futures routes)
-const ENDPOINTS = {
-  // Account / positions / trading (authenticated)
-  ACCOUNT_BALANCE: `${API_PREFIX}/account/balance`,
-  ACCOUNT_BILLS: `${API_PREFIX}/account/bills`,
-  CURRENT_POSITIONS: `${API_PREFIX}/trade/position/opens`,
-  POSITION_HISTORY: `${API_PREFIX}/trade/position/history`,
-  ADJUST_MARGIN: `${API_PREFIX}/position/margin`,
-  GET_LEVERAGES: `${API_PREFIX}/account/leverage-info`,
-  SET_LEVERAGE: `${API_PREFIX}/trade/set-leverage`,
-  SWITCH_POSITION_MODE: `${API_PREFIX}/position/mode`,
-  VIEW_POSITION_MODE: `${API_PREFIX}/position/mode-info`,
-  PLACE_ORDER: `${API_PREFIX}/trade/order`,
-  CANCEL_ORDER: `${API_PREFIX}/trade/cancel-order`,
-  CANCEL_ALL_ORDERS: `${API_PREFIX}/trade/cancel-all-orders`,
-  ORDER_HISTORY: `${API_PREFIX}/trade/order/history`, // Fixed to match V3 spec: /v3/trade/order/history
-  EXECUTION_DETAILS: `${API_PREFIX}/trade/order/trades`, // Added from V3 spec: /v3/trade/order/trades
-  OPEN_ORDERS: `${API_PREFIX}/trade/open-orders`,
+const API_PREFIX = "/api/futures";
 
-  // Market data (public)
-  // Use "get-trading-info" for 24h stats/last price
-  MARKET_TICKER: `${API_PREFIX}/market/get-trading-info`,
-  // Klines/candles
-  MARKET_KLINES: `${API_PREFIX}/market/get-kline-data`,
-  // Order book (Level 2)
-  MARKET_DEPTH: `${API_PREFIX}/market/get-order-book`,
-  // Recent executions/trades
-  MARKET_TRADES: `${API_PREFIX}/market/get-execution-info`,
-  // Funding rate
-  MARKET_FUNDING_RATE: `${API_PREFIX}/market/get-funding-rate`,
+// Normalize symbol (UI uses BTC-USDT; backend expects BTC_USDT or BTC_USDT_PERP)
+const normalizeFuturesSymbol = (sym?: string): string | undefined => {
+  if (!sym) return sym;
+  // Convert BTC-USDT -> BTC_USDT (backend normalizes to _PERP itself)
+  return sym.replace(/-/g, "_").toUpperCase();
+};
+
+// API endpoints — mapped to actual backend routes in apps/api/src/routes/futures.ts
+const ENDPOINTS = {
+  // Authenticated account endpoints
+  ACCOUNT_BALANCE: `${API_PREFIX}/balance`,
+  ACCOUNT_BILLS: `${API_PREFIX}/account/bills`,
+  CURRENT_POSITIONS: `${API_PREFIX}/positions`,
+  POSITION_HISTORY: `${API_PREFIX}/position-history`,
+  ADJUST_MARGIN: `${API_PREFIX}/position/margin`,
+  GET_LEVERAGES: `${API_PREFIX}/leverage`, // GET /leverage/:symbol (handled via param)
+  SET_LEVERAGE: `${API_PREFIX}/leverage`, // POST /leverage
+  SWITCH_POSITION_MODE: `${API_PREFIX}/position-mode`,
+  VIEW_POSITION_MODE: `${API_PREFIX}/position-mode`,
+  PLACE_ORDER: `${API_PREFIX}/order`,
+  CANCEL_ORDER: `${API_PREFIX}/order`, // DELETE /order/:orderId
+  CANCEL_ALL_ORDERS: `${API_PREFIX}/orders`, // DELETE /orders?symbol=...
+  ORDER_HISTORY: `${API_PREFIX}/order-history`,
+  EXECUTION_DETAILS: `${API_PREFIX}/trades`, // GET /trades (authenticated user trades)
+  OPEN_ORDERS: `${API_PREFIX}/orders`,
+  // Public market data endpoints
+  MARKET_TICKER: `${API_PREFIX}/ticker`,
+  MARKET_KLINES: `${API_PREFIX}/klines`,
+  MARKET_DEPTH: `${API_PREFIX}/orderbook`,
+  MARKET_TRADES: `${API_PREFIX}/trades`, // GET /trades/:symbol (public)
+  MARKET_FUNDING_RATE: `${API_PREFIX}/funding-rate`,
 };
 
 // Enums
@@ -207,10 +205,13 @@ export interface FuturesPosition {
 
 export interface FuturesAccountBalance {
   state: string;
-  eq: string;
+  eq: string;          // Total equity (the real balance field from Poloniex)
+  availMgn: string;    // Available margin
   isoEq: string;
   im: string;
   mm: string;
+  totalBalance?: number;     // Parsed convenience field
+  availableBalance?: number; // Parsed convenience field
 }
 
 export interface FuturesOrder {
@@ -246,11 +247,9 @@ const createAuthHeaders = (): Record<string, string> => {
 
 // Main API class
 class PoloniexFuturesAPI {
-  private baseHost: string;
   private mockMode: boolean;
 
   constructor(mockMode = false) {
-    this.baseHost = BASE_HOST;
     this.mockMode = mockMode;
   }
 
@@ -264,7 +263,8 @@ class PoloniexFuturesAPI {
       return this.mockResponse<T>(endpoint, params);
     }
 
-    const url = new URL(this.baseHost + endpoint);
+    const baseHost = getBaseHost();
+    const url = new URL(baseHost + endpoint);
     let body = "";
 
     if (method === "GET" && Object.keys(params).length > 0) {
@@ -277,9 +277,7 @@ class PoloniexFuturesAPI {
       body = JSON.stringify(params);
     }
 
-    const headers = authenticated
-      ? createAuthHeaders()
-      : { "Content-Type": "application/json" };
+    const headers = authenticated ? createAuthHeaders() : { "Content-Type": "application/json" };
 
     const response = await fetch(url.toString(), {
       method,
@@ -292,7 +290,6 @@ class PoloniexFuturesAPI {
 
     // Handle non-OK responses with robust parsing
     if (!response.ok) {
-      // Try to parse JSON error first, otherwise capture text snippet
       let errorPayload: unknown = {};
       if (contentType.includes("application/json")) {
         errorPayload = await response.json().catch(() => ({}));
@@ -303,7 +300,7 @@ class PoloniexFuturesAPI {
       throw new Error(`API error (${response.status}) from ${url.toString()}: ${JSON.stringify(errorPayload)}`);
     }
 
-    // Guard: successful but non-JSON (e.g., HTML index.html) should not be parsed as JSON
+    // Guard: successful but non-JSON response
     if (!contentType.includes("application/json")) {
       const text = await response.text().catch(() => "");
       throw new Error(
@@ -325,16 +322,18 @@ class PoloniexFuturesAPI {
         mockData = {
           state: "NORMAL",
           eq: "10000.00",
+          availMgn: "10000.00",
           isoEq: "5000.00",
           im: "1000.00",
           mm: "500.00",
+          totalBalance: 10000,
+          availableBalance: 10000,
         } as T;
         break;
-
       case ENDPOINTS.CURRENT_POSITIONS:
         mockData = [
           {
-            symbol: "BTC-USDT",
+            symbol: "BTC_USDT_PERP",
             side: OrderSide.BUY,
             mgnMode: MarginMode.ISOLATED,
             posSide: PositionSide.LONG,
@@ -357,26 +356,22 @@ class PoloniexFuturesAPI {
           },
         ] as T;
         break;
-
       case ENDPOINTS.VIEW_POSITION_MODE:
         mockData = { posMode: PositionMode.ONE_WAY } as T;
         break;
-
       case ENDPOINTS.GET_LEVERAGES:
         mockData = {
-          symbol: String(params.symbol || "BTC-USDT"),
+          symbol: String(params.symbol || "BTC_USDT_PERP"),
           leverage: "10",
           maxLeverage: "75",
         } as T;
         break;
-
       case ENDPOINTS.OPEN_ORDERS:
         mockData = [] as T;
         break;
-
       case ENDPOINTS.MARKET_TICKER:
         mockData = {
-          symbol: String(params.symbol || "BTC-USDT"),
+          symbol: String(params.symbol || "BTC_USDT_PERP"),
           last: "50000.00",
           bestAsk: "50010.00",
           bestBid: "49990.00",
@@ -387,7 +382,6 @@ class PoloniexFuturesAPI {
           nextFundingTime: Date.now() + 8 * 60 * 60 * 1000,
         } as T;
         break;
-
       case ENDPOINTS.MARKET_KLINES:
         mockData = [
           {
@@ -400,7 +394,6 @@ class PoloniexFuturesAPI {
           },
         ] as T;
         break;
-
       case ENDPOINTS.MARKET_DEPTH:
         mockData = {
           asks: [
@@ -414,7 +407,6 @@ class PoloniexFuturesAPI {
           ts: Date.now(),
         } as T;
         break;
-
       case ENDPOINTS.MARKET_TRADES:
         mockData = [
           {
@@ -425,15 +417,13 @@ class PoloniexFuturesAPI {
           },
         ] as T;
         break;
-
       case ENDPOINTS.MARKET_FUNDING_RATE:
         mockData = {
-          symbol: String(params.symbol || "BTC-USDT"),
+          symbol: String(params.symbol || "BTC_USDT_PERP"),
           fundingRate: "0.0001",
           nextFundingTime: Date.now() + 8 * 60 * 60 * 1000,
         } as T;
         break;
-
       default:
         mockData = {} as T;
     }
@@ -443,10 +433,17 @@ class PoloniexFuturesAPI {
 
   // Account endpoints
   async getAccountBalance(): Promise<FuturesAccountBalance> {
-    return this.request<FuturesAccountBalance>(
+    const raw = await this.request<FuturesAccountBalance>(
       "GET",
       ENDPOINTS.ACCOUNT_BALANCE
     );
+    // Parse numeric fields for display convenience
+    // Poloniex returns eq/availMgn as string decimals
+    return {
+      ...raw,
+      totalBalance: parseFloat(raw.eq || "0"),
+      availableBalance: parseFloat(raw.availMgn || raw.eq || "0"),
+    };
   }
 
   async getAccountBills(params: {
@@ -460,9 +457,15 @@ class PoloniexFuturesAPI {
 
   // Position endpoints
   async getCurrentPositions(symbol?: string): Promise<FuturesPosition[]> {
-    return this.request<FuturesPosition[]>("GET", ENDPOINTS.CURRENT_POSITIONS, {
-      symbol,
-    });
+    const result = await this.request<FuturesPosition[] | { data?: FuturesPosition[] }>(
+      "GET",
+      ENDPOINTS.CURRENT_POSITIONS,
+      symbol ? { symbol } : {}
+    );
+    // Handle both array and wrapped response
+    if (Array.isArray(result)) return result;
+    if (result && (result as any).data) return (result as any).data;
+    return [];
   }
 
   async getPositionHistory(params: {
@@ -491,9 +494,8 @@ class PoloniexFuturesAPI {
   }
 
   async getLeverages(symbol: string): Promise<LeverageInfo> {
-    return this.request<LeverageInfo>("GET", ENDPOINTS.GET_LEVERAGES, {
-      symbol,
-    });
+    // Backend: GET /api/futures/leverage/:symbol
+    return this.request<LeverageInfo>("GET", `${ENDPOINTS.GET_LEVERAGES}/${normalizeFuturesSymbol(symbol)}`);
   }
 
   async setLeverage(params: {
@@ -504,7 +506,7 @@ class PoloniexFuturesAPI {
     return this.request<GenericApiResponse>(
       "POST",
       ENDPOINTS.SET_LEVERAGE,
-      params
+      { symbol: normalizeFuturesSymbol(params.symbol), leverage: params.lever }
     );
   }
 
@@ -512,15 +514,20 @@ class PoloniexFuturesAPI {
     return this.request<GenericApiResponse>(
       "POST",
       ENDPOINTS.SWITCH_POSITION_MODE,
-      { posMode }
+      { symbol: "BTC_USDT_PERP", mode: posMode === PositionMode.HEDGE ? "ISOLATED" : "CROSS" }
     );
   }
 
   async getPositionMode(): Promise<{ posMode: PositionMode }> {
-    return this.request<{ posMode: PositionMode }>(
-      "GET",
-      ENDPOINTS.VIEW_POSITION_MODE
-    );
+    // This endpoint may not exist on backend - return safe default
+    try {
+      return await this.request<{ posMode: PositionMode }>(
+        "GET",
+        `${ENDPOINTS.VIEW_POSITION_MODE}/BTC_USDT_PERP`
+      );
+    } catch {
+      return { posMode: PositionMode.ONE_WAY };
+    }
   }
 
   // Trading endpoints
@@ -533,21 +540,30 @@ class PoloniexFuturesAPI {
     posSide: PositionSide;
     clientOrderId?: string;
   }): Promise<OrderResponse> {
-    return this.request<OrderResponse>("POST", ENDPOINTS.PLACE_ORDER, params);
+    return this.request<OrderResponse>("POST", ENDPOINTS.PLACE_ORDER, {
+      ...params,
+      symbol: normalizeFuturesSymbol(params.symbol),
+    });
   }
 
   async cancelOrder(params: {
     symbol: string;
     orderId: string;
   }): Promise<OrderResponse> {
-    return this.request<OrderResponse>("POST", ENDPOINTS.CANCEL_ORDER, params);
+    // Backend: DELETE /api/futures/order/:orderId?symbol=...
+    return this.request<OrderResponse>(
+      "DELETE",
+      `${ENDPOINTS.CANCEL_ORDER}/${params.orderId}`,
+      { symbol: normalizeFuturesSymbol(params.symbol) }
+    );
   }
 
   async cancelAllOrders(symbol?: string): Promise<GenericApiResponse> {
+    // Backend: DELETE /api/futures/orders?symbol=...
     return this.request<GenericApiResponse>(
-      "POST",
+      "DELETE",
       ENDPOINTS.CANCEL_ALL_ORDERS,
-      { symbol }
+      symbol ? { symbol: normalizeFuturesSymbol(symbol) } : {}
     );
   }
 
@@ -557,23 +573,43 @@ class PoloniexFuturesAPI {
     endTime?: number;
     limit?: number;
   }): Promise<FuturesOrder[]> {
-    return this.request<FuturesOrder[]>("GET", ENDPOINTS.ORDER_HISTORY, params);
+    const result = await this.request<FuturesOrder[] | any>("GET", ENDPOINTS.ORDER_HISTORY, params);
+    if (Array.isArray(result)) return result;
+    if (result && result.data) return result.data;
+    return [];
   }
 
   async getOpenOrders(symbol?: string): Promise<FuturesOrder[]> {
-    return this.request<FuturesOrder[]>("GET", ENDPOINTS.OPEN_ORDERS, {
-      symbol,
-    });
+    // Backend: GET /api/futures/orders?symbol=...
+    const result = await this.request<FuturesOrder[] | any>("GET", ENDPOINTS.OPEN_ORDERS, symbol ? { symbol } : {});
+    if (Array.isArray(result)) return result;
+    if (result && result.data) return result.data;
+    return [];
   }
 
-  // Market data endpoints
+  // Market data endpoints (public)
   async getMarketTicker(symbol: string): Promise<MarketTicker> {
-    return this.request<MarketTicker>(
+    // Backend: GET /api/futures/ticker?symbol=BTC_USDT
+    const data = await this.request<any>(
       "GET",
       ENDPOINTS.MARKET_TICKER,
       { symbol: normalizeFuturesSymbol(symbol) },
       false
     );
+    // Normalize ticker response — Poloniex v3 returns array or single object
+    const ticker = Array.isArray(data) ? data[0] : data;
+    if (!ticker) throw new Error("No ticker data returned");
+    return {
+      symbol: ticker.symbol || symbol,
+      last: ticker.close || ticker.last || ticker.lp || "0",
+      bestAsk: ticker.ask || ticker.bestAsk || "0",
+      bestBid: ticker.bid || ticker.bestBid || "0",
+      high24h: ticker.high24h || ticker.high || "0",
+      low24h: ticker.low24h || ticker.low || "0",
+      volume24h: ticker.amount || ticker.volume24h || "0",
+      fundingRate: ticker.fundingRate || "0",
+      nextFundingTime: ticker.nextFundingTime || 0,
+    };
   }
 
   async getMarketKlines(params: {
@@ -583,30 +619,36 @@ class PoloniexFuturesAPI {
     endTime?: number;
     limit?: number;
   }): Promise<MarketKline[]> {
-    const payload = {
-      ...params,
-      symbol: normalizeFuturesSymbol(params.symbol),
-    };
-    return this.request<MarketKline[]>(
+    // Backend: GET /api/futures/klines/:symbol?interval=1h&limit=100
+    const sym = normalizeFuturesSymbol(params.symbol) || params.symbol;
+    const data = await this.request<any>(
       "GET",
-      ENDPOINTS.MARKET_KLINES,
-      payload,
+      `${ENDPOINTS.MARKET_KLINES}/${sym}`,
+      { interval: params.interval, limit: params.limit || 100 },
       false
     );
+    if (!Array.isArray(data)) return [];
+    // Poloniex V3 candles: [low, high, open, close, amt, qty, tC, sT, cT]
+    return data.map((c: any) => ({
+      ts: parseInt(c[7] || c.ts || Date.now()),
+      open: String(c[2] || c.open || "0"),
+      high: String(c[1] || c.high || "0"),
+      low: String(c[0] || c.low || "0"),
+      close: String(c[3] || c.close || "0"),
+      volume: String(c[5] || c.volume || "0"),
+    }));
   }
 
   async getMarketDepth(params: {
     symbol: string;
     limit?: number;
   }): Promise<MarketDepth> {
-    const payload = {
-      ...params,
-      symbol: normalizeFuturesSymbol(params.symbol),
-    };
+    // Backend: GET /api/futures/orderbook/:symbol?depth=20
+    const sym = normalizeFuturesSymbol(params.symbol) || params.symbol;
     return this.request<MarketDepth>(
       "GET",
-      ENDPOINTS.MARKET_DEPTH,
-      payload,
+      `${ENDPOINTS.MARKET_DEPTH}/${sym}`,
+      { depth: params.limit || 20 },
       false
     );
   }
@@ -615,23 +657,30 @@ class PoloniexFuturesAPI {
     symbol: string;
     limit?: number;
   }): Promise<MarketTrade[]> {
-    const payload = {
-      ...params,
-      symbol: normalizeFuturesSymbol(params.symbol),
-    };
-    return this.request<MarketTrade[]>(
+    // Backend: GET /api/futures/trades/:symbol
+    const sym = normalizeFuturesSymbol(params.symbol) || params.symbol;
+    const data = await this.request<any>(
       "GET",
-      ENDPOINTS.MARKET_TRADES,
-      payload,
+      `${ENDPOINTS.MARKET_TRADES}/${sym}`,
+      {},
       false
     );
+    if (!Array.isArray(data)) return [];
+    return data.map((t: any) => ({
+      ts: t.cT || t.ts || Date.now(),
+      price: String(t.px || t.price || "0"),
+      size: String(t.qty || t.size || "0"),
+      side: (t.side === "sell" ? OrderSide.SELL : OrderSide.BUY),
+    }));
   }
 
   async getMarketFundingRate(symbol: string): Promise<FundingRate> {
+    // Backend: GET /api/futures/funding-rate/:symbol
+    const sym = normalizeFuturesSymbol(symbol) || symbol;
     return this.request<FundingRate>(
       "GET",
-      ENDPOINTS.MARKET_FUNDING_RATE,
-      { symbol: normalizeFuturesSymbol(symbol) },
+      `${ENDPOINTS.MARKET_FUNDING_RATE}/${sym}`,
+      {},
       false
     );
   }

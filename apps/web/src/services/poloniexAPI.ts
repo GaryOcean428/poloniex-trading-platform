@@ -1,6 +1,6 @@
 import { useAppStore } from "@/store";
 import { MarketData } from "@/types";
-import { getApiBaseUrl, shouldUseMockMode } from "@/utils/environment";
+import { getApiBaseUrl, shouldUseMockMode, getBackendUrl } from "@/utils/environment";
 import { getAccessToken } from "@/utils/auth";
 import axios from "axios";
 
@@ -8,7 +8,7 @@ import axios from "axios";
 const createAuthenticatedAxios = () => {
   const token = getAccessToken();
   return axios.create({
-    baseURL: getApiBaseUrl(),
+    baseURL: getBackendUrl(),
     timeout: 30000,
     headers: {
       "Content-Type": "application/json",

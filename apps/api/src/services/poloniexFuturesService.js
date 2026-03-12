@@ -15,6 +15,19 @@ class PoloniexFuturesService {
     this.timeout = 30000;
   }
 
+    /**
+       * Normalize symbol to Poloniex Futures format
+          * Converts BTC_USDT -> BTC_USDT_PERP for endpoints that require it
+             */
+    normalizeSymbol(symbol) {
+          if (!symbol) return symbol;
+          // Already in correct format
+          if (symbol.endsWith('_PERP') || symbol.includes('PERP')) return symbol;
+          // Convert SPOT format to PERP format for futures
+          return `${symbol}_PERP`;
+    }
+  
+
   /**
    * Generate HMAC-SHA256 signature for Poloniex v3 API authentication
    * Per specification: https://api-docs.poloniex.com/v3/futures/api/#authentication
@@ -548,7 +561,8 @@ class PoloniexFuturesService {
    * Endpoint: GET /v3/market/tickers
    */
   async getTickers(symbol = null) {
-    const params = symbol ? { symbol } : {};
+        const normalizedSymbol = symbol ? this.normalizeSymbol(symbol) : null;
+        const params = normalizedSymbol ? { symbol: normalizedSymbol } : {};
     return this.makePublicRequest('GET', '/market/tickers', params);
   }
 
@@ -557,7 +571,8 @@ class PoloniexFuturesService {
    * Endpoint: GET /v3/market/orderBook
    */
   async getOrderBook(symbol, depth = 20) {
-    const params = { symbol, depth };
+        const normalizedSymbol = this.normalizeSymbol(symbol);
+        const params = { symbol: normalizedSymbol, depth };
     return this.makePublicRequest('GET', '/market/orderBook', params);
   }
 
@@ -566,7 +581,7 @@ class PoloniexFuturesService {
    * Endpoint: GET /v3/market/trades
    */
   async getMarketTrades(symbol) {
-    const params = { symbol };
+        const params = { symbol: this.normalizeSymbol(symbol) };
     return this.makePublicRequest('GET', '/market/trades', params);
   }
 
