@@ -236,7 +236,7 @@ class PoloniexFuturesService {
       logger.info(`Transferred ${amount} USDT from futures to spot`, { result });
       return {
         success: true,
-        transferId: result?.applyId || result?.transferId || String(Date.now())
+        transferId: result?.applyId || result?.transferId || `txn_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
       };
     } catch (error) {
       logger.error('Error transferring to spot:', error);

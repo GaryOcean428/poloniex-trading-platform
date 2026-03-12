@@ -498,11 +498,11 @@ class FullyAutonomousTrader extends EventEmitter {
     if (action === 'HOLD') return null;
 
     // Calculate position size based on risk
+    // positionSize is in USDT (notional value)
     const slPercent = config.stopLossPercent / 100;
     const tpPercent = config.takeProfitPercent / 100;
-    const riskAmount = (config.initialCapital * config.maxRiskPerTrade) / 100;
-    const stopLossDistance = currentPrice * slPercent;
-    const positionSize = riskAmount / stopLossDistance;
+    const riskAmount = (config.initialCapital * config.maxRiskPerTrade) / 100; // USDT risked
+    const positionSizeUsdt = riskAmount / slPercent; // USDT notional
 
     // Calculate stop loss and take profit using config percentages
     const stopLoss = side === 'long' 
@@ -521,7 +521,7 @@ class FullyAutonomousTrader extends EventEmitter {
       entryPrice: currentPrice,
       stopLoss,
       takeProfit,
-      positionSize: Math.min(positionSize, config.initialCapital * 0.1), // Max 10% per position
+      positionSize: Math.min(positionSizeUsdt, config.initialCapital * 0.1), // USDT, max 10% of capital
       leverage: config.leverage,
       reason,
       indicators: factors
@@ -575,6 +575,21 @@ class FullyAutonomousTrader extends EventEmitter {
 
         // Run risk service checks before placing order
         const orderSize = signal.positionSize / signal.entryPrice;
+
+        // Fetch actual market info for risk validation
+        let marketInfo = { maxLeverage: 50, riskLimits: [] as any[] };
+        try {
+          const contractInfo = await poloniexFuturesService.getContractInfo(signal.symbol);
+          if (contractInfo) {
+            marketInfo = {
+              maxLeverage: parseFloat(contractInfo.maxLeverage || contractInfo.maxLev || '50'),
+              riskLimits: contractInfo.riskLimits || []
+            };
+          }
+        } catch (infoErr) {
+          logger.warn(`Could not fetch contract info for ${signal.symbol}, using defaults`);
+        }
+
         const riskCheck = await riskService.checkOrderRisk(
           {
             symbol: signal.symbol,
@@ -586,7 +601,7 @@ class FullyAutonomousTrader extends EventEmitter {
             takeProfit: signal.takeProfit
           },
           { id: userId, balance: availableBalance },
-          { maxLeverage: 50, riskLimits: [] } // Will be overridden by actual market info if available
+          marketInfo
         );
 
         if (!riskCheck.allowed) {
