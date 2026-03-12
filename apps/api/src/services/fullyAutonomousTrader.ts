@@ -12,6 +12,7 @@
 import { EventEmitter } from 'events';
 import { pool } from '../db/connection.js';
 import poloniexFuturesService from './poloniexFuturesService.js';
+import riskService from './riskService.js';
 import mlPredictionService from './mlPredictionService.js';
 import { apiCredentialsService } from './apiCredentialsService.js';
 import { logger } from '../utils/logger.js';
@@ -25,6 +26,10 @@ interface TradingConfig {
   symbols: string[]; // Trading pairs
   enabled: boolean;
   paperTrading: boolean; // If true, simulate trades without real execution
+  stopLossPercent: number; // Stop loss percentage (e.g., 2 = 2%)
+  takeProfitPercent: number; // Take profit percentage (e.g., 4 = 4%)
+  leverage: number; // Leverage multiplier (e.g., 3)
+  maxConcurrentPositions: number; // Maximum open positions at once
 }
 
 interface Position {
@@ -98,7 +103,11 @@ class FullyAutonomousTrader extends EventEmitter {
           targetDailyReturn: parseFloat(row.target_daily_return),
           symbols: row.symbols,
           enabled: row.enabled,
-          paperTrading: row.paper_trading !== false // Default to true if not set
+          paperTrading: row.paper_trading !== false, // Default to true if not set
+          stopLossPercent: parseFloat(row.stop_loss_percent) || 2,
+          takeProfitPercent: parseFloat(row.take_profit_percent) || 4,
+          leverage: parseFloat(row.leverage) || 3,
+          maxConcurrentPositions: parseInt(row.max_concurrent_positions) || 3
         };
 
         this.configs.set(config.userId, config);
@@ -134,7 +143,11 @@ class FullyAutonomousTrader extends EventEmitter {
       targetDailyReturn: config?.targetDailyReturn || 1, // 1% daily target
       symbols: config?.symbols || ['BTC_USDT_PERP', 'ETH_USDT_PERP', 'SOL_USDT_PERP'],
       enabled: true,
-      paperTrading: config?.paperTrading !== undefined ? config.paperTrading : true // Default to paper trading for safety
+      paperTrading: config?.paperTrading !== undefined ? config.paperTrading : true, // Default to paper trading for safety
+      stopLossPercent: config?.stopLossPercent || 2, // 2% stop loss
+      takeProfitPercent: config?.takeProfitPercent || 4, // 4% take profit (2:1 R:R)
+      leverage: config?.leverage || 3, // Conservative leverage
+      maxConcurrentPositions: config?.maxConcurrentPositions || 3
     };
 
     // Save to database
@@ -485,18 +498,20 @@ class FullyAutonomousTrader extends EventEmitter {
     if (action === 'HOLD') return null;
 
     // Calculate position size based on risk
+    const slPercent = config.stopLossPercent / 100;
+    const tpPercent = config.takeProfitPercent / 100;
     const riskAmount = (config.initialCapital * config.maxRiskPerTrade) / 100;
-    const stopLossDistance = currentPrice * 0.02; // 2% stop loss
+    const stopLossDistance = currentPrice * slPercent;
     const positionSize = riskAmount / stopLossDistance;
 
-    // Calculate stop loss and take profit
+    // Calculate stop loss and take profit using config percentages
     const stopLoss = side === 'long' 
-      ? currentPrice * 0.98  // 2% below entry
-      : currentPrice * 1.02; // 2% above entry
+      ? currentPrice * (1 - slPercent)
+      : currentPrice * (1 + slPercent);
 
     const takeProfit = side === 'long'
-      ? currentPrice * 1.04  // 4% above entry (2:1 risk/reward)
-      : currentPrice * 0.96; // 4% below entry
+      ? currentPrice * (1 + tpPercent)
+      : currentPrice * (1 - tpPercent);
 
     return {
       symbol,
@@ -507,7 +522,7 @@ class FullyAutonomousTrader extends EventEmitter {
       stopLoss,
       takeProfit,
       positionSize: Math.min(positionSize, config.initialCapital * 0.1), // Max 10% per position
-      leverage: 3, // Conservative leverage
+      leverage: config.leverage,
       reason,
       indicators: factors
     };
@@ -536,29 +551,98 @@ class FullyAutonomousTrader extends EventEmitter {
           return;
         }
 
-        // Get current positions
-        const currentPositions = await poloniexFuturesService.getPositions(credentials);
-        const positionCount = currentPositions.filter((p: any) => 
-          parseFloat(p.qty || p.positionAmt || '0') !== 0
-        ).length;
-
-        // Limit concurrent positions
-        const maxPositions = 3;
-        if (positionCount >= maxPositions) {
-          logger.info(`Max positions reached for user ${userId}`);
+        // Validate balance before placing order
+        const balance = await poloniexFuturesService.getAccountBalance(credentials);
+        const availableBalance = parseFloat(balance.availMgn || balance.availableBalance || '0');
+        const requiredMargin = (signal.positionSize / signal.leverage);
+        if (availableBalance < requiredMargin * 1.1) { // 10% buffer
+          logger.warn(`Insufficient margin for user ${userId}: available=${availableBalance}, required=${requiredMargin}`);
           return;
         }
 
-        // Place real order
+        // Get current positions
+        const currentPositions = await poloniexFuturesService.getPositions(credentials);
+        const activePositions = Array.isArray(currentPositions) ? currentPositions : [];
+        const positionCount = activePositions.filter((p: any) => 
+          parseFloat(p.qty || p.positionAmt || '0') !== 0
+        ).length;
+
+        // Limit concurrent positions using config
+        if (positionCount >= config.maxConcurrentPositions) {
+          logger.info(`Max positions (${config.maxConcurrentPositions}) reached for user ${userId}`);
+          return;
+        }
+
+        // Run risk service checks before placing order
+        const orderSize = signal.positionSize / signal.entryPrice;
+        const riskCheck = await riskService.checkOrderRisk(
+          {
+            symbol: signal.symbol,
+            leverage: signal.leverage,
+            size: orderSize,
+            price: signal.entryPrice,
+            side: signal.side === 'long' ? 'buy' : 'sell',
+            stopLoss: signal.stopLoss,
+            takeProfit: signal.takeProfit
+          },
+          { id: userId, balance: availableBalance },
+          { maxLeverage: 50, riskLimits: [] } // Will be overridden by actual market info if available
+        );
+
+        if (!riskCheck.allowed) {
+          logger.warn(`Risk check rejected order for user ${userId}: ${riskCheck.reason}`);
+          await riskService.logRiskDecision({
+            accountId: userId,
+            orderId: null,
+            symbol: signal.symbol,
+            allowed: false,
+            reason: riskCheck.reason,
+            leverage: signal.leverage,
+            positionSize: orderSize
+          });
+          return;
+        }
+
+        // Validate stop loss / take profit levels
+        const slTpCheck = riskService.validateStopLossTakeProfit(
+          {
+            stopLoss: signal.stopLoss,
+            takeProfit: signal.takeProfit,
+            side: signal.side === 'long' ? 'buy' : 'sell'
+          },
+          signal.entryPrice
+        );
+
+        if (!slTpCheck.valid) {
+          logger.warn(`SL/TP validation failed for user ${userId}: ${slTpCheck.reason}`);
+          return;
+        }
+
+        // Normalize symbol for futures API
+        const normalizedSymbol = poloniexFuturesService.normalizeSymbol(signal.symbol);
+
+        // Place real order - use 'size' field (not 'quantity') per Poloniex API
         const order = await poloniexFuturesService.placeOrder(credentials, {
-          symbol: signal.symbol,
-          side: signal.side === 'long' ? 'BUY' : 'SELL',
-          type: 'MARKET',
-          quantity: signal.positionSize / signal.entryPrice,
-          leverage: signal.leverage
+          symbol: normalizedSymbol,
+          side: signal.side === 'long' ? 'buy' : 'sell',
+          type: 'market',
+          size: orderSize
         });
 
-        orderId = order.orderId;
+        orderId = order.orderId || order.id;
+
+        // Log risk decision for audit trail
+        await riskService.logRiskDecision({
+          accountId: userId,
+          orderId: orderId,
+          symbol: signal.symbol,
+          allowed: true,
+          reason: signal.reason,
+          leverage: signal.leverage,
+          positionSize: orderSize
+        });
+
+        logger.info(`[LIVE] Order placed: ${orderId} for ${signal.symbol}`);
       } else {
         // Paper trading - check virtual position limits
         const openPaperTrades = await pool.query(
@@ -567,8 +651,8 @@ class FullyAutonomousTrader extends EventEmitter {
           [userId]
         );
 
-        if (parseInt(openPaperTrades.rows[0].count) >= 3) {
-          logger.info(`Max paper positions reached for user ${userId}`);
+        if (parseInt(openPaperTrades.rows[0].count) >= config.maxConcurrentPositions) {
+          logger.info(`Max paper positions (${config.maxConcurrentPositions}) reached for user ${userId}`);
           return;
         }
       }
@@ -604,13 +688,19 @@ class FullyAutonomousTrader extends EventEmitter {
    * Manage existing positions (stop loss, take profit, trailing stop)
    */
   private async managePositions(userId: string, analyses: Map<string, MarketAnalysis>): Promise<void> {
+    const config = this.configs.get(userId);
     const credentials = await apiCredentialsService.getCredentials(userId);
     if (!credentials) return;
 
+    const slPercent = config?.stopLossPercent || 2;
+    const tpPercent = config?.takeProfitPercent || 4;
+    const trailingTrigger = slPercent; // Start trailing stop when profit exceeds SL distance
+
     try {
       const positions = await poloniexFuturesService.getPositions(credentials);
+      const activePositions = Array.isArray(positions) ? positions : [];
 
-      for (const position of positions) {
+      for (const position of activePositions) {
         const qty = parseFloat(position.qty || position.positionAmt || '0');
         if (qty === 0) continue;
 
@@ -619,23 +709,25 @@ class FullyAutonomousTrader extends EventEmitter {
         const entryPrice = parseFloat(position.openAvgPx || position.entryPrice || '0');
         const unrealizedPnL = parseFloat(position.upl || position.unrealizedPnl || '0');
 
-        // Check stop loss (2% loss)
-        const lossPercent = (unrealizedPnL / (entryPrice * Math.abs(qty))) * 100;
-        if (lossPercent < -2) {
-          logger.info(`Stop loss triggered for ${symbol}: ${lossPercent.toFixed(2)}%`);
+        // Calculate P&L percentage
+        const pnlPercent = entryPrice > 0 ? (unrealizedPnL / (entryPrice * Math.abs(qty))) * 100 : 0;
+
+        // Check stop loss using config percentage
+        if (pnlPercent < -slPercent) {
+          logger.info(`Stop loss triggered for ${symbol}: ${pnlPercent.toFixed(2)}% (limit: -${slPercent}%)`);
           await this.closePosition(userId, symbol, 'stop_loss');
           continue;
         }
 
-        // Check take profit (4% profit)
-        if (lossPercent > 4) {
-          logger.info(`Take profit triggered for ${symbol}: ${lossPercent.toFixed(2)}%`);
+        // Check take profit using config percentage
+        if (pnlPercent > tpPercent) {
+          logger.info(`Take profit triggered for ${symbol}: ${pnlPercent.toFixed(2)}% (limit: ${tpPercent}%)`);
           await this.closePosition(userId, symbol, 'take_profit');
           continue;
         }
 
-        // Trailing stop (if profit > 2%, trail at 1%)
-        if (lossPercent > 2) {
+        // Trailing stop (if profit > SL distance, close on trend reversal)
+        if (pnlPercent > trailingTrigger) {
           const analysis = analyses.get(symbol);
           if (analysis) {
             // If trend reverses, close position
@@ -661,21 +753,25 @@ class FullyAutonomousTrader extends EventEmitter {
 
     try {
       const positions = await poloniexFuturesService.getPositions(credentials);
-      const position = positions.find((p: any) => p.symbol === symbol);
+      const allPositions = Array.isArray(positions) ? positions : [];
+      const position = allPositions.find((p: any) => p.symbol === symbol);
 
       if (!position) return;
 
       const qty = parseFloat(position.qty || position.positionAmt || '0');
       if (qty === 0) return;
 
-      // Close position
-      await poloniexFuturesService.placeOrder(credentials, {
-        symbol,
-        side: qty > 0 ? 'SELL' : 'BUY',
-        type: 'MARKET',
-        quantity: Math.abs(qty),
-        reduceOnly: true
-      });
+      // Use Poloniex close position endpoint for cleaner execution
+      const closeType = qty > 0 ? 'close_long' : 'close_short';
+      await poloniexFuturesService.closePosition(credentials, symbol, closeType);
+
+      // Update autonomous_trades record
+      await pool.query(
+        `UPDATE autonomous_trades 
+         SET status = 'closed', close_reason = $3, closed_at = NOW()
+         WHERE user_id = $1 AND symbol = $2 AND status = 'open'`,
+        [userId, symbol, reason]
+      );
 
       logger.info(`Position closed for user ${userId}: ${symbol} (${reason})`);
       this.emit('position_closed', { userId, symbol, reason });
@@ -693,14 +789,18 @@ class FullyAutonomousTrader extends EventEmitter {
     if (!credentials) return;
 
     try {
-      const positions = await poloniexFuturesService.getPositions(credentials);
+      // Use the bulk close endpoint for efficiency
+      await poloniexFuturesService.closeAllPositions(credentials);
+      
+      // Update all open trades in DB
+      await pool.query(
+        `UPDATE autonomous_trades 
+         SET status = 'closed', close_reason = 'trading_disabled', closed_at = NOW()
+         WHERE user_id = $1 AND status = 'open'`,
+        [userId]
+      );
 
-      for (const position of positions) {
-        const qty = parseFloat(position.qty || position.positionAmt || '0');
-        if (qty !== 0) {
-          await this.closePosition(userId, position.symbol, 'trading_disabled');
-        }
-      }
+      logger.info(`All positions closed for user ${userId}`);
     } catch (error) {
       logger.error(`Error closing all positions for user ${userId}:`, error);
     }
