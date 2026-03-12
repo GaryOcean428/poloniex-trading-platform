@@ -75,10 +75,10 @@
   },
   "dependencies": {
     "@testing-library/dom": "^10.4.1",
-    "axios": "^1.11.0",
+    "axios": "^1.13.5",
     "crypto-js": "^4.2.0",
     "express": "^5.2.0",
-    "express-rate-limit": "^8.1.0",
+    "express-rate-limit": "^8.2.2",
     "file-saver": "^2.0.5",
     "immer": "^10.1.1",
     "jszip": "^3.10.1",

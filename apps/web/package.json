@@ -31,7 +31,7 @@
     "@types/react-dom": "^19.1.7",
     "@types/seedrandom": "^3.0.8",
     "@vitejs/plugin-react": "^5.0.0",
-    "axios": "^1.11.0",
+    "axios": "^1.13.5",
     "chart.js": "^4.5.0",
     "clsx": "^2.1.1",
     "crypto-js": "^4.2.0",
