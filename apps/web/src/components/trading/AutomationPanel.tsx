@@ -105,15 +105,40 @@ const AutomationPanel: React.FC = () => {
       if (result.signal && result.confidence > 0.7) {
         const side = result.signal === 'BUY' ? 'buy' : 'sell';
 
-        // TODO: Implement actual order placement when trading engine is ready
-        // For now, just log the intended trade
-        logger.info(`Would execute ${side} order based on strategy ${strategy.name} for ${pair}`);
-        
-        // Simulate order execution for UI feedback
-        setLastSignal(prev => prev ? {
-          ...prev,
-          executed: true
-        } : null);
+        try {
+          const { getBackendUrl } = await import('../../utils/environment');
+          const backendUrl = getBackendUrl();
+          const token = localStorage.getItem('access_token') || localStorage.getItem('auth_token');
+
+          const orderResponse = await fetch(`${backendUrl}/api/futures/orders`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+            },
+            body: JSON.stringify({
+              symbol: pair.replace('-', '_') + '_PERP',
+              side,
+              type: 'market',
+              size: riskPerTrade || 1,
+              leverage: leverage || 3,
+              stopLoss: stopLossPercent || 2,
+              takeProfit: takeProfitPercent || 4
+            })
+          });
+
+          if (orderResponse.ok) {
+            logger.info(`Executed ${side} order for ${pair} via strategy ${strategy.name}`);
+            setLastSignal(prev => prev ? { ...prev, executed: true } : null);
+          } else {
+            const errData = await orderResponse.json();
+            logger.warn(`Order placement failed: ${errData.error || 'Unknown error'}`);
+            setLastSignal(prev => prev ? { ...prev, executed: false } : null);
+          }
+        } catch (orderErr) {
+          logger.warn(`Order placement error: ${orderErr instanceof Error ? orderErr.message : 'Unknown'}`);
+          setLastSignal(prev => prev ? { ...prev, executed: false } : null);
+        }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to run strategy');

@@ -44,23 +44,46 @@ const TradeHistory: React.FC = () => {
   const [itemsPerPage] = useState(20);
 
   // Fetch real trade data from API
-  // TODO: Replace with actual API call when available
   useEffect(() => {
-    // For now, start with empty trades
-    // In production, this should fetch from the backend API
-    setTrades([]);
-  }, []);
+    const fetchTrades = async () => {
+      try {
+        const { getBackendUrl } = await import('../utils/environment');
+        const backendUrl = getBackendUrl();
+        const token = localStorage.getItem('access_token') || localStorage.getItem('auth_token');
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (token) headers['Authorization'] = `Bearer ${token}`;
 
-  const getBasePrice = (pair: string): number => {
-    const basePrices: { [key: string]: number } = {
-      'BTC-USDT': 43000,
-      'ETH-USDT': 2500,
-      'ADA-USDT': 0.45,
-      'DOT-USDT': 6.5,
-      'SOL-USDT': 80
+        const response = await fetch(`${backendUrl}/api/autonomous/trades?limit=100`, { headers });
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success && Array.isArray(data.trades)) {
+            setTrades(data.trades.map((t: any) => ({
+              id: t.id,
+              timestamp: new Date(t.entryTime),
+              pair: t.symbol || '',
+              side: t.side === 'long' ? 'buy' : 'sell',
+              type: 'market' as const,
+              amount: t.quantity || 0,
+              price: t.entryPrice || 0,
+              total: (t.quantity || 0) * (t.entryPrice || 0),
+              fee: 0,
+              feeCurrency: 'USDT',
+              pnl: t.pnl ?? undefined,
+              strategy: t.reason || undefined,
+              orderId: t.id,
+              status: t.status === 'open' ? 'filled' : t.status === 'closed' ? 'filled' : 'cancelled'
+            })));
+            return;
+          }
+        }
+        // If API call fails or no data, start with empty trades
+        setTrades([]);
+      } catch {
+        setTrades([]);
+      }
     };
-    return basePrices[pair] || 100;
-  };
+    fetchTrades();
+  }, []);
 
   // Apply filters and search
   useEffect(() => {

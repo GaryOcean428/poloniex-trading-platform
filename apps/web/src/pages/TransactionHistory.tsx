@@ -39,11 +39,40 @@ const TransactionHistory: React.FC = () => {
   const [itemsPerPage] = useState(20);
 
   // Fetch real transaction data from API
-  // TODO: Replace with actual API call when available
   useEffect(() => {
-    // For now, start with empty transactions
-    // In production, this should fetch from the backend API
-    setTransactions([]);
+    const fetchTransactions = async () => {
+      try {
+        const { getBackendUrl } = await import('../utils/environment');
+        const backendUrl = getBackendUrl();
+        const token = localStorage.getItem('access_token') || localStorage.getItem('auth_token');
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+
+        const response = await fetch(`${backendUrl}/api/futures/account-bills`, { headers });
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success && Array.isArray(data.bills)) {
+            setTransactions(data.bills.map((b: any, idx: number) => ({
+              id: b.id || `tx-${idx}`,
+              timestamp: new Date(b.timestamp || b.createdAt || Date.now()),
+              type: (b.type || 'trade') as Transaction['type'],
+              currency: b.currency || 'USDT',
+              amount: parseFloat(b.amount || '0'),
+              status: 'completed' as const,
+              txHash: b.txHash || undefined,
+              description: b.description || getTransactionDescription(b.type || 'trade', b.currency || 'USDT', parseFloat(b.amount || '0')),
+              balance: parseFloat(b.balance || '0')
+            })));
+            return;
+          }
+        }
+        // If API call fails or no data, start with empty transactions
+        setTransactions([]);
+      } catch {
+        setTransactions([]);
+      }
+    };
+    fetchTransactions();
   }, []);
 
   // Helper function to generate transaction descriptions
