@@ -264,4 +264,30 @@ router.get('/trades', authenticateToken, async (req: Request, res: Response) => 
   }
 });
 
+/**
+ * GET /api/autonomous/heartbeat
+ * Check if autonomous trading loop is alive for the current user
+ */
+router.get('/heartbeat', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const userId = String(req.user.id);
+    const status = await fullyAutonomousTrader.getStatus(userId);
+
+    res.json({
+      success: true,
+      alive: status.isRunning,
+      lastHeartbeat: status.lastHeartbeat,
+      enabled: status.enabled,
+      paperTrading: status.paperTrading,
+      openPositions: status.openPositions
+    });
+  } catch (error: any) {
+    logger.error('Error checking heartbeat:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to check heartbeat'
+    });
+  }
+});
+
 export default router;

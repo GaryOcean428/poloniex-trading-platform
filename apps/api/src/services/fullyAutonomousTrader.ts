@@ -30,6 +30,9 @@ interface TradingConfig {
   takeProfitPercent: number; // Take profit percentage (e.g., 4 = 4%)
   leverage: number; // Leverage multiplier (e.g., 3)
   maxConcurrentPositions: number; // Maximum open positions at once
+  tradingCycleSeconds: number; // Seconds between trading cycles (default: 60)
+  confidenceThreshold: number; // Minimum confidence to execute (0-100, default: 70)
+  signalScoreThreshold: number; // Minimum score magnitude for signals (default: 50)
 }
 
 interface Position {
@@ -79,10 +82,49 @@ class FullyAutonomousTrader extends EventEmitter {
   private positions: Map<string, Position[]> = new Map();
   private runningIntervals: Map<string, NodeJS.Timeout> = new Map();
   private performanceMetrics: Map<string, any> = new Map();
+  private lastHeartbeat: Map<string, Date> = new Map();
 
   constructor() {
     super();
     this.loadActiveConfigs();
+  }
+
+  /**
+   * Update heartbeat timestamp for a user's trading session.
+   * This allows the UI to verify the trading loop is still active.
+   */
+  private updateHeartbeat(userId: string): void {
+    this.lastHeartbeat.set(userId, new Date());
+  }
+
+  /**
+   * Get the current status of autonomous trading for a user.
+   * Used by both /api/autonomous/status and /api/autonomous-trading/data.
+   */
+  async getStatus(userId: string): Promise<{
+    enabled: boolean;
+    paperTrading: boolean;
+    lastHeartbeat: string | null;
+    isRunning: boolean;
+    config: TradingConfig | null;
+    openPositions: number;
+    metrics: any;
+  }> {
+    const config = this.configs.get(userId);
+    const isRunning = this.runningIntervals.has(userId);
+    const heartbeat = this.lastHeartbeat.get(userId);
+    const metrics = this.performanceMetrics.get(userId) || null;
+    const positions = this.positions.get(userId) || [];
+
+    return {
+      enabled: config?.enabled ?? false,
+      paperTrading: config?.paperTrading ?? true,
+      lastHeartbeat: heartbeat ? heartbeat.toISOString() : null,
+      isRunning,
+      config: config || null,
+      openPositions: positions.length,
+      metrics
+    };
   }
 
   /**
@@ -107,7 +149,10 @@ class FullyAutonomousTrader extends EventEmitter {
           stopLossPercent: parseFloat(row.stop_loss_percent) || 2,
           takeProfitPercent: parseFloat(row.take_profit_percent) || 4,
           leverage: parseFloat(row.leverage) || 3,
-          maxConcurrentPositions: parseInt(row.max_concurrent_positions) || 3
+          maxConcurrentPositions: parseInt(row.max_concurrent_positions) || 3,
+          tradingCycleSeconds: parseInt(row.trading_cycle_seconds) || 60,
+          confidenceThreshold: parseFloat(row.confidence_threshold) || 70,
+          signalScoreThreshold: parseFloat(row.signal_score_threshold) || 50
         };
 
         this.configs.set(config.userId, config);
@@ -147,7 +192,10 @@ class FullyAutonomousTrader extends EventEmitter {
       stopLossPercent: config?.stopLossPercent || 2, // 2% stop loss
       takeProfitPercent: config?.takeProfitPercent || 4, // 4% take profit (2:1 R:R)
       leverage: config?.leverage || 3, // Conservative leverage
-      maxConcurrentPositions: config?.maxConcurrentPositions || 3
+      maxConcurrentPositions: config?.maxConcurrentPositions || 3,
+      tradingCycleSeconds: config?.tradingCycleSeconds || 60, // 1 minute default
+      confidenceThreshold: config?.confidenceThreshold || 70, // 70% minimum confidence
+      signalScoreThreshold: config?.signalScoreThreshold || 50 // ±50 score threshold
     };
 
     // Save to database
@@ -224,21 +272,22 @@ class FullyAutonomousTrader extends EventEmitter {
       return;
     }
 
-    logger.info(`Starting autonomous trading for user ${userId}`);
+    logger.info(`Starting autonomous trading for user ${userId} (cycle: ${config.tradingCycleSeconds}s)`);
 
     // Run immediately
     this.tradingCycle(userId).catch(err => {
       logger.error(`Trading cycle error for user ${userId}:`, err);
     });
 
-    // Then run every 1 minute (high-frequency monitoring)
+    // Then run at configured interval
+    const cycleMs = config.tradingCycleSeconds * 1000;
     const interval = setInterval(async () => {
       try {
         await this.tradingCycle(userId);
       } catch (err) {
         logger.error(`Trading cycle error for user ${userId}:`, err);
       }
-    }, 60 * 1000); // 1 minute
+    }, cycleMs);
 
     this.runningIntervals.set(userId, interval);
   }
@@ -253,6 +302,9 @@ class FullyAutonomousTrader extends EventEmitter {
     }
 
     try {
+      // Update heartbeat to signal the trading loop is active
+      this.updateHeartbeat(userId);
+
       // Step 1: Check risk limits
       const riskCheck = await this.checkRiskLimits(userId);
       if (!riskCheck.canTrade) {
@@ -419,7 +471,7 @@ class FullyAutonomousTrader extends EventEmitter {
     for (const [symbol, analysis] of analyses) {
       try {
         const signal = await this.generateSignal(symbol, analysis, config);
-        if (signal && signal.confidence >= 70) { // Only high-confidence signals
+        if (signal && signal.confidence >= config.confidenceThreshold) {
           signals.push(signal);
         }
       } catch (error) {
@@ -485,11 +537,11 @@ class FullyAutonomousTrader extends EventEmitter {
     const totalScore = factors.trend + factors.momentum + factors.ml + factors.volatility;
     confidence = Math.abs(totalScore);
 
-    if (totalScore > 50) {
+    if (totalScore > config.signalScoreThreshold) {
       action = 'BUY';
       side = 'long';
       reason = `Bullish: Trend=${factors.trend}, Momentum=${factors.momentum.toFixed(1)}, ML=${factors.ml.toFixed(1)}`;
-    } else if (totalScore < -50) {
+    } else if (totalScore < -config.signalScoreThreshold) {
       action = 'SELL';
       side = 'short';
       reason = `Bearish: Trend=${factors.trend}, Momentum=${factors.momentum.toFixed(1)}, ML=${factors.ml.toFixed(1)}`;
