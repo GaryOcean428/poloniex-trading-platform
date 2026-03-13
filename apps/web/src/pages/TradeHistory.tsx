@@ -45,6 +45,18 @@ const TradeHistory: React.FC = () => {
 
   // Fetch real trade data from API
   useEffect(() => {
+    interface ApiTrade {
+      id: string;
+      entryTime: string;
+      symbol: string;
+      side: string;
+      quantity: number;
+      entryPrice: number;
+      pnl: number | null;
+      reason: string | null;
+      status: string;
+    }
+
     const fetchTrades = async () => {
       try {
         const { getBackendUrl } = await import('../utils/environment');
@@ -57,11 +69,11 @@ const TradeHistory: React.FC = () => {
         if (response.ok) {
           const data = await response.json();
           if (data.success && Array.isArray(data.trades)) {
-            setTrades(data.trades.map((t: any) => ({
+            setTrades(data.trades.map((t: ApiTrade) => ({
               id: t.id,
               timestamp: new Date(t.entryTime),
               pair: t.symbol || '',
-              side: t.side === 'long' ? 'buy' : 'sell',
+              side: t.side === 'long' ? 'buy' as const : 'sell' as const,
               type: 'market' as const,
               amount: t.quantity || 0,
               price: t.entryPrice || 0,
@@ -71,12 +83,11 @@ const TradeHistory: React.FC = () => {
               pnl: t.pnl ?? undefined,
               strategy: t.reason || undefined,
               orderId: t.id,
-              status: t.status === 'open' ? 'filled' : t.status === 'closed' ? 'filled' : 'cancelled'
+              status: t.status === 'open' ? 'filled' as const : t.status === 'closed' ? 'filled' as const : 'cancelled' as const
             })));
             return;
           }
         }
-        // If API call fails or no data, start with empty trades
         setTrades([]);
       } catch {
         setTrades([]);

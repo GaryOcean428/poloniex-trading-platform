@@ -76,8 +76,8 @@ const LiveTradingDashboard: React.FC = () => {
           const data = await response.json();
           if (Array.isArray(data) && data.length > 0) {
             const pairs = data
-              .filter((m: any) => m.symbol && m.symbol.includes('USDT'))
-              .map((m: any) => m.symbol.replace('_', '-'))
+              .filter((m: { symbol?: string }) => m.symbol && m.symbol.includes('USDT'))
+              .map((m: { symbol: string }) => m.symbol.replace('_', '-'))
               .slice(0, 20);
             if (pairs.length > 0) setTradingPairs(pairs);
           }

@@ -58,6 +58,18 @@ const TransactionHistory: React.FC = () => {
 
   // Fetch real transaction data from API
   useEffect(() => {
+    interface ApiBill {
+      id?: string;
+      timestamp?: string;
+      createdAt?: string;
+      type?: string;
+      currency?: string;
+      amount?: string;
+      txHash?: string;
+      description?: string;
+      balance?: string;
+    }
+
     const fetchTransactions = async () => {
       try {
         const { getBackendUrl } = await import('../utils/environment');
@@ -70,7 +82,7 @@ const TransactionHistory: React.FC = () => {
         if (response.ok) {
           const data = await response.json();
           if (data.success && Array.isArray(data.bills)) {
-            setTransactions(data.bills.map((b: any, idx: number) => ({
+            setTransactions(data.bills.map((b: ApiBill, idx: number) => ({
               id: b.id || `tx-${idx}`,
               timestamp: new Date(b.timestamp || b.createdAt || Date.now()),
               type: (b.type || 'trade') as Transaction['type'],
@@ -78,13 +90,12 @@ const TransactionHistory: React.FC = () => {
               amount: parseFloat(b.amount || '0'),
               status: 'completed' as const,
               txHash: b.txHash || undefined,
-              description: b.description || getTransactionDescription(b.type || 'trade', b.currency || 'USDT', parseFloat(b.amount || '0')),
+              description: b.description || getTransactionDescription((b.type || 'trade') as Transaction['type'], b.currency || 'USDT', parseFloat(b.amount || '0')),
               balance: parseFloat(b.balance || '0')
             })));
             return;
           }
         }
-        // If API call fails or no data, start with empty transactions
         setTransactions([]);
       } catch {
         setTransactions([]);

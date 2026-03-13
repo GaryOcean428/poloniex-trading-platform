@@ -336,11 +336,13 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
 
         const pnls = returnsResult.rows.map((r: any) => parseFloat(r.pnl));
         if (pnls.length > 1) {
-          // Sharpe ratio: mean(returns) / stddev(returns) * sqrt(252) (annualized)
+          // Sharpe ratio: mean(returns) / stddev(returns) * sqrt(252)
+          // 252 = standard number of trading days per year for annualization
           const mean = pnls.reduce((a: number, b: number) => a + b, 0) / pnls.length;
           const variance = pnls.reduce((a: number, b: number) => a + (b - mean) ** 2, 0) / (pnls.length - 1);
           const stdDev = Math.sqrt(variance);
-          sharpeRatio = stdDev > 0 ? (mean / stdDev) * Math.sqrt(252) : 0;
+          const TRADING_DAYS_PER_YEAR = 252;
+          sharpeRatio = stdDev > 0 ? (mean / stdDev) * Math.sqrt(TRADING_DAYS_PER_YEAR) : 0;
 
           // Max drawdown: largest peak-to-trough decline in cumulative PnL
           let peak = 0;
