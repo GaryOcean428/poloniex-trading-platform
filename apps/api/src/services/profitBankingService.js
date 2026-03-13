@@ -1,6 +1,7 @@
 import { EventEmitter } from 'events';
 import { logger } from '../utils/logger.js';
 import poloniexFuturesService from './poloniexFuturesService.js';
+import { apiCredentialsService } from './apiCredentialsService.js';
 import { query } from '../db/connection.js';
 
 /**
@@ -12,6 +13,7 @@ class ProfitBankingService extends EventEmitter {
   constructor() {
     super();
     this.isInitialized = false;
+    this.userId = null;
     this.bankingConfig = {
       enabled: true,
       bankingPercentage: 0.30,      // Bank 30% of profits
@@ -43,10 +45,15 @@ class ProfitBankingService extends EventEmitter {
   
   /**
    * Initialize the profit banking service
+   * @param {string} [userId] - Optional user ID to bind credentials
    */
-  async initialize() {
+  async initialize(userId = null) {
     try {
       this.logger.info('💰 Initializing Profit Banking Service...');
+      
+      if (userId) {
+        this.userId = userId;
+      }
       
       // Load banking history from database
       await this.loadBankingHistory();
@@ -169,7 +176,11 @@ class ProfitBankingService extends EventEmitter {
       this.logger.info(`💸 Banking ${amount.toFixed(2)} USDT to spot account...`);
       
       // Execute transfer via Poloniex API
-      const transferResult = await poloniexFuturesService.transferToSpot(amount);
+      const credentials = await this.getCredentials();
+      if (!credentials) {
+        throw new Error('No API credentials available for transfer');
+      }
+      const transferResult = await poloniexFuturesService.transferToSpot(credentials, amount);
       
       if (transferResult.success) {
         // Record successful banking
@@ -297,12 +308,25 @@ class ProfitBankingService extends EventEmitter {
    */
   async getFuturesBalance() {
     try {
-      const accountInfo = await poloniexFuturesService.getAccountInfo();
+      const credentials = await this.getCredentials();
+      if (!credentials) {
+        this.logger.warn('No credentials available for futures balance check');
+        return 0;
+      }
+      const accountInfo = await poloniexFuturesService.getAccountInfo(credentials);
       return parseFloat(accountInfo.balance || 0);
     } catch (error) {
       this.logger.error('❌ Failed to get futures balance:', error);
       return 0;
     }
+  }
+
+  /**
+   * Get API credentials for the configured user
+   */
+  async getCredentials() {
+    if (!this.userId) return null;
+    return apiCredentialsService.getCredentials(this.userId);
   }
   
   /**

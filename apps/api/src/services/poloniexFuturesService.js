@@ -191,6 +191,63 @@ class PoloniexFuturesService {
   }
 
   /**
+   * Get account overview / info
+   * Endpoint: GET /v3/account/overview
+   * Returns account summary including balance, margin, P&L
+   */
+  async getAccountInfo(credentials) {
+    try {
+      const balanceData = await this.getAccountBalance(credentials);
+      return {
+        balance: balanceData.availMgn || balanceData.availableBalance || 0,
+        totalEquity: balanceData.eq || balanceData.totalEquity || 0,
+        unrealisedPnl: balanceData.upl || balanceData.unrealisedPnl || 0,
+        frozenFunds: balanceData.frozenFunds || 0,
+        marginBalance: balanceData.mgn || balanceData.marginBalance || 0,
+        accountId: balanceData.accountId || 'default'
+      };
+    } catch (error) {
+      logger.error('Error fetching account info:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Transfer funds from futures account to spot/exchange account
+   * Endpoint: POST /v3/account/transfer-out
+   * 
+   * @param {Object} credentials - API credentials
+   * @param {number} amount - Amount to transfer (USDT)
+   * @returns {Promise<Object>} Transfer result { success: boolean, transferId?: string, error?: string }
+   */
+  async transferToSpot(credentials, amount) {
+    try {
+      if (!amount || amount <= 0) {
+        return { success: false, error: 'Transfer amount must be positive' };
+      }
+
+      const body = {
+        currency: 'USDT',
+        amount: String(amount)
+      };
+
+      const result = await this.makeRequest(credentials, 'POST', '/account/transfer-out', body);
+      
+      logger.info(`Transferred ${amount} USDT from futures to spot`, { result });
+      return {
+        success: true,
+        transferId: result?.applyId || result?.transferId || `txn_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+      };
+    } catch (error) {
+      logger.error('Error transferring to spot:', error);
+      return {
+        success: false,
+        error: error.message || 'Transfer failed'
+      };
+    }
+  }
+
+  /**
    * Get account bills (transaction history)
    * Endpoint: GET /v3/account/bills
    */
