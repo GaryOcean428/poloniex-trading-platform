@@ -38,6 +38,24 @@ const TransactionHistory: React.FC = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage] = useState(20);
 
+  // Helper function to generate transaction descriptions
+  const getTransactionDescription = (type: Transaction['type'], currency: string, amount: number): string => {
+    switch (type) {
+      case 'deposit':
+        return `Deposit ${currency} to account`;
+      case 'withdrawal':
+        return `Withdraw ${currency} from account`;
+      case 'trade':
+        return `${amount > 0 ? 'Buy' : 'Sell'} ${currency}`;
+      case 'fee':
+        return `Trading fee for ${currency}`;
+      case 'interest':
+        return `Interest earned on ${currency}`;
+      default:
+        return `${type} transaction`;
+    }
+  };
+
   // Fetch real transaction data from API
   useEffect(() => {
     const fetchTransactions = async () => {
@@ -74,24 +92,6 @@ const TransactionHistory: React.FC = () => {
     };
     fetchTransactions();
   }, []);
-
-  // Helper function to generate transaction descriptions
-  const getTransactionDescription = (type: Transaction['type'], currency: string, amount: number): string => {
-    switch (type) {
-      case 'deposit':
-        return `Deposit ${currency} to account`;
-      case 'withdrawal':
-        return `Withdraw ${currency} from account`;
-      case 'trade':
-        return `${amount > 0 ? 'Buy' : 'Sell'} ${currency}`;
-      case 'fee':
-        return `Trading fee for ${currency}`;
-      case 'interest':
-        return `Interest earned on ${currency}`;
-      default:
-        return `${type} transaction`;
-    }
-  };
 
   // Apply filters and search
   useEffect(() => {
