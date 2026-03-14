@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
-import { Play, Pause, Square, Activity, Brain, TrendingUp, AlertCircle } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Play, Pause, Square, Activity, Brain, TrendingUp, AlertCircle, Shield, Zap } from 'lucide-react';
 import axios from 'axios';
 import { getAccessToken } from '@/utils/auth';
+import { getBackendUrl } from '@/utils/environment';
 import StrategyGenerationDisplay from './StrategyGenerationDisplay';
 import ActiveStrategiesPanel from './ActiveStrategiesPanel';
 import BacktestResultsVisualization from './BacktestResultsVisualization';
@@ -9,11 +10,7 @@ import StrategyApprovalQueue from './StrategyApprovalQueue';
 import LiveTradingActivityFeed from './LiveTradingActivityFeed';
 import PerformanceAnalytics from './PerformanceAnalytics';
 
-// Auto-detect API URL based on environment
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 
-  (window.location.hostname.includes('railway.app') 
-    ? 'https://polytrade-be.up.railway.app' 
-    : 'http://localhost:3000');
+const API_BASE_URL = getBackendUrl();
 
 interface AgentStatus {
   id: string;
@@ -54,6 +51,7 @@ const AutonomousAgentDashboard: React.FC = () => {
   const [strategies, setStrategies] = useState<AgentStrategy[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [paperMode, setPaperMode] = useState(true);
   const [config, setConfig] = useState({
     maxDrawdown: 15,
     positionSize: 2,
@@ -70,57 +68,83 @@ const AutonomousAgentDashboard: React.FC = () => {
 
   useEffect(() => {
     fetchAgentStatus();
+    fetchActivity();
+    fetchStrategies();
     const interval = setInterval(() => {
       fetchAgentStatus();
       fetchActivity();
       fetchStrategies();
-    }, 10000); // Refresh every 10 seconds
+    }, 10000);
 
-    return () => clearInterval(interval);
+    // WebSocket real-time updates
+    let socket: any = null;
+    import('socket.io-client').then(({ io }) => {
+      socket = io(API_BASE_URL, { transports: ['websocket', 'polling'] });
+      socket.on('agent:activity', (event: any) => {
+        // Prepend new activity to the list for real-time updates
+        setActivity(prev => [{
+          id: `ws-${Date.now()}`,
+          session_id: event.data?.sessionId || '',
+          activity_type: event.type,
+          description: event.data?.description || event.type,
+          metadata: event.data,
+          created_at: new Date(event.timestamp)
+        }, ...prev].slice(0, 50));
+      });
+    }).catch(() => {
+      // Socket.IO client not available — polling only
+    });
+
+    return () => {
+      clearInterval(interval);
+      if (socket) socket.disconnect();
+    };
+  }, []);
+
+  const getAuthHeaders = useCallback(() => {
+    const token = getAccessToken();
+    return { Authorization: `Bearer ${token}` };
   }, []);
 
   const fetchAgentStatus = async () => {
     try {
-      const token = getAccessToken();
       const response = await axios.get(`${API_BASE_URL}/api/agent/status`, {
-        headers: { Authorization: `Bearer ${token}` }
+        headers: getAuthHeaders()
       });
       
       if (response.data.success) {
         setAgentStatus(response.data.status);
       }
     } catch (_err: unknown) {
-      // console.error('Error fetching agent status:', err);
+      // Silently handle — status will be null
     }
   };
 
   const fetchActivity = async () => {
     try {
-      const token = localStorage.getItem('token');
       const response = await axios.get(`${API_BASE_URL}/api/agent/activity?limit=20`, {
-        headers: { Authorization: `Bearer ${token}` }
+        headers: getAuthHeaders()
       });
       
       if (response.data.success) {
         setActivity(response.data.activity);
       }
     } catch (_err: unknown) {
-      // console.error('Error fetching activity:', err);
+      // Silently handle
     }
   };
 
   const fetchStrategies = async () => {
     try {
-      const token = localStorage.getItem('token');
       const response = await axios.get(`${API_BASE_URL}/api/agent/strategies`, {
-        headers: { Authorization: `Bearer ${token}` }
+        headers: getAuthHeaders()
       });
       
       if (response.data.success) {
         setStrategies(response.data.strategies);
       }
     } catch (_err: unknown) {
-      // console.error('Error fetching strategies:', err);
+      // Silently handle
     }
   };
 
@@ -129,11 +153,10 @@ const AutonomousAgentDashboard: React.FC = () => {
     setError(null);
     
     try {
-      const token = localStorage.getItem('token');
       const response = await axios.post(
         `${API_BASE_URL}/api/agent/start`,
-        config,
-        { headers: { Authorization: `Bearer ${token}` } }
+        { ...config, paperTrading: paperMode },
+        { headers: getAuthHeaders() }
       );
       
       if (response.data.success) {
@@ -152,11 +175,10 @@ const AutonomousAgentDashboard: React.FC = () => {
     setError(null);
     
     try {
-      const token = localStorage.getItem('token');
       const response = await axios.post(
         `${API_BASE_URL}/api/agent/stop`,
         {},
-        { headers: { Authorization: `Bearer ${token}` } }
+        { headers: getAuthHeaders() }
       );
       
       if (response.data.success) {
@@ -174,11 +196,10 @@ const AutonomousAgentDashboard: React.FC = () => {
     setError(null);
     
     try {
-      const token = localStorage.getItem('token');
       const response = await axios.post(
         `${API_BASE_URL}/api/agent/pause`,
         {},
-        { headers: { Authorization: `Bearer ${token}` } }
+        { headers: getAuthHeaders() }
       );
       
       if (response.data.success) {
@@ -271,6 +292,39 @@ const AutonomousAgentDashboard: React.FC = () => {
             )}
           </div>
         </div>
+      </div>
+
+      {/* Paper / Live Mode Toggle */}
+      <div className="bg-white rounded-lg shadow-lg p-4 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          {paperMode ? (
+            <Shield className="w-6 h-6 text-blue-600" />
+          ) : (
+            <Zap className="w-6 h-6 text-orange-500" />
+          )}
+          <div>
+            <p className="font-semibold text-gray-900">
+              {paperMode ? 'Paper Trading Mode' : 'Live Trading Mode'}
+            </p>
+            <p className="text-sm text-gray-500">
+              {paperMode 
+                ? 'Simulated trades with virtual capital — no real money at risk' 
+                : 'Real trades will be executed on your Poloniex account'}
+            </p>
+          </div>
+        </div>
+        <button
+          onClick={() => setPaperMode(prev => !prev)}
+          disabled={agentStatus?.status === 'running'}
+          className={`relative inline-flex h-8 w-16 items-center rounded-full transition-colors focus:outline-none focus:ring-4 focus:ring-blue-300 disabled:opacity-50 disabled:cursor-not-allowed ${paperMode ? 'bg-blue-600' : 'bg-orange-500'}`}
+          role="switch"
+          aria-checked={paperMode}
+          aria-label={paperMode ? 'Switch to live trading' : 'Switch to paper trading'}
+          title={agentStatus?.status === 'running' ? 'Stop the agent to change trading mode' : undefined}
+        >
+          <span className={`inline-block h-6 w-6 transform rounded-full bg-white shadow-md transition-transform ${paperMode ? 'translate-x-1' : 'translate-x-9'}`} />
+          <span className="sr-only">{paperMode ? 'Paper' : 'Live'}</span>
+        </button>
       </div>
 
       {/* Error Alert */}

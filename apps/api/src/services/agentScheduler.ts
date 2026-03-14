@@ -2,6 +2,7 @@
  * Agent Scheduler
  * 
  * Background job scheduler for autonomous agents
+ * - Restores agent sessions from PostgreSQL on startup
  * - Starts agents in "always" mode
  * - Restarts agents after server restart
  * - Monitors agent health
@@ -9,7 +10,7 @@
 
 import * as cron from 'node-cron';
 import { pool } from '../db/connection.js';
-import { enhancedAutonomousAgent } from './enhancedAutonomousAgent.js';
+import { autonomousTradingAgent } from './autonomousTradingAgent.js';
 import { agentSettingsService } from './agentSettingsService.js';
 import { logger } from '../utils/logger.js';
 
@@ -29,6 +30,9 @@ class AgentScheduler {
     logger.info('Starting agent scheduler...');
     this.isRunning = true;
 
+    // Restore agent sessions that were running before server restart
+    await autonomousTradingAgent.restoreRunningSessionsFromDB();
+
     // Check every minute for agents that should be running
     const checkJob = cron.schedule('* * * * *', async () => {
       await this.checkAndStartAgents();
@@ -36,7 +40,7 @@ class AgentScheduler {
 
     this.jobs.set('check-agents', checkJob);
 
-    // Restart agents that were running when server stopped
+    // Restart agents from agent_settings (always-run mode)
     await this.restartPersistentAgents();
 
     logger.info('Agent scheduler started successfully');
@@ -70,7 +74,7 @@ class AgentScheduler {
       for (const userId of alwaysRunUsers) {
         try {
           // Check if agent is already running
-          const status = await enhancedAutonomousAgent.getAgentStatus(userId);
+          const status = await autonomousTradingAgent.getAgentStatus(userId);
           
           if (!status || status.status !== 'running') {
             logger.info(`Starting persistent agent for user ${userId}`);
@@ -79,7 +83,7 @@ class AgentScheduler {
             const settings = await agentSettingsService.getSettings(userId);
             
             if (settings && settings.config) {
-              await enhancedAutonomousAgent.startAgent(userId, settings.config);
+              await autonomousTradingAgent.startAgent(userId, settings.config);
               await agentSettingsService.updateActiveStatus(userId, true);
             }
           }
@@ -97,7 +101,7 @@ class AgentScheduler {
    */
   private async restartPersistentAgents() {
     try {
-      logger.info('Restarting persistent agents...');
+      logger.info('Restarting persistent agents from settings...');
 
       const result = await pool.query(`
         SELECT user_id, config
@@ -108,14 +112,21 @@ class AgentScheduler {
 
       for (const row of result.rows) {
         try {
+          // Check if already restored by restoreRunningSessionsFromDB
+          const existing = await autonomousTradingAgent.getAgentStatus(row.user_id);
+          if (existing && existing.status === 'running') {
+            logger.info(`Agent already running for user ${row.user_id} (restored from session)`);
+            continue;
+          }
+
           logger.info(`Restarting persistent agent for user ${row.user_id}`);
-          await enhancedAutonomousAgent.startAgent(row.user_id, row.config);
+          await autonomousTradingAgent.startAgent(row.user_id, row.config);
         } catch (error) {
           logger.error(`Error restarting agent for user ${row.user_id}:`, error);
         }
       }
 
-      logger.info(`Restarted ${result.rows.length} persistent agents`);
+      logger.info(`Processed ${result.rows.length} persistent agent settings`);
     } catch (error) {
       logger.error('Error restarting persistent agents:', error);
     }
@@ -138,14 +149,14 @@ class AgentScheduler {
       }
 
       // Check if agent is already running
-      const status = await enhancedAutonomousAgent.getAgentStatus(userId);
+      const status = await autonomousTradingAgent.getAgentStatus(userId);
       if (status && status.status === 'running') {
         logger.info(`Agent already running for user ${userId}`);
         return;
       }
 
       logger.info(`Auto-starting agent for user ${userId} on login`);
-      await enhancedAutonomousAgent.startAgent(userId, settings.config);
+      await autonomousTradingAgent.startAgent(userId, settings.config);
       await agentSettingsService.updateActiveStatus(userId, true);
     } catch (error) {
       logger.error(`Error auto-starting agent for user ${userId}:`, error);
@@ -170,13 +181,13 @@ class AgentScheduler {
       }
 
       // Get current agent status
-      const status = await enhancedAutonomousAgent.getAgentStatus(userId);
+      const status = await autonomousTradingAgent.getAgentStatus(userId);
       if (!status || status.status !== 'running') {
         return;
       }
 
       logger.info(`Stopping agent for user ${userId} on logout`);
-      await enhancedAutonomousAgent.stopAgent(status.id);
+      await autonomousTradingAgent.stopAgent(status.id);
       await agentSettingsService.updateActiveStatus(userId, false);
     } catch (error) {
       logger.error(`Error stopping agent for user ${userId}:`, error);

@@ -7,6 +7,7 @@ import automatedTradingService from './automatedTradingService.js';
 import { apiCredentialsService } from './apiCredentialsService.js';
 import mlPredictionService from './mlPredictionService.js';
 import { logger } from '../utils/logger.js';
+import type { Server as SocketIOServer } from 'socket.io';
 
 interface AgentConfig {
   userId: string;
@@ -64,9 +65,93 @@ interface AgentLearning {
 class AutonomousTradingAgent extends EventEmitter {
   private sessions: Map<string, AgentSession> = new Map();
   private runningIntervals: Map<string, NodeJS.Timeout> = new Map();
+  private io: SocketIOServer | null = null;
 
   constructor() {
     super();
+  }
+
+  /**
+   * Set the Socket.IO server instance for real-time updates
+   */
+  setSocketIO(io: SocketIOServer): void {
+    this.io = io;
+  }
+
+  /**
+   * Broadcast an agent event to connected clients via WebSocket
+   */
+  private broadcastEvent(eventType: string, data: any): void {
+    if (this.io) {
+      this.io.emit('agent:activity', { type: eventType, data, timestamp: new Date().toISOString() });
+    }
+  }
+
+  /**
+   * Restore running/paused sessions from PostgreSQL on startup.
+   * Re-populates the in-memory sessions map and restarts autonomous loops
+   * for sessions that were running when the server last stopped.
+   */
+  async restoreRunningSessionsFromDB(): Promise<void> {
+    try {
+      const result = await pool.query(
+        `SELECT * FROM agent_sessions WHERE status IN ('running', 'paused') ORDER BY started_at DESC`
+      );
+
+      if (result.rows.length === 0) {
+        logger.info('[Agent] No sessions to restore from database');
+        return;
+      }
+
+      logger.info(`[Agent] Restoring ${result.rows.length} session(s) from database`);
+
+      for (const row of result.rows) {
+        try {
+          const session: AgentSession = {
+            id: row.id,
+            userId: row.user_id,
+            status: row.status,
+            startedAt: new Date(row.started_at),
+            stoppedAt: row.stopped_at ? new Date(row.stopped_at) : undefined,
+            strategiesGenerated: parseInt(row.strategies_generated) || 0,
+            backtestsCompleted: parseInt(row.backtests_completed) || 0,
+            paperTradesExecuted: parseInt(row.paper_trades_executed) || 0,
+            liveTradesExecuted: parseInt(row.live_trades_executed) || 0,
+            totalPnl: parseFloat(row.total_pnl || '0'),
+            config: row.config
+          };
+
+          this.sessions.set(session.id, session);
+
+          // Restart the autonomous loop for running sessions
+          if (session.status === 'running') {
+            // Verify API credentials still exist before restarting
+            const credentials = await apiCredentialsService.getCredentials(session.userId);
+            if (credentials) {
+              this.startAutonomousLoop(session);
+              await this.logActivity(session.id, 'session_restored', 'Session restored after server restart');
+              this.broadcastEvent('session_restored', { sessionId: session.id, userId: session.userId });
+              logger.info(`[Agent] Restored and restarted session ${session.id} for user ${session.userId}`);
+            } else {
+              // No credentials, pause the session
+              session.status = 'paused';
+              await pool.query(
+                `UPDATE agent_sessions SET status = 'paused' WHERE id = $1`,
+                [session.id]
+              );
+              await this.logActivity(session.id, 'session_paused', 'Session paused: API credentials not found');
+              logger.warn(`[Agent] Session ${session.id} paused: no API credentials for user ${session.userId}`);
+            }
+          }
+        } catch (err: any) {
+          logger.error(`[Agent] Error restoring session ${row.id}:`, err.message);
+        }
+      }
+
+      logger.info(`[Agent] Session restoration complete. Active sessions: ${this.sessions.size}`);
+    } catch (error: any) {
+      logger.error('[Agent] Error restoring sessions from database:', error.message);
+    }
   }
 
   /**
@@ -324,27 +409,40 @@ class AutonomousTradingAgent extends EventEmitter {
       logger.warn(`[Agent ${session.id}] ML predictions unavailable:`, mlError.message);
     }
 
-    // Generate 5-10 strategy variations
+    // Check if LLM is available; fall back to rule-based strategies if not
+    const llmStrategyGenerator = getLLMStrategyGenerator();
+    const useLLM = llmStrategyGenerator.isAvailable();
+
+    if (!useLLM) {
+      logger.warn(`[Agent ${session.id}] Claude API key not configured — using rule-based strategy generation`);
+      await this.logActivity(session.id, 'llm_unavailable', 'Claude API key not configured. Using rule-based strategies.');
+    }
+
     const numStrategies = 5;
 
     for (let i = 0; i < numStrategies; i++) {
       try {
+        let strategyData: any;
         const prompt = this.buildStrategyGenerationPrompt(config, marketContext, i);
-        
-        const llmStrategyGenerator = getLLMStrategyGenerator();
-        // Build market context for LLM with ML predictions
-        const llmMarketContext = {
-          symbol: config.preferredPairs[0],
-          currentPrice: marketContext.price || 0,
-          priceChange24h: 0,
-          volume24h: 0,
-          technicalIndicators: {},
-          marketRegime: marketContext.trend === 'up' ? 'trending_up' as const : 
-                       marketContext.trend === 'down' ? 'trending_down' as const : 
-                       'ranging' as const,
-          mlPredictions: mlPredictions // Add ML predictions to context
-        };
-        const strategyData = await llmStrategyGenerator.generateStrategy(llmMarketContext);
+
+        if (useLLM) {
+          // LLM-powered strategy generation
+          const llmMarketContext = {
+            symbol: config.preferredPairs[0],
+            currentPrice: marketContext.price || 0,
+            priceChange24h: 0,
+            volume24h: 0,
+            technicalIndicators: {},
+            marketRegime: marketContext.trend === 'up' ? 'trending_up' as const : 
+                         marketContext.trend === 'down' ? 'trending_down' as const : 
+                         'ranging' as const,
+            mlPredictions: mlPredictions
+          };
+          strategyData = await llmStrategyGenerator.generateStrategy(llmMarketContext);
+        } else {
+          // Rule-based fallback strategy generation
+          strategyData = this.generateRuleBasedStrategy(config, marketContext, i);
+        }
 
         const strategy: AgentStrategy = {
           id: `${session.id}-strategy-${Date.now()}-${i}`,
@@ -383,6 +481,70 @@ class AutonomousTradingAgent extends EventEmitter {
     );
 
     return strategies;
+  }
+
+  /**
+   * Generate a rule-based strategy when LLM is unavailable.
+   * Uses market context and index to create diverse strategy templates.
+   */
+  private generateRuleBasedStrategy(config: AgentConfig, marketContext: any, index: number): any {
+    const strategyTemplates = [
+      {
+        name: 'SMA Crossover Trend Follower',
+        type: 'trend_following',
+        description: 'Enters long when SMA20 crosses above SMA50, short when below. Uses ATR-based stops.',
+        parameters: { smaPeriodShort: 20, smaPeriodLong: 50, atrMultiplier: 2.0 },
+        entryConditions: ['SMA(20) crosses above SMA(50) for long', 'SMA(20) crosses below SMA(50) for short'],
+        exitConditions: ['ATR-based trailing stop', 'Opposite crossover signal'],
+        riskManagement: { stopLossPercent: config.stopLossPercentage, takeProfitPercent: config.stopLossPercentage * 2, maxPositionSize: config.positionSize, maxDrawdown: config.maxDrawdown }
+      },
+      {
+        name: 'RSI Mean Reversion',
+        type: 'mean_reversion',
+        description: 'Buys oversold RSI conditions (<30) and sells overbought (>70). Best in ranging markets.',
+        parameters: { rsiPeriod: 14, oversoldLevel: 30, overboughtLevel: 70 },
+        entryConditions: ['RSI(14) < 30 for long', 'RSI(14) > 70 for short'],
+        exitConditions: ['RSI returns to neutral zone (40-60)', 'Fixed take-profit hit'],
+        riskManagement: { stopLossPercent: config.stopLossPercentage, takeProfitPercent: config.stopLossPercentage * 1.5, maxPositionSize: config.positionSize, maxDrawdown: config.maxDrawdown }
+      },
+      {
+        name: 'Bollinger Band Breakout',
+        type: 'breakout',
+        description: 'Trades breakouts above/below Bollinger Bands with volume confirmation.',
+        parameters: { bbPeriod: 20, bbStdDev: 2.0, volumeThreshold: 1.5 },
+        entryConditions: ['Price closes above upper BB with 1.5x avg volume for long', 'Price closes below lower BB with 1.5x avg volume for short'],
+        exitConditions: ['Price returns to middle band', 'Trailing stop at opposite band'],
+        riskManagement: { stopLossPercent: config.stopLossPercentage, takeProfitPercent: config.stopLossPercentage * 2.5, maxPositionSize: config.positionSize, maxDrawdown: config.maxDrawdown }
+      },
+      {
+        name: 'MACD Momentum',
+        type: 'momentum',
+        description: 'Follows MACD histogram direction with trend confirmation from EMA(200).',
+        parameters: { macdFast: 12, macdSlow: 26, macdSignal: 9, emaTrend: 200 },
+        entryConditions: ['MACD histogram turns positive above EMA(200) for long', 'MACD histogram turns negative below EMA(200) for short'],
+        exitConditions: ['MACD histogram reversal', 'Price crosses EMA(200)'],
+        riskManagement: { stopLossPercent: config.stopLossPercentage, takeProfitPercent: config.stopLossPercentage * 2, maxPositionSize: config.positionSize, maxDrawdown: config.maxDrawdown }
+      },
+      {
+        name: 'Multi-Timeframe Confluence',
+        type: 'swing',
+        description: 'Combines signals from multiple timeframes for high-confidence entries.',
+        parameters: { timeframes: config.preferredTimeframes, requiredConfluence: 3 },
+        entryConditions: ['Bullish alignment across 3+ timeframes for long', 'Bearish alignment across 3+ timeframes for short'],
+        exitConditions: ['Timeframe alignment breaks', 'Risk-reward target met'],
+        riskManagement: { stopLossPercent: config.stopLossPercentage, takeProfitPercent: config.stopLossPercentage * 3, maxPositionSize: config.positionSize, maxDrawdown: config.maxDrawdown }
+      }
+    ];
+
+    const template = strategyTemplates[index % strategyTemplates.length];
+
+    return {
+      ...template,
+      algorithm: `rule_based_${template.type}`,
+      expectedPerformance: { winRate: 0.5, profitFactor: 1.2, sharpeRatio: 0.8 },
+      confidence: 0.6,
+      reasoning: `Rule-based ${template.type} strategy generated for ${marketContext.trend || 'neutral'} market with ${marketContext.volatility || 'medium'} volatility.`
+    };
   }
 
   /**
@@ -792,6 +954,7 @@ class AutonomousTradingAgent extends EventEmitter {
        VALUES ($1, $2, $3)`,
       [sessionId, activityType, description]
     );
+    this.broadcastEvent(activityType, { sessionId, description });
   }
 }
 
