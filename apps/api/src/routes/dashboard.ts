@@ -17,45 +17,18 @@ router.get('/overview', authenticateToken, async (req: Request, res: Response) =
     try {
       credentials = await apiCredentialsService.getCredentials(String(req.user.id));
     } catch (credError) {
-      // No credentials found - return mock data for demo users
-      return res.json({
-        success: true,
-        timestamp: new Date().toISOString(),
-        data: {
-          balance: {
-            availableBalance: '10000.00',
-            totalEquity: '10000.00',
-            unrealizedPnL: '0.00',
-            currency: 'USDT'
-          },
-          positions: [],
-          positionsSummary: {
-            totalPositions: 0,
-            totalValue: 0,
-            totalPnL: 0
-          },
-          recentTrades: [],
-          tradesSummary: {
-            count: 0,
-            last24h: 0
-          },
-          openOrders: [],
-          ordersSummary: {
-            count: 0
-          }
-        },
-        mock: true
-      });
+      credentials = null;
     }
     
     if (!credentials) {
+      // No credentials found - return demo data with clear indication
       return res.json({
         success: true,
         timestamp: new Date().toISOString(),
         data: {
           balance: {
-            availableBalance: '10000.00',
-            totalEquity: '10000.00',
+            availableBalance: '0.00',
+            totalEquity: '0.00',
             unrealizedPnL: '0.00',
             currency: 'USDT'
           },
@@ -75,7 +48,8 @@ router.get('/overview', authenticateToken, async (req: Request, res: Response) =
             count: 0
           }
         },
-        mock: true
+        mock: true,
+        mockReason: 'No API credentials configured. Add your Poloniex API keys in Settings to see real data.'
       });
     }
 

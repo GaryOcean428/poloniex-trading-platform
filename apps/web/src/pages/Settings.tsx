@@ -327,7 +327,7 @@ const Settings: React.FC = () => {
             </div>
 
             {/* Date & Locale Preferences */}
-            <div className="trading-card">
+            <div id="regional" className="trading-card">
               <div className="flex items-center mb-4">
                 <User className="h-6 w-6 text-blue-500 mr-2" />
                 <h2 className="text-xl font-bold">Regional Preferences</h2>
@@ -359,33 +359,6 @@ const Settings: React.FC = () => {
               </div>
             </div>
             
-            <div id="regional" className="trading-card">
-              <div className="flex items-center mb-4">
-                <User className="h-6 w-6 text-blue-500 mr-2" />
-                <h2 className="text-xl font-bold">Regional Settings</h2>
-              </div>
-              
-              <div className="space-y-3">
-                <div>
-                  <label htmlFor="dateFormat" className="block text-sm font-medium text-neutral-700 mb-2">
-                    Date Format
-                  </label>
-                  <select
-                    id="dateFormat"
-                    name="dateFormat"
-                    value={formData.dateFormat}
-                    onChange={handleChange}
-                    className="mt-1 block w-full input"
-                  >
-                    <option value="AU">Australian (DD/MM/YYYY)</option>
-                    <option value="US">US (MM/DD/YYYY)</option>
-                  </select>
-                  <p className="mt-1 text-sm text-text-muted">
-                    Choose how dates are displayed throughout the application
-                  </p>
-                </div>
-              </div>
-            </div>
             
             <div id="extension" className="trading-card">
               <div className="flex items-center mb-4">
