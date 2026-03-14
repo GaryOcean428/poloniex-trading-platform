@@ -120,19 +120,21 @@ router.get('/overview', authenticateToken, async (req: Request, res: Response) =
       ? positionsData.filter((pos: any) => parseFloat(pos.qty || pos.positionAmt || '0') !== 0).length
       : 0;
 
-    // Transform Poloniex trade data to frontend format
+    // Transform Poloniex V3 trade data to frontend Trade interface format
+    // Poloniex V3 /trade/order/trades returns: px, qty, feeAmt, feeCcy, cTime, trdId, ordId, side, symbol, value, role, ordType
+    // Frontend Trade interface expects string types for price/qty/commission to preserve financial precision
     const transformedTrades = Array.isArray(tradesData) 
-      ? tradesData.map((trade: any) => ({
-          id: trade.tradeId || trade.id || String(Math.random()),
-          pair: trade.symbol || 'UNKNOWN',
-          timestamp: trade.ts || trade.time || Date.now(),
-          type: trade.side === 'buy' || trade.side === 'BUY' ? 'BUY' : 'SELL',
-          price: parseFloat(trade.fillPx || trade.price || '0'),
-          amount: parseFloat(trade.fillSz || trade.qty || trade.amount || '0'),
-          total: parseFloat(trade.fillPx || trade.price || '0') * parseFloat(trade.fillSz || trade.qty || trade.amount || '0'),
-          status: 'COMPLETED',
-          fee: parseFloat(trade.fee || '0'),
-          orderId: trade.ordId || trade.orderId || ''
+      ? tradesData.map((trade: any, index: number) => ({
+          id: trade.trdId || trade.tradeId || trade.id || `unknown-${Date.now()}-${index}`,
+          symbol: trade.symbol || 'UNKNOWN',
+          orderId: trade.ordId || trade.orderId || '',
+          side: (trade.side === 'buy' || trade.side === 'BUY') ? 'BUY' : 'SELL',
+          price: String(trade.px || trade.fillPx || trade.price || '0'),
+          qty: String(trade.qty || trade.fillSz || trade.sz || trade.amount || '0'),
+          realizedPnl: String(trade.realizedPnl || '0'),
+          commission: String(trade.feeAmt || trade.fee || '0'),
+          commissionAsset: trade.feeCcy || trade.commissionAsset || 'USDT',
+          time: parseInt(String(trade.cTime || trade.ts || trade.time || Date.now()))
         }))
       : [];
 
@@ -156,7 +158,7 @@ router.get('/overview', authenticateToken, async (req: Request, res: Response) =
         tradesSummary: {
           count: transformedTrades.length,
           last24h: transformedTrades.filter((t: any) => {
-            const tradeTime = t.timestamp;
+            const tradeTime = t.time;
             const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
             return tradeTime > dayAgo;
           }).length
