@@ -316,8 +316,8 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
         // Handle dashboard API format (has totalBalance/availableBalance numbers)
         else if (balanceData.totalBalance !== undefined) {
           setAccountBalance({
-            total: parseFloat(String(balanceData.totalBalance || 0)),
-            available: parseFloat(String(balanceData.availableBalance || 0)),
+            total: Number(balanceData.totalBalance) || 0,
+            available: Number(balanceData.availableBalance) || 0,
             currency: balanceData.currency || 'USDT'
           });
         }
@@ -325,10 +325,16 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
         else if (typeof balanceData.total === 'number' && typeof balanceData.available === 'number') {
           setAccountBalance(data);
         } else {
-          setAccountBalance(data);
+          // Unknown format — set a zero balance so the type guard passes
+          // and the UI doesn't show a stale/misleading value
+          setAccountBalance({
+            total: 0,
+            available: 0,
+            currency: 'USDT'
+          });
         }
       } else {
-        setAccountBalance(data);
+        setAccountBalance(null);
       }
     } catch (err) {
       const error = err as Error;
