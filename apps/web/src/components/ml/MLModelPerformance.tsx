@@ -105,6 +105,13 @@ const MLModelPerformance: React.FC<{ symbol: string }> = ({ symbol }) => {
     return (val * 100).toFixed(0);
   };
 
+  // Format prediction price from backend response
+  const formatPredictionPrice = (pred: any): string => {
+    if (pred.price != null) return `$${pred.price.toFixed(2)}`;
+    if (pred.prediction != null) return `$${pred.prediction.toFixed(2)}`;
+    return 'N/A';
+  };
+
   // Get signal color
   const signalColor = signal.signal === 'BUY' ? 'text-green-400' : 
                       signal.signal === 'SELL' ? 'text-red-400' : 'text-yellow-400';
@@ -150,7 +157,7 @@ const MLModelPerformance: React.FC<{ symbol: string }> = ({ symbol }) => {
             <div key={horizon} className="bg-gray-700 rounded-lg p-4">
               <p className="text-sm text-gray-400">{horizon} Prediction</p>
               <p className="text-2xl font-bold text-white mt-2">
-                {pred.price != null ? `$${pred.price.toFixed(2)}` : (pred.prediction != null ? `$${pred.prediction.toFixed(2)}` : 'N/A')}
+                {formatPredictionPrice(pred)}
               </p>
               <div className="mt-2 space-y-1">
                 <div className="flex justify-between text-xs">
