@@ -77,13 +77,12 @@ const AutonomousAgentDashboard: React.FC = () => {
     }, 10000);
 
     // WebSocket real-time updates
-    let socket: any = null;
+    let socket: { on: (event: string, cb: (data: any) => void) => void; disconnect: () => void } | null = null;
     import('socket.io-client').then(({ io }) => {
       socket = io(API_BASE_URL, { transports: ['websocket', 'polling'] });
-      socket.on('agent:activity', (event: any) => {
-        // Prepend new activity to the list for real-time updates
+      socket!.on('agent:activity', (event: { type: string; data?: { sessionId?: string; description?: string }; timestamp: string }) => {
         setActivity(prev => [{
-          id: `ws-${Date.now()}`,
+          id: `ws-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
           session_id: event.data?.sessionId || '',
           activity_type: event.type,
           description: event.data?.description || event.type,

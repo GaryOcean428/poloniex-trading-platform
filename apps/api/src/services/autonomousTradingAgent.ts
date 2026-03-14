@@ -139,7 +139,7 @@ class AutonomousTradingAgent extends EventEmitter {
                 `UPDATE agent_sessions SET status = 'paused' WHERE id = $1`,
                 [session.id]
               );
-              await this.logActivity(session.id, 'session_paused', 'Session paused: API credentials not found');
+              await this.logActivity(session.id, 'session_paused', 'Session paused: Poloniex API credentials not configured. Please add your API keys in Settings.');
               logger.warn(`[Agent] Session ${session.id} paused: no API credentials for user ${session.userId}`);
             }
           }
@@ -529,7 +529,7 @@ class AutonomousTradingAgent extends EventEmitter {
         name: 'Multi-Timeframe Confluence',
         type: 'swing',
         description: 'Combines signals from multiple timeframes for high-confidence entries.',
-        parameters: { timeframes: config.preferredTimeframes, requiredConfluence: 3 },
+        parameters: { timeframes: config.preferredTimeframes, requiredConfluence: Math.min(3, config.preferredTimeframes.length) },
         entryConditions: ['Bullish alignment across 3+ timeframes for long', 'Bearish alignment across 3+ timeframes for short'],
         exitConditions: ['Timeframe alignment breaks', 'Risk-reward target met'],
         riskManagement: { stopLossPercent: config.stopLossPercentage, takeProfitPercent: config.stopLossPercentage * 3, maxPositionSize: config.positionSize, maxDrawdown: config.maxDrawdown }
