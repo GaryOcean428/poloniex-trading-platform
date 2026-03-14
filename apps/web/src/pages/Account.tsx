@@ -142,10 +142,8 @@ const Account: React.FC = () => {
         }
 
         // Call backend API endpoint
-        const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 
-          (window.location.hostname.includes('railway.app') 
-            ? 'https://polytrade-be.up.railway.app'
-            : 'http://localhost:3000');
+        const { getBackendUrl } = await import('../utils/environment');
+        const API_BASE_URL = getBackendUrl();
         
         const response = await fetch(`${API_BASE_URL}/api/dashboard/bills?limit=5`, {
           headers: {
@@ -179,17 +177,17 @@ const Account: React.FC = () => {
   const accountData = {
     totalBalance: parseFloat(accountBalance?.total?.toString() || '0'),
     availableBalance: parseFloat(accountBalance?.available?.toString() || '0'),
-    equity: parseFloat(accountBalance?.total?.toString() || '0'), // Use total as fallback for equity
-    unrealizedPnL: 0, // Placeholder until backend endpoint provided
-    todayPnL: 0, // Placeholder
-    weeklyPnL: undefined as number | undefined, // Remove hardcoded values
-    monthlyPnL: undefined as number | undefined,
-    lifetimePnL: undefined as number | undefined,
+    equity: parseFloat(accountBalance?.total?.toString() || '0'),
+    unrealizedPnL: parseFloat(accountBalance?.unrealizedPnL?.toString() || '0'),
+    todayPnL: parseFloat(accountBalance?.todayPnL?.toString() || '0'),
+    weeklyPnL: accountBalance?.weeklyPnL != null ? parseFloat(accountBalance.weeklyPnL.toString()) : undefined,
+    monthlyPnL: accountBalance?.monthlyPnL != null ? parseFloat(accountBalance.monthlyPnL.toString()) : undefined,
+    lifetimePnL: accountBalance?.lifetimePnL != null ? parseFloat(accountBalance.lifetimePnL.toString()) : undefined,
     depositsPending: 0,
     withdrawalsPending: 0,
-    verificationStatus: 'Verified',
-    tradingLevel: 'Advanced',
-    feeRate: '0.1%',
+    verificationStatus: accountBalance?.verificationStatus || 'Unknown',
+    tradingLevel: accountBalance?.tradingLevel || 'Standard',
+    feeRate: accountBalance?.feeRate || 'N/A',
   };
 
   return (

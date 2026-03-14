@@ -42,15 +42,6 @@ interface RealTimeMetric {
   changePercent: number;
 }
 
-// Interface for future alert functionality
-// interface LiveAlert {
-//   id: string;
-//   type: 'success' | 'warning' | 'error' | 'info';
-//   message: string;
-//   timestamp: number;
-//   acknowledged: boolean;
-// }
-
 const LiveTradingDashboard: React.FC = () => {
   const {
     // marketData,
@@ -70,11 +61,33 @@ const LiveTradingDashboard: React.FC = () => {
   const [selectedPair, setSelectedPair] = useState<string>('BTC-USDT');
   const [isLiveMode, setIsLiveMode] = useState<boolean>(false);
 
-  // Available trading pairs for live monitoring
-  const tradingPairs = [
-    'BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'XRP-USDT',
-    'ADA-USDT', 'DOGE-USDT', 'MATIC-USDT', 'DOT-USDT'
-  ];
+  // Default trading pairs - fetched from API when available
+  const defaultPairs = ['BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'XRP-USDT', 'ADA-USDT', 'DOGE-USDT', 'MATIC-USDT', 'DOT-USDT'];
+  const [tradingPairs, setTradingPairs] = useState<string[]>(defaultPairs);
+
+  // Fetch available trading pairs from API
+  useEffect(() => {
+    const fetchPairs = async () => {
+      try {
+        const { getBackendUrl } = await import('../utils/environment');
+        const backendUrl = getBackendUrl();
+        const response = await fetch(`${backendUrl}/api/markets`);
+        if (response.ok) {
+          const data = await response.json();
+          if (Array.isArray(data) && data.length > 0) {
+            const pairs = data
+              .filter((m: { symbol?: string }) => m.symbol && m.symbol.includes('USDT'))
+              .map((m: { symbol: string }) => m.symbol.replace('_', '-'))
+              .slice(0, 20);
+            if (pairs.length > 0) setTradingPairs(pairs);
+          }
+        }
+      } catch {
+        // Keep default pairs on error
+      }
+    };
+    fetchPairs();
+  }, []);
 
   // Handle real-time market data
   const handleMarketData = useCallback((payload: unknown) => {

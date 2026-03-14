@@ -142,7 +142,30 @@ const HistoricalDataManager: React.FC<HistoricalDataManagerProps> = ({ onDataLoa
             volume: number;
           }> = [];
 
-          const basePrice = 50000; // Starting price for mock data
+          // Derive mock base price from symbol for realistic simulation
+          const symbolUpper = symbol.toUpperCase();
+          let basePrice = 100; // Fallback for unknown symbols
+          
+          // Try to fetch real price from API, fall back to reasonable estimation
+          try {
+            const { getBackendUrl } = await import('../../utils/environment');
+            const backendUrl = getBackendUrl();
+            const priceRes = await fetch(`${backendUrl}/api/markets/${symbol.replace('-', '_')}`);
+            if (priceRes.ok) {
+              const priceData = await priceRes.json();
+              if (priceData?.price || priceData?.markPrice) {
+                basePrice = parseFloat(priceData.price || priceData.markPrice);
+              }
+            }
+          } catch {
+            // Use symbol-based estimation if API unavailable
+          }
+          // If we couldn't get a real price, use symbol-name heuristic
+          if (basePrice <= 100) {
+            if (symbolUpper.includes('BTC')) basePrice = 90000;
+            else if (symbolUpper.includes('ETH')) basePrice = 3000;
+            else if (symbolUpper.includes('SOL')) basePrice = 150;
+          }
           for (let i = 0; i < totalCandles; i++) {
             const timestamp = Date.now() - (totalCandles - i) * 60000; // 1 minute intervals
             const open = basePrice + (Math.random() - 0.5) * 1000;

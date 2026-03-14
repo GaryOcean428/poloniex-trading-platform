@@ -322,6 +322,42 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
 
       const metrics = tradesResult.rows[0];
 
+      // Calculate Sharpe ratio and max drawdown from individual trade returns
+      let sharpeRatio = 0;
+      let maxDrawdown = 0;
+
+      try {
+        const returnsResult = await pool.query(
+          `SELECT pnl FROM trades 
+           WHERE user_id = $1 AND created_at >= $2 AND pnl IS NOT NULL
+           ORDER BY created_at ASC`,
+          [userId, status.startedAt]
+        );
+
+        const pnls = returnsResult.rows.map((r: any) => parseFloat(r.pnl));
+        if (pnls.length > 1) {
+          // Sharpe ratio: mean(returns) / stddev(returns) * sqrt(252)
+          // 252 = standard number of trading days per year for annualization
+          const mean = pnls.reduce((a: number, b: number) => a + b, 0) / pnls.length;
+          const variance = pnls.reduce((a: number, b: number) => a + (b - mean) ** 2, 0) / (pnls.length - 1);
+          const stdDev = Math.sqrt(variance);
+          const TRADING_DAYS_PER_YEAR = 252;
+          sharpeRatio = stdDev > 0 ? (mean / stdDev) * Math.sqrt(TRADING_DAYS_PER_YEAR) : 0;
+
+          // Max drawdown: largest peak-to-trough decline in cumulative PnL
+          let peak = 0;
+          let cumPnl = 0;
+          for (const pnl of pnls) {
+            cumPnl += pnl;
+            if (cumPnl > peak) peak = cumPnl;
+            const drawdown = peak > 0 ? (peak - cumPnl) / peak : 0;
+            if (drawdown > maxDrawdown) maxDrawdown = drawdown;
+          }
+        }
+      } catch {
+        // Keep defaults of 0 if calculation fails
+      }
+
       res.json({
         success: true,
         performance: {
@@ -334,8 +370,8 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
           losingTrades: parseInt(metrics.losing_trades || 0),
           averageWin: parseFloat(metrics.avg_win || 0),
           averageLoss: parseFloat(metrics.avg_loss || 0),
-          sharpeRatio: 0, // TODO: Calculate Sharpe ratio
-          maxDrawdown: 0 // TODO: Calculate max drawdown
+          sharpeRatio: parseFloat(sharpeRatio.toFixed(2)),
+          maxDrawdown: parseFloat((maxDrawdown * 100).toFixed(2))
         }
       });
     } catch (dbError: any) {

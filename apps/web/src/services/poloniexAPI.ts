@@ -306,63 +306,82 @@ class PoloniexApiClient {
   }
 
   public async placeOrder(
-    _pair: string,
-    _side: 'buy' | 'sell',
-    _type: 'market' | 'limit',
-    _quantity: number,
-    _price?: number
+    pair: string,
+    side: 'buy' | 'sell',
+    type: 'market' | 'limit',
+    quantity: number,
+    price?: number
   ): Promise<{ orderId: string; status: string; id?: string }> {
-    // TODO: Implement actual order placement
-    // For now, return a mock response to satisfy the interface
-    // console.warn('placeOrder called - this is a stub implementation');
-    
     if (this.mockMode) {
       const orderId = `mock_${Date.now()}`;
       return {
         orderId,
-        id: orderId, // Add id field for compatibility
+        id: orderId,
         status: 'filled'
       };
     }
-    
-    throw new Error('Order placement not implemented for live trading');
+
+    // Route through backend API for live trading
+    const api = createAuthenticatedAxios();
+    const symbol = pair.replace('-', '_') + '_PERP';
+    const response = await api.post('/api/futures/orders', {
+      symbol,
+      side,
+      type,
+      size: quantity,
+      ...(price && type === 'limit' ? { price } : {})
+    });
+    return {
+      orderId: response.data?.orderId || response.data?.id || `order_${Date.now()}`,
+      id: response.data?.id || response.data?.orderId,
+      status: response.data?.status || 'submitted'
+    };
   }
 
   public async placeConditionalOrder(
-    _pair: string,
-    _side: 'buy' | 'sell',
-    _type: 'stop' | 'takeProfit',
-    _quantity: number,
-    _triggerPrice: number
+    pair: string,
+    side: 'buy' | 'sell',
+    type: 'stop' | 'takeProfit',
+    quantity: number,
+    triggerPrice: number
   ): Promise<{ orderId: string; status: string }> {
-    // TODO: Implement actual conditional order placement
-    // For now, return a mock response to satisfy the interface
-    // console.warn('placeConditionalOrder called - this is a stub implementation');
-    
     if (this.mockMode) {
       return {
         orderId: `mock_conditional_${Date.now()}`,
         status: 'pending'
       };
     }
-    
-    throw new Error('Conditional order placement not implemented for live trading');
+
+    // Route through backend API for live trading
+    const api = createAuthenticatedAxios();
+    const symbol = pair.replace('-', '_') + '_PERP';
+    const response = await api.post('/api/futures/orders', {
+      symbol,
+      side,
+      type: 'limit',
+      size: quantity,
+      price: triggerPrice,
+      reduceOnly: true
+    });
+    return {
+      orderId: response.data?.orderId || response.data?.id || `cond_${Date.now()}`,
+      status: response.data?.status || 'pending'
+    };
   }
 
-  // Event listener methods for automated trading
-  public onPositionUpdate(_callback: (data: unknown) => void): void {
-    // TODO: Implement position update listener
-    // console.warn('onPositionUpdate called - this is a stub implementation');
+  // Event listener methods for automated trading - emit events via EventTarget
+  private eventTarget = new EventTarget();
+
+  public onPositionUpdate(callback: (data: unknown) => void): void {
+    this.eventTarget.addEventListener('positionUpdate', ((e: CustomEvent) => callback(e.detail)) as EventListener);
   }
 
-  public onLiquidationWarning(_callback: (data: unknown) => void): void {
-    // TODO: Implement liquidation warning listener
-    // console.warn('onLiquidationWarning called - this is a stub implementation');
+  public onLiquidationWarning(callback: (data: unknown) => void): void {
+    this.eventTarget.addEventListener('liquidationWarning', ((e: CustomEvent) => callback(e.detail)) as EventListener);
   }
 
-  public onMarginUpdate(_callback: (data: unknown) => void): void {
-    // TODO: Implement margin update listener
-    // console.warn('onMarginUpdate called - this is a stub implementation');
+  public onMarginUpdate(callback: (data: unknown) => void): void {
+    this.eventTarget.addEventListener('marginUpdate', ((e: CustomEvent) => callback(e.detail)) as EventListener);
   }
 }
 

@@ -268,8 +268,27 @@ const DQNTradingPanel: React.FC = () => {
 
     if (latestAction.action === 'buy')
     {
-      // Execute buy strategy
-      // TODO: Implement executeStrategy functionality
+      // Execute buy strategy via backend API
+      try {
+        const { getBackendUrl } = await import('../../utils/environment');
+        const backendUrl = getBackendUrl();
+        const token = localStorage.getItem('access_token') || localStorage.getItem('auth_token');
+        await fetch(`${backendUrl}/api/futures/orders`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+          },
+          body: JSON.stringify({
+            symbol: defaultPair.replace('-', '_') + '_PERP',
+            side: 'buy',
+            type: 'market',
+            size: 0.01
+          })
+        });
+      } catch (orderErr) {
+        logger.warn('DQN order placement failed', { error: orderErr });
+      }
       logger.info('DQN Strategy - BUY signal', {
         component: 'DQNTradingPanel',
         type: 'DQN_STRATEGY',
@@ -281,8 +300,27 @@ const DQNTradingPanel: React.FC = () => {
       });
     } else if (latestAction.action === 'sell')
     {
-      // Execute sell strategy
-      // TODO: Implement executeStrategy functionality
+      // Execute sell strategy via backend API
+      try {
+        const { getBackendUrl } = await import('../../utils/environment');
+        const backendUrl = getBackendUrl();
+        const token = localStorage.getItem('access_token') || localStorage.getItem('auth_token');
+        await fetch(`${backendUrl}/api/futures/orders`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+          },
+          body: JSON.stringify({
+            symbol: defaultPair.replace('-', '_') + '_PERP',
+            side: 'sell',
+            type: 'market',
+            size: 0.01
+          })
+        });
+      } catch (orderErr) {
+        logger.warn('DQN order placement failed', { error: orderErr });
+      }
       logger.info('DQN Strategy - SELL signal', {
         component: 'DQNTradingPanel',
         type: 'DQN_STRATEGY',

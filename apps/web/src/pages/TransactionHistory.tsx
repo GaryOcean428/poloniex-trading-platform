@@ -38,14 +38,6 @@ const TransactionHistory: React.FC = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage] = useState(20);
 
-  // Fetch real transaction data from API
-  // TODO: Replace with actual API call when available
-  useEffect(() => {
-    // For now, start with empty transactions
-    // In production, this should fetch from the backend API
-    setTransactions([]);
-  }, []);
-
   // Helper function to generate transaction descriptions
   const getTransactionDescription = (type: Transaction['type'], currency: string, amount: number): string => {
     switch (type) {
@@ -63,6 +55,54 @@ const TransactionHistory: React.FC = () => {
         return `${type} transaction`;
     }
   };
+
+  // Fetch real transaction data from API
+  useEffect(() => {
+    interface ApiBill {
+      id?: string;
+      timestamp?: string;
+      createdAt?: string;
+      type?: string;
+      currency?: string;
+      amount?: string;
+      txHash?: string;
+      description?: string;
+      balance?: string;
+    }
+
+    const fetchTransactions = async () => {
+      try {
+        const { getBackendUrl } = await import('../utils/environment');
+        const backendUrl = getBackendUrl();
+        const token = localStorage.getItem('access_token') || localStorage.getItem('auth_token');
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+
+        const response = await fetch(`${backendUrl}/api/futures/account-bills`, { headers });
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success && Array.isArray(data.bills)) {
+            setTransactions(data.bills.map((b: ApiBill, idx: number) => ({
+              id: b.id || `tx-${idx}`,
+              timestamp: new Date(b.timestamp || b.createdAt || Date.now()),
+              type: (b.type || 'trade') as Transaction['type'],
+              currency: b.currency || 'USDT',
+              amount: parseFloat(b.amount || '0'),
+              status: 'completed' as const,
+              txHash: b.txHash || undefined,
+              description: b.description || getTransactionDescription((b.type || 'trade') as Transaction['type'], b.currency || 'USDT', parseFloat(b.amount || '0')),
+              balance: parseFloat(b.balance || '0')
+            })));
+            return;
+          }
+        }
+        setTransactions([]);
+      } catch {
+        setTransactions([]);
+      }
+    };
+    fetchTransactions();
+  }, []);
 
   // Apply filters and search
   useEffect(() => {

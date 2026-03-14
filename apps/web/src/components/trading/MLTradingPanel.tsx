@@ -216,8 +216,27 @@ const MLTradingPanel: React.FC = () => {
 
     if (latestPrediction.prediction === 1 && latestPrediction.confidence > 0.6)
     {
-      // Execute buy strategy
-      // TODO: Implement executeStrategy functionality
+      // Execute buy strategy via backend API
+      try {
+        const { getBackendUrl } = await import('../../utils/environment');
+        const backendUrl = getBackendUrl();
+        const token = localStorage.getItem('access_token') || localStorage.getItem('auth_token');
+        await fetch(`${backendUrl}/api/futures/orders`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+          },
+          body: JSON.stringify({
+            symbol: defaultPair.replace('-', '_') + '_PERP',
+            side: 'buy',
+            type: 'market',
+            size: 0.01
+          })
+        });
+      } catch (orderErr) {
+        logger.warn('ML order placement failed', { error: orderErr });
+      }
       logger.info('ML Strategy - BUY signal', {
         component: 'MLTradingPanel',
         type: 'ML_STRATEGY',
@@ -229,8 +248,27 @@ const MLTradingPanel: React.FC = () => {
       });
     } else if (latestPrediction.prediction === 0 && latestPrediction.confidence > 0.6)
     {
-      // Execute sell strategy
-      // TODO: Implement executeStrategy functionality
+      // Execute sell strategy via backend API
+      try {
+        const { getBackendUrl } = await import('../../utils/environment');
+        const backendUrl = getBackendUrl();
+        const token = localStorage.getItem('access_token') || localStorage.getItem('auth_token');
+        await fetch(`${backendUrl}/api/futures/orders`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+          },
+          body: JSON.stringify({
+            symbol: defaultPair.replace('-', '_') + '_PERP',
+            side: 'sell',
+            type: 'market',
+            size: 0.01
+          })
+        });
+      } catch (orderErr) {
+        logger.warn('ML order placement failed', { error: orderErr });
+      }
       logger.info('ML Strategy - SELL signal', {
         component: 'MLTradingPanel',
         type: 'ML_STRATEGY',
