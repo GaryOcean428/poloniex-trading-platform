@@ -350,7 +350,11 @@ const Account: React.FC = () => {
                     <div>
                       <h4 className="text-sm font-medium text-neutral-500">Verification Status</h4>
                       <div className="flex items-center mt-1">
-                        <div className="h-3 w-3 rounded-full bg-green-500 mr-2"></div>
+                        <div className={`h-3 w-3 rounded-full mr-2 ${
+                          accountData.verificationStatus === 'Verified' ? 'bg-green-500' :
+                          accountData.verificationStatus === 'Pending' ? 'bg-yellow-500' :
+                          'bg-gray-400'
+                        }`}></div>
                         <span className="font-medium">{accountData.verificationStatus}</span>
                       </div>
                     </div>

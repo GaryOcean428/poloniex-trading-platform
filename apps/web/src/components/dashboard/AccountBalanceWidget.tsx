@@ -111,6 +111,16 @@ const AccountBalanceWidget: React.FC = () => {
         </button>
       </div>
 
+      {balance?.mock && (
+        <div className="flex items-start space-x-2 text-amber-700 bg-amber-50 border border-amber-200 p-3 rounded-lg mb-4">
+          <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="text-xs font-medium">Demo Mode</p>
+            <p className="text-xs mt-0.5">{balance.mockReason || 'Displaying simulated data. Configure API keys in Settings for real data.'}</p>
+          </div>
+        </div>
+      )}
+
       <div className="space-y-4">
         {/* Total Balance */}
         <div>
