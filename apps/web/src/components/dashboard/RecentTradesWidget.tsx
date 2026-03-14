@@ -25,8 +25,8 @@ const RecentTradesWidget: React.FC = () => {
   useEffect(() => {
     fetchTrades();
     
-    // Auto-refresh every 15 seconds
-    const interval = setInterval(fetchTrades, 15000);
+    // Auto-refresh every 30 seconds
+    const interval = setInterval(fetchTrades, 30000);
     return () => clearInterval(interval);
   }, []);
 
