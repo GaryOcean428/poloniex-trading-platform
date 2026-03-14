@@ -195,9 +195,9 @@ const LiveDataDashboard: React.FC = () => {
 
   // Set up polling for order book, trades, and summary
   useEffect(() => {
-    const orderBookInterval = setInterval(fetchOrderBook, 10000); // 10 seconds
-    const tradesInterval = setInterval(fetchTrades, 5000); // 5 seconds
-    const summaryInterval = setInterval(fetchMarketSummary, 30000); // 30 seconds
+    const orderBookInterval = setInterval(fetchOrderBook, 30000); // 30 seconds
+    const tradesInterval = setInterval(fetchTrades, 15000); // 15 seconds
+    const summaryInterval = setInterval(fetchMarketSummary, 60000); // 60 seconds
 
     return () => {
       clearInterval(orderBookInterval);

@@ -1,20 +1,13 @@
 import {
-  Activity,
   ArrowLeft,
-  BarChart4,
-  Chrome,
   History,
   LayoutDashboard,
   LineChart,
   Menu,
-  MessageSquare,
-  Receipt,
   Settings,
   TrendingUp,
   User,
   Zap,
-  AlertCircle,
-  Sparkles,
   Brain,
   X
 } from 'lucide-react';
@@ -33,20 +26,12 @@ const Sidebar: React.FC = () => {
 
   const navItems = [
     { path: '/', label: 'Dashboard', icon: <LayoutDashboard size={20} /> },
-    { path: '/dashboard/live', label: 'Live Trading', icon: <Activity size={20} /> },
-    { path: '/strategies', label: 'Trading Strategies', icon: <Zap size={20} /> },
-    { path: '/ai-strategies', label: 'AI Strategy Generator', icon: <Sparkles size={20} /> },
-    { path: '/strategy-dashboard', label: 'Strategy Dashboard', icon: <BarChart4 size={20} /> },
     { path: '/autonomous-agent', label: 'Autonomous Agent', icon: <Brain size={20} /> },
-    { path: '/backtesting', label: 'Advanced Backtesting', icon: <TrendingUp size={20} /> },
-    { path: '/account', label: 'Account', icon: <User size={20} /> },
-    { path: '/transactions', label: 'Transaction History', icon: <Receipt size={20} /> },
-    { path: '/trades', label: 'Trade History', icon: <History size={20} /> },
-    { path: '/charts', label: 'Market Analysis', icon: <BarChart4 size={20} /> },
+    { path: '/strategies', label: 'Strategies', icon: <Zap size={20} /> },
+    { path: '/history', label: 'History', icon: <History size={20} /> },
+    { path: '/backtesting', label: 'Backtesting', icon: <TrendingUp size={20} /> },
     { path: '/performance', label: 'Performance', icon: <LineChart size={20} /> },
-    { path: '/chat', label: 'Community Chat', icon: <MessageSquare size={20} /> },
-    { path: '/extension', label: 'Chrome Extension', icon: <Chrome size={20} /> },
-    { path: '/status', label: 'System Status', icon: <AlertCircle size={20} /> },
+    { path: '/account', label: 'Account', icon: <User size={20} /> },
     { path: '/settings', label: 'Settings', icon: <Settings size={20} /> }
   ];
 
@@ -120,7 +105,10 @@ const Sidebar: React.FC = () => {
           <nav>
             <ul className="space-y-1">
               {navItems.map((item) => {
-                const isActive = location.pathname === item.path;
+                const isActive = location.pathname === item.path
+                  || (item.path === '/strategies' && ['/ai-strategies', '/strategy-dashboard', '/charts'].includes(location.pathname))
+                  || (item.path === '/history' && ['/transactions', '/trades'].includes(location.pathname))
+                  || (item.path === '/settings' && location.pathname === '/status');
                 return (
                   <li key={item.path}>
                     <Link
@@ -213,7 +201,10 @@ const Sidebar: React.FC = () => {
           <nav>
             <ul className="space-y-1">
               {navItems.map((item) => {
-                const isActive = location.pathname === item.path;
+                const isActive = location.pathname === item.path
+                  || (item.path === '/strategies' && ['/ai-strategies', '/strategy-dashboard', '/charts'].includes(location.pathname))
+                  || (item.path === '/history' && ['/transactions', '/trades'].includes(location.pathname))
+                  || (item.path === '/settings' && location.pathname === '/status');
                 return (
                   <li key={item.path}>
                     <Link
