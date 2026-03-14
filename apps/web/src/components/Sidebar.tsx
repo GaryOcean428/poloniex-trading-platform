@@ -35,6 +35,14 @@ const Sidebar: React.FC = () => {
     { path: '/settings', label: 'Settings', icon: <Settings size={20} /> }
   ];
 
+  const isNavItemActive = (itemPath: string, currentPath: string): boolean => {
+    if (currentPath === itemPath) return true;
+    if (itemPath === '/strategies' && ['/ai-strategies', '/strategy-dashboard', '/charts'].includes(currentPath)) return true;
+    if (itemPath === '/history' && ['/transactions', '/trades'].includes(currentPath)) return true;
+    if (itemPath === '/settings' && currentPath === '/status') return true;
+    return false;
+  };
+
   const toggleSidebar = () => {
     setIsCollapsed(!isCollapsed);
   };
@@ -105,10 +113,7 @@ const Sidebar: React.FC = () => {
           <nav>
             <ul className="space-y-1">
               {navItems.map((item) => {
-                const isActive = location.pathname === item.path
-                  || (item.path === '/strategies' && ['/ai-strategies', '/strategy-dashboard', '/charts'].includes(location.pathname))
-                  || (item.path === '/history' && ['/transactions', '/trades'].includes(location.pathname))
-                  || (item.path === '/settings' && location.pathname === '/status');
+                const isActive = isNavItemActive(item.path, location.pathname);
                 return (
                   <li key={item.path}>
                     <Link
@@ -201,10 +206,7 @@ const Sidebar: React.FC = () => {
           <nav>
             <ul className="space-y-1">
               {navItems.map((item) => {
-                const isActive = location.pathname === item.path
-                  || (item.path === '/strategies' && ['/ai-strategies', '/strategy-dashboard', '/charts'].includes(location.pathname))
-                  || (item.path === '/history' && ['/transactions', '/trades'].includes(location.pathname))
-                  || (item.path === '/settings' && location.pathname === '/status');
+                const isActive = isNavItemActive(item.path, location.pathname);
                 return (
                   <li key={item.path}>
                     <Link

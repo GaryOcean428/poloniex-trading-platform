@@ -6,13 +6,13 @@ const TradeHistory = lazy(() => import('./TradeHistory'));
 
 type HistoryTab = 'trades' | 'transactions';
 
+const tabs: { id: HistoryTab; label: string; icon: React.ReactNode }[] = [
+  { id: 'trades', label: 'Trade History', icon: <BarChart3 size={18} /> },
+  { id: 'transactions', label: 'Transaction History', icon: <Receipt size={18} /> },
+];
+
 const History: React.FC = () => {
   const [activeTab, setActiveTab] = useState<HistoryTab>('trades');
-
-  const tabs: { id: HistoryTab; label: string; icon: React.ReactNode }[] = [
-    { id: 'trades', label: 'Trade History', icon: <BarChart3 size={18} /> },
-    { id: 'transactions', label: 'Transaction History', icon: <Receipt size={18} /> },
-  ];
 
   return (
     <div className="space-y-4">
