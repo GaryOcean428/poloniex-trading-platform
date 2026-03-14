@@ -120,11 +120,12 @@ router.get('/overview', authenticateToken, async (req: Request, res: Response) =
       ? positionsData.filter((pos: any) => parseFloat(pos.qty || pos.positionAmt || '0') !== 0).length
       : 0;
 
-    // Transform Poloniex V3 trade data to frontend format
+    // Transform Poloniex V3 trade data to frontend Trade interface format
     // Poloniex V3 /trade/order/trades returns: px, qty, feeAmt, feeCcy, cTime, trdId, ordId, side, symbol, value, role, ordType
+    // Frontend Trade interface expects string types for price/qty/commission to preserve financial precision
     const transformedTrades = Array.isArray(tradesData) 
-      ? tradesData.map((trade: any) => ({
-          id: trade.trdId || trade.tradeId || trade.id || String(Math.random()),
+      ? tradesData.map((trade: any, index: number) => ({
+          id: trade.trdId || trade.tradeId || trade.id || `unknown-${Date.now()}-${index}`,
           symbol: trade.symbol || 'UNKNOWN',
           orderId: trade.ordId || trade.orderId || '',
           side: (trade.side === 'buy' || trade.side === 'BUY') ? 'BUY' : 'SELL',
