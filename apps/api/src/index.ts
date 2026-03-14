@@ -48,6 +48,7 @@ import fullyAutonomousTrader from './services/fullyAutonomousTrader.js';
 import { persistentTradingEngine } from './services/persistentTradingEngine.js';
 import { agentScheduler } from './services/agentScheduler.js';
 import automatedTradingService from './services/automatedTradingService.js';
+import { autonomousTradingAgent } from './services/autonomousTradingAgent.js';
 
 // Import environment configuration (dotenv.config() is called inside env.ts)
 import { env } from './config/env.js';
@@ -390,7 +391,10 @@ server.listen(PORT, '::', () => {
     logger.error('Failed to start persistent trading engine:', error);
   });
   
-  // Start agent scheduler
+  // Wire Socket.IO to autonomous agent for real-time updates
+  autonomousTradingAgent.setSocketIO(io);
+  
+  // Start agent scheduler (restores sessions from DB, starts always-run agents)
   agentScheduler.start().catch(error => {
     logger.error('Failed to start agent scheduler:', error);
   });
