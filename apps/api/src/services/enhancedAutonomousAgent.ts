@@ -554,7 +554,7 @@ Generate the combination logic as executable JavaScript code.
       this.runningIntervals.delete(sessionId);
     }
 
-    session.status = 'paused' as any;
+    session.status = 'paused';
     await this.saveSession(session);
 
     logger.info(`Agent paused for session ${sessionId}`);
@@ -566,7 +566,7 @@ Generate the combination logic as executable JavaScript code.
    */
   async getAgentStatus(userId: string): Promise<AgentSession | null> {
     const session = Array.from(this.sessions.values()).find(
-      s => s.userId === userId && (s.status === 'running' || (s.status as string) === 'paused')
+      s => s.userId === userId && (s.status === 'running' || s.status === 'paused')
     );
     return session || null;
   }
