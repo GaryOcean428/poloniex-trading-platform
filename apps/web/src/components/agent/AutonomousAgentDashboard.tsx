@@ -163,7 +163,13 @@ const AutonomousAgentDashboard: React.FC = () => {
         await fetchAgentStatus();
       }
     } catch (err: any) {
-      setError(err.response?.data?.error || 'Failed to start agent');
+      const code = err.response?.data?.code;
+      if (code === 'ALREADY_RUNNING') {
+        // Agent is already running — just refresh its status
+        await fetchAgentStatus();
+      } else {
+        setError(err.response?.data?.error || 'Failed to start agent');
+      }
     } finally {
       setLoading(false);
     }
