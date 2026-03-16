@@ -10,6 +10,7 @@ export { default as Backtesting } from './Backtesting';
 export { default as Chat } from './Chat';
 export { default as Dashboard } from './Dashboard';
 export { default as ExtensionDownload } from './ExtensionDownload';
+export { default as History } from './History';
 export { default as LiveTradingDashboard } from './LiveTradingDashboard';
 export { default as Login } from './Login';
 export { default as MarketAnalysis } from './MarketAnalysis';

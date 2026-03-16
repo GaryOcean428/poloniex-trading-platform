@@ -20,7 +20,7 @@ const RealTimeMarketTicker: React.FC = () => {
         setIsLoading(true);
         setError(null);
 
-        // Subscribe to ticker updates (polls every 2 seconds)
+        // Subscribe to ticker updates (polls every 10 seconds)
         cleanup = TickerService.subscribeTickers(
           selectedPairs,
           (tickers) => {
@@ -32,7 +32,7 @@ const RealTimeMarketTicker: React.FC = () => {
               setIsLoading(false);
             }
           },
-          2000 // Update every 2 seconds
+          10000 // Update every 10 seconds
         );
       } catch (_err) {
         // console.error('Failed to initialize tickers:', err);
@@ -163,7 +163,7 @@ const RealTimeMarketTicker: React.FC = () => {
 
       <div className="mt-4 text-center">
         <p className="text-xs text-gray-500 dark:text-gray-400">
-          Updates every 2 seconds
+          Updates every 10 seconds
         </p>
       </div>
     </div>

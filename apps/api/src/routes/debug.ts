@@ -1,11 +1,15 @@
 /**
  * Debug Routes - Database inspection and diagnostics
+ * Consolidates former diagnostic.ts and test-balance.ts routes.
  * WARNING: Should be disabled in production or protected with admin auth
  */
 
 import express from 'express';
 import { pool } from '../db/connection.js';
 import { logger } from '../utils/logger.js';
+import { authenticateToken } from '../middleware/auth.js';
+import { apiCredentialsService } from '../services/apiCredentialsService.js';
+import poloniexFuturesService from '../services/poloniexFuturesService.js';
 
 const router = express.Router();
 
@@ -166,8 +170,6 @@ router.post('/test-api-creds', async (req, res) => {
   }
 });
 
-export default router;
-
 /**
  * Check users table and demo user
  * GET /api/debug/users
@@ -251,3 +253,137 @@ router.get('/db-connection', async (req, res) => {
     });
   }
 });
+
+/**
+ * GET /api/debug/credentials-status
+ * Check if user has credentials and their status
+ * (Consolidated from former diagnostic.ts)
+ */
+router.get('/credentials-status', authenticateToken, async (req: any, res: any) => {
+  try {
+    const userId = String(req.user.id);
+    
+    // Check database directly
+    const result = await pool.query(`
+      SELECT 
+        id, exchange, is_active, created_at, updated_at, last_used_at,
+        LENGTH(api_key_encrypted) as key_length,
+        LENGTH(api_secret_encrypted) as secret_length,
+        encryption_iv IS NOT NULL as has_iv,
+        encryption_tag IS NOT NULL as has_tag
+      FROM api_credentials
+      WHERE user_id = $1
+      ORDER BY created_at DESC
+    `, [userId]);
+    
+    const hasCredentials = await apiCredentialsService.hasCredentials(userId);
+    
+    res.json({
+      success: true,
+      userId,
+      hasCredentials,
+      credentialsCount: result.rows.length,
+      credentials: result.rows.map((row: any) => ({
+        id: row.id,
+        exchange: row.exchange,
+        isActive: row.is_active,
+        keyLength: row.key_length,
+        secretLength: row.secret_length,
+        hasIv: row.has_iv,
+        hasTag: row.has_tag,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        lastUsedAt: row.last_used_at
+      }))
+    });
+  } catch (error: any) {
+    logger.error('Debug credentials-status error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * GET /api/debug/test-balance
+ * Test balance fetch with detailed logging
+ * (Consolidated from former test-balance.ts and diagnostic.ts)
+ */
+router.get('/test-balance', authenticateToken, async (req: any, res: any) => {
+  try {
+    const userId = String(req.user.id);
+    logger.info('=== TEST BALANCE REQUEST ===', { userId });
+    
+    // Step 1: Get credentials
+    logger.info('Step 1: Fetching credentials...');
+    const credentials = await apiCredentialsService.getCredentials(userId);
+    
+    if (!credentials) {
+      logger.warn('No credentials found');
+      return res.json({
+        success: false,
+        error: 'No API credentials found',
+        step: 'credentials'
+      });
+    }
+    
+    logger.info('Credentials found:', {
+      hasApiKey: !!credentials.apiKey,
+      apiKeyLength: credentials.apiKey?.length,
+      hasApiSecret: !!credentials.apiSecret,
+      apiSecretLength: credentials.apiSecret?.length,
+      exchange: credentials.exchange
+    });
+    
+    // Step 2: Test balance fetch
+    logger.info('Step 2: Fetching balance from Poloniex...');
+    
+    try {
+      const balance = await poloniexFuturesService.getAccountBalance(credentials);
+      
+      logger.info('Balance fetched successfully:', {
+        balance: JSON.stringify(balance, null, 2)
+      });
+      
+      return res.json({
+        success: true,
+        balance,
+        credentials: {
+          hasApiKey: !!credentials.apiKey,
+          apiKeyPrefix: credentials.apiKey?.substring(0, 8),
+          exchange: credentials.exchange
+        }
+      });
+      
+    } catch (apiError: any) {
+      logger.error('Poloniex API Error:', {
+        message: apiError.message,
+        status: apiError.response?.status,
+        statusText: apiError.response?.statusText,
+        data: JSON.stringify(apiError.response?.data)
+      });
+      
+      return res.json({
+        success: false,
+        error: 'Poloniex API call failed',
+        step: 'api_call',
+        details: {
+          message: apiError.message,
+          status: apiError.response?.status,
+          data: apiError.response?.data
+        }
+      });
+    }
+    
+  } catch (error: any) {
+    logger.error('Test balance error:', error);
+    return res.status(500).json({
+      success: false,
+      error: error.message,
+      step: 'unknown'
+    });
+  }
+});
+
+export default router;

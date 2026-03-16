@@ -16,6 +16,7 @@ import paperTradingService from './paperTradingService.js';
 import automatedTradingService from './automatedTradingService.js';
 import { apiCredentialsService } from './apiCredentialsService.js';
 import { logger } from '../utils/logger.js';
+import type { Server as SocketIOServer } from 'socket.io';
 
 interface AgentConfig {
   userId: string;
@@ -78,9 +79,89 @@ class EnhancedAutonomousAgent extends EventEmitter {
   private sessions: Map<string, AgentSession> = new Map();
   private runningIntervals: Map<string, NodeJS.Timeout> = new Map();
   private strategies: Map<string, Strategy> = new Map();
+  private io: SocketIOServer | null = null;
 
   constructor() {
     super();
+  }
+
+  /**
+   * Set the Socket.IO server instance for real-time updates
+   */
+  setSocketIO(io: SocketIOServer): void {
+    this.io = io;
+  }
+
+  /**
+   * Broadcast an agent event to connected clients via WebSocket
+   */
+  private broadcastEvent(eventType: string, data: any): void {
+    if (this.io) {
+      this.io.emit('agent:activity', { type: eventType, data, timestamp: new Date().toISOString() });
+    }
+  }
+
+  /**
+   * Restore running/paused sessions from PostgreSQL on startup.
+   * Re-populates the in-memory sessions map and restarts agent loops
+   * for sessions that were running when the server last stopped.
+   */
+  async restoreRunningSessionsFromDB(): Promise<void> {
+    try {
+      const result = await pool.query(
+        `SELECT * FROM agent_sessions WHERE status IN ('running', 'paused') ORDER BY started_at DESC`
+      );
+
+      if (result.rows.length === 0) {
+        logger.info('[Agent] No sessions to restore from database');
+        return;
+      }
+
+      logger.info(`[Agent] Restoring ${result.rows.length} session(s) from database`);
+
+      for (const row of result.rows) {
+        try {
+          const session: AgentSession = {
+            id: row.id,
+            userId: row.user_id,
+            status: row.status,
+            startedAt: new Date(row.started_at),
+            stoppedAt: row.stopped_at ? new Date(row.stopped_at) : undefined,
+            strategiesGenerated: parseInt(row.strategies_generated) || 0,
+            backtestsCompleted: parseInt(row.backtests_completed) || 0,
+            paperTradesExecuted: parseInt(row.paper_trades_executed) || 0,
+            liveTradesExecuted: parseInt(row.live_trades_executed) || 0,
+            totalPnl: parseFloat(row.total_pnl || '0'),
+            config: typeof row.config === 'string' ? JSON.parse(row.config) : row.config
+          };
+
+          this.sessions.set(session.id, session);
+
+          // Restart the agent loop for running sessions
+          if (session.status === 'running') {
+            const credentials = await apiCredentialsService.getCredentials(session.userId);
+            if (credentials) {
+              await this.startAgentLoop(session);
+              this.broadcastEvent('session_restored', { sessionId: session.id, userId: session.userId });
+              logger.info(`[Agent] Restored and restarted session ${session.id} for user ${session.userId}`);
+            } else {
+              session.status = 'paused';
+              await pool.query(
+                `UPDATE agent_sessions SET status = 'paused' WHERE id = $1`,
+                [session.id]
+              );
+              logger.warn(`[Agent] Session ${session.id} paused: Poloniex API credentials not configured. Please add your API keys in Settings.`);
+            }
+          }
+        } catch (err: any) {
+          logger.error(`[Agent] Error restoring session ${row.id}:`, err.message);
+        }
+      }
+
+      logger.info(`[Agent] Session restoration complete. Active sessions: ${this.sessions.size}`);
+    } catch (error: any) {
+      logger.error('[Agent] Error restoring sessions from database:', error.message);
+    }
   }
 
   /**
@@ -266,6 +347,7 @@ class EnhancedAutonomousAgent extends EventEmitter {
 
   /**
    * Generate a single strategy
+   * Falls back to rule-based strategy if LLM is unavailable
    */
   private async generateSingleStrategy(
     session: AgentSession,
@@ -276,24 +358,42 @@ class EnhancedAutonomousAgent extends EventEmitter {
   ): Promise<Strategy> {
     const llmGenerator = getLLMStrategyGenerator();
     
-    const aiStrategy = await llmGenerator.generateStrategy({
-      symbol,
-      timeframe: session.config.preferredTimeframes[0],
-      strategyType,
-      riskTolerance: 'moderate',
-      indicators,
-      description
-    } as any);
+    let strategyName = `${strategyType}_${symbol}`;
+    let strategyCode = '';
+    
+    if (llmGenerator.isAvailable()) {
+      try {
+        const aiStrategy = await llmGenerator.generateStrategy({
+          symbol,
+          timeframe: session.config.preferredTimeframes[0],
+          strategyType,
+          riskTolerance: 'moderate',
+          indicators,
+          description
+        } as any);
+        
+        strategyName = aiStrategy.name || strategyName;
+        strategyCode = (aiStrategy as any).code || JSON.stringify(aiStrategy);
+      } catch (err: any) {
+        logger.warn(`[Agent] LLM strategy generation failed, using rule-based fallback: ${err.message}`);
+        strategyCode = JSON.stringify(this.generateRuleBasedStrategy(strategyType, symbol, indicators, session.config));
+      }
+    } else {
+      logger.info(`[Agent] Claude API key not configured — using rule-based ${strategyType} strategy for ${symbol}`);
+      const ruleStrategy = this.generateRuleBasedStrategy(strategyType, symbol, indicators, session.config);
+      strategyName = ruleStrategy.name;
+      strategyCode = JSON.stringify(ruleStrategy);
+    }
     
     const strategy: Strategy = {
       id: `strategy_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       sessionId: session.id,
-      name: aiStrategy.name || `${strategyType}_${symbol}`,
+      name: strategyName,
       type: 'single',
       symbol,
       timeframe: session.config.preferredTimeframes[0],
       indicators,
-      code: (aiStrategy as any).code || JSON.stringify(aiStrategy),
+      code: strategyCode,
       description,
       status: 'generated',
       performance: {
@@ -307,8 +407,59 @@ class EnhancedAutonomousAgent extends EventEmitter {
     
     this.strategies.set(strategy.id, strategy);
     await this.saveStrategy(strategy);
+    this.broadcastEvent('strategy_generated', { strategyId: strategy.id, name: strategy.name, symbol });
     
     return strategy;
+  }
+
+  /**
+   * Generate a rule-based strategy when LLM is unavailable.
+   */
+  private generateRuleBasedStrategy(
+    strategyType: string,
+    symbol: string,
+    indicators: string[],
+    config: AgentConfig
+  ): any {
+    const templates: Record<string, any> = {
+      trend_following: {
+        name: `SMA Crossover ${symbol}`,
+        type: 'trend_following',
+        description: 'Enters long when SMA20 crosses above SMA50, short when below. Uses ATR-based stops.',
+        parameters: { smaPeriodShort: 20, smaPeriodLong: 50, atrMultiplier: 2.0 },
+        entryConditions: ['SMA(20) crosses above SMA(50) for long', 'SMA(20) crosses below SMA(50) for short'],
+        exitConditions: ['ATR-based trailing stop', 'Opposite crossover signal'],
+        riskManagement: { stopLossPercent: config.stopLossPercentage, takeProfitPercent: config.stopLossPercentage * 2, maxPositionSize: config.positionSize, maxDrawdown: config.maxDrawdown }
+      },
+      momentum: {
+        name: `RSI Momentum ${symbol}`,
+        type: 'momentum',
+        description: 'Buys oversold RSI conditions (<30) and sells overbought (>70).',
+        parameters: { rsiPeriod: 14, oversoldLevel: 30, overboughtLevel: 70 },
+        entryConditions: ['RSI(14) < 30 for long', 'RSI(14) > 70 for short'],
+        exitConditions: ['RSI returns to neutral zone (40-60)', 'Fixed take-profit hit'],
+        riskManagement: { stopLossPercent: config.stopLossPercentage, takeProfitPercent: config.stopLossPercentage * 1.5, maxPositionSize: config.positionSize, maxDrawdown: config.maxDrawdown }
+      },
+      volume_analysis: {
+        name: `Volume Breakout ${symbol}`,
+        type: 'breakout',
+        description: 'Trades breakouts above/below Bollinger Bands with volume confirmation.',
+        parameters: { bbPeriod: 20, bbStdDev: 2.0, volumeThreshold: 1.5 },
+        entryConditions: ['Price closes above upper BB with 1.5x avg volume for long', 'Price closes below lower BB for short'],
+        exitConditions: ['Price returns to middle band', 'Trailing stop at opposite band'],
+        riskManagement: { stopLossPercent: config.stopLossPercentage, takeProfitPercent: config.stopLossPercentage * 2.5, maxPositionSize: config.positionSize, maxDrawdown: config.maxDrawdown }
+      }
+    };
+
+    const template = templates[strategyType] || templates.trend_following;
+    return {
+      ...template,
+      algorithm: `rule_based_${strategyType}`,
+      indicators,
+      expectedPerformance: { winRate: 0.5, profitFactor: 1.2, sharpeRatio: 0.8 },
+      confidence: 0.6,
+      reasoning: `Rule-based ${strategyType} strategy for ${symbol}.`
+    };
   }
 
   /**
@@ -540,11 +691,33 @@ Generate the combination logic as executable JavaScript code.
   }
 
   /**
+   * Pause the agent
+   */
+  async pauseAgent(sessionId: string): Promise<void> {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      throw new Error('Session not found');
+    }
+
+    const interval = this.runningIntervals.get(sessionId);
+    if (interval) {
+      clearInterval(interval);
+      this.runningIntervals.delete(sessionId);
+    }
+
+    session.status = 'paused';
+    await this.saveSession(session);
+
+    logger.info(`Agent paused for session ${sessionId}`);
+    this.emit('agent:paused', { sessionId });
+  }
+
+  /**
    * Get agent status
    */
   async getAgentStatus(userId: string): Promise<AgentSession | null> {
     const session = Array.from(this.sessions.values()).find(
-      s => s.userId === userId && s.status === 'running'
+      s => s.userId === userId && (s.status === 'running' || s.status === 'paused')
     );
     return session || null;
   }
