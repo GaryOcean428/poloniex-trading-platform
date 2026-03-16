@@ -18,6 +18,7 @@ import Integration from './components/Integration';
 import ToastContainer from './components/ToastContainer';
 import RouteGuard from './components/RouteGuard';
 import { BrowserCompatibility } from './utils/extensionErrorHandler';
+import './styles/tokens.css';
 import './styles/theme.css';
 import './App.css';
 
