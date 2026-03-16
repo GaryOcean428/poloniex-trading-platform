@@ -43,7 +43,7 @@ export default function PaperTradingToggle({ strategyId, strategyName, onStatusC
     try {
       const token = getAccessToken();
       const response = await axios.get(
-        `${API_BASE_URL}/api/paper-trading-v2/status?strategyId=${strategyId}`,
+        `${API_BASE_URL}/api/paper-trading/status?strategyId=${strategyId}`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
       
@@ -66,7 +66,7 @@ export default function PaperTradingToggle({ strategyId, strategyName, onStatusC
       if (active) {
         // Stop paper trading
         await axios.post(
-          `${API_BASE_URL}/api/paper-trading-v2/stop`,
+          `${API_BASE_URL}/api/paper-trading/stop`,
           { strategyId },
           { headers: { Authorization: `Bearer ${token}` } }
         );
@@ -78,7 +78,7 @@ export default function PaperTradingToggle({ strategyId, strategyName, onStatusC
         const initialCapital = accountBalance?.total || 10000;
         
         await axios.post(
-          `${API_BASE_URL}/api/paper-trading-v2/start`,
+          `${API_BASE_URL}/api/paper-trading/start`,
           { 
             strategyId,
             symbol: 'BTC_USDT',

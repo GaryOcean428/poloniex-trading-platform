@@ -13,19 +13,15 @@ import type { CorsOptions } from 'cors';
 import authRoutes from './routes/auth.js';
 import apiKeyRoutes from './routes/apiKeys.js';
 import futuresRoutes from './routes/futures.js';
-import backtestingRoutes from './routes/backtesting.js';
 import backtestRoutes from './routes/backtest.js';
-import paperTradingRoutes from './routes/paperTrading.js';
-import paperTradingRoutesNew from './routes/paper-trading.js';
+import paperTradingRoutes from './routes/paper-trading.js';
 import riskRoutes from './routes/risk.js';
-import autonomousTradingRoutes from './routes/autonomousTrading.js';
 import confidenceScoringRoutes from './routes/confidenceScoring.js';
 import strategiesRoutes from './routes/strategies.js';
 import statusRoutes from './routes/status.js';
 import marketsRoutes from './routes/markets.js';
 import proxyRoutes from './routes/proxy.js';
 import llmStrategiesRoutes from './routes/llmStrategies.js';
-import credentialsRoutes from './routes/credentials.js';
 import tradingSessionsRoutes from './routes/tradingSessions.js';
 import debugRoutes from './routes/debug.js';
 import agentRoutes from './routes/agent.js';
@@ -39,8 +35,6 @@ import publicAdminRoutes from './routes/public-admin.js';
 import versionCheckRoutes from './routes/version-check.js';
 import deployVersionRoutes from './routes/deploy-version.js';
 import autonomousTraderRoutes from './routes/autonomousTrader.js';
-import diagnosticRoutes from './routes/diagnostic.js';
-import testBalanceRoutes from './routes/test-balance.js';
 
 // Import services
 import { logger } from './utils/logger.js';
@@ -170,21 +164,15 @@ app.use('/api/api-keys', apiKeyRoutes);
 app.use('/api/keys', apiKeyRoutes); // Alias for frontend compatibility
 app.use('/api/markets', marketsRoutes);
 app.use('/api/futures', futuresRoutes);
-app.use('/api/backtesting', backtestingRoutes);
 app.use('/api/backtest', backtestRoutes);
 app.use('/api/paper-trading', paperTradingRoutes);
-app.use('/api/paper-trading-v2', paperTradingRoutesNew);
 app.use('/api/risk', riskRoutes);
-app.use('/api/autonomous-trading', autonomousTradingRoutes);
 app.use('/api/confidence-scoring', confidenceScoringRoutes);
 app.use('/api/strategies', strategiesRoutes);
 app.use('/api/llm-strategies', llmStrategiesRoutes);
-app.use('/api/credentials', credentialsRoutes);
 app.use('/api/trading-sessions', tradingSessionsRoutes);
 app.use('/api/status', statusRoutes);
-app.use('/api/debug', debugRoutes); // Debug routes for database inspection
-app.use('/api/diagnostic', diagnosticRoutes); // Diagnostic routes for troubleshooting
-app.use('/api/test-balance', testBalanceRoutes); // Test balance endpoint with detailed logging
+app.use('/api/debug', debugRoutes); // Debug, diagnostic, and test-balance routes (consolidated)
 app.use('/api/agent', agentRoutes); // Autonomous trading agent routes
 app.use('/api/autonomous', autonomousTraderRoutes); // Fully autonomous trading system
 app.use('/api/monitoring', monitoringRoutes); // Monitoring and error tracking routes
