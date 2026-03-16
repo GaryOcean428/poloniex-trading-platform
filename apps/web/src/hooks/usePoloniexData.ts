@@ -288,16 +288,15 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
     try {
       const data = await poloniexApi.getAccountBalance();
       
-      // Transform Poloniex Futures API response to expected format
-      // Futures API returns: { eq: string, im: string, mm: string, ... }
+      // Transform API response to expected format
       // Expected format: { total: number, available: number, currency: string }
       if (data && typeof data === 'object') {
-        const futuresData = data as any;
+        const balanceData = data as any;
         
         // Check if this is Futures API format (has 'eq' field)
-        if (futuresData.eq !== undefined) {
-          const equity = parseFloat(futuresData.eq || "0");
-          const initialMargin = parseFloat(futuresData.im || "0");
+        if (balanceData.eq !== undefined) {
+          const equity = parseFloat(balanceData.eq || "0");
+          const initialMargin = parseFloat(balanceData.im || "0");
           const available = equity - initialMargin;
           
           setAccountBalance({
@@ -305,12 +304,37 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
             available: Math.max(0, available),
             currency: 'USDT'
           });
-        } else {
-          // Already in expected format or unknown format
+        }
+        // Handle poloniexApi transformed format (has totalAmount/availableAmount strings)
+        else if (balanceData.totalAmount !== undefined) {
+          setAccountBalance({
+            total: parseFloat(balanceData.totalAmount || '0'),
+            available: parseFloat(balanceData.availableAmount || '0'),
+            currency: 'USDT'
+          });
+        }
+        // Handle dashboard API format (has totalBalance/availableBalance numbers)
+        else if (balanceData.totalBalance !== undefined) {
+          setAccountBalance({
+            total: Number(balanceData.totalBalance) || 0,
+            available: Number(balanceData.availableBalance) || 0,
+            currency: balanceData.currency || 'USDT'
+          });
+        }
+        // Already in expected format (has total/available)
+        else if (typeof balanceData.total === 'number' && typeof balanceData.available === 'number') {
           setAccountBalance(data);
+        } else {
+          // Unknown format — set a zero balance so the type guard passes
+          // and the UI doesn't show a stale/misleading value
+          setAccountBalance({
+            total: 0,
+            available: 0,
+            currency: 'USDT'
+          });
         }
       } else {
-        setAccountBalance(data);
+        setAccountBalance(null);
       }
     } catch (err) {
       const error = err as Error;
