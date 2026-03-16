@@ -27,7 +27,7 @@ export default function PaperTradingDashboard({ strategyId }: Props) {
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 3000); // Update every 3 seconds
+    const interval = setInterval(fetchData, 15000); // Update every 15 seconds
     return () => clearInterval(interval);
   }, [strategyId]);
 

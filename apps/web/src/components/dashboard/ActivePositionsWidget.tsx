@@ -27,8 +27,8 @@ const ActivePositionsWidget: React.FC = () => {
   useEffect(() => {
     fetchPositions();
     
-    // Auto-refresh every 10 seconds for positions
-    const interval = setInterval(fetchPositions, 10000);
+    // Auto-refresh every 30 seconds for positions
+    const interval = setInterval(fetchPositions, 30000);
     return () => clearInterval(interval);
   }, []);
 

@@ -165,7 +165,7 @@ export const TickerService = {
   subscribeTickers(
     symbols: string[],
     callback: (tickers: TickerData[]) => void,
-    intervalMs: number = 2000
+    intervalMs: number = 10000
   ): () => void {
     let isActive = true;
 

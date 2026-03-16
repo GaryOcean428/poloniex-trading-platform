@@ -35,7 +35,7 @@ export default function PaperTradingToggle({ strategyId, strategyName, onStatusC
 
   useEffect(() => {
     fetchStatus();
-    const interval = setInterval(fetchStatus, 5000); // Poll every 5 seconds
+    const interval = setInterval(fetchStatus, 15000); // Poll every 15 seconds
     return () => clearInterval(interval);
   }, [strategyId]);
 

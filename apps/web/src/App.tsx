@@ -1,4 +1,4 @@
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { lazy, Suspense, useEffect } from 'react';
 import Navbar from './components/Navbar';
 import Sidebar from './components/Sidebar';
@@ -24,20 +24,16 @@ import './App.css';
 
 // Lazy load page components
 const Dashboard = lazy(() => import('./pages/Dashboard'));
-const LiveTradingDashboard = lazy(() => import('./pages/LiveTradingDashboard'));
 const Strategies = lazy(() => import('./pages/Strategies'));
 const Backtesting = lazy(() => import('./pages/Backtesting'));
 const Account = lazy(() => import('./pages/Account'));
-const TransactionHistory = lazy(() => import('./pages/TransactionHistory'));
-const TradeHistory = lazy(() => import('./pages/TradeHistory'));
+const History = lazy(() => import('./pages/History'));
 const MarketAnalysis = lazy(() => import('./pages/MarketAnalysis'));
 const Performance = lazy(() => import('./pages/Performance'));
 const Settings = lazy(() => import('./pages/Settings'));
-const Chat = lazy(() => import('./pages/Chat'));
-const ExtensionDownload = lazy(() => import('./pages/ExtensionDownload'));
 const AIStrategyGenerator = lazy(() => import('./pages/AIStrategyGenerator'));
-const StrategyDashboard = lazy(() => import('./pages/StrategyDashboard')); // AI strategy visualization
-const AutonomousAgent = lazy(() => import('./pages/AutonomousAgent')); // AI-powered autonomous trading
+const StrategyDashboard = lazy(() => import('./pages/StrategyDashboard'));
+const AutonomousAgent = lazy(() => import('./pages/AutonomousAgent'));
 const Status = lazy(() => import('./pages/Status'));
 const Login = lazy(() => import('./pages/Login'));
 const NotFound = lazy(() => import('./pages/NotFound'));
@@ -92,22 +88,24 @@ function App() {
                         <Suspense fallback={<LoadingSpinner />}>
                           <Routes>
                             <Route path="/" element={<Dashboard />} />
-                            <Route path="/dashboard/live" element={<LiveTradingDashboard />} />
+                            <Route path="/autonomous-agent" element={<AutonomousAgent />} />
                             <Route path="/strategies" element={<Strategies />} />
                             <Route path="/ai-strategies" element={<AIStrategyGenerator />} />
                             <Route path="/strategy-dashboard" element={<StrategyDashboard />} />
-                            <Route path="/autonomous-agent" element={<AutonomousAgent />} />
+                            <Route path="/history" element={<History />} />
                             <Route path="/backtesting" element={<Backtesting />} />
                             <Route path="/charts" element={<MarketAnalysis />} />
                             <Route path="/performance" element={<Performance />} />
                             <Route path="/account" element={<Account />} />
-                            <Route path="/transactions" element={<TransactionHistory />} />
-                            <Route path="/trades" element={<TradeHistory />} />
-                            <Route path="/chat" element={<Chat />} />
                             <Route path="/settings" element={<Settings />} />
-                            <Route path="/extension" element={<ExtensionDownload />} />
                             <Route path="/status" element={<Status />} />
                             <Route path="/login" element={<Login />} />
+                            {/* Redirects for removed/consolidated nav items */}
+                            <Route path="/dashboard/live" element={<Navigate to="/" replace />} />
+                            <Route path="/transactions" element={<Navigate to="/history" replace />} />
+                            <Route path="/trades" element={<Navigate to="/history" replace />} />
+                            <Route path="/chat" element={<Navigate to="/" replace />} />
+                            <Route path="/extension" element={<Navigate to="/" replace />} />
                             <Route path="/404" element={<NotFound />} />
                             <Route path="*" element={<NotFound />} />
                           </Routes>
