@@ -2,6 +2,7 @@
  * Agent Scheduler
  * 
  * Background job scheduler for autonomous agents
+ * - Restores agent sessions from PostgreSQL on startup
  * - Starts agents in "always" mode
  * - Restarts agents after server restart
  * - Monitors agent health
@@ -29,6 +30,9 @@ class AgentScheduler {
     logger.info('Starting agent scheduler...');
     this.isRunning = true;
 
+    // Restore agent sessions that were running before server restart
+    await enhancedAutonomousAgent.restoreRunningSessionsFromDB();
+
     // Check every minute for agents that should be running
     const checkJob = cron.schedule('* * * * *', async () => {
       await this.checkAndStartAgents();
@@ -36,7 +40,7 @@ class AgentScheduler {
 
     this.jobs.set('check-agents', checkJob);
 
-    // Restart agents that were running when server stopped
+    // Restart agents from agent_settings (always-run mode)
     await this.restartPersistentAgents();
 
     logger.info('Agent scheduler started successfully');
@@ -97,7 +101,7 @@ class AgentScheduler {
    */
   private async restartPersistentAgents() {
     try {
-      logger.info('Restarting persistent agents...');
+      logger.info('Restarting persistent agents from settings...');
 
       const result = await pool.query(`
         SELECT user_id, config
@@ -108,6 +112,13 @@ class AgentScheduler {
 
       for (const row of result.rows) {
         try {
+          // Check if already restored by restoreRunningSessionsFromDB
+          const existing = await enhancedAutonomousAgent.getAgentStatus(row.user_id);
+          if (existing && existing.status === 'running') {
+            logger.info(`Agent already running for user ${row.user_id} (restored from session)`);
+            continue;
+          }
+
           logger.info(`Restarting persistent agent for user ${row.user_id}`);
           await enhancedAutonomousAgent.startAgent(row.user_id, row.config);
         } catch (error) {
@@ -115,7 +126,7 @@ class AgentScheduler {
         }
       }
 
-      logger.info(`Restarted ${result.rows.length} persistent agents`);
+      logger.info(`Processed ${result.rows.length} persistent agent settings`);
     } catch (error) {
       logger.error('Error restarting persistent agents:', error);
     }
