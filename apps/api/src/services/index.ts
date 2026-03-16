@@ -13,7 +13,6 @@ export * from './userService.js';
 
 // Trading Services
 export * from './automatedTradingService.js';
-export * from './autonomousTradingAgent.js';
 export * from './backtestingEngine.js';
 export * from './fullyAutonomousTrader.js';
 export * from './paperTradingService.js';

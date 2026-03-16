@@ -110,7 +110,7 @@ const Settings: React.FC = () => {
           try {
             const { getBackendUrl } = await import('../utils/environment');
             const backendUrl = getBackendUrl();
-            const response = await fetch(`${backendUrl}/api/credentials`, {
+            const response = await fetch(`${backendUrl}/api/api-keys`, {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
