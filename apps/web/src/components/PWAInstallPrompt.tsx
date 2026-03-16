@@ -61,9 +61,6 @@ const PWAInstallPrompt: React.FC<PWAInstallPromptProps> = ({
 
     // Listen for beforeinstallprompt event
     const handleBeforeInstallPrompt = (e: Event) => {
-      // Prevent the mini-infobar from appearing on mobile
-      e.preventDefault();
-
       // Respect prior dismissal and standalone state to avoid noisy warnings
       const dismissed = (() => {
         try {
@@ -73,10 +70,15 @@ const PWAInstallPrompt: React.FC<PWAInstallPromptProps> = ({
         }
       })();
       if (dismissed || isStandalone) {
-        // Don't show banner if already dismissed or in standalone mode
-        // No need to store the event in this case
+        // Don't show banner if already dismissed or in standalone mode.
+        // Allow the browser default behavior (no preventDefault) so the
+        // console warning "Banner not shown" is avoided.
         return;
       }
+
+      // Prevent the mini-infobar from appearing on mobile — we will show
+      // our own custom install UI instead.
+      e.preventDefault();
 
       // Type assertion for the beforeinstallprompt event
       const beforeInstallEvent = e as unknown as BeforeInstallPromptEvent;

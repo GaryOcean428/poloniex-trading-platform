@@ -186,7 +186,7 @@ class PoloniexApiClient {
 
       await this.checkRateLimit("public");
       const api = createAuthenticatedAxios();
-      const response = await api.get(`/klines/${pair}`, {
+      const response = await api.get(`/api/futures/klines/${pair}`, {
         params: {
           interval: "5m",
           limit: 100,
@@ -243,13 +243,23 @@ class PoloniexApiClient {
       }
 
       const api = createAuthenticatedAxios();
-      const response = await api.get(`/klines/${pair}`, {
-        params: {
-          interval: "1h",
-          startTime: new Date(startDate).getTime(),
-          endTime: new Date(endDate).getTime(),
-          limit: 1000,
-        },
+      const startTime = new Date(startDate).getTime();
+      const endTime = new Date(endDate).getTime();
+
+      // Validate timestamps to prevent NaN/invalid values in API requests
+      const params: Record<string, string | number> = {
+        interval: "1h",
+        limit: 1000,
+      };
+      if (Number.isFinite(startTime)) {
+        params.startTime = startTime;
+      }
+      if (Number.isFinite(endTime)) {
+        params.endTime = endTime;
+      }
+
+      const response = await api.get(`/api/futures/klines/${pair}`, {
+        params,
       });
 
       const data = response.data.map((candle: unknown[]) => ({

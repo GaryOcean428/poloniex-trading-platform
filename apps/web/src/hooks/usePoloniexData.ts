@@ -4,9 +4,8 @@ import { MarketData, Trade } from '@/types';
 import { webSocketService } from '@/services/websocketService';
 import { mockMarketData, mockTrades } from '@/data/mockData';
 import { useSettings } from '@/hooks/useSettings';
-import { shouldUseMockMode, IS_WEBCONTAINER } from '@/utils/environment';
+import { shouldUseMockMode, IS_WEBCONTAINER, getBackendUrl } from '@/utils/environment';
 import { getAccessToken } from '@/utils/auth';
-import { getApiBaseUrl } from '@/utils/environment';
 
 interface PoloniexDataHook {
   marketData: MarketData[];
@@ -67,7 +66,7 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
         return false;
       }
 
-      const response = await fetch(`${getApiBaseUrl()}/api/keys`, {
+      const response = await fetch(`${getBackendUrl()}/api/keys`, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${token}`,
