@@ -13,6 +13,8 @@ export interface Balance {
   marginBalance: number;
   unrealizedPnL: number;
   currency: string;
+  mock?: boolean;
+  mockReason?: string;
 }
 
 export interface Position {
@@ -76,6 +78,8 @@ export interface DashboardResponse {
   success: boolean;
   timestamp: string;
   data: DashboardOverview;
+  mock?: boolean;
+  mockReason?: string;
   errors?: {
     balance?: string | null;
     positions?: string | null;
@@ -176,7 +180,13 @@ class DashboardService {
         `${API_BASE_URL}/api/dashboard/balance`,
         { headers }
       );
-      return response.data.data;
+      const balance = response.data.data;
+      // Pass through mock status from the API response
+      if (response.data.mock) {
+        balance.mock = true;
+        balance.mockReason = response.data.message || response.data.mockReason;
+      }
+      return balance;
     } catch (error: any) {
       // console.error('Error fetching balance:', error);
       const message = error instanceof Error ? error.message : 'Failed to fetch balance';

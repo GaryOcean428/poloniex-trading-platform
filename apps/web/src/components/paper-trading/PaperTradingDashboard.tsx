@@ -37,7 +37,7 @@ export default function PaperTradingDashboard({ strategyId }: Props) {
       
       // Fetch trades
       const tradesResponse = await axios.get(
-        `${API_BASE_URL}/api/paper-trading-v2/trades?strategyId=${strategyId}&limit=20`,
+        `${API_BASE_URL}/api/paper-trading/trades?strategyId=${strategyId}&limit=20`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
       
@@ -47,7 +47,7 @@ export default function PaperTradingDashboard({ strategyId }: Props) {
       
       // Fetch P&L
       const pnlResponse = await axios.get(
-        `${API_BASE_URL}/api/paper-trading-v2/pnl?strategyId=${strategyId}`,
+        `${API_BASE_URL}/api/paper-trading/pnl?strategyId=${strategyId}`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
       

@@ -1,6 +1,5 @@
 import express from 'express';
 import { authenticateToken } from '../middleware/auth.js';
-import { autonomousTradingAgent } from '../services/autonomousTradingAgent.js';
 import { enhancedAutonomousAgent } from '../services/enhancedAutonomousAgent.js';
 import { agentSettingsService } from '../services/agentSettingsService.js';
 import type { Request, Response } from 'express';
@@ -40,11 +39,7 @@ router.post('/start', authenticateToken, async (req: Request, res: Response) => 
     
     const config = req.body;
 
-    // Use enhanced agent if AI strategies are enabled
-    const useEnhancedAgent = config.enableAIStrategies !== false;
-    const session = useEnhancedAgent 
-      ? await enhancedAutonomousAgent.startAgent(userId, config)
-      : await autonomousTradingAgent.startAgent(userId, config);
+    const session = await enhancedAutonomousAgent.startAgent(userId, config);
 
     res.json({
       success: true,
@@ -92,7 +87,7 @@ router.post('/stop', authenticateToken, async (req: Request, res: Response) => {
     }
 
     // Get active session
-    const status = await autonomousTradingAgent.getAgentStatus(userId);
+    const status = await enhancedAutonomousAgent.getAgentStatus(userId);
     if (!status) {
       return res.status(404).json({
         success: false,
@@ -100,7 +95,7 @@ router.post('/stop', authenticateToken, async (req: Request, res: Response) => {
       });
     }
 
-    await autonomousTradingAgent.stopAgent(status.id);
+    await enhancedAutonomousAgent.stopAgent(status.id);
 
     res.json({
       success: true,
@@ -130,7 +125,7 @@ router.post('/pause', authenticateToken, async (req: Request, res: Response) => 
       });
     }
 
-    const status = await autonomousTradingAgent.getAgentStatus(userId);
+    const status = await enhancedAutonomousAgent.getAgentStatus(userId);
     if (!status) {
       return res.status(404).json({
         success: false,
@@ -138,7 +133,7 @@ router.post('/pause', authenticateToken, async (req: Request, res: Response) => 
       });
     }
 
-    await autonomousTradingAgent.pauseAgent(status.id);
+    await enhancedAutonomousAgent.pauseAgent(status.id);
 
     res.json({
       success: true,
@@ -168,7 +163,7 @@ router.get('/status', authenticateToken, async (req: Request, res: Response) => 
       });
     }
 
-    const status = await autonomousTradingAgent.getAgentStatus(userId);
+    const status = await enhancedAutonomousAgent.getAgentStatus(userId);
 
     res.json({
       success: true,
@@ -201,7 +196,7 @@ router.get('/activity', authenticateToken, async (req: Request, res: Response) =
     const limit = parseInt(req.query.limit as string) || 20;
 
     // Get user's active session
-    const status = await autonomousTradingAgent.getAgentStatus(userId);
+    const status = await enhancedAutonomousAgent.getAgentStatus(userId);
     if (!status) {
       return res.json({
         success: true,
@@ -243,7 +238,7 @@ router.get('/strategies', authenticateToken, async (req: Request, res: Response)
     }
 
     // Get user's active session
-    const status = await autonomousTradingAgent.getAgentStatus(userId);
+    const status = await enhancedAutonomousAgent.getAgentStatus(userId);
     if (!status) {
       return res.json({
         success: true,
@@ -297,7 +292,7 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
       maxDrawdown: 0
     };
 
-    const status = await autonomousTradingAgent.getAgentStatus(userId);
+    const status = await enhancedAutonomousAgent.getAgentStatus(userId);
     if (!status) {
       return res.json({
         success: true,
@@ -406,7 +401,7 @@ router.get('/learnings', authenticateToken, async (req: Request, res: Response) 
       });
     }
 
-    const status = await autonomousTradingAgent.getAgentStatus(userId);
+    const status = await enhancedAutonomousAgent.getAgentStatus(userId);
     if (!status) {
       return res.json({
         success: true,
@@ -449,7 +444,7 @@ router.put('/config', authenticateToken, async (req: Request, res: Response) => 
 
     const config = req.body;
 
-    const status = await autonomousTradingAgent.getAgentStatus(userId);
+    const status = await enhancedAutonomousAgent.getAgentStatus(userId);
     if (!status) {
       return res.status(404).json({
         success: false,

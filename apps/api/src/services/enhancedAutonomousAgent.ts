@@ -540,11 +540,33 @@ Generate the combination logic as executable JavaScript code.
   }
 
   /**
+   * Pause the agent
+   */
+  async pauseAgent(sessionId: string): Promise<void> {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      throw new Error('Session not found');
+    }
+
+    const interval = this.runningIntervals.get(sessionId);
+    if (interval) {
+      clearInterval(interval);
+      this.runningIntervals.delete(sessionId);
+    }
+
+    session.status = 'paused';
+    await this.saveSession(session);
+
+    logger.info(`Agent paused for session ${sessionId}`);
+    this.emit('agent:paused', { sessionId });
+  }
+
+  /**
    * Get agent status
    */
   async getAgentStatus(userId: string): Promise<AgentSession | null> {
     const session = Array.from(this.sessions.values()).find(
-      s => s.userId === userId && s.status === 'running'
+      s => s.userId === userId && (s.status === 'running' || s.status === 'paused')
     );
     return session || null;
   }
