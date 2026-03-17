@@ -522,6 +522,7 @@ class BacktestingEngine extends EventEmitter {
   }
 
   /**
+   * Execute entry order with realistic market simulation
    */
   async executeEntry(signal, currentCandle, config) {
     try {
