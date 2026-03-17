@@ -1,16 +1,15 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, fireEvent, waitFor, act, cleanup } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import { openAITradingService } from '../services/openAIService';
+import { claudeTradingService } from '../services/claudeTradingService';
 import TradingInsights from '../components/TradingInsights';
 import PWAInstallPrompt from '../components/PWAInstallPrompt';
 
-// Mock the OpenAI service
-vi.mock('../services/openAIService', () => ({
-  openAITradingService: {
+// Mock the Claude service
+vi.mock('../services/claudeTradingService', () => ({
+  claudeTradingService: {
     generateTradingInsight: vi.fn(),
     getConnectionStatus: vi.fn(() => 'mock'),
-    isReady: vi.fn(() => false)
   }
 }));
 
@@ -19,10 +18,14 @@ describe('Phase 5: Advanced Features', () => {
     vi.clearAllMocks();
   });
 
+  afterEach(() => {
+    cleanup();
+  });
+
   describe('OpenAI Trading Insights', () => {
     beforeEach(() => {
       // Provide a default insight so initial useEffect render doesn't crash
-      (openAITradingService.generateTradingInsight as any).mockResolvedValue({
+      (claudeTradingService.generateTradingInsight as any).mockResolvedValue({
         type: 'market_outlook',
         title: 'Initial Outlook',
         content: 'Market is stable',
@@ -32,7 +35,7 @@ describe('Phase 5: Advanced Features', () => {
       });
     });
     it('should render trading insights component', async () => {
-      render(<TradingInsights />);
+      render(<TradingInsights price={50000} />);
       
       await waitFor(() => {
         expect(screen.getByText('AI Trading Insights')).toBeInTheDocument();
@@ -50,28 +53,27 @@ describe('Phase 5: Advanced Features', () => {
         createdAt: new Date()
       };
 
-      (openAITradingService.generateTradingInsight as any).mockResolvedValue(mockInsight);
-      (openAITradingService.isReady as any).mockReturnValue(true);
+      (claudeTradingService.generateTradingInsight as any).mockResolvedValue(mockInsight);
 
-      render(<TradingInsights />);
+      render(<TradingInsights price={50000} />);
       
       const refreshButton = await screen.findByTitle('Refresh insights');
       fireEvent.click(refreshButton);
 
       await waitFor(() => {
-        expect(openAITradingService.generateTradingInsight).toHaveBeenCalled();
+        expect(claudeTradingService.generateTradingInsight).toHaveBeenCalled();
       });
     });
 
     it('should show GPT-4.1 connection status', async () => {
-      (openAITradingService.getConnectionStatus as any).mockReturnValue('connected');
+      (claudeTradingService.getConnectionStatus as any).mockReturnValue('connected');
       
-      render(<TradingInsights />);
-      expect(await screen.findByText(/GPT-4\.1/)).toBeInTheDocument();
+      render(<TradingInsights price={50000} />);
+      expect(await screen.findByText(/Claude Sonnet 4\.5/)).toBeInTheDocument();
     });
 
     it('should expand to show custom query interface', async () => {
-      render(<TradingInsights />);
+      render(<TradingInsights price={50000} />);
       
       // Use plural query to avoid timeouts when element is already present
       const expandButtons = screen.getAllByText('Expand');
@@ -134,7 +136,7 @@ describe('Phase 5: Advanced Features', () => {
       });
 
       // Wait for the component to process the event
-      expect(await screen.findByText('Install Trading Bot')).toBeInTheDocument();
+      expect((await screen.findAllByText('Install Trading Bot')).length).toBeGreaterThan(0);
     });
   });
 

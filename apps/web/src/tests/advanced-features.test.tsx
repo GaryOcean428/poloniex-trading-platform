@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from 'vitest';
+import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { MemoryRouter } from 'react-router-dom';
 import LiveDataDashboard from '@/components/dashboard/LiveDataDashboard';
@@ -191,6 +191,10 @@ describe('Advanced Features Tests', () => {
     clearIntSpy?.mockRestore();
     (global as any).ResizeObserver = roBackup;
     (global as any).IntersectionObserver = ioBackup;
+  });
+
+  afterEach(() => {
+    cleanup();
   });
 
   // Use real timers; setInterval is stubbed to not schedule callbacks
