@@ -188,7 +188,11 @@ describe('Enhanced /healthz Endpoint Tests', () => {
       }
       
       // Move dist folder
-      renameSync(distPath, backupPath);
+      try {
+        renameSync(distPath, backupPath);
+      } catch (error) {
+        throw new Error(`Failed to move dist folder for unhealthy-state test: ${error.message}`);
+      }
 
       try {
         serverProcess = spawn('node', ['serve.js'], {

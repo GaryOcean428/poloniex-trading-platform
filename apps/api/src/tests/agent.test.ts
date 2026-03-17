@@ -18,10 +18,10 @@ try {
   request = null;
 }
 
-const describeWithSupertest = request ? describe : describe.skip;
+const describeIfSupertest = request ? describe : describe.skip;
 const requestClient = request as NonNullable<typeof request>;
 
-describeWithSupertest('Autonomous Agent API', () => {
+describeIfSupertest('Autonomous Agent API', () => {
   beforeAll(async () => {
     // Create test user and get auth token
     const registerRes = await requestClient(API_URL)
