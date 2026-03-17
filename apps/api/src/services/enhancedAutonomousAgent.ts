@@ -896,23 +896,22 @@ Generate the combination logic as executable JavaScript code.
     
     // Start paper trading session
     // First create the session, then start it with strategy config
+    let parsedStrategyCode: any = null;
+    try { parsedStrategyCode = JSON.parse(strategy.code); } catch { /* LLM code may not be JSON */ }
+
     const paperSession = await paperTradingService.createSession({
       name: `Paper: ${strategy.name}`,
       strategyName: strategy.name,
       symbol: strategy.symbol,
       timeframe: strategy.timeframe || session.config.preferredTimeframes[0] || '1h',
       initialCapital,
-      strategy: (() => {
-        try { return JSON.parse(strategy.code); } catch { return null; }
-      })()
+      strategy: parsedStrategyCode
     });
     
     // Track mapping from strategy ID → paper session ID for later result lookup
     this.paperSessionIds.set(strategy.id, paperSession.id);
     
-    await paperTradingService.startSession(paperSession.id, (() => {
-      try { return JSON.parse(strategy.code); } catch { return null; }
-    })());
+    await paperTradingService.startSession(paperSession.id, parsedStrategyCode);
     
     this.emit('strategy:paper_trading', { strategyId: strategy.id });
     

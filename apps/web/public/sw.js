@@ -259,24 +259,19 @@ self.addEventListener('notificationclick', (event) => {
 // Handle messages from clients (pages) and browser extensions
 // This prevents "message channel closed" errors from browser extensions
 self.addEventListener('message', (event) => {
-  // Only process messages from our own origin
-  if (event.source && event.source !== self.serviceWorker) {
-    // Acknowledge messages from our app clients
-    if (event.data && event.data.type) {
-      switch (event.data.type) {
-        case 'SKIP_WAITING':
-          self.skipWaiting();
-          break;
-        case 'CLIENTS_CLAIM':
-          self.clients.claim();
-          break;
-        default:
-          break;
-      }
+  if (event.data && event.data.type) {
+    switch (event.data.type) {
+      case 'SKIP_WAITING':
+        self.skipWaiting();
+        break;
+      case 'CLIENTS_CLAIM':
+        self.clients.claim();
+        break;
+      default:
+        break;
     }
   }
-  // Never return true — this prevents the "asynchronous response" error.
-  // If a response is needed, use event.ports[0].postMessage() instead.
+  // Acknowledge messages via MessagePort to prevent "message channel closed" errors
   if (event.ports && event.ports[0]) {
     event.ports[0].postMessage({ ack: true });
   }

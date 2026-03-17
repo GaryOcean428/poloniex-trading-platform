@@ -454,14 +454,9 @@ class BacktestingEngine extends EventEmitter {
    * Generate trend following signals based on SMA/EMA crossover
    */
   generateTrendFollowingSignals(indicators, params) {
-    const {
-      smaPeriodShort = 20,
-      smaPeriodLong = 50
-    } = params;
-
-    // Use pre-calculated SMA/EMA from indicators
-    const shortMA = smaPeriodShort <= 20 ? indicators.sma20 : indicators.sma50;
-    const longMA = smaPeriodLong >= 50 ? indicators.sma50 : indicators.sma20;
+    // The engine pre-calculates sma20 and sma50; use those directly
+    const shortMA = indicators.sma20;
+    const longMA = indicators.sma50;
 
     if (shortMA == null || longMA == null) return null;
 
@@ -470,7 +465,7 @@ class BacktestingEngine extends EventEmitter {
       const spread = (shortMA - longMA) / longMA;
       return {
         side: 'long',
-        strength: Math.min(spread * 100, 1),
+        strength: Math.min(spread * 20, 1),
         reason: 'trend_following_long'
       };
     }
@@ -480,7 +475,7 @@ class BacktestingEngine extends EventEmitter {
       const spread = (longMA - shortMA) / longMA;
       return {
         side: 'short',
-        strength: Math.min(spread * 100, 1),
+        strength: Math.min(spread * 20, 1),
         reason: 'trend_following_short'
       };
     }
