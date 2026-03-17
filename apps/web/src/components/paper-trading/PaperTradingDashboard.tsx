@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Activity, TrendingUp, TrendingDown, Clock, DollarSign } from 'lucide-react';
+import { Activity, TrendingUp, TrendingDown, Clock, DollarSign, BarChart3 } from 'lucide-react';
 import axios from 'axios';
 import { getAccessToken } from '@/utils/auth';
 import { getBackendUrl } from '@/utils/environment';
@@ -9,12 +9,26 @@ const API_BASE_URL = getBackendUrl();
 interface Trade {
   id: string;
   symbol: string;
-  side: 'BUY' | 'SELL';
+  side: 'BUY' | 'SELL' | 'long' | 'short';
   price: number;
-  quantity: number;
+  quantity?: number;
+  size?: number;
   timestamp: string;
   pnl?: number;
+  fees?: number;
   status: 'open' | 'closed';
+  type?: string;
+}
+
+interface PnLData {
+  totalPnL: number;
+  realizedPnL: number;
+  unrealizedPnL: number;
+  winRate: number;
+  totalTrades: number;
+  initialCapital?: number;
+  currentValue?: number;
+  fees?: number;
 }
 
 interface Props {
@@ -23,7 +37,7 @@ interface Props {
 
 export default function PaperTradingDashboard({ strategyId }: Props) {
   const [trades, setTrades] = useState<Trade[]>([]);
-  const [pnl, setPnl] = useState<any>(null);
+  const [pnl, setPnl] = useState<PnLData | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -75,15 +89,20 @@ export default function PaperTradingDashboard({ strategyId }: Props) {
     <div className="space-y-6">
       {/* P&L Summary */}
       {pnl && (
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="bg-white rounded-lg shadow p-4">
             <div className="flex items-center gap-2 text-gray-600 text-sm mb-2">
               <DollarSign size={16} />
               <span>Total P&L</span>
             </div>
-            <p className={`text-2xl font-bold ${pnl.totalPnL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-              {pnl.totalPnL >= 0 ? '+' : ''}${pnl.totalPnL?.toFixed(2) || '0.00'}
+            <p className={`text-2xl font-bold ${(pnl.totalPnL ?? 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+              {(pnl.totalPnL ?? 0) >= 0 ? '+' : ''}${(pnl.totalPnL ?? 0).toFixed(2)}
             </p>
+            {pnl.initialCapital != null && pnl.initialCapital > 0 && (
+              <p className={`text-xs mt-1 ${(pnl.totalPnL ?? 0) >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                {(pnl.totalPnL ?? 0) >= 0 ? '+' : ''}{(((pnl.totalPnL ?? 0) / pnl.initialCapital) * 100).toFixed(2)}% return
+              </p>
+            )}
           </div>
 
           <div className="bg-white rounded-lg shadow p-4">
@@ -91,9 +110,14 @@ export default function PaperTradingDashboard({ strategyId }: Props) {
               <TrendingUp size={16} />
               <span>Realized P&L</span>
             </div>
-            <p className={`text-2xl font-bold ${pnl.realizedPnL >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-              {pnl.realizedPnL >= 0 ? '+' : ''}${pnl.realizedPnL?.toFixed(2) || '0.00'}
+            <p className={`text-2xl font-bold ${(pnl.realizedPnL ?? 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+              {(pnl.realizedPnL ?? 0) >= 0 ? '+' : ''}${(pnl.realizedPnL ?? 0).toFixed(2)}
             </p>
+            {pnl.fees != null && pnl.fees > 0 && (
+              <p className="text-xs mt-1 text-gray-500">
+                Fees: ${pnl.fees.toFixed(2)}
+              </p>
+            )}
           </div>
 
           <div className="bg-white rounded-lg shadow p-4">
@@ -102,7 +126,7 @@ export default function PaperTradingDashboard({ strategyId }: Props) {
               <span>Win Rate</span>
             </div>
             <p className="text-2xl font-bold text-blue-600">
-              {((pnl.winRate || 0) * 100).toFixed(1)}%
+              {((pnl.winRate ?? 0) * 100).toFixed(1)}%
             </p>
           </div>
 
@@ -112,8 +136,34 @@ export default function PaperTradingDashboard({ strategyId }: Props) {
               <span>Total Trades</span>
             </div>
             <p className="text-2xl font-bold text-purple-600">
-              {pnl.totalTrades || 0}
+              {pnl.totalTrades ?? 0}
             </p>
+          </div>
+        </div>
+      )}
+
+      {/* Account Summary */}
+      {pnl && pnl.initialCapital != null && (
+        <div className="bg-white rounded-lg shadow p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <BarChart3 size={18} className="text-gray-600" />
+            <h4 className="font-semibold text-gray-900">Simulated Account</h4>
+          </div>
+          <div className="grid grid-cols-3 gap-4 text-center">
+            <div>
+              <p className="text-xs text-gray-500">Starting Balance</p>
+              <p className="text-lg font-bold text-gray-800">${pnl.initialCapital.toFixed(2)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-gray-500">Current Value</p>
+              <p className="text-lg font-bold text-gray-800">${(pnl.currentValue ?? pnl.initialCapital).toFixed(2)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-gray-500">Unrealized P&L</p>
+              <p className={`text-lg font-bold ${(pnl.unrealizedPnL ?? 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                {(pnl.unrealizedPnL ?? 0) >= 0 ? '+' : ''}${(pnl.unrealizedPnL ?? 0).toFixed(2)}
+              </p>
+            </div>
           </div>
         </div>
       )}
@@ -166,7 +216,7 @@ export default function PaperTradingDashboard({ strategyId }: Props) {
                         </span>
                       </div>
                       <div className="text-sm text-gray-600 mt-1">
-                        {trade.quantity} @ ${trade.price.toFixed(2)}
+                        {(trade.quantity || trade.size || 0)} @ ${(trade.price ?? 0).toFixed(2)}
                       </div>
                     </div>
                   </div>

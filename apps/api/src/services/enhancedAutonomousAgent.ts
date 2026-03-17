@@ -14,6 +14,7 @@ import { getLLMStrategyGenerator } from './llmStrategyGenerator.js';
 import backtestingEngine from './backtestingEngine.js';
 import paperTradingService from './paperTradingService.js';
 import automatedTradingService from './automatedTradingService.js';
+import poloniexFuturesService from './poloniexFuturesService.js';
 import { apiCredentialsService } from './apiCredentialsService.js';
 import { logger } from '../utils/logger.js';
 import type { Server as SocketIOServer } from 'socket.io';
@@ -592,12 +593,28 @@ Generate the combination logic as executable JavaScript code.
     strategy.promotedAt = new Date();
     await this.saveStrategy(strategy);
     
+    // Fetch real account balance to use as paper trading capital
+    let initialCapital = 10000; // fallback
+    try {
+      const credentials = await apiCredentialsService.getCredentials(session.userId);
+      if (credentials) {
+        const balance = await poloniexFuturesService.getAccountBalance(credentials);
+        const accountEquity = parseFloat(balance?.accountEquity || balance?.eq || '0');
+        if (accountEquity > 0) {
+          initialCapital = accountEquity;
+          logger.info(`Using real account balance $${initialCapital.toFixed(2)} for paper trading`);
+        }
+      }
+    } catch (err) {
+      logger.warn(`Could not fetch account balance for paper trading, using default $${initialCapital}:`, err);
+    }
+    
     // Start paper trading session
     await paperTradingService.startSession({
       userId: session.userId,
       strategyId: strategy.id,
       symbol: strategy.symbol,
-      initialCapital: 10000,
+      initialCapital,
       duration: session.config.paperTradingDurationHours * 60 * 60 * 1000
     });
     
