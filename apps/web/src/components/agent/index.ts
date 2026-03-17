@@ -4,6 +4,7 @@
  */
 
 export { default as ActiveStrategiesPanel } from './ActiveStrategiesPanel';
+export { default as AgentOverviewPanel } from './AgentOverviewPanel';
 export { default as AutonomousAgentDashboard } from './AutonomousAgentDashboard';
 export { default as BacktestResultsVisualization } from './BacktestResultsVisualization';
 export { default as LiveTradingActivityFeed } from './LiveTradingActivityFeed';
