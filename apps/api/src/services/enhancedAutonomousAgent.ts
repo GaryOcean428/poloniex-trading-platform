@@ -599,7 +599,7 @@ Generate the combination logic as executable JavaScript code.
       const credentials = await apiCredentialsService.getCredentials(session.userId);
       if (credentials) {
         const balance = await poloniexFuturesService.getAccountBalance(credentials);
-        const accountEquity = parseFloat(balance?.accountEquity || balance?.eq || '0');
+        const accountEquity = parseFloat(balance?.accountEquity ?? balance?.eq ?? '0');
         if (accountEquity > 0) {
           initialCapital = accountEquity;
           logger.info(`Using real account balance $${initialCapital.toFixed(2)} for paper trading`);

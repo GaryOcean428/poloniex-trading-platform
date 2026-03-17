@@ -9,7 +9,7 @@ const API_BASE_URL = getBackendUrl();
 interface Trade {
   id: string;
   symbol: string;
-  side: 'BUY' | 'SELL' | 'long' | 'short';
+  side: string;
   price: number;
   quantity?: number;
   size?: number;

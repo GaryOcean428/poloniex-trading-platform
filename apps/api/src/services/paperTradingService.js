@@ -451,6 +451,8 @@ class PaperTradingService extends EventEmitter {
         takeProfit: positionData.takeProfit,
         unrealizedPnl: 0,
         realizedPnl: 0,
+        entryFees: this.calculateTradingFees(positionData.size, positionData.entryPrice),
+        fees: 0,
         status: 'open',
         entryTime: new Date(),
         reason: positionData.reason || 'manual'
@@ -483,9 +485,8 @@ class PaperTradingService extends EventEmitter {
       session.positions.set(positionId, position);
 
       // Update session margin and deduct entry fees from cash
-      const entryFees = this.calculateTradingFees(position.size, position.entryPrice);
       session.margin += position.size * position.entryPrice;
-      session.cash -= (position.size * position.entryPrice) + entryFees;
+      session.cash -= (position.size * position.entryPrice) + position.entryFees;
 
       // Create trade record
       await this.createTradeRecord(session, position, 'entry');
@@ -534,7 +535,7 @@ class PaperTradingService extends EventEmitter {
 
       // Calculate realized P&L including fees from entry and exit
       const rawPnl = this.calculateRealizedPnl(position, executionResult.executionPrice);
-      const entryFees = this.calculateTradingFees(position.size, position.entryPrice);
+      const entryFees = position.entryFees || this.calculateTradingFees(position.size, position.entryPrice);
       const exitFees = executionResult.fees || this.calculateTradingFees(position.size, executionResult.executionPrice);
       const realizedPnl = rawPnl - entryFees - exitFees;
 

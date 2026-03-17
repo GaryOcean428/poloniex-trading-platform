@@ -121,7 +121,11 @@ export default function PaperTradingToggle({ strategyId, strategyName, onStatusC
       </div>
 
       {/* Status Display */}
-      {active && status?.session && (
+      {active && status?.session && (() => {
+        const displayCapital = status.session.currentCapital ?? status.session.initialCapital ?? 0;
+        const displayPnL = status.session.totalPnL ?? 0;
+        const displayWinRate = status.session.winRate ?? 0;
+        return (
         <div className="grid grid-cols-2 gap-3 mb-4">
           <div className="p-3 bg-blue-50 rounded-lg">
             <div className="flex items-center gap-2 text-blue-700 text-xs mb-1">
@@ -129,30 +133,30 @@ export default function PaperTradingToggle({ strategyId, strategyName, onStatusC
               <span>Current Capital</span>
             </div>
             <p className="text-lg font-bold text-blue-900">
-              ${(status.session.currentCapital ?? status.session.initialCapital ?? 0).toFixed(2)}
+              ${displayCapital.toFixed(2)}
             </p>
           </div>
           
           <div className={`p-3 rounded-lg ${
-            (status.session.totalPnL ?? 0) >= 0 ? 'bg-green-50' : 'bg-red-50'
+            displayPnL >= 0 ? 'bg-green-50' : 'bg-red-50'
           }`}>
             <div className={`flex items-center gap-2 text-xs mb-1 ${
-              (status.session.totalPnL ?? 0) >= 0 ? 'text-green-700' : 'text-red-700'
+              displayPnL >= 0 ? 'text-green-700' : 'text-red-700'
             }`}>
               <TrendingUp size={14} />
               <span>Total P&L</span>
             </div>
             <p className={`text-lg font-bold ${
-              (status.session.totalPnL ?? 0) >= 0 ? 'text-green-900' : 'text-red-900'
+              displayPnL >= 0 ? 'text-green-900' : 'text-red-900'
             }`}>
-              {(status.session.totalPnL ?? 0) >= 0 ? '+' : ''}${(status.session.totalPnL ?? 0).toFixed(2)}
+              {displayPnL >= 0 ? '+' : ''}${displayPnL.toFixed(2)}
             </p>
           </div>
           
           <div className="p-3 bg-purple-50 rounded-lg">
             <div className="text-purple-700 text-xs mb-1">Win Rate</div>
             <p className="text-lg font-bold text-purple-900">
-              {((status.session.winRate ?? 0) * 100).toFixed(1)}%
+              {(displayWinRate * 100).toFixed(1)}%
             </p>
           </div>
           
@@ -163,7 +167,8 @@ export default function PaperTradingToggle({ strategyId, strategyName, onStatusC
             </p>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* Toggle Button */}
       <button
