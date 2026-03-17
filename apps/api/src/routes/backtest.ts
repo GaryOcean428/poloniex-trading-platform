@@ -85,6 +85,23 @@ interface StrategyBreakdown {
   performance: Record<string, number>;
 }
 
+interface BacktestResultRow {
+  id: string;
+  user_id: string;
+  strategy_id: string;
+  symbol: string;
+  start_date: string;
+  end_date: string;
+  initial_capital: string;
+  timeframe: string;
+  status: string;
+  progress: string;
+  results: string | Record<string, unknown> | null;
+  error: string | null;
+  started_at: string;
+  completed_at: string | null;
+}
+
 const router = express.Router();
 
 // Pipeline readiness thresholds
@@ -143,7 +160,7 @@ async function loadBacktestFromDB(backtestId: string): Promise<BacktestRecord | 
       [backtestId]
     );
     if (result.rows.length === 0) return null;
-    const row = result.rows[0];
+    const row: BacktestResultRow = result.rows[0];
     return {
       id: row.id,
       userId: row.user_id,
@@ -291,7 +308,7 @@ router.get('/history', authenticateToken, async (req: Request, res: Response) =>
         `SELECT * FROM backtest_results WHERE user_id = $1 ORDER BY started_at DESC LIMIT $2`,
         [userId, limit]
       );
-      dbBacktests = dbResult.rows.map((row: any) => ({
+      dbBacktests = dbResult.rows.map((row: BacktestResultRow) => ({
         id: row.id,
         userId: row.user_id,
         strategyId: row.strategy_id,

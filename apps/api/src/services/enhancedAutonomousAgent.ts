@@ -244,11 +244,17 @@ class EnhancedAutonomousAgent extends EventEmitter {
     cooldownRemaining?: number;
   } {
     const cb = this.getCircuitBreaker(sessionId);
+    // dailyLoss is stored as absolute $. Convert to an approximate %
+    // using the session config's positionSize * 1000 as the capital proxy.
+    const session = this.sessions.get(sessionId);
+    const capitalBase = session ? session.config.positionSize * 1000 : 10000;
+    const dailyLossPercent = capitalBase > 0 ? (cb.dailyLoss / capitalBase) * 100 : 0;
+
     return {
       isTripped: cb.isTripped,
       reason: cb.trippedReason,
       consecutiveLosses: cb.consecutiveLosses,
-      dailyLossPercent: cb.dailyLoss,
+      dailyLossPercent: parseFloat(dailyLossPercent.toFixed(2)),
       cooldownRemaining: cb.isTripped && cb.trippedAt
         ? Math.max(0, EnhancedAutonomousAgent.CIRCUIT_BREAKER_COOLDOWN_MS - (Date.now() - cb.trippedAt.getTime()))
         : undefined
@@ -668,11 +674,14 @@ class EnhancedAutonomousAgent extends EventEmitter {
         maxDrawdown: config.maxDrawdown,
         maxHoldingPeriodHours: config.tradingStyle === 'scalping' ? 2 : config.tradingStyle === 'day_trading' ? 24 : 168
       },
-      subStrategies: subStrategies.map((s, i) => ({
-        id: s.id,
-        name: s.name,
-        weight: [0.4, 0.35, 0.25][i]
-      })),
+      subStrategies: subStrategies.map((s, i) => {
+        // Default weights distributed evenly if more than 3 strategies
+        const defaultWeights = [0.4, 0.35, 0.25];
+        const weight = i < defaultWeights.length
+          ? defaultWeights[i]
+          : 1 / subStrategies.length;
+        return { id: s.id, name: s.name, weight };
+      }),
       confidence: 0.7,
       reasoning: `Rule-based multi-strategy combo for ${symbol} with weighted majority voting.`
     };

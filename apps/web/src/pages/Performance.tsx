@@ -47,6 +47,18 @@ interface RiskMetrics {
   consecutiveLosses: number;
 }
 
+/** Shape returned by the pipeline summary's strategyBreakdown array */
+interface RawStrategyBreakdown {
+  name: string;
+  pnl?: number;
+  total_pnl?: number;
+  trades?: number;
+  total_trades?: number;
+  win_rate?: number;
+  winRate?: number;
+  status?: string;
+}
+
 const CHART_COLORS = {
   primary: '#06b6d4',
   secondary: '#8b5cf6',
@@ -80,8 +92,8 @@ const Performance: React.FC = () => {
       if (perfRes?.data?.success && perfRes.data.performance) {
         const p = perfRes.data.performance;
         const avgWin = Math.abs(parseFloat(p.averageWin) || 0);
-        const avgLoss = Math.abs(parseFloat(p.averageLoss) || 1);
-        const profitFactor = avgLoss > 0 ? avgWin / avgLoss : 0;
+        const avgLoss = Math.abs(parseFloat(p.averageLoss) || 0);
+        const profitFactor = avgLoss > 0 ? avgWin / avgLoss : (avgWin > 0 ? Infinity : 0);
         const winRate = parseFloat(p.winRate) || 0;
         const expectancy = (winRate / 100) * avgWin - ((100 - winRate) / 100) * avgLoss;
 
@@ -110,7 +122,7 @@ const Performance: React.FC = () => {
         const summary = stratRes.data.summary;
         if (summary?.strategyBreakdown) {
           setStrategyBreakdown(
-            summary.strategyBreakdown.map((s: { name: string; pnl?: number; total_pnl?: number; trades?: number; total_trades?: number; win_rate?: number; winRate?: number; status?: string }) => ({
+            summary.strategyBreakdown.map((s: RawStrategyBreakdown) => ({
               name: s.name,
               value: parseFloat(String(s.pnl ?? s.total_pnl ?? 0)),
               trades: parseInt(String(s.trades ?? s.total_trades ?? 0)),
