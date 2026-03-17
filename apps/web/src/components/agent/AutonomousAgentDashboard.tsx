@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Play, Pause, Square, Activity, Brain, TrendingUp, AlertCircle, Shield, Zap, BarChart3 } from 'lucide-react';
+import { Play, Pause, Square, Activity, Brain, TrendingUp, AlertCircle, Shield, Zap, BarChart3, Settings, ChevronDown, ChevronUp } from 'lucide-react';
 import axios from 'axios';
 import { getAccessToken } from '@/utils/auth';
 import { getBackendUrl } from '@/utils/environment';
@@ -62,6 +62,7 @@ const AutonomousAgentDashboard: React.FC = () => {
     dailyLossPercent: number;
     cooldownRemaining?: number;
   } | null>(null);
+  const [showConfig, setShowConfig] = useState(false);
   const [config, setConfig] = useState({
     maxDrawdown: 15,
     positionSize: 2,
@@ -375,6 +376,154 @@ const AutonomousAgentDashboard: React.FC = () => {
           <span className={`inline-block h-6 w-6 transform rounded-full bg-white shadow-md transition-transform ${paperMode ? 'translate-x-1' : 'translate-x-9'}`} />
           <span className="sr-only">{paperMode ? 'Paper' : 'Live'}</span>
         </button>
+      </div>
+
+      {/* Agent Configuration Panel */}
+      <div className="bg-white rounded-lg shadow-lg overflow-hidden">
+        <button
+          onClick={() => setShowConfig(!showConfig)}
+          className="w-full p-4 flex items-center justify-between hover:bg-gray-50 transition-colors"
+          disabled={agentStatus?.status === 'running'}
+        >
+          <div className="flex items-center gap-3">
+            <Settings className="w-5 h-5 text-gray-600" />
+            <div className="text-left">
+              <p className="font-semibold text-gray-900">Agent Configuration</p>
+              <p className="text-sm text-gray-500">
+                {config.tradingStyle.replace('_', ' ')} · {config.preferredPairs.join(', ')} · Max DD {config.maxDrawdown}%
+              </p>
+            </div>
+          </div>
+          {showConfig ? <ChevronUp className="w-5 h-5 text-gray-400" /> : <ChevronDown className="w-5 h-5 text-gray-400" />}
+        </button>
+        {showConfig && (
+          <div className="border-t border-gray-200 p-6 space-y-4">
+            {agentStatus?.status === 'running' && (
+              <p className="text-sm text-amber-600 bg-amber-50 rounded p-2">⚠ Stop the agent to change configuration.</p>
+            )}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {/* Trading Style */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Trading Style</label>
+                <select
+                  value={config.tradingStyle}
+                  onChange={e => setConfig(c => ({ ...c, tradingStyle: e.target.value }))}
+                  disabled={agentStatus?.status === 'running'}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-cyan-500 disabled:bg-gray-100 disabled:text-gray-500"
+                >
+                  <option value="scalping">Scalping (high frequency, tight stops)</option>
+                  <option value="day_trading">Day Trading (intraday, moderate risk)</option>
+                  <option value="swing_trading">Swing Trading (multi-day, wider stops)</option>
+                </select>
+              </div>
+              {/* Max Drawdown */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Max Drawdown: {config.maxDrawdown}%
+                </label>
+                <input
+                  type="range"
+                  min={5}
+                  max={30}
+                  step={1}
+                  value={config.maxDrawdown}
+                  onChange={e => setConfig(c => ({ ...c, maxDrawdown: parseInt(e.target.value) }))}
+                  disabled={agentStatus?.status === 'running'}
+                  className="w-full accent-cyan-600"
+                />
+                <div className="flex justify-between text-xs text-gray-400"><span>5% (safe)</span><span>30% (aggressive)</span></div>
+              </div>
+              {/* Position Size */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Position Size: {config.positionSize}% of capital
+                </label>
+                <input
+                  type="range"
+                  min={1}
+                  max={10}
+                  step={0.5}
+                  value={config.positionSize}
+                  onChange={e => setConfig(c => ({ ...c, positionSize: parseFloat(e.target.value) }))}
+                  disabled={agentStatus?.status === 'running'}
+                  className="w-full accent-cyan-600"
+                />
+                <div className="flex justify-between text-xs text-gray-400"><span>1% (conservative)</span><span>10% (aggressive)</span></div>
+              </div>
+              {/* Stop Loss */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Stop Loss: {config.stopLossPercentage}%
+                </label>
+                <input
+                  type="range"
+                  min={1}
+                  max={10}
+                  step={0.5}
+                  value={config.stopLossPercentage}
+                  onChange={e => setConfig(c => ({ ...c, stopLossPercentage: parseFloat(e.target.value) }))}
+                  disabled={agentStatus?.status === 'running'}
+                  className="w-full accent-cyan-600"
+                />
+              </div>
+              {/* Max Concurrent Positions */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Max Concurrent Positions: {config.maxConcurrentPositions}
+                </label>
+                <input
+                  type="range"
+                  min={1}
+                  max={10}
+                  step={1}
+                  value={config.maxConcurrentPositions}
+                  onChange={e => setConfig(c => ({ ...c, maxConcurrentPositions: parseInt(e.target.value) }))}
+                  disabled={agentStatus?.status === 'running'}
+                  className="w-full accent-cyan-600"
+                />
+              </div>
+              {/* Automation Level */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Automation Level</label>
+                <select
+                  value={config.automationLevel}
+                  onChange={e => setConfig(c => ({ ...c, automationLevel: e.target.value }))}
+                  disabled={agentStatus?.status === 'running'}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-cyan-500 disabled:bg-gray-100 disabled:text-gray-500"
+                >
+                  <option value="fully_autonomous">Fully Autonomous (no approval needed)</option>
+                  <option value="semi_autonomous">Semi-Autonomous (approve before live)</option>
+                  <option value="manual_override">Manual Override (approve all actions)</option>
+                </select>
+              </div>
+            </div>
+            {/* Preferred Pairs */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Preferred Trading Pairs</label>
+              <div className="flex flex-wrap gap-2">
+                {['BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'XRP-USDT', 'DOGE-USDT', 'AVAX-USDT'].map(pair => (
+                  <button
+                    key={pair}
+                    onClick={() => setConfig(c => ({
+                      ...c,
+                      preferredPairs: c.preferredPairs.includes(pair)
+                        ? c.preferredPairs.filter(p => p !== pair)
+                        : [...c.preferredPairs, pair]
+                    }))}
+                    disabled={agentStatus?.status === 'running'}
+                    className={`px-3 py-1 rounded-full text-sm font-medium transition-colors disabled:opacity-50 ${
+                      config.preferredPairs.includes(pair)
+                        ? 'bg-cyan-100 text-cyan-700 border border-cyan-300'
+                        : 'bg-gray-100 text-gray-600 border border-gray-200 hover:bg-gray-200'
+                    }`}
+                  >
+                    {pair}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Connection & Heartbeat Status Bar */}

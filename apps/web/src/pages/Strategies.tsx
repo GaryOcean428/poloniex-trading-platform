@@ -124,17 +124,26 @@ const Strategies: React.FC = () => {
               </h2>
               <p className="text-sm text-cyan-700 mt-1">
                 The agent automatically generates, backtests, and promotes strategies through its pipeline.
-                View agent-managed strategies on the Autonomous Agent or Backtesting pages.
+                It uses circuit breakers, drawdown-adjusted sizing, and Kelly Criterion allocation to maximise risk-adjusted returns.
               </p>
+              <div className="flex gap-2 mt-3">
+                <Link
+                  to="/autonomous-agent"
+                  className="inline-flex items-center px-3 py-1.5 bg-cyan-600 text-white text-sm rounded-md hover:bg-cyan-700 transition-colors"
+                >
+                  <Brain className="w-3.5 h-3.5 mr-1" />
+                  Agent Dashboard
+                </Link>
+                <Link
+                  to="/performance"
+                  className="inline-flex items-center px-3 py-1.5 bg-green-600 text-white text-sm rounded-md hover:bg-green-700 transition-colors"
+                >
+                  Performance
+                  <ArrowRight className="w-3.5 h-3.5 ml-1" />
+                </Link>
+              </div>
             </div>
           </div>
-          <Link
-            to="/autonomous-agent"
-            className="inline-flex items-center px-3 py-1.5 bg-cyan-600 text-white text-sm rounded-md hover:bg-cyan-700 transition-colors flex-shrink-0"
-          >
-            Agent
-            <ArrowRight className="w-4 h-4 ml-1" />
-          </Link>
         </div>
       </div>
 
