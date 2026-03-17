@@ -1,7 +1,8 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useTradingContext } from '../hooks/useTradingContext';
 import { Strategy, StrategyType } from '../types';
-import { Plus, Zap, Settings as SettingsIcon, BarChart2, Play, Pause, Trash2, History, Sparkles } from 'lucide-react';
+import { Plus, Zap, Settings as SettingsIcon, BarChart2, Play, Pause, Trash2, History, Sparkles, Brain, ArrowRight } from 'lucide-react';
 import NewStrategyForm from '../components/strategy/NewStrategyForm';
 import StrategyDetails from '../components/strategy/StrategyDetails';
 import { backtestService } from '../services/backtestService';
@@ -21,9 +22,13 @@ const Strategies: React.FC = () => {
       // Use real account balance for backtesting, fallback to 10000 if not available
       const initialBalance = accountBalance?.total || 10000;
       
+      // Use dynamic date range: last 12 months
+      const endDate = new Date().toISOString().split('T')[0] ?? '2024-01-01';
+      const startDate = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] ?? '2023-01-01';
+      
       const result = await backtestService.runBacktest(strategy, {
-        startDate: '2023-01-01',
-        endDate: '2024-01-01',
+        startDate,
+        endDate,
         initialBalance,
         feeRate: 0.001,
         slippage: 0.001,
@@ -43,6 +48,10 @@ const Strategies: React.FC = () => {
       // Use real account balance for optimization, fallback to 10000 if not available
       const initialBalance = accountBalance?.total || 10000;
       
+      // Use dynamic date range: last 12 months
+      const endDate = new Date().toISOString().split('T')[0] ?? '2024-01-01';
+      const startDate = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] ?? '2023-01-01';
+      
       // Fix the parameter ranges to match the expected type
       const parameterRanges: Record<string, [number, number, number]> = {
         shortPeriod: [5, 20, 5],
@@ -52,8 +61,8 @@ const Strategies: React.FC = () => {
       const results = await backtestService.optimizeStrategy(
         strategy,
         {
-          startDate: '2023-01-01',
-          endDate: '2024-01-01',
+          startDate,
+          endDate,
           initialBalance,
           feeRate: 0.001,
           slippage: 0.001,
@@ -97,7 +106,33 @@ const Strategies: React.FC = () => {
   };
   
   return (
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+    <div className="space-y-4">
+      {/* Agent-Driven Strategy Banner */}
+      <div className="bg-gradient-to-r from-cyan-50 to-blue-50 border border-cyan-200 rounded-lg p-5">
+        <div className="flex items-start justify-between">
+          <div className="flex items-start gap-3">
+            <Brain className="w-6 h-6 text-cyan-600 mt-0.5 flex-shrink-0" />
+            <div>
+              <h2 className="text-base font-semibold text-cyan-900">
+                Strategies are managed by the Autonomous Agent
+              </h2>
+              <p className="text-sm text-cyan-700 mt-1">
+                The agent automatically generates, backtests, and promotes strategies through its pipeline.
+                View agent-managed strategies on the Autonomous Agent or Backtesting pages.
+              </p>
+            </div>
+          </div>
+          <Link
+            to="/autonomous-agent"
+            className="inline-flex items-center px-3 py-1.5 bg-cyan-600 text-white text-sm rounded-md hover:bg-cyan-700 transition-colors flex-shrink-0"
+          >
+            Agent
+            <ArrowRight className="w-4 h-4 ml-1" />
+          </Link>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
       <div className="md:col-span-1">
         <div className="trading-card mb-4">
           <div className="flex justify-between items-center mb-4">
@@ -226,6 +261,7 @@ const Strategies: React.FC = () => {
           )}
         </div>
       </div>
+    </div>
     </div>
   );
 };

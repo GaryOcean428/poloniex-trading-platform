@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import axios from 'axios';
 import { getAccessToken } from '@/utils/auth';
 import { getBackendUrl } from '@/utils/environment';
@@ -218,6 +219,8 @@ const Backtesting: React.FC = () => {
   const [pipelineResults, setPipelineResults] = useState<PipelineResult[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedStrategy, setExpandedStrategy] = useState<string | null>(null);
+  const [lastFetched, setLastFetched] = useState<Date | null>(null);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
   const getAuthHeaders = useCallback(() => {
     const token = getAccessToken();
@@ -231,9 +234,16 @@ const Backtesting: React.FC = () => {
       });
       if (response.data.success) {
         setSummary(response.data.summary);
+        setFetchError(null);
       }
-    } catch (_err) {
-      // Silently handle – summary will stay null and show empty state
+    } catch (err: any) {
+      const status = err?.response?.status;
+      if (status === 401) {
+        setFetchError('Session expired — please log in again.');
+      } else if (status && status >= 500) {
+        setFetchError('Backend unavailable — retrying automatically.');
+      }
+      // For network errors or other cases, keep previous data
     }
   }, [getAuthHeaders]);
 
@@ -246,13 +256,14 @@ const Backtesting: React.FC = () => {
         setPipelineResults(response.data.results);
       }
     } catch (_err) {
-      // Silently handle
+      // Pipeline results are secondary — summary error already covers feedback
     }
   }, [getAuthHeaders]);
 
   const refreshData = useCallback(async () => {
     setLoading(true);
     await Promise.all([fetchPipelineSummary(), fetchPipelineResults()]);
+    setLastFetched(new Date());
     setLoading(false);
   }, [fetchPipelineSummary, fetchPipelineResults]);
 
@@ -279,9 +290,16 @@ const Backtesting: React.FC = () => {
             The autonomous agent automatically generates, backtests, and validates trading strategies.
             Start the agent from the Autonomous Agent page to begin.
           </p>
-          <p className="text-sm text-text-muted">
+          <p className="text-sm text-text-muted mb-4">
             Strategies progress through: Generated → Backtested → Paper Trading → Live
           </p>
+          <Link
+            to="/autonomous-agent"
+            className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            <Zap className="w-4 h-4 mr-2" />
+            Go to Autonomous Agent
+          </Link>
         </div>
       );
     }
@@ -428,10 +446,17 @@ const Backtesting: React.FC = () => {
         <div className="bg-bg-tertiary p-8 rounded-lg shadow text-center">
           <Zap className="w-12 h-12 text-gray-400 mx-auto mb-4" />
           <h3 className="text-lg font-medium text-text-primary mb-2">No Strategies Yet</h3>
-          <p className="text-gray-600">
+          <p className="text-gray-600 mb-4">
             The autonomous agent has not generated any strategies yet.
             Start the agent to begin automated strategy development and backtesting.
           </p>
+          <Link
+            to="/autonomous-agent"
+            className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            <Zap className="w-4 h-4 mr-2" />
+            Go to Autonomous Agent
+          </Link>
         </div>
       );
     }
@@ -820,15 +845,33 @@ const Backtesting: React.FC = () => {
             Agent-driven strategy development, backtesting, paper trading validation, and live-readiness assessment
           </p>
         </div>
-        <button
-          onClick={refreshData}
-          disabled={loading}
-          className="flex items-center px-3 py-2 bg-bg-tertiary border border-border-subtle rounded-md hover:bg-bg-secondary transition-colors disabled:opacity-50"
-        >
-          <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
-          Refresh
-        </button>
+        <div className="flex items-center gap-3">
+          {lastFetched && (
+            <span className="text-xs text-text-muted">
+              Updated {lastFetched.toLocaleTimeString()}
+            </span>
+          )}
+          <button
+            onClick={refreshData}
+            disabled={loading}
+            className="flex items-center px-3 py-2 bg-bg-tertiary border border-border-subtle rounded-md hover:bg-bg-secondary transition-colors disabled:opacity-50"
+          >
+            <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+        </div>
       </div>
+
+      {/* Error Banner */}
+      {fetchError && (
+        <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
+          <AlertTriangle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm text-red-800 font-medium">{fetchError}</p>
+            <p className="text-xs text-red-600 mt-1">Auto-refreshing every 30 seconds</p>
+          </div>
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="mb-6">
