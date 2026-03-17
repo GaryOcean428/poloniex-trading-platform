@@ -4,7 +4,7 @@ import type { Strategy, StrategyParameters } from '@shared/types/strategy';
 
 /**
  * LLM-Powered Strategy Generator
- * Uses Claude 3.5 Sonnet to generate novel trading strategies based on market analysis
+ * Uses Claude Sonnet 4.6 to generate novel trading strategies based on market analysis
  */
 
 export interface MarketContext {
@@ -54,7 +54,7 @@ export interface GeneratedStrategy {
 
 export class LLMStrategyGenerator {
   private client: Anthropic | null = null;
-  private model = 'claude-sonnet-4-5-20250929'; // Claude Sonnet 4.5 (latest)
+  private model = 'claude-sonnet-4-6';
   private apiKey: string | undefined;
 
   constructor() {
@@ -62,7 +62,7 @@ export class LLMStrategyGenerator {
     // Don't throw error on missing API key - allow lazy initialization
     if (this.apiKey) {
       this.client = new Anthropic({ apiKey: this.apiKey });
-      logger.info('LLM Strategy Generator initialized with Claude Sonnet 4.5 (claude-sonnet-4-5-20250929)');
+      logger.info('LLM Strategy Generator initialized with Claude Sonnet 4.6 (claude-sonnet-4-6)');
     } else {
       logger.warn('ANTHROPIC_API_KEY not set - LLM strategy generation will be unavailable');
     }
@@ -94,20 +94,20 @@ export class LLMStrategyGenerator {
 
       const prompt = this.buildStrategyGenerationPrompt(marketContext);
 
-      // Use extended thinking for complex strategy generation with prompt caching
+      // Use adaptive thinking for Sonnet 4.6 with balanced effort and prompt caching
       const response = await this.client.messages.create({
         model: this.model,
-        max_tokens: 8192, // Increased for detailed strategies
+        max_tokens: 8192,
         temperature: 0.7,
         thinking: {
-          type: 'enabled' as const,
-          budget_tokens: 4000 // Reserve tokens for deep reasoning about strategy design
+          type: 'adaptive' as const
         },
+        effort: 'medium',
         system: [
           {
             type: 'text',
             text: this.getSystemPrompt(),
-            cache_control: { type: 'ephemeral' } // Cache the system prompt for 5 minutes
+            cache_control: { type: 'ephemeral' }
           }
         ],
         messages: [
@@ -130,10 +130,9 @@ export class LLMStrategyGenerator {
       }
 
       const strategy = this.parseStrategyResponse(textBlocks[0].text, marketContext);
-      
+
       logger.info(`Successfully generated strategy: ${strategy.name}`);
       return strategy;
-
     } catch (error) {
       logger.error('Error generating strategy with LLM:', error);
       throw error;
@@ -149,12 +148,12 @@ export class LLMStrategyGenerator {
   ): Promise<GeneratedStrategy[]> {
     this.ensureClient();
     const strategies: GeneratedStrategy[] = [];
-    
+
     for (let i = 0; i < count; i++) {
       try {
         const strategy = await this.generateStrategy(marketContext);
         strategies.push(strategy);
-        
+
         // Add small delay to avoid rate limiting
         await new Promise(resolve => setTimeout(resolve, 1000));
       } catch (error) {
@@ -184,21 +183,21 @@ export class LLMStrategyGenerator {
       logger.info(`Optimizing strategy ${strategy.name} using LLM...`);
 
       const prompt = this.buildOptimizationPrompt(strategy, performanceData, marketContext);
-      
-      // Use extended thinking for strategy optimization with prompt caching
+
+      // Use adaptive thinking for Sonnet 4.6 with balanced effort and prompt caching
       const response = await this.client.messages.create({
         model: this.model,
         max_tokens: 8192,
         temperature: 0.6,
         thinking: {
-          type: 'enabled' as const,
-          budget_tokens: 4000 // Reserve tokens for analyzing performance and optimizing
+          type: 'adaptive' as const
         },
+        effort: 'medium',
         system: [
           {
             type: 'text',
             text: this.getSystemPrompt(),
-            cache_control: { type: 'ephemeral' } // Cache the system prompt for 5 minutes
+            cache_control: { type: 'ephemeral' }
           }
         ],
         messages: [
@@ -222,10 +221,9 @@ export class LLMStrategyGenerator {
       const content = textBlocks[0];
 
       const optimizedStrategy = this.parseStrategyResponse(content.text, marketContext);
-      
+
       logger.info(`Successfully optimized strategy: ${optimizedStrategy.name}`);
       return optimizedStrategy;
-
     } catch (error) {
       logger.error('Error optimizing strategy with LLM:', error);
       throw error;
@@ -424,7 +422,6 @@ Generate an optimized version of this strategy as JSON (follow the exact format 
       parsed.reasoning = parsed.reasoning || 'LLM-generated strategy';
 
       return parsed as GeneratedStrategy;
-
     } catch (error) {
       logger.error('Error parsing LLM strategy response:', error);
       logger.error('Response was:', response);
