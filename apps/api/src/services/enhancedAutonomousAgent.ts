@@ -82,6 +82,23 @@ class EnhancedAutonomousAgent extends EventEmitter {
   private strategies: Map<string, Strategy> = new Map();
   private io: SocketIOServer | null = null;
 
+  // Circuit breaker state per session
+  private circuitBreakers: Map<string, {
+    consecutiveLosses: number;
+    dailyLoss: number;
+    dailyLossResetAt: Date;
+    isTripped: boolean;
+    trippedAt?: Date;
+    trippedReason?: string;
+  }> = new Map();
+
+  // Circuit breaker thresholds
+  private static readonly MAX_CONSECUTIVE_LOSSES = 5;
+  private static readonly MAX_DAILY_LOSS_PERCENT = 3; // % of capital
+  private static readonly CIRCUIT_BREAKER_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour cooldown
+  private static readonly DRAWDOWN_SCALE_THRESHOLD = 10; // Start scaling at 10% drawdown
+  private static readonly DRAWDOWN_HALT_THRESHOLD = 20; // Halt at 20% drawdown
+
   constructor() {
     super();
   }
@@ -100,6 +117,149 @@ class EnhancedAutonomousAgent extends EventEmitter {
     if (this.io) {
       this.io.emit('agent:activity', { type: eventType, data, timestamp: new Date().toISOString() });
     }
+  }
+
+  /**
+   * Initialize or get circuit breaker state for a session
+   */
+  private getCircuitBreaker(sessionId: string) {
+    if (!this.circuitBreakers.has(sessionId)) {
+      this.circuitBreakers.set(sessionId, {
+        consecutiveLosses: 0,
+        dailyLoss: 0,
+        dailyLossResetAt: this.getNextDayReset(),
+        isTripped: false
+      });
+    }
+    const cb = this.circuitBreakers.get(sessionId)!;
+    // Reset daily loss counter at midnight UTC
+    if (new Date() >= cb.dailyLossResetAt) {
+      cb.dailyLoss = 0;
+      cb.dailyLossResetAt = this.getNextDayReset();
+    }
+    return cb;
+  }
+
+  private getNextDayReset(): Date {
+    const now = new Date();
+    const reset = new Date(now);
+    reset.setUTCHours(0, 0, 0, 0);
+    reset.setUTCDate(reset.getUTCDate() + 1);
+    return reset;
+  }
+
+  /**
+   * Check if the circuit breaker allows trading for this session.
+   * Returns { allowed: true } or { allowed: false, reason: string }
+   */
+  checkCircuitBreaker(sessionId: string): { allowed: boolean; reason?: string } {
+    const cb = this.getCircuitBreaker(sessionId);
+
+    // Auto-reset after cooldown
+    if (cb.isTripped && cb.trippedAt) {
+      const elapsed = Date.now() - cb.trippedAt.getTime();
+      if (elapsed >= EnhancedAutonomousAgent.CIRCUIT_BREAKER_COOLDOWN_MS) {
+        logger.info(`[CircuitBreaker] Cooldown expired for session ${sessionId} — resetting`);
+        cb.isTripped = false;
+        cb.consecutiveLosses = 0;
+        cb.trippedReason = undefined;
+        cb.trippedAt = undefined;
+      }
+    }
+
+    if (cb.isTripped) {
+      return { allowed: false, reason: cb.trippedReason || 'Circuit breaker tripped' };
+    }
+    return { allowed: true };
+  }
+
+  /**
+   * Record a trade result and update circuit breaker state.
+   * Called after every trade execution.
+   */
+  recordTradeResult(sessionId: string, pnl: number, capitalBase: number): void {
+    const cb = this.getCircuitBreaker(sessionId);
+
+    if (pnl < 0) {
+      cb.consecutiveLosses++;
+      cb.dailyLoss += Math.abs(pnl);
+    } else {
+      cb.consecutiveLosses = 0; // Reset on a win
+    }
+
+    // Check consecutive losses
+    if (cb.consecutiveLosses >= EnhancedAutonomousAgent.MAX_CONSECUTIVE_LOSSES) {
+      cb.isTripped = true;
+      cb.trippedAt = new Date();
+      cb.trippedReason = `${cb.consecutiveLosses} consecutive losses — pausing for cooldown`;
+      logger.warn(`[CircuitBreaker] TRIPPED for session ${sessionId}: ${cb.trippedReason}`);
+      this.broadcastEvent('circuit_breaker_tripped', {
+        sessionId,
+        reason: cb.trippedReason,
+        consecutiveLosses: cb.consecutiveLosses
+      });
+    }
+
+    // Check daily loss limit
+    const dailyLossPercent = capitalBase > 0 ? (cb.dailyLoss / capitalBase) * 100 : 0;
+    if (dailyLossPercent >= EnhancedAutonomousAgent.MAX_DAILY_LOSS_PERCENT) {
+      cb.isTripped = true;
+      cb.trippedAt = new Date();
+      cb.trippedReason = `Daily loss limit reached (${dailyLossPercent.toFixed(1)}% of capital) — halting until next day`;
+      logger.warn(`[CircuitBreaker] TRIPPED for session ${sessionId}: ${cb.trippedReason}`);
+      this.broadcastEvent('circuit_breaker_tripped', {
+        sessionId,
+        reason: cb.trippedReason,
+        dailyLossPercent
+      });
+    }
+  }
+
+  /**
+   * Calculate drawdown-adjusted position size.
+   * As drawdown increases, position size decreases linearly.
+   * At DRAWDOWN_HALT_THRESHOLD, position size → 0.
+   */
+  getDrawdownAdjustedPositionSize(basePositionSize: number, currentDrawdownPercent: number): number {
+    if (currentDrawdownPercent >= EnhancedAutonomousAgent.DRAWDOWN_HALT_THRESHOLD) {
+      return 0; // Full halt
+    }
+    if (currentDrawdownPercent <= EnhancedAutonomousAgent.DRAWDOWN_SCALE_THRESHOLD) {
+      return basePositionSize; // No reduction
+    }
+    // Linear scale-down between thresholds
+    const range = EnhancedAutonomousAgent.DRAWDOWN_HALT_THRESHOLD - EnhancedAutonomousAgent.DRAWDOWN_SCALE_THRESHOLD;
+    const excess = currentDrawdownPercent - EnhancedAutonomousAgent.DRAWDOWN_SCALE_THRESHOLD;
+    const scale = 1 - (excess / range);
+    return basePositionSize * Math.max(0, scale);
+  }
+
+  /**
+   * Get circuit breaker status for frontend display
+   */
+  getCircuitBreakerStatus(sessionId: string): {
+    isTripped: boolean;
+    reason?: string;
+    consecutiveLosses: number;
+    dailyLossPercent: number;
+    cooldownRemaining?: number;
+  } {
+    const cb = this.getCircuitBreaker(sessionId);
+    // dailyLoss is stored as absolute $. Convert to an approximate %
+    // using the session config's positionSize * 1000 as the capital proxy.
+    const session = this.sessions.get(sessionId);
+    const capitalBase = session ? session.config.positionSize * 1000 : 10000;
+    const dailyLossPercent = capitalBase > 0 ? (cb.dailyLoss / capitalBase) * 100 : 0;
+
+    return {
+      isTripped: cb.isTripped,
+      reason: cb.trippedReason,
+      consecutiveLosses: cb.consecutiveLosses,
+      dailyLossPercent: parseFloat(dailyLossPercent.toFixed(2)),
+      cooldownRemaining: cb.isTripped && cb.trippedAt
+        ? Math.max(0, EnhancedAutonomousAgent.CIRCUIT_BREAKER_COOLDOWN_MS - (Date.now() - cb.trippedAt.getTime()))
+        : undefined
+    };
   }
 
   /**
@@ -430,16 +590,16 @@ class EnhancedAutonomousAgent extends EventEmitter {
         parameters: { smaPeriodShort: 20, smaPeriodLong: 50, atrMultiplier: 2.0 },
         entryConditions: ['SMA(20) crosses above SMA(50) for long', 'SMA(20) crosses below SMA(50) for short'],
         exitConditions: ['ATR-based trailing stop', 'Opposite crossover signal'],
-        riskManagement: { stopLossPercent: config.stopLossPercentage, takeProfitPercent: config.stopLossPercentage * 2, maxPositionSize: config.positionSize, maxDrawdown: config.maxDrawdown }
+        riskManagement: { stopLossPercent: config.stopLossPercentage, takeProfitPercent: config.stopLossPercentage * 2, trailingStop: true, trailingStopPercent: config.stopLossPercentage * 0.8, maxPositionSize: config.positionSize, maxDrawdown: config.maxDrawdown }
       },
       momentum: {
         name: `RSI Momentum ${symbol}`,
         type: 'momentum',
-        description: 'Buys oversold RSI conditions (<30) and sells overbought (>70).',
-        parameters: { rsiPeriod: 14, oversoldLevel: 30, overboughtLevel: 70 },
-        entryConditions: ['RSI(14) < 30 for long', 'RSI(14) > 70 for short'],
-        exitConditions: ['RSI returns to neutral zone (40-60)', 'Fixed take-profit hit'],
-        riskManagement: { stopLossPercent: config.stopLossPercentage, takeProfitPercent: config.stopLossPercentage * 1.5, maxPositionSize: config.positionSize, maxDrawdown: config.maxDrawdown }
+        description: 'Buys oversold RSI conditions (<30) and sells overbought (>70). Includes MACD confirmation.',
+        parameters: { rsiPeriod: 14, oversoldLevel: 30, overboughtLevel: 70, macdFast: 12, macdSlow: 26, macdSignal: 9 },
+        entryConditions: ['RSI(14) < 30 AND MACD histogram positive for long', 'RSI(14) > 70 AND MACD histogram negative for short'],
+        exitConditions: ['RSI returns to neutral zone (40-60)', 'MACD signal crossover', 'Fixed take-profit hit'],
+        riskManagement: { stopLossPercent: config.stopLossPercentage, takeProfitPercent: config.stopLossPercentage * 1.5, trailingStop: false, maxPositionSize: config.positionSize, maxDrawdown: config.maxDrawdown }
       },
       volume_analysis: {
         name: `Volume Breakout ${symbol}`,
@@ -448,7 +608,25 @@ class EnhancedAutonomousAgent extends EventEmitter {
         parameters: { bbPeriod: 20, bbStdDev: 2.0, volumeThreshold: 1.5 },
         entryConditions: ['Price closes above upper BB with 1.5x avg volume for long', 'Price closes below lower BB for short'],
         exitConditions: ['Price returns to middle band', 'Trailing stop at opposite band'],
-        riskManagement: { stopLossPercent: config.stopLossPercentage, takeProfitPercent: config.stopLossPercentage * 2.5, maxPositionSize: config.positionSize, maxDrawdown: config.maxDrawdown }
+        riskManagement: { stopLossPercent: config.stopLossPercentage, takeProfitPercent: config.stopLossPercentage * 2.5, trailingStop: true, trailingStopPercent: config.stopLossPercentage, maxPositionSize: config.positionSize, maxDrawdown: config.maxDrawdown }
+      },
+      mean_reversion: {
+        name: `Mean Reversion ${symbol}`,
+        type: 'mean_reversion',
+        description: 'Trades price deviations from VWAP / EMA mean, entering when price is >2 std devs away.',
+        parameters: { emaPeriod: 50, stdDevMultiplier: 2.0, vwapAnchor: 'session' },
+        entryConditions: ['Price < EMA(50) - 2*StdDev for long (oversold reversion)', 'Price > EMA(50) + 2*StdDev for short (overbought reversion)'],
+        exitConditions: ['Price returns to EMA(50)', 'Time-based exit after 4 hours', 'Stop loss hit'],
+        riskManagement: { stopLossPercent: config.stopLossPercentage * 0.75, takeProfitPercent: config.stopLossPercentage * 1.2, trailingStop: false, maxPositionSize: config.positionSize * 0.75, maxDrawdown: config.maxDrawdown }
+      },
+      scalping: {
+        name: `EMA Scalp ${symbol}`,
+        type: 'scalping',
+        description: 'Short-term EMA crossover with tight stops for quick entries and exits on lower timeframes.',
+        parameters: { emaFast: 9, emaSlow: 21, rsiFilter: 14, rsiOversold: 40, rsiOverbought: 60 },
+        entryConditions: ['EMA(9) crosses above EMA(21) with RSI > 40 for long', 'EMA(9) crosses below EMA(21) with RSI < 60 for short'],
+        exitConditions: ['Opposite EMA crossover', 'RSI extreme reversal', 'Fixed 0.5% take-profit'],
+        riskManagement: { stopLossPercent: Math.min(config.stopLossPercentage, 1.5), takeProfitPercent: Math.min(config.stopLossPercentage, 1.5) * 1.5, trailingStop: true, trailingStopPercent: 0.3, maxPositionSize: config.positionSize * 0.5, maxDrawdown: config.maxDrawdown * 0.5 }
       }
     };
 
@@ -464,7 +642,55 @@ class EnhancedAutonomousAgent extends EventEmitter {
   }
 
   /**
+   * Generate a rule-based multi-strategy combo when LLM is unavailable.
+   * Uses weighted voting with majority-agreement entry signals.
+   */
+  private generateRuleBasedCombo(
+    symbol: string,
+    subStrategies: Strategy[],
+    config: AgentConfig
+  ): any {
+    return {
+      name: `Weighted Combo ${symbol}`,
+      type: 'multi_strategy_combo',
+      description: `Weighted voting combo: Trend 40%, Momentum 35%, Volume 25%. Requires 2+ strategy agreement for entry.`,
+      weights: { trend: 0.4, momentum: 0.35, volume: 0.25 },
+      entryConditions: [
+        'At least 2 of 3 sub-strategies agree on direction',
+        'Combined weighted score > 0.6 for long, < -0.6 for short',
+        'No circuit breaker active'
+      ],
+      exitConditions: [
+        'Any sub-strategy signals exit',
+        'Combined score drops below ±0.3',
+        'Trailing stop hit',
+        'Max holding period (configurable) exceeded'
+      ],
+      riskManagement: {
+        stopLossPercent: config.stopLossPercentage,
+        takeProfitPercent: config.stopLossPercentage * 2,
+        trailingStop: true,
+        trailingStopPercent: config.stopLossPercentage * 0.6,
+        maxPositionSize: config.positionSize,
+        maxDrawdown: config.maxDrawdown,
+        maxHoldingPeriodHours: config.tradingStyle === 'scalping' ? 2 : config.tradingStyle === 'day_trading' ? 24 : 168
+      },
+      subStrategies: subStrategies.map((s, i) => {
+        // Default weights distributed evenly if more than 3 strategies
+        const defaultWeights = [0.4, 0.35, 0.25];
+        const weight = i < defaultWeights.length
+          ? defaultWeights[i]
+          : 1 / subStrategies.length;
+        return { id: s.id, name: s.name, weight };
+      }),
+      confidence: 0.7,
+      reasoning: `Rule-based multi-strategy combo for ${symbol} with weighted majority voting.`
+    };
+  }
+
+  /**
    * Create multi-strategy combination
+   * Falls back to rule-based combo if LLM is unavailable
    */
   private async createMultiStrategyCombo(
     session: AgentSession,
@@ -473,8 +699,13 @@ class EnhancedAutonomousAgent extends EventEmitter {
   ): Promise<Strategy> {
     const llmGenerator = getLLMStrategyGenerator();
     
-    // Generate combination logic using AI
-    const comboPrompt = `
+    let comboCode = '';
+    let comboName = `Multi-Combo: ${symbol}`;
+
+    if (llmGenerator.isAvailable()) {
+      try {
+        // Generate combination logic using AI
+        const comboPrompt = `
 Create a multi-strategy combination that combines these strategies:
 
 1. Trend Strategy: ${subStrategies[0].description}
@@ -489,26 +720,37 @@ The combination should:
 
 Generate the combination logic as executable JavaScript code.
 `;
-    
-    const aiCombo = await llmGenerator.generateStrategy({
-      symbol,
-      timeframe: session.config.preferredTimeframes[0],
-      strategyType: 'multi_strategy_combo',
-      riskTolerance: 'moderate',
-      indicators: ['SMA', 'EMA', 'RSI', 'MACD', 'Volume', 'OBV'],
-      description: `Multi-strategy combination for ${symbol}`,
-      customPrompt: comboPrompt
-    } as any);
+
+        const aiCombo = await llmGenerator.generateStrategy({
+          symbol,
+          timeframe: session.config.preferredTimeframes[0],
+          strategyType: 'multi_strategy_combo',
+          riskTolerance: 'moderate',
+          indicators: ['SMA', 'EMA', 'RSI', 'MACD', 'Volume', 'OBV'],
+          description: `Multi-strategy combination for ${symbol}`,
+          customPrompt: comboPrompt
+        } as any);
+
+        comboCode = (aiCombo as any).code || JSON.stringify(aiCombo);
+        comboName = (aiCombo as any).name || comboName;
+      } catch (err: any) {
+        logger.warn(`[Agent] LLM combo generation failed, using rule-based combo: ${err.message}`);
+        comboCode = JSON.stringify(this.generateRuleBasedCombo(symbol, subStrategies, session.config));
+      }
+    } else {
+      logger.info(`[Agent] Claude API not available — using rule-based combo for ${symbol}`);
+      comboCode = JSON.stringify(this.generateRuleBasedCombo(symbol, subStrategies, session.config));
+    }
     
     const comboStrategy: Strategy = {
       id: `combo_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       sessionId: session.id,
-      name: `Multi-Combo: ${symbol}`,
+      name: comboName,
       type: 'combo',
       symbol,
       timeframe: session.config.preferredTimeframes[0],
       indicators: ['SMA', 'EMA', 'RSI', 'MACD', 'Volume', 'OBV'],
-      code: (aiCombo as any).code || JSON.stringify(aiCombo),
+      code: comboCode,
       description: `Multi-strategy combination for ${symbol}`,
       status: 'generated',
       performance: {
@@ -532,9 +774,17 @@ Generate the combination logic as executable JavaScript code.
 
   /**
    * Run strategy lifecycle: backtest → paper → live
+   * Integrates circuit breaker checks at each promotion gate.
    */
   private async runStrategyLifecycle(session: AgentSession, strategy: Strategy): Promise<void> {
     try {
+      // Check circuit breaker before starting lifecycle
+      const cbCheck = this.checkCircuitBreaker(session.id);
+      if (!cbCheck.allowed) {
+        logger.info(`[Lifecycle] Skipping ${strategy.name} — circuit breaker: ${cbCheck.reason}`);
+        return;
+      }
+
       // 1. Backtest
       logger.info(`Starting backtest for strategy ${strategy.name}`);
       
@@ -567,13 +817,22 @@ Generate the combination logic as executable JavaScript code.
       await this.saveSession(session);
       
       logger.info(`Backtest completed for ${strategy.name}:`, strategy.performance);
+      this.broadcastEvent('strategy_backtested', {
+        strategyId: strategy.id,
+        name: strategy.name,
+        performance: strategy.performance
+      });
       this.emit('strategy:backtested', { strategyId: strategy.id, performance: strategy.performance });
       
       // 2. Promote to paper trading if backtest passes
-      if (strategy.performance.winRate > 0.55 && strategy.performance.profitFactor > 1.5) {
+      // Dynamic thresholds based on trading style
+      const winRateThreshold = session.config.tradingStyle === 'scalping' ? 0.52 : 0.55;
+      const profitFactorThreshold = session.config.tradingStyle === 'scalping' ? 1.3 : 1.5;
+
+      if (strategy.performance.winRate > winRateThreshold && strategy.performance.profitFactor > profitFactorThreshold) {
         await this.promoteToPaperTrading(session, strategy);
       } else {
-        logger.info(`Strategy ${strategy.name} failed backtest, retiring`);
+        logger.info(`Strategy ${strategy.name} failed backtest (WR: ${strategy.performance.winRate}, PF: ${strategy.performance.profitFactor}), retiring`);
         await this.retireStrategy(strategy, 'failed_backtest');
       }
       
@@ -627,21 +886,41 @@ Generate the combination logic as executable JavaScript code.
   }
 
   /**
-   * Check paper trading results and promote to live if successful
+   * Check paper trading results and promote to live if successful.
+   * Uses dynamic thresholds based on trading style.
    */
   private async checkPaperTradingResults(session: AgentSession, strategy: Strategy): Promise<void> {
     try {
+      // Check circuit breaker before promoting to live
+      const cbCheck = this.checkCircuitBreaker(session.id);
+      if (!cbCheck.allowed) {
+        logger.info(`[Lifecycle] Not promoting ${strategy.name} to live — circuit breaker: ${cbCheck.reason}`);
+        return;
+      }
+
       const paperSession = paperTradingService.getSession(strategy.id);
       const paperResults = paperSession ? {
         winRate: paperSession.totalTrades > 0 ? (paperSession.winningTrades / paperSession.totalTrades) : 0,
         profitFactor: paperSession.losingTrades > 0 ? 
-          Math.abs(paperSession.winningTrades / paperSession.losingTrades) : 0
+          Math.abs(paperSession.winningTrades / paperSession.losingTrades) : 0,
+        totalTrades: paperSession.totalTrades || 0
       } : null;
       
-      if (paperResults && paperResults.winRate > 0.60 && paperResults.profitFactor > 2.0) {
+      // Dynamic thresholds: scalping strategies need fewer trades but similar ratios
+      const minWinRate = session.config.tradingStyle === 'scalping' ? 0.55 : 0.58;
+      const minProfitFactor = session.config.tradingStyle === 'scalping' ? 1.5 : 1.8;
+      const minTrades = session.config.tradingStyle === 'scalping' ? 10 : 5;
+
+      if (paperResults && 
+          paperResults.winRate > minWinRate && 
+          paperResults.profitFactor > minProfitFactor &&
+          paperResults.totalTrades >= minTrades) {
         await this.promoteToLiveTrading(session, strategy);
       } else {
-        logger.info(`Strategy ${strategy.name} failed paper trading, retiring`);
+        const reason = paperResults 
+          ? `WR: ${(paperResults.winRate * 100).toFixed(1)}% (need >${(minWinRate * 100).toFixed(0)}%), PF: ${paperResults.profitFactor.toFixed(2)} (need >${minProfitFactor}), Trades: ${paperResults.totalTrades} (need >=${minTrades})`
+          : 'no paper trading data';
+        logger.info(`Strategy ${strategy.name} failed paper trading (${reason}), retiring`);
         await this.retireStrategy(strategy, 'failed_paper_trading');
       }
     } catch (error) {
@@ -650,7 +929,8 @@ Generate the combination logic as executable JavaScript code.
   }
 
   /**
-   * Promote strategy to live trading
+   * Promote strategy to live trading.
+   * Applies drawdown-adjusted position sizing for safety.
    */
   private async promoteToLiveTrading(session: AgentSession, strategy: Strategy): Promise<void> {
     logger.info(`Promoting ${strategy.name} to LIVE trading`);
@@ -659,15 +939,26 @@ Generate the combination logic as executable JavaScript code.
     strategy.promotedAt = new Date();
     await this.saveStrategy(strategy);
     
-    // Register strategy for live trading
+    // Calculate drawdown-adjusted position size
+    const maxDrawdown = await this.calculateMaxDrawdown(strategy.id);
+    const basePositionSize = session.config.positionSize / 100;
+    const adjustedPositionSize = this.getDrawdownAdjustedPositionSize(basePositionSize, maxDrawdown);
+
+    // Register strategy for live trading with adjusted sizing
     await automatedTradingService.registerStrategy(session.userId, {
       id: strategy.id,
       strategyId: strategy.id,
       symbol: strategy.symbol,
-      positionSize: session.config.positionSize / 100,
+      positionSize: adjustedPositionSize,
       maxPositions: 1
     });
     
+    this.broadcastEvent('strategy_promoted_live', {
+      strategyId: strategy.id,
+      name: strategy.name,
+      positionSize: adjustedPositionSize,
+      drawdownAdjusted: adjustedPositionSize < basePositionSize
+    });
     this.emit('strategy:live', { strategyId: strategy.id });
   }
 

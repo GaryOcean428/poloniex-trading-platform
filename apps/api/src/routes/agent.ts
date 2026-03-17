@@ -354,6 +354,35 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
         // Keep defaults of 0 if calculation fails
       }
 
+      // Fetch daily P&L for charts
+      let dailyPerformance: Array<{ date: string; pnl: number; cumulativePnL: number; trades: number }> = [];
+      try {
+        const dailyResult = await pool.query(
+          `SELECT
+             DATE(created_at) as trade_date,
+             SUM(pnl) as daily_pnl,
+             COUNT(*) as daily_trades
+           FROM trades
+           WHERE user_id = $1 AND created_at >= $2 AND pnl IS NOT NULL
+           GROUP BY DATE(created_at)
+           ORDER BY trade_date ASC`,
+          [userId, status.startedAt]
+        );
+        let cumPnl = 0;
+        dailyPerformance = dailyResult.rows.map((r: { trade_date: string; daily_pnl: string; daily_trades: string }) => {
+          const dayPnl = parseFloat(r.daily_pnl) || 0;
+          cumPnl += dayPnl;
+          return {
+            date: new Date(r.trade_date).toISOString().slice(0, 10),
+            pnl: parseFloat(dayPnl.toFixed(2)),
+            cumulativePnL: parseFloat(cumPnl.toFixed(2)),
+            trades: parseInt(r.daily_trades) || 0
+          };
+        });
+      } catch {
+        // Daily breakdown unavailable — return empty array
+      }
+
       res.json({
         success: true,
         performance: {
@@ -368,14 +397,16 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
           averageLoss: parseFloat(metrics.avg_loss || 0),
           sharpeRatio: parseFloat(sharpeRatio.toFixed(2)),
           maxDrawdown: parseFloat((maxDrawdown * 100).toFixed(2))
-        }
+        },
+        dailyPerformance
       });
     } catch (dbError: unknown) {
       console.warn('Trades table query failed, returning default performance:', dbError instanceof Error ? dbError.message : String(dbError));
       // Return default performance if trades table doesn't exist
       res.json({
         success: true,
-        performance: defaultPerformance
+        performance: defaultPerformance,
+        dailyPerformance: []
       });
     }
   } catch (error: unknown) {
@@ -383,6 +414,40 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
     res.status(500).json({
       success: false,
       error: error instanceof Error ? error.message : 'Failed to get performance'
+    });
+  }
+});
+
+/**
+ * GET /api/agent/circuit-breaker
+ * Get the circuit breaker status for the current user's session
+ */
+router.get('/circuit-breaker', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const userId = (req.user?.id || req.user?.userId)?.toString();
+    if (!userId) {
+      return res.status(401).json({ success: false, error: 'User ID not found in token' });
+    }
+
+    const status = await enhancedAutonomousAgent.getAgentStatus(userId);
+    if (!status) {
+      return res.json({
+        success: true,
+        circuitBreaker: {
+          isTripped: false,
+          consecutiveLosses: 0,
+          dailyLossPercent: 0
+        }
+      });
+    }
+
+    const cbStatus = enhancedAutonomousAgent.getCircuitBreakerStatus(status.id);
+    res.json({ success: true, circuitBreaker: cbStatus });
+  } catch (error: unknown) {
+    console.error('Error getting circuit breaker status:', error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to get circuit breaker status'
     });
   }
 });

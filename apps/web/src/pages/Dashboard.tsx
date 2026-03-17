@@ -14,7 +14,7 @@ import MLModelPerformance from '../components/ml/MLModelPerformance';
 import AccountBalanceWidget from '../components/dashboard/AccountBalanceWidget';
 import ActivePositionsWidget from '../components/dashboard/ActivePositionsWidget';
 import RecentTradesWidget from '../components/dashboard/RecentTradesWidget';
-import { Activity, ArrowRight } from 'lucide-react';
+import { Activity, ArrowRight, TrendingUp, Brain } from 'lucide-react';
 import { poloniexApi } from '../services/poloniexAPI';
 
 const Dashboard: React.FC = () => {
@@ -62,6 +62,43 @@ const Dashboard: React.FC = () => {
       
       <div className="mb-6 lg:mb-8">
         <ExtensionBanner />
+      </div>
+
+      {/* Quick Navigation Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6 lg:mb-8">
+        <Link
+          to="/autonomous-agent"
+          className="flex items-center gap-3 p-4 bg-gradient-to-r from-cyan-500/10 to-blue-500/10 border border-cyan-500/20 rounded-lg hover:shadow-md transition-all group"
+        >
+          <Brain className="w-8 h-8 text-cyan-600" />
+          <div className="flex-1 min-w-0">
+            <p className="font-semibold text-text-primary text-sm">Autonomous Agent</p>
+            <p className="text-xs text-text-secondary">AI-powered strategy generation & trading</p>
+          </div>
+          <ArrowRight className="w-4 h-4 text-cyan-500 group-hover:translate-x-1 transition-transform" />
+        </Link>
+        <Link
+          to="/performance"
+          className="flex items-center gap-3 p-4 bg-gradient-to-r from-green-500/10 to-emerald-500/10 border border-green-500/20 rounded-lg hover:shadow-md transition-all group"
+        >
+          <TrendingUp className="w-8 h-8 text-green-600" />
+          <div className="flex-1 min-w-0">
+            <p className="font-semibold text-text-primary text-sm">Performance Analytics</p>
+            <p className="text-xs text-text-secondary">P&L, Sharpe ratio, strategy breakdown</p>
+          </div>
+          <ArrowRight className="w-4 h-4 text-green-500 group-hover:translate-x-1 transition-transform" />
+        </Link>
+        <Link
+          to="/backtesting"
+          className="flex items-center gap-3 p-4 bg-gradient-to-r from-purple-500/10 to-indigo-500/10 border border-purple-500/20 rounded-lg hover:shadow-md transition-all group"
+        >
+          <Activity className="w-8 h-8 text-purple-600" />
+          <div className="flex-1 min-w-0">
+            <p className="font-semibold text-text-primary text-sm">Backtesting Pipeline</p>
+            <p className="text-xs text-text-secondary">Strategy validation & confidence scores</p>
+          </div>
+          <ArrowRight className="w-4 h-4 text-purple-500 group-hover:translate-x-1 transition-transform" />
+        </Link>
       </div>
       
       <div className="mb-6 lg:mb-8">
