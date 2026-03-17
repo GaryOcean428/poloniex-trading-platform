@@ -125,7 +125,8 @@ const AgentOverviewPanel: React.FC<AgentOverviewPanelProps> = ({
   }, [fetchData]);
 
   const formatCurrency = (value: number): string => {
-    const prefix = value >= 0 ? '+$' : '-$';
+    if (value === 0) return '$0.00';
+    const prefix = value > 0 ? '+$' : '-$';
     return `${prefix}${Math.abs(value).toFixed(2)}`;
   };
 
@@ -179,6 +180,7 @@ const AgentOverviewPanel: React.FC<AgentOverviewPanelProps> = ({
 
   const paper = pipelineSummary?.paperTrading;
   const totalPaperPnl = paper ? paper.totalRealizedPnl + paper.totalUnrealizedPnl : 0;
+  const paperLosingTrades = paper ? paper.totalTrades - paper.winningTrades : 0;
   const health = getHealthLabel();
   const riskRating = pipelineSummary?.risk?.rating || 'unknown';
 
@@ -266,7 +268,7 @@ const AgentOverviewPanel: React.FC<AgentOverviewPanelProps> = ({
                   riskRating === 'very_high' ? 'bg-red-100 text-red-700' :
                   'bg-gray-100 text-gray-600'
                 }`}>
-                  {riskRating === 'unknown' ? 'N/A' : riskRating.replace('_', ' ')}
+                  {riskRating === 'unknown' ? 'N/A' : riskRating.replace(/_/g, ' ')}
                 </span>
               </div>
 
@@ -372,7 +374,7 @@ const AgentOverviewPanel: React.FC<AgentOverviewPanelProps> = ({
                   <span className="text-sm text-gray-900">
                     <span className="font-semibold">{paper.totalTrades}</span>
                     <span className="text-xs text-gray-500 ml-1">
-                      ({paper.winningTrades}W / {paper.totalTrades - paper.winningTrades}L)
+                      ({paper.winningTrades}W / {paperLosingTrades}L)
                     </span>
                   </span>
                 </div>
