@@ -1,11 +1,9 @@
 import axios, { AxiosError, AxiosResponse } from 'axios';
 import { getAccessToken, getRefreshToken, storeAuthData, clearAuthData, shouldRefreshToken } from '@/utils/auth';
 import { auditLogger, AuditEventType } from '@/utils/auditLogger';
+import { getBackendUrl } from '@/utils/environment';
 
-// Get the backend URL from environment
-const API_BASE_URL = import.meta.env.VITE_BACKEND_URL ||
-                     import.meta.env.VITE_API_URL ||
-                     'http://localhost:3000';
+const API_BASE_URL = getBackendUrl();
 
 interface LoginCredentials {
   username: string;

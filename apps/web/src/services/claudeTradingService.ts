@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { getAccessToken } from '@/utils/auth';
+import { getBackendUrl } from '@/utils/environment';
 
 export interface TradingInsight {
   type: 'analysis' | 'recommendation' | 'risk_assessment' | 'market_outlook';
@@ -27,11 +28,7 @@ export interface TradingData {
   };
 }
 
-// Auto-detect API URL based on environment
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 
-  (window.location.hostname.includes('railway.app') 
-    ? 'https://polytrade-be.up.railway.app' 
-    : 'http://localhost:3000');
+const API_BASE_URL = getBackendUrl();
 
 class ClaudeTradingService {
   private isConfigured = true; // Always configured since we use backend

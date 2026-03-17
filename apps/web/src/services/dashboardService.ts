@@ -1,11 +1,8 @@
 import axios from 'axios';
 import { getAccessToken, getRefreshToken } from '@/utils/auth';
+import { getBackendUrl } from '@/utils/environment';
 
-// Auto-detect API base URL based on environment
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 
-  (window.location.hostname.includes('railway.app') 
-    ? 'https://polytrade-be.up.railway.app'
-    : 'http://localhost:3000');
+const API_BASE_URL = getBackendUrl();
 
 export interface Balance {
   totalBalance: number;

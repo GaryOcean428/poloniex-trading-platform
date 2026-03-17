@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { getBackendUrl } from '@/utils/environment';
 import { 
   Activity, 
   AlertTriangle, 
@@ -70,7 +71,7 @@ const Status: React.FC = () => {
   const fetchStatus = async () => {
     try {
       setLoading(true);
-      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+      const API_URL = getBackendUrl();
       const response = await fetch(`${API_URL}/api/status`);
       if (!response.ok) {
         const errorMessage = response.status === 404 

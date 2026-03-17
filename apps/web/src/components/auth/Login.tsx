@@ -34,7 +34,7 @@ const Login: React.FC<LoginProps> = ({ onSuccess }) => {
           onSuccess();
         }
       } else {
-        setError('Invalid email/username or password. Try demo/password');
+        setError('Invalid email/username or password.');
       }
     } catch (err: any) {
       const errorMessage = err instanceof Error ? err.message : 'Login failed. Please try again.';
@@ -90,10 +90,12 @@ const Login: React.FC<LoginProps> = ({ onSuccess }) => {
               }}
             />
           </div>
-          <div className="mt-2 text-sm text-gray-600 dark:text-gray-400">
-            <p>Demo credentials: username: <strong>demo</strong>, password: <strong>password</strong></p>
-            <p>Or try: username: <strong>trader</strong>, password: <strong>password</strong></p>
-          </div>
+          {import.meta.env.DEV && (
+            <div className="mt-2 text-sm text-gray-600 dark:text-gray-400">
+              <p>Demo credentials: username: <strong>demo</strong>, password: <strong>password</strong></p>
+              <p>Or try: username: <strong>trader</strong>, password: <strong>password</strong></p>
+            </div>
+          )}
 
           {/* Hidden submit button for Enter key accessibility */}
           <button type="submit" className="hidden" aria-hidden="true" tabIndex={-1}>Submit</button>

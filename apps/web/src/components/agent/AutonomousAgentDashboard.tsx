@@ -70,11 +70,19 @@ const AutonomousAgentDashboard: React.FC = () => {
     fetchAgentStatus();
     fetchActivity();
     fetchStrategies();
+
+    // Poll at different rates depending on agent status:
+    // Running → every 10s, Paused/Stopped → every 60s (just status check)
+    const isActive = agentStatus?.status === 'running';
+    const pollInterval = isActive ? 10000 : 60000;
+
     const interval = setInterval(() => {
       fetchAgentStatus();
-      fetchActivity();
-      fetchStrategies();
-    }, 10000);
+      if (isActive) {
+        fetchActivity();
+        fetchStrategies();
+      }
+    }, pollInterval);
 
     // WebSocket real-time updates
     let socket: { on: (event: string, cb: (data: any) => void) => void; disconnect: () => void } | null = null;
@@ -98,7 +106,7 @@ const AutonomousAgentDashboard: React.FC = () => {
       clearInterval(interval);
       if (socket) socket.disconnect();
     };
-  }, []);
+  }, [agentStatus?.status]);
 
   const getAuthHeaders = useCallback(() => {
     const token = getAccessToken();

@@ -23,12 +23,14 @@ const RouteGuard: React.FC<RouteGuardProps> = ({ children }) => {
     // Add route validation if needed
     const validRoutes = [
       '/',
+      '/dashboard',
       '/strategies',
       '/ai-strategies',
       '/strategy-dashboard',
       '/autonomous-agent',
       '/backtesting',
       '/charts',
+      '/history',
       '/performance',
       '/account',
       '/transactions',

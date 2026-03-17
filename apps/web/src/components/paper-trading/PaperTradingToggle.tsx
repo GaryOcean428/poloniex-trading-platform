@@ -3,8 +3,9 @@ import { Play, Square, Loader, TrendingUp, DollarSign } from 'lucide-react';
 import axios from 'axios';
 import { getAccessToken } from '@/utils/auth';
 import { useTradingContext } from '@/hooks/useTradingContext';
+import { getBackendUrl } from '@/utils/environment';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
+const API_BASE_URL = getBackendUrl();
 
 interface Props {
   strategyId: string;

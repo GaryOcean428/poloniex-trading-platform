@@ -2,11 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { TrendingUp, TrendingDown, Activity, Target, CheckCircle, XCircle } from 'lucide-react';
 import axios from 'axios';
 import { getAccessToken } from '@/utils/auth';
+import { getBackendUrl } from '@/utils/environment';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 
-  (window.location.hostname.includes('railway.app') 
-    ? 'https://polytrade-be.up.railway.app' 
-    : 'http://localhost:3000');
+const API_BASE_URL = getBackendUrl();
 
 interface Position {
   id: string;
@@ -58,9 +56,13 @@ const ActiveStrategiesPanel: React.FC<ActiveStrategiesPanelProps> = ({ agentStat
       
       const interval = setInterval(() => {
         fetchActiveStrategies();
-      }, 5000); // Update every 5 seconds
+      }, 15000); // Update every 15 seconds
 
       return () => clearInterval(interval);
+    } else {
+      // Not running — clear loading state and show empty
+      setLoading(false);
+      setStrategies([]);
     }
   }, [agentStatus]);
 

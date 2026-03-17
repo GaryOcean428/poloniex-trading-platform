@@ -3,16 +3,9 @@ import React, { useState, useEffect } from 'react';
 // import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import axios from 'axios';
 import { getAccessToken } from '@/utils/auth';
+import { getBackendUrl } from '@/utils/environment';
 
-// Auto-detect API base URL based on environment
-const getApiBaseUrl = () => {
-  if (typeof window !== 'undefined' && window.location.hostname.includes('railway.app')) {
-    return 'https://polytrade-be.up.railway.app';
-  }
-  return 'http://localhost:3000';
-};
-
-const API_BASE_URL = getApiBaseUrl();
+const API_BASE_URL = getBackendUrl();
 
 // Interface available when prediction features are implemented
 // interface ModelPrediction {
