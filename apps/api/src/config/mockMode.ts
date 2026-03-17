@@ -182,21 +182,21 @@ export function isMockMode(): boolean {
 /**
  * Get mock user credentials
  */
-export function getMockUser() {
+export function getMockUser(): typeof mockModeConfig.mockUser {
   return mockModeConfig.mockUser;
 }
 
 /**
  * Get mock API credentials
  */
-export function getMockCredentials() {
+export function getMockCredentials(): typeof mockModeConfig.mockCredentials {
   return mockModeConfig.mockCredentials;
 }
 
 /**
  * Log mock operation
  */
-export function logMockOperation(operation: string, details?: any) {
+export function logMockOperation(operation: string, details?: unknown): void {
   if (mockModeConfig.logging.logMockOperations) {
     console.log(`[MOCK MODE] ${operation}`, details || '');
   }

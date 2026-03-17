@@ -36,11 +36,11 @@ router.get('/predictions/:symbol', authenticateToken, async (req, res) => {
       if (!ohlcvData || ohlcvData.length === 0) {
         throw new Error('No historical data available');
       }
-    } catch (dataError: any) {
+    } catch (dataError: unknown) {
       logger.error('Failed to fetch historical data:', dataError);
       return res.status(503).json({
         error: 'Unable to fetch market data',
-        message: dataError.message
+        message: dataError instanceof Error ? dataError.message : String(dataError)
       });
     }
 
@@ -53,7 +53,7 @@ router.get('/predictions/:symbol', authenticateToken, async (req, res) => {
       const tickers = await poloniexFuturesService.getTickers(symbol);
       const ticker = Array.isArray(tickers) ? tickers[0] : tickers;
       currentPrice = parseFloat(ticker?.markPx || ticker?.markPrice || '0');
-    } catch (error) {
+    } catch {
       currentPrice = ohlcvData[ohlcvData.length - 1]?.close || 0;
     }
 
@@ -66,11 +66,11 @@ router.get('/predictions/:symbol', authenticateToken, async (req, res) => {
       explanation: result.explanation
     });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('QIG prediction error:', error);
     res.status(500).json({
       error: 'Failed to generate QIG predictions',
-      message: error.message
+      message: error instanceof Error ? error instanceof Error ? error.message : String(error) : String(error)
     });
   }
 });
@@ -106,11 +106,11 @@ router.get('/metrics/:symbol', authenticateToken, async (req, res) => {
       explanation: result.explanation
     });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('QIG metrics error:', error);
     res.status(500).json({
       error: 'Failed to compute QIG metrics',
-      message: error.message
+      message: error instanceof Error ? error instanceof Error ? error.message : String(error) : String(error)
     });
   }
 });
@@ -150,7 +150,7 @@ router.get('/compare/:symbol', authenticateToken, async (req, res) => {
       const tickers = await poloniexFuturesService.getTickers(symbol);
       const ticker = Array.isArray(tickers) ? tickers[0] : tickers;
       currentPrice = parseFloat(ticker?.markPx || ticker?.markPrice || '0');
-    } catch (error) {
+    } catch {
       currentPrice = ohlcvData[ohlcvData.length - 1]?.close || 0;
     }
 
@@ -180,11 +180,11 @@ router.get('/compare/:symbol', authenticateToken, async (req, res) => {
       }
     });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('QIG comparison error:', error);
     res.status(500).json({
       error: 'Failed to compare predictions',
-      message: error.message
+      message: error instanceof Error ? error instanceof Error ? error.message : String(error) : String(error)
     });
   }
 });
@@ -201,11 +201,11 @@ router.get('/health', async (req, res) => {
       service: 'qig-enhanced-ml',
       timestamp: Date.now()
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     res.status(500).json({
       status: 'unhealthy',
       service: 'qig-enhanced-ml',
-      error: error.message,
+      error: error instanceof Error ? error.message : String(error),
       timestamp: Date.now()
     });
   }

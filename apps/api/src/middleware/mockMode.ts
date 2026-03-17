@@ -2,9 +2,9 @@ import { Request, Response, NextFunction } from 'express';
 
 export const MOCK_MODE = process.env.MOCK_MODE === 'true';
 
-export function mockModeMiddleware(req: Request, res: Response, next: NextFunction) {
+export function mockModeMiddleware(req: Request, res: Response, next: NextFunction): void {
   if (MOCK_MODE) {
-    (req as any).mockMode = true;
+    (req as unknown as Record<string, unknown>).mockMode = true;
   }
   next();
 }

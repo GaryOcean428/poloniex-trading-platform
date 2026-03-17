@@ -41,8 +41,8 @@ router.get('/performance/:symbol', authenticateToken, async (req, res) => {
       if (!currentPrice && ohlcvData.length > 0) {
         currentPrice = ohlcvData[ohlcvData.length - 1].close;
       }
-    } catch (dataError: any) {
-      console.error('Failed to fetch historical data:', dataError.message);
+    } catch (dataError: unknown) {
+      console.error('Failed to fetch historical data:', dataError instanceof Error ? dataError.message : String(dataError));
       // Return fallback data instead of 503
       return res.json({
         symbol,
@@ -59,7 +59,7 @@ router.get('/performance/:symbol', authenticateToken, async (req, res) => {
         currentPrice: 0,
         timestamp: new Date().toISOString(),
         error: 'Data unavailable',
-        message: dataError.message
+        message: dataError instanceof Error ? dataError.message : String(dataError)
       });
     }
 
@@ -72,15 +72,15 @@ router.get('/performance/:symbol', authenticateToken, async (req, res) => {
         try {
           predictions = await mlPredictionService.getMultiHorizonPredictions(symbol, ohlcvData);
           signal = await mlPredictionService.getTradingSignal(symbol, ohlcvData, currentPrice);
-        } catch (pythonError: any) {
-          console.warn('Python ML failed, falling back to simple ML:', pythonError.message);
+        } catch (pythonError: unknown) {
+          console.warn('Python ML failed, falling back to simple ML:', pythonError instanceof Error ? pythonError.message : String(pythonError));
           usePythonML = false; // Disable Python ML for subsequent requests
           throw pythonError; // Re-throw to use fallback
         }
       } else {
         throw new Error('Python ML disabled, using simple ML');
       }
-    } catch (mlError: any) {
+    } catch {
       console.log('Using simple ML service for predictions');
       // Use JavaScript-based simple ML service
       predictions = await simpleMlService.getMultiHorizonPredictions(symbol, ohlcvData);
@@ -95,7 +95,7 @@ router.get('/performance/:symbol', authenticateToken, async (req, res) => {
       timestamp: new Date().toISOString()
     });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('ML performance endpoint error:', error);
     
     // Return fallback data when ML models unavailable
@@ -114,7 +114,7 @@ router.get('/performance/:symbol', authenticateToken, async (req, res) => {
       currentPrice: 0,
       timestamp: new Date().toISOString(),
       error: 'ML models unavailable',
-      message: error.message
+      message: error instanceof Error ? error instanceof Error ? error.message : String(error) : String(error)
     });
   }
 });
@@ -148,11 +148,11 @@ router.post('/train/:symbol', authenticateToken, async (req, res) => {
       timestamp: new Date().toISOString()
     });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('ML training endpoint error:', error);
     res.status(500).json({ 
       error: 'Failed to train ML models',
-      message: error.message 
+      message: error instanceof Error ? error instanceof Error ? error.message : String(error) : String(error) 
     });
   }
 });
@@ -170,10 +170,10 @@ router.get('/health', async (req, res) => {
       timestamp: new Date().toISOString()
     });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     res.status(500).json({ 
       status: 'unhealthy',
-      error: error.message 
+      error: error instanceof Error ? error.message : String(error) 
     });
   }
 });

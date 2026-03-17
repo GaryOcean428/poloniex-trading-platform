@@ -20,8 +20,8 @@ router.post('/reset-password', async (req, res) => {
     try {
       await pool.query(`ALTER TABLE api_credentials ADD COLUMN IF NOT EXISTS permissions JSONB DEFAULT '{"read": true, "trade": true, "withdraw": false}'::jsonb;`);
       console.log('✅ Migration 005: permissions column added/verified');
-    } catch (migError: any) {
-      console.log('Migration note:', migError.message);
+    } catch (migError: unknown) {
+      console.log('Migration note:', migError instanceof Error ? migError.message : String(migError));
     }
     
     if (!username || !password) {
@@ -70,8 +70,8 @@ router.post('/reset-garyocean', async (req, res) => {
         ADD COLUMN IF NOT EXISTS permissions JSONB DEFAULT '{"read": true, "trade": true, "withdraw": false}'::jsonb;
       `);
       console.log('✅ Migration 005 completed: Added permissions column');
-    } catch (migError: any) {
-      console.log('Migration 005 note:', migError.message);
+    } catch (migError: unknown) {
+      console.log('Migration 005 note:', migError instanceof Error ? migError.message : String(migError));
     }
     
     // Hash the password "I.Am.Dev.1"
@@ -129,9 +129,9 @@ router.post('/run-migration', async (req, res) => {
     } else {
       res.status(400).json({ error: 'Unknown migration number' });
     }
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Migration error:', error);
-    res.status(500).json({ error: 'Failed to run migration', details: error.message });
+    res.status(500).json({ error: 'Failed to run migration', details: error instanceof Error ? error.message : String(error) });
   }
 });
 
