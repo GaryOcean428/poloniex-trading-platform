@@ -203,8 +203,8 @@ router.post('/analyze-market', authenticateToken, async (req, res) => {
 /**
  * Helper function to analyze market conditions
  */
-async function analyzeMarketConditions(context: MarketContext) {
-  const { currentPrice, priceChange24h, technicalIndicators } = context;
+async function analyzeMarketConditions(context: MarketContext): Promise<Record<string, unknown>> {
+  const { priceChange24h, technicalIndicators } = context;
 
   // Determine market regime
   let marketRegime: MarketContext['marketRegime'] = 'ranging';

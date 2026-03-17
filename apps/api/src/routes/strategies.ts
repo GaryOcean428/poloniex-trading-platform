@@ -79,7 +79,7 @@ const strategies: Strategy[] = [
  * List all strategies
  * @returns {Array<Strategy>} Array of strategy objects conforming to the shared Strategy interface
  */
-router.get('/', (req: Request<{}, {}, {}, StrategyQueryParams>, res: Response) => {
+router.get('/', (req: Request<object, object, object, StrategyQueryParams>, res: Response) => {
   try {
     // Filter by active status if provided
     const { active } = req.query;
@@ -144,7 +144,7 @@ router.get('/:id', (req: Request<{ id: string }>, res: Response) => {
  * @body {CreateStrategyRequest} Strategy data conforming to the shared Strategy interface
  * @returns {Strategy} Created strategy object
  */
-router.post('/', (req: Request<{}, {}, CreateStrategyRequest>, res: Response) => {
+router.post('/', (req: Request<object, object, CreateStrategyRequest>, res: Response) => {
   try {
     const { name, type, algorithm, parameters } = req.body;
     
@@ -198,7 +198,7 @@ router.post('/', (req: Request<{}, {}, CreateStrategyRequest>, res: Response) =>
  * @body {UpdateStrategyRequest} Strategy data to update
  * @returns {Strategy} Updated strategy object
  */
-router.put('/:id', (req: Request<{ id: string }, {}, UpdateStrategyRequest>, res: Response) => {
+router.put('/:id', (req: Request<{ id: string }, object, UpdateStrategyRequest>, res: Response) => {
   try {
     const { id } = req.params;
     const strategyIndex = strategies.findIndex(s => s.id === id);

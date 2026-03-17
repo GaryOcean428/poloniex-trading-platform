@@ -138,17 +138,18 @@ router.get('/trades/:symbol', async (req, res) => {
  */
 router.get('/candles/:symbol', async (req, res) => {
   try {
-    const result = await poloniexSpotService.getCandles(req.params.symbol, req.query as any);
+    const result = await poloniexSpotService.getCandles(req.params.symbol, req.query as unknown as { interval: string; startTime?: number; endTime?: number; limit?: number });
     
     res.json({
       success: true,
       data: result
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('Error fetching candles:', error);
-    res.status(error.statusCode || 500).json({
+    const statusCode = (typeof error === 'object' && error !== null && 'statusCode' in error) ? (error as {statusCode: number}).statusCode : 500;
+    res.status(statusCode).json({
       success: false,
-      error: error.message
+      error: error instanceof Error ? error.message : String(error)
     });
   }
 });

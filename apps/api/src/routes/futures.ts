@@ -15,10 +15,11 @@ router.get('/health', async (req: Request, res: Response) => {
   try {
     const health = await poloniexFuturesService.healthCheck();
     res.status(health.status === 'healthy' ? 200 : 503).json(health);
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const errMsg = error instanceof Error ? error.message : String(error);
     res.status(503).json({
       status: 'error',
-      message: error.message,
+      message: errMsg,
       timestamp: new Date().toISOString(),
       service: 'PoloniexFuturesService'
     });
@@ -32,11 +33,12 @@ router.get('/products', async (req: Request, res: Response) => {
   try {
     const products = await poloniexFuturesService.getProducts();
     res.json(products);
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { response?: { status?: number; data?: unknown }; message?: string };
     logger.error('Error fetching futures products:', error);
     res.status(500).json({
       error: 'Failed to fetch futures products',
-      details: error.response?.data || error.message
+      details: err.response?.data || (error instanceof Error ? error.message : String(error))
     });
   }
 });
@@ -49,11 +51,12 @@ router.get('/products/:symbol', async (req: Request, res: Response) => {
     const { symbol } = req.params;
     const product = await poloniexFuturesService.getProduct(symbol);
     res.json(product);
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { response?: { status?: number; data?: unknown }; message?: string };
     logger.error(`Error fetching product ${req.params.symbol}:`, error);
     res.status(500).json({
       error: 'Failed to fetch product information',
-      details: error.response?.data || error.message
+      details: err.response?.data || (error instanceof Error ? error.message : String(error))
     });
   }
 });
@@ -67,11 +70,12 @@ router.get('/ticker', async (req: Request, res: Response) => {
     const { symbol } = req.query;
     const tickers = await poloniexFuturesService.getTickers(symbol as string | undefined);
     res.json(tickers);
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { response?: { status?: number; data?: unknown }; message?: string };
     logger.error('Error fetching tickers:', error);
     res.status(500).json({
       error: 'Failed to fetch tickers',
-      details: error.response?.data || error.message
+      details: err.response?.data || (error instanceof Error ? error.message : String(error))
     });
   }
 });
@@ -85,11 +89,12 @@ router.get('/orderbook/:symbol', async (req: Request, res: Response) => {
     const { depth = '20' } = req.query;
     const orderbook = await poloniexFuturesService.getOrderBook(symbol, parseInt(depth as string));
     res.json(orderbook);
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { response?: { status?: number; data?: unknown }; message?: string };
     logger.error(`Error fetching orderbook for ${req.params.symbol}:`, error);
     res.status(500).json({
       error: 'Failed to fetch order book',
-      details: error.response?.data || error.message
+      details: err.response?.data || (error instanceof Error ? error.message : String(error))
     });
   }
 });
@@ -120,11 +125,12 @@ router.get('/klines/:symbol', async (req: Request, res: Response) => {
     const poloniexInterval = intervalMap[interval as string] || 'HOUR_1'; // Default to 1h
     const klines = await poloniexFuturesService.getKlines(symbol, poloniexInterval, { limit: parseInt(limit as string) });
     res.json(klines);
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { response?: { status?: number; data?: unknown }; message?: string };
     logger.error(`Error fetching klines for ${req.params.symbol}:`, error);
     res.status(500).json({
       error: 'Failed to fetch kline data',
-      details: error.response?.data || error.message
+      details: err.response?.data || (error instanceof Error ? error.message : String(error))
     });
   }
 });
@@ -135,14 +141,14 @@ router.get('/klines/:symbol', async (req: Request, res: Response) => {
 router.get('/trades/:symbol', async (req: Request, res: Response) => {
   try {
     const { symbol } = req.params;
-    const { limit = '50' } = req.query;
     const trades = await poloniexFuturesService.getMarketTrades(symbol);
     res.json(trades);
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { response?: { status?: number; data?: unknown }; message?: string };
     logger.error(`Error fetching trades for ${req.params.symbol}:`, error);
     res.status(500).json({
       error: 'Failed to fetch recent trades',
-      details: error.response?.data || error.message
+      details: err.response?.data || (error instanceof Error ? error.message : String(error))
     });
   }
 });
@@ -165,11 +171,12 @@ router.get('/balance', authenticateToken, async (req: Request, res: Response) =>
 
     const balance = await poloniexFuturesService.getAccountBalance(credentials);
     res.json(balance);
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { response?: { status?: number; data?: unknown }; message?: string };
     logger.error('Error fetching account balance:', error);
-    res.status(error.response?.status || 500).json({
+    res.status(err.response?.status || 500).json({
       error: 'Failed to fetch account balance',
-      details: error.response?.data || error.message
+      details: err.response?.data || (error instanceof Error ? error.message : String(error))
     });
   }
 });
@@ -190,11 +197,12 @@ router.get('/positions', authenticateToken, async (req: Request, res: Response) 
 
     const positions = await poloniexFuturesService.getPositions(credentials);
     res.json(positions);
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { response?: { status?: number; data?: unknown }; message?: string };
     logger.error('Error fetching positions:', error);
-    res.status(error.response?.status || 500).json({
+    res.status(err.response?.status || 500).json({
       error: 'Failed to fetch positions',
-      details: error.response?.data || error.message
+      details: err.response?.data || (error instanceof Error ? error.message : String(error))
     });
   }
 });
@@ -217,11 +225,12 @@ router.get('/trades', authenticateToken, async (req: Request, res: Response) => 
     const params = req.query; // symbol, orderId, startTime, endTime, limit
     const trades = await poloniexFuturesService.getExecutionDetails(credentials, params);
     res.json(trades);
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { response?: { status?: number; data?: unknown }; message?: string };
     logger.error('Error fetching trade history:', error);
-    res.status(error.response?.status || 500).json({
+    res.status(err.response?.status || 500).json({
       error: 'Failed to fetch trade history',
-      details: error.response?.data || error.message
+      details: err.response?.data || (error instanceof Error ? error.message : String(error))
     });
   }
 });
@@ -243,11 +252,12 @@ router.get('/orders', authenticateToken, async (req: Request, res: Response) => 
     const params = req.query; // symbol, status
     const orders = await poloniexFuturesService.getCurrentOrders(credentials, params);
     res.json(orders);
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { response?: { status?: number; data?: unknown }; message?: string };
     logger.error('Error fetching orders:', error);
-    res.status(error.response?.status || 500).json({
+    res.status(err.response?.status || 500).json({
       error: 'Failed to fetch orders',
-      details: error.response?.data || error.message
+      details: err.response?.data || (error instanceof Error ? error.message : String(error))
     });
   }
 });
@@ -278,11 +288,12 @@ router.post('/order', authenticateToken, async (req: Request, res: Response) => 
     const order = await poloniexFuturesService.placeOrder(credentials, orderParams);
 
     res.json(order);
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { response?: { status?: number; data?: unknown }; message?: string };
     logger.error('Error placing order:', error);
-    res.status(error.response?.status || 500).json({
+    res.status(err.response?.status || 500).json({
       error: 'Failed to place order',
-      details: error.response?.data || error.message
+      details: err.response?.data || (error instanceof Error ? error.message : String(error))
     });
   }
 });
@@ -312,11 +323,12 @@ router.delete('/order/:orderId', authenticateToken, async (req: Request, res: Re
 
     const result = await poloniexFuturesService.cancelOrder(credentials, orderId, symbol as string);
     res.json(result);
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { response?: { status?: number; data?: unknown }; message?: string };
     logger.error('Error canceling order:', error);
-    res.status(error.response?.status || 500).json({
+    res.status(err.response?.status || 500).json({
       error: 'Failed to cancel order',
-      details: error.response?.data || error.message
+      details: err.response?.data || (error instanceof Error ? error.message : String(error))
     });
   }
 });
@@ -345,11 +357,12 @@ router.delete('/orders', authenticateToken, async (req: Request, res: Response) 
 
     const result = await poloniexFuturesService.cancelAllOrders(credentials, symbol as string);
     res.json(result);
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { response?: { status?: number; data?: unknown }; message?: string };
     logger.error('Error canceling all orders:', error);
-    res.status(error.response?.status || 500).json({
+    res.status(err.response?.status || 500).json({
       error: 'Failed to cancel all orders',
-      details: error.response?.data || error.message
+      details: err.response?.data || (error instanceof Error ? error.message : String(error))
     });
   }
 });
@@ -371,11 +384,12 @@ router.get('/leverage/:symbol', authenticateToken, async (req: Request, res: Res
     const { symbol } = req.params;
     const leverage = await poloniexFuturesService.getLeverages(credentials, symbol);
     res.json(leverage);
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { response?: { status?: number; data?: unknown }; message?: string };
     logger.error('Error fetching leverage:', error);
-    res.status(error.response?.status || 500).json({
+    res.status(err.response?.status || 500).json({
       error: 'Failed to fetch leverage',
-      details: error.response?.data || error.message
+      details: err.response?.data || (error instanceof Error ? error.message : String(error))
     });
   }
 });
@@ -404,11 +418,12 @@ router.post('/leverage', authenticateToken, async (req: Request, res: Response) 
 
     const result = await poloniexFuturesService.setLeverage(credentials, symbol, leverage);
     res.json(result);
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { response?: { status?: number; data?: unknown }; message?: string };
     logger.error('Error setting leverage:', error);
-    res.status(error.response?.status || 500).json({
+    res.status(err.response?.status || 500).json({
       error: 'Failed to set leverage',
-      details: error.response?.data || error.message
+      details: err.response?.data || (error instanceof Error ? error.message : String(error))
     });
   }
 });
@@ -443,11 +458,12 @@ router.post('/position/close', authenticateToken, async (req: Request, res: Resp
 
     const result = await poloniexFuturesService.closePosition(credentials, symbol, type);
     res.json(result);
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { response?: { status?: number; data?: unknown }; message?: string };
     logger.error('Error closing position:', error);
-    res.status(error.response?.status || 500).json({
+    res.status(err.response?.status || 500).json({
       error: 'Failed to close position',
-      details: error.response?.data || error.message
+      details: err.response?.data || (error instanceof Error ? error.message : String(error))
     });
   }
 });
@@ -468,11 +484,12 @@ router.post('/positions/close-all', authenticateToken, async (req: Request, res:
 
     const result = await poloniexFuturesService.closeAllPositions(credentials);
     res.json(result);
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { response?: { status?: number; data?: unknown }; message?: string };
     logger.error('Error closing all positions:', error);
-    res.status(error.response?.status || 500).json({
+    res.status(err.response?.status || 500).json({
       error: 'Failed to close all positions',
-      details: error.response?.data || error.message
+      details: err.response?.data || (error instanceof Error ? error.message : String(error))
     });
   }
 });
@@ -494,11 +511,12 @@ router.get('/position-mode/:symbol', authenticateToken, async (req: Request, res
     const { symbol } = req.params;
     const mode = await poloniexFuturesService.getPositionMode(credentials, symbol);
     res.json(mode);
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { response?: { status?: number; data?: unknown }; message?: string };
     logger.error('Error fetching position mode:', error);
-    res.status(error.response?.status || 500).json({
+    res.status(err.response?.status || 500).json({
       error: 'Failed to fetch position mode',
-      details: error.response?.data || error.message
+      details: err.response?.data || (error instanceof Error ? error.message : String(error))
     });
   }
 });
@@ -533,11 +551,12 @@ router.post('/position-mode', authenticateToken, async (req: Request, res: Respo
 
     const result = await poloniexFuturesService.switchPositionMode(credentials, symbol, mode);
     res.json(result);
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { response?: { status?: number; data?: unknown }; message?: string };
     logger.error('Error switching position mode:', error);
-    res.status(error.response?.status || 500).json({
+    res.status(err.response?.status || 500).json({
       error: 'Failed to switch position mode',
-      details: error.response?.data || error.message
+      details: err.response?.data || (error instanceof Error ? error.message : String(error))
     });
   }
 });
@@ -572,11 +591,12 @@ router.post('/position/margin', authenticateToken, async (req: Request, res: Res
 
     const result = await poloniexFuturesService.adjustMargin(credentials, symbol, amount, type);
     res.json(result);
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { response?: { status?: number; data?: unknown }; message?: string };
     logger.error('Error adjusting margin:', error);
-    res.status(error.response?.status || 500).json({
+    res.status(err.response?.status || 500).json({
       error: 'Failed to adjust margin',
-      details: error.response?.data || error.message
+      details: err.response?.data || (error instanceof Error ? error.message : String(error))
     });
   }
 });
@@ -589,11 +609,12 @@ router.get('/mark-price/:symbol', async (req: Request, res: Response) => {
     const { symbol } = req.params;
     const markPrice = await poloniexFuturesService.getMarkPrice(symbol);
     res.json(markPrice);
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { response?: { status?: number; data?: unknown }; message?: string };
     logger.error(`Error fetching mark price for ${req.params.symbol}:`, error);
     res.status(500).json({
       error: 'Failed to fetch mark price',
-      details: error.response?.data || error.message
+      details: err.response?.data || (error instanceof Error ? error.message : String(error))
     });
   }
 });
@@ -606,11 +627,12 @@ router.get('/index-price/:symbol', async (req: Request, res: Response) => {
     const { symbol } = req.params;
     const indexPrice = await poloniexFuturesService.getIndexPrice(symbol);
     res.json(indexPrice);
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { response?: { status?: number; data?: unknown }; message?: string };
     logger.error(`Error fetching index price for ${req.params.symbol}:`, error);
     res.status(500).json({
       error: 'Failed to fetch index price',
-      details: error.response?.data || error.message
+      details: err.response?.data || (error instanceof Error ? error.message : String(error))
     });
   }
 });
@@ -623,11 +645,12 @@ router.get('/index-price-components/:symbol', async (req: Request, res: Response
     const { symbol } = req.params;
     const components = await poloniexFuturesService.getIndexPriceComponents(symbol);
     res.json(components);
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { response?: { status?: number; data?: unknown }; message?: string };
     logger.error(`Error fetching index price components for ${req.params.symbol}:`, error);
     res.status(500).json({
       error: 'Failed to fetch index price components',
-      details: error.response?.data || error.message
+      details: err.response?.data || (error instanceof Error ? error.message : String(error))
     });
   }
 });
@@ -640,11 +663,12 @@ router.get('/funding-rate/:symbol', async (req: Request, res: Response) => {
     const { symbol } = req.params;
     const fundingRate = await poloniexFuturesService.getFundingRate(symbol);
     res.json(fundingRate);
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { response?: { status?: number; data?: unknown }; message?: string };
     logger.error(`Error fetching funding rate for ${req.params.symbol}:`, error);
     res.status(500).json({
       error: 'Failed to fetch funding rate',
-      details: error.response?.data || error.message
+      details: err.response?.data || (error instanceof Error ? error.message : String(error))
     });
   }
 });
@@ -658,11 +682,12 @@ router.get('/funding-rate-history/:symbol', async (req: Request, res: Response) 
     const params = req.query;
     const history = await poloniexFuturesService.getFundingRateHistory(symbol, params);
     res.json(history);
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { response?: { status?: number; data?: unknown }; message?: string };
     logger.error(`Error fetching funding rate history for ${req.params.symbol}:`, error);
     res.status(500).json({
       error: 'Failed to fetch funding rate history',
-      details: error.response?.data || error.message
+      details: err.response?.data || (error instanceof Error ? error.message : String(error))
     });
   }
 });
@@ -675,11 +700,12 @@ router.get('/open-interest/:symbol', async (req: Request, res: Response) => {
     const { symbol } = req.params;
     const openInterest = await poloniexFuturesService.getOpenInterest(symbol);
     res.json(openInterest);
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { response?: { status?: number; data?: unknown }; message?: string };
     logger.error(`Error fetching open interest for ${req.params.symbol}:`, error);
     res.status(500).json({
       error: 'Failed to fetch open interest',
-      details: error.response?.data || error.message
+      details: err.response?.data || (error instanceof Error ? error.message : String(error))
     });
   }
 });
@@ -692,11 +718,12 @@ router.get('/risk-limit/:symbol', async (req: Request, res: Response) => {
     const { symbol } = req.params;
     const riskLimit = await poloniexFuturesService.getRiskLimit(symbol);
     res.json(riskLimit);
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { response?: { status?: number; data?: unknown }; message?: string };
     logger.error(`Error fetching risk limit for ${req.params.symbol}:`, error);
     res.status(500).json({
       error: 'Failed to fetch risk limit',
-      details: error.response?.data || error.message
+      details: err.response?.data || (error instanceof Error ? error.message : String(error))
     });
   }
 });
@@ -718,11 +745,12 @@ router.get('/user-risk-limit/:symbol', authenticateToken, async (req: Request, r
     const { symbol } = req.params;
     const userRiskLimit = await poloniexFuturesService.getUserRiskLimit(credentials, symbol);
     res.json(userRiskLimit);
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { response?: { status?: number; data?: unknown }; message?: string };
     logger.error(`Error fetching user risk limit for ${req.params.symbol}:`, error);
-    res.status(error.response?.status || 500).json({
+    res.status(err.response?.status || 500).json({
       error: 'Failed to fetch user risk limit',
-      details: error.response?.data || error.message
+      details: err.response?.data || (error instanceof Error ? error.message : String(error))
     });
   }
 });
@@ -734,11 +762,12 @@ router.get('/insurance-fund', async (req: Request, res: Response) => {
   try {
     const insuranceFund = await poloniexFuturesService.getInsuranceFund();
     res.json(insuranceFund);
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { response?: { status?: number; data?: unknown }; message?: string };
     logger.error('Error fetching insurance fund:', error);
     res.status(500).json({
       error: 'Failed to fetch insurance fund information',
-      details: error.response?.data || error.message
+      details: err.response?.data || (error instanceof Error ? error.message : String(error))
     });
   }
 });
@@ -752,11 +781,12 @@ router.get('/market-info', async (req: Request, res: Response) => {
     const { symbol } = req.query;
     const marketInfo = await poloniexFuturesService.getMarketInfo(symbol as string | undefined);
     res.json(marketInfo);
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { response?: { status?: number; data?: unknown }; message?: string };
     logger.error('Error fetching market info:', error);
     res.status(500).json({
       error: 'Failed to fetch market information',
-      details: error.response?.data || error.message
+      details: err.response?.data || (error instanceof Error ? error.message : String(error))
     });
   }
 });
@@ -769,11 +799,12 @@ router.get('/limit-price/:symbol', async (req: Request, res: Response) => {
     const { symbol } = req.params;
     const limitPrice = await poloniexFuturesService.getMarketLimitPrice(symbol);
     res.json(limitPrice);
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { response?: { status?: number; data?: unknown }; message?: string };
     logger.error(`Error fetching limit price for ${req.params.symbol}:`, error);
     res.status(500).json({
       error: 'Failed to fetch limit price',
-      details: error.response?.data || error.message
+      details: err.response?.data || (error instanceof Error ? error.message : String(error))
     });
   }
 });
@@ -796,11 +827,12 @@ router.get('/order-history', authenticateToken, async (req: Request, res: Respon
     const params = req.query;
     const orders = await poloniexFuturesService.getOrderHistory(credentials, params);
     res.json(orders);
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { response?: { status?: number; data?: unknown }; message?: string };
     logger.error('Error fetching order history:', error);
-    res.status(error.response?.status || 500).json({
+    res.status(err.response?.status || 500).json({
       error: 'Failed to fetch order history',
-      details: error.response?.data || error.message
+      details: err.response?.data || (error instanceof Error ? error.message : String(error))
     });
   }
 });
@@ -821,11 +853,12 @@ router.get('/position-history', authenticateToken, async (req: Request, res: Res
     const params = req.query;
     const history = await poloniexFuturesService.getPositionHistory(credentials, params);
     res.json(history);
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { response?: { status?: number; data?: unknown }; message?: string };
     logger.error('Error fetching position history:', error);
-    res.status(error.response?.status || 500).json({
+    res.status(err.response?.status || 500).json({
       error: 'Failed to fetch position history',
-      details: error.response?.data || error.message
+      details: err.response?.data || (error instanceof Error ? error.message : String(error))
     });
   }
 });
@@ -846,11 +879,12 @@ router.get('/account/bills', authenticateToken, async (req: Request, res: Respon
     const params = req.query;
     const bills = await poloniexFuturesService.getAccountBills(credentials, params);
     res.json(bills);
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { response?: { status?: number; data?: unknown }; message?: string };
     logger.error('Error fetching account bills:', error);
-    res.status(error.response?.status || 500).json({
+    res.status(err.response?.status || 500).json({
       error: 'Failed to fetch account bills',
-      details: error.response?.data || error.message
+      details: err.response?.data || (error instanceof Error ? error.message : String(error))
     });
   }
 });

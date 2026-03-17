@@ -5,6 +5,86 @@ import { pool } from '../db/connection.js';
 import { logger } from '../utils/logger.js';
 import type { Request, Response } from 'express';
 
+interface BacktestConfig {
+  strategyId: string;
+  symbol: string;
+  startDate: Date;
+  endDate: Date;
+  initialCapital: number;
+  timeframe: string;
+}
+
+interface BacktestRecord {
+  id: string;
+  userId: string;
+  strategyId: string;
+  symbol: string;
+  startDate: string;
+  endDate: string;
+  initialCapital: number;
+  timeframe: string;
+  status: string;
+  progress: number;
+  startedAt: Date;
+  results: unknown;
+  error: string | null;
+  completedAt?: Date;
+}
+
+interface StrategyRow {
+  id: string;
+  name: string;
+  symbol: string;
+  status: string;
+  performance: Record<string, number> | null;
+  timeframe: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface PipelineResultRow {
+  strategy_id: string;
+  strategy_name: string | null;
+  symbol: string | null;
+  timeframe: string | null;
+  strategy_status: string | null;
+  results: Record<string, unknown> | null;
+  average_score: string | null;
+  recommendation: string | null;
+  reasoning: string | null;
+  performance: Record<string, unknown> | null;
+  pipeline_created_at: string;
+}
+
+interface PaperTradingSummary {
+  totalSessions: number;
+  activeSessions: number;
+  totalRealizedPnl: number;
+  totalUnrealizedPnl: number;
+  totalTrades: number;
+  winningTrades: number;
+  winRate: number;
+  averageReturnPct: number;
+}
+
+interface RecentEvent {
+  strategyId: string;
+  strategyName: string;
+  symbol: string;
+  status: string;
+  updatedAt: string;
+  createdAt: string;
+}
+
+interface StrategyBreakdown {
+  id: string;
+  name: string;
+  symbol: string;
+  timeframe: string;
+  status: string;
+  performance: Record<string, number>;
+}
+
 const router = express.Router();
 
 // Pipeline readiness thresholds
@@ -12,7 +92,7 @@ const MIN_CONFIDENCE_THRESHOLD = 60;
 const MIN_WIN_RATE_THRESHOLD = 45;
 
 // Store running backtests
-const runningBacktests = new Map<string, any>();
+const runningBacktests = new Map<string, BacktestRecord>();
 
 /**
  * POST /api/backtest/run
@@ -67,11 +147,12 @@ router.post('/run', authenticateToken, async (req: Request, res: Response) => {
       message: 'Backtest started'
     });
     
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('Error starting backtest:', error);
+    const errMsg = error instanceof Error ? error.message : String(error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to start backtest'
+      error: errMsg || 'Failed to start backtest'
     });
   }
 });
@@ -105,11 +186,12 @@ router.get('/status/:id', authenticateToken, async (req: Request, res: Response)
       ...backtest
     });
     
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('Error fetching backtest status:', error);
+    const errMsg = error instanceof Error ? error.message : String(error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to fetch backtest status'
+      error: errMsg || 'Failed to fetch backtest status'
     });
   }
 });
@@ -134,11 +216,12 @@ router.get('/history', authenticateToken, async (req: Request, res: Response) =>
       backtests: userBacktests
     });
     
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('Error fetching backtest history:', error);
+    const errMsg = error instanceof Error ? error.message : String(error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to fetch backtest history'
+      error: errMsg || 'Failed to fetch backtest history'
     });
   }
 });
@@ -174,11 +257,12 @@ router.delete('/:id', authenticateToken, async (req: Request, res: Response) => 
       message: 'Backtest deleted'
     });
     
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('Error deleting backtest:', error);
+    const errMsg = error instanceof Error ? error.message : String(error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to delete backtest'
+      error: errMsg || 'Failed to delete backtest'
     });
   }
 });
@@ -186,7 +270,7 @@ router.delete('/:id', authenticateToken, async (req: Request, res: Response) => 
 /**
  * Run backtest asynchronously
  */
-async function runBacktestAsync(backtestId: string, config: any) {
+async function runBacktestAsync(backtestId: string, config: BacktestConfig): Promise<void> {
   const backtest = runningBacktests.get(backtestId);
   if (!backtest) return;
   
@@ -228,10 +312,11 @@ async function runBacktestAsync(backtestId: string, config: any) {
     
     logger.info(`Backtest ${backtestId} completed`, { results });
     
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error(`Backtest ${backtestId} failed:`, error);
+    const errMsg = error instanceof Error ? error.message : String(error);
     backtest.status = 'failed';
-    backtest.error = error.message || 'Backtest failed';
+    backtest.error = errMsg || 'Backtest failed';
     backtest.completedAt = new Date();
   }
 }
@@ -246,7 +331,7 @@ router.get('/pipeline/results', authenticateToken, async (req: Request, res: Res
     const limit = parseInt(req.query.limit as string) || 20;
     const strategyId = req.query.strategy_id as string | undefined;
 
-    let pipelineResults: any[] = [];
+    let pipelineResults: Array<Record<string, unknown>> = [];
 
     try {
       let queryText = `
@@ -267,7 +352,7 @@ router.get('/pipeline/results', authenticateToken, async (req: Request, res: Res
         LEFT JOIN agent_sessions asess ON ast.session_id = asess.id
         WHERE asess.user_id = $1
       `;
-      const params: any[] = [userId];
+      const params: (string | number)[] = [userId];
 
       if (strategyId) {
         params.push(strategyId);
@@ -278,7 +363,7 @@ router.get('/pipeline/results', authenticateToken, async (req: Request, res: Res
       params.push(limit);
 
       const result = await pool.query(queryText, params);
-      pipelineResults = result.rows.map((row: any) => ({
+      pipelineResults = result.rows.map((row: PipelineResultRow) => ({
         strategyId: row.strategy_id,
         strategyName: row.strategy_name || 'Unknown Strategy',
         symbol: row.symbol || 'N/A',
@@ -296,9 +381,9 @@ router.get('/pipeline/results', authenticateToken, async (req: Request, res: Res
         },
         createdAt: row.pipeline_created_at
       }));
-    } catch (dbError: any) {
+    } catch (dbError: unknown) {
       logger.warn('Pipeline results tables not available yet, returning empty results', {
-        error: dbError.message
+        error: dbError instanceof Error ? dbError.message : String(dbError)
       });
     }
 
@@ -307,11 +392,12 @@ router.get('/pipeline/results', authenticateToken, async (req: Request, res: Res
       results: pipelineResults
     });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('Error fetching pipeline results:', error);
+    const errMsg = error instanceof Error ? error.message : String(error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to fetch pipeline results',
+      error: errMsg || 'Failed to fetch pipeline results',
       results: []
     });
   }
@@ -332,9 +418,9 @@ router.get('/pipeline/summary', authenticateToken, async (req: Request, res: Res
     let totalLive = 0;
     let overallConfidence = 0;
     let averageMaxDrawdown = 0;
-    let paperTradingSummary: any = null;
-    let recentEvents: any[] = [];
-    let strategyBreakdown: any[] = [];
+    let paperTradingSummary: PaperTradingSummary | null = null;
+    let recentEvents: RecentEvent[] = [];
+    let strategyBreakdown: StrategyBreakdown[] = [];
 
     // Query agent_strategies for status counts and performance
     try {
@@ -349,11 +435,11 @@ router.get('/pipeline/summary', authenticateToken, async (req: Request, res: Res
 
       const strategies = strategiesResult.rows;
       totalGenerated = strategies.length;
-      totalBacktested = strategies.filter((s: any) =>
+      totalBacktested = strategies.filter((s: StrategyRow) =>
         ['backtested', 'paper_trading', 'live', 'deployed'].includes(s.status)
       ).length;
-      totalPaperTrading = strategies.filter((s: any) => s.status === 'paper_trading').length;
-      totalLive = strategies.filter((s: any) => ['live', 'deployed'].includes(s.status)).length;
+      totalPaperTrading = strategies.filter((s: StrategyRow) => s.status === 'paper_trading').length;
+      totalLive = strategies.filter((s: StrategyRow) => ['live', 'deployed'].includes(s.status)).length;
 
       // Collect max drawdowns from performance data
       const drawdowns: number[] = [];
@@ -368,7 +454,7 @@ router.get('/pipeline/summary', authenticateToken, async (req: Request, res: Res
       }
 
       // Build recent lifecycle events from the last 10 updated strategies
-      recentEvents = strategies.slice(0, 10).map((s: any) => ({
+      recentEvents = strategies.slice(0, 10).map((s: StrategyRow) => ({
         strategyId: s.id,
         strategyName: s.name,
         symbol: s.symbol,
@@ -377,7 +463,7 @@ router.get('/pipeline/summary', authenticateToken, async (req: Request, res: Res
         createdAt: s.created_at
       }));
 
-      strategyBreakdown = strategies.map((s: any) => ({
+      strategyBreakdown = strategies.map((s: StrategyRow) => ({
         id: s.id,
         name: s.name,
         symbol: s.symbol,
@@ -385,8 +471,8 @@ router.get('/pipeline/summary', authenticateToken, async (req: Request, res: Res
         status: s.status,
         performance: s.performance || {}
       }));
-    } catch (dbError: any) {
-      logger.warn('agent_strategies table not available yet', { error: dbError.message });
+    } catch (dbError: unknown) {
+      logger.warn('agent_strategies table not available yet', { error: dbError instanceof Error ? dbError.message : String(dbError) });
     }
 
     // Query pipeline results for overall confidence
@@ -401,11 +487,11 @@ router.get('/pipeline/summary', authenticateToken, async (req: Request, res: Res
       );
 
       if (pipelineScores.rows.length > 0) {
-        const scores = pipelineScores.rows.map((r: any) => parseFloat(r.average_score));
+        const scores = pipelineScores.rows.map((r: { average_score: string }) => parseFloat(r.average_score));
         overallConfidence = scores.reduce((a: number, b: number) => a + b, 0) / scores.length;
       }
-    } catch (dbError: any) {
-      logger.warn('backtest_pipeline_results table not available yet', { error: dbError.message });
+    } catch (dbError: unknown) {
+      logger.warn('backtest_pipeline_results table not available yet', { error: dbError instanceof Error ? dbError.message : String(dbError) });
     }
 
     // Query paper trading sessions summary
@@ -444,8 +530,8 @@ router.get('/pipeline/summary', authenticateToken, async (req: Request, res: Res
           averageReturnPct: parseFloat(paper.avg_return_pct) || 0
         };
       }
-    } catch (dbError: any) {
-      logger.warn('paper_trading_sessions table not available yet', { error: dbError.message });
+    } catch (dbError: unknown) {
+      logger.warn('paper_trading_sessions table not available yet', { error: dbError instanceof Error ? dbError.message : String(dbError) });
     }
 
     const riskRating = getRiskRating(averageMaxDrawdown);
@@ -480,11 +566,12 @@ router.get('/pipeline/summary', authenticateToken, async (req: Request, res: Res
       }
     });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('Error fetching pipeline summary:', error);
+    const errMsg = error instanceof Error ? error.message : String(error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to fetch pipeline summary',
+      error: errMsg || 'Failed to fetch pipeline summary',
       summary: {
         strategyCounts: { generated: 0, backtested: 0, paperTrading: 0, live: 0 },
         confidence: { score: 0, level: 'insufficient_data' },
@@ -528,7 +615,7 @@ function assessLiveReadiness(
   totalBacktested: number,
   confidence: number,
   riskRating: string,
-  paperTradingSummary: any
+  paperTradingSummary: PaperTradingSummary | null
 ): { ready: boolean; reasons: string[] } {
   const reasons: string[] = [];
 

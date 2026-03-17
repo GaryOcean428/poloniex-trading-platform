@@ -1,13 +1,11 @@
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
-import helmet from 'helmet';
 import compression from 'compression';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { createServer } from 'http';
 import { Server as SocketIOServer } from 'socket.io';
-import type { CorsOptions } from 'cors';
 
 // Import routes
 import authRoutes from './routes/auth.js';
@@ -33,12 +31,10 @@ import mlRoutes from './routes/ml.js';
 import qigRoutes from './routes/qig.js';
 import publicAdminRoutes from './routes/public-admin.js';
 import versionCheckRoutes from './routes/version-check.js';
-import deployVersionRoutes from './routes/deploy-version.js';
 import autonomousTraderRoutes from './routes/autonomousTrader.js';
 
 // Import services
 import { logger } from './utils/logger.js';
-import fullyAutonomousTrader from './services/fullyAutonomousTrader.js';
 import { persistentTradingEngine } from './services/persistentTradingEngine.js';
 import { agentScheduler } from './services/agentScheduler.js';
 import automatedTradingService from './services/automatedTradingService.js';

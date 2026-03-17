@@ -5,11 +5,25 @@
  */
 
 import express from 'express';
+import type { Request, Response } from 'express';
 import { pool } from '../db/connection.js';
 import { logger } from '../utils/logger.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { apiCredentialsService } from '../services/apiCredentialsService.js';
 import poloniexFuturesService from '../services/poloniexFuturesService.js';
+
+interface CredentialRow {
+  id: string;
+  exchange: string;
+  is_active: boolean;
+  key_length: number;
+  secret_length: number;
+  has_iv: boolean;
+  has_tag: boolean;
+  created_at: string;
+  updated_at: string;
+  last_used_at: string | null;
+}
 
 const router = express.Router();
 
@@ -33,11 +47,12 @@ router.get('/tables', async (req, res) => {
       count: tables.length,
       tables
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('Error fetching tables:', error);
+    const errMsg = error instanceof Error ? error.message : String(error);
     res.status(500).json({
       success: false,
-      error: error.message
+      error: errMsg
     });
   }
 });
@@ -83,11 +98,12 @@ router.get('/table/:tableName', async (req, res) => {
       rowCount: parseInt(countResult.rows[0].count),
       columns: structureResult.rows
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('Error fetching table structure:', error);
+    const errMsg = error instanceof Error ? error.message : String(error);
     res.status(500).json({
       success: false,
-      error: error.message
+      error: errMsg
     });
   }
 });
@@ -160,12 +176,13 @@ router.post('/test-api-creds', async (req, res) => {
       testId: testInsert.rows[0].id
     });
     
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('Error testing API credentials:', error);
+    const err = error as { message?: string; detail?: string };
     res.status(500).json({
       success: false,
-      error: error.message,
-      detail: error.detail || 'No additional details'
+      error: err.message ?? String(error),
+      detail: err.detail ?? 'No additional details'
     });
   }
 });
@@ -222,11 +239,12 @@ router.get('/users', async (req, res) => {
       garyUser: garyUserResult.rows[0] || null,
       recentUsers: allUsersResult.rows
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('Error checking users:', error);
+    const errMsg = error instanceof Error ? error.message : String(error);
     res.status(500).json({
       success: false,
-      error: error.message
+      error: errMsg
     });
   }
 });
@@ -244,12 +262,13 @@ router.get('/db-connection', async (req, res) => {
       timestamp: result.rows[0].current_time,
       postgresVersion: result.rows[0].pg_version
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('Database connection test failed:', error);
+    const errMsg = error instanceof Error ? error.message : String(error);
     res.status(500).json({
       success: false,
       connected: false,
-      error: error.message
+      error: errMsg
     });
   }
 });
@@ -259,7 +278,7 @@ router.get('/db-connection', async (req, res) => {
  * Check if user has credentials and their status
  * (Consolidated from former diagnostic.ts)
  */
-router.get('/credentials-status', authenticateToken, async (req: any, res: any) => {
+router.get('/credentials-status', authenticateToken, async (req: Request, res: Response) => {
   try {
     const userId = String(req.user.id);
     
@@ -283,7 +302,7 @@ router.get('/credentials-status', authenticateToken, async (req: any, res: any) 
       userId,
       hasCredentials,
       credentialsCount: result.rows.length,
-      credentials: result.rows.map((row: any) => ({
+      credentials: result.rows.map((row: CredentialRow) => ({
         id: row.id,
         exchange: row.exchange,
         isActive: row.is_active,
@@ -296,11 +315,12 @@ router.get('/credentials-status', authenticateToken, async (req: any, res: any) 
         lastUsedAt: row.last_used_at
       }))
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('Debug credentials-status error:', error);
+    const errMsg = error instanceof Error ? error.message : String(error);
     res.status(500).json({
       success: false,
-      error: error.message
+      error: errMsg
     });
   }
 });
@@ -310,7 +330,7 @@ router.get('/credentials-status', authenticateToken, async (req: any, res: any) 
  * Test balance fetch with detailed logging
  * (Consolidated from former test-balance.ts and diagnostic.ts)
  */
-router.get('/test-balance', authenticateToken, async (req: any, res: any) => {
+router.get('/test-balance', authenticateToken, async (req: Request, res: Response) => {
   try {
     const userId = String(req.user.id);
     logger.info('=== TEST BALANCE REQUEST ===', { userId });
@@ -356,12 +376,13 @@ router.get('/test-balance', authenticateToken, async (req: any, res: any) => {
         }
       });
       
-    } catch (apiError: any) {
+    } catch (apiError: unknown) {
+      const ae = apiError as { message?: string; response?: { status?: number; statusText?: string; data?: unknown } };
       logger.error('Poloniex API Error:', {
-        message: apiError.message,
-        status: apiError.response?.status,
-        statusText: apiError.response?.statusText,
-        data: JSON.stringify(apiError.response?.data)
+        message: ae.message,
+        status: ae.response?.status,
+        statusText: ae.response?.statusText,
+        data: JSON.stringify(ae.response?.data)
       });
       
       return res.json({
@@ -369,18 +390,19 @@ router.get('/test-balance', authenticateToken, async (req: any, res: any) => {
         error: 'Poloniex API call failed',
         step: 'api_call',
         details: {
-          message: apiError.message,
-          status: apiError.response?.status,
-          data: apiError.response?.data
+          message: ae.message,
+          status: ae.response?.status,
+          data: ae.response?.data
         }
       });
     }
     
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('Test balance error:', error);
+    const errMsg = error instanceof Error ? error.message : String(error);
     return res.status(500).json({
       success: false,
-      error: error.message,
+      error: errMsg,
       step: 'unknown'
     });
   }

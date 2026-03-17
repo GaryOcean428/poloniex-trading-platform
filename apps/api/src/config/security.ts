@@ -6,9 +6,9 @@
  */
 
 import helmet from 'helmet';
-import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import type { CorsOptions } from 'cors';
+import type { Request, Response, NextFunction } from 'express';
 import { env } from './env.js';
 import { logger } from '../utils/logger.js';
 
@@ -96,7 +96,7 @@ export function createCorsOptions(): CorsOptions {
   const allowedOriginsSet = new Set(allowedOrigins);
 
   return {
-    origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+    origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void): void => {
       // Allow requests with no origin (like mobile apps or curl requests)
       if (!origin) {
         return callback(null, true);
@@ -131,7 +131,7 @@ export function createCorsOptions(): CorsOptions {
 /**
  * Security logging middleware
  */
-export function securityLogger(req: any, res: any, next: any) {
+export function securityLogger(req: Request, _res: Response, next: NextFunction): void {
   // Log suspicious requests
   const suspiciousPatterns = [
     /\.\./,           // Path traversal
@@ -168,7 +168,7 @@ export function securityLogger(req: any, res: any, next: any) {
 /**
  * Request sanitization middleware
  */
-export function sanitizeRequest(req: any, res: any, next: any) {
+export function sanitizeRequest(req: Request, _res: Response, next: NextFunction): void {
   // Remove potential XSS vectors from query parameters
   if (req.query) {
     for (const key in req.query) {

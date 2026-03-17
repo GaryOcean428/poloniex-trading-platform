@@ -17,7 +17,7 @@ const router = express.Router();
 router.post('/', authenticateToken, async (req, res) => {
   try {
     const { strategyConfig, riskConfig, sessionName } = req.body;
-    const userId = (req as any).user.userId;
+    const userId = req.user?.userId;
 
     if (!strategyConfig) {
       return res.status(400).json({ error: 'Strategy configuration is required' });
@@ -35,9 +35,9 @@ router.post('/', authenticateToken, async (req, res) => {
       sessionId,
       message: 'Trading session started successfully'
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error starting trading session:', error);
-    res.status(500).json({ error: error.message || 'Failed to start trading session' });
+    res.status(500).json({ error: (error instanceof Error ? error.message : String(error)) || 'Failed to start trading session' });
   }
 });
 
@@ -48,7 +48,7 @@ router.post('/', authenticateToken, async (req, res) => {
 router.post('/:sessionId/stop', authenticateToken, async (req, res) => {
   try {
     const { sessionId } = req.params;
-    const userId = (req as any).user.userId;
+    const userId = req.user?.userId;
 
     // Verify session belongs to user
     const result = await pool.query(
@@ -70,9 +70,9 @@ router.post('/:sessionId/stop', authenticateToken, async (req, res) => {
       success: true,
       message: 'Trading session stopped successfully'
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error stopping trading session:', error);
-    res.status(500).json({ error: error.message || 'Failed to stop trading session' });
+    res.status(500).json({ error: (error instanceof Error ? error.message : String(error)) || 'Failed to stop trading session' });
   }
 });
 
@@ -82,7 +82,7 @@ router.post('/:sessionId/stop', authenticateToken, async (req, res) => {
  */
 router.get('/', authenticateToken, async (req, res) => {
   try {
-    const userId = (req as any).user.userId;
+    const userId = req.user?.userId;
 
     const result = await pool.query(
       `SELECT id, session_name, is_active, strategy_config, risk_config, 
@@ -96,9 +96,9 @@ router.get('/', authenticateToken, async (req, res) => {
     res.json({
       sessions: result.rows
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error fetching trading sessions:', error);
-    res.status(500).json({ error: error.message || 'Failed to fetch trading sessions' });
+    res.status(500).json({ error: (error instanceof Error ? error.message : String(error)) || 'Failed to fetch trading sessions' });
   }
 });
 
@@ -109,7 +109,7 @@ router.get('/', authenticateToken, async (req, res) => {
 router.get('/:sessionId', authenticateToken, async (req, res) => {
   try {
     const { sessionId } = req.params;
-    const userId = (req as any).user.userId;
+    const userId = req.user?.userId;
 
     const result = await pool.query(
       `SELECT * FROM trading_sessions 
@@ -124,9 +124,9 @@ router.get('/:sessionId', authenticateToken, async (req, res) => {
     res.json({
       session: result.rows[0]
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error fetching trading session:', error);
-    res.status(500).json({ error: error.message || 'Failed to fetch trading session' });
+    res.status(500).json({ error: (error instanceof Error ? error.message : String(error)) || 'Failed to fetch trading session' });
   }
 });
 
@@ -144,9 +144,9 @@ router.get('/engine/status', authenticateToken, async (req, res) => {
       activeSessionsCount: activeSessions.length,
       activeSessions
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error fetching engine status:', error);
-    res.status(500).json({ error: error.message || 'Failed to fetch engine status' });
+    res.status(500).json({ error: (error instanceof Error ? error.message : String(error)) || 'Failed to fetch engine status' });
   }
 });
 

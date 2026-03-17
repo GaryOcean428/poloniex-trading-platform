@@ -5,6 +5,53 @@ import poloniexSpotService from '../services/poloniexSpotService.js';
 import { apiCredentialsService } from '../services/apiCredentialsService.js';
 import { logger } from '../utils/logger.js';
 
+interface PositionRow {
+  qty?: string;
+  positionAmt?: string;
+  markPx?: string;
+  markPrice?: string;
+  upl?: string;
+  unrealizedPnl?: string;
+}
+
+interface TradeRow {
+  trdId?: string;
+  tradeId?: string;
+  id?: string;
+  symbol?: string;
+  ordId?: string;
+  orderId?: string;
+  side?: string;
+  px?: string;
+  fillPx?: string;
+  price?: string;
+  qty?: string;
+  fillSz?: string;
+  sz?: string;
+  amount?: string;
+  realizedPnl?: string;
+  feeAmt?: string;
+  fee?: string;
+  feeCcy?: string;
+  commissionAsset?: string;
+  cTime?: string | number;
+  ts?: string | number;
+  time?: string | number;
+}
+
+interface SpotBalanceRow {
+  currency?: string;
+  available?: string;
+  hold?: string;
+}
+
+interface FuturesData {
+  totalEquity: number;
+  availableBalance: number;
+  unrealizedPnL?: number;
+  positionMargin?: number;
+}
+
 const router = express.Router();
 
 /**
@@ -16,7 +63,7 @@ router.get('/overview', authenticateToken, async (req: Request, res: Response) =
     let credentials;
     try {
       credentials = await apiCredentialsService.getCredentials(String(req.user.id));
-    } catch (credError) {
+    } catch {
       credentials = null;
     }
     
@@ -79,7 +126,7 @@ router.get('/overview', authenticateToken, async (req: Request, res: Response) =
 
     // Calculate summary statistics - Poloniex V3 format
     const totalPositionValue = Array.isArray(positionsData) 
-      ? positionsData.reduce((sum: number, pos: any) => {
+      ? positionsData.reduce((sum: number, pos: PositionRow) => {
           const qty = parseFloat(pos.qty || pos.positionAmt || '0');
           const markPrice = parseFloat(pos.markPx || pos.markPrice || '0');
           return sum + (qty * markPrice);
@@ -87,18 +134,18 @@ router.get('/overview', authenticateToken, async (req: Request, res: Response) =
       : 0;
 
     const totalPnL = Array.isArray(positionsData)
-      ? positionsData.reduce((sum: number, pos: any) => sum + (parseFloat(pos.upl || pos.unrealizedPnl || '0')), 0)
+      ? positionsData.reduce((sum: number, pos: PositionRow) => sum + (parseFloat(pos.upl || pos.unrealizedPnl || '0')), 0)
       : 0;
 
     const activePositionsCount = Array.isArray(positionsData)
-      ? positionsData.filter((pos: any) => parseFloat(pos.qty || pos.positionAmt || '0') !== 0).length
+      ? positionsData.filter((pos: PositionRow) => parseFloat(pos.qty || pos.positionAmt || '0') !== 0).length
       : 0;
 
     // Transform Poloniex V3 trade data to frontend Trade interface format
     // Poloniex V3 /trade/order/trades returns: px, qty, feeAmt, feeCcy, cTime, trdId, ordId, side, symbol, value, role, ordType
     // Frontend Trade interface expects string types for price/qty/commission to preserve financial precision
     const transformedTrades = Array.isArray(tradesData) 
-      ? tradesData.map((trade: any, index: number) => ({
+      ? tradesData.map((trade: TradeRow, index: number) => ({
           id: trade.trdId || trade.tradeId || trade.id || `unknown-${Date.now()}-${index}`,
           symbol: trade.symbol || 'UNKNOWN',
           orderId: trade.ordId || trade.orderId || '',
@@ -131,7 +178,7 @@ router.get('/overview', authenticateToken, async (req: Request, res: Response) =
         recentTrades: transformedTrades,
         tradesSummary: {
           count: transformedTrades.length,
-          last24h: transformedTrades.filter((t: any) => {
+          last24h: transformedTrades.filter((t) => {
             const tradeTime = t.time;
             const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
             return tradeTime > dayAgo;
@@ -152,12 +199,13 @@ router.get('/overview', authenticateToken, async (req: Request, res: Response) =
       }
     });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('Error fetching dashboard overview:', error);
+    const errMsg = error instanceof Error ? error.message : String(error);
     res.status(500).json({
       success: false,
       error: 'Failed to fetch dashboard data',
-      details: error.message,
+      details: errMsg,
       data: {
         balance: null,
         positions: [],
@@ -200,17 +248,18 @@ router.get('/balance', authenticateToken, async (req: Request, res: Response) =>
         exchange: credentials?.exchange,
         apiKeyPrefix: credentials?.apiKey?.substring(0, 8) 
       });
-    } catch (credError: any) {
+    } catch (credError: unknown) {
+      const ce = credError as { message?: string; stack?: string };
       logger.error('Error retrieving credentials from database', { 
         userId, 
-        error: credError.message,
-        stack: credError.stack 
+        error: ce.message ?? String(credError),
+        stack: ce.stack 
       });
       // Return error instead of mock data
       return res.status(500).json({
         success: false,
         error: 'Failed to retrieve API credentials from database',
-        details: credError.message,
+        details: ce.message ?? String(credError),
         requiresApiKeys: false // Credentials exist but can't be retrieved
       });
     }
@@ -260,10 +309,11 @@ router.get('/balance', authenticateToken, async (req: Request, res: Response) =>
         availableBalance,
         unrealizedPnL
       });
-    } catch (futuresError: any) {
+    } catch (futuresError: unknown) {
+      const fe = futuresError as { message?: string; response?: { status?: number } };
       logger.warn('Futures balance fetch failed, trying Spot:', {
-        error: futuresError.message,
-        status: futuresError.response?.status
+        error: fe.message,
+        status: fe.response?.status
       });
       
       // Try Spot API
@@ -276,30 +326,31 @@ router.get('/balance', authenticateToken, async (req: Request, res: Response) =>
         
         if (Array.isArray(spotBalances)) {
           // Sum up all balances
-          totalBalance = spotBalances.reduce((sum, bal: any) => {
+          totalBalance = spotBalances.reduce((sum, bal: SpotBalanceRow) => {
             const available = parseFloat(bal.available || '0');
             const hold = parseFloat(bal.hold || '0');
             return sum + available + hold;
           }, 0);
           
-          availableBalance = spotBalances.reduce((sum, bal: any) => {
+          availableBalance = spotBalances.reduce((sum, bal: SpotBalanceRow) => {
             return sum + parseFloat(bal.available || '0');
           }, 0);
           
           balanceSource = 'spot';
         }
-      } catch (spotError: any) {
+      } catch (spotError: unknown) {
+        const se = spotError as { message?: string };
         logger.error('Both Spot and Futures balance fetch failed:', {
-          futuresError: futuresError.message,
-          spotError: spotError.message
+          futuresError: fe.message,
+          spotError: se.message
         });
         
         return res.status(500).json({
           success: false,
           error: 'Failed to fetch balance from Poloniex',
           details: 'Both Spot and Futures API calls failed',
-          futuresError: futuresError.message,
-          spotError: spotError.message
+          futuresError: fe.message,
+          spotError: se.message
         });
       }
     }
@@ -321,12 +372,13 @@ router.get('/balance', authenticateToken, async (req: Request, res: Response) =>
       data: transformedBalance
     });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('Error fetching balance:', error);
+    const errMsg = error instanceof Error ? error.message : String(error);
     res.status(500).json({
       success: false,
       error: 'Internal server error',
-      details: error.message
+      details: errMsg
     });
   }
 });
@@ -340,7 +392,7 @@ router.get('/positions', authenticateToken, async (req: Request, res: Response) 
     let credentials;
     try {
       credentials = await apiCredentialsService.getCredentials(String(req.user.id));
-    } catch (credError) {
+    } catch {
       // No credentials found - return empty positions for demo users
       return res.json({
         success: true,
@@ -374,9 +426,10 @@ router.get('/positions', authenticateToken, async (req: Request, res: Response) 
     let positions;
     try {
       positions = await poloniexFuturesService.getPositions(credentials);
-    } catch (apiError: any) {
+    } catch (apiError: unknown) {
+      const apiErrMsg = apiError instanceof Error ? apiError.message : String(apiError);
       // API call failed - return empty positions with warning
-      logger.warn('Poloniex API call failed, returning empty positions:', apiError.message);
+      logger.warn('Poloniex API call failed, returning empty positions:', apiErrMsg);
       return res.json({
         success: true,
         data: {
@@ -394,14 +447,14 @@ router.get('/positions', authenticateToken, async (req: Request, res: Response) 
     
     // Calculate summary - Poloniex V3 uses 'qty' for position amount
     const activePositions = Array.isArray(positions)
-      ? positions.filter((pos: any) => parseFloat(pos.qty || pos.positionAmt || '0') !== 0)
+      ? positions.filter((pos: PositionRow) => parseFloat(pos.qty || pos.positionAmt || '0') !== 0)
       : [];
 
-    const totalPnL = activePositions.reduce((sum: number, pos: any) => 
+    const totalPnL = activePositions.reduce((sum: number, pos: PositionRow) => 
       sum + (parseFloat(pos.upl || pos.unrealizedPnl || '0')), 0);
 
     // Calculate notional value: qty * markPx
-    const totalValue = activePositions.reduce((sum: number, pos: any) => {
+    const totalValue = activePositions.reduce((sum: number, pos: PositionRow) => {
       const qty = parseFloat(pos.qty || pos.positionAmt || '0');
       const markPrice = parseFloat(pos.markPx || pos.markPrice || '0');
       return sum + (qty * markPrice);
@@ -419,12 +472,13 @@ router.get('/positions', authenticateToken, async (req: Request, res: Response) 
       }
     });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('Error fetching positions:', error);
+    const errMsg = error instanceof Error ? error.message : String(error);
     res.status(500).json({
       success: false,
       error: 'Internal server error',
-      details: error.message
+      details: errMsg
     });
   }
 });
@@ -438,7 +492,7 @@ router.get('/bills', authenticateToken, async (req: Request, res: Response) => {
     let credentials;
     try {
       credentials = await apiCredentialsService.getCredentials(String(req.user.id));
-    } catch (credError) {
+    } catch {
       // No credentials found - return empty bills for demo users
       return res.json({
         success: true,
@@ -462,9 +516,10 @@ router.get('/bills', authenticateToken, async (req: Request, res: Response) => {
     let bills;
     try {
       bills = await poloniexFuturesService.getAccountBills(credentials, { limit });
-    } catch (apiError: any) {
+    } catch (apiError: unknown) {
+      const apiErrMsg = apiError instanceof Error ? apiError.message : String(apiError);
       // API call failed - return empty bills with warning
-      logger.warn('Poloniex API call failed, returning empty bills:', apiError.message);
+      logger.warn('Poloniex API call failed, returning empty bills:', apiErrMsg);
       return res.json({
         success: true,
         data: [],
@@ -478,12 +533,13 @@ router.get('/bills', authenticateToken, async (req: Request, res: Response) => {
       data: bills
     });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('Error fetching account bills:', error);
+    const errMsg = error instanceof Error ? error.message : String(error);
     res.status(500).json({
       success: false,
       error: 'Internal server error',
-      details: error.message
+      details: errMsg
     });
   }
 });
@@ -518,7 +574,7 @@ router.get('/balance/all', authenticateToken, async (req: Request, res: Response
     // Process Spot balances
     let spotData = { total: 0, available: 0, balances: [] };
     if (spotBalances.status === 'fulfilled' && Array.isArray(spotBalances.value)) {
-      const balances = spotBalances.value.map((bal: any) => ({
+      const balances = spotBalances.value.map((bal: SpotBalanceRow) => ({
         currency: bal.currency,
         available: parseFloat(bal.available || '0'),
         hold: parseFloat(bal.hold || '0'),
@@ -533,9 +589,9 @@ router.get('/balance/all', authenticateToken, async (req: Request, res: Response
     }
 
     // Process Futures balance
-    let futuresData: any = { totalEquity: 0, availableBalance: 0 };
+    let futuresData: FuturesData = { totalEquity: 0, availableBalance: 0 };
     if (futuresBalance.status === 'fulfilled') {
-      const bal: any = futuresBalance.value;
+      const bal = futuresBalance.value as { eq?: string; totalEquity?: string; availMgn?: string; availableBalance?: string; upl?: string; unrealizedPnL?: string; im?: string; positionMargin?: string };
       futuresData = {
         totalEquity: parseFloat(bal.eq || bal.totalEquity || '0'),
         availableBalance: parseFloat(bal.availMgn || bal.availableBalance || '0'),
@@ -558,12 +614,13 @@ router.get('/balance/all', authenticateToken, async (req: Request, res: Response
         }
       }
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('Error fetching combined balance:', error);
+    const errMsg = error instanceof Error ? error.message : String(error);
     res.status(500).json({
       success: false,
       error: 'Failed to fetch combined balance',
-      details: error.message
+      details: errMsg
     });
   }
 });
@@ -624,12 +681,13 @@ router.post('/transfer', authenticateToken, async (req: Request, res: Response) 
       message: `Successfully transferred ${amount} ${currency} from ${fromAccount} to ${toAccount}`,
       data: result
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('Error transferring funds:', error);
+    const err = error as { message?: string; response?: { data?: unknown } };
     res.status(500).json({
       success: false,
       error: 'Failed to transfer funds',
-      details: error.response?.data || error.message
+      details: err.response?.data || err.message
     });
   }
 });
@@ -657,12 +715,13 @@ router.get('/transfer/history', authenticateToken, async (req: Request, res: Res
       success: true,
       data: history
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('Error fetching transfer history:', error);
+    const errMsg = error instanceof Error ? error.message : String(error);
     res.status(500).json({
       success: false,
       error: 'Failed to fetch transfer history',
-      details: error.message
+      details: errMsg
     });
   }
 });

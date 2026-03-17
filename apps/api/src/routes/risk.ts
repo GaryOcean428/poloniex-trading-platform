@@ -47,11 +47,11 @@ router.get('/settings', authenticateToken, async (req: Request, res: Response) =
       }
     });
     
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('Error fetching risk settings:', error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to fetch risk settings'
+      error: (error instanceof Error ? error.message : String(error)) || 'Failed to fetch risk settings'
     });
   }
 });
@@ -136,11 +136,11 @@ router.put('/settings', authenticateToken, async (req: Request, res: Response) =
       message: 'Risk settings updated'
     });
     
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('Error updating risk settings:', error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to update risk settings'
+      error: (error instanceof Error ? error.message : String(error)) || 'Failed to update risk settings'
     });
   }
 });
@@ -151,7 +151,6 @@ router.put('/settings', authenticateToken, async (req: Request, res: Response) =
  */
 router.get('/status', authenticateToken, async (req: Request, res: Response) => {
   try {
-    const userId = String(req.user.id);
     
     // Calculate current risk metrics
     // This would normally query active positions and calculate real-time risk
@@ -168,11 +167,11 @@ router.get('/status', authenticateToken, async (req: Request, res: Response) => 
       status
     });
     
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('Error fetching risk status:', error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to fetch risk status'
+      error: (error instanceof Error ? error.message : String(error)) || 'Failed to fetch risk status'
     });
   }
 });
@@ -183,7 +182,6 @@ router.get('/status', authenticateToken, async (req: Request, res: Response) => 
  */
 router.get('/alerts', authenticateToken, async (req: Request, res: Response) => {
   try {
-    const userId = String(req.user.id);
     
     // Get risk alerts
     const alerts = [
@@ -195,11 +193,11 @@ router.get('/alerts', authenticateToken, async (req: Request, res: Response) => 
       alerts
     });
     
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('Error fetching risk alerts:', error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to fetch risk alerts'
+      error: (error instanceof Error ? error.message : String(error)) || 'Failed to fetch risk alerts'
     });
   }
 });

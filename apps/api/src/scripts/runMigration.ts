@@ -6,7 +6,7 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-async function runMigration(migrationFile: string) {
+async function runMigration(migrationFile: string): Promise<void> {
   try {
     console.log(`Running migration: ${migrationFile}`);
     
@@ -23,7 +23,7 @@ async function runMigration(migrationFile: string) {
   }
 }
 
-async function main() {
+async function main(): Promise<void> {
   const migrationFile = process.argv[2];
   
   if (!migrationFile) {
@@ -35,7 +35,7 @@ async function main() {
   try {
     await runMigration(migrationFile);
     process.exit(0);
-  } catch (error) {
+  } catch {
     process.exit(1);
   }
 }

@@ -36,11 +36,11 @@ router.post('/start', authenticateToken, async (req: Request, res: Response) => 
       session
     });
     
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('Error starting paper trading:', error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to start paper trading'
+      error: (error instanceof Error ? error.message : String(error)) || 'Failed to start paper trading'
     });
   }
 });
@@ -51,7 +51,6 @@ router.post('/start', authenticateToken, async (req: Request, res: Response) => 
  */
 router.post('/stop', authenticateToken, async (req: Request, res: Response) => {
   try {
-    const userId = String(req.user.id);
     const { strategyId } = req.body;
     
     if (!strategyId) {
@@ -69,11 +68,11 @@ router.post('/stop', authenticateToken, async (req: Request, res: Response) => {
       message: 'Paper trading stopped'
     });
     
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('Error stopping paper trading:', error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to stop paper trading'
+      error: (error instanceof Error ? error.message : String(error)) || 'Failed to stop paper trading'
     });
   }
 });
@@ -84,7 +83,6 @@ router.post('/stop', authenticateToken, async (req: Request, res: Response) => {
  */
 router.get('/status', authenticateToken, async (req: Request, res: Response) => {
   try {
-    const userId = String(req.user.id);
     const { strategyId } = req.query;
     
     // Get status
@@ -101,11 +99,11 @@ router.get('/status', authenticateToken, async (req: Request, res: Response) => 
       status
     });
     
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('Error fetching paper trading status:', error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to fetch status'
+      error: (error instanceof Error ? error.message : String(error)) || 'Failed to fetch status'
     });
   }
 });
@@ -116,8 +114,7 @@ router.get('/status', authenticateToken, async (req: Request, res: Response) => 
  */
 router.get('/trades', authenticateToken, async (req: Request, res: Response) => {
   try {
-    const userId = String(req.user.id);
-    const { strategyId, limit } = req.query;
+    const { strategyId } = req.query;
     
     // Get trades
     const session = paperTradingService.getSession(strategyId as string);
@@ -128,11 +125,11 @@ router.get('/trades', authenticateToken, async (req: Request, res: Response) => 
       trades
     });
     
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('Error fetching paper trading trades:', error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to fetch trades'
+      error: (error instanceof Error ? error.message : String(error)) || 'Failed to fetch trades'
     });
   }
 });
@@ -143,7 +140,6 @@ router.get('/trades', authenticateToken, async (req: Request, res: Response) => 
  */
 router.get('/pnl', authenticateToken, async (req: Request, res: Response) => {
   try {
-    const userId = String(req.user.id);
     const { strategyId } = req.query;
     
     // Get P&L
@@ -161,11 +157,11 @@ router.get('/pnl', authenticateToken, async (req: Request, res: Response) => {
       pnl
     });
     
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('Error fetching paper trading P&L:', error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to fetch P&L'
+      error: (error instanceof Error ? error.message : String(error)) || 'Failed to fetch P&L'
     });
   }
 });
