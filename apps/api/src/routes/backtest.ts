@@ -264,7 +264,8 @@ router.get('/pipeline/results', authenticateToken, async (req: Request, res: Res
           ast.timeframe
         FROM backtest_pipeline_results bpr
         LEFT JOIN agent_strategies ast ON bpr.strategy_id = ast.id::text
-        WHERE ast.user_id = $1
+        LEFT JOIN agent_sessions asess ON ast.session_id = asess.id
+        WHERE asess.user_id = $1
       `;
       const params: any[] = [userId];
 
@@ -338,10 +339,11 @@ router.get('/pipeline/summary', authenticateToken, async (req: Request, res: Res
     // Query agent_strategies for status counts and performance
     try {
       const strategiesResult = await pool.query(
-        `SELECT id, name, symbol, status, performance, timeframe, created_at, updated_at
-         FROM agent_strategies
-         WHERE user_id = $1
-         ORDER BY updated_at DESC`,
+        `SELECT ast.id, ast.name, ast.symbol, ast.status, ast.performance, ast.timeframe, ast.created_at, ast.updated_at
+         FROM agent_strategies ast
+         JOIN agent_sessions asess ON ast.session_id = asess.id
+         WHERE asess.user_id = $1
+         ORDER BY ast.updated_at DESC`,
         [userId]
       );
 
@@ -393,7 +395,8 @@ router.get('/pipeline/summary', authenticateToken, async (req: Request, res: Res
         `SELECT bpr.average_score
          FROM backtest_pipeline_results bpr
          JOIN agent_strategies ast ON bpr.strategy_id = ast.id::text
-         WHERE ast.user_id = $1 AND bpr.average_score IS NOT NULL`,
+         JOIN agent_sessions asess ON ast.session_id = asess.id
+         WHERE asess.user_id = $1 AND bpr.average_score IS NOT NULL`,
         [userId]
       );
 
@@ -418,7 +421,9 @@ router.get('/pipeline/summary', authenticateToken, async (req: Request, res: Res
            COALESCE(AVG((current_value - initial_capital) / NULLIF(initial_capital, 0) * 100), 0) AS avg_return_pct
          FROM paper_trading_sessions
          WHERE strategy_name IN (
-           SELECT name FROM agent_strategies WHERE user_id = $1
+           SELECT ast.name FROM agent_strategies ast
+           JOIN agent_sessions asess ON ast.session_id = asess.id
+           WHERE asess.user_id = $1
          )`,
         [userId]
       );
