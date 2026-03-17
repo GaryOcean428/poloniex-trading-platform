@@ -1,4 +1,5 @@
 import CryptoJS from 'crypto-js';
+import { getBackendUrl } from './environment';
 
 interface SignatureParams {
   method: string;
@@ -228,11 +229,8 @@ export async function refreshAccessToken(): Promise<string | null> {
   }
 
   try {
-    // Get backend URL from environment or use default
-    const backendUrl = import.meta.env.VITE_API_BASE_URL || 
-      (window.location.hostname.includes('railway.app') 
-        ? 'https://polytrade-be.up.railway.app'
-        : 'http://localhost:3000');
+    // Get backend URL from environment
+    const backendUrl = getBackendUrl();
 
     const response = await fetch(`${backendUrl}/api/auth/refresh`, {
       method: 'POST',
