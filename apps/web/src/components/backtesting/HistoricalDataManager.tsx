@@ -38,14 +38,15 @@ interface HistoricalDataManagerProps {
 }
 
 const HistoricalDataManager: React.FC<HistoricalDataManagerProps> = ({ onDataLoaded }) => {
-  const defaultEndDate = new Date().toISOString().split('T')[0] ?? '2024-01-01';
-  const defaultStartDate = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] ?? '2023-01-01';
+  const now = new Date();
+  const yearAgo = new Date(now);
+  yearAgo.setFullYear(yearAgo.getFullYear() - 1);
 
   const [request, setRequest] = useState<HistoricalDataRequest>({
     symbols: ['BTC_USDT'],
     timeframes: ['1h'],
-    startDate: defaultStartDate,
-    endDate: defaultEndDate,
+    startDate: yearAgo.toISOString().slice(0, 10),
+    endDate: now.toISOString().slice(0, 10),
     includeVolume: true,
     adjustForSplits: true,
     adjustForDividends: false

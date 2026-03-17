@@ -23,8 +23,11 @@ const Strategies: React.FC = () => {
       const initialBalance = accountBalance?.total || 10000;
       
       // Use dynamic date range: last 12 months
-      const endDate = new Date().toISOString().split('T')[0] ?? '2024-01-01';
-      const startDate = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] ?? '2023-01-01';
+      const now = new Date();
+      const yearAgo = new Date(now);
+      yearAgo.setFullYear(yearAgo.getFullYear() - 1);
+      const endDate = now.toISOString().slice(0, 10);
+      const startDate = yearAgo.toISOString().slice(0, 10);
       
       const result = await backtestService.runBacktest(strategy, {
         startDate,
@@ -49,8 +52,11 @@ const Strategies: React.FC = () => {
       const initialBalance = accountBalance?.total || 10000;
       
       // Use dynamic date range: last 12 months
-      const endDate = new Date().toISOString().split('T')[0] ?? '2024-01-01';
-      const startDate = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] ?? '2023-01-01';
+      const now = new Date();
+      const yearAgo = new Date(now);
+      yearAgo.setFullYear(yearAgo.getFullYear() - 1);
+      const endDate = now.toISOString().slice(0, 10);
+      const startDate = yearAgo.toISOString().slice(0, 10);
       
       // Fix the parameter ranges to match the expected type
       const parameterRanges: Record<string, [number, number, number]> = {
