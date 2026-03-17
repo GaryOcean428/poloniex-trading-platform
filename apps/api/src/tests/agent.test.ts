@@ -3,19 +3,28 @@
  * Tests the complete agent lifecycle and functionality
  */
 
-import { describe, test, expect, beforeAll, afterAll, beforeEach } from '@jest/globals';
-import request from 'supertest';
+import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { pool } from '../db/connection.js';
 import { mockTradingService } from '../services/mockTradingService.js';
 
 const API_URL = process.env.API_URL || 'http://localhost:3001';
 let authToken: string;
 let userId: number;
+let request: ((url: string) => any) | null = null;
 
-describe('Autonomous Agent API', () => {
+try {
+  request = (await import('supertest')).default as (url: string) => any;
+} catch {
+  request = null;
+}
+
+const describeIfSupertest = request ? describe : describe.skip;
+const requestClient = request as NonNullable<typeof request>;
+
+describeIfSupertest('Autonomous Agent API', () => {
   beforeAll(async () => {
     // Create test user and get auth token
-    const registerRes = await request(API_URL)
+    const registerRes = await requestClient(API_URL)
       .post('/api/auth/register')
       .send({
         email: `test_${Date.now()}@example.com`,
@@ -46,7 +55,7 @@ describe('Autonomous Agent API', () => {
 
   describe('Authentication', () => {
     test('should reject requests without auth token', async () => {
-      const res = await request(API_URL)
+      const res = await requestClient(API_URL)
         .get('/api/agent/status');
 
       expect(res.status).toBe(401);
@@ -54,7 +63,7 @@ describe('Autonomous Agent API', () => {
     });
 
     test('should accept requests with valid auth token', async () => {
-      const res = await request(API_URL)
+      const res = await requestClient(API_URL)
         .get('/api/agent/status')
         .set('Authorization', `Bearer ${authToken}`);
 
@@ -76,7 +85,7 @@ describe('Autonomous Agent API', () => {
         automationLevel: 'fully_autonomous'
       };
 
-      const res = await request(API_URL)
+      const res = await requestClient(API_URL)
         .post('/api/agent/start')
         .set('Authorization', `Bearer ${authToken}`)
         .send(config);
@@ -88,7 +97,7 @@ describe('Autonomous Agent API', () => {
     });
 
     test('should get agent status', async () => {
-      const res = await request(API_URL)
+      const res = await requestClient(API_URL)
         .get('/api/agent/status')
         .set('Authorization', `Bearer ${authToken}`);
 
@@ -98,7 +107,7 @@ describe('Autonomous Agent API', () => {
     });
 
     test('should pause agent', async () => {
-      const res = await request(API_URL)
+      const res = await requestClient(API_URL)
         .post('/api/agent/pause')
         .set('Authorization', `Bearer ${authToken}`);
 
@@ -107,7 +116,7 @@ describe('Autonomous Agent API', () => {
     });
 
     test('should stop agent', async () => {
-      const res = await request(API_URL)
+      const res = await requestClient(API_URL)
         .post('/api/agent/stop')
         .set('Authorization', `Bearer ${authToken}`);
 
@@ -119,7 +128,7 @@ describe('Autonomous Agent API', () => {
   describe('Strategy Generation', () => {
     test('should generate strategies', async () => {
       // Start agent first
-      await request(API_URL)
+      await requestClient(API_URL)
         .post('/api/agent/start')
         .set('Authorization', `Bearer ${authToken}`)
         .send({
@@ -131,7 +140,7 @@ describe('Autonomous Agent API', () => {
       // Wait for strategies to be generated (mock mode should be fast)
       await new Promise(resolve => setTimeout(resolve, 3000));
 
-      const res = await request(API_URL)
+      const res = await requestClient(API_URL)
         .get('/api/agent/strategies')
         .set('Authorization', `Bearer ${authToken}`);
 
@@ -143,7 +152,7 @@ describe('Autonomous Agent API', () => {
 
   describe('Activity Logging', () => {
     test('should log agent activities', async () => {
-      const res = await request(API_URL)
+      const res = await requestClient(API_URL)
         .get('/api/agent/activity?limit=10')
         .set('Authorization', `Bearer ${authToken}`);
 
@@ -155,7 +164,7 @@ describe('Autonomous Agent API', () => {
 
   describe('Performance Metrics', () => {
     test('should return performance metrics', async () => {
-      const res = await request(API_URL)
+      const res = await requestClient(API_URL)
         .get('/api/agent/performance')
         .set('Authorization', `Bearer ${authToken}`);
 
@@ -174,7 +183,7 @@ describe('Autonomous Agent API', () => {
         positionSize: 3
       };
 
-      const res = await request(API_URL)
+      const res = await requestClient(API_URL)
         .put('/api/agent/config')
         .set('Authorization', `Bearer ${authToken}`)
         .send(newConfig);
@@ -191,7 +200,7 @@ describe('Autonomous Agent API', () => {
         positionSize: 0 // Invalid: zero
       };
 
-      const res = await request(API_URL)
+      const res = await requestClient(API_URL)
         .post('/api/agent/start')
         .set('Authorization', `Bearer ${authToken}`)
         .send(invalidConfig);
@@ -201,7 +210,7 @@ describe('Autonomous Agent API', () => {
     });
 
     test('should handle missing required fields', async () => {
-      const res = await request(API_URL)
+      const res = await requestClient(API_URL)
         .post('/api/agent/start')
         .set('Authorization', `Bearer ${authToken}`)
         .send({});

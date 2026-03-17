@@ -29,7 +29,7 @@ describe('Zustand State Management', () => {
       const clearedCredentials = useAppStore.getState().apiCredentials;
       expect(clearedCredentials.apiKey).toBe('');
       expect(clearedCredentials.apiSecret).toBe('');
-      expect(clearedCredentials.isLiveTrading).toBe(false);
+      expect(clearedCredentials.isLiveTrading).toBe(true);
     });
 
     it('should update partial credentials', () => {

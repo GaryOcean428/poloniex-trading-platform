@@ -3,16 +3,16 @@
  * Tests with realistic market data scenarios
  */
 
-import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { describe, it, expect, vi } from 'vitest';
 import qigEnhancedMlService from '../qigEnhancedMlService.js';
 
 // Mock logger
-jest.mock('../../../utils/logger.js', () => ({
+vi.mock('../../../utils/logger.js', () => ({
   logger: {
-    debug: jest.fn(),
-    info: jest.fn(),
-    error: jest.fn(),
-    warn: jest.fn()
+    debug: vi.fn(),
+    info: vi.fn(),
+    error: vi.fn(),
+    warn: vi.fn()
   }
 }));
 

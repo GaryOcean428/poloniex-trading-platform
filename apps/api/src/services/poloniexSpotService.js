@@ -474,11 +474,11 @@ class PoloniexSpotService {
    * @param {string} symbol - Trading pair (e.g., BTC_USDT)
    */
   async getTicker24h(symbol) {
-    try {
-      if (!symbol) {
-        throw new Error('Symbol is required');
-      }
+    if (!symbol) {
+      throw new Error('Symbol is required');
+    }
 
+    try {
       // Market data endpoints don't require authentication
       const url = `${this.baseURL}/markets/${symbol}/ticker24h`;
       const response = await axios.get(url, { timeout: this.timeout });
@@ -558,11 +558,11 @@ class PoloniexSpotService {
    * @param {number} [params.limit] - Number of levels (5, 10, 20, 50, 100, 150)
    */
   async getOrderBook(symbol, params = {}) {
-    try {
-      if (!symbol) {
-        throw new Error('Symbol is required');
-      }
+    if (!symbol) {
+      throw new Error('Symbol is required');
+    }
 
+    try {
       const queryString = Object.keys(params).length > 0
         ? '?' + new URLSearchParams(params).toString()
         : '';
@@ -619,15 +619,15 @@ class PoloniexSpotService {
    * @param {number} [params.limit] - Number of candles (default: 100, max: 500)
    */
   async getCandles(symbol, params = {}) {
+    if (!symbol) {
+      throw new Error('Symbol is required');
+    }
+
+    if (!params.interval) {
+      throw new Error('Interval is required');
+    }
+
     try {
-      if (!symbol) {
-        throw new Error('Symbol is required');
-      }
-
-      if (!params.interval) {
-        throw new Error('Interval is required');
-      }
-
       const queryString = new URLSearchParams(params).toString();
       const url = `${this.baseURL}/markets/${symbol}/candles?${queryString}`;
       const response = await axios.get(url, { timeout: this.timeout });
