@@ -1,6 +1,22 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { z } from 'zod';
 import { logger } from '../utils/logger.js';
 import type { Strategy, StrategyParameters } from '@shared/types/strategy';
+
+/**
+ * SDK 0.68.0 does not yet expose `adaptive` thinking or the `effort` parameter
+ * introduced in Claude 4.6.  We extend the params locally so the TypeScript
+ * compiler stays happy while remaining fully type-safe for all other fields.
+ */
+type AdaptiveThinkingConfig = { type: 'adaptive' };
+type ExtendedMessageCreateParams = Omit<
+  Anthropic.Messages.MessageCreateParamsNonStreaming,
+  'thinking'
+> & {
+  thinking?: AdaptiveThinkingConfig | Anthropic.Messages.ThinkingConfigParam;
+  /** Claude 4.6 effort parameter (GA, no beta header needed). */
+  effort?: 'low' | 'medium' | 'high' | 'max';
+};
 
 /**
  * LLM-Powered Strategy Generator
@@ -52,6 +68,36 @@ export interface GeneratedStrategy {
   reasoning: string;
 }
 
+// ---------------------------------------------------------------------------
+// Zod schema for validating / coercing the LLM JSON output
+// ---------------------------------------------------------------------------
+const GeneratedStrategySchema = z.object({
+  name: z.string().min(1),
+  description: z.string().min(1),
+  type: z.enum(['trend_following', 'mean_reversion', 'momentum', 'breakout', 'scalping', 'swing', 'arbitrage']),
+  algorithm: z.string().min(1),
+  parameters: z.object({
+    pair: z.string().optional(),
+    timeframe: z.string().optional(),
+    indicators: z.record(z.string(), z.unknown()).optional()
+  }).passthrough(),
+  entryConditions: z.array(z.string()).min(1),
+  exitConditions: z.array(z.string()).min(1),
+  riskManagement: z.object({
+    stopLossPercent: z.number(),
+    takeProfitPercent: z.number(),
+    maxPositionSize: z.number(),
+    maxDrawdown: z.number()
+  }),
+  expectedPerformance: z.object({
+    winRate: z.number(),
+    profitFactor: z.number(),
+    sharpeRatio: z.number()
+  }).optional().default({ winRate: 0.50, profitFactor: 1.5, sharpeRatio: 1.0 }),
+  confidence: z.number().optional().default(70),
+  reasoning: z.string().optional().default('LLM-generated strategy')
+});
+
 export class LLMStrategyGenerator {
   private client: Anthropic | null = null;
   private model = 'claude-sonnet-4-6';
@@ -95,7 +141,7 @@ export class LLMStrategyGenerator {
       const prompt = this.buildStrategyGenerationPrompt(marketContext);
 
       // Use adaptive thinking for Sonnet 4.6 with balanced effort and prompt caching
-      const response = await this.client.messages.create({
+      const response = await (this.client!.messages.create as (params: ExtendedMessageCreateParams) => Promise<Anthropic.Message>)({
         model: this.model,
         max_tokens: 8192,
         temperature: 0.7,
@@ -185,7 +231,7 @@ export class LLMStrategyGenerator {
       const prompt = this.buildOptimizationPrompt(strategy, performanceData, marketContext);
 
       // Use adaptive thinking for Sonnet 4.6 with balanced effort and prompt caching
-      const response = await this.client.messages.create({
+      const response = await (this.client!.messages.create as (params: ExtendedMessageCreateParams) => Promise<Anthropic.Message>)({
         model: this.model,
         max_tokens: 8192,
         temperature: 0.6,
@@ -383,7 +429,7 @@ Generate an optimized version of this strategy as JSON (follow the exact format 
   }
 
   /**
-   * Parse LLM response into structured strategy
+   * Parse LLM response into structured strategy using Zod schema validation
    */
   private parseStrategyResponse(response: string, context: MarketContext): GeneratedStrategy {
     try {
@@ -394,34 +440,20 @@ Generate an optimized version of this strategy as JSON (follow the exact format 
       }
 
       const jsonStr = jsonMatch[1] || jsonMatch[0];
-      const parsed = JSON.parse(jsonStr);
+      const parsed: unknown = JSON.parse(jsonStr);
 
-      // Validate required fields
-      const required = ['name', 'description', 'type', 'algorithm', 'parameters', 'entryConditions', 'exitConditions', 'riskManagement'];
-      for (const field of required) {
-        if (!parsed[field]) {
-          throw new Error(`Missing required field: ${field}`);
-        }
-      }
+      // Validate and coerce via Zod schema; defaults for optional fields are applied here
+      const result = GeneratedStrategySchema.parse(parsed);
 
       // Ensure parameters include pair and timeframe
-      if (!parsed.parameters.pair) {
-        parsed.parameters.pair = context.symbol;
+      if (!result.parameters.pair) {
+        result.parameters.pair = context.symbol;
       }
-      if (!parsed.parameters.timeframe) {
-        parsed.parameters.timeframe = '1h';
+      if (!result.parameters.timeframe) {
+        result.parameters.timeframe = '1h';
       }
 
-      // Set defaults for optional fields
-      parsed.expectedPerformance = parsed.expectedPerformance || {
-        winRate: 0.50,
-        profitFactor: 1.5,
-        sharpeRatio: 1.0
-      };
-      parsed.confidence = parsed.confidence || 70;
-      parsed.reasoning = parsed.reasoning || 'LLM-generated strategy';
-
-      return parsed as GeneratedStrategy;
+      return result as GeneratedStrategy;
     } catch (error) {
       logger.error('Error parsing LLM strategy response:', error);
       logger.error('Response was:', response);
