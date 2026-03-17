@@ -1,906 +1,848 @@
-import React, { useState, useEffect } from 'react';
-import { Strategy } from '@/types';
-import { BacktestResult, BacktestOptions } from '@/types/backtest';
-// import { backtestService } from '@/services/backtestService';
-import { advancedBacktestService } from '@/services/advancedBacktestService';
+import React, { useState, useEffect, useCallback } from 'react';
+import axios from 'axios';
+import { getAccessToken } from '@/utils/auth';
+import { getBackendUrl } from '@/utils/environment';
 import { useTradingContext } from '@/hooks/useTradingContext';
-import HistoricalDataManager from '@/components/backtesting/HistoricalDataManager';
-import { 
-  Play, 
-  Settings, 
-  Download, 
+import {
   TrendingUp,
   AlertTriangle,
   BarChart3,
-  PieChart,
   Activity,
   Zap,
-  Database
+  Brain,
+  Shield,
+  CheckCircle2,
+  XCircle,
+  Clock,
+  ArrowRight,
+  RefreshCw,
+  Target,
+  Eye,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
-import { Line, Bar } from 'react-chartjs-2';
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  BarElement,
-  Title,
-  Tooltip,
-  Legend,
-  Filler
-} from 'chart.js';
 
-// Register Chart.js components
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  BarElement,
-  Title,
-  Tooltip,
-  Legend,
-  Filler
-);
+const API_BASE_URL = getBackendUrl();
 
-interface AdvancedMetrics {
-  valueAtRisk95: number;
-  valueAtRisk99: number;
-  conditionalVaR95: number;
-  conditionalVaR99: number;
-  calmarRatio: number;
-  sortinoRatio: number;
-  omegaRatio: number;
-  tailRatio: number;
-  gainToLossRatio: number;
-  payoffRatio: number;
-  expectancy: number;
-  systemQualityNumber: number;
-  kRatio: number;
-  ulcerIndex: number;
-  recoveryFactor: number;
-  profitabilityIndex: number;
-  // Additional properties used in the UI
-  painIndex: number;
-  martinRatio: number;
-  burkeRatio: number;
-  skewness: number;
-  kurtosis: number;
-  upnessIndex: number;
-  upsidePotentialRatio: number;
-  gainToPainRatio: number;
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+interface StrategyCounts {
+  generated: number;
+  backtested: number;
+  paperTrading: number;
+  live: number;
 }
 
-interface BacktestSession {
+interface Confidence {
+  score: number;
+  level: string;
+}
+
+interface Risk {
+  rating: string;
+  averageMaxDrawdown: number;
+}
+
+interface PaperTradingSummary {
+  totalSessions: number;
+  activeSessions: number;
+  totalRealizedPnl: number;
+  totalUnrealizedPnl: number;
+  totalTrades: number;
+  winningTrades: number;
+  winRate: number;
+  averageReturnPct: number;
+}
+
+interface LiveReadiness {
+  ready: boolean;
+  reasons: string[];
+}
+
+interface StrategyEvent {
+  strategyId: string;
+  strategyName: string;
+  symbol: string;
+  status: string;
+  updatedAt: string;
+  createdAt: string;
+}
+
+interface StrategyBreakdown {
   id: string;
   name: string;
-  strategy: Strategy;
-  options: BacktestOptions;
-  result: BacktestResult | null;
-  advancedMetrics: AdvancedMetrics;
-  createdAt: Date;
-  status: 'pending' | 'running' | 'completed' | 'failed';
+  symbol: string;
+  timeframe: string;
+  status: string;
+  performance: {
+    winRate?: number;
+    profitFactor?: number;
+    totalTrades?: number;
+    totalReturn?: number;
+  };
 }
 
-const Backtesting: React.FC = () => {
-  const { strategies } = useTradingContext();
-  const [selectedStrategy, setSelectedStrategy] = useState<Strategy | null>(null);
-  const [backtestOptions, setBacktestOptions] = useState<BacktestOptions>({
-    startDate: '2023-01-01',
-    endDate: '2024-01-01',
-    initialBalance: 10000,
-    feeRate: 0.001,
-    slippage: 0.001,
-    useHistoricalData: true
-  });
-  
-  const [sessions, setSessions] = useState<BacktestSession[]>([]);
-  const [activeSession, setActiveSession] = useState<BacktestSession | null>(null);
-  const [isRunning, setIsRunning] = useState(false);
-  const [activeTab, setActiveTab] = useState<'setup' | 'data' | 'results' | 'analysis' | 'reports'>('setup');
-  const [historicalDataLoaded, setHistoricalDataLoaded] = useState(false);
+interface PipelineSummary {
+  strategyCounts: StrategyCounts;
+  confidence: Confidence;
+  risk: Risk;
+  paperTrading: PaperTradingSummary | null;
+  liveReadiness: LiveReadiness;
+  recentEvents: StrategyEvent[];
+  strategyBreakdown: StrategyBreakdown[];
+}
 
-  // Initialize with sample session for demo
-  useEffect(() => {
-    if (strategies.length > 0 && sessions.length === 0) {
-      const firstStrategy = strategies[0];
-      if (!firstStrategy) return; // Satisfy noUncheckedIndexedAccess
-      const sampleSession: BacktestSession = {
-        id: '1',
-        name: 'Sample Backtest',
-        strategy: firstStrategy,
-        options: backtestOptions,
-        result: null,
-        advancedMetrics: {
-          valueAtRisk95: 0, valueAtRisk99: 0, conditionalVaR95: 0, conditionalVaR99: 0,
-          calmarRatio: 0, sortinoRatio: 0, omegaRatio: 0, tailRatio: 0,
-          gainToLossRatio: 0, payoffRatio: 0, expectancy: 0, systemQualityNumber: 0,
-          kRatio: 0, ulcerIndex: 0, recoveryFactor: 0, profitabilityIndex: 0,
-          painIndex: 0, martinRatio: 0, burkeRatio: 0, skewness: 0, kurtosis: 0,
-          upnessIndex: 0, upsidePotentialRatio: 0, gainToPainRatio: 0
-        },
-        createdAt: new Date(),
-        status: 'pending'
-      };
-      setSessions([sampleSession]);
-    }
-  }, [strategies, backtestOptions, sessions.length]);
-
-  const runBacktest = async () => {
-    if (!selectedStrategy) return;
-
-    setIsRunning(true);
-    
-    const sessionId = Date.now().toString();
-    const newSession: BacktestSession = {
-      id: sessionId,
-      name: `Backtest ${selectedStrategy.name} ${new Date().toLocaleDateString()}`,
-      strategy: selectedStrategy,
-      options: backtestOptions,
-      result: null,
-      advancedMetrics: {
-        valueAtRisk95: 0, valueAtRisk99: 0, conditionalVaR95: 0, conditionalVaR99: 0,
-        calmarRatio: 0, sortinoRatio: 0, omegaRatio: 0, tailRatio: 0,
-        gainToLossRatio: 0, payoffRatio: 0, expectancy: 0, systemQualityNumber: 0,
-        kRatio: 0, ulcerIndex: 0, recoveryFactor: 0, profitabilityIndex: 0,
-        painIndex: 0, martinRatio: 0, burkeRatio: 0, skewness: 0, kurtosis: 0,
-        upnessIndex: 0, upsidePotentialRatio: 0, gainToPainRatio: 0
-      },
-      createdAt: new Date(),
-      status: 'running'
-    };
-
-    setSessions(prev => [newSession, ...prev]);
-    setActiveSession(newSession);
-
-    try {
-      // Use advanced backtest service for Phase 4
-      const result = await advancedBacktestService.runAdvancedBacktest(selectedStrategy, backtestOptions);
-      const advancedMetrics = result.advancedMetrics;
-
-      const updatedSession = {
-        ...newSession,
-        result: {
-          ...result,
-          // Convert advanced metrics to the expected format
-          metrics: {
-            ...result.metrics,
-            netProfit: result.totalPnL,
-            grossProfit: result.trades.filter(t => t.pnl > 0).reduce((sum, t) => sum + t.pnl, 0),
-            grossLoss: Math.abs(result.trades.filter(t => t.pnl < 0).reduce((sum, t) => sum + t.pnl, 0)),
-            maxConsecutiveWins: 0, // Would need to calculate
-            maxConsecutiveLosses: 0, // Would need to calculate
-            averageTrade: result.trades.reduce((sum, t) => sum + t.pnl, 0) / result.trades.length || 0,
-            averageProfit: result.trades.filter(t => t.pnl > 0).reduce((sum, t) => sum + t.pnl, 0) / result.trades.filter(t => t.pnl > 0).length || 0,
-            averageLoss: result.trades.filter(t => t.pnl < 0).reduce((sum, t) => sum + t.pnl, 0) / result.trades.filter(t => t.pnl < 0).length || 0,
-            largestProfit: Math.max(...result.trades.map(t => t.pnl)),
-            largestLoss: Math.min(...result.trades.map(t => t.pnl)),
-            annualizedReturn: ((result.finalBalance / result.initialBalance) - 1) * 365 / 365 // Simplified
-          }
-        },
-        advancedMetrics: {
-          valueAtRisk95: advancedMetrics.valueAtRisk95 || 0,
-          valueAtRisk99: advancedMetrics.valueAtRisk99 || 0,
-          conditionalVaR95: advancedMetrics.conditionalVaR95 || 0,
-          conditionalVaR99: advancedMetrics.conditionalVaR99 || 0,
-          calmarRatio: advancedMetrics.calmarRatio || 0,
-          sortinoRatio: advancedMetrics.sortinoRatio || 0,
-          omegaRatio: advancedMetrics.omegaRatio || 0,
-          tailRatio: advancedMetrics.tailRatio || 0,
-          gainToLossRatio: (advancedMetrics.averageWin || 0) / Math.max(Math.abs(advancedMetrics.averageLoss || 0), 1),
-          payoffRatio: (advancedMetrics.averageWin || 0) / Math.max(Math.abs(advancedMetrics.averageLoss || 0), 1),
-          expectancy: (advancedMetrics.averageWin || 0) * (result.winRate / 100) - Math.abs(advancedMetrics.averageLoss || 0) * ((100 - result.winRate) / 100),
-          systemQualityNumber: result.sharpeRatio * Math.sqrt(result.totalTrades),
-          kRatio: 0, // Not available in service response yet
-          ulcerIndex: advancedMetrics.ulcerIndex || 0,
-          recoveryFactor: advancedMetrics.recoveryFactor || 0,
-          profitabilityIndex: ((result.finalBalance - result.initialBalance) / result.initialBalance) || 0,
-          painIndex: advancedMetrics.painIndex || 0,
-          martinRatio: advancedMetrics.martinRatio || 0,
-          burkeRatio: advancedMetrics.burkeRatio || 0,
-          skewness: advancedMetrics.skewness || 0,
-          kurtosis: advancedMetrics.kurtosis || 0,
-          upnessIndex: advancedMetrics.upnessIndex || 0,
-          upsidePotentialRatio: advancedMetrics.upsidePotentialRatio || 0,
-          gainToPainRatio: advancedMetrics.gainToPainRatio || 0
-        },
-        status: 'completed' as const
-      };
-
-      setSessions(prev => prev.map(s => s.id === sessionId ? updatedSession : s));
-      setActiveSession(updatedSession);
-      setActiveTab('results' as 'setup' | 'data' | 'results' | 'analysis' | 'reports');
-    } catch (_error) {
-    // console.error('Backtest failed:', error);
-    const failedSession = {
-      ...newSession,
-      status: 'failed' as const
-    };
-      setSessions(prev => prev.map(s => s.id === sessionId ? failedSession : s));
-    } finally {
-      setIsRunning(false);
-    }
+interface PipelineResult {
+  strategyId: string;
+  strategyName: string;
+  symbol: string;
+  timeframe: string;
+  status: string;
+  averageScore: number;
+  recommendation: string;
+  reasoning: string;
+  performance: {
+    winRate?: number;
+    profitFactor?: number;
+    totalTrades?: number;
+    totalReturn?: number;
   };
-
-  // TODO: Implement advanced metrics calculation
-  /*
-  const calculateAdvancedMetrics = (result: BacktestResult): AdvancedMetrics => {
-    const returns = result.trades.map(t => t.pnlPercent / 100);
-    const negativeReturns = returns.filter(r => r < 0).sort((a, b) => a - b);
-    const positiveReturns = returns.filter(r => r > 0);
-    
-    // Calculate Value at Risk (VaR)
-    const calculateVaR = (confidence: number) => {
-      const index = Math.floor((1 - confidence) * negativeReturns.length);
-      return negativeReturns[index] || 0;
-    };
-
-    const var95 = calculateVaR(0.95);
-    const var99 = calculateVaR(0.99);
-
-    // Calculate Conditional VaR (Expected Shortfall)
-    const calculateCVaR = (confidence: number) => {
-      const varValue = calculateVaR(confidence);
-      const tailReturns = negativeReturns.filter(r => r <= varValue);
-      return tailReturns.length > 0 ? tailReturns.reduce((sum, r) => sum + r, 0) / tailReturns.length : 0;
-    };
-
-    const cvar95 = calculateCVaR(0.95);
-    const cvar99 = calculateCVaR(0.99);
-
-    // Calculate other advanced metrics
-    const downside = returns.filter(r => r < 0);
-    const downsideDeviation = Math.sqrt(downside.reduce((sum, r) => sum + r * r, 0) / downside.length);
-    const avgReturn = returns.reduce((sum, r) => sum + r, 0) / returns.length;
-    
-    const sortinoRatio = downsideDeviation > 0 ? avgReturn / downsideDeviation : 0;
-    const calmarRatio = result.maxDrawdown > 0 ? (result.finalBalance - result.initialBalance) / result.initialBalance / result.maxDrawdown : 0;
-
-    const wins = result.trades.filter(t => t.pnl > 0);
-    const losses = result.trades.filter(t => t.pnl < 0);
-    const avgWin = wins.length > 0 ? wins.reduce((sum, t) => sum + t.pnl, 0) / wins.length : 0;
-    const avgLoss = losses.length > 0 ? Math.abs(losses.reduce((sum, t) => sum + t.pnl, 0) / losses.length) : 0;
-
-    return {
-      valueAtRisk95: Math.abs(var95) * 100,
-      valueAtRisk99: Math.abs(var99) * 100,
-      conditionalVaR95: Math.abs(cvar95) * 100,
-      conditionalVaR99: Math.abs(cvar99) * 100,
-      calmarRatio,
-      sortinoRatio,
-      omegaRatio: positiveReturns.length > 0 && negativeReturns.length > 0 
-        ? (positiveReturns.reduce((sum, r) => sum + r, 0) / positiveReturns.length) / 
-          (Math.abs(negativeReturns.reduce((sum, r) => sum + r, 0) / negativeReturns.length)) : 0,
-      tailRatio: negativeReturns.length > 1 ? Math.abs(var95 / var99) : 0,
-      gainToLossRatio: avgLoss > 0 ? avgWin / avgLoss : 0,
-      payoffRatio: avgLoss > 0 ? avgWin / avgLoss : 0,
-      expectancy: (result.winRate / 100 * avgWin) - ((100 - result.winRate) / 100 * avgLoss),
-      systemQualityNumber: result.sharpeRatio * Math.sqrt(result.totalTrades),
-      kRatio: returns.length > 1 ? avgReturn / (Math.max(...returns) - Math.min(...returns)) : 0,
-      ulcerIndex: Math.sqrt(result.trades.reduce((sum, t, i) => {
-        const dd = result.trades.slice(0, i + 1).reduce((maxBalance, trade) => Math.max(maxBalance, trade.balance), 0);
-        const drawdown = dd > 0 ? Math.pow((dd - t.balance) / dd * 100, 2) : 0;
-        return sum + drawdown;
-      }, 0) / result.trades.length),
-      recoveryFactor: result.maxDrawdown > 0 ? (result.finalBalance - result.initialBalance) / result.maxDrawdown : 0,
-      profitabilityIndex: result.initialBalance > 0 ? (result.finalBalance - result.initialBalance) / result.initialBalance : 0
-    };
+  confidence: {
+    score: number;
+    level: string;
+    assessedAt: string;
   };
-  */
+  createdAt: string;
+}
 
-  const exportResults = async (_format: 'csv' | 'pdf' | 'excel') => {
-    if (!activeSession?.result) return;
-    
-    // Implement export functionality
-    // console.log(`Exporting results in ${format} format`);
-    // This would integrate with a reporting service
+// ─── Helper Components ────────────────────────────────────────────────────────
+
+const ConfidenceMeter: React.FC<{ score: number; level: string }> = ({ score, level }) => {
+  const getColor = () => {
+    if (level === 'high') return { bar: 'bg-green-500', text: 'text-green-700', bg: 'bg-green-50' };
+    if (level === 'medium') return { bar: 'bg-yellow-500', text: 'text-yellow-700', bg: 'bg-yellow-50' };
+    if (level === 'low') return { bar: 'bg-orange-500', text: 'text-orange-700', bg: 'bg-orange-50' };
+    if (level === 'very_low') return { bar: 'bg-red-500', text: 'text-red-700', bg: 'bg-red-50' };
+    return { bar: 'bg-gray-400', text: 'text-gray-600', bg: 'bg-gray-50' };
   };
+  const colors = getColor();
+  const clampedScore = Math.min(100, Math.max(0, score));
 
-  const renderSetupTab = () => (
-    <div className="space-y-6">
-      <div className="bg-bg-tertiary p-6 rounded-lg shadow">
-        <h3 className="text-lg font-medium mb-4 flex items-center">
-          <Settings className="w-5 h-5 mr-2" />
-          Backtest Configuration
-        </h3>
-        
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Strategy
-            </label>
-            <select
-              value={selectedStrategy?.id || ''}
-              onChange={(e) => {
-                const strategy = strategies.find(s => s.id === e.target.value);
-                setSelectedStrategy(strategy || null);
-              }}
-              className="w-full p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            >
-              <option value="">Select a strategy</option>
-              {strategies.map(strategy => (
-                <option key={strategy.id} value={strategy.id}>
-                  {strategy.name} ({strategy.type})
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Initial Balance (USD)
-            </label>
-            <div className="space-y-2">
-              <input
-                type="number"
-                min="100"
-                max="1000000"
-                step="100"
-                value={backtestOptions.initialBalance}
-                onChange={(e) => setBacktestOptions({
-                  ...backtestOptions,
-                  initialBalance: parseFloat(e.target.value) || 10000
-                })}
-                className="w-full p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                placeholder="Enter amount (min: $100)"
-              />
-              <div className="flex flex-wrap gap-2">
-                {[1000, 5000, 10000, 25000, 50000, 100000].map(amount => (
-                  <button
-                    key={amount}
-                    type="button"
-                    onClick={() => setBacktestOptions({
-                      ...backtestOptions,
-                      initialBalance: amount
-                    })}
-                    className={`px-3 py-1 text-xs rounded-md border transition-colors ${
-                      backtestOptions.initialBalance === amount
-                        ? 'bg-blue-100 border-blue-300 text-blue-700'
-                        : 'bg-bg-secondary border-border-subtle text-gray-600 hover:bg-bg-tertiary'
-                    }`}
-                  >
-                    ${amount.toLocaleString()}
-                  </button>
-                ))}
-              </div>
-              <p className="text-xs text-text-muted">
-                Choose a starting balance for your backtest simulation
-              </p>
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Start Date
-            </label>
-            <input
-              type="date"
-              value={backtestOptions.startDate}
-              onChange={(e) => setBacktestOptions({
-                ...backtestOptions,
-                startDate: e.target.value
-              })}
-              className="w-full p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              End Date
-            </label>
-            <input
-              type="date"
-              value={backtestOptions.endDate}
-              onChange={(e) => setBacktestOptions({
-                ...backtestOptions,
-                endDate: e.target.value
-              })}
-              className="w-full p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Fee Rate (%)
-            </label>
-            <input
-              type="number"
-              step="0.001"
-              value={backtestOptions.feeRate * 100}
-              onChange={(e) => setBacktestOptions({
-                ...backtestOptions,
-                feeRate: parseFloat(e.target.value) / 100
-              })}
-              className="w-full p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Slippage (%)
-            </label>
-            <input
-              type="number"
-              step="0.001"
-              value={backtestOptions.slippage * 100}
-              onChange={(e) => setBacktestOptions({
-                ...backtestOptions,
-                slippage: parseFloat(e.target.value) / 100
-              })}
-              className="w-full p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            />
-          </div>
-        </div>
-
-        <div className="mt-6 flex justify-end space-x-3">
-          <button
-            onClick={runBacktest}
-            disabled={!selectedStrategy || isRunning}
-            className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <Play className="w-4 h-4 mr-2" />
-            {isRunning ? 'Running Backtest...' : 'Run Backtest'}
-          </button>
-        </div>
+  return (
+    <div className={`${colors.bg} p-4 rounded-lg`}>
+      <div className="flex items-center justify-between mb-2">
+        <span className={`text-sm font-medium ${colors.text}`}>
+          Confidence: {level.replace('_', ' ').toUpperCase()}
+        </span>
+        <span className={`text-lg font-bold ${colors.text}`}>{clampedScore.toFixed(0)}/100</span>
       </div>
-
-      {/* Session History */}
-      <div className="bg-bg-tertiary p-6 rounded-lg shadow">
-        <h3 className="text-lg font-medium mb-4">Recent Sessions</h3>
-        <div className="space-y-3">
-          {sessions.slice(0, 5).map(session => (
-            <div
-              key={session.id}
-              onClick={() => setActiveSession(session)}
-              className={`p-4 border rounded-md cursor-pointer transition-colors ${
-                activeSession?.id === session.id
-                  ? 'border-blue-500 bg-blue-50'
-                  : 'border-border-subtle hover:border-gray-300'
-              }`}
-            >
-              <div className="flex items-center justify-between">
-                <div>
-                  <h4 className="font-medium">{session.name}</h4>
-                  <p className="text-sm text-gray-600">
-                    {session.strategy.name} • {session.createdAt.toLocaleDateString()}
-                  </p>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                    session.status === 'completed' ? 'bg-green-100 text-green-800' :
-                    session.status === 'running' ? 'bg-yellow-100 text-yellow-800' :
-                    session.status === 'failed' ? 'bg-red-100 text-red-800' :
-                    'bg-gray-100 text-gray-800'
-                  }`}>
-                    {session.status}
-                  </span>
-                  {session.result && (
-                    <span className={`text-sm font-medium ${
-                      session.result.totalPnL > 0 ? 'text-green-600' : 'text-red-600'
-                    }`}>
-                      {session.result.totalPnL > 0 ? '+' : ''}${session.result.totalPnL.toFixed(2)}
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
+      <div className="w-full bg-gray-200 rounded-full h-3">
+        <div
+          className={`${colors.bar} h-3 rounded-full transition-all duration-700`}
+          style={{ width: `${clampedScore}%` }}
+        />
       </div>
     </div>
   );
+};
 
-  const renderResultsTab = () => {
-    if (!activeSession?.result) {
+const RiskBadge: React.FC<{ rating: string; drawdown: number }> = ({ rating, drawdown }) => {
+  const getStyle = () => {
+    switch (rating) {
+      case 'low': return 'bg-green-100 text-green-800 border-green-300';
+      case 'medium': return 'bg-yellow-100 text-yellow-800 border-yellow-300';
+      case 'high': return 'bg-orange-100 text-orange-800 border-orange-300';
+      case 'very_high': return 'bg-red-100 text-red-800 border-red-300';
+      default: return 'bg-gray-100 text-gray-600 border-gray-300';
+    }
+  };
+
+  return (
+    <div className={`inline-flex items-center px-3 py-1 rounded-full border text-sm font-medium ${getStyle()}`}>
+      <Shield className="w-3.5 h-3.5 mr-1.5" />
+      Risk: {rating.replace('_', ' ').toUpperCase()}
+      {drawdown > 0 && <span className="ml-1.5 text-xs opacity-75">(DD: {drawdown.toFixed(1)}%)</span>}
+    </div>
+  );
+};
+
+const StatusBadge: React.FC<{ status: string }> = ({ status }) => {
+  const getStyle = () => {
+    switch (status) {
+      case 'generated': return 'bg-gray-100 text-gray-700';
+      case 'backtested': return 'bg-blue-100 text-blue-700';
+      case 'paper_trading': return 'bg-yellow-100 text-yellow-700';
+      case 'live': case 'deployed': return 'bg-green-100 text-green-700';
+      case 'retired': return 'bg-red-100 text-red-700';
+      default: return 'bg-gray-100 text-gray-600';
+    }
+  };
+
+  return (
+    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStyle()}`}>
+      {status.replace('_', ' ')}
+    </span>
+  );
+};
+
+const LifecycleStage: React.FC<{ current: string }> = ({ current }) => {
+  const stages = ['generated', 'backtested', 'paper_trading', 'live'];
+  const currentIdx = stages.indexOf(current);
+
+  return (
+    <div className="flex items-center space-x-1 text-xs">
+      {stages.map((stage, i) => (
+        <React.Fragment key={stage}>
+          <span
+            className={`px-2 py-0.5 rounded ${
+              i < currentIdx ? 'bg-green-100 text-green-700' :
+              i === currentIdx ? 'bg-blue-200 text-blue-800 font-semibold' :
+              'bg-gray-100 text-gray-400'
+            }`}
+          >
+            {stage.replace('_', ' ')}
+          </span>
+          {i < stages.length - 1 && <ArrowRight className="w-3 h-3 text-gray-300" />}
+        </React.Fragment>
+      ))}
+    </div>
+  );
+};
+
+// ─── Main Component ───────────────────────────────────────────────────────────
+
+const Backtesting: React.FC = () => {
+  const { accountBalance } = useTradingContext();
+  const [activeTab, setActiveTab] = useState<'overview' | 'strategies' | 'paper' | 'readiness'>('overview');
+  const [summary, setSummary] = useState<PipelineSummary | null>(null);
+  const [pipelineResults, setPipelineResults] = useState<PipelineResult[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [expandedStrategy, setExpandedStrategy] = useState<string | null>(null);
+
+  const getAuthHeaders = useCallback(() => {
+    const token = getAccessToken();
+    return { Authorization: `Bearer ${token}` };
+  }, []);
+
+  const fetchPipelineSummary = useCallback(async () => {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/api/backtest/pipeline/summary`, {
+        headers: getAuthHeaders()
+      });
+      if (response.data.success) {
+        setSummary(response.data.summary);
+      }
+    } catch (_err) {
+      // Silently handle – summary will stay null and show empty state
+    }
+  }, [getAuthHeaders]);
+
+  const fetchPipelineResults = useCallback(async () => {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/api/backtest/pipeline/results`, {
+        headers: getAuthHeaders()
+      });
+      if (response.data.success) {
+        setPipelineResults(response.data.results);
+      }
+    } catch (_err) {
+      // Silently handle
+    }
+  }, [getAuthHeaders]);
+
+  const refreshData = useCallback(async () => {
+    setLoading(true);
+    await Promise.all([fetchPipelineSummary(), fetchPipelineResults()]);
+    setLoading(false);
+  }, [fetchPipelineSummary, fetchPipelineResults]);
+
+  useEffect(() => {
+    refreshData();
+    // Refresh every 30 seconds
+    const interval = setInterval(refreshData, 30000);
+    return () => clearInterval(interval);
+  }, [refreshData]);
+
+  // Determine available balance for simulation context
+  const simulationBalance = accountBalance
+    ? Number(accountBalance.available ?? accountBalance.total ?? 0) || 0
+    : 0;
+
+  // ─── Overview Tab ─────────────────────────────────────────────────────────
+  const renderOverviewTab = () => {
+    if (!summary) {
       return (
         <div className="bg-bg-tertiary p-8 rounded-lg shadow text-center">
-          <TrendingUp className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-text-primary mb-2">No Results Available</h3>
-          <p className="text-gray-600">Run a backtest to see results here.</p>
+          <Brain className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-text-primary mb-2">Agent Backtesting Pipeline</h3>
+          <p className="text-gray-600 mb-4">
+            The autonomous agent automatically generates, backtests, and validates trading strategies.
+            Start the agent from the Autonomous Agent page to begin.
+          </p>
+          <p className="text-sm text-text-muted">
+            Strategies progress through: Generated → Backtested → Paper Trading → Live
+          </p>
         </div>
       );
     }
 
-    const result = activeSession.result;
-    const metrics = activeSession.advancedMetrics;
+    const { strategyCounts, confidence, risk, liveReadiness } = summary;
 
     return (
       <div className="space-y-6">
-        {/* Key Performance Metrics */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="bg-bg-tertiary p-4 rounded-lg shadow">
-            <div className="flex items-center">
-              <TrendingUp className="w-8 h-8 text-green-500 mr-3" />
-              <div>
-                <p className="text-sm text-gray-600">Total Return</p>
-                <p className={`text-xl font-bold ${result.totalPnL > 0 ? 'text-green-600' : 'text-red-600'}`}>
-                  {((result.finalBalance - result.initialBalance) / result.initialBalance * 100).toFixed(2)}%
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-bg-tertiary p-4 rounded-lg shadow">
-            <div className="flex items-center">
-              <BarChart3 className="w-8 h-8 text-blue-500 mr-3" />
-              <div>
-                <p className="text-sm text-gray-600">Sharpe Ratio</p>
-                <p className="text-xl font-bold">{result.sharpeRatio.toFixed(2)}</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-bg-tertiary p-4 rounded-lg shadow">
-            <div className="flex items-center">
-              <AlertTriangle className="w-8 h-8 text-red-500 mr-3" />
-              <div>
-                <p className="text-sm text-gray-600">Max Drawdown</p>
-                <p className="text-xl font-bold text-red-600">{result.maxDrawdown.toFixed(2)}%</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-bg-tertiary p-4 rounded-lg shadow">
-            <div className="flex items-center">
-              <Activity className="w-8 h-8 text-purple-500 mr-3" />
-              <div>
-                <p className="text-sm text-gray-600">Win Rate</p>
-                <p className="text-xl font-bold">{result.winRate.toFixed(1)}%</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Advanced Risk Metrics */}
-        {metrics && (
-          <div className="bg-bg-tertiary p-6 rounded-lg shadow">
-            <h3 className="text-lg font-medium mb-4">Advanced Risk Metrics</h3>
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-              <div className="text-center p-3 bg-gray-50 rounded">
-                <p className="text-sm text-gray-600">VaR (95%)</p>
-                <p className="text-lg font-bold">{metrics.valueAtRisk95.toFixed(2)}%</p>
-              </div>
-              <div className="text-center p-3 bg-gray-50 rounded">
-                <p className="text-sm text-gray-600">CVaR (95%)</p>
-                <p className="text-lg font-bold">{metrics.conditionalVaR95.toFixed(2)}%</p>
-              </div>
-              <div className="text-center p-3 bg-gray-50 rounded">
-                <p className="text-sm text-gray-600">Calmar Ratio</p>
-                <p className="text-lg font-bold">{metrics.calmarRatio.toFixed(2)}</p>
-              </div>
-              <div className="text-center p-3 bg-gray-50 rounded">
-                <p className="text-sm text-gray-600">Sortino Ratio</p>
-                <p className="text-lg font-bold">{metrics.sortinoRatio.toFixed(2)}</p>
-              </div>
-              <div className="text-center p-3 bg-gray-50 rounded">
-                <p className="text-sm text-gray-600">Omega Ratio</p>
-                <p className="text-lg font-bold">{metrics.omegaRatio.toFixed(2)}</p>
-              </div>
-              <div className="text-center p-3 bg-gray-50 rounded">
-                <p className="text-sm text-gray-600">Expectancy</p>
-                <p className="text-lg font-bold">${metrics.expectancy.toFixed(2)}</p>
-              </div>
-              <div className="text-center p-3 bg-gray-50 rounded">
-                <p className="text-sm text-gray-600">Ulcer Index</p>
-                <p className="text-lg font-bold">{metrics.ulcerIndex.toFixed(2)}</p>
-              </div>
-              <div className="text-center p-3 bg-gray-50 rounded">
-                <p className="text-sm text-gray-600">Recovery Factor</p>
-                <p className="text-lg font-bold">{metrics.recoveryFactor.toFixed(2)}</p>
-              </div>
+        {/* Balance Context Banner */}
+        {simulationBalance > 0 && (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-center">
+            <Target className="w-5 h-5 text-blue-600 mr-3 flex-shrink-0" />
+            <div>
+              <span className="text-sm text-blue-800">
+                <span className="font-medium">Simulation Balance:</span>{' '}
+                ${simulationBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDT
+              </span>
+              <span className="text-xs text-blue-600 ml-2">
+                — Backtesting and paper trading use your actual available balance as the baseline
+              </span>
             </div>
           </div>
         )}
 
-        {/* Equity Curve Chart */}
-        <div className="bg-white p-6 rounded-lg shadow">
-          <h3 className="text-lg font-medium mb-4">Equity Curve</h3>
-          <div className="h-64">
-            <Line
-              data={{
-                labels: result.trades.map((_, i) => i + 1),
-                datasets: [
-                  {
-                    label: 'Equity',
-                    data: result.trades.map(t => t.balance),
-                    borderColor: 'rgb(59, 130, 246)',
-                    backgroundColor: 'rgba(59, 130, 246, 0.1)',
-                    tension: 0.1,
-                    fill: true
-                  }
-                ]
-              }}
-              options={{
-                responsive: true,
-                maintainAspectRatio: false,
-                scales: {
-                  y: {
-                    beginAtZero: false
-                  }
-                }
-              }}
-            />
+        {/* Strategy Lifecycle Counters */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="bg-bg-tertiary p-4 rounded-lg shadow">
+            <div className="flex items-center">
+              <Brain className="w-8 h-8 text-purple-500 mr-3" />
+              <div>
+                <p className="text-sm text-gray-600">Generated</p>
+                <p className="text-2xl font-bold text-text-primary">{strategyCounts.generated}</p>
+              </div>
+            </div>
+          </div>
+          <div className="bg-bg-tertiary p-4 rounded-lg shadow">
+            <div className="flex items-center">
+              <BarChart3 className="w-8 h-8 text-blue-500 mr-3" />
+              <div>
+                <p className="text-sm text-gray-600">Backtested</p>
+                <p className="text-2xl font-bold text-text-primary">{strategyCounts.backtested}</p>
+              </div>
+            </div>
+          </div>
+          <div className="bg-bg-tertiary p-4 rounded-lg shadow">
+            <div className="flex items-center">
+              <Eye className="w-8 h-8 text-yellow-500 mr-3" />
+              <div>
+                <p className="text-sm text-gray-600">Paper Trading</p>
+                <p className="text-2xl font-bold text-text-primary">{strategyCounts.paperTrading}</p>
+              </div>
+            </div>
+          </div>
+          <div className="bg-bg-tertiary p-4 rounded-lg shadow">
+            <div className="flex items-center">
+              <TrendingUp className="w-8 h-8 text-green-500 mr-3" />
+              <div>
+                <p className="text-sm text-gray-600">Live</p>
+                <p className="text-2xl font-bold text-text-primary">{strategyCounts.live}</p>
+              </div>
+            </div>
           </div>
         </div>
 
-        {/* Trade Analysis */}
-        <div className="bg-white p-6 rounded-lg shadow">
-          <h3 className="text-lg font-medium mb-4">Trade Analysis</h3>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Confidence & Risk Row */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <ConfidenceMeter score={confidence.score} level={confidence.level} />
+          <div className="bg-bg-tertiary p-4 rounded-lg shadow flex items-center justify-between">
             <div>
-              <h4 className="font-medium mb-3">P&L Distribution</h4>
-              <div className="h-48">
-                <Bar
-                  data={{
-                    labels: ['Winning Trades', 'Losing Trades'],
-                    datasets: [
-                      {
-                        label: 'Count',
-                        data: [result.winningTrades, result.losingTrades],
-                        backgroundColor: ['rgba(34, 197, 94, 0.8)', 'rgba(239, 68, 68, 0.8)'],
-                      }
-                    ]
-                  }}
-                  options={{
-                    responsive: true,
-                    maintainAspectRatio: false
-                  }}
-                />
-              </div>
+              <p className="text-sm text-gray-600 mb-1">Risk Assessment</p>
+              <RiskBadge rating={risk.rating} drawdown={risk.averageMaxDrawdown} />
             </div>
-            
+            <Shield className="w-10 h-10 text-gray-300" />
+          </div>
+        </div>
+
+        {/* Live Readiness Assessment */}
+        <div className={`p-5 rounded-lg shadow border ${
+          liveReadiness.ready
+            ? 'bg-green-50 border-green-200'
+            : 'bg-amber-50 border-amber-200'
+        }`}>
+          <div className="flex items-start">
+            {liveReadiness.ready
+              ? <CheckCircle2 className="w-6 h-6 text-green-600 mr-3 mt-0.5 flex-shrink-0" />
+              : <AlertTriangle className="w-6 h-6 text-amber-600 mr-3 mt-0.5 flex-shrink-0" />
+            }
             <div>
-              <h4 className="font-medium mb-3">Monthly Returns</h4>
-              <div className="h-48">
-                <Line
-                  data={{
-                    labels: result.metrics.monthlyReturns.map((_, i) => `Month ${i + 1}`),
-                    datasets: [
-                      {
-                        label: 'Monthly Return',
-                        data: result.metrics.monthlyReturns,
-                        borderColor: 'rgb(168, 85, 247)',
-                        backgroundColor: 'rgba(168, 85, 247, 0.1)',
-                        tension: 0.1
-                      }
-                    ]
-                  }}
-                  options={{
-                    responsive: true,
-                    maintainAspectRatio: false
-                  }}
-                />
-              </div>
+              <h3 className={`font-semibold ${liveReadiness.ready ? 'text-green-800' : 'text-amber-800'}`}>
+                {liveReadiness.ready ? 'Ready for Live Trading' : 'Not Yet Ready for Live Trading'}
+              </h3>
+              <ul className="mt-2 space-y-1">
+                {liveReadiness.reasons.map((reason, i) => (
+                  <li key={i} className={`text-sm flex items-start ${
+                    liveReadiness.ready ? 'text-green-700' : 'text-amber-700'
+                  }`}>
+                    {liveReadiness.ready
+                      ? <CheckCircle2 className="w-4 h-4 mr-1.5 mt-0.5 flex-shrink-0" />
+                      : <XCircle className="w-4 h-4 mr-1.5 mt-0.5 flex-shrink-0" />
+                    }
+                    {reason}
+                  </li>
+                ))}
+              </ul>
             </div>
           </div>
         </div>
+
+        {/* Recent Strategy Events */}
+        {summary.recentEvents.length > 0 && (
+          <div className="bg-bg-tertiary p-6 rounded-lg shadow">
+            <h3 className="text-lg font-medium mb-4 flex items-center">
+              <Clock className="w-5 h-5 mr-2 text-gray-500" />
+              Recent Strategy Activity
+            </h3>
+            <div className="space-y-3">
+              {summary.recentEvents.slice(0, 5).map((event, i) => (
+                <div key={i} className="flex items-center justify-between p-3 bg-bg-secondary rounded-md">
+                  <div className="flex items-center space-x-3">
+                    <StatusBadge status={event.status} />
+                    <div>
+                      <p className="text-sm font-medium text-text-primary">{event.strategyName}</p>
+                      <p className="text-xs text-text-muted">{event.symbol}</p>
+                    </div>
+                  </div>
+                  <span className="text-xs text-text-muted">
+                    {new Date(event.updatedAt).toLocaleDateString()}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     );
   };
 
-  const renderDataTab = () => (
-    <div className="space-y-6">
-      <HistoricalDataManager 
-        onDataLoaded={(_data) => {
-          setHistoricalDataLoaded(true);
-          // console.log('Historical data loaded:', data);
-        }}
-      />
-      
-      {historicalDataLoaded && (
-        <div className="bg-green-50 border border-green-200 rounded-md p-4">
-          <div className="flex items-center">
-            <Database className="w-5 h-5 text-green-600 mr-2" />
-            <span className="text-sm text-green-700 font-medium">
-              Historical data successfully loaded and ready for backtesting
-            </span>
-          </div>
-        </div>
-      )}
-    </div>
-  );
+  // ─── Strategies Tab ─────────────────────────────────────────────────────────
+  const renderStrategiesTab = () => {
+    const strategies = summary?.strategyBreakdown || [];
 
-  const renderAnalysisTab = () => {
-    if (!activeSession?.advancedMetrics) {
+    if (strategies.length === 0) {
       return (
-        <div className="bg-white p-8 rounded-lg shadow text-center">
-          <PieChart className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-text-primary mb-2">Advanced Analysis</h3>
-          <p className="text-gray-600">Run a backtest to see advanced analysis and risk metrics.</p>
+        <div className="bg-bg-tertiary p-8 rounded-lg shadow text-center">
+          <Zap className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-text-primary mb-2">No Strategies Yet</h3>
+          <p className="text-gray-600">
+            The autonomous agent has not generated any strategies yet.
+            Start the agent to begin automated strategy development and backtesting.
+          </p>
         </div>
       );
     }
 
-    const metrics = activeSession.advancedMetrics;
-
     return (
-      <div className="space-y-6">
-        {/* Risk Analysis */}
-        <div className="bg-white p-6 rounded-lg shadow">
-          <h3 className="text-lg font-medium mb-4">Risk Analysis</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            <div className="bg-red-50 p-4 rounded-lg">
-              <h4 className="font-medium text-red-800 mb-2">Value at Risk</h4>
-              <div className="space-y-2">
-                <div className="flex justify-between">
-                  <span className="text-sm text-red-600">VaR (95%)</span>
-                  <span className="font-bold text-red-800">{metrics.valueAtRisk95.toFixed(2)}%</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-sm text-red-600">VaR (99%)</span>
-                  <span className="font-bold text-red-800">{metrics.valueAtRisk99.toFixed(2)}%</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-orange-50 p-4 rounded-lg">
-              <h4 className="font-medium text-orange-800 mb-2">Conditional VaR</h4>
-              <div className="space-y-2">
-                <div className="flex justify-between">
-                  <span className="text-sm text-orange-600">CVaR (95%)</span>
-                  <span className="font-bold text-orange-800">{metrics.conditionalVaR95.toFixed(2)}%</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-sm text-orange-600">CVaR (99%)</span>
-                  <span className="font-bold text-orange-800">{metrics.conditionalVaR99.toFixed(2)}%</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-blue-50 p-4 rounded-lg">
-              <h4 className="font-medium text-blue-800 mb-2">Advanced Ratios</h4>
-              <div className="space-y-2">
-                <div className="flex justify-between">
-                  <span className="text-sm text-brand-cyan">Calmar Ratio</span>
-                  <span className="font-bold text-blue-800">{metrics.calmarRatio.toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-sm text-brand-cyan">Sortino Ratio</span>
-                  <span className="font-bold text-blue-800">{metrics.sortinoRatio.toFixed(2)}</span>
-                </div>
-              </div>
-            </div>
-          </div>
+      <div className="space-y-4">
+        <div className="bg-bg-tertiary p-4 rounded-lg shadow">
+          <h3 className="text-lg font-medium mb-2">Agent-Generated Strategies</h3>
+          <p className="text-sm text-text-muted mb-4">
+            These strategies were automatically developed, backtested, and validated by the autonomous trading agent.
+          </p>
         </div>
 
-        {/* Downside Risk Metrics */}
-        <div className="bg-white p-6 rounded-lg shadow">
-          <h3 className="text-lg font-medium mb-4">Downside Risk Metrics</h3>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="text-center p-3 bg-gray-50 rounded">
-              <p className="text-sm text-gray-600">Ulcer Index</p>
-              <p className="text-lg font-bold">{metrics.ulcerIndex.toFixed(2)}</p>
-            </div>
-            <div className="text-center p-3 bg-gray-50 rounded">
-              <p className="text-sm text-gray-600">Pain Index</p>
-              <p className="text-lg font-bold">{metrics.painIndex.toFixed(2)}</p>
-            </div>
-            <div className="text-center p-3 bg-gray-50 rounded">
-              <p className="text-sm text-gray-600">Martin Ratio</p>
-              <p className="text-lg font-bold">{metrics.martinRatio.toFixed(2)}</p>
-            </div>
-            <div className="text-center p-3 bg-gray-50 rounded">
-              <p className="text-sm text-gray-600">Burke Ratio</p>
-              <p className="text-lg font-bold">{metrics.burkeRatio.toFixed(2)}</p>
-            </div>
-          </div>
-        </div>
+        {strategies.map((strategy) => {
+          const isExpanded = expandedStrategy === strategy.id;
+          const matchingResult = pipelineResults.find(r => r.strategyId === strategy.id);
 
-        {/* Distribution Analysis */}
-        <div className="bg-white p-6 rounded-lg shadow">
-          <h3 className="text-lg font-medium mb-4">Return Distribution Analysis</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div>
-              <h4 className="font-medium mb-3">Statistical Measures</h4>
-              <div className="space-y-2">
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Skewness</span>
-                  <span className="font-medium">{metrics.skewness.toFixed(3)}</span>
+          return (
+            <div
+              key={strategy.id}
+              className="bg-bg-tertiary rounded-lg shadow overflow-hidden"
+            >
+              <button
+                onClick={() => setExpandedStrategy(isExpanded ? null : strategy.id)}
+                className="w-full p-4 flex items-center justify-between hover:bg-bg-secondary transition-colors"
+              >
+                <div className="flex items-center space-x-4">
+                  <StatusBadge status={strategy.status} />
+                  <div className="text-left">
+                    <p className="font-medium text-text-primary">{strategy.name}</p>
+                    <p className="text-xs text-text-muted">{strategy.symbol} · {strategy.timeframe}</p>
+                  </div>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Kurtosis</span>
-                  <span className="font-medium">{metrics.kurtosis.toFixed(3)}</span>
+                <div className="flex items-center space-x-4">
+                  {strategy.performance.winRate != null && (
+                    <span className="text-sm text-text-secondary">
+                      WR: {(strategy.performance.winRate * 100).toFixed(1)}%
+                    </span>
+                  )}
+                  {matchingResult && (
+                    <span className={`text-sm font-medium ${
+                      matchingResult.recommendation === 'deploy' ? 'text-green-600' :
+                      matchingResult.recommendation === 'optimize' ? 'text-yellow-600' :
+                      'text-red-600'
+                    }`}>
+                      {matchingResult.recommendation}
+                    </span>
+                  )}
+                  {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Tail Ratio</span>
-                  <span className="font-medium">{metrics.tailRatio.toFixed(3)}</span>
-                </div>
-              </div>
-            </div>
+              </button>
 
-            <div>
-              <h4 className="font-medium mb-3">Upside Potential</h4>
-              <div className="space-y-2">
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Upness Index</span>
-                  <span className="font-medium">{(metrics.upnessIndex * 100).toFixed(1)}%</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Upside Potential Ratio</span>
-                  <span className="font-medium">{metrics.upsidePotentialRatio.toFixed(3)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Gain to Pain Ratio</span>
-                  <span className="font-medium">{metrics.gainToPainRatio.toFixed(3)}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+              {isExpanded && (
+                <div className="px-4 pb-4 border-t border-border-subtle">
+                  <div className="pt-4 space-y-4">
+                    {/* Lifecycle */}
+                    <div>
+                      <p className="text-xs text-text-muted mb-2 font-medium">LIFECYCLE</p>
+                      <LifecycleStage current={strategy.status} />
+                    </div>
 
-        {/* Performance Attribution */}
-        <div className="bg-white p-6 rounded-lg shadow">
-          <h3 className="text-lg font-medium mb-4">Performance Attribution</h3>
-          <div className="bg-blue-50 p-4 rounded-lg text-center">
-            <PieChart className="w-8 h-8 text-brand-cyan mx-auto mb-2" />
-            <p className="text-blue-700 font-medium">Factor Analysis</p>
-            <p className="text-sm text-brand-cyan mt-1">
-              Factor decomposition and performance attribution analysis coming in next update
-            </p>
-          </div>
-        </div>
+                    {/* Performance */}
+                    {strategy.performance && strategy.performance.winRate != null && (
+                      <div>
+                        <p className="text-xs text-text-muted mb-2 font-medium">BACKTEST PERFORMANCE</p>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                          <div className="bg-bg-secondary p-3 rounded">
+                            <p className="text-xs text-text-muted">Win Rate</p>
+                            <p className="text-sm font-bold">{((strategy.performance.winRate || 0) * 100).toFixed(1)}%</p>
+                          </div>
+                          <div className="bg-bg-secondary p-3 rounded">
+                            <p className="text-xs text-text-muted">Profit Factor</p>
+                            <p className="text-sm font-bold">{(strategy.performance.profitFactor || 0).toFixed(2)}</p>
+                          </div>
+                          <div className="bg-bg-secondary p-3 rounded">
+                            <p className="text-xs text-text-muted">Total Trades</p>
+                            <p className="text-sm font-bold">{strategy.performance.totalTrades || 0}</p>
+                          </div>
+                          <div className="bg-bg-secondary p-3 rounded">
+                            <p className="text-xs text-text-muted">Total Return</p>
+                            <p className={`text-sm font-bold ${
+                              (strategy.performance.totalReturn || 0) >= 0 ? 'text-green-600' : 'text-red-600'
+                            }`}>
+                              {((strategy.performance.totalReturn || 0) * 100).toFixed(2)}%
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Pipeline Result */}
+                    {matchingResult && (
+                      <div>
+                        <p className="text-xs text-text-muted mb-2 font-medium">PIPELINE ASSESSMENT</p>
+                        <ConfidenceMeter score={matchingResult.confidence.score} level={matchingResult.confidence.level} />
+                        <div className={`mt-3 p-3 rounded-lg text-sm ${
+                          matchingResult.recommendation === 'deploy' ? 'bg-green-50 text-green-800' :
+                          matchingResult.recommendation === 'optimize' ? 'bg-yellow-50 text-yellow-800' :
+                          'bg-red-50 text-red-800'
+                        }`}>
+                          <p className="font-medium mb-1">
+                            Recommendation: {matchingResult.recommendation.toUpperCase()}
+                          </p>
+                          <p className="text-xs">{matchingResult.reasoning}</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     );
   };
 
-  const renderReportsTab = () => (
-    <div className="space-y-6">
-      <div className="bg-white p-6 rounded-lg shadow">
-        <h3 className="text-lg font-medium mb-4">Export Results</h3>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <button
-            onClick={() => exportResults('csv')}
-            className="flex items-center justify-center p-4 border border-gray-300 rounded-md hover:bg-gray-50"
-          >
-            <Download className="w-5 h-5 mr-2" />
-            Export CSV
-          </button>
-          <button
-            onClick={() => exportResults('excel')}
-            className="flex items-center justify-center p-4 border border-gray-300 rounded-md hover:bg-gray-50"
-          >
-            <Download className="w-5 h-5 mr-2" />
-            Export Excel
-          </button>
-          <button
-            onClick={() => exportResults('pdf')}
-            className="flex items-center justify-center p-4 border border-gray-300 rounded-md hover:bg-gray-50"
-          >
-            <Download className="w-5 h-5 mr-2" />
-            Export PDF Report
-          </button>
-        </div>
-      </div>
-    </div>
-  );
+  // ─── Paper Trading Tab ──────────────────────────────────────────────────────
+  const renderPaperTradingTab = () => {
+    const paper = summary?.paperTrading;
 
+    if (!paper) {
+      return (
+        <div className="bg-bg-tertiary p-8 rounded-lg shadow text-center">
+          <Eye className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-text-primary mb-2">No Paper Trading Data</h3>
+          <p className="text-gray-600 mb-4">
+            Paper trading validates strategies with simulated trades using your actual available balance
+            before risking real funds.
+          </p>
+          <p className="text-sm text-text-muted">
+            Strategies that pass backtesting are automatically promoted to paper trading by the agent.
+          </p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-6">
+        {/* Paper Trading Overview */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="bg-bg-tertiary p-4 rounded-lg shadow">
+            <p className="text-sm text-gray-600">Active Sessions</p>
+            <p className="text-2xl font-bold text-text-primary">{paper.activeSessions}</p>
+            <p className="text-xs text-text-muted">of {paper.totalSessions} total</p>
+          </div>
+          <div className="bg-bg-tertiary p-4 rounded-lg shadow">
+            <p className="text-sm text-gray-600">Realized P&L</p>
+            <p className={`text-2xl font-bold ${paper.totalRealizedPnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+              {paper.totalRealizedPnl >= 0 ? '+' : ''}${paper.totalRealizedPnl.toFixed(2)}
+            </p>
+          </div>
+          <div className="bg-bg-tertiary p-4 rounded-lg shadow">
+            <p className="text-sm text-gray-600">Win Rate</p>
+            <p className="text-2xl font-bold text-text-primary">{paper.winRate.toFixed(1)}%</p>
+            <p className="text-xs text-text-muted">
+              {paper.winningTrades}W / {paper.totalTrades - paper.winningTrades}L
+            </p>
+          </div>
+          <div className="bg-bg-tertiary p-4 rounded-lg shadow">
+            <p className="text-sm text-gray-600">Avg Return</p>
+            <p className={`text-2xl font-bold ${paper.averageReturnPct >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+              {paper.averageReturnPct >= 0 ? '+' : ''}{paper.averageReturnPct.toFixed(2)}%
+            </p>
+          </div>
+        </div>
+
+        {/* Unrealized P&L */}
+        <div className="bg-bg-tertiary p-5 rounded-lg shadow">
+          <h3 className="text-lg font-medium mb-3 flex items-center">
+            <Activity className="w-5 h-5 mr-2 text-blue-500" />
+            Paper Trading Performance
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="p-3 bg-bg-secondary rounded">
+              <p className="text-sm text-text-muted">Total Trades</p>
+              <p className="text-lg font-bold">{paper.totalTrades}</p>
+            </div>
+            <div className="p-3 bg-bg-secondary rounded">
+              <p className="text-sm text-text-muted">Unrealized P&L</p>
+              <p className={`text-lg font-bold ${paper.totalUnrealizedPnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                {paper.totalUnrealizedPnl >= 0 ? '+' : ''}${paper.totalUnrealizedPnl.toFixed(2)}
+              </p>
+            </div>
+            <div className="p-3 bg-bg-secondary rounded">
+              <p className="text-sm text-text-muted">Combined P&L</p>
+              <p className={`text-lg font-bold ${
+                (paper.totalRealizedPnl + paper.totalUnrealizedPnl) >= 0 ? 'text-green-600' : 'text-red-600'
+              }`}>
+                {(paper.totalRealizedPnl + paper.totalUnrealizedPnl) >= 0 ? '+' : ''}
+                ${(paper.totalRealizedPnl + paper.totalUnrealizedPnl).toFixed(2)}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Simulation Balance Context */}
+        {simulationBalance > 0 && (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+            <div className="flex items-center">
+              <Target className="w-5 h-5 text-blue-600 mr-3" />
+              <div>
+                <p className="text-sm text-blue-800">
+                  Paper trading simulations are calibrated to your available balance of{' '}
+                  <span className="font-semibold">
+                    ${simulationBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDT
+                  </span>
+                  , providing realistic results for when you switch to live mode.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // ─── Readiness Tab ──────────────────────────────────────────────────────────
+  const renderReadinessTab = () => {
+    if (!summary) {
+      return (
+        <div className="bg-bg-tertiary p-8 rounded-lg shadow text-center">
+          <Shield className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-text-primary mb-2">Live Readiness Assessment</h3>
+          <p className="text-gray-600">
+            Once the agent generates and validates strategies, a comprehensive readiness assessment will appear here.
+          </p>
+        </div>
+      );
+    }
+
+    const { confidence, risk, liveReadiness, paperTrading } = summary;
+
+    return (
+      <div className="space-y-6">
+        {/* Readiness Verdict */}
+        <div className={`p-6 rounded-lg shadow-lg border-2 ${
+          liveReadiness.ready
+            ? 'bg-green-50 border-green-300'
+            : 'bg-amber-50 border-amber-300'
+        }`}>
+          <div className="flex items-center mb-4">
+            {liveReadiness.ready
+              ? <CheckCircle2 className="w-8 h-8 text-green-600 mr-3" />
+              : <AlertTriangle className="w-8 h-8 text-amber-600 mr-3" />
+            }
+            <div>
+              <h2 className={`text-xl font-bold ${liveReadiness.ready ? 'text-green-800' : 'text-amber-800'}`}>
+                {liveReadiness.ready
+                  ? 'Your strategies are ready for live trading'
+                  : 'Additional validation needed before live trading'}
+              </h2>
+            </div>
+          </div>
+          <ul className="space-y-2 ml-11">
+            {liveReadiness.reasons.map((reason, i) => (
+              <li key={i} className={`text-sm flex items-start ${
+                liveReadiness.ready ? 'text-green-700' : 'text-amber-700'
+              }`}>
+                {liveReadiness.ready
+                  ? <CheckCircle2 className="w-4 h-4 mr-2 mt-0.5 flex-shrink-0" />
+                  : <XCircle className="w-4 h-4 mr-2 mt-0.5 flex-shrink-0" />
+                }
+                {reason}
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        {/* Detailed Assessment Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Confidence Assessment */}
+          <div className="bg-bg-tertiary p-5 rounded-lg shadow">
+            <h3 className="text-base font-semibold mb-3 flex items-center">
+              <Brain className="w-5 h-5 mr-2 text-purple-500" />
+              Strategy Confidence
+            </h3>
+            <ConfidenceMeter score={confidence.score} level={confidence.level} />
+            <p className="text-xs text-text-muted mt-3">
+              Based on backtesting performance across all agent-generated strategies.
+              A score above 60 is considered sufficient for live deployment.
+            </p>
+          </div>
+
+          {/* Risk Assessment */}
+          <div className="bg-bg-tertiary p-5 rounded-lg shadow">
+            <h3 className="text-base font-semibold mb-3 flex items-center">
+              <Shield className="w-5 h-5 mr-2 text-orange-500" />
+              Risk Profile
+            </h3>
+            <div className="mb-3">
+              <RiskBadge rating={risk.rating} drawdown={risk.averageMaxDrawdown} />
+            </div>
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-text-muted">Avg Max Drawdown</span>
+                <span className="font-medium">{risk.averageMaxDrawdown.toFixed(1)}%</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-text-muted">Risk Rating</span>
+                <span className="font-medium capitalize">{risk.rating.replace('_', ' ')}</span>
+              </div>
+            </div>
+            <p className="text-xs text-text-muted mt-3">
+              A lower max drawdown indicates more consistent performance.
+              Strategies with drawdown above 20% are flagged as high risk.
+            </p>
+          </div>
+        </div>
+
+        {/* Paper Trading Validation */}
+        <div className="bg-bg-tertiary p-5 rounded-lg shadow">
+          <h3 className="text-base font-semibold mb-3 flex items-center">
+            <Eye className="w-5 h-5 mr-2 text-yellow-500" />
+            Paper Trading Validation
+          </h3>
+          {paperTrading ? (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="p-3 bg-bg-secondary rounded text-center">
+                <p className="text-xs text-text-muted">Sessions</p>
+                <p className="text-lg font-bold">{paperTrading.totalSessions}</p>
+              </div>
+              <div className="p-3 bg-bg-secondary rounded text-center">
+                <p className="text-xs text-text-muted">Win Rate</p>
+                <p className={`text-lg font-bold ${paperTrading.winRate >= 55 ? 'text-green-600' : 'text-orange-600'}`}>
+                  {paperTrading.winRate.toFixed(1)}%
+                </p>
+              </div>
+              <div className="p-3 bg-bg-secondary rounded text-center">
+                <p className="text-xs text-text-muted">Realized P&L</p>
+                <p className={`text-lg font-bold ${paperTrading.totalRealizedPnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                  ${paperTrading.totalRealizedPnl.toFixed(2)}
+                </p>
+              </div>
+              <div className="p-3 bg-bg-secondary rounded text-center">
+                <p className="text-xs text-text-muted">Avg Return</p>
+                <p className={`text-lg font-bold ${paperTrading.averageReturnPct >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                  {paperTrading.averageReturnPct.toFixed(2)}%
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="text-center py-4">
+              <p className="text-sm text-text-muted">
+                No paper trading data available yet. Strategies that pass backtesting will be automatically promoted to paper trading.
+              </p>
+            </div>
+          )}
+        </div>
+
+        {/* Simulation Balance */}
+        {simulationBalance > 0 && (
+          <div className="bg-bg-tertiary p-5 rounded-lg shadow">
+            <h3 className="text-base font-semibold mb-3 flex items-center">
+              <Target className="w-5 h-5 mr-2 text-blue-500" />
+              Balance-Based Simulation
+            </h3>
+            <p className="text-sm text-text-secondary mb-3">
+              All backtesting and paper trading simulations use your actual available balance as the baseline,
+              ensuring realistic performance projections for live trading.
+            </p>
+            <div className="bg-blue-50 p-4 rounded-lg">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-blue-800">Available for Live Trading</span>
+                <span className="text-xl font-bold text-blue-900">
+                  ${simulationBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDT
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // ─── Render ─────────────────────────────────────────────────────────────────
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-text-primary flex items-center">
-          <Zap className="w-8 h-8 mr-3 text-brand-cyan" />
-          Advanced Backtesting Engine
-        </h1>
-        <p className="mt-2 text-gray-600">
-          Comprehensive strategy testing with advanced risk metrics and performance analysis
-        </p>
+      <div className="mb-8 flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold text-text-primary flex items-center">
+            <Zap className="w-8 h-8 mr-3 text-brand-cyan" />
+            Automated Backtesting Pipeline
+          </h1>
+          <p className="mt-2 text-gray-600">
+            Agent-driven strategy development, backtesting, paper trading validation, and live-readiness assessment
+          </p>
+        </div>
+        <button
+          onClick={refreshData}
+          disabled={loading}
+          className="flex items-center px-3 py-2 bg-bg-tertiary border border-border-subtle rounded-md hover:bg-bg-secondary transition-colors disabled:opacity-50"
+        >
+          <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+          Refresh
+        </button>
       </div>
 
       {/* Tabs */}
       <div className="mb-6">
         <div className="border-b border-border-subtle">
           <nav className="-mb-px flex space-x-8">
-            {[
-              { id: 'setup', label: 'Setup', icon: Settings },
-              { id: 'data', label: 'Historical Data', icon: Database },
-              { id: 'results', label: 'Results', icon: TrendingUp },
-              { id: 'analysis', label: 'Analysis', icon: BarChart3 },
-              { id: 'reports', label: 'Reports', icon: Download }
-            ].map(({ id, label, icon: Icon }) => (
+            {([
+              { id: 'overview' as const, label: 'Overview', icon: BarChart3 },
+              { id: 'strategies' as const, label: 'Strategies', icon: Brain },
+              { id: 'paper' as const, label: 'Paper Trading', icon: Eye },
+              { id: 'readiness' as const, label: 'Live Readiness', icon: Shield }
+            ]).map(({ id, label, icon: Icon }) => (
               <button
                 key={id}
-                onClick={() => setActiveTab(id as 'setup' | 'data' | 'results' | 'analysis' | 'reports')}
+                onClick={() => setActiveTab(id)}
                 className={`py-2 px-1 border-b-2 font-medium text-sm flex items-center ${
                   activeTab === id
                     ? 'border-blue-500 text-blue-600'
@@ -916,11 +858,10 @@ const Backtesting: React.FC = () => {
       </div>
 
       {/* Tab Content */}
-      {activeTab === 'setup' && renderSetupTab()}
-      {activeTab === 'data' && renderDataTab()}
-      {activeTab === 'results' && renderResultsTab()}
-      {activeTab === 'analysis' && renderAnalysisTab()}
-      {activeTab === 'reports' && renderReportsTab()}
+      {activeTab === 'overview' && renderOverviewTab()}
+      {activeTab === 'strategies' && renderStrategiesTab()}
+      {activeTab === 'paper' && renderPaperTradingTab()}
+      {activeTab === 'readiness' && renderReadinessTab()}
     </div>
   );
 };
