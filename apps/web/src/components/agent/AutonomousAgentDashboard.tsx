@@ -10,6 +10,7 @@ import BacktestResultsVisualization from './BacktestResultsVisualization';
 import StrategyApprovalQueue from './StrategyApprovalQueue';
 import LiveTradingActivityFeed from './LiveTradingActivityFeed';
 import PerformanceAnalytics from './PerformanceAnalytics';
+import AgentOverviewPanel from './AgentOverviewPanel';
 
 const API_BASE_URL = getBackendUrl();
 
@@ -605,6 +606,13 @@ const AutonomousAgentDashboard: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Profitability & Agent Oversight Panel */}
+      <AgentOverviewPanel
+        agentStatus={agentStatus?.status}
+        startedAt={agentStatus?.startedAt}
+        circuitBreakerTripped={circuitBreaker?.isTripped}
+      />
 
       {/* Real-Time Strategy Generation Display */}
       <StrategyGenerationDisplay agentStatus={agentStatus?.status} />
