@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState, useRef } from 'react';
 import { getAccessToken } from '@/utils/auth';
 import { apiCredentialsSchema, validateSchema } from '@/utils/validationSchemas';
 import { useTradingContext } from '@/hooks/useTradingContext';
+import { getBackendUrl } from '@/utils/environment';
 
 interface ApiCredential {
   id: string;
@@ -66,7 +67,7 @@ const ApiKeyManagement: React.FC = () => {
   }, []);
 
   // API base URL
-  const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+  const API_BASE = getBackendUrl();
 
   // Clear messages after 5 seconds
   useEffect(() => {

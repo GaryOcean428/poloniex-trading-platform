@@ -40,9 +40,12 @@ const NotFound: React.FC = () => {
         
         <div className="mt-8 text-sm text-text-muted">
           <p>Available pages:</p>
-          <div className="mt-2 space-x-4">
+          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 justify-center">
             <Link to="/" className="text-brand-cyan hover:underline">Dashboard</Link>
+            <Link to="/autonomous-agent" className="text-brand-cyan hover:underline">Autonomous Agent</Link>
             <Link to="/strategies" className="text-brand-cyan hover:underline">Strategies</Link>
+            <Link to="/backtesting" className="text-brand-cyan hover:underline">Backtesting</Link>
+            <Link to="/performance" className="text-brand-cyan hover:underline">Performance</Link>
             <Link to="/account" className="text-brand-cyan hover:underline">Account</Link>
             <Link to="/settings" className="text-brand-cyan hover:underline">Settings</Link>
           </div>

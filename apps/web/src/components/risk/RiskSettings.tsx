@@ -2,8 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { Shield, Save, AlertTriangle, TrendingDown, Target } from 'lucide-react';
 import axios from 'axios';
 import { getAccessToken } from '@/utils/auth';
+import { getBackendUrl } from '@/utils/environment';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
+const API_BASE_URL = getBackendUrl();
 
 interface RiskSettingsData {
   maxDrawdown: number;
@@ -125,17 +126,6 @@ export default function RiskSettings() {
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
-      {/* Header */}
-      <div className="bg-gradient-to-r from-blue-600 to-purple-600 rounded-lg p-6 text-white">
-        <div className="flex items-center gap-3 mb-2">
-          <Shield size={32} />
-          <h2 className="text-2xl font-bold">Risk Management</h2>
-        </div>
-        <p className="text-blue-100">
-          Configure your risk parameters to protect your capital and manage exposure
-        </p>
-      </div>
-
       {/* Presets */}
       <div className="bg-white rounded-lg shadow p-6">
         <h3 className="text-lg font-semibold mb-4 text-gray-900">Quick Presets</h3>

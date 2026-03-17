@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Play, Pause, Square, Activity, Brain, TrendingUp, AlertCircle, Shield, Zap } from 'lucide-react';
 import axios from 'axios';
 import { getAccessToken } from '@/utils/auth';
@@ -66,15 +66,14 @@ const AutonomousAgentDashboard: React.FC = () => {
     paperTradingDurationHours: 48
   });
 
+  const agentStatusRef = useRef(agentStatus?.status);
+  agentStatusRef.current = agentStatus?.status;
+
+  // Initial data fetch + WebSocket setup (runs once)
   useEffect(() => {
     fetchAgentStatus();
     fetchActivity();
     fetchStrategies();
-    const interval = setInterval(() => {
-      fetchAgentStatus();
-      fetchActivity();
-      fetchStrategies();
-    }, 10000);
 
     // WebSocket real-time updates
     let socket: { on: (event: string, cb: (data: any) => void) => void; disconnect: () => void } | null = null;
@@ -95,10 +94,25 @@ const AutonomousAgentDashboard: React.FC = () => {
     });
 
     return () => {
-      clearInterval(interval);
       if (socket) socket.disconnect();
     };
   }, []);
+
+  // Polling interval — adjusts based on agent status
+  useEffect(() => {
+    const isActive = agentStatus?.status === 'running';
+    const pollInterval = isActive ? 10000 : 60000;
+
+    const interval = setInterval(() => {
+      fetchAgentStatus();
+      if (agentStatusRef.current === 'running') {
+        fetchActivity();
+        fetchStrategies();
+      }
+    }, pollInterval);
+
+    return () => clearInterval(interval);
+  }, [agentStatus?.status]);
 
   const getAuthHeaders = useCallback(() => {
     const token = getAccessToken();

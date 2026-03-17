@@ -18,11 +18,22 @@ export const getEnvVariable = (key: string, fallback: string = ''): string => {
 };
 
 // Get Poloniex API credentials from environment
+// WARNING: API keys should NOT be set via VITE_ env vars in production
+// as they will be bundled into the frontend JavaScript.
+// Use the backend /api/api-keys endpoint to manage credentials securely.
 export const getPoloniexApiKey = (): string => {
+  if (!IS_LOCAL_DEV && !IS_WEBCONTAINER) {
+    // Never expose API keys in production builds
+    return '';
+  }
   return getEnvVariable('VITE_POLONIEX_API_KEY', '');
 };
 
 export const getPoloniexApiSecret = (): string => {
+  if (!IS_LOCAL_DEV && !IS_WEBCONTAINER) {
+    // Never expose API secrets in production builds
+    return '';
+  }
   return getEnvVariable('VITE_POLONIEX_API_SECRET', '');
 };
 

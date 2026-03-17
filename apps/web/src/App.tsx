@@ -1,5 +1,5 @@
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { lazy, Suspense, useEffect } from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { lazy, Suspense, useEffect, type ReactNode } from 'react';
 import Navbar from './components/Navbar';
 import Sidebar from './components/Sidebar';
 import SkipLinks from './components/SkipLinks';
@@ -53,6 +53,48 @@ const LoadingSpinner = () => (
   </div>
 );
 
+// Layout wrapper that hides sidebar/navbar on login page
+const AppLayout = ({ children }: { children: ReactNode }) => {
+  const location = useLocation();
+  const isLoginPage = location.pathname === '/login';
+
+  if (isLoginPage) {
+    return (
+      <div className="flex h-screen bg-neutral-100 overflow-hidden">
+        <div className="flex-1 flex flex-col min-w-0">
+          <main
+            id="main-content"
+            className="flex-1 overflow-y-auto bg-neutral-100 p-4 sm:p-6 lg:p-8"
+            role="main"
+            aria-label="Main content"
+            tabIndex={-1}
+          >
+            {children}
+          </main>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-screen bg-neutral-100 overflow-hidden">
+      <Sidebar />
+      <div className="flex-1 flex flex-col min-w-0">
+        <Navbar />
+        <main
+          id="main-content"
+          className="flex-1 overflow-y-auto bg-neutral-100 p-4 sm:p-6 lg:p-8"
+          role="main"
+          aria-label="Main content"
+          tabIndex={-1}
+        >
+          {children}
+        </main>
+      </div>
+    </div>
+  );
+};
+
 function App() {
   useEffect(() => {
     BrowserCompatibility.setupExtensionCompatibility();
@@ -73,17 +115,7 @@ function App() {
               <WebSocketProvider>
                 <TradingProvider>
                 <MobileMenuProvider>
-                <div className="flex h-screen bg-neutral-100 overflow-hidden">
-                  <Sidebar />
-                  <div className="flex-1 flex flex-col min-w-0">
-                    <Navbar />
-                    <main 
-                      id="main-content"
-                      className="flex-1 overflow-y-auto bg-neutral-100 p-4 sm:p-6 lg:p-8"
-                      role="main"
-                      aria-label="Main content"
-                      tabIndex={-1}
-                    >
+                <AppLayout>
                       <RouteGuard>
                         <Suspense fallback={<LoadingSpinner />}>
                           <Routes>
@@ -102,6 +134,7 @@ function App() {
                             <Route path="/login" element={<Login />} />
                             {/* Redirects for removed/consolidated nav items */}
                             <Route path="/dashboard/live" element={<Navigate to="/" replace />} />
+                            <Route path="/dashboard" element={<Navigate to="/" replace />} />
                             <Route path="/transactions" element={<Navigate to="/history" replace />} />
                             <Route path="/trades" element={<Navigate to="/history" replace />} />
                             <Route path="/chat" element={<Navigate to="/" replace />} />
@@ -111,9 +144,7 @@ function App() {
                           </Routes>
                         </Suspense>
                       </RouteGuard>
-                    </main>
-                  </div>
-                </div>
+                </AppLayout>
                 <Integration />
                 <ToastContainer />
 

@@ -18,6 +18,7 @@ import {
     RefreshCw
 } from 'lucide-react';
 import React, { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 
 const AutonomousTradingDashboard: React.FC = () => {
     const [session, setSession] = useState<LiveAutonomousSession | null>(null);
@@ -186,23 +187,13 @@ const AutonomousTradingDashboard: React.FC = () => {
                             <Settings className="h-4 w-4 mr-2" />
                             Settings
                         </button>
-                        {!session?.isActive ? (
-                            <button
-                                onClick={handleStartAutonomous}
-                                disabled={loading}
-                                className="bg-success hover:bg-success/90 px-6 py-2.5 rounded-lg font-semibold shadow-elev-2 transition-all duration-200"
-                            >
-                                {loading ? 'Starting...' : 'Start Autonomous Trading'}
-                            </button>
-                        ) : (
-                            <button
-                                onClick={handleStopAutonomous}
-                                disabled={loading}
-                                className="bg-error hover:bg-error/90 px-6 py-2.5 rounded-lg font-semibold shadow-elev-2 transition-all duration-200"
-                            >
-                                {loading ? 'Stopping...' : 'Stop Trading'}
-                            </button>
-                        )}
+                        <Link
+                            to="/autonomous-agent"
+                            className="bg-success hover:bg-success/90 px-6 py-2.5 rounded-lg font-semibold shadow-elev-2 transition-all duration-200 flex items-center"
+                        >
+                            <Play className="h-4 w-4 mr-2" />
+                            Manage Agent
+                        </Link>
                     </div>
                 </div>
             </div>
@@ -396,12 +387,12 @@ const AutonomousTradingDashboard: React.FC = () => {
                     <p className="text-text-secondary mb-8 text-lg">
                         Our AI system will analyze markets and maximize your profits.
                     </p>
-                    <button
-                        onClick={() => setShowSettings(true)}
+                    <Link
+                        to="/autonomous-agent"
                         className="text-brand-cyan hover:text-brand-cyan/80 font-semibold text-lg"
                     >
-                        Configure Settings →
-                    </button>
+                        Go to Autonomous Agent →
+                    </Link>
                 </div>
             )}
         </div>
