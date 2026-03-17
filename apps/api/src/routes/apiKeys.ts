@@ -4,7 +4,7 @@
  * Uses apiCredentialsService for actual storage
  */
 
-import express from 'express';
+import express, { Request, Response } from 'express';
 import rateLimit from 'express-rate-limit';
 import { apiCredentialsService } from '../services/apiCredentialsService.js';
 import { authenticateToken } from '../middleware/auth.js';
@@ -38,7 +38,7 @@ const apiKeysRateLimiter = rateLimit({
  * Health check for API keys
  * GET /api/keys/health
  */
-router.get('/health', (req, res) => {
+router.get('/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', service: 'api-keys' });
 });
 
@@ -46,9 +46,9 @@ router.get('/health', (req, res) => {
  * Get all API credentials for the authenticated user
  * GET /api/keys
  */
-router.get('/', apiKeysRateLimiter, authenticateToken, async (req, res) => {
+router.get('/', apiKeysRateLimiter, authenticateToken, async (req: Request, res: Response) => {
   try {
-    const userId = String((req as any).user.id);
+    const userId = String(req.user?.id);
     
     // Check if user has credentials for Poloniex
     const hasCredentials = await apiCredentialsService.hasCredentials(userId, 'poloniex');
@@ -73,11 +73,11 @@ router.get('/', apiKeysRateLimiter, authenticateToken, async (req, res) => {
       credentials,
       timestamp: new Date().toISOString()
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('Error fetching API keys:', error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to fetch API keys',
+      error: error instanceof Error ? error.message : 'Failed to fetch API keys',
       credentials: []
     });
   }
@@ -87,10 +87,10 @@ router.get('/', apiKeysRateLimiter, authenticateToken, async (req, res) => {
  * Create or update API credentials
  * POST /api/keys
  */
-router.post('/', authenticateToken, async (req, res) => {
+router.post('/', authenticateToken, async (req: Request, res: Response) => {
   try {
-    const userId = String((req as any).user.id);
-    const { apiKey, apiSecret, credentialName, passphrase, permissions } = req.body;
+    const userId = String(req.user?.id);
+    const { apiKey, apiSecret, credentialName, permissions } = req.body;
 
     if (!apiKey || !apiSecret) {
       return res.status(400).json({
@@ -130,11 +130,11 @@ router.post('/', authenticateToken, async (req, res) => {
         createdAt: new Date().toISOString()
       }
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('Error storing API keys:', error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to store API credentials'
+      error: error instanceof Error ? error.message : 'Failed to store API credentials'
     });
   }
 });
@@ -144,9 +144,9 @@ router.post('/', authenticateToken, async (req, res) => {
  * GET /api/keys/active
  * Returns decrypted API key and secret for use in trading operations
  */
-router.get('/active', authenticateToken, async (req, res) => {
+router.get('/active', authenticateToken, async (req: Request, res: Response) => {
   try {
-    const userId = String((req as any).user.id);
+    const userId = String(req.user?.id);
     const exchange = req.query.exchange as string || 'poloniex';
 
     // Get decrypted credentials
@@ -176,11 +176,11 @@ router.get('/active', authenticateToken, async (req, res) => {
       },
       timestamp: new Date().toISOString()
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('Error retrieving active API credentials:', error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to retrieve API credentials',
+      error: error instanceof Error ? error.message : 'Failed to retrieve API credentials',
       hasCredentials: false
     });
   }
@@ -190,9 +190,9 @@ router.get('/active', authenticateToken, async (req, res) => {
  * Delete API credentials
  * DELETE /api/keys/:id
  */
-router.delete('/:id', authenticateToken, async (req, res) => {
+router.delete('/:id', authenticateToken, async (req: Request, res: Response) => {
   try {
-    const userId = String((req as any).user.id);
+    const userId = String(req.user?.id);
     const { id } = req.params;
 
     // Extract exchange from ID (format: userId-exchange)
@@ -210,11 +210,11 @@ router.delete('/:id', authenticateToken, async (req, res) => {
       success: true,
       message: 'API credentials deleted successfully'
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('Error deleting API keys:', error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to delete API credentials'
+      error: error instanceof Error ? error.message : 'Failed to delete API credentials'
     });
   }
 });
@@ -223,9 +223,9 @@ router.delete('/:id', authenticateToken, async (req, res) => {
  * Update API credential status (activate/deactivate)
  * PATCH /api/keys/:id
  */
-router.patch('/:id', authenticateToken, async (req, res) => {
+router.patch('/:id', authenticateToken, async (req: Request, res: Response) => {
   try {
-    const userId = String((req as any).user.id);
+    const userId = String(req.user?.id);
     const { id } = req.params;
     const { isActive } = req.body;
 
@@ -246,11 +246,11 @@ router.patch('/:id', authenticateToken, async (req, res) => {
       success: true,
       message: 'API credential status updated successfully'
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('Error updating API key status:', error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to update API credential status'
+      error: error instanceof Error ? error.message : 'Failed to update API credential status'
     });
   }
 });

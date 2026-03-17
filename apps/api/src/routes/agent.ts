@@ -45,27 +45,28 @@ router.post('/start', authenticateToken, async (req: Request, res: Response) => 
       success: true,
       session
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error starting agent:', error);
+    const errMsg = error instanceof Error ? error.message : String(error);
     
     // Provide specific error codes
     let errorCode = 'UNKNOWN_ERROR';
     let statusCode = 500;
     
-    if (error.message.includes('credentials')) {
+    if (errMsg.includes('credentials')) {
       errorCode = 'CREDENTIALS_ERROR';
       statusCode = 400;
-    } else if (error.message.includes('already running')) {
+    } else if (errMsg.includes('already running')) {
       errorCode = 'ALREADY_RUNNING';
       statusCode = 409;
-    } else if (error.message.includes('API')) {
+    } else if (errMsg.includes('API')) {
       errorCode = 'API_ERROR';
       statusCode = 503;
     }
     
     res.status(statusCode).json({
       success: false,
-      error: error.message || 'Failed to start agent',
+      error: errMsg,
       code: errorCode
     });
   }
@@ -101,11 +102,11 @@ router.post('/stop', authenticateToken, async (req: Request, res: Response) => {
       success: true,
       message: 'Agent stopped successfully'
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error stopping agent:', error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to stop agent'
+      error: error instanceof Error ? error.message : 'Failed to stop agent'
     });
   }
 });
@@ -139,11 +140,11 @@ router.post('/pause', authenticateToken, async (req: Request, res: Response) => 
       success: true,
       message: 'Agent paused successfully'
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error pausing agent:', error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to pause agent'
+      error: error instanceof Error ? error.message : 'Failed to pause agent'
     });
   }
 });
@@ -169,11 +170,11 @@ router.get('/status', authenticateToken, async (req: Request, res: Response) => 
       success: true,
       status: status || null
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error getting agent status:', error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to get agent status'
+      error: error instanceof Error ? error.message : 'Failed to get agent status'
     });
   }
 });
@@ -213,11 +214,11 @@ router.get('/activity', authenticateToken, async (req: Request, res: Response) =
       success: true,
       activity: result.rows
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error getting activity:', error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to get activity'
+      error: error instanceof Error ? error.message : 'Failed to get activity'
     });
   }
 });
@@ -255,11 +256,11 @@ router.get('/strategies', authenticateToken, async (req: Request, res: Response)
       success: true,
       strategies: result.rows
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error getting strategies:', error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to get strategies'
+      error: error instanceof Error ? error.message : 'Failed to get strategies'
     });
   }
 });
@@ -329,7 +330,7 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
           [userId, status.startedAt]
         );
 
-        const pnls = returnsResult.rows.map((r: any) => parseFloat(r.pnl));
+        const pnls = returnsResult.rows.map((r: { pnl: string }) => parseFloat(r.pnl));
         if (pnls.length > 1) {
           // Sharpe ratio: mean(returns) / stddev(returns) * sqrt(252)
           // 252 = standard number of trading days per year for annualization
@@ -369,19 +370,19 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
           maxDrawdown: parseFloat((maxDrawdown * 100).toFixed(2))
         }
       });
-    } catch (dbError: any) {
-      console.warn('Trades table query failed, returning default performance:', dbError.message);
+    } catch (dbError: unknown) {
+      console.warn('Trades table query failed, returning default performance:', dbError instanceof Error ? dbError.message : String(dbError));
       // Return default performance if trades table doesn't exist
       res.json({
         success: true,
         performance: defaultPerformance
       });
     }
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error getting performance:', error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to get performance'
+      error: error instanceof Error ? error.message : 'Failed to get performance'
     });
   }
 });
@@ -418,11 +419,11 @@ router.get('/learnings', authenticateToken, async (req: Request, res: Response) 
       success: true,
       learnings: result.rows
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error getting learnings:', error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to get learnings'
+      error: error instanceof Error ? error.message : 'Failed to get learnings'
     });
   }
 });
@@ -462,11 +463,11 @@ router.put('/config', authenticateToken, async (req: Request, res: Response) => 
       success: true,
       message: 'Configuration updated successfully'
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error updating config:', error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to update configuration'
+      error: error instanceof Error ? error.message : 'Failed to update configuration'
     });
   }
 });
@@ -482,16 +483,14 @@ router.get('/activity/live', authenticateToken, async (req: Request, res: Respon
       return res.status(401).json({ success: false, error: 'User ID not found' });
     }
 
-    const limit = parseInt(req.query.limit as string) || 50;
-    
     // Return empty array for now - will be populated when agent is running
     res.json({
       success: true,
       activities: []
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error getting live activity:', error);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
   }
 });
 
@@ -511,9 +510,9 @@ router.get('/strategies/active', authenticateToken, async (req: Request, res: Re
       success: true,
       strategies: []
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error getting active strategies:', error);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
   }
 });
 
@@ -532,9 +531,9 @@ router.get('/strategies/pending-approval', authenticateToken, async (req: Reques
       success: true,
       strategies: []
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error getting pending strategies:', error);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
   }
 });
 
@@ -553,9 +552,9 @@ router.get('/strategy/current', authenticateToken, async (req: Request, res: Res
       success: true,
       generation: null
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error getting current strategy:', error);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
   }
 });
 
@@ -570,15 +569,13 @@ router.get('/strategy/recent', authenticateToken, async (req: Request, res: Resp
       return res.status(401).json({ success: false, error: 'User ID not found' });
     }
 
-    const limit = parseInt(req.query.limit as string) || 5;
-
     res.json({
       success: true,
       strategies: []
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error getting recent strategies:', error);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
   }
 });
 
@@ -593,16 +590,13 @@ router.get('/backtest/results', authenticateToken, async (req: Request, res: Res
       return res.status(401).json({ success: false, error: 'User ID not found' });
     }
 
-    const limit = parseInt(req.query.limit as string) || 10;
-    const strategyId = req.query.strategy_id as string;
-
     res.json({
       success: true,
       results: []
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error getting backtest results:', error);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
   }
 });
 
@@ -617,15 +611,13 @@ router.post('/strategy/:id/approve', authenticateToken, async (req: Request, res
       return res.status(401).json({ success: false, error: 'User ID not found' });
     }
 
-    const strategyId = req.params.id;
-
     res.json({
       success: true,
       message: 'Strategy approved'
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error approving strategy:', error);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
   }
 });
 
@@ -640,15 +632,13 @@ router.post('/strategy/:id/reject', authenticateToken, async (req: Request, res:
       return res.status(401).json({ success: false, error: 'User ID not found' });
     }
 
-    const strategyId = req.params.id;
-
     res.json({
       success: true,
       message: 'Strategy rejected'
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error rejecting strategy:', error);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
   }
 });
 
@@ -663,15 +653,13 @@ router.post('/strategy/:id/pause', authenticateToken, async (req: Request, res: 
       return res.status(401).json({ success: false, error: 'User ID not found' });
     }
 
-    const strategyId = req.params.id;
-
     res.json({
       success: true,
       message: 'Strategy paused'
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error pausing strategy:', error);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
   }
 });
 
@@ -686,15 +674,13 @@ router.post('/strategy/:id/resume', authenticateToken, async (req: Request, res:
       return res.status(401).json({ success: false, error: 'User ID not found' });
     }
 
-    const strategyId = req.params.id;
-
     res.json({
       success: true,
       message: 'Strategy resumed'
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error resuming strategy:', error);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
   }
 });
 
@@ -709,15 +695,13 @@ router.post('/strategy/:id/retire', authenticateToken, async (req: Request, res:
       return res.status(401).json({ success: false, error: 'User ID not found' });
     }
 
-    const strategyId = req.params.id;
-
     res.json({
       success: true,
       message: 'Strategy retired'
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error retiring strategy:', error);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
   }
 });
 
@@ -742,11 +726,11 @@ router.get('/strategies', authenticateToken, async (req: Request, res: Response)
       success: true,
       strategies
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error getting strategies:', error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to get strategies'
+      error: error instanceof Error ? error.message : 'Failed to get strategies'
     });
   }
 });
@@ -773,11 +757,11 @@ router.get('/strategies/:sessionId', authenticateToken, async (req: Request, res
       success: true,
       strategies
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error getting session strategies:', error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to get strategies'
+      error: error instanceof Error ? error.message : 'Failed to get strategies'
     });
   }
 });
@@ -808,11 +792,11 @@ router.get('/settings', authenticateToken, async (req: Request, res: Response) =
         config: {}
       }
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error getting agent settings:', error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to get agent settings'
+      error: error instanceof Error ? error.message : 'Failed to get agent settings'
     });
   }
 });
@@ -853,11 +837,11 @@ router.post('/settings', authenticateToken, async (req: Request, res: Response) 
       success: true,
       settings
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error saving agent settings:', error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to save agent settings'
+      error: error instanceof Error ? error.message : 'Failed to save agent settings'
     });
   }
 });

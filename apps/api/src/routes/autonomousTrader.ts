@@ -22,11 +22,11 @@ router.post('/enable', authenticateToken, async (req: Request, res: Response) =>
       message: 'Autonomous trading enabled. The system will now trade automatically to profitability.',
       config
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('Error enabling autonomous trading:', error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to enable autonomous trading'
+      error: error instanceof Error ? error.message : 'Failed to enable autonomous trading'
     });
   }
 });
@@ -45,11 +45,11 @@ router.post('/disable', authenticateToken, async (req: Request, res: Response) =
       success: true,
       message: 'Autonomous trading disabled. All positions have been closed.'
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('Error disabling autonomous trading:', error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to disable autonomous trading'
+      error: error instanceof Error ? error.message : 'Failed to disable autonomous trading'
     });
   }
 });
@@ -131,11 +131,11 @@ router.get('/status', authenticateToken, async (req: Request, res: Response) => 
         reason: trade.reason
       }))
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('Error getting autonomous trading status:', error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to get status'
+      error: error instanceof Error ? error.message : 'Failed to get status'
     });
   }
 });
@@ -197,11 +197,11 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
         worstTrade: stats.worst_trade ? parseFloat(stats.worst_trade) : 0
       }
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('Error getting performance metrics:', error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to get performance'
+      error: error instanceof Error ? error.message : 'Failed to get performance'
     });
   }
 });
@@ -221,7 +221,7 @@ router.get('/trades', authenticateToken, async (req: Request, res: Response) => 
       WHERE user_id = $1
     `;
 
-    const params: any[] = [userId];
+    const params: (string | number)[] = [userId];
 
     if (status) {
       query += ` AND status = $2`;
@@ -255,11 +255,11 @@ router.get('/trades', authenticateToken, async (req: Request, res: Response) => 
         reason: trade.reason
       }))
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('Error getting trades:', error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to get trades'
+      error: error instanceof Error ? error.message : 'Failed to get trades'
     });
   }
 });
@@ -281,11 +281,11 @@ router.get('/heartbeat', authenticateToken, async (req: Request, res: Response) 
       paperTrading: status.paperTrading,
       openPositions: status.openPositions
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     logger.error('Error checking heartbeat:', error);
     res.status(500).json({
       success: false,
-      error: error.message || 'Failed to check heartbeat'
+      error: error instanceof Error ? error.message : 'Failed to check heartbeat'
     });
   }
 });

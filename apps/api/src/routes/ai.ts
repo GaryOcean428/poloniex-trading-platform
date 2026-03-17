@@ -4,6 +4,28 @@ import { authenticateToken } from '../middleware/auth.js';
 
 const router = Router();
 
+interface TradingTechnicalIndicators {
+  rsi?: number;
+  macd?: number;
+}
+
+interface TradingData {
+  symbol: string;
+  price: number;
+  change24h: number;
+  volume: number;
+  technicalIndicators?: TradingTechnicalIndicators;
+}
+
+interface TradingInsight {
+  type: string;
+  title: string;
+  content: string;
+  confidence: number;
+  timeframe: string;
+}
+
+
 // Initialize Claude client
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY
@@ -74,12 +96,12 @@ router.post('/trading-insight', authenticateToken, async (req: Request, res: Res
         outputTokens: message.usage.output_tokens
       }
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error generating trading insight:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to generate trading insight',
-      details: error.message
+      details: error instanceof Error ? error.message : String(error)
     });
   }
 });
@@ -87,7 +109,7 @@ router.post('/trading-insight', authenticateToken, async (req: Request, res: Res
 /**
  * Build trading prompt for Claude
  */
-function buildTradingPrompt(tradingData: any, userQuery?: string): string {
+function buildTradingPrompt(tradingData: TradingData, userQuery?: string): string {
   const { symbol, price, change24h, volume, technicalIndicators } = tradingData;
 
   let prompt = `You are an expert cryptocurrency trading analyst. Analyze the following market data and provide a concise trading insight.
@@ -129,7 +151,7 @@ Focus on actionable insights and be concise.`;
 /**
  * Parse Claude's response into structured insight
  */
-function parseClaudeResponse(responseText: string, tradingData: any): any {
+function parseClaudeResponse(responseText: string, tradingData: TradingData): TradingInsight {
   try {
     // Try to extract JSON from response
     const jsonMatch = responseText.match(/\{[\s\S]*\}/);
