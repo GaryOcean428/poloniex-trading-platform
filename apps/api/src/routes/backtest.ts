@@ -429,18 +429,19 @@ router.get('/pipeline/summary', authenticateToken, async (req: Request, res: Res
       );
 
       const paper = paperResult.rows[0];
-      if (paper && parseInt(paper.total_sessions) > 0) {
+      const paperSessionCount = parseInt(paper?.total_sessions) || 0;
+      if (paperSessionCount > 0) {
         const totalTrades = parseInt(paper.total_trades) || 0;
         const winningTrades = parseInt(paper.total_winning_trades) || 0;
         paperTradingSummary = {
-          totalSessions: parseInt(paper.total_sessions),
-          activeSessions: parseInt(paper.active_sessions),
-          totalRealizedPnl: parseFloat(paper.total_realized_pnl),
-          totalUnrealizedPnl: parseFloat(paper.total_unrealized_pnl),
+          totalSessions: paperSessionCount,
+          activeSessions: parseInt(paper.active_sessions) || 0,
+          totalRealizedPnl: parseFloat(paper.total_realized_pnl) || 0,
+          totalUnrealizedPnl: parseFloat(paper.total_unrealized_pnl) || 0,
           totalTrades,
           winningTrades,
           winRate: totalTrades > 0 ? (winningTrades / totalTrades) * 100 : 0,
-          averageReturnPct: parseFloat(paper.avg_return_pct)
+          averageReturnPct: parseFloat(paper.avg_return_pct) || 0
         };
       }
     } catch (dbError: any) {

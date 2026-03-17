@@ -265,7 +265,7 @@ const Backtesting: React.FC = () => {
 
   // Determine available balance for simulation context
   const simulationBalance = accountBalance
-    ? parseFloat(String(accountBalance.available || accountBalance.total || 0))
+    ? Number(accountBalance.available ?? accountBalance.total ?? 0) || 0
     : 0;
 
   // ─── Overview Tab ─────────────────────────────────────────────────────────
@@ -466,7 +466,7 @@ const Backtesting: React.FC = () => {
                   </div>
                 </div>
                 <div className="flex items-center space-x-4">
-                  {strategy.performance.winRate != null && strategy.performance.winRate > 0 && (
+                  {strategy.performance.winRate != null && (
                     <span className="text-sm text-text-secondary">
                       WR: {(strategy.performance.winRate * 100).toFixed(1)}%
                     </span>
@@ -494,7 +494,7 @@ const Backtesting: React.FC = () => {
                     </div>
 
                     {/* Performance */}
-                    {strategy.performance && (strategy.performance.winRate ?? 0) > 0 && (
+                    {strategy.performance && strategy.performance.winRate != null && (
                       <div>
                         <p className="text-xs text-text-muted mb-2 font-medium">BACKTEST PERFORMANCE</p>
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
