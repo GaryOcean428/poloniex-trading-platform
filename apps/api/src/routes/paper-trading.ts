@@ -89,7 +89,20 @@ router.get('/status', authenticateToken, async (req: Request, res: Response) => 
     const session = paperTradingService.getSession(strategyId as string);
     const status = session ? {
       active: true,
-      session
+      session: {
+        id: session.id,
+        strategyId: session.strategyName || strategyId,
+        symbol: session.symbol,
+        initialCapital: session.initialCapital,
+        currentCapital: session.currentCapital,
+        totalPnL: session.totalPnl,
+        realizedPnL: session.realizedPnl,
+        unrealizedPnL: session.unrealizedPnl,
+        winRate: session.winRate,
+        totalTrades: session.totalTrades,
+        winningTrades: session.winningTrades,
+        losingTrades: session.losingTrades
+      }
     } : {
       active: false
     };
@@ -145,11 +158,16 @@ router.get('/pnl', authenticateToken, async (req: Request, res: Response) => {
     // Get P&L
     const session = paperTradingService.getSession(strategyId as string);
     const pnl = session ? {
-      totalPnL: session.totalPnL,
-      realizedPnL: session.realizedPnL,
-      unrealizedPnL: session.unrealizedPnL,
+      totalPnL: session.totalPnl,
+      realizedPnL: session.realizedPnl,
+      unrealizedPnL: session.unrealizedPnl,
       winRate: session.winRate,
-      totalTrades: session.totalTrades
+      totalTrades: session.totalTrades,
+      initialCapital: session.initialCapital,
+      currentValue: session.currentValue,
+      fees: session.trades
+        .filter((t: any) => t.fees)
+        .reduce((sum: number, t: any) => sum + (t.fees || 0), 0)
     } : null;
     
     res.json({

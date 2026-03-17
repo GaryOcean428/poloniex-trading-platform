@@ -451,6 +451,8 @@ class PaperTradingService extends EventEmitter {
         takeProfit: positionData.takeProfit,
         unrealizedPnl: 0,
         realizedPnl: 0,
+        entryFees: this.calculateTradingFees(positionData.size, positionData.entryPrice),
+        fees: 0,
         status: 'open',
         entryTime: new Date(),
         reason: positionData.reason || 'manual'
@@ -482,9 +484,9 @@ class PaperTradingService extends EventEmitter {
       // Add to session positions
       session.positions.set(positionId, position);
 
-      // Update session margin
+      // Update session margin and deduct entry fees from cash
       session.margin += position.size * position.entryPrice;
-      session.cash -= position.size * position.entryPrice;
+      session.cash -= (position.size * position.entryPrice) + position.entryFees;
 
       // Create trade record
       await this.createTradeRecord(session, position, 'entry');
@@ -531,19 +533,23 @@ class PaperTradingService extends EventEmitter {
         throw new Error(`Failed to execute exit order: ${executionResult.message}`);
       }
 
-      // Calculate realized P&L
-      const realizedPnl = this.calculateRealizedPnl(position, executionResult.executionPrice);
+      // Calculate realized P&L including fees from entry and exit
+      const rawPnl = this.calculateRealizedPnl(position, executionResult.executionPrice);
+      const entryFees = position.entryFees || this.calculateTradingFees(position.size, position.entryPrice);
+      const exitFees = executionResult.fees || this.calculateTradingFees(position.size, executionResult.executionPrice);
+      const realizedPnl = rawPnl - entryFees - exitFees;
 
       // Update position
       position.exitPrice = executionResult.executionPrice;
       position.exitTime = new Date();
       position.realizedPnl = realizedPnl;
+      position.fees = entryFees + exitFees;
       position.unrealizedPnl = 0;
       position.status = 'closed';
 
       // Update session totals
       session.realizedPnl += realizedPnl;
-      session.cash += position.size * executionResult.executionPrice;
+      session.cash += position.size * executionResult.executionPrice - exitFees;
       session.margin -= position.size * position.entryPrice;
       session.totalTrades++;
       
@@ -819,8 +825,16 @@ class PaperTradingService extends EventEmitter {
     const session = this.activeSessions.get(sessionId);
     if (!session) return null;
 
+    const winRate = session.totalTrades > 0
+      ? session.winningTrades / session.totalTrades
+      : 0;
+    const totalPnl = session.realizedPnl + session.unrealizedPnl;
+
     return {
       ...session,
+      totalPnl,
+      winRate,
+      currentCapital: session.currentValue,
       positions: Array.from(session.positions.values()),
       trades: session.trades.slice(-50) // Last 50 trades
     };
@@ -962,8 +976,8 @@ class PaperTradingService extends EventEmitter {
       timeframe: sessionData.timeframe,
       initialCapital: parseFloat(sessionData.initial_capital),
       currentValue: parseFloat(sessionData.current_value),
-      cash: parseFloat(sessionData.current_value), // Will be recalculated
-      margin: 0,
+      cash: parseFloat(sessionData.current_value), // Will be adjusted after positions load
+      margin: 0, // Will be recalculated after positions load
       unrealizedPnl: parseFloat(sessionData.unrealized_pnl),
       realizedPnl: parseFloat(sessionData.realized_pnl),
       totalTrades: parseInt(sessionData.total_trades),
@@ -988,6 +1002,8 @@ class PaperTradingService extends EventEmitter {
       const session = this.activeSessions.get(sessionId);
       if (!session) return;
 
+      let openMargin = 0;
+
       for (const positionData of result.rows) {
         const position = {
           id: positionData.id,
@@ -1008,7 +1024,16 @@ class PaperTradingService extends EventEmitter {
         };
 
         session.positions.set(position.id, position);
+
+        // Track margin for open positions
+        if (position.status === 'open') {
+          openMargin += position.size * position.entryPrice;
+        }
       }
+
+      // Recalculate margin and cash from open positions
+      session.margin = openMargin;
+      session.cash = session.currentValue - session.unrealizedPnl - openMargin;
     } catch (error) {
       logger.error('Error loading session positions:', error);
     }
