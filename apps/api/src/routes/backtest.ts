@@ -91,8 +91,79 @@ const router = express.Router();
 const MIN_CONFIDENCE_THRESHOLD = 60;
 const MIN_WIN_RATE_THRESHOLD = 45;
 
-// Store running backtests
+// Store running backtests in-memory for active progress tracking
+// Completed results are persisted to the database
 const runningBacktests = new Map<string, BacktestRecord>();
+
+/**
+ * Persist a completed/failed backtest to the database for cross-restart survival.
+ */
+async function persistBacktestToDB(backtest: BacktestRecord): Promise<void> {
+  try {
+    await pool.query(
+      `INSERT INTO backtest_results
+        (id, user_id, strategy_id, symbol, start_date, end_date, initial_capital, timeframe, status, progress, results, error, started_at, completed_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+       ON CONFLICT (id) DO UPDATE SET
+        status = EXCLUDED.status,
+        progress = EXCLUDED.progress,
+        results = EXCLUDED.results,
+        error = EXCLUDED.error,
+        completed_at = EXCLUDED.completed_at`,
+      [
+        backtest.id,
+        backtest.userId,
+        backtest.strategyId,
+        backtest.symbol,
+        backtest.startDate,
+        backtest.endDate,
+        backtest.initialCapital,
+        backtest.timeframe,
+        backtest.status,
+        backtest.progress,
+        JSON.stringify(backtest.results),
+        backtest.error,
+        backtest.startedAt,
+        backtest.completedAt || null
+      ]
+    );
+  } catch (err: unknown) {
+    // Table may not exist yet — log and continue using in-memory only
+    logger.warn('Could not persist backtest to DB (table may not exist):', err instanceof Error ? err.message : String(err));
+  }
+}
+
+/**
+ * Load a backtest from the database if it's not in the in-memory map.
+ */
+async function loadBacktestFromDB(backtestId: string): Promise<BacktestRecord | null> {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM backtest_results WHERE id = $1`,
+      [backtestId]
+    );
+    if (result.rows.length === 0) return null;
+    const row = result.rows[0];
+    return {
+      id: row.id,
+      userId: row.user_id,
+      strategyId: row.strategy_id,
+      symbol: row.symbol,
+      startDate: row.start_date,
+      endDate: row.end_date,
+      initialCapital: parseFloat(row.initial_capital) || 10000,
+      timeframe: row.timeframe,
+      status: row.status,
+      progress: parseInt(row.progress) || 0,
+      startedAt: new Date(row.started_at),
+      results: typeof row.results === 'string' ? JSON.parse(row.results) : row.results,
+      error: row.error,
+      completedAt: row.completed_at ? new Date(row.completed_at) : undefined
+    };
+  } catch {
+    return null;
+  }
+}
 
 /**
  * POST /api/backtest/run
@@ -164,8 +235,13 @@ router.post('/run', authenticateToken, async (req: Request, res: Response) => {
 router.get('/status/:id', authenticateToken, async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const backtest = runningBacktests.get(id);
+    let backtest = runningBacktests.get(id);
     
+    // Fall back to database if not in memory (e.g., after server restart)
+    if (!backtest) {
+      backtest = await loadBacktestFromDB(id) ?? undefined;
+    }
+
     if (!backtest) {
       return res.status(404).json({
         success: false,
@@ -205,15 +281,48 @@ router.get('/history', authenticateToken, async (req: Request, res: Response) =>
     const userId = String(req.user.id);
     const limit = parseInt(req.query.limit as string) || 20;
     
-    // Get user's backtests
-    const userBacktests = Array.from(runningBacktests.values())
-      .filter(bt => bt.userId === userId)
+    // Merge in-memory running backtests with persisted DB backtests
+    const inMemory = Array.from(runningBacktests.values())
+      .filter(bt => bt.userId === userId);
+
+    let dbBacktests: BacktestRecord[] = [];
+    try {
+      const dbResult = await pool.query(
+        `SELECT * FROM backtest_results WHERE user_id = $1 ORDER BY started_at DESC LIMIT $2`,
+        [userId, limit]
+      );
+      dbBacktests = dbResult.rows.map((row: any) => ({
+        id: row.id,
+        userId: row.user_id,
+        strategyId: row.strategy_id,
+        symbol: row.symbol,
+        startDate: row.start_date,
+        endDate: row.end_date,
+        initialCapital: parseFloat(row.initial_capital) || 10000,
+        timeframe: row.timeframe,
+        status: row.status,
+        progress: parseInt(row.progress) || 0,
+        startedAt: new Date(row.started_at),
+        results: typeof row.results === 'string' ? JSON.parse(row.results) : row.results,
+        error: row.error,
+        completedAt: row.completed_at ? new Date(row.completed_at) : undefined
+      }));
+    } catch {
+      // DB table may not exist — fallback to in-memory only
+    }
+
+    // Deduplicate: in-memory takes priority (more recent data)
+    const seenIds = new Set(inMemory.map(bt => bt.id));
+    const merged = [
+      ...inMemory,
+      ...dbBacktests.filter(bt => !seenIds.has(bt.id))
+    ]
       .sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime())
       .slice(0, limit);
-    
+
     res.json({
       success: true,
-      backtests: userBacktests
+      backtests: merged
     });
     
   } catch (error: unknown) {
@@ -252,6 +361,13 @@ router.delete('/:id', authenticateToken, async (req: Request, res: Response) => 
     
     runningBacktests.delete(id);
     
+    // Also delete from DB
+    try {
+      await pool.query('DELETE FROM backtest_results WHERE id = $1', [id]);
+    } catch {
+      // DB table may not exist — in-memory delete is sufficient
+    }
+
     res.json({
       success: true,
       message: 'Backtest deleted'
@@ -309,6 +425,9 @@ async function runBacktestAsync(backtestId: string, config: BacktestConfig): Pro
     backtest.progress = 100;
     backtest.results = results;
     backtest.completedAt = new Date();
+
+    // Persist completed backtest to database
+    await persistBacktestToDB(backtest);
     
     logger.info(`Backtest ${backtestId} completed`, { results });
     
@@ -318,6 +437,9 @@ async function runBacktestAsync(backtestId: string, config: BacktestConfig): Pro
     backtest.status = 'failed';
     backtest.error = errMsg || 'Backtest failed';
     backtest.completedAt = new Date();
+
+    // Persist failed backtest to database
+    await persistBacktestToDB(backtest);
   }
 }
 

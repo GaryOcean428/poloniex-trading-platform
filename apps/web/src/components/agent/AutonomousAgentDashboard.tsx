@@ -55,6 +55,13 @@ const AutonomousAgentDashboard: React.FC = () => {
   const [paperMode, setPaperMode] = useState(true);
   const [lastPolled, setLastPolled] = useState<Date | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<'connected' | 'disconnected' | 'polling'>('polling');
+  const [circuitBreaker, setCircuitBreaker] = useState<{
+    isTripped: boolean;
+    reason?: string;
+    consecutiveLosses: number;
+    dailyLossPercent: number;
+    cooldownRemaining?: number;
+  } | null>(null);
   const [config, setConfig] = useState({
     maxDrawdown: 15,
     positionSize: 2,
@@ -117,6 +124,7 @@ const AutonomousAgentDashboard: React.FC = () => {
       if (agentStatusRef.current === 'running') {
         fetchActivity();
         fetchStrategies();
+        fetchCircuitBreaker();
       }
     }, pollInterval);
 
@@ -168,6 +176,19 @@ const AutonomousAgentDashboard: React.FC = () => {
       }
     } catch (_err: unknown) {
       // Silently handle
+    }
+  };
+
+  const fetchCircuitBreaker = async () => {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/api/agent/circuit-breaker`, {
+        headers: getAuthHeaders()
+      });
+      if (response.data.success) {
+        setCircuitBreaker(response.data.circuitBreaker);
+      }
+    } catch (_err: unknown) {
+      // Silently handle — circuit breaker display is non-critical
     }
   };
 
@@ -395,6 +416,47 @@ const AutonomousAgentDashboard: React.FC = () => {
         </div>
       )}
 
+      {/* Circuit Breaker Warning */}
+      {circuitBreaker?.isTripped && (
+        <div className="bg-red-50 border border-red-300 rounded-lg p-4 flex items-start gap-3" role="alert">
+          <Shield className="w-6 h-6 text-red-600 flex-shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <h3 className="text-red-800 font-semibold flex items-center gap-2">
+              Circuit Breaker Active
+              <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+            </h3>
+            <p className="text-red-700 text-sm mt-1">{circuitBreaker.reason}</p>
+            {circuitBreaker.cooldownRemaining != null && circuitBreaker.cooldownRemaining > 0 && (
+              <p className="text-red-600 text-xs mt-2">
+                Auto-reset in {Math.ceil(circuitBreaker.cooldownRemaining / 60000)} min
+              </p>
+            )}
+            <div className="flex gap-4 mt-2 text-xs text-red-600">
+              <span>Consecutive losses: {circuitBreaker.consecutiveLosses}</span>
+              <span>Daily loss: {circuitBreaker.dailyLossPercent.toFixed(2)}%</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Risk Protection Summary (when agent is running) */}
+      {agentStatus?.status === 'running' && !circuitBreaker?.isTripped && (
+        <div className="bg-green-50 border border-green-200 rounded-lg p-3 flex items-center gap-3 text-sm">
+          <Shield className="w-5 h-5 text-green-600 flex-shrink-0" />
+          <div className="flex-1 flex items-center justify-between">
+            <span className="text-green-800">
+              Risk protection active — circuit breaker, drawdown scaling, trailing stops enabled
+            </span>
+            {circuitBreaker && (
+              <div className="flex gap-3 text-xs text-green-600">
+                <span>Consec. losses: {circuitBreaker.consecutiveLosses}/5</span>
+                <span>Daily loss: {circuitBreaker.dailyLossPercent.toFixed(2)}%</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Real-Time Strategy Generation Display */}
       <StrategyGenerationDisplay agentStatus={agentStatus?.status} />
 
@@ -405,7 +467,7 @@ const AutonomousAgentDashboard: React.FC = () => {
       <ActiveStrategiesPanel agentStatus={agentStatus?.status} />
 
       {/* Status Overview - White Cards with Shadows */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
         <div 
           className="bg-white rounded-lg p-6 shadow-lg hover:shadow-xl transition-shadow"
           role="status"
@@ -432,19 +494,39 @@ const AutonomousAgentDashboard: React.FC = () => {
           <p className="text-2xl font-bold text-gray-900">
             {agentStatus?.strategiesGenerated || 0}
           </p>
+          <p className="text-xs text-gray-500 mt-1">
+            {strategies.filter(s => s.status === 'live').length} live · {strategies.filter(s => s.status === 'paper_trading').length} paper
+          </p>
         </div>
 
         <div 
           className="bg-white rounded-lg p-6 shadow-lg hover:shadow-xl transition-shadow"
           role="status"
-          aria-label={`Live strategies: ${agentStatus?.liveTradesExecuted || 0}`}
+          aria-label={`Backtests completed: ${agentStatus?.backtestsCompleted || 0}`}
         >
           <div className="flex items-center justify-between mb-2">
-            <span className="text-gray-600 text-sm font-medium">Live Strategies</span>
-            <TrendingUp className="w-5 h-5 text-green-600" />
+            <span className="text-gray-600 text-sm font-medium">Backtests Completed</span>
+            <BarChart3 className="w-5 h-5 text-purple-600" />
           </div>
           <p className="text-2xl font-bold text-gray-900">
-            {agentStatus?.liveTradesExecuted || 0}
+            {agentStatus?.backtestsCompleted || 0}
+          </p>
+          <p className="text-xs text-gray-500 mt-1">
+            {strategies.filter(s => s.status === 'backtested').length} passed
+          </p>
+        </div>
+
+        <div 
+          className="bg-white rounded-lg p-6 shadow-lg hover:shadow-xl transition-shadow"
+          role="status"
+          aria-label={`Paper trades: ${agentStatus?.paperTradesExecuted || 0}`}
+        >
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-gray-600 text-sm font-medium">Paper Trades</span>
+            <Shield className="w-5 h-5 text-blue-600" />
+          </div>
+          <p className="text-2xl font-bold text-gray-900">
+            {agentStatus?.paperTradesExecuted || 0}
           </p>
         </div>
 
