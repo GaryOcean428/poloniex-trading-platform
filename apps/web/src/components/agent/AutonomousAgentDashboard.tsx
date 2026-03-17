@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Play, Pause, Square, Activity, Brain, TrendingUp, AlertCircle, Shield, Zap } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Play, Pause, Square, Activity, Brain, TrendingUp, AlertCircle, Shield, Zap, BarChart3 } from 'lucide-react';
 import axios from 'axios';
 import { getAccessToken } from '@/utils/auth';
 import { getBackendUrl } from '@/utils/environment';
@@ -52,6 +53,8 @@ const AutonomousAgentDashboard: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [paperMode, setPaperMode] = useState(true);
+  const [lastPolled, setLastPolled] = useState<Date | null>(null);
+  const [connectionStatus, setConnectionStatus] = useState<'connected' | 'disconnected' | 'polling'>('polling');
   const [config, setConfig] = useState({
     maxDrawdown: 15,
     positionSize: 2,
@@ -79,6 +82,12 @@ const AutonomousAgentDashboard: React.FC = () => {
     let socket: { on: (event: string, cb: (data: any) => void) => void; disconnect: () => void } | null = null;
     import('socket.io-client').then(({ io }) => {
       socket = io(API_BASE_URL, { transports: ['websocket', 'polling'] });
+      (socket as any).on('connect', () => {
+        setConnectionStatus('connected');
+      });
+      (socket as any).on('disconnect', () => {
+        setConnectionStatus('polling');
+      });
       socket!.on('agent:activity', (event: { type: string; data?: { sessionId?: string; description?: string }; timestamp: string }) => {
         setActivity(prev => [{
           id: `ws-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -90,7 +99,7 @@ const AutonomousAgentDashboard: React.FC = () => {
         }, ...prev].slice(0, 50));
       });
     }).catch(() => {
-      // Socket.IO client not available — polling only
+      setConnectionStatus('polling');
     });
 
     return () => {
@@ -128,8 +137,9 @@ const AutonomousAgentDashboard: React.FC = () => {
       if (response.data.success) {
         setAgentStatus(response.data.status);
       }
+      setLastPolled(new Date());
     } catch (_err: unknown) {
-      // Silently handle — status will be null
+      setLastPolled(new Date());
     }
   };
 
@@ -346,6 +356,34 @@ const AutonomousAgentDashboard: React.FC = () => {
         </button>
       </div>
 
+      {/* Connection & Heartbeat Status Bar */}
+      <div className="bg-white rounded-lg shadow p-3 flex items-center justify-between text-sm">
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
+            <span className={`inline-block w-2 h-2 rounded-full ${
+              connectionStatus === 'connected' ? 'bg-green-500 animate-pulse' :
+              connectionStatus === 'polling' ? 'bg-yellow-500' :
+              'bg-red-500'
+            }`} />
+            <span className="text-gray-600">
+              {connectionStatus === 'connected' ? 'Live WebSocket' :
+               connectionStatus === 'polling' ? 'Polling' :
+               'Disconnected'}
+            </span>
+          </div>
+          {agentStatus?.status === 'running' && agentStatus?.startedAt && (
+            <span className="text-gray-500">
+              Running since {new Date(agentStatus.startedAt).toLocaleString()}
+            </span>
+          )}
+        </div>
+        {lastPolled && (
+          <span className="text-gray-400 text-xs">
+            Last checked: {lastPolled.toLocaleTimeString()}
+          </span>
+        )}
+      </div>
+
       {/* Error Alert */}
       {error && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3" role="alert">
@@ -431,84 +469,44 @@ const AutonomousAgentDashboard: React.FC = () => {
       {/* Backtest Results Visualization */}
       <BacktestResultsVisualization />
 
-      {/* Strategies Table - White Card */}
+      {/* Strategy Pipeline Summary — link to Backtesting for detailed view */}
       <div className="bg-white rounded-lg shadow-lg overflow-hidden">
-        <div className="p-6 border-b border-gray-200">
-          <h2 className="text-xl font-bold text-gray-900">Generated Strategies</h2>
-        </div>
-        <div className="overflow-x-auto">
-          {strategies.length > 0 ? (
-            <table 
-              className="w-full"
-              role="table"
-              aria-label="Generated trading strategies"
-            >
-              <caption className="sr-only">List of AI-generated trading strategies with their performance metrics</caption>
-              <thead className="bg-gray-50 border-b border-gray-200">
-                <tr>
-                  <th scope="col" className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
-                    Strategy Name
-                  </th>
-                  <th scope="col" className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
-                    Status
-                  </th>
-                  <th scope="col" className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
-                    Backtest Score
-                  </th>
-                  <th scope="col" className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
-                    Paper Score
-                  </th>
-                  <th scope="col" className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
-                    Created
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {strategies.map((strategy) => (
-                  <tr 
-                    key={strategy.id}
-                    className="hover:bg-gray-50 transition-colors"
-                  >
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                      {strategy.strategy_name}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`px-3 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${getStrategyStatusColor(strategy.status)}`}>
-                        {strategy.status.replace('_', ' ')}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
-                      {strategy.backtest_score.toFixed(2)}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
-                      {strategy.paper_trading_score?.toFixed(2) || 'N/A'}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {new Date(strategy.created_at).toLocaleDateString()}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : (
-            <div className="text-center py-12">
-              <Brain className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-              <h3 className="text-lg font-semibold text-gray-700 mb-2">
-                No Strategies Yet
-              </h3>
-              <p className="text-gray-500 mb-6">
-                Start the agent to begin generating AI-powered trading strategies
+        <div className="p-6 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <BarChart3 className="w-5 h-5 text-cyan-600" />
+            <div>
+              <h2 className="text-lg font-bold text-gray-900">Strategy Pipeline</h2>
+              <p className="text-sm text-gray-500">
+                {strategies.length > 0
+                  ? `${strategies.length} strategies generated — view full pipeline on Backtesting`
+                  : 'Start the agent to generate AI-powered trading strategies'}
               </p>
-              <button 
-                onClick={startAgent}
-                disabled={loading}
-                className="px-6 py-3 bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-lg hover:shadow-lg transition-shadow disabled:opacity-50 focus:ring-4 focus:ring-blue-300 focus:outline-none"
-              >
-                Start Agent Now
-              </button>
             </div>
-          )}
+          </div>
+          <Link
+            to="/backtesting"
+            className="inline-flex items-center px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors text-sm"
+          >
+            View Pipeline
+          </Link>
         </div>
+        {strategies.length > 0 && (
+          <div className="border-t border-gray-200 px-6 py-4">
+            <div className="flex gap-6 text-sm">
+              {['generated', 'backtested', 'paper_trading', 'live'].map(status => {
+                const count = strategies.filter(s => s.status === status).length;
+                return (
+                  <div key={status} className="flex items-center gap-2">
+                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${getStrategyStatusColor(status)}`}>
+                      {status.replace('_', ' ')}
+                    </span>
+                    <span className="text-gray-600 font-medium">{count}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Live Trading Activity Feed */}
