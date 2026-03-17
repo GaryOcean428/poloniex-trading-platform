@@ -212,7 +212,7 @@ class BacktestingEngine extends EventEmitter {
       // Load historical data
       const historicalData = await this.loadHistoricalData(
         config.symbol,
-        config.timeframe,
+        config.timeframe || '1h',
         config.startDate,
         config.endDate
       );
@@ -360,6 +360,9 @@ class BacktestingEngine extends EventEmitter {
     try {
       // Execute strategy logic
       switch (strategy.type) {
+        case 'trend_following':
+          signals.entry = this.generateTrendFollowingSignals(indicators, strategy.parameters);
+          break;
         case 'momentum':
           signals.entry = this.generateMomentumSignals(indicators, strategy.parameters);
           break;
@@ -441,6 +444,77 @@ class BacktestingEngine extends EventEmitter {
         side: 'short',
         strength: (currentPrice - upper) / (upper - lower),
         reason: 'mean_reversion_short'
+      };
+    }
+
+    return null;
+  }
+
+  /**
+   * Generate trend following signals based on SMA/EMA crossover
+   */
+  generateTrendFollowingSignals(indicators, params) {
+    // The engine pre-calculates sma20 and sma50; use those directly
+    const shortMA = indicators.sma20;
+    const longMA = indicators.sma50;
+
+    if (shortMA == null || longMA == null) return null;
+
+    // Long signal: Short MA above Long MA (uptrend)
+    if (shortMA > longMA) {
+      const spread = (shortMA - longMA) / longMA;
+      return {
+        side: 'long',
+        strength: Math.min(spread * 20, 1),
+        reason: 'trend_following_long'
+      };
+    }
+
+    // Short signal: Short MA below Long MA (downtrend)
+    if (shortMA < longMA) {
+      const spread = (longMA - shortMA) / longMA;
+      return {
+        side: 'short',
+        strength: Math.min(spread * 20, 1),
+        reason: 'trend_following_short'
+      };
+    }
+
+    return null;
+  }
+
+  /**
+   * Generate breakout signals using Bollinger Bands with volume confirmation
+   */
+  generateBreakoutSignals(indicators, params) {
+    const {
+      volumeThreshold = 1.5
+    } = params;
+
+    const { upper, lower } = indicators.bollingerBands;
+    const currentPrice = indicators.current.price;
+    const currentVolume = indicators.current.volume;
+    const avgVolume = indicators.volumeMA;
+
+    if (upper == null || lower == null) return null;
+
+    const volumeConfirmed = avgVolume > 0 && (currentVolume / avgVolume) >= volumeThreshold;
+
+    // Long signal: Price breaks above upper BB with volume confirmation
+    if (currentPrice > upper && volumeConfirmed) {
+      return {
+        side: 'long',
+        strength: Math.min((currentPrice - upper) / (upper - lower), 1),
+        reason: 'breakout_long'
+      };
+    }
+
+    // Short signal: Price breaks below lower BB with volume confirmation
+    if (currentPrice < lower && volumeConfirmed) {
+      return {
+        side: 'short',
+        strength: Math.min((lower - currentPrice) / (upper - lower), 1),
+        reason: 'breakout_short'
       };
     }
 

@@ -81,6 +81,8 @@ class EnhancedAutonomousAgent extends EventEmitter {
   private runningIntervals: Map<string, NodeJS.Timeout> = new Map();
   private strategies: Map<string, Strategy> = new Map();
   private io: SocketIOServer | null = null;
+  // Maps strategy ID → paper trading session ID for result lookup
+  private paperSessionIds: Map<string, string> = new Map();
 
   // Circuit breaker state per session
   private circuitBreakers: Map<string, {
@@ -788,27 +790,51 @@ Generate the combination logic as executable JavaScript code.
       // 1. Backtest
       logger.info(`Starting backtest for strategy ${strategy.name}`);
       
-      // Register strategy first
+      // Parse the strategy code to extract type and parameters for the backtesting engine
+      let engineType = 'momentum'; // safe default that the engine supports
+      let engineParams: Record<string, any> = {};
+      try {
+        const parsed = JSON.parse(strategy.code);
+        // Map rule-based strategy types to engine-supported signal generators
+        const typeMap: Record<string, string> = {
+          'trend_following': 'trend_following',
+          'momentum': 'momentum',
+          'breakout': 'breakout',
+          'mean_reversion': 'mean_reversion',
+          'scalping': 'momentum', // scalping uses momentum signals with tighter params
+          'multi_strategy_combo': 'momentum'
+        };
+        engineType = typeMap[parsed.type] || typeMap[strategy.type] || 'momentum';
+        engineParams = parsed.parameters || {};
+      } catch {
+        // LLM-generated code may not be valid JSON; fall back to momentum
+        logger.warn(`[Lifecycle] Could not parse strategy code for ${strategy.name}, using momentum defaults`);
+      }
+
+      // Register strategy with the correct type and parameters for signal generation
       backtestingEngine.registerStrategy(strategy.id, {
         id: strategy.id,
         name: strategy.name,
-        type: 'custom',
-        parameters: {},
+        type: engineType,
+        parameters: engineParams,
         code: strategy.code
       });
       
       const backtestResult = await backtestingEngine.runBacktest(strategy.id, {
         symbol: strategy.symbol,
+        timeframe: strategy.timeframe || session.config.preferredTimeframes[0] || '1h',
         startDate: new Date(Date.now() - session.config.backtestPeriodDays * 24 * 60 * 60 * 1000),
         endDate: new Date(),
         initialCapital: 10000
       });
       
+      // Backtest engine stores results in metrics sub-object; winRate is a percentage (0-100)
+      const metrics = (backtestResult?.metrics || backtestResult || {}) as Record<string, any>;
       strategy.performance = {
-        winRate: backtestResult.winRate || 0,
-        profitFactor: backtestResult.profitFactor || 0,
-        totalTrades: backtestResult.totalTrades || 0,
-        totalReturn: backtestResult.totalReturn || 0
+        winRate: (metrics.winRate != null ? metrics.winRate / 100 : 0),
+        profitFactor: metrics.profitFactor || 0,
+        totalTrades: metrics.totalTrades || 0,
+        totalReturn: metrics.totalReturn || 0
       };
       strategy.status = 'backtested';
       
@@ -869,13 +895,23 @@ Generate the combination logic as executable JavaScript code.
     }
     
     // Start paper trading session
-    await paperTradingService.startSession({
-      userId: session.userId,
-      strategyId: strategy.id,
+    // First create the session, then start it with strategy config
+    let parsedStrategyCode: any = null;
+    try { parsedStrategyCode = JSON.parse(strategy.code); } catch { /* LLM code may not be JSON */ }
+
+    const paperSession = await paperTradingService.createSession({
+      name: `Paper: ${strategy.name}`,
+      strategyName: strategy.name,
       symbol: strategy.symbol,
+      timeframe: strategy.timeframe || session.config.preferredTimeframes[0] || '1h',
       initialCapital,
-      duration: session.config.paperTradingDurationHours * 60 * 60 * 1000
+      strategy: parsedStrategyCode
     });
+    
+    // Track mapping from strategy ID → paper session ID for later result lookup
+    this.paperSessionIds.set(strategy.id, paperSession.id);
+    
+    await paperTradingService.startSession(paperSession.id, parsedStrategyCode);
     
     this.emit('strategy:paper_trading', { strategyId: strategy.id });
     
@@ -898,11 +934,12 @@ Generate the combination logic as executable JavaScript code.
         return;
       }
 
-      const paperSession = paperTradingService.getSession(strategy.id);
+      const paperSessionId = this.paperSessionIds.get(strategy.id);
+      const paperSession = paperSessionId ? paperTradingService.getSession(paperSessionId) : null;
       const paperResults = paperSession ? {
-        winRate: paperSession.totalTrades > 0 ? (paperSession.winningTrades / paperSession.totalTrades) : 0,
-        profitFactor: paperSession.losingTrades > 0 ? 
-          Math.abs(paperSession.winningTrades / paperSession.losingTrades) : 0,
+        winRate: paperSession.winRate || 0,
+        profitFactor: (paperSession.losingTrades > 0 && paperSession.winningTrades > 0)
+          ? paperSession.winningTrades / paperSession.losingTrades : 0,
         totalTrades: paperSession.totalTrades || 0
       } : null;
       
