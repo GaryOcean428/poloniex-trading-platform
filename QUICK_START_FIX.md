@@ -27,13 +27,14 @@ This PR fixes the critical issues affecting your Poloniex Trading Platform:
 node apps/api/run-migration.js
 ```
 
-**Expected Output:**
+**Expected Output (example):**
 ```
 🔄 Starting database migrations...
-📝 Migration 1: Add encryption_tag column...
-✅ encryption_tag column already exists
-📝 Migration 2: Create trades table...
-✅ Created trades table
+📝 Running 001_futures_schema.sql...
+✅ 001_futures_schema.sql completed
+...
+📝 Running 011_agent_events_table.sql...
+✅ 011_agent_events_table.sql completed
 ✨ All migrations completed successfully!
 ```
 
