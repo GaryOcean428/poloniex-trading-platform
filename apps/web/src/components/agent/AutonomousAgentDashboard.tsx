@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Play, Pause, Square, Activity, Brain, TrendingUp, AlertCircle, Shield, Zap, BarChart3, Settings, ChevronDown, ChevronUp } from 'lucide-react';
+import { Play, Pause, Square, Activity, Brain, TrendingUp, AlertCircle, Shield, BarChart3, Settings, ChevronDown, ChevronUp } from 'lucide-react';
 import axios from 'axios';
 import { getAccessToken } from '@/utils/auth';
 import { getBackendUrl } from '@/utils/environment';
@@ -13,6 +13,21 @@ import PerformanceAnalytics from './PerformanceAnalytics';
 import AgentOverviewPanel from './AgentOverviewPanel';
 
 const API_BASE_URL = getBackendUrl();
+
+const RISK_CONFIGS = {
+  conservative: { maxDrawdown: 8, positionSize: 1, stopLossPercentage: 3, maxConcurrentPositions: 2 },
+  balanced: { maxDrawdown: 15, positionSize: 2, stopLossPercentage: 5, maxConcurrentPositions: 3 },
+  aggressive: { maxDrawdown: 25, positionSize: 5, stopLossPercentage: 8, maxConcurrentPositions: 5 }
+} as const;
+
+const FALLBACK_HEALTH_STATUS = {
+  healthy: false,
+  dependencies: {
+    database: { healthy: false, message: 'Unreachable' },
+    agentService: { healthy: false, message: 'Unreachable' }
+  },
+  timestamp: ''
+};
 
 interface AgentStatus {
   id: string;
@@ -53,7 +68,6 @@ const AutonomousAgentDashboard: React.FC = () => {
   const [strategies, setStrategies] = useState<AgentStrategy[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [paperMode, setPaperMode] = useState(true);
   const [lastPolled, setLastPolled] = useState<Date | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<'connected' | 'disconnected' | 'polling'>('polling');
   const [circuitBreaker, setCircuitBreaker] = useState<{
@@ -64,6 +78,31 @@ const AutonomousAgentDashboard: React.FC = () => {
     cooldownRemaining?: number;
   } | null>(null);
   const [showConfig, setShowConfig] = useState(false);
+  const [existingSession, setExistingSession] = useState<{
+    sessionId: string | null;
+    state: string;
+    startedAt: string | null;
+    resumeAllowed: boolean;
+  } | null>(null);
+  const [healthStatus, setHealthStatus] = useState<{
+    healthy: boolean;
+    dependencies: Record<string, { healthy: boolean; message: string }>;
+    timestamp: string;
+  } | null>(null);
+  const [riskAppetite, setRiskAppetite] = useState<'conservative' | 'balanced' | 'aggressive'>('balanced');
+  const [executionMode, setExecutionMode] = useState<'backtest' | 'paper' | 'live'>('paper');
+  const [performanceMode, setPerformanceMode] = useState<'all' | 'backtest' | 'paper' | 'live'>('all');
+  const [agentEvents, setAgentEvents] = useState<Array<{
+    id: string;
+    event_type: string;
+    execution_mode: string;
+    description: string;
+    explanation: string;
+    confidence_score: number;
+    created_at: string;
+  }>>([]);
+  const [eventFilter, setEventFilter] = useState<'all' | 'trade_decision' | 'state_change' | 'risk_action' | 'health_alert' | 'error'>('all');
+  const [lastHeartbeat, setLastHeartbeat] = useState<Date | null>(null);
   const [config, setConfig] = useState({
     maxDrawdown: 15,
     positionSize: 2,
@@ -86,6 +125,7 @@ const AutonomousAgentDashboard: React.FC = () => {
     fetchAgentStatus();
     fetchActivity();
     fetchStrategies();
+    fetchHealth();
 
     // WebSocket real-time updates
     let socket: { on: (event: string, cb: (data: any) => void) => void; disconnect: () => void } | null = null;
@@ -127,6 +167,8 @@ const AutonomousAgentDashboard: React.FC = () => {
         fetchActivity();
         fetchStrategies();
         fetchCircuitBreaker();
+        fetchHealth();
+        fetchEvents();
       }
     }, pollInterval);
 
@@ -194,14 +236,49 @@ const AutonomousAgentDashboard: React.FC = () => {
     }
   };
 
+  const fetchHealth = async () => {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/api/agent/health`, {
+        headers: getAuthHeaders()
+      });
+      if (response.data.success) {
+        setHealthStatus(response.data);
+        setLastHeartbeat(new Date());
+      }
+    } catch {
+      setHealthStatus({
+        ...FALLBACK_HEALTH_STATUS,
+        timestamp: new Date().toISOString()
+      });
+    }
+  };
+
+  const fetchEvents = async () => {
+    try {
+      const params = new URLSearchParams({ limit: '20' });
+      if (eventFilter !== 'all') params.set('type', eventFilter);
+      const response = await axios.get(`${API_BASE_URL}/api/agent/events?${params.toString()}`, {
+        headers: getAuthHeaders()
+      });
+      if (response.data.success) {
+        setAgentEvents(response.data.events);
+      }
+    } catch {
+      // Events are non-critical
+    }
+  };
+
   const startAgent = async () => {
     setLoading(true);
     setError(null);
+    setExistingSession(null);
     
     try {
+      const riskConfig = RISK_CONFIGS[riskAppetite];
+
       const response = await axios.post(
         `${API_BASE_URL}/api/agent/start`,
-        { ...config, paperTrading: paperMode },
+        { ...config, ...riskConfig, paperTrading: executionMode === 'paper', executionMode },
         { headers: getAuthHeaders() }
       );
       
@@ -210,13 +287,43 @@ const AutonomousAgentDashboard: React.FC = () => {
         await fetchAgentStatus();
       }
     } catch (err: any) {
-      const code = err.response?.data?.code;
+      const data = err.response?.data;
+      const code = data?.code;
+      
       if (code === 'ALREADY_RUNNING') {
-        // Agent is already running — just refresh its status
+        setExistingSession({
+          sessionId: data.existingSessionId,
+          state: data.existingState,
+          startedAt: data.startedAt,
+          resumeAllowed: data.resumeAllowed
+        });
         await fetchAgentStatus();
+      } else if (err.response?.status === 503) {
+        setError('Service temporarily unavailable. Some dependencies may be down.');
+        await fetchHealth();
       } else {
-        setError(err.response?.data?.error || 'Failed to start agent');
+        setError(data?.error || 'Failed to start agent');
       }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const resumeAgent = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await axios.post(
+        `${API_BASE_URL}/api/agent/resume`,
+        {},
+        { headers: getAuthHeaders() }
+      );
+      if (response.data.success) {
+        setExistingSession(null);
+        await fetchAgentStatus();
+      }
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Failed to resume agent');
     } finally {
       setLoading(false);
     }
@@ -346,38 +453,139 @@ const AutonomousAgentDashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* Paper / Live Mode Toggle */}
-      <div className="bg-white rounded-lg shadow-lg p-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          {paperMode ? (
-            <Shield className="w-6 h-6 text-blue-600" />
-          ) : (
-            <Zap className="w-6 h-6 text-orange-500" />
-          )}
-          <div>
-            <p className="font-semibold text-gray-900">
-              {paperMode ? 'Paper Trading Mode' : 'Live Trading Mode'}
+      {/* Existing Session Banner */}
+      {existingSession && (
+        <div className="bg-amber-50 border border-amber-300 rounded-lg p-4 flex items-start gap-3" role="alert">
+          <AlertCircle className="w-6 h-6 text-amber-600 flex-shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <h3 className="text-amber-800 font-semibold">Agent Session Already Active</h3>
+            <p className="text-amber-700 text-sm mt-1">
+              An agent session is currently {existingSession.state}.
+              {existingSession.startedAt && (
+                <> Started <time dateTime={existingSession.startedAt}>{new Date(existingSession.startedAt).toLocaleString()}</time></>
+              )}
             </p>
-            <p className="text-sm text-gray-500">
-              {paperMode 
-                ? 'Simulated trades with virtual capital — no real money at risk' 
-                : 'Real trades will be executed on your Poloniex account'}
-            </p>
+            <div className="flex gap-3 mt-3">
+              {existingSession.resumeAllowed && (
+                <button onClick={resumeAgent} disabled={loading}
+                  className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50">
+                  Resume Session
+                </button>
+              )}
+              <button onClick={() => { fetchAgentStatus(); setExistingSession(null); }} 
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors">
+                View Current Session
+              </button>
+              <button onClick={stopAgent} disabled={loading}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50">
+                Stop Existing Session
+              </button>
+            </div>
           </div>
         </div>
-        <button
-          onClick={() => setPaperMode(prev => !prev)}
-          disabled={agentStatus?.status === 'running'}
-          className={`relative inline-flex h-8 w-16 items-center rounded-full transition-colors focus:outline-none focus:ring-4 focus:ring-blue-300 disabled:opacity-50 disabled:cursor-not-allowed ${paperMode ? 'bg-blue-600' : 'bg-orange-500'}`}
-          role="switch"
-          aria-checked={paperMode}
-          aria-label={paperMode ? 'Switch to live trading' : 'Switch to paper trading'}
-          title={agentStatus?.status === 'running' ? 'Stop the agent to change trading mode' : undefined}
-        >
-          <span className={`inline-block h-6 w-6 transform rounded-full bg-white shadow-md transition-transform ${paperMode ? 'translate-x-1' : 'translate-x-9'}`} />
-          <span className="sr-only">{paperMode ? 'Paper' : 'Live'}</span>
-        </button>
+      )}
+
+      {/* Health / Degraded State Banner */}
+      {healthStatus && !healthStatus.healthy && (
+        <div className="bg-orange-50 border border-orange-300 rounded-lg p-4" role="alert">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="w-6 h-6 text-orange-600 flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <h3 className="text-orange-800 font-semibold">Service Degraded</h3>
+              <p className="text-orange-700 text-sm mt-1">
+                Some services are unavailable. Historical data and read-only features still work.
+              </p>
+              <div className="mt-2 space-y-1">
+                {healthStatus.dependencies && Object.entries(healthStatus.dependencies).map(([key, dep]) => (
+                  dep && typeof dep === 'object' && 'healthy' in dep && (
+                    <div key={key} className="flex items-center gap-2 text-sm">
+                      <span className={`w-2 h-2 rounded-full ${dep.healthy ? 'bg-green-500' : 'bg-red-500'}`} />
+                      <span className="text-gray-600 capitalize">{key.replace(/([A-Z])/g, ' $1').trim()}</span>
+                      <span className={dep.healthy ? 'text-green-700' : 'text-red-700'}>{dep.message}</span>
+                    </div>
+                  )
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Risk Appetite & Execution Mode */}
+      <div className="bg-white rounded-lg shadow-lg p-6">
+        <h3 className="text-lg font-bold text-gray-900 mb-4">Agent Configuration</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Risk Appetite */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Risk Appetite</label>
+            <div className="grid grid-cols-3 gap-2">
+              {([
+                { value: 'conservative', label: 'Conservative', desc: 'Low risk, steady returns', activeClass: 'border-blue-500 bg-blue-50' },
+                { value: 'balanced', label: 'Balanced', desc: 'Moderate risk & reward', activeClass: 'border-cyan-500 bg-cyan-50' },
+                { value: 'aggressive', label: 'Aggressive', desc: 'High risk, high reward', activeClass: 'border-orange-500 bg-orange-50' }
+              ] as const).map(opt => (
+                <button key={opt.value}
+                  onClick={() => setRiskAppetite(opt.value)}
+                  disabled={agentStatus?.status === 'running'}
+                  className={`p-3 rounded-lg border-2 text-left transition-all disabled:opacity-50 ${
+                    riskAppetite === opt.value
+                      ? opt.activeClass
+                      : 'border-gray-200 hover:border-gray-300'
+                  }`}>
+                  <p className="font-semibold text-sm text-gray-900">{opt.label}</p>
+                  <p className="text-xs text-gray-500 mt-1">{opt.desc}</p>
+                </button>
+              ))}
+            </div>
+          </div>
+          {/* Execution Mode */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Execution Mode</label>
+            <div className="grid grid-cols-3 gap-2">
+              {([
+                { value: 'backtest', label: 'Backtest', desc: 'Historical simulation', icon: '📊', bgClass: 'border-purple-500 bg-purple-50' },
+                { value: 'paper', label: 'Paper', desc: 'Simulated capital', icon: '📝', bgClass: 'border-blue-500 bg-blue-50' },
+                { value: 'live', label: 'Live', desc: 'Real capital', icon: '⚡', bgClass: 'border-red-500 bg-red-50' }
+              ] as const).map(opt => (
+                <button key={opt.value}
+                  onClick={() => setExecutionMode(opt.value)}
+                  disabled={agentStatus?.status === 'running'}
+                  className={`p-3 rounded-lg border-2 text-left transition-all disabled:opacity-50 ${
+                    executionMode === opt.value ? opt.bgClass : 'border-gray-200 hover:border-gray-300'
+                  }`}>
+                  <p className="font-semibold text-sm text-gray-900">{opt.icon} {opt.label}</p>
+                  <p className="text-xs text-gray-500 mt-1">{opt.desc}</p>
+                </button>
+              ))}
+            </div>
+            {executionMode === 'live' && (
+              <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+                <p className="text-red-800 text-sm font-medium">⚠️ Live Trading — Real money will be used</p>
+                <p className="text-red-600 text-xs mt-1">Ensure you have reviewed your risk settings and account balance.</p>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
+
+      {/* Emergency Stop — visible when live trading is active */}
+      {agentStatus?.status === 'running' && (executionMode === 'live' || agentStatus?.config?.executionMode === 'live') && (
+        <div className="bg-red-50 border-2 border-red-300 rounded-lg p-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Shield className="w-6 h-6 text-red-600" />
+            <div>
+              <p className="font-semibold text-red-800">Live Trading Active</p>
+              <p className="text-sm text-red-600">Kill switch — immediately stops all live trading</p>
+            </div>
+          </div>
+          <button
+            onClick={stopAgent}
+            className="px-6 py-3 bg-red-600 hover:bg-red-700 text-white rounded-lg font-bold transition-colors shadow-lg hover:shadow-xl animate-pulse"
+          >
+            🛑 KILL SWITCH
+          </button>
+        </div>
+      )}
 
       {/* Agent Configuration Panel */}
       <div className="bg-white rounded-lg shadow-lg overflow-hidden">
@@ -553,6 +761,14 @@ const AutonomousAgentDashboard: React.FC = () => {
             Last checked: {lastPolled.toLocaleTimeString()}
           </span>
         )}
+        {lastHeartbeat && (() => {
+          const heartbeatAge = Math.round((Date.now() - lastHeartbeat.getTime()) / 1000);
+          return (
+            <span className="text-gray-400 text-xs flex items-center gap-1" aria-label={`Last heartbeat ${heartbeatAge} seconds ago`}>
+              💓 Heartbeat: {heartbeatAge}s ago
+            </span>
+          );
+        })()}
       </div>
 
       {/* Error Alert */}
@@ -606,6 +822,39 @@ const AutonomousAgentDashboard: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Performance Mode Tabs */}
+      <div className="bg-white rounded-lg shadow-lg overflow-hidden">
+        <div className="border-b border-gray-200 px-6 pt-4">
+          <div className="flex gap-1">
+            {(['all', 'backtest', 'paper', 'live'] as const).map(mode => (
+              <button
+                key={mode}
+                onClick={() => setPerformanceMode(mode)}
+                className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${
+                  performanceMode === mode
+                    ? mode === 'live' ? 'bg-red-50 text-red-700 border-b-2 border-red-500'
+                    : mode === 'paper' ? 'bg-blue-50 text-blue-700 border-b-2 border-blue-500'
+                    : mode === 'backtest' ? 'bg-purple-50 text-purple-700 border-b-2 border-purple-500'
+                    : 'bg-gray-50 text-gray-700 border-b-2 border-gray-500'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                {mode === 'all' ? 'All Modes' : mode === 'backtest' ? '📊 Backtest' : mode === 'paper' ? '📝 Paper' : '⚡ Live'}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="p-4 text-sm text-gray-500">
+          {performanceMode === 'all'
+            ? 'Showing combined performance across all execution modes'
+            : performanceMode === 'live'
+            ? '⚠️ Showing LIVE trading performance — real capital metrics'
+            : performanceMode === 'paper'
+            ? 'Showing paper trading performance — simulated capital'
+            : 'Showing historical backtest performance'}
+        </div>
+      </div>
 
       {/* Profitability & Agent Oversight Panel */}
       <AgentOverviewPanel
@@ -704,6 +953,73 @@ const AutonomousAgentDashboard: React.FC = () => {
 
       {/* Performance Analytics */}
       <PerformanceAnalytics agentStatus={agentStatus?.status} />
+
+      {/* Agent Activity Timeline */}
+      <div className="bg-white rounded-lg shadow-lg overflow-hidden">
+        <div className="p-6 border-b border-gray-200">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+              <Activity className="w-5 h-5 text-cyan-600" />
+              Agent Activity Timeline
+            </h2>
+            <div className="flex gap-1">
+              {['all', 'trade_decision', 'state_change', 'risk_action', 'health_alert', 'error'].map(filter => (
+                <button key={filter}
+                  onClick={() => setEventFilter(filter)}
+                  className={`px-3 py-1 text-xs rounded-full transition-colors ${
+                    eventFilter === filter
+                      ? 'bg-cyan-100 text-cyan-700 font-medium'
+                      : 'text-gray-500 hover:bg-gray-100'
+                  }`}>
+                  {filter === 'all' ? 'All' : filter.replace(/_/g, ' ')}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="p-6 max-h-96 overflow-y-auto">
+          {agentEvents.length > 0 ? (
+            <div className="space-y-3">
+              {agentEvents.map((event) => (
+                <div key={event.id} className="flex items-start gap-3 p-3 rounded-lg hover:bg-gray-50 transition-colors border-l-4 border-l-cyan-400">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                        event.event_type === 'trade_decision' ? 'bg-green-100 text-green-700' :
+                        event.event_type === 'risk_action' ? 'bg-red-100 text-red-700' :
+                        event.event_type === 'state_change' ? 'bg-blue-100 text-blue-700' :
+                        event.event_type === 'health_alert' ? 'bg-orange-100 text-orange-700' :
+                        event.event_type === 'error' ? 'bg-red-100 text-red-700' :
+                        'bg-gray-100 text-gray-700'
+                      }`}>{event.event_type?.replace(/_/g, ' ') || 'event'}</span>
+                      {event.execution_mode && (
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                          event.execution_mode === 'live' ? 'bg-red-100 text-red-700' :
+                          event.execution_mode === 'paper' ? 'bg-blue-100 text-blue-700' :
+                          'bg-purple-100 text-purple-700'
+                        }`}>{event.execution_mode}</span>
+                      )}
+                      {event.confidence_score != null && (
+                        <span className="text-xs text-gray-500">Confidence: {Number(event.confidence_score).toFixed(1)}%</span>
+                      )}
+                    </div>
+                    <p className="text-sm text-gray-900">{event.description}</p>
+                    {event.explanation && (
+                      <p className="text-xs text-gray-500 mt-1">{event.explanation}</p>
+                    )}
+                    <p className="text-xs text-gray-400 mt-1">{new Date(event.created_at).toLocaleString()}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-center py-8">
+              <p className="text-gray-500">No agent events yet</p>
+              <p className="text-gray-400 text-sm mt-1">Events will appear here once the agent starts making decisions</p>
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* Backtest Results Visualization */}
       <BacktestResultsVisualization />

@@ -49,16 +49,42 @@ router.post('/start', authenticateToken, async (req: Request, res: Response) => 
     console.error('Error starting agent:', error);
     const errMsg = error instanceof Error ? error.message : String(error);
     
-    // Provide specific error codes
+    // Handle "already running" with structured 409
+    if (errMsg.includes('already running')) {
+      try {
+        const catchUserId = (req.user?.id || req.user?.userId)?.toString();
+        const existingSession = catchUserId ? await enhancedAutonomousAgent.getAgentStatus(catchUserId) : null;
+        return res.status(409).json({
+          success: false,
+          error: 'An agent session is already active',
+          code: 'ALREADY_RUNNING',
+          existingSessionId: existingSession?.id || null,
+          existingState: existingSession?.status || 'unknown',
+          startedAt: existingSession?.startedAt || null,
+          resumeAllowed: existingSession?.status === 'paused',
+          takeoverAllowed: true
+        });
+      } catch {
+        return res.status(409).json({
+          success: false,
+          error: 'An agent session is already active',
+          code: 'ALREADY_RUNNING',
+          existingSessionId: null,
+          existingState: 'unknown',
+          startedAt: null,
+          resumeAllowed: false,
+          takeoverAllowed: true
+        });
+      }
+    }
+    
+    // Provide specific error codes for other errors
     let errorCode = 'UNKNOWN_ERROR';
     let statusCode = 500;
     
     if (errMsg.includes('credentials')) {
       errorCode = 'CREDENTIALS_ERROR';
       statusCode = 400;
-    } else if (errMsg.includes('already running')) {
-      errorCode = 'ALREADY_RUNNING';
-      statusCode = 409;
     } else if (errMsg.includes('API')) {
       errorCode = 'API_ERROR';
       statusCode = 503;
@@ -150,6 +176,66 @@ router.post('/pause', authenticateToken, async (req: Request, res: Response) => 
 });
 
 /**
+ * POST /api/agent/resume
+ * Resume the autonomous trading agent
+ */
+router.post('/resume', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const userId = (req.user?.id || req.user?.userId)?.toString();
+    
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        error: 'User ID not found in token'
+      });
+    }
+
+    const status = await enhancedAutonomousAgent.getAgentStatus(userId);
+    if (!status) {
+      return res.status(404).json({
+        success: false,
+        error: 'No active agent session found'
+      });
+    }
+
+    if (status.status !== 'paused') {
+      return res.status(400).json({
+        success: false,
+        error: `Cannot resume agent in '${status.status}' state. Agent must be paused.`,
+        code: 'INVALID_STATE'
+      });
+    }
+
+    // Resume the agent by updating state
+    try {
+      await pool.query(
+        'UPDATE agent_sessions SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+        ['running', status.id]
+      );
+    } catch {
+      // DB update is best-effort; in-memory state is the source of truth
+    }
+    status.status = 'running';
+
+    res.json({
+      success: true,
+      message: 'Agent resumed successfully',
+      session: {
+        id: status.id,
+        status: status.status,
+        startedAt: status.startedAt
+      }
+    });
+  } catch (error: unknown) {
+    console.error('Error resuming agent:', error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to resume agent'
+    });
+  }
+});
+
+/**
  * GET /api/agent/status
  * Get current agent status
  */
@@ -175,6 +261,73 @@ router.get('/status', authenticateToken, async (req: Request, res: Response) => 
     res.status(500).json({
       success: false,
       error: error instanceof Error ? error.message : 'Failed to get agent status'
+    });
+  }
+});
+
+/**
+ * GET /api/agent/health
+ * Get agent service health with dependency statuses
+ */
+router.get('/health', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const userId = (req.user?.id || req.user?.userId)?.toString();
+    
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        error: 'User ID not found in token'
+      });
+    }
+
+    // Check database connectivity
+    let dbHealthy = false;
+    try {
+      await pool.query('SELECT 1');
+      dbHealthy = true;
+    } catch {
+      // DB is down
+    }
+
+    // Check if agent service is available
+    const agentAvailable = enhancedAutonomousAgent != null;
+    
+    // Check for active session
+    let activeSession = null;
+    try {
+      activeSession = await enhancedAutonomousAgent.getAgentStatus(userId);
+    } catch {
+      // Agent status unavailable
+    }
+
+    const allHealthy = dbHealthy && agentAvailable;
+
+    res.json({
+      success: true,
+      healthy: allHealthy,
+      dependencies: {
+        database: { healthy: dbHealthy, message: dbHealthy ? 'Connected' : 'Connection failed' },
+        agentService: { healthy: agentAvailable, message: agentAvailable ? 'Available' : 'Unavailable' },
+        activeSession: activeSession ? {
+          id: activeSession.id,
+          status: activeSession.status,
+          startedAt: activeSession.startedAt
+        } : null
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error: unknown) {
+    console.error('Error checking agent health:', error);
+    res.status(503).json({
+      success: false,
+      error: 'Health check failed',
+      code: 'HEALTH_CHECK_FAILED',
+      dependencies: {
+        database: { healthy: false, message: 'Unknown' },
+        agentService: { healthy: false, message: 'Unknown' }
+      },
+      retryable: true,
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -220,6 +373,64 @@ router.get('/activity', authenticateToken, async (req: Request, res: Response) =
       success: false,
       error: error instanceof Error ? error.message : 'Failed to get activity'
     });
+  }
+});
+
+/**
+ * GET /api/agent/events
+ * Get agent events/audit trail with filters
+ */
+router.get('/events', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const userId = (req.user?.id || req.user?.userId)?.toString();
+    
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        error: 'User ID not found in token'
+      });
+    }
+
+    const limit = parseInt(req.query.limit as string) || 50;
+    const eventType = req.query.type as string | undefined;
+    const mode = req.query.mode as string | undefined;
+
+    let queryText = `SELECT * FROM agent_events WHERE user_id = $1`;
+    const params: (string | number)[] = [userId];
+
+    if (eventType) {
+      params.push(eventType);
+      queryText += ` AND event_type = $${params.length}`;
+    }
+    if (mode) {
+      params.push(mode);
+      queryText += ` AND execution_mode = $${params.length}`;
+    }
+
+    queryText += ` ORDER BY created_at DESC LIMIT $${params.length + 1}`;
+    params.push(limit);
+
+    const result = await pool.query(queryText, params);
+
+    res.json({
+      success: true,
+      events: result.rows
+    });
+  } catch (error: unknown) {
+    // Return empty array if table doesn't exist yet
+    const errMsg = error instanceof Error ? error.message : String(error);
+    if (errMsg.includes('does not exist') || errMsg.includes('relation')) {
+      res.json({
+        success: true,
+        events: []
+      });
+    } else {
+      console.error('Agent events query failed:', errMsg);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to fetch agent events'
+      });
+    }
   }
 });
 
@@ -303,6 +514,11 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
 
     // Calculate performance metrics from trades
     try {
+      const mode = req.query.mode as string | undefined;
+      const modeFilter = mode ? ' AND execution_mode = $3' : '';
+      const queryParams: (string | Date)[] = [userId, status.startedAt];
+      if (mode) queryParams.push(mode);
+      
       const tradesResult = await pool.query(
         `SELECT 
           COUNT(*) as total_trades,
@@ -312,8 +528,8 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
           AVG(CASE WHEN pnl > 0 THEN pnl END) as avg_win,
           AVG(CASE WHEN pnl < 0 THEN pnl END) as avg_loss
         FROM trades 
-        WHERE user_id = $1 AND created_at >= $2`,
-        [userId, status.startedAt]
+        WHERE user_id = $1 AND created_at >= $2${modeFilter}`,
+        queryParams
       );
 
       const metrics = tradesResult.rows[0];
@@ -325,9 +541,9 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
       try {
         const returnsResult = await pool.query(
           `SELECT pnl FROM trades 
-           WHERE user_id = $1 AND created_at >= $2 AND pnl IS NOT NULL
+           WHERE user_id = $1 AND created_at >= $2 AND pnl IS NOT NULL${modeFilter}
            ORDER BY created_at ASC`,
-          [userId, status.startedAt]
+          queryParams
         );
 
         const pnls = returnsResult.rows.map((r: { pnl: string }) => parseFloat(r.pnl));
@@ -363,10 +579,10 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
              SUM(pnl) as daily_pnl,
              COUNT(*) as daily_trades
            FROM trades
-           WHERE user_id = $1 AND created_at >= $2 AND pnl IS NOT NULL
+           WHERE user_id = $1 AND created_at >= $2 AND pnl IS NOT NULL${modeFilter}
            GROUP BY DATE(created_at)
            ORDER BY trade_date ASC`,
-          [userId, status.startedAt]
+          queryParams
         );
         let cumPnl = 0;
         dailyPerformance = dailyResult.rows.map((r: { trade_date: string; daily_pnl: string; daily_trades: string }) => {
@@ -385,6 +601,7 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
 
       res.json({
         success: true,
+        mode: mode || 'all',
         performance: {
           totalPnl: parseFloat(metrics.total_pnl || 0),
           winRate: metrics.total_trades > 0 
