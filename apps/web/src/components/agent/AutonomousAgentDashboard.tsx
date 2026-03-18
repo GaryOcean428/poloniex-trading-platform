@@ -14,6 +14,21 @@ import AgentOverviewPanel from './AgentOverviewPanel';
 
 const API_BASE_URL = getBackendUrl();
 
+const RISK_CONFIGS = {
+  conservative: { maxDrawdown: 8, positionSize: 1, stopLossPercentage: 3, maxConcurrentPositions: 2 },
+  balanced: { maxDrawdown: 15, positionSize: 2, stopLossPercentage: 5, maxConcurrentPositions: 3 },
+  aggressive: { maxDrawdown: 25, positionSize: 5, stopLossPercentage: 8, maxConcurrentPositions: 5 }
+} as const;
+
+const FALLBACK_HEALTH_STATUS = {
+  healthy: false,
+  dependencies: {
+    database: { healthy: false, message: 'Unreachable' },
+    agentService: { healthy: false, message: 'Unreachable' }
+  },
+  timestamp: ''
+};
+
 interface AgentStatus {
   id: string;
   userId: string;
@@ -232,11 +247,7 @@ const AutonomousAgentDashboard: React.FC = () => {
       }
     } catch {
       setHealthStatus({
-        healthy: false,
-        dependencies: {
-          database: { healthy: false, message: 'Unreachable' },
-          agentService: { healthy: false, message: 'Unreachable' }
-        },
+        ...FALLBACK_HEALTH_STATUS,
         timestamp: new Date().toISOString()
       });
     }
@@ -244,7 +255,7 @@ const AutonomousAgentDashboard: React.FC = () => {
 
   const fetchEvents = async () => {
     try {
-      const filterParam = eventFilter !== 'all' ? `&type=${eventFilter}` : '';
+      const filterParam = eventFilter !== 'all' ? `&type=${encodeURIComponent(eventFilter)}` : '';
       const response = await axios.get(`${API_BASE_URL}/api/agent/events?limit=20${filterParam}`, {
         headers: getAuthHeaders()
       });
@@ -262,11 +273,7 @@ const AutonomousAgentDashboard: React.FC = () => {
     setExistingSession(null);
     
     try {
-      const riskConfig = {
-        conservative: { maxDrawdown: 8, positionSize: 1, stopLossPercentage: 3, maxConcurrentPositions: 2 },
-        balanced: { maxDrawdown: 15, positionSize: 2, stopLossPercentage: 5, maxConcurrentPositions: 3 },
-        aggressive: { maxDrawdown: 25, positionSize: 5, stopLossPercentage: 8, maxConcurrentPositions: 5 }
-      }[riskAppetite];
+      const riskConfig = RISK_CONFIGS[riskAppetite];
 
       const response = await axios.post(
         `${API_BASE_URL}/api/agent/start`,
@@ -454,7 +461,7 @@ const AutonomousAgentDashboard: React.FC = () => {
             <p className="text-amber-700 text-sm mt-1">
               An agent session is currently {existingSession.state}.
               {existingSession.startedAt && (
-                <> Started {new Date(existingSession.startedAt).toLocaleString()}</>
+                <> Started <time dateTime={existingSession.startedAt}>{new Date(existingSession.startedAt).toLocaleString()}</time></>
               )}
             </p>
             <div className="flex gap-3 mt-3">
@@ -560,8 +567,8 @@ const AutonomousAgentDashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* Kill Switch — visible when live trading is active */}
-      {agentStatus?.status === 'running' && executionMode === 'live' && (
+      {/* Emergency Stop — visible when live trading is active */}
+      {agentStatus?.status === 'running' && (executionMode === 'live' || agentStatus?.config?.executionMode === 'live') && (
         <div className="bg-red-50 border-2 border-red-300 rounded-lg p-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <Shield className="w-6 h-6 text-red-600" />
@@ -754,7 +761,7 @@ const AutonomousAgentDashboard: React.FC = () => {
           </span>
         )}
         {lastHeartbeat && (
-          <span className="text-gray-400 text-xs flex items-center gap-1">
+          <span className="text-gray-400 text-xs flex items-center gap-1" aria-label={`Last heartbeat ${Math.round((Date.now() - lastHeartbeat.getTime()) / 1000)} seconds ago`}>
             💓 Heartbeat: {Math.round((Date.now() - lastHeartbeat.getTime()) / 1000)}s ago
           </span>
         )}
@@ -989,7 +996,7 @@ const AutonomousAgentDashboard: React.FC = () => {
                         }`}>{event.execution_mode}</span>
                       )}
                       {event.confidence_score != null && (
-                        <span className="text-xs text-gray-500">Confidence: {event.confidence_score}%</span>
+                        <span className="text-xs text-gray-500">Confidence: {Number(event.confidence_score).toFixed(1)}%</span>
                       )}
                     </div>
                     <p className="text-sm text-gray-900">{event.description}</p>
