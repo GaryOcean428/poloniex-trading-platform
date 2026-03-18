@@ -30,6 +30,10 @@ async function runMigration() {
     console.log('🔄 Starting database migrations...\n');
 
     const migrationsDir = path.join(__dirname, 'database', 'migrations');
+    if (!fs.existsSync(migrationsDir)) {
+      throw new Error(`Migrations directory not found: ${migrationsDir}`);
+    }
+
     const migrationFiles = fs
       .readdirSync(migrationsDir)
       .filter(file => /^\d+_.*\.sql$/.test(file))
@@ -41,14 +45,35 @@ async function runMigration() {
         : migrationFiles.filter(file => file.startsWith(`${migrationArg}_`));
 
     if (selectedMigrations.length === 0) {
-      throw new Error(`No migration file found for "${migrationArg}"`);
+      throw new Error(
+        `No migration file found for "${migrationArg}". Expected pattern: "${migrationArg}_*.sql"`
+      );
     }
 
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        migration_name TEXT PRIMARY KEY,
+        applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    const appliedRows = await client.query('SELECT migration_name FROM schema_migrations');
+    const appliedMigrations = new Set(appliedRows.rows.map(row => row.migration_name));
+
     for (const migrationFile of selectedMigrations) {
+      if (appliedMigrations.has(migrationFile)) {
+        console.log(`⏭️  Skipping already applied migration: ${migrationFile}`);
+        continue;
+      }
+
       const migrationPath = path.join(migrationsDir, migrationFile);
       const migrationSQL = fs.readFileSync(migrationPath, 'utf8');
       console.log(`📝 Running ${migrationFile}...`);
       await client.query(migrationSQL);
+      await client.query(
+        'INSERT INTO schema_migrations (migration_name) VALUES ($1) ON CONFLICT (migration_name) DO NOTHING',
+        [migrationFile]
+      );
       console.log(`✅ ${migrationFile} completed`);
     }
 

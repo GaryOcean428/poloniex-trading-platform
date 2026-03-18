@@ -10,6 +10,10 @@ const __dirname = path.dirname(__filename);
 const migrationsDir = path.join(__dirname, '../../database/migrations');
 
 function getMigrationFiles(): string[] {
+  if (!fs.existsSync(migrationsDir)) {
+    throw new Error(`Migrations directory not found: ${migrationsDir}`);
+  }
+
   return fs
     .readdirSync(migrationsDir)
     .filter(file => /^\d+_.*\.sql$/.test(file))
@@ -35,6 +39,7 @@ router.post('/migrate', async (req, res) => {
       demoUserCreated: false,
       migrationFiles,
       migrationsApplied: [] as string[],
+      migrationsSkipped: [] as string[],
       tables: [] as string[]
     };
 
@@ -63,10 +68,33 @@ router.post('/migrate', async (req, res) => {
       results.demoUserCreated = true;
     }
 
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        migration_name TEXT PRIMARY KEY,
+        applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    const appliedMigrationsResult = await pool.query<{ migration_name: string }>(
+      'SELECT migration_name FROM schema_migrations'
+    );
+    const appliedMigrations = new Set(
+      appliedMigrationsResult.rows.map(row => row.migration_name)
+    );
+
     for (const migrationFile of migrationFiles) {
+      if (appliedMigrations.has(migrationFile)) {
+        results.migrationsSkipped.push(migrationFile);
+        continue;
+      }
+
       const migrationPath = path.join(migrationsDir, migrationFile);
       const migrationSql = fs.readFileSync(migrationPath, 'utf8');
       await pool.query(migrationSql);
+      await pool.query(
+        'INSERT INTO schema_migrations (migration_name) VALUES ($1) ON CONFLICT (migration_name) DO NOTHING',
+        [migrationFile]
+      );
       results.migrationsApplied.push(migrationFile);
     }
 
