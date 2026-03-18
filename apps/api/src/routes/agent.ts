@@ -207,11 +207,15 @@ router.post('/resume', authenticateToken, async (req: Request, res: Response) =>
     }
 
     // Resume the agent by updating state
+    try {
+      await pool.query(
+        'UPDATE agent_sessions SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+        ['running', status.id]
+      );
+    } catch {
+      // DB update is best-effort; in-memory state is the source of truth
+    }
     status.status = 'running';
-    await pool.query(
-      'UPDATE agent_sessions SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
-      ['running', status.id]
-    ).catch(() => { /* DB update optional */ });
 
     res.json({
       success: true,

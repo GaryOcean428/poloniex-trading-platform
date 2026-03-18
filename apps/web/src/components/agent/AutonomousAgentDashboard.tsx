@@ -101,7 +101,7 @@ const AutonomousAgentDashboard: React.FC = () => {
     confidence_score: number;
     created_at: string;
   }>>([]);
-  const [eventFilter, setEventFilter] = useState<string>('all');
+  const [eventFilter, setEventFilter] = useState<'all' | 'trade_decision' | 'state_change' | 'risk_action' | 'health_alert' | 'error'>('all');
   const [lastHeartbeat, setLastHeartbeat] = useState<Date | null>(null);
   const [config, setConfig] = useState({
     maxDrawdown: 15,
@@ -255,8 +255,9 @@ const AutonomousAgentDashboard: React.FC = () => {
 
   const fetchEvents = async () => {
     try {
-      const filterParam = eventFilter !== 'all' ? `&type=${encodeURIComponent(eventFilter)}` : '';
-      const response = await axios.get(`${API_BASE_URL}/api/agent/events?limit=20${filterParam}`, {
+      const params = new URLSearchParams({ limit: '20' });
+      if (eventFilter !== 'all') params.set('type', eventFilter);
+      const response = await axios.get(`${API_BASE_URL}/api/agent/events?${params.toString()}`, {
         headers: getAuthHeaders()
       });
       if (response.data.success) {
@@ -760,11 +761,14 @@ const AutonomousAgentDashboard: React.FC = () => {
             Last checked: {lastPolled.toLocaleTimeString()}
           </span>
         )}
-        {lastHeartbeat && (
-          <span className="text-gray-400 text-xs flex items-center gap-1" aria-label={`Last heartbeat ${Math.round((Date.now() - lastHeartbeat.getTime()) / 1000)} seconds ago`}>
-            💓 Heartbeat: {Math.round((Date.now() - lastHeartbeat.getTime()) / 1000)}s ago
-          </span>
-        )}
+        {lastHeartbeat && (() => {
+          const heartbeatAge = Math.round((Date.now() - lastHeartbeat.getTime()) / 1000);
+          return (
+            <span className="text-gray-400 text-xs flex items-center gap-1" aria-label={`Last heartbeat ${heartbeatAge} seconds ago`}>
+              💓 Heartbeat: {heartbeatAge}s ago
+            </span>
+          );
+        })()}
       </div>
 
       {/* Error Alert */}
@@ -967,7 +971,7 @@ const AutonomousAgentDashboard: React.FC = () => {
                       ? 'bg-cyan-100 text-cyan-700 font-medium'
                       : 'text-gray-500 hover:bg-gray-100'
                   }`}>
-                  {filter === 'all' ? 'All' : filter.replace('_', ' ')}
+                  {filter === 'all' ? 'All' : filter.replace(/_/g, ' ')}
                 </button>
               ))}
             </div>
@@ -987,7 +991,7 @@ const AutonomousAgentDashboard: React.FC = () => {
                         event.event_type === 'health_alert' ? 'bg-orange-100 text-orange-700' :
                         event.event_type === 'error' ? 'bg-red-100 text-red-700' :
                         'bg-gray-100 text-gray-700'
-                      }`}>{event.event_type?.replace('_', ' ') || 'event'}</span>
+                      }`}>{event.event_type?.replace(/_/g, ' ') || 'event'}</span>
                       {event.execution_mode && (
                         <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
                           event.execution_mode === 'live' ? 'bg-red-100 text-red-700' :
