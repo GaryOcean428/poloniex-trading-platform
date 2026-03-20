@@ -7,13 +7,24 @@ import { fileURLToPath } from 'url';
 const router = express.Router();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const migrationsDir = path.join(__dirname, '../../database/migrations');
+
+function getMigrationFiles(): string[] {
+  if (!fs.existsSync(migrationsDir)) {
+    throw new Error(`Migrations directory not found: ${migrationsDir}`);
+  }
+
+  return fs
+    .readdirSync(migrationsDir)
+    .filter(file => /^\d+_.*\.sql$/.test(file))
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+}
 
 // Admin endpoint to run migrations
 router.post('/migrate', async (req, res) => {
   try {
     console.log('🚀 Starting database migrations...');
-    
-    // Check if users table exists
+    const migrationFiles = getMigrationFiles();
     const checkUsersTable = await pool.query(`
       SELECT EXISTS (
         SELECT FROM information_schema.tables 
@@ -26,82 +37,65 @@ router.post('/migrate', async (req, res) => {
       usersTableExists: checkUsersTable.rows[0].exists,
       usersTableCreated: false,
       demoUserCreated: false,
-      agentTablesCreated: false,
-      tables: []
+      migrationFiles,
+      migrationsApplied: [] as string[],
+      migrationsSkipped: [] as string[],
+      tables: [] as string[]
     };
 
     if (!checkUsersTable.rows[0].exists) {
-      console.log('📝 Creating users table...');
-      
-      // Read schema file
       const schemaPath = path.join(__dirname, '../db/schema-no-postgis.sql');
       const schema = fs.readFileSync(schemaPath, 'utf8');
-      
-      // Execute schema
       await pool.query(schema);
       results.usersTableCreated = true;
-      console.log('✅ Users table created');
     }
 
-    // Check if demo user exists
     const checkDemoUser = await pool.query(`
       SELECT * FROM users WHERE username = 'demo' LIMIT 1;
     `);
 
     if (checkDemoUser.rows.length === 0) {
-      console.log('📝 Creating demo user...');
-      
-      // Create demo user (password: "password")
       const bcrypt = await import('bcryptjs');
       const passwordHash = await bcrypt.hash('password', 10);
-      
-      await pool.query(`
-        INSERT INTO users (username, email, password_hash, role, is_active, is_verified, trading_enabled)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
-        ON CONFLICT (username) DO NOTHING;
-      `, ['demo', 'demo@example.com', passwordHash, 'trader', true, true, true]);
-      
+      await pool.query(
+        `
+          INSERT INTO users (username, email, password_hash, role, is_active, is_verified, trading_enabled)
+          VALUES ($1, $2, $3, $4, $5, $6, $7)
+          ON CONFLICT (username) DO NOTHING;
+        `,
+        ['demo', 'demo@example.com', passwordHash, 'trader', true, true, true]
+      );
       results.demoUserCreated = true;
-      console.log('✅ Demo user created');
     }
 
-    // Check if agent tables exist
-    const checkAgentTables = await pool.query(`
-      SELECT EXISTS (
-        SELECT FROM information_schema.tables 
-        WHERE table_schema = 'public' 
-        AND table_name = 'agent_sessions'
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        migration_name TEXT PRIMARY KEY,
+        applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
 
-    if (!checkAgentTables.rows[0].exists) {
-      console.log('📝 Creating agent tables...');
-      
-      const agentMigrationPath = path.join(__dirname, '../../migrations/004_add_autonomous_agent_tables.sql');
-      const agentSchema = fs.readFileSync(agentMigrationPath, 'utf8');
-      
-      await pool.query(agentSchema);
-      results.agentTablesCreated = true;
-      console.log('✅ Agent tables created');
-    }
+    const appliedMigrationsResult = await pool.query<{ migration_name: string }>(
+      'SELECT migration_name FROM schema_migrations'
+    );
+    const appliedMigrations = new Set(
+      appliedMigrationsResult.rows.map(row => row.migration_name)
+    );
 
-    // Check if autonomous trading tables exist (009)
-    const checkAutonomousTables = await pool.query(`
-      SELECT EXISTS (
-        SELECT FROM information_schema.tables 
-        WHERE table_schema = 'public' 
-        AND table_name = 'autonomous_trading_configs'
+    for (const migrationFile of migrationFiles) {
+      if (appliedMigrations.has(migrationFile)) {
+        results.migrationsSkipped.push(migrationFile);
+        continue;
+      }
+
+      const migrationPath = path.join(migrationsDir, migrationFile);
+      const migrationSql = fs.readFileSync(migrationPath, 'utf8');
+      await pool.query(migrationSql);
+      await pool.query(
+        'INSERT INTO schema_migrations (migration_name) VALUES ($1) ON CONFLICT (migration_name) DO NOTHING',
+        [migrationFile]
       );
-    `);
-
-    if (!checkAutonomousTables.rows[0].exists) {
-      console.log('📝 Creating autonomous trading tables...');
-      
-      const autonomousMigrationPath = path.join(__dirname, '../../migrations/009_autonomous_trading_tables.sql');
-      const autonomousSchema = fs.readFileSync(autonomousMigrationPath, 'utf8');
-      
-      await pool.query(autonomousSchema);
-      console.log('✅ Autonomous trading tables created');
+      results.migrationsApplied.push(migrationFile);
     }
 
     // Get list of all tables
