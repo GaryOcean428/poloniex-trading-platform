@@ -17,9 +17,9 @@ This guide explains how to run database migrations to fix the "trades table does
    ```
 
    This will:
-   - Check and add `encryption_tag` column to `api_credentials` table
-   - Create the `trades` table with all required columns
-   - Display a summary of created tables
+   - Discover and execute all SQL files in `apps/api/database/migrations` in numeric order
+   - Apply the latest schema updates from recent PRs (including `010_*` and `011_*`)
+   - Display a summary of base tables after migrations complete
 
 ### Expected Output
 
