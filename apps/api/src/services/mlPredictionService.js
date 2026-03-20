@@ -144,7 +144,6 @@ class MLPredictionService {
       const attemptedInterpreters = new Set();
       const pythonCandidates = [
         this.pythonPath,
-        process.env.PYTHON_PATH,
         'python3.11',
         'python3',
         'python'

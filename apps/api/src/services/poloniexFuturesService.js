@@ -697,8 +697,7 @@ class PoloniexFuturesService {
         eTime: Math.floor(endTime)
       };
 
-      const normalizedSymbol = this.normalizeSymbol(symbol);
-      const candles = await this.getKlines(normalizedSymbol, intervalConfig.format, params);
+      const candles = await this.getKlines(symbol, intervalConfig.format, params);
 
       // Transform to standard OHLCV format
       if (!candles || !Array.isArray(candles)) {
