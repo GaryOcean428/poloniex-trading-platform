@@ -20,11 +20,12 @@ class PoloniexFuturesService {
           * Converts BTC_USDT -> BTC_USDT_PERP for endpoints that require it
              */
     normalizeSymbol(symbol) {
-          if (!symbol) return symbol;
-          // Already in correct format
-          if (symbol.endsWith('_PERP') || symbol.includes('PERP')) return symbol;
-          // Convert SPOT format to PERP format for futures
-          return `${symbol}_PERP`;
+      if (!symbol) return symbol;
+      const normalizedBase = symbol.replace('-', '_');
+      // Already in correct format
+      if (normalizedBase.endsWith('_PERP') || normalizedBase.includes('PERP')) return normalizedBase;
+      // Convert SPOT format to PERP format for futures
+      return `${normalizedBase}_PERP`;
     }
   
 
@@ -647,7 +648,8 @@ class PoloniexFuturesService {
    * Endpoint: GET /v3/market/candles
    */
   async getKlines(symbol, interval, params = {}) {
-    const queryParams = { symbol, interval, ...params };
+    const normalizedSymbol = this.normalizeSymbol(symbol);
+    const queryParams = { symbol: normalizedSymbol, interval, ...params };
     return this.makePublicRequest('GET', '/market/candles', queryParams);
   }
 
@@ -695,7 +697,8 @@ class PoloniexFuturesService {
         eTime: Math.floor(endTime)
       };
 
-      const candles = await this.getKlines(symbol, intervalConfig.format, params);
+      const normalizedSymbol = this.normalizeSymbol(symbol);
+      const candles = await this.getKlines(normalizedSymbol, intervalConfig.format, params);
 
       // Transform to standard OHLCV format
       if (!candles || !Array.isArray(candles)) {

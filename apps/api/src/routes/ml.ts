@@ -138,8 +138,23 @@ router.post('/train/:symbol', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Insufficient historical data for training' });
     }
 
-    // Train models
-    const results = await mlPredictionService.trainModels(symbol, ohlcvData);
+    let results;
+    try {
+      if (usePythonML) {
+        results = await mlPredictionService.trainModels(symbol, ohlcvData);
+      } else {
+        throw new Error('Python ML disabled, using simple ML');
+      }
+    } catch (pythonError: unknown) {
+      console.warn('Python ML training failed, falling back to simple ML:', pythonError instanceof Error ? pythonError.message : String(pythonError));
+      usePythonML = false;
+      results = {
+        mode: 'fallback',
+        message: 'Python ML unavailable. Using simple JavaScript ML for runtime predictions.',
+        models_trained: [],
+        fallback: true
+      };
+    }
 
     res.json({
       symbol,
@@ -150,9 +165,9 @@ router.post('/train/:symbol', authenticateToken, async (req, res) => {
 
   } catch (error: unknown) {
     console.error('ML training endpoint error:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Failed to train ML models',
-      message: error instanceof Error ? error instanceof Error ? error.message : String(error) : String(error) 
+      message: error instanceof Error ? error.message : String(error)
     });
   }
 });
