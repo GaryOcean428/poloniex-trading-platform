@@ -1112,7 +1112,7 @@ const AutonomousAgentDashboard: React.FC = () => {
               </div>
               <div className="p-3 bg-purple-50 rounded-lg">
                 <div className="text-purple-700">Avg Score</div>
-                <div className="text-xl font-semibold text-purple-800">{capabilitySummary.averageCompositeScore}</div>
+                <div className="text-xl font-semibold text-purple-800">{capabilitySummary.averageCompositeScore.toFixed(2)}</div>
               </div>
             </div>
           </div>

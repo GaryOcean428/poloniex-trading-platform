@@ -18,18 +18,37 @@ export interface CapabilityHint {
   recommendation: string;
 }
 
+const MAX_PROFIT_FACTOR = 2.5;
+const MAX_SHARPE_RATIO = 2;
+const MAX_DRAWDOWN_FOR_NORMALIZATION = 0.3;
+
+const WIN_RATE_WEIGHT = 35;
+const PROFIT_FACTOR_WEIGHT = 25;
+const DRAWDOWN_WEIGHT = 25;
+const SHARPE_WEIGHT = 15;
+
+const WIN_RATE_TARGET = 0.55;
+const WIN_RATE_HIGH_PRIORITY_THRESHOLD = 0.45;
+const PROFIT_FACTOR_TARGET = 1.5;
+const PROFIT_FACTOR_HIGH_PRIORITY_THRESHOLD = 1.2;
+const MAX_DRAWDOWN_TARGET = 0.15;
+const MAX_DRAWDOWN_HIGH_PRIORITY_THRESHOLD = 0.22;
+
 export function calculateCompositeCapabilityScore(input: CapabilityPerformanceInput): number {
   const normalizedWinRate = Math.min(Math.max(input.winRate, 0), 1);
-  const normalizedProfitFactor = Math.min(Math.max(input.profitFactor, 0), 2.5) / 2.5;
-  const normalizedSharpe = Math.min(Math.max(input.sharpeRatio || 0, 0), 2) / 2;
-  const normalizedDrawdown = Math.max(0, 1 - Math.min(Math.max(input.maxDrawdown || 0, 0), 0.3) / 0.3);
+  const normalizedProfitFactor = Math.min(Math.max(input.profitFactor, 0), MAX_PROFIT_FACTOR) / MAX_PROFIT_FACTOR;
+  const normalizedSharpe = Math.min(Math.max(input.sharpeRatio || 0, 0), MAX_SHARPE_RATIO) / MAX_SHARPE_RATIO;
+  const normalizedDrawdown = Math.max(
+    0,
+    1 - Math.min(Math.max(input.maxDrawdown || 0, 0), MAX_DRAWDOWN_FOR_NORMALIZATION) / MAX_DRAWDOWN_FOR_NORMALIZATION
+  );
 
   // Weighted blend inspired by PowerTrader-style reliability + risk discipline
   const score =
-    normalizedWinRate * 35 +
-    normalizedProfitFactor * 25 +
-    normalizedDrawdown * 25 +
-    normalizedSharpe * 15;
+    normalizedWinRate * WIN_RATE_WEIGHT +
+    normalizedProfitFactor * PROFIT_FACTOR_WEIGHT +
+    normalizedDrawdown * DRAWDOWN_WEIGHT +
+    normalizedSharpe * SHARPE_WEIGHT;
 
   return Math.round(Math.min(100, Math.max(0, score)));
 }
@@ -43,36 +62,36 @@ export function getStrategyCapabilityClass(score: number): CapabilityClass {
 export function generateCapabilityHints(input: CapabilityPerformanceInput): CapabilityHint[] {
   const hints: CapabilityHint[] = [];
 
-  if (input.winRate < 0.55) {
+  if (input.winRate < WIN_RATE_TARGET) {
     hints.push({
       metric: 'winRate',
       current: input.winRate,
-      target: 0.55,
-      gap: parseFloat((0.55 - input.winRate).toFixed(4)),
-      priority: input.winRate < 0.45 ? 'high' : 'medium',
+      target: WIN_RATE_TARGET,
+      gap: parseFloat((WIN_RATE_TARGET - input.winRate).toFixed(4)),
+      priority: input.winRate < WIN_RATE_HIGH_PRIORITY_THRESHOLD ? 'high' : 'medium',
       recommendation: 'Tighten entry filters and reduce low-conviction setups.'
     });
   }
 
-  if (input.profitFactor < 1.5) {
+  if (input.profitFactor < PROFIT_FACTOR_TARGET) {
     hints.push({
       metric: 'profitFactor',
       current: input.profitFactor,
-      target: 1.5,
-      gap: parseFloat((1.5 - input.profitFactor).toFixed(4)),
-      priority: input.profitFactor < 1.2 ? 'high' : 'medium',
+      target: PROFIT_FACTOR_TARGET,
+      gap: parseFloat((PROFIT_FACTOR_TARGET - input.profitFactor).toFixed(4)),
+      priority: input.profitFactor < PROFIT_FACTOR_HIGH_PRIORITY_THRESHOLD ? 'high' : 'medium',
       recommendation: 'Improve reward-to-risk ratio with tighter stops and stronger take-profit rules.'
     });
   }
 
   const maxDrawdown = input.maxDrawdown || 0;
-  if (maxDrawdown > 0.15) {
+  if (maxDrawdown > MAX_DRAWDOWN_TARGET) {
     hints.push({
       metric: 'maxDrawdown',
       current: maxDrawdown,
-      target: 0.15,
-      gap: parseFloat((maxDrawdown - 0.15).toFixed(4)),
-      priority: maxDrawdown > 0.22 ? 'high' : 'medium',
+      target: MAX_DRAWDOWN_TARGET,
+      gap: parseFloat((maxDrawdown - MAX_DRAWDOWN_TARGET).toFixed(4)),
+      priority: maxDrawdown > MAX_DRAWDOWN_HIGH_PRIORITY_THRESHOLD ? 'high' : 'medium',
       recommendation: 'Lower position size and enforce stricter drawdown-aware throttling.'
     });
   }

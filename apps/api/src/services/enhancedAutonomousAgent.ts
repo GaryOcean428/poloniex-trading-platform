@@ -107,6 +107,10 @@ interface StrategyCapabilityProfile {
 }
 
 class EnhancedAutonomousAgent extends EventEmitter {
+  private static readonly MIN_SHARPE_FOR_ALLOCATION = 0.5;
+  private static readonly MIN_COMPOSITE_FOR_ALLOCATION = 50;
+  private static readonly MIN_WIN_RATE_FALLBACK = 0.58;
+  private static readonly MAX_DRAWDOWN_FALLBACK = 0.12;
   private sessions: Map<string, AgentSession> = new Map();
   private runningIntervals: Map<string, NodeJS.Timeout> = new Map();
   private strategies: Map<string, Strategy> = new Map();
@@ -1268,7 +1272,16 @@ Generate the combination logic as executable JavaScript code.
 
       // Sort strategies by capability score first, then by Sharpe ratio
       const rankedStrategies = strategyMetrics
-        .filter(m => m.sharpeRatio > 0.5 || m.compositeScore >= 50)
+        .filter(
+          m => {
+            const passesComposite = m.compositeScore >= EnhancedAutonomousAgent.MIN_COMPOSITE_FOR_ALLOCATION;
+            const passesSharpe = m.sharpeRatio > EnhancedAutonomousAgent.MIN_SHARPE_FOR_ALLOCATION;
+            const passesFallbackQuality =
+              m.winRate >= EnhancedAutonomousAgent.MIN_WIN_RATE_FALLBACK &&
+              m.maxDrawdown <= EnhancedAutonomousAgent.MAX_DRAWDOWN_FALLBACK;
+            return passesComposite && (passesSharpe || passesFallbackQuality);
+          }
+        )
         .sort((a, b) => {
           if (b.compositeScore !== a.compositeScore) return b.compositeScore - a.compositeScore;
           return b.sharpeRatio - a.sharpeRatio;

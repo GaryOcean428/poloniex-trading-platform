@@ -151,7 +151,8 @@ class MLPredictionService {
 
       const tryInterpreter = (index = 0) => {
         if (index >= pythonCandidates.length) {
-          reject(new Error('Failed to start Python process: no valid Python interpreter found (tried PYTHON_PATH, python3.11, python3, python)'));
+          const attempted = Array.from(attemptedInterpreters.values()).join(', ');
+          reject(new Error(`Failed to start Python process: no valid Python interpreter found (tried: ${attempted})`));
           return;
         }
 
