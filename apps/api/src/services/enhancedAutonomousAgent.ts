@@ -17,6 +17,11 @@ import automatedTradingService from './automatedTradingService.js';
 import poloniexFuturesService from './poloniexFuturesService.js';
 import { apiCredentialsService } from './apiCredentialsService.js';
 import { logger } from '../utils/logger.js';
+import {
+  calculateCompositeCapabilityScore,
+  generateCapabilityHints,
+  getStrategyCapabilityClass
+} from './agentCapabilityScoring.js';
 import type { Server as SocketIOServer } from 'socket.io';
 
 interface AgentConfig {
@@ -74,6 +79,31 @@ interface Strategy {
   createdAt: Date;
   promotedAt?: Date;
   retiredAt?: Date;
+}
+
+interface StrategyCapabilityProfile {
+  strategyId: string;
+  strategyName: string;
+  status: Strategy['status'];
+  symbol: string;
+  compositeScore: number;
+  capabilityClass: 'tier1' | 'tier2' | 'tier3';
+  metrics: {
+    winRate: number;
+    profitFactor: number;
+    totalTrades: number;
+    totalReturn: number;
+    sharpeRatio: number;
+    maxDrawdown: number;
+  };
+  hints: Array<{
+    metric: 'winRate' | 'profitFactor' | 'maxDrawdown';
+    current: number;
+    target: number;
+    gap: number;
+    priority: 'high' | 'medium';
+    recommendation: string;
+  }>;
 }
 
 class EnhancedAutonomousAgent extends EventEmitter {
@@ -1091,6 +1121,39 @@ Generate the combination logic as executable JavaScript code.
   }
 
   /**
+   * Get capability profiles for all strategies in a session.
+   */
+  async getSessionCapabilityProfiles(sessionId: string): Promise<StrategyCapabilityProfile[]> {
+    const strategies = await this.getStrategies(sessionId);
+    const profiles = await Promise.all(
+      strategies.map(async (strategy) => {
+        const recentPerformance = await this.getStrategyRecentPerformance(strategy.id);
+        const metrics = {
+          winRate: strategy.performance.winRate || recentPerformance.winRate || 0,
+          profitFactor: strategy.performance.profitFactor || recentPerformance.profitFactor || 0,
+          totalTrades: strategy.performance.totalTrades || recentPerformance.totalTrades || 0,
+          totalReturn: strategy.performance.totalReturn || recentPerformance.returnRate || 0,
+          sharpeRatio: recentPerformance.sharpeRatio || 0,
+          maxDrawdown: recentPerformance.maxDrawdown || 0
+        };
+        const compositeScore = calculateCompositeCapabilityScore(metrics);
+        return {
+          strategyId: strategy.id,
+          strategyName: strategy.name,
+          status: strategy.status,
+          symbol: strategy.symbol,
+          compositeScore,
+          capabilityClass: getStrategyCapabilityClass(compositeScore),
+          metrics,
+          hints: generateCapabilityHints(metrics)
+        };
+      })
+    );
+
+    return profiles.sort((a, b) => b.compositeScore - a.compositeScore);
+  }
+
+  /**
    * Save session to database
    */
   private async saveSession(session: AgentSession): Promise<void> {
@@ -1183,21 +1246,33 @@ Generate the combination logic as executable JavaScript code.
       const strategyMetrics = await Promise.all(
         liveStrategies.map(async (strategy) => {
           const recentPerformance = await this.getStrategyRecentPerformance(strategy.id);
+          const compositeScore = calculateCompositeCapabilityScore({
+            winRate: recentPerformance.winRate,
+            profitFactor: recentPerformance.profitFactor,
+            totalTrades: recentPerformance.totalTrades,
+            totalReturn: recentPerformance.returnRate,
+            sharpeRatio: recentPerformance.sharpeRatio,
+            maxDrawdown: recentPerformance.maxDrawdown
+          });
           return {
             strategy,
             sharpeRatio: recentPerformance.sharpeRatio,
             returnRate: recentPerformance.returnRate,
             winRate: recentPerformance.winRate,
             profitFactor: recentPerformance.profitFactor,
-            maxDrawdown: recentPerformance.maxDrawdown
+            maxDrawdown: recentPerformance.maxDrawdown,
+            compositeScore
           };
         })
       );
 
-      // Sort strategies by risk-adjusted returns (Sharpe ratio)
+      // Sort strategies by capability score first, then by Sharpe ratio
       const rankedStrategies = strategyMetrics
-        .filter(m => m.sharpeRatio > 0.5) // Only keep strategies with positive risk-adjusted returns
-        .sort((a, b) => b.sharpeRatio - a.sharpeRatio);
+        .filter(m => m.sharpeRatio > 0.5 || m.compositeScore >= 50)
+        .sort((a, b) => {
+          if (b.compositeScore !== a.compositeScore) return b.compositeScore - a.compositeScore;
+          return b.sharpeRatio - a.sharpeRatio;
+        });
 
       // Calculate optimal allocation using Kelly Criterion for top performers
       // totalCapital is the total capital available for allocation across all strategies
@@ -1216,7 +1291,7 @@ Generate the combination logic as executable JavaScript code.
         logger.info(
           `Optimized allocation for ${allocation.strategyName}: ` +
           `${(allocation.positionSize * 100).toFixed(2)}% ` +
-          `(Sharpe: ${allocation.sharpeRatio.toFixed(2)})`
+          `(Sharpe: ${allocation.sharpeRatio.toFixed(2)}, Capability: ${allocation.compositeScore})`
         );
       }
 
@@ -1268,7 +1343,8 @@ Generate the combination logic as executable JavaScript code.
           positionSize: positionSize / totalCapital, // As fraction of total
           kellyFraction: fractionalKelly,
           sharpeRatio: metric.sharpeRatio,
-          expectedReturn: metric.returnRate
+          expectedReturn: metric.returnRate,
+          compositeScore: metric.compositeScore || 0
         });
         
         remainingCapital -= positionSize;

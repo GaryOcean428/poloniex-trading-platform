@@ -636,6 +636,70 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
 });
 
 /**
+ * GET /api/agent/capabilities
+ * Get composite capability profile for the current session strategies
+ */
+router.get('/capabilities', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const userId = (req.user?.id || req.user?.userId)?.toString();
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        error: 'User ID not found in token'
+      });
+    }
+
+    const status = await enhancedAutonomousAgent.getAgentStatus(userId);
+    if (!status) {
+      return res.json({
+        success: true,
+        capabilitySummary: {
+          totalStrategies: 0,
+          tier1: 0,
+          tier2: 0,
+          tier3: 0,
+          averageCompositeScore: 0
+        },
+        strategies: []
+      });
+    }
+
+    const profiles = await enhancedAutonomousAgent.getSessionCapabilityProfiles(status.id);
+    const summary = profiles.reduce(
+      (acc, profile) => {
+        acc.totalStrategies += 1;
+        acc[profile.capabilityClass] += 1;
+        acc.averageCompositeScore += profile.compositeScore;
+        return acc;
+      },
+      {
+        totalStrategies: 0,
+        tier1: 0,
+        tier2: 0,
+        tier3: 0,
+        averageCompositeScore: 0
+      }
+    );
+
+    if (summary.totalStrategies > 0) {
+      summary.averageCompositeScore = parseFloat((summary.averageCompositeScore / summary.totalStrategies).toFixed(2));
+    }
+
+    res.json({
+      success: true,
+      capabilitySummary: summary,
+      strategies: profiles
+    });
+  } catch (error: unknown) {
+    console.error('Error getting agent capability profiles:', error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to get capability profiles'
+    });
+  }
+});
+
+/**
  * GET /api/agent/circuit-breaker
  * Get the circuit breaker status for the current user's session
  */
