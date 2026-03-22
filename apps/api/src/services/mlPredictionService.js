@@ -13,7 +13,7 @@ const __dirname = path.dirname(__filename);
 
 class MLPredictionService {
   constructor() {
-    this.pythonPath = 'python3.11';
+    this.pythonPath = process.env.PYTHON_PATH || 'python3.11';
     this.scriptPath = path.join(__dirname, '../ml/predict.py');
     this.modelsPath = path.join(__dirname, '../ml/saved_models');
   }
@@ -141,40 +141,71 @@ class MLPredictionService {
    */
   _runPythonScript(input) {
     return new Promise((resolve, reject) => {
-      const python = spawn(this.pythonPath, [this.scriptPath]);
-      
-      let stdout = '';
-      let stderr = '';
+      const attemptedInterpreters = new Set();
+      const pythonCandidates = [
+        this.pythonPath,
+        'python3.11',
+        'python3',
+        'python'
+      ].filter(Boolean);
 
-      python.stdout.on('data', (data) => {
-        stdout += data.toString();
-      });
-
-      python.stderr.on('data', (data) => {
-        stderr += data.toString();
-      });
-
-      python.on('close', (code) => {
-        if (code !== 0) {
-          reject(new Error(`Python script exited with code ${code}: ${stderr}`));
+      const tryInterpreter = (index = 0) => {
+        if (index >= pythonCandidates.length) {
+          const attempted = Array.from(attemptedInterpreters.values()).join(', ');
+          reject(new Error(`Failed to start Python process: no valid Python interpreter found (tried: ${attempted})`));
           return;
         }
 
-        try {
-          const result = JSON.parse(stdout);
-          resolve(result);
-        } catch (error) {
-          reject(new Error(`Failed to parse Python output: ${error.message}\nOutput: ${stdout}`));
+        const candidate = pythonCandidates[index];
+        if (!candidate || attemptedInterpreters.has(candidate)) {
+          tryInterpreter(index + 1);
+          return;
         }
-      });
+        attemptedInterpreters.add(candidate);
 
-      python.on('error', (error) => {
-        reject(new Error(`Failed to start Python process: ${error.message}`));
-      });
+        const python = spawn(candidate, [this.scriptPath]);
+        let stdout = '';
+        let stderr = '';
 
-      // Send input to Python script
-      python.stdin.write(input);
-      python.stdin.end();
+        python.stdout.on('data', (data) => {
+          stdout += data.toString();
+        });
+
+        python.stderr.on('data', (data) => {
+          stderr += data.toString();
+        });
+
+        python.on('close', (code) => {
+          if (code !== 0) {
+            reject(new Error(`Python script exited with code ${code}: ${stderr}`));
+            return;
+          }
+
+          this.pythonPath = candidate;
+          try {
+            const result = JSON.parse(stdout);
+            resolve(result);
+          } catch (error) {
+            reject(new Error(`Failed to parse Python output: ${error.message}\nOutput: ${stdout}`));
+          }
+        });
+
+        python.on('error', (error) => {
+          if (error?.code === 'ENOENT') {
+            if (index === 0) {
+              logger.warn(`Python interpreter not found: ${candidate}. Trying fallback interpreters...`);
+            }
+            tryInterpreter(index + 1);
+            return;
+          }
+          reject(new Error(`Failed to start Python process: ${error.message}`));
+        });
+
+        python.stdin.write(input);
+        python.stdin.end();
+      };
+
+      tryInterpreter();
     });
   }
 

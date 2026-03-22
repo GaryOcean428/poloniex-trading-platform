@@ -191,6 +191,12 @@ describe('PoloniexFuturesService', () => {
       expect(result).toBeDefined();
       expect(axios).toHaveBeenCalled();
     });
+
+    it('should normalize dash symbols for kline requests', async () => {
+      await poloniexFuturesService.getKlines('BTC-USDT', 'HOUR_1', { limit: 10 });
+      const config = axios.mock.calls[0][0];
+      expect(config.url).toContain('symbol=BTC_USDT_PERP');
+    });
   });
 
   describe('Error Handling', () => {

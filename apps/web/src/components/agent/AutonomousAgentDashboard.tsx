@@ -101,6 +101,13 @@ const AutonomousAgentDashboard: React.FC = () => {
     confidence_score: number;
     created_at: string;
   }>>([]);
+  const [capabilitySummary, setCapabilitySummary] = useState<{
+    totalStrategies: number;
+    tier1: number;
+    tier2: number;
+    tier3: number;
+    averageCompositeScore: number;
+  } | null>(null);
   const [eventFilter, setEventFilter] = useState<'all' | 'trade_decision' | 'state_change' | 'risk_action' | 'health_alert' | 'error'>('all');
   const [lastHeartbeat, setLastHeartbeat] = useState<Date | null>(null);
   const [config, setConfig] = useState({
@@ -126,6 +133,7 @@ const AutonomousAgentDashboard: React.FC = () => {
     fetchActivity();
     fetchStrategies();
     fetchHealth();
+    fetchCapabilities();
 
     // WebSocket real-time updates
     let socket: { on: (event: string, cb: (data: any) => void) => void; disconnect: () => void } | null = null;
@@ -170,6 +178,7 @@ const AutonomousAgentDashboard: React.FC = () => {
         fetchHealth();
         fetchEvents();
       }
+      fetchCapabilities();
     }, pollInterval);
 
     return () => clearInterval(interval);
@@ -265,6 +274,19 @@ const AutonomousAgentDashboard: React.FC = () => {
       }
     } catch {
       // Events are non-critical
+    }
+  };
+
+  const fetchCapabilities = async () => {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/api/agent/capabilities`, {
+        headers: getAuthHeaders()
+      });
+      if (response.data.success) {
+        setCapabilitySummary(response.data.capabilitySummary);
+      }
+    } catch {
+      setCapabilitySummary(null);
     }
   };
 
@@ -1063,6 +1085,39 @@ const AutonomousAgentDashboard: React.FC = () => {
           </div>
         )}
       </div>
+
+      {capabilitySummary && capabilitySummary.totalStrategies > 0 && (
+        <div className="bg-white rounded-lg shadow-lg overflow-hidden">
+          <div className="p-6">
+            <h2 className="text-lg font-bold text-gray-900 mb-2">Capability Tiers</h2>
+            <p className="text-sm text-gray-500 mb-4">
+              Composite scoring with adaptive improvement hints for autonomous strategy quality.
+            </p>
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-sm">
+              <div className="p-3 bg-gray-50 rounded-lg">
+                <div className="text-gray-500">Strategies</div>
+                <div className="text-xl font-semibold text-gray-900">{capabilitySummary.totalStrategies}</div>
+              </div>
+              <div className="p-3 bg-emerald-50 rounded-lg">
+                <div className="text-emerald-700">Tier 1</div>
+                <div className="text-xl font-semibold text-emerald-800">{capabilitySummary.tier1}</div>
+              </div>
+              <div className="p-3 bg-blue-50 rounded-lg">
+                <div className="text-blue-700">Tier 2</div>
+                <div className="text-xl font-semibold text-blue-800">{capabilitySummary.tier2}</div>
+              </div>
+              <div className="p-3 bg-orange-50 rounded-lg">
+                <div className="text-orange-700">Tier 3</div>
+                <div className="text-xl font-semibold text-orange-800">{capabilitySummary.tier3}</div>
+              </div>
+              <div className="p-3 bg-purple-50 rounded-lg">
+                <div className="text-purple-700">Avg Score</div>
+                <div className="text-xl font-semibold text-purple-800">{capabilitySummary.averageCompositeScore.toFixed(2)}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Live Trading Activity Feed */}
       <LiveTradingActivityFeed agentStatus={agentStatus?.status} />
