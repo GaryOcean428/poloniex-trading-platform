@@ -52,59 +52,51 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  event.respondWith(
-    caches.match(event.request)
-      .then((cachedResponse) => {
-        // Return cached version if available
+  const isApiRequest = event.request.url.includes('/api/');
+
+  // For API calls: serve from cache if available, otherwise pass through to network.
+  // Do not generate artificial error responses — let network errors propagate
+  // to the frontend's own error handling.
+  if (isApiRequest) {
+    event.respondWith(
+      caches.match(event.request).then((cachedResponse) => {
         if (cachedResponse) {
-          // For API requests, also try to fetch fresh data in background
-          if (event.request.url.includes('/api/')) {
-            fetch(event.request).then((response) => {
-              if (response.ok) {
-                const responseClone = response.clone();
-                caches.open(CACHE_NAME).then((cache) => {
-                  cache.put(event.request, responseClone);
-                });
-              }
-            }).catch(() => {
-              // Ignore fetch errors in background update
-            });
-          }
+          // Serve stale cache immediately and refresh in background
+          fetch(event.request).then((response) => {
+            if (response.ok) {
+              const responseClone = response.clone();
+              caches.open(CACHE_NAME).then((cache) => {
+                cache.put(event.request, responseClone);
+              });
+            }
+          }).catch(() => { /* background refresh failed, stale cache is fine */ });
           return cachedResponse;
         }
 
-        // Network first for API calls
-        if (event.request.url.includes('/api/')) {
-          return fetch(event.request)
-            .then((response) => {
-              if (response.ok) {
-                const responseClone = response.clone();
-                caches.open(CACHE_NAME).then((cache) => {
-                  cache.put(event.request, responseClone);
-                });
-              }
-              return response;
-            })
-            .catch(() => {
-              // Return a basic offline response for API calls
-              return new Response(
-                JSON.stringify({ 
-                  error: 'Offline', 
-                  message: 'API unavailable in offline mode',
-                  timestamp: new Date().toISOString()
-                }),
-                {
-                  status: 503,
-                  statusText: 'Service Unavailable',
-                  headers: {
-                    'Content-Type': 'application/json'
-                  }
-                }
-              );
+        // No cache — pass through to network; cache successful responses
+        return fetch(event.request).then((response) => {
+          if (response.ok) {
+            const responseClone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => {
+              cache.put(event.request, responseClone);
             });
+          }
+          return response;
+        });
+        // No .catch() — let network errors propagate to the frontend
+      })
+    );
+    return;
+  }
+
+  // Static assets — cache-first strategy
+  event.respondWith(
+    caches.match(event.request)
+      .then((cachedResponse) => {
+        if (cachedResponse) {
+          return cachedResponse;
         }
 
-        // For other requests, try network first, fallback to cache, then offline
         return fetch(event.request)
           .then((response) => {
             if (response.ok) {
@@ -120,12 +112,21 @@ self.addEventListener('fetch', (event) => {
             if (event.request.mode === 'navigate') {
               return caches.match('/');
             }
-            
-            // For other failed requests, return a basic response
-            return new Response('Offline', {
-              status: 503,
-              statusText: 'Service Unavailable'
-            });
+            // For other failed requests, return a proper error response
+            return new Response(
+              JSON.stringify({
+                success: false,
+                error: 'Offline',
+                message: 'Service temporarily unavailable',
+                offline: true,
+                timestamp: new Date().toISOString()
+              }),
+              {
+                status: 503,
+                statusText: 'Service Unavailable',
+                headers: { 'Content-Type': 'application/json' }
+              }
+            );
           });
       })
   );
@@ -179,5 +180,26 @@ self.addEventListener('notificationclick', (event) => {
     event.waitUntil(
       clients.openWindow('/')
     );
+  }
+});
+
+// Handle messages from clients (pages) and browser extensions
+// This prevents "message channel closed" errors from browser extensions
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type) {
+    switch (event.data.type) {
+      case 'SKIP_WAITING':
+        self.skipWaiting();
+        break;
+      case 'CLIENTS_CLAIM':
+        self.clients.claim();
+        break;
+      default:
+        break;
+    }
+  }
+  // Acknowledge messages via MessagePort to prevent "message channel closed" errors
+  if (event.ports && event.ports[0]) {
+    event.ports[0].postMessage({ ack: true });
   }
 });
