@@ -52,62 +52,51 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  event.respondWith(
-    caches.match(event.request)
-      .then((cachedResponse) => {
-        // Return cached version if available
+  const isApiRequest = event.request.url.includes('/api/');
+
+  // For API calls: serve from cache if available, otherwise pass through to network.
+  // Do not generate artificial error responses — let network errors propagate
+  // to the frontend's own error handling.
+  if (isApiRequest) {
+    event.respondWith(
+      caches.match(event.request).then((cachedResponse) => {
         if (cachedResponse) {
-          // For API requests, also try to fetch fresh data in background
-          if (event.request.url.includes('/api/')) {
-            fetch(event.request).then((response) => {
-              if (response.ok) {
-                const responseClone = response.clone();
-                caches.open(CACHE_NAME).then((cache) => {
-                  cache.put(event.request, responseClone);
-                });
-              }
-            }).catch(() => {
-              // Ignore fetch errors in background update
-            });
-          }
+          // Serve stale cache immediately and refresh in background
+          fetch(event.request).then((response) => {
+            if (response.ok) {
+              const responseClone = response.clone();
+              caches.open(CACHE_NAME).then((cache) => {
+                cache.put(event.request, responseClone);
+              });
+            }
+          }).catch(() => { /* background refresh failed, stale cache is fine */ });
           return cachedResponse;
         }
 
-        // Network first for API calls
-        if (event.request.url.includes('/api/')) {
-          return fetch(event.request)
-            .then((response) => {
-              if (response.ok) {
-                const responseClone = response.clone();
-                caches.open(CACHE_NAME).then((cache) => {
-                  cache.put(event.request, responseClone);
-                });
-              }
-              return response;
-            })
-            .catch(() => {
-              // Return a graceful offline response for API calls
-              return new Response(
-                JSON.stringify({ 
-                  success: false,
-                  error: 'offline', 
-                  message: 'API unavailable in offline mode. Please check your connection.',
-                  offline: true,
-                  timestamp: new Date().toISOString()
-                }),
-                {
-                  status: 200,
-                  statusText: 'OK (Offline Fallback)',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    'X-SW-Fallback': 'true'
-                  }
-                }
-              );
+        // No cache — pass through to network; cache successful responses
+        return fetch(event.request).then((response) => {
+          if (response.ok) {
+            const responseClone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => {
+              cache.put(event.request, responseClone);
             });
+          }
+          return response;
+        });
+        // No .catch() — let network errors propagate to the frontend
+      })
+    );
+    return;
+  }
+
+  // Static assets — cache-first strategy
+  event.respondWith(
+    caches.match(event.request)
+      .then((cachedResponse) => {
+        if (cachedResponse) {
+          return cachedResponse;
         }
 
-        // For other requests, try network first, fallback to cache, then offline
         return fetch(event.request)
           .then((response) => {
             if (response.ok) {
@@ -123,8 +112,7 @@ self.addEventListener('fetch', (event) => {
             if (event.request.mode === 'navigate') {
               return caches.match('/');
             }
-            
-            // For other failed requests, return a basic response
+            // For other failed requests, let the error propagate
             return new Response('Offline', {
               status: 503,
               statusText: 'Service Unavailable'

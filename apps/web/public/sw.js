@@ -84,104 +84,120 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  event.respondWith(
-    caches.match(event.request)
-      .then((cachedResponse) => {
-        // Return cached version if available
+  const isApiRequest = event.request.url.includes('/api/');
+  const isTradingDataRequest = isApiRequest && (
+    event.request.url.includes('/api/market') ||
+    event.request.url.includes('/api/trade')
+  );
+
+  // For non-trading-data API calls, only serve from cache if available;
+  // otherwise let the browser handle the request natively so errors
+  // propagate to the frontend's own error handling (no artificial 503).
+  if (isApiRequest && !isTradingDataRequest) {
+    event.respondWith(
+      caches.match(event.request).then((cachedResponse) => {
+        // Serve stale cache immediately and refresh in background
         if (cachedResponse) {
-          // For API requests, also try to fetch fresh data in background
-          if (event.request.url.includes('/api/')) {
-            fetch(event.request).then((response) => {
-              if (response.ok) {
-                const responseClone = response.clone();
-                caches.open(CACHE_NAME).then((cache) => {
-                  cache.put(event.request, responseClone);
-                });
-              }
-            }).catch(() => {
-              // Ignore fetch errors in background update
-            });
-          }
+          fetch(event.request).then((response) => {
+            if (response.ok) {
+              const responseClone = response.clone();
+              caches.open(CACHE_NAME).then((cache) => {
+                cache.put(event.request, responseClone);
+              });
+            }
+          }).catch(() => { /* background refresh failed, stale cache is fine */ });
           return cachedResponse;
         }
 
-        // Network first for API calls
-        if (event.request.url.includes('/api/')) {
-          return fetch(event.request)
-            .then((response) => {
-              if (response.ok) {
-                const responseClone = response.clone();
-                caches.open(CACHE_NAME).then((cache) => {
-                  cache.put(event.request, responseClone);
-                });
-
-                // Cache trading data separately for offline access
-                if (event.request.url.includes('/api/market') ||
-                    event.request.url.includes('/api/trade')) {
-                  response.clone().json().then((data) => {
-                    caches.open(TRADING_DATA_CACHE).then((cache) => {
-                      cache.put(event.request, new Response(JSON.stringify({
-                        ...data,
-                        cached: true,
-                        cacheTime: new Date().toISOString()
-                      })));
-                    });
-                  }).catch(() => {
-                    // Ignore JSON parsing errors
-                  });
-                }
-              }
-              return response;
-            })
-            .catch(() => {
-              // Try to return cached trading data for offline mode
-              if (event.request.url.includes('/api/market') ||
-                  event.request.url.includes('/api/trade')) {
-                return caches.open(TRADING_DATA_CACHE).then((cache) => {
-                  return cache.match(event.request).then((cachedResponse) => {
-                    if (cachedResponse) {
-                      return cachedResponse;
-                    }
-                    // Return fallback offline data
-                    return new Response(
-                      JSON.stringify({
-                        ...OFFLINE_FALLBACK_DATA,
-                        message: 'Using offline data due to connectivity issues'
-                      }),
-                      {
-                        status: 200,
-                        statusText: 'OK (Offline)',
-                        headers: {
-                          'Content-Type': 'application/json'
-                        }
-                      }
-                    );
-                  });
-                });
-              }
-
-              // Return a graceful offline response for other API calls
-              return new Response(
-                JSON.stringify({
-                  success: false,
-                  error: 'offline',
-                  message: 'API unavailable in offline mode. Please check your connection.',
-                  offline: true,
-                  timestamp: new Date().toISOString()
-                }),
-                {
-                  status: 200,
-                  statusText: 'OK (Offline Fallback)',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    'X-SW-Fallback': 'true'
-                  }
-                }
-              );
+        // No cache — pass through to network; cache successful responses
+        return fetch(event.request).then((response) => {
+          if (response.ok) {
+            const responseClone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => {
+              cache.put(event.request, responseClone);
             });
+          }
+          return response;
+        });
+        // No .catch() — let network errors propagate to the frontend
+      })
+    );
+    return;
+  }
+
+  // Trading data API calls — provide offline fallback
+  if (isTradingDataRequest) {
+    event.respondWith(
+      caches.match(event.request).then((cachedResponse) => {
+        if (cachedResponse) {
+          fetch(event.request).then((response) => {
+            if (response.ok) {
+              const responseClone = response.clone();
+              caches.open(CACHE_NAME).then((cache) => {
+                cache.put(event.request, responseClone);
+              });
+            }
+          }).catch(() => { /* background refresh failed */ });
+          return cachedResponse;
         }
 
-        // For other requests, try network first, fallback to cache, then offline
+        return fetch(event.request)
+          .then((response) => {
+            if (response.ok) {
+              const responseClone = response.clone();
+              caches.open(CACHE_NAME).then((cache) => {
+                cache.put(event.request, responseClone);
+              });
+              // Cache trading data separately for offline access
+              response.clone().json().then((data) => {
+                caches.open(TRADING_DATA_CACHE).then((cache) => {
+                  cache.put(event.request, new Response(JSON.stringify({
+                    ...data,
+                    cached: true,
+                    cacheTime: new Date().toISOString()
+                  })));
+                });
+              }).catch(() => { /* Ignore JSON parsing errors */ });
+            }
+            return response;
+          })
+          .catch(() => {
+            // Try to return cached trading data for offline mode
+            return caches.open(TRADING_DATA_CACHE).then((cache) => {
+              return cache.match(event.request).then((cached) => {
+                if (cached) {
+                  return cached;
+                }
+                // Return fallback offline data
+                return new Response(
+                  JSON.stringify({
+                    ...OFFLINE_FALLBACK_DATA,
+                    message: 'Using offline data due to connectivity issues'
+                  }),
+                  {
+                    status: 200,
+                    statusText: 'OK (Offline)',
+                    headers: {
+                      'Content-Type': 'application/json'
+                    }
+                  }
+                );
+              });
+            });
+          });
+      })
+    );
+    return;
+  }
+
+  // Static assets — cache-first strategy
+  event.respondWith(
+    caches.match(event.request)
+      .then((cachedResponse) => {
+        if (cachedResponse) {
+          return cachedResponse;
+        }
+
         return fetch(event.request)
           .then((response) => {
             if (response.ok) {
@@ -191,19 +207,8 @@ self.addEventListener('fetch', (event) => {
               });
             }
             return response;
-          })
-          .catch(() => {
-            // If it's a navigation request, return the cached index page
-            if (event.request.mode === 'navigate') {
-              return caches.match('/');
-            }
-
-            // For other failed requests, return a basic response
-            return new Response('Offline', {
-              status: 503,
-              statusText: 'Service Unavailable'
-            });
           });
+        // No .catch() — let network errors propagate naturally for static assets
       })
   );
 });
