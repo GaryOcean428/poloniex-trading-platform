@@ -86,18 +86,21 @@ self.addEventListener('fetch', (event) => {
               return response;
             })
             .catch(() => {
-              // Return a basic offline response for API calls
+              // Return a graceful offline response for API calls
               return new Response(
                 JSON.stringify({ 
-                  error: 'Offline', 
-                  message: 'API unavailable in offline mode',
+                  success: false,
+                  error: 'offline', 
+                  message: 'API unavailable in offline mode. Please check your connection.',
+                  offline: true,
                   timestamp: new Date().toISOString()
                 }),
                 {
-                  status: 503,
-                  statusText: 'Service Unavailable',
+                  status: 200,
+                  statusText: 'OK (Offline Fallback)',
                   headers: {
-                    'Content-Type': 'application/json'
+                    'Content-Type': 'application/json',
+                    'X-SW-Fallback': 'true'
                   }
                 }
               );

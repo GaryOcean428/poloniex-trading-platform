@@ -26,10 +26,20 @@ interface TradingInsight {
 }
 
 
-// Initialize Claude client
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY
-});
+// Initialize Claude client lazily - only when API key is available
+let anthropic: Anthropic | null = null;
+
+function getAnthropicClient(): Anthropic | null {
+  if (!process.env.ANTHROPIC_API_KEY) {
+    return null;
+  }
+  if (!anthropic) {
+    anthropic = new Anthropic({
+      apiKey: process.env.ANTHROPIC_API_KEY
+    });
+  }
+  return anthropic;
+}
 
 /**
  * POST /api/ai/trading-insight
@@ -46,11 +56,28 @@ router.post('/trading-insight', authenticateToken, async (req: Request, res: Res
       });
     }
 
+    // Check if Anthropic API key is configured
+    const client = getAnthropicClient();
+    if (!client) {
+      // Return fallback insight when API key is not configured
+      const fallbackInsight = parseClaudeResponse('', tradingData);
+      return res.json({
+        success: true,
+        insight: fallbackInsight,
+        meta: {
+          thinkingEnabled: false,
+          inputTokens: 0,
+          outputTokens: 0,
+          mock: true
+        }
+      });
+    }
+
     // Build prompt for Claude
     const prompt = buildTradingPrompt(tradingData, userQuery);
 
     // Call Claude Sonnet 4.5 with extended thinking for better trading analysis
-    const message = await anthropic.messages.create({
+    const message = await client.messages.create({
       model: 'claude-sonnet-4-5-20250929',
       max_tokens: 4096, // Increased from 1024 for more detailed analysis
       // Enable extended thinking for complex trading analysis (can be disabled for speed)
