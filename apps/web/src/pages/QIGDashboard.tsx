@@ -6,12 +6,13 @@
 
 import React, { useState } from 'react';
 import { QIGPredictionCard } from '../components/QIGPredictionCard';
+import { getBackendUrl } from '@/utils/environment';
 
 const QIGDashboard: React.FC = () => {
   const [selectedSymbol, setSelectedSymbol] = useState('BTC_USDT');
   
   // Get API URL and auth token from environment/context
-  const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8765';
+  const apiUrl = getBackendUrl();
   const authToken = localStorage.getItem('authToken') || '';
 
   const symbols = [

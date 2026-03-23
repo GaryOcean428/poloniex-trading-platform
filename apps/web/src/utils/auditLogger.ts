@@ -4,6 +4,7 @@
  */
 
 import { logger } from './logger';
+import { getBackendUrl } from './environment';
 
 export enum AuditEventType {
   // Authentication Events
@@ -70,7 +71,7 @@ class AuditLogger {
   private backendUrl: string;
 
   constructor() {
-    this.backendUrl = import.meta.env.VITE_API_URL || 'http://localhost:8765';
+    this.backendUrl = getBackendUrl();
   }
 
   /**

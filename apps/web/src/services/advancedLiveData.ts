@@ -1,4 +1,5 @@
 import axios, { AxiosInstance } from "axios";
+import { getBackendUrl } from "@/utils/environment";
 
 // Type definitions for live data processing
 export interface LiveDataConfig {
@@ -185,10 +186,8 @@ export class LiveDataService {
   }
 
   private initializePoloniexClient(): void {
-    // Get backend URL from environment utility
-    const backendUrl = typeof window !== 'undefined' && window.location.hostname.includes('railway.app')
-      ? 'https://polytrade-be.up.railway.app'
-      : '';
+    // Get backend URL from environment utility (handles Railway, local, and other environments)
+    const backendUrl = getBackendUrl();
     
     this.poloniexRestClient = axios.create({
       baseURL: `${backendUrl}/api/futures`,

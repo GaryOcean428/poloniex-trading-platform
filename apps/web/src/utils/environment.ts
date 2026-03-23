@@ -130,10 +130,9 @@ export const getBackendUrl = (): string => {
     const hostname = window.location.hostname;
     const protocol = window.location.protocol || 'http:';
 
-    // Local development
+    // Local development - backend runs on .clinerules compliant port 8765
     if (hostname === 'localhost' || hostname === '127.0.0.1') {
-      // Tests expect explicit localhost:3000 for local backend
-      return 'http://localhost:3000';
+      return 'http://localhost:8765';
     }
 
     // Railway deployment detection
