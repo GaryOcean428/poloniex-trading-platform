@@ -112,18 +112,18 @@ self.addEventListener('fetch', (event) => {
             if (event.request.mode === 'navigate') {
               return caches.match('/');
             }
-            // For other failed requests, let the error propagate naturally
-            // (no artificial 503 that confuses frontend error handling)
+            // For other failed requests, return a proper error response
             return new Response(
               JSON.stringify({
+                success: false,
                 error: 'Offline',
                 message: 'Service temporarily unavailable',
                 offline: true,
                 timestamp: new Date().toISOString()
               }),
               {
-                status: 200,
-                statusText: 'OK',
+                status: 503,
+                statusText: 'Service Unavailable',
                 headers: { 'Content-Type': 'application/json' }
               }
             );

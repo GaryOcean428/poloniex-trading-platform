@@ -224,8 +224,14 @@ self.addEventListener('fetch', (event) => {
               });
             }
             return response;
+          })
+          .catch(() => {
+            // Network error for static assets — return a minimal offline response
+            return new Response('', {
+              status: 503,
+              statusText: 'Service Unavailable'
+            });
           });
-        // No .catch() — let network errors propagate naturally for static assets
       })
   );
 });
