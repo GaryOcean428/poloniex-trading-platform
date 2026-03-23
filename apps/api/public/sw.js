@@ -112,11 +112,21 @@ self.addEventListener('fetch', (event) => {
             if (event.request.mode === 'navigate') {
               return caches.match('/');
             }
-            // For other failed requests, let the error propagate
-            return new Response('Offline', {
-              status: 503,
-              statusText: 'Service Unavailable'
-            });
+            // For other failed requests, let the error propagate naturally
+            // (no artificial 503 that confuses frontend error handling)
+            return new Response(
+              JSON.stringify({
+                error: 'Offline',
+                message: 'Service temporarily unavailable',
+                offline: true,
+                timestamp: new Date().toISOString()
+              }),
+              {
+                status: 200,
+                statusText: 'OK',
+                headers: { 'Content-Type': 'application/json' }
+              }
+            );
           });
       })
   );
@@ -170,5 +180,26 @@ self.addEventListener('notificationclick', (event) => {
     event.waitUntil(
       clients.openWindow('/')
     );
+  }
+});
+
+// Handle messages from clients (pages) and browser extensions
+// This prevents "message channel closed" errors from browser extensions
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type) {
+    switch (event.data.type) {
+      case 'SKIP_WAITING':
+        self.skipWaiting();
+        break;
+      case 'CLIENTS_CLAIM':
+        self.clients.claim();
+        break;
+      default:
+        break;
+    }
+  }
+  // Acknowledge messages via MessagePort to prevent "message channel closed" errors
+  if (event.ports && event.ports[0]) {
+    event.ports[0].postMessage({ ack: true });
   }
 });

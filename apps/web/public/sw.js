@@ -118,8 +118,25 @@ self.addEventListener('fetch', (event) => {
             });
           }
           return response;
+        }).catch(() => {
+          // Network error (ERR_NETWORK_CHANGED, offline, etc.)
+          // Return a proper JSON error response so the frontend's error
+          // handling (axios .catch) can process it cleanly instead of
+          // generating "Uncaught (in promise)" console errors.
+          return new Response(
+            JSON.stringify({
+              success: false,
+              error: 'Network unavailable',
+              offline: true,
+              timestamp: new Date().toISOString()
+            }),
+            {
+              status: 503,
+              statusText: 'Service Unavailable',
+              headers: { 'Content-Type': 'application/json' }
+            }
+          );
         });
-        // No .catch() — let network errors propagate to the frontend
       })
     );
     return;

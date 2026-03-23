@@ -230,7 +230,8 @@ const Backtesting: React.FC = () => {
   const fetchPipelineSummary = useCallback(async () => {
     try {
       const response = await axios.get(`${API_BASE_URL}/api/backtest/pipeline/summary`, {
-        headers: getAuthHeaders()
+        headers: getAuthHeaders(),
+        timeout: 15000
       });
       if (response.data.success) {
         setSummary(response.data.summary);
@@ -242,6 +243,8 @@ const Backtesting: React.FC = () => {
         setFetchError('Session expired — please log in again.');
       } else if (status && status >= 500) {
         setFetchError('Backend unavailable — retrying automatically.');
+      } else if (err?.code === 'ERR_NETWORK' || err?.message?.includes('Network Error')) {
+        setFetchError('Network issue detected — retrying automatically.');
       }
       // For network errors or other cases, keep previous data
     }
@@ -250,7 +253,8 @@ const Backtesting: React.FC = () => {
   const fetchPipelineResults = useCallback(async () => {
     try {
       const response = await axios.get(`${API_BASE_URL}/api/backtest/pipeline/results`, {
-        headers: getAuthHeaders()
+        headers: getAuthHeaders(),
+        timeout: 15000
       });
       if (response.data.success) {
         setPipelineResults(response.data.results);

@@ -46,8 +46,10 @@ function getAnthropicClient(): Anthropic | null {
  * Generate trading insights using Claude Sonnet 4.5 with extended thinking
  */
 router.post('/trading-insight', authenticateToken, async (req: Request, res: Response) => {
+  // Extract tradingData outside try so it's accessible in the catch block for fallback
+  const tradingData = req.body?.tradingData;
   try {
-    const { tradingData, userQuery, enableThinking = true } = req.body;
+    const { userQuery, enableThinking = true } = req.body;
 
     if (!tradingData) {
       return res.status(400).json({
@@ -125,10 +127,20 @@ router.post('/trading-insight', authenticateToken, async (req: Request, res: Res
     });
   } catch (error: unknown) {
     console.error('Error generating trading insight:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to generate trading insight',
-      details: error instanceof Error ? error.message : String(error)
+
+    // Graceful degradation: return a fallback insight instead of 500
+    // Common failures: invalid API key, rate limit, network error, model errors
+    const fallbackInsight = parseClaudeResponse('', tradingData || { symbol: 'N/A', price: 0, change24h: 0, volume: 0 });
+    res.json({
+      success: true,
+      insight: fallbackInsight,
+      meta: {
+        thinkingEnabled: false,
+        inputTokens: 0,
+        outputTokens: 0,
+        mock: true,
+        fallbackReason: error instanceof Error ? error.message : String(error)
+      }
     });
   }
 });
