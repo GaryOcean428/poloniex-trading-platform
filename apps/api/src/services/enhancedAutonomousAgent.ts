@@ -26,6 +26,7 @@ import type { Server as SocketIOServer } from 'socket.io';
 
 interface AgentConfig {
   userId: string;
+  executionMode: 'backtest' | 'paper' | 'live';
   maxDrawdown: number;
   positionSize: number;
   maxConcurrentPositions: number;
@@ -383,6 +384,7 @@ class EnhancedAutonomousAgent extends EventEmitter {
     // Create default config
     const defaultConfig: AgentConfig = {
       userId,
+      executionMode: 'live',
       maxDrawdown: 15,
       positionSize: 2,
       maxConcurrentPositions: 3,
@@ -423,6 +425,7 @@ class EnhancedAutonomousAgent extends EventEmitter {
 
     logger.info(`Enhanced autonomous agent started for user ${userId}`, {
       sessionId: session.id,
+      executionMode: defaultConfig.executionMode,
       config: defaultConfig
     });
 
@@ -438,6 +441,13 @@ class EnhancedAutonomousAgent extends EventEmitter {
     // Initial strategy generation
     if (session.config.enableAIStrategies) {
       await this.generateStrategies(session);
+    }
+
+    // In backtest mode, do not set up recurring generation or allocation optimization
+    // since backtest is a one-shot analysis of generated strategies
+    if (session.config.executionMode === 'backtest') {
+      logger.info(`Agent loop started for session ${session.id} in backtest-only mode (no recurring generation)`);
+      return;
     }
 
     // Set up periodic strategy generation
@@ -456,7 +466,7 @@ class EnhancedAutonomousAgent extends EventEmitter {
     // Start profit maximization through dynamic allocation optimization
     this.startAllocationOptimization(session);
     
-    logger.info(`Agent loop started for session ${session.id} with profit maximization enabled`);
+    logger.info(`Agent loop started for session ${session.id} in ${session.config.executionMode} mode with profit maximization enabled`);
   }
 
   /**
@@ -884,6 +894,18 @@ Generate the combination logic as executable JavaScript code.
       });
       this.emit('strategy:backtested', { strategyId: strategy.id, performance: strategy.performance });
       
+      // In backtest-only mode, stop after backtesting — do not promote further
+      if (session.config.executionMode === 'backtest') {
+        logger.info(`[Lifecycle] Backtest-only mode: ${strategy.name} completed. Not promoting to paper or live.`);
+        this.broadcastEvent('strategy_backtest_complete', {
+          strategyId: strategy.id,
+          name: strategy.name,
+          performance: strategy.performance,
+          executionMode: 'backtest'
+        });
+        return;
+      }
+
       // 2. Promote to paper trading if backtest passes
       // Dynamic thresholds based on trading style
       const winRateThreshold = session.config.tradingStyle === 'scalping' ? 0.52 : 0.55;
@@ -961,6 +983,17 @@ Generate the combination logic as executable JavaScript code.
    */
   private async checkPaperTradingResults(session: AgentSession, strategy: Strategy): Promise<void> {
     try {
+      // In paper-only mode, do not promote to live trading
+      if (session.config.executionMode === 'paper') {
+        logger.info(`[Lifecycle] Paper-only mode: ${strategy.name} paper trading complete. Not promoting to live.`);
+        this.broadcastEvent('strategy_paper_complete', {
+          strategyId: strategy.id,
+          name: strategy.name,
+          executionMode: 'paper'
+        });
+        return;
+      }
+
       // Check circuit breaker before promoting to live
       const cbCheck = this.checkCircuitBreaker(session.id);
       if (!cbCheck.allowed) {
@@ -1004,6 +1037,12 @@ Generate the combination logic as executable JavaScript code.
    * Applies drawdown-adjusted position sizing for safety.
    */
   private async promoteToLiveTrading(session: AgentSession, strategy: Strategy): Promise<void> {
+    // Safety: never promote to live when executionMode is backtest or paper
+    if (session.config.executionMode !== 'live') {
+      logger.warn(`[Lifecycle] Blocked live promotion for ${strategy.name} — executionMode is '${session.config.executionMode}'`);
+      return;
+    }
+
     logger.info(`Promoting ${strategy.name} to LIVE trading`);
     
     strategy.status = 'live';

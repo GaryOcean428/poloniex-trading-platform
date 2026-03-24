@@ -533,10 +533,9 @@ router.get('/pipeline/results', authenticateToken, async (req: Request, res: Res
 
   } catch (error: unknown) {
     logger.error('Error fetching pipeline results:', error);
-    const errMsg = error instanceof Error ? error.message : String(error);
-    res.status(500).json({
-      success: false,
-      error: errMsg || 'Failed to fetch pipeline results',
+    // Return empty-but-valid results so the frontend renders the empty state
+    res.json({
+      success: true,
       results: []
     });
   }
@@ -707,16 +706,16 @@ router.get('/pipeline/summary', authenticateToken, async (req: Request, res: Res
 
   } catch (error: unknown) {
     logger.error('Error fetching pipeline summary:', error);
-    const errMsg = error instanceof Error ? error.message : String(error);
-    res.status(500).json({
-      success: false,
-      error: errMsg || 'Failed to fetch pipeline summary',
+    // Return empty-but-valid summary so the frontend can render the empty state
+    // instead of showing a permanent error banner
+    res.json({
+      success: true,
       summary: {
         strategyCounts: { generated: 0, backtested: 0, paperTrading: 0, live: 0 },
         confidence: { score: 0, level: 'insufficient_data' },
         risk: { rating: 'unknown', averageMaxDrawdown: 0 },
         paperTrading: null,
-        liveReadiness: { ready: false, reasons: ['Unable to load pipeline data'] },
+        liveReadiness: { ready: false, reasons: ['Unable to load pipeline data — start the agent to begin.'] },
         recentEvents: [],
         strategyBreakdown: []
       }
