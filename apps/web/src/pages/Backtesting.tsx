@@ -236,11 +236,18 @@ const Backtesting: React.FC = () => {
       if (response.data.success) {
         setSummary(response.data.summary);
         setFetchError(null);
+      } else if (response.data.offline) {
+        setFetchError('Backend offline — retrying automatically. Start the agent to generate strategies.');
       }
     } catch (err: any) {
       const status = err?.response?.status;
-      if (status === 401) {
+      const data = err?.response?.data;
+      if (data?.offline) {
+        setFetchError('Network unavailable — showing cached data if available.');
+      } else if (status === 401) {
         setFetchError('Session expired — please log in again.');
+      } else if (status === 503) {
+        setFetchError('Backend temporarily unavailable — retrying automatically.');
       } else if (status && status >= 500) {
         setFetchError('Backend unavailable — retrying automatically.');
       } else if (err?.code === 'ERR_NETWORK' || err?.message?.includes('Network Error')) {
