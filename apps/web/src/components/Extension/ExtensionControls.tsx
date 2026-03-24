@@ -30,7 +30,8 @@ const ExtensionControls: React.FC<ExtensionControlsProps> = ({ onClose }) => {
           extensionId,
           { type: 'REFRESH_DATA' },
           () => {
-            // Removed unused response parameter
+            // Consume chrome.runtime.lastError to prevent unhandled message channel errors
+            if (chrome.runtime.lastError) { /* extension unavailable */ }
             setIsRefreshing(false);
           }
         );

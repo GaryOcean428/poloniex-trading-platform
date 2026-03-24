@@ -39,6 +39,11 @@ const ExtensionSettings: React.FC<ExtensionSettingsProps> = ({ onClose }) => {
           extensionId,
           { type: 'CHECK_INSTALLATION' },
           (response: ExtensionResponse) => {
+            // Check for chrome.runtime.lastError to prevent unhandled message channel errors
+            if (chrome.runtime.lastError) {
+              setExtensionStatus('Not detected');
+              return;
+            }
             if (response && response.installed) {
               setExtensionStatus('Connected');
             } else {
@@ -99,7 +104,8 @@ const ExtensionSettings: React.FC<ExtensionSettingsProps> = ({ onClose }) => {
           }
         },
         (_response: ExtensionResponse) => {
-          // console.log('Extension settings updated:', response);
+          // Consume chrome.runtime.lastError to prevent unhandled message channel errors
+          if (chrome.runtime.lastError) { /* extension unavailable */ }
         }
       );
 
@@ -114,7 +120,8 @@ const ExtensionSettings: React.FC<ExtensionSettingsProps> = ({ onClose }) => {
           }
         },
         (_response: ExtensionResponse) => {
-          // console.log('Extension API credentials updated:', response);
+          // Consume chrome.runtime.lastError to prevent unhandled message channel errors
+          if (chrome.runtime.lastError) { /* extension unavailable */ }
         }
       );
     }

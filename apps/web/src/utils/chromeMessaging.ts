@@ -30,9 +30,18 @@ export const chromeMessaging = {
     }
     
     return new Promise((resolve) => {
-      runtime.sendMessage(message, (response) => {
-        resolve(response || null);
-      });
+      try {
+        runtime.sendMessage(message, (response) => {
+          // Consume chrome.runtime.lastError to prevent unhandled message channel errors
+          if (runtime.lastError) {
+            resolve(null);
+            return;
+          }
+          resolve(response || null);
+        });
+      } catch {
+        resolve(null);
+      }
     });
   },
   
