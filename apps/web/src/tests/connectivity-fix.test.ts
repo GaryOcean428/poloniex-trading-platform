@@ -22,7 +22,7 @@ describe('WebSocket & API Connectivity Fix', () => {
     it('should return localhost for local development', () => {
       global.window.location.hostname = 'localhost';
       const backendUrl = getBackendUrl();
-      expect(backendUrl).toBe('http://localhost:3000');
+      expect(backendUrl).toBe('http://localhost:8765');
     });
 
     it('should return Railway backend URL for Railway deployment', () => {

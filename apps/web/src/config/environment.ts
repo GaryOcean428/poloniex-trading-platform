@@ -1,4 +1,5 @@
 // Enhanced environment management for proper mock mode detection and security
+import { getBackendUrl } from '../utils/environment';
 interface EnvironmentConfig {
   apiKey: string | null;
   apiSecret: string | null;
@@ -119,7 +120,7 @@ export class EnvironmentManager {
       isProduction: import.meta.env.PROD,
       wsUrl: import.meta.env.VITE_WS_URL || 'wss://ws.poloniex.com/ws/v3/public',
       apiUrl: import.meta.env.VITE_API_URL || 'https://api.poloniex.com',
-      backendUrl: import.meta.env.VITE_BACKEND_URL || import.meta.env.VITE_API_URL || 'https://api.poloniex.com',
+      backendUrl: import.meta.env.VITE_BACKEND_URL || getBackendUrl(),
       liveTradingEnabled: false // Will be set after validation
     };
   }

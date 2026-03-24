@@ -45,14 +45,12 @@ export const securityHeaders = helmet({
  */
 export const rateLimiter = rateLimit({
   windowMs: 1 * 60 * 1000, // 1 minute
-  max: 1000, // Limit each IP to 1000 requests per minute (much higher for dashboard widgets)
+  max: 1000, // Limit each IP to 1000 requests per minute (higher for dashboard polling)
   message: {
     error: 'Too many requests from this IP, please try again later.',
   },
   standardHeaders: true,
   legacyHeaders: false,
-  // TEMPORARILY DISABLE ALL RATE LIMITING FOR TESTING
-  skip: () => true,
 });
 
 /**
@@ -60,14 +58,12 @@ export const rateLimiter = rateLimit({
  */
 export const authRateLimiter = rateLimit({
   windowMs: 1 * 60 * 1000, // 1 minute
-  max: 10000, // Very high limit for testing (10000 requests per minute)
+  max: 20, // Limit auth attempts to 20 per minute per IP
   message: {
     error: 'Too many authentication attempts, please try again later.',
   },
   standardHeaders: true,
   legacyHeaders: false,
-  // Skip rate limiting entirely for now to enable testing
-  skip: () => true,
 });
 
 /**

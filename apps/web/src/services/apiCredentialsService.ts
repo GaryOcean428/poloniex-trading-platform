@@ -1,7 +1,8 @@
 import axios from 'axios';
 import { getAccessToken } from '@/utils/auth';
+import { getBackendUrl } from '@/utils/environment';
 
-const API_URL = import.meta.env.VITE_API_URL || 'https://polytrade-be.up.railway.app';
+const API_URL = getBackendUrl();
 
 export interface ApiCredentials {
   id: string;

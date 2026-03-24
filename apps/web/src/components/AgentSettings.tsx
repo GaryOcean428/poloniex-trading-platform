@@ -7,8 +7,9 @@
 import React, { useState, useEffect } from 'react';
 import { Settings, Save, AlertCircle, CheckCircle } from 'lucide-react';
 import { getAccessToken } from '@/utils/auth';
+import { getBackendUrl } from '@/utils/environment';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8765';
+const API_BASE = getBackendUrl();
 
 interface AgentSettingsData {
   runMode: 'never' | 'manual' | 'always';
