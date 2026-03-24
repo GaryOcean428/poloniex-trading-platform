@@ -24,18 +24,19 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (!isInitialized) {
     sendResponse({ success: false, error: 'Extension not initialized' });
-    return true;
+    return false;
   }
 
   switch (request.type) {
     case 'PLACE_ORDER':
-      // Simulate API call
+      // Simulate API call (truly async - must return true)
       setTimeout(() => {
         sendResponse({ success: true, orderId: 'ord_' + Date.now() });
       }, 1000);
       return true;
     
     case 'GET_MARKET_DATA':
+      // Promise-based (truly async - must return true)
       fetchMarketData(request.pair)
         .then(data => {
           sendResponse({ success: true, data });
@@ -47,17 +48,17 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
     case 'CHECK_INSTALLATION':
       sendResponse({ installed: true });
-      return true;
+      return false;
 
     case 'SAVE_COOKIES':
       storedCookies[request.data.site] = request.data.cookies;
       chrome.storage.local.set({ cookies: storedCookies });
       sendResponse({ success: true });
-      return true;
+      return false;
 
     case 'GET_COOKIES':
       sendResponse({ cookies: storedCookies[request.data.site] });
-      return true;
+      return false;
 
     case 'UPDATE_TRADINGVIEW_DATA':
       lastTradingViewData = request.data;
@@ -71,11 +72,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         });
       });
       sendResponse({ success: true });
-      return true;
+      return false;
       
     default:
       sendResponse({ success: false, error: 'Unknown message type' });
-      return true;
+      return false;
   }
 });
 

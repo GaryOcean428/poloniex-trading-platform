@@ -133,6 +133,7 @@ export class BrowserCompatibility {
     if (extensionId && runtime) {
       try {
         runtime.sendMessage(extensionId, { ping: true }, () => {
+          // Consume chrome.runtime.lastError to prevent unhandled message channel errors
           if (runtime.lastError) {
             return false;
           }
