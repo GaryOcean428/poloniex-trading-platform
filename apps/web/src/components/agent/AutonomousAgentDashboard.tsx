@@ -125,7 +125,7 @@ const AutonomousAgentDashboard: React.FC = () => {
     paperTradingDurationHours: 48,
     marketType: 'futures' as const,
     defaultLeverage: 3,
-    marginMode: 'CROSS' as const,
+    marginMode: 'CROSS' as 'CROSS' | 'ISOLATED',
   });
 
   const agentStatusRef = useRef(agentStatus?.status);
@@ -1031,7 +1031,7 @@ const AutonomousAgentDashboard: React.FC = () => {
             <div className="flex gap-1">
               {['all', 'trade_decision', 'state_change', 'risk_action', 'health_alert', 'error'].map(filter => (
                 <button key={filter}
-                  onClick={() => setEventFilter(filter)}
+                  onClick={() => setEventFilter(filter as typeof eventFilter)}
                   className={`px-3 py-1 text-xs rounded-full transition-colors ${
                     eventFilter === filter
                       ? 'bg-cyan-100 text-cyan-700 font-medium'

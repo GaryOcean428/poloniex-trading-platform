@@ -200,9 +200,8 @@ const MLTradingPanel: React.FC = () => {
   };
 
   // Execute trades based on predictions
-  const handleExecuteTrades = () => {
-    if (predictions.length === 0)
-    {
+  const handleExecuteTrades = async () => {
+    if (predictions.length === 0) {
       setError('No predictions available');
       return;
     }

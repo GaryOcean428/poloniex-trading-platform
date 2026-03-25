@@ -48,7 +48,7 @@ export class ApiCredentialsService {
       const encrypted = encryptionService.encryptCredentials(apiKey, apiSecret);
       
       // Default credential name if not provided
-      const name = credentialName || `${exchange.charAt(0).toUpperCase() + exchange.slice(1)} API`;
+      const _name = credentialName || `${exchange.charAt(0).toUpperCase() + exchange.slice(1)} API`;
       
       // Store in database (upsert)
       await pool.query(

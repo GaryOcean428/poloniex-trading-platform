@@ -173,21 +173,22 @@ const Account: React.FC = () => {
     };
   }, []);
 
-  // Parse account data
+  // Parse account data — cast to Record for optional extended fields from API
+  const bal = accountBalance as Record<string, unknown> | null;
   const accountData = {
-    totalBalance: parseFloat(accountBalance?.total?.toString() || '0'),
-    availableBalance: parseFloat(accountBalance?.available?.toString() || '0'),
-    equity: parseFloat(accountBalance?.total?.toString() || '0'),
-    unrealizedPnL: parseFloat(accountBalance?.unrealizedPnL?.toString() || '0'),
-    todayPnL: parseFloat(accountBalance?.todayPnL?.toString() || '0'),
-    weeklyPnL: accountBalance?.weeklyPnL != null ? parseFloat(accountBalance.weeklyPnL.toString()) : undefined,
-    monthlyPnL: accountBalance?.monthlyPnL != null ? parseFloat(accountBalance.monthlyPnL.toString()) : undefined,
-    lifetimePnL: accountBalance?.lifetimePnL != null ? parseFloat(accountBalance.lifetimePnL.toString()) : undefined,
+    totalBalance: parseFloat(String(bal?.total ?? '0')),
+    availableBalance: parseFloat(String(bal?.available ?? '0')),
+    equity: parseFloat(String(bal?.total ?? '0')),
+    unrealizedPnL: parseFloat(String(bal?.unrealizedPnL ?? '0')),
+    todayPnL: parseFloat(String(bal?.todayPnL ?? '0')),
+    weeklyPnL: bal?.weeklyPnL != null ? parseFloat(String(bal.weeklyPnL)) : undefined,
+    monthlyPnL: bal?.monthlyPnL != null ? parseFloat(String(bal.monthlyPnL)) : undefined,
+    lifetimePnL: bal?.lifetimePnL != null ? parseFloat(String(bal.lifetimePnL)) : undefined,
     depositsPending: 0,
     withdrawalsPending: 0,
-    verificationStatus: accountBalance?.verificationStatus || 'Unknown',
-    tradingLevel: accountBalance?.tradingLevel || 'Standard',
-    feeRate: accountBalance?.feeRate || 'N/A',
+    verificationStatus: (bal?.verificationStatus as string) || 'Unknown',
+    tradingLevel: (bal?.tradingLevel as string) || 'Standard',
+    feeRate: (bal?.feeRate as string) || 'N/A',
   };
 
   return (

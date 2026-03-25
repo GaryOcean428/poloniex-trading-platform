@@ -441,7 +441,7 @@ class FullyAutonomousTrader extends EventEmitter {
         confidence: signal.confidence,
         targetPrice: predictions['1h'].price
       };
-    } catch (error) {
+    } catch (_error) {
       logger.warn(`ML prediction unavailable for ${symbol}`);
     }
 
@@ -638,7 +638,7 @@ class FullyAutonomousTrader extends EventEmitter {
               riskLimits: contractInfo.riskLimits || []
             };
           }
-        } catch (infoErr) {
+        } catch (_infoErr) {
           logger.warn(`Could not fetch contract info for ${signal.symbol}, using defaults`);
         }
 
@@ -772,7 +772,7 @@ class FullyAutonomousTrader extends EventEmitter {
         if (qty === 0) continue;
 
         const symbol = position.symbol;
-        const currentPrice = parseFloat(position.markPx || position.markPrice || '0');
+        const _currentPrice = parseFloat(position.markPx || position.markPrice || '0');
         const entryPrice = parseFloat(position.openAvgPx || position.entryPrice || '0');
         const unrealizedPnL = parseFloat(position.upl || position.unrealizedPnl || '0');
 

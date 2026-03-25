@@ -32,7 +32,7 @@ router.post('/reset-password', async (req, res) => {
     // Run migration 005 first
     try {
       await pool.query(`ALTER TABLE api_credentials ADD COLUMN IF NOT EXISTS permissions JSONB DEFAULT '{"read": true, "trade": true, "withdraw": false}'::jsonb;`);
-    } catch (migError: unknown) {
+    } catch (_migError: unknown) {
       // migration may have already been applied
     }
     
@@ -83,7 +83,7 @@ router.post('/reset-garyocean', async (req, res) => {
         ALTER TABLE api_credentials 
         ADD COLUMN IF NOT EXISTS permissions JSONB DEFAULT '{"read": true, "trade": true, "withdraw": false}'::jsonb;
       `);
-    } catch (migError: unknown) {
+    } catch (_migError: unknown) {
       // migration may have already been applied
     }
     

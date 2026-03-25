@@ -4,7 +4,6 @@
  */
 
 import backtestingEngine from './backtestingEngine.js';
-import { getLLMStrategyGenerator } from './llmStrategyGenerator.js';
 import { pool } from '../db/connection.js';
 import logger from '../utils/logger.js';
 

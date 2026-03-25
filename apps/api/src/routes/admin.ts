@@ -151,7 +151,7 @@ router.get('/db-status', async (req, res) => {
       userCount: userCount.rows[0].count,
       agentSessionCount: agentSessionCount.rows[0].count
     });
-  } catch (error) {
+  } catch (_error) {
     res.status(500).json({
       success: false,
       error: 'Failed to get database status'

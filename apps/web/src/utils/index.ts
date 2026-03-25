@@ -20,7 +20,17 @@ export * from './extensionHelper';
 export * from './logger';
 export * from './mockDataGenerators';
 export * from './monitoringSystem';
-export * from './performanceOptimizer';
+export type {
+  PerformanceConfig,
+  CacheEntry,
+  BatchRequest,
+} from './performanceOptimizer';
+export {
+  PerformanceOptimizer,
+  OptimizedWebSocket,
+  performanceOptimizer,
+  optimizationUtils,
+} from './performanceOptimizer';
 export * from './riskManagement';
 export * from './storage';
 export * from './strategyExecutors';

@@ -30,7 +30,7 @@ export * from './advancedBacktestService';
 
 // Strategy Services
 export * from './llmStrategyService';
-export * from './openAIService';
+export { openAITradingService } from './openAIService';
 
 // Data & Mock Services
 export * from './mockDataService';
@@ -41,5 +41,15 @@ export * from './apiCredentialsService';
 
 // WebSocket Services
 export * from './websocketService';
-export * from './autonomousTradingWebSocket';
+export {
+  AUTONOMOUS_TRADING_EVENTS,
+  autonomousTradingWebSocket,
+  type GenerationCompleteEvent,
+  type ProfitBankedEvent,
+  type StrategyEvent,
+  type BacktestCompletedEvent,
+  type EmergencyStopEvent,
+  type RiskAssessmentAlert,
+  type EventListener,
+} from './autonomousTradingWebSocket';
 export * from './websocket/index';
