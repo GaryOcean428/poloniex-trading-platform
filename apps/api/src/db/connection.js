@@ -14,9 +14,9 @@ const pool = new Pool({
   connectionTimeoutMillis: 2000,
 });
 
-// Test connection
+// Log pool connections at debug level to reduce noise under load
 pool.on('connect', () => {
-  logger.info('Connected to PostgreSQL database');
+  logger.debug('Connected to PostgreSQL database');
 });
 
 pool.on('error', (err) => {
