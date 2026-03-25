@@ -42,6 +42,8 @@ CREATE INDEX IF NOT EXISTS idx_agent_strategies_symbol ON agent_strategies(symbo
 -- 2. Create trades table if it doesn't exist
 --    (mirrors migration 008)
 -- ============================================================
+-- Ensure trigger function exists (CREATE OR REPLACE is idempotent;
+-- PostgreSQL has no CREATE FUNCTION IF NOT EXISTS)
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -176,6 +178,18 @@ ALTER TABLE trades ADD COLUMN IF NOT EXISTS risk_score DECIMAL(5, 2);
 ALTER TABLE trades ADD COLUMN IF NOT EXISTS fees DECIMAL(30, 18) DEFAULT 0;
 ALTER TABLE trades ADD COLUMN IF NOT EXISTS pnl_percent DECIMAL(10, 4);
 ALTER TABLE trades ADD COLUMN IF NOT EXISTS simulated BOOLEAN DEFAULT true;
+
+-- Ensure execution_mode CHECK constraint exists
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.check_constraints
+        WHERE constraint_name = 'trades_execution_mode_check'
+    ) THEN
+        ALTER TABLE trades ADD CONSTRAINT trades_execution_mode_check
+            CHECK (execution_mode IN ('backtest', 'paper', 'live'));
+    END IF;
+END $$;
 
 -- Comments
 COMMENT ON TABLE trades IS 'Main trades table for autonomous trading system';
