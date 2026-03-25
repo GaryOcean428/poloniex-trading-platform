@@ -108,6 +108,32 @@ const router = express.Router();
 const MIN_CONFIDENCE_THRESHOLD = 60;
 const MIN_WIN_RATE_THRESHOLD = 45;
 
+// Cached column name for agent_strategies — old migration (004) uses
+// "strategy_name" while new migration (007+012) uses "name".  Migration 012
+// adds "name" when the old table already exists, but it may not have been
+// applied yet.  Detect once at first use and cache the result.
+const VALID_NAME_COLUMNS = new Set(['name', 'strategy_name']);
+let _strategyNameCol: string | null = null;
+
+async function getStrategyNameColumn(): Promise<string> {
+  if (_strategyNameCol) return _strategyNameCol;
+  try {
+    const { rows } = await pool.query(
+      `SELECT column_name FROM information_schema.columns
+       WHERE table_name = 'agent_strategies'
+         AND column_name IN ('name', 'strategy_name')
+         AND table_schema = current_schema()
+       ORDER BY CASE column_name WHEN 'name' THEN 0 ELSE 1 END`
+    );
+    // Prefer "name" (new schema); fall back to "strategy_name" (old schema)
+    const col = rows.length > 0 ? String(rows[0].column_name) : 'name';
+    _strategyNameCol = VALID_NAME_COLUMNS.has(col) ? col : 'name';
+  } catch {
+    _strategyNameCol = 'name';
+  }
+  return _strategyNameCol;
+}
+
 // Store running backtests in-memory for active progress tracking
 // Completed results are persisted to the database
 const runningBacktests = new Map<string, BacktestRecord>();
@@ -473,6 +499,7 @@ router.get('/pipeline/results', authenticateToken, async (req: Request, res: Res
     let pipelineResults: Array<Record<string, unknown>> = [];
 
     try {
+      const nameCol = await getStrategyNameColumn();
       let queryText = `
         SELECT
           bpr.strategy_id,
@@ -481,7 +508,7 @@ router.get('/pipeline/results', authenticateToken, async (req: Request, res: Res
           bpr.recommendation,
           bpr.reasoning,
           bpr.created_at AS pipeline_created_at,
-          ast.name AS strategy_name,
+          ast.${nameCol} AS strategy_name,
           ast.symbol,
           ast.status AS strategy_status,
           ast.performance,
@@ -562,8 +589,9 @@ router.get('/pipeline/summary', authenticateToken, async (req: Request, res: Res
 
     // Query agent_strategies for status counts and performance
     try {
+      const nameCol = await getStrategyNameColumn();
       const strategiesResult = await pool.query(
-        `SELECT ast.id, ast.name, ast.symbol, ast.status, ast.performance, ast.timeframe, ast.created_at, ast.updated_at
+        `SELECT ast.id, ast.${nameCol} AS name, ast.symbol, ast.status, ast.performance, ast.timeframe, ast.created_at, ast.updated_at
          FROM agent_strategies ast
          JOIN agent_sessions asess ON ast.session_id = asess.id
          WHERE asess.user_id = $1
@@ -634,6 +662,7 @@ router.get('/pipeline/summary', authenticateToken, async (req: Request, res: Res
 
     // Query paper trading sessions summary
     try {
+      const nameCol = await getStrategyNameColumn();
       const paperResult = await pool.query(
         `SELECT
            COUNT(*) AS total_sessions,
@@ -645,7 +674,7 @@ router.get('/pipeline/summary', authenticateToken, async (req: Request, res: Res
            COALESCE(AVG((current_value - initial_capital) / NULLIF(initial_capital, 0) * 100), 0) AS avg_return_pct
          FROM paper_trading_sessions
          WHERE strategy_name IN (
-           SELECT ast.name FROM agent_strategies ast
+           SELECT ast.${nameCol} FROM agent_strategies ast
            JOIN agent_sessions asess ON ast.session_id = asess.id
            WHERE asess.user_id = $1
          )`,
