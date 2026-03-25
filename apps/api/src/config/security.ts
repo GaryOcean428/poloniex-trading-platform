@@ -93,8 +93,12 @@ export function createCorsOptions(): CorsOptions {
 
   return {
     origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void): void => {
-      // Allow requests with no origin (like mobile apps or curl requests)
+      // In production, reject requests with no origin header to prevent
+      // cross-origin attacks from non-browser clients (only allow in dev)
       if (!origin) {
+        if (env.NODE_ENV === 'production') {
+          return callback(null, false);
+        }
         return callback(null, true);
       }
 

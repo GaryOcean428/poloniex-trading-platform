@@ -72,7 +72,7 @@ function extractPoloniexData() {
         orders: orderHistory,
         timestamp: Date.now()
       }
-    });
+    }).catch(() => { /* background service worker may be inactive */ });
 
     // Also add a visible indicator that data is being extracted
     showExtractorStatus();
@@ -344,12 +344,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     case 'START_DATA_EXTRACTION':
       startDataExtraction();
       sendResponse({ success: true });
-      return; // synchronous response
+      return false;
 
     case 'STOP_DATA_EXTRACTION':
       stopDataExtraction();
       sendResponse({ success: true });
-      return; // synchronous response
+      return false;
 
     case 'GET_POLONIEX_DATA':
       sendResponse({
@@ -360,12 +360,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           orders: orderHistory
         }
       });
-      return; // synchronous response
+      return false;
 
     case 'EXECUTE_TRADE': {
       const success = executeTrade(request.data);
       sendResponse({ success });
-      return; // synchronous response
+      return false;
     }
 
     case 'RESTORE_COOKIES':
@@ -376,12 +376,19 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           console.error('Error restoring Poloniex cookies:', e);
         }
         sendResponse({ success: true });
+      } else {
+        sendResponse({ success: false, error: 'Wrong site' });
       }
-      return; // synchronous response
+      return false;
+
+    case 'SYNC_TRADINGVIEW_DATA':
+      // Accept forwarded TradingView data from background
+      sendResponse({ success: true });
+      return false;
 
     default:
-      // no-op for other message types
-      return;
+      sendResponse({ success: false, error: 'Unknown message type' });
+      return false;
   }
 });
 
