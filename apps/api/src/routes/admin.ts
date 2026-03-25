@@ -60,7 +60,8 @@ router.post('/migrate', async (req, res) => {
 
     if (checkDemoUser.rows.length === 0) {
       const bcrypt = await import('bcryptjs');
-      const demoPassword = process.env.DEMO_USER_PASSWORD || 'demo-' + Date.now().toString(36);
+      const crypto = await import('crypto');
+      const demoPassword = process.env.DEMO_USER_PASSWORD || crypto.randomBytes(16).toString('hex');
       const passwordHash = await bcrypt.hash(demoPassword, 12);
       await pool.query(
         `

@@ -12,7 +12,7 @@ router.use(authRateLimiter);
  * Validate the SECRET_ADMIN_KEY. Rejects if not set or using default placeholder.
  */
 function validateAdminKey(adminKey: string | undefined): boolean {
-  const expectedKey = process.env.SECRET_ADMIN_KEY;
+  const expectedKey = process.env.SECRET_ADMIN_KEY?.trim();
   if (!expectedKey || expectedKey === 'CHANGE_ME_IN_PRODUCTION') {
     return false;
   }
