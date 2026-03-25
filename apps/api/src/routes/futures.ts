@@ -882,9 +882,12 @@ router.get('/account/bills', authenticateToken, async (req: Request, res: Respon
   } catch (error: unknown) {
     const err = error as { response?: { status?: number; data?: unknown }; message?: string };
     logger.error('Error fetching account bills:', error);
-    res.status(err.response?.status || 500).json({
+    const status = err.response?.status || 500;
+    res.status(status).json({
+      success: false,
       error: 'Failed to fetch account bills',
-      details: err.response?.data || (error instanceof Error ? error.message : String(error))
+      details: err.response?.data || (error instanceof Error ? error.message : String(error)),
+      bills: []
     });
   }
 });
