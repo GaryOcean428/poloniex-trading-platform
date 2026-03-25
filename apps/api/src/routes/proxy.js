@@ -524,7 +524,7 @@ router.get('/trades', async (req, res) => {
 /**
  * Error handling middleware
  */
-router.use((error, req, res) => {
+router.use((error, req, res, next) => {
   logger.error('Proxy route error', { 
     error: error.message, 
     stack: error.stack,
