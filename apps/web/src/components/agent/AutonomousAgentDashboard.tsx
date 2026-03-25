@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Play, Pause, Square, Activity, Brain, TrendingUp, AlertCircle, Shield, BarChart3, Settings, ChevronDown, ChevronUp } from 'lucide-react';
 import axios from 'axios';
 import { getAccessToken } from '@/utils/auth';
+import { usePersistedState } from '@/hooks/usePersistedState';
 import { getBackendUrl } from '@/utils/environment';
 import StrategyGenerationDisplay from './StrategyGenerationDisplay';
 import ActiveStrategiesPanel from './ActiveStrategiesPanel';
@@ -89,8 +90,8 @@ const AutonomousAgentDashboard: React.FC = () => {
     dependencies: Record<string, { healthy: boolean; message: string }>;
     timestamp: string;
   } | null>(null);
-  const [riskAppetite, setRiskAppetite] = useState<'conservative' | 'balanced' | 'aggressive'>('balanced');
-  const [executionMode, setExecutionMode] = useState<'backtest' | 'paper' | 'live'>('paper');
+  const [riskAppetite, setRiskAppetite] = usePersistedState<'conservative' | 'balanced' | 'aggressive'>('agent_risk_appetite', 'balanced');
+  const [executionMode, setExecutionMode] = usePersistedState<'backtest' | 'paper' | 'live'>('agent_execution_mode', 'paper');
   const [performanceMode, setPerformanceMode] = useState<'all' | 'backtest' | 'paper' | 'live'>('all');
   const [agentEvents, setAgentEvents] = useState<Array<{
     id: string;
@@ -110,7 +111,7 @@ const AutonomousAgentDashboard: React.FC = () => {
   } | null>(null);
   const [eventFilter, setEventFilter] = useState<'all' | 'trade_decision' | 'state_change' | 'risk_action' | 'health_alert' | 'error'>('all');
   const [lastHeartbeat, setLastHeartbeat] = useState<Date | null>(null);
-  const [config, setConfig] = useState({
+  const [config, setConfig] = usePersistedState('agent_dashboard_config', {
     maxDrawdown: 15,
     positionSize: 2,
     maxConcurrentPositions: 3,
