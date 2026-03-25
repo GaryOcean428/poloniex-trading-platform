@@ -67,7 +67,7 @@ class ResilientDatabaseConnection {
 
     // Connection event handlers
     this.pool.on('connect', (client) => {
-      logger.info('New database client connected', {
+      logger.debug('New database client connected', {
         totalCount: this.pool.totalCount,
         idleCount: this.pool.idleCount,
         waitingCount: this.pool.waitingCount
@@ -86,7 +86,7 @@ class ResilientDatabaseConnection {
     });
 
     this.pool.on('remove', (client) => {
-      logger.info('Client removed from pool', {
+      logger.debug('Client removed from pool', {
         totalCount: this.pool.totalCount,
         idleCount: this.pool.idleCount,
         waitingCount: this.pool.waitingCount
