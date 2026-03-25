@@ -27,6 +27,7 @@ import type { Server as SocketIOServer } from 'socket.io';
 interface AgentConfig {
   userId: string;
   executionMode: 'backtest' | 'paper' | 'live';
+  marketType: 'futures' | 'spot';
   maxDrawdown: number;
   positionSize: number;
   maxConcurrentPositions: number;
@@ -40,6 +41,10 @@ interface AgentConfig {
   paperTradingDurationHours: number;
   enableAIStrategies: boolean;
   enableMultiStrategyCombo: boolean;
+  /** Default leverage for futures trading (1-100x) */
+  defaultLeverage: number;
+  /** Margin mode for futures positions */
+  marginMode: 'CROSS' | 'ISOLATED';
 }
 
 interface AgentSession {
@@ -385,12 +390,13 @@ class EnhancedAutonomousAgent extends EventEmitter {
     const defaultConfig: AgentConfig = {
       userId,
       executionMode: 'live',
+      marketType: 'futures',
       maxDrawdown: 15,
       positionSize: 2,
       maxConcurrentPositions: 3,
       stopLossPercentage: 5,
       tradingStyle: 'day_trading',
-      preferredPairs: ['BTC_USDT', 'ETH_USDT'],
+      preferredPairs: ['BTC_USDT_PERP', 'ETH_USDT_PERP'],
       preferredTimeframes: ['15m', '1h', '4h'],
       automationLevel: 'fully_autonomous',
       strategyGenerationInterval: 24, // Generate new strategies daily
@@ -398,6 +404,8 @@ class EnhancedAutonomousAgent extends EventEmitter {
       paperTradingDurationHours: 168, // 7 days
       enableAIStrategies: true,
       enableMultiStrategyCombo: true,
+      defaultLeverage: 3,
+      marginMode: 'CROSS',
       ...config
     };
 

@@ -33,7 +33,7 @@ export class StrategyService implements StrategyServiceInterface {
     this.strategies = [
       {
         id: '1',
-        name: 'MA Crossover BTC-USDT',
+        name: 'MA Crossover BTC Futures',
         type: 'automated',
         algorithm: 'MovingAverageCrossover',
         active: true,
@@ -41,7 +41,8 @@ export class StrategyService implements StrategyServiceInterface {
           pair: 'BTC-USDT',
           timeframe: '1h',
           fastPeriod: 10,
-          slowPeriod: 50
+          slowPeriod: 50,
+          marketType: 'futures'
         },
         performance: {
           totalPnL: 1250.75,
@@ -54,7 +55,7 @@ export class StrategyService implements StrategyServiceInterface {
       },
       {
         id: '2',
-        name: 'RSI ETH Strategy',
+        name: 'RSI ETH Futures Strategy',
         type: 'automated',
         algorithm: 'RSI',
         active: false,
@@ -63,7 +64,8 @@ export class StrategyService implements StrategyServiceInterface {
           timeframe: '4h',
           period: 14,
           overbought: 70,
-          oversold: 30
+          oversold: 30,
+          marketType: 'futures'
         },
         performance: {
           totalPnL: -200.25,
