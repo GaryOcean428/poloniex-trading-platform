@@ -1,8 +1,23 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import { pool } from '../db/connection.js';
+import { authRateLimiter } from '../config/security.js';
 
 const router = express.Router();
+
+// Apply rate limiting to all public-admin routes
+router.use(authRateLimiter);
+
+/**
+ * Validate the SECRET_ADMIN_KEY. Rejects if not set or using default placeholder.
+ */
+function validateAdminKey(adminKey: string | undefined): boolean {
+  const expectedKey = process.env.SECRET_ADMIN_KEY;
+  if (!expectedKey || expectedKey === 'CHANGE_ME_IN_PRODUCTION') {
+    return false;
+  }
+  return adminKey === expectedKey;
+}
 
 // Public password reset endpoint (no authentication required)
 // Only works if SECRET_ADMIN_KEY environment variable matches
@@ -10,30 +25,27 @@ router.post('/reset-password', async (req, res) => {
   try {
     const { username, password, adminKey } = req.body;
     
-    // Check admin key
-    const expectedKey = process.env.SECRET_ADMIN_KEY || 'CHANGE_ME_IN_PRODUCTION';
-    if (adminKey !== expectedKey) {
+    if (!validateAdminKey(adminKey)) {
       return res.status(403).json({ error: 'Invalid admin key' });
     }
     
     // Run migration 005 first
     try {
       await pool.query(`ALTER TABLE api_credentials ADD COLUMN IF NOT EXISTS permissions JSONB DEFAULT '{"read": true, "trade": true, "withdraw": false}'::jsonb;`);
-      console.log('✅ Migration 005: permissions column added/verified');
     } catch (migError: unknown) {
-      console.log('Migration note:', migError instanceof Error ? migError.message : String(migError));
+      // migration may have already been applied
     }
     
-    if (!username || !password) {
-      return res.status(400).json({ error: 'Username and password required' });
+    if (!username || !password || typeof password !== 'string' || password.length < 8) {
+      return res.status(400).json({ error: 'Username and password (min 8 chars) required' });
     }
     
     // Hash the new password
-    const hashedPassword = await bcrypt.hash(password, 10);
+    const hashedPassword = await bcrypt.hash(password, 12);
     
     // Update user password
     const result = await pool.query(
-      'UPDATE users SET password_hash = $1, updated_at = NOW() WHERE username = $2 RETURNING id, username, email',
+      'UPDATE users SET password_hash = $1, updated_at = NOW() WHERE username = $2 RETURNING id, username',
       [hashedPassword, username]
     );
     
@@ -44,7 +56,7 @@ router.post('/reset-password', async (req, res) => {
     res.json({
       success: true,
       message: `Password reset successful for user: ${username}`,
-      user: result.rows[0]
+      user: { id: result.rows[0].id, username: result.rows[0].username }
     });
   } catch (error) {
     console.error('Password reset error:', error);
@@ -55,12 +67,14 @@ router.post('/reset-password', async (req, res) => {
 // Quick reset for GaryOcean (temporary convenience endpoint) + Run migration
 router.post('/reset-garyocean', async (req, res) => {
   try {
-    const { adminKey } = req.body;
+    const { adminKey, password } = req.body;
     
-    // Check admin key
-    const expectedKey = process.env.SECRET_ADMIN_KEY || 'CHANGE_ME_IN_PRODUCTION';
-    if (adminKey !== expectedKey) {
+    if (!validateAdminKey(adminKey)) {
       return res.status(403).json({ error: 'Invalid admin key' });
+    }
+    
+    if (!password || typeof password !== 'string' || password.length < 8) {
+      return res.status(400).json({ error: 'Password (min 8 chars) required in request body' });
     }
     
     // Run migration 005: Add permissions column
@@ -69,17 +83,15 @@ router.post('/reset-garyocean', async (req, res) => {
         ALTER TABLE api_credentials 
         ADD COLUMN IF NOT EXISTS permissions JSONB DEFAULT '{"read": true, "trade": true, "withdraw": false}'::jsonb;
       `);
-      console.log('✅ Migration 005 completed: Added permissions column');
     } catch (migError: unknown) {
-      console.log('Migration 005 note:', migError instanceof Error ? migError.message : String(migError));
+      // migration may have already been applied
     }
     
-    // Hash the password "I.Am.Dev.1"
-    const hashedPassword = await bcrypt.hash('I.Am.Dev.1', 10);
+    const hashedPassword = await bcrypt.hash(password, 12);
     
     // Update GaryOcean password
     const result = await pool.query(
-      'UPDATE users SET password_hash = $1, updated_at = NOW() WHERE username = $2 RETURNING id, username, email',
+      'UPDATE users SET password_hash = $1, updated_at = NOW() WHERE username = $2 RETURNING id, username',
       [hashedPassword, 'GaryOcean']
     );
     
@@ -89,8 +101,8 @@ router.post('/reset-garyocean', async (req, res) => {
     
     res.json({
       success: true,
-      message: 'GaryOcean password reset to: I.Am.Dev.1 + Migration 005 completed',
-      user: result.rows[0]
+      message: 'GaryOcean password reset successfully',
+      user: { id: result.rows[0].id, username: result.rows[0].username }
     });
   } catch (error) {
     console.error('Password reset error:', error);
@@ -103,9 +115,7 @@ router.post('/run-migration', async (req, res) => {
   try {
     const { migrationNumber, adminKey } = req.body;
     
-    // Check admin key
-    const expectedKey = process.env.SECRET_ADMIN_KEY || 'CHANGE_ME_IN_PRODUCTION';
-    if (adminKey !== expectedKey) {
+    if (!validateAdminKey(adminKey)) {
       return res.status(403).json({ error: 'Invalid admin key' });
     }
     
@@ -131,7 +141,7 @@ router.post('/run-migration', async (req, res) => {
     }
   } catch (error: unknown) {
     console.error('Migration error:', error);
-    res.status(500).json({ error: 'Failed to run migration', details: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ error: 'Failed to run migration' });
   }
 });
 

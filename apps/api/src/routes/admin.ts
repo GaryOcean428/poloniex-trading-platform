@@ -3,11 +3,15 @@ import { pool } from '../db/connection.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { authenticateToken } from '../middleware/auth.js';
 
 const router = express.Router();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const migrationsDir = path.join(__dirname, '../../database/migrations');
+
+// All admin routes require authentication
+router.use(authenticateToken);
 
 function getMigrationFiles(): string[] {
   if (!fs.existsSync(migrationsDir)) {
@@ -56,7 +60,8 @@ router.post('/migrate', async (req, res) => {
 
     if (checkDemoUser.rows.length === 0) {
       const bcrypt = await import('bcryptjs');
-      const passwordHash = await bcrypt.hash('password', 10);
+      const demoPassword = process.env.DEMO_USER_PASSWORD || 'demo-' + Date.now().toString(36);
+      const passwordHash = await bcrypt.hash(demoPassword, 12);
       await pool.query(
         `
           INSERT INTO users (username, email, password_hash, role, is_active, is_verified, trading_enabled)
@@ -116,8 +121,7 @@ router.post('/migrate', async (req, res) => {
     console.error('❌ Migration failed:', error);
     res.status(500).json({
       success: false,
-      error: error.message,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      error: 'Migration failed'
     });
   }
 });
@@ -146,7 +150,7 @@ router.get('/db-status', async (req, res) => {
   } catch (error) {
     res.status(500).json({
       success: false,
-      error: error.message
+      error: 'Failed to get database status'
     });
   }
 });
@@ -158,8 +162,16 @@ router.post('/reset-demo-password', async (req, res) => {
   try {
     console.log('🔐 Resetting demo user password...');
     
+    const { password } = req.body;
+    if (!password || typeof password !== 'string' || password.length < 8) {
+      return res.status(400).json({
+        success: false,
+        error: 'Password must be at least 8 characters'
+      });
+    }
+    
     const bcrypt = await import('bcryptjs');
-    const passwordHash = await bcrypt.hash('password', 12);
+    const passwordHash = await bcrypt.hash(password, 12);
     
     // Update demo user password
     const result = await pool.query(`
@@ -180,15 +192,15 @@ router.post('/reset-demo-password', async (req, res) => {
     
     res.json({
       success: true,
-      message: 'Demo user password reset to "password"',
-      user: result.rows[0]
+      message: 'Demo user password reset successfully',
+      user: { id: result.rows[0].id, username: result.rows[0].username }
     });
     
   } catch (error) {
     console.error('❌ Password reset failed:', error);
     res.status(500).json({
       success: false,
-      error: error.message
+      error: 'Password reset failed'
     });
   }
 });
@@ -198,14 +210,22 @@ router.post('/reset-gary-password', async (req, res) => {
   try {
     console.log('🔐 Resetting GaryOcean user password...');
     
+    const { password } = req.body;
+    if (!password || typeof password !== 'string' || password.length < 8) {
+      return res.status(400).json({
+        success: false,
+        error: 'Password must be at least 8 characters'
+      });
+    }
+    
     const bcrypt = await import('bcryptjs');
-    const passwordHash = await bcrypt.hash('I.Am.Dev.1', 12);
+    const passwordHash = await bcrypt.hash(password, 12);
     
     // Update GaryOcean user password
     const result = await pool.query(`
       UPDATE users 
       SET password_hash = $1 
-      WHERE username = 'GaryOcean' OR email = 'braden.lang77@gmail.com'
+      WHERE username = 'GaryOcean'
       RETURNING id, username, email;
     `, [passwordHash]);
     
@@ -220,15 +240,15 @@ router.post('/reset-gary-password', async (req, res) => {
     
     res.json({
       success: true,
-      message: 'GaryOcean user password reset to "I.Am.Dev.1"',
-      user: result.rows[0]
+      message: 'GaryOcean password reset successfully',
+      user: { id: result.rows[0].id, username: result.rows[0].username }
     });
     
   } catch (error) {
     console.error('❌ Password reset failed:', error);
     res.status(500).json({
       success: false,
-      error: error.message
+      error: 'Password reset failed'
     });
   }
 });

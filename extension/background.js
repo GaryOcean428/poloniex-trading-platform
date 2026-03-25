@@ -2,6 +2,7 @@
 let isInitialized = false;
 let storedCookies = {};
 let lastTradingViewData = null;
+let lastPoloniexData = null;
 
 // Listen for installation
 chrome.runtime.onInstalled.addListener(() => {
@@ -19,6 +20,10 @@ chrome.runtime.onInstalled.addListener(() => {
   
   isInitialized = true;
 });
+
+// Also initialize on service worker startup (onInstalled only fires on
+// install/update, not on every Chrome restart or SW wake-up)
+isInitialized = true;
 
 // Handle messages from the popup or content scripts
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -68,9 +73,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           chrome.tabs.sendMessage(tab.id, {
             type: 'SYNC_TRADINGVIEW_DATA',
             data: lastTradingViewData
-          });
+          }).catch(() => { /* tab may not have content script ready */ });
         });
       });
+      sendResponse({ success: true });
+      return false;
+
+    case 'UPDATE_POLONIEX_DATA':
+      lastPoloniexData = request.data;
       sendResponse({ success: true });
       return false;
       
@@ -92,12 +102,12 @@ chrome.storage.local.get(['cookies'], (result) => {
           chrome.tabs.sendMessage(tabId, {
             type: 'RESTORE_COOKIES',
             data: { site: 'tradingview', cookies: storedCookies.tradingview }
-          });
+          }).catch(() => { /* content script may not be ready */ });
         } else if (tab.url?.includes('poloniex.com') && storedCookies.poloniex) {
           chrome.tabs.sendMessage(tabId, {
             type: 'RESTORE_COOKIES',
             data: { site: 'poloniex', cookies: storedCookies.poloniex }
-          });
+          }).catch(() => { /* content script may not be ready */ });
         }
       }
     });

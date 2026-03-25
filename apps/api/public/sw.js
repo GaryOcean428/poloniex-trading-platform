@@ -82,8 +82,23 @@ self.addEventListener('fetch', (event) => {
             });
           }
           return response;
+        }).catch(() => {
+          // Network error — return a proper JSON error so the frontend
+          // can handle it cleanly instead of generating unhandled rejections
+          return new Response(
+            JSON.stringify({
+              success: false,
+              error: 'Network unavailable',
+              offline: true,
+              timestamp: new Date().toISOString()
+            }),
+            {
+              status: 503,
+              statusText: 'Service Unavailable',
+              headers: { 'Content-Type': 'application/json' }
+            }
+          );
         });
-        // No .catch() — let network errors propagate to the frontend
       })
     );
     return;

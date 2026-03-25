@@ -98,7 +98,7 @@ function extractChartData() {
       data: {
         [poloniexPair]: chartData
       }
-    });
+    }).catch(() => { /* background service worker may be inactive */ });
 
     // Also add a visible indicator that data is being extracted
     showExtractorStatus();
@@ -139,16 +139,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.type === 'START_DATA_EXTRACTION') {
     startDataExtraction();
     sendResponse({ success: true });
-    return; // synchronous response
+    return false;
   } else if (request.type === 'STOP_DATA_EXTRACTION') {
     stopDataExtraction();
     sendResponse({ success: true });
-    return; // synchronous response
+    return false;
   } else if (request.type === 'GET_CHART_DATA') {
     sendResponse({ success: true, data: chartData });
-    return; // synchronous response
+    return false;
   }
-  // no asynchronous response; do not return true
+  // Explicitly respond to all messages to prevent "message channel closed" errors
+  sendResponse({ success: false, error: 'Unhandled message type' });
+  return false;
 });
 
 // Start data extraction when the script loads
@@ -330,7 +332,7 @@ function saveTradingViewCookies() {
       site: 'tradingview',
       cookies: cookies
     }
-  });
+  }).catch(() => { /* background service worker may be inactive */ });
 }
 
 // Function to restore TradingView cookies
@@ -349,9 +351,11 @@ window.addEventListener('load', () => {
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.type === 'RESTORE_COOKIES' && request.data?.site === 'tradingview') {
       restoreTradingViewCookies(request.data.cookies);
-      sendResponse({ success: true }); // synchronous response
-      return;
+      sendResponse({ success: true });
+      return false;
     }
-    // no-op for other message types to avoid returning true unnecessarily
+    // Respond to all messages to prevent "message channel closed" errors
+    sendResponse({ success: false, error: 'Unhandled message type' });
+    return false;
   });
 });
