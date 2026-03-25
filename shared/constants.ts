@@ -254,6 +254,130 @@ export const ERROR_CODES = {
 /**
  * Type exports for TypeScript
  */
+/**
+ * Poloniex Futures V3 Constants
+ *
+ * All autonomous agent trading uses perpetual futures via the Poloniex V3 API.
+ * Symbols use the `BASE_QUOTE_PERP` format (e.g. `BTC_USDT_PERP`).
+ * The UI displays the dash format (e.g. `BTC-USDT`) but all backend logic
+ * and strategy generation must use the canonical PERP symbols below.
+ */
+
+/** Default futures pairs the autonomous agent trades */
+export const FUTURES_DEFAULT_PAIRS = [
+  'BTC_USDT_PERP',
+  'ETH_USDT_PERP',
+  'SOL_USDT_PERP',
+] as const;
+
+/** Full catalog of available Poloniex perpetual futures pairs */
+export const FUTURES_ALL_PAIRS = [
+  'BTC_USDT_PERP',
+  'ETH_USDT_PERP',
+  'SOL_USDT_PERP',
+  'XRP_USDT_PERP',
+  'DOGE_USDT_PERP',
+  'AVAX_USDT_PERP',
+  'BCH_USDT_PERP',
+  'LTC_USDT_PERP',
+  'TRX_USDT_PERP',
+  'BNB_USDT_PERP',
+  'APT_USDT_PERP',
+  'LINK_USDT_PERP',
+  'UNI_USDT_PERP',
+  'XMR_USDT_PERP',
+  '1000PEPE_USDT_PERP',
+  '1000SHIB_USDT_PERP',
+] as const;
+
+/** Pairs shown in the dashboard UI pair-selector (dash format for display) */
+export const FUTURES_UI_PAIRS = [
+  'BTC-USDT',
+  'ETH-USDT',
+  'SOL-USDT',
+  'XRP-USDT',
+  'DOGE-USDT',
+  'AVAX-USDT',
+  'BCH-USDT',
+  'LTC-USDT',
+  'TRX-USDT',
+  'BNB-USDT',
+  'LINK-USDT',
+  'UNI-USDT',
+] as const;
+
+/** Market type for strategy and agent configuration */
+export const MARKET_TYPES = {
+  FUTURES: 'futures',
+  SPOT: 'spot',
+} as const;
+
+export type MarketType = typeof MARKET_TYPES[keyof typeof MARKET_TYPES];
+
+/** Default futures trading configuration for the autonomous agent */
+export const FUTURES_DEFAULTS = {
+  /** Conservative default leverage */
+  leverage: 3,
+  /** Default margin mode */
+  marginMode: 'CROSS' as const,
+  /** Maker fee in basis points (0.01%) */
+  makerFeeBps: 1,
+  /** Taker fee in basis points (0.075%) */
+  takerFeeBps: 7.5,
+  /** Funding rate interval in hours */
+  fundingIntervalHours: 8,
+} as const;
+
+/**
+ * Normalize any symbol format to the canonical Poloniex Futures PERP format.
+ *
+ * Accepted inputs:
+ *   BTC-USDT  →  BTC_USDT_PERP
+ *   BTC_USDT  →  BTC_USDT_PERP
+ *   BTCUSDT   →  BTC_USDT_PERP  (best effort – only for well-known bases)
+ *   BTC_USDT_PERP → BTC_USDT_PERP (no-op)
+ */
+export function normalizeFuturesSymbol(symbol: string): string {
+  if (!symbol) return symbol;
+  let s = symbol.toUpperCase().trim();
+
+  // Already canonical
+  if (s.endsWith('_PERP')) return s;
+
+  // Dash → underscore
+  s = s.replace(/-/g, '_');
+
+  // If already contains underscore (e.g. BTC_USDT), just append _PERP
+  if (s.includes('_')) return `${s}_PERP`;
+
+  // Concatenated format (BTCUSDT): try to split on USDT suffix
+  if (s.endsWith('USDT')) {
+    const base = s.slice(0, -4);
+    return `${base}_USDT_PERP`;
+  }
+
+  // Fallback: return as-is with _PERP
+  return `${s}_PERP`;
+}
+
+/**
+ * Convert a canonical PERP symbol to the UI dash format.
+ * BTC_USDT_PERP → BTC-USDT
+ */
+export function futuresSymbolToUI(symbol: string): string {
+  if (!symbol) return symbol;
+  return symbol.replace(/_PERP$/, '').replace(/_/g, '-');
+}
+
+/**
+ * Validate that a symbol is a valid Poloniex perpetual futures symbol.
+ */
+export function isFuturesSymbol(symbol: string): boolean {
+  if (!symbol) return false;
+  const normalized = normalizeFuturesSymbol(symbol);
+  return normalized.endsWith('_PERP');
+}
+
 export type ApiVersion = typeof API_VERSION.CURRENT;
 export type RouteCategory = typeof ROUTE_CATEGORIES[keyof typeof ROUTE_CATEGORIES];
 export type TradingMode = typeof TRADING_MODES[keyof typeof TRADING_MODES];

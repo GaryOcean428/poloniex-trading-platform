@@ -102,6 +102,26 @@ class RiskService {
   }
 
   /**
+   * Validate that the symbol is a valid perpetual futures symbol.
+   * Agent trading must only use futures PERP symbols, not spot.
+   * @param {string} symbol - Trading symbol
+   * @returns {{ allowed: boolean, reason?: string }}
+   */
+  validateFuturesSymbol(symbol) {
+    if (!symbol) {
+      return { allowed: false, reason: 'Symbol is required' };
+    }
+    const upper = symbol.toUpperCase().replace(/-/g, '_');
+    if (!upper.endsWith('_PERP')) {
+      return {
+        allowed: false,
+        reason: `Symbol "${symbol}" is not a futures perpetual symbol. Agent trading requires _PERP suffix (e.g. BTC_USDT_PERP).`
+      };
+    }
+    return { allowed: true };
+  }
+
+  /**
    * Check position size against risk tier limits
    * @param {Object} order - Order details
    * @param {Array} riskLimits - Risk tier limits from market catalog

@@ -106,6 +106,9 @@ class PaperTradingService extends EventEmitter {
         startedAt: new Date(),
         lastUpdateAt: new Date(),
         strategy: config.strategy || null,
+        leverage: config.leverage || 1, // Futures leverage (1 = no leverage)
+        marginMode: config.marginMode || 'CROSS',
+        marketType: 'futures',
         riskParameters: config.riskParameters || {
           maxDailyLoss: 0.05, // 5% max daily loss
           maxPositionSize: 0.1, // 10% max position size
@@ -485,8 +488,13 @@ class PaperTradingService extends EventEmitter {
       session.positions.set(positionId, position);
 
       // Update session margin and deduct entry fees from cash
-      session.margin += position.size * position.entryPrice;
-      session.cash -= (position.size * position.entryPrice) + position.entryFees;
+      // With leverage, margin required = notional / leverage
+      const leverage = session.leverage || 1;
+      const notional = position.size * position.entryPrice;
+      const marginRequired = notional / leverage;
+      position.leverage = leverage;
+      session.margin += marginRequired;
+      session.cash -= marginRequired + position.entryFees;
 
       // Create trade record
       await this.createTradeRecord(session, position, 'entry');
@@ -549,8 +557,11 @@ class PaperTradingService extends EventEmitter {
 
       // Update session totals
       session.realizedPnl += realizedPnl;
-      session.cash += position.size * executionResult.executionPrice - exitFees;
-      session.margin -= position.size * position.entryPrice;
+      // Return margin collateral plus P&L minus exit fees
+      const closeLeverage = position.leverage || session.leverage || 1;
+      const entryMarginUsed = (position.size * position.entryPrice) / closeLeverage;
+      session.cash += entryMarginUsed + rawPnl - exitFees;
+      session.margin -= entryMarginUsed;
       session.totalTrades++;
       
       if (realizedPnl > 0) {
@@ -1025,9 +1036,10 @@ class PaperTradingService extends EventEmitter {
 
         session.positions.set(position.id, position);
 
-        // Track margin for open positions
+        // Track margin for open positions (leverage-adjusted)
         if (position.status === 'open') {
-          openMargin += position.size * position.entryPrice;
+          const posLeverage = position.leverage || session.leverage || 1;
+          openMargin += (position.size * position.entryPrice) / posLeverage;
         }
       }
 

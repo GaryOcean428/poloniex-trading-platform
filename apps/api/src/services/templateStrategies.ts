@@ -69,7 +69,7 @@ export const TEMPLATE_STRATEGIES: TemplateStrategy[] = [
     },
     difficulty: 'beginner',
     timeframes: ['15m', '1h', '4h'],
-    bestMarkets: ['BTC_USDT', 'ETH_USDT', 'SOL_USDT']
+    bestMarkets: ['BTC_USDT_PERP', 'ETH_USDT_PERP', 'SOL_USDT_PERP']
   },
   {
     id: 'template-ma-crossover',
@@ -110,7 +110,7 @@ export const TEMPLATE_STRATEGIES: TemplateStrategy[] = [
     },
     difficulty: 'beginner',
     timeframes: ['1h', '4h', '1d'],
-    bestMarkets: ['BTC_USDT', 'ETH_USDT']
+    bestMarkets: ['BTC_USDT_PERP', 'ETH_USDT_PERP']
   },
   {
     id: 'template-bollinger-breakout',
@@ -153,7 +153,7 @@ export const TEMPLATE_STRATEGIES: TemplateStrategy[] = [
     },
     difficulty: 'intermediate',
     timeframes: ['15m', '1h', '4h'],
-    bestMarkets: ['BTC_USDT', 'ETH_USDT', 'BNB_USDT']
+    bestMarkets: ['BTC_USDT_PERP', 'ETH_USDT_PERP', 'BNB_USDT_PERP']
   },
   {
     id: 'template-macd-momentum',
@@ -196,7 +196,7 @@ export const TEMPLATE_STRATEGIES: TemplateStrategy[] = [
     },
     difficulty: 'intermediate',
     timeframes: ['1h', '4h', '1d'],
-    bestMarkets: ['BTC_USDT', 'ETH_USDT', 'ADA_USDT']
+    bestMarkets: ['BTC_USDT_PERP', 'ETH_USDT_PERP', 'SOL_USDT_PERP']
   },
   {
     id: 'template-support-resistance',
@@ -239,7 +239,7 @@ export const TEMPLATE_STRATEGIES: TemplateStrategy[] = [
     },
     difficulty: 'intermediate',
     timeframes: ['1h', '4h', '1d'],
-    bestMarkets: ['BTC_USDT', 'ETH_USDT']
+    bestMarkets: ['BTC_USDT_PERP', 'ETH_USDT_PERP']
   },
   {
     id: 'template-triple-ema',
@@ -282,7 +282,7 @@ export const TEMPLATE_STRATEGIES: TemplateStrategy[] = [
     },
     difficulty: 'advanced',
     timeframes: ['4h', '1d'],
-    bestMarkets: ['BTC_USDT', 'ETH_USDT']
+    bestMarkets: ['BTC_USDT_PERP', 'ETH_USDT_PERP']
   },
   {
     id: 'template-volume-breakout',
@@ -325,7 +325,7 @@ export const TEMPLATE_STRATEGIES: TemplateStrategy[] = [
     },
     difficulty: 'advanced',
     timeframes: ['1h', '4h'],
-    bestMarkets: ['BTC_USDT', 'ETH_USDT', 'SOL_USDT']
+    bestMarkets: ['BTC_USDT_PERP', 'ETH_USDT_PERP', 'SOL_USDT_PERP']
   },
   {
     id: 'template-scalping-quick',
@@ -369,7 +369,7 @@ export const TEMPLATE_STRATEGIES: TemplateStrategy[] = [
     },
     difficulty: 'advanced',
     timeframes: ['1m', '5m', '15m'],
-    bestMarkets: ['BTC_USDT', 'ETH_USDT']
+    bestMarkets: ['BTC_USDT_PERP', 'ETH_USDT_PERP']
   }
 ];
 

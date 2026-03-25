@@ -1,262 +1,30 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "_note": "Canonical, programmatically consumable catalog of ALL Poloniex Futures v3 markets. Policy: include all markets; use exchange max leverage and exchange fees.",
-  "version": 2,
-  "source": "../railway-poloniex-docs.md",
-  "lastSynced": "2025-08-11T13:48:20.474Z",
+  "version": 3,
+  "source": "https://api-docs.poloniex.com/v3/futures/",
+  "lastSynced": "2026-03-25T02:00:00.000Z",
   "markets": [
-    {
-      "symbol": "BNB_USDT_PERP",
-      "base": "BNB",
-      "quote": "USDT",
-      "contractType": "perpetual",
-      "status": "trading",
-      "pricePrecision": null,
-      "quantityPrecision": null,
-      "tickSize": null,
-      "lotSize": null,
-      "minNotional": null,
-      "maxLeverage": 10,
-      "maintenanceMarginTable": [],
-      "riskLimits": [],
-      "feesBps": {
-        "maker": null,
-        "taker": null
-      },
-      "funding": {
-        "intervalHours": 8,
-        "rateCap": null
-      }
-    },
-    {
-      "symbol": "TRX_USDT_PERP",
-      "base": "TRX",
-      "quote": "USDT",
-      "contractType": "perpetual",
-      "status": "trading",
-      "pricePrecision": null,
-      "quantityPrecision": null,
-      "tickSize": null,
-      "lotSize": null,
-      "minNotional": null,
-      "maxLeverage": 10,
-      "maintenanceMarginTable": [],
-      "riskLimits": [],
-      "feesBps": {
-        "maker": null,
-        "taker": null
-      },
-      "funding": {
-        "intervalHours": 8,
-        "rateCap": null
-      }
-    },
-    {
-      "symbol": "LTC_USDT_PERP",
-      "base": "LTC",
-      "quote": "USDT",
-      "contractType": "perpetual",
-      "status": "trading",
-      "pricePrecision": null,
-      "quantityPrecision": null,
-      "tickSize": null,
-      "lotSize": null,
-      "minNotional": null,
-      "maxLeverage": 10,
-      "maintenanceMarginTable": [],
-      "riskLimits": [],
-      "feesBps": {
-        "maker": null,
-        "taker": null
-      },
-      "funding": {
-        "intervalHours": 8,
-        "rateCap": null
-      }
-    },
-    {
-      "symbol": "APT_USDT_PERP",
-      "base": "APT",
-      "quote": "USDT",
-      "contractType": "perpetual",
-      "status": "trading",
-      "pricePrecision": null,
-      "quantityPrecision": null,
-      "tickSize": null,
-      "lotSize": null,
-      "minNotional": null,
-      "maxLeverage": 10,
-      "maintenanceMarginTable": [],
-      "riskLimits": [],
-      "feesBps": {
-        "maker": null,
-        "taker": null
-      },
-      "funding": {
-        "intervalHours": 8,
-        "rateCap": null
-      }
-    },
-    {
-      "symbol": "1000PEPE_USDT_PERP",
-      "base": "1000PEPE",
-      "quote": "USDT",
-      "contractType": "perpetual",
-      "status": "trading",
-      "pricePrecision": null,
-      "quantityPrecision": null,
-      "tickSize": null,
-      "lotSize": null,
-      "minNotional": null,
-      "maxLeverage": 10,
-      "maintenanceMarginTable": [],
-      "riskLimits": [],
-      "feesBps": {
-        "maker": null,
-        "taker": null
-      },
-      "funding": {
-        "intervalHours": 8,
-        "rateCap": null
-      }
-    },
-    {
-      "symbol": "1000SHIB_USDT_PERP",
-      "base": "1000SHIB",
-      "quote": "USDT",
-      "contractType": "perpetual",
-      "status": "trading",
-      "pricePrecision": null,
-      "quantityPrecision": null,
-      "tickSize": null,
-      "lotSize": null,
-      "minNotional": null,
-      "maxLeverage": 10,
-      "maintenanceMarginTable": [],
-      "riskLimits": [],
-      "feesBps": {
-        "maker": null,
-        "taker": null
-      },
-      "funding": {
-        "intervalHours": 8,
-        "rateCap": null
-      }
-    },
     {
       "symbol": "BTC_USDT_PERP",
       "base": "BTC",
       "quote": "USDT",
       "contractType": "perpetual",
       "status": "trading",
-      "pricePrecision": null,
-      "quantityPrecision": null,
-      "tickSize": null,
-      "lotSize": null,
-      "minNotional": null,
-      "maxLeverage": 20,
-      "maintenanceMarginTable": [],
-      "riskLimits": [],
-      "feesBps": {
-        "maker": null,
-        "taker": null
-      },
-      "funding": {
-        "intervalHours": 8,
-        "rateCap": null
-      }
-    },
-    {
-      "symbol": "DOGE_USDT_PERP",
-      "base": "DOGE",
-      "quote": "USDT",
-      "contractType": "perpetual",
-      "status": "trading",
-      "pricePrecision": null,
-      "quantityPrecision": null,
-      "tickSize": null,
-      "lotSize": null,
-      "minNotional": null,
-      "maxLeverage": 10,
-      "maintenanceMarginTable": [],
-      "riskLimits": [],
-      "feesBps": {
-        "maker": null,
-        "taker": null
-      },
-      "funding": {
-        "intervalHours": 8,
-        "rateCap": null
-      }
-    },
-    {
-      "symbol": "AVAX_USDT_PERP",
-      "base": "AVAX",
-      "quote": "USDT",
-      "contractType": "perpetual",
-      "status": "trading",
-      "pricePrecision": null,
-      "quantityPrecision": null,
-      "tickSize": null,
-      "lotSize": null,
-      "minNotional": null,
-      "maxLeverage": 10,
-      "maintenanceMarginTable": [],
-      "riskLimits": [],
-      "feesBps": {
-        "maker": null,
-        "taker": null
-      },
-      "funding": {
-        "intervalHours": 8,
-        "rateCap": null
-      }
-    },
-    {
-      "symbol": "XRP_USDT_PERP",
-      "base": "XRP",
-      "quote": "USDT",
-      "contractType": "perpetual",
-      "status": "trading",
-      "pricePrecision": null,
-      "quantityPrecision": null,
-      "tickSize": null,
-      "lotSize": null,
-      "minNotional": null,
-      "maxLeverage": 10,
-      "maintenanceMarginTable": [],
-      "riskLimits": [],
-      "feesBps": {
-        "maker": null,
-        "taker": null
-      },
-      "funding": {
-        "intervalHours": 8,
-        "rateCap": null
-      }
-    },
-    {
-      "symbol": "SOL_USDT_PERP",
-      "base": "SOL",
-      "quote": "USDT",
-      "contractType": "perpetual",
-      "status": "trading",
-      "pricePrecision": null,
-      "quantityPrecision": null,
-      "tickSize": null,
-      "lotSize": null,
-      "minNotional": null,
-      "maxLeverage": 10,
-      "maintenanceMarginTable": [],
-      "riskLimits": [],
-      "feesBps": {
-        "maker": null,
-        "taker": null
-      },
-      "funding": {
-        "intervalHours": 8,
-        "rateCap": null
-      }
+      "pricePrecision": 1,
+      "quantityPrecision": 3,
+      "tickSize": 0.1,
+      "lotSize": 0.001,
+      "minNotional": 5,
+      "maxLeverage": 100,
+      "maintenanceMarginTable": [
+        { "notionalFloor": 0, "maintenanceMarginRate": 0.004 }
+      ],
+      "riskLimits": [
+        { "tier": 1, "maxPosition": 100000, "initialMarginRate": 0.01, "maintenanceMarginRate": 0.004 }
+      ],
+      "feesBps": { "maker": 1, "taker": 7.5 },
+      "funding": { "intervalHours": 8, "rateCap": null }
     },
     {
       "symbol": "ETH_USDT_PERP",
@@ -264,22 +32,62 @@
       "quote": "USDT",
       "contractType": "perpetual",
       "status": "trading",
-      "pricePrecision": null,
-      "quantityPrecision": null,
-      "tickSize": null,
-      "lotSize": null,
-      "minNotional": null,
-      "maxLeverage": 20,
-      "maintenanceMarginTable": [],
-      "riskLimits": [],
-      "feesBps": {
-        "maker": null,
-        "taker": null
-      },
-      "funding": {
-        "intervalHours": 8,
-        "rateCap": null
-      }
+      "pricePrecision": 2,
+      "quantityPrecision": 2,
+      "tickSize": 0.01,
+      "lotSize": 0.01,
+      "minNotional": 5,
+      "maxLeverage": 100,
+      "maintenanceMarginTable": [
+        { "notionalFloor": 0, "maintenanceMarginRate": 0.004 }
+      ],
+      "riskLimits": [
+        { "tier": 1, "maxPosition": 50000, "initialMarginRate": 0.01, "maintenanceMarginRate": 0.004 }
+      ],
+      "feesBps": { "maker": 1, "taker": 7.5 },
+      "funding": { "intervalHours": 8, "rateCap": null }
+    },
+    {
+      "symbol": "SOL_USDT_PERP",
+      "base": "SOL",
+      "quote": "USDT",
+      "contractType": "perpetual",
+      "status": "trading",
+      "pricePrecision": 2,
+      "quantityPrecision": 1,
+      "tickSize": 0.01,
+      "lotSize": 0.1,
+      "minNotional": 5,
+      "maxLeverage": 50,
+      "maintenanceMarginTable": [
+        { "notionalFloor": 0, "maintenanceMarginRate": 0.005 }
+      ],
+      "riskLimits": [
+        { "tier": 1, "maxPosition": 25000, "initialMarginRate": 0.02, "maintenanceMarginRate": 0.005 }
+      ],
+      "feesBps": { "maker": 1, "taker": 7.5 },
+      "funding": { "intervalHours": 8, "rateCap": null }
+    },
+    {
+      "symbol": "XRP_USDT_PERP",
+      "base": "XRP",
+      "quote": "USDT",
+      "contractType": "perpetual",
+      "status": "trading",
+      "pricePrecision": 4,
+      "quantityPrecision": 0,
+      "tickSize": 0.0001,
+      "lotSize": 10,
+      "minNotional": 5,
+      "maxLeverage": 50,
+      "maintenanceMarginTable": [
+        { "notionalFloor": 0, "maintenanceMarginRate": 0.005 }
+      ],
+      "riskLimits": [
+        { "tier": 1, "maxPosition": 25000, "initialMarginRate": 0.02, "maintenanceMarginRate": 0.005 }
+      ],
+      "feesBps": { "maker": 1, "taker": 7.5 },
+      "funding": { "intervalHours": 8, "rateCap": null }
     },
     {
       "symbol": "BCH_USDT_PERP",
@@ -287,22 +95,251 @@
       "quote": "USDT",
       "contractType": "perpetual",
       "status": "trading",
-      "pricePrecision": null,
-      "quantityPrecision": null,
-      "tickSize": null,
-      "lotSize": null,
-      "minNotional": null,
+      "pricePrecision": 1,
+      "quantityPrecision": 2,
+      "tickSize": 0.1,
+      "lotSize": 0.01,
+      "minNotional": 5,
+      "maxLeverage": 50,
+      "maintenanceMarginTable": [
+        { "notionalFloor": 0, "maintenanceMarginRate": 0.005 }
+      ],
+      "riskLimits": [
+        { "tier": 1, "maxPosition": 25000, "initialMarginRate": 0.02, "maintenanceMarginRate": 0.005 }
+      ],
+      "feesBps": { "maker": 1, "taker": 7.5 },
+      "funding": { "intervalHours": 8, "rateCap": null }
+    },
+    {
+      "symbol": "LTC_USDT_PERP",
+      "base": "LTC",
+      "quote": "USDT",
+      "contractType": "perpetual",
+      "status": "trading",
+      "pricePrecision": 2,
+      "quantityPrecision": 1,
+      "tickSize": 0.01,
+      "lotSize": 0.1,
+      "minNotional": 5,
+      "maxLeverage": 50,
+      "maintenanceMarginTable": [
+        { "notionalFloor": 0, "maintenanceMarginRate": 0.005 }
+      ],
+      "riskLimits": [
+        { "tier": 1, "maxPosition": 25000, "initialMarginRate": 0.02, "maintenanceMarginRate": 0.005 }
+      ],
+      "feesBps": { "maker": 1, "taker": 7.5 },
+      "funding": { "intervalHours": 8, "rateCap": null }
+    },
+    {
+      "symbol": "TRX_USDT_PERP",
+      "base": "TRX",
+      "quote": "USDT",
+      "contractType": "perpetual",
+      "status": "trading",
+      "pricePrecision": 5,
+      "quantityPrecision": 0,
+      "tickSize": 0.00001,
+      "lotSize": 100,
+      "minNotional": 5,
+      "maxLeverage": 50,
+      "maintenanceMarginTable": [
+        { "notionalFloor": 0, "maintenanceMarginRate": 0.005 }
+      ],
+      "riskLimits": [
+        { "tier": 1, "maxPosition": 25000, "initialMarginRate": 0.02, "maintenanceMarginRate": 0.005 }
+      ],
+      "feesBps": { "maker": 1, "taker": 7.5 },
+      "funding": { "intervalHours": 8, "rateCap": null }
+    },
+    {
+      "symbol": "BNB_USDT_PERP",
+      "base": "BNB",
+      "quote": "USDT",
+      "contractType": "perpetual",
+      "status": "trading",
+      "pricePrecision": 1,
+      "quantityPrecision": 2,
+      "tickSize": 0.1,
+      "lotSize": 0.01,
+      "minNotional": 5,
+      "maxLeverage": 50,
+      "maintenanceMarginTable": [
+        { "notionalFloor": 0, "maintenanceMarginRate": 0.005 }
+      ],
+      "riskLimits": [
+        { "tier": 1, "maxPosition": 25000, "initialMarginRate": 0.02, "maintenanceMarginRate": 0.005 }
+      ],
+      "feesBps": { "maker": 1, "taker": 7.5 },
+      "funding": { "intervalHours": 8, "rateCap": null }
+    },
+    {
+      "symbol": "DOGE_USDT_PERP",
+      "base": "DOGE",
+      "quote": "USDT",
+      "contractType": "perpetual",
+      "status": "trading",
+      "pricePrecision": 5,
+      "quantityPrecision": 0,
+      "tickSize": 0.00001,
+      "lotSize": 100,
+      "minNotional": 5,
+      "maxLeverage": 50,
+      "maintenanceMarginTable": [
+        { "notionalFloor": 0, "maintenanceMarginRate": 0.005 }
+      ],
+      "riskLimits": [
+        { "tier": 1, "maxPosition": 25000, "initialMarginRate": 0.02, "maintenanceMarginRate": 0.005 }
+      ],
+      "feesBps": { "maker": 1, "taker": 7.5 },
+      "funding": { "intervalHours": 8, "rateCap": null }
+    },
+    {
+      "symbol": "AVAX_USDT_PERP",
+      "base": "AVAX",
+      "quote": "USDT",
+      "contractType": "perpetual",
+      "status": "trading",
+      "pricePrecision": 2,
+      "quantityPrecision": 1,
+      "tickSize": 0.01,
+      "lotSize": 0.1,
+      "minNotional": 5,
+      "maxLeverage": 50,
+      "maintenanceMarginTable": [
+        { "notionalFloor": 0, "maintenanceMarginRate": 0.005 }
+      ],
+      "riskLimits": [
+        { "tier": 1, "maxPosition": 25000, "initialMarginRate": 0.02, "maintenanceMarginRate": 0.005 }
+      ],
+      "feesBps": { "maker": 1, "taker": 7.5 },
+      "funding": { "intervalHours": 8, "rateCap": null }
+    },
+    {
+      "symbol": "APT_USDT_PERP",
+      "base": "APT",
+      "quote": "USDT",
+      "contractType": "perpetual",
+      "status": "trading",
+      "pricePrecision": 3,
+      "quantityPrecision": 1,
+      "tickSize": 0.001,
+      "lotSize": 0.1,
+      "minNotional": 5,
+      "maxLeverage": 50,
+      "maintenanceMarginTable": [
+        { "notionalFloor": 0, "maintenanceMarginRate": 0.005 }
+      ],
+      "riskLimits": [
+        { "tier": 1, "maxPosition": 25000, "initialMarginRate": 0.02, "maintenanceMarginRate": 0.005 }
+      ],
+      "feesBps": { "maker": 1, "taker": 7.5 },
+      "funding": { "intervalHours": 8, "rateCap": null }
+    },
+    {
+      "symbol": "LINK_USDT_PERP",
+      "base": "LINK",
+      "quote": "USDT",
+      "contractType": "perpetual",
+      "status": "trading",
+      "pricePrecision": 3,
+      "quantityPrecision": 1,
+      "tickSize": 0.001,
+      "lotSize": 0.1,
+      "minNotional": 5,
+      "maxLeverage": 50,
+      "maintenanceMarginTable": [
+        { "notionalFloor": 0, "maintenanceMarginRate": 0.005 }
+      ],
+      "riskLimits": [
+        { "tier": 1, "maxPosition": 25000, "initialMarginRate": 0.02, "maintenanceMarginRate": 0.005 }
+      ],
+      "feesBps": { "maker": 1, "taker": 7.5 },
+      "funding": { "intervalHours": 8, "rateCap": null }
+    },
+    {
+      "symbol": "UNI_USDT_PERP",
+      "base": "UNI",
+      "quote": "USDT",
+      "contractType": "perpetual",
+      "status": "trading",
+      "pricePrecision": 3,
+      "quantityPrecision": 0,
+      "tickSize": 0.001,
+      "lotSize": 1,
+      "minNotional": 5,
+      "maxLeverage": 50,
+      "maintenanceMarginTable": [
+        { "notionalFloor": 0, "maintenanceMarginRate": 0.005 }
+      ],
+      "riskLimits": [
+        { "tier": 1, "maxPosition": 25000, "initialMarginRate": 0.02, "maintenanceMarginRate": 0.005 }
+      ],
+      "feesBps": { "maker": 1, "taker": 7.5 },
+      "funding": { "intervalHours": 8, "rateCap": null }
+    },
+    {
+      "symbol": "XMR_USDT_PERP",
+      "base": "XMR",
+      "quote": "USDT",
+      "contractType": "perpetual",
+      "status": "trading",
+      "pricePrecision": 2,
+      "quantityPrecision": 2,
+      "tickSize": 0.01,
+      "lotSize": 0.01,
+      "minNotional": 5,
+      "maxLeverage": 50,
+      "maintenanceMarginTable": [
+        { "notionalFloor": 0, "maintenanceMarginRate": 0.005 }
+      ],
+      "riskLimits": [
+        { "tier": 1, "maxPosition": 25000, "initialMarginRate": 0.02, "maintenanceMarginRate": 0.005 }
+      ],
+      "feesBps": { "maker": 1, "taker": 7.5 },
+      "funding": { "intervalHours": 8, "rateCap": null }
+    },
+    {
+      "symbol": "1000PEPE_USDT_PERP",
+      "base": "1000PEPE",
+      "quote": "USDT",
+      "contractType": "perpetual",
+      "status": "trading",
+      "pricePrecision": 7,
+      "quantityPrecision": 0,
+      "tickSize": 0.0000001,
+      "lotSize": 1000,
+      "minNotional": 5,
       "maxLeverage": 10,
-      "maintenanceMarginTable": [],
-      "riskLimits": [],
-      "feesBps": {
-        "maker": null,
-        "taker": null
-      },
-      "funding": {
-        "intervalHours": 8,
-        "rateCap": null
-      }
+      "maintenanceMarginTable": [
+        { "notionalFloor": 0, "maintenanceMarginRate": 0.01 }
+      ],
+      "riskLimits": [
+        { "tier": 1, "maxPosition": 10000, "initialMarginRate": 0.1, "maintenanceMarginRate": 0.01 }
+      ],
+      "feesBps": { "maker": 1, "taker": 7.5 },
+      "funding": { "intervalHours": 8, "rateCap": null }
+    },
+    {
+      "symbol": "1000SHIB_USDT_PERP",
+      "base": "1000SHIB",
+      "quote": "USDT",
+      "contractType": "perpetual",
+      "status": "trading",
+      "pricePrecision": 6,
+      "quantityPrecision": 0,
+      "tickSize": 0.000001,
+      "lotSize": 1000,
+      "minNotional": 5,
+      "maxLeverage": 10,
+      "maintenanceMarginTable": [
+        { "notionalFloor": 0, "maintenanceMarginRate": 0.01 }
+      ],
+      "riskLimits": [
+        { "tier": 1, "maxPosition": 10000, "initialMarginRate": 0.1, "maintenanceMarginRate": 0.01 }
+      ],
+      "feesBps": { "maker": 1, "taker": 7.5 },
+      "funding": { "intervalHours": 8, "rateCap": null }
     }
   ],
   "schema": {
@@ -332,8 +369,8 @@
       }
     ],
     "feesBps": {
-      "maker": "number",
-      "taker": "number"
+      "maker": "number (basis points, e.g. 1 = 0.01%)",
+      "taker": "number (basis points, e.g. 7.5 = 0.075%)"
     },
     "funding": {
       "intervalHours": 8,
@@ -347,42 +384,5 @@
       "trades": "https://api-docs.poloniex.com/v3/futures/market/get-execution-info",
       "fundingHistory": "https://api-docs.poloniex.com/v3/futures/market/get-historical-funding-rates"
     }
-  },
-  "examples": [
-    {
-      "symbol": "BTCUSDT",
-      "base": "BTC",
-      "quote": "USDT",
-      "contractType": "perpetual",
-      "status": "trading",
-      "pricePrecision": 1,
-      "quantityPrecision": 3,
-      "tickSize": 0.1,
-      "lotSize": 0.001,
-      "minNotional": 5,
-      "maxLeverage": 100,
-      "maintenanceMarginTable": [
-        {
-          "notionalFloor": 0,
-          "maintenanceMarginRate": 0.004
-        }
-      ],
-      "riskLimits": [
-        {
-          "tier": 1,
-          "maxPosition": 100000,
-          "initialMarginRate": 0.01,
-          "maintenanceMarginRate": 0.004
-        }
-      ],
-      "feesBps": {
-        "maker": 2,
-        "taker": 5
-      },
-      "funding": {
-        "intervalHours": 8,
-        "rateCap": null
-      }
-    }
-  ]
+  }
 }

@@ -191,7 +191,7 @@ class AutonomousStrategyGenerator extends EventEmitter {
   async createInitialPopulation() {
     this.logger.info('🧪 Creating initial strategy population...');
     
-    const symbols = ['BTCUSDT', 'ETHUSDT', 'ADAUSDT', 'DOTUSDT', 'LINKUSDT'];
+    const symbols = ['BTC_USDT_PERP', 'ETH_USDT_PERP', 'SOL_USDT_PERP', 'XRP_USDT_PERP', 'LINK_USDT_PERP'];
     const strategyTypes = ['momentum', 'mean_reversion', 'breakout', 'trend_following'];
     
     for (let i = 0; i < this.generationConfig.populationSize; i++) {

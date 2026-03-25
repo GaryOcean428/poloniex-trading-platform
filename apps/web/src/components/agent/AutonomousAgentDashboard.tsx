@@ -121,7 +121,10 @@ const AutonomousAgentDashboard: React.FC = () => {
     automationLevel: 'fully_autonomous',
     strategyGenerationInterval: 24,
     backtestPeriodDays: 365,
-    paperTradingDurationHours: 48
+    paperTradingDurationHours: 48,
+    marketType: 'futures' as const,
+    defaultLeverage: 3,
+    marginMode: 'CROSS' as const,
   });
 
   const agentStatusRef = useRef(agentStatus?.status);
@@ -621,7 +624,7 @@ const AutonomousAgentDashboard: React.FC = () => {
             <div className="text-left">
               <p className="font-semibold text-gray-900">Agent Configuration</p>
               <p className="text-sm text-gray-500">
-                {config.tradingStyle.replace('_', ' ')} · {config.preferredPairs.join(', ')} · Max DD {config.maxDrawdown}%
+                Futures {config.defaultLeverage}x · {config.tradingStyle.replace('_', ' ')} · {config.preferredPairs.join(', ')} · Max DD {config.maxDrawdown}%
               </p>
             </div>
           </div>
@@ -727,12 +730,42 @@ const AutonomousAgentDashboard: React.FC = () => {
                   <option value="manual_override">Manual Override (approve all actions)</option>
                 </select>
               </div>
+              {/* Futures Leverage */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Futures Leverage: {config.defaultLeverage}x
+                </label>
+                <input
+                  type="range"
+                  min={1}
+                  max={20}
+                  step={1}
+                  value={config.defaultLeverage}
+                  onChange={e => setConfig(c => ({ ...c, defaultLeverage: parseInt(e.target.value) }))}
+                  disabled={agentStatus?.status === 'running'}
+                  className="w-full accent-cyan-600"
+                />
+                <div className="flex justify-between text-xs text-gray-400"><span>1x (no leverage)</span><span>20x</span></div>
+              </div>
+              {/* Margin Mode */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Margin Mode</label>
+                <select
+                  value={config.marginMode}
+                  onChange={e => setConfig(c => ({ ...c, marginMode: e.target.value as 'CROSS' | 'ISOLATED' }))}
+                  disabled={agentStatus?.status === 'running'}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-cyan-500 disabled:bg-gray-100 disabled:text-gray-500"
+                >
+                  <option value="CROSS">Cross Margin (shared collateral)</option>
+                  <option value="ISOLATED">Isolated Margin (per-position)</option>
+                </select>
+              </div>
             </div>
             {/* Preferred Pairs */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Preferred Trading Pairs</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Preferred Futures Pairs (PERP)</label>
               <div className="flex flex-wrap gap-2">
-                {['BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'XRP-USDT', 'DOGE-USDT', 'AVAX-USDT'].map(pair => (
+                {['BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'XRP-USDT', 'DOGE-USDT', 'AVAX-USDT', 'BCH-USDT', 'LTC-USDT', 'TRX-USDT', 'BNB-USDT', 'LINK-USDT', 'UNI-USDT'].map(pair => (
                   <button
                     key={pair}
                     onClick={() => setConfig(c => ({

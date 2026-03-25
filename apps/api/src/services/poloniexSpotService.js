@@ -7,6 +7,11 @@ import rateLimiter from '../utils/rateLimiter.js';
 /**
  * Poloniex Spot API Service
  * Handles Spot trading operations
+ *
+ * @note **NOT used by the autonomous trading agent.**
+ * The autonomous agent trades exclusively via Poloniex Futures V3 API
+ * (see poloniexFuturesService.js). This spot service is available for
+ * manual user trading and fund transfers only.
  */
 class PoloniexSpotService {
   constructor() {

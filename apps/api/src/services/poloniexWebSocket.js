@@ -4,9 +4,14 @@ import { logger } from '../utils/logger.js';
 import { EventEmitter } from 'events';
 
 /**
- * Poloniex WebSocket Service
- * Handles real-time data streams from Poloniex
+ * Poloniex **Spot** WebSocket Service
+ * Handles real-time data streams from Poloniex Spot markets.
  * Based on: https://api-docs.poloniex.com/spot/websocket/
+ *
+ * @note **NOT used by the autonomous trading agent.**
+ * The agent uses the Futures WebSocket (futuresWebSocket.ts) for real-time
+ * market data. This spot WebSocket service is available for manual
+ * user-facing spot market features only.
  */
 class PoloniexWebSocketService extends EventEmitter {
   constructor() {

@@ -606,10 +606,19 @@ class AutomatedTradingService extends EventEmitter {
 
   /**
    * Execute buy/sell order
+   * Note: Only futures PERP symbols are supported for agent trading.
    */
   async executeBuySellOrder(credentials, strategy, signal) {
+    // Normalize symbol to futures PERP format
+    let symbol = strategy.symbol;
+    if (symbol && !symbol.toUpperCase().includes('PERP')) {
+      const normalized = symbol.toUpperCase().replace(/-/g, '_');
+      symbol = normalized.includes('_') ? `${normalized}_PERP` : symbol;
+      logger.warn(`Symbol "${strategy.symbol}" auto-normalized to futures format: "${symbol}"`);
+    }
+
     const orderData = {
-      symbol: strategy.symbol,
+      symbol,
       side: signal.action.toLowerCase(),
       type: signal.type || 'MARKET',
       size: signal.size,
