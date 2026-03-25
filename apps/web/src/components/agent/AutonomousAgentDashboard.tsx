@@ -133,7 +133,7 @@ const AutonomousAgentDashboard: React.FC = () => {
 
   // Track consecutive poll errors for backoff
   const consecutiveErrorsRef = useRef(0);
-  const MAX_CONSECUTIVE_ERRORS = 5;
+  const MAX_CONSECUTIVE_ERRORS = 6;
   const MAX_BACKOFF_INTERVAL = 120000; // 2 minutes max
 
   // Initial data fetch + WebSocket setup (runs once)

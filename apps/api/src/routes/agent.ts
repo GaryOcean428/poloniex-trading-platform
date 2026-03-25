@@ -7,6 +7,12 @@ import { pool } from '../db/connection.js';
 
 const router = express.Router();
 
+/** Check if an error is caused by a missing database table/relation */
+function isTableMissingError(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error);
+  return msg.includes('does not exist') || msg.includes('relation');
+}
+
 /**
  * POST /api/agent/start
  * Start the autonomous trading agent
@@ -370,8 +376,7 @@ router.get('/activity', authenticateToken, async (req: Request, res: Response) =
     });
   } catch (error: unknown) {
     // Return empty array if table doesn't exist yet or DB error occurs
-    const errMsg = error instanceof Error ? error.message : String(error);
-    if (errMsg.includes('does not exist') || errMsg.includes('relation')) {
+    if (isTableMissingError(error)) {
       return res.json({
         success: true,
         activity: []
@@ -428,17 +433,17 @@ router.get('/events', authenticateToken, async (req: Request, res: Response) => 
     });
   } catch (error: unknown) {
     // Return empty array if table doesn't exist yet
-    const errMsg = error instanceof Error ? error.message : String(error);
-    if (errMsg.includes('does not exist') || errMsg.includes('relation')) {
+    if (isTableMissingError(error)) {
       res.json({
         success: true,
         events: []
       });
     } else {
-      console.error('Agent events query failed:', errMsg);
-      res.status(500).json({
-        success: false,
-        error: 'Failed to fetch agent events'
+      console.error('Agent events query failed:', error instanceof Error ? error.message : String(error));
+      res.json({
+        success: true,
+        events: [],
+        _fallback: true
       });
     }
   }
@@ -479,8 +484,7 @@ router.get('/strategies', authenticateToken, async (req: Request, res: Response)
     });
   } catch (error: unknown) {
     // Return empty array if table doesn't exist yet or DB error occurs
-    const errMsg = error instanceof Error ? error.message : String(error);
-    if (errMsg.includes('does not exist') || errMsg.includes('relation')) {
+    if (isTableMissingError(error)) {
       return res.json({
         success: true,
         strategies: []
@@ -799,8 +803,7 @@ router.get('/learnings', authenticateToken, async (req: Request, res: Response) 
     });
   } catch (error: unknown) {
     // Return empty array if table doesn't exist yet or DB error occurs
-    const errMsg = error instanceof Error ? error.message : String(error);
-    if (errMsg.includes('does not exist') || errMsg.includes('relation')) {
+    if (isTableMissingError(error)) {
       return res.json({
         success: true,
         learnings: []
