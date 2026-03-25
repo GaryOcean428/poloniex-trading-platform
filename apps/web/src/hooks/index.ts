@@ -14,6 +14,7 @@ export { default as useFuturesTrading } from './useFuturesTrading';
 export { default as useMarkets } from './useMarkets';
 export { default as useMockMode } from './useMockMode';
 export { default as usePageVisibility } from './usePageVisibility';
+export { usePersistedState } from './usePersistedState';
 export { default as usePoloniexData } from './usePoloniexData';
 export { default as useResponsiveNav } from './useResponsiveNav';
 export { default as useSettings } from './useSettings';
