@@ -324,7 +324,7 @@ class MonitoringService {
   /**
    * Send to external monitoring service
    */
-  private sendToExternalService(errorLog: ErrorLog): void {
+  private sendToExternalService(_errorLog: ErrorLog): void {
     // TODO: Integrate with Sentry, LogRocket, or other service
     // Example:
     // Sentry.captureException(new Error(errorLog.message), {

@@ -9,26 +9,17 @@ import alertingService from '../services/alertingService.js';
 const query = async (text: string, params?: unknown[]) => {
   return await pool.query(text, params);
 };
-import poloniexFuturesService from '../services/poloniexFuturesService.js';
-import { WebSocketEvents, PoloniexEvents, PoloniexTopics, MessageTypes } from '../types/websocketEvents.js';
 import { 
   AccountData, 
   PositionData, 
   OrderData, 
   TradeExecutionData, 
   TickerData,
-  WebSocketData,
   isAccountData,
   isPositionData,
   isOrderData,
   isTradeExecutionData
 } from '../types/websocketData.js';
-
-// WebSocket event handler type definitions aligned with @types/ws
-type WebSocketEventHandler = (ws: WebSocket, message: Buffer) => void | Promise<void>;
-type WebSocketErrorHandler = (ws: WebSocket, error: Error) => void | Promise<void>;
-type WebSocketConnectionHandler = (ws: WebSocket) => void | Promise<void>;
-type WebSocketCloseHandler = (ws: WebSocket, code: number, reason: Buffer) => void | Promise<void>;
 
 // Message interfaces for type safety
 interface PoloniexMessage {

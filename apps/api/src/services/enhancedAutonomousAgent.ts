@@ -496,7 +496,7 @@ class EnhancedAutonomousAgent extends EventEmitter {
     logger.info(`Generating strategies for session ${session.id} - using parallel execution`);
     
     const strategies: Strategy[] = [];
-    const llmGenerator = getLLMStrategyGenerator();
+    const _llmGenerator = getLLMStrategyGenerator();
     
     // Process multiple symbols in parallel for faster strategy generation
     const symbolPromises = session.config.preferredPairs.map(async (symbol) => {

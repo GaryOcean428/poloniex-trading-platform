@@ -252,9 +252,8 @@ const DQNTradingPanel: React.FC = () => {
   };
 
   // Execute trades based on DQN actions
-  const handleExecuteTrades = () => {
-    if (actions.length === 0)
-    {
+  const handleExecuteTrades = async () => {
+    if (actions.length === 0) {
       setError('No actions available');
       return;
     }

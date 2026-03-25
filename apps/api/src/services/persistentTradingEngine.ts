@@ -271,7 +271,7 @@ export class PersistentTradingEngine extends EventEmitter {
     strategyConfig: any,
     marketData: any,
     positions: any,
-    positionState: any
+    _positionState: any
   ): Promise<any> {
     try {
       if (!marketData || !marketData.price || marketData.price === 0) {
@@ -305,7 +305,7 @@ export class PersistentTradingEngine extends EventEmitter {
   private async executeTrade(
     context: StrategyExecutionContext,
     signal: any,
-    marketData: any
+    _marketData: any
   ): Promise<void> {
     const { poloniexService, credentials, session } = context;
     

@@ -36,6 +36,7 @@ interface StrategyBreakdownItem {
   trades: number;
   winRate: number;
   status: string;
+  [key: string]: string | number;
 }
 
 interface RiskMetrics {

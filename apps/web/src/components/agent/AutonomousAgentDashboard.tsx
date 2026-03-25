@@ -125,11 +125,16 @@ const AutonomousAgentDashboard: React.FC = () => {
     paperTradingDurationHours: 48,
     marketType: 'futures' as const,
     defaultLeverage: 3,
-    marginMode: 'CROSS' as const,
+    marginMode: 'CROSS' as 'CROSS' | 'ISOLATED',
   });
 
   const agentStatusRef = useRef(agentStatus?.status);
   agentStatusRef.current = agentStatus?.status;
+
+  // Track consecutive poll errors for backoff
+  const consecutiveErrorsRef = useRef(0);
+  const MAX_CONSECUTIVE_ERRORS = 6;
+  const MAX_BACKOFF_INTERVAL = 120000; // 2 minutes max
 
   // Initial data fetch + WebSocket setup (runs once)
   useEffect(() => {
@@ -168,10 +173,13 @@ const AutonomousAgentDashboard: React.FC = () => {
     };
   }, []);
 
-  // Polling interval — adjusts based on agent status
+  // Polling interval — adjusts based on agent status with exponential backoff on errors
   useEffect(() => {
     const isActive = agentStatus?.status === 'running';
-    const pollInterval = isActive ? 10000 : 60000;
+    const baseInterval = isActive ? 10000 : 60000;
+    // Exponential backoff: double interval per consecutive error, up to max
+    const errorMultiplier = Math.pow(2, Math.min(consecutiveErrorsRef.current, 6));
+    const pollInterval = Math.min(baseInterval * errorMultiplier, MAX_BACKOFF_INTERVAL);
 
     const interval = setInterval(() => {
       fetchAgentStatus();
@@ -201,9 +209,11 @@ const AutonomousAgentDashboard: React.FC = () => {
       
       if (response.data.success) {
         setAgentStatus(response.data.status);
+        consecutiveErrorsRef.current = 0; // Reset on success
       }
       setLastPolled(new Date());
     } catch (_err: unknown) {
+      consecutiveErrorsRef.current = Math.min(consecutiveErrorsRef.current + 1, MAX_CONSECUTIVE_ERRORS);
       setLastPolled(new Date());
     }
   };
@@ -1021,7 +1031,7 @@ const AutonomousAgentDashboard: React.FC = () => {
             <div className="flex gap-1">
               {['all', 'trade_decision', 'state_change', 'risk_action', 'health_alert', 'error'].map(filter => (
                 <button key={filter}
-                  onClick={() => setEventFilter(filter)}
+                  onClick={() => setEventFilter(filter as typeof eventFilter)}
                   className={`px-3 py-1 text-xs rounded-full transition-colors ${
                     eventFilter === filter
                       ? 'bg-cyan-100 text-cyan-700 font-medium'
