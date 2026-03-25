@@ -112,7 +112,7 @@ class RiskService {
       return { allowed: false, reason: 'Symbol is required' };
     }
     const upper = symbol.toUpperCase().replace(/-/g, '_');
-    if (!upper.endsWith('_PERP') && !upper.includes('PERP')) {
+    if (!upper.endsWith('_PERP')) {
       return {
         allowed: false,
         reason: `Symbol "${symbol}" is not a futures perpetual symbol. Agent trading requires _PERP suffix (e.g. BTC_USDT_PERP).`
