@@ -409,6 +409,18 @@ class EnhancedAutonomousAgent extends EventEmitter {
       ...config
     };
 
+    // Ensure all preferred pairs are normalized to futures PERP format
+    defaultConfig.preferredPairs = defaultConfig.preferredPairs.map((pair: string) => {
+      const upper = pair.toUpperCase().replace(/-/g, '_');
+      if (upper.endsWith('_PERP')) return upper;
+      if (upper.includes('_')) return `${upper}_PERP`;
+      // Concatenated format (BTCUSDT)
+      if (upper.endsWith('USDT')) return `${upper.slice(0, -4)}_USDT_PERP`;
+      return `${upper}_PERP`;
+    });
+
+    logger.info(`Agent preferredPairs normalized to futures format: ${defaultConfig.preferredPairs.join(', ')}`);
+
     // Create session
     const session: AgentSession = {
       id: `session_${Date.now()}_${userId}`,
