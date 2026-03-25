@@ -109,9 +109,10 @@ const MIN_CONFIDENCE_THRESHOLD = 60;
 const MIN_WIN_RATE_THRESHOLD = 45;
 
 // Cached column name for agent_strategies — old migration (004) uses
-// "strategy_name" while new migration (007) uses "name".  Migration 012
+// "strategy_name" while new migration (007+012) uses "name".  Migration 012
 // adds "name" when the old table already exists, but it may not have been
 // applied yet.  Detect once at first use and cache the result.
+const VALID_NAME_COLUMNS = new Set(['name', 'strategy_name']);
 let _strategyNameCol: string | null = null;
 
 async function getStrategyNameColumn(): Promise<string> {
@@ -125,7 +126,8 @@ async function getStrategyNameColumn(): Promise<string> {
        ORDER BY CASE column_name WHEN 'name' THEN 0 ELSE 1 END`
     );
     // Prefer "name" (new schema); fall back to "strategy_name" (old schema)
-    _strategyNameCol = rows.length > 0 ? rows[0].column_name : 'name';
+    const col = rows.length > 0 ? String(rows[0].column_name) : 'name';
+    _strategyNameCol = VALID_NAME_COLUMNS.has(col) ? col : 'name';
   } catch {
     _strategyNameCol = 'name';
   }
