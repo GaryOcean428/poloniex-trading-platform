@@ -9,10 +9,12 @@ let lastPoloniexData = null;
  * Reads persisted state from chrome.storage.local and only then marks
  * the worker as initialized so the message-listener guard is meaningful.
  */
+let isInitializing = false;
 function initializeBackgroundState() {
-  if (isInitialized) {
+  if (isInitialized || isInitializing) {
     return;
   }
+  isInitializing = true;
 
   chrome.storage.local.get(
     ['cookies', 'lastTradingViewData', 'lastPoloniexData'],
