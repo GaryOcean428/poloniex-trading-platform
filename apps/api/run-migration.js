@@ -25,6 +25,13 @@ async function runMigration() {
   const client = await pool.connect();
   
   try {
+    // Prevent multiple instances (or restarts) from running migrations concurrently.
+    // This is important on Railway where there may be overlapping deploys.
+    // Uses an advisory lock scoped to the DB connection.
+    await client.query('SELECT pg_advisory_lock(hashtext($1)::bigint)', [
+      'polytrade:db-migrations',
+    ]);
+
     const migrationArg = process.argv[2] ?? 'all';
     
     console.log('🔄 Starting database migrations...\n');
@@ -96,11 +103,19 @@ async function runMigration() {
       });
     }
     
-  } catch (error) {
+      } catch (error) {
     console.error('❌ Migration error:', error.message);
     console.error('Stack trace:', error.stack);
     throw error;
   } finally {
+        // Best-effort unlock (connection might already be in a bad state).
+        try {
+          await client.query('SELECT pg_advisory_unlock(hashtext($1)::bigint)', [
+            'polytrade:db-migrations',
+          ]);
+        } catch {
+          // ignore
+        }
     client.release();
     await pool.end();
   }
