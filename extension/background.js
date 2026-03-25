@@ -4,6 +4,27 @@ let storedCookies = {};
 let lastTradingViewData = null;
 let lastPoloniexData = null;
 
+/**
+ * Perform asynchronous initialization for the background service worker.
+ * Reads persisted state from chrome.storage.local and only then marks
+ * the worker as initialized so the message-listener guard is meaningful.
+ */
+function initializeBackgroundState() {
+  if (isInitialized) {
+    return;
+  }
+
+  chrome.storage.local.get(
+    ['cookies', 'lastTradingViewData', 'lastPoloniexData'],
+    (result) => {
+      storedCookies = result.cookies || {};
+      lastTradingViewData = result.lastTradingViewData || null;
+      lastPoloniexData = result.lastPoloniexData || null;
+      isInitialized = true;
+    }
+  );
+}
+
 // Listen for installation
 chrome.runtime.onInstalled.addListener(() => {
   console.log('Poloniex Trading Extension installed');
@@ -18,12 +39,12 @@ chrome.runtime.onInstalled.addListener(() => {
     poloniexEnabled: true
   });
   
-  isInitialized = true;
+  initializeBackgroundState();
 });
 
 // Also initialize on service worker startup (onInstalled only fires on
 // install/update, not on every Chrome restart or SW wake-up)
-isInitialized = true;
+initializeBackgroundState();
 
 // Handle messages from the popup or content scripts
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -90,27 +111,20 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 });
 
-// Load stored cookies on startup
-chrome.storage.local.get(['cookies'], (result) => {
-  if (result.cookies) {
-    storedCookies = result.cookies;
-    
-    // Restore cookies when tabs are loaded
-    chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-      if (changeInfo.status === 'complete') {
-        if (tab.url?.includes('tradingview.com') && storedCookies.tradingview) {
-          chrome.tabs.sendMessage(tabId, {
-            type: 'RESTORE_COOKIES',
-            data: { site: 'tradingview', cookies: storedCookies.tradingview }
-          }).catch(() => { /* content script may not be ready */ });
-        } else if (tab.url?.includes('poloniex.com') && storedCookies.poloniex) {
-          chrome.tabs.sendMessage(tabId, {
-            type: 'RESTORE_COOKIES',
-            data: { site: 'poloniex', cookies: storedCookies.poloniex }
-          }).catch(() => { /* content script may not be ready */ });
-        }
-      }
-    });
+// Restore cookies when tabs are loaded
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status === 'complete' && isInitialized) {
+    if (tab.url?.includes('tradingview.com') && storedCookies.tradingview) {
+      chrome.tabs.sendMessage(tabId, {
+        type: 'RESTORE_COOKIES',
+        data: { site: 'tradingview', cookies: storedCookies.tradingview }
+      }).catch(() => { /* content script may not be ready */ });
+    } else if (tab.url?.includes('poloniex.com') && storedCookies.poloniex) {
+      chrome.tabs.sendMessage(tabId, {
+        type: 'RESTORE_COOKIES',
+        data: { site: 'poloniex', cookies: storedCookies.poloniex }
+      }).catch(() => { /* content script may not be ready */ });
+    }
   }
 });
 

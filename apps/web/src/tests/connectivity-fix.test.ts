@@ -25,6 +25,12 @@ describe('WebSocket & API Connectivity Fix', () => {
       expect(backendUrl).toBe('http://localhost:8765');
     });
 
+    it('should return localhost for 127.0.0.1 as a local variant', () => {
+      global.window.location.hostname = '127.0.0.1';
+      const backendUrl = getBackendUrl();
+      expect(backendUrl).toBe('http://localhost:8765');
+    });
+
     it('should return Railway backend URL for Railway deployment', () => {
       global.window.location.hostname = 'poloniex-trading-platform-production.up.railway.app';
       const backendUrl = getBackendUrl();
