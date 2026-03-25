@@ -59,19 +59,22 @@ router.post('/migrate', async (req, res) => {
     `);
 
     if (checkDemoUser.rows.length === 0) {
-      const bcrypt = await import('bcryptjs');
-      const crypto = await import('crypto');
-      const demoPassword = process.env.DEMO_USER_PASSWORD || crypto.randomBytes(16).toString('hex');
-      const passwordHash = await bcrypt.hash(demoPassword, 12);
-      await pool.query(
-        `
-          INSERT INTO users (username, email, password_hash, role, is_active, is_verified, trading_enabled)
-          VALUES ($1, $2, $3, $4, $5, $6, $7)
-          ON CONFLICT (username) DO NOTHING;
-        `,
-        ['demo', 'demo@example.com', passwordHash, 'trader', true, true, true]
-      );
-      results.demoUserCreated = true;
+      const demoPassword = process.env.DEMO_USER_PASSWORD;
+      if (!demoPassword) {
+        console.warn('⚠️ DEMO_USER_PASSWORD is not set — skipping demo user creation. Set the env var to create the demo account.');
+      } else {
+        const bcrypt = await import('bcryptjs');
+        const passwordHash = await bcrypt.hash(demoPassword, 12);
+        await pool.query(
+          `
+            INSERT INTO users (username, email, password_hash, role, is_active, is_verified, trading_enabled)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            ON CONFLICT (username) DO NOTHING;
+          `,
+          ['demo', 'demo@example.com', passwordHash, 'trader', true, true, true]
+        );
+        results.demoUserCreated = true;
+      }
     }
 
     await pool.query(`

@@ -29,7 +29,9 @@ DO $$
 BEGIN
     IF EXISTS (
         SELECT 1 FROM information_schema.columns
-        WHERE table_name = 'agent_strategies' AND column_name = 'strategy_name'
+        WHERE table_name = 'agent_strategies'
+          AND column_name = 'strategy_name'
+          AND table_schema = current_schema()
     ) THEN
         UPDATE agent_strategies SET name = strategy_name WHERE name IS NULL AND strategy_name IS NOT NULL;
     END IF;
