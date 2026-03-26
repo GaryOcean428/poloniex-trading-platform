@@ -204,46 +204,72 @@ class SimpleMlService {
       const rsi = this.calculateRSI(closePrices);
       const macd = this.calculateMACD(closePrices);
       
-      // Determine signal
+      // Determine signal using a scoring approach instead of rigid conditions
       let action: 'BUY' | 'SELL' | 'HOLD' = 'HOLD';
       let confidence = 0;
       let reason = '';
       let strength = 0;
-      
-      // Strong buy signals
-      if (rsi < 30 && currentPrice > sma20 && macd.histogram > 0) {
+
+      // Build a composite score from multiple indicators
+      let bullishPoints = 0;
+      let bearishPoints = 0;
+      const reasons: string[] = [];
+
+      // Trend: price vs moving averages
+      if (currentPrice > sma20) { bullishPoints += 1; reasons.push('+price>SMA20'); }
+      else { bearishPoints += 1; reasons.push('+price<SMA20'); }
+
+      if (currentPrice > sma50) { bullishPoints += 1; reasons.push('+price>SMA50'); }
+      else { bearishPoints += 1; reasons.push('+price<SMA50'); }
+
+      // Momentum: RSI zones
+      if (rsi < 30) { bullishPoints += 2; reasons.push('+RSI oversold'); }
+      else if (rsi < 45) { bullishPoints += 1; reasons.push('+RSI low'); }
+      else if (rsi > 70) { bearishPoints += 2; reasons.push('+RSI overbought'); }
+      else if (rsi > 55) { bearishPoints += 1; reasons.push('+RSI high'); }
+
+      // MACD histogram direction
+      if (macd.histogram > 0) { bullishPoints += 1; reasons.push('+MACD bullish'); }
+      else if (macd.histogram < 0) { bearishPoints += 1; reasons.push('+MACD bearish'); }
+
+      const netScore = bullishPoints - bearishPoints;
+      // Max possible net score is ~5 (all bullish), min is ~-5 (all bearish)
+
+      if (netScore >= 3) {
         action = 'BUY';
-        confidence = 75;
+        confidence = 80;
         strength = 0.8;
-        reason = 'Oversold RSI with bullish MACD and price above SMA20';
-      }
-      // Moderate buy signals
-      else if (currentPrice > sma20 && currentPrice > sma50 && rsi < 50) {
+        reason = `Strong bullish: ${reasons.filter(r => r.startsWith('+')).join(', ')}`;
+      } else if (netScore >= 2) {
+        action = 'BUY';
+        confidence = 70;
+        strength = 0.65;
+        reason = `Moderate bullish: ${reasons.filter(r => r.startsWith('+')).join(', ')}`;
+      } else if (netScore >= 1) {
         action = 'BUY';
         confidence = 60;
-        strength = 0.6;
-        reason = 'Price above moving averages with room for growth';
-      }
-      // Strong sell signals
-      else if (rsi > 70 && currentPrice < sma20 && macd.histogram < 0) {
+        strength = 0.5;
+        reason = `Mild bullish: ${reasons.filter(r => r.startsWith('+')).join(', ')}`;
+      } else if (netScore <= -3) {
         action = 'SELL';
-        confidence = 75;
+        confidence = 80;
         strength = 0.8;
-        reason = 'Overbought RSI with bearish MACD and price below SMA20';
-      }
-      // Moderate sell signals
-      else if (currentPrice < sma20 && currentPrice < sma50 && rsi > 50) {
+        reason = `Strong bearish: ${reasons.filter(r => r.startsWith('+')).join(', ')}`;
+      } else if (netScore <= -2) {
+        action = 'SELL';
+        confidence = 70;
+        strength = 0.65;
+        reason = `Moderate bearish: ${reasons.filter(r => r.startsWith('+')).join(', ')}`;
+      } else if (netScore <= -1) {
         action = 'SELL';
         confidence = 60;
-        strength = 0.6;
-        reason = 'Price below moving averages with downward momentum';
-      }
-      // Hold
-      else {
+        strength = 0.5;
+        reason = `Mild bearish: ${reasons.filter(r => r.startsWith('+')).join(', ')}`;
+      } else {
         action = 'HOLD';
         confidence = 50;
         strength = 0.3;
-        reason = 'Mixed signals - waiting for clearer trend';
+        reason = 'Evenly split signals - no clear direction';
       }
       
       logger.info(`Trading signal for ${symbol}:`, { action, confidence, strength });
