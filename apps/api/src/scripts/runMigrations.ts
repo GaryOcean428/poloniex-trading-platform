@@ -58,11 +58,18 @@ export async function runAllMigrations(): Promise<void> {
       const migrationPath = path.join(migrationsDir, migrationFile);
       const migrationSQL = fs.readFileSync(migrationPath, 'utf8');
       logger.info(`Running migration: ${migrationFile}`);
-      await client.query(migrationSQL);
-      await client.query(
-        'INSERT INTO schema_migrations (migration_name) VALUES ($1) ON CONFLICT (migration_name) DO NOTHING',
-        [migrationFile]
-      );
+      await client.query('BEGIN');
+      try {
+        await client.query(migrationSQL);
+        await client.query(
+          'INSERT INTO schema_migrations (migration_name) VALUES ($1) ON CONFLICT (migration_name) DO NOTHING',
+          [migrationFile]
+        );
+        await client.query('COMMIT');
+      } catch (migrationError) {
+        await client.query('ROLLBACK');
+        throw migrationError;
+      }
       logger.info(`✅ Migration ${migrationFile} completed`);
       applied++;
     }
