@@ -39,6 +39,7 @@ import { persistentTradingEngine } from './services/persistentTradingEngine.js';
 import { agentScheduler } from './services/agentScheduler.js';
 import automatedTradingService from './services/automatedTradingService.js';
 import { enhancedAutonomousAgent } from './services/enhancedAutonomousAgent.js';
+import { runAllMigrations } from './scripts/runMigrations.js';
 
 // Import environment configuration (dotenv.config() is called inside env.ts)
 import { env } from './config/env.js';
@@ -55,6 +56,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
+app.set('trust proxy', 1);
 const server = createServer(app);
 
 // Use Railway PORT environment variable or fallback to .clinerules compliant port range (8765-8799)
@@ -353,7 +355,7 @@ io.on('connection', (socket) => {
 });
 
 // Start server
-server.listen(PORT, '::', () => {
+server.listen(PORT, '::', async () => {
   logger.info(`✅ Backend startup complete`, {
     port: PORT,
     env: process.env.NODE_ENV || 'development',
@@ -364,6 +366,16 @@ server.listen(PORT, '::', () => {
   logger.info(`Server running on port ${PORT}`);
   logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
   logger.info(`Socket.IO server initialized`);
+  
+  // Run database migrations before starting services
+  try {
+    logger.info('Running database migrations...');
+    await runAllMigrations();
+    logger.info('✅ Database migrations completed');
+  } catch (error) {
+    logger.error('❌ Database migration failed:', error);
+    process.exit(1);
+  }
   
   // Initialize and start automated trading service
   automatedTradingService.initialize().catch(error => {
