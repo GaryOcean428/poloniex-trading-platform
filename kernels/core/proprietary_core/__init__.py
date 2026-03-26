@@ -1,14 +1,22 @@
+"""Proprietary Core — ML and intelligence layer for Poloniex Trading Platform.
+
+Modules:
+    regime   — Market regime detector (Creator/Preserver/Dissolver)
+    coupling — Strategy coupling estimator (κ, R²)
+    sizing   — Adaptive position sizing based on regime + coupling
+    models   — Pydantic models for API validation
 """
-Proprietary Core - Trading Platform Kernels
 
-This package contains the core computational logic and machine learning models
-for the Poloniex Trading Platform. It is designed to be imported as a library
-by the API layer, maintaining separation between computation and web serving.
-"""
+from .regime import MarketRegime, RegimeDetector, RegimeState
+from .coupling import CouplingEstimator, CouplingState
+from .sizing import AdaptiveSizer, SizeDecision
 
-__version__ = "1.0.0"
-
-# Export main components
-# Components will be added as they are developed
-
-__all__ = []
+__all__ = [
+    "MarketRegime",
+    "RegimeDetector",
+    "RegimeState",
+    "CouplingEstimator",
+    "CouplingState",
+    "AdaptiveSizer",
+    "SizeDecision",
+]
