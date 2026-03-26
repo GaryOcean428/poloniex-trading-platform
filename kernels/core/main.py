@@ -1,16 +1,33 @@
-#!/usr/bin/env python3
+"""ML Worker Service — FastAPI application.
+
+Serves the intelligence layer (regime detection, coupling estimation,
+basin detection, strategy loop) and health endpoints.
 """
-Entry point for ML Worker service.
-"""
 
-import os
-import sys
-from pathlib import Path
+from fastapi import FastAPI
 
-# Import and run the FastAPI application
-from health import app
+from proprietary_core.api import router as intelligence_router
 
-if __name__ == "__main__":
-    import uvicorn
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+app = FastAPI(
+    title="Poloniex ML Worker",
+    description="Intelligence layer: regime detection, coupling estimation, basin detection, strategy loop.",
+    version="0.2.0",
+)
+
+# Mount intelligence layer endpoints
+app.include_router(intelligence_router)
+
+
+@app.get("/health")
+def health():
+    return {
+        "status": "ok",
+        "service": "ml-worker",
+        "version": "0.2.0",
+        "capabilities": [
+            "regime_detection",
+            "coupling_estimation",
+            "basin_detection",
+            "strategy_loop",
+        ],
+    }
