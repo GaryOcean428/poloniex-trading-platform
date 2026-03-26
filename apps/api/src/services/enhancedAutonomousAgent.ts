@@ -561,10 +561,13 @@ class EnhancedAutonomousAgent extends EventEmitter {
       })
     );
     
-    // Fire and forget - strategies will progress through their lifecycle independently
-    Promise.all(lifecyclePromises).then(() => {
+    // Await lifecycle completion so errors surface and session stats update correctly
+    try {
+      await Promise.all(lifecyclePromises);
       logger.info(`All ${strategies.length} strategies have completed their lifecycle for session ${session.id}`);
-    });
+    } catch (error) {
+      logger.error(`Unexpected error awaiting strategy lifecycles for session ${session.id}:`, error);
+    }
     
     logger.info(`Generated ${strategies.length} strategies for session ${session.id} using parallel execution`);
     this.emit('strategies:generated', { sessionId: session.id, count: strategies.length });
@@ -938,9 +941,20 @@ Generate the combination logic as executable JavaScript code.
         await this.retireStrategy(strategy, 'failed_backtest');
       }
       
-    } catch (error) {
-      logger.error(`Error in strategy lifecycle for ${strategy.name}:`, error);
-      await this.retireStrategy(strategy, 'error');
+    } catch (error: any) {
+      const errorMessage = error?.message || String(error);
+      // Distinguish transient errors (network, rate limit, DB connection) from permanent failures
+      const isTransient = /ECONNREFUSED|ETIMEDOUT|ENOTFOUND|ECONNRESET|rate limit|too many requests|503|429|connection|socket hang up/i.test(errorMessage);
+
+      if (isTransient) {
+        logger.warn(`[Lifecycle] Transient error for ${strategy.name}, will retry on next generation cycle: ${errorMessage}`);
+        // Reset strategy to 'generated' so next generation cycle can re-run lifecycle
+        strategy.status = 'generated';
+        await this.saveStrategy(strategy);
+      } else {
+        logger.error(`[Lifecycle] Permanent error for ${strategy.name}, retiring: ${errorMessage}`);
+        await this.retireStrategy(strategy, 'error');
+      }
     }
   }
 
@@ -1047,8 +1061,20 @@ Generate the combination logic as executable JavaScript code.
         logger.info(`Strategy ${strategy.name} failed paper trading (${reason}), retiring`);
         await this.retireStrategy(strategy, 'failed_paper_trading');
       }
-    } catch (error) {
-      logger.error(`Error checking paper trading results for ${strategy.name}:`, error);
+    } catch (error: any) {
+      const errorMessage = error?.message || String(error);
+      const isTransient = /ECONNREFUSED|ETIMEDOUT|ENOTFOUND|ECONNRESET|rate limit|too many requests|503|429|connection|socket hang up/i.test(errorMessage);
+      if (isTransient) {
+        logger.warn(`[Lifecycle] Transient error checking paper results for ${strategy.name}, scheduling retry: ${errorMessage}`);
+        // Retry the check after a shorter delay
+        setTimeout(() => {
+          this.checkPaperTradingResults(session, strategy).catch(retryError => {
+            logger.error(`[Lifecycle] Paper trading retry also failed for ${strategy.name}:`, retryError);
+          });
+        }, 60 * 60 * 1000); // Retry in 1 hour
+      } else {
+        logger.error(`[Lifecycle] Permanent error checking paper results for ${strategy.name}: ${errorMessage}`);
+      }
     }
   }
 

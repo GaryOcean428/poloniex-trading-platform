@@ -31,8 +31,8 @@ interface TradingConfig {
   leverage: number; // Leverage multiplier (e.g., 3)
   maxConcurrentPositions: number; // Maximum open positions at once
   tradingCycleSeconds: number; // Seconds between trading cycles (default: 60)
-  confidenceThreshold: number; // Minimum confidence to execute (0-100, default: 70)
-  signalScoreThreshold: number; // Minimum score magnitude for signals (default: 50)
+  confidenceThreshold: number; // Minimum confidence to execute (0-100, default: 65)
+  signalScoreThreshold: number; // Minimum raw score magnitude for signals (default: 30)
 }
 
 interface Position {
@@ -151,8 +151,8 @@ class FullyAutonomousTrader extends EventEmitter {
           leverage: parseFloat(row.leverage) || 3,
           maxConcurrentPositions: parseInt(row.max_concurrent_positions) || 3,
           tradingCycleSeconds: parseInt(row.trading_cycle_seconds) || 60,
-          confidenceThreshold: parseFloat(row.confidence_threshold) || 70,
-          signalScoreThreshold: parseFloat(row.signal_score_threshold) || 50
+          confidenceThreshold: parseFloat(row.confidence_threshold) || 65,
+          signalScoreThreshold: parseFloat(row.signal_score_threshold) || 30
         };
 
         this.configs.set(config.userId, config);
@@ -194,8 +194,8 @@ class FullyAutonomousTrader extends EventEmitter {
       leverage: config?.leverage || 3, // Conservative leverage
       maxConcurrentPositions: config?.maxConcurrentPositions || 3,
       tradingCycleSeconds: config?.tradingCycleSeconds || 60, // 1 minute default
-      confidenceThreshold: config?.confidenceThreshold || 70, // 70% minimum confidence
-      signalScoreThreshold: config?.signalScoreThreshold || 50 // ±50 score threshold
+      confidenceThreshold: config?.confidenceThreshold || 65, // 65% minimum confidence
+      signalScoreThreshold: config?.signalScoreThreshold || 30 // ±30 raw score threshold
     };
 
     // Save to database
@@ -509,33 +509,35 @@ class FullyAutonomousTrader extends EventEmitter {
       volatility: 0
     };
 
-    // Trend factor
+    // Trend factor (±30)
     if (analysis.trend === 'bullish') {
       factors.trend = 30;
     } else if (analysis.trend === 'bearish') {
       factors.trend = -30;
     }
 
-    // Momentum factor
+    // Momentum factor (±20)
     factors.momentum = analysis.momentum * 0.2; // Scale to -20 to 20
 
-    // ML factor
+    // ML factor (±30)
     if (analysis.mlPrediction.direction === 'UP') {
       factors.ml = analysis.mlPrediction.confidence * 0.3; // Scale to 0-30
     } else if (analysis.mlPrediction.direction === 'DOWN') {
       factors.ml = -analysis.mlPrediction.confidence * 0.3;
     }
 
-    // Volatility factor (prefer medium volatility)
+    // Volatility factor (0-10)
     if (analysis.volatility === 'medium') {
       factors.volatility = 10;
     } else if (analysis.volatility === 'low') {
       factors.volatility = 5;
     }
 
-    // Calculate total confidence
+    // Calculate raw score and normalize confidence to 0-100 scale
+    // Max possible |score| is ~90 (30+20+30+10), so normalize accordingly
     const totalScore = factors.trend + factors.momentum + factors.ml + factors.volatility;
-    confidence = Math.abs(totalScore);
+    const maxPossibleScore = 90;
+    confidence = Math.min(Math.round((Math.abs(totalScore) / maxPossibleScore) * 100), 100);
 
     if (totalScore > config.signalScoreThreshold) {
       action = 'BUY';
