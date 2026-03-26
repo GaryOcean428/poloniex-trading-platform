@@ -1067,8 +1067,10 @@ Generate the combination logic as executable JavaScript code.
       if (isTransient) {
         logger.warn(`[Lifecycle] Transient error checking paper results for ${strategy.name}, scheduling retry: ${errorMessage}`);
         // Retry the check after a shorter delay
-        setTimeout(async () => {
-          await this.checkPaperTradingResults(session, strategy);
+        setTimeout(() => {
+          this.checkPaperTradingResults(session, strategy).catch(retryError => {
+            logger.error(`[Lifecycle] Paper trading retry also failed for ${strategy.name}:`, retryError);
+          });
         }, 60 * 60 * 1000); // Retry in 1 hour
       } else {
         logger.error(`[Lifecycle] Permanent error checking paper results for ${strategy.name}: ${errorMessage}`);
