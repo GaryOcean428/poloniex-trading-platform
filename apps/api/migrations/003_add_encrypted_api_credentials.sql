@@ -69,11 +69,14 @@ END;
 $$ language 'plpgsql';
 
 -- Apply triggers
+DROP TRIGGER IF EXISTS update_api_credentials_updated_at ON api_credentials;
 CREATE TRIGGER update_api_credentials_updated_at BEFORE UPDATE ON api_credentials
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_trading_sessions_updated_at ON trading_sessions;
 CREATE TRIGGER update_trading_sessions_updated_at BEFORE UPDATE ON trading_sessions
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_user_settings_updated_at ON user_settings;
 CREATE TRIGGER update_user_settings_updated_at BEFORE UPDATE ON user_settings
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();

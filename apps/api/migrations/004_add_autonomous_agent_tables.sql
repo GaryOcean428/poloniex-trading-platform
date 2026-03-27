@@ -18,8 +18,8 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
   updated_at TIMESTAMP DEFAULT NOW()
 );
 
-CREATE INDEX idx_agent_sessions_user_id ON agent_sessions(user_id);
-CREATE INDEX idx_agent_sessions_status ON agent_sessions(status);
+CREATE INDEX IF NOT EXISTS idx_agent_sessions_user_id ON agent_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_agent_sessions_status ON agent_sessions(status);
 
 -- Agent Strategies Table
 CREATE TABLE IF NOT EXISTS agent_strategies (
@@ -38,9 +38,9 @@ CREATE TABLE IF NOT EXISTS agent_strategies (
   retired_at TIMESTAMP
 );
 
-CREATE INDEX idx_agent_strategies_session_id ON agent_strategies(session_id);
-CREATE INDEX idx_agent_strategies_status ON agent_strategies(status);
-CREATE INDEX idx_agent_strategies_backtest_score ON agent_strategies(backtest_score DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_strategies_session_id ON agent_strategies(session_id);
+CREATE INDEX IF NOT EXISTS idx_agent_strategies_status ON agent_strategies(status);
+CREATE INDEX IF NOT EXISTS idx_agent_strategies_backtest_score ON agent_strategies(backtest_score DESC);
 
 -- Agent Learnings Table
 CREATE TABLE IF NOT EXISTS agent_learnings (
@@ -54,9 +54,9 @@ CREATE TABLE IF NOT EXISTS agent_learnings (
   created_at TIMESTAMP DEFAULT NOW()
 );
 
-CREATE INDEX idx_agent_learnings_session_id ON agent_learnings(session_id);
-CREATE INDEX idx_agent_learnings_type ON agent_learnings(learning_type);
-CREATE INDEX idx_agent_learnings_confidence ON agent_learnings(confidence DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_learnings_session_id ON agent_learnings(session_id);
+CREATE INDEX IF NOT EXISTS idx_agent_learnings_type ON agent_learnings(learning_type);
+CREATE INDEX IF NOT EXISTS idx_agent_learnings_confidence ON agent_learnings(confidence DESC);
 
 -- Agent Activity Log Table
 CREATE TABLE IF NOT EXISTS agent_activity_log (
@@ -68,9 +68,9 @@ CREATE TABLE IF NOT EXISTS agent_activity_log (
   created_at TIMESTAMP DEFAULT NOW()
 );
 
-CREATE INDEX idx_agent_activity_log_session_id ON agent_activity_log(session_id);
-CREATE INDEX idx_agent_activity_log_type ON agent_activity_log(activity_type);
-CREATE INDEX idx_agent_activity_log_created_at ON agent_activity_log(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_activity_log_session_id ON agent_activity_log(session_id);
+CREATE INDEX IF NOT EXISTS idx_agent_activity_log_type ON agent_activity_log(activity_type);
+CREATE INDEX IF NOT EXISTS idx_agent_activity_log_created_at ON agent_activity_log(created_at DESC);
 
 -- Update timestamp trigger function
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -82,6 +82,7 @@ END;
 $$ language 'plpgsql';
 
 -- Add trigger to agent_sessions
+DROP TRIGGER IF EXISTS update_agent_sessions_updated_at ON agent_sessions;
 CREATE TRIGGER update_agent_sessions_updated_at BEFORE UPDATE ON agent_sessions
 FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 

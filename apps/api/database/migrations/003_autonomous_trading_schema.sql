@@ -228,10 +228,12 @@ END;
 $$ language 'plpgsql';
 
 -- Add triggers for updated_at
+DROP TRIGGER IF EXISTS update_trading_config_updated_at ON trading_config;
 CREATE TRIGGER update_trading_config_updated_at 
     BEFORE UPDATE ON trading_config 
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_autonomous_strategies_updated_at ON autonomous_strategies;
 CREATE TRIGGER update_autonomous_strategies_updated_at 
     BEFORE UPDATE ON autonomous_strategies 
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
@@ -289,6 +291,7 @@ GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO postgres;
 
 -- Insert sample data for testing
 INSERT INTO strategy_generations (generation_number, population_size, average_fitness, best_fitness, diversity_score, mutation_rate, crossover_rate)
-VALUES (0, 20, 0.0, 0.0, 1.0, 0.1, 0.7);
-
-COMMIT;
+SELECT 0, 20, 0.0, 0.0, 1.0, 0.1, 0.7
+WHERE NOT EXISTS (
+    SELECT 1 FROM strategy_generations WHERE generation_number = 0
+);

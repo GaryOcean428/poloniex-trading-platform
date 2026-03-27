@@ -478,15 +478,19 @@ END;
 $$ language 'plpgsql';
 
 -- Apply update triggers to relevant tables
+DROP TRIGGER IF EXISTS update_futures_accounts_updated_at ON futures_accounts;
 CREATE TRIGGER update_futures_accounts_updated_at BEFORE UPDATE ON futures_accounts
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_futures_positions_updated_at ON futures_positions;
 CREATE TRIGGER update_futures_positions_updated_at BEFORE UPDATE ON futures_positions
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_futures_orders_updated_at ON futures_orders;
 CREATE TRIGGER update_futures_orders_updated_at BEFORE UPDATE ON futures_orders
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_futures_risk_limits_updated_at ON futures_risk_limits;
 CREATE TRIGGER update_futures_risk_limits_updated_at BEFORE UPDATE ON futures_risk_limits
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
@@ -572,6 +576,12 @@ SELECT
 FROM users u
 JOIN futures_accounts fa ON u.id = fa.user_id
 WHERE u.username = 'GaryOcean'
+AND NOT EXISTS (
+    SELECT 1
+    FROM strategy_execution_logs sel
+    WHERE sel.strategy_id = 'MIGRATION_001'
+      AND sel.action = 'CREATE_SCHEMA'
+)
 LIMIT 1;
 
 -- Success message
