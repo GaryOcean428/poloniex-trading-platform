@@ -83,3 +83,11 @@ User follow-up: check past 10 PRs and ensure everything has been covered from al
   - direct database execution via `DATABASE_URL`
 - It fails clearly if neither migration credential path is configured.
 - It optionally checks deployed backend health after migration using `RAILWAY_BACKEND_HEALTH_URL`.
+
+
+## Runtime Migration Fix Update
+- Railway deploy logs exposed a Postgres 42P16 failure in `003_autonomous_trading_schema.sql`.
+- Root cause: `002_backtesting_schema.sql` and `003_autonomous_trading_schema.sql` both defined `strategy_performance_summary`, but with incompatible column layouts (`name` first vs `id` first).
+- Fixed by renaming the autonomous-trading view in migration 003 to `autonomous_strategy_performance_summary`.
+- Added a regression test to detect duplicate view names across SQL migrations so incompatible view replacements are caught before deploy.
+- Verification: `yarn build:api` ✅ and backend migration safety tests now `6 passed` ✅.

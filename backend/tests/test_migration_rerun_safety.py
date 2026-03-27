@@ -129,3 +129,27 @@ def test_typescript_runner_uses_per_migration_transaction() -> None:
     assert "await client.query('BEGIN')" in runner_content
     assert "await client.query('COMMIT')" in runner_content
     assert "await client.query('ROLLBACK')" in runner_content
+
+
+# Feature: distinct views should not collide across migration files with incompatible schemas
+def test_no_duplicate_view_names_across_migrations() -> None:
+    create_view_pattern = re.compile(
+        r"\bCREATE\s+(?:OR\s+REPLACE\s+)?VIEW\s+([a-zA-Z_][a-zA-Z0-9_]*)\b",
+        re.IGNORECASE,
+    )
+    seen: dict[str, Path] = {}
+    duplicates: list[str] = []
+
+    for sql_file in _sql_files():
+        raw = sql_file.read_text(encoding="utf-8")
+        sanitized = _strip_line_comments(_strip_dollar_quoted_blocks(raw))
+
+        for match in create_view_pattern.finditer(sanitized):
+            view_name = match.group(1).lower()
+            prior = seen.get(view_name)
+            if prior and prior != sql_file:
+                duplicates.append(f"{view_name}: {prior.name} and {sql_file.name}")
+            else:
+                seen[view_name] = sql_file
+
+    assert not duplicates, "\n".join(duplicates)
