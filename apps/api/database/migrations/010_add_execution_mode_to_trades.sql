@@ -10,8 +10,23 @@ ALTER TABLE trades ADD COLUMN IF NOT EXISTS rationale TEXT;
 -- Add strategy_version column
 ALTER TABLE trades ADD COLUMN IF NOT EXISTS strategy_version VARCHAR(50);
 
--- Add agent_session_id column
-ALTER TABLE trades ADD COLUMN IF NOT EXISTS agent_session_id VARCHAR(100) REFERENCES agent_sessions(id) ON DELETE SET NULL;
+-- Add agent_session_id column (FK added only if agent_sessions table exists)
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'trades' AND column_name = 'agent_session_id' AND table_schema = current_schema()
+    ) THEN
+        IF EXISTS (
+            SELECT 1 FROM information_schema.tables
+            WHERE table_name = 'agent_sessions' AND table_schema = current_schema()
+        ) THEN
+            ALTER TABLE trades ADD COLUMN agent_session_id VARCHAR(100) REFERENCES agent_sessions(id) ON DELETE SET NULL;
+        ELSE
+            ALTER TABLE trades ADD COLUMN agent_session_id VARCHAR(100);
+        END IF;
+    END IF;
+END $$;
 
 -- Add confidence_score for trade decisions
 ALTER TABLE trades ADD COLUMN IF NOT EXISTS confidence_score DECIMAL(5, 2);
