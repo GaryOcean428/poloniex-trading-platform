@@ -99,11 +99,21 @@ router.post('/migrate', async (req, res) => {
 
       const migrationPath = path.join(migrationsDir, migrationFile);
       const migrationSql = fs.readFileSync(migrationPath, 'utf8');
-      await pool.query(migrationSql);
-      await pool.query(
-        'INSERT INTO schema_migrations (migration_name) VALUES ($1) ON CONFLICT (migration_name) DO NOTHING',
-        [migrationFile]
-      );
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query(migrationSql);
+        await client.query(
+          'INSERT INTO schema_migrations (migration_name) VALUES ($1) ON CONFLICT (migration_name) DO NOTHING',
+          [migrationFile]
+        );
+        await client.query('COMMIT');
+      } catch (migrationError) {
+        await client.query('ROLLBACK');
+        throw migrationError;
+      } finally {
+        client.release();
+      }
       results.migrationsApplied.push(migrationFile);
     }
 
