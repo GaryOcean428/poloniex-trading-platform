@@ -70,3 +70,16 @@ User follow-up: check past 10 PRs and ensure everything has been covered from al
 
 ## Remaining Runtime Constraint
 - End-to-end backend startup health in this workspace still requires real deployment environment variables (`DATABASE_URL`, `JWT_SECRET`, `FRONTEND_URL`, `API_ENCRYPTION_KEY`), which are not present in this container.
+
+
+## GitHub Automation Update
+- Added `.github/workflows/auto-migrate-on-main.yml`.
+- The workflow runs on:
+  - push to `main`
+  - merged PRs into `main`
+  - manual dispatch
+- It supports two migration modes:
+  - Railway remote execution via `RAILWAY_TOKEN`, `RAILWAY_PROJECT_ID`, `RAILWAY_SERVICE`, and optional `RAILWAY_ENVIRONMENT`
+  - direct database execution via `DATABASE_URL`
+- It fails clearly if neither migration credential path is configured.
+- It optionally checks deployed backend health after migration using `RAILWAY_BACKEND_HEALTH_URL`.
