@@ -193,7 +193,7 @@ if (process.env.NODE_ENV === 'production') {
   if (process.env.FRONTEND_STANDALONE === 'true') {
     logger.warn('FRONTEND_STANDALONE=true: skipping static frontend serving in backend');
   } else {
-    const distPath = path.resolve(__dirname, '../../frontend/dist');
+    const distPath = path.resolve(__dirname, '../../web/dist');
     logger.info(`Checking for frontend dist at: ${distPath}`);
     
     if (fs.existsSync(distPath)) {

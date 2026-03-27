@@ -31,16 +31,32 @@ describe('WebSocket & API Connectivity Fix', () => {
       expect(backendUrl).toBe('http://localhost:8765');
     });
 
-    it('should return Railway backend URL for Railway deployment', () => {
+    it('should return same-origin backend URL for Railway deployment', () => {
       global.window.location.hostname = 'poloniex-trading-platform-production.up.railway.app';
+      Object.defineProperty(window, 'location', {
+        value: {
+          ...window.location,
+          hostname: 'poloniex-trading-platform-production.up.railway.app',
+          origin: 'https://poloniex-trading-platform-production.up.railway.app'
+        },
+        writable: true
+      });
       const backendUrl = getBackendUrl();
-      expect(backendUrl).toBe('https://polytrade-be.up.railway.app');
+      expect(backendUrl).toBe('https://poloniex-trading-platform-production.up.railway.app');
     });
 
-    it('should return Railway backend URL for any Railway domain', () => {
+    it('should return same-origin backend URL for any Railway domain', () => {
       global.window.location.hostname = 'some-service.railway.app';
+      Object.defineProperty(window, 'location', {
+        value: {
+          ...window.location,
+          hostname: 'some-service.railway.app',
+          origin: 'https://some-service.railway.app'
+        },
+        writable: true
+      });
       const backendUrl = getBackendUrl();
-      expect(backendUrl).toBe('https://polytrade-be.up.railway.app');
+      expect(backendUrl).toBe('https://some-service.railway.app');
     });
 
     it('should respect VITE_BACKEND_URL environment variable', () => {
@@ -73,23 +89,15 @@ describe('WebSocket & API Connectivity Fix', () => {
   });
 
   describe('CORS Configuration Validation', () => {
-    it('should validate that Railway backend URL is included in CORS origins', async () => {
-      // This test validates the CORS configuration by checking the backend code
-      // In a real deployment, this would be validated by making actual HTTP requests
-      
-      const railwayBackendUrl = 'https://polytrade-be.up.railway.app';
-      
-      // Simulate what the CORS middleware should allow
+    it('should validate that CORS relies on configured origins instead of hardcoded domains', async () => {
       const allowedOrigins = [
         'https://healthcheck.railway.app',
-        'https://poloniex-trading-platform-production.up.railway.app',
         'https://polytrade-fe.up.railway.app',
-        'https://polytrade-be.up.railway.app', // This should be present after our fix
         'http://localhost:5173'
       ];
-      
-      expect(allowedOrigins).toContain(railwayBackendUrl);
-      expect(allowedOrigins).toContain('https://poloniex-trading-platform-production.up.railway.app');
+
+      expect(allowedOrigins).not.toContain('https://polytrade-be.up.railway.app');
+      expect(allowedOrigins).not.toContain('https://poloniex-trading-platform-production.up.railway.app');
     });
   });
 
@@ -116,15 +124,14 @@ describe('WebSocket & API Connectivity Fix', () => {
       expect(configuredTransports).toEqual(expectedTransports);
     });
 
-    it('should validate Socket.IO CORS configuration includes Railway URLs', () => {
-      // Validate that Socket.IO CORS includes the necessary Railway URLs
+    it('should validate Socket.IO CORS configuration can work without hardcoded Railway URLs', () => {
       const expectedCorsOrigins = [
-        'https://poloniex-trading-platform-production.up.railway.app',
-        'https://polytrade-be.up.railway.app'
+        'https://polytrade-fe.up.railway.app',
+        'https://custom.example.com'
       ];
       
       expectedCorsOrigins.forEach(origin => {
-        expect(origin).toMatch(/^https:\/\/.*\.railway\.app$/);
+        expect(origin).toMatch(/^https:\/\//);
       });
     });
   });

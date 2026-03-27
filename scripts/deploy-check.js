@@ -9,6 +9,9 @@ import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
+const apiDir = 'apps/api';
+const webDir = 'apps/web';
+
 const colors = {
   green: '\x1b[32m',
   red: '\x1b[31m',
@@ -52,30 +55,30 @@ function checkEnvironment() {
   if (checkFile('railway.json', 'Root railway.json')) passed++;
 
   checks++;
-  if (checkFile('frontend/railway.json', 'Frontend railway.json')) passed++;
+  if (checkFile(`${webDir}/railpack.json`, 'Web railpack.json')) passed++;
 
   checks++;
-  if (checkFile('backend/railway.json', 'Backend railway.json')) passed++;
+  if (checkFile(`${apiDir}/railpack.json`, 'API railpack.json')) passed++;
 
   checks++;
-  if (checkFile('frontend/nixpacks.toml', 'Frontend nixpacks.toml')) passed++;
+  if (checkFile(`${webDir}/serve.js`, 'Web serve.js')) passed++;
 
   checks++;
-  if (checkFile('backend/nixpacks.toml', 'Backend nixpacks.toml')) passed++;
+  if (checkFile(`${apiDir}/src/index.ts`, 'API entrypoint')) passed++;
 
   // Check package.json scripts
   checks++;
-  if (checkFile('frontend/package.json', 'Frontend package.json')) passed++;
+  if (checkFile(`${webDir}/package.json`, 'Web package.json')) passed++;
 
   checks++;
-  if (checkFile('backend/package.json', 'Backend package.json')) passed++;
+  if (checkFile(`${apiDir}/package.json`, 'API package.json')) passed++;
 
   // Check environment files
   checks++;
-  if (checkFile('frontend/.env.production', 'Frontend production env')) passed++;
+  if (checkFile('.env.example', 'Root environment example')) passed++;
 
   checks++;
-  if (checkFile('backend/.env.example', 'Backend env example')) passed++;
+  if (checkFile('.nvmrc', 'Node version file')) passed++;
 
   // Summary
   log('\n📊 Deployment Check Summary:\n', 'yellow');

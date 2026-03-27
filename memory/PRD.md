@@ -47,3 +47,26 @@ User follow-up: check past 10 PRs and ensure everything has been covered from al
 - Redeploy with the patched migrations.
 - If any migration still fails at runtime, capture the exact failing filename + SQLSTATE and extend the same idempotency pattern there.
 - Optionally add a migration lint/test step so future PRs cannot reintroduce rerun blockers.
+
+
+## Deployment Readiness Update
+- Fixed stale deployment/readiness scripts that still referenced legacy `backend/` and `frontend/` paths after the monorepo moved to `apps/api` and `apps/web`.
+- Updated Railway validation scripts to correctly inspect `apps/api` and `apps/web`, accept Node 20, and understand Railpack-driven builds.
+- Updated service Railpack configs so build/start commands are correct for service-root execution (`yarn run build`, `yarn run start`, `node serve.js`).
+- Removed hardcoded deployment URL assumptions from backend CORS and frontend environment helpers, and corrected backend static frontend path resolution to `../../web/dist`.
+- Removed a hardcoded backend DNS prefetch hint from `apps/web/index.html`.
+- Rebuilt both services successfully and re-ran all deployment validators.
+- Verified frontend runtime health locally via `/healthz` after build.
+- Re-ran focused frontend regression tests (`connectivity-fix`, `websocket-config`) and backend migration safety tests; all passed.
+
+## Deployment Validation Results
+- `yarn build:api` ✅
+- `yarn build:web` ✅
+- `yarn deploy:check` ✅
+- `yarn railway:validate` ✅
+- `node scripts/railway-compliance-check.mjs` ✅ (warning only: root `nixpacks.toml` is ignored because `railway.json` explicitly uses RAILPACK)
+- `node scripts/verify-frontend-deployment.js` ✅
+- Frontend health endpoint `/healthz` ✅
+
+## Remaining Runtime Constraint
+- End-to-end backend startup health in this workspace still requires real deployment environment variables (`DATABASE_URL`, `JWT_SECRET`, `FRONTEND_URL`, `API_ENCRYPTION_KEY`), which are not present in this container.

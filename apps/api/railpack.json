@@ -16,13 +16,13 @@
     },
     "build": {
       "commands": [
-        "yarn workspace @poloniex-platform/api run build"
+        "yarn run build"
       ],
       "inputs": [{"step": "install"}]
     }
   },
   "deploy": {
-    "startCommand": "yarn workspace @poloniex-platform/api run start",
+    "startCommand": "yarn run start",
     "inputs": [{"step": "build"}]
   }
 }

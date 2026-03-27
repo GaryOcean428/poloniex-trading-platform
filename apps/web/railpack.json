@@ -17,13 +17,13 @@
     },
     "build": {
       "commands": [
-        "yarn workspace @poloniex-platform/web run build"
+        "yarn run build"
       ],
       "inputs": [{"step": "install"}]
     }
   },
   "deploy": {
-    "startCommand": "node apps/web/serve.js",
+    "startCommand": "node serve.js",
     "inputs": [{"step": "build"}]
   }
 }
