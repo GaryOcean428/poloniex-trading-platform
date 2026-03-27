@@ -262,7 +262,9 @@ WHERE status = 'completed'
 GROUP BY DATE(timestamp)
 ORDER BY date DESC;
 
-CREATE OR REPLACE VIEW strategy_performance_summary AS
+-- Use a distinct name from the backtesting view created in migration 002.
+-- PostgreSQL cannot CREATE OR REPLACE a view when column names/order change.
+CREATE OR REPLACE VIEW autonomous_strategy_performance_summary AS
 SELECT 
     s.id,
     s.name,
