@@ -63,6 +63,7 @@ CREATE INDEX IF NOT EXISTS idx_trades_user_status ON trades(user_id, status);
 CREATE INDEX IF NOT EXISTS idx_trades_symbol ON trades(symbol);
 
 -- Add trigger for automatic timestamp updates
+DROP TRIGGER IF EXISTS update_trades_updated_at ON trades;
 CREATE TRIGGER update_trades_updated_at 
     BEFORE UPDATE ON trades 
     FOR EACH ROW 

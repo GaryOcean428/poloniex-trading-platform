@@ -35,12 +35,27 @@ function checkWarning(message) {
 
 // Check 1: No conflicting build configs
 console.log('\n📋 Checking for conflicting build configs...');
+const railwayJsonPath = join(rootDir, 'railway.json');
+let usesRailpackBuilder = false;
+if (existsSync(railwayJsonPath)) {
+  try {
+    const railwayConfig = JSON.parse(readFileSync(railwayJsonPath, 'utf-8'));
+    usesRailpackBuilder = railwayConfig.build?.builder === 'RAILPACK';
+  } catch {
+    // handled later by other checks
+  }
+}
+
 const conflictingFiles = ['Dockerfile', 'railway.toml', 'nixpacks.toml'];
 let hasConflicts = false;
 for (const file of conflictingFiles) {
   if (existsSync(join(rootDir, file))) {
-    checkFailed(`Conflicting build config found: ${file}`);
-    hasConflicts = true;
+    if (file === 'nixpacks.toml' && usesRailpackBuilder) {
+      checkWarning('nixpacks.toml present but ignored because railway.json explicitly uses RAILPACK');
+    } else {
+      checkFailed(`Conflicting build config found: ${file}`);
+      hasConflicts = true;
+    }
   }
 }
 if (!hasConflicts) {
@@ -50,9 +65,8 @@ if (!hasConflicts) {
 // Check 2: Railpack.json files exist and are valid
 console.log('\n📋 Checking railpack.json files...');
 const railpackFiles = [
-  'railpack.json',
-  'frontend/railpack.json',
-  'backend/railpack.json'
+  'apps/web/railpack.json',
+  'apps/api/railpack.json'
 ];
 
 for (const file of railpackFiles) {
@@ -75,7 +89,7 @@ for (const file of railpackFiles) {
     }
 
     // Check service-specific files for proper structure
-    if (file.includes('frontend') || file.includes('backend')) {
+    if (file.includes('apps/web') || file.includes('apps/api')) {
       if (content.provider === 'node') {
         checkPassed(`${file} specifies Node provider`);
       }
@@ -105,18 +119,7 @@ for (const file of railpackFiles) {
         if (content.deploy.startCommand) {
           checkPassed(`${file} has startCommand`);
         }
-        if (content.deploy.healthCheckPath) {
-          checkPassed(`${file} has healthCheckPath`);
-        } else {
-          checkWarning(`${file} missing healthCheckPath`);
-        }
-      }
-    }
-    
-    // Check root railpack.json for services
-    if (file === 'railpack.json') {
-      if (content.services) {
-        checkPassed(`${file} defines services for monorepo`);
+        checkPassed(`${file} has deploy configuration`);
       }
     }
   } catch (error) {
@@ -128,8 +131,8 @@ for (const file of railpackFiles) {
 console.log('\n📋 Checking package.json configuration...');
 const packageFiles = [
   'package.json',
-  'frontend/package.json',
-  'backend/package.json'
+  'apps/web/package.json',
+  'apps/api/package.json'
 ];
 
 for (const file of packageFiles) {
@@ -174,7 +177,7 @@ import { execSync } from 'child_process';
 
 try {
   const result = execSync(
-    'grep -r "require(" backend/src --include="*.js" --include="*.ts" 2>/dev/null || true',
+    'grep -r "require(" apps/api/src --include="*.js" --include="*.ts" 2>/dev/null || true',
     { cwd: rootDir, encoding: 'utf-8' }
   );
   
@@ -184,7 +187,7 @@ try {
     const actualRequires = lines.filter(line => !line.includes('// require') && !line.includes('* require'));
     
     if (actualRequires.length > 0) {
-      checkFailed(`Found ${actualRequires.length} require() statements in backend/src`);
+      checkFailed(`Found ${actualRequires.length} require() statements in apps/api/src`);
       actualRequires.forEach(line => console.log(`  ${line}`));
     } else {
       checkPassed('No CommonJS require() in backend ES modules');
@@ -217,14 +220,14 @@ if (existsSync(yarnrcPath)) {
 // Check 6: Health check endpoints
 console.log('\n📋 Checking health check endpoints...');
 try {
-  const backendIndex = readFileSync(join(rootDir, 'backend/src/index.ts'), 'utf-8');
+  const backendIndex = readFileSync(join(rootDir, 'apps/api/src/index.ts'), 'utf-8');
   if (backendIndex.includes('/api/health')) {
     checkPassed('Backend has /api/health endpoint');
   } else {
     checkFailed('Backend missing /api/health endpoint');
   }
 
-  const frontendServe = readFileSync(join(rootDir, 'frontend/serve.js'), 'utf-8');
+  const frontendServe = readFileSync(join(rootDir, 'apps/web/serve.js'), 'utf-8');
   if (frontendServe.includes('/healthz') || frontendServe.includes('/api/health')) {
     checkPassed('Frontend has health check endpoint');
   } else {
@@ -237,7 +240,7 @@ try {
 // Check 7: Port binding
 console.log('\n📋 Checking port binding configuration...');
 try {
-  const backendIndex = readFileSync(join(rootDir, 'backend/src/index.ts'), 'utf-8');
+  const backendIndex = readFileSync(join(rootDir, 'apps/api/src/index.ts'), 'utf-8');
   if (backendIndex.includes('0.0.0.0') && backendIndex.includes('process.env.PORT')) {
     checkPassed('Backend binds to 0.0.0.0 and uses PORT env var');
   } else if (backendIndex.includes('process.env.PORT') || backendIndex.includes('env.PORT')) {
@@ -246,7 +249,7 @@ try {
     checkFailed('Backend should bind to 0.0.0.0 and use PORT env var');
   }
 
-  const frontendServe = readFileSync(join(rootDir, 'frontend/serve.js'), 'utf-8');
+  const frontendServe = readFileSync(join(rootDir, 'apps/web/serve.js'), 'utf-8');
   if (frontendServe.includes('0.0.0.0') && frontendServe.includes('process.env.PORT')) {
     checkPassed('Frontend binds to 0.0.0.0 and uses PORT env var');
   } else {

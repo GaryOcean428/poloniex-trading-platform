@@ -80,19 +80,116 @@ ADD COLUMN IF NOT EXISTS seasonal_performance JSONB DEFAULT '{}',
 ADD COLUMN IF NOT EXISTS performance_metrics JSONB DEFAULT '{}';
 
 -- Add constraints for data integrity
-ALTER TABLE autonomous_strategies
-ADD CONSTRAINT chk_algorithm CHECK (algorithm IN ('MovingAverageCrossover', 'RSI', 'MACD', 'BollingerBands', 'Custom')),
-ADD CONSTRAINT chk_type CHECK (type IN ('manual', 'automated', 'ml', 'dqn')),
-ADD CONSTRAINT chk_status CHECK (status IN ('created', 'backtesting', 'backtested', 'paper_trading', 'live', 'retired', 'error')),
-ADD CONSTRAINT chk_symbol CHECK (symbol ~ '^[A-Z]{2,10}$'),
-ADD CONSTRAINT chk_timeframe CHECK (timeframe IN ('1m', '5m', '15m', '30m', '1h', '4h', '1d', '1w')),
-ADD CONSTRAINT chk_fitness_score CHECK (fitness_score >= 0 AND fitness_score <= 1),
-ADD CONSTRAINT chk_generation CHECK (generation >= 0),
-ADD CONSTRAINT chk_win_rate CHECK (win_rate >= 0 AND win_rate <= 1),
-ADD CONSTRAINT chk_sharpe_ratio CHECK (sharpe_ratio > -10 AND sharpe_ratio < 10),
-ADD CONSTRAINT chk_max_drawdown CHECK (max_drawdown >= 0 AND max_drawdown <= 1),
-ADD CONSTRAINT chk_profit_factor CHECK (profit_factor > 0),
-ADD CONSTRAINT chk_kelly_criterion CHECK (kelly_criterion >= 0 AND kelly_criterion <= 1);
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'chk_algorithm'
+          AND conrelid = 'autonomous_strategies'::regclass
+    ) THEN
+        ALTER TABLE autonomous_strategies
+        ADD CONSTRAINT chk_algorithm CHECK (algorithm IN ('MovingAverageCrossover', 'RSI', 'MACD', 'BollingerBands', 'Custom'));
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'chk_type'
+          AND conrelid = 'autonomous_strategies'::regclass
+    ) THEN
+        ALTER TABLE autonomous_strategies
+        ADD CONSTRAINT chk_type CHECK (type IN ('manual', 'automated', 'ml', 'dqn'));
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'chk_status'
+          AND conrelid = 'autonomous_strategies'::regclass
+    ) THEN
+        ALTER TABLE autonomous_strategies
+        ADD CONSTRAINT chk_status CHECK (status IN ('created', 'backtesting', 'backtested', 'paper_trading', 'live', 'retired', 'error'));
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'chk_symbol'
+          AND conrelid = 'autonomous_strategies'::regclass
+    ) THEN
+        ALTER TABLE autonomous_strategies
+        ADD CONSTRAINT chk_symbol CHECK (symbol ~ '^[A-Z]{2,10}$');
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'chk_timeframe'
+          AND conrelid = 'autonomous_strategies'::regclass
+    ) THEN
+        ALTER TABLE autonomous_strategies
+        ADD CONSTRAINT chk_timeframe CHECK (timeframe IN ('1m', '5m', '15m', '30m', '1h', '4h', '1d', '1w'));
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'chk_fitness_score'
+          AND conrelid = 'autonomous_strategies'::regclass
+    ) THEN
+        ALTER TABLE autonomous_strategies
+        ADD CONSTRAINT chk_fitness_score CHECK (fitness_score >= 0 AND fitness_score <= 1);
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'chk_generation'
+          AND conrelid = 'autonomous_strategies'::regclass
+    ) THEN
+        ALTER TABLE autonomous_strategies
+        ADD CONSTRAINT chk_generation CHECK (generation >= 0);
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'chk_win_rate'
+          AND conrelid = 'autonomous_strategies'::regclass
+    ) THEN
+        ALTER TABLE autonomous_strategies
+        ADD CONSTRAINT chk_win_rate CHECK (win_rate >= 0 AND win_rate <= 1);
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'chk_sharpe_ratio'
+          AND conrelid = 'autonomous_strategies'::regclass
+    ) THEN
+        ALTER TABLE autonomous_strategies
+        ADD CONSTRAINT chk_sharpe_ratio CHECK (sharpe_ratio > -10 AND sharpe_ratio < 10);
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'chk_max_drawdown'
+          AND conrelid = 'autonomous_strategies'::regclass
+    ) THEN
+        ALTER TABLE autonomous_strategies
+        ADD CONSTRAINT chk_max_drawdown CHECK (max_drawdown >= 0 AND max_drawdown <= 1);
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'chk_profit_factor'
+          AND conrelid = 'autonomous_strategies'::regclass
+    ) THEN
+        ALTER TABLE autonomous_strategies
+        ADD CONSTRAINT chk_profit_factor CHECK (profit_factor > 0);
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'chk_kelly_criterion'
+          AND conrelid = 'autonomous_strategies'::regclass
+    ) THEN
+        ALTER TABLE autonomous_strategies
+        ADD CONSTRAINT chk_kelly_criterion CHECK (kelly_criterion >= 0 AND kelly_criterion <= 1);
+    END IF;
+END $$;
 
 -- Create indexes for the new columns
 CREATE INDEX IF NOT EXISTS idx_autonomous_strategies_algorithm ON autonomous_strategies(algorithm);
@@ -162,6 +259,12 @@ SELECT
 FROM users u
 JOIN futures_accounts fa ON u.id = fa.user_id
 WHERE u.username = 'GaryOcean'
+AND NOT EXISTS (
+    SELECT 1
+    FROM strategy_execution_logs sel
+    WHERE sel.strategy_id = 'MIGRATION_004'
+      AND sel.action = 'UPDATE_SCHEMA'
+)
 LIMIT 1;
 
 -- Migration completed successfully

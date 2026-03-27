@@ -1,0 +1,85 @@
+name: Auto Migrate on Main
+
+on:
+  push:
+    branches:
+      - main
+  pull_request_target:
+    types:
+      - closed
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: auto-migrate-${{ github.event.pull_request.merge_commit_sha || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  migrate:
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request_target' && github.event.pull_request.merged == true)
+    runs-on: ubuntu-latest
+    env:
+      NODE_ENV: production
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+      RAILWAY_SERVICE: ${{ secrets.RAILWAY_SERVICE }}
+      RAILWAY_ENVIRONMENT: ${{ secrets.RAILWAY_ENVIRONMENT }}
+      RAILWAY_BACKEND_HEALTH_URL: ${{ secrets.RAILWAY_BACKEND_HEALTH_URL }}
+    steps:
+      - name: Checkout merged code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'yarn'
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      - name: Run migrations on Railway service
+        if: ${{ env.RAILWAY_TOKEN != '' && env.RAILWAY_PROJECT_ID != '' && env.RAILWAY_SERVICE != '' }}
+        run: |
+          npm i -g @railway/cli
+          if [ -n "$RAILWAY_ENVIRONMENT" ]; then
+            railway run \
+              -p "$RAILWAY_PROJECT_ID" \
+              -s "$RAILWAY_SERVICE" \
+              -e "$RAILWAY_ENVIRONMENT" \
+              --no-local \
+              node apps/api/run-migration.js all
+          else
+            railway run \
+              -p "$RAILWAY_PROJECT_ID" \
+              -s "$RAILWAY_SERVICE" \
+              --no-local \
+              node apps/api/run-migration.js all
+          fi
+
+      - name: Run migrations via DATABASE_URL fallback
+        if: ${{ !(env.RAILWAY_TOKEN != '' && env.RAILWAY_PROJECT_ID != '' && env.RAILWAY_SERVICE != '') && env.DATABASE_URL != '' }}
+        run: node apps/api/run-migration.js all
+
+      - name: Fail when migration secrets are missing
+        if: ${{ !(env.RAILWAY_TOKEN != '' && env.RAILWAY_PROJECT_ID != '' && env.RAILWAY_SERVICE != '') && env.DATABASE_URL == '' }}
+        run: |
+          echo "Missing migration credentials. Configure either:" >&2
+          echo "- RAILWAY_TOKEN + RAILWAY_PROJECT_ID + RAILWAY_SERVICE (+ optional RAILWAY_ENVIRONMENT)" >&2
+          echo "- or DATABASE_URL" >&2
+          exit 1
+
+      - name: Check backend health after migration
+        if: ${{ env.RAILWAY_BACKEND_HEALTH_URL != '' }}
+        run: |
+          curl --fail --silent --show-error "$RAILWAY_BACKEND_HEALTH_URL/api/health"

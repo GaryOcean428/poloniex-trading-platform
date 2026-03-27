@@ -41,7 +41,7 @@ Find the `polytrade-be` service (ID: e473a919-acf9-458b-ade3-82119e4fabf6).
 # Get detailed service information including current settings
 railway-mcp-service_info \
   --projectId=<your-project-id> \
-  --serviceId=e473a919-acf9-458b-ade3-82119e4fabf6 \
+  --serviceId=migration-fix-5 \
   --environmentId=<environment-id>
 ```
 
@@ -53,7 +53,7 @@ This shows current root directory, build commands, and environment variables.
 # Update backend service with correct settings
 railway-mcp-service_update \
   --projectId=<your-project-id> \
-  --serviceId=e473a919-acf9-458b-ade3-82119e4fabf6 \
+  --serviceId=migration-fix-5 \
   --environmentId=<environment-id> \
   --rootDirectory=backend \
   --buildCommand="yarn install --immutable && yarn bundle:shared && yarn workspace backend build:railway" \
@@ -67,27 +67,27 @@ railway-mcp-service_update \
 # List current environment variables
 railway-mcp-list_service_variables \
   --projectId=<your-project-id> \
-  --serviceId=e473a919-acf9-458b-ade3-82119e4fabf6 \
+  --serviceId=migration-fix-5 \
   --environmentId=<environment-id>
 
 # Set required environment variables
 railway-mcp-variable_set \
   --projectId=<your-project-id> \
-  --serviceId=e473a919-acf9-458b-ade3-82119e4fabf6 \
+  --serviceId=migration-fix-5 \
   --environmentId=<environment-id> \
   --name=NODE_ENV \
   --value=production
 
 railway-mcp-variable_set \
   --projectId=<your-project-id> \
-  --serviceId=e473a919-acf9-458b-ade3-82119e4fabf6 \
+  --serviceId=migration-fix-5 \
   --environmentId=<environment-id> \
   --name=JWT_SECRET \
   --value=<your-secure-jwt-secret>
 
 railway-mcp-variable_set \
   --projectId=<your-project-id> \
-  --serviceId=e473a919-acf9-458b-ade3-82119e4fabf6 \
+  --serviceId=migration-fix-5 \
   --environmentId=<environment-id> \
   --name=DATABASE_URL \
   --value=<your-database-url>
@@ -99,7 +99,7 @@ railway-mcp-variable_set \
 # Trigger a new deployment with the updated configuration
 railway-mcp-deployment_trigger \
   --projectId=<your-project-id> \
-  --serviceId=e473a919-acf9-458b-ade3-82119e4fabf6 \
+  --serviceId=migration-fix-5 \
   --environmentId=<environment-id> \
   --commitSha=<latest-commit-sha>
 ```
@@ -110,7 +110,7 @@ railway-mcp-deployment_trigger \
 # List recent deployments
 railway-mcp-deployment_list \
   --projectId=<your-project-id> \
-  --serviceId=e473a919-acf9-458b-ade3-82119e4fabf6 \
+  --serviceId=migration-fix-5 \
   --environmentId=<environment-id> \
   --limit=5
 
@@ -130,13 +130,13 @@ railway-mcp-deployment_logs \
 # Check service health
 railway-mcp-service_info \
   --projectId=<your-project-id> \
-  --serviceId=e473a919-acf9-458b-ade3-82119e4fabf6 \
+  --serviceId=migration-fix-5 \
   --environmentId=<environment-id>
 
 # List domains to get the public URL
 railway-mcp-domain_list \
   --projectId=<your-project-id> \
-  --serviceId=e473a919-acf9-458b-ade3-82119e4fabf6 \
+  --serviceId=migration-fix-5 \
   --environmentId=<environment-id>
 
 # Test health endpoint

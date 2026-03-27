@@ -119,13 +119,16 @@ export const getBaseUrl = () => {
   if (IS_LOCAL_DEV) {
     return 'http://localhost:5675'; // .clinerules compliant frontend port
   }
-  // Production URL - Railway domain or current origin
-  return typeof window !== 'undefined' ? window.location.origin : 'https://poloniex-trading-platform.up.railway.app';
+  return typeof window !== 'undefined' ? window.location.origin : '';
 };
 
 // Get backend API URL with proper protocol and Railway support
 export const getBackendUrl = (): string => {
-  // Priority 1: Environment detection (window context first for tests/dev)
+  // Priority 1: Explicit backend URL
+  const envUrl = getEnvVariable('VITE_BACKEND_URL');
+  if (envUrl) return envUrl;
+
+  // Priority 2: Environment detection from browser context
   if (typeof window !== 'undefined' && window.location) {
     const hostname = window.location.hostname;
     const protocol = window.location.protocol || 'http:';
@@ -133,11 +136,6 @@ export const getBackendUrl = (): string => {
     // Local development - backend runs on .clinerules compliant port 8765
     if (hostname === 'localhost' || hostname === '127.0.0.1') {
       return 'http://localhost:8765';
-    }
-
-    // Railway deployment detection
-    if (hostname.includes('railway.app') || hostname.includes('up.railway.app')) {
-      return 'https://polytrade-be.up.railway.app';
     }
 
     // WebContainer detection
@@ -148,9 +146,6 @@ export const getBackendUrl = (): string => {
     // Fall back to same origin for other cases
     return window.location.origin;
   }
-  // Priority 2: Explicit backend URL (server-side or when window is unavailable)
-  const envUrl = getEnvVariable('VITE_BACKEND_URL');
-  if (envUrl) return envUrl;
 
   // Priority 3: Railway environment variables (server-side scenarios)
   const railwayPublicDomain = getEnvVariable('VITE_RAILWAY_PUBLIC_DOMAIN');
@@ -163,8 +158,7 @@ export const getBackendUrl = (): string => {
     return `https://${railwayPrivateDomain}`;
   }
 
-  // Server-side fallback - use .clinerules compliant port
-  return 'http://localhost:8765';
+  return '';
 };
 
 // Get WebSocket URL with proper protocol handling for Railway deployment

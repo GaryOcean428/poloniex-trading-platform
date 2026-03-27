@@ -42,14 +42,10 @@ vi.mock('@/utils/environment', () => ({
         return `${protocol}//${hostname}:8765`;
       }
 
-      if (hostname.includes('railway.app') || hostname.includes('up.railway.app')) {
-        return 'https://polytrade-be.up.railway.app';
-      }
-
       return `${protocol}//${hostname}`;
     }
 
-    return 'http://localhost:8765';
+    return '';
   },
 }));
 
@@ -112,12 +108,12 @@ describe('WebSocket Configuration', () => {
       expect(url).toBe('wss://localhost:8765');
     });
 
-    it('should detect Railway deployment URL', () => {
+    it('should use same-origin for hosted deployments without explicit backend env', () => {
       window.location.hostname = 'polytrade-fe.up.railway.app';
       window.location.protocol = 'https:';
       
       const url = getWebSocketUrl();
-      expect(url).toBe('wss://polytrade-be.up.railway.app');
+      expect(url).toBe('wss://polytrade-fe.up.railway.app');
     });
   });
 

@@ -40,9 +40,11 @@ async function checkRailwayConfig() {
   
   const checks = [
     ['railway.json', 'Railway configuration file'],
-    ['railpack.json', 'Railpack configuration file'],
-    ['backend/package.json', 'Backend package.json'],
-    ['backend/dist/src/index.js', 'Backend build output'],
+    ['apps/api/railpack.json', 'API railpack configuration file'],
+    ['apps/web/railpack.json', 'Web railpack configuration file'],
+    ['apps/api/package.json', 'API package.json'],
+    ['apps/web/package.json', 'Web package.json'],
+    ['apps/api/dist/index.js', 'API build output'],
     ['.nvmrc', 'Node version file']
   ];
 
@@ -59,7 +61,7 @@ async function checkHealthEndpoint() {
   log('\n🏥 Checking Health Endpoint...', 'blue');
   
   try {
-    const indexContent = await fs.readFile(path.join(rootDir, 'backend/src/index.ts'), 'utf-8');
+    const indexContent = await fs.readFile(path.join(rootDir, 'apps/api/src/index.ts'), 'utf-8');
     const hasHealthRoute = indexContent.includes('/api/health') || indexContent.includes('/healthz');
     
     if (hasHealthRoute) {
@@ -84,11 +86,11 @@ async function checkNodeVersion() {
     const version = nvmrc.trim();
     const major = parseInt(version.split('.')[0]);
     
-    if (major >= 22) {
+    if (major >= 20) {
       log(`✓ Node version: ${version}`, 'green');
       return true;
     } else {
-      log(`⚠ Node version ${version} is < 22.x`, 'yellow');
+      log(`⚠ Node version ${version} is < 20.x`, 'yellow');
       return false;
     }
   } catch (error) {
@@ -101,25 +103,26 @@ async function checkRailpackConfig() {
   log('\n⚙️  Checking Railpack Configuration...', 'blue');
   
   try {
-    const railpackContent = await fs.readFile(path.join(rootDir, 'backend/railpack.json'), 'utf-8');
+    const railpackContent = await fs.readFile(path.join(rootDir, 'apps/api/railpack.json'), 'utf-8');
     const config = JSON.parse(railpackContent);
-    
-    if (config.deploy && config.deploy.healthCheckPath) {
-      log(`✓ Health check path configured: ${config.deploy.healthCheckPath}`, 'green');
-    } else {
-      log('⚠ No health check path in railpack.json', 'yellow');
-    }
     
     if (config.deploy && config.deploy.startCommand) {
       log(`✓ Start command configured: ${config.deploy.startCommand}`, 'green');
     } else {
-      log('✗ No start command in railpack.json', 'red');
+      log('✗ No start command in apps/api/railpack.json', 'red');
+      return false;
+    }
+
+    if (config.steps?.build?.commands?.length) {
+      log(`✓ Build command configured`, 'green');
+    } else {
+      log('✗ No build command in apps/api/railpack.json', 'red');
       return false;
     }
     
     return true;
   } catch (error) {
-    log(`✗ Could not check railpack config: ${error.message}`, 'red');
+    log(`✗ Could not check apps/api/railpack.json: ${error.message}`, 'red');
     return false;
   }
 }
@@ -143,7 +146,9 @@ async function checkRailwayJson() {
       log('⚠ No start command in railway.json', 'yellow');
     }
     
-    if (config.build && config.build.buildCommand) {
+    if (config.build && config.build.builder === 'RAILPACK') {
+      log('✓ railway.json uses Railpack builder', 'green');
+    } else if (config.build && config.build.buildCommand) {
       log(`✓ Build command configured`, 'green');
     } else {
       log('⚠ No build command in railway.json', 'yellow');
@@ -177,8 +182,8 @@ async function main() {
     process.exit(0);
   } else {
     log('❌ Some checks failed - Fix issues before deploying', 'red');
-    log('\n💡 Note: Backend build output check may fail if not built yet.', 'yellow');
-    log('   Run "yarn build:backend" to build the backend first.', 'yellow');
+    log('\n💡 Note: Build output checks fail until the monorepo apps are built.', 'yellow');
+    log('   Run "yarn build:api && yarn build:web" to build the services first.', 'yellow');
     process.exit(1);
   }
 }

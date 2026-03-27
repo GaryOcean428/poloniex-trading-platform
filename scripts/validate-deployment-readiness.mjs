@@ -60,39 +60,45 @@ function section(title) {
 // Validation Tests
 section('1. Build Artifacts');
 
+const apiDir = join(rootDir, 'apps/api');
+const webDir = join(rootDir, 'apps/web');
+
 // Check backend build
-const backendDist = join(rootDir, 'backend/dist/src/index.js');
-if (existsSync(backendDist)) {
+const backendDistCandidates = [
+  join(apiDir, 'dist/index.js'),
+  join(apiDir, 'dist/src/index.js')
+];
+const backendDist = backendDistCandidates.find(existsSync);
+if (backendDist) {
   const stats = statSync(backendDist);
   const sizeKB = (stats.size / 1024).toFixed(2);
   success(`Backend built successfully (${sizeKB} KB)`);
 } else {
-  error('Backend dist not found. Run: yarn workspace backend build:railway');
+  error('Backend dist not found. Run: yarn build:api');
 }
 
 // Check frontend build
-const frontendDist = join(rootDir, 'frontend/dist/index.html');
+const frontendDist = join(webDir, 'dist/index.html');
 if (existsSync(frontendDist)) {
   success('Frontend built successfully');
   
   // Check for key frontend assets
-  const assetsDir = join(rootDir, 'frontend/dist/assets');
+  const assetsDir = join(webDir, 'dist/assets');
   if (existsSync(assetsDir)) {
     success('Frontend assets directory exists');
   } else {
     warning('Frontend assets directory not found');
   }
 } else {
-  error('Frontend dist not found. Run: yarn workspace frontend build');
+  error('Frontend dist not found. Run: yarn build:web');
 }
 
 section('2. Configuration Files');
 
 // Check railpack configurations
 const configs = [
-  { path: 'railpack.json', name: 'Root railpack.json' },
-  { path: 'backend/railpack.json', name: 'Backend railpack.json' },
-  { path: 'frontend/railpack.json', name: 'Frontend railpack.json' },
+  { path: 'apps/api/railpack.json', name: 'API railpack.json' },
+  { path: 'apps/web/railpack.json', name: 'Web railpack.json' },
   { path: 'railway.json', name: 'Railway configuration' }
 ];
 
@@ -160,7 +166,7 @@ if (existsSync(envExamplePath)) {
 section('5. Backend Features');
 
 // Check backend source for key features
-const backendIndex = join(rootDir, 'backend/src/index.ts');
+const backendIndex = join(apiDir, 'src/index.ts');
 if (existsSync(backendIndex)) {
   const backendContent = readFileSync(backendIndex, 'utf-8');
   
@@ -196,7 +202,7 @@ if (existsSync(backendIndex)) {
 section('6. Security Configuration');
 
 // Check security middleware
-const securityConfig = join(rootDir, 'backend/src/config/security.ts');
+const securityConfig = join(apiDir, 'src/config/security.ts');
 if (existsSync(securityConfig)) {
   const securityContent = readFileSync(securityConfig, 'utf-8');
   
@@ -230,7 +236,7 @@ if (existsSync(securityConfig)) {
 section('7. Frontend Serve Configuration');
 
 // Check frontend serve script
-const frontendServe = join(rootDir, 'frontend/serve.js');
+const frontendServe = join(webDir, 'serve.js');
 if (existsSync(frontendServe)) {
   const serveContent = readFileSync(frontendServe, 'utf-8');
   

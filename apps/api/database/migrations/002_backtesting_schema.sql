@@ -350,26 +350,32 @@ END;
 $$ language 'plpgsql';
 
 -- Apply triggers to tables with updated_at columns
+DROP TRIGGER IF EXISTS update_backtest_results_updated_at ON backtest_results;
 CREATE TRIGGER update_backtest_results_updated_at 
     BEFORE UPDATE ON backtest_results 
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_strategy_definitions_updated_at ON strategy_definitions;
 CREATE TRIGGER update_strategy_definitions_updated_at 
     BEFORE UPDATE ON strategy_definitions 
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_strategy_performance_updated_at ON strategy_performance;
 CREATE TRIGGER update_strategy_performance_updated_at 
     BEFORE UPDATE ON strategy_performance 
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_paper_trading_sessions_updated_at ON paper_trading_sessions;
 CREATE TRIGGER update_paper_trading_sessions_updated_at 
     BEFORE UPDATE ON paper_trading_sessions 
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_paper_trading_positions_updated_at ON paper_trading_positions;
 CREATE TRIGGER update_paper_trading_positions_updated_at 
     BEFORE UPDATE ON paper_trading_positions 
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_historical_market_data_updated_at ON historical_market_data;
 CREATE TRIGGER update_historical_market_data_updated_at 
     BEFORE UPDATE ON historical_market_data 
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
