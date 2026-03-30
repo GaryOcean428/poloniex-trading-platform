@@ -29,12 +29,12 @@ coverage/
 .vitest/
 
 # Frontend source (not needed for backend deployment, but node_modules needed for workspace)
-apps/web/src/
-apps/web/public/
-apps/web/.vscode/
-apps/web/index.html
-apps/web/vite.config.ts
-apps/web/tsconfig*.json
+frontend/src/
+frontend/public/
+frontend/.vscode/
+frontend/index.html
+frontend/vite.config.ts
+frontend/tsconfig*.json
 
 # Python services - DO NOT ignore the directory itself, Railway needs it for ml-worker service
 # Individual services will be deployed via root railpack.json service definitions
@@ -70,9 +70,9 @@ Thumbs.db
 *.backup
 
 # Build artifacts from OTHER workspaces
-apps/web/dist/
-apps/web/build/
-apps/web/.next/
+frontend/dist/
+frontend/build/
+frontend/.next/
 
 # Keep backend build artifacts - they're needed!
 # backend/dist/ - DO NOT IGNORE

@@ -11,7 +11,7 @@
         "npm i -g corepack@latest",
         "corepack enable",
         "corepack prepare yarn@4.9.2 --activate",
-        "yarn install --check-cache"
+        "yarn install"
       ]
     },
     "build": {
@@ -22,7 +22,7 @@
     }
   },
   "deploy": {
-    "startCommand": "node dist/index.js",
+    "startCommand": "yarn run start",
     "inputs": [{"step": "build"}]
   }
 }
