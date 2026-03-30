@@ -3,8 +3,7 @@
   "provider": "node",
   "packages": {
     "node": "20",
-    "yarn": "4.9.2",
-    "caddy": null
+    "yarn": "4.9.2"
   },
   "steps": {
     "install": {
@@ -12,7 +11,7 @@
         "npm i -g corepack@latest",
         "corepack enable",
         "corepack prepare yarn@4.9.2 --activate",
-        "yarn install --immutable --immutable-cache"
+        "yarn install --check-cache"
       ]
     },
     "build": {
