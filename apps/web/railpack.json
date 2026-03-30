@@ -23,7 +23,7 @@
     }
   },
   "deploy": {
-    "startCommand": "node serve.js",
+    "startCommand": "node apps/web/serve.js",
     "inputs": [{"step": "build"}]
   }
 }
