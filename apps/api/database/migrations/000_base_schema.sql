@@ -1,6 +1,7 @@
 -- 000_base_schema.sql
 -- Base schema: users + autonomous_trading_configs tables
 -- Required by all subsequent migrations (001+ reference users(id))
+-- MUST be fully idempotent — existing tables may have different column names
 
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
@@ -35,16 +36,17 @@ CREATE TRIGGER trg_users_updated_at
     FOR EACH ROW EXECUTE FUNCTION update_users_updated_at();
 
 -- =================== AUTONOMOUS TRADING CONFIGS ===================
--- Queried on startup by FullyAutonomousTrader.loadActiveConfigs()
+-- FullyAutonomousTrader.loadActiveConfigs() queries: WHERE enabled = true
+-- Use 'enabled' (not 'is_active') to match service code.
 
 CREATE TABLE IF NOT EXISTS autonomous_trading_configs (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    name VARCHAR(200) NOT NULL,
+    name VARCHAR(200) DEFAULT '',
     strategy_type VARCHAR(100) DEFAULT 'default',
     config JSONB NOT NULL DEFAULT '{}',
     risk_params JSONB DEFAULT '{}',
-    is_active BOOLEAN DEFAULT false,
+    enabled BOOLEAN DEFAULT false,
     last_executed_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
@@ -52,8 +54,20 @@ CREATE TABLE IF NOT EXISTS autonomous_trading_configs (
 
 CREATE INDEX IF NOT EXISTS idx_autonomous_trading_configs_user
     ON autonomous_trading_configs(user_id);
-CREATE INDEX IF NOT EXISTS idx_autonomous_trading_configs_active
-    ON autonomous_trading_configs(is_active) WHERE is_active = true;
+
+-- Guard index creation — column may be 'enabled' or 'is_active' depending on DB state
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'autonomous_trading_configs'
+          AND column_name = 'enabled'
+          AND table_schema = current_schema()
+    ) THEN
+        CREATE INDEX IF NOT EXISTS idx_autonomous_trading_configs_active
+            ON autonomous_trading_configs(enabled) WHERE enabled = true;
+    END IF;
+END $$;
 
 DROP TRIGGER IF EXISTS trg_autonomous_trading_configs_updated_at ON autonomous_trading_configs;
 CREATE TRIGGER trg_autonomous_trading_configs_updated_at
