@@ -1,19 +1,15 @@
 import React, { useState, useEffect } from 'react';
-// Recharts imports available when chart features are implemented
-// import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import axios from 'axios';
 import { getAccessToken } from '@/utils/auth';
 import { getBackendUrl } from '@/utils/environment';
 
 const API_BASE_URL = getBackendUrl();
 
-// Interface available when prediction features are implemented
-// interface ModelPrediction {
-//   model: string;
-//   prediction: number;
-//   confidence: number;
-//   timestamp: string;
-// }
+interface MLSignal {
+  signal: 'BUY' | 'SELL' | 'HOLD';
+  strength: number;
+  reason: string;
+}
 
 interface MLPerformanceData {
   symbol: string;
@@ -22,13 +18,15 @@ interface MLPerformanceData {
     '4h': any;
     '24h': any;
   };
-  signal: {
-    signal: 'BUY' | 'SELL' | 'HOLD';
-    strength: number;
-    reason: string;
-  };
+  signal?: MLSignal;
   timestamp: string;
 }
+
+const DEFAULT_SIGNAL: MLSignal = {
+  signal: 'HOLD',
+  strength: 0,
+  reason: 'No signal data available'
+};
 
 const MLModelPerformance: React.FC<{ symbol: string }> = ({ symbol }) => {
   const [performanceData, setPerformanceData] = useState<MLPerformanceData | null>(null);
@@ -37,7 +35,7 @@ const MLModelPerformance: React.FC<{ symbol: string }> = ({ symbol }) => {
 
   useEffect(() => {
     fetchMLPerformance();
-    const interval = setInterval(fetchMLPerformance, 60000); // Refresh every minute
+    const interval = setInterval(fetchMLPerformance, 60000);
     return () => clearInterval(interval);
   }, [symbol]);
 
@@ -90,7 +88,9 @@ const MLModelPerformance: React.FC<{ symbol: string }> = ({ symbol }) => {
 
   if (!performanceData) return null;
 
-  const { predictions, signal } = performanceData;
+  const { predictions } = performanceData;
+  // Guard: API may return without signal field — use safe default
+  const signal: MLSignal = performanceData.signal ?? DEFAULT_SIGNAL;
 
   // Normalize confidence values: backend may return 0-1 or 0-100
   const formatConfidence = (val: number): string => {
@@ -100,8 +100,8 @@ const MLModelPerformance: React.FC<{ symbol: string }> = ({ symbol }) => {
 
   // Format prediction price from backend response
   const formatPredictionPrice = (pred: any): string => {
-    if (pred.price != null) return `$${pred.price.toFixed(2)}`;
-    if (pred.prediction != null) return `$${pred.prediction.toFixed(2)}`;
+    if (pred?.price != null) return `$${pred.price.toFixed(2)}`;
+    if (pred?.prediction != null) return `$${pred.prediction.toFixed(2)}`;
     return 'N/A';
   };
 
@@ -128,47 +128,49 @@ const MLModelPerformance: React.FC<{ symbol: string }> = ({ symbol }) => {
           </div>
           <div className="text-right">
             <p className="text-sm text-gray-400">Strength</p>
-            <p className="text-2xl font-bold text-white">{(signal.strength * 100).toFixed(1)}%</p>
+            <p className="text-2xl font-bold text-white">{((signal.strength ?? 0) * 100).toFixed(1)}%</p>
           </div>
         </div>
         <p className="text-sm text-gray-300 mt-2">{signal.reason}</p>
       </div>
 
       {/* Multi-Horizon Predictions */}
-      <div className="grid grid-cols-3 gap-4">
-        {Object.entries(predictions).map(([horizon, pred]: [string, any]) => {
-          if (pred.error) {
+      {predictions && (
+        <div className="grid grid-cols-3 gap-4">
+          {Object.entries(predictions).map(([horizon, pred]: [string, any]) => {
+            if (!pred || pred.error) {
+              return (
+                <div key={horizon} className="bg-gray-700 rounded-lg p-4">
+                  <p className="text-sm text-gray-400">{horizon} Prediction</p>
+                  <p className="text-xs text-red-400 mt-2">Unavailable</p>
+                </div>
+              );
+            }
+
             return (
               <div key={horizon} className="bg-gray-700 rounded-lg p-4">
                 <p className="text-sm text-gray-400">{horizon} Prediction</p>
-                <p className="text-xs text-red-400 mt-2">Unavailable</p>
+                <p className="text-2xl font-bold text-white mt-2">
+                  {formatPredictionPrice(pred)}
+                </p>
+                <div className="mt-2 space-y-1">
+                  <div className="flex justify-between text-xs">
+                    <span className="text-gray-400">Confidence</span>
+                    <span className="text-blue-400">{formatConfidence(pred.confidence || 0)}%</span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-gray-400">Agreement</span>
+                    <span className="text-green-400">{formatConfidence(pred.agreement || 0)}%</span>
+                  </div>
+                </div>
               </div>
             );
-          }
-
-          return (
-            <div key={horizon} className="bg-gray-700 rounded-lg p-4">
-              <p className="text-sm text-gray-400">{horizon} Prediction</p>
-              <p className="text-2xl font-bold text-white mt-2">
-                {formatPredictionPrice(pred)}
-              </p>
-              <div className="mt-2 space-y-1">
-                <div className="flex justify-between text-xs">
-                  <span className="text-gray-400">Confidence</span>
-                  <span className="text-blue-400">{formatConfidence(pred.confidence || 0)}%</span>
-                </div>
-                <div className="flex justify-between text-xs">
-                  <span className="text-gray-400">Agreement</span>
-                  <span className="text-green-400">{formatConfidence(pred.agreement || 0)}%</span>
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
+          })}
+        </div>
+      )}
 
       {/* Individual Model Predictions */}
-      {predictions['1h'] && predictions['1h'].individual_predictions && (
+      {predictions?.['1h']?.individual_predictions && (
         <div>
           <h4 className="text-sm font-semibold text-gray-300 mb-3">Individual Model Predictions (1h)</h4>
           <div className="grid grid-cols-5 gap-3">
@@ -179,7 +181,7 @@ const MLModelPerformance: React.FC<{ symbol: string }> = ({ symbol }) => {
                   ${(prediction as number).toFixed(2)}
                 </p>
                 <p className="text-xs text-blue-400 mt-1">
-                  {formatConfidence(predictions['1h'].individual_confidences[model] || 0)}%
+                  {formatConfidence(predictions['1h'].individual_confidences?.[model] || 0)}%
                 </p>
               </div>
             ))}
@@ -188,7 +190,7 @@ const MLModelPerformance: React.FC<{ symbol: string }> = ({ symbol }) => {
       )}
 
       {/* Model Weights */}
-      {predictions['1h'] && predictions['1h'].weights && (
+      {predictions?.['1h']?.weights && (
         <div>
           <h4 className="text-sm font-semibold text-gray-300 mb-3">Model Weights</h4>
           <div className="space-y-2">
