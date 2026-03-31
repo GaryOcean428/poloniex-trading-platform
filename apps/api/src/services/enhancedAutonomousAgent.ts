@@ -490,14 +490,39 @@ class EnhancedAutonomousAgent extends EventEmitter {
   }
 
   /**
+   * Gather performance summaries from past strategies to feed into LLM generation.
+   * This enables the learning loop: past results inform future strategy design.
+   */
+  private getPastPerformanceSummary(sessionId: string): string {
+    const pastStrategies = Array.from(this.strategies.values()).filter(
+      s => s.sessionId === sessionId && s.performance && s.performance.totalTrades > 0
+    );
+
+    if (pastStrategies.length === 0) return '';
+
+    const summaries = pastStrategies.slice(-10).map(s => {
+      const perf = s.performance;
+      return `- ${s.name} (${s.type}/${s.symbol}): WR=${((perf.winRate || 0) * 100).toFixed(1)}%, PF=${(perf.profitFactor || 0).toFixed(2)}, Return=${(perf.totalReturn || 0).toFixed(2)}%, Trades=${perf.totalTrades}, Status=${s.status}`;
+    });
+
+    return `\n\nPAST STRATEGY PERFORMANCE (learn from these results):\n${summaries.join('\n')}\nAvoid repeating approaches that failed. Double down on patterns that worked.`;
+  }
+
+  /**
    * Generate AI-powered trading strategies
    */
   async generateStrategies(session: AgentSession): Promise<Strategy[]> {
     logger.info(`Generating strategies for session ${session.id} - using parallel execution`);
-    
+
+    // Gather learning context from past strategy performance
+    const learningContext = this.getPastPerformanceSummary(session.id);
+    if (learningContext) {
+      logger.info(`[Agent] Feeding ${learningContext.split('\n').length - 2} past strategy results into next generation cycle`);
+    }
+
     const strategies: Strategy[] = [];
     const _llmGenerator = getLLMStrategyGenerator();
-    
+
     // Process multiple symbols in parallel for faster strategy generation
     const symbolPromises = session.config.preferredPairs.map(async (symbol) => {
       try {
@@ -508,21 +533,21 @@ class EnhancedAutonomousAgent extends EventEmitter {
             symbol,
             'trend_following',
             ['SMA', 'EMA'],
-            'Trend following strategy using moving averages'
+            'Trend following strategy using moving averages' + learningContext
           ),
           this.generateSingleStrategy(
             session,
             symbol,
             'momentum',
             ['RSI', 'MACD'],
-            'Momentum strategy using RSI and MACD'
+            'Momentum strategy using RSI and MACD' + learningContext
           ),
           this.generateSingleStrategy(
             session,
             symbol,
             'volume_analysis',
             ['Volume', 'OBV'],
-            'Volume analysis strategy'
+            'Volume analysis strategy' + learningContext
           )
         ]);
         
@@ -935,6 +960,27 @@ Generate the combination logic as executable JavaScript code.
       const profitFactorThreshold = session.config.tradingStyle === 'scalping' ? 1.3 : 1.5;
 
       if (strategy.performance.winRate > winRateThreshold && strategy.performance.profitFactor > profitFactorThreshold) {
+        // LLM refinement: optimize winning strategies before paper trading
+        const llmGen = getLLMStrategyGenerator();
+        if (llmGen.isAvailable()) {
+          try {
+            const optimized = await llmGen.optimizeStrategy(
+              strategy as any,
+              {
+                winRate: strategy.performance.winRate,
+                profitFactor: strategy.performance.profitFactor,
+                sharpeRatio: metrics.sharpeRatio || 0,
+                maxDrawdown: metrics.maxDrawdown || 0,
+                totalTrades: strategy.performance.totalTrades
+              },
+              { symbol: strategy.symbol, currentPrice: 0, priceChange24h: 0, volume24h: 0, technicalIndicators: {} }
+            );
+            strategy.code = JSON.stringify(optimized);
+            logger.info(`[Lifecycle] LLM-refined strategy ${strategy.name} before paper trading`);
+          } catch (err: any) {
+            logger.warn(`[Lifecycle] LLM optimization skipped for ${strategy.name}: ${err.message}`);
+          }
+        }
         await this.promoteToPaperTrading(session, strategy);
       } else {
         logger.info(`Strategy ${strategy.name} failed backtest (WR: ${strategy.performance.winRate}, PF: ${strategy.performance.profitFactor}), retiring`);

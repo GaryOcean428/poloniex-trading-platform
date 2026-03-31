@@ -4,9 +4,13 @@ import { logger } from '../utils/logger.js';
 import type { Strategy, StrategyParameters } from '@shared/types/strategy';
 
 /**
- * SDK 0.68.0 does not yet expose `adaptive` thinking or the `effort` parameter
- * introduced in Claude 4.6.  We extend the params locally so the TypeScript
- * compiler stays happy while remaining fully type-safe for all other fields.
+ * SDK 0.68.0 does not yet expose `adaptive` thinking or the `output_config`
+ * parameter introduced in Claude 4.6.  We extend the params locally so the
+ * TypeScript compiler stays happy while remaining fully type-safe for all
+ * other fields.
+ *
+ * Per the Anthropic API docs, `effort` lives inside `output_config`, NOT as
+ * a top-level param.
  */
 type AdaptiveThinkingConfig = { type: 'adaptive' };
 type ExtendedMessageCreateParams = Omit<
@@ -14,8 +18,8 @@ type ExtendedMessageCreateParams = Omit<
   'thinking'
 > & {
   thinking?: AdaptiveThinkingConfig | Anthropic.Messages.ThinkingConfigParam;
-  /** Claude 4.6 effort parameter (GA, no beta header needed). */
-  effort?: 'low' | 'medium' | 'high' | 'max';
+  /** output_config.effort controls how much thinking Claude does. */
+  output_config?: { effort?: 'low' | 'medium' | 'high' | 'max' };
 };
 
 /**
@@ -148,7 +152,7 @@ export class LLMStrategyGenerator {
         thinking: {
           type: 'adaptive' as const
         },
-        effort: 'medium',
+        output_config: { effort: 'medium' },
         system: [
           {
             type: 'text',
@@ -238,7 +242,7 @@ export class LLMStrategyGenerator {
         thinking: {
           type: 'adaptive' as const
         },
-        effort: 'medium',
+        output_config: { effort: 'medium' },
         system: [
           {
             type: 'text',

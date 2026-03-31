@@ -475,14 +475,17 @@ class BacktestingEngine extends EventEmitter {
         INSERT INTO backtest_results (
           id, strategy_name, symbol, timeframe, start_date, end_date,
           initial_capital, final_value, total_return, max_drawdown,
-          sharpe_ratio, total_trades, win_rate, created_at, config, metrics
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+          max_drawdown_percent, sharpe_ratio, total_trades, win_rate,
+          created_at, config, metrics
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
       `, [
         backtestId, this.currentBacktest.strategyName, this.currentBacktest.config.symbol,
         this.currentBacktest.config.timeframe, this.currentBacktest.config.startDate,
         this.currentBacktest.config.endDate, this.currentBacktest.config.initialCapital || 100000,
         this.currentBacktest.portfolio.totalValue, this.currentBacktest.metrics.totalReturn,
-        this.currentBacktest.metrics.maxDrawdown, this.currentBacktest.metrics.sharpeRatio,
+        this.currentBacktest.metrics.maxDrawdown,
+        this.currentBacktest.metrics.maxDrawdownPercent || 0,
+        this.currentBacktest.metrics.sharpeRatio,
         this.currentBacktest.metrics.totalTrades, this.currentBacktest.metrics.winRate,
         new Date(), JSON.stringify(this.currentBacktest.config), JSON.stringify(this.currentBacktest.metrics)
       ]);
