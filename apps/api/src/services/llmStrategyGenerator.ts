@@ -344,28 +344,40 @@ Return ONLY a valid JSON object with this exact structure:
   }
 
   /**
-   * Build prompt for strategy generation
+   * Safe number formatting helper — returns 'N/A' for undefined/null/NaN values
+   */
+  private safeFixed(value: number | undefined | null, decimals: number = 2): string {
+    if (value == null || isNaN(value)) return 'N/A';
+    return value.toFixed(decimals);
+  }
+
+  /**
+   * Build prompt for strategy generation.
+   * Handles incomplete MarketContext gracefully — the enhanced agent may pass
+   * partial context (e.g. symbol + strategyType only) when real market data
+   * is unavailable. Missing fields render as 'N/A' rather than crashing.
    */
   private buildStrategyGenerationPrompt(context: MarketContext): string {
     const { symbol, currentPrice, priceChange24h, volume24h, technicalIndicators, marketRegime, sentiment } = context;
+    const ti = technicalIndicators || {};
 
     return `Generate a novel trading strategy for ${symbol} based on the following market analysis:
 
 CURRENT MARKET CONDITIONS:
 - Symbol: ${symbol}
-- Current Price: $${currentPrice.toFixed(2)}
-- 24h Price Change: ${priceChange24h.toFixed(2)}%
-- 24h Volume: ${volume24h.toLocaleString()}
+- Current Price: $${this.safeFixed(currentPrice)}
+- 24h Price Change: ${this.safeFixed(priceChange24h)}%
+- 24h Volume: ${volume24h != null ? volume24h.toLocaleString() : 'N/A'}
 - Market Regime: ${marketRegime || 'unknown'}
 - Sentiment: ${sentiment || 'neutral'}
 
 TECHNICAL INDICATORS:
-${technicalIndicators.rsi ? `- RSI: ${technicalIndicators.rsi.toFixed(2)}` : ''}
-${technicalIndicators.macd ? `- MACD: Line=${technicalIndicators.macd.line.toFixed(2)}, Signal=${technicalIndicators.macd.signal.toFixed(2)}, Histogram=${technicalIndicators.macd.histogram.toFixed(2)}` : ''}
-${technicalIndicators.bollingerBands ? `- Bollinger Bands: Upper=${technicalIndicators.bollingerBands.upper.toFixed(2)}, Middle=${technicalIndicators.bollingerBands.middle.toFixed(2)}, Lower=${technicalIndicators.bollingerBands.lower.toFixed(2)}` : ''}
-${technicalIndicators.sma20 ? `- SMA(20): ${technicalIndicators.sma20.toFixed(2)}` : ''}
-${technicalIndicators.sma50 ? `- SMA(50): ${technicalIndicators.sma50.toFixed(2)}` : ''}
-${technicalIndicators.sma200 ? `- SMA(200): ${technicalIndicators.sma200.toFixed(2)}` : ''}
+${ti.rsi != null ? `- RSI: ${this.safeFixed(ti.rsi)}` : ''}
+${ti.macd ? `- MACD: Line=${this.safeFixed(ti.macd.line)}, Signal=${this.safeFixed(ti.macd.signal)}, Histogram=${this.safeFixed(ti.macd.histogram)}` : ''}
+${ti.bollingerBands ? `- Bollinger Bands: Upper=${this.safeFixed(ti.bollingerBands.upper)}, Middle=${this.safeFixed(ti.bollingerBands.middle)}, Lower=${this.safeFixed(ti.bollingerBands.lower)}` : ''}
+${ti.sma20 != null ? `- SMA(20): ${this.safeFixed(ti.sma20)}` : ''}
+${ti.sma50 != null ? `- SMA(50): ${this.safeFixed(ti.sma50)}` : ''}
+${ti.sma200 != null ? `- SMA(200): ${this.safeFixed(ti.sma200)}` : ''}
 
 REQUIREMENTS:
 1. Design a strategy that exploits the current market regime
@@ -401,16 +413,16 @@ CURRENT STRATEGY:
 - Parameters: ${JSON.stringify(strategy.parameters, null, 2)}
 
 PERFORMANCE DATA:
-- Win Rate: ${(performance.winRate * 100).toFixed(2)}%
-- Profit Factor: ${performance.profitFactor.toFixed(2)}
-- Sharpe Ratio: ${performance.sharpeRatio.toFixed(2)}
-- Max Drawdown: ${(performance.maxDrawdown * 100).toFixed(2)}%
+- Win Rate: ${this.safeFixed(performance.winRate * 100)}%
+- Profit Factor: ${this.safeFixed(performance.profitFactor)}
+- Sharpe Ratio: ${this.safeFixed(performance.sharpeRatio)}
+- Max Drawdown: ${this.safeFixed(performance.maxDrawdown * 100)}%
 - Total Trades: ${performance.totalTrades}
 
 CURRENT MARKET CONDITIONS:
 - Symbol: ${context.symbol}
-- Current Price: $${context.currentPrice.toFixed(2)}
-- 24h Change: ${context.priceChange24h.toFixed(2)}%
+- Current Price: $${this.safeFixed(context.currentPrice)}
+- 24h Change: ${this.safeFixed(context.priceChange24h)}%
 - Market Regime: ${context.marketRegime || 'unknown'}
 
 OPTIMIZATION GOALS:
