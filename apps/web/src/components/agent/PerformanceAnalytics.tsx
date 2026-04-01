@@ -3,6 +3,7 @@ import { BarChart3, TrendingUp, PieChart, Target } from 'lucide-react';
 import axios from 'axios';
 import { getAccessToken } from '@/utils/auth';
 import { getBackendUrl } from '@/utils/environment';
+import { safeNum } from '@/utils/safeNum';
 
 const API_BASE_URL = getBackendUrl();
 
@@ -215,12 +216,12 @@ const PerformanceAnalytics: React.FC<PerformanceAnalyticsProps> = ({
                     {strategy.strategy_name}
                   </span>
                   <span className={`text-sm font-bold ${getPnLColor(strategy.pnl)}`}>
-                    ${strategy.pnl.toFixed(2)}
+                    ${safeNum(strategy.pnl).toFixed(2)}
                   </span>
                 </div>
                 <div className="flex items-center gap-4 text-xs text-gray-600">
                   <span>{strategy.trades} trades</span>
-                  <span>Win rate: {strategy.win_rate.toFixed(1)}%</span>
+                  <span>Win rate: {safeNum(strategy.win_rate).toFixed(1)}%</span>
                 </div>
                 {/* Progress bar */}
                 <div className="mt-2 h-2 bg-gray-200 rounded-full overflow-hidden">
@@ -254,12 +255,12 @@ const PerformanceAnalytics: React.FC<PerformanceAnalyticsProps> = ({
               <div className="flex items-center justify-between mb-1">
                 <span className="text-sm font-medium text-gray-900">{symbol.symbol}</span>
                 <span className={`text-sm font-bold ${getPnLColor(symbol.pnl)}`}>
-                  ${symbol.pnl.toFixed(2)}
+                  ${safeNum(symbol.pnl).toFixed(2)}
                 </span>
               </div>
               <div className="flex items-center gap-4 text-xs text-gray-600 mb-2">
                 <span>{symbol.trades} trades</span>
-                <span>Win rate: {symbol.win_rate.toFixed(1)}%</span>
+                <span>Win rate: {safeNum(symbol.win_rate).toFixed(1)}%</span>
               </div>
               {/* Horizontal bar */}
               <div className="h-6 bg-gray-100 rounded-lg overflow-hidden relative">
@@ -413,7 +414,7 @@ const PerformanceAnalytics: React.FC<PerformanceAnalyticsProps> = ({
           <div className="bg-red-50 border border-red-200 rounded-lg p-4">
             <p className="text-xs text-red-700 font-semibold mb-1">Losing Trades</p>
             <p className="text-2xl font-bold text-red-600">{data.losing_trades || 0}</p>
-            <p className="text-xs text-red-600 mt-1">Avg: ${Math.abs(data.avg_loss || 0).toFixed(2)}</p>
+            <p className="text-xs text-red-600 mt-1">Avg: ${safeNum(Math.abs(data.avg_loss || 0)).toFixed(2)}</p>
           </div>
           <div className="bg-green-50 border border-green-200 rounded-lg p-4">
             <p className="text-xs text-green-700 font-semibold mb-1">Best Trade</p>
@@ -421,7 +422,7 @@ const PerformanceAnalytics: React.FC<PerformanceAnalyticsProps> = ({
           </div>
           <div className="bg-red-50 border border-red-200 rounded-lg p-4">
             <p className="text-xs text-red-700 font-semibold mb-1">Worst Trade</p>
-            <p className="text-2xl font-bold text-red-600">${Math.abs(data.worst_trade || 0).toFixed(2)}</p>
+            <p className="text-2xl font-bold text-red-600">${safeNum(Math.abs(data.worst_trade || 0)).toFixed(2)}</p>
           </div>
         </div>
       </div>
