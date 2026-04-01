@@ -9,7 +9,7 @@
   "scripts": {
     "prebuild": "node prebuild.mjs && node prebuild-safenum.mjs",
     "dev": "vite",
-    "build": "vite build",
+    "build": "node prebuild.mjs && node prebuild-safenum.mjs && vite build",
     "preview": "vite preview",
     "lint": "eslint . --max-warnings 400",
     "lint:fix": "eslint . --fix",
