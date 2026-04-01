@@ -1,5 +1,6 @@
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
-import { lazy, Suspense, useEffect, type ReactNode } from 'react';
+import { Suspense, useEffect, type ReactNode } from 'react';
+import { lazyWithRetry } from './utils/lazyWithRetry';
 import Navbar from './components/Navbar';
 import Sidebar from './components/Sidebar';
 import SkipLinks from './components/SkipLinks';
@@ -23,20 +24,20 @@ import './styles/theme.css';
 import './App.css';
 
 // Lazy load page components
-const Dashboard = lazy(() => import('./pages/Dashboard'));
-const Strategies = lazy(() => import('./pages/Strategies'));
-const Backtesting = lazy(() => import('./pages/Backtesting'));
-const Account = lazy(() => import('./pages/Account'));
-const History = lazy(() => import('./pages/History'));
-const MarketAnalysis = lazy(() => import('./pages/MarketAnalysis'));
-const Performance = lazy(() => import('./pages/Performance'));
-const Settings = lazy(() => import('./pages/Settings'));
-const AIStrategyGenerator = lazy(() => import('./pages/AIStrategyGenerator'));
-const StrategyDashboard = lazy(() => import('./pages/StrategyDashboard'));
-const AutonomousAgent = lazy(() => import('./pages/AutonomousAgent'));
-const Status = lazy(() => import('./pages/Status'));
-const Login = lazy(() => import('./pages/Login'));
-const NotFound = lazy(() => import('./pages/NotFound'));
+const Dashboard = lazyWithRetry(() => import('./pages/Dashboard'));
+const Strategies = lazyWithRetry(() => import('./pages/Strategies'));
+const Backtesting = lazyWithRetry(() => import('./pages/Backtesting'));
+const Account = lazyWithRetry(() => import('./pages/Account'));
+const History = lazyWithRetry(() => import('./pages/History'));
+const MarketAnalysis = lazyWithRetry(() => import('./pages/MarketAnalysis'));
+const Performance = lazyWithRetry(() => import('./pages/Performance'));
+const Settings = lazyWithRetry(() => import('./pages/Settings'));
+const AIStrategyGenerator = lazyWithRetry(() => import('./pages/AIStrategyGenerator'));
+const StrategyDashboard = lazyWithRetry(() => import('./pages/StrategyDashboard'));
+const AutonomousAgent = lazyWithRetry(() => import('./pages/AutonomousAgent'));
+const Status = lazyWithRetry(() => import('./pages/Status'));
+const Login = lazyWithRetry(() => import('./pages/Login'));
+const NotFound = lazyWithRetry(() => import('./pages/NotFound'));
 
 // Loading component
 const LoadingSpinner = () => (

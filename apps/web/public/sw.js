@@ -207,6 +207,29 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  // Hashed build assets (Vite chunks) — network-first to avoid stale chunks after deploy
+  const isHashedAsset = event.request.url.includes('/assets/');
+  if (isHashedAsset) {
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          if (response.ok) {
+            const responseClone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => {
+              cache.put(event.request, responseClone);
+            });
+          }
+          return response;
+        })
+        .catch(() => {
+          return caches.match(event.request).then((cached) => {
+            return cached || new Response('', { status: 503, statusText: 'Service Unavailable' });
+          });
+        })
+    );
+    return;
+  }
+
   // Static assets — cache-first strategy
   event.respondWith(
     caches.match(event.request)
