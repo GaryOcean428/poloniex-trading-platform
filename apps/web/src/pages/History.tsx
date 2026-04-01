@@ -1,8 +1,9 @@
-import React, { useState, lazy, Suspense } from 'react';
+import React, { useState, Suspense } from 'react';
 import { History as HistoryIcon, Receipt, BarChart3 } from 'lucide-react';
+import { lazyWithRetry } from '../utils/lazyWithRetry';
 
-const TransactionHistory = lazy(() => import('./TransactionHistory'));
-const TradeHistory = lazy(() => import('./TradeHistory'));
+const TransactionHistory = lazyWithRetry(() => import('./TransactionHistory'));
+const TradeHistory = lazyWithRetry(() => import('./TradeHistory'));
 
 type HistoryTab = 'trades' | 'transactions';
 
