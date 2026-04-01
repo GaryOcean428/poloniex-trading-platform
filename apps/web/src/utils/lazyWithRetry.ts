@@ -15,10 +15,18 @@ function retryImport(
     }
     // All retries exhausted — do a one-time hard reload so the browser
     // fetches the latest index.html (and therefore the correct chunk URLs).
-    const reloadKey = 'chunk-reload-' + location.pathname;
-    if (!sessionStorage.getItem(reloadKey)) {
-      sessionStorage.setItem(reloadKey, '1');
-      window.location.reload();
+    // Guard for non-browser environments (SSR, Jest, Storybook) and
+    // blocked storage (private browsing modes).
+    if (typeof window !== 'undefined' && typeof sessionStorage !== 'undefined') {
+      try {
+        const reloadKey = 'chunk-reload-' + location.pathname;
+        if (!sessionStorage.getItem(reloadKey)) {
+          sessionStorage.setItem(reloadKey, '1');
+          window.location.reload();
+        }
+      } catch {
+        // Storage blocked — skip reload, let error boundary handle it
+      }
     }
     throw error;
   });
