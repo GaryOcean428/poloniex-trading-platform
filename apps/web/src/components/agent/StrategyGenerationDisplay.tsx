@@ -3,6 +3,7 @@ import { Brain, TrendingUp, Activity, CheckCircle, Clock, Zap, Target, BarChart3
 import axios from 'axios';
 import { getAccessToken } from '@/utils/auth';
 import { getBackendUrl } from '@/utils/environment';
+import { safeNum } from '@/utils/safeNum';
 
 const API_BASE_URL = getBackendUrl();
 
@@ -281,25 +282,25 @@ const StrategyGenerationDisplay: React.FC<StrategyGenerationDisplayProps> = ({ a
                   <div className="bg-gray-50 rounded-lg p-3 text-center">
                     <p className="text-xs text-gray-600 mb-1">Win Rate</p>
                     <p className="text-lg font-bold text-green-600">
-                      {currentGeneration.backtest_results.win_rate.toFixed(1)}%
+                      {safeNum(currentGeneration.backtest_results.win_rate).toFixed(1)}%
                     </p>
                   </div>
                   <div className="bg-gray-50 rounded-lg p-3 text-center">
                     <p className="text-xs text-gray-600 mb-1">Profit Factor</p>
                     <p className="text-lg font-bold text-blue-600">
-                      {currentGeneration.backtest_results.profit_factor.toFixed(2)}
+                      {safeNum(currentGeneration.backtest_results.profit_factor).toFixed(2)}
                     </p>
                   </div>
                   <div className="bg-gray-50 rounded-lg p-3 text-center">
                     <p className="text-xs text-gray-600 mb-1">Sharpe Ratio</p>
                     <p className="text-lg font-bold text-purple-600">
-                      {currentGeneration.backtest_results.sharpe_ratio.toFixed(2)}
+                      {safeNum(currentGeneration.backtest_results.sharpe_ratio).toFixed(2)}
                     </p>
                   </div>
                   <div className="bg-gray-50 rounded-lg p-3 text-center">
                     <p className="text-xs text-gray-600 mb-1">Max Drawdown</p>
                     <p className="text-lg font-bold text-red-600">
-                      {currentGeneration.backtest_results.max_drawdown.toFixed(1)}%
+                      {safeNum(currentGeneration.backtest_results.max_drawdown).toFixed(1)}%
                     </p>
                   </div>
                 </div>
@@ -341,7 +342,7 @@ const StrategyGenerationDisplay: React.FC<StrategyGenerationDisplayProps> = ({ a
                       <div className="text-right">
                         <p className="text-xs text-gray-600">Win Rate</p>
                         <p className="text-sm font-bold text-green-600">
-                          {strategy.backtest_results.win_rate.toFixed(1)}%
+                          {safeNum(strategy.backtest_results.win_rate).toFixed(1)}%
                         </p>
                       </div>
                     )}

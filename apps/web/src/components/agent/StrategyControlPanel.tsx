@@ -3,6 +3,7 @@ import { CheckCircle, XCircle, Pause, Play, AlertTriangle, Shield } from 'lucide
 import axios from 'axios';
 import { getAccessToken } from '@/utils/auth';
 import { getBackendUrl } from '@/utils/environment';
+import { safeNum } from '@/utils/safeNum';
 
 const API_BASE_URL = getBackendUrl();
 
@@ -188,10 +189,10 @@ const StrategyControlPanel: React.FC<StrategyControlPanelProps> = ({ strategy, o
         </div>
         <div className="text-right">
           <p className="text-xs text-gray-600">Backtest Score</p>
-          <p className="text-2xl font-bold text-blue-600">{strategy.backtest_score.toFixed(2)}</p>
+          <p className="text-2xl font-bold text-blue-600">{safeNum(strategy.backtest_score).toFixed(2)}</p>
           {strategy.paper_trading_score && (
             <p className="text-xs text-gray-600 mt-1">
-              Paper: {strategy.paper_trading_score.toFixed(2)}
+              Paper: {safeNum(strategy.paper_trading_score).toFixed(2)}
             </p>
           )}
         </div>
