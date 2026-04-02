@@ -452,7 +452,7 @@ class BacktestingEngine extends EventEmitter {
     const exits = trades.filter(t => t.type === 'exit');
     const gp = exits.filter(t => t.pnl > 0).reduce((s, t) => s + t.pnl, 0);
     const gl = Math.abs(exits.filter(t => t.pnl <= 0).reduce((s, t) => s + t.pnl, 0));
-    return gl > 0 ? gp / gl : gp > 0 ? Infinity : 0;
+    return gl > 0 ? gp / gl : gp > 0 ? 9999.99 : 0;
   }
   calculateExpectancy(trades) {
     const exits = trades.filter(t => t.type === 'exit');
@@ -475,9 +475,11 @@ class BacktestingEngine extends EventEmitter {
         INSERT INTO backtest_results (
           id, strategy_name, symbol, timeframe, start_date, end_date,
           initial_capital, final_value, total_return, max_drawdown,
-          max_drawdown_percent, sharpe_ratio, total_trades, win_rate,
+          max_drawdown_percent, sharpe_ratio, sortino_ratio, calmar_ratio,
+          total_trades, winning_trades, losing_trades, win_rate,
+          profit_factor, expectancy, average_win, average_loss,
           created_at, config, metrics
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
       `, [
         backtestId, this.currentBacktest.strategyName, this.currentBacktest.config.symbol,
         this.currentBacktest.config.timeframe, this.currentBacktest.config.startDate,
@@ -485,8 +487,17 @@ class BacktestingEngine extends EventEmitter {
         this.currentBacktest.portfolio.totalValue, this.currentBacktest.metrics.totalReturn,
         this.currentBacktest.metrics.maxDrawdown,
         this.currentBacktest.metrics.maxDrawdownPercent || 0,
-        this.currentBacktest.metrics.sharpeRatio,
-        this.currentBacktest.metrics.totalTrades, this.currentBacktest.metrics.winRate,
+        this.currentBacktest.metrics.sharpeRatio || 0,
+        this.currentBacktest.metrics.sortinoRatio || 0,
+        this.currentBacktest.metrics.calmarRatio || 0,
+        this.currentBacktest.metrics.totalTrades || 0,
+        this.currentBacktest.metrics.winningTrades || 0,
+        this.currentBacktest.metrics.losingTrades || 0,
+        this.currentBacktest.metrics.winRate || 0,
+        Number.isFinite(this.currentBacktest.metrics.profitFactor) ? this.currentBacktest.metrics.profitFactor : 0,
+        this.currentBacktest.metrics.expectancy || 0,
+        this.currentBacktest.metrics.averageWin || 0,
+        this.currentBacktest.metrics.averageLoss || 0,
         new Date(), JSON.stringify(this.currentBacktest.config), JSON.stringify(this.currentBacktest.metrics)
       ]);
       this.currentBacktest.id = backtestId;
