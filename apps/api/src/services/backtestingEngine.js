@@ -493,7 +493,7 @@ class BacktestingEngine extends EventEmitter {
         this.currentBacktest.metrics.totalTrades,
         this.currentBacktest.metrics.winningTrades || 0,
         this.currentBacktest.metrics.losingTrades || 0,
-        this.currentBacktest.metrics.winRate,
+        this.currentBacktest.metrics.winRate || 0,
         this.currentBacktest.metrics.profitFactor || 0,
         this.currentBacktest.metrics.expectancy || 0,
         this.currentBacktest.metrics.averageWin || 0,
