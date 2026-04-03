@@ -452,7 +452,7 @@ class BacktestingEngine extends EventEmitter {
     const exits = trades.filter(t => t.type === 'exit');
     const gp = exits.filter(t => t.pnl > 0).reduce((s, t) => s + t.pnl, 0);
     const gl = Math.abs(exits.filter(t => t.pnl <= 0).reduce((s, t) => s + t.pnl, 0));
-    return gl > 0 ? gp / gl : gp > 0 ? Infinity : 0;
+    return gl > 0 ? gp / gl : gp > 0 ? 9999.99 : 0;
   }
   calculateExpectancy(trades) {
     const exits = trades.filter(t => t.type === 'exit');
@@ -490,11 +490,11 @@ class BacktestingEngine extends EventEmitter {
         this.currentBacktest.metrics.sharpeRatio || 0,
         this.currentBacktest.metrics.sortinoRatio || 0,
         this.currentBacktest.metrics.calmarRatio || 0,
-        this.currentBacktest.metrics.totalTrades,
+        this.currentBacktest.metrics.totalTrades || 0,
         this.currentBacktest.metrics.winningTrades || 0,
         this.currentBacktest.metrics.losingTrades || 0,
         this.currentBacktest.metrics.winRate || 0,
-        this.currentBacktest.metrics.profitFactor || 0,
+        Number.isFinite(this.currentBacktest.metrics.profitFactor) ? this.currentBacktest.metrics.profitFactor : 0,
         this.currentBacktest.metrics.expectancy || 0,
         this.currentBacktest.metrics.averageWin || 0,
         this.currentBacktest.metrics.averageLoss || 0,
