@@ -16,6 +16,7 @@ class PaperTradingService extends EventEmitter {
     this.activeSessions = new Map();
     this.strategies = new Map();
     this.marketData = new Map();
+    this.strategyIntervals = new Map();
     this.isInitialized = false;
     
     // Market simulation parameters
@@ -885,6 +886,13 @@ class PaperTradingService extends EventEmitter {
         throw new Error(`Session ${sessionId} not found`);
       }
 
+      // Clear strategy execution interval
+      const intervalId = this.strategyIntervals.get(sessionId);
+      if (intervalId) {
+        clearInterval(intervalId);
+        this.strategyIntervals.delete(sessionId);
+      }
+
       // Close all open positions
       for (const [positionId, position] of session.positions) {
         if (position.status === 'open') {
@@ -1052,21 +1060,95 @@ class PaperTradingService extends EventEmitter {
   }
 
   async subscribeToSymbolData(symbol) {
-    // This would integrate with the existing WebSocket infrastructure
-    // For now, we'll rely on the existing market data subscription
-    logger.info(`📡 Subscribed to market data for ${symbol}`);
+    try {
+      if (futuresWebSocket.subscribeToSymbol) {
+        await futuresWebSocket.subscribeToSymbol(symbol);
+      }
+      logger.info(`Subscribed to market data for ${symbol}`);
+    } catch (error) {
+      logger.error(`Error subscribing to symbol data for ${symbol}:`, error);
+    }
   }
 
   async getHistoricalDataForSignal(symbol, timeframe) {
-    // This would fetch recent historical data for technical analysis
-    // For now, return empty array - would be implemented with real data
-    return [];
+    try {
+      const tf = timeframe || '1h';
+      const intervalSeconds = {
+        '1m': 60, '5m': 300, '15m': 900, '30m': 1800,
+        '1h': 3600, '2h': 7200, '4h': 14400, '12h': 43200, '1d': 86400
+      };
+      const seconds = intervalSeconds[tf] || 3600;
+      // Fetch 50 candles of history (enough for SMA50 and other indicators)
+      const startDate = new Date(Date.now() - seconds * 50 * 1000);
+      const endDate = new Date();
+
+      const data = await backtestingEngine.loadHistoricalData(symbol, tf, startDate, endDate);
+      return data;
+    } catch (error) {
+      logger.error(`Error fetching historical data for ${symbol}:`, error);
+      return [];
+    }
   }
 
   startStrategyExecution(sessionId) {
-    // This would start the strategy execution loop
-    // For now, we'll rely on market data updates to trigger signals
-    logger.info(`🚀 Started strategy execution for session ${sessionId}`);
+    const session = this.activeSessions.get(sessionId);
+    if (!session) {
+      logger.error(`Cannot start strategy execution: session ${sessionId} not found`);
+      return;
+    }
+
+    // Run first cycle immediately, then every 60 seconds
+    this._runStrategyCycle(sessionId);
+
+    const intervalId = setInterval(() => {
+      this._runStrategyCycle(sessionId);
+    }, 60000);
+
+    this.strategyIntervals.set(sessionId, intervalId);
+    logger.info(`Started strategy execution for session ${sessionId} (60s cycle)`);
+  }
+
+  async _runStrategyCycle(sessionId) {
+    try {
+      const session = this.activeSessions.get(sessionId);
+      if (!session || session.status !== 'active') {
+        const intervalId = this.strategyIntervals.get(sessionId);
+        if (intervalId) {
+          clearInterval(intervalId);
+          this.strategyIntervals.delete(sessionId);
+        }
+        return;
+      }
+
+      // Get latest market data from WebSocket cache or fetch fresh
+      let marketData = this.marketData.get(session.symbol);
+      if (!marketData) {
+        try {
+          const tickers = await poloniexFuturesService.getTickers(session.symbol);
+          if (tickers && tickers[0]) {
+            const t = tickers[0];
+            marketData = {
+              symbol: session.symbol,
+              price: parseFloat(t.markPx || t.markPrice || t.lastPx || '0'),
+              open: parseFloat(t.open || t.markPx || '0'),
+              high: parseFloat(t.high || t.markPx || '0'),
+              low: parseFloat(t.low || t.markPx || '0'),
+              volume: parseFloat(t.qty24h || t.vol || '0'),
+              timestamp: Date.now()
+            };
+          }
+        } catch (err) {
+          logger.warn(`Could not fetch ticker for ${session.symbol}: ${err.message}`);
+          return;
+        }
+      }
+
+      if (!marketData || !marketData.price) return;
+
+      await this.generateTradingSignals(session, marketData);
+    } catch (error) {
+      logger.error(`Strategy execution error for session ${sessionId}:`, error);
+    }
   }
 }
 
