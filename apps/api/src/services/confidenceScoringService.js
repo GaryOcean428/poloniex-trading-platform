@@ -82,6 +82,10 @@ class ConfidenceScoringService extends EventEmitter {
    */
   async calculateConfidenceScore(strategyName, symbol, timeframe) {
     try {
+      if (!strategyName) {
+        return this.createLowConfidenceScore(strategyName, symbol, 'missing_strategy_name');
+      }
+
       logger.info(`🔍 Calculating confidence score for ${strategyName} on ${symbol} (${timeframe})`);
 
       // Get historical performance data
@@ -953,12 +957,14 @@ class ConfidenceScoringService extends EventEmitter {
         SELECT DISTINCT strategy_name, symbol, timeframe
         FROM backtest_results
         WHERE created_at > NOW() - INTERVAL '7 days'
+          AND strategy_name IS NOT NULL AND strategy_name <> ''
         
         UNION
         
         SELECT DISTINCT strategy_name, symbol, timeframe
         FROM paper_trading_sessions
         WHERE started_at > NOW() - INTERVAL '7 days'
+          AND strategy_name IS NOT NULL AND strategy_name <> ''
       `);
 
       for (const strategy of strategies.rows) {
