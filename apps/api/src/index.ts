@@ -39,6 +39,7 @@ import { persistentTradingEngine } from './services/persistentTradingEngine.js';
 import { agentScheduler } from './services/agentScheduler.js';
 import automatedTradingService from './services/automatedTradingService.js';
 import { enhancedAutonomousAgent } from './services/enhancedAutonomousAgent.js';
+import paperTradingService from './services/paperTradingService.js';
 import { runAllMigrations } from './scripts/runMigrations.js';
 
 // Import environment configuration (dotenv.config() is called inside env.ts)
@@ -393,6 +394,11 @@ server.listen(PORT, '::', async () => {
   // Start agent scheduler (restores sessions from DB, starts always-run agents)
   agentScheduler.start().catch(error => {
     logger.error('Failed to start agent scheduler:', error);
+  });
+
+  // Initialize paper trading service (loads active sessions, subscribes to market data)
+  paperTradingService.initialize().catch(error => {
+    logger.error('Failed to initialize paper trading service:', error);
   });
   
   // Health heartbeat for production monitoring

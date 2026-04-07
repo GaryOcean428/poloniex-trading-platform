@@ -3,6 +3,12 @@ import { logger } from '../utils/logger.js';
 import { query } from '../db/connection.js';
 import poloniexFuturesService from './poloniexFuturesService.js';
 
+/** Coerce a value to a finite number suitable for DB insertion. */
+function safeNum(v, fallback = 0) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 /**
  * Enhanced Backtesting Engine
  * Sophisticated backtesting with historical data, realistic market simulation,
@@ -486,18 +492,18 @@ class BacktestingEngine extends EventEmitter {
         this.currentBacktest.config.endDate, this.currentBacktest.config.initialCapital || 100000,
         this.currentBacktest.portfolio.totalValue, this.currentBacktest.metrics.totalReturn,
         this.currentBacktest.metrics.maxDrawdown,
-        this.currentBacktest.metrics.maxDrawdownPercent || 0,
-        this.currentBacktest.metrics.sharpeRatio || 0,
-        this.currentBacktest.metrics.sortinoRatio || 0,
-        this.currentBacktest.metrics.calmarRatio || 0,
-        this.currentBacktest.metrics.totalTrades || 0,
-        this.currentBacktest.metrics.winningTrades || 0,
-        this.currentBacktest.metrics.losingTrades || 0,
-        this.currentBacktest.metrics.winRate || 0,
-        Number.isFinite(this.currentBacktest.metrics.profitFactor) ? this.currentBacktest.metrics.profitFactor : 0,
-        this.currentBacktest.metrics.expectancy || 0,
-        this.currentBacktest.metrics.averageWin || 0,
-        this.currentBacktest.metrics.averageLoss || 0,
+        safeNum(this.currentBacktest.metrics.maxDrawdownPercent),
+        safeNum(this.currentBacktest.metrics.sharpeRatio),
+        safeNum(this.currentBacktest.metrics.sortinoRatio),
+        safeNum(this.currentBacktest.metrics.calmarRatio),
+        safeNum(this.currentBacktest.metrics.totalTrades),
+        safeNum(this.currentBacktest.metrics.winningTrades),
+        safeNum(this.currentBacktest.metrics.losingTrades),
+        safeNum(this.currentBacktest.metrics.winRate),
+        safeNum(this.currentBacktest.metrics.profitFactor),
+        safeNum(this.currentBacktest.metrics.expectancy),
+        safeNum(this.currentBacktest.metrics.averageWin),
+        safeNum(this.currentBacktest.metrics.averageLoss),
         new Date(), JSON.stringify(this.currentBacktest.config), JSON.stringify(this.currentBacktest.metrics)
       ]);
       this.currentBacktest.id = backtestId;
