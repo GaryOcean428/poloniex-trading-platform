@@ -394,7 +394,7 @@ class BacktestingEngine extends EventEmitter {
 
   async executeEntry(signal, currentCandle, config) {
     try {
-      const positionSize = this.calculatePositionSize(signal, config);
+      const positionSize = this.calculatePositionSize(signal, config, currentCandle.close);
       const executionPrice = this.simulateMarketExecution(currentCandle.close, signal.side, positionSize, 'entry');
       const stopLoss = this.calculateStopLoss(executionPrice, signal.side, config);
       const takeProfit = this.calculateTakeProfit(executionPrice, signal.side, config);
@@ -433,13 +433,16 @@ class BacktestingEngine extends EventEmitter {
     return side === 'long' ? basePrice * (1 + totalSlippage) : basePrice * (1 - totalSlippage);
   }
 
-  calculatePositionSize(signal, config) {
+  calculatePositionSize(signal, config, currentPrice) {
     const { maxPositionSize = 0.1, minPositionSize = 0.01 } = config;
     const portfolioValue = this.currentBacktest.portfolio.totalValue;
-    const baseSize = portfolioValue * minPositionSize;
-    const maxSize = portfolioValue * maxPositionSize;
+    const price = currentPrice || 1;
+    // Calculate dollar allocation, then convert to asset units
+    const baseDollar = portfolioValue * minPositionSize;
+    const maxDollar = portfolioValue * maxPositionSize;
     const strengthMultiplier = Math.min(signal.strength || 1, 1);
-    return Math.min(Math.max(baseSize * strengthMultiplier, baseSize), maxSize);
+    const dollarSize = Math.min(Math.max(baseDollar * strengthMultiplier, baseDollar), maxDollar);
+    return dollarSize / price;
   }
 
   calculateSMA(values, period) {
