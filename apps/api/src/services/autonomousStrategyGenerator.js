@@ -5,6 +5,43 @@ import backtestingEngine from './backtestingEngine.js';
 import paperTradingService from './paperTradingService.js';
 import confidenceScoringService from './confidenceScoringService.js';
 import poloniexFuturesService from './poloniexFuturesService.js';
+import { getLeverageTier, capEffectiveLeverage } from './leverageAwareStrategyFactory.js';
+import { getMaxLeverage } from './marketCatalog.js';
+
+/**
+ * Leverage tier configuration for strategy generation.
+ * Aligned with poloniex-futures-v3.json maxLeverage values.
+ *
+ * Tier 1 (100x): BTC, ETH — scalping/mean-reversion/breakout viable
+ * Tier 2 (50x):  major alts — momentum/trend-following
+ * Tier 3 (10x):  memecoins — momentum-only, 2-3x effective leverage
+ */
+const LEVERAGE_TIER_CONFIG = {
+  1: {
+    // BTC_USDT_PERP, ETH_USDT_PERP (100x max → 25x effective cap)
+    strategyTypes: ['mean_reversion', 'breakout', 'trend_following', 'momentum'],
+    leverageRange: { min: 5, max: 20 },
+    stopLossRange: { min: 0.003, max: 0.008 },
+    timeframes: ['1m', '5m', '15m', '1h'],
+    targetRegimes: ['trending', 'mean_reverting', 'any'],
+  },
+  2: {
+    // Major alts (50x max → 12x effective cap)
+    strategyTypes: ['momentum', 'trend_following', 'breakout', 'mean_reversion'],
+    leverageRange: { min: 3, max: 10 },
+    stopLossRange: { min: 0.01, max: 0.02 },
+    timeframes: ['5m', '15m', '1h', '4h'],
+    targetRegimes: ['trending', 'mean_reverting', 'any'],
+  },
+  3: {
+    // Memecoins (10x max → 2x effective cap)
+    strategyTypes: ['momentum', 'trend_following'],
+    leverageRange: { min: 1, max: 2 },
+    stopLossRange: { min: 0.03, max: 0.05 },
+    timeframes: ['1m', '5m', '15m'],
+    targetRegimes: ['trending'],
+  },
+};
 
 // ─── Bridge law constant (frozen physics result, not tunable) ─────────────────
 // w(tf) = (60 / tfMinutes)^0.74   (τ ∝ J^0.74, R²>0.96, seed-robust)
@@ -301,43 +338,69 @@ class AutonomousStrategyGenerator extends EventEmitter {
   }
   
   /**
-   * Create initial population of strategies
+   * Create initial population of strategies with leverage-tier awareness.
+   * Fetches maxLeverage for each symbol from the market catalog so that
+   * generateRandomStrategy() can cap leverage appropriately.
    */
   async createInitialPopulation() {
     this.logger.info('🧪 Creating initial strategy population...');
     
     const symbols = ['BTC_USDT_PERP', 'ETH_USDT_PERP', 'SOL_USDT_PERP', 'XRP_USDT_PERP', 'LINK_USDT_PERP'];
     const strategyTypes = ['momentum', 'mean_reversion', 'breakout', 'trend_following'];
+
+    // Pre-fetch maxLeverage for all symbols to avoid async inside sync generateRandomStrategy
+    const leverageMap = {};
+    await Promise.all(
+      symbols.map(async (sym) => {
+        try {
+          const maxLev = await getMaxLeverage(sym);
+          if (maxLev != null) leverageMap[sym] = maxLev;
+        } catch (_err) {
+          // use default (50) if fetch fails
+        }
+      })
+    );
     
     for (let i = 0; i < this.generationConfig.populationSize; i++) {
-      const strategy = this.generateRandomStrategy(symbols, strategyTypes);
+      const strategy = this.generateRandomStrategy(symbols, strategyTypes, leverageMap);
       this.strategies.set(strategy.id, strategy);
       
-      this.logger.info(`Created strategy ${strategy.id}: ${strategy.name}`);
+      this.logger.info(`Created strategy ${strategy.id}: ${strategy.name} (T${strategy.leverageTier} ${strategy.leverage}x)`);
     }
     
     this.logger.info(`✅ Created ${this.strategies.size} initial strategies`);
   }
   
   /**
-   * Generate a random strategy with random parameters, conditioned on detected regime.
+   * Generate a random strategy with random parameters.
+   * Combines leverage-tier awareness with regime-conditioned type selection
+   * and learned fitness weights (QIG learning loop).
+   *
+   * @param {string[]} symbols       List of candidate symbols
+   * @param {string[]} strategyTypes Fallback strategy types (overridden by tier config)
+   * @param {Object}   [leverageMap] Optional pre-fetched {symbol → maxLeverage} map
    */
-  generateRandomStrategy(symbols, strategyTypes) {
+  generateRandomStrategy(symbols, strategyTypes, leverageMap = {}) {
     const id = `auto_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const symbol = symbols[Math.floor(Math.random() * symbols.length)];
-    const timeframe = this.parameterRanges.timeframes[Math.floor(Math.random() * this.parameterRanges.timeframes.length)];
+
+    // Determine leverage tier from the symbol's max leverage
+    const maxLeverage = leverageMap[symbol] ?? 50; // default to Tier 2 if unknown
+    const tier = getLeverageTier(maxLeverage);
+    const tierConfig = LEVERAGE_TIER_CONFIG[tier];
 
     // Regime-conditioned type selection (QIG: don't average across regime basins)
-    let candidateTypes = strategyTypes;
+    // Intersect tier-allowed types with regime-preferred types
+    let candidateTypes = tierConfig.strategyTypes;
     if (this.currentRegime === 'trending') {
-      candidateTypes = strategyTypes.filter(t => TRENDING_TYPES.has(t));
-      if (candidateTypes.length === 0) candidateTypes = strategyTypes;
+      const regimeFiltered = candidateTypes.filter(t => TRENDING_TYPES.has(t));
+      if (regimeFiltered.length > 0) candidateTypes = regimeFiltered;
     } else if (this.currentRegime === 'ranging') {
-      candidateTypes = strategyTypes.filter(t => REVERTING_TYPES.has(t));
-      if (candidateTypes.length === 0) candidateTypes = strategyTypes;
+      const regimeFiltered = candidateTypes.filter(t => REVERTING_TYPES.has(t));
+      if (regimeFiltered.length > 0) candidateTypes = regimeFiltered;
     }
 
-    // Weight type selection by learned fitness weights
+    // Weight type selection by learned fitness weights from DB
     const weights = candidateTypes.map(t => this.fitnessWeights[t] ?? 1.0);
     const totalWeight = weights.reduce((a, b) => a + b, 0);
     let rand = Math.random() * totalWeight;
@@ -346,18 +409,35 @@ class AutonomousStrategyGenerator extends EventEmitter {
       rand -= weights[i];
       if (rand <= 0) { type = candidateTypes[i]; break; }
     }
-    
-    // Generate random indicator combination
-    const indicators = this.selectRandomIndicators();
-    const parameters = this.generateRandomParameters(type, indicators);
-    
+
+    // Select timeframe appropriate for this tier
+    const timeframe = tierConfig.timeframes[Math.floor(Math.random() * tierConfig.timeframes.length)];
+
+    // Pick a target regime for this strategy
+    const targetRegime = tierConfig.targetRegimes[Math.floor(Math.random() * tierConfig.targetRegimes.length)];
+
+    // Generate random leverage within tier range, then cap at 25% of maxLeverage
+    const rawLeverage = this.randomInt(tierConfig.leverageRange.min, tierConfig.leverageRange.max);
+    const leverage = capEffectiveLeverage(rawLeverage, maxLeverage);
+
+    // Generate random stop loss within tier range
+    const stopLoss = this.randomFloat(tierConfig.stopLossRange.min, tierConfig.stopLossRange.max);
+
+    // Generate random indicator combination scoped to tier-appropriate indicators
+    const indicators = this.selectRandomIndicators(tier);
+    const parameters = this.generateRandomParameters(type, indicators, { stopLoss, leverage, tier });
+
     return {
       id,
-      name: `Auto ${type} ${symbol} ${timeframe}`,
+      name: `Auto ${type} ${symbol} ${timeframe} T${tier}`,
       type,
       symbol,
       timeframe,
       regimeAtCreation: this.currentRegime,
+      leverageTier: tier,
+      maxLeverage,
+      leverage,
+      targetRegime,
       indicators,
       parameters,
       performance: {
@@ -376,37 +456,59 @@ class AutonomousStrategyGenerator extends EventEmitter {
       generation: this.generationCount
     };
   }
-  
+
   /**
-   * Select random indicators for strategy
+   * Select random indicators for strategy, optionally scoped by leverage tier.
+   *
+   * Tier 1: all indicator categories (highest signal complexity)
+   * Tier 2: momentum + trend + volatility + volume
+   * Tier 3: momentum + volatility only (simpler signals for memecoins)
+   *
+   * @param {1|2|3} [tier] Leverage tier (optional; defaults to all categories)
    */
-  selectRandomIndicators() {
+  selectRandomIndicators(tier) {
     const indicators = [];
-    const categories = Object.keys(this.indicatorLibrary);
-    
+    let categories = Object.keys(this.indicatorLibrary);
+
+    // Scope indicator categories by tier
+    if (tier === 3) {
+      // Memecoins: momentum only — no complex trend/SR indicators
+      categories = ['momentum', 'volatility'];
+    } else if (tier === 2) {
+      // Major alts: momentum + trend
+      categories = ['trend', 'momentum', 'volatility', 'volume'];
+    }
+    // Tier 1 uses all categories
+
     // Select 2-4 indicators from different categories
     const numIndicators = Math.floor(Math.random() * 3) + 2;
     const selectedCategories = this.shuffleArray(categories).slice(0, numIndicators);
-    
+
     for (const category of selectedCategories) {
       const categoryIndicators = this.indicatorLibrary[category];
+      if (!categoryIndicators) continue;
       const indicator = categoryIndicators[Math.floor(Math.random() * categoryIndicators.length)];
       indicators.push({ category, indicator });
     }
-    
+
     return indicators;
   }
   
   /**
-   * Generate random parameters for strategy
+   * Generate random parameters for strategy.
+   *
+   * @param {string} type        Strategy type
+   * @param {Array}  indicators  Selected indicators
+   * @param {Object} [tierOpts]  Tier-specific overrides: { stopLoss, leverage, tier }
    */
-  generateRandomParameters(type, indicators) {
+  generateRandomParameters(type, indicators, tierOpts = {}) {
     const parameters = {};
-    
-    // Base parameters for all strategies
-    parameters.stopLoss = this.randomFloat(0.01, 0.05);
-    parameters.takeProfit = this.randomFloat(0.02, 0.08);
+
+    // Base parameters — use tier-appropriate ranges when provided
+    parameters.stopLoss = tierOpts.stopLoss ?? this.randomFloat(0.01, 0.05);
+    parameters.takeProfit = this.randomFloat(parameters.stopLoss * 1.5, parameters.stopLoss * 3);
     parameters.positionSize = this.randomFloat(0.01, this.riskTolerance.maxPositionSize);
+    parameters.leverage = tierOpts.leverage ?? 3;
     
     // Type-specific parameters
     switch (type) {
@@ -535,7 +637,9 @@ class AutonomousStrategyGenerator extends EventEmitter {
   
   /**
    * Crossover two strategies to create offspring.
-   * Pre-condition: both parents are in the same regime basin (enforced by caller).
+   * Crossover two strategies from the same regime basin.
+   * Preserves leverage tier of chosen parent symbol (re-capped at 25% max).
+   * Regime-conditioned: enforced by generateNewStrategies() caller.
    */
   crossoverStrategies(parent1, parent2) {
     const id = `cross_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -553,13 +657,28 @@ class AutonomousStrategyGenerator extends EventEmitter {
       )
       .slice(0, 4); // Max 4 indicators
     
+    // Inherit symbol and leverage tier from chosen parent
+    const chosenSymbol = Math.random() < 0.5 ? parent1.symbol : parent2.symbol;
+    const inheritedTier = chosenSymbol === parent1.symbol ? parent1.leverageTier : parent2.leverageTier;
+    const inheritedMaxLev = chosenSymbol === parent1.symbol ? parent1.maxLeverage : parent2.maxLeverage;
+    const inheritedLev = Math.random() < 0.5 ? parent1.leverage : parent2.leverage;
+    // Re-cap leverage for the selected symbol
+    const leverage = inheritedMaxLev
+      ? capEffectiveLeverage(inheritedLev ?? 3, inheritedMaxLev)
+      : (inheritedLev ?? 3);
+    if (parameters.leverage !== undefined) parameters.leverage = leverage;
+
     return {
       id,
       name: `Cross ${parent1.type} x ${parent2.type}`,
       type: Math.random() < 0.5 ? parent1.type : parent2.type,
-      symbol: Math.random() < 0.5 ? parent1.symbol : parent2.symbol,
+      symbol: chosenSymbol,
       timeframe: Math.random() < 0.5 ? parent1.timeframe : parent2.timeframe,
       regimeAtCreation: this.currentRegime,
+      leverageTier: tier,
+      maxLeverage,
+      leverage,
+      targetRegime,
       indicators,
       parameters,
       performance: {
@@ -581,7 +700,8 @@ class AutonomousStrategyGenerator extends EventEmitter {
   }
   
   /**
-   * Mutate a strategy to create variation
+   * Mutate a strategy to create variation.
+   * Preserves leverageTier and re-caps leverage after mutation.
    */
   mutateStrategy(parent) {
     const id = `mut_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -617,11 +737,19 @@ class AutonomousStrategyGenerator extends EventEmitter {
         }
       }
     }
+
+    // Re-cap leverage after mutation to stay within tier limits
+    if (mutated.maxLeverage && mutated.parameters.leverage !== undefined) {
+      mutated.parameters.leverage = capEffectiveLeverage(
+        Math.round(mutated.parameters.leverage),
+        mutated.maxLeverage
+      );
+      mutated.leverage = mutated.parameters.leverage;
+    }
     
-    // Occasionally mutate indicators
+    // Occasionally mutate indicators (scoped to tier)
     if (Math.random() < this.generationConfig.mutationRate * 0.5) {
-      const newIndicators = this.selectRandomIndicators();
-      mutated.indicators = newIndicators;
+      mutated.indicators = this.selectRandomIndicators(mutated.leverageTier);
     }
     
     return mutated;

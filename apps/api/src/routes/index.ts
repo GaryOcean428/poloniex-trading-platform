@@ -18,7 +18,6 @@ export { default as tradingSessionsRoutes } from './tradingSessions.js';
 
 // Strategy & Risk Management
 export { default as strategiesRoutes } from './strategies.js';
-export { default as llmStrategiesRoutes } from './llmStrategies.js';
 export { default as riskRoutes } from './risk.js';
 export { default as confidenceScoringRoutes } from './confidenceScoring.js';
 
@@ -29,7 +28,6 @@ export { default as proxyRoutes } from './proxy.js';
 
 // ML & AI
 export { default as mlRoutes } from './ml.js';
-export { default as aiRoutes } from './ai.js';
 export { default as qigRoutes } from './qig.js';
 export { default as agentRoutes } from './agent.js';
 

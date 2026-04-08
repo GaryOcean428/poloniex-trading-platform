@@ -64,30 +64,11 @@ CREATE INDEX IF NOT EXISTS idx_sp_backtest_sharpe
     ON strategy_performance (backtest_sharpe DESC NULLS LAST)
     WHERE status NOT IN ('killed', 'retired');
 
--- Paper trading sessions: add censoring and multi-session support columns if not present
+-- Allow multiple sessions per pair (remove unique constraint if it exists).
+-- is_censored / censor_reason columns already added by migration 017_paper_trading_censoring.sql.
 DO $$
 BEGIN
-    -- Add is_censored to paper_trading_sessions if missing
-    IF NOT EXISTS (
-        SELECT 1 FROM information_schema.columns
-        WHERE table_name = 'paper_trading_sessions'
-          AND column_name = 'is_censored'
-          AND table_schema = current_schema()
-    ) THEN
-        ALTER TABLE paper_trading_sessions ADD COLUMN is_censored BOOLEAN NOT NULL DEFAULT FALSE;
-    END IF;
-
-    IF NOT EXISTS (
-        SELECT 1 FROM information_schema.columns
-        WHERE table_name = 'paper_trading_sessions'
-          AND column_name = 'censor_reason'
-          AND table_schema = current_schema()
-    ) THEN
-        ALTER TABLE paper_trading_sessions ADD COLUMN censor_reason TEXT;
-    END IF;
-
     -- Allow multiple sessions per pair (remove unique constraint if it exists)
-    -- Check if there's a unique constraint on (symbol) or (symbol, status)
     IF EXISTS (
         SELECT 1 FROM pg_constraint
         WHERE conname = 'paper_trading_sessions_symbol_unique'
