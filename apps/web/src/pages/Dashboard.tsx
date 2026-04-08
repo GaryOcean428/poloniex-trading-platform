@@ -8,19 +8,20 @@ import AccountSummary from '../components/dashboard/AccountSummary';
 import QuickTrade from '../components/dashboard/QuickTrade';
 import RealTimeMarketTicker from '../components/dashboard/RealTimeMarketTicker';
 import TradingInsights from '../components/TradingInsights';
-import ExtensionBanner from '../components/dashboard/ExtensionBanner';
+
 import AutonomousTradingDashboard from '../components/trading/AutonomousTradingDashboard';
 import MLModelPerformance from '../components/ml/MLModelPerformance';
 import AccountBalanceWidget from '../components/dashboard/AccountBalanceWidget';
 import ActivePositionsWidget from '../components/dashboard/ActivePositionsWidget';
 import RecentTradesWidget from '../components/dashboard/RecentTradesWidget';
-import { Activity, ArrowRight, TrendingUp, Brain } from 'lucide-react';
+import { Activity, ArrowRight, TrendingUp, Brain, Play, BarChart3 } from 'lucide-react';
 import { poloniexApi } from '../services/poloniexAPI';
+import PipelineFunnelWidget from '../components/dashboard/PipelineFunnelWidget';
 
 const Dashboard: React.FC = () => {
   const { marketData: contextMarketData, strategies, activeStrategies, trades } = useTradingContext();
   const [liveMarketData, setLiveMarketData] = useState<any[]>([]);
-  const [loadingMarket, setLoadingMarket] = useState(true);
+  const [_loadingMarket, setLoadingMarket] = useState(true);
   
   // Fetch live market data for chart
   useEffect(() => {
@@ -60,8 +61,36 @@ const Dashboard: React.FC = () => {
         </div>
       </div>
       
-      <div className="mb-6 lg:mb-8">
-        <ExtensionBanner />
+      {/* Quick Actions Bar (replaces Chrome Extension banner) */}
+      <div className="mb-6 lg:mb-8 grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <Link
+          to="/autonomous-agent"
+          className="flex items-center justify-center gap-2 px-4 py-3 bg-cyan-600 text-white rounded-lg hover:bg-cyan-700 transition-colors font-medium text-sm shadow"
+        >
+          <Play size={15} />
+          Start Agent
+        </Link>
+        <Link
+          to="/backtesting"
+          className="flex items-center justify-center gap-2 px-4 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors font-medium text-sm shadow"
+        >
+          <BarChart3 size={15} />
+          View Backtests
+        </Link>
+        <Link
+          to="/performance"
+          className="flex items-center justify-center gap-2 px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium text-sm shadow"
+        >
+          <TrendingUp size={15} />
+          Performance
+        </Link>
+        <Link
+          to="/dashboard/live"
+          className="flex items-center justify-center gap-2 px-4 py-3 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors font-medium text-sm shadow"
+        >
+          <Activity size={15} />
+          Live Trading
+        </Link>
       </div>
 
       {/* Quick Navigation Cards */}
@@ -103,6 +132,11 @@ const Dashboard: React.FC = () => {
       
       <div className="mb-6 lg:mb-8">
         <RealTimeMarketTicker />
+      </div>
+
+      {/* Pipeline Funnel */}
+      <div className="mb-6 lg:mb-8">
+        <PipelineFunnelWidget />
       </div>
 
       <div className="mb-6 lg:mb-8">
