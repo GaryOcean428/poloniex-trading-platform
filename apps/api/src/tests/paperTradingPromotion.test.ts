@@ -169,3 +169,162 @@ describe('Pipeline funnel Generated to Backtested to Paper Trading', () => {
     expect(promoted.length).toBe(4);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Dual censored/uncensored Sharpe fitness — QIG reliability_warning
+// ---------------------------------------------------------------------------
+
+function computeSharpe(trades: Array<{ pnl: number }>): number {
+  if (trades.length < 2) return 0;
+  const pnls = trades.map(t => t.pnl);
+  const avg = pnls.reduce((s, v) => s + v, 0) / pnls.length;
+  const variance = pnls.reduce((s, v) => s + Math.pow(v - avg, 2), 0) / pnls.length;
+  const stdDev = Math.sqrt(variance);
+  return stdDev > 0 ? avg / stdDev : 0;
+}
+
+function computeReliabilityWarning(
+  allTrades: Array<{ pnl: number; isCensored: boolean }>,
+  divergenceThreshold = 0.20
+): { reliabilityWarning: boolean; divergence: number } {
+  const allSharpe = computeSharpe(allTrades);
+  const uncensoredSharpe = computeSharpe(allTrades.filter(t => !t.isCensored));
+  const denominator = Math.max(Math.abs(uncensoredSharpe), 0.01);
+  const divergence = Math.abs(allSharpe - uncensoredSharpe) / denominator;
+  return { reliabilityWarning: divergence > divergenceThreshold, divergence };
+}
+
+describe('Dual censored/uncensored Sharpe fitness (QIG reliability_warning)', () => {
+  it('flags reliability_warning when censored sessions inflate Sharpe by >20%', () => {
+    // Uncensored trades: mediocre, negative-average PnL
+    const trades = [
+      { pnl: 10, isCensored: false },
+      { pnl: -20, isCensored: false },
+      { pnl: 5, isCensored: false },
+      { pnl: -15, isCensored: false },
+      // Censored trade with very large outlier PnL (forced-close artefact)
+      { pnl: 500, isCensored: true },
+    ];
+    const { reliabilityWarning, divergence } = computeReliabilityWarning(trades);
+    expect(divergence).toBeGreaterThan(0.20);
+    expect(reliabilityWarning).toBe(true);
+  });
+
+  it('does not flag reliability_warning when divergence is within 20%', () => {
+    const trades = [
+      { pnl: 10, isCensored: false },
+      { pnl: 12, isCensored: false },
+      { pnl: 11, isCensored: false },
+      // Censored trade with similar PnL — not distorting
+      { pnl: 11, isCensored: true },
+    ];
+    const { reliabilityWarning, divergence } = computeReliabilityWarning(trades);
+    expect(divergence).toBeLessThanOrEqual(0.20);
+    expect(reliabilityWarning).toBe(false);
+  });
+
+  it('returns reliability_warning=false when no trades are present', () => {
+    const { reliabilityWarning } = computeReliabilityWarning([]);
+    expect(reliabilityWarning).toBe(false);
+  });
+
+  it('returns reliability_warning=false when all trades are uncensored', () => {
+    const trades = [
+      { pnl: 10, isCensored: false },
+      { pnl: 20, isCensored: false },
+    ];
+    const { reliabilityWarning } = computeReliabilityWarning(trades);
+    // allSharpe == uncensoredSharpe → divergence = 0
+    expect(reliabilityWarning).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Continuous confidence-based position sizing
+// ---------------------------------------------------------------------------
+
+function calcPositionSize(
+  currentValue: number,
+  riskPerTrade: number,
+  stopLossPercent: number,
+  maxPositionSize: number,
+  price: number,
+  confidence: number
+): number {
+  const riskAmount = currentValue * riskPerTrade;
+  const maxPositionValue = riskAmount / stopLossPercent;
+  const maxPositionSizeUnits = maxPositionValue / price;
+  const maxAllowedSize = (currentValue * maxPositionSize) / price;
+  const baseSize = Math.min(maxPositionSizeUnits, maxAllowedSize);
+  // Continuous confidence scaling
+  return baseSize * (Math.min(Math.max(confidence, 0), 100) / 100);
+}
+
+describe('Continuous confidence position sizing (no threshold noise)', () => {
+  const baseParams = { currentValue: 10000, riskPerTrade: 0.02, stopLossPercent: 0.02, maxPositionSize: 0.10, price: 100 };
+
+  it('scales position linearly with confidence', () => {
+    const { currentValue, riskPerTrade, stopLossPercent, maxPositionSize, price } = baseParams;
+    const size50 = calcPositionSize(currentValue, riskPerTrade, stopLossPercent, maxPositionSize, price, 50);
+    const size100 = calcPositionSize(currentValue, riskPerTrade, stopLossPercent, maxPositionSize, price, 100);
+    expect(size50).toBeCloseTo(size100 * 0.5, 5);
+  });
+
+  it('confidence=49.9% and confidence=50.1% produce similar (not opposite) sizes', () => {
+    const { currentValue, riskPerTrade, stopLossPercent, maxPositionSize, price } = baseParams;
+    const size499 = calcPositionSize(currentValue, riskPerTrade, stopLossPercent, maxPositionSize, price, 49.9);
+    const size501 = calcPositionSize(currentValue, riskPerTrade, stopLossPercent, maxPositionSize, price, 50.1);
+    const ratio = size501 / size499;
+    // Should be very close to 1 (within 1%)
+    expect(ratio).toBeGreaterThan(0.99);
+    expect(ratio).toBeLessThan(1.01);
+  });
+
+  it('confidence=0 yields zero position size', () => {
+    const { currentValue, riskPerTrade, stopLossPercent, maxPositionSize, price } = baseParams;
+    const size = calcPositionSize(currentValue, riskPerTrade, stopLossPercent, maxPositionSize, price, 0);
+    expect(size).toBe(0);
+  });
+
+  it('confidence above 100 is clamped to 100', () => {
+    const { currentValue, riskPerTrade, stopLossPercent, maxPositionSize, price } = baseParams;
+    const sizeMax  = calcPositionSize(currentValue, riskPerTrade, stopLossPercent, maxPositionSize, price, 100);
+    const sizeover = calcPositionSize(currentValue, riskPerTrade, stopLossPercent, maxPositionSize, price, 150);
+    expect(sizeover).toBe(sizeMax);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Confidence trajectory buffer
+// ---------------------------------------------------------------------------
+
+describe('Confidence trajectory (last-N rolling buffer)', () => {
+  function buildTrajectory(scores: number[], maxLen = 20): number[] {
+    const buf: number[] = [];
+    for (const s of scores) {
+      buf.push(s);
+      if (buf.length > maxLen) buf.shift();
+    }
+    return [...buf];
+  }
+
+  it('retains all scores when below capacity', () => {
+    const traj = buildTrajectory([70, 75, 80]);
+    expect(traj).toEqual([70, 75, 80]);
+  });
+
+  it('evicts oldest score when capacity is exceeded', () => {
+    const traj = buildTrajectory([70, 75, 80], 2);
+    expect(traj).toEqual([75, 80]);
+  });
+
+  it('trajectory length equals trajectoryLength when overfilled', () => {
+    const traj = buildTrajectory(Array.from({ length: 30 }, (_, i) => i), 20);
+    expect(traj.length).toBe(20);
+  });
+
+  it('most recent score is always the last element', () => {
+    const traj = buildTrajectory([10, 20, 30, 40, 50], 3);
+    expect(traj[traj.length - 1]).toBe(50);
+  });
+});

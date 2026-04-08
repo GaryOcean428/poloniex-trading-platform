@@ -6,6 +6,48 @@ import futuresWebSocket from '../websocket/futuresWebSocket.js';
 import backtestingEngine from './backtestingEngine.js';
 
 /**
+ * Determine whether a paper-trading session result is censored.
+ *
+ * A session is censored (QIG term: τ_decoherence == t_max) when the
+ * observed P&L doesn't represent the true value because an external
+ * limit cut the measurement short:
+ *   1. Max-drawdown limit hit  → true loss could be worse.
+ *   2. Session time limit hit  → strategy didn't reach natural end-of-life.
+ *   3. Position-size limit hit → true return is undefined (capped).
+ *
+ * Callers should fit performance metrics with and without censored sessions
+ * and flag a reliability warning when the fits diverge significantly.
+ *
+ * @param {object} session - A paper trading session object.
+ * @returns {{ isCensored: boolean, reason: string|null }}
+ */
+export function isCensored(session) {
+  if (!session) return { isCensored: false, reason: null };
+
+  // Max-drawdown limit was breached
+  if (session.censoringReason === 'max_drawdown') {
+    return { isCensored: true, reason: 'max_drawdown' };
+  }
+
+  // Check current drawdown against configured limit
+  const drawdown = (session.initialCapital - session.currentValue) / session.initialCapital;
+  const maxDrawdownLimit = session.riskParameters?.maxDailyLoss ?? 0.05;
+  if (drawdown >= maxDrawdownLimit) {
+    return { isCensored: true, reason: 'max_drawdown' };
+  }
+
+  // Time limit hit (session ran for longer than its intended window)
+  if (session.maxDurationMs && session.startedAt) {
+    const elapsed = Date.now() - new Date(session.startedAt).getTime();
+    if (elapsed >= session.maxDurationMs) {
+      return { isCensored: true, reason: 'time_limit' };
+    }
+  }
+
+  return { isCensored: false, reason: null };
+}
+
+/**
  * Paper Trading Service
  * Real-time market simulation without actual capital risk
  * Provides a bridge between backtesting and live trading
@@ -812,15 +854,10 @@ class PaperTradingService extends EventEmitter {
       // Check daily loss limit
       const dailyLoss = (session.initialCapital - session.currentValue) / session.initialCapital;
       if (dailyLoss > session.riskParameters.maxDailyLoss) {
-        // QIG censoring: hitting max drawdown kill threshold means true loss is censored
-        if (!session.isCensored) {
-          session.isCensored = true;
-          session.censorReason = 'max_drawdown_kill';
-          logger.warn(
-            `[Censoring] Session ${session.id} (${session.strategyName}) hit max drawdown ` +
-            `${(dailyLoss * 100).toFixed(2)}% — marking as CENSORED (true loss unknown)`
-          );
-        }
+        // Mark session as censored: P&L is bounded by the drawdown limit, not by
+        // the strategy's natural behaviour.
+        session.isCensored = true;
+        session.censoringReason = 'max_drawdown';
         return {
           allowed: false,
           reason: 'daily_loss_limit_exceeded',
@@ -834,15 +871,9 @@ class PaperTradingService extends EventEmitter {
       const positionPercent = positionValue / session.currentValue;
       
       if (positionPercent > session.riskParameters.maxPositionSize) {
-        // QIG censoring: hitting position size limit means the strategy can't fully express itself
-        if (!session.isCensored) {
-          session.isCensored = true;
-          session.censorReason = 'position_size_limit';
-          logger.warn(
-            `[Censoring] Session ${session.id} (${session.strategyName}) hit position size limit ` +
-            `${(positionPercent * 100).toFixed(2)}% — marking as CENSORED (strategy constrained, true performance unknown)`
-          );
-        }
+        // Mark session as censored: return is bounded by the position-size cap.
+        session.isCensored = true;
+        session.censoringReason = 'position_size_limit';
         return {
           allowed: false,
           reason: 'position_size_limit_exceeded',
@@ -885,8 +916,16 @@ class PaperTradingService extends EventEmitter {
     // Apply position size limits
     const maxAllowedValue = session.currentValue * session.riskParameters.maxPositionSize;
     const maxAllowedSize = maxAllowedValue / price;
-    
-    return Math.min(maxPositionSize, maxAllowedSize);
+
+    const baseSize = Math.min(maxPositionSize, maxAllowedSize);
+
+    // Continuous confidence scaling: scale position size proportionally to
+    // confidence (0-100).  A signal confidence of 80 → 80% of base size.
+    // Falls back to full base size when confidence is not provided.
+    const confidence = (signal && signal.confidence != null) ? signal.confidence : 100;
+    const scaledSize = baseSize * (Math.min(Math.max(confidence, 0), 100) / 100);
+
+    return scaledSize;
   }
 
   /**
@@ -1061,12 +1100,22 @@ class PaperTradingService extends EventEmitter {
       session.status = 'stopped';
       session.endedAt = new Date();
 
+      // Detect censoring before persisting
+      const { isCensored: censored, reason: censoringReason } = isCensored(session);
+      session.isCensored = censored;
+      session.censoringReason = censoringReason;
+
+      if (censored) {
+        logger.warn(`Paper trading session ${sessionId} flagged as censored: ${censoringReason}`);
+      }
+
       // Update database
       await query(`
         UPDATE paper_trading_sessions 
-        SET status = 'stopped', ended_at = $1, is_censored = $2, censor_reason = $3, updated_at = NOW()
-        WHERE id = $4
-      `, [session.endedAt, session.isCensored || false, session.censorReason || null, sessionId]);
+        SET status = 'stopped', ended_at = $1, updated_at = NOW(),
+            is_censored = $3, censoring_reason = $4
+        WHERE id = $2
+      `, [session.endedAt, sessionId, censored, censoringReason]);
 
       // Remove from active sessions
       this.activeSessions.delete(sessionId);
