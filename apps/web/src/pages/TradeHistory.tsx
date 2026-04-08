@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Search, Filter, Download, TrendingUp, TrendingDown, ArrowUpDown, BarChart3 } from 'lucide-react';
+import { Search, Filter, Download, TrendingUp, TrendingDown, ArrowUpDown, BarChart3, Globe, Bot } from 'lucide-react';
+
+type TradeSource = 'exchange' | 'bot';
 
 interface TradeHistoryItem {
   id: string;
@@ -16,6 +18,20 @@ interface TradeHistoryItem {
   strategy?: string;
   orderId: string;
   status: 'filled' | 'partial' | 'cancelled';
+  source: TradeSource;
+}
+
+interface ExchangeTradeItem {
+  id: string;
+  symbol: string;
+  side: string;
+  qty: number;
+  entryPrice: number;
+  closePrice: number;
+  realizedPnl: number;
+  openTime: string | null;
+  closeTime: string | null;
+  source: 'exchange';
 }
 
 interface TradeFilters {
@@ -26,9 +42,23 @@ interface TradeFilters {
   strategy: string;
 }
 
+type ActiveTab = 'exchange' | 'bot';
+
 const TradeHistory: React.FC = () => {
-  const [trades, setTrades] = useState<TradeHistoryItem[]>([]);
+  const [activeTab, setActiveTab] = useState<ActiveTab>('exchange');
+
+  // Bot trades state
+  const [botTrades, setBotTrades] = useState<TradeHistoryItem[]>([]);
+  const [botLoading, setBotLoading] = useState(false);
+
+  // Exchange trades state
+  const [exchangeTrades, setExchangeTrades] = useState<ExchangeTradeItem[]>([]);
+  const [exchangeLoading, setExchangeLoading] = useState(false);
+  const [exchangeMock, setExchangeMock] = useState(false);
+  const [exchangeWarning, setExchangeWarning] = useState<string | null>(null);
+
   const [filteredTrades, setFilteredTrades] = useState<TradeHistoryItem[]>([]);
+  const [filteredExchangeTrades, setFilteredExchangeTrades] = useState<ExchangeTradeItem[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [filters, setFilters] = useState<TradeFilters>({
     startDate: '',
@@ -43,7 +73,7 @@ const TradeHistory: React.FC = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage] = useState(20);
 
-  // Fetch real trade data from API
+  // Fetch bot trades from internal DB
   useEffect(() => {
     interface ApiTrade {
       id: string;
@@ -57,7 +87,8 @@ const TradeHistory: React.FC = () => {
       status: string;
     }
 
-    const fetchTrades = async () => {
+    const fetchBotTrades = async () => {
+      setBotLoading(true);
       try {
         const { getBackendUrl } = await import('../utils/environment');
         const backendUrl = getBackendUrl();
@@ -69,7 +100,7 @@ const TradeHistory: React.FC = () => {
         if (response.ok) {
           const data = await response.json();
           if (data.success && Array.isArray(data.trades)) {
-            setTrades(data.trades.map((t: ApiTrade) => ({
+            setBotTrades(data.trades.map((t: ApiTrade) => ({
               id: t.id,
               timestamp: new Date(t.entryTime),
               pair: t.symbol || '',
@@ -83,22 +114,61 @@ const TradeHistory: React.FC = () => {
               pnl: t.pnl ?? undefined,
               strategy: t.reason || undefined,
               orderId: t.id,
-              status: t.status === 'open' ? 'filled' as const : t.status === 'closed' ? 'filled' as const : 'cancelled' as const
+              status: t.status === 'open' ? 'filled' as const : t.status === 'closed' ? 'filled' as const : 'cancelled' as const,
+              source: 'bot' as const,
             })));
             return;
           }
         }
-        setTrades([]);
+        setBotTrades([]);
       } catch {
-        setTrades([]);
+        setBotTrades([]);
+      } finally {
+        setBotLoading(false);
       }
     };
-    fetchTrades();
+    fetchBotTrades();
   }, []);
 
-  // Apply filters and search
+  // Fetch exchange trades from Poloniex API
   useEffect(() => {
-    let filtered = [...trades];
+    const fetchExchangeTrades = async () => {
+      setExchangeLoading(true);
+      setExchangeWarning(null);
+      try {
+        const { getBackendUrl } = await import('../utils/environment');
+        const backendUrl = getBackendUrl();
+        const token = localStorage.getItem('access_token') || localStorage.getItem('auth_token');
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+
+        const response = await fetch(`${backendUrl}/api/dashboard/exchange-trades?limit=100`, { headers });
+        if (response.ok) {
+          const data = await response.json();
+          if (data.mock) {
+            setExchangeMock(true);
+            setExchangeWarning(data.warning || data.message || null);
+          } else {
+            setExchangeMock(false);
+          }
+          if (data.success && Array.isArray(data.data)) {
+            setExchangeTrades(data.data);
+            return;
+          }
+        }
+        setExchangeTrades([]);
+      } catch {
+        setExchangeTrades([]);
+      } finally {
+        setExchangeLoading(false);
+      }
+    };
+    fetchExchangeTrades();
+  }, []);
+
+  // Apply filters and search to bot trades
+  useEffect(() => {
+    let filtered = [...botTrades];
 
     // Apply search
     if (searchQuery) {
@@ -152,7 +222,35 @@ const TradeHistory: React.FC = () => {
 
     setFilteredTrades(filtered);
     setCurrentPage(1);
-  }, [trades, searchQuery, filters, sortField, sortDirection]);
+  }, [botTrades, searchQuery, filters, sortField, sortDirection]);
+
+  // Apply search/filters to exchange trades
+  useEffect(() => {
+    let filtered = [...exchangeTrades];
+
+    if (searchQuery) {
+      filtered = filtered.filter(t =>
+        t.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        t.symbol.toLowerCase().includes(searchQuery.toLowerCase())
+      );
+    }
+    if (filters.pair) {
+      filtered = filtered.filter(t => t.symbol === filters.pair);
+    }
+    if (filters.side) {
+      const normalized = filters.side === 'buy' ? 'long' : filters.side === 'sell' ? 'short' : filters.side;
+      filtered = filtered.filter(t => t.side.toLowerCase() === normalized);
+    }
+    if (filters.startDate) {
+      filtered = filtered.filter(t => t.openTime && new Date(t.openTime) >= new Date(filters.startDate));
+    }
+    if (filters.endDate) {
+      filtered = filtered.filter(t => t.closeTime && new Date(t.closeTime) <= new Date(filters.endDate + 'T23:59:59'));
+    }
+
+    setFilteredExchangeTrades(filtered);
+    setCurrentPage(1);
+  }, [exchangeTrades, searchQuery, filters]);
 
   // Pagination
   const paginatedTrades = useMemo(() => {
@@ -160,9 +258,16 @@ const TradeHistory: React.FC = () => {
     return filteredTrades.slice(startIndex, startIndex + itemsPerPage);
   }, [filteredTrades, currentPage, itemsPerPage]);
 
-  const totalPages = Math.ceil(filteredTrades.length / itemsPerPage);
+  const paginatedExchangeTrades = useMemo(() => {
+    const startIndex = (currentPage - 1) * itemsPerPage;
+    return filteredExchangeTrades.slice(startIndex, startIndex + itemsPerPage);
+  }, [filteredExchangeTrades, currentPage, itemsPerPage]);
 
-  // Calculate summary statistics
+  const totalPages = Math.ceil(
+    (activeTab === 'exchange' ? filteredExchangeTrades : filteredTrades).length / itemsPerPage
+  );
+
+  // Calculate bot trade summary statistics
   const summaryStats = useMemo(() => {
     const totalTrades = filteredTrades.length;
     const totalVolume = filteredTrades.reduce((sum, trade) => sum + trade.total, 0);
@@ -180,6 +285,16 @@ const TradeHistory: React.FC = () => {
     };
   }, [filteredTrades]);
 
+  // Calculate exchange trade summary statistics
+  const exchangeSummaryStats = useMemo(() => {
+    const totalTrades = filteredExchangeTrades.length;
+    const totalPnL = filteredExchangeTrades.reduce((sum, t) => sum + (t.realizedPnl || 0), 0);
+    const totalVolume = filteredExchangeTrades.reduce((sum, t) => sum + t.qty * t.closePrice, 0);
+    const winningTrades = filteredExchangeTrades.filter(t => (t.realizedPnl || 0) > 0).length;
+    const winRate = totalTrades > 0 ? (winningTrades / totalTrades) * 100 : 0;
+    return { totalTrades, totalPnL, totalVolume, winRate };
+  }, [filteredExchangeTrades]);
+
   const handleSort = (field: keyof TradeHistoryItem) => {
     if (sortField === field) {
       setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
@@ -190,34 +305,59 @@ const TradeHistory: React.FC = () => {
   };
 
   const exportToCSV = () => {
-    const csvData = filteredTrades.map(trade => ({
-      ID: trade.id,
-      Date: trade.timestamp.toISOString(),
-      Pair: trade.pair,
-      Side: trade.side,
-      Type: trade.type,
-      Amount: trade.amount,
-      Price: trade.price,
-      Total: trade.total,
-      Fee: trade.fee,
-      PnL: trade.pnl || 0,
-      Strategy: trade.strategy || '',
-      OrderID: trade.orderId,
-      Status: trade.status
-    }));
-
-    if (csvData.length === 0) return;
-    const header = Object.keys(csvData[0] ?? {}).join(',');
-    const rows = csvData.map(row => Object.values(row).join(','));
-    const csvContent = [header, ...rows].join('\n');
-
-    const blob = new Blob([csvContent], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `trade-history-${new Date().toISOString().split('T')[0]}.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
+    if (activeTab === 'exchange') {
+      const csvData = filteredExchangeTrades.map(t => ({
+        ID: t.id,
+        Symbol: t.symbol,
+        Side: t.side,
+        Qty: t.qty,
+        EntryPrice: t.entryPrice,
+        ClosePrice: t.closePrice,
+        RealizedPnL: t.realizedPnl,
+        OpenTime: t.openTime || '',
+        CloseTime: t.closeTime || '',
+        Source: 'exchange',
+      }));
+      if (csvData.length === 0) return;
+      const header = Object.keys(csvData[0] ?? {}).join(',');
+      const rows = csvData.map(row => Object.values(row).join(','));
+      const csvContent = [header, ...rows].join('\n');
+      const blob = new Blob([csvContent], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `exchange-history-${new Date().toISOString().split('T')[0]}.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } else {
+      const csvData = filteredTrades.map(trade => ({
+        ID: trade.id,
+        Date: trade.timestamp.toISOString(),
+        Pair: trade.pair,
+        Side: trade.side,
+        Type: trade.type,
+        Amount: trade.amount,
+        Price: trade.price,
+        Total: trade.total,
+        Fee: trade.fee,
+        PnL: trade.pnl || 0,
+        Strategy: trade.strategy || '',
+        OrderID: trade.orderId,
+        Status: trade.status,
+        Source: 'bot',
+      }));
+      if (csvData.length === 0) return;
+      const header = Object.keys(csvData[0] ?? {}).join(',');
+      const rows = csvData.map(row => Object.values(row).join(','));
+      const csvContent = [header, ...rows].join('\n');
+      const blob = new Blob([csvContent], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `bot-trades-${new Date().toISOString().split('T')[0]}.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+    }
   };
 
   const getStatusColor = (status: TradeHistoryItem['status']) => {
@@ -233,9 +373,11 @@ const TradeHistory: React.FC = () => {
     }
   };
 
+  const isLoading = activeTab === 'exchange' ? exchangeLoading : botLoading;
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      <div className="mb-8">
+      <div className="mb-6">
         <h1 className="text-3xl font-bold text-text-primary flex items-center">
           <BarChart3 className="w-8 h-8 mr-3 text-brand-cyan" />
           Trade History
@@ -245,37 +387,102 @@ const TradeHistory: React.FC = () => {
         </p>
       </div>
 
-      {/* Summary Statistics */}
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
-        <div className="bg-bg-tertiary p-4 rounded-lg shadow-elev-1 border border-border-subtle">
-          <div className="text-2xl font-bold text-text-primary">{summaryStats.totalTrades}</div>
-          <div className="text-sm text-text-muted">Total Trades</div>
-        </div>
-        <div className="bg-bg-tertiary p-4 rounded-lg shadow-elev-1 border border-border-subtle">
-          <div className="text-2xl font-bold text-brand-cyan">
-            ${summaryStats.totalVolume.toFixed(0)}
-          </div>
-          <div className="text-sm text-text-muted">Total Volume</div>
-        </div>
-        <div className="bg-bg-tertiary p-4 rounded-lg shadow-elev-1 border border-border-subtle">
-          <div className={`text-2xl font-bold ${summaryStats.totalPnL >= 0 ? 'text-success' : 'text-error'}`}>
-            {summaryStats.totalPnL >= 0 ? '+' : ''}${summaryStats.totalPnL.toFixed(2)}
-          </div>
-          <div className="text-sm text-text-muted">Total P&L</div>
-        </div>
-        <div className="bg-bg-tertiary p-4 rounded-lg shadow">
-          <div className="text-2xl font-bold text-orange-600">
-            ${summaryStats.totalFees.toFixed(2)}
-          </div>
-          <div className="text-sm text-text-muted">Total Fees</div>
-        </div>
-        <div className="bg-bg-tertiary p-4 rounded-lg shadow">
-          <div className={`text-2xl font-bold ${summaryStats.winRate >= 50 ? 'text-green-600' : 'text-red-600'}`}>
-            {summaryStats.winRate.toFixed(1)}%
-          </div>
-          <div className="text-sm text-text-muted">Win Rate</div>
-        </div>
+      {/* Source Tabs */}
+      <div className="border-b border-gray-200 dark:border-gray-700 mb-6">
+        <nav className="flex space-x-4" aria-label="Trade source tabs">
+          <button
+            onClick={() => { setActiveTab('exchange'); setCurrentPage(1); }}
+            className={`flex items-center space-x-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === 'exchange'
+                ? 'border-blue-600 text-blue-600 dark:text-blue-400'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
+            }`}
+            aria-selected={activeTab === 'exchange'}
+            role="tab"
+          >
+            <Globe size={16} />
+            <span>Exchange History</span>
+            <span className="ml-1 text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 px-2 py-0.5 rounded-full">
+              {exchangeTrades.length}
+            </span>
+          </button>
+          <button
+            onClick={() => { setActiveTab('bot'); setCurrentPage(1); }}
+            className={`flex items-center space-x-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === 'bot'
+                ? 'border-blue-600 text-blue-600 dark:text-blue-400'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
+            }`}
+            aria-selected={activeTab === 'bot'}
+            role="tab"
+          >
+            <Bot size={16} />
+            <span>Bot Trades</span>
+            <span className="ml-1 text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 px-2 py-0.5 rounded-full">
+              {botTrades.length}
+            </span>
+          </button>
+        </nav>
       </div>
+
+      {/* Summary Statistics */}
+      {activeTab === 'exchange' ? (
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+          <div className="bg-bg-tertiary p-4 rounded-lg shadow-elev-1 border border-border-subtle">
+            <div className="text-2xl font-bold text-text-primary">{exchangeSummaryStats.totalTrades}</div>
+            <div className="text-sm text-text-muted">Total Trades</div>
+          </div>
+          <div className="bg-bg-tertiary p-4 rounded-lg shadow-elev-1 border border-border-subtle">
+            <div className="text-2xl font-bold text-brand-cyan">
+              ${exchangeSummaryStats.totalVolume.toFixed(0)}
+            </div>
+            <div className="text-sm text-text-muted">Total Volume</div>
+          </div>
+          <div className="bg-bg-tertiary p-4 rounded-lg shadow-elev-1 border border-border-subtle">
+            <div className={`text-2xl font-bold ${exchangeSummaryStats.totalPnL >= 0 ? 'text-success' : 'text-error'}`}>
+              {exchangeSummaryStats.totalPnL >= 0 ? '+' : ''}${exchangeSummaryStats.totalPnL.toFixed(2)}
+            </div>
+            <div className="text-sm text-text-muted">Realized P&L</div>
+          </div>
+          <div className="bg-bg-tertiary p-4 rounded-lg shadow">
+            <div className={`text-2xl font-bold ${exchangeSummaryStats.winRate >= 50 ? 'text-green-600' : 'text-red-600'}`}>
+              {exchangeSummaryStats.winRate.toFixed(1)}%
+            </div>
+            <div className="text-sm text-text-muted">Win Rate</div>
+          </div>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
+          <div className="bg-bg-tertiary p-4 rounded-lg shadow-elev-1 border border-border-subtle">
+            <div className="text-2xl font-bold text-text-primary">{summaryStats.totalTrades}</div>
+            <div className="text-sm text-text-muted">Total Trades</div>
+          </div>
+          <div className="bg-bg-tertiary p-4 rounded-lg shadow-elev-1 border border-border-subtle">
+            <div className="text-2xl font-bold text-brand-cyan">
+              ${summaryStats.totalVolume.toFixed(0)}
+            </div>
+            <div className="text-sm text-text-muted">Total Volume</div>
+          </div>
+          <div className="bg-bg-tertiary p-4 rounded-lg shadow-elev-1 border border-border-subtle">
+            <div className={`text-2xl font-bold ${summaryStats.totalPnL >= 0 ? 'text-success' : 'text-error'}`}>
+              {summaryStats.totalPnL >= 0 ? '+' : ''}${summaryStats.totalPnL.toFixed(2)}
+            </div>
+            <div className="text-sm text-text-muted">Total P&L</div>
+          </div>
+          <div className="bg-bg-tertiary p-4 rounded-lg shadow">
+            <div className="text-2xl font-bold text-orange-600">
+              ${summaryStats.totalFees.toFixed(2)}
+            </div>
+            <div className="text-sm text-text-muted">Total Fees</div>
+          </div>
+          <div className="bg-bg-tertiary p-4 rounded-lg shadow">
+            <div className={`text-2xl font-bold ${summaryStats.winRate >= 50 ? 'text-green-600' : 'text-red-600'}`}>
+              {summaryStats.winRate.toFixed(1)}%
+            </div>
+            <div className="text-sm text-text-muted">Win Rate</div>
+          </div>
+        </div>
+      )}
 
       {/* Search and Filters */}
       <div className="bg-bg-tertiary p-6 rounded-lg shadow mb-6">
@@ -300,7 +507,7 @@ const TradeHistory: React.FC = () => {
             </button>
             <button
               onClick={exportToCSV}
-              disabled={filteredTrades.length === 0}
+              disabled={activeTab === 'exchange' ? filteredExchangeTrades.length === 0 : filteredTrades.length === 0}
               className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Download className="w-4 h-4 mr-2" />
@@ -376,166 +583,281 @@ const TradeHistory: React.FC = () => {
         )}
       </div>
 
-      {/* Trade Table */}
-      <div className="bg-white rounded-lg shadow overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-bg-secondary">
-              <tr>
-                {[
-                  { key: 'timestamp', label: 'Date/Time' },
-                  { key: 'pair', label: 'Pair' },
-                  { key: 'side', label: 'Side' },
-                  { key: 'type', label: 'Type' },
-                  { key: 'amount', label: 'Amount' },
-                  { key: 'price', label: 'Price' },
-                  { key: 'total', label: 'Total' },
-                  { key: 'fee', label: 'Fee' },
-                  { key: 'pnl', label: 'P&L' },
-                  { key: 'strategy', label: 'Strategy' },
-                  { key: 'status', label: 'Status' }
-                ].map((header) => (
-                  <th
-                    key={header.key}
-                    onClick={() => handleSort(header.key as keyof TradeHistoryItem)}
-                    className="px-6 py-3 text-left text-xs font-medium text-text-muted uppercase tracking-wider cursor-pointer hover:bg-gray-100"
-                  >
-                    <div className="flex items-center">
-                      {header.label}
-                      <ArrowUpDown className="w-3 h-3 ml-1" />
-                    </div>
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {paginatedTrades.map((trade) => (
-                <tr key={trade.id} className="hover:bg-bg-secondary">
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-text-primary">
-                    {trade.timestamp.toLocaleString()}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-text-primary">
-                    {trade.pair}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    <div className="flex items-center">
-                      {trade.side === 'buy' ? (
-                        <TrendingUp className="w-4 h-4 text-green-600 mr-1" />
-                      ) : (
-                        <TrendingDown className="w-4 h-4 text-red-600 mr-1" />
-                      )}
-                      <span className={`font-medium ${trade.side === 'buy' ? 'text-green-600' : 'text-red-600'}`}>
-                        {trade.side.toUpperCase()}
-                      </span>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-text-secondary capitalize">
-                    {trade.type}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-text-primary">
-                    {trade.amount.toFixed(6)}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-text-primary">
-                    ${trade.price.toFixed(2)}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-text-primary">
-                    ${trade.total.toFixed(2)}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-orange-600">
-                    ${trade.fee.toFixed(4)}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    {trade.pnl !== undefined && (
-                      <span className={`font-medium ${trade.pnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                        {trade.pnl >= 0 ? '+' : ''}${trade.pnl.toFixed(2)}
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-text-secondary">
-                    {trade.strategy}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${getStatusColor(trade.status)}`}>
-                      {trade.status}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      {/* Loading state */}
+      {isLoading && (
+        <div className="flex items-center justify-center py-12">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
         </div>
+      )}
 
-        {/* Pagination */}
-        {totalPages > 1 && (
-          <div className="bg-white px-6 py-3 border-t border-border-subtle flex items-center justify-between">
-            <div className="flex-1 flex justify-between sm:hidden">
-              <button
-                onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
-                disabled={currentPage === 1}
-                className="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-bg-secondary disabled:opacity-50"
-              >
-                Previous
-              </button>
-              <button
-                onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
-                disabled={currentPage === totalPages}
-                className="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-bg-secondary disabled:opacity-50"
-              >
-                Next
-              </button>
-            </div>
-            <div className="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
-              <div>
-                <p className="text-sm text-gray-700">
-                  Showing{' '}
-                  <span className="font-medium">{(currentPage - 1) * itemsPerPage + 1}</span>
-                  {' '}to{' '}
-                  <span className="font-medium">
-                    {Math.min(currentPage * itemsPerPage, filteredTrades.length)}
-                  </span>
-                  {' '}of{' '}
-                  <span className="font-medium">{filteredTrades.length}</span>
-                  {' '}results
-                </p>
-              </div>
-              <div>
-                <nav className="relative z-0 inline-flex rounded-md shadow-sm -space-x-px">
-                  <button
-                    onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
-                    disabled={currentPage === 1}
-                    className="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-text-muted hover:bg-gray-50 disabled:opacity-50"
-                  >
-                    Previous
-                  </button>
-                  {[...Array(Math.min(5, totalPages))].map((_, i) => {
-                    const page = i + 1;
-                    return (
-                      <button
-                        key={page}
-                        onClick={() => setCurrentPage(page)}
-                        className={`relative inline-flex items-center px-4 py-2 border text-sm font-medium ${
-                          currentPage === page
-                            ? 'z-10 bg-brand-cyan/10 border-brand-cyan text-brand-cyan'
-                            : 'bg-white border-gray-300 text-gray-500 hover:bg-gray-50'
-                        }`}
-                      >
-                        {page}
-                      </button>
-                    );
-                  })}
-                  <button
-                    onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
-                    disabled={currentPage === totalPages}
-                    className="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50"
-                  >
-                    Next
-                  </button>
-                </nav>
-              </div>
-            </div>
+      {/* Exchange warning banner */}
+      {activeTab === 'exchange' && !exchangeLoading && exchangeMock && exchangeWarning && (
+        <div className="mb-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg text-sm text-yellow-800">
+          {exchangeWarning}
+        </div>
+      )}
+
+      {/* Exchange History Table */}
+      {activeTab === 'exchange' && !exchangeLoading && (
+        <div className="bg-white rounded-lg shadow overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-bg-secondary">
+                <tr>
+                  {['Symbol', 'Side', 'Qty', 'Entry Price', 'Close Price', 'Realized P&L', 'Open Time', 'Close Time', 'Source'].map((label) => (
+                    <th key={label} className="px-6 py-3 text-left text-xs font-medium text-text-muted uppercase tracking-wider">
+                      {label}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {paginatedExchangeTrades.length === 0 ? (
+                  <tr>
+                    <td colSpan={9} className="px-6 py-12 text-center text-text-muted">
+                      No exchange history found
+                    </td>
+                  </tr>
+                ) : paginatedExchangeTrades.map((t) => (
+                  <tr key={t.id} className="hover:bg-bg-secondary">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-text-primary">{t.symbol}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm">
+                      <div className="flex items-center">
+                        {t.side === 'long' ? (
+                          <TrendingUp className="w-4 h-4 text-green-600 mr-1" />
+                        ) : (
+                          <TrendingDown className="w-4 h-4 text-red-600 mr-1" />
+                        )}
+                        <span className={`font-medium ${t.side === 'long' ? 'text-green-600' : 'text-red-600'}`}>
+                          {t.side.toUpperCase()}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-text-primary">{t.qty}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-text-primary">${t.entryPrice.toFixed(2)}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-text-primary">${t.closePrice.toFixed(2)}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm">
+                      <span className={`font-medium ${t.realizedPnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        {t.realizedPnl >= 0 ? '+' : ''}${t.realizedPnl.toFixed(2)}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-text-secondary">
+                      {t.openTime ? new Date(t.openTime).toLocaleString() : '—'}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-text-secondary">
+                      {t.closeTime ? new Date(t.closeTime).toLocaleString() : '—'}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className="inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full bg-blue-100 text-blue-700">
+                        <Globe size={10} className="mr-1" /> exchange
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-        )}
-      </div>
+
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <div className="bg-white px-6 py-3 border-t border-border-subtle flex items-center justify-between">
+              <p className="text-sm text-gray-700">
+                Showing <span className="font-medium">{(currentPage - 1) * itemsPerPage + 1}</span> to{' '}
+                <span className="font-medium">{Math.min(currentPage * itemsPerPage, filteredExchangeTrades.length)}</span> of{' '}
+                <span className="font-medium">{filteredExchangeTrades.length}</span> results
+              </p>
+              <nav className="relative z-0 inline-flex rounded-md shadow-sm -space-x-px">
+                <button onClick={() => setCurrentPage(Math.max(1, currentPage - 1))} disabled={currentPage === 1}
+                  className="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-text-muted hover:bg-gray-50 disabled:opacity-50">
+                  Previous
+                </button>
+                {[...Array(Math.min(5, totalPages))].map((_, i) => {
+                  const page = i + 1;
+                  return (
+                    <button key={page} onClick={() => setCurrentPage(page)}
+                      className={`relative inline-flex items-center px-4 py-2 border text-sm font-medium ${
+                        currentPage === page ? 'z-10 bg-brand-cyan/10 border-brand-cyan text-brand-cyan' : 'bg-white border-gray-300 text-gray-500 hover:bg-gray-50'
+                      }`}>{page}</button>
+                  );
+                })}
+                <button onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))} disabled={currentPage === totalPages}
+                  className="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50">
+                  Next
+                </button>
+              </nav>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Bot Trades Table */}
+      {activeTab === 'bot' && !botLoading && (
+        <div className="bg-white rounded-lg shadow overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-bg-secondary">
+                <tr>
+                  {[
+                    { key: 'timestamp', label: 'Date/Time' },
+                    { key: 'pair', label: 'Pair' },
+                    { key: 'side', label: 'Side' },
+                    { key: 'type', label: 'Type' },
+                    { key: 'amount', label: 'Amount' },
+                    { key: 'price', label: 'Price' },
+                    { key: 'total', label: 'Total' },
+                    { key: 'fee', label: 'Fee' },
+                    { key: 'pnl', label: 'P&L' },
+                    { key: 'strategy', label: 'Strategy' },
+                    { key: 'status', label: 'Status' }
+                  ].map((header) => (
+                    <th
+                      key={header.key}
+                      onClick={() => handleSort(header.key as keyof TradeHistoryItem)}
+                      className="px-6 py-3 text-left text-xs font-medium text-text-muted uppercase tracking-wider cursor-pointer hover:bg-gray-100"
+                    >
+                      <div className="flex items-center">
+                        {header.label}
+                        <ArrowUpDown className="w-3 h-3 ml-1" />
+                      </div>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {paginatedTrades.length === 0 ? (
+                  <tr>
+                    <td colSpan={11} className="px-6 py-12 text-center text-text-muted">
+                      No bot trades found
+                    </td>
+                  </tr>
+                ) : paginatedTrades.map((trade) => (
+                  <tr key={trade.id} className="hover:bg-bg-secondary">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-text-primary">
+                      {trade.timestamp.toLocaleString()}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-text-primary">
+                      {trade.pair}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm">
+                      <div className="flex items-center">
+                        {trade.side === 'buy' ? (
+                          <TrendingUp className="w-4 h-4 text-green-600 mr-1" />
+                        ) : (
+                          <TrendingDown className="w-4 h-4 text-red-600 mr-1" />
+                        )}
+                        <span className={`font-medium ${trade.side === 'buy' ? 'text-green-600' : 'text-red-600'}`}>
+                          {trade.side.toUpperCase()}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-text-secondary capitalize">
+                      {trade.type}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-text-primary">
+                      {trade.amount.toFixed(6)}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-text-primary">
+                      ${trade.price.toFixed(2)}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-text-primary">
+                      ${trade.total.toFixed(2)}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-orange-600">
+                      ${trade.fee.toFixed(4)}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm">
+                      {trade.pnl !== undefined && (
+                        <span className={`font-medium ${trade.pnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                          {trade.pnl >= 0 ? '+' : ''}${trade.pnl.toFixed(2)}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-text-secondary">
+                      {trade.strategy}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${getStatusColor(trade.status)}`}>
+                        {trade.status}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <div className="bg-white px-6 py-3 border-t border-border-subtle flex items-center justify-between">
+              <div className="flex-1 flex justify-between sm:hidden">
+                <button
+                  onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+                  disabled={currentPage === 1}
+                  className="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-bg-secondary disabled:opacity-50"
+                >
+                  Previous
+                </button>
+                <button
+                  onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
+                  disabled={currentPage === totalPages}
+                  className="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-bg-secondary disabled:opacity-50"
+                >
+                  Next
+                </button>
+              </div>
+              <div className="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-sm text-gray-700">
+                    Showing{' '}
+                    <span className="font-medium">{(currentPage - 1) * itemsPerPage + 1}</span>
+                    {' '}to{' '}
+                    <span className="font-medium">
+                      {Math.min(currentPage * itemsPerPage, filteredTrades.length)}
+                    </span>
+                    {' '}of{' '}
+                    <span className="font-medium">{filteredTrades.length}</span>
+                    {' '}results
+                  </p>
+                </div>
+                <div>
+                  <nav className="relative z-0 inline-flex rounded-md shadow-sm -space-x-px">
+                    <button
+                      onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+                      disabled={currentPage === 1}
+                      className="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-text-muted hover:bg-gray-50 disabled:opacity-50"
+                    >
+                      Previous
+                    </button>
+                    {[...Array(Math.min(5, totalPages))].map((_, i) => {
+                      const page = i + 1;
+                      return (
+                        <button
+                          key={page}
+                          onClick={() => setCurrentPage(page)}
+                          className={`relative inline-flex items-center px-4 py-2 border text-sm font-medium ${
+                            currentPage === page
+                              ? 'z-10 bg-brand-cyan/10 border-brand-cyan text-brand-cyan'
+                              : 'bg-white border-gray-300 text-gray-500 hover:bg-gray-50'
+                          }`}
+                        >
+                          {page}
+                        </button>
+                      );
+                    })}
+                    <button
+                      onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
+                      disabled={currentPage === totalPages}
+                      className="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50"
+                    >
+                      Next
+                    </button>
+                  </nav>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };
