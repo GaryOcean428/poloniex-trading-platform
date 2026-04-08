@@ -690,6 +690,17 @@ class FullyAutonomousTrader extends EventEmitter {
         // Normalize symbol for futures API
         const normalizedSymbol = poloniexFuturesService.normalizeSymbol(signal.symbol);
 
+        // Set leverage on the exchange before placing the order.
+        // The signal carries the strategy-specific leverage (already capped at
+        // 25% of maxLeverage by leverageAwareStrategyFactory).
+        try {
+          await poloniexFuturesService.setLeverage(credentials, normalizedSymbol, signal.leverage);
+          logger.info(`[LIVE] Leverage set to ${signal.leverage}x for ${normalizedSymbol}`);
+        } catch (leverageErr) {
+          logger.warn(`[LIVE] Could not set leverage for ${normalizedSymbol}: ${leverageErr}`);
+          // Non-fatal: proceed with whatever leverage the exchange currently has
+        }
+
         // Place real order - use 'size' field (not 'quantity') per Poloniex API
         const order = await poloniexFuturesService.placeOrder(credentials, {
           symbol: normalizedSymbol,

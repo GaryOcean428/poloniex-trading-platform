@@ -19,13 +19,11 @@ import strategiesRoutes from './routes/strategies.js';
 import statusRoutes from './routes/status.js';
 import marketsRoutes from './routes/markets.js';
 import proxyRoutes from './routes/proxy.js';
-import llmStrategiesRoutes from './routes/llmStrategies.js';
 import tradingSessionsRoutes from './routes/tradingSessions.js';
 import debugRoutes from './routes/debug.js';
 import agentRoutes from './routes/agent.js';
 import monitoringRoutes from './routes/monitoring.js';
 import adminRoutes from './routes/admin.js';
-import aiRoutes from './routes/ai.js';
 import dashboardRoutes from './routes/dashboard.js';
 import mlRoutes from './routes/ml.js';
 import qigRoutes from './routes/qig.js';
@@ -169,7 +167,6 @@ app.use('/api/paper-trading', paperTradingRoutes);
 app.use('/api/risk', riskRoutes);
 app.use('/api/confidence-scoring', confidenceScoringRoutes);
 app.use('/api/strategies', strategiesRoutes);
-app.use('/api/llm-strategies', llmStrategiesRoutes);
 app.use('/api/trading-sessions', tradingSessionsRoutes);
 app.use('/api/status', statusRoutes);
 app.use('/api/debug', debugRoutes); // Debug, diagnostic, and test-balance routes (consolidated)
@@ -177,7 +174,6 @@ app.use('/api/agent', agentRoutes); // Autonomous trading agent routes
 app.use('/api/autonomous', autonomousTraderRoutes); // Fully autonomous trading system
 app.use('/api/monitoring', monitoringRoutes); // Monitoring and error tracking routes
 app.use('/api/admin', adminRoutes); // Admin routes for migrations
-app.use('/api/ai', aiRoutes); // AI-powered trading insights using Claude Sonnet 4.5
 app.use('/api/dashboard', dashboardRoutes); // Unified dashboard data endpoint
 app.use('/api/ml', mlRoutes); // ML model predictions and performance
 app.use('/api/qig', qigRoutes); // QIG-enhanced predictions with information geometry
