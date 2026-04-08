@@ -1,22 +1,221 @@
 /**
  * ML Prediction Service
- * Integrates ensemble ML predictions with the autonomous trading agent
+ * Routes ML inference to the ml-worker service (Python) via HTTP or Redis pub/sub.
+ * Falls back to simpleMlService when ml-worker is unreachable.
+ *
+ * Architecture:
+ *   polytrade-be (Node.js) --HTTP--> ml-worker (Python/FastAPI)
+ *                          --Redis pub/sub (fallback)--> ml-worker
+ *                          --simpleMlService (final fallback)
  */
 
-import { spawn } from 'child_process';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import { createClient } from 'redis';
+import { randomUUID } from 'crypto';
 import { logger } from '../utils/logger.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const ML_WORKER_URL = process.env.ML_WORKER_URL || '';
+const REDIS_URL = process.env.REDIS_URL || process.env.REDIS_PUBLIC_URL || '';
+
+const PREDICT_REQUEST_CHANNEL = 'ml:predict:request';
+const PREDICT_RESPONSE_PREFIX = 'ml:predict:response:';
+const HEALTH_CHANNEL = 'ml:health';
+
+/** How long (ms) to wait for a response before giving up */
+const REQUEST_TIMEOUT_MS = 5000;
+/** How long (ms) a Redis heartbeat is considered fresh */
+const HEARTBEAT_STALE_MS = 90_000;
 
 class MLPredictionService {
   constructor() {
-    this.pythonPath = process.env.PYTHON_PATH || 'python3.11';
-    this.scriptPath = path.join(__dirname, '../ml/predict.py');
-    this.modelsPath = path.join(__dirname, '../ml/saved_models');
+    /** Cached timestamp of the last observed ml-worker heartbeat */
+    this._lastHeartbeatAt = 0;
+    /** Dedicated subscriber client for response channels */
+    this._subscriber = null;
+    /** Whether the subscriber is currently connected */
+    this._subscriberConnected = false;
+    /** Publisher/command client (shared) */
+    this._publisher = null;
   }
+
+  // ---------------------------------------------------------------------------
+  // Redis helpers
+  // ---------------------------------------------------------------------------
+
+  async _getPublisher() {
+    if (this._publisher) return this._publisher;
+    if (!REDIS_URL) return null;
+    try {
+      this._publisher = createClient({ url: REDIS_URL });
+      this._publisher.on('error', (err) => {
+        logger.error('ML Redis publisher error:', err);
+      });
+      await this._publisher.connect();
+      return this._publisher;
+    } catch (err) {
+      logger.warn('ML Redis publisher connection failed:', err.message);
+      this._publisher = null;
+      return null;
+    }
+  }
+
+  async _getSubscriber() {
+    if (this._subscriber && this._subscriberConnected) return this._subscriber;
+    if (!REDIS_URL) return null;
+    try {
+      this._subscriber = createClient({ url: REDIS_URL });
+      this._subscriber.on('error', (err) => {
+        logger.error('ML Redis subscriber error:', err);
+        this._subscriberConnected = false;
+      });
+      this._subscriber.on('connect', () => {
+        this._subscriberConnected = true;
+      });
+      await this._subscriber.connect();
+      this._subscriberConnected = true;
+      return this._subscriber;
+    } catch (err) {
+      logger.warn('ML Redis subscriber connection failed:', err.message);
+      this._subscriber = null;
+      this._subscriberConnected = false;
+      return null;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Health / availability checks
+  // ---------------------------------------------------------------------------
+
+  /** Returns true if the ml-worker heartbeat in Redis is fresh */
+  async _isWorkerAlive() {
+    try {
+      const pub = await this._getPublisher();
+      if (!pub) return false;
+      const raw = await pub.get(HEALTH_CHANNEL);
+      if (!raw) return false;
+      const hb = JSON.parse(raw);
+      if (hb?.status === 'ok') {
+        this._lastHeartbeatAt = Date.now();
+        return true;
+      }
+    } catch {
+      // ignore
+    }
+    return Date.now() - this._lastHeartbeatAt < HEARTBEAT_STALE_MS;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Transport layer: HTTP to ml-worker
+  // ---------------------------------------------------------------------------
+
+  async _callWorkerHTTP(payload) {
+    if (!ML_WORKER_URL) {
+      throw new Error('ML_WORKER_URL not configured');
+    }
+    const url = `${ML_WORKER_URL.replace(/\/$/, '')}/ml/predict`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    try {
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => '');
+        throw new Error(`ml-worker HTTP ${resp.status}: ${text}`);
+      }
+      return await resp.json();
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Transport layer: Redis pub/sub to ml-worker
+  // ---------------------------------------------------------------------------
+
+  async _callWorkerRedis(payload) {
+    const pub = await this._getPublisher();
+    const sub = await this._getSubscriber();
+    if (!pub || !sub) {
+      throw new Error('Redis not available for ML pub/sub');
+    }
+
+    const requestId = randomUUID();
+    const responseChannel = `${PREDICT_RESPONSE_PREFIX}${requestId}`;
+
+    return new Promise((resolve, reject) => {
+      let settled = false;
+
+      const settle = (fn, value) => {
+        if (settled) return;
+        settled = true;
+        fn(value);
+      };
+
+      const timeout = setTimeout(() => {
+        sub.unsubscribe(responseChannel).catch(() => {});
+        settle(reject, new Error(`ML worker Redis timeout after ${REQUEST_TIMEOUT_MS}ms`));
+      }, REQUEST_TIMEOUT_MS);
+
+      const onMessage = (message) => {
+        clearTimeout(timeout);
+        sub.unsubscribe(responseChannel).catch(() => {});
+        try {
+          const result = JSON.parse(message);
+          if (result.status === 'error') {
+            settle(reject, new Error(result.error || 'ML worker returned error'));
+          } else {
+            settle(resolve, result);
+          }
+        } catch (err) {
+          settle(reject, new Error(`Failed to parse ML worker response: ${err.message}`));
+        }
+      };
+
+      sub.subscribe(responseChannel, onMessage).then(() => {
+        pub.publish(PREDICT_REQUEST_CHANNEL, JSON.stringify({ ...payload, requestId })).catch((err) => {
+          clearTimeout(timeout);
+          sub.unsubscribe(responseChannel).catch(() => {});
+          settle(reject, new Error(`Failed to publish ML predict request: ${err.message}`));
+        });
+      }).catch((err) => {
+        clearTimeout(timeout);
+        settle(reject, new Error(`Failed to subscribe ML response channel: ${err.message}`));
+      });
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Unified call: HTTP first, Redis fallback
+  // ---------------------------------------------------------------------------
+
+  async _callWorker(payload) {
+    // Try HTTP first (preferred, lower overhead)
+    if (ML_WORKER_URL) {
+      try {
+        return await this._callWorkerHTTP(payload);
+      } catch (httpErr) {
+        logger.warn(`ML worker HTTP failed (${httpErr.message}), trying Redis pub/sub`);
+      }
+    }
+
+    // Redis pub/sub fallback
+    if (REDIS_URL) {
+      try {
+        return await this._callWorkerRedis(payload);
+      } catch (redisErr) {
+        throw new Error(`ML worker unavailable via HTTP and Redis: ${redisErr.message}`);
+      }
+    }
+
+    throw new Error('ML worker unreachable: neither ML_WORKER_URL nor REDIS_URL is configured');
+  }
+
+  // ---------------------------------------------------------------------------
+  // Public API
+  // ---------------------------------------------------------------------------
 
   /**
    * Get ML prediction for a trading pair
@@ -27,21 +226,12 @@ class MLPredictionService {
    */
   async getPrediction(symbol, ohlcvData, horizon = '1h') {
     try {
-      const input = JSON.stringify({
-        symbol,
-        data: ohlcvData,
-        horizon,
-        action: 'predict'
-      });
-
-      const result = await this._runPythonScript(input);
-      
+      const result = await this._callWorker({ action: 'predict', symbol, data: ohlcvData, horizon });
       logger.info(`ML prediction for ${symbol} (${horizon}):`, {
         prediction: result.prediction,
         confidence: result.confidence,
-        signal: result.signal
+        signal: result.signal,
       });
-
       return result;
     } catch (error) {
       logger.error(`ML prediction failed for ${symbol}:`, error);
@@ -58,32 +248,16 @@ class MLPredictionService {
    */
   async getTradingSignal(symbol, ohlcvData, currentPrice) {
     try {
-      const input = JSON.stringify({
-        symbol,
-        data: ohlcvData,
-        current_price: currentPrice,
-        action: 'signal'
-      });
-
-      const result = await this._runPythonScript(input);
-      
+      const result = await this._callWorker({ action: 'signal', symbol, data: ohlcvData, current_price: currentPrice });
       logger.info(`ML trading signal for ${symbol}:`, {
         signal: result.signal,
         strength: result.strength,
-        reason: result.reason
+        reason: result.reason,
       });
-
       return result;
     } catch (error) {
       logger.error(`ML signal generation failed for ${symbol}:`, error);
-      
-      // Return neutral signal on error
-      return {
-        signal: 'HOLD',
-        strength: 0,
-        reason: `ML prediction error: ${error.message}`,
-        error: true
-      };
+      return { signal: 'HOLD', strength: 0, reason: `ML prediction error: ${error.message}`, error: true };
     }
   }
 
@@ -95,16 +269,8 @@ class MLPredictionService {
    */
   async trainModels(symbol, historicalData) {
     try {
-      const input = JSON.stringify({
-        symbol,
-        data: historicalData,
-        action: 'train'
-      });
-
-      const result = await this._runPythonScript(input);
-      
+      const result = await this._callWorker({ action: 'train', symbol, data: historicalData });
       logger.info(`ML models trained for ${symbol}:`, result);
-
       return result;
     } catch (error) {
       logger.error(`ML training failed for ${symbol}:`, error);
@@ -120,14 +286,7 @@ class MLPredictionService {
    */
   async getMultiHorizonPredictions(symbol, ohlcvData) {
     try {
-      const input = JSON.stringify({
-        symbol,
-        data: ohlcvData,
-        action: 'multi_horizon'
-      });
-
-      const result = await this._runPythonScript(input);
-      
+      const result = await this._callWorker({ action: 'multi_horizon', symbol, data: ohlcvData });
       return result;
     } catch (error) {
       logger.error(`Multi-horizon prediction failed for ${symbol}:`, error);
@@ -136,92 +295,35 @@ class MLPredictionService {
   }
 
   /**
-   * Run Python ML script and get results
-   * @private
-   */
-  _runPythonScript(input) {
-    return new Promise((resolve, reject) => {
-      const attemptedInterpreters = new Set();
-      const pythonCandidates = [
-        this.pythonPath,
-        'python3.11',
-        'python3',
-        'python'
-      ].filter(Boolean);
-
-      const tryInterpreter = (index = 0) => {
-        if (index >= pythonCandidates.length) {
-          const attempted = Array.from(attemptedInterpreters.values()).join(', ');
-          reject(new Error(`Failed to start Python process: no valid Python interpreter found (tried: ${attempted})`));
-          return;
-        }
-
-        const candidate = pythonCandidates[index];
-        if (!candidate || attemptedInterpreters.has(candidate)) {
-          tryInterpreter(index + 1);
-          return;
-        }
-        attemptedInterpreters.add(candidate);
-
-        const python = spawn(candidate, [this.scriptPath]);
-        let stdout = '';
-        let stderr = '';
-
-        python.stdout.on('data', (data) => {
-          stdout += data.toString();
-        });
-
-        python.stderr.on('data', (data) => {
-          stderr += data.toString();
-        });
-
-        python.on('close', (code) => {
-          if (code !== 0) {
-            reject(new Error(`Python script exited with code ${code}: ${stderr}`));
-            return;
-          }
-
-          this.pythonPath = candidate;
-          try {
-            const result = JSON.parse(stdout);
-            resolve(result);
-          } catch (error) {
-            reject(new Error(`Failed to parse Python output: ${error.message}\nOutput: ${stdout}`));
-          }
-        });
-
-        python.on('error', (error) => {
-          if (error?.code === 'ENOENT') {
-            if (index === 0) {
-              logger.warn(`Python interpreter not found: ${candidate}. Trying fallback interpreters...`);
-            }
-            tryInterpreter(index + 1);
-            return;
-          }
-          reject(new Error(`Failed to start Python process: ${error.message}`));
-        });
-
-        python.stdin.write(input);
-        python.stdin.end();
-      };
-
-      tryInterpreter();
-    });
-  }
-
-  /**
-   * Check if ML service is available
+   * Check if ML worker service is available.
+   * Checks Redis heartbeat first, then falls back to an HTTP health probe.
    * @returns {Promise<boolean>}
    */
   async healthCheck() {
+    // Check Redis heartbeat (set by the ml-worker every 30 s)
     try {
-      const input = JSON.stringify({ action: 'health' });
-      const result = await this._runPythonScript(input);
-      return result.status === 'healthy';
-    } catch (error) {
-      logger.error('ML service health check failed:', error);
-      return false;
+      if (await this._isWorkerAlive()) return true;
+    } catch {
+      // ignore
     }
+
+    // Fallback: try HTTP /health endpoint
+    if (ML_WORKER_URL) {
+      try {
+        const url = `${ML_WORKER_URL.replace(/\/$/, '')}/health`;
+        const controller = new AbortController();
+        setTimeout(() => controller.abort(), 3000);
+        const resp = await fetch(url, { signal: controller.signal });
+        if (resp.ok) {
+          this._lastHeartbeatAt = Date.now();
+          return true;
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    return false;
   }
 }
 
