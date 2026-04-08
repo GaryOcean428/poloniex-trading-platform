@@ -34,9 +34,23 @@ interface StrategyGeneration {
 
 interface StrategyGenerationDisplayProps {
   agentStatus?: string;
+  strategiesGenerated?: number;
+  backtestsCompleted?: number;
+  paperTradesExecuted?: number;
+  lastActivity?: string;
+  startedAt?: Date;
+  errorCount?: number;
 }
 
-const StrategyGenerationDisplay: React.FC<StrategyGenerationDisplayProps> = ({ agentStatus }) => {
+const StrategyGenerationDisplay: React.FC<StrategyGenerationDisplayProps> = ({
+  agentStatus,
+  strategiesGenerated = 0,
+  backtestsCompleted = 0,
+  paperTradesExecuted = 0,
+  lastActivity,
+  startedAt,
+  errorCount = 0,
+}) => {
   const [currentGeneration, setCurrentGeneration] = useState<StrategyGeneration | null>(null);
   const [recentStrategies, setRecentStrategies] = useState<StrategyGeneration[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -359,14 +373,58 @@ const StrategyGenerationDisplay: React.FC<StrategyGenerationDisplayProps> = ({ a
 
       {/* No Activity State */}
       {!currentGeneration && recentStrategies.length === 0 && (
-        <div className="bg-white rounded-lg shadow-lg p-8 text-center">
-          <Brain className="w-16 h-16 text-gray-300 mx-auto mb-4 animate-pulse" />
-          <h3 className="text-lg font-semibold text-gray-700 mb-2">
-            Analyzing Markets...
-          </h3>
-          <p className="text-gray-500">
-            The AI agent is analyzing market conditions to generate optimal trading strategies
-          </p>
+        <div className="bg-white rounded-lg shadow-lg overflow-hidden">
+          {agentStatus === 'running' ? (
+            <>
+              <div className="px-6 py-4 border-b border-gray-100 flex items-center gap-2">
+                <span className="inline-block w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                <h3 className="text-base font-semibold text-gray-700">Analyzing Markets...</h3>
+              </div>
+              <div className="p-6">
+                <p className="text-sm text-gray-500 mb-4">
+                  The AI agent is analyzing market conditions to generate optimal trading strategies.
+                </p>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="bg-gray-50 rounded-lg p-3 text-center">
+                    <p className="text-xs text-gray-400 mb-1">Strategies</p>
+                    <p className="text-xl font-bold text-gray-800">{strategiesGenerated}</p>
+                  </div>
+                  <div className="bg-gray-50 rounded-lg p-3 text-center">
+                    <p className="text-xs text-gray-400 mb-1">Backtests</p>
+                    <p className="text-xl font-bold text-gray-800">{backtestsCompleted}</p>
+                  </div>
+                  <div className="bg-gray-50 rounded-lg p-3 text-center">
+                    <p className="text-xs text-gray-400 mb-1">Paper Trades</p>
+                    <p className="text-xl font-bold text-gray-800">{paperTradesExecuted}</p>
+                  </div>
+                  <div className="bg-gray-50 rounded-lg p-3 text-center">
+                    <p className="text-xs text-gray-400 mb-1">Errors</p>
+                    <p className={`text-xl font-bold ${errorCount > 0 ? 'text-red-600' : 'text-gray-800'}`}>{errorCount}</p>
+                  </div>
+                </div>
+                {lastActivity && (
+                  <p className="text-xs text-gray-400 mt-3">
+                    Last action: <span className="text-gray-600">{lastActivity}</span>
+                  </p>
+                )}
+                {startedAt && (
+                  <p className="text-xs text-gray-400 mt-1">
+                    Running since {new Date(startedAt).toLocaleString()}
+                  </p>
+                )}
+              </div>
+            </>
+          ) : (
+            <div className="p-8 text-center">
+              <Brain className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+              <h3 className="text-lg font-semibold text-gray-700 mb-2">
+                Strategy Generation
+              </h3>
+              <p className="text-gray-500">
+                Start the agent to begin analyzing markets and generating trading strategies.
+              </p>
+            </div>
+          )}
         </div>
       )}
     </div>
