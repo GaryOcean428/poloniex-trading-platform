@@ -12,6 +12,7 @@ import StrategyApprovalQueue from './StrategyApprovalQueue';
 import LiveTradingActivityFeed from './LiveTradingActivityFeed';
 import PerformanceAnalytics from './PerformanceAnalytics';
 import AgentOverviewPanel from './AgentOverviewPanel';
+import MLLiveRecommendations from './MLLiveRecommendations';
 import { safeNum } from '@/utils/safeNum';
 
 const API_BASE_URL = getBackendUrl();
@@ -936,6 +937,9 @@ const AutonomousAgentDashboard: React.FC = () => {
       {/* Strategy Approval Queue */}
       <StrategyApprovalQueue agentStatus={agentStatus?.status} />
 
+      {/* ML Self-Learning Engine — Live Recommendations (one-click confirmation required) */}
+      <MLLiveRecommendations />
+
       {/* Active Strategies with Performance Metrics */}
       <ActiveStrategiesPanel agentStatus={agentStatus?.status} />
 
@@ -1067,7 +1071,7 @@ const AutonomousAgentDashboard: React.FC = () => {
                         }`}>{event.execution_mode}</span>
                       )}
                       {event.confidence_score != null && safeNum(
-                        <span className="text-xs text-gray-500">Confidence: {Number(event.confidence_score).toFixed(1)}%</span>
+                        <span className="text-xs text-gray-500">Confidence: {NumbersafeNum(event.confidence_score).toFixed(1)}%</span>
                       )}
                     </div>
                     <p className="text-sm text-gray-900">{event.description}</p>

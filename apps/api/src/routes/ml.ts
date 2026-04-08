@@ -3,6 +3,8 @@ import { authenticateToken } from '../middleware/auth.js';
 import mlPredictionService from '../services/mlPredictionService.js';
 import simpleMlService from '../services/simpleMlService.js';
 import poloniexFuturesService from '../services/poloniexFuturesService.js';
+import { strategyLearningEngine } from '../services/strategyLearningEngine.js';
+import parallelStrategyRunner from '../services/parallelStrategyRunner.js';
 
 const router = express.Router();
 
@@ -190,6 +192,109 @@ router.get('/health', async (req, res) => {
       status: 'unhealthy',
       error: error instanceof Error ? error.message : String(error) 
     });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ML Self-Learning Engine routes
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * GET /api/ml/learning/status
+ * Returns current state of the learning engine (running, generation, slot counts).
+ */
+router.get('/learning/status', authenticateToken, async (req, res) => {
+  try {
+    const engineStatus = await strategyLearningEngine.getEngineStatus();
+    const runnerStatus = parallelStrategyRunner.getStatus();
+    res.json({ success: true, engine: engineStatus, parallelRunner: runnerStatus });
+  } catch (error: unknown) {
+    res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+/**
+ * POST /api/ml/learning/start
+ * Start the continuous learning loop.
+ */
+router.post('/learning/start', authenticateToken, async (req, res) => {
+  try {
+    await strategyLearningEngine.start();
+    res.json({ success: true, message: 'Strategy learning engine started' });
+  } catch (error: unknown) {
+    res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+/**
+ * POST /api/ml/learning/stop
+ * Stop the continuous learning loop.
+ */
+router.post('/learning/stop', authenticateToken, async (req, res) => {
+  try {
+    await strategyLearningEngine.stop();
+    res.json({ success: true, message: 'Strategy learning engine stopped' });
+  } catch (error: unknown) {
+    res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+/**
+ * GET /api/ml/learning/recommendations
+ * Returns strategies currently recommended for live trading (status = 'recommended').
+ * These require one-click user confirmation before going live.
+ */
+router.get('/learning/recommendations', authenticateToken, async (req, res) => {
+  try {
+    const recommendations = await strategyLearningEngine.getLiveRecommendations();
+    res.json({ success: true, recommendations });
+  } catch (error: unknown) {
+    res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+/**
+ * POST /api/ml/learning/recommendations/:strategyId/confirm
+ * One-click user confirmation to promote a recommended strategy to live trading.
+ * NEVER auto-promotes — always requires explicit user action.
+ */
+router.post('/learning/recommendations/:strategyId/confirm', authenticateToken, async (req, res) => {
+  try {
+    const { strategyId } = req.params;
+    const strategy = await strategyLearningEngine.confirmLivePromotion(strategyId);
+    res.json({ success: true, strategy, message: `Strategy ${strategyId} promoted to live trading` });
+  } catch (error: unknown) {
+    res.status(400).json({ success: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+/**
+ * GET /api/ml/learning/top-performers
+ * Returns top performing strategies (uncensored, non-divergent) for inspection.
+ */
+router.get('/learning/top-performers', authenticateToken, async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit) || 20, 100);
+    const performers = await strategyLearningEngine.getTopPerformers(limit);
+    res.json({ success: true, performers });
+  } catch (error: unknown) {
+    res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+/**
+ * GET /api/ml/learning/parallel-runner
+ * Returns status of parallel paper trading runner (active sessions + metrics).
+ */
+router.get('/learning/parallel-runner', authenticateToken, async (req, res) => {
+  try {
+    const [status, allMetrics] = await Promise.all([
+      Promise.resolve(parallelStrategyRunner.getStatus()),
+      parallelStrategyRunner.getAllMetrics(),
+    ]);
+    res.json({ success: true, status, metrics: allMetrics });
+  } catch (error: unknown) {
+    res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
   }
 });
 
