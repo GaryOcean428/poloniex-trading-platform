@@ -31,7 +31,6 @@ const envSchema = z.object({
   POLONIEX_API_KEY: z.string().optional(),
   POLONIEX_API_SECRET: z.string().optional(),
   REDIS_URL: z.string().optional(),
-  ANTHROPIC_API_KEY: z.string().optional(),
 });
 
 export type EnvironmentConfig = z.infer<typeof envSchema>;

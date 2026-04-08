@@ -119,7 +119,6 @@ router.get('/env', (req, res) => {
       NODE_ENV: process.env.NODE_ENV || 'not set',
       DATABASE_URL: process.env.DATABASE_URL ? 'set' : 'not set',
       ENCRYPTION_KEY: process.env.ENCRYPTION_KEY ? 'set' : 'not set',
-      ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ? 'set' : 'not set',
       PORT: process.env.PORT || 'not set'
     }
   });
