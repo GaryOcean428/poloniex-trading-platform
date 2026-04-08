@@ -22,7 +22,6 @@ export * from './mockTradingService.js';
 // Strategy Services
 export * from './strategyService.js';
 export * from './strategyOptimizer.js';
-export * from './llmStrategyGenerator.js';
 export * from './autonomousStrategyGenerator.js';
 export * from './pineScriptParser.js';
 export * from './templateStrategies.js';
@@ -55,7 +54,6 @@ export * from './agentSettingsService.js';
 
 // Automation
 export * from './automatedBacktestingPipeline.js';
-export * from './haikuOptimizationService.js';
 
 // QIG Services
 export * from './qig/index.js';
