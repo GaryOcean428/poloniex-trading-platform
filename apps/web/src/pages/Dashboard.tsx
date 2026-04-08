@@ -21,7 +21,7 @@ import PipelineFunnelWidget from '../components/dashboard/PipelineFunnelWidget';
 const Dashboard: React.FC = () => {
   const { marketData: contextMarketData, strategies, activeStrategies, trades } = useTradingContext();
   const [liveMarketData, setLiveMarketData] = useState<any[]>([]);
-  const [_loadingMarket, setLoadingMarket] = useState(true);
+  const [, setLoadingMarket] = useState(true);
   
   // Fetch live market data for chart
   useEffect(() => {
