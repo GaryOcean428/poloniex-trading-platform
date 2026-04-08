@@ -198,8 +198,7 @@ class ConfidenceScoringService extends EventEmitter {
       // Store confidence score
       await this.storeConfidenceScore(confidenceAssessment);
 
-      // Update in-memory cache
-      const cacheKey = `${strategyName}_${symbol}_${timeframe}`;
+      // Update in-memory cache (cacheKey already declared above)
       this.confidenceScores.set(cacheKey, confidenceAssessment);
 
       logger.info(`✅ Confidence score calculated: ${confidenceScore}% for ${strategyName} on ${symbol}`);

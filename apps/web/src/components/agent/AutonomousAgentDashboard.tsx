@@ -12,6 +12,7 @@ import StrategyApprovalQueue from './StrategyApprovalQueue';
 import LiveTradingActivityFeed from './LiveTradingActivityFeed';
 import PerformanceAnalytics from './PerformanceAnalytics';
 import AgentOverviewPanel from './AgentOverviewPanel';
+import MLLiveRecommendations from './MLLiveRecommendations';
 import { safeNum } from '@/utils/safeNum';
 
 const API_BASE_URL = getBackendUrl();
@@ -945,6 +946,9 @@ const AutonomousAgentDashboard: React.FC = () => {
 
       {/* Strategy Approval Queue */}
       <StrategyApprovalQueue agentStatus={agentStatus?.status} />
+
+      {/* ML Self-Learning Engine — Live Recommendations (one-click confirmation required) */}
+      <MLLiveRecommendations />
 
       {/* Active Strategies with Performance Metrics */}
       <ActiveStrategiesPanel agentStatus={agentStatus?.status} />

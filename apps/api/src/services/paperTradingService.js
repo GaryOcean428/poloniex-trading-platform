@@ -161,6 +161,9 @@ class PaperTradingService extends EventEmitter {
         leverage: config.leverage || 1, // Futures leverage (1 = no leverage)
         marginMode: config.marginMode || 'CROSS',
         marketType: 'futures',
+        // QIG censoring fields
+        isCensored: false,
+        censorReason: null,
         riskParameters: config.riskParameters || {
           maxDailyLoss: 0.05, // 5% max daily loss
           maxPositionSize: 0.1, // 10% max position size
@@ -173,12 +176,15 @@ class PaperTradingService extends EventEmitter {
       };
 
       // Store session in database
+      // Note: Multiple sessions per symbol are allowed (parallel paper trading support).
+      // The unique constraint on symbol was dropped in migration 017.
       await query(`
         INSERT INTO paper_trading_sessions (
           id, session_name, strategy_name, symbol, timeframe,
           initial_capital, current_value, unrealized_pnl, realized_pnl,
-          total_trades, winning_trades, status, started_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+          total_trades, winning_trades, status, started_at,
+          is_censored, censor_reason
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
       `, [
         session.id,
         session.name,
@@ -192,7 +198,9 @@ class PaperTradingService extends EventEmitter {
         session.totalTrades,
         session.winningTrades,
         session.status,
-        session.startedAt
+        session.startedAt,
+        session.isCensored,
+        session.censorReason,
       ]);
 
       // Add to active sessions
@@ -208,6 +216,31 @@ class PaperTradingService extends EventEmitter {
     } catch (error) {
       logger.error('Error creating paper trading session:', error);
       throw error;
+    }
+  }
+
+  /**
+   * Mark a paper trading session as censored (QIG pattern).
+   * Call when a session ends abnormally so its metrics are excluded from
+   * uncensored fitness computation.
+   *
+   * @param {string} sessionId
+   * @param {string} reason - 'max_drawdown_kill' | 'session_end_forced_close' | 'position_size_limit'
+   */
+  async censorSession(sessionId, reason) {
+    const session = this.activeSessions.get(sessionId);
+    if (session) {
+      session.isCensored = true;
+      session.censorReason = reason;
+    }
+    try {
+      await query(
+        `UPDATE paper_trading_sessions SET is_censored = TRUE, censor_reason = $1, updated_at = NOW() WHERE id = $2`,
+        [reason, sessionId]
+      );
+      logger.info(`📌 Censored paper session ${sessionId}: ${reason}`);
+    } catch (error) {
+      logger.error(`Error censoring session ${sessionId}:`, error);
     }
   }
 
@@ -1024,9 +1057,13 @@ class PaperTradingService extends EventEmitter {
   }
 
   /**
-   * Stop a session
+   * Stop a session.
+   * If the session has open positions that are force-closed, it will be marked censored.
+   * @param {string} sessionId
+   * @param {Object} [options]
+   * @param {boolean} [options.forcedClose=false] - If true, marks session as censored (session_end_forced_close)
    */
-  async stopSession(sessionId) {
+  async stopSession(sessionId, options = {}) {
     try {
       const session = this.activeSessions.get(sessionId);
       if (!session) {
@@ -1040,17 +1077,17 @@ class PaperTradingService extends EventEmitter {
         this.strategyIntervals.delete(sessionId);
       }
 
-      // Close all open positions
-      let hadOpenPositionsToClose = false;
+      // Detect if any positions are being force-closed (censoring trigger)
+      let hasOpenPositions = false;
       for (const [positionId, position] of session.positions) {
         if (position.status === 'open') {
-          hadOpenPositionsToClose = true;
+          hasOpenPositions = true;
           await this.closePosition(sessionId, positionId, 'session_stopped');
         }
       }
 
       // QIG censoring: session ended with open positions → true outcome is censored
-      if (hadOpenPositionsToClose && !session.isCensored) {
+      if (hasOpenPositions || options.forcedClose) {
         session.isCensored = true;
         session.censorReason = 'session_end_forced_close';
         logger.warn(
@@ -1085,7 +1122,7 @@ class PaperTradingService extends EventEmitter {
       // Unregister from parallel strategy map
       this._unregisterParallelStrategy(session.symbol, sessionId);
 
-      logger.info(`⏹️ Stopped paper trading session: ${sessionId}`);
+      logger.info(`⏹️ Stopped paper trading session: ${sessionId}${session.isCensored ? ' [CENSORED]' : ''}`);
       
       this.emit('sessionStopped', session);
       return session;

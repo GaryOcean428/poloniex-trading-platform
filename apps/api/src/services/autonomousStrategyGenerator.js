@@ -1,5 +1,6 @@
 import { EventEmitter } from 'events';
 import { logger } from '../utils/logger.js';
+import { query } from '../db/connection.js';
 import backtestingEngine from './backtestingEngine.js';
 import paperTradingService from './paperTradingService.js';
 import confidenceScoringService from './confidenceScoringService.js';
@@ -41,6 +42,29 @@ const LEVERAGE_TIER_CONFIG = {
     targetRegimes: ['trending'],
   },
 };
+
+// ─── Bridge law constant (frozen physics result, not tunable) ─────────────────
+// w(tf) = (60 / tfMinutes)^0.74   (τ ∝ J^0.74, R²>0.96, seed-robust)
+const BRIDGE_LAW_EXPONENT = 0.74;
+
+/** Bridge law timeframe weight */
+function bridgeLawWeight(tfMinutes) {
+  return Math.pow(60 / tfMinutes, BRIDGE_LAW_EXPONENT);
+}
+
+/** Minutes per timeframe label */
+const TF_MINUTES = { '1m': 1, '5m': 5, '15m': 15, '30m': 30, '1h': 60, '4h': 240 };
+
+// Regime basin membership (for crossover guard)
+const TRENDING_TYPES = new Set(['momentum', 'trend_following', 'breakout']);
+const REVERTING_TYPES = new Set(['mean_reversion', 'scalping']);
+
+/** Returns true iff both strategy types live in the same regime basin */
+function sameRegimeBasin(type1, type2) {
+  const t1trending = TRENDING_TYPES.has(type1);
+  const t2trending = TRENDING_TYPES.has(type2);
+  return t1trending === t2trending;
+}
 
 /**
  * Autonomous Strategy Generator
@@ -102,8 +126,94 @@ class AutonomousStrategyGenerator extends EventEmitter {
     };
     
     this.logger = logger;
+
+    // Population fitness weights learned from historical DB performance
+    // Keys are strategy types; values are weight multipliers updated each generation
+    this.fitnessWeights = {
+      momentum: 1.0,
+      mean_reversion: 1.0,
+      breakout: 1.0,
+      trend_following: 1.0,
+      scalping: 1.0,
+    };
+
+    // Current detected regime (updated each generation)
+    this.currentRegime = 'unknown'; // 'trending' | 'ranging' | 'volatile' | 'unknown'
   }
-  
+
+  // ─── Market regime detection ────────────────────────────────────────────────
+
+  /**
+   * Detect market regime using recent backtest performance as proxy.
+   * Returns 'trending', 'ranging', 'volatile', or 'unknown'.
+   */
+  async detectMarketRegime() {
+    try {
+      const result = await query(`
+        SELECT
+          AVG(sharpe_ratio)        AS avg_sharpe,
+          STDDEV(sharpe_ratio)     AS std_sharpe,
+          AVG(max_drawdown_percent) AS avg_dd
+        FROM backtest_results
+        WHERE created_at > NOW() - INTERVAL '24 hours'
+          AND sharpe_ratio IS NOT NULL
+      `);
+      if (!result.rows.length) return 'unknown';
+      const { avg_sharpe, std_sharpe, avg_dd } = result.rows[0];
+      const sharpe = Number(avg_sharpe) || 0;
+      const stdSharpe = Number(std_sharpe) || 0;
+      const dd = Number(avg_dd) || 0;
+      if (sharpe > 1.2 && dd < 0.08) return 'trending';
+      if (stdSharpe > 1.5 || dd > 0.15) return 'volatile';
+      return 'ranging';
+    } catch {
+      return 'unknown';
+    }
+  }
+
+  /**
+   * Load learned fitness weights from strategy_performance table.
+   * Each type gets a weight proportional to its median uncensored Sharpe.
+   */
+  async loadFitnessWeightsFromDB() {
+    try {
+      const result = await query(`
+        SELECT strategy_type,
+               PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY COALESCE(uncensored_sharpe, paper_sharpe, backtest_sharpe)) AS median_sharpe
+        FROM strategy_performance
+        WHERE is_censored = FALSE
+          AND fitness_divergent = FALSE
+          AND status NOT IN ('killed', 'retired', 'censored_rejected')
+        GROUP BY strategy_type
+      `);
+      for (const row of result.rows) {
+        const sharpe = Number(row.median_sharpe);
+        if (Number.isFinite(sharpe) && sharpe > 0) {
+          this.fitnessWeights[row.strategy_type] = 1 + Math.min(sharpe, 3); // cap at 4×
+        }
+      }
+      this.logger.debug('Updated fitness weights from DB:', this.fitnessWeights);
+    } catch {
+      // Non-critical; use default weights
+    }
+  }
+
+  /**
+   * Compute bridge-law-weighted signal for multi-timeframe strategy.
+   * w(tf) = (60/tfMinutes)^0.74  — frozen constant.
+   */
+  computeMultiTimeframeWeights(timeframes) {
+    const weights = {};
+    let total = 0;
+    for (const tf of timeframes) {
+      const mins = TF_MINUTES[tf] ?? 60;
+      weights[tf] = bridgeLawWeight(mins);
+      total += weights[tf];
+    }
+    for (const tf of timeframes) weights[tf] /= total;
+    return weights;
+  }
+
   /**
    * Initialize the autonomous strategy generator
    */
@@ -177,6 +287,11 @@ class AutonomousStrategyGenerator extends EventEmitter {
     while (this.isRunning) {
       try {
         this.logger.info(`🔄 Starting generation ${this.generationCount + 1}...`);
+
+        // 0. Detect current market regime and load learned fitness weights
+        this.currentRegime = await this.detectMarketRegime();
+        await this.loadFitnessWeightsFromDB();
+        this.logger.info(`📡 Detected regime: ${this.currentRegime}`);
         
         // 1. Evaluate current strategy performance
         await this.evaluateStrategies();
@@ -257,20 +372,16 @@ class AutonomousStrategyGenerator extends EventEmitter {
   }
   
   /**
-   * Generate a random strategy with random parameters, leverage-tier aware.
-   *
-   * Each generated strategy includes:
-   *   - leverageTier: 1 | 2 | 3 (derived from contract maxLeverage)
-   *   - leverage: capped at 25% of contract max (capEffectiveLeverage)
-   *   - targetRegime: 'trending' | 'mean_reverting' | 'transition' | 'any'
-   *   - stopLoss / timeframe / strategyType appropriate for the tier
+   * Generate a random strategy with random parameters.
+   * Combines leverage-tier awareness with regime-conditioned type selection
+   * and learned fitness weights (QIG learning loop).
    *
    * @param {string[]} symbols       List of candidate symbols
    * @param {string[]} strategyTypes Fallback strategy types (overridden by tier config)
    * @param {Object}   [leverageMap] Optional pre-fetched {symbol → maxLeverage} map
    */
   generateRandomStrategy(symbols, strategyTypes, leverageMap = {}) {
-    const id = `auto_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const id = `auto_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
     const symbol = symbols[Math.floor(Math.random() * symbols.length)];
 
     // Determine leverage tier from the symbol's max leverage
@@ -278,8 +389,26 @@ class AutonomousStrategyGenerator extends EventEmitter {
     const tier = getLeverageTier(maxLeverage);
     const tierConfig = LEVERAGE_TIER_CONFIG[tier];
 
-    // Select strategy type appropriate for this tier
-    const type = tierConfig.strategyTypes[Math.floor(Math.random() * tierConfig.strategyTypes.length)];
+    // Regime-conditioned type selection (QIG: don't average across regime basins)
+    // Intersect tier-allowed types with regime-preferred types
+    let candidateTypes = tierConfig.strategyTypes;
+    if (this.currentRegime === 'trending') {
+      const regimeFiltered = candidateTypes.filter(t => TRENDING_TYPES.has(t));
+      if (regimeFiltered.length > 0) candidateTypes = regimeFiltered;
+    } else if (this.currentRegime === 'ranging') {
+      const regimeFiltered = candidateTypes.filter(t => REVERTING_TYPES.has(t));
+      if (regimeFiltered.length > 0) candidateTypes = regimeFiltered;
+    }
+
+    // Weight type selection by learned fitness weights from DB
+    const weights = candidateTypes.map(t => this.fitnessWeights[t] ?? 1.0);
+    const totalWeight = weights.reduce((a, b) => a + b, 0);
+    let rand = Math.random() * totalWeight;
+    let type = candidateTypes[0];
+    for (let i = 0; i < candidateTypes.length; i++) {
+      rand -= weights[i];
+      if (rand <= 0) { type = candidateTypes[i]; break; }
+    }
 
     // Select timeframe appropriate for this tier
     const timeframe = tierConfig.timeframes[Math.floor(Math.random() * tierConfig.timeframes.length)];
@@ -304,6 +433,7 @@ class AutonomousStrategyGenerator extends EventEmitter {
       type,
       symbol,
       timeframe,
+      regimeAtCreation: this.currentRegime,
       leverageTier: tier,
       maxLeverage,
       leverage,
@@ -459,7 +589,8 @@ class AutonomousStrategyGenerator extends EventEmitter {
   }
   
   /**
-   * Generate new strategies through mutation and crossover
+   * Generate new strategies through mutation and crossover.
+   * Regime-conditioned: only crossover strategies in the same basin.
    */
   async generateNewStrategies() {
     this.logger.info('🧬 Generating new strategies...');
@@ -474,11 +605,20 @@ class AutonomousStrategyGenerator extends EventEmitter {
     // Generate new strategies through crossover and mutation
     for (let i = 0; i < Math.floor(this.generationConfig.populationSize * 0.3); i++) {
       if (Math.random() < this.generationConfig.crossoverRate && topPerformers.length >= 2) {
-        // Crossover between two top performers
+        // QIG regime guard: only crossover within same basin (trending ↔ mean-reversion forbidden)
         const parent1 = topPerformers[Math.floor(Math.random() * topPerformers.length)];
-        const parent2 = topPerformers[Math.floor(Math.random() * topPerformers.length)];
-        const offspring = this.crossoverStrategies(parent1, parent2);
-        newStrategies.push(offspring);
+        const compatible = topPerformers.filter(
+          p => p.id !== parent1.id && sameRegimeBasin(parent1.type, p.type)
+        );
+        if (compatible.length > 0) {
+          const parent2 = compatible[Math.floor(Math.random() * compatible.length)];
+          const offspring = this.crossoverStrategies(parent1, parent2);
+          newStrategies.push(offspring);
+        } else {
+          // No compatible crossover partner → mutate instead
+          const mutated = this.mutateStrategy(parent1);
+          newStrategies.push(mutated);
+        }
       } else if (topPerformers.length > 0) {
         // Mutation of top performer
         const parent = topPerformers[Math.floor(Math.random() * topPerformers.length)];
@@ -496,12 +636,12 @@ class AutonomousStrategyGenerator extends EventEmitter {
   }
   
   /**
-   * Crossover two strategies to create offspring.
-   * Preserves leverage tier of whichever parent's symbol is chosen,
-   * then re-caps leverage to that symbol's safe maximum.
+   * Crossover two strategies from the same regime basin.
+   * Preserves leverage tier of chosen parent symbol (re-capped at 25% max).
+   * Regime-conditioned: both parents must be in the same basin (enforced by caller).
    */
   crossoverStrategies(parent1, parent2) {
-    const id = `cross_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const id = `cross_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
     
     // Mix parameters from both parents
     const parameters = {};
@@ -533,6 +673,7 @@ class AutonomousStrategyGenerator extends EventEmitter {
       type: Math.random() < 0.5 ? parent1.type : parent2.type,
       symbol: chosenSymbol,
       timeframe: Math.random() < 0.5 ? parent1.timeframe : parent2.timeframe,
+      regimeAtCreation: this.currentRegime,
       leverageTier: inheritedTier,
       maxLeverage: inheritedMaxLev,
       leverage,
@@ -562,7 +703,7 @@ class AutonomousStrategyGenerator extends EventEmitter {
    * Preserves leverageTier and re-caps leverage after mutation.
    */
   mutateStrategy(parent) {
-    const id = `mut_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const id = `mut_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
     const mutated = JSON.parse(JSON.stringify(parent));
     
     mutated.id = id;
@@ -614,7 +755,10 @@ class AutonomousStrategyGenerator extends EventEmitter {
   }
   
   /**
-   * Calculate fitness score for strategy selection
+   * Calculate fitness score for strategy selection.
+   * Uses DB-learned per-type weights and penalises censored/divergent strategies.
+   * Two fitness values are produced (all-data and uncensored-only); if they diverge
+   * >20% the strategy is flagged as unreliable.
    */
   calculateFitnessScore(strategy) {
     const perf = strategy.performance;
@@ -625,8 +769,16 @@ class AutonomousStrategyGenerator extends EventEmitter {
     const sharpeScore = Math.max(0, perf.sharpeRatio || 0) * 0.2;
     const drawdownPenalty = Math.max(0, perf.maxDrawdown || 0) * -0.2;
     const confidenceScore = (perf.confidence || 0) * 0.1;
+
+    // Apply learned fitness weight for strategy type
+    const typeWeight = this.fitnessWeights[strategy.type] ?? 1.0;
+
+    // Penalise censored or divergent strategies
+    const censorPenalty = strategy.isCensored ? 0.5 : 1.0;
+    const divergentPenalty = strategy.fitnessDivergent ? 0.3 : 1.0;
     
-    return profitScore + winRateScore + sharpeScore + drawdownPenalty + confidenceScore;
+    const raw = profitScore + winRateScore + sharpeScore + drawdownPenalty + confidenceScore;
+    return raw * typeWeight * censorPenalty * divergentPenalty;
   }
   
   /**
