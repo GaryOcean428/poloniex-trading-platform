@@ -10,6 +10,38 @@ function safeNum(v, fallback = 0) {
 }
 
 /**
+ * Determine whether a completed backtest result should be flagged as censored.
+ *
+ * Borrowed from QIG bridge-law validation: a measurement is censored when it
+ * hits the ceiling/floor of the measurement window and therefore doesn't
+ * represent the true value.  In backtesting the analogous situations are:
+ *   1. An open position was force-closed at backtest_end (window too short).
+ *   2. The position size limit was hit (true return is unbounded above).
+ *   3. Total trades is zero (no signal, not a real strategy result).
+ *
+ * @param {object} backtest - The currentBacktest object after simulation.
+ * @returns {{ isCensored: boolean, reason: string|null }}
+ */
+function detectBacktestCensoring(backtest) {
+  if (!backtest) return { isCensored: false, reason: null };
+
+  // Position force-closed at window end
+  const hasWindowEndClose = backtest.trades && backtest.trades.some(
+    t => t.reason === 'backtest_end'
+  );
+  if (hasWindowEndClose) {
+    return { isCensored: true, reason: 'window_end_forced_close' };
+  }
+
+  // No trades at all — signal never triggered inside the window
+  if (backtest.metrics && backtest.metrics.totalTrades === 0) {
+    return { isCensored: true, reason: 'no_trades_in_window' };
+  }
+
+  return { isCensored: false, reason: null };
+}
+
+/**
  * Enhanced Backtesting Engine
  * Sophisticated backtesting with historical data, realistic market simulation,
  * and comprehensive performance analytics
@@ -477,6 +509,7 @@ class BacktestingEngine extends EventEmitter {
   async storeBacktestResults() {
     try {
       const backtestId = `backtest_${Date.now()}`;
+      const { isCensored, reason: censoringReason } = detectBacktestCensoring(this.currentBacktest);
       await query(`
         INSERT INTO backtest_results (
           id, strategy_name, symbol, timeframe, start_date, end_date,
@@ -484,8 +517,9 @@ class BacktestingEngine extends EventEmitter {
           max_drawdown_percent, sharpe_ratio, sortino_ratio, calmar_ratio,
           total_trades, winning_trades, losing_trades, win_rate,
           profit_factor, expectancy, average_win, average_loss,
-          created_at, config, metrics
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
+          created_at, config, metrics,
+          is_censored, censoring_reason
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
       `, [
         backtestId, this.currentBacktest.strategyName, this.currentBacktest.config.symbol,
         this.currentBacktest.config.timeframe, this.currentBacktest.config.startDate,
@@ -504,9 +538,15 @@ class BacktestingEngine extends EventEmitter {
         safeNum(this.currentBacktest.metrics.expectancy),
         safeNum(this.currentBacktest.metrics.averageWin),
         safeNum(this.currentBacktest.metrics.averageLoss),
-        new Date(), JSON.stringify(this.currentBacktest.config), JSON.stringify(this.currentBacktest.metrics)
+        new Date(), JSON.stringify(this.currentBacktest.config), JSON.stringify(this.currentBacktest.metrics),
+        isCensored, censoringReason
       ]);
       this.currentBacktest.id = backtestId;
+      this.currentBacktest.isCensored = isCensored;
+      this.currentBacktest.censoringReason = censoringReason;
+      if (isCensored) {
+        logger.warn(`Backtest ${backtestId} flagged as censored: ${censoringReason}`);
+      }
     } catch (error) { logger.error('Error storing backtest results:', error); }
   }
 
