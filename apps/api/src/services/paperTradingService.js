@@ -115,7 +115,10 @@ class PaperTradingService extends EventEmitter {
           maxPositionSize: 0.1, // 10% max position size
           stopLossPercent: 0.02, // 2% stop loss
           takeProfitPercent: 0.04 // 4% take profit
-        }
+        },
+        // QIG censoring: track whether session outcome is censored (true value unknown)
+        isCensored: false,
+        censorReason: null
       };
 
       // Store session in database
@@ -693,6 +696,15 @@ class PaperTradingService extends EventEmitter {
       // Check daily loss limit
       const dailyLoss = (session.initialCapital - session.currentValue) / session.initialCapital;
       if (dailyLoss > session.riskParameters.maxDailyLoss) {
+        // QIG censoring: hitting max drawdown kill threshold means true loss is censored
+        if (!session.isCensored) {
+          session.isCensored = true;
+          session.censorReason = 'max_drawdown_kill';
+          logger.warn(
+            `[Censoring] Session ${session.id} (${session.strategyName}) hit max drawdown ` +
+            `${(dailyLoss * 100).toFixed(2)}% — marking as CENSORED (true loss unknown)`
+          );
+        }
         return {
           allowed: false,
           reason: 'daily_loss_limit_exceeded',
@@ -706,6 +718,15 @@ class PaperTradingService extends EventEmitter {
       const positionPercent = positionValue / session.currentValue;
       
       if (positionPercent > session.riskParameters.maxPositionSize) {
+        // QIG censoring: hitting position size limit means the strategy can't fully express itself
+        if (!session.isCensored) {
+          session.isCensored = true;
+          session.censorReason = 'position_size_limit';
+          logger.warn(
+            `[Censoring] Session ${session.id} (${session.strategyName}) hit position size limit ` +
+            `${(positionPercent * 100).toFixed(2)}% — marking as CENSORED (strategy constrained, true performance unknown)`
+          );
+        }
         return {
           allowed: false,
           reason: 'position_size_limit_exceeded',
@@ -848,7 +869,9 @@ class PaperTradingService extends EventEmitter {
       winRate,
       currentCapital: session.currentValue,
       positions: Array.from(session.positions.values()),
-      trades: session.trades.slice(-50) // Last 50 trades
+      trades: session.trades.slice(-50), // Last 50 trades
+      isCensored: session.isCensored || false,
+      censorReason: session.censorReason || null
     };
   }
 
@@ -872,7 +895,9 @@ class PaperTradingService extends EventEmitter {
       winRate: session.totalTrades > 0 ? (session.winningTrades / session.totalTrades) * 100 : 0,
       status: session.status,
       startedAt: session.startedAt,
-      lastUpdateAt: session.lastUpdateAt
+      lastUpdateAt: session.lastUpdateAt,
+      isCensored: session.isCensored || false,
+      censorReason: session.censorReason || null
     }));
   }
 
@@ -894,10 +919,22 @@ class PaperTradingService extends EventEmitter {
       }
 
       // Close all open positions
+      let hadOpenPositionsToClose = false;
       for (const [positionId, position] of session.positions) {
         if (position.status === 'open') {
+          hadOpenPositionsToClose = true;
           await this.closePosition(sessionId, positionId, 'session_stopped');
         }
+      }
+
+      // QIG censoring: session ended with open positions → true outcome is censored
+      if (hadOpenPositionsToClose && !session.isCensored) {
+        session.isCensored = true;
+        session.censorReason = 'session_end_forced_close';
+        logger.warn(
+          `[Censoring] Session ${session.id} (${session.strategyName}) ended with open positions ` +
+          `— marking as CENSORED (true Sharpe/WR unknown, forced close at session end)`
+        );
       }
 
       // Update session status
@@ -907,9 +944,9 @@ class PaperTradingService extends EventEmitter {
       // Update database
       await query(`
         UPDATE paper_trading_sessions 
-        SET status = 'stopped', ended_at = $1, updated_at = NOW()
-        WHERE id = $2
-      `, [session.endedAt, sessionId]);
+        SET status = 'stopped', ended_at = $1, is_censored = $2, censor_reason = $3, updated_at = NOW()
+        WHERE id = $4
+      `, [session.endedAt, session.isCensored || false, session.censorReason || null, sessionId]);
 
       // Remove from active sessions
       this.activeSessions.delete(sessionId);
@@ -932,14 +969,17 @@ class PaperTradingService extends EventEmitter {
       await query(`
         UPDATE paper_trading_sessions 
         SET current_value = $1, unrealized_pnl = $2, realized_pnl = $3,
-            total_trades = $4, winning_trades = $5, updated_at = NOW()
-        WHERE id = $6
+            total_trades = $4, winning_trades = $5,
+            is_censored = $6, censor_reason = $7, updated_at = NOW()
+        WHERE id = $8
       `, [
         session.currentValue,
         session.unrealizedPnl,
         session.realizedPnl,
         session.totalTrades,
         session.winningTrades,
+        session.isCensored || false,
+        session.censorReason || null,
         session.id
       ]);
     } catch (error) {
@@ -1006,7 +1046,9 @@ class PaperTradingService extends EventEmitter {
       trades: [],
       status: sessionData.status,
       startedAt: sessionData.started_at,
-      lastUpdateAt: sessionData.updated_at || sessionData.started_at
+      lastUpdateAt: sessionData.updated_at || sessionData.started_at,
+      isCensored: sessionData.is_censored || false,
+      censorReason: sessionData.censor_reason || null
     };
   }
 
