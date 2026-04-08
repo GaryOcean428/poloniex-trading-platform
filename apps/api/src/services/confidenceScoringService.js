@@ -646,7 +646,7 @@ class ConfidenceScoringService extends EventEmitter {
     if (reliabilityWarning) {
       warnings.push({
         type: 'censored_data_distortion',
-        message: 'Censored sessions are distorting the performance estimate (Sharpe divergence >20%). Strategy reliability is uncertain.',
+        message: `Censored sessions are distorting the performance estimate (Sharpe divergence >${this.scoringParameters.censoredDivergenceThreshold * 100}%). Strategy reliability is uncertain.`,
         severity: 'high'
       });
     }
