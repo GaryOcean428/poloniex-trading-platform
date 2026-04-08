@@ -8,6 +8,8 @@ import {
   Shield,
   Key,
   RefreshCw,
+  ArrowUpRight,
+  ArrowDownRight,
   DollarSign,
   BarChart4
 } from 'lucide-react';
@@ -44,10 +46,6 @@ const Account: React.FC = () => {
   }>>([]);
   const [recentLoading, setRecentLoading] = useState(false);
   const [recentError, setRecentError] = useState<string | null>(null);
-
-  // Exchange trade counts from Poloniex API
-  const [exchangeTradeCount, setExchangeTradeCount] = useState<number | null>(null);
-  const [botTradeCount, setBotTradeCount] = useState<number | null>(null);
 
   // instantiate inside effect to avoid extra deps
 
@@ -175,40 +173,7 @@ const Account: React.FC = () => {
     };
   }, []);
 
-  // Fetch exchange and bot trade counts
-  useEffect(() => {
-    let mounted = true;
-    const fetchTradeCounts = async () => {
-      try {
-        const token = getAccessToken();
-        if (!token) return;
-        const { getBackendUrl } = await import('../utils/environment');
-        const API_BASE_URL = getBackendUrl();
-        const headers = {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        };
-
-        // Fetch exchange trade count
-        const exchangeRes = await fetch(`${API_BASE_URL}/api/dashboard/exchange-trades?limit=200`, { headers });
-        if (exchangeRes.ok) {
-          const data = await exchangeRes.json();
-          if (mounted && data.success) setExchangeTradeCount(data.total ?? (Array.isArray(data.data) ? data.data.length : 0));
-        }
-
-        // Fetch bot trade count
-        const botRes = await fetch(`${API_BASE_URL}/api/autonomous/trades?limit=200`, { headers });
-        if (botRes.ok) {
-          const data = await botRes.json();
-          if (mounted && data.success && Array.isArray(data.trades)) setBotTradeCount(data.trades.length);
-        }
-      } catch {
-        // silently ignore — these counts are informational
-      }
-    };
-    fetchTradeCounts();
-    return () => { mounted = false; };
-  }, []);
+  // Parse account data — cast to Record for optional extended fields from API
   const bal = accountBalance as Record<string, unknown> | null;
   const accountData = {
     totalBalance: parseFloat(String(bal?.total ?? '0')),
@@ -338,27 +303,27 @@ const Account: React.FC = () => {
                 <div className="bg-bg-tertiary rounded-lg shadow-md p-4 border border-border-subtle">
                   <div className="flex justify-between items-start">
                     <div>
-                      <p className="text-neutral-500 text-sm">Trade Activity</p>
-                      <p className="text-2xl font-bold mt-1">
-                        {exchangeTradeCount !== null ? exchangeTradeCount : '—'} Trades
-                      </p>
+                      <p className="text-neutral-500 text-sm">Recent Activity</p>
+                      <p className="text-2xl font-bold mt-1">12 Trades</p>
                     </div>
                     <div className="bg-neutral-100 p-2 rounded-full">
                       <Clock className="h-6 w-6 text-neutral-600" />
                     </div>
                   </div>
-                  <div className="mt-4 text-sm space-y-1">
+                  <div className="mt-4 text-sm">
                     <div className="flex justify-between items-center">
-                      <span className="text-neutral-500">Exchange (Poloniex)</span>
-                      <span className="font-medium">
-                        {exchangeTradeCount !== null ? `${exchangeTradeCount} trades` : '—'}
+                      <span className="flex items-center text-neutral-500">
+                        <ArrowUpRight className="h-4 w-4 mr-1 text-green-500" />
+                        Buys
                       </span>
+                      <span className="font-medium">7 orders</span>
                     </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-neutral-500">Bot Trades</span>
-                      <span className="font-medium">
-                        {botTradeCount !== null ? `${botTradeCount} trades` : '—'}
+                    <div className="flex justify-between items-center mt-1">
+                      <span className="flex items-center text-neutral-500">
+                        <ArrowDownRight className="h-4 w-4 mr-1 text-red-500" />
+                        Sells
                       </span>
+                      <span className="font-medium">5 orders</span>
                     </div>
                   </div>
                 </div>
