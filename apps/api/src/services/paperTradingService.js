@@ -852,8 +852,16 @@ class PaperTradingService extends EventEmitter {
     // Apply position size limits
     const maxAllowedValue = session.currentValue * session.riskParameters.maxPositionSize;
     const maxAllowedSize = maxAllowedValue / price;
-    
-    return Math.min(maxPositionSize, maxAllowedSize);
+
+    const baseSize = Math.min(maxPositionSize, maxAllowedSize);
+
+    // Continuous confidence scaling: scale position size proportionally to
+    // confidence (0-100).  A signal confidence of 80 → 80% of base size.
+    // Falls back to full base size when confidence is not provided.
+    const confidence = (signal && signal.confidence != null) ? signal.confidence : 100;
+    const scaledSize = baseSize * (Math.min(Math.max(confidence, 0), 100) / 100);
+
+    return scaledSize;
   }
 
   /**
