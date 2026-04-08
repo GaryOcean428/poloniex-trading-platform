@@ -18,6 +18,15 @@ class PaperTradingService extends EventEmitter {
     this.marketData = new Map();
     this.strategyIntervals = new Map();
     this.isInitialized = false;
+
+    /**
+     * Parallel strategy tracking per symbol.
+     * Map<symbol, Map<sessionId, strategyConfig>>
+     *
+     * Allows multiple strategies to run concurrently for the same pair so
+     * the ML loop can compare performance and evolve via selection pressure.
+     */
+    this.parallelStrategies = new Map();
     
     // Market simulation parameters
     this.marketSimulation = {
@@ -147,6 +156,9 @@ class PaperTradingService extends EventEmitter {
       // Add to active sessions
       this.activeSessions.set(sessionId, session);
 
+      // Register in the per-symbol parallel strategy map
+      this._registerParallelStrategy(session.symbol, sessionId, null);
+
       logger.info(`📝 Created paper trading session: ${session.name} (${sessionId})`);
       
       this.emit('sessionCreated', session);
@@ -171,6 +183,8 @@ class PaperTradingService extends EventEmitter {
       if (strategyConfig) {
         backtestingEngine.registerStrategy(`paper_${sessionId}`, strategyConfig);
         session.strategy = strategyConfig;
+        // Update parallel strategy map with the actual config
+        this._registerParallelStrategy(session.symbol, sessionId, strategyConfig);
       }
 
       // Subscribe to real-time market data
@@ -187,6 +201,75 @@ class PaperTradingService extends EventEmitter {
       logger.error('Error starting paper trading session:', error);
       throw error;
     }
+  }
+
+  /**
+   * Register a strategy in the per-symbol parallel strategy map.
+   * This allows multiple strategies to compete on the same trading pair.
+   *
+   * @param {string} symbol      Trading symbol (e.g. 'BTC_USDT_PERP')
+   * @param {string} sessionId   Paper trading session ID
+   * @param {Object|null} config Strategy configuration (null if not yet started)
+   */
+  _registerParallelStrategy(symbol, sessionId, config) {
+    if (!this.parallelStrategies.has(symbol)) {
+      this.parallelStrategies.set(symbol, new Map());
+    }
+    this.parallelStrategies.get(symbol).set(sessionId, config);
+  }
+
+  /**
+   * Remove a session from the parallel strategy map when it ends.
+   *
+   * @param {string} symbol    Trading symbol
+   * @param {string} sessionId Paper trading session ID
+   */
+  _unregisterParallelStrategy(symbol, sessionId) {
+    const symMap = this.parallelStrategies.get(symbol);
+    if (symMap) {
+      symMap.delete(sessionId);
+      if (symMap.size === 0) this.parallelStrategies.delete(symbol);
+    }
+  }
+
+  /**
+   * Get all active strategy sessions for a symbol.
+   * Used by the ML loop to compare parallel strategy performance.
+   *
+   * @param {string} symbol  Trading symbol
+   * @returns {Array<{sessionId: string, config: Object, session: Object}>}
+   */
+  getParallelStrategiesForSymbol(symbol) {
+    const symMap = this.parallelStrategies.get(symbol);
+    if (!symMap) return [];
+    const result = [];
+    for (const [sessionId, config] of symMap) {
+      const session = this.activeSessions.get(sessionId);
+      if (session) result.push({ sessionId, config, session });
+    }
+    return result;
+  }
+
+  /**
+   * Get performance ranking for all parallel strategies on a symbol.
+   * Returns sessions sorted by realized P&L descending.
+   *
+   * @param {string} symbol  Trading symbol
+   * @returns {Array<{sessionId, realizedPnl, totalTrades, winRate}>}
+   */
+  getRankedStrategiesForSymbol(symbol) {
+    return this.getParallelStrategiesForSymbol(symbol)
+      .map(({ sessionId, session }) => ({
+        sessionId,
+        strategyName: session.strategyName,
+        realizedPnl: session.realizedPnl ?? 0,
+        totalTrades: session.totalTrades ?? 0,
+        winRate: session.totalTrades > 0
+          ? (session.winningTrades ?? 0) / session.totalTrades
+          : 0,
+        leverage: session.leverage ?? 1,
+      }))
+      .sort((a, b) => b.realizedPnl - a.realizedPnl);
   }
 
   /**
@@ -950,6 +1033,8 @@ class PaperTradingService extends EventEmitter {
 
       // Remove from active sessions
       this.activeSessions.delete(sessionId);
+      // Unregister from parallel strategy map
+      this._unregisterParallelStrategy(session.symbol, sessionId);
 
       logger.info(`⏹️ Stopped paper trading session: ${sessionId}`);
       
