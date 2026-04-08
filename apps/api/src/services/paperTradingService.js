@@ -6,6 +6,48 @@ import futuresWebSocket from '../websocket/futuresWebSocket.js';
 import backtestingEngine from './backtestingEngine.js';
 
 /**
+ * Determine whether a paper-trading session result is censored.
+ *
+ * A session is censored (QIG term: τ_decoherence == t_max) when the
+ * observed P&L doesn't represent the true value because an external
+ * limit cut the measurement short:
+ *   1. Max-drawdown limit hit  → true loss could be worse.
+ *   2. Session time limit hit  → strategy didn't reach natural end-of-life.
+ *   3. Position-size limit hit → true return is undefined (capped).
+ *
+ * Callers should fit performance metrics with and without censored sessions
+ * and flag a reliability warning when the fits diverge significantly.
+ *
+ * @param {object} session - A paper trading session object.
+ * @returns {{ isCensored: boolean, reason: string|null }}
+ */
+export function isCensored(session) {
+  if (!session) return { isCensored: false, reason: null };
+
+  // Max-drawdown limit was breached
+  if (session.censoringReason === 'max_drawdown') {
+    return { isCensored: true, reason: 'max_drawdown' };
+  }
+
+  // Check current drawdown against configured limit
+  const drawdown = (session.initialCapital - session.currentValue) / session.initialCapital;
+  const maxDrawdownLimit = session.riskParameters?.maxDailyLoss ?? 0.05;
+  if (drawdown >= maxDrawdownLimit) {
+    return { isCensored: true, reason: 'max_drawdown' };
+  }
+
+  // Time limit hit (session ran for longer than its intended window)
+  if (session.maxDurationMs && session.startedAt) {
+    const elapsed = Date.now() - new Date(session.startedAt).getTime();
+    if (elapsed >= session.maxDurationMs) {
+      return { isCensored: true, reason: 'time_limit' };
+    }
+  }
+
+  return { isCensored: false, reason: null };
+}
+
+/**
  * Paper Trading Service
  * Real-time market simulation without actual capital risk
  * Provides a bridge between backtesting and live trading
@@ -16,7 +58,17 @@ class PaperTradingService extends EventEmitter {
     this.activeSessions = new Map();
     this.strategies = new Map();
     this.marketData = new Map();
+    this.strategyIntervals = new Map();
     this.isInitialized = false;
+
+    /**
+     * Parallel strategy tracking per symbol.
+     * Map<symbol, Map<sessionId, strategyConfig>>
+     *
+     * Allows multiple strategies to run concurrently for the same pair so
+     * the ML loop can compare performance and evolve via selection pressure.
+     */
+    this.parallelStrategies = new Map();
     
     // Market simulation parameters
     this.marketSimulation = {
@@ -114,7 +166,10 @@ class PaperTradingService extends EventEmitter {
           maxPositionSize: 0.1, // 10% max position size
           stopLossPercent: 0.02, // 2% stop loss
           takeProfitPercent: 0.04 // 4% take profit
-        }
+        },
+        // QIG censoring: track whether session outcome is censored (true value unknown)
+        isCensored: false,
+        censorReason: null
       };
 
       // Store session in database
@@ -143,6 +198,9 @@ class PaperTradingService extends EventEmitter {
       // Add to active sessions
       this.activeSessions.set(sessionId, session);
 
+      // Register in the per-symbol parallel strategy map
+      this._registerParallelStrategy(session.symbol, sessionId, null);
+
       logger.info(`📝 Created paper trading session: ${session.name} (${sessionId})`);
       
       this.emit('sessionCreated', session);
@@ -167,6 +225,8 @@ class PaperTradingService extends EventEmitter {
       if (strategyConfig) {
         backtestingEngine.registerStrategy(`paper_${sessionId}`, strategyConfig);
         session.strategy = strategyConfig;
+        // Update parallel strategy map with the actual config
+        this._registerParallelStrategy(session.symbol, sessionId, strategyConfig);
       }
 
       // Subscribe to real-time market data
@@ -183,6 +243,75 @@ class PaperTradingService extends EventEmitter {
       logger.error('Error starting paper trading session:', error);
       throw error;
     }
+  }
+
+  /**
+   * Register a strategy in the per-symbol parallel strategy map.
+   * This allows multiple strategies to compete on the same trading pair.
+   *
+   * @param {string} symbol      Trading symbol (e.g. 'BTC_USDT_PERP')
+   * @param {string} sessionId   Paper trading session ID
+   * @param {Object|null} config Strategy configuration (null if not yet started)
+   */
+  _registerParallelStrategy(symbol, sessionId, config) {
+    if (!this.parallelStrategies.has(symbol)) {
+      this.parallelStrategies.set(symbol, new Map());
+    }
+    this.parallelStrategies.get(symbol).set(sessionId, config);
+  }
+
+  /**
+   * Remove a session from the parallel strategy map when it ends.
+   *
+   * @param {string} symbol    Trading symbol
+   * @param {string} sessionId Paper trading session ID
+   */
+  _unregisterParallelStrategy(symbol, sessionId) {
+    const symMap = this.parallelStrategies.get(symbol);
+    if (symMap) {
+      symMap.delete(sessionId);
+      if (symMap.size === 0) this.parallelStrategies.delete(symbol);
+    }
+  }
+
+  /**
+   * Get all active strategy sessions for a symbol.
+   * Used by the ML loop to compare parallel strategy performance.
+   *
+   * @param {string} symbol  Trading symbol
+   * @returns {Array<{sessionId: string, config: Object, session: Object}>}
+   */
+  getParallelStrategiesForSymbol(symbol) {
+    const symMap = this.parallelStrategies.get(symbol);
+    if (!symMap) return [];
+    const result = [];
+    for (const [sessionId, config] of symMap) {
+      const session = this.activeSessions.get(sessionId);
+      if (session) result.push({ sessionId, config, session });
+    }
+    return result;
+  }
+
+  /**
+   * Get performance ranking for all parallel strategies on a symbol.
+   * Returns sessions sorted by realized P&L descending.
+   *
+   * @param {string} symbol  Trading symbol
+   * @returns {Array<{sessionId, realizedPnl, totalTrades, winRate}>}
+   */
+  getRankedStrategiesForSymbol(symbol) {
+    return this.getParallelStrategiesForSymbol(symbol)
+      .map(({ sessionId, session }) => ({
+        sessionId,
+        strategyName: session.strategyName,
+        realizedPnl: session.realizedPnl ?? 0,
+        totalTrades: session.totalTrades ?? 0,
+        winRate: session.totalTrades > 0
+          ? (session.winningTrades ?? 0) / session.totalTrades
+          : 0,
+        leverage: session.leverage ?? 1,
+      }))
+      .sort((a, b) => b.realizedPnl - a.realizedPnl);
   }
 
   /**
@@ -692,6 +821,10 @@ class PaperTradingService extends EventEmitter {
       // Check daily loss limit
       const dailyLoss = (session.initialCapital - session.currentValue) / session.initialCapital;
       if (dailyLoss > session.riskParameters.maxDailyLoss) {
+        // Mark session as censored: P&L is bounded by the drawdown limit, not by
+        // the strategy's natural behaviour.
+        session.isCensored = true;
+        session.censoringReason = 'max_drawdown';
         return {
           allowed: false,
           reason: 'daily_loss_limit_exceeded',
@@ -705,6 +838,9 @@ class PaperTradingService extends EventEmitter {
       const positionPercent = positionValue / session.currentValue;
       
       if (positionPercent > session.riskParameters.maxPositionSize) {
+        // Mark session as censored: return is bounded by the position-size cap.
+        session.isCensored = true;
+        session.censoringReason = 'position_size_limit';
         return {
           allowed: false,
           reason: 'position_size_limit_exceeded',
@@ -847,7 +983,9 @@ class PaperTradingService extends EventEmitter {
       winRate,
       currentCapital: session.currentValue,
       positions: Array.from(session.positions.values()),
-      trades: session.trades.slice(-50) // Last 50 trades
+      trades: session.trades.slice(-50), // Last 50 trades
+      isCensored: session.isCensored || false,
+      censorReason: session.censorReason || null
     };
   }
 
@@ -871,7 +1009,9 @@ class PaperTradingService extends EventEmitter {
       winRate: session.totalTrades > 0 ? (session.winningTrades / session.totalTrades) * 100 : 0,
       status: session.status,
       startedAt: session.startedAt,
-      lastUpdateAt: session.lastUpdateAt
+      lastUpdateAt: session.lastUpdateAt,
+      isCensored: session.isCensored || false,
+      censorReason: session.censorReason || null
     }));
   }
 
@@ -885,26 +1025,57 @@ class PaperTradingService extends EventEmitter {
         throw new Error(`Session ${sessionId} not found`);
       }
 
+      // Clear strategy execution interval
+      const intervalId = this.strategyIntervals.get(sessionId);
+      if (intervalId) {
+        clearInterval(intervalId);
+        this.strategyIntervals.delete(sessionId);
+      }
+
       // Close all open positions
+      let hadOpenPositionsToClose = false;
       for (const [positionId, position] of session.positions) {
         if (position.status === 'open') {
+          hadOpenPositionsToClose = true;
           await this.closePosition(sessionId, positionId, 'session_stopped');
         }
+      }
+
+      // QIG censoring: session ended with open positions → true outcome is censored
+      if (hadOpenPositionsToClose && !session.isCensored) {
+        session.isCensored = true;
+        session.censorReason = 'session_end_forced_close';
+        logger.warn(
+          `[Censoring] Session ${session.id} (${session.strategyName}) ended with open positions ` +
+          `— marking as CENSORED (true Sharpe/WR unknown, forced close at session end)`
+        );
       }
 
       // Update session status
       session.status = 'stopped';
       session.endedAt = new Date();
 
+      // Detect censoring before persisting
+      const { isCensored: censored, reason: censoringReason } = isCensored(session);
+      session.isCensored = censored;
+      session.censoringReason = censoringReason;
+
+      if (censored) {
+        logger.warn(`Paper trading session ${sessionId} flagged as censored: ${censoringReason}`);
+      }
+
       // Update database
       await query(`
         UPDATE paper_trading_sessions 
-        SET status = 'stopped', ended_at = $1, updated_at = NOW()
+        SET status = 'stopped', ended_at = $1, updated_at = NOW(),
+            is_censored = $3, censoring_reason = $4
         WHERE id = $2
-      `, [session.endedAt, sessionId]);
+      `, [session.endedAt, sessionId, censored, censoringReason]);
 
       // Remove from active sessions
       this.activeSessions.delete(sessionId);
+      // Unregister from parallel strategy map
+      this._unregisterParallelStrategy(session.symbol, sessionId);
 
       logger.info(`⏹️ Stopped paper trading session: ${sessionId}`);
       
@@ -924,14 +1095,17 @@ class PaperTradingService extends EventEmitter {
       await query(`
         UPDATE paper_trading_sessions 
         SET current_value = $1, unrealized_pnl = $2, realized_pnl = $3,
-            total_trades = $4, winning_trades = $5, updated_at = NOW()
-        WHERE id = $6
+            total_trades = $4, winning_trades = $5,
+            is_censored = $6, censor_reason = $7, updated_at = NOW()
+        WHERE id = $8
       `, [
         session.currentValue,
         session.unrealizedPnl,
         session.realizedPnl,
         session.totalTrades,
         session.winningTrades,
+        session.isCensored || false,
+        session.censorReason || null,
         session.id
       ]);
     } catch (error) {
@@ -998,7 +1172,9 @@ class PaperTradingService extends EventEmitter {
       trades: [],
       status: sessionData.status,
       startedAt: sessionData.started_at,
-      lastUpdateAt: sessionData.updated_at || sessionData.started_at
+      lastUpdateAt: sessionData.updated_at || sessionData.started_at,
+      isCensored: sessionData.is_censored || false,
+      censorReason: sessionData.censor_reason || null
     };
   }
 
@@ -1052,21 +1228,95 @@ class PaperTradingService extends EventEmitter {
   }
 
   async subscribeToSymbolData(symbol) {
-    // This would integrate with the existing WebSocket infrastructure
-    // For now, we'll rely on the existing market data subscription
-    logger.info(`📡 Subscribed to market data for ${symbol}`);
+    try {
+      if (futuresWebSocket.subscribeToSymbol) {
+        await futuresWebSocket.subscribeToSymbol(symbol);
+      }
+      logger.info(`Subscribed to market data for ${symbol}`);
+    } catch (error) {
+      logger.error(`Error subscribing to symbol data for ${symbol}:`, error);
+    }
   }
 
   async getHistoricalDataForSignal(symbol, timeframe) {
-    // This would fetch recent historical data for technical analysis
-    // For now, return empty array - would be implemented with real data
-    return [];
+    try {
+      const tf = timeframe || '1h';
+      const intervalSeconds = {
+        '1m': 60, '5m': 300, '15m': 900, '30m': 1800,
+        '1h': 3600, '2h': 7200, '4h': 14400, '12h': 43200, '1d': 86400
+      };
+      const seconds = intervalSeconds[tf] || 3600;
+      // Fetch 50 candles of history (enough for SMA50 and other indicators)
+      const startDate = new Date(Date.now() - seconds * 50 * 1000);
+      const endDate = new Date();
+
+      const data = await backtestingEngine.loadHistoricalData(symbol, tf, startDate, endDate);
+      return data;
+    } catch (error) {
+      logger.error(`Error fetching historical data for ${symbol}:`, error);
+      return [];
+    }
   }
 
   startStrategyExecution(sessionId) {
-    // This would start the strategy execution loop
-    // For now, we'll rely on market data updates to trigger signals
-    logger.info(`🚀 Started strategy execution for session ${sessionId}`);
+    const session = this.activeSessions.get(sessionId);
+    if (!session) {
+      logger.error(`Cannot start strategy execution: session ${sessionId} not found`);
+      return;
+    }
+
+    // Run first cycle immediately, then every 60 seconds
+    this._runStrategyCycle(sessionId);
+
+    const intervalId = setInterval(() => {
+      this._runStrategyCycle(sessionId);
+    }, 60000);
+
+    this.strategyIntervals.set(sessionId, intervalId);
+    logger.info(`Started strategy execution for session ${sessionId} (60s cycle)`);
+  }
+
+  async _runStrategyCycle(sessionId) {
+    try {
+      const session = this.activeSessions.get(sessionId);
+      if (!session || session.status !== 'active') {
+        const intervalId = this.strategyIntervals.get(sessionId);
+        if (intervalId) {
+          clearInterval(intervalId);
+          this.strategyIntervals.delete(sessionId);
+        }
+        return;
+      }
+
+      // Get latest market data from WebSocket cache or fetch fresh
+      let marketData = this.marketData.get(session.symbol);
+      if (!marketData) {
+        try {
+          const tickers = await poloniexFuturesService.getTickers(session.symbol);
+          if (tickers && tickers[0]) {
+            const t = tickers[0];
+            marketData = {
+              symbol: session.symbol,
+              price: parseFloat(t.markPx || t.markPrice || t.lastPx || '0'),
+              open: parseFloat(t.open || t.markPx || '0'),
+              high: parseFloat(t.high || t.markPx || '0'),
+              low: parseFloat(t.low || t.markPx || '0'),
+              volume: parseFloat(t.qty24h || t.vol || '0'),
+              timestamp: Date.now()
+            };
+          }
+        } catch (err) {
+          logger.warn(`Could not fetch ticker for ${session.symbol}: ${err.message}`);
+          return;
+        }
+      }
+
+      if (!marketData || !marketData.price) return;
+
+      await this.generateTradingSignals(session, marketData);
+    } catch (error) {
+      logger.error(`Strategy execution error for session ${sessionId}:`, error);
+    }
   }
 }
 

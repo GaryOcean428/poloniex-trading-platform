@@ -47,7 +47,17 @@ class ConfidenceScoringService extends EventEmitter {
       // Market condition factors
       volatilityPenalty: 0.2, // Reduce confidence in high volatility
       trendStrengthBonus: 0.1, // Increase confidence in strong trends
-      liquidityPenalty: 0.15 // Reduce confidence in low liquidity
+      liquidityPenalty: 0.15, // Reduce confidence in low liquidity
+
+      // Censoring-aware scoring thresholds
+      // Minimum uncensored trades required to fit a separate uncensored score
+      minUncensoredTradesForFit: 5,
+      // Minimum trades for partial sub-scores (performance)
+      minTradesForPerformanceScore: 5,
+      // Minimum trades for partial sub-scores (consistency / risk)
+      minTradesForConsistencyScore: 10,
+      // Points-difference above which censored/uncensored fits are flagged as diverging
+      censoredDivergenceThreshold: 10
     };
   }
 
@@ -82,6 +92,10 @@ class ConfidenceScoringService extends EventEmitter {
    */
   async calculateConfidenceScore(strategyName, symbol, timeframe) {
     try {
+      if (!strategyName) {
+        return this.createLowConfidenceScore(strategyName, symbol, 'missing_strategy_name');
+      }
+
       logger.info(`🔍 Calculating confidence score for ${strategyName} on ${symbol} (${timeframe})`);
 
       // Get historical performance data
@@ -89,19 +103,31 @@ class ConfidenceScoringService extends EventEmitter {
       
       if (!performanceData || performanceData.trades.length < this.scoringParameters.minimumTrades) {
         logger.warn(`Insufficient trade data for ${strategyName} on ${symbol} (${performanceData?.trades.length || 0} trades)`);
-        return this.createLowConfidenceScore(strategyName, symbol, 'insufficient_data');
+        // Return partial sub-scores even when there is insufficient data for the
+        // composite score.  This lets callers see the direction of quality without
+        // waiting for the full minimumTrades threshold.
+        return this.createLowConfidenceScore(strategyName, symbol, 'insufficient_data', performanceData);
       }
 
       // Get current market conditions
       const marketConditions = await this.analyzeMarketConditions(symbol);
 
-      // Calculate component scores
+      // Separate censored and uncensored trade sets (QIG censoring detection).
+      // Fitting only on uncensored data gives a more reliable estimate.
+      const uncensoredTrades = performanceData.trades.filter(t => !t.is_censored);
+      const hasCensoredData = uncensoredTrades.length < performanceData.trades.length;
+
+      const uncensoredData = hasCensoredData && uncensoredTrades.length >= this.scoringParameters.minUncensoredTradesForFit
+        ? { ...performanceData, trades: uncensoredTrades }
+        : null;
+
+      // Calculate component scores on the full dataset
       const performanceScore = this.calculatePerformanceScore(performanceData);
       const consistencyScore = this.calculateConsistencyScore(performanceData);
       const riskScore = this.calculateRiskScore(performanceData);
       const marketConditionScore = this.calculateMarketConditionScore(marketConditions, performanceData);
 
-      // Calculate weighted confidence score
+      // Calculate weighted confidence score (full dataset)
       const confidenceScore = (
         (performanceScore * this.scoringParameters.performanceWeight) +
         (consistencyScore * this.scoringParameters.consistencyWeight) +
@@ -109,7 +135,23 @@ class ConfidenceScoringService extends EventEmitter {
         (marketConditionScore * this.scoringParameters.marketConditionWeight)
       );
 
-      // Calculate recommended position size
+      // Optionally compute score without censored records
+      let confidenceWithoutCensored = null;
+      if (uncensoredData) {
+        const perfU = this.calculatePerformanceScore(uncensoredData);
+        const consU = this.calculateConsistencyScore(uncensoredData);
+        const riskU = this.calculateRiskScore(uncensoredData);
+        confidenceWithoutCensored = Math.round(
+          (perfU * this.scoringParameters.performanceWeight) +
+          (consU * this.scoringParameters.consistencyWeight) +
+          (riskU * this.scoringParameters.riskWeight) +
+          (marketConditionScore * this.scoringParameters.marketConditionWeight)
+        );
+      }
+
+      // Continuous position sizing: size scales linearly with confidence rather
+      // than jumping between discrete tiers.  This removes threshold noise where
+      // a signal at 49.9 % vs 50.1 % confidence produces opposite position sizes.
       const recommendedPositionSize = this.calculateRecommendedPositionSize(confidenceScore, marketConditions);
 
       // Create confidence assessment
@@ -127,6 +169,16 @@ class ConfidenceScoringService extends EventEmitter {
           risk: Math.round(riskScore),
           marketCondition: Math.round(marketConditionScore)
         },
+        // Censoring-aware metadata
+        censoringInfo: {
+          hasCensoredData,
+          censoredTradeCount: performanceData.trades.length - uncensoredTrades.length,
+          confidenceWithCensored: Math.round(confidenceScore),
+          confidenceWithoutCensored,
+          // Significant divergence means the estimate is unreliable
+          estimateUnreliable: confidenceWithoutCensored !== null &&
+            Math.abs(Math.round(confidenceScore) - confidenceWithoutCensored) > this.scoringParameters.censoredDivergenceThreshold
+        },
         warnings: this.generateWarnings(confidenceScore, marketConditions, performanceData),
         calculatedAt: new Date(),
         tradesAnalyzed: performanceData.trades.length,
@@ -135,6 +187,15 @@ class ConfidenceScoringService extends EventEmitter {
           end: performanceData.endDate
         }
       };
+
+      // Add unreliable-estimate warning when censored/uncensored fits diverge
+      if (confidenceAssessment.censoringInfo.estimateUnreliable) {
+        confidenceAssessment.warnings.push({
+          type: 'censored_data_divergence',
+          message: `Censored trades alter confidence by ${Math.abs(Math.round(confidenceScore) - confidenceWithoutCensored)} points. Performance estimate may be unreliable.`,
+          severity: 'high'
+        });
+      }
 
       // Store confidence score
       await this.storeConfidenceScore(confidenceAssessment);
@@ -557,24 +618,23 @@ class ConfidenceScoringService extends EventEmitter {
   }
 
   /**
-   * Calculate recommended position size based on confidence
+   * Calculate recommended position size based on confidence.
+   *
+   * Continuous linear scaling (QIG continuous-confidence principle):
+   *   size = baseSize × (confidence / 100)
+   *
+   * This replaces the previous stepped approach (low/med/high tiers) which
+   * introduced threshold noise: a signal at 49.9 % vs 50.1 % confidence would
+   * produce opposite position sizes.  The continuous version scales smoothly.
+   *
+   * Market-condition adjustments are multiplicative on top of the linear base.
    */
   calculateRecommendedPositionSize(confidenceScore, marketConditions) {
     try {
-      let baseSize = this.scoringParameters.basePositionSize;
+      // Continuous linear base: size scales proportionally with confidence [0-100]
+      let baseSize = this.scoringParameters.basePositionSize * (confidenceScore / 100);
 
-      // Adjust based on confidence score
-      if (confidenceScore >= this.scoringParameters.highConfidenceThreshold) {
-        baseSize *= 1.5;
-      } else if (confidenceScore >= this.scoringParameters.mediumConfidenceThreshold) {
-        baseSize *= 1.0;
-      } else if (confidenceScore >= this.scoringParameters.lowConfidenceThreshold) {
-        baseSize *= 0.7;
-      } else {
-        baseSize *= 0.4;
-      }
-
-      // Adjust for market conditions
+      // Multiplicative market-condition adjustments
       if (marketConditions.volatility.level === 'high') {
         baseSize *= 0.7;
       } else if (marketConditions.volatility.level === 'low') {
@@ -809,9 +869,28 @@ class ConfidenceScoringService extends EventEmitter {
   }
 
   /**
-   * Create low confidence score for insufficient data
+   * Create low confidence score for insufficient data.
+   *
+   * When the full minimumTrades threshold has not been reached, we still return
+   * partial sub-scores so that callers can see the direction of quality.  All
+   * sub-scores default to 0 (not null) so that downstream code need not guard
+   * against missing keys.
    */
-  createLowConfidenceScore(strategyName, symbol, reason) {
+  createLowConfidenceScore(strategyName, symbol, reason, performanceData = null) {
+    // Compute whatever partial sub-scores are available
+    const partialPerformance = performanceData &&
+      performanceData.trades.length >= this.scoringParameters.minTradesForPerformanceScore
+      ? Math.round(this.calculatePerformanceScore(performanceData))
+      : 0;
+    const partialConsistency = performanceData &&
+      performanceData.trades.length >= this.scoringParameters.minTradesForConsistencyScore
+      ? Math.round(this.calculateConsistencyScore(performanceData))
+      : 0;
+    const partialRisk = performanceData &&
+      performanceData.trades.length >= this.scoringParameters.minTradesForConsistencyScore
+      ? Math.round(this.calculateRiskScore(performanceData))
+      : 0;
+
     return {
       strategyName,
       symbol,
@@ -820,10 +899,17 @@ class ConfidenceScoringService extends EventEmitter {
       recommendedPositionSize: this.scoringParameters.minPositionSize,
       marketConditions: null,
       factors: {
-        performance: 0,
-        consistency: 0,
-        risk: 0,
+        performance: partialPerformance,
+        consistency: partialConsistency,
+        risk: partialRisk,
         marketCondition: 0
+      },
+      censoringInfo: {
+        hasCensoredData: false,
+        censoredTradeCount: 0,
+        confidenceWithCensored: 20,
+        confidenceWithoutCensored: null,
+        estimateUnreliable: false
       },
       warnings: [{
         type: 'insufficient_data',
@@ -831,7 +917,7 @@ class ConfidenceScoringService extends EventEmitter {
         severity: 'high'
       }],
       calculatedAt: new Date(),
-      tradesAnalyzed: 0
+      tradesAnalyzed: performanceData?.trades.length ?? 0
     };
   }
 
@@ -953,12 +1039,14 @@ class ConfidenceScoringService extends EventEmitter {
         SELECT DISTINCT strategy_name, symbol, timeframe
         FROM backtest_results
         WHERE created_at > NOW() - INTERVAL '7 days'
+          AND strategy_name IS NOT NULL AND strategy_name <> ''
         
         UNION
         
         SELECT DISTINCT strategy_name, symbol, timeframe
         FROM paper_trading_sessions
         WHERE started_at > NOW() - INTERVAL '7 days'
+          AND strategy_name IS NOT NULL AND strategy_name <> ''
       `);
 
       for (const strategy of strategies.rows) {

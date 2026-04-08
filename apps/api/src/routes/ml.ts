@@ -6,7 +6,7 @@ import poloniexFuturesService from '../services/poloniexFuturesService.js';
 
 const router = express.Router();
 
-// Flag to use simple ML service if Python ML fails
+// Flag to use simple ML service if ml-worker fails
 let usePythonML = true;
 
 /**
@@ -67,21 +67,22 @@ router.get('/performance/:symbol', authenticateToken, async (req, res) => {
     let predictions, signal;
     
     try {
-      // Try Python ML first if enabled
+      // Try ml-worker (HTTP/Redis) first if enabled
       if (usePythonML) {
         try {
           predictions = await mlPredictionService.getMultiHorizonPredictions(symbol, ohlcvData);
           signal = await mlPredictionService.getTradingSignal(symbol, ohlcvData, currentPrice);
-        } catch (pythonError: unknown) {
-          console.warn('Python ML failed, falling back to simple ML:', pythonError instanceof Error ? pythonError.message : String(pythonError));
-          usePythonML = false; // Disable Python ML for subsequent requests
-          throw pythonError; // Re-throw to use fallback
+          usePythonML = true; // Re-enable on success (allows recovery after transient errors)
+        } catch (workerError: unknown) {
+          console.warn('ML worker failed, falling back to simple ML:', workerError instanceof Error ? workerError.message : String(workerError));
+          usePythonML = false; // Disable for a while to avoid repeated timeouts
+          throw workerError; // Re-throw to use fallback
         }
       } else {
-        throw new Error('Python ML disabled, using simple ML');
+        throw new Error('ML worker temporarily disabled, using simple ML');
       }
     } catch {
-      console.log('Using simple ML service for predictions');
+      console.warn('[ML] Using simpleMlService as fallback — ml-worker unavailable');
       // Use JavaScript-based simple ML service
       predictions = await simpleMlService.getMultiHorizonPredictions(symbol, ohlcvData);
       signal = await simpleMlService.getTradingSignal(symbol, ohlcvData, currentPrice);
@@ -143,10 +144,10 @@ router.post('/train/:symbol', authenticateToken, async (req, res) => {
       if (usePythonML) {
         results = await mlPredictionService.trainModels(symbol, ohlcvData);
       } else {
-        throw new Error('Python ML disabled, using simple ML');
+        throw new Error('ML worker temporarily disabled, using simple ML');
       }
-    } catch (pythonError: unknown) {
-      console.warn('Python ML training failed, falling back to simple ML:', pythonError instanceof Error ? pythonError.message : String(pythonError));
+    } catch (workerError: unknown) {
+      console.warn('ML worker training failed, falling back to simple ML:', workerError instanceof Error ? workerError.message : String(workerError));
       usePythonML = false;
       results = {
         mode: 'fallback',

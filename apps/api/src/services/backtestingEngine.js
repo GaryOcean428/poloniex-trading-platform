@@ -3,6 +3,44 @@ import { logger } from '../utils/logger.js';
 import { query } from '../db/connection.js';
 import poloniexFuturesService from './poloniexFuturesService.js';
 
+/** Coerce a value to a finite number suitable for DB insertion. */
+function safeNum(v, fallback = 0) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+/**
+ * Determine whether a completed backtest result should be flagged as censored.
+ *
+ * Borrowed from QIG bridge-law validation: a measurement is censored when it
+ * hits the ceiling/floor of the measurement window and therefore doesn't
+ * represent the true value.  In backtesting the analogous situations are:
+ *   1. An open position was force-closed at backtest_end (window too short).
+ *   2. The position size limit was hit (true return is unbounded above).
+ *   3. Total trades is zero (no signal, not a real strategy result).
+ *
+ * @param {object} backtest - The currentBacktest object after simulation.
+ * @returns {{ isCensored: boolean, reason: string|null }}
+ */
+function detectBacktestCensoring(backtest) {
+  if (!backtest) return { isCensored: false, reason: null };
+
+  // Position force-closed at window end
+  const hasWindowEndClose = backtest.trades && backtest.trades.some(
+    t => t.reason === 'backtest_end'
+  );
+  if (hasWindowEndClose) {
+    return { isCensored: true, reason: 'window_end_forced_close' };
+  }
+
+  // No trades at all — signal never triggered inside the window
+  if (backtest.metrics && backtest.metrics.totalTrades === 0) {
+    return { isCensored: true, reason: 'no_trades_in_window' };
+  }
+
+  return { isCensored: false, reason: null };
+}
+
 /**
  * Enhanced Backtesting Engine
  * Sophisticated backtesting with historical data, realistic market simulation,
@@ -158,7 +196,10 @@ class BacktestingEngine extends EventEmitter {
           equity: config.initialCapital || 100000, margin: 0, unrealizedPnl: 0, realizedPnl: 0
         },
         metrics: { totalTrades: 0, winningTrades: 0, losingTrades: 0, maxDrawdown: 0, maxDrawdownPercent: 0, sharpeRatio: 0, sortinoRatio: 0, calmarRatio: 0 },
-        dailyReturns: [], equity_curve: []
+        dailyReturns: [], equity_curve: [],
+        // is_censored: true when a position was force-closed at window end or hit a hard limit.
+        // Censored backtests should be down-weighted in strategy scoring.
+        is_censored: false,
       };
       const historicalData = await this.loadHistoricalData(config.symbol, config.timeframe || '1h', config.startDate, config.endDate);
       await this.runBacktestSimulation(strategy, historicalData, config);
@@ -177,6 +218,7 @@ class BacktestingEngine extends EventEmitter {
 
   async runBacktestSimulation(strategy, historicalData, config) {
     let currentPosition = null, stopLoss = null, takeProfit = null;
+    const leverage = config.leverage ?? 1;
     for (let i = 0; i < historicalData.length; i++) {
       const currentCandle = historicalData[i];
       const previousCandles = historicalData.slice(Math.max(0, i - (strategy.lookback || 20)), i);
@@ -184,8 +226,20 @@ class BacktestingEngine extends EventEmitter {
       const indicators = this.calculateTechnicalIndicators(previousCandles, currentCandle);
       const signals = await this.generateTradingSignals(strategy, indicators, currentCandle);
       if (currentPosition) {
+        // Check standard exit conditions
         const exitSignal = this.checkExitConditions(currentPosition, currentCandle, stopLoss, takeProfit);
-        if (exitSignal) { await this.executeExit(currentPosition, currentCandle, exitSignal.reason); currentPosition = null; stopLoss = null; takeProfit = null; }
+        // Check leverage-aware liquidation price
+        const liquidationHit = leverage > 1
+          ? this.checkLiquidation(currentPosition, currentCandle, leverage)
+          : false;
+        if (liquidationHit) {
+          await this.executeExit(currentPosition, currentCandle, 'liquidation');
+          this.currentBacktest.is_censored = true;
+          currentPosition = null; stopLoss = null; takeProfit = null;
+        } else if (exitSignal) {
+          await this.executeExit(currentPosition, currentCandle, exitSignal.reason);
+          currentPosition = null; stopLoss = null; takeProfit = null;
+        }
       }
       if (!currentPosition && signals.entry) {
         const entryResult = await this.executeEntry(signals.entry, currentCandle, config);
@@ -198,7 +252,73 @@ class BacktestingEngine extends EventEmitter {
     if (currentPosition) {
       const lastCandle = historicalData[historicalData.length - 1];
       await this.executeExit(currentPosition, lastCandle, 'backtest_end');
+      // Force-close at window end: mark as censored so result is down-weighted
+      this.currentBacktest.is_censored = true;
     }
+  }
+
+  /**
+   * Check whether a leveraged position has been liquidated.
+   * Liquidation occurs when unrealised loss >= initial margin.
+   *
+   * Liquidation price (long):  entryPrice × (1 − 1/leverage)
+   * Liquidation price (short): entryPrice × (1 + 1/leverage)
+   *
+   * @param {Object} position    Current open position
+   * @param {Object} candle      Current OHLCV candle
+   * @param {number} leverage    Effective leverage (e.g. 10)
+   * @returns {boolean} true if liquidation price was touched this candle
+   */
+  checkLiquidation(position, candle, leverage) {
+    if (!position || leverage <= 1) return false;
+    const liqOffset = 1 / leverage;
+    if (position.side === 'long') {
+      const liqPrice = position.entryPrice * (1 - liqOffset);
+      return candle.low <= liqPrice;
+    } else {
+      const liqPrice = position.entryPrice * (1 + liqOffset);
+      return candle.high >= liqPrice;
+    }
+  }
+
+  /**
+   * Calculate the liquidation price for a position.
+   *
+   * @param {number} entryPrice  Entry price
+   * @param {'long'|'short'} side Position side
+   * @param {number} leverage    Effective leverage
+   * @returns {number} Liquidation price
+   */
+  calculateLiquidationPrice(entryPrice, side, leverage) {
+    if (leverage <= 1) return side === 'long' ? 0 : Infinity;
+    const liqOffset = 1 / leverage;
+    return side === 'long'
+      ? entryPrice * (1 - liqOffset)
+      : entryPrice * (1 + liqOffset);
+  }
+
+  /**
+   * Calculate required margin for a position.
+   *
+   * @param {number} positionSize  Notional position size (USDT)
+   * @param {number} leverage      Effective leverage
+   * @returns {number} Required margin (USDT)
+   */
+  calculateRequiredMargin(positionSize, leverage) {
+    return leverage > 0 ? positionSize / leverage : positionSize;
+  }
+
+  /**
+   * Estimate periodic funding cost for a leveraged position.
+   * Uses a simplified model: fundingRate × notionalValue per interval.
+   *
+   * @param {number} notionalValue  Position notional value (USDT)
+   * @param {number} fundingRate    Funding rate per interval (e.g. 0.0001 = 0.01%)
+   * @param {number} intervals      Number of funding intervals
+   * @returns {number} Total funding cost (USDT, always positive = cost)
+   */
+  calculateFundingCost(notionalValue, fundingRate, intervals) {
+    return Math.abs(fundingRate) * notionalValue * intervals;
   }
 
   calculateTechnicalIndicators(historicalData, currentCandle) {
@@ -274,11 +394,29 @@ class BacktestingEngine extends EventEmitter {
 
   async executeEntry(signal, currentCandle, config) {
     try {
-      const positionSize = this.calculatePositionSize(signal, config);
+      const positionSize = this.calculatePositionSize(signal, config, currentCandle.close);
       const executionPrice = this.simulateMarketExecution(currentCandle.close, signal.side, positionSize, 'entry');
       const stopLoss = this.calculateStopLoss(executionPrice, signal.side, config);
       const takeProfit = this.calculateTakeProfit(executionPrice, signal.side, config);
-      const position = { id: `pos_${Date.now()}`, symbol: config.symbol, side: signal.side, size: positionSize, entryPrice: executionPrice, entryTime: currentCandle.timestamp, stopLoss, takeProfit, unrealizedPnl: 0, status: 'open' };
+      const leverage = config.leverage ?? 1;
+      const notional = positionSize * executionPrice;
+      const requiredMargin = this.calculateRequiredMargin(notional, leverage);
+      const liquidationPrice = this.calculateLiquidationPrice(executionPrice, signal.side, leverage);
+      const position = {
+        id: `pos_${Date.now()}`,
+        symbol: config.symbol,
+        side: signal.side,
+        size: positionSize,
+        entryPrice: executionPrice,
+        entryTime: currentCandle.timestamp,
+        stopLoss,
+        takeProfit,
+        leverage,
+        requiredMargin,
+        liquidationPrice,
+        unrealizedPnl: 0,
+        status: 'open',
+      };
       const trade = { id: `trade_${Date.now()}`, positionId: position.id, symbol: config.symbol, side: signal.side, size: positionSize, price: executionPrice, timestamp: currentCandle.timestamp, type: 'entry', reason: signal.reason, fees: this.calculateTradingFees(positionSize, executionPrice) };
       this.updatePortfolioAfterTrade(trade, 'entry');
       this.currentBacktest.trades.push(trade);
@@ -295,13 +433,16 @@ class BacktestingEngine extends EventEmitter {
     return side === 'long' ? basePrice * (1 + totalSlippage) : basePrice * (1 - totalSlippage);
   }
 
-  calculatePositionSize(signal, config) {
+  calculatePositionSize(signal, config, currentPrice) {
     const { maxPositionSize = 0.1, minPositionSize = 0.01 } = config;
     const portfolioValue = this.currentBacktest.portfolio.totalValue;
-    const baseSize = portfolioValue * minPositionSize;
-    const maxSize = portfolioValue * maxPositionSize;
+    const price = currentPrice || 1;
+    // Calculate dollar allocation, then convert to asset units
+    const baseDollar = portfolioValue * minPositionSize;
+    const maxDollar = portfolioValue * maxPositionSize;
     const strengthMultiplier = Math.min(signal.strength || 1, 1);
-    return Math.min(Math.max(baseSize * strengthMultiplier, baseSize), maxSize);
+    const dollarSize = Math.min(Math.max(baseDollar * strengthMultiplier, baseDollar), maxDollar);
+    return dollarSize / price;
   }
 
   calculateSMA(values, period) {
@@ -452,7 +593,7 @@ class BacktestingEngine extends EventEmitter {
     const exits = trades.filter(t => t.type === 'exit');
     const gp = exits.filter(t => t.pnl > 0).reduce((s, t) => s + t.pnl, 0);
     const gl = Math.abs(exits.filter(t => t.pnl <= 0).reduce((s, t) => s + t.pnl, 0));
-    return gl > 0 ? gp / gl : gp > 0 ? Infinity : 0;
+    return gl > 0 ? gp / gl : gp > 0 ? 9999.99 : 0;
   }
   calculateExpectancy(trades) {
     const exits = trades.filter(t => t.type === 'exit');
@@ -471,25 +612,44 @@ class BacktestingEngine extends EventEmitter {
   async storeBacktestResults() {
     try {
       const backtestId = `backtest_${Date.now()}`;
+      const { isCensored, reason: censoringReason } = detectBacktestCensoring(this.currentBacktest);
       await query(`
         INSERT INTO backtest_results (
           id, strategy_name, symbol, timeframe, start_date, end_date,
           initial_capital, final_value, total_return, max_drawdown,
-          max_drawdown_percent, sharpe_ratio, total_trades, win_rate,
-          created_at, config, metrics
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+          max_drawdown_percent, sharpe_ratio, sortino_ratio, calmar_ratio,
+          total_trades, winning_trades, losing_trades, win_rate,
+          profit_factor, expectancy, average_win, average_loss,
+          created_at, config, metrics,
+          is_censored, censoring_reason
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
       `, [
         backtestId, this.currentBacktest.strategyName, this.currentBacktest.config.symbol,
         this.currentBacktest.config.timeframe, this.currentBacktest.config.startDate,
         this.currentBacktest.config.endDate, this.currentBacktest.config.initialCapital || 100000,
         this.currentBacktest.portfolio.totalValue, this.currentBacktest.metrics.totalReturn,
         this.currentBacktest.metrics.maxDrawdown,
-        this.currentBacktest.metrics.maxDrawdownPercent || 0,
-        this.currentBacktest.metrics.sharpeRatio,
-        this.currentBacktest.metrics.totalTrades, this.currentBacktest.metrics.winRate,
-        new Date(), JSON.stringify(this.currentBacktest.config), JSON.stringify(this.currentBacktest.metrics)
+        safeNum(this.currentBacktest.metrics.maxDrawdownPercent),
+        safeNum(this.currentBacktest.metrics.sharpeRatio),
+        safeNum(this.currentBacktest.metrics.sortinoRatio),
+        safeNum(this.currentBacktest.metrics.calmarRatio),
+        safeNum(this.currentBacktest.metrics.totalTrades),
+        safeNum(this.currentBacktest.metrics.winningTrades),
+        safeNum(this.currentBacktest.metrics.losingTrades),
+        safeNum(this.currentBacktest.metrics.winRate),
+        safeNum(this.currentBacktest.metrics.profitFactor),
+        safeNum(this.currentBacktest.metrics.expectancy),
+        safeNum(this.currentBacktest.metrics.averageWin),
+        safeNum(this.currentBacktest.metrics.averageLoss),
+        new Date(), JSON.stringify(this.currentBacktest.config), JSON.stringify(this.currentBacktest.metrics),
+        isCensored, censoringReason
       ]);
       this.currentBacktest.id = backtestId;
+      this.currentBacktest.isCensored = isCensored;
+      this.currentBacktest.censoringReason = censoringReason;
+      if (isCensored) {
+        logger.warn(`Backtest ${backtestId} flagged as censored: ${censoringReason}`);
+      }
     } catch (error) { logger.error('Error storing backtest results:', error); }
   }
 

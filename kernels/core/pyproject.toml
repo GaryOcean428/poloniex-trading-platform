@@ -15,6 +15,7 @@ dependencies = [
     "python-multipart>=0.0.9",
     "redis>=5.0.0",
     "celery[redis]>=5.4.0",
+    "qig-core>=2.7.0",
 ]
 
 [build-system]
