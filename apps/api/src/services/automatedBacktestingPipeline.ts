@@ -53,8 +53,8 @@ export interface PipelineResult {
 
 export class AutomatedBacktestingPipeline {
   private backtestingEngine: any;
-  private minWinRate = 0.55; // 55% minimum win rate
-  private minProfitFactor = 1.5; // 1.5:1 profit factor
+  private minWinRate = 0.40; // 40% minimum win rate (futures-realistic; 50%+ WR is rare with leverage)
+  private minProfitFactor = 1.0; // 1.0:1 profit factor (break-even floor)
   private maxDrawdown = 0.20; // 20% max drawdown
 
   constructor() {
