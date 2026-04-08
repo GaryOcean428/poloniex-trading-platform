@@ -381,7 +381,7 @@ class AutonomousStrategyGenerator extends EventEmitter {
    * @param {Object}   [leverageMap] Optional pre-fetched {symbol → maxLeverage} map
    */
   generateRandomStrategy(symbols, strategyTypes, leverageMap = {}) {
-    const id = `auto_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const id = `auto_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
     const symbol = symbols[Math.floor(Math.random() * symbols.length)];
 
     // Determine leverage tier from the symbol's max leverage
@@ -636,13 +636,12 @@ class AutonomousStrategyGenerator extends EventEmitter {
   }
   
   /**
-   * Crossover two strategies to create offspring.
    * Crossover two strategies from the same regime basin.
    * Preserves leverage tier of chosen parent symbol (re-capped at 25% max).
-   * Regime-conditioned: enforced by generateNewStrategies() caller.
+   * Regime-conditioned: both parents must be in the same basin (enforced by caller).
    */
   crossoverStrategies(parent1, parent2) {
-    const id = `cross_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const id = `cross_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
     
     // Mix parameters from both parents
     const parameters = {};
@@ -675,10 +674,10 @@ class AutonomousStrategyGenerator extends EventEmitter {
       symbol: chosenSymbol,
       timeframe: Math.random() < 0.5 ? parent1.timeframe : parent2.timeframe,
       regimeAtCreation: this.currentRegime,
-      leverageTier: tier,
-      maxLeverage,
+      leverageTier: inheritedTier,
+      maxLeverage: inheritedMaxLev,
       leverage,
-      targetRegime,
+      targetRegime: Math.random() < 0.5 ? parent1.targetRegime : parent2.targetRegime,
       indicators,
       parameters,
       performance: {
@@ -704,7 +703,7 @@ class AutonomousStrategyGenerator extends EventEmitter {
    * Preserves leverageTier and re-caps leverage after mutation.
    */
   mutateStrategy(parent) {
-    const id = `mut_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const id = `mut_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
     const mutated = JSON.parse(JSON.stringify(parent));
     
     mutated.id = id;

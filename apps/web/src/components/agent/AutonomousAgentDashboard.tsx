@@ -1070,8 +1070,8 @@ const AutonomousAgentDashboard: React.FC = () => {
                           'bg-purple-100 text-purple-700'
                         }`}>{event.execution_mode}</span>
                       )}
-                      {event.confidence_score != null && safeNum(
-                        <span className="text-xs text-gray-500">Confidence: {NumbersafeNum(event.confidence_score).toFixed(1)}%</span>
+                      {event.confidence_score != null && (
+                        <span className="text-xs text-gray-500">Confidence: {safeNum(event.confidence_score).toFixed(1)}%</span>
                       )}
                     </div>
                     <p className="text-sm text-gray-900">{event.description}</p>

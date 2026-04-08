@@ -1,4 +1,4 @@
--- Migration 017: strategy_performance table for ML self-learning engine
+-- Migration 018: strategy_performance table for ML self-learning engine
 -- Tracks continuous performance of all generated strategies across their lifecycle.
 -- QIG-informed: includes is_censored flag (censoring-aware fitness) and regime_at_creation.
 

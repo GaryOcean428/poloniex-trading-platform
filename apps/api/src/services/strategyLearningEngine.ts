@@ -331,7 +331,7 @@ class StrategyLearningEngine extends EventEmitter {
   }
 
   private generateRandom(symbols: string[], regime: MarketRegime): StrategyRecord {
-    const id = `sle_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const id = `sle_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
     const symbol = symbols[Math.floor(Math.random() * symbols.length)];
     const tfKeys = Object.keys(SUPPORTED_TF_MINUTES);
     const timeframe = tfKeys[Math.floor(Math.random() * tfKeys.length)];
@@ -380,7 +380,7 @@ class StrategyLearningEngine extends EventEmitter {
   }
 
   private crossoverStrategies(parent1: StrategyRecord, parent2: StrategyRecord, regime: MarketRegime): StrategyRecord {
-    const id = `cross_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const id = `cross_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
     return {
       ...this.generateRandom([parent1.symbol, parent2.symbol], regime),
       strategyId: id,
@@ -394,7 +394,7 @@ class StrategyLearningEngine extends EventEmitter {
   }
 
   private mutateStrategy(parent: StrategyRecord, regime: MarketRegime): StrategyRecord {
-    const id = `mut_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const id = `mut_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
     const tfKeys = Object.keys(SUPPORTED_TF_MINUTES);
     return {
       ...parent,
