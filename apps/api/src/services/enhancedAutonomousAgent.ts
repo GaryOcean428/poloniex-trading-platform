@@ -1,8 +1,8 @@
 /**
  * Enhanced Autonomous Trading Agent
  * 
- * Integrates AI strategy generation with autonomous trading:
- * - Generates strategies using Claude AI
+ * Integrates ML-based strategy generation with autonomous trading:
+ * - Generates strategies using evolutionary/rule-based algorithms
  * - Creates multi-strategy combinations
  * - Manages strategy lifecycle (backtest → paper → live)
  * - Continuous learning and adaptation
@@ -10,7 +10,6 @@
 
 import { EventEmitter } from 'events';
 import { pool } from '../db/connection.js';
-import { getLLMStrategyGenerator } from './llmStrategyGenerator.js';
 import backtestingEngine from './backtestingEngine.js';
 import paperTradingService from './paperTradingService.js';
 import automatedTradingService from './automatedTradingService.js';
@@ -533,7 +532,6 @@ class EnhancedAutonomousAgent extends EventEmitter {
     }
 
     const strategies: Strategy[] = [];
-    const _llmGenerator = getLLMStrategyGenerator();
 
     // Process multiple symbols in parallel for faster strategy generation
     const symbolPromises = session.config.preferredPairs.map(async (symbol) => {
@@ -613,8 +611,7 @@ class EnhancedAutonomousAgent extends EventEmitter {
   }
 
   /**
-   * Generate a single strategy
-   * Falls back to rule-based strategy if LLM is unavailable
+   * Generate a single strategy using the rule-based evolutionary approach
    */
   private async generateSingleStrategy(
     session: AgentSession,
@@ -623,34 +620,9 @@ class EnhancedAutonomousAgent extends EventEmitter {
     indicators: string[],
     description: string
   ): Promise<Strategy> {
-    const llmGenerator = getLLMStrategyGenerator();
-    
-    let strategyName = `${strategyType}_${symbol}`;
-    let strategyCode = '';
-    
-    if (llmGenerator.isAvailable()) {
-      try {
-        const aiStrategy = await llmGenerator.generateStrategy({
-          symbol,
-          timeframe: session.config.preferredTimeframes[0],
-          strategyType,
-          riskTolerance: 'moderate',
-          indicators,
-          description
-        } as any);
-        
-        strategyName = aiStrategy.name || strategyName;
-        strategyCode = (aiStrategy as any).code || JSON.stringify(aiStrategy);
-      } catch (err: any) {
-        logger.warn(`[Agent] LLM strategy generation failed, using rule-based fallback: ${err.message}`);
-        strategyCode = JSON.stringify(this.generateRuleBasedStrategy(strategyType, symbol, indicators, session.config));
-      }
-    } else {
-      logger.info(`[Agent] Claude API key not configured — using rule-based ${strategyType} strategy for ${symbol}`);
-      const ruleStrategy = this.generateRuleBasedStrategy(strategyType, symbol, indicators, session.config);
-      strategyName = ruleStrategy.name;
-      strategyCode = JSON.stringify(ruleStrategy);
-    }
+    const ruleStrategy = this.generateRuleBasedStrategy(strategyType, symbol, indicators, session.config);
+    const strategyName = ruleStrategy.name;
+    const strategyCode = JSON.stringify(ruleStrategy);
     
     const strategy: Strategy = {
       id: `strategy_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
@@ -795,58 +767,15 @@ class EnhancedAutonomousAgent extends EventEmitter {
   }
 
   /**
-   * Create multi-strategy combination
-   * Falls back to rule-based combo if LLM is unavailable
+   * Create multi-strategy combination using the rule-based evolutionary approach
    */
   private async createMultiStrategyCombo(
     session: AgentSession,
     symbol: string,
     subStrategies: Strategy[]
   ): Promise<Strategy> {
-    const llmGenerator = getLLMStrategyGenerator();
-    
-    let comboCode = '';
-    let comboName = `Multi-Combo: ${symbol}`;
-
-    if (llmGenerator.isAvailable()) {
-      try {
-        // Generate combination logic using AI
-        const comboPrompt = `
-Create a multi-strategy combination that combines these strategies:
-
-1. Trend Strategy: ${subStrategies[0].description}
-2. Momentum Strategy: ${subStrategies[1].description}
-3. Volume Strategy: ${subStrategies[2].description}
-
-The combination should:
-- Use weighted voting (Trend: 40%, Momentum: 35%, Volume: 25%)
-- Only enter trades when at least 2 strategies agree
-- Exit when any strategy signals exit
-- Include proper risk management with ${session.config.stopLossPercentage}% stop loss
-
-Generate the combination logic as executable JavaScript code.
-`;
-
-        const aiCombo = await llmGenerator.generateStrategy({
-          symbol,
-          timeframe: session.config.preferredTimeframes[0],
-          strategyType: 'multi_strategy_combo',
-          riskTolerance: 'moderate',
-          indicators: ['SMA', 'EMA', 'RSI', 'MACD', 'Volume', 'OBV'],
-          description: `Multi-strategy combination for ${symbol}`,
-          customPrompt: comboPrompt
-        } as any);
-
-        comboCode = (aiCombo as any).code || JSON.stringify(aiCombo);
-        comboName = (aiCombo as any).name || comboName;
-      } catch (err: any) {
-        logger.warn(`[Agent] LLM combo generation failed, using rule-based combo: ${err.message}`);
-        comboCode = JSON.stringify(this.generateRuleBasedCombo(symbol, subStrategies, session.config));
-      }
-    } else {
-      logger.info(`[Agent] Claude API not available — using rule-based combo for ${symbol}`);
-      comboCode = JSON.stringify(this.generateRuleBasedCombo(symbol, subStrategies, session.config));
-    }
+    const comboName = `Multi-Combo: ${symbol}`;
+    const comboCode = JSON.stringify(this.generateRuleBasedCombo(symbol, subStrategies, session.config));
     
     const comboStrategy: Strategy = {
       id: `combo_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
@@ -986,28 +915,7 @@ Generate the combination logic as executable JavaScript code.
         `Decision: ${wrPassed && pfPassed ? 'PROMOTE → paper' : 'RETIRE (failed backtest)'}`
       );
 
-      if (wrPassed && pfPassed) {
-        // LLM refinement: optimize winning strategies before paper trading
-        const llmGen = getLLMStrategyGenerator();
-        if (llmGen.isAvailable()) {
-          try {
-            const optimized = await llmGen.optimizeStrategy(
-              strategy as any,
-              {
-                winRate: strategy.performance.winRate,
-                profitFactor: strategy.performance.profitFactor,
-                sharpeRatio,
-                maxDrawdown,
-                totalTrades: strategy.performance.totalTrades
-              },
-              { symbol: strategy.symbol, currentPrice: 0, priceChange24h: 0, volume24h: 0, technicalIndicators: {} }
-            );
-            strategy.code = JSON.stringify(optimized);
-            logger.info(`[Lifecycle] LLM-refined strategy ${strategy.name} before paper trading`);
-          } catch (err: any) {
-            logger.warn(`[Lifecycle] LLM optimization skipped for ${strategy.name}: ${err.message}`);
-          }
-        }
+      if (strategy.performance.winRate > winRateThreshold && strategy.performance.profitFactor > profitFactorThreshold) {
         await this.promoteToPaperTrading(session, strategy);
       } else {
         await this.retireStrategy(strategy, 'failed_backtest');
@@ -1059,7 +967,7 @@ Generate the combination logic as executable JavaScript code.
     // Start paper trading session
     // First create the session, then start it with strategy config
     let parsedStrategyCode: any = null;
-    try { parsedStrategyCode = JSON.parse(strategy.code); } catch { /* LLM code may not be JSON */ }
+    try { parsedStrategyCode = JSON.parse(strategy.code); } catch { /* strategy code may not be JSON */ }
 
     const paperSession = await paperTradingService.createSession({
       name: `Paper: ${strategy.name}`,
