@@ -3,6 +3,44 @@ import { logger } from '../utils/logger.js';
 import { query } from '../db/connection.js';
 import poloniexFuturesService from './poloniexFuturesService.js';
 
+/** Coerce a value to a finite number suitable for DB insertion. */
+function safeNum(v, fallback = 0) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+/**
+ * Determine whether a completed backtest result should be flagged as censored.
+ *
+ * Borrowed from QIG bridge-law validation: a measurement is censored when it
+ * hits the ceiling/floor of the measurement window and therefore doesn't
+ * represent the true value.  In backtesting the analogous situations are:
+ *   1. An open position was force-closed at backtest_end (window too short).
+ *   2. The position size limit was hit (true return is unbounded above).
+ *   3. Total trades is zero (no signal, not a real strategy result).
+ *
+ * @param {object} backtest - The currentBacktest object after simulation.
+ * @returns {{ isCensored: boolean, reason: string|null }}
+ */
+function detectBacktestCensoring(backtest) {
+  if (!backtest) return { isCensored: false, reason: null };
+
+  // Position force-closed at window end
+  const hasWindowEndClose = backtest.trades && backtest.trades.some(
+    t => t.reason === 'backtest_end'
+  );
+  if (hasWindowEndClose) {
+    return { isCensored: true, reason: 'window_end_forced_close' };
+  }
+
+  // No trades at all — signal never triggered inside the window
+  if (backtest.metrics && backtest.metrics.totalTrades === 0) {
+    return { isCensored: true, reason: 'no_trades_in_window' };
+  }
+
+  return { isCensored: false, reason: null };
+}
+
 /**
  * Enhanced Backtesting Engine
  * Sophisticated backtesting with historical data, realistic market simulation,
@@ -17,17 +55,12 @@ class BacktestingEngine extends EventEmitter {
     this.strategies = new Map();
     this.historicalData = new Map();
     this.marketSimulation = {
-      slippage: 0.001, // 0.1% default slippage
-      latency: 50, // 50ms execution delay
-      marketImpact: 0.0005 // 0.05% market impact
+      slippage: 0.001,
+      latency: 50,
+      marketImpact: 0.0005
     };
   }
 
-  /**
-   * Register a strategy for backtesting
-   * @param {string} strategyName - Unique strategy identifier
-   * @param {Object} strategy - Strategy configuration
-   */
   registerStrategy(strategyName, strategy) {
     this.strategies.set(strategyName, {
       ...strategy,
@@ -37,35 +70,22 @@ class BacktestingEngine extends EventEmitter {
     logger.info(`Strategy registered: ${strategyName}`);
   }
 
-  /**
-   * Load historical data for backtesting
-   * @param {string} symbol - Trading symbol
-   * @param {string} timeframe - Data timeframe (1m, 5m, 1h, 1d)
-   * @param {Date} startDate - Start date for historical data
-   * @param {Date} endDate - End date for historical data
-   */
   async loadHistoricalData(symbol, timeframe, startDate, endDate) {
     try {
       logger.info(`Loading historical data for ${symbol} (${timeframe})`);
-      
-      // First, try to load from database
       const cachedData = await this.getCachedHistoricalData(symbol, timeframe, startDate, endDate);
-      
       if (cachedData.length > 0) {
         logger.info(`Found ${cachedData.length} cached data points for ${symbol}`);
         this.historicalData.set(`${symbol}_${timeframe}`, cachedData);
         return cachedData;
       }
-
-      // If no cached data, fetch from Poloniex API
       const freshData = await this.fetchHistoricalDataFromAPI(symbol, timeframe, startDate, endDate);
-      
-      // Cache the data for future use
+      if (freshData.length === 0) {
+        throw new Error(`No historical data available for ${symbol} (${timeframe})`);
+      }
       await this.cacheHistoricalData(symbol, timeframe, freshData);
-      
       this.historicalData.set(`${symbol}_${timeframe}`, freshData);
       logger.info(`Loaded ${freshData.length} historical data points for ${symbol}`);
-      
       return freshData;
     } catch (error) {
       logger.error(`Error loading historical data for ${symbol}:`, error);
@@ -74,36 +94,49 @@ class BacktestingEngine extends EventEmitter {
   }
 
   /**
-   * Fetch historical data from Poloniex API
+   * Fetch historical data from Poloniex API.
+   * Uses getHistoricalData() which correctly handles:
+   *   - Interval format conversion ("15m" → "MINUTE_15")
+   *   - Poloniex V3 array response format
+   *   - Proper time range params (sTime, eTime)
+   *   - Non-array response guarding
    */
   async fetchHistoricalDataFromAPI(symbol, timeframe, startDate, endDate) {
     try {
-      const klineData = await poloniexFuturesService.getKlines(
-        symbol,
-        timeframe,
-        Math.floor(startDate.getTime() / 1000),
-        Math.floor(endDate.getTime() / 1000)
-      );
+      // Calculate how many candles we need based on the time range and interval
+      const intervalSeconds = {
+        '1m': 60, '5m': 300, '15m': 900, '30m': 1800,
+        '1h': 3600, '1H': 3600, '2h': 7200,
+        '4h': 14400, '4H': 14400, '12h': 43200,
+        '1d': 86400, '1D': 86400
+      };
+      const seconds = intervalSeconds[timeframe] || 3600;
+      const rangeMs = endDate.getTime() - startDate.getTime();
+      const limit = Math.min(Math.ceil(rangeMs / (seconds * 1000)), 500);
 
-      return klineData.map(candle => ({
-        timestamp: new Date(candle.time * 1000),
-        open: parseFloat(candle.open),
-        high: parseFloat(candle.high),
-        low: parseFloat(candle.low),
-        close: parseFloat(candle.close),
-        volume: parseFloat(candle.volume),
+      // getHistoricalData handles interval format conversion, V3 array parsing,
+      // and non-array response guarding internally
+      const data = await poloniexFuturesService.getHistoricalData(symbol, timeframe, limit);
+
+      if (!Array.isArray(data) || data.length === 0) {
+        logger.warn(`No historical data returned for ${symbol} (${timeframe}), limit=${limit}`);
+        return [];
+      }
+
+      // getHistoricalData already returns {timestamp, open, high, low, close, volume}
+      // Just add symbol and timeframe for caching compatibility
+      return data.map(candle => ({
+        ...candle,
+        timestamp: new Date(candle.timestamp),
         symbol,
         timeframe
       }));
     } catch (error) {
-      logger.error(`Error fetching historical data from API:`, error);
-      throw error;
+      logger.error(`Error fetching historical data from API for ${symbol}:`, error);
+      return [];
     }
   }
 
-  /**
-   * Get cached historical data from database
-   */
   async getCachedHistoricalData(symbol, timeframe, startDate, endDate) {
     try {
       const result = await query(`
@@ -113,7 +146,6 @@ class BacktestingEngine extends EventEmitter {
         AND timestamp >= $3 AND timestamp <= $4
         ORDER BY timestamp ASC
       `, [symbol, timeframe, startDate, endDate]);
-
       return result.rows.map(row => ({
         timestamp: new Date(row.timestamp),
         open: parseFloat(row.open),
@@ -130,110 +162,52 @@ class BacktestingEngine extends EventEmitter {
     }
   }
 
-  /**
-   * Cache historical data in database
-   */
   async cacheHistoricalData(symbol, timeframe, data) {
     try {
       const insertQuery = `
         INSERT INTO historical_market_data (symbol, timeframe, timestamp, open, high, low, close, volume)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         ON CONFLICT (symbol, timeframe, timestamp) DO UPDATE SET
-        open = EXCLUDED.open,
-        high = EXCLUDED.high,
-        low = EXCLUDED.low,
-        close = EXCLUDED.close,
-        volume = EXCLUDED.volume
+        open = EXCLUDED.open, high = EXCLUDED.high, low = EXCLUDED.low,
+        close = EXCLUDED.close, volume = EXCLUDED.volume
       `;
-
       for (const candle of data) {
         await query(insertQuery, [
-          candle.symbol,
-          candle.timeframe,
-          candle.timestamp,
-          candle.open,
-          candle.high,
-          candle.low,
-          candle.close,
-          candle.volume
+          candle.symbol, candle.timeframe, candle.timestamp,
+          candle.open, candle.high, candle.low, candle.close, candle.volume
         ]);
       }
-
       logger.info(`Cached ${data.length} historical data points for ${symbol}`);
     } catch (error) {
       logger.error('Error caching historical data:', error);
     }
   }
 
-  /**
-   * Run backtest for a specific strategy
-   * @param {string} strategyName - Strategy to backtest
-   * @param {Object} config - Backtest configuration
-   */
   async runBacktest(strategyName, config) {
     try {
       this.isRunning = true;
       const strategy = this.strategies.get(strategyName);
-      
-      if (!strategy) {
-        throw new Error(`Strategy ${strategyName} not found`);
-      }
-
+      if (!strategy) throw new Error(`Strategy ${strategyName} not found`);
       logger.info(`Starting backtest for strategy: ${strategyName}`);
-      
       this.currentBacktest = {
-        strategyName,
-        config,
-        startTime: new Date(),
-        trades: [],
-        positions: [],
+        strategyName, config, startTime: new Date(), trades: [], positions: [],
         portfolio: {
-          cash: config.initialCapital || 100000,
-          totalValue: config.initialCapital || 100000,
-          equity: config.initialCapital || 100000,
-          margin: 0,
-          unrealizedPnl: 0,
-          realizedPnl: 0
+          cash: config.initialCapital || 100000, totalValue: config.initialCapital || 100000,
+          equity: config.initialCapital || 100000, margin: 0, unrealizedPnl: 0, realizedPnl: 0
         },
-        metrics: {
-          totalTrades: 0,
-          winningTrades: 0,
-          losingTrades: 0,
-          maxDrawdown: 0,
-          maxDrawdownPercent: 0,
-          sharpeRatio: 0,
-          sortinoRatio: 0,
-          calmarRatio: 0
-        },
-        dailyReturns: [],
-        equity_curve: []
+        metrics: { totalTrades: 0, winningTrades: 0, losingTrades: 0, maxDrawdown: 0, maxDrawdownPercent: 0, sharpeRatio: 0, sortinoRatio: 0, calmarRatio: 0 },
+        dailyReturns: [], equity_curve: [],
+        // is_censored: true when a position was force-closed at window end or hit a hard limit.
+        // Censored backtests should be down-weighted in strategy scoring.
+        is_censored: false,
       };
-
-      // Load historical data
-      const historicalData = await this.loadHistoricalData(
-        config.symbol,
-        config.timeframe || '1h',
-        config.startDate,
-        config.endDate
-      );
-
-      // Run the backtest simulation
+      const historicalData = await this.loadHistoricalData(config.symbol, config.timeframe || '1h', config.startDate, config.endDate);
       await this.runBacktestSimulation(strategy, historicalData, config);
-
-      // Calculate final metrics
       this.calculateBacktestMetrics();
-
-      // Store results
       await this.storeBacktestResults();
-
       this.isRunning = false;
       logger.info(`Backtest completed for strategy: ${strategyName}`);
-      
-      this.emit('backtestComplete', {
-        strategyName,
-        results: this.currentBacktest
-      });
-
+      this.emit('backtestComplete', { strategyName, results: this.currentBacktest });
       return this.currentBacktest;
     } catch (error) {
       this.isRunning = false;
@@ -242,306 +216,192 @@ class BacktestingEngine extends EventEmitter {
     }
   }
 
-  /**
-   * Run the actual backtest simulation
-   */
   async runBacktestSimulation(strategy, historicalData, config) {
-    let currentPosition = null;
-    let stopLoss = null;
-    let takeProfit = null;
-    
+    let currentPosition = null, stopLoss = null, takeProfit = null;
+    const leverage = config.leverage ?? 1;
     for (let i = 0; i < historicalData.length; i++) {
       const currentCandle = historicalData[i];
-      const previousCandles = historicalData.slice(Math.max(0, i - strategy.lookback || 20), i);
-      
-      // Skip if not enough historical data
-      if (previousCandles.length < (strategy.lookback || 20)) {
-        continue;
-      }
-
-      // Calculate technical indicators
+      const previousCandles = historicalData.slice(Math.max(0, i - (strategy.lookback || 20)), i);
+      if (previousCandles.length < (strategy.lookback || 20)) continue;
       const indicators = this.calculateTechnicalIndicators(previousCandles, currentCandle);
-      
-      // Generate trading signals
       const signals = await this.generateTradingSignals(strategy, indicators, currentCandle);
-      
-      // Process existing position (check stop loss, take profit)
       if (currentPosition) {
+        // Check standard exit conditions
         const exitSignal = this.checkExitConditions(currentPosition, currentCandle, stopLoss, takeProfit);
-        if (exitSignal) {
+        // Check leverage-aware liquidation price
+        const liquidationHit = leverage > 1
+          ? this.checkLiquidation(currentPosition, currentCandle, leverage)
+          : false;
+        if (liquidationHit) {
+          await this.executeExit(currentPosition, currentCandle, 'liquidation');
+          this.currentBacktest.is_censored = true;
+          currentPosition = null; stopLoss = null; takeProfit = null;
+        } else if (exitSignal) {
           await this.executeExit(currentPosition, currentCandle, exitSignal.reason);
-          currentPosition = null;
-          stopLoss = null;
-          takeProfit = null;
+          currentPosition = null; stopLoss = null; takeProfit = null;
         }
       }
-
-      // Process new entry signals
       if (!currentPosition && signals.entry) {
         const entryResult = await this.executeEntry(signals.entry, currentCandle, config);
-        if (entryResult.success) {
-          currentPosition = entryResult.position;
-          stopLoss = entryResult.stopLoss;
-          takeProfit = entryResult.takeProfit;
-        }
+        if (entryResult.success) { currentPosition = entryResult.position; stopLoss = entryResult.stopLoss; takeProfit = entryResult.takeProfit; }
       }
-
-      // Update portfolio value
       this.updatePortfolioValue(currentCandle, currentPosition);
-      
-      // Record equity curve
-      this.currentBacktest.equity_curve.push({
-        timestamp: currentCandle.timestamp,
-        totalValue: this.currentBacktest.portfolio.totalValue,
-        cash: this.currentBacktest.portfolio.cash,
-        unrealizedPnl: this.currentBacktest.portfolio.unrealizedPnl
-      });
-
-      // Emit progress updates
-      if (i % 1000 === 0) {
-        this.emit('backtestProgress', {
-          progress: (i / historicalData.length) * 100,
-          currentDate: currentCandle.timestamp,
-          totalValue: this.currentBacktest.portfolio.totalValue
-        });
-      }
+      this.currentBacktest.equity_curve.push({ timestamp: currentCandle.timestamp, totalValue: this.currentBacktest.portfolio.totalValue, cash: this.currentBacktest.portfolio.cash, unrealizedPnl: this.currentBacktest.portfolio.unrealizedPnl });
+      if (i % 1000 === 0) this.emit('backtestProgress', { progress: (i / historicalData.length) * 100, currentDate: currentCandle.timestamp, totalValue: this.currentBacktest.portfolio.totalValue });
     }
-
-    // Close any remaining position
     if (currentPosition) {
       const lastCandle = historicalData[historicalData.length - 1];
       await this.executeExit(currentPosition, lastCandle, 'backtest_end');
+      // Force-close at window end: mark as censored so result is down-weighted
+      this.currentBacktest.is_censored = true;
     }
   }
 
   /**
-   * Calculate technical indicators for strategy evaluation
+   * Check whether a leveraged position has been liquidated.
+   * Liquidation occurs when unrealised loss >= initial margin.
+   *
+   * Liquidation price (long):  entryPrice × (1 − 1/leverage)
+   * Liquidation price (short): entryPrice × (1 + 1/leverage)
+   *
+   * @param {Object} position    Current open position
+   * @param {Object} candle      Current OHLCV candle
+   * @param {number} leverage    Effective leverage (e.g. 10)
+   * @returns {boolean} true if liquidation price was touched this candle
    */
+  checkLiquidation(position, candle, leverage) {
+    if (!position || leverage <= 1) return false;
+    const liqOffset = 1 / leverage;
+    if (position.side === 'long') {
+      const liqPrice = position.entryPrice * (1 - liqOffset);
+      return candle.low <= liqPrice;
+    } else {
+      const liqPrice = position.entryPrice * (1 + liqOffset);
+      return candle.high >= liqPrice;
+    }
+  }
+
+  /**
+   * Calculate the liquidation price for a position.
+   *
+   * @param {number} entryPrice  Entry price
+   * @param {'long'|'short'} side Position side
+   * @param {number} leverage    Effective leverage
+   * @returns {number} Liquidation price
+   */
+  calculateLiquidationPrice(entryPrice, side, leverage) {
+    if (leverage <= 1) return side === 'long' ? 0 : Infinity;
+    const liqOffset = 1 / leverage;
+    return side === 'long'
+      ? entryPrice * (1 - liqOffset)
+      : entryPrice * (1 + liqOffset);
+  }
+
+  /**
+   * Calculate required margin for a position.
+   *
+   * @param {number} positionSize  Notional position size (USDT)
+   * @param {number} leverage      Effective leverage
+   * @returns {number} Required margin (USDT)
+   */
+  calculateRequiredMargin(positionSize, leverage) {
+    return leverage > 0 ? positionSize / leverage : positionSize;
+  }
+
+  /**
+   * Estimate periodic funding cost for a leveraged position.
+   * Uses a simplified model: fundingRate × notionalValue per interval.
+   *
+   * @param {number} notionalValue  Position notional value (USDT)
+   * @param {number} fundingRate    Funding rate per interval (e.g. 0.0001 = 0.01%)
+   * @param {number} intervals      Number of funding intervals
+   * @returns {number} Total funding cost (USDT, always positive = cost)
+   */
+  calculateFundingCost(notionalValue, fundingRate, intervals) {
+    return Math.abs(fundingRate) * notionalValue * intervals;
+  }
+
   calculateTechnicalIndicators(historicalData, currentCandle) {
     const closes = historicalData.map(d => d.close);
     const highs = historicalData.map(d => d.high);
     const lows = historicalData.map(d => d.low);
     const volumes = historicalData.map(d => d.volume);
-
     return {
-      // Moving Averages
-      sma20: this.calculateSMA(closes, 20),
-      sma50: this.calculateSMA(closes, 50),
-      ema20: this.calculateEMA(closes, 20),
-      ema50: this.calculateEMA(closes, 50),
-      
-      // Momentum Indicators
-      rsi: this.calculateRSI(closes, 14),
-      macd: this.calculateMACD(closes),
-      
-      // Volatility Indicators
+      sma20: this.calculateSMA(closes, 20), sma50: this.calculateSMA(closes, 50),
+      ema20: this.calculateEMA(closes, 20), ema50: this.calculateEMA(closes, 50),
+      rsi: this.calculateRSI(closes, 14), macd: this.calculateMACD(closes),
       bollingerBands: this.calculateBollingerBands(closes, 20, 2),
       atr: this.calculateATR(highs, lows, closes, 14),
-      
-      // Volume Indicators
       volumeMA: this.calculateSMA(volumes, 20),
-      
-      // Current price data
-      current: {
-        price: currentCandle.close,
-        high: currentCandle.high,
-        low: currentCandle.low,
-        volume: currentCandle.volume
-      }
+      current: { price: currentCandle.close, high: currentCandle.high, low: currentCandle.low, volume: currentCandle.volume }
     };
   }
 
-  /**
-   * Generate trading signals based on strategy
-   */
   async generateTradingSignals(strategy, indicators, currentCandle) {
     const signals = { entry: null, exit: null };
-
     try {
-      // Execute strategy logic
       switch (strategy.type) {
-        case 'trend_following':
-          signals.entry = this.generateTrendFollowingSignals(indicators, strategy.parameters);
-          break;
-        case 'momentum':
-          signals.entry = this.generateMomentumSignals(indicators, strategy.parameters);
-          break;
-        case 'mean_reversion':
-          signals.entry = this.generateMeanReversionSignals(indicators, strategy.parameters);
-          break;
-        case 'breakout':
-          signals.entry = this.generateBreakoutSignals(indicators, strategy.parameters);
-          break;
-        case 'custom':
-          if (strategy.customLogic) {
-            signals.entry = await strategy.customLogic(indicators, currentCandle);
-          }
-          break;
+        case 'trend_following': signals.entry = this.generateTrendFollowingSignals(indicators, strategy.parameters); break;
+        case 'momentum': signals.entry = this.generateMomentumSignals(indicators, strategy.parameters); break;
+        case 'mean_reversion': signals.entry = this.generateMeanReversionSignals(indicators, strategy.parameters); break;
+        case 'breakout': signals.entry = this.generateBreakoutSignals(indicators, strategy.parameters); break;
+        case 'custom': if (strategy.customLogic) signals.entry = await strategy.customLogic(indicators, currentCandle); break;
       }
-
       return signals;
-    } catch (error) {
-      logger.error('Error generating trading signals:', error);
-      return signals;
-    }
+    } catch (error) { logger.error('Error generating trading signals:', error); return signals; }
   }
 
-  /**
-   * Generate momentum-based trading signals
-   */
   generateMomentumSignals(indicators, params) {
-    const {
-      rsi_oversold = 30,
-      rsi_overbought = 70,
-      macd_threshold = 0
-    } = params;
-
-    // Long signal: RSI oversold and MACD positive
-    if (indicators.rsi < rsi_oversold && indicators.macd.histogram > macd_threshold) {
-      return {
-        side: 'long',
-        strength: Math.abs(indicators.rsi - 50) / 50,
-        reason: 'momentum_long'
-      };
-    }
-
-    // Short signal: RSI overbought and MACD negative
-    if (indicators.rsi > rsi_overbought && indicators.macd.histogram < -macd_threshold) {
-      return {
-        side: 'short',
-        strength: Math.abs(indicators.rsi - 50) / 50,
-        reason: 'momentum_short'
-      };
-    }
-
+    const { rsi_oversold = 30, rsi_overbought = 70, macd_threshold = 0 } = params || {};
+    if (indicators.rsi == null || indicators.macd == null) return null;
+    if (indicators.rsi < rsi_oversold && indicators.macd.histogram > macd_threshold) return { side: 'long', strength: Math.abs(indicators.rsi - 50) / 50, reason: 'momentum_long' };
+    if (indicators.rsi > rsi_overbought && indicators.macd.histogram < -macd_threshold) return { side: 'short', strength: Math.abs(indicators.rsi - 50) / 50, reason: 'momentum_short' };
     return null;
   }
 
-  /**
-   * Generate mean reversion signals
-   */
   generateMeanReversionSignals(indicators, params) {
-    const {
-      bb_std_dev = 2,
-      rsi_extreme = 20
-    } = params;
-
-    const { upper, lower, middle } = indicators.bollingerBands;
+    const { rsi_extreme = 20 } = params || {};
+    if (!indicators.bollingerBands || indicators.rsi == null) return null;
+    const { upper, lower } = indicators.bollingerBands;
     const currentPrice = indicators.current.price;
-
-    // Long signal: Price below lower Bollinger Band and RSI oversold
-    if (currentPrice < lower && indicators.rsi < rsi_extreme) {
-      return {
-        side: 'long',
-        strength: (lower - currentPrice) / (upper - lower),
-        reason: 'mean_reversion_long'
-      };
-    }
-
-    // Short signal: Price above upper Bollinger Band and RSI overbought
-    if (currentPrice > upper && indicators.rsi > (100 - rsi_extreme)) {
-      return {
-        side: 'short',
-        strength: (currentPrice - upper) / (upper - lower),
-        reason: 'mean_reversion_short'
-      };
-    }
-
+    if (currentPrice < lower && indicators.rsi < rsi_extreme) return { side: 'long', strength: (lower - currentPrice) / (upper - lower), reason: 'mean_reversion_long' };
+    if (currentPrice > upper && indicators.rsi > (100 - rsi_extreme)) return { side: 'short', strength: (currentPrice - upper) / (upper - lower), reason: 'mean_reversion_short' };
     return null;
   }
 
-  /**
-   * Generate trend following signals based on SMA/EMA crossover
-   */
   generateTrendFollowingSignals(indicators, params) {
-    // The engine pre-calculates sma20 and sma50; use those directly
     const shortMA = indicators.sma20;
     const longMA = indicators.sma50;
-
     if (shortMA == null || longMA == null) return null;
-
-    // Long signal: Short MA above Long MA (uptrend)
-    if (shortMA > longMA) {
-      const spread = (shortMA - longMA) / longMA;
-      return {
-        side: 'long',
-        strength: Math.min(spread * 20, 1),
-        reason: 'trend_following_long'
-      };
-    }
-
-    // Short signal: Short MA below Long MA (downtrend)
-    if (shortMA < longMA) {
-      const spread = (longMA - shortMA) / longMA;
-      return {
-        side: 'short',
-        strength: Math.min(spread * 20, 1),
-        reason: 'trend_following_short'
-      };
-    }
-
+    if (shortMA > longMA) return { side: 'long', strength: Math.min(((shortMA - longMA) / longMA) * 20, 1), reason: 'trend_following_long' };
+    if (shortMA < longMA) return { side: 'short', strength: Math.min(((longMA - shortMA) / longMA) * 20, 1), reason: 'trend_following_short' };
     return null;
   }
 
-  /**
-   * Generate breakout signals using Bollinger Bands with volume confirmation
-   */
   generateBreakoutSignals(indicators, params) {
-    const {
-      volumeThreshold = 1.5
-    } = params;
-
+    const { volumeThreshold = 1.5 } = params || {};
+    if (!indicators.bollingerBands) return null;
     const { upper, lower } = indicators.bollingerBands;
     const currentPrice = indicators.current.price;
     const currentVolume = indicators.current.volume;
     const avgVolume = indicators.volumeMA;
-
     if (upper == null || lower == null) return null;
-
     const volumeConfirmed = avgVolume > 0 && (currentVolume / avgVolume) >= volumeThreshold;
-
-    // Long signal: Price breaks above upper BB with volume confirmation
-    if (currentPrice > upper && volumeConfirmed) {
-      return {
-        side: 'long',
-        strength: Math.min((currentPrice - upper) / (upper - lower), 1),
-        reason: 'breakout_long'
-      };
-    }
-
-    // Short signal: Price breaks below lower BB with volume confirmation
-    if (currentPrice < lower && volumeConfirmed) {
-      return {
-        side: 'short',
-        strength: Math.min((lower - currentPrice) / (upper - lower), 1),
-        reason: 'breakout_short'
-      };
-    }
-
+    if (currentPrice > upper && volumeConfirmed) return { side: 'long', strength: Math.min((currentPrice - upper) / (upper - lower), 1), reason: 'breakout_long' };
+    if (currentPrice < lower && volumeConfirmed) return { side: 'short', strength: Math.min((lower - currentPrice) / (upper - lower), 1), reason: 'breakout_short' };
     return null;
   }
 
-  /**
-   * Execute entry order with realistic market simulation
-   */
   async executeEntry(signal, currentCandle, config) {
     try {
-      // Calculate position size based on risk management
-      const positionSize = this.calculatePositionSize(signal, config);
-      
-      // Simulate market conditions
-      const executionPrice = this.simulateMarketExecution(
-        currentCandle.close, 
-        signal.side, 
-        positionSize,
-        'entry'
-      );
-
-      // Calculate stop loss and take profit
+      const positionSize = this.calculatePositionSize(signal, config, currentCandle.close);
+      const executionPrice = this.simulateMarketExecution(currentCandle.close, signal.side, positionSize, 'entry');
       const stopLoss = this.calculateStopLoss(executionPrice, signal.side, config);
       const takeProfit = this.calculateTakeProfit(executionPrice, signal.side, config);
-
-      // Create position
+      const leverage = config.leverage ?? 1;
+      const notional = positionSize * executionPrice;
+      const requiredMargin = this.calculateRequiredMargin(notional, leverage);
+      const liquidationPrice = this.calculateLiquidationPrice(executionPrice, signal.side, leverage);
       const position = {
         id: `pos_${Date.now()}`,
         symbol: config.symbol,
@@ -551,619 +411,332 @@ class BacktestingEngine extends EventEmitter {
         entryTime: currentCandle.timestamp,
         stopLoss,
         takeProfit,
+        leverage,
+        requiredMargin,
+        liquidationPrice,
         unrealizedPnl: 0,
-        status: 'open'
+        status: 'open',
       };
-
-      // Record trade
-      const trade = {
-        id: `trade_${Date.now()}`,
-        positionId: position.id,
-        symbol: config.symbol,
-        side: signal.side,
-        size: positionSize,
-        price: executionPrice,
-        timestamp: currentCandle.timestamp,
-        type: 'entry',
-        reason: signal.reason,
-        fees: this.calculateTradingFees(positionSize, executionPrice)
-      };
-
-      // Update portfolio
+      const trade = { id: `trade_${Date.now()}`, positionId: position.id, symbol: config.symbol, side: signal.side, size: positionSize, price: executionPrice, timestamp: currentCandle.timestamp, type: 'entry', reason: signal.reason, fees: this.calculateTradingFees(positionSize, executionPrice) };
       this.updatePortfolioAfterTrade(trade, 'entry');
-
-      // Store trade and position
       this.currentBacktest.trades.push(trade);
       this.currentBacktest.positions.push(position);
       this.currentBacktest.metrics.totalTrades++;
-
-      logger.debug(`Entry executed: ${signal.side} ${positionSize} at ${executionPrice}`);
-
-      return {
-        success: true,
-        position,
-        stopLoss,
-        takeProfit,
-        trade
-      };
-    } catch (error) {
-      logger.error('Error executing entry:', error);
-      return { success: false, error: error.message };
-    }
+      return { success: true, position, stopLoss, takeProfit, trade };
+    } catch (error) { logger.error('Error executing entry:', error); return { success: false, error: error.message }; }
   }
 
-  /**
-   * Simulate realistic market execution with slippage and latency
-   */
   simulateMarketExecution(basePrice, side, size, type) {
-    // Base slippage
     let slippage = this.marketSimulation.slippage;
-    
-    // Market impact based on position size
-    const marketImpact = this.marketSimulation.marketImpact * Math.log(size / 1000);
-    
-    // Adjust for market conditions (higher slippage during volatile periods)
-    const volatilityMultiplier = 1.0; // Could be calculated from ATR
-    
-    const totalSlippage = (slippage + marketImpact) * volatilityMultiplier;
-    
-    // Apply slippage in the direction unfavorable to the trader
-    if (side === 'long') {
-      return basePrice * (1 + totalSlippage);
-    } else {
-      return basePrice * (1 - totalSlippage);
-    }
+    const marketImpact = this.marketSimulation.marketImpact * Math.log(Math.max(size / 1000, 0.001));
+    const totalSlippage = (slippage + Math.max(marketImpact, 0)) * 1.0;
+    return side === 'long' ? basePrice * (1 + totalSlippage) : basePrice * (1 - totalSlippage);
   }
 
-  /**
-   * Calculate position size based on risk management
-   */
-  calculatePositionSize(signal, config) {
-    const {
-      riskPerTrade = 0.02, // 2% risk per trade
-      maxPositionSize = 0.1, // 10% of portfolio
-      minPositionSize = 0.01 // 1% of portfolio
-    } = config;
-
+  calculatePositionSize(signal, config, currentPrice) {
+    const { maxPositionSize = 0.1, minPositionSize = 0.01 } = config;
     const portfolioValue = this.currentBacktest.portfolio.totalValue;
-    const riskAmount = portfolioValue * riskPerTrade;
-    
-    // Calculate position size based on signal strength
-    const baseSize = portfolioValue * minPositionSize;
-    const maxSize = portfolioValue * maxPositionSize;
-    
-    // Adjust size based on signal strength
+    if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
+      logger.warn(`Invalid currentPrice (${currentPrice}) in calculatePositionSize, using portfolio fraction`);
+      // Fall back to dollar-based sizing without price conversion
+      const baseDollar = portfolioValue * minPositionSize;
+      const maxDollar = portfolioValue * maxPositionSize;
+      const strengthMultiplier = Math.min(signal.strength || 1, 1);
+      return Math.min(Math.max(baseDollar * strengthMultiplier, baseDollar), maxDollar);
+    }
+    // Calculate dollar allocation, then convert to asset units
+    const baseDollar = portfolioValue * minPositionSize;
+    const maxDollar = portfolioValue * maxPositionSize;
     const strengthMultiplier = Math.min(signal.strength || 1, 1);
-    const positionSize = baseSize * strengthMultiplier;
-    
-    return Math.min(Math.max(positionSize, baseSize), maxSize);
+    const dollarSize = Math.min(Math.max(baseDollar * strengthMultiplier, baseDollar), maxDollar);
+    return dollarSize / currentPrice;
   }
 
-  /**
-   * Calculate various technical indicators
-   */
   calculateSMA(values, period) {
     if (values.length < period) return null;
-    const sum = values.slice(-period).reduce((acc, val) => acc + val, 0);
-    return sum / period;
+    return values.slice(-period).reduce((acc, val) => acc + val, 0) / period;
   }
 
   calculateEMA(values, period) {
     if (values.length < period) return null;
     const multiplier = 2 / (period + 1);
     let ema = values[0];
-    for (let i = 1; i < values.length; i++) {
-      ema = (values[i] * multiplier) + (ema * (1 - multiplier));
-    }
+    for (let i = 1; i < values.length; i++) ema = (values[i] * multiplier) + (ema * (1 - multiplier));
     return ema;
   }
 
   calculateRSI(values, period = 14) {
     if (values.length < period + 1) return null;
-    
-    let gains = 0;
-    let losses = 0;
-    
+    let gains = 0, losses = 0;
     for (let i = 1; i <= period; i++) {
       const change = values[i] - values[i - 1];
-      if (change > 0) {
-        gains += change;
-      } else {
-        losses += Math.abs(change);
-      }
+      if (change > 0) gains += change; else losses += Math.abs(change);
     }
-    
-    const avgGain = gains / period;
-    const avgLoss = losses / period;
-    
+    const avgGain = gains / period, avgLoss = losses / period;
     if (avgLoss === 0) return 100;
-    
-    const rs = avgGain / avgLoss;
-    return 100 - (100 / (1 + rs));
+    return 100 - (100 / (1 + avgGain / avgLoss));
   }
 
-  calculateMACD(values, fastPeriod = 12, slowPeriod = 26, signalPeriod = 9) {
+  calculateMACD(values, fastPeriod = 12, slowPeriod = 26) {
     if (values.length < slowPeriod) return null;
-    
     const fastEMA = this.calculateEMA(values, fastPeriod);
     const slowEMA = this.calculateEMA(values, slowPeriod);
     const macdLine = fastEMA - slowEMA;
-    
-    // For simplicity, using a basic signal line calculation
-    const signalLine = macdLine * 0.9; // Simplified
-    const histogram = macdLine - signalLine;
-    
-    return {
-      macd: macdLine,
-      signal: signalLine,
-      histogram
-    };
+    const signalLine = macdLine * 0.9;
+    return { macd: macdLine, signal: signalLine, histogram: macdLine - signalLine };
   }
 
   calculateBollingerBands(values, period = 20, stdDev = 2) {
     if (values.length < period) return null;
-    
     const sma = this.calculateSMA(values, period);
     const recentValues = values.slice(-period);
-    
-    // Calculate standard deviation
-    const squaredDiffs = recentValues.map(val => Math.pow(val - sma, 2));
-    const variance = squaredDiffs.reduce((acc, val) => acc + val, 0) / period;
-    const standardDeviation = Math.sqrt(variance);
-    
-    return {
-      middle: sma,
-      upper: sma + (standardDeviation * stdDev),
-      lower: sma - (standardDeviation * stdDev)
-    };
+    const variance = recentValues.reduce((acc, val) => acc + Math.pow(val - sma, 2), 0) / period;
+    const sd = Math.sqrt(variance);
+    return { middle: sma, upper: sma + (sd * stdDev), lower: sma - (sd * stdDev) };
   }
 
   calculateATR(highs, lows, closes, period = 14) {
     if (highs.length < period + 1) return null;
-    
     const trueRanges = [];
-    for (let i = 1; i < highs.length; i++) {
-      const tr1 = highs[i] - lows[i];
-      const tr2 = Math.abs(highs[i] - closes[i - 1]);
-      const tr3 = Math.abs(lows[i] - closes[i - 1]);
-      trueRanges.push(Math.max(tr1, tr2, tr3));
-    }
-    
+    for (let i = 1; i < highs.length; i++) trueRanges.push(Math.max(highs[i] - lows[i], Math.abs(highs[i] - closes[i - 1]), Math.abs(lows[i] - closes[i - 1])));
     return this.calculateSMA(trueRanges, period);
   }
 
-  /**
-   * Check exit conditions for existing positions
-   */
   checkExitConditions(position, currentCandle, stopLoss, takeProfit) {
-    const currentPrice = currentCandle.close;
-    
-    // Check stop loss
-    if (position.side === 'long' && currentPrice <= stopLoss) {
-      return { reason: 'stop_loss', price: stopLoss };
-    }
-    if (position.side === 'short' && currentPrice >= stopLoss) {
-      return { reason: 'stop_loss', price: stopLoss };
-    }
-    
-    // Check take profit
-    if (position.side === 'long' && currentPrice >= takeProfit) {
-      return { reason: 'take_profit', price: takeProfit };
-    }
-    if (position.side === 'short' && currentPrice <= takeProfit) {
-      return { reason: 'take_profit', price: takeProfit };
-    }
-    
+    const p = currentCandle.close;
+    if (position.side === 'long' && p <= stopLoss) return { reason: 'stop_loss', price: stopLoss };
+    if (position.side === 'short' && p >= stopLoss) return { reason: 'stop_loss', price: stopLoss };
+    if (position.side === 'long' && p >= takeProfit) return { reason: 'take_profit', price: takeProfit };
+    if (position.side === 'short' && p <= takeProfit) return { reason: 'take_profit', price: takeProfit };
     return null;
   }
 
-  /**
-   * Execute exit order
-   */
   async executeExit(position, currentCandle, reason) {
     try {
-      const exitPrice = this.simulateMarketExecution(
-        currentCandle.close,
-        position.side === 'long' ? 'short' : 'long',
-        position.size,
-        'exit'
-      );
-
-      // Calculate P&L
+      const exitPrice = this.simulateMarketExecution(currentCandle.close, position.side === 'long' ? 'short' : 'long', position.size, 'exit');
       const pnl = this.calculatePnL(position, exitPrice);
-
-      // Create exit trade
-      const trade = {
-        id: `trade_${Date.now()}`,
-        positionId: position.id,
-        symbol: position.symbol,
-        side: position.side === 'long' ? 'short' : 'long',
-        size: position.size,
-        price: exitPrice,
-        timestamp: currentCandle.timestamp,
-        type: 'exit',
-        reason,
-        fees: this.calculateTradingFees(position.size, exitPrice),
-        pnl
-      };
-
-      // Update position
-      position.exitPrice = exitPrice;
-      position.exitTime = currentCandle.timestamp;
-      position.realizedPnl = pnl;
-      position.status = 'closed';
-
-      // Update portfolio
+      const trade = { id: `trade_${Date.now()}`, positionId: position.id, symbol: position.symbol, side: position.side === 'long' ? 'short' : 'long', size: position.size, price: exitPrice, timestamp: currentCandle.timestamp, type: 'exit', reason, fees: this.calculateTradingFees(position.size, exitPrice), pnl };
+      position.exitPrice = exitPrice; position.exitTime = currentCandle.timestamp; position.realizedPnl = pnl; position.status = 'closed';
       this.updatePortfolioAfterTrade(trade, 'exit');
-
-      // Update metrics
-      if (pnl > 0) {
-        this.currentBacktest.metrics.winningTrades++;
-      } else {
-        this.currentBacktest.metrics.losingTrades++;
-      }
-
-      // Store trade
+      if (pnl > 0) this.currentBacktest.metrics.winningTrades++; else this.currentBacktest.metrics.losingTrades++;
       this.currentBacktest.trades.push(trade);
-
-      logger.debug(`Exit executed: ${reason} at ${exitPrice}, P&L: ${pnl.toFixed(2)}`);
-
       return trade;
-    } catch (error) {
-      logger.error('Error executing exit:', error);
-      throw error;
-    }
+    } catch (error) { logger.error('Error executing exit:', error); throw error; }
   }
 
-  /**
-   * Calculate P&L for a position
-   */
   calculatePnL(position, exitPrice) {
     const entryValue = position.size * position.entryPrice;
     const exitValue = position.size * exitPrice;
-    
-    if (position.side === 'long') {
-      return exitValue - entryValue;
-    } else {
-      return entryValue - exitValue;
-    }
+    return position.side === 'long' ? exitValue - entryValue : entryValue - exitValue;
   }
 
-  /**
-   * Calculate trading fees based on order type
-   * Poloniex Futures fees: 0.01% maker / 0.075% taker
-   */
   calculateTradingFees(size, price, orderType = 'market') {
-    // Maker fee: 0.01% for limit orders that add liquidity
-    // Taker fee: 0.075% for market orders that remove liquidity
-    const makerFeeRate = 0.0001; // 0.01%
-    const takerFeeRate = 0.00075; // 0.075%
-    
-    const feeRate = orderType === 'limit' ? makerFeeRate : takerFeeRate;
-    return size * price * feeRate;
+    return size * price * (orderType === 'limit' ? 0.0001 : 0.00075);
   }
 
-  /**
-   * Update portfolio after trade execution
-   */
   updatePortfolioAfterTrade(trade, type) {
     const tradeValue = trade.size * trade.price;
-    
-    if (type === 'entry') {
-      this.currentBacktest.portfolio.cash -= tradeValue;
-      this.currentBacktest.portfolio.margin += tradeValue;
-    } else if (type === 'exit') {
-      this.currentBacktest.portfolio.cash += tradeValue;
-      this.currentBacktest.portfolio.margin -= tradeValue;
-      this.currentBacktest.portfolio.realizedPnl += trade.pnl;
-    }
-    
-    // Subtract fees
+    if (type === 'entry') { this.currentBacktest.portfolio.cash -= tradeValue; this.currentBacktest.portfolio.margin += tradeValue; }
+    else if (type === 'exit') { this.currentBacktest.portfolio.cash += tradeValue; this.currentBacktest.portfolio.margin -= tradeValue; this.currentBacktest.portfolio.realizedPnl += trade.pnl; }
     this.currentBacktest.portfolio.cash -= trade.fees;
-    
-    // Update total value
-    this.currentBacktest.portfolio.totalValue = 
-      this.currentBacktest.portfolio.cash + 
-      this.currentBacktest.portfolio.margin +
-      this.currentBacktest.portfolio.unrealizedPnl;
+    this.currentBacktest.portfolio.totalValue = this.currentBacktest.portfolio.cash + this.currentBacktest.portfolio.margin + this.currentBacktest.portfolio.unrealizedPnl;
   }
 
-  /**
-   * Update portfolio value with current market prices
-   */
   updatePortfolioValue(currentCandle, position) {
     let unrealizedPnl = 0;
-    
-    if (position && position.status === 'open') {
-      unrealizedPnl = this.calculatePnL(position, currentCandle.close);
-    }
-    
+    if (position && position.status === 'open') unrealizedPnl = this.calculatePnL(position, currentCandle.close);
     this.currentBacktest.portfolio.unrealizedPnl = unrealizedPnl;
-    this.currentBacktest.portfolio.totalValue = 
-      this.currentBacktest.portfolio.cash + 
-      this.currentBacktest.portfolio.margin +
-      unrealizedPnl;
+    this.currentBacktest.portfolio.totalValue = this.currentBacktest.portfolio.cash + this.currentBacktest.portfolio.margin + unrealizedPnl;
   }
 
-  /**
-   * Calculate comprehensive backtest metrics
-   */
   calculateBacktestMetrics() {
     const { trades, portfolio, equity_curve } = this.currentBacktest;
-    
-    // Basic metrics
     const totalTrades = trades.filter(t => t.type === 'exit').length;
     const winningTrades = trades.filter(t => t.type === 'exit' && t.pnl > 0).length;
     const losingTrades = trades.filter(t => t.type === 'exit' && t.pnl <= 0).length;
-    
     const winRate = totalTrades > 0 ? (winningTrades / totalTrades) * 100 : 0;
-    const totalReturn = ((portfolio.totalValue - (this.currentBacktest.config.initialCapital || 100000)) / (this.currentBacktest.config.initialCapital || 100000)) * 100;
-    
-    // Calculate drawdown
-    let maxValue = portfolio.totalValue;
-    let maxDrawdown = 0;
-    let maxDrawdownPercent = 0;
-    
+    const initialCapital = this.currentBacktest.config.initialCapital || 100000;
+    const totalReturn = ((portfolio.totalValue - initialCapital) / initialCapital) * 100;
+    let maxValue = portfolio.totalValue, maxDrawdown = 0, maxDrawdownPercent = 0;
     for (const point of equity_curve) {
-      if (point.totalValue > maxValue) {
-        maxValue = point.totalValue;
-      }
-      const drawdown = maxValue - point.totalValue;
-      const drawdownPercent = (drawdown / maxValue) * 100;
-      
-      if (drawdown > maxDrawdown) {
-        maxDrawdown = drawdown;
-        maxDrawdownPercent = drawdownPercent;
-      }
+      if (point.totalValue > maxValue) maxValue = point.totalValue;
+      const dd = maxValue - point.totalValue;
+      const ddp = (dd / maxValue) * 100;
+      if (dd > maxDrawdown) { maxDrawdown = dd; maxDrawdownPercent = ddp; }
     }
-    
-    // Calculate daily returns for Sharpe ratio
     const dailyReturns = this.calculateDailyReturns(equity_curve);
-    const sharpeRatio = this.calculateSharpeRatio(dailyReturns);
-    const sortinoRatio = this.calculateSortinoRatio(dailyReturns);
-    
-    // Update metrics
     this.currentBacktest.metrics = {
-      totalTrades,
-      winningTrades,
-      losingTrades,
-      winRate,
-      totalReturn,
-      maxDrawdown,
-      maxDrawdownPercent,
-      sharpeRatio,
-      sortinoRatio,
-      calmarRatio: totalReturn / maxDrawdownPercent,
-      averageWin: winningTrades > 0 ? trades.filter(t => t.type === 'exit' && t.pnl > 0).reduce((sum, t) => sum + t.pnl, 0) / winningTrades : 0,
-      averageLoss: losingTrades > 0 ? trades.filter(t => t.type === 'exit' && t.pnl <= 0).reduce((sum, t) => sum + t.pnl, 0) / losingTrades : 0,
+      totalTrades, winningTrades, losingTrades, winRate, totalReturn, maxDrawdown, maxDrawdownPercent,
+      sharpeRatio: this.calculateSharpeRatio(dailyReturns),
+      sortinoRatio: this.calculateSortinoRatio(dailyReturns),
+      calmarRatio: maxDrawdownPercent > 0 ? totalReturn / maxDrawdownPercent : 0,
+      averageWin: winningTrades > 0 ? trades.filter(t => t.type === 'exit' && t.pnl > 0).reduce((s, t) => s + t.pnl, 0) / winningTrades : 0,
+      averageLoss: losingTrades > 0 ? trades.filter(t => t.type === 'exit' && t.pnl <= 0).reduce((s, t) => s + t.pnl, 0) / losingTrades : 0,
       profitFactor: this.calculateProfitFactor(trades),
       expectancy: this.calculateExpectancy(trades)
     };
   }
 
-  /**
-   * Calculate daily returns from equity curve
-   */
   calculateDailyReturns(equityCurve) {
-    const dailyReturns = [];
-    for (let i = 1; i < equityCurve.length; i++) {
-      const returnPct = (equityCurve[i].totalValue - equityCurve[i - 1].totalValue) / equityCurve[i - 1].totalValue;
-      dailyReturns.push(returnPct);
-    }
-    return dailyReturns;
+    const r = [];
+    for (let i = 1; i < equityCurve.length; i++) r.push((equityCurve[i].totalValue - equityCurve[i - 1].totalValue) / equityCurve[i - 1].totalValue);
+    return r;
   }
-
-  /**
-   * Calculate Sharpe ratio
-   */
   calculateSharpeRatio(dailyReturns) {
     if (dailyReturns.length === 0) return 0;
-    
-    const avgReturn = dailyReturns.reduce((sum, r) => sum + r, 0) / dailyReturns.length;
-    const stdDev = Math.sqrt(dailyReturns.reduce((sum, r) => sum + Math.pow(r - avgReturn, 2), 0) / dailyReturns.length);
-    
-    return stdDev > 0 ? (avgReturn / stdDev) * Math.sqrt(365) : 0;
+    const avg = dailyReturns.reduce((s, r) => s + r, 0) / dailyReturns.length;
+    const std = Math.sqrt(dailyReturns.reduce((s, r) => s + Math.pow(r - avg, 2), 0) / dailyReturns.length);
+    return std > 0 ? (avg / std) * Math.sqrt(365) : 0;
   }
-
-  /**
-   * Calculate Sortino ratio
-   */
   calculateSortinoRatio(dailyReturns) {
     if (dailyReturns.length === 0) return 0;
-    
-    const avgReturn = dailyReturns.reduce((sum, r) => sum + r, 0) / dailyReturns.length;
-    const negativeReturns = dailyReturns.filter(r => r < 0);
-    
-    if (negativeReturns.length === 0) return avgReturn * Math.sqrt(365);
-    
-    const downwardDeviation = Math.sqrt(negativeReturns.reduce((sum, r) => sum + Math.pow(r, 2), 0) / negativeReturns.length);
-    
-    return downwardDeviation > 0 ? (avgReturn / downwardDeviation) * Math.sqrt(365) : 0;
+    const avg = dailyReturns.reduce((s, r) => s + r, 0) / dailyReturns.length;
+    const neg = dailyReturns.filter(r => r < 0);
+    if (neg.length === 0) return avg * Math.sqrt(365);
+    const dd = Math.sqrt(neg.reduce((s, r) => s + Math.pow(r, 2), 0) / neg.length);
+    return dd > 0 ? (avg / dd) * Math.sqrt(365) : 0;
   }
-
-  /**
-   * Calculate profit factor
-   */
   calculateProfitFactor(trades) {
-    const exitTrades = trades.filter(t => t.type === 'exit');
-    const grossProfit = exitTrades.filter(t => t.pnl > 0).reduce((sum, t) => sum + t.pnl, 0);
-    const grossLoss = Math.abs(exitTrades.filter(t => t.pnl <= 0).reduce((sum, t) => sum + t.pnl, 0));
-    
-    return grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? Infinity : 0;
+    const exits = trades.filter(t => t.type === 'exit');
+    const gp = exits.filter(t => t.pnl > 0).reduce((s, t) => s + t.pnl, 0);
+    const gl = Math.abs(exits.filter(t => t.pnl <= 0).reduce((s, t) => s + t.pnl, 0));
+    return gl > 0 ? gp / gl : gp > 0 ? 9999.99 : 0;
   }
-
-  /**
-   * Calculate expectancy
-   */
   calculateExpectancy(trades) {
-    const exitTrades = trades.filter(t => t.type === 'exit');
-    if (exitTrades.length === 0) return 0;
-    
-    const totalPnl = exitTrades.reduce((sum, t) => sum + t.pnl, 0);
-    return totalPnl / exitTrades.length;
+    const exits = trades.filter(t => t.type === 'exit');
+    return exits.length === 0 ? 0 : exits.reduce((s, t) => s + t.pnl, 0) / exits.length;
   }
 
-  /**
-   * Calculate stop loss and take profit levels
-   */
   calculateStopLoss(entryPrice, side, config) {
-    const stopLossPercent = config.stopLossPercent || 0.02; // 2% default
-    
-    if (side === 'long') {
-      return entryPrice * (1 - stopLossPercent);
-    } else {
-      return entryPrice * (1 + stopLossPercent);
-    }
+    const slp = config.stopLossPercent || 0.02;
+    return side === 'long' ? entryPrice * (1 - slp) : entryPrice * (1 + slp);
   }
-
   calculateTakeProfit(entryPrice, side, config) {
-    const takeProfitPercent = config.takeProfitPercent || 0.04; // 4% default
-    
-    if (side === 'long') {
-      return entryPrice * (1 + takeProfitPercent);
-    } else {
-      return entryPrice * (1 - takeProfitPercent);
-    }
+    const tpp = config.takeProfitPercent || 0.04;
+    return side === 'long' ? entryPrice * (1 + tpp) : entryPrice * (1 - tpp);
   }
 
-  /**
-   * Store backtest results in database
-   */
   async storeBacktestResults() {
     try {
       const backtestId = `backtest_${Date.now()}`;
-      
-      // Store main backtest record
+      const { isCensored, reason: censoringReason } = detectBacktestCensoring(this.currentBacktest);
       await query(`
         INSERT INTO backtest_results (
           id, strategy_name, symbol, timeframe, start_date, end_date,
           initial_capital, final_value, total_return, max_drawdown,
-          sharpe_ratio, total_trades, win_rate, created_at, config, metrics
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+          max_drawdown_percent, sharpe_ratio, sortino_ratio, calmar_ratio,
+          total_trades, winning_trades, losing_trades, win_rate,
+          profit_factor, expectancy, average_win, average_loss,
+          created_at, config, metrics,
+          is_censored, censoring_reason
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
       `, [
-        backtestId,
-        this.currentBacktest.strategyName,
-        this.currentBacktest.config.symbol,
-        this.currentBacktest.config.timeframe,
-        this.currentBacktest.config.startDate,
-        this.currentBacktest.config.endDate,
-        this.currentBacktest.config.initialCapital || 100000,
-        this.currentBacktest.portfolio.totalValue,
-        this.currentBacktest.metrics.totalReturn,
+        backtestId, this.currentBacktest.strategyName, this.currentBacktest.config.symbol,
+        this.currentBacktest.config.timeframe, this.currentBacktest.config.startDate,
+        this.currentBacktest.config.endDate, this.currentBacktest.config.initialCapital || 100000,
+        this.currentBacktest.portfolio.totalValue, this.currentBacktest.metrics.totalReturn,
         this.currentBacktest.metrics.maxDrawdown,
-        this.currentBacktest.metrics.sharpeRatio,
-        this.currentBacktest.metrics.totalTrades,
-        this.currentBacktest.metrics.winRate,
-        new Date(),
-        JSON.stringify(this.currentBacktest.config),
-        JSON.stringify(this.currentBacktest.metrics)
+        safeNum(this.currentBacktest.metrics.maxDrawdownPercent),
+        safeNum(this.currentBacktest.metrics.sharpeRatio),
+        safeNum(this.currentBacktest.metrics.sortinoRatio),
+        safeNum(this.currentBacktest.metrics.calmarRatio),
+        safeNum(this.currentBacktest.metrics.totalTrades),
+        safeNum(this.currentBacktest.metrics.winningTrades),
+        safeNum(this.currentBacktest.metrics.losingTrades),
+        safeNum(this.currentBacktest.metrics.winRate),
+        safeNum(this.currentBacktest.metrics.profitFactor),
+        safeNum(this.currentBacktest.metrics.expectancy),
+        safeNum(this.currentBacktest.metrics.averageWin),
+        safeNum(this.currentBacktest.metrics.averageLoss),
+        new Date(), JSON.stringify(this.currentBacktest.config), JSON.stringify(this.currentBacktest.metrics),
+        isCensored, censoringReason
       ]);
-      
-      // Store trades
-      for (const trade of this.currentBacktest.trades) {
-        await query(`
-          INSERT INTO backtest_trades (
-            backtest_id, trade_id, symbol, side, size, price, timestamp, type, reason, fees, pnl
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-        `, [
-          backtestId,
-          trade.id,
-          trade.symbol,
-          trade.side,
-          trade.size,
-          trade.price,
-          trade.timestamp,
-          trade.type,
-          trade.reason,
-          trade.fees,
-          trade.pnl || 0
-        ]);
-      }
-      
-      // Store equity curve
-      for (const point of this.currentBacktest.equity_curve) {
-        await query(`
-          INSERT INTO backtest_equity_curve (
-            backtest_id, timestamp, total_value, cash, unrealized_pnl
-          ) VALUES ($1, $2, $3, $4, $5)
-        `, [
-          backtestId,
-          point.timestamp,
-          point.totalValue,
-          point.cash,
-          point.unrealizedPnl
-        ]);
-      }
-      
-      logger.info(`Backtest results stored with ID: ${backtestId}`);
       this.currentBacktest.id = backtestId;
-      
-    } catch (error) {
-      logger.error('Error storing backtest results:', error);
-    }
+      this.currentBacktest.isCensored = isCensored;
+      this.currentBacktest.censoringReason = censoringReason;
+      if (isCensored) {
+        logger.warn(`Backtest ${backtestId} flagged as censored: ${censoringReason}`);
+      }
+    } catch (error) { logger.error('Error storing backtest results:', error); }
   }
 
-  /**
-   * Get backtest results
-   */
   async getBacktestResults(limit = 10) {
-    try {
-      const results = await query(`
-        SELECT * FROM backtest_results 
-        ORDER BY created_at DESC 
-        LIMIT $1
-      `, [limit]);
-      
-      return results.rows;
-    } catch (error) {
-      logger.error('Error fetching backtest results:', error);
-      return [];
-    }
+    try { return (await query('SELECT * FROM backtest_results ORDER BY created_at DESC LIMIT $1', [limit])).rows; }
+    catch (error) { logger.error('Error fetching backtest results:', error); return []; }
   }
-
-  /**
-   * Get detailed backtest data
-   */
   async getBacktestDetails(backtestId) {
     try {
-      const [backtestResult, tradesResult, equityCurveResult] = await Promise.all([
+      const [br, tr, ec] = await Promise.all([
         query('SELECT * FROM backtest_results WHERE id = $1', [backtestId]),
         query('SELECT * FROM backtest_trades WHERE backtest_id = $1 ORDER BY timestamp', [backtestId]),
         query('SELECT * FROM backtest_equity_curve WHERE backtest_id = $1 ORDER BY timestamp', [backtestId])
       ]);
-      
-      if (backtestResult.rows.length === 0) {
-        return null;
+      return br.rows.length === 0 ? null : { backtest: br.rows[0], trades: tr.rows, equityCurve: ec.rows };
+    } catch (error) { logger.error('Error fetching backtest details:', error); return null; }
+  }
+  stopBacktest() { this.isRunning = false; logger.info('Backtest stopped by user'); }
+  getBacktestStatus() { return { isRunning: this.isRunning, currentBacktest: this.currentBacktest, strategies: Array.from(this.strategies.keys()) }; }
+
+  /**
+   * Walk-forward validation: splits historical data into train (70%) + test (30%).
+   * Runs backtest simulation on out-of-sample test period only.
+   * Returns out-of-sample metrics to prevent overfitting.
+   *
+   * @param {string} strategyName
+   * @param {Object} config - same as runBacktest config
+   * @param {number} trainFraction - fraction used for training (default 0.7)
+   * @returns {Object} Out-of-sample backtest metrics
+   */
+  async runWalkForwardValidation(strategyName, config, trainFraction = 0.7) {
+    try {
+      const strategy = this.strategies.get(strategyName);
+      if (!strategy) throw new Error(`Strategy ${strategyName} not found for walk-forward validation`);
+
+      const allData = await this.loadHistoricalData(
+        config.symbol, config.timeframe || '1h', config.startDate, config.endDate
+      );
+      if (allData.length < 20) {
+        throw new Error(`Insufficient data for walk-forward validation: ${allData.length} bars`);
       }
-      
-      return {
-        backtest: backtestResult.rows[0],
-        trades: tradesResult.rows,
-        equityCurve: equityCurveResult.rows
+
+      const splitIndex = Math.floor(allData.length * trainFraction);
+      const testData = allData.slice(splitIndex); // out-of-sample period
+
+      if (testData.length < 5) {
+        throw new Error('Test period too short for walk-forward validation');
+      }
+
+      // Run simulation on test (out-of-sample) data only
+      const testBacktest = {
+        strategyName, config, startTime: new Date(), trades: [], positions: [],
+        portfolio: {
+          cash: config.initialCapital || 100000, totalValue: config.initialCapital || 100000,
+          equity: config.initialCapital || 100000, margin: 0, unrealizedPnl: 0, realizedPnl: 0
+        },
+        metrics: { totalTrades: 0, winningTrades: 0, losingTrades: 0, maxDrawdown: 0, maxDrawdownPercent: 0, sharpeRatio: 0, sortinoRatio: 0, calmarRatio: 0 },
+        dailyReturns: [], equity_curve: []
       };
+
+      const savedBacktest = this.currentBacktest;
+      this.currentBacktest = testBacktest;
+
+      await this.runBacktestSimulation(strategy, testData, config);
+      this.calculateBacktestMetrics();
+
+      const outOfSampleMetrics = { ...this.currentBacktest.metrics, isWalkForward: true, testBars: testData.length, trainBars: splitIndex };
+      this.currentBacktest = savedBacktest;
+
+      logger.info(
+        `[WF] Walk-forward validation for ${strategyName}: ` +
+        `OOS sharpe=${safeNum(outOfSampleMetrics.sharpeRatio).toFixed(2)} ` +
+        `WR=${(safeNum(outOfSampleMetrics.winRate) * 100).toFixed(1)}%`
+      );
+
+      return outOfSampleMetrics;
     } catch (error) {
-      logger.error('Error fetching backtest details:', error);
-      return null;
+      logger.error(`Walk-forward validation failed for ${strategyName}:`, error);
+      throw error;
     }
-  }
-
-  /**
-   * Stop running backtest
-   */
-  stopBacktest() {
-    this.isRunning = false;
-    logger.info('Backtest stopped by user');
-  }
-
-  /**
-   * Get current backtest status
-   */
-  getBacktestStatus() {
-    return {
-      isRunning: this.isRunning,
-      currentBacktest: this.currentBacktest,
-      strategies: Array.from(this.strategies.keys())
-    };
   }
 }
 

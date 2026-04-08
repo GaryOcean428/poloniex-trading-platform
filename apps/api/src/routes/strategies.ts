@@ -22,11 +22,8 @@ interface UpdateStrategyRequest extends Partial<CreateStrategyRequest> {
 }
 
 // Mock in-memory storage for development/testing only
-// TODO: Replace with database queries for production
-// This mock data should only be used when NODE_ENV !== 'production'
-if (process.env.NODE_ENV === 'production') {
-  console.warn('WARNING: Mock strategies data should not be used in production. Implement database-backed storage.');
-}
+// NOTE: Production strategy management uses /api/agent/strategies (database-backed).
+// This route provides a basic scaffold for manual strategy CRUD during development.
 
 const strategies: Strategy[] = [
   {

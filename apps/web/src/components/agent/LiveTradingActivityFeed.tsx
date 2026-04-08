@@ -3,6 +3,7 @@ import { Activity, TrendingUp, TrendingDown, Target, AlertTriangle, CheckCircle,
 import axios from 'axios';
 import { getAccessToken } from '@/utils/auth';
 import { getBackendUrl } from '@/utils/environment';
+import { safeNum } from '@/utils/safeNum';
 
 const API_BASE_URL = getBackendUrl();
 
@@ -282,10 +283,10 @@ const LiveTradingActivityFeed: React.FC<LiveTradingActivityFeedProps> = ({
                       </p>
                       {activity.pnl !== undefined && (
                         <p className={`text-sm font-bold ${getPnLColor(activity.pnl)} mt-1`}>
-                          {activity.pnl >= 0 ? '+' : ''}${activity.pnl.toFixed(2)}
+                          {activity.pnl >= 0 ? '+' : ''}${safeNum(activity.pnl).toFixed(2)}
                           {activity.pnl_percent !== undefined && (
                             <span className="text-xs ml-1">
-                              ({activity.pnl_percent >= 0 ? '+' : ''}{activity.pnl_percent.toFixed(2)}%)
+                              ({activity.pnl_percent >= 0 ? '+' : ''}{safeNum(activity.pnl_percent).toFixed(2)}%)
                             </span>
                           )}
                         </p>
@@ -294,7 +295,7 @@ const LiveTradingActivityFeed: React.FC<LiveTradingActivityFeedProps> = ({
                   </div>
                   {activity.price && (
                     <div className="flex items-center gap-4 text-xs text-gray-600 mt-2">
-                      <span>Price: ${activity.price.toFixed(2)}</span>
+                      <span>Price: ${safeNum(activity.price).toFixed(2)}</span>
                       {activity.quantity && (
                         <span>Qty: {activity.quantity}</span>
                       )}

@@ -4,8 +4,8 @@ import { useWebSocket } from '../../services/websocketService';
 import { TickerService, type TickerData } from '../../services/tickerService';
 
 const RealTimeMarketTicker: React.FC = () => {
-  const { isConnected, isMockMode } = useWebSocket();
-  const { isMockMode: contextMockMode } = useTradingContext();
+  const { isConnected, isMockMode: _isMockMode } = useWebSocket();
+  const { isMockMode: _contextMockMode } = useTradingContext();
   const [tickerData, setTickerData] = useState<TickerData[]>([]);
   const [selectedPairs] = useState(['BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'BNB-USDT']);
   const [isLoading, setIsLoading] = useState(true);

@@ -3,6 +3,7 @@ import { BarChart3, TrendingUp, TrendingDown, DollarSign, Activity } from 'lucid
 import axios from 'axios';
 import { getAccessToken } from '@/utils/auth';
 import { getBackendUrl } from '@/utils/environment';
+import { safeNum } from '@/utils/safeNum';
 
 const API_BASE_URL = getBackendUrl();
 
@@ -160,9 +161,9 @@ const BacktestResultsVisualization: React.FC<BacktestResultsVisualizationProps> 
 
           {/* Y-axis labels */}
           <div className="absolute left-0 top-0 bottom-0 flex flex-col justify-between text-xs text-gray-500 -ml-12">
-            <span>${maxEquity.toFixed(0)}</span>
-            <span>${((maxEquity + minEquity) / 2).toFixed(0)}</span>
-            <span>${minEquity.toFixed(0)}</span>
+            <span>${safeNum(maxEquity).toFixed(0)}</span>
+            <span>${safeNum((maxEquity + minEquity) / 2).toFixed(0)}</span>
+            <span>${safeNum(minEquity).toFixed(0)}</span>
           </div>
         </div>
 
@@ -232,8 +233,8 @@ const BacktestResultsVisualization: React.FC<BacktestResultsVisualizationProps> 
           {/* Y-axis labels */}
           <div className="absolute left-0 top-0 bottom-0 flex flex-col justify-between text-xs text-gray-500 -ml-12">
             <span>0%</span>
-            <span>-{(maxDrawdown / 2).toFixed(1)}%</span>
-            <span>-{maxDrawdown.toFixed(1)}%</span>
+            <span>-{safeNum(maxDrawdown / 2).toFixed(1)}%</span>
+            <span>-{safeNum(maxDrawdown).toFixed(1)}%</span>
           </div>
         </div>
       </div>
@@ -303,10 +304,10 @@ const BacktestResultsVisualization: React.FC<BacktestResultsVisualizationProps> 
               <div className="text-right">
                 <p className="text-sm text-gray-600 mb-1">Total Return</p>
                 <p className={`text-4xl font-bold ${getReturnColor(selectedResult.total_return_percent)}`}>
-                  {selectedResult.total_return_percent >= 0 ? '+' : ''}{selectedResult.total_return_percent.toFixed(2)}%
+                  {selectedResult.total_return_percent >= 0 ? '+' : ''}{safeNum(selectedResult.total_return_percent).toFixed(2)}%
                 </p>
                 <p className={`text-lg ${getReturnColor(selectedResult.total_return_percent)}`}>
-                  ${selectedResult.total_return.toFixed(2)}
+                  ${safeNum(selectedResult.total_return).toFixed(2)}
                 </p>
               </div>
             </div>
@@ -320,31 +321,31 @@ const BacktestResultsVisualization: React.FC<BacktestResultsVisualizationProps> 
               <div className="bg-white rounded-lg p-3 shadow-sm">
                 <p className="text-xs text-gray-600 mb-1">Win Rate</p>
                 <p className={`text-lg font-bold ${selectedResult.win_rate >= 50 ? 'text-green-600' : 'text-red-600'}`}>
-                  {selectedResult.win_rate.toFixed(1)}%
+                  {safeNum(selectedResult.win_rate).toFixed(1)}%
                 </p>
               </div>
               <div className="bg-white rounded-lg p-3 shadow-sm">
                 <p className="text-xs text-gray-600 mb-1">Profit Factor</p>
                 <p className={`text-lg font-bold ${selectedResult.profit_factor >= 1.5 ? 'text-green-600' : 'text-orange-600'}`}>
-                  {selectedResult.profit_factor.toFixed(2)}
+                  {safeNum(selectedResult.profit_factor).toFixed(2)}
                 </p>
               </div>
               <div className="bg-white rounded-lg p-3 shadow-sm">
                 <p className="text-xs text-gray-600 mb-1">Sharpe Ratio</p>
                 <p className={`text-lg font-bold ${selectedResult.sharpe_ratio >= 1 ? 'text-green-600' : 'text-orange-600'}`}>
-                  {selectedResult.sharpe_ratio.toFixed(2)}
+                  {safeNum(selectedResult.sharpe_ratio).toFixed(2)}
                 </p>
               </div>
               <div className="bg-white rounded-lg p-3 shadow-sm">
                 <p className="text-xs text-gray-600 mb-1">Max Drawdown</p>
                 <p className="text-lg font-bold text-red-600">
-                  {selectedResult.max_drawdown_percent.toFixed(1)}%
+                  {safeNum(selectedResult.max_drawdown_percent).toFixed(1)}%
                 </p>
               </div>
               <div className="bg-white rounded-lg p-3 shadow-sm">
                 <p className="text-xs text-gray-600 mb-1">Avg Duration</p>
                 <p className="text-lg font-bold text-gray-900">
-                  {selectedResult.avg_trade_duration_hours.toFixed(1)}h
+                  {safeNum(selectedResult.avg_trade_duration_hours).toFixed(1)}h
                 </p>
               </div>
             </div>
@@ -367,23 +368,23 @@ const BacktestResultsVisualization: React.FC<BacktestResultsVisualizationProps> 
                 <p className="text-xs text-green-700 font-semibold mb-1">Winning Trades</p>
                 <p className="text-2xl font-bold text-green-600">{selectedResult.winning_trades}</p>
                 <p className="text-xs text-green-600 mt-1">
-                  Avg: ${selectedResult.avg_win.toFixed(2)}
+                  Avg: ${safeNum(selectedResult.avg_win).toFixed(2)}
                 </p>
               </div>
               <div className="bg-red-50 border border-red-200 rounded-lg p-4">
                 <p className="text-xs text-red-700 font-semibold mb-1">Losing Trades</p>
                 <p className="text-2xl font-bold text-red-600">{selectedResult.losing_trades}</p>
                 <p className="text-xs text-red-600 mt-1">
-                  Avg: ${Math.abs(selectedResult.avg_loss).toFixed(2)}
+                  Avg: ${safeNum(Math.abs(selectedResult.avg_loss)).toFixed(2)}
                 </p>
               </div>
               <div className="bg-green-50 border border-green-200 rounded-lg p-4">
                 <p className="text-xs text-green-700 font-semibold mb-1">Largest Win</p>
-                <p className="text-2xl font-bold text-green-600">${selectedResult.largest_win.toFixed(2)}</p>
+                <p className="text-2xl font-bold text-green-600">${safeNum(selectedResult.largest_win).toFixed(2)}</p>
               </div>
               <div className="bg-red-50 border border-red-200 rounded-lg p-4">
                 <p className="text-xs text-red-700 font-semibold mb-1">Largest Loss</p>
-                <p className="text-2xl font-bold text-red-600">${Math.abs(selectedResult.largest_loss).toFixed(2)}</p>
+                <p className="text-2xl font-bold text-red-600">${safeNum(Math.abs(selectedResult.largest_loss)).toFixed(2)}</p>
               </div>
             </div>
           </div>
@@ -398,19 +399,19 @@ const BacktestResultsVisualization: React.FC<BacktestResultsVisualizationProps> 
               <div className="text-center p-4 bg-gray-50 rounded-lg">
                 <p className="text-sm text-gray-600 mb-2">Initial Capital</p>
                 <p className="text-2xl font-bold text-gray-900">
-                  ${selectedResult.initial_capital.toFixed(2)}
+                  ${safeNum(selectedResult.initial_capital).toFixed(2)}
                 </p>
               </div>
               <div className="text-center p-4 bg-gray-50 rounded-lg">
                 <p className="text-sm text-gray-600 mb-2">Final Capital</p>
                 <p className={`text-2xl font-bold ${getReturnColor(selectedResult.total_return_percent)}`}>
-                  ${selectedResult.final_capital.toFixed(2)}
+                  ${safeNum(selectedResult.final_capital).toFixed(2)}
                 </p>
               </div>
               <div className="text-center p-4 bg-gray-50 rounded-lg">
                 <p className="text-sm text-gray-600 mb-2">Net Profit/Loss</p>
                 <p className={`text-2xl font-bold ${getReturnColor(selectedResult.total_return_percent)}`}>
-                  {selectedResult.total_return >= 0 ? '+' : ''}${selectedResult.total_return.toFixed(2)}
+                  {selectedResult.total_return >= 0 ? '+' : ''}${safeNum(selectedResult.total_return).toFixed(2)}
                 </p>
               </div>
             </div>

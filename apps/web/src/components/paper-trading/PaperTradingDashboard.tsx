@@ -98,7 +98,7 @@ export default function PaperTradingDashboard({ strategyId }: Props) {
             <p className={`text-2xl font-bold ${(pnl.totalPnL ?? 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
               {(pnl.totalPnL ?? 0) >= 0 ? '+' : ''}${(pnl.totalPnL ?? 0).toFixed(2)}
             </p>
-            {pnl.initialCapital != null && pnl.initialCapital > 0 && (
+            {pnl.initialCapital !== null && pnl.initialCapital > 0 && (
               <p className={`text-xs mt-1 ${(pnl.totalPnL ?? 0) >= 0 ? 'text-green-500' : 'text-red-500'}`}>
                 {(pnl.totalPnL ?? 0) >= 0 ? '+' : ''}{(((pnl.totalPnL ?? 0) / pnl.initialCapital) * 100).toFixed(2)}% return
               </p>
@@ -113,7 +113,7 @@ export default function PaperTradingDashboard({ strategyId }: Props) {
             <p className={`text-2xl font-bold ${(pnl.realizedPnL ?? 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
               {(pnl.realizedPnL ?? 0) >= 0 ? '+' : ''}${(pnl.realizedPnL ?? 0).toFixed(2)}
             </p>
-            {pnl.fees != null && pnl.fees > 0 && (
+            {pnl.fees !== null && pnl.fees > 0 && (
               <p className="text-xs mt-1 text-gray-500">
                 Fees: ${pnl.fees.toFixed(2)}
               </p>
@@ -143,7 +143,7 @@ export default function PaperTradingDashboard({ strategyId }: Props) {
       )}
 
       {/* Account Summary */}
-      {pnl && pnl.initialCapital != null && (
+      {pnl && pnl.initialCapital !== null && (
         <div className="bg-white rounded-lg shadow p-4">
           <div className="flex items-center gap-2 mb-3">
             <BarChart3 size={18} className="text-gray-600" />

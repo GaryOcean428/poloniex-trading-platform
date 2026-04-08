@@ -69,7 +69,7 @@ class ClaudeTradingService {
     }
   }
 
-  private getMockInsight(tradingData: TradingData, userQuery?: string): TradingInsight {
+  private getMockInsight(tradingData: TradingData, _userQuery?: string): TradingInsight {
     const insights = [
       {
         type: 'analysis' as const,

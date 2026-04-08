@@ -36,7 +36,7 @@ function startBackgroundTokenRefresh() {
         const payload = JSON.parse(atob(parts[1]));
         const expiresAt = payload.exp * 1000; // Convert to milliseconds
         const now = Date.now();
-        const fiveMinutes = 5 * 60 * 1000;
+        const _fiveMinutes = 5 * 60 * 1000;
 
         // Refresh if token expires in less than 10 minutes
         if (expiresAt - now < 10 * 60 * 1000) {

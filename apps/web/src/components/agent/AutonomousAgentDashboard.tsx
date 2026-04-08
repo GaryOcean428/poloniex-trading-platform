@@ -12,6 +12,8 @@ import StrategyApprovalQueue from './StrategyApprovalQueue';
 import LiveTradingActivityFeed from './LiveTradingActivityFeed';
 import PerformanceAnalytics from './PerformanceAnalytics';
 import AgentOverviewPanel from './AgentOverviewPanel';
+import MLLiveRecommendations from './MLLiveRecommendations';
+import { safeNum } from '@/utils/safeNum';
 
 const API_BASE_URL = getBackendUrl();
 
@@ -163,6 +165,8 @@ const AutonomousAgentDashboard: React.FC = () => {
           metadata: event.data,
           created_at: new Date(event.timestamp)
         }, ...prev].slice(0, 50));
+        // Refresh agent status counters on any activity
+        fetchAgentStatus();
       });
     }).catch(() => {
       setConnectionStatus('polling');
@@ -858,14 +862,14 @@ const AutonomousAgentDashboard: React.FC = () => {
               <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse" />
             </h3>
             <p className="text-red-700 text-sm mt-1">{circuitBreaker.reason}</p>
-            {circuitBreaker.cooldownRemaining != null && circuitBreaker.cooldownRemaining > 0 && (
+            {circuitBreaker.cooldownRemaining !== null && circuitBreaker.cooldownRemaining > 0 && (
               <p className="text-red-600 text-xs mt-2">
                 Auto-reset in {Math.ceil(circuitBreaker.cooldownRemaining / 60000)} min
               </p>
             )}
             <div className="flex gap-4 mt-2 text-xs text-red-600">
               <span>Consecutive losses: {circuitBreaker.consecutiveLosses}</span>
-              <span>Daily loss: {circuitBreaker.dailyLossPercent.toFixed(2)}%</span>
+              <span>Daily loss: {safeNum(circuitBreaker.dailyLossPercent).toFixed(2)}%</span>
             </div>
           </div>
         </div>
@@ -882,7 +886,7 @@ const AutonomousAgentDashboard: React.FC = () => {
             {circuitBreaker && (
               <div className="flex gap-3 text-xs text-green-600">
                 <span>Consec. losses: {circuitBreaker.consecutiveLosses}/5</span>
-                <span>Daily loss: {circuitBreaker.dailyLossPercent.toFixed(2)}%</span>
+                <span>Daily loss: {safeNum(circuitBreaker.dailyLossPercent).toFixed(2)}%</span>
               </div>
             )}
           </div>
@@ -930,10 +934,21 @@ const AutonomousAgentDashboard: React.FC = () => {
       />
 
       {/* Real-Time Strategy Generation Display */}
-      <StrategyGenerationDisplay agentStatus={agentStatus?.status} />
+      <StrategyGenerationDisplay
+        agentStatus={agentStatus?.status}
+        strategiesGenerated={agentStatus?.strategiesGenerated}
+        backtestsCompleted={agentStatus?.backtestsCompleted}
+        paperTradesExecuted={agentStatus?.paperTradesExecuted}
+        lastActivity={activity[0]?.description}
+        startedAt={agentStatus?.startedAt}
+        errorCount={activity.filter(a => a.activity_type === 'error').length}
+      />
 
       {/* Strategy Approval Queue */}
       <StrategyApprovalQueue agentStatus={agentStatus?.status} />
+
+      {/* ML Self-Learning Engine — Live Recommendations (one-click confirmation required) */}
+      <MLLiveRecommendations />
 
       {/* Active Strategies with Performance Metrics */}
       <ActiveStrategiesPanel agentStatus={agentStatus?.status} />
@@ -1065,8 +1080,8 @@ const AutonomousAgentDashboard: React.FC = () => {
                           'bg-purple-100 text-purple-700'
                         }`}>{event.execution_mode}</span>
                       )}
-                      {event.confidence_score != null && (
-                        <span className="text-xs text-gray-500">Confidence: {Number(event.confidence_score).toFixed(1)}%</span>
+                      {event.confidence_score !== null && (
+                        <span className="text-xs text-gray-500">Confidence: {safeNum(event.confidence_score).toFixed(1)}%</span>
                       )}
                     </div>
                     <p className="text-sm text-gray-900">{event.description}</p>
@@ -1156,7 +1171,7 @@ const AutonomousAgentDashboard: React.FC = () => {
               </div>
               <div className="p-3 bg-purple-50 rounded-lg">
                 <div className="text-purple-700">Avg Score</div>
-                <div className="text-xl font-semibold text-purple-800">{capabilitySummary.averageCompositeScore.toFixed(2)}</div>
+                <div className="text-xl font-semibold text-purple-800">{safeNum(capabilitySummary.averageCompositeScore).toFixed(2)}</div>
               </div>
             </div>
           </div>

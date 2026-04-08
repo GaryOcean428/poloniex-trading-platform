@@ -3,6 +3,7 @@ import { TrendingUp, TrendingDown, Activity, Target, CheckCircle, XCircle } from
 import axios from 'axios';
 import { getAccessToken } from '@/utils/auth';
 import { getBackendUrl } from '@/utils/environment';
+import { safeNum } from '@/utils/safeNum';
 
 const API_BASE_URL = getBackendUrl();
 
@@ -148,10 +149,10 @@ const ActiveStrategiesPanel: React.FC<ActiveStrategiesPanelProps> = ({ agentStat
                 <div className="text-right">
                   <p className="text-sm opacity-90">Total P&L</p>
                   <p className={`text-3xl font-bold ${strategy.total_pnl >= 0 ? 'text-white' : 'text-red-200'}`}>
-                    ${strategy.total_pnl.toFixed(2)}
+                    ${safeNum(strategy.total_pnl).toFixed(2)}
                   </p>
                   <p className="text-sm opacity-90">
-                    ({strategy.total_pnl_percent >= 0 ? '+' : ''}{strategy.total_pnl_percent.toFixed(2)}%)
+                    ({strategy.total_pnl_percent >= 0 ? '+' : ''}{safeNum(strategy.total_pnl_percent).toFixed(2)}%)
                   </p>
                 </div>
                 <span className={`px-4 py-2 rounded-full text-sm font-semibold ${
@@ -176,31 +177,31 @@ const ActiveStrategiesPanel: React.FC<ActiveStrategiesPanelProps> = ({ agentStat
               <div className="bg-gray-50 rounded-lg p-3">
                 <p className="text-xs text-gray-600 mb-1">Win Rate</p>
                 <p className={`text-lg font-bold ${strategy.win_rate >= 50 ? 'text-green-600' : 'text-red-600'}`}>
-                  {strategy.win_rate.toFixed(1)}%
+                  {safeNum(strategy.win_rate).toFixed(1)}%
                 </p>
               </div>
               <div className="bg-gray-50 rounded-lg p-3">
                 <p className="text-xs text-gray-600 mb-1">Profit Factor</p>
                 <p className={`text-lg font-bold ${strategy.profit_factor >= 1.5 ? 'text-green-600' : 'text-orange-600'}`}>
-                  {strategy.profit_factor.toFixed(2)}
+                  {safeNum(strategy.profit_factor).toFixed(2)}
                 </p>
               </div>
               <div className="bg-gray-50 rounded-lg p-3">
                 <p className="text-xs text-gray-600 mb-1">Sharpe Ratio</p>
                 <p className={`text-lg font-bold ${strategy.sharpe_ratio >= 1 ? 'text-green-600' : 'text-orange-600'}`}>
-                  {strategy.sharpe_ratio.toFixed(2)}
+                  {safeNum(strategy.sharpe_ratio).toFixed(2)}
                 </p>
               </div>
               <div className="bg-gray-50 rounded-lg p-3">
                 <p className="text-xs text-gray-600 mb-1">Max Drawdown</p>
                 <p className="text-lg font-bold text-red-600">
-                  {strategy.max_drawdown.toFixed(1)}%
+                  {safeNum(strategy.max_drawdown).toFixed(1)}%
                 </p>
               </div>
               <div className="bg-gray-50 rounded-lg p-3">
                 <p className="text-xs text-gray-600 mb-1">Current DD</p>
                 <p className={`text-lg font-bold ${getDrawdownColor(strategy.current_drawdown, strategy.max_drawdown)}`}>
-                  {strategy.current_drawdown.toFixed(1)}%
+                  {safeNum(strategy.current_drawdown).toFixed(1)}%
                 </p>
               </div>
             </div>
@@ -226,14 +227,14 @@ const ActiveStrategiesPanel: React.FC<ActiveStrategiesPanelProps> = ({ agentStat
                   <TrendingUp className="w-4 h-4 text-green-600" />
                   <p className="text-xs text-green-700 font-semibold">Avg Win</p>
                 </div>
-                <p className="text-lg font-bold text-green-600">${strategy.avg_win.toFixed(2)}</p>
+                <p className="text-lg font-bold text-green-600">${safeNum(strategy.avg_win).toFixed(2)}</p>
               </div>
               <div className="bg-red-50 border border-red-200 rounded-lg p-3">
                 <div className="flex items-center gap-2 mb-1">
                   <TrendingDown className="w-4 h-4 text-red-600" />
                   <p className="text-xs text-red-700 font-semibold">Avg Loss</p>
                 </div>
-                <p className="text-lg font-bold text-red-600">${Math.abs(strategy.avg_loss).toFixed(2)}</p>
+                <p className="text-lg font-bold text-red-600">${safeNum(Math.abs(strategy.avg_loss)).toFixed(2)}</p>
               </div>
             </div>
           </div>
@@ -264,10 +265,10 @@ const ActiveStrategiesPanel: React.FC<ActiveStrategiesPanelProps> = ({ agentStat
                       </div>
                       <div className="text-right">
                         <p className={`text-xl font-bold ${getPnLColor(position.unrealized_pnl)}`}>
-                          ${position.unrealized_pnl.toFixed(2)}
+                          ${safeNum(position.unrealized_pnl).toFixed(2)}
                         </p>
                         <p className={`text-sm ${getPnLColor(position.unrealized_pnl)}`}>
-                          ({position.unrealized_pnl_percent >= 0 ? '+' : ''}{position.unrealized_pnl_percent.toFixed(2)}%)
+                          ({position.unrealized_pnl_percent >= 0 ? '+' : ''}{safeNum(position.unrealized_pnl_percent).toFixed(2)}%)
                         </p>
                       </div>
                     </div>
@@ -275,11 +276,11 @@ const ActiveStrategiesPanel: React.FC<ActiveStrategiesPanelProps> = ({ agentStat
                     <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-sm">
                       <div>
                         <p className="text-gray-600 text-xs mb-1">Entry Price</p>
-                        <p className="font-semibold text-gray-900">${position.entry_price.toFixed(2)}</p>
+                        <p className="font-semibold text-gray-900">${safeNum(position.entry_price).toFixed(2)}</p>
                       </div>
                       <div>
                         <p className="text-gray-600 text-xs mb-1">Current Price</p>
-                        <p className="font-semibold text-gray-900">${position.current_price.toFixed(2)}</p>
+                        <p className="font-semibold text-gray-900">${safeNum(position.current_price).toFixed(2)}</p>
                       </div>
                       <div>
                         <p className="text-gray-600 text-xs mb-1">Quantity</p>
@@ -287,11 +288,11 @@ const ActiveStrategiesPanel: React.FC<ActiveStrategiesPanelProps> = ({ agentStat
                       </div>
                       <div>
                         <p className="text-gray-600 text-xs mb-1">Stop Loss</p>
-                        <p className="font-semibold text-red-600">${position.stop_loss.toFixed(2)}</p>
+                        <p className="font-semibold text-red-600">${safeNum(position.stop_loss).toFixed(2)}</p>
                       </div>
                       <div>
                         <p className="text-gray-600 text-xs mb-1">Take Profit</p>
-                        <p className="font-semibold text-green-600">${position.take_profit.toFixed(2)}</p>
+                        <p className="font-semibold text-green-600">${safeNum(position.take_profit).toFixed(2)}</p>
                       </div>
                     </div>
 

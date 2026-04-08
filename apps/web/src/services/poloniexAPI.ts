@@ -1,6 +1,6 @@
 import { useAppStore } from "@/store";
 import { MarketData } from "@/types";
-import { getApiBaseUrl, shouldUseMockMode, getBackendUrl } from "@/utils/environment";
+import { getApiBaseUrl as _getApiBaseUrl, shouldUseMockMode, getBackendUrl } from "@/utils/environment";
 import { getAccessToken } from "@/utils/auth";
 import axios from "axios";
 

@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import {
   DollarSign,
   TrendingUp,
-  TrendingDown,
+  TrendingDown as _TrendingDown,
   Activity,
   Clock,
   Target,
@@ -19,6 +19,7 @@ import {
 import axios from 'axios';
 import { getAccessToken } from '@/utils/auth';
 import { getBackendUrl } from '@/utils/environment';
+import { safeNum } from '@/utils/safeNum';
 
 const API_BASE_URL = getBackendUrl();
 
@@ -127,12 +128,12 @@ const AgentOverviewPanel: React.FC<AgentOverviewPanelProps> = ({
   const formatCurrency = (value: number): string => {
     if (value === 0) return '$0.00';
     const prefix = value > 0 ? '+$' : '-$';
-    return `${prefix}${Math.abs(value).toFixed(2)}`;
+    return `${prefix}${safeNum(Math.abs(value)).toFixed(2)}`;
   };
 
   const formatPercent = (value: number): string => {
     const prefix = value >= 0 ? '+' : '';
-    return `${prefix}${value.toFixed(1)}%`;
+    return `${prefix}${safeNum(value).toFixed(1)}%`;
   };
 
   const pnlColor = (value: number): string =>
@@ -185,7 +186,14 @@ const AgentOverviewPanel: React.FC<AgentOverviewPanelProps> = ({
   const riskRating = pipelineSummary?.risk?.rating || 'unknown';
 
   // Find best and worst strategies from breakdown
-  const breakdown = pipelineSummary?.strategyBreakdown || [];
+  // API returns { performance: { winRate, totalReturn, ... } } — flatten for display
+  const rawBreakdown = pipelineSummary?.strategyBreakdown || [];
+  const breakdown = rawBreakdown.map((s: any) => ({
+    ...s,
+    winRate: s.winRate ?? s.performance?.winRate ?? 0,
+    pnl: s.pnl ?? s.performance?.totalReturn ?? 0,
+    totalTrades: s.totalTrades ?? s.performance?.totalTrades ?? 0,
+  }));
   const sortedByPnl = [...breakdown].sort((a, b) => b.pnl - a.pnl);
   const bestStrategy = sortedByPnl[0] || null;
   const worstStrategy = sortedByPnl.length > 1 ? sortedByPnl[sortedByPnl.length - 1] : null;
@@ -300,13 +308,13 @@ const AgentOverviewPanel: React.FC<AgentOverviewPanelProps> = ({
                   <div className="flex items-center justify-between p-2.5 bg-gray-50 rounded-lg">
                     <span className="text-sm text-gray-600">Win Rate</span>
                     <span className={`text-sm font-semibold ${performance.winRate >= 50 ? 'text-green-600' : 'text-red-600'}`}>
-                      {performance.winRate.toFixed(1)}%
+                      {safeNum(performance.winRate).toFixed(1)}%
                     </span>
                   </div>
                   <div className="flex items-center justify-between p-2.5 bg-gray-50 rounded-lg">
                     <span className="text-sm text-gray-600">Sharpe Ratio</span>
                     <span className={`text-sm font-semibold ${performance.sharpeRatio >= 1 ? 'text-green-600' : performance.sharpeRatio >= 0 ? 'text-yellow-600' : 'text-red-600'}`}>
-                      {performance.sharpeRatio.toFixed(2)}
+                      {safeNum(performance.sharpeRatio).toFixed(2)}
                     </span>
                   </div>
                 </>
@@ -364,7 +372,7 @@ const AgentOverviewPanel: React.FC<AgentOverviewPanelProps> = ({
                     <Target className="w-3.5 h-3.5" /> Win Rate
                   </span>
                   <span className={`text-sm font-semibold ${paper.winRate >= 50 ? 'text-green-600' : 'text-red-600'}`}>
-                    {paper.winRate.toFixed(1)}%
+                    {safeNum(paper.winRate).toFixed(1)}%
                   </span>
                 </div>
 
@@ -434,7 +442,7 @@ const AgentOverviewPanel: React.FC<AgentOverviewPanelProps> = ({
                       <div className="flex items-center justify-between p-2.5 bg-gray-50 rounded-lg">
                         <span className="text-sm text-gray-600">Avg Win Rate</span>
                         <span className={`text-sm font-semibold ${avgWinRate >= 50 ? 'text-green-600' : 'text-red-600'}`}>
-                          {avgWinRate.toFixed(1)}%
+                          {safeNum(avgWinRate).toFixed(1)}%
                         </span>
                       </div>
                     </>
@@ -442,11 +450,11 @@ const AgentOverviewPanel: React.FC<AgentOverviewPanelProps> = ({
                 })()}
 
                 {/* Max Drawdown */}
-                {pipelineSummary?.risk?.averageMaxDrawdown != null && (
+                {pipelineSummary?.risk?.averageMaxDrawdown !== null && (
                   <div className="flex items-center justify-between p-2.5 bg-gray-50 rounded-lg">
                     <span className="text-sm text-gray-600">Avg Max Drawdown</span>
                     <span className="text-sm font-semibold text-orange-600">
-                      {pipelineSummary.risk.averageMaxDrawdown.toFixed(1)}%
+                      {safeNum(pipelineSummary.risk.averageMaxDrawdown).toFixed(1)}%
                     </span>
                   </div>
                 )}
@@ -464,7 +472,7 @@ const AgentOverviewPanel: React.FC<AgentOverviewPanelProps> = ({
                       {bestStrategy.strategyName}
                     </p>
                     <p className="text-xs text-gray-500">
-                      {bestStrategy.totalTrades} trades · {bestStrategy.winRate.toFixed(0)}% win
+                      {bestStrategy.totalTrades} trades · {safeNum(bestStrategy.winRate).toFixed(0)}% win
                     </p>
                   </div>
                 )}
@@ -482,7 +490,7 @@ const AgentOverviewPanel: React.FC<AgentOverviewPanelProps> = ({
                       {worstStrategy.strategyName}
                     </p>
                     <p className="text-xs text-gray-500">
-                      {worstStrategy.totalTrades} trades · {worstStrategy.winRate.toFixed(0)}% win
+                      {worstStrategy.totalTrades} trades · {safeNum(worstStrategy.winRate).toFixed(0)}% win
                     </p>
                   </div>
                 )}
@@ -526,7 +534,7 @@ const AgentOverviewPanel: React.FC<AgentOverviewPanelProps> = ({
                 </div>
                 <div>
                   <span className="text-gray-500">Max Drawdown</span>
-                  <span className="ml-2 font-bold text-orange-600">{performance.maxDrawdown.toFixed(1)}%</span>
+                  <span className="ml-2 font-bold text-orange-600">{safeNum(performance.maxDrawdown).toFixed(1)}%</span>
                 </div>
               </div>
               <Link

@@ -23,7 +23,7 @@ import { Link } from 'react-router-dom';
 const AutonomousTradingDashboard: React.FC = () => {
     const [session, setSession] = useState<LiveAutonomousSession | null>(null);
     const [connectionStatus, setConnectionStatus] = useState(liveAutonomousTradingEngine.getConnectionStatus());
-    const [loading, setLoading] = useState(false);
+    const [_loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [settings, setSettings] = useState<AutonomousSettings>({
         initialBalance: 10000,
@@ -91,7 +91,7 @@ const AutonomousTradingDashboard: React.FC = () => {
         };
     }, [session]);
 
-    const handleStartAutonomous = async () => {
+    const _handleStartAutonomous = async () => {
         setLoading(true);
         setError(null);
 
@@ -113,7 +113,7 @@ const AutonomousTradingDashboard: React.FC = () => {
         }
     };
 
-    const handleStopAutonomous = async () => {
+    const _handleStopAutonomous = async () => {
         if (!session) return;
 
         setLoading(true);
