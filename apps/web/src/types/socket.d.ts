@@ -1,8 +1,8 @@
-import { Socket } from "socket.io-client";
+import { Socket as _Socket } from "socket.io-client";
 
 declare global {
   namespace SocketIOClient {
-    type Socket = Socket;
+    type Socket = _Socket;
   }
 }
 

@@ -523,7 +523,7 @@ class AutonomousTradingAPIService {
       console.info(`Banking requested for amount: ${amount}`);
   }
 
-  async getBankingHistory(limit: number = 50): Promise<BankingRecord[]> {
+  async getBankingHistory(_limit: number = 50): Promise<BankingRecord[]> {
         // Not yet implemented in backend - return empty array
       return [];
   }

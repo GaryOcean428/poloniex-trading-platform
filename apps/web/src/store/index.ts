@@ -320,7 +320,7 @@ export const useNotificationActions = () =>
 export const initializeSampleNotifications = () => {
   const store = useAppStore.getState();
   if (store.appNotifications.length === 0) {
-    const baseTimestamp = Date.now();
+    const _baseTimestamp = Date.now();
     store.addNotification({
       type: "warning",
       title: "API Rate Limit",

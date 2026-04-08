@@ -6,7 +6,7 @@ import {
   BacktestTrade,
 } from "@/types/backtest";
 import { executeStrategy } from "@/utils/strategyExecutors";
-import { getCachedCredentials } from "./apiCredentialsService";
+import { getCachedCredentials as _getCachedCredentials } from "./apiCredentialsService";
 
 // Enhanced metrics for Phase 4
 interface AdvancedBacktestMetrics {

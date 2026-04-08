@@ -53,7 +53,7 @@ const StrategyGenerationDisplay: React.FC<StrategyGenerationDisplayProps> = ({
 }) => {
   const [currentGeneration, setCurrentGeneration] = useState<StrategyGeneration | null>(null);
   const [recentStrategies, setRecentStrategies] = useState<StrategyGeneration[]>([]);
-  const [isGenerating, setIsGenerating] = useState(false);
+  const [_isGenerating, setIsGenerating] = useState(false);
 
   useEffect(() => {
     if (agentStatus === 'running') {
