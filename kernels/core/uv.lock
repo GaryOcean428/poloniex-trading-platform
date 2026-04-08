@@ -436,6 +436,7 @@ dependencies = [
     { name = "pandas" },
     { name = "pydantic" },
     { name = "python-multipart" },
+    { name = "qig-core" },
     { name = "redis" },
     { name = "scikit-learn" },
     { name = "uvicorn", extra = ["standard"] },
@@ -466,6 +467,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.7.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "python-multipart", specifier = ">=0.0.9" },
+    { name = "qig-core", specifier = ">=2.7.0" },
     { name = "redis", specifier = ">=5.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.5.0" },
     { name = "scikit-learn", specifier = ">=1.5.0" },
@@ -602,6 +604,18 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/fe/0f/25911a9f080464c59fab9027482f822b86bf0608957a5fcc6eaac85aa515/PyYAML-6.0.2-cp313-cp313-musllinux_1_1_x86_64.whl", hash = "sha256:68ccc6023a3400877818152ad9a1033e3db8625d899c72eacb5a668902e4d652", size = 751597, upload-time = "2024-08-06T20:32:56.985Z" },
     { url = "https://files.pythonhosted.org/packages/14/0d/e2c3b43bbce3cf6bd97c840b46088a3031085179e596d4929729d8d68270/PyYAML-6.0.2-cp313-cp313-win32.whl", hash = "sha256:bc2fa7c6b47d6bc618dd7fb02ef6fdedb1090ec036abab80d4681424b84c1183", size = 140527, upload-time = "2024-08-06T20:33:03.001Z" },
     { url = "https://files.pythonhosted.org/packages/fa/de/02b54f42487e3d3c6efb3f89428677074ca7bf43aae402517bc7cca949f3/PyYAML-6.0.2-cp313-cp313-win_amd64.whl", hash = "sha256:8388ee1976c416731879ac16da0aff3f63b286ffdd57cdeb95f3f2e085687563", size = 156446, upload-time = "2024-08-06T20:33:04.33Z" },
+]
+
+[[package]]
+name = "qig-core"
+version = "2.7.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d5/fb/aa8102dd04dd9bf8d3a4b00cce4197908444bf7c8adc4c5cee5a1ca4cc17/qig_core-2.7.0.tar.gz", hash = "sha256:1fce71442972c33c45779f2e114e7c16bcc7404f268253fb58b032b92b2c5289", size = 161793, upload-time = "2026-04-07T08:23:22.679Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c9/8a/c8ea976610aaa54400b6e341761294ddffa89955b8d678429492fc8c6755/qig_core-2.7.0-py3-none-any.whl", hash = "sha256:80c392e545b91f0d98009a3ad370a93804de9d795fb14b847cb9476d9bdd67ff", size = 171430, upload-time = "2026-04-07T08:23:20.539Z" },
 ]
 
 [[package]]
