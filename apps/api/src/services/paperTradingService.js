@@ -718,6 +718,15 @@ class PaperTradingService extends EventEmitter {
       const positionPercent = positionValue / session.currentValue;
       
       if (positionPercent > session.riskParameters.maxPositionSize) {
+        // QIG censoring: hitting position size limit means the strategy can't fully express itself
+        if (!session.isCensored) {
+          session.isCensored = true;
+          session.censorReason = 'position_size_limit';
+          logger.warn(
+            `[Censoring] Session ${session.id} (${session.strategyName}) hit position size limit ` +
+            `${(positionPercent * 100).toFixed(2)}% — marking as CENSORED (strategy constrained, true performance unknown)`
+          );
+        }
         return {
           allowed: false,
           reason: 'position_size_limit_exceeded',
@@ -910,16 +919,16 @@ class PaperTradingService extends EventEmitter {
       }
 
       // Close all open positions
-      let hadOpenPositions = false;
+      let hadOpenPositionsToClose = false;
       for (const [positionId, position] of session.positions) {
         if (position.status === 'open') {
-          hadOpenPositions = true;
+          hadOpenPositionsToClose = true;
           await this.closePosition(sessionId, positionId, 'session_stopped');
         }
       }
 
       // QIG censoring: session ended with open positions → true outcome is censored
-      if (hadOpenPositions && !session.isCensored) {
+      if (hadOpenPositionsToClose && !session.isCensored) {
         session.isCensored = true;
         session.censorReason = 'session_end_forced_close';
         logger.warn(

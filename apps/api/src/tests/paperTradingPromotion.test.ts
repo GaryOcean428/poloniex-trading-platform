@@ -105,7 +105,7 @@ describe('QIG Censoring censored sessions blocked from live promotion', () => {
     expect(shouldPromoteToLive(0.55, 1.6, 10, false)).toBe(true);
   });
 
-  it('replicates QIG R squared failure mode censored outlier inflates avg WR by over 20 percent', () => {
+  it('replicates QIG R² failure mode censored outlier inflates avg WR by over 20 percent', () => {
     const sessions = [
       { winRate: 0.50, isCensored: false },
       { winRate: 0.40, isCensored: false },

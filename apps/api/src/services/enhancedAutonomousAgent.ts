@@ -87,6 +87,18 @@ interface Strategy {
   retiredAt?: Date;
 }
 
+/** Shape of the object returned by paperTradingService.getSession() */
+interface PaperSessionSnapshot {
+  winRate: number;
+  losingTrades: number;
+  winningTrades: number;
+  totalTrades: number;
+  /** True when the session outcome is censored (hit drawdown kill, force-closed, etc.) */
+  isCensored?: boolean;
+  censorReason?: string | null;
+  [key: string]: unknown;
+}
+
 interface StrategyCapabilityProfile {
   strategyId: string;
   strategyName: string;
@@ -1096,14 +1108,16 @@ Generate the combination logic as executable JavaScript code.
       }
 
       const paperSessionId = this.paperSessionIds.get(strategy.id);
-      const paperSession = paperSessionId ? paperTradingService.getSession(paperSessionId) : null;
+      const paperSession = paperSessionId
+        ? (paperTradingService.getSession(paperSessionId) as PaperSessionSnapshot | null)
+        : null;
       const paperResults = paperSession ? {
         winRate: paperSession.winRate || 0,
         profitFactor: (paperSession.losingTrades > 0 && paperSession.winningTrades > 0)
           ? paperSession.winningTrades / paperSession.losingTrades : 0,
         totalTrades: paperSession.totalTrades || 0,
-        isCensored: (paperSession as any).isCensored || false,
-        censorReason: (paperSession as any).censorReason || null
+        isCensored: paperSession.isCensored ?? false,
+        censorReason: paperSession.censorReason ?? null
       } : null;
       
       // Dynamic thresholds: scalping strategies need fewer trades but similar ratios
