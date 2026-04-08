@@ -47,7 +47,17 @@ class ConfidenceScoringService extends EventEmitter {
       // Market condition factors
       volatilityPenalty: 0.2, // Reduce confidence in high volatility
       trendStrengthBonus: 0.1, // Increase confidence in strong trends
-      liquidityPenalty: 0.15 // Reduce confidence in low liquidity
+      liquidityPenalty: 0.15, // Reduce confidence in low liquidity
+
+      // Censoring-aware scoring thresholds
+      // Minimum uncensored trades required to fit a separate uncensored score
+      minUncensoredTradesForFit: 5,
+      // Minimum trades for partial sub-scores (performance)
+      minTradesForPerformanceScore: 5,
+      // Minimum trades for partial sub-scores (consistency / risk)
+      minTradesForConsistencyScore: 10,
+      // Points-difference above which censored/uncensored fits are flagged as diverging
+      censoredDivergenceThreshold: 10
     };
   }
 
@@ -107,7 +117,7 @@ class ConfidenceScoringService extends EventEmitter {
       const uncensoredTrades = performanceData.trades.filter(t => !t.is_censored);
       const hasCensoredData = uncensoredTrades.length < performanceData.trades.length;
 
-      const uncensoredData = hasCensoredData && uncensoredTrades.length >= 5
+      const uncensoredData = hasCensoredData && uncensoredTrades.length >= this.scoringParameters.minUncensoredTradesForFit
         ? { ...performanceData, trades: uncensoredTrades }
         : null;
 
@@ -165,9 +175,9 @@ class ConfidenceScoringService extends EventEmitter {
           censoredTradeCount: performanceData.trades.length - uncensoredTrades.length,
           confidenceWithCensored: Math.round(confidenceScore),
           confidenceWithoutCensored,
-          // Significant divergence (>10 pts) means the estimate is unreliable
+          // Significant divergence means the estimate is unreliable
           estimateUnreliable: confidenceWithoutCensored !== null &&
-            Math.abs(Math.round(confidenceScore) - confidenceWithoutCensored) > 10
+            Math.abs(Math.round(confidenceScore) - confidenceWithoutCensored) > this.scoringParameters.censoredDivergenceThreshold
         },
         warnings: this.generateWarnings(confidenceScore, marketConditions, performanceData),
         calculatedAt: new Date(),
@@ -868,13 +878,16 @@ class ConfidenceScoringService extends EventEmitter {
    */
   createLowConfidenceScore(strategyName, symbol, reason, performanceData = null) {
     // Compute whatever partial sub-scores are available
-    const partialPerformance = performanceData && performanceData.trades.length >= 5
+    const partialPerformance = performanceData &&
+      performanceData.trades.length >= this.scoringParameters.minTradesForPerformanceScore
       ? Math.round(this.calculatePerformanceScore(performanceData))
       : 0;
-    const partialConsistency = performanceData && performanceData.trades.length >= 10
+    const partialConsistency = performanceData &&
+      performanceData.trades.length >= this.scoringParameters.minTradesForConsistencyScore
       ? Math.round(this.calculateConsistencyScore(performanceData))
       : 0;
-    const partialRisk = performanceData && performanceData.trades.length >= 10
+    const partialRisk = performanceData &&
+      performanceData.trades.length >= this.scoringParameters.minTradesForConsistencyScore
       ? Math.round(this.calculateRiskScore(performanceData))
       : 0;
 

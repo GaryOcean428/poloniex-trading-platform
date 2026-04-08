@@ -93,8 +93,8 @@ export function computeADX(candles: OHLCCandle[], period = 14): number {
   if (atr.length === 0) return NaN;
 
   const dx: number[] = atr.map((atrVal, i) => {
-    const pdi = atr[i] > 0 ? (pDI[i] / atrVal) * 100 : 0;
-    const mdi = atr[i] > 0 ? (mDI[i] / atrVal) * 100 : 0;
+    const pdi = atrVal > 0 ? (pDI[i] / atrVal) * 100 : 0;
+    const mdi = atrVal > 0 ? (mDI[i] / atrVal) * 100 : 0;
     const sum = pdi + mdi;
     return sum > 0 ? (Math.abs(pdi - mdi) / sum) * 100 : 0;
   });
