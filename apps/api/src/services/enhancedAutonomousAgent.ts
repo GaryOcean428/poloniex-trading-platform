@@ -87,6 +87,18 @@ interface Strategy {
   retiredAt?: Date;
 }
 
+/** Shape of the object returned by paperTradingService.getSession() */
+interface PaperSessionSnapshot {
+  winRate: number;
+  losingTrades: number;
+  winningTrades: number;
+  totalTrades: number;
+  /** True when the session outcome is censored (hit drawdown kill, force-closed, etc.) */
+  isCensored?: boolean;
+  censorReason?: string | null;
+  [key: string]: unknown;
+}
+
 interface StrategyCapabilityProfile {
   strategyId: string;
   strategyName: string;
@@ -955,11 +967,26 @@ Generate the combination logic as executable JavaScript code.
       }
 
       // 2. Promote to paper trading if backtest passes
-      // Dynamic thresholds based on trading style
-      const winRateThreshold = session.config.tradingStyle === 'scalping' ? 0.52 : 0.55;
-      const profitFactorThreshold = session.config.tradingStyle === 'scalping' ? 1.3 : 1.5;
+      // Futures-realistic thresholds: 50%+ WR is rare with leverage; use 40% as minimum
+      // (Higher thresholds were blocking all strategies — 88 backtested, 0 promoted)
+      const winRateThreshold = session.config.tradingStyle === 'scalping' ? 0.42 : 0.40;
+      const profitFactorThreshold = session.config.tradingStyle === 'scalping' ? 1.1 : 1.0;
 
-      if (strategy.performance.winRate > winRateThreshold && strategy.performance.profitFactor > profitFactorThreshold) {
+      const wrPassed = strategy.performance.winRate >= winRateThreshold;
+      const pfPassed = strategy.performance.profitFactor >= profitFactorThreshold;
+      const sharpeRatio = metrics.sharpeRatio || 0;
+      const maxDrawdown = metrics.maxDrawdown || 0;
+
+      logger.info(
+        `[Promotion] ${strategy.name} | ` +
+        `WR: ${(strategy.performance.winRate * 100).toFixed(1)}% (need >=${(winRateThreshold * 100).toFixed(0)}%) ${wrPassed ? '✓' : '✗'} | ` +
+        `PF: ${strategy.performance.profitFactor.toFixed(2)} (need >=${profitFactorThreshold}) ${pfPassed ? '✓' : '✗'} | ` +
+        `Sharpe: ${sharpeRatio.toFixed(2)} | MaxDD: ${(maxDrawdown * 100).toFixed(1)}% | ` +
+        `Trades: ${strategy.performance.totalTrades} | ` +
+        `Decision: ${wrPassed && pfPassed ? 'PROMOTE → paper' : 'RETIRE (failed backtest)'}`
+      );
+
+      if (wrPassed && pfPassed) {
         // LLM refinement: optimize winning strategies before paper trading
         const llmGen = getLLMStrategyGenerator();
         if (llmGen.isAvailable()) {
@@ -969,8 +996,8 @@ Generate the combination logic as executable JavaScript code.
               {
                 winRate: strategy.performance.winRate,
                 profitFactor: strategy.performance.profitFactor,
-                sharpeRatio: metrics.sharpeRatio || 0,
-                maxDrawdown: metrics.maxDrawdown || 0,
+                sharpeRatio,
+                maxDrawdown,
                 totalTrades: strategy.performance.totalTrades
               },
               { symbol: strategy.symbol, currentPrice: 0, priceChange24h: 0, volume24h: 0, technicalIndicators: {} }
@@ -983,7 +1010,6 @@ Generate the combination logic as executable JavaScript code.
         }
         await this.promoteToPaperTrading(session, strategy);
       } else {
-        logger.info(`Strategy ${strategy.name} failed backtest (WR: ${strategy.performance.winRate}, PF: ${strategy.performance.profitFactor}), retiring`);
         await this.retireStrategy(strategy, 'failed_backtest');
       }
       
@@ -1082,18 +1108,41 @@ Generate the combination logic as executable JavaScript code.
       }
 
       const paperSessionId = this.paperSessionIds.get(strategy.id);
-      const paperSession = paperSessionId ? paperTradingService.getSession(paperSessionId) : null;
+      const paperSession = paperSessionId
+        ? (paperTradingService.getSession(paperSessionId) as PaperSessionSnapshot | null)
+        : null;
       const paperResults = paperSession ? {
         winRate: paperSession.winRate || 0,
         profitFactor: (paperSession.losingTrades > 0 && paperSession.winningTrades > 0)
           ? paperSession.winningTrades / paperSession.losingTrades : 0,
-        totalTrades: paperSession.totalTrades || 0
+        totalTrades: paperSession.totalTrades || 0,
+        isCensored: paperSession.isCensored ?? false,
+        censorReason: paperSession.censorReason ?? null
       } : null;
       
       // Dynamic thresholds: scalping strategies need fewer trades but similar ratios
-      const minWinRate = session.config.tradingStyle === 'scalping' ? 0.55 : 0.58;
-      const minProfitFactor = session.config.tradingStyle === 'scalping' ? 1.5 : 1.8;
+      const minWinRate = session.config.tradingStyle === 'scalping' ? 0.50 : 0.52;
+      const minProfitFactor = session.config.tradingStyle === 'scalping' ? 1.3 : 1.5;
       const minTrades = session.config.tradingStyle === 'scalping' ? 10 : 5;
+
+      // QIG censoring: if the paper session was censored (hit drawdown kill / force-closed),
+      // the true performance is unknown — flag as unreliable and do not promote to live
+      if (paperResults?.isCensored) {
+        logger.warn(
+          `[Censoring] Strategy ${strategy.name} paper session is CENSORED (reason: ${paperResults.censorReason}). ` +
+          `Reported WR: ${(paperResults.winRate * 100).toFixed(1)}% may be unreliable — blocking live promotion`
+        );
+        await this.retireStrategy(strategy, 'censored_paper_session');
+        return;
+      }
+
+      logger.info(
+        `[PaperPromotion] ${strategy.name} | ` +
+        `WR: ${(paperResults ? paperResults.winRate * 100 : 0).toFixed(1)}% (need >${(minWinRate * 100).toFixed(0)}%) | ` +
+        `PF: ${(paperResults?.profitFactor || 0).toFixed(2)} (need >${minProfitFactor}) | ` +
+        `Trades: ${paperResults?.totalTrades || 0} (need >=${minTrades}) | ` +
+        `Censored: ${paperResults?.isCensored ? 'YES' : 'no'}`
+      );
 
       if (paperResults && 
           paperResults.winRate > minWinRate && 
