@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Brain, TrendingUp, AlertCircle, CheckCircle, XCircle, Info } from 'lucide-react';
+import { Brain, TrendingUp, AlertCircle, CheckCircle, XCircle as _XCircle, Info } from 'lucide-react';
 import axios from 'axios';
 import { getAccessToken } from '@/utils/auth';
 import { getBackendUrl } from '@/utils/environment';
@@ -59,21 +59,21 @@ interface MLLiveRecommendationsProps {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function formatPnl(pnl: number | null): string {
-  if (pnl == null) return '—';
+  if (pnl === null) return '—';
   const sign = pnl >= 0 ? '+' : '';
   return `${sign}$${safeNum(pnl).toFixed(4)}`;
 }
 
 function formatSharpe(v: number | null): string {
-  return v != null ? safeNum(v).toFixed(2) : '—';
+  return v !== null ? safeNum(v).toFixed(2) : '—';
 }
 
 function formatPct(v: number | null): string {
-  return v != null ? `${safeNum(v * 100).toFixed(1)}%` : '—';
+  return v !== null ? `${safeNum(v * 100).toFixed(1)}%` : '—';
 }
 
 function confidenceColor(score: number | null): string {
-  if (score == null) return 'text-gray-500';
+  if (score === null) return 'text-gray-500';
   if (score >= 75) return 'text-green-600';
   if (score >= 60) return 'text-yellow-600';
   return 'text-red-600';
@@ -278,7 +278,7 @@ const MLLiveRecommendations: React.FC<MLLiveRecommendationsProps> = ({ pollInter
                     </div>
 
                     {/* Confidence badge */}
-                    {s.confidenceScore != null && (
+                    {s.confidenceScore !== null && (
                       <span className={`text-sm font-bold ${confidenceColor(s.confidenceScore)}`}>
                         {safeNum(s.confidenceScore).toFixed(0)}% confidence
                       </span>
@@ -293,7 +293,7 @@ const MLLiveRecommendations: React.FC<MLLiveRecommendationsProps> = ({ pollInter
                       value={formatSharpe(s.uncensoredSharpe)}
                       tooltip="Computed from sessions that did NOT end with forced close or drawdown kill"
                     />
-                    <MetricCell label="Paper P&L" value={formatPnl(s.paperPnl)} positive={s.paperPnl != null && s.paperPnl > 0} />
+                    <MetricCell label="Paper P&L" value={formatPnl(s.paperPnl)} positive={s.paperPnl !== null && s.paperPnl > 0} />
                     <MetricCell label="Win Rate" value={formatPct(s.paperWr)} />
                     <MetricCell label="Paper Trades" value={String(s.paperTrades)} />
                     <MetricCell label="Backtest Sharpe" value={formatSharpe(s.backtestSharpe)} />

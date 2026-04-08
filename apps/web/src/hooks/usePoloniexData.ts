@@ -84,7 +84,7 @@ export const usePoloniexData = (initialPair: string = 'BTC-USDT'): PoloniexDataH
         return hasActiveCredentials;
       }
       return false;
-    } catch (error) {
+    } catch (_error) {
       // If we can't check, assume no credentials to avoid false positives
       return false;
     }

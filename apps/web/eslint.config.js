@@ -40,7 +40,8 @@ export default [
       '@typescript-eslint/no-unused-vars': ['warn', { 
         argsIgnorePattern: '^_',
         varsIgnorePattern: '^_',
-        destructuredArrayIgnorePattern: '^_'
+        destructuredArrayIgnorePattern: '^_',
+        caughtErrorsIgnorePattern: '^_'
       }],
       '@typescript-eslint/no-require-imports': 'warn',
       '@typescript-eslint/prefer-as-const': 'warn',

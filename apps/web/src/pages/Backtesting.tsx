@@ -530,7 +530,7 @@ const Backtesting: React.FC = () => {
                   </div>
                 </div>
                 <div className="flex items-center space-x-4">
-                  {strategy.performance.winRate != null && (
+                  {strategy.performance.winRate !== null && (
                     <span className="text-sm text-text-secondary">
                       WR: {(strategy.performance.winRate * 100).toFixed(1)}%
                     </span>
@@ -559,30 +559,30 @@ const Backtesting: React.FC = () => {
 
                     {/* Performance */}
                     {strategy.performance && (
-                      Object.values(strategy.performance).some(v => v != null)
+                      Object.values(strategy.performance).some(v => v !== null)
                     ) && (
                       <div>
                         <p className="text-xs text-text-muted mb-2 font-medium">BACKTEST PERFORMANCE</p>
                         <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                          {strategy.performance.winRate != null && (
+                          {strategy.performance.winRate !== null && (
                             <div className="bg-bg-secondary p-3 rounded">
                               <p className="text-xs text-text-muted">Win Rate</p>
                               <p className="text-sm font-bold">{((strategy.performance.winRate || 0) * 100).toFixed(1)}%</p>
                             </div>
                           )}
-                          {strategy.performance.profitFactor != null && (
+                          {strategy.performance.profitFactor !== null && (
                             <div className="bg-bg-secondary p-3 rounded">
                               <p className="text-xs text-text-muted">Profit Factor</p>
                               <p className="text-sm font-bold">{(strategy.performance.profitFactor || 0).toFixed(2)}</p>
                             </div>
                           )}
-                          {strategy.performance.totalTrades != null && (
+                          {strategy.performance.totalTrades !== null && (
                             <div className="bg-bg-secondary p-3 rounded">
                               <p className="text-xs text-text-muted">Total Trades</p>
                               <p className="text-sm font-bold">{strategy.performance.totalTrades || 0}</p>
                             </div>
                           )}
-                          {strategy.performance.totalReturn != null && (
+                          {strategy.performance.totalReturn !== null && (
                             <div className="bg-bg-secondary p-3 rounded">
                               <p className="text-xs text-text-muted">Total Return</p>
                               <p className={`text-sm font-bold ${
@@ -592,7 +592,7 @@ const Backtesting: React.FC = () => {
                               </p>
                             </div>
                           )}
-                          {strategy.performance.sharpeRatio != null && (
+                          {strategy.performance.sharpeRatio !== null && (
                             <div className="bg-bg-secondary p-3 rounded">
                               <p className="text-xs text-text-muted">Sharpe Ratio</p>
                               <p className={`text-sm font-bold ${
@@ -603,7 +603,7 @@ const Backtesting: React.FC = () => {
                               </p>
                             </div>
                           )}
-                          {strategy.performance.maxDrawdown != null && (
+                          {strategy.performance.maxDrawdown !== null && (
                             <div className="bg-bg-secondary p-3 rounded">
                               <p className="text-xs text-text-muted">Max Drawdown</p>
                               <p className="text-sm font-bold text-red-600">
@@ -612,7 +612,7 @@ const Backtesting: React.FC = () => {
                             </div>
                           )}
                         </div>
-                        {Object.values(strategy.performance).every(v => v == null) && (
+                        {Object.values(strategy.performance).every(v => v === null) && (
                           <p className="text-xs text-text-muted py-2">No performance metrics available yet.</p>
                         )}
                       </div>

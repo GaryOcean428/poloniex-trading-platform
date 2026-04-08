@@ -472,7 +472,7 @@ class AutonomousStrategyGenerator extends EventEmitter {
 
     // Scope indicator categories by tier
     if (tier === 3) {
-      // Memecoins: momentum only — no complex trend/SR indicators
+      // Memecoins: momentum + volatility only — no complex trend/SR indicators
       categories = ['momentum', 'volatility'];
     } else if (tier === 2) {
       // Major alts: momentum + trend

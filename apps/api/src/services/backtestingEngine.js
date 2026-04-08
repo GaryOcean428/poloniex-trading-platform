@@ -436,13 +436,20 @@ class BacktestingEngine extends EventEmitter {
   calculatePositionSize(signal, config, currentPrice) {
     const { maxPositionSize = 0.1, minPositionSize = 0.01 } = config;
     const portfolioValue = this.currentBacktest.portfolio.totalValue;
-    const price = currentPrice || 1;
+    if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
+      logger.warn(`Invalid currentPrice (${currentPrice}) in calculatePositionSize, using portfolio fraction`);
+      // Fall back to dollar-based sizing without price conversion
+      const baseDollar = portfolioValue * minPositionSize;
+      const maxDollar = portfolioValue * maxPositionSize;
+      const strengthMultiplier = Math.min(signal.strength || 1, 1);
+      return Math.min(Math.max(baseDollar * strengthMultiplier, baseDollar), maxDollar);
+    }
     // Calculate dollar allocation, then convert to asset units
     const baseDollar = portfolioValue * minPositionSize;
     const maxDollar = portfolioValue * maxPositionSize;
     const strengthMultiplier = Math.min(signal.strength || 1, 1);
     const dollarSize = Math.min(Math.max(baseDollar * strengthMultiplier, baseDollar), maxDollar);
-    return dollarSize / price;
+    return dollarSize / currentPrice;
   }
 
   calculateSMA(values, period) {

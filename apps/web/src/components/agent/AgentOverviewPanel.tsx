@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import {
   DollarSign,
   TrendingUp,
-  TrendingDown,
+  TrendingDown as _TrendingDown,
   Activity,
   Clock,
   Target,
@@ -450,7 +450,7 @@ const AgentOverviewPanel: React.FC<AgentOverviewPanelProps> = ({
                 })()}
 
                 {/* Max Drawdown */}
-                {pipelineSummary?.risk?.averageMaxDrawdown != null && (
+                {pipelineSummary?.risk?.averageMaxDrawdown !== null && (
                   <div className="flex items-center justify-between p-2.5 bg-gray-50 rounded-lg">
                     <span className="text-sm text-gray-600">Avg Max Drawdown</span>
                     <span className="text-sm font-semibold text-orange-600">

@@ -21,7 +21,6 @@ import { EventEmitter } from 'events';
 import { query } from '../db/connection.js';
 import { logger } from '../utils/logger.js';
 import backtestingEngine from './backtestingEngine.js';
-import paperTradingService from './paperTradingService.js';
 import confidenceScoringService from './confidenceScoringService.js';
 import parallelStrategyRunner from './parallelStrategyRunner.js';
 
@@ -109,9 +108,6 @@ const FITNESS_DIVERGENCE_THRESHOLD = 0.20;
 /** Phase clock: if persistent negative slope for this many cycles, kill the strategy */
 const PHASE_CLOCK_KILL_CYCLES = 5;
 
-/** How many strategies run in parallel paper trading */
-const PARALLEL_PAPER_SLOTS = 10;
-
 /** Loop interval: 30 minutes between learning cycles */
 const LOOP_INTERVAL_MS = 30 * 60 * 1000;
 
@@ -139,10 +135,6 @@ function sameRegimeBasin(type1: StrategyType, type2: StrategyType): boolean {
 function safeNum(v: unknown, fallback = 0): number {
   const n = Number(v);
   return Number.isFinite(n) ? n : fallback;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

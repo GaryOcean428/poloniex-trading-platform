@@ -4,7 +4,7 @@
  * Prevents ".toFixed() of undefined" crashes throughout the dashboard.
  */
 export function safeNum(value: unknown): number {
-  if (value == null) return 0;
+  if (value === null || value === undefined) return 0;
   const n = Number(value);
   return Number.isFinite(n) ? n : 0;
 }

@@ -862,7 +862,7 @@ const AutonomousAgentDashboard: React.FC = () => {
               <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse" />
             </h3>
             <p className="text-red-700 text-sm mt-1">{circuitBreaker.reason}</p>
-            {circuitBreaker.cooldownRemaining != null && circuitBreaker.cooldownRemaining > 0 && (
+            {circuitBreaker.cooldownRemaining !== null && circuitBreaker.cooldownRemaining > 0 && (
               <p className="text-red-600 text-xs mt-2">
                 Auto-reset in {Math.ceil(circuitBreaker.cooldownRemaining / 60000)} min
               </p>
@@ -1080,7 +1080,7 @@ const AutonomousAgentDashboard: React.FC = () => {
                           'bg-purple-100 text-purple-700'
                         }`}>{event.execution_mode}</span>
                       )}
-                      {event.confidence_score != null && (
+                      {event.confidence_score !== null && (
                         <span className="text-xs text-gray-500">Confidence: {safeNum(event.confidence_score).toFixed(1)}%</span>
                       )}
                     </div>

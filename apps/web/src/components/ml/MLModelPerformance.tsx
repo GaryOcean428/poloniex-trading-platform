@@ -100,8 +100,8 @@ const MLModelPerformance: React.FC<{ symbol: string }> = ({ symbol }) => {
 
   // Format prediction price from backend response
   const formatPredictionPrice = (pred: any): string => {
-    if (pred?.price != null) return `$${pred.price.toFixed(2)}`;
-    if (pred?.prediction != null) return `$${pred.prediction.toFixed(2)}`;
+    if (pred?.price !== null) return `$${pred.price.toFixed(2)}`;
+    if (pred?.prediction !== null) return `$${pred.prediction.toFixed(2)}`;
     return 'N/A';
   };
 

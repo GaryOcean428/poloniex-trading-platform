@@ -8,7 +8,7 @@ declare global {
   }
 }
 
-declare namespace chrome {
+declare namespace _chrome {
   const runtime: any;
   const tabs: any;
   const windows: any;

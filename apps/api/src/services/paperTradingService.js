@@ -1310,6 +1310,14 @@ class PaperTradingService extends EventEmitter {
       return;
     }
 
+    // Guard against duplicate intervals for the same session
+    const existingInterval = this.strategyIntervals.get(sessionId);
+    if (existingInterval) {
+      clearInterval(existingInterval);
+      this.strategyIntervals.delete(sessionId);
+      logger.warn(`Cleared existing strategy interval for session ${sessionId} before starting new one`);
+    }
+
     // Run first cycle immediately, then every 60 seconds
     this._runStrategyCycle(sessionId);
 
@@ -1329,6 +1337,11 @@ class PaperTradingService extends EventEmitter {
         if (intervalId) {
           clearInterval(intervalId);
           this.strategyIntervals.delete(sessionId);
+        }
+        // Clean up inactive session from activeSessions map
+        if (session && session.status !== 'active') {
+          this.activeSessions.delete(sessionId);
+          logger.info(`Removed inactive session ${sessionId} (status: ${session.status}) from activeSessions`);
         }
         return;
       }
@@ -1351,7 +1364,7 @@ class PaperTradingService extends EventEmitter {
             };
           }
         } catch (err) {
-          logger.warn(`Could not fetch ticker for ${session.symbol}: ${err.message}`);
+          logger.warn(`Could not fetch ticker for ${session.symbol}: ${err?.message || err}`);
           return;
         }
       }
