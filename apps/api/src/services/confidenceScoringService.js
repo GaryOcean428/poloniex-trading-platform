@@ -53,7 +53,10 @@ class ConfidenceScoringService extends EventEmitter {
       censoredDivergenceThreshold: 0.20,
 
       // Confidence trajectory buffer length (number of past scores to retain)
-      trajectoryLength: 20
+      trajectoryLength: 20,
+
+      // Max number of trajectory keys to retain (prevents unbounded Map growth)
+      maxTrajectoryKeys: 1000
     };
 
     // Per-strategy confidence trajectory buffers (last N scores over time)
@@ -626,8 +629,9 @@ class ConfidenceScoringService extends EventEmitter {
    */
   calculateRecommendedPositionSize(confidenceScore, marketConditions) {
     try {
-      // Continuous scaling: position size is proportional to confidence
-      let baseSize = this.scoringParameters.basePositionSize * (confidenceScore / 100);
+      // Continuous scaling: position size is proportional to confidence [0-100]
+      const clampedConfidence = Math.max(0, Math.min(100, confidenceScore));
+      let baseSize = this.scoringParameters.basePositionSize * (clampedConfidence / 100);
 
       // Multiplicative market-condition adjustments
       if (marketConditions.volatility.level === 'high') {
@@ -738,7 +742,17 @@ class ConfidenceScoringService extends EventEmitter {
    * capping at scoringParameters.trajectoryLength entries.
    */
   updateConfidenceTrajectory(cacheKey, score) {
-    const buf = this.confidenceTrajectories.get(cacheKey) || [];
+    let buf = this.confidenceTrajectories.get(cacheKey);
+    if (!buf) {
+      // Evict oldest key if Map exceeds maxTrajectoryKeys
+      if (this.confidenceTrajectories.size >= this.scoringParameters.maxTrajectoryKeys) {
+        const oldestKey = this.confidenceTrajectories.keys().next().value;
+        if (oldestKey !== undefined) {
+          this.confidenceTrajectories.delete(oldestKey);
+        }
+      }
+      buf = [];
+    }
     buf.push(score);
     if (buf.length > this.scoringParameters.trajectoryLength) {
       buf.shift();
@@ -946,7 +960,7 @@ class ConfidenceScoringService extends EventEmitter {
       censoringInfo: {
         hasCensoredData: false,
         censoredTradeCount: 0,
-        confidenceWithCensored: 20,
+        confidenceWithCensored: null,
         confidenceWithoutCensored: null,
         estimateUnreliable: false
       },

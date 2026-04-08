@@ -90,6 +90,22 @@ describe('Paper to Live promotion thresholds', () => {
   it('blocks strategy with low profit factor', () => {
     expect(shouldPromoteToLive(0.55, 1.5, 10, false)).toBe(false);
   });
+
+  it('promotes scalping strategy meeting scalping criteria', () => {
+    expect(shouldPromoteToLive(0.55, 1.7, 10, false, 'scalping')).toBe(true);
+  });
+
+  it('blocks scalping strategy at exact scalping WR threshold (strict >)', () => {
+    expect(shouldPromoteToLive(0.50, 1.5, 10, false, 'scalping')).toBe(false);
+  });
+
+  it('blocks scalping strategy at exact scalping PF threshold (strict >)', () => {
+    expect(shouldPromoteToLive(0.55, 1.3, 10, false, 'scalping')).toBe(false);
+  });
+
+  it('blocks scalping strategy with insufficient trades', () => {
+    expect(shouldPromoteToLive(0.55, 1.7, 9, false, 'scalping')).toBe(false);
+  });
 });
 
 describe('QIG Censoring censored sessions blocked from live promotion', () => {

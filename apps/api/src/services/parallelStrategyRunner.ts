@@ -47,14 +47,14 @@ const MAX_PARALLEL_SLOTS = 10;
 /** Base virtual capital for paper trading (USDT) */
 const BASE_VIRTUAL_CAPITAL = 1000;
 
-/** Kill drawdown threshold per strategy */
-const KILL_DRAWDOWN_THRESHOLD = 0.10; // 10%
+/** Kill drawdown threshold per strategy (reserved for future kill logic) */
+const _KILL_DRAWDOWN_THRESHOLD = 0.10; // 10%
 
-/** Minimum Sharpe before soft-kill */
-const KILL_MIN_SHARPE = 0;
+/** Minimum Sharpe before soft-kill (reserved for future kill logic) */
+const _KILL_MIN_SHARPE = 0;
 
-/** Minimum trades before Sharpe evaluation */
-const MIN_TRADES_FOR_KILL = 50;
+/** Minimum trades before Sharpe evaluation (reserved for future kill logic) */
+const _MIN_TRADES_FOR_KILL = 50;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ParallelStrategyRunner
