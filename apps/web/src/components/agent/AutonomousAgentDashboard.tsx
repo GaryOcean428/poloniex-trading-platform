@@ -164,6 +164,8 @@ const AutonomousAgentDashboard: React.FC = () => {
           metadata: event.data,
           created_at: new Date(event.timestamp)
         }, ...prev].slice(0, 50));
+        // Refresh agent status counters on any activity
+        fetchAgentStatus();
       });
     }).catch(() => {
       setConnectionStatus('polling');
@@ -931,7 +933,15 @@ const AutonomousAgentDashboard: React.FC = () => {
       />
 
       {/* Real-Time Strategy Generation Display */}
-      <StrategyGenerationDisplay agentStatus={agentStatus?.status} />
+      <StrategyGenerationDisplay
+        agentStatus={agentStatus?.status}
+        strategiesGenerated={agentStatus?.strategiesGenerated}
+        backtestsCompleted={agentStatus?.backtestsCompleted}
+        paperTradesExecuted={agentStatus?.paperTradesExecuted}
+        lastActivity={activity[0]?.description}
+        startedAt={agentStatus?.startedAt}
+        errorCount={activity.filter(a => a.activity_type === 'error').length}
+      />
 
       {/* Strategy Approval Queue */}
       <StrategyApprovalQueue agentStatus={agentStatus?.status} />
@@ -1066,8 +1076,8 @@ const AutonomousAgentDashboard: React.FC = () => {
                           'bg-purple-100 text-purple-700'
                         }`}>{event.execution_mode}</span>
                       )}
-                      {event.confidence_score != null && safeNum(
-                        <span className="text-xs text-gray-500">Confidence: {Number(event.confidence_score).toFixed(1)}%</span>
+                      {event.confidence_score != null && (
+                        <span className="text-xs text-gray-500">Confidence: {safeNum(event.confidence_score).toFixed(1)}%</span>
                       )}
                     </div>
                     <p className="text-sm text-gray-900">{event.description}</p>
