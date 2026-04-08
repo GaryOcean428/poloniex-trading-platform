@@ -63,7 +63,7 @@ export class Logger {
   }
 
   private logToConsole(entry: LogEntry): void {
-    const formatted = this.formatLogEntry(entry);
+    const _formatted = this.formatLogEntry(entry);
 
     switch (entry.level) {
       case 'DEBUG':

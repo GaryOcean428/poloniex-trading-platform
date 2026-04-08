@@ -306,7 +306,7 @@ function localeToFormat(locale: DateLocale): DateFormat {
  */
 export function formatTime(
   date: Date | string | number,
-  locale: DateLocale = 'en-AU'
+  _locale: DateLocale = 'en-AU'
 ): string {
   const dateObj = date instanceof Date ? date : new Date(date);
 
@@ -348,7 +348,7 @@ export function formatDateTime(
  */
 export function formatRelativeTime(
   date: Date | string | number,
-  locale?: DateLocale
+  _locale?: DateLocale
 ): string {
   return getRelativeTime(date);
 }

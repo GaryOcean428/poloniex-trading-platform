@@ -394,7 +394,7 @@ class BacktestingEngine extends EventEmitter {
 
   async executeEntry(signal, currentCandle, config) {
     try {
-      const positionSize = this.calculatePositionSize(signal, config);
+      const positionSize = this.calculatePositionSize(signal, config, currentCandle.close);
       const executionPrice = this.simulateMarketExecution(currentCandle.close, signal.side, positionSize, 'entry');
       const stopLoss = this.calculateStopLoss(executionPrice, signal.side, config);
       const takeProfit = this.calculateTakeProfit(executionPrice, signal.side, config);
@@ -433,13 +433,23 @@ class BacktestingEngine extends EventEmitter {
     return side === 'long' ? basePrice * (1 + totalSlippage) : basePrice * (1 - totalSlippage);
   }
 
-  calculatePositionSize(signal, config) {
+  calculatePositionSize(signal, config, currentPrice) {
     const { maxPositionSize = 0.1, minPositionSize = 0.01 } = config;
     const portfolioValue = this.currentBacktest.portfolio.totalValue;
-    const baseSize = portfolioValue * minPositionSize;
-    const maxSize = portfolioValue * maxPositionSize;
+    if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
+      logger.warn(`Invalid currentPrice (${currentPrice}) in calculatePositionSize, using portfolio fraction`);
+      // Fall back to dollar-based sizing without price conversion
+      const baseDollar = portfolioValue * minPositionSize;
+      const maxDollar = portfolioValue * maxPositionSize;
+      const strengthMultiplier = Math.min(signal.strength || 1, 1);
+      return Math.min(Math.max(baseDollar * strengthMultiplier, baseDollar), maxDollar);
+    }
+    // Calculate dollar allocation, then convert to asset units
+    const baseDollar = portfolioValue * minPositionSize;
+    const maxDollar = portfolioValue * maxPositionSize;
     const strengthMultiplier = Math.min(signal.strength || 1, 1);
-    return Math.min(Math.max(baseSize * strengthMultiplier, baseSize), maxSize);
+    const dollarSize = Math.min(Math.max(baseDollar * strengthMultiplier, baseDollar), maxDollar);
+    return dollarSize / currentPrice;
   }
 
   calculateSMA(values, period) {
@@ -666,6 +676,68 @@ class BacktestingEngine extends EventEmitter {
   }
   stopBacktest() { this.isRunning = false; logger.info('Backtest stopped by user'); }
   getBacktestStatus() { return { isRunning: this.isRunning, currentBacktest: this.currentBacktest, strategies: Array.from(this.strategies.keys()) }; }
+
+  /**
+   * Walk-forward validation: splits historical data into train (70%) + test (30%).
+   * Runs backtest simulation on out-of-sample test period only.
+   * Returns out-of-sample metrics to prevent overfitting.
+   *
+   * @param {string} strategyName
+   * @param {Object} config - same as runBacktest config
+   * @param {number} trainFraction - fraction used for training (default 0.7)
+   * @returns {Object} Out-of-sample backtest metrics
+   */
+  async runWalkForwardValidation(strategyName, config, trainFraction = 0.7) {
+    try {
+      const strategy = this.strategies.get(strategyName);
+      if (!strategy) throw new Error(`Strategy ${strategyName} not found for walk-forward validation`);
+
+      const allData = await this.loadHistoricalData(
+        config.symbol, config.timeframe || '1h', config.startDate, config.endDate
+      );
+      if (allData.length < 20) {
+        throw new Error(`Insufficient data for walk-forward validation: ${allData.length} bars`);
+      }
+
+      const splitIndex = Math.floor(allData.length * trainFraction);
+      const testData = allData.slice(splitIndex); // out-of-sample period
+
+      if (testData.length < 5) {
+        throw new Error('Test period too short for walk-forward validation');
+      }
+
+      // Run simulation on test (out-of-sample) data only
+      const testBacktest = {
+        strategyName, config, startTime: new Date(), trades: [], positions: [],
+        portfolio: {
+          cash: config.initialCapital || 100000, totalValue: config.initialCapital || 100000,
+          equity: config.initialCapital || 100000, margin: 0, unrealizedPnl: 0, realizedPnl: 0
+        },
+        metrics: { totalTrades: 0, winningTrades: 0, losingTrades: 0, maxDrawdown: 0, maxDrawdownPercent: 0, sharpeRatio: 0, sortinoRatio: 0, calmarRatio: 0 },
+        dailyReturns: [], equity_curve: []
+      };
+
+      const savedBacktest = this.currentBacktest;
+      this.currentBacktest = testBacktest;
+
+      await this.runBacktestSimulation(strategy, testData, config);
+      this.calculateBacktestMetrics();
+
+      const outOfSampleMetrics = { ...this.currentBacktest.metrics, isWalkForward: true, testBars: testData.length, trainBars: splitIndex };
+      this.currentBacktest = savedBacktest;
+
+      logger.info(
+        `[WF] Walk-forward validation for ${strategyName}: ` +
+        `OOS sharpe=${safeNum(outOfSampleMetrics.sharpeRatio).toFixed(2)} ` +
+        `WR=${(safeNum(outOfSampleMetrics.winRate) * 100).toFixed(1)}%`
+      );
+
+      return outOfSampleMetrics;
+    } catch (error) {
+      logger.error(`Walk-forward validation failed for ${strategyName}:`, error);
+      throw error;
+    }
+  }
 }
 
 export default new BacktestingEngine();

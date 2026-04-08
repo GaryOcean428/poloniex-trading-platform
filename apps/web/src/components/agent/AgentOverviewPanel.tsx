@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import {
   DollarSign,
   TrendingUp,
-  TrendingDown,
+  TrendingDown as _TrendingDown,
   Activity,
   Clock,
   Target,
@@ -186,7 +186,14 @@ const AgentOverviewPanel: React.FC<AgentOverviewPanelProps> = ({
   const riskRating = pipelineSummary?.risk?.rating || 'unknown';
 
   // Find best and worst strategies from breakdown
-  const breakdown = pipelineSummary?.strategyBreakdown || [];
+  // API returns { performance: { winRate, totalReturn, ... } } — flatten for display
+  const rawBreakdown = pipelineSummary?.strategyBreakdown || [];
+  const breakdown = rawBreakdown.map((s: any) => ({
+    ...s,
+    winRate: s.winRate ?? s.performance?.winRate ?? 0,
+    pnl: s.pnl ?? s.performance?.totalReturn ?? 0,
+    totalTrades: s.totalTrades ?? s.performance?.totalTrades ?? 0,
+  }));
   const sortedByPnl = [...breakdown].sort((a, b) => b.pnl - a.pnl);
   const bestStrategy = sortedByPnl[0] || null;
   const worstStrategy = sortedByPnl.length > 1 ? sortedByPnl[sortedByPnl.length - 1] : null;
@@ -443,7 +450,7 @@ const AgentOverviewPanel: React.FC<AgentOverviewPanelProps> = ({
                 })()}
 
                 {/* Max Drawdown */}
-                {pipelineSummary?.risk?.averageMaxDrawdown != null && (
+                {pipelineSummary?.risk?.averageMaxDrawdown !== null && (
                   <div className="flex items-center justify-between p-2.5 bg-gray-50 rounded-lg">
                     <span className="text-sm text-gray-600">Avg Max Drawdown</span>
                     <span className="text-sm font-semibold text-orange-600">

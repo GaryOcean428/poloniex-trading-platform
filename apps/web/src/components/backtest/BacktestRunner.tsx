@@ -42,7 +42,7 @@ export default function BacktestRunner({ strategyId, strategyName, onComplete }:
   const [progress, setProgress] = useState(0);
   const [results, setResults] = useState<BacktestResults | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [backtestId, setBacktestId] = useState<string | null>(null);
+  const [_backtestId, setBacktestId] = useState<string | null>(null);
   
   // Use real account balance for initial capital, fallback to 10000 if not available
   const defaultInitialCapital = accountBalance?.total || 10000;

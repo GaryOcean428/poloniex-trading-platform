@@ -80,6 +80,8 @@ interface StrategyBreakdown {
     profitFactor?: number;
     totalTrades?: number;
     totalReturn?: number;
+    sharpeRatio?: number;
+    maxDrawdown?: number;
   };
 }
 
@@ -118,7 +120,9 @@ interface PipelineResult {
 
 // ─── Helper Components ────────────────────────────────────────────────────────
 
-const ConfidenceMeter: React.FC<{ score: number; level: string }> = ({ score, level }) => {
+const MINIMUM_TRADES_FOR_CONFIDENCE = 30;
+
+const ConfidenceMeter: React.FC<{ score: number; level: string; paperTrades?: number }> = ({ score, level, paperTrades }) => {
   const getColor = () => {
     if (level === 'high') return { bar: 'bg-green-500', text: 'text-green-700', bg: 'bg-green-50' };
     if (level === 'medium') return { bar: 'bg-yellow-500', text: 'text-yellow-700', bg: 'bg-yellow-50' };
@@ -128,6 +132,30 @@ const ConfidenceMeter: React.FC<{ score: number; level: string }> = ({ score, le
   };
   const colors = getColor();
   const clampedScore = Math.min(100, Math.max(0, score));
+  const tradesCompleted = paperTrades ?? 0;
+  const isInsufficient = level === 'insufficient_data' || (score === 0 && tradesCompleted < MINIMUM_TRADES_FOR_CONFIDENCE);
+  const tradeProgress = Math.min(tradesCompleted, MINIMUM_TRADES_FOR_CONFIDENCE);
+  const tradeProgressPct = Math.round((tradeProgress / MINIMUM_TRADES_FOR_CONFIDENCE) * 100);
+
+  if (isInsufficient) {
+    return (
+      <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-sm font-medium text-gray-600">Confidence Score</span>
+          <span className="text-sm font-semibold text-gray-500">{tradesCompleted}/{MINIMUM_TRADES_FOR_CONFIDENCE} trades</span>
+        </div>
+        <div className="w-full bg-gray-200 rounded-full h-3 mb-2">
+          <div
+            className="bg-blue-400 h-3 rounded-full transition-all duration-700"
+            style={{ width: `${tradeProgressPct}%` }}
+          />
+        </div>
+        <p className="text-xs text-gray-500">
+          Need {MINIMUM_TRADES_FOR_CONFIDENCE} paper trades for a confidence score ({tradesCompleted}/{MINIMUM_TRADES_FOR_CONFIDENCE} completed)
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className={`${colors.bg} p-4 rounded-lg`}>
@@ -377,7 +405,7 @@ const Backtesting: React.FC = () => {
 
         {/* Confidence & Risk Row */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <ConfidenceMeter score={confidence.score} level={confidence.level} />
+          <ConfidenceMeter score={confidence.score} level={confidence.level} paperTrades={summary.paperTrading?.totalTrades} />
           <div className="bg-bg-tertiary p-4 rounded-lg shadow flex items-center justify-between">
             <div>
               <p className="text-sm text-gray-600 mb-1">Risk Assessment</p>
@@ -502,7 +530,7 @@ const Backtesting: React.FC = () => {
                   </div>
                 </div>
                 <div className="flex items-center space-x-4">
-                  {strategy.performance.winRate != null && (
+                  {strategy.performance.winRate !== null && (
                     <span className="text-sm text-text-secondary">
                       WR: {(strategy.performance.winRate * 100).toFixed(1)}%
                     </span>
@@ -530,31 +558,63 @@ const Backtesting: React.FC = () => {
                     </div>
 
                     {/* Performance */}
-                    {strategy.performance && strategy.performance.winRate != null && (
+                    {strategy.performance && (
+                      Object.values(strategy.performance).some(v => v !== null)
+                    ) && (
                       <div>
                         <p className="text-xs text-text-muted mb-2 font-medium">BACKTEST PERFORMANCE</p>
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                          <div className="bg-bg-secondary p-3 rounded">
-                            <p className="text-xs text-text-muted">Win Rate</p>
-                            <p className="text-sm font-bold">{((strategy.performance.winRate || 0) * 100).toFixed(1)}%</p>
-                          </div>
-                          <div className="bg-bg-secondary p-3 rounded">
-                            <p className="text-xs text-text-muted">Profit Factor</p>
-                            <p className="text-sm font-bold">{(strategy.performance.profitFactor || 0).toFixed(2)}</p>
-                          </div>
-                          <div className="bg-bg-secondary p-3 rounded">
-                            <p className="text-xs text-text-muted">Total Trades</p>
-                            <p className="text-sm font-bold">{strategy.performance.totalTrades || 0}</p>
-                          </div>
-                          <div className="bg-bg-secondary p-3 rounded">
-                            <p className="text-xs text-text-muted">Total Return</p>
-                            <p className={`text-sm font-bold ${
-                              (strategy.performance.totalReturn || 0) >= 0 ? 'text-green-600' : 'text-red-600'
-                            }`}>
-                              {((strategy.performance.totalReturn || 0) * 100).toFixed(2)}%
-                            </p>
-                          </div>
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                          {strategy.performance.winRate !== null && (
+                            <div className="bg-bg-secondary p-3 rounded">
+                              <p className="text-xs text-text-muted">Win Rate</p>
+                              <p className="text-sm font-bold">{((strategy.performance.winRate || 0) * 100).toFixed(1)}%</p>
+                            </div>
+                          )}
+                          {strategy.performance.profitFactor !== null && (
+                            <div className="bg-bg-secondary p-3 rounded">
+                              <p className="text-xs text-text-muted">Profit Factor</p>
+                              <p className="text-sm font-bold">{(strategy.performance.profitFactor || 0).toFixed(2)}</p>
+                            </div>
+                          )}
+                          {strategy.performance.totalTrades !== null && (
+                            <div className="bg-bg-secondary p-3 rounded">
+                              <p className="text-xs text-text-muted">Total Trades</p>
+                              <p className="text-sm font-bold">{strategy.performance.totalTrades || 0}</p>
+                            </div>
+                          )}
+                          {strategy.performance.totalReturn !== null && (
+                            <div className="bg-bg-secondary p-3 rounded">
+                              <p className="text-xs text-text-muted">Total Return</p>
+                              <p className={`text-sm font-bold ${
+                                (strategy.performance.totalReturn || 0) >= 0 ? 'text-green-600' : 'text-red-600'
+                              }`}>
+                                {((strategy.performance.totalReturn || 0) * 100).toFixed(2)}%
+                              </p>
+                            </div>
+                          )}
+                          {strategy.performance.sharpeRatio !== null && (
+                            <div className="bg-bg-secondary p-3 rounded">
+                              <p className="text-xs text-text-muted">Sharpe Ratio</p>
+                              <p className={`text-sm font-bold ${
+                                (strategy.performance.sharpeRatio || 0) >= 1 ? 'text-green-600' :
+                                (strategy.performance.sharpeRatio || 0) >= 0 ? 'text-yellow-600' : 'text-red-600'
+                              }`}>
+                                {(strategy.performance.sharpeRatio || 0).toFixed(2)}
+                              </p>
+                            </div>
+                          )}
+                          {strategy.performance.maxDrawdown !== null && (
+                            <div className="bg-bg-secondary p-3 rounded">
+                              <p className="text-xs text-text-muted">Max Drawdown</p>
+                              <p className="text-sm font-bold text-red-600">
+                                {(strategy.performance.maxDrawdown || 0).toFixed(2)}%
+                              </p>
+                            </div>
+                          )}
                         </div>
+                        {Object.values(strategy.performance).every(v => v === null) && (
+                          <p className="text-xs text-text-muted py-2">No performance metrics available yet.</p>
+                        )}
                       </div>
                     )}
 
@@ -745,7 +805,7 @@ const Backtesting: React.FC = () => {
               <Brain className="w-5 h-5 mr-2 text-purple-500" />
               Strategy Confidence
             </h3>
-            <ConfidenceMeter score={confidence.score} level={confidence.level} />
+            <ConfidenceMeter score={confidence.score} level={confidence.level} paperTrades={summary.paperTrading?.totalTrades} />
             <p className="text-xs text-text-muted mt-3">
               Based on backtesting performance across all agent-generated strategies.
               A score above 60 is considered sufficient for live deployment.

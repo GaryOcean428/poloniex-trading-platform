@@ -56,7 +56,7 @@ const AccountSummary: React.FC = () => {
       if (balance.eq !== undefined) {
         const equity = parseFloat(balance.eq || "0");
         const initialMargin = parseFloat(balance.im || "0");
-        const maintenanceMargin = parseFloat(balance.mm || "0");
+        const _maintenanceMargin = parseFloat(balance.mm || "0");
         const available = equity - initialMargin; // Available = Equity - Initial Margin
         
         return {

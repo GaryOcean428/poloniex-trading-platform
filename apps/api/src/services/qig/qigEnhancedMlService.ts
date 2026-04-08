@@ -241,7 +241,7 @@ class QIGEnhancedMLService {
     metrics: QIGMetrics,
     currentPrice: number
   ): { '1h': Prediction; '4h': Prediction; '24h': Prediction } {
-    const { sma20, ema12, rsi } = state.indicators;
+    const { sma20, ema12 } = state.indicators;
     
     // Simple trend detection
     const bullish = currentPrice > sma20 && currentPrice > ema12;
@@ -283,7 +283,7 @@ class QIGEnhancedMLService {
     metrics: QIGMetrics,
     currentPrice: number
   ): { '1h': Prediction; '4h': Prediction; '24h': Prediction } {
-    const { sma20, sma50, ema12, rsi, macd, macdHistogram } = state.indicators;
+    const { sma20, sma50, ema12, rsi, macdHistogram } = state.indicators;
     const weights = metrics.attentionWeights;
     
     // Weighted bullish/bearish scoring
@@ -398,7 +398,7 @@ class QIGEnhancedMLService {
   /**
    * Generate human-readable explanation of QIG metrics
    */
-  private generateExplanation(metrics: QIGMetrics, state: MarketState): string {
+  private generateExplanation(metrics: QIGMetrics, _state: MarketState): string {
     const regimeExplanations = {
       LINEAR: 'Market is in a stable, predictable state with clear trends. Using simple trend-following strategy.',
       GEOMETRIC: 'Market shows complex patterns requiring full multi-indicator analysis. Using attention-weighted synthesis.',
