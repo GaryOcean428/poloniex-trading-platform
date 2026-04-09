@@ -76,6 +76,7 @@ interface Strategy {
     profitFactor: number;
     totalTrades: number;
     totalReturn: number;
+    maxDrawdown?: number;
   };
   subStrategies?: {
     strategyId: string;
