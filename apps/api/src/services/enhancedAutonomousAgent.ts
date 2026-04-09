@@ -872,17 +872,17 @@ class EnhancedAutonomousAgent extends EventEmitter {
         metrics.totalReturn != null
           ? (Math.abs(metrics.totalReturn) <= 1 ? metrics.totalReturn * 100 : metrics.totalReturn)
           : 0;
-      const rawMaxDrawdown = metrics.maxDrawdownPercent ?? metrics.maxDrawdown ?? 0;
+      const rawMaxDrawdown = metrics.maxDrawdownPercent ?? metrics.maxDrawdown ?? null;
       const normalizedMaxDrawdown =
         rawMaxDrawdown != null
           ? (Math.abs(rawMaxDrawdown) <= 1 ? rawMaxDrawdown * 100 : rawMaxDrawdown)
-          : 0;
+          : null;
       strategy.performance = {
         winRate: normalizedWinRate,
         profitFactor: metrics.profitFactor || 0,
         totalTrades: metrics.totalTrades || 0,
         totalReturn: normalizedTotalReturn,
-        maxDrawdown: normalizedMaxDrawdown
+        ...(normalizedMaxDrawdown !== null ? { maxDrawdown: normalizedMaxDrawdown } : {})
       };
       strategy.status = 'backtested';
       
