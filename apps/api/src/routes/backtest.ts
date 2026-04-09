@@ -134,6 +134,12 @@ async function getStrategyNameColumn(): Promise<string> {
   return _strategyNameCol;
 }
 
+function normalizePercentLikeValue(value: unknown): number | null {
+  const num = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(num)) return null;
+  return Math.abs(num) <= 1 ? num * 100 : num;
+}
+
 // Store running backtests in-memory for active progress tracking
 // Completed results are persisted to the database
 const runningBacktests = new Map<string, BacktestRecord>();
@@ -582,7 +588,7 @@ router.get('/pipeline/summary', authenticateToken, async (req: Request, res: Res
     let totalPaperTrading = 0;
     let totalLive = 0;
     let overallConfidence = 0;
-    let averageMaxDrawdown = 0;
+    let averageMaxDrawdown: number | null = null;
     let paperTradingSummary: PaperTradingSummary | null = null;
     let recentEvents: RecentEvent[] = [];
     let strategyBreakdown: StrategyBreakdown[] = [];
@@ -611,8 +617,13 @@ router.get('/pipeline/summary', authenticateToken, async (req: Request, res: Res
       const drawdowns: number[] = [];
       for (const s of strategies) {
         const perf = s.performance;
-        if (perf && typeof perf === 'object' && typeof perf.maxDrawdown === 'number') {
-          drawdowns.push(perf.maxDrawdown);
+        if (perf && typeof perf === 'object') {
+          const parsedDrawdown = normalizePercentLikeValue(
+            perf.maxDrawdownPercent ?? perf.maxDrawdown ?? perf.max_drawdown_percent ?? perf.max_drawdown
+          );
+          if (parsedDrawdown !== null) {
+            drawdowns.push(parsedDrawdown);
+          }
         }
       }
       if (drawdowns.length > 0) {
@@ -724,7 +735,9 @@ router.get('/pipeline/summary', authenticateToken, async (req: Request, res: Res
         },
         risk: {
           rating: riskRating,
-          averageMaxDrawdown: Math.round(averageMaxDrawdown * 100) / 100
+          averageMaxDrawdown: averageMaxDrawdown !== null
+            ? Math.round(averageMaxDrawdown * 100) / 100
+            : null
         },
         paperTrading: paperTradingSummary,
         liveReadiness,
@@ -742,7 +755,7 @@ router.get('/pipeline/summary', authenticateToken, async (req: Request, res: Res
       summary: {
         strategyCounts: { generated: 0, backtested: 0, paperTrading: 0, live: 0 },
         confidence: { score: 0, level: 'insufficient_data' },
-        risk: { rating: 'unknown', averageMaxDrawdown: 0 },
+        risk: { rating: 'unknown', averageMaxDrawdown: null },
         paperTrading: null,
         liveReadiness: { ready: false, reasons: ['Unable to load pipeline data — start the agent to begin.'] },
         recentEvents: [],
@@ -766,7 +779,8 @@ function getConfidenceLevel(score: number): string {
 /**
  * Derive a risk rating from the average max drawdown percentage
  */
-function getRiskRating(avgMaxDrawdown: number): string {
+function getRiskRating(avgMaxDrawdown: number | null): string {
+  if (avgMaxDrawdown === null) return 'unknown';
   const dd = Math.abs(avgMaxDrawdown);
   if (dd >= 30) return 'very_high';
   if (dd >= 20) return 'high';
