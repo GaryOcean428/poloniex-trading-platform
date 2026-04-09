@@ -53,6 +53,37 @@ CREATE TABLE IF NOT EXISTS strategy_performance (
     generation           INTEGER NOT NULL DEFAULT 0
 );
 
+-- Ensure all columns exist (idempotent: handles pre-existing table with partial schema)
+ALTER TABLE strategy_performance ADD COLUMN IF NOT EXISTS symbol TEXT NOT NULL DEFAULT '';
+ALTER TABLE strategy_performance ADD COLUMN IF NOT EXISTS leverage NUMERIC(6,2) NOT NULL DEFAULT 1;
+ALTER TABLE strategy_performance ADD COLUMN IF NOT EXISTS timeframe TEXT NOT NULL DEFAULT '';
+ALTER TABLE strategy_performance ADD COLUMN IF NOT EXISTS strategy_type TEXT NOT NULL DEFAULT '';
+ALTER TABLE strategy_performance ADD COLUMN IF NOT EXISTS regime_at_creation TEXT NOT NULL DEFAULT 'unknown';
+ALTER TABLE strategy_performance ADD COLUMN IF NOT EXISTS backtest_sharpe NUMERIC(10,4);
+ALTER TABLE strategy_performance ADD COLUMN IF NOT EXISTS backtest_wr NUMERIC(6,4);
+ALTER TABLE strategy_performance ADD COLUMN IF NOT EXISTS backtest_max_dd NUMERIC(6,4);
+ALTER TABLE strategy_performance ADD COLUMN IF NOT EXISTS paper_sharpe NUMERIC(10,4);
+ALTER TABLE strategy_performance ADD COLUMN IF NOT EXISTS paper_wr NUMERIC(6,4);
+ALTER TABLE strategy_performance ADD COLUMN IF NOT EXISTS paper_pnl NUMERIC(14,4);
+ALTER TABLE strategy_performance ADD COLUMN IF NOT EXISTS paper_trades INTEGER DEFAULT 0;
+ALTER TABLE strategy_performance ADD COLUMN IF NOT EXISTS live_sharpe NUMERIC(10,4);
+ALTER TABLE strategy_performance ADD COLUMN IF NOT EXISTS live_pnl NUMERIC(14,4);
+ALTER TABLE strategy_performance ADD COLUMN IF NOT EXISTS live_trades INTEGER DEFAULT 0;
+ALTER TABLE strategy_performance ADD COLUMN IF NOT EXISTS is_censored BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE strategy_performance ADD COLUMN IF NOT EXISTS censor_reason TEXT;
+ALTER TABLE strategy_performance ADD COLUMN IF NOT EXISTS uncensored_sharpe NUMERIC(10,4);
+ALTER TABLE strategy_performance ADD COLUMN IF NOT EXISTS fitness_divergent BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE strategy_performance ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'backtesting';
+ALTER TABLE strategy_performance ADD COLUMN IF NOT EXISTS confidence_score NUMERIC(6,2);
+ALTER TABLE strategy_performance ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE strategy_performance ADD COLUMN IF NOT EXISTS promoted_paper_at TIMESTAMPTZ;
+ALTER TABLE strategy_performance ADD COLUMN IF NOT EXISTS recommended_live_at TIMESTAMPTZ;
+ALTER TABLE strategy_performance ADD COLUMN IF NOT EXISTS promoted_live_at TIMESTAMPTZ;
+ALTER TABLE strategy_performance ADD COLUMN IF NOT EXISTS killed_at TIMESTAMPTZ;
+ALTER TABLE strategy_performance ADD COLUMN IF NOT EXISTS kill_reason TEXT;
+ALTER TABLE strategy_performance ADD COLUMN IF NOT EXISTS parent_strategy_id TEXT;
+ALTER TABLE strategy_performance ADD COLUMN IF NOT EXISTS generation INTEGER NOT NULL DEFAULT 0;
+
 -- Index for ML queries: find best strategies per (symbol, type, timeframe, regime)
 CREATE INDEX IF NOT EXISTS idx_sp_symbol_type
     ON strategy_performance (symbol, strategy_type, regime_at_creation, status);
