@@ -76,6 +76,7 @@ interface Strategy {
     profitFactor: number;
     totalTrades: number;
     totalReturn: number;
+    maxDrawdown?: number;
   };
   subStrategies?: {
     strategyId: string;
@@ -861,13 +862,27 @@ class EnhancedAutonomousAgent extends EventEmitter {
         initialCapital: 10000
       });
       
-      // Backtest engine stores results in metrics sub-object; winRate is a percentage (0-100)
+      // Backtest engine stores results in metrics sub-object; normalize units defensively.
       const metrics = (backtestResult?.metrics || backtestResult || {}) as Record<string, any>;
+      const normalizedWinRate =
+        metrics.winRate != null
+          ? (metrics.winRate > 1 ? metrics.winRate / 100 : metrics.winRate)
+          : 0;
+      const normalizedTotalReturn =
+        metrics.totalReturn != null
+          ? (Math.abs(metrics.totalReturn) <= 1 ? metrics.totalReturn * 100 : metrics.totalReturn)
+          : 0;
+      const rawMaxDrawdown = metrics.maxDrawdownPercent ?? metrics.maxDrawdown ?? null;
+      const normalizedMaxDrawdown =
+        rawMaxDrawdown != null
+          ? (Math.abs(rawMaxDrawdown) <= 1 ? rawMaxDrawdown * 100 : rawMaxDrawdown)
+          : null;
       strategy.performance = {
-        winRate: (metrics.winRate != null ? metrics.winRate / 100 : 0),
+        winRate: normalizedWinRate,
         profitFactor: metrics.profitFactor || 0,
         totalTrades: metrics.totalTrades || 0,
-        totalReturn: metrics.totalReturn || 0
+        totalReturn: normalizedTotalReturn,
+        ...(normalizedMaxDrawdown !== null ? { maxDrawdown: normalizedMaxDrawdown } : {})
       };
       strategy.status = 'backtested';
       

@@ -36,9 +36,9 @@ interface PaperTradingSummary {
 
 interface StrategyBreakdown {
   strategyName: string;
-  pnl: number;
+  returnPct: number;
   totalTrades: number;
-  winRate: number;
+  winRatePct: number;
   status: string;
 }
 
@@ -55,7 +55,7 @@ interface PipelineSummary {
   };
   risk: {
     rating: string;
-    averageMaxDrawdown: number;
+    averageMaxDrawdown: number | null;
   };
   paperTrading: PaperTradingSummary | null;
   strategyBreakdown: StrategyBreakdown[];
@@ -136,6 +136,11 @@ const AgentOverviewPanel: React.FC<AgentOverviewPanelProps> = ({
     return `${prefix}${safeNum(value).toFixed(1)}%`;
   };
 
+  const toPercent = (value: number | undefined | null): number => {
+    const n = safeNum(value ?? 0);
+    return Math.abs(n) <= 1 ? n * 100 : n;
+  };
+
   const pnlColor = (value: number): string =>
     value > 0 ? 'text-green-600' : value < 0 ? 'text-red-600' : 'text-gray-600';
 
@@ -189,14 +194,15 @@ const AgentOverviewPanel: React.FC<AgentOverviewPanelProps> = ({
   // API returns { performance: { winRate, totalReturn, ... } } — flatten for display
   const rawBreakdown = pipelineSummary?.strategyBreakdown || [];
   const breakdown = rawBreakdown.map((s: any) => ({
-    ...s,
-    winRate: s.winRate ?? s.performance?.winRate ?? 0,
-    pnl: s.pnl ?? s.performance?.totalReturn ?? 0,
-    totalTrades: s.totalTrades ?? s.performance?.totalTrades ?? 0,
+    strategyName: s.strategyName ?? s.name ?? 'Unnamed strategy',
+    status: s.status ?? 'unknown',
+    totalTrades: safeNum(s.totalTrades ?? s.performance?.totalTrades ?? 0),
+    winRatePct: toPercent(s.winRate ?? s.performance?.winRate ?? 0),
+    returnPct: toPercent(s.pnl ?? s.performance?.totalReturn ?? 0),
   }));
-  const sortedByPnl = [...breakdown].sort((a, b) => b.pnl - a.pnl);
-  const bestStrategy = sortedByPnl[0] || null;
-  const worstStrategy = sortedByPnl.length > 1 ? sortedByPnl[sortedByPnl.length - 1] : null;
+  const sortedByReturn = [...breakdown].sort((a, b) => b.returnPct - a.returnPct);
+  const bestStrategy = sortedByReturn[0] || null;
+  const worstStrategy = sortedByReturn.length > 1 ? sortedByReturn[sortedByReturn.length - 1] : null;
 
   if (loading) {
     return (
@@ -422,17 +428,20 @@ const AgentOverviewPanel: React.FC<AgentOverviewPanelProps> = ({
               <div className="space-y-2">
                 {/* Avg Win Rate across strategies */}
                 {(() => {
-                  const avgWinRate = breakdown.reduce((sum, s) => sum + s.winRate, 0) / breakdown.length;
-                  const totalPnl = breakdown.reduce((sum, s) => sum + s.pnl, 0);
+                  const totalTrades = breakdown.reduce((sum, s) => sum + safeNum(s.totalTrades), 0);
+                  const avgWinRate = totalTrades > 0
+                    ? breakdown.reduce((sum, s) => sum + (s.winRatePct * safeNum(s.totalTrades)), 0) / totalTrades
+                    : breakdown.reduce((sum, s) => sum + s.winRatePct, 0) / breakdown.length;
+                  const avgReturn = breakdown.reduce((sum, s) => sum + s.returnPct, 0) / breakdown.length;
                   return (
                     <>
-                      <div className={`p-4 rounded-lg ${pnlBg(totalPnl)}`}>
+                      <div className={`p-4 rounded-lg ${pnlBg(avgReturn)}`}>
                         <div className="flex items-center justify-between mb-1">
-                          <span className="text-sm text-gray-600">Aggregate P&amp;L</span>
+                          <span className="text-sm text-gray-600">Avg Return</span>
                           <Percent className="w-4 h-4 text-gray-400" />
                         </div>
-                        <p className={`text-2xl font-bold ${pnlColor(totalPnl)}`}>
-                          {formatCurrency(totalPnl)}
+                        <p className={`text-2xl font-bold ${pnlColor(avgReturn)}`}>
+                          {formatPercent(avgReturn)}
                         </p>
                         <p className="text-sm text-gray-500 mt-0.5">
                           across {breakdown.length} strategies
@@ -461,36 +470,36 @@ const AgentOverviewPanel: React.FC<AgentOverviewPanelProps> = ({
 
                 {/* Best Strategy */}
                 {bestStrategy && (
-                  <div className={`p-2.5 rounded-lg border ${bestStrategy.pnl >= 0 ? 'border-green-200 bg-green-50' : 'border-gray-200 bg-gray-50'}`}>
+                  <div className={`p-2.5 rounded-lg border ${bestStrategy.returnPct >= 0 ? 'border-green-200 bg-green-50' : 'border-gray-200 bg-gray-50'}`}>
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-gray-500">Best Strategy</span>
-                      <span className={`text-xs font-semibold ${pnlColor(bestStrategy.pnl)}`}>
-                        {formatCurrency(bestStrategy.pnl)}
+                      <span className={`text-xs font-semibold ${pnlColor(bestStrategy.returnPct)}`}>
+                        {formatPercent(bestStrategy.returnPct)}
                       </span>
                     </div>
                     <p className="text-sm font-medium text-gray-900 truncate mt-0.5">
                       {bestStrategy.strategyName}
                     </p>
                     <p className="text-xs text-gray-500">
-                      {bestStrategy.totalTrades} trades · {safeNum(bestStrategy.winRate).toFixed(0)}% win
+                      {bestStrategy.totalTrades} trades · {safeNum(bestStrategy.winRatePct).toFixed(1)}% win
                     </p>
                   </div>
                 )}
 
                 {/* Worst Strategy */}
                 {worstStrategy && worstStrategy !== bestStrategy && (
-                  <div className={`p-2.5 rounded-lg border ${worstStrategy.pnl < 0 ? 'border-red-200 bg-red-50' : 'border-gray-200 bg-gray-50'}`}>
+                  <div className={`p-2.5 rounded-lg border ${worstStrategy.returnPct < 0 ? 'border-red-200 bg-red-50' : 'border-gray-200 bg-gray-50'}`}>
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-gray-500">Worst Strategy</span>
-                      <span className={`text-xs font-semibold ${pnlColor(worstStrategy.pnl)}`}>
-                        {formatCurrency(worstStrategy.pnl)}
+                      <span className={`text-xs font-semibold ${pnlColor(worstStrategy.returnPct)}`}>
+                        {formatPercent(worstStrategy.returnPct)}
                       </span>
                     </div>
                     <p className="text-sm font-medium text-gray-900 truncate mt-0.5">
                       {worstStrategy.strategyName}
                     </p>
                     <p className="text-xs text-gray-500">
-                      {worstStrategy.totalTrades} trades · {safeNum(worstStrategy.winRate).toFixed(0)}% win
+                      {worstStrategy.totalTrades} trades · {safeNum(worstStrategy.winRatePct).toFixed(1)}% win
                     </p>
                   </div>
                 )}

@@ -41,7 +41,7 @@ interface Confidence {
 
 interface Risk {
   rating: string;
-  averageMaxDrawdown: number;
+  averageMaxDrawdown: number | null;
 }
 
 interface PaperTradingSummary {
@@ -121,6 +121,11 @@ interface PipelineResult {
 // ─── Helper Components ────────────────────────────────────────────────────────
 
 const MINIMUM_TRADES_FOR_CONFIDENCE = 30;
+const toPercent = (value: number | null | undefined): number => {
+  const n = Number(value ?? 0);
+  if (!Number.isFinite(n)) return 0;
+  return Math.abs(n) <= 1 ? n * 100 : n;
+};
 
 const ConfidenceMeter: React.FC<{ score: number; level: string; paperTrades?: number }> = ({ score, level, paperTrades }) => {
   const getColor = () => {
@@ -175,7 +180,7 @@ const ConfidenceMeter: React.FC<{ score: number; level: string; paperTrades?: nu
   );
 };
 
-const RiskBadge: React.FC<{ rating: string; drawdown: number }> = ({ rating, drawdown }) => {
+const RiskBadge: React.FC<{ rating: string; drawdown: number | null }> = ({ rating, drawdown }) => {
   const getStyle = () => {
     switch (rating) {
       case 'low': return 'bg-green-100 text-green-800 border-green-300';
@@ -190,7 +195,7 @@ const RiskBadge: React.FC<{ rating: string; drawdown: number }> = ({ rating, dra
     <div className={`inline-flex items-center px-3 py-1 rounded-full border text-sm font-medium ${getStyle()}`}>
       <Shield className="w-3.5 h-3.5 mr-1.5" />
       Risk: {rating.replace('_', ' ').toUpperCase()}
-      {drawdown > 0 && <span className="ml-1.5 text-xs opacity-75">(DD: {drawdown.toFixed(1)}%)</span>}
+      {drawdown !== null && drawdown > 0 && <span className="ml-1.5 text-xs opacity-75">(DD: {drawdown.toFixed(1)}%)</span>}
     </div>
   );
 };
@@ -588,7 +593,7 @@ const Backtesting: React.FC = () => {
                               <p className={`text-sm font-bold ${
                                 (strategy.performance.totalReturn || 0) >= 0 ? 'text-green-600' : 'text-red-600'
                               }`}>
-                                {((strategy.performance.totalReturn || 0) * 100).toFixed(2)}%
+                                {toPercent(strategy.performance.totalReturn).toFixed(2)}%
                               </p>
                             </div>
                           )}
@@ -824,7 +829,9 @@ const Backtesting: React.FC = () => {
             <div className="space-y-2 text-sm">
               <div className="flex justify-between">
                 <span className="text-text-muted">Avg Max Drawdown</span>
-                <span className="font-medium">{risk.averageMaxDrawdown.toFixed(1)}%</span>
+                <span className="font-medium">
+                  {risk.averageMaxDrawdown === null ? 'N/A' : `${risk.averageMaxDrawdown.toFixed(1)}%`}
+                </span>
               </div>
               <div className="flex justify-between">
                 <span className="text-text-muted">Risk Rating</span>
