@@ -39,6 +39,7 @@ import automatedTradingService from './services/automatedTradingService.js';
 import { enhancedAutonomousAgent } from './services/enhancedAutonomousAgent.js';
 import paperTradingService from './services/paperTradingService.js';
 import { runAllMigrations } from './scripts/runMigrations.js';
+import { refreshKnownDatabaseCollationVersions } from './scripts/refreshCollationVersion.js';
 
 // Import environment configuration (dotenv.config() is called inside env.ts)
 import { env } from './config/env.js';
@@ -366,6 +367,10 @@ server.listen(PORT, '::', async () => {
   
   // Run database migrations before starting services
   try {
+    logger.info('Refreshing PostgreSQL collation metadata...');
+    await refreshKnownDatabaseCollationVersions();
+    logger.info('✅ PostgreSQL collation metadata refresh completed');
+
     logger.info('Running database migrations...');
     await runAllMigrations();
     logger.info('✅ Database migrations completed');
