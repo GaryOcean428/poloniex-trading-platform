@@ -493,9 +493,16 @@ class StrategyLearningEngine extends EventEmitter {
   private async runBacktestWithWalkForward(
     strategy: StrategyRecord
   ): Promise<{ sharpe: number; winRate: number; maxDrawdown: number }> {
+    // Scale backtest window by timeframe to ensure sufficient OOS candles
+    const tfMinutes = SUPPORTED_TF_MINUTES[strategy.timeframe] ?? 60;
+    // Target: at least 100 OOS candles
+    const minOOSDays = Math.max(9, Math.ceil((100 * tfMinutes) / (24 * 60)));
+    const totalDays = Math.ceil(minOOSDays / 0.3); // 30% OOS
+    const cappedTotalDays = Math.min(totalDays, 90); // cap at 90 days
+
     const endDate = new Date();
-    const startDate = new Date(endDate.getTime() - 30 * 24 * 60 * 60 * 1000);
-    const splitDate = new Date(startDate.getTime() + 21 * 24 * 60 * 60 * 1000); // 70% train
+    const startDate = new Date(endDate.getTime() - cappedTotalDays * 24 * 60 * 60 * 1000);
+    const splitDate = new Date(startDate.getTime() + cappedTotalDays * 0.7 * 24 * 60 * 60 * 1000);
 
     try {
       // Run backtest on test period (out-of-sample last 9 days)

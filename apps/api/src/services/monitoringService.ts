@@ -35,6 +35,7 @@ class MonitoringService {
   private maxLogsRetention = 1000;
   private errorCount = 0;
   private warningCount = 0;
+  private activeConnectionCount = 0;
 
   /**
    * Log an error
@@ -152,7 +153,7 @@ class MonitoringService {
       timestamp: new Date(),
       cpu: process.cpuUsage().user / 1000000, // Convert to seconds
       memory: process.memoryUsage().heapUsed / 1024 / 1024, // Convert to MB
-      activeConnections: 0, // TODO: Track active connections
+      activeConnections: this.activeConnectionCount,
       errorRate: this.calculateErrorRate()
     };
 
@@ -322,15 +323,53 @@ class MonitoringService {
   }
 
   /**
-   * Send to external monitoring service
+   * Track active WebSocket/HTTP connections.
    */
-  private sendToExternalService(_errorLog: ErrorLog): void {
-    // TODO: Integrate with Sentry, LogRocket, or other service
-    // Example:
-    // Sentry.captureException(new Error(errorLog.message), {
-    //   extra: errorLog.context,
-    //   user: { id: errorLog.userId }
-    // });
+  incrementConnections(): void {
+    this.activeConnectionCount++;
+  }
+
+  decrementConnections(): void {
+    this.activeConnectionCount = Math.max(0, this.activeConnectionCount - 1);
+  }
+
+  /**
+   * Send to external monitoring service.
+   * Emits structured JSON for log aggregation pipelines (ELK, Datadog, etc.).
+   */
+  private sendToExternalService(errorLog: ErrorLog): void {
+    this.reportToExternalMonitoring({
+      type: 'error_log',
+      severity: errorLog.level,
+      message: errorLog.message,
+      metadata: {
+        stack: errorLog.stack,
+        context: errorLog.context,
+        userId: errorLog.userId,
+      },
+    });
+  }
+
+  /**
+   * External monitoring integration.
+   * Structured error reporting for log aggregation (ELK, Datadog, etc.).
+   */
+  private reportToExternalMonitoring(event: {
+    type: string;
+    severity: string;
+    message: string;
+    metadata?: Record<string, unknown>;
+  }): void {
+    // Emit structured JSON for log aggregation pipelines
+    console.error(JSON.stringify({
+      monitoring_event: true,
+      type: event.type,
+      severity: event.severity,
+      message: event.message,
+      timestamp: new Date().toISOString(),
+      service: 'polytrade-api',
+      ...event.metadata,
+    }));
   }
 
   /**
@@ -351,6 +390,7 @@ class MonitoringService {
     this.healthMetrics = [];
     this.errorCount = 0;
     this.warningCount = 0;
+    this.activeConnectionCount = 0;
   }
 }
 
