@@ -49,6 +49,9 @@ class ConfidenceScoringService extends EventEmitter {
       trendStrengthBonus: 0.1, // Increase confidence in strong trends
       liquidityPenalty: 0.15, // Reduce confidence in low liquidity
 
+      // Minimum uncensored trades required for reliable fit
+      minUncensoredTradesForFit: 10,
+
       // QIG censoring divergence threshold (20% = 0.20)
       censoredDivergenceThreshold: 0.20,
 
@@ -178,6 +181,12 @@ class ConfidenceScoringService extends EventEmitter {
           uncensored_sharpe: uncensoredSharpe,
           divergence: sharpeDivergence
         },
+        censoringInfo: {
+          allDataSharpe: allSharpe,
+          uncensoredSharpe: uncensoredSharpe,
+          sharpeDivergence: sharpeDivergence,
+          estimateUnreliable: reliabilityWarning,
+        },
         // Continuous confidence trajectory (last N scores over time)
         confidence_trajectory,
         warnings: this.generateWarnings(confidenceScore, marketConditions, performanceData, reliabilityWarning),
@@ -190,7 +199,7 @@ class ConfidenceScoringService extends EventEmitter {
       };
 
       // Add unreliable-estimate warning when censored/uncensored fits diverge
-      if (confidenceAssessment.censoringInfo.estimateUnreliable) {
+      if (confidenceAssessment?.censoringInfo?.estimateUnreliable) {
         confidenceAssessment.warnings.push({
           type: 'censored_data_divergence',
           message: `Censored trades alter confidence by ${Math.abs(Math.round(confidenceScore) - confidenceWithoutCensored)} points. Performance estimate may be unreliable.`,

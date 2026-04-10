@@ -147,6 +147,8 @@ export interface StrategyTemplate {
    */
   allocationWeight: number;
   description: string;
+  /** Bridge-law weights for primary + supporting timeframes (normalised to sum=1). */
+  timeframeWeights?: Record<string, number>;
 }
 
 // ── Tier 1 templates (BTC, ETH — 100x max → 25x effective cap) ───────────────
@@ -446,6 +448,9 @@ export async function buildStrategySpec(
       timeframeWeights[tf] = timeframeWeight(parseTimeframeMinutes(tf));
     }
 
+    // Populate normalised bridge-law weights on the template for downstream consumers
+    template.timeframeWeights = getNormalisedTimeframeWeights(allTimeframes);
+
     // Regime-conditioned allocation:
     // When mean_reverting and strategy targets mean_reversion → amplify weight
     // (QIG: mean-reverting regime is 170× stronger than trending)
@@ -494,6 +499,31 @@ export function combineMultiTimeframeSignals(
   return totalWeight > 0 ? weightedSum / totalWeight : 0;
 }
 
+/**
+ * Get the normalised bridge-law weight distribution for a set of timeframes.
+ * Returns weights summing to 1.0 for capital/signal allocation.
+ */
+export function getNormalisedTimeframeWeights(
+  timeframes: string[]
+): Record<string, number> {
+  const weights: Record<string, number> = {};
+  let total = 0;
+
+  for (const tf of timeframes) {
+    const w = TIMEFRAME_WEIGHTS[tf] ?? timeframeWeight(60);
+    weights[tf] = w;
+    total += w;
+  }
+
+  if (total > 0) {
+    for (const tf of timeframes) {
+      weights[tf] /= total;
+    }
+  }
+
+  return weights;
+}
+
 // ── Internal utilities ────────────────────────────────────────────────────────
 function parseTimeframeMinutes(tf: string): number {
   const map: Record<string, number> = {
@@ -512,6 +542,7 @@ export default {
   TIMEFRAME_WEIGHTS,
   buildStrategySpec,
   combineMultiTimeframeSignals,
+  getNormalisedTimeframeWeights,
   kellyPositionSize,
   standardPositionSize,
   ALL_TEMPLATES,

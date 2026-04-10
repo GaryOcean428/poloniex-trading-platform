@@ -723,6 +723,45 @@ class FullyAutonomousTrader extends EventEmitter {
         });
 
         logger.info(`[LIVE] Order placed: ${orderId} for ${signal.symbol}`);
+
+        // Place exchange-side stop-loss order for crash protection
+        if (signal.stopLoss) {
+          try {
+            const slSide = signal.side === 'long' ? 'sell' : 'buy';
+            await poloniexFuturesService.placeOrder(credentials, {
+              symbol: normalizedSymbol,
+              side: slSide,
+              type: 'stop_market',
+              size: orderSize,
+              stopPrice: signal.stopLoss,
+              stopPriceType: 'TP',
+              reduceOnly: true,
+            });
+            logger.info(`[LIVE] Exchange-side SL placed at ${signal.stopLoss} for ${normalizedSymbol}`);
+          } catch (slErr) {
+            logger.error(`[LIVE] Failed to place exchange-side SL for ${normalizedSymbol}:`, slErr);
+            // Non-fatal: client-side polling is backup
+          }
+        }
+
+        // Place exchange-side take-profit order
+        if (signal.takeProfit) {
+          try {
+            const tpSide = signal.side === 'long' ? 'sell' : 'buy';
+            await poloniexFuturesService.placeOrder(credentials, {
+              symbol: normalizedSymbol,
+              side: tpSide,
+              type: 'stop_market',
+              size: orderSize,
+              stopPrice: signal.takeProfit,
+              stopPriceType: 'TP',
+              reduceOnly: true,
+            });
+            logger.info(`[LIVE] Exchange-side TP placed at ${signal.takeProfit} for ${normalizedSymbol}`);
+          } catch (tpErr) {
+            logger.error(`[LIVE] Failed to place exchange-side TP for ${normalizedSymbol}:`, tpErr);
+          }
+        }
       } else {
         // Paper trading - check virtual position limits
         const openPaperTrades = await pool.query(
@@ -841,20 +880,36 @@ class FullyAutonomousTrader extends EventEmitter {
       const qty = parseFloat(position.qty || position.positionAmt || '0');
       if (qty === 0) return;
 
+      const exitPrice = parseFloat(position.markPx || position.markPrice || '0');
+      const entryPrice = parseFloat(position.openAvgPx || position.entryPrice || '0');
+      const pnl = parseFloat(position.unrealPnl || position.unrealisedPnl || '0');
+
       // Use Poloniex close position endpoint for cleaner execution
       const closeType = qty > 0 ? 'close_long' : 'close_short';
       await poloniexFuturesService.closePosition(credentials, symbol, closeType);
 
-      // Update autonomous_trades record
-      await pool.query(
-        `UPDATE autonomous_trades 
-         SET status = 'closed', close_reason = $3, closed_at = NOW()
-         WHERE user_id = $1 AND symbol = $2 AND status = 'open'`,
-        [userId, symbol, reason]
-      );
+      // Update autonomous_trades record with exit data
+      // Try to update with exit_price and pnl; fall back to basic update if columns don't exist
+      try {
+        await pool.query(
+          `UPDATE autonomous_trades
+           SET status = 'closed', close_reason = $3, closed_at = NOW(),
+               exit_price = $4, pnl = $5
+           WHERE user_id = $1 AND symbol = $2 AND status = 'open'`,
+          [userId, symbol, reason, exitPrice, pnl]
+        );
+      } catch (updateErr) {
+        // Columns may not exist yet — fall back to basic update
+        await pool.query(
+          `UPDATE autonomous_trades
+           SET status = 'closed', close_reason = $3, closed_at = NOW()
+           WHERE user_id = $1 AND symbol = $2 AND status = 'open'`,
+          [userId, symbol, reason]
+        );
+      }
 
-      logger.info(`Position closed for user ${userId}: ${symbol} (${reason})`);
-      this.emit('position_closed', { userId, symbol, reason });
+      logger.info(`Position closed for user ${userId}: ${symbol} (${reason}) exit=${exitPrice} pnl=${pnl}`);
+      this.emit('position_closed', { userId, symbol, reason, exitPrice, pnl });
 
     } catch (error) {
       logger.error(`Error closing position for user ${userId}:`, error);

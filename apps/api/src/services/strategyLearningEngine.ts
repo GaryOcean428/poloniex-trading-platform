@@ -146,6 +146,9 @@ class StrategyLearningEngine extends EventEmitter {
   private loopTimer: ReturnType<typeof setTimeout> | null = null;
   private generationCount = 0;
 
+  // Last detected regime — returned when insufficient data for fresh detection
+  private lastKnownRegime: MarketRegime = 'unknown';
+
   // In-memory store of active strategy records
   private strategies: Map<string, StrategyRecord> = new Map();
 
@@ -245,7 +248,8 @@ class StrategyLearningEngine extends EventEmitter {
       `);
 
       if (!result.rows.length) {
-        return 'unknown';
+        logger.debug(`[SLE] Insufficient data for regime detection, using last known: ${this.lastKnownRegime}`);
+        return this.lastKnownRegime;
       }
 
       const row0 = result.rows[0] as unknown as {
@@ -255,8 +259,10 @@ class StrategyLearningEngine extends EventEmitter {
         cnt: unknown;
       };
 
+      // If insufficient data, return last known regime instead of 'unknown'
       if (safeNum(row0.cnt) < 3) {
-        return 'unknown';
+        logger.debug(`[SLE] Insufficient data for regime detection, using last known: ${this.lastKnownRegime}`);
+        return this.lastKnownRegime;
       }
 
       const avgSharpe = safeNum(row0.avg_sharpe);
@@ -264,12 +270,17 @@ class StrategyLearningEngine extends EventEmitter {
       const avgDd = safeNum(row0.avg_dd);
 
       // Heuristic: high Sharpe + low DD = trending; high volatility/DD = volatile
-      if (avgSharpe > 1.2 && avgDd < 0.08) return 'trending';
-      if (stdSharpe > 1.5 || avgDd > 0.15) return 'volatile';
-      return 'ranging';
+      let detectedRegime: MarketRegime;
+      if (avgSharpe > 1.2 && avgDd < 0.08) detectedRegime = 'trending';
+      else if (stdSharpe > 1.5 || avgDd > 0.15) detectedRegime = 'volatile';
+      else detectedRegime = 'ranging';
+
+      // Store the detected regime for future fallback
+      this.lastKnownRegime = detectedRegime;
+      return detectedRegime;
     } catch (err) {
-      logger.warn('[SLE] Regime detection failed, defaulting to unknown:', err);
-      return 'unknown';
+      logger.warn('[SLE] Regime detection failed, using last known:', err);
+      return this.lastKnownRegime;
     }
   }
 
@@ -611,10 +622,14 @@ class StrategyLearningEngine extends EventEmitter {
         killReason = `phase_clock_${s.phaseClock}_negative_cycles`;
       }
 
-      // Censored rejected: fitnessDivergent flag (unreliable signal)
+      // Censored + divergent: strongest rejection
       if (s.fitnessDivergent && s.isCensored) {
         killReason = 'fitness_divergent_and_censored';
         s.status = 'censored_rejected';
+      }
+      // Fitness divergent alone: unreliable estimate, demote to killed
+      else if (s.fitnessDivergent) {
+        killReason = 'fitness_divergent_unreliable_estimate';
       }
 
       // Hard drawdown kill

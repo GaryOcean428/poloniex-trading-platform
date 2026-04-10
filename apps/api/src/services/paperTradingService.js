@@ -1,6 +1,6 @@
 import { EventEmitter } from 'events';
 import { logger } from '../utils/logger.js';
-import { query } from '../db/connection.js';
+import { query, pool } from '../db/connection.js';
 import poloniexFuturesService from './poloniexFuturesService.js';
 import futuresWebSocket from '../websocket/futuresWebSocket.js';
 import backtestingEngine from './backtestingEngine.js';
@@ -404,13 +404,62 @@ class PaperTradingService extends EventEmitter {
       
       // Update unrealized P&L for open positions
       let totalUnrealizedPnl = 0;
-      
+
       for (const [positionId, position] of session.positions) {
         if (position.status === 'open') {
           const pnl = this.calculateUnrealizedPnl(position, currentPrice);
           position.unrealizedPnl = pnl;
           position.currentPrice = currentPrice;
           totalUnrealizedPnl += pnl;
+
+          // Issue #20: Maintenance margin ratio enforcement
+          const maintenanceMarginRate = 0.005; // 0.5% per Poloniex default
+          const notional = position.size * currentPrice;
+          const maintenanceMargin = notional * maintenanceMarginRate;
+          const posLeverage = position.leverage || session.leverage || 1;
+          const positionMargin = notional / posLeverage;
+          const marginRatio = maintenanceMargin > 0
+            ? (positionMargin + position.unrealizedPnl) / maintenanceMargin
+            : Infinity;
+
+          if (marginRatio <= 1.0) {
+            logger.warn(`[PT] Position ${position.id} margin ratio ${marginRatio.toFixed(2)} below maintenance`);
+          }
+
+          // Issue #1: Liquidation check
+          if (this.checkLiquidation(session, position, currentPrice)) {
+            const leverage = position.leverage || session.leverage || 1;
+            const entryMargin = (position.size * position.entryPrice) / leverage;
+            position.realizedPnl = -entryMargin;
+            position.unrealizedPnl = 0;
+            position.status = 'closed';
+            position.exitPrice = currentPrice;
+            position.exitTime = new Date();
+
+            session.realizedPnl += position.realizedPnl;
+            session.margin -= entryMargin;
+            session.totalTrades++;
+            session.losingTrades++;
+
+            // Mark session as censored due to liquidation
+            session.isCensored = true;
+            session.censorReason = 'liquidation_triggered';
+
+            logger.warn(`[PT] Position ${position.id} LIQUIDATED at ${currentPrice} (entry: ${position.entryPrice}, leverage: ${leverage}x)`);
+
+            this.emit('positionClosed', {
+              sessionId: session.id,
+              position,
+              reason: 'liquidation',
+              realizedPnl: position.realizedPnl
+            });
+
+            // Persist liquidation asynchronously
+            this.updateSessionInDatabase(session).catch(err =>
+              logger.error(`[PT] Failed to persist session after liquidation:`, err)
+            );
+            continue;
+          }
         }
       }
 
@@ -471,6 +520,12 @@ class PaperTradingService extends EventEmitter {
         indicators,
         marketData
       );
+
+      // Issue #2: Skip entry signals for censored sessions
+      if (session.isCensored) {
+        logger.debug(`[PT] Session ${session.id} is censored — skipping entry signal`);
+        return;
+      }
 
       // Process entry signals
       if (signals.entry && !this.hasOpenPosition(session)) {
@@ -723,6 +778,11 @@ class PaperTradingService extends EventEmitter {
       const closeLeverage = position.leverage || session.leverage || 1;
       const entryMarginUsed = (position.size * position.entryPrice) / closeLeverage;
       session.cash += entryMarginUsed + rawPnl - exitFees;
+      // Issue #7: Prevent cash from going negative
+      if (session.cash <= 0) {
+        logger.warn(`[PT] Session ${session.id} cash exhausted after position close`);
+        session.cash = Math.max(0, session.cash);
+      }
       session.margin -= entryMarginUsed;
       session.totalTrades++;
       
@@ -732,24 +792,80 @@ class PaperTradingService extends EventEmitter {
         session.losingTrades++;
       }
 
-      // Update position in database
-      await query(`
-        UPDATE paper_trading_positions 
-        SET exit_price = $1, exit_time = $2, realized_pnl = $3, 
-            unrealized_pnl = 0, status = 'closed', updated_at = NOW()
-        WHERE id = $4
-      `, [
-        executionResult.executionPrice,
-        position.exitTime,
-        realizedPnl,
-        positionId
-      ]);
+      // Issue #9: Wrap all DB writes in a single transaction to prevent
+      // corrupted state on network failure mid-write.
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
 
-      // Create exit trade record
-      await this.createTradeRecord(session, position, 'exit', realizedPnl);
+        // Update position in database
+        await client.query(`
+          UPDATE paper_trading_positions
+          SET exit_price = $1, exit_time = $2, realized_pnl = $3,
+              unrealized_pnl = 0, status = 'closed', updated_at = NOW()
+          WHERE id = $4
+        `, [
+          executionResult.executionPrice,
+          position.exitTime,
+          realizedPnl,
+          positionId
+        ]);
 
-      // Update session in database
-      await this.updateSessionInDatabase(session);
+        // Create exit trade record (inline to use transactional client)
+        const tradeId = `trade_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        const trade = {
+          id: tradeId,
+          sessionId: session.id,
+          positionId: position.id,
+          symbol: position.symbol,
+          side: position.side === 'long' ? 'short' : 'long',
+          size: position.size,
+          price: position.exitPrice,
+          timestamp: new Date(),
+          type: 'exit',
+          reason: position.reason || 'manual',
+          fees: this.calculateTradingFees(position.size, position.exitPrice),
+          pnl: realizedPnl
+        };
+
+        await client.query(`
+          INSERT INTO paper_trading_trades (
+            id, session_id, position_id, trade_id, symbol, side, size,
+            price, timestamp, type, reason, fees, pnl
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        `, [
+          tradeId, session.id, position.id, tradeId,
+          trade.symbol, trade.side, trade.size, trade.price,
+          trade.timestamp, trade.type, trade.reason, trade.fees, trade.pnl
+        ]);
+
+        session.trades.push(trade);
+
+        // Update session in database
+        await client.query(`
+          UPDATE paper_trading_sessions
+          SET current_value = $1, unrealized_pnl = $2, realized_pnl = $3,
+              total_trades = $4, winning_trades = $5,
+              is_censored = $6, censor_reason = $7, updated_at = NOW()
+          WHERE id = $8
+        `, [
+          session.currentValue,
+          session.unrealizedPnl,
+          session.realizedPnl,
+          session.totalTrades,
+          session.winningTrades,
+          session.isCensored || false,
+          session.censorReason || null,
+          session.id
+        ]);
+
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      } finally {
+        client.release();
+      }
 
       logger.info(`📉 Closed position ${positionId} for session ${sessionId}: P&L = ${realizedPnl.toFixed(2)}`);
       
@@ -838,11 +954,38 @@ class PaperTradingService extends EventEmitter {
   calculateRealizedPnl(position, exitPrice) {
     const entryValue = position.size * position.entryPrice;
     const exitValue = position.size * exitPrice;
-    
+
     if (position.side === 'long') {
       return exitValue - entryValue;
     } else {
       return entryValue - exitValue;
+    }
+  }
+
+  /**
+   * Check if a leveraged position should be liquidated.
+   * Uses a 0.5% maintenance margin buffer.
+   *
+   * @param {Object} session  - The paper trading session
+   * @param {Object} position - The open position to check
+   * @param {number} currentPrice - Current market price
+   * @returns {boolean} true if the position should be liquidated
+   */
+  checkLiquidation(session, position, currentPrice) {
+    const leverage = position.leverage || session.leverage || 1;
+    if (leverage <= 1) return false; // No liquidation risk without leverage
+
+    const maintenanceBuffer = 0.005; // 0.5% maintenance margin buffer
+    const liquidationThreshold = (1 / leverage) - maintenanceBuffer;
+
+    if (position.side === 'long') {
+      // Long liquidation: price drops below entry * (1 - 1/leverage + buffer)
+      const liquidationPrice = position.entryPrice * (1 - liquidationThreshold);
+      return currentPrice <= liquidationPrice;
+    } else {
+      // Short liquidation: price rises above entry * (1 + 1/leverage - buffer)
+      const liquidationPrice = position.entryPrice * (1 + liquidationThreshold);
+      return currentPrice >= liquidationPrice;
     }
   }
 
@@ -958,30 +1101,30 @@ class PaperTradingService extends EventEmitter {
     for (const [positionId, position] of session.positions) {
       if (position.status !== 'open') continue;
 
-      let shouldClose = false;
-      let reason = '';
+      // Issue #14: Evaluate SL and TP independently, then resolve conflicts
+      // by choosing whichever price level was closer to being hit first.
+      const slTriggered = (position.side === 'long' && currentPrice <= position.stopLoss)
+        || (position.side === 'short' && currentPrice >= position.stopLoss);
 
-      // Check stop loss
-      if (position.side === 'long' && currentPrice <= position.stopLoss) {
-        shouldClose = true;
-        reason = 'stop_loss';
-      } else if (position.side === 'short' && currentPrice >= position.stopLoss) {
-        shouldClose = true;
-        reason = 'stop_loss';
-      }
+      const tpTriggered = (position.side === 'long' && currentPrice >= position.takeProfit)
+        || (position.side === 'short' && currentPrice <= position.takeProfit);
 
-      // Check take profit
-      if (position.side === 'long' && currentPrice >= position.takeProfit) {
-        shouldClose = true;
-        reason = 'take_profit';
-      } else if (position.side === 'short' && currentPrice <= position.takeProfit) {
-        shouldClose = true;
-        reason = 'take_profit';
-      }
-
-      if (shouldClose) {
+      if (slTriggered && tpTriggered) {
+        // Both triggered — determine which was hit first based on distance
+        const slDistance = Math.abs(currentPrice - position.stopLoss);
+        const tpDistance = Math.abs(currentPrice - position.takeProfit);
+        const reason = slDistance <= tpDistance ? 'stop_loss' : 'take_profit';
+        const exitPrice = reason === 'stop_loss' ? position.stopLoss : position.takeProfit;
         setTimeout(() => {
-          this.closePosition(session.id, positionId, reason, currentPrice);
+          this.closePosition(session.id, positionId, reason, exitPrice);
+        }, 0);
+      } else if (slTriggered) {
+        setTimeout(() => {
+          this.closePosition(session.id, positionId, 'stop_loss', position.stopLoss);
+        }, 0);
+      } else if (tpTriggered) {
+        setTimeout(() => {
+          this.closePosition(session.id, positionId, 'take_profit', position.takeProfit);
         }, 0);
       }
     }
@@ -1347,7 +1490,13 @@ class PaperTradingService extends EventEmitter {
       }
 
       // Get latest market data from WebSocket cache or fetch fresh
+      // Issue #13: Check staleness of cached market data before using it
+      const MAX_DATA_AGE_MS = 60_000; // 60 seconds
       let marketData = this.marketData.get(session.symbol);
+      if (marketData && marketData.lastUpdate && (Date.now() - marketData.lastUpdate) > MAX_DATA_AGE_MS) {
+        logger.warn(`[PT] Stale market data for ${session.symbol} (${Date.now() - marketData.lastUpdate}ms old), skipping signal execution`);
+        return;
+      }
       if (!marketData) {
         try {
           const tickers = await poloniexFuturesService.getTickers(session.symbol);
