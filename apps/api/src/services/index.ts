@@ -21,7 +21,8 @@ export * from './mockTradingService.js';
 
 // Strategy Services
 export * from './strategyService.js';
-export * from './strategyOptimizer.js';
+// Deprecated: strategyOptimizer replaced by strategyLearningEngine
+// export * from './strategyOptimizer.js';
 export * from './autonomousStrategyGenerator.js';
 export * from './pineScriptParser.js';
 export * from './templateStrategies.js';

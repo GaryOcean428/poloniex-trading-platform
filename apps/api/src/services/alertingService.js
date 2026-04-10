@@ -150,25 +150,38 @@ class AlertingService {
       hostname: process.env.HOSTNAME || 'unknown'
     };
     
-    logger.error('🚨 CRITICAL ALERT 🚨', alertMessage);
-    
-    // TODO: Send to external monitoring service
-    // - Webhook to Slack/Discord: POST to webhook URL
-    // - Email notification via SendGrid/AWS SES
-    // - PagerDuty/Opsgenie for on-call alerting
-    // - Custom webhook for internal monitoring dashboard
-    
-    // Example Slack webhook integration:
-    // if (process.env.SLACK_WEBHOOK_URL) {
-    //   await fetch(process.env.SLACK_WEBHOOK_URL, {
-    //     method: 'POST',
-    //     headers: { 'Content-Type': 'application/json' },
-    //     body: JSON.stringify({
-    //       text: `🚨 ${title}`,
-    //       attachments: [{ color: 'danger', text: JSON.stringify(details, null, 2) }]
-    //     })
-    //   });
-    // }
+    logger.error('CRITICAL ALERT', alertMessage);
+
+    // Emit structured alert for external consumption.
+    // Can be picked up by log aggregation, webhook, or monitoring service.
+    this.emitStructuredAlert({
+      type: 'critical_alert',
+      severity: 'critical',
+      message: title,
+      metadata: {
+        details,
+        environment: process.env.NODE_ENV,
+        hostname: process.env.HOSTNAME || 'unknown',
+      },
+    });
+  }
+
+  /**
+   * Emit a structured alert as JSON for external consumption.
+   * Machine-readable format that can be consumed by any log aggregation system
+   * (ELK, Datadog, CloudWatch, etc.) or forwarded via webhook.
+   * @param {{ type: string, severity: string, message: string, metadata?: Object }} alert
+   */
+  emitStructuredAlert(alert) {
+    logger.error(JSON.stringify({
+      alert: true,
+      type: alert.type,
+      severity: alert.severity,
+      message: alert.message,
+      timestamp: new Date().toISOString(),
+      service: 'polytrade-api',
+      ...(alert.metadata || {}),
+    }));
   }
 
   /**

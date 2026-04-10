@@ -43,6 +43,24 @@ const LEVERAGE_TIER_CONFIG = {
   },
 };
 
+// ─── Leverage caps per tier: effective = min(desired, floor(maxLeverage * 0.25)) ─
+const LEVERAGE_CAPS = {
+  // tier 1 (BTC, ETH): max 100x → cap at 25x
+  1: 25,
+  // tier 2 (major alts): max 50x → cap at 12x
+  2: 12,
+  // tier 3 (memecoins): max 10x → cap at 2x
+  3: 2,
+};
+
+// Symbol → tier lookup for leverage capping during generation
+const SYMBOL_TIER_MAP = {
+  BTC: 1, ETH: 1,
+  SOL: 2, XRP: 2, BCH: 2, LTC: 2, TRX: 2, BNB: 2,
+  DOGE: 2, AVAX: 2, APT: 2, LINK: 2, UNI: 2, XMR: 2,
+  PEPE: 3, SHIB: 3,
+};
+
 // ─── Bridge law constant (frozen physics result, not tunable) ─────────────────
 // w(tf) = (60 / tfMinutes)^0.74   (τ ∝ J^0.74, R²>0.96, seed-robust)
 const BRIDGE_LAW_EXPONENT = 0.74;
@@ -416,9 +434,10 @@ class AutonomousStrategyGenerator extends EventEmitter {
     // Pick a target regime for this strategy
     const targetRegime = tierConfig.targetRegimes[Math.floor(Math.random() * tierConfig.targetRegimes.length)];
 
-    // Generate random leverage within tier range, then cap at 25% of maxLeverage
+    // Generate random leverage within tier range, then cap at 25% of maxLeverage and tier cap
     const rawLeverage = this.randomInt(tierConfig.leverageRange.min, tierConfig.leverageRange.max);
-    const leverage = capEffectiveLeverage(rawLeverage, maxLeverage);
+    const cappedByMax = capEffectiveLeverage(rawLeverage, maxLeverage);
+    const leverage = Math.min(cappedByMax, LEVERAGE_CAPS[tier] || 25);
 
     // Generate random stop loss within tier range
     const stopLoss = this.randomFloat(tierConfig.stopLossRange.min, tierConfig.stopLossRange.max);
@@ -593,6 +612,9 @@ class AutonomousStrategyGenerator extends EventEmitter {
    * Regime-conditioned: only crossover strategies in the same basin.
    */
   async generateNewStrategies() {
+    // Ensure fitness weights are fresh before selection pressure is applied
+    await this.loadFitnessWeightsFromDB();
+
     this.logger.info('🧬 Generating new strategies...');
     
     // Get top performers for breeding
@@ -661,10 +683,12 @@ class AutonomousStrategyGenerator extends EventEmitter {
     const inheritedTier = chosenSymbol === parent1.symbol ? parent1.leverageTier : parent2.leverageTier;
     const inheritedMaxLev = chosenSymbol === parent1.symbol ? parent1.maxLeverage : parent2.maxLeverage;
     const inheritedLev = Math.random() < 0.5 ? parent1.leverage : parent2.leverage;
-    // Re-cap leverage for the selected symbol
-    const leverage = inheritedMaxLev
+    // Re-cap leverage for the selected symbol (both max-leverage and tier cap)
+    const tierCap = LEVERAGE_CAPS[inheritedTier] || 25;
+    const rawLeverage = inheritedMaxLev
       ? capEffectiveLeverage(inheritedLev ?? 3, inheritedMaxLev)
       : (inheritedLev ?? 3);
+    const leverage = Math.min(rawLeverage, tierCap);
     if (parameters.leverage !== undefined) parameters.leverage = leverage;
 
     return {
@@ -737,11 +761,12 @@ class AutonomousStrategyGenerator extends EventEmitter {
       }
     }
 
-    // Re-cap leverage after mutation to stay within tier limits
+    // Re-cap leverage after mutation to stay within tier limits and tier cap
     if (mutated.maxLeverage && mutated.parameters.leverage !== undefined) {
-      mutated.parameters.leverage = capEffectiveLeverage(
-        Math.round(mutated.parameters.leverage),
-        mutated.maxLeverage
+      const mutTierCap = LEVERAGE_CAPS[mutated.leverageTier] || 25;
+      mutated.parameters.leverage = Math.min(
+        capEffectiveLeverage(Math.round(mutated.parameters.leverage), mutated.maxLeverage),
+        mutTierCap
       );
       mutated.leverage = mutated.parameters.leverage;
     }
@@ -806,6 +831,24 @@ class AutonomousStrategyGenerator extends EventEmitter {
   /**
    * Utility functions
    */
+  /**
+   * Derive leverage tier from a symbol string (e.g. 'BTC_USDT_PERP' → 1).
+   * Falls back to tier 2 (12x cap) if the base asset is not recognised.
+   */
+  getSymbolTier(symbol) {
+    const base = String(symbol).split('_')[0].toUpperCase();
+    return SYMBOL_TIER_MAP[base] ?? 2;
+  }
+
+  /**
+   * Cap leverage for a strategy based on its symbol's tier.
+   * effective = min(desired, LEVERAGE_CAPS[tier])
+   */
+  capLeverageForSymbol(leverage, symbol) {
+    const tier = this.getSymbolTier(symbol);
+    return Math.min(leverage, LEVERAGE_CAPS[tier] || 25);
+  }
+
   randomInt(min, max) {
     return Math.floor(Math.random() * (max - min + 1)) + min;
   }

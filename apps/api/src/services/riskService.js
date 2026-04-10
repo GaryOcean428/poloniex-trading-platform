@@ -186,7 +186,8 @@ class RiskService {
         error: error.message,
         accountId: account.id
       });
-      return { allowed: true };
+      // FAIL CLOSED: block trading when risk checks are unavailable
+      return { allowed: false, reason: 'Risk check system unavailable — order blocked for safety' };
     }
   }
 
@@ -226,7 +227,8 @@ class RiskService {
         error: error.message,
         accountId: account.id
       });
-      return { allowed: true };
+      // FAIL CLOSED: block trading when risk checks are unavailable
+      return { allowed: false, reason: 'Risk check system unavailable — order blocked for safety' };
     }
   }
 
@@ -264,7 +266,8 @@ class RiskService {
         error: error.message,
         accountId: account.id
       });
-      return { allowed: true };
+      // FAIL CLOSED: block trading when risk checks are unavailable
+      return { allowed: false, reason: 'Risk check system unavailable — order blocked for safety' };
     }
   }
 

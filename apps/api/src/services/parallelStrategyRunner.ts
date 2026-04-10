@@ -64,6 +64,9 @@ class ParallelStrategyRunner extends EventEmitter {
   /** Live session mapping: strategyId → metrics */
   private sessions: Map<string, StrategyMetrics> = new Map();
 
+  /** Queue for strategies waiting for an open slot */
+  private waitingQueue: StrategyRecord[] = [];
+
   constructor() {
     super();
   }
@@ -73,7 +76,11 @@ class ParallelStrategyRunner extends EventEmitter {
   /** Add a strategy to the parallel runner. Respects MAX_PARALLEL_SLOTS. */
   async addStrategy(strategy: StrategyRecord): Promise<boolean> {
     if (this.sessions.size >= MAX_PARALLEL_SLOTS) {
-      logger.warn(`[PSR] Max parallel slots (${MAX_PARALLEL_SLOTS}) reached, cannot add ${strategy.strategyId}`);
+      // Queue instead of silently dropping
+      if (!this.waitingQueue.find(s => s.strategyId === strategy.strategyId)) {
+        this.waitingQueue.push(strategy);
+        logger.info(`[PSR] Slots full (${MAX_PARALLEL_SLOTS}), queued ${strategy.strategyId} (queue size: ${this.waitingQueue.length})`);
+      }
       return false;
     }
 
@@ -143,6 +150,16 @@ class ParallelStrategyRunner extends EventEmitter {
     this.sessions.delete(strategyId);
     logger.info(`[PSR] Removed strategy ${strategyId}${killReason ? ` (${killReason})` : ''}`);
     this.emit('strategyRemoved', { strategyId, killReason });
+
+    // Try to add next queued strategy
+    if (this.waitingQueue.length > 0) {
+      const next = this.waitingQueue.shift()!;
+      logger.info(`[PSR] Slot freed, adding queued strategy ${next.strategyId}`);
+      // Fire and forget — addStrategy will handle errors
+      this.addStrategy(next).catch(err => {
+        logger.error(`[PSR] Failed to add queued strategy ${next.strategyId}:`, err);
+      });
+    }
   }
 
   // ─────────────────────────── metrics retrieval ────────────────────────────
@@ -232,6 +249,10 @@ class ParallelStrategyRunner extends EventEmitter {
 
   get availableSlots(): number {
     return MAX_PARALLEL_SLOTS - this.sessions.size;
+  }
+
+  getQueueSize(): number {
+    return this.waitingQueue.length;
   }
 
   // ─────────────────────────── financial maths ─────────────────────────────

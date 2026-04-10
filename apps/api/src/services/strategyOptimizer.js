@@ -1,5 +1,6 @@
 import { EventEmitter } from 'events';
 import { logger } from '../utils/logger.js';
+import { pool } from '../db/connection.js';
 import backtestingEngine from './backtestingEngine.js';
 import paperTradingService from './paperTradingService.js';
 import confidenceScoringService from './confidenceScoringService.js';
@@ -469,15 +470,45 @@ class StrategyOptimizer extends EventEmitter {
    * Get recent performance data for strategy
    */
   async getRecentPerformance(strategyId, since) {
-    // This would typically query a database or trading system
-    // For now, return mock data
-    return {
-      drawdown: Math.random() * 0.3, // 0-30% drawdown
-      winRate: 0.3 + Math.random() * 0.4, // 30-70% win rate
-      profitFactor: 0.5 + Math.random() * 1.0, // 0.5-1.5 profit factor
-      totalTrades: Math.floor(Math.random() * 50) + 10,
-      profit: (Math.random() - 0.5) * 0.2 // -10% to +10%
-    };
+    try {
+      const result = await pool.query(`
+        SELECT
+          COALESCE(MAX(CASE WHEN pnl < 0 THEN ABS(pnl) ELSE 0 END), 0) as max_loss,
+          COALESCE(SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END), 0) as wins,
+          COALESCE(COUNT(*), 0) as total_trades,
+          COALESCE(SUM(CASE WHEN pnl > 0 THEN pnl ELSE 0 END), 0) as gross_profit,
+          COALESCE(SUM(CASE WHEN pnl < 0 THEN ABS(pnl) ELSE 0 END), 0) as gross_loss,
+          COALESCE(SUM(pnl), 0) as total_pnl
+        FROM autonomous_trades
+        WHERE reason LIKE $1
+          AND created_at >= $2
+          AND status = 'closed'
+      `, [`%${strategyId}%`, new Date(since)]);
+
+      const row = result.rows[0];
+      const totalTrades = parseInt(row.total_trades) || 0;
+      const wins = parseInt(row.wins) || 0;
+      const grossProfit = parseFloat(row.gross_profit) || 0;
+      const grossLoss = parseFloat(row.gross_loss) || 0.001; // avoid division by zero
+
+      return {
+        drawdown: parseFloat(row.max_loss) || 0,
+        winRate: totalTrades > 0 ? wins / totalTrades : 0,
+        profitFactor: grossLoss > 0 ? grossProfit / grossLoss : 0,
+        totalTrades,
+        profit: parseFloat(row.total_pnl) || 0,
+      };
+    } catch (error) {
+      this.logger.error('Error fetching recent performance:', error);
+      // FAIL CLOSED: return worst-case metrics that will trigger retirement review
+      return {
+        drawdown: 1.0,
+        winRate: 0,
+        profitFactor: 0,
+        totalTrades: 0,
+        profit: -1,
+      };
+    }
   }
   
   /**
