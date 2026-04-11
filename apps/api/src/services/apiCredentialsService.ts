@@ -5,6 +5,7 @@
 
 import { pool } from '../db/connection.js';
 import { encryptionService } from './encryptionService.js';
+import { logger } from '../utils/logger.js';
 
 export interface ApiCredentials {
   id: string;
@@ -66,9 +67,9 @@ export class ApiCredentialsService {
         [userId, exchange, encrypted.apiKeyEncrypted, encrypted.apiSecretEncrypted, encrypted.encryptionIv, encrypted.tag]
       );
       
-      console.log(`API credentials stored for user ${userId} on ${exchange}`);
+      logger.info(`API credentials stored for user ${userId} on ${exchange}`);
     } catch (error) {
-      console.error('Error storing API credentials:', error);
+      logger.error('Error storing API credentials:', error);
       throw new Error('Failed to store API credentials');
     }
   }
@@ -95,7 +96,7 @@ export class ApiCredentialsService {
       
       // Check if encryption_tag exists (for backward compatibility with old data)
       if (!stored.encryption_tag) {
-        console.warn(`API credentials for user ${userId} missing encryption tag - user needs to re-enter credentials`);
+        logger.warn(`API credentials for user ${userId} missing encryption tag - user needs to re-enter credentials`);
         return null;
       }
       
@@ -122,7 +123,7 @@ export class ApiCredentialsService {
         updatedAt: stored.updated_at
       };
     } catch (error) {
-      console.error('Error retrieving API credentials:', error);
+      logger.error('Error retrieving API credentials:', error);
       throw new Error('Failed to retrieve API credentials');
     }
   }
@@ -137,9 +138,9 @@ export class ApiCredentialsService {
         [userId, exchange]
       );
       
-      console.log(`API credentials deleted for user ${userId} on ${exchange}`);
+      logger.info(`API credentials deleted for user ${userId} on ${exchange}`);
     } catch (error) {
-      console.error('Error deleting API credentials:', error);
+      logger.error('Error deleting API credentials:', error);
       throw new Error('Failed to delete API credentials');
     }
   }
@@ -155,9 +156,9 @@ export class ApiCredentialsService {
         [userId, exchange]
       );
       
-      console.log(`API credentials deactivated for user ${userId} on ${exchange}`);
+      logger.info(`API credentials deactivated for user ${userId} on ${exchange}`);
     } catch (error) {
-      console.error('Error deactivating API credentials:', error);
+      logger.error('Error deactivating API credentials:', error);
       throw new Error('Failed to deactivate API credentials');
     }
   }
@@ -175,7 +176,7 @@ export class ApiCredentialsService {
       
       return parseInt(result.rows[0].count) > 0;
     } catch (error) {
-      console.error('Error checking API credentials:', error);
+      logger.error('Error checking API credentials:', error);
       return false;
     }
   }
@@ -191,7 +192,7 @@ export class ApiCredentialsService {
       );
     } catch (error) {
       // Non-critical error, just log it
-      console.error('Error updating last_used_at:', error);
+      logger.error('Error updating last_used_at:', error);
     }
   }
 
@@ -208,7 +209,7 @@ export class ApiCredentialsService {
       
       return result.rows.map(row => row.user_id);
     } catch (error) {
-      console.error('Error getting active users:', error);
+      logger.error('Error getting active users:', error);
       return [];
     }
   }

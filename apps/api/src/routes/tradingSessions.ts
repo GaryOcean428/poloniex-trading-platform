@@ -21,7 +21,7 @@ router.post('/', authenticateToken, async (req, res) => {
     const userId = req.user?.userId;
 
     if (!strategyConfig) {
-      return res.status(400).json({ error: 'Strategy configuration is required' });
+      return res.status(400).json({ success: false, error: 'Strategy configuration is required' });
     }
 
     const sessionId = await persistentTradingEngine.startSession(
@@ -38,7 +38,7 @@ router.post('/', authenticateToken, async (req, res) => {
     });
   } catch (error: unknown) {
     logger.error('Error starting trading session:', error);
-    res.status(500).json({ error: (error instanceof Error ? error.message : String(error)) || 'Failed to start trading session' });
+    res.status(500).json({ success: false, error: 'Failed to start trading session' });
   }
 });
 
@@ -58,11 +58,11 @@ router.post('/:sessionId/stop', authenticateToken, async (req, res) => {
     );
 
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Trading session not found' });
+      return res.status(404).json({ success: false, error: 'Trading session not found' });
     }
 
     if (result.rows[0].user_id !== userId) {
-      return res.status(403).json({ error: 'Unauthorized' });
+      return res.status(403).json({ success: false, error: 'Unauthorized' });
     }
 
     await persistentTradingEngine.stopSession(sessionId);
@@ -73,7 +73,7 @@ router.post('/:sessionId/stop', authenticateToken, async (req, res) => {
     });
   } catch (error: unknown) {
     logger.error('Error stopping trading session:', error);
-    res.status(500).json({ error: (error instanceof Error ? error.message : String(error)) || 'Failed to stop trading session' });
+    res.status(500).json({ success: false, error: 'Failed to stop trading session' });
   }
 });
 
@@ -99,7 +99,7 @@ router.get('/', authenticateToken, async (req, res) => {
     });
   } catch (error: unknown) {
     logger.error('Error fetching trading sessions:', error);
-    res.status(500).json({ error: (error instanceof Error ? error.message : String(error)) || 'Failed to fetch trading sessions' });
+    res.status(500).json({ success: false, error: 'Failed to fetch trading sessions' });
   }
 });
 
@@ -119,7 +119,7 @@ router.get('/:sessionId', authenticateToken, async (req, res) => {
     );
 
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Trading session not found' });
+      return res.status(404).json({ success: false, error: 'Trading session not found' });
     }
 
     res.json({
@@ -127,7 +127,7 @@ router.get('/:sessionId', authenticateToken, async (req, res) => {
     });
   } catch (error: unknown) {
     logger.error('Error fetching trading session:', error);
-    res.status(500).json({ error: (error instanceof Error ? error.message : String(error)) || 'Failed to fetch trading session' });
+    res.status(500).json({ success: false, error: 'Failed to fetch trading session' });
   }
 });
 
@@ -147,7 +147,7 @@ router.get('/engine/status', authenticateToken, async (req, res) => {
     });
   } catch (error: unknown) {
     logger.error('Error fetching engine status:', error);
-    res.status(500).json({ error: (error instanceof Error ? error.message : String(error)) || 'Failed to fetch engine status' });
+    res.status(500).json({ success: false, error: 'Failed to fetch engine status' });
   }
 });
 

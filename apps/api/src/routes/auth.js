@@ -18,7 +18,7 @@ router.post('/login', async (req, res) => {
     const { username, email, password } = req.body;
 
     if ((!username && !email) || !password) {
-      return res.status(400).json({ error: 'Username/email and password required' });
+      return res.status(400).json({ success: false, error: 'Username/email and password required' });
     }
 
     // Determine identifier: prefer explicit email if provided, otherwise username
@@ -35,14 +35,14 @@ router.post('/login', async (req, res) => {
     const result = await pool.query(query, [identifier]);
 
     if (result.rows.length === 0) {
-      return res.status(401).json({ error: 'Invalid credentials' });
+      return res.status(401).json({ success: false, error: 'Invalid credentials' });
     }
 
     const user = result.rows[0];
     const isValidPassword = await bcrypt.compare(password, user.password_hash);
 
     if (!isValidPassword) {
-      return res.status(401).json({ error: 'Invalid credentials' });
+      return res.status(401).json({ success: false, error: 'Invalid credentials' });
     }
 
     // Generate access token (short-lived)
@@ -72,7 +72,7 @@ router.post('/login', async (req, res) => {
     });
   } catch (error) {
     logger.error('Login error', { error: error.message, stack: error.stack });
-    res.status(500).json({ error: 'Server error' });
+    res.status(500).json({ success: false, error: 'Server error' });
   }
 });
 
@@ -229,7 +229,7 @@ router.post('/register', async (req, res) => {
     });
   } catch (error) {
     logger.error('Registration error', { error: error.message, stack: error.stack });
-    res.status(500).json({ error: 'Server error' });
+    res.status(500).json({ success: false, error: 'Server error' });
   }
 });
 
