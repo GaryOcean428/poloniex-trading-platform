@@ -1116,16 +1116,16 @@ class PaperTradingService extends EventEmitter {
         // Falls back to distance heuristic when candle data is unavailable.
         const candle = this.marketData.get(session.symbol);
         let reason;
-        if (candle && candle.open != null && candle.high != null && candle.low != null) {
-          const openPrice = Number(candle.open);
+        const o = Number(candle?.open);
+        const h = Number(candle?.high);
+        const l = Number(candle?.low);
+        if (Number.isFinite(o) && Number.isFinite(h) && Number.isFinite(l)) {
           if (position.side === 'long') {
             // Long: SL hit at low, TP hit at high
-            reason = (openPrice - Number(candle.low)) <= (Number(candle.high) - openPrice)
-              ? 'stop_loss' : 'take_profit';
+            reason = (o - l) <= (h - o) ? 'stop_loss' : 'take_profit';
           } else {
             // Short: SL hit at high, TP hit at low
-            reason = (Number(candle.high) - openPrice) <= (openPrice - Number(candle.low))
-              ? 'stop_loss' : 'take_profit';
+            reason = (h - o) <= (o - l) ? 'stop_loss' : 'take_profit';
           }
         } else {
           // Fallback: distance heuristic

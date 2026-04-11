@@ -126,13 +126,15 @@ class ConfidenceScoringService extends EventEmitter {
         ? { ...performanceData, trades: uncensoredTrades }
         : null;
 
-      // Calculate component scores — prefer uncensored data for performance
-      // and consistency when available (QIG: censoring-aware fitness).
-      const fitData = uncensoredData || performanceData;
-      const performanceScore = this.calculatePerformanceScore(fitData);
-      const consistencyScore = this.calculateConsistencyScore(fitData);
-      const riskScore = this.calculateRiskScore(performanceData);
-      const marketConditionScore = this.calculateMarketConditionScore(marketConditions, performanceData);
+      // QIG censoring-aware fitness: performance and consistency are scored
+      // on uncensored trades only (when available) to avoid survivorship bias.
+      // Risk and market-condition scores intentionally use the FULL dataset
+      // because drawdown and liquidity assessments need all observations.
+      const uncensoredFitData = uncensoredData || performanceData;
+      const performanceScore = this.calculatePerformanceScore(uncensoredFitData);
+      const consistencyScore = this.calculateConsistencyScore(uncensoredFitData);
+      const riskScore = this.calculateRiskScore(performanceData);                                  // full dataset — intentional
+      const marketConditionScore = this.calculateMarketConditionScore(marketConditions, performanceData); // full dataset — intentional
 
       // Calculate weighted confidence score (full dataset)
       const confidenceScore = (
