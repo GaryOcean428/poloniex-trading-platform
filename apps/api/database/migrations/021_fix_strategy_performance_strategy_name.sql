@@ -25,7 +25,7 @@ UPDATE strategy_performance
   WHERE strategy_name IS NULL
     AND strategy_id IS NOT NULL;
 
--- 3. Set a default so future INSERTs that omit strategy_name get an empty string
+-- 3. Set a NULL default so future INSERTs that omit strategy_name get NULL
 --    instead of a constraint violation.
 DO $$
 BEGIN
@@ -34,6 +34,6 @@ BEGIN
     WHERE table_name = 'strategy_performance'
       AND column_name = 'strategy_name'
   ) THEN
-    ALTER TABLE strategy_performance ALTER COLUMN strategy_name SET DEFAULT '';
+    ALTER TABLE strategy_performance ALTER COLUMN strategy_name SET DEFAULT NULL;
   END IF;
 END $$;

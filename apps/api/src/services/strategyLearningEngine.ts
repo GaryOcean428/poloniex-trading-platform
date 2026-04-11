@@ -78,6 +78,9 @@ export interface StrategyRecord {
 /** Bridge law exponent — frozen physics result (τ ∝ J^0.74, R²>0.96) */
 const BRIDGE_LAW_EXPONENT = 0.74;
 
+/** Default lookback period for strategy backtesting */
+const DEFAULT_STRATEGY_LOOKBACK = 20;
+
 /** Timeframes supported for multi-timeframe strategies (in minutes) */
 const SUPPORTED_TF_MINUTES: Record<string, number> = {
   '5m': 5,
@@ -509,7 +512,7 @@ class StrategyLearningEngine extends EventEmitter {
       const strategyDef = {
         type: strategy.strategyType,
         parameters: {},
-        lookback: 20,
+        lookback: DEFAULT_STRATEGY_LOOKBACK,
       };
       (backtestingEngine as any).registerStrategy(strategy.strategyId, strategyDef);
 
