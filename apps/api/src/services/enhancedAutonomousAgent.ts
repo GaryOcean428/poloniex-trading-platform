@@ -155,6 +155,7 @@ class EnhancedAutonomousAgent extends EventEmitter {
   private static readonly CIRCUIT_BREAKER_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour cooldown
   private static readonly DRAWDOWN_SCALE_THRESHOLD = 10; // Start scaling at 10% drawdown
   private static readonly DRAWDOWN_HALT_THRESHOLD = 20; // Halt at 20% drawdown
+  private static readonly PROMOTION_POLL_INTERVAL_MS = 5 * 60 * 1000; // 5-min poll cycle
 
   constructor() {
     super();
@@ -1624,7 +1625,7 @@ class EnhancedAutonomousAgent extends EventEmitter {
       this.processDuePromotions().catch(err => {
         logger.error('[PromotionPoll] Error processing due promotions:', err);
       });
-    }, 5 * 60 * 1000); // 5 minutes
+    }, EnhancedAutonomousAgent.PROMOTION_POLL_INTERVAL_MS);
     logger.info('[PromotionPoll] Started paper promotion polling (5-min cycle)');
 
     // Run immediately on startup
@@ -1651,10 +1652,16 @@ class EnhancedAutonomousAgent extends EventEmitter {
   async processDuePromotions(): Promise<void> {
     try {
       const result = await pool.query(
-        `UPDATE paper_promotion_queue
+        `WITH due AS (
+           SELECT id FROM paper_promotion_queue
+            WHERE NOT processed AND due_at <= NOW()
+            FOR UPDATE SKIP LOCKED
+         )
+         UPDATE paper_promotion_queue q
             SET processed = TRUE
-          WHERE NOT processed AND due_at <= NOW()
-          RETURNING session_id, strategy_id`
+           FROM due
+          WHERE q.id = due.id
+          RETURNING q.session_id, q.strategy_id`
       );
 
       if (result.rows.length === 0) return;
