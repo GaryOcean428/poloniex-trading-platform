@@ -1,18 +1,74 @@
 import jwt from 'jsonwebtoken';
 import { logger } from '../utils/logger.js';
 
+const AUTH_LOG_COOLDOWN_MS = 60_000;
+const authFailureLogState = new Map();
+
+const normalizeAuthHeader = (authHeader) => {
+  if (!authHeader) return '';
+  if (Array.isArray(authHeader)) return authHeader[0] || '';
+  if (typeof authHeader !== 'string') return '';
+  return authHeader.trim();
+};
+
+const extractBearerToken = (authHeader) => {
+  const normalizedHeader = normalizeAuthHeader(authHeader);
+  if (!normalizedHeader) return null;
+
+  const [scheme, ...tokenParts] = normalizedHeader.split(/\s+/);
+  if (!scheme || scheme.toLowerCase() !== 'bearer' || tokenParts.length === 0) {
+    return null;
+  }
+
+  const token = tokenParts.join(' ').trim();
+  if (!token || token === 'null' || token === 'undefined') {
+    return null;
+  }
+
+  return token;
+};
+
+const isLikelyJwt = (token) => {
+  if (!token || typeof token !== 'string') return false;
+  const parts = token.split('.');
+  return parts.length === 3 && parts.every(part => part.length > 0);
+};
+
+const logJwtVerificationFailure = (errorMessage) => {
+  const key = errorMessage || 'unknown';
+  const now = Date.now();
+  const previous = authFailureLogState.get(key);
+
+  if (!previous || now - previous.lastLoggedAt >= AUTH_LOG_COOLDOWN_MS) {
+    authFailureLogState.set(key, { lastLoggedAt: now, suppressedCount: 0 });
+    logger.warn('JWT verification failed', { error: key, suppressed: 0 });
+    return;
+  }
+
+  previous.suppressedCount += 1;
+  authFailureLogState.set(key, previous);
+};
+
 /**
  * JWT Authentication Middleware
  * Verifies JWT tokens and adds user information to request
  */
 export const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
+  const token = extractBearerToken(authHeader);
 
   if (!token) {
     return res.status(401).json({ 
       error: 'Access token required',
       code: 'NO_TOKEN'
+    });
+  }
+
+  if (!isLikelyJwt(token)) {
+    logJwtVerificationFailure('jwt malformed');
+    return res.status(403).json({
+      error: 'Invalid or expired token',
+      code: 'INVALID_TOKEN'
     });
   }
 
@@ -24,7 +80,7 @@ export const authenticateToken = (req, res, next) => {
   
   jwt.verify(token, jwtSecret, (err, user) => {
     if (err) {
-      logger.warn('JWT verification failed', { error: err.message });
+      logJwtVerificationFailure(err.message);
       return res.status(403).json({
         error: 'Invalid or expired token',
         code: 'INVALID_TOKEN'
@@ -41,9 +97,14 @@ export const authenticateToken = (req, res, next) => {
  */
 export const optionalAuth = (req, res, next) => {
   const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
+  const token = extractBearerToken(authHeader);
 
   if (!token) {
+    req.user = null;
+    return next();
+  }
+
+  if (!isLikelyJwt(token)) {
     req.user = null;
     return next();
   }
@@ -56,7 +117,7 @@ export const optionalAuth = (req, res, next) => {
   
   jwt.verify(token, jwtSecret, (err, user) => {
     if (err) {
-      logger.warn('Optional JWT verification failed', { error: err.message });
+      logJwtVerificationFailure(err.message);
       req.user = null;
     } else {
       req.user = user;
