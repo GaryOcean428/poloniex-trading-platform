@@ -136,6 +136,9 @@ class EnhancedAutonomousAgent extends EventEmitter {
   // Maps strategy ID → paper trading session ID for result lookup
   private paperSessionIds: Map<string, string> = new Map();
 
+  // Polling interval for DB-persisted paper promotion deadlines
+  private promotionPollInterval: NodeJS.Timeout | null = null;
+
   // Circuit breaker state per session
   private circuitBreakers: Map<string, {
     consecutiveLosses: number;
@@ -374,6 +377,9 @@ class EnhancedAutonomousAgent extends EventEmitter {
       }
 
       logger.info(`[Agent] Session restoration complete. Active sessions: ${this.sessions.size}`);
+
+      // Start promotion polling so DB-persisted deadlines get processed after redeploy
+      this.startPromotionPolling();
     } catch (error: any) {
       logger.error('[Agent] Error restoring sessions from database:', error.message);
     }
@@ -1000,10 +1006,25 @@ class EnhancedAutonomousAgent extends EventEmitter {
     
     this.emit('strategy:paper_trading', { strategyId: strategy.id });
     
-    // Schedule check for promotion to live trading
-    setTimeout(async () => {
-      await this.checkPaperTradingResults(session, strategy);
-    }, session.config.paperTradingDurationHours * 60 * 60 * 1000);
+    // Persist promotion deadline in DB so it survives redeploys
+    const dueAt = new Date(Date.now() + session.config.paperTradingDurationHours * 60 * 60 * 1000);
+    try {
+      await pool.query(
+        `INSERT INTO paper_promotion_queue (session_id, strategy_id, due_at)
+         VALUES ($1, $2, $3)`,
+        [session.id, strategy.id, dueAt]
+      );
+      logger.info(`[Lifecycle] Scheduled promotion check for ${strategy.name} at ${dueAt.toISOString()}`);
+    } catch (err: any) {
+      // Table may not exist yet on first deploy; fall back to setTimeout
+      logger.warn(`[Lifecycle] Could not persist promotion deadline, falling back to setTimeout: ${err.message}`);
+      setTimeout(async () => {
+        await this.checkPaperTradingResults(session, strategy);
+      }, session.config.paperTradingDurationHours * 60 * 60 * 1000);
+    }
+
+    // Ensure the promotion polling loop is running
+    this.startPromotionPolling();
   }
 
   /**
@@ -1591,6 +1612,79 @@ class EnhancedAutonomousAgent extends EventEmitter {
     this.runningIntervals.set(`${session.id}_optimization`, optimizationInterval);
 
     logger.info(`Started allocation optimization for session ${session.id}`);
+  }
+
+  /**
+   * Start polling for DB-persisted paper promotion deadlines.
+   * Runs every 5 minutes. Safe to call multiple times — only one interval is created.
+   */
+  startPromotionPolling(): void {
+    if (this.promotionPollInterval) return;
+    this.promotionPollInterval = setInterval(() => {
+      this.processDuePromotions().catch(err => {
+        logger.error('[PromotionPoll] Error processing due promotions:', err);
+      });
+    }, 5 * 60 * 1000); // 5 minutes
+    logger.info('[PromotionPoll] Started paper promotion polling (5-min cycle)');
+
+    // Run immediately on startup
+    this.processDuePromotions().catch(err => {
+      logger.error('[PromotionPoll] Error on initial promotion processing:', err);
+    });
+  }
+
+  /**
+   * Stop the promotion polling loop.
+   */
+  stopPromotionPolling(): void {
+    if (this.promotionPollInterval) {
+      clearInterval(this.promotionPollInterval);
+      this.promotionPollInterval = null;
+    }
+  }
+
+  /**
+   * Process any paper promotion deadlines that are due.
+   * Reads from the `paper_promotion_queue` table, marks rows as processed,
+   * then runs `checkPaperTradingResults` for each.
+   */
+  async processDuePromotions(): Promise<void> {
+    try {
+      const result = await pool.query(
+        `UPDATE paper_promotion_queue
+            SET processed = TRUE
+          WHERE NOT processed AND due_at <= NOW()
+          RETURNING session_id, strategy_id`
+      );
+
+      if (result.rows.length === 0) return;
+
+      logger.info(`[PromotionPoll] Processing ${result.rows.length} due promotion(s)`);
+
+      for (const row of result.rows) {
+        const session = this.sessions.get(row.session_id);
+        const strategy = this.strategies.get(row.strategy_id);
+        if (session && strategy) {
+          try {
+            await this.checkPaperTradingResults(session, strategy);
+          } catch (err: any) {
+            logger.error(`[PromotionPoll] Error checking results for strategy ${row.strategy_id}:`, err.message);
+          }
+        } else {
+          logger.warn(
+            `[PromotionPoll] Skipping promotion — session or strategy not found ` +
+            `(session_id: ${row.session_id}, strategy_id: ${row.strategy_id})`
+          );
+        }
+      }
+    } catch (err: any) {
+      // Table may not exist on first deploy before migration runs
+      if (/relation.*does not exist/i.test(err.message)) {
+        logger.debug('[PromotionPoll] paper_promotion_queue table not yet created, skipping');
+      } else {
+        throw err;
+      }
+    }
   }
 }
 

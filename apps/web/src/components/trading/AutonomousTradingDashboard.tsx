@@ -2,6 +2,7 @@ import {
     AutonomousSettings
 } from '@/services/autonomousTradingEngine';
 import { liveAutonomousTradingEngine, LiveAutonomousSession } from '@/services/liveAutonomousTradingEngine';
+import { useAuth } from '@/hooks/useAuth';
 import {
     Brain,
     CheckCircle,
@@ -21,6 +22,7 @@ import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 const AutonomousTradingDashboard: React.FC = () => {
+    const { user } = useAuth();
     const [session, setSession] = useState<LiveAutonomousSession | null>(null);
     const [connectionStatus, setConnectionStatus] = useState(liveAutonomousTradingEngine.getConnectionStatus());
     const [_loading, setLoading] = useState(false);
@@ -97,8 +99,11 @@ const AutonomousTradingDashboard: React.FC = () => {
 
         try
         {
+            if (!user?.id) {
+                throw new Error('You must be logged in to start autonomous trading');
+            }
             const sessionId = await liveAutonomousTradingEngine.startAutonomousTrading(
-                'user_123',
+                user.id,
                 settings
             );
 

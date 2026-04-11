@@ -30,6 +30,9 @@ router.post('/start', authenticateToken, async (req: Request, res: Response) => 
       initialCapital: initialCapital || 10000,
       name: `Paper Trading - ${strategyId}`
     });
+
+    // Start the session to activate strategy execution
+    await paperTradingService.startSession(session.id, null);
     
     res.json({
       success: true,
