@@ -16,6 +16,7 @@ interface TradeHistoryItem {
   strategy?: string;
   orderId: string;
   status: 'filled' | 'partial' | 'cancelled';
+  source: 'exchange' | 'bot';
 }
 
 interface TradeFilters {
@@ -26,10 +27,14 @@ interface TradeFilters {
   strategy: string;
 }
 
+type TradeTab = 'all' | 'exchange' | 'bot';
+
 const TradeHistory: React.FC = () => {
-  const [trades, setTrades] = useState<TradeHistoryItem[]>([]);
+  const [botTrades, setBotTrades] = useState<TradeHistoryItem[]>([]);
+  const [exchangeTrades, setExchangeTrades] = useState<TradeHistoryItem[]>([]);
   const [filteredTrades, setFilteredTrades] = useState<TradeHistoryItem[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [activeTab, setActiveTab] = useState<TradeTab>('all');
   const [filters, setFilters] = useState<TradeFilters>({
     startDate: '',
     endDate: '',
@@ -43,7 +48,16 @@ const TradeHistory: React.FC = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage] = useState(20);
 
-  // Fetch real trade data from API
+  // Combine trades based on active tab
+  const trades = useMemo(() => {
+    switch (activeTab) {
+      case 'exchange': return exchangeTrades;
+      case 'bot': return botTrades;
+      default: return [...exchangeTrades, ...botTrades];
+    }
+  }, [activeTab, exchangeTrades, botTrades]);
+
+  // Fetch bot trades from internal DB
   useEffect(() => {
     interface ApiTrade {
       id: string;
@@ -57,7 +71,7 @@ const TradeHistory: React.FC = () => {
       status: string;
     }
 
-    const fetchTrades = async () => {
+    const fetchBotTrades = async () => {
       try {
         const { getBackendUrl } = await import('../utils/environment');
         const backendUrl = getBackendUrl();
@@ -69,7 +83,7 @@ const TradeHistory: React.FC = () => {
         if (response.ok) {
           const data = await response.json();
           if (data.success && Array.isArray(data.trades)) {
-            setTrades(data.trades.map((t: ApiTrade) => ({
+            setBotTrades(data.trades.map((t: ApiTrade) => ({
               id: t.id,
               timestamp: new Date(t.entryTime),
               pair: t.symbol || '',
@@ -83,17 +97,74 @@ const TradeHistory: React.FC = () => {
               pnl: t.pnl ?? undefined,
               strategy: t.reason || undefined,
               orderId: t.id,
-              status: t.status === 'open' ? 'filled' as const : t.status === 'closed' ? 'filled' as const : 'cancelled' as const
+              status: t.status === 'open' ? 'filled' as const : t.status === 'closed' ? 'filled' as const : 'cancelled' as const,
+              source: 'bot' as const
             })));
             return;
           }
         }
-        setTrades([]);
+        setBotTrades([]);
       } catch {
-        setTrades([]);
+        setBotTrades([]);
       }
     };
-    fetchTrades();
+    fetchBotTrades();
+  }, []);
+
+  // Fetch exchange trades from Poloniex API
+  useEffect(() => {
+    interface ExchangeTrade {
+      id: string;
+      symbol: string;
+      orderId: string;
+      side: string;
+      price: string;
+      qty: string;
+      realizedPnl: string;
+      fee: string;
+      feeCurrency: string;
+      time: number;
+      source: string;
+    }
+
+    const fetchExchangeTrades = async () => {
+      try {
+        const { getBackendUrl } = await import('../utils/environment');
+        const backendUrl = getBackendUrl();
+        const token = localStorage.getItem('access_token') || localStorage.getItem('auth_token');
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+
+        const response = await fetch(`${backendUrl}/api/dashboard/trades?limit=100`, { headers });
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success && Array.isArray(data.data?.trades)) {
+            setExchangeTrades(data.data.trades.map((t: ExchangeTrade) => ({
+              id: t.id,
+              timestamp: new Date(t.time),
+              pair: t.symbol || '',
+              side: t.side === 'buy' ? 'buy' as const : 'sell' as const,
+              type: 'market' as const,
+              amount: parseFloat(t.qty) || 0,
+              price: parseFloat(t.price) || 0,
+              total: (parseFloat(t.qty) || 0) * (parseFloat(t.price) || 0),
+              fee: parseFloat(t.fee) || 0,
+              feeCurrency: t.feeCurrency || 'USDT',
+              pnl: parseFloat(t.realizedPnl) || undefined,
+              strategy: undefined,
+              orderId: t.orderId || t.id,
+              status: 'filled' as const,
+              source: 'exchange' as const
+            })));
+            return;
+          }
+        }
+        setExchangeTrades([]);
+      } catch {
+        setExchangeTrades([]);
+      }
+    };
+    fetchExchangeTrades();
   }, []);
 
   // Apply filters and search
@@ -245,6 +316,27 @@ const TradeHistory: React.FC = () => {
         </p>
       </div>
 
+      {/* Trade Source Tabs */}
+      <div className="flex border-b border-border-subtle mb-6">
+        {([
+          { key: 'all', label: 'All Trades', count: exchangeTrades.length + botTrades.length },
+          { key: 'exchange', label: 'Exchange History', count: exchangeTrades.length },
+          { key: 'bot', label: 'Bot Trades', count: botTrades.length }
+        ] as const).map(tab => (
+          <button
+            key={tab.key}
+            onClick={() => setActiveTab(tab.key)}
+            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+              activeTab === tab.key
+                ? 'border-brand-cyan text-brand-cyan'
+                : 'border-transparent text-text-muted hover:text-text-primary hover:border-gray-300'
+            }`}
+          >
+            {tab.label} ({tab.count})
+          </button>
+        ))}
+      </div>
+
       {/* Summary Statistics */}
       <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
         <div className="bg-bg-tertiary p-4 rounded-lg shadow-elev-1 border border-border-subtle">
@@ -392,7 +484,7 @@ const TradeHistory: React.FC = () => {
                   { key: 'total', label: 'Total' },
                   { key: 'fee', label: 'Fee' },
                   { key: 'pnl', label: 'P&L' },
-                  { key: 'strategy', label: 'Strategy' },
+                  { key: 'strategy', label: 'Source' },
                   { key: 'status', label: 'Status' }
                 ].map((header) => (
                   <th
@@ -451,8 +543,14 @@ const TradeHistory: React.FC = () => {
                       </span>
                     )}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-text-secondary">
-                    {trade.strategy}
+                  <td className="px-6 py-4 whitespace-nowrap text-sm">
+                    <span className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${
+                      trade.source === 'exchange'
+                        ? 'bg-blue-100 text-blue-800'
+                        : 'bg-purple-100 text-purple-800'
+                    }`}>
+                      {trade.source === 'exchange' ? 'Exchange' : trade.strategy || 'Bot'}
+                    </span>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <span className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${getStatusColor(trade.status)}`}>

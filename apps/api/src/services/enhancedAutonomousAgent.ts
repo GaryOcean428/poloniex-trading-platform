@@ -23,6 +23,12 @@ import {
 } from './agentCapabilityScoring.js';
 import type { Server as SocketIOServer } from 'socket.io';
 
+/** Safe number formatting — returns fallback string for NaN/Infinity */
+function safeFixed(value: unknown, decimals: number, fallback = 'N/A'): string {
+  const n = Number(value);
+  return Number.isFinite(n) ? n.toFixed(decimals) : fallback;
+}
+
 interface AgentConfig {
   userId: string;
   executionMode: 'backtest' | 'paper' | 'live';
@@ -263,7 +269,7 @@ class EnhancedAutonomousAgent extends EventEmitter {
     if (dailyLossPercent >= EnhancedAutonomousAgent.MAX_DAILY_LOSS_PERCENT) {
       cb.isTripped = true;
       cb.trippedAt = new Date();
-      cb.trippedReason = `Daily loss limit reached (${dailyLossPercent.toFixed(1)}% of capital) — halting until next day`;
+      cb.trippedReason = `Daily loss limit reached (${safeFixed(dailyLossPercent, 1, '?')}% of capital) — halting until next day`;
       logger.warn(`[CircuitBreaker] TRIPPED for session ${sessionId}: ${cb.trippedReason}`);
       this.broadcastEvent('circuit_breaker_tripped', {
         sessionId,
@@ -313,7 +319,7 @@ class EnhancedAutonomousAgent extends EventEmitter {
       isTripped: cb.isTripped,
       reason: cb.trippedReason,
       consecutiveLosses: cb.consecutiveLosses,
-      dailyLossPercent: parseFloat(dailyLossPercent.toFixed(2)),
+      dailyLossPercent: parseFloat(safeFixed(dailyLossPercent, 2, '0')),
       cooldownRemaining: cb.isTripped && cb.trippedAt
         ? Math.max(0, EnhancedAutonomousAgent.CIRCUIT_BREAKER_COOLDOWN_MS - (Date.now() - cb.trippedAt.getTime()))
         : undefined
@@ -521,7 +527,7 @@ class EnhancedAutonomousAgent extends EventEmitter {
 
     const summaries = pastStrategies.slice(-10).map(s => {
       const perf = s.performance;
-      return `- ${s.name} (${s.type}/${s.symbol}): WR=${((perf.winRate || 0) * 100).toFixed(1)}%, PF=${(perf.profitFactor || 0).toFixed(2)}, Return=${(perf.totalReturn || 0).toFixed(2)}%, Trades=${perf.totalTrades}, Status=${s.status}`;
+      return `- ${s.name} (${s.type}/${s.symbol}): WR=${safeFixed((perf.winRate || 0) * 100, 1, '?')}%, PF=${safeFixed(perf.profitFactor || 0, 2, '?')}, Return=${safeFixed(perf.totalReturn || 0, 2, '?')}%, Trades=${perf.totalTrades}, Status=${s.status}`;
     });
 
     return `\n\nPAST STRATEGY PERFORMANCE (learn from these results):\n${summaries.join('\n')}\nAvoid repeating approaches that failed. Double down on patterns that worked.`;
@@ -930,9 +936,9 @@ class EnhancedAutonomousAgent extends EventEmitter {
 
       logger.info(
         `[Promotion] ${strategy.name} | ` +
-        `WR: ${(strategy.performance.winRate * 100).toFixed(1)}% (need >=${(winRateThreshold * 100).toFixed(0)}%) ${wrPassed ? '✓' : '✗'} | ` +
-        `PF: ${strategy.performance.profitFactor.toFixed(2)} (need >=${profitFactorThreshold}) ${pfPassed ? '✓' : '✗'} | ` +
-        `Sharpe: ${sharpeRatio.toFixed(2)} | MaxDD: ${(maxDrawdown * 100).toFixed(1)}% | ` +
+        `WR: ${safeFixed(strategy.performance.winRate * 100, 1, '?')}% (need >=${safeFixed(winRateThreshold * 100, 0, '?')}%) ${wrPassed ? '✓' : '✗'} | ` +
+        `PF: ${safeFixed(strategy.performance.profitFactor, 2, '?')} (need >=${profitFactorThreshold}) ${pfPassed ? '✓' : '✗'} | ` +
+        `Sharpe: ${safeFixed(sharpeRatio, 2, '?')} | MaxDD: ${safeFixed(maxDrawdown * 100, 1, '?')}% | ` +
         `Trades: ${strategy.performance.totalTrades} | ` +
         `Decision: ${wrPassed && pfPassed ? 'PROMOTE → paper' : 'RETIRE (failed backtest)'}`
       );
@@ -979,7 +985,7 @@ class EnhancedAutonomousAgent extends EventEmitter {
         const accountEquity = parseFloat(balance?.accountEquity ?? balance?.eq ?? '0');
         if (accountEquity > 0) {
           initialCapital = accountEquity;
-          logger.info(`Using real account balance $${initialCapital.toFixed(2)} for paper trading`);
+          logger.info(`Using real account balance $${safeFixed(initialCapital, 2, '0')} for paper trading`);
         }
       }
     } catch (err) {
@@ -1075,7 +1081,7 @@ class EnhancedAutonomousAgent extends EventEmitter {
       if (paperResults?.isCensored) {
         logger.warn(
           `[Censoring] Strategy ${strategy.name} paper session is CENSORED (reason: ${paperResults.censorReason}). ` +
-          `Reported WR: ${(paperResults.winRate * 100).toFixed(1)}% may be unreliable — blocking live promotion`
+          `Reported WR: ${safeFixed(paperResults.winRate * 100, 1, '?')}% may be unreliable — blocking live promotion`
         );
         await this.retireStrategy(strategy, 'censored_paper_session');
         return;
@@ -1083,8 +1089,8 @@ class EnhancedAutonomousAgent extends EventEmitter {
 
       logger.info(
         `[PaperPromotion] ${strategy.name} | ` +
-        `WR: ${(paperResults ? paperResults.winRate * 100 : 0).toFixed(1)}% (need >${(minWinRate * 100).toFixed(0)}%) | ` +
-        `PF: ${(paperResults?.profitFactor || 0).toFixed(2)} (need >${minProfitFactor}) | ` +
+        `WR: ${safeFixed(paperResults ? paperResults.winRate * 100 : 0, 1, '?')}% (need >${safeFixed(minWinRate * 100, 0, '?')}%) | ` +
+        `PF: ${safeFixed(paperResults?.profitFactor || 0, 2, '?')} (need >${minProfitFactor}) | ` +
         `Trades: ${paperResults?.totalTrades || 0} (need >=${minTrades}) | ` +
         `Censored: ${paperResults?.isCensored ? 'YES' : 'no'}`
       );
@@ -1096,7 +1102,7 @@ class EnhancedAutonomousAgent extends EventEmitter {
         await this.promoteToLiveTrading(session, strategy);
       } else {
         const reason = paperResults 
-          ? `WR: ${(paperResults.winRate * 100).toFixed(1)}% (need >${(minWinRate * 100).toFixed(0)}%), PF: ${paperResults.profitFactor.toFixed(2)} (need >${minProfitFactor}), Trades: ${paperResults.totalTrades} (need >=${minTrades})`
+          ? `WR: ${safeFixed(paperResults.winRate * 100, 1, '?')}% (need >${safeFixed(minWinRate * 100, 0, '?')}%), PF: ${safeFixed(paperResults.profitFactor, 2, '?')} (need >${minProfitFactor}), Trades: ${paperResults.totalTrades} (need >=${minTrades})`
           : 'no paper trading data';
         logger.info(`Strategy ${strategy.name} failed paper trading (${reason}), retiring`);
         await this.retireStrategy(strategy, 'failed_paper_trading');
@@ -1428,8 +1434,8 @@ class EnhancedAutonomousAgent extends EventEmitter {
         
         logger.info(
           `Optimized allocation for ${allocation.strategyName}: ` +
-          `${(allocation.positionSize * 100).toFixed(2)}% ` +
-          `(Sharpe: ${allocation.sharpeRatio.toFixed(2)}, Capability: ${allocation.compositeScore})`
+          `${safeFixed(allocation.positionSize * 100, 2, '?')}% ` +
+          `(Sharpe: ${safeFixed(allocation.sharpeRatio, 2, '?')}, Capability: ${allocation.compositeScore})`
         );
       }
 

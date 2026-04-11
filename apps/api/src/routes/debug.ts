@@ -27,6 +27,9 @@ interface CredentialRow {
 
 const router = express.Router();
 
+// Gate all debug routes behind authentication in production
+router.use(authenticateToken);
+
 /**
  * Get all tables in the database
  * GET /api/debug/tables
@@ -89,8 +92,17 @@ router.get('/table/:tableName', async (req, res) => {
       ORDER BY ordinal_position;
     `, [tableName]);
     
-    // Get row count
-    const countResult = await pool.query(`SELECT COUNT(*) as count FROM ${tableName}`);
+    // Get row count — tableName is validated to exist by the query above,
+    // but we double-check it matches a safe identifier pattern to prevent injection
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(tableName)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid table name format'
+      });
+    }
+    const countResult = await pool.query(
+      `SELECT COUNT(*) as count FROM "${tableName}"`
+    );
     
     res.json({
       success: true,
@@ -277,7 +289,7 @@ router.get('/db-connection', async (req, res) => {
  * Check if user has credentials and their status
  * (Consolidated from former diagnostic.ts)
  */
-router.get('/credentials-status', authenticateToken, async (req: Request, res: Response) => {
+router.get('/credentials-status', async (req: Request, res: Response) => {
   try {
     const userId = String(req.user.id);
     
@@ -329,7 +341,7 @@ router.get('/credentials-status', authenticateToken, async (req: Request, res: R
  * Test balance fetch with detailed logging
  * (Consolidated from former test-balance.ts and diagnostic.ts)
  */
-router.get('/test-balance', authenticateToken, async (req: Request, res: Response) => {
+router.get('/test-balance', async (req: Request, res: Response) => {
   try {
     const userId = String(req.user.id);
     logger.info('=== TEST BALANCE REQUEST ===', { userId });

@@ -167,9 +167,9 @@ router.get('/active', authenticateToken, async (req: Request, res: Response) => 
       hasCredentials: true,
       credentials: {
         apiKey: credentials.apiKey,
-        // Mask API secret: only expose last 4 characters for verification
+        // Never expose any part of the API secret — just confirm it exists
         apiSecret: credentials.apiSecret
-          ? '••••••••' + credentials.apiSecret.slice(-4)
+          ? '••••••••••••••••'
           : '',
         exchange: exchange
       },

@@ -22,7 +22,7 @@ router.get('/predictions/:symbol', authenticateToken, async (req, res) => {
     const userId = req.user?.userId;
 
     if (!userId) {
-      return res.status(401).json({ error: 'Unauthorized' });
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
     }
 
     logger.info(`QIG prediction request for ${symbol} by user ${userId}`);
@@ -85,14 +85,14 @@ router.get('/metrics/:symbol', authenticateToken, async (req, res) => {
     const userId = req.user?.userId;
 
     if (!userId) {
-      return res.status(401).json({ error: 'Unauthorized' });
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
     }
 
     // Get historical data
     const ohlcvData = await poloniexFuturesService.getHistoricalData(symbol, '1h', 200);
     
     if (!ohlcvData || ohlcvData.length === 0) {
-      return res.status(503).json({ error: 'No historical data available' });
+      return res.status(503).json({ success: false, error: 'No historical data available' });
     }
 
     // Get full predictions (includes metrics)
@@ -125,7 +125,7 @@ router.get('/compare/:symbol', authenticateToken, async (req, res) => {
     const userId = req.user?.userId;
 
     if (!userId) {
-      return res.status(401).json({ error: 'Unauthorized' });
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
     }
 
     logger.info(`QIG comparison request for ${symbol} by user ${userId}`);
@@ -134,7 +134,7 @@ router.get('/compare/:symbol', authenticateToken, async (req, res) => {
     const ohlcvData = await poloniexFuturesService.getHistoricalData(symbol, '1h', 200);
     
     if (!ohlcvData || ohlcvData.length === 0) {
-      return res.status(503).json({ error: 'No historical data available' });
+      return res.status(503).json({ success: false, error: 'No historical data available' });
     }
 
     // Get QIG-enhanced predictions

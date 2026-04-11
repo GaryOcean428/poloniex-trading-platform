@@ -7,6 +7,7 @@ import express from 'express';
 import { persistentTradingEngine } from '../services/persistentTradingEngine.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { pool } from '../db/connection.js';
+import { logger } from '../utils/logger.js';
 
 const router = express.Router();
 
@@ -20,7 +21,7 @@ router.post('/', authenticateToken, async (req, res) => {
     const userId = req.user?.userId;
 
     if (!strategyConfig) {
-      return res.status(400).json({ error: 'Strategy configuration is required' });
+      return res.status(400).json({ success: false, error: 'Strategy configuration is required' });
     }
 
     const sessionId = await persistentTradingEngine.startSession(
@@ -36,8 +37,8 @@ router.post('/', authenticateToken, async (req, res) => {
       message: 'Trading session started successfully'
     });
   } catch (error: unknown) {
-    console.error('Error starting trading session:', error);
-    res.status(500).json({ error: (error instanceof Error ? error.message : String(error)) || 'Failed to start trading session' });
+    logger.error('Error starting trading session:', error);
+    res.status(500).json({ success: false, error: 'Failed to start trading session' });
   }
 });
 
@@ -57,11 +58,11 @@ router.post('/:sessionId/stop', authenticateToken, async (req, res) => {
     );
 
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Trading session not found' });
+      return res.status(404).json({ success: false, error: 'Trading session not found' });
     }
 
     if (result.rows[0].user_id !== userId) {
-      return res.status(403).json({ error: 'Unauthorized' });
+      return res.status(403).json({ success: false, error: 'Unauthorized' });
     }
 
     await persistentTradingEngine.stopSession(sessionId);
@@ -71,8 +72,8 @@ router.post('/:sessionId/stop', authenticateToken, async (req, res) => {
       message: 'Trading session stopped successfully'
     });
   } catch (error: unknown) {
-    console.error('Error stopping trading session:', error);
-    res.status(500).json({ error: (error instanceof Error ? error.message : String(error)) || 'Failed to stop trading session' });
+    logger.error('Error stopping trading session:', error);
+    res.status(500).json({ success: false, error: 'Failed to stop trading session' });
   }
 });
 
@@ -97,8 +98,8 @@ router.get('/', authenticateToken, async (req, res) => {
       sessions: result.rows
     });
   } catch (error: unknown) {
-    console.error('Error fetching trading sessions:', error);
-    res.status(500).json({ error: (error instanceof Error ? error.message : String(error)) || 'Failed to fetch trading sessions' });
+    logger.error('Error fetching trading sessions:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch trading sessions' });
   }
 });
 
@@ -118,15 +119,15 @@ router.get('/:sessionId', authenticateToken, async (req, res) => {
     );
 
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Trading session not found' });
+      return res.status(404).json({ success: false, error: 'Trading session not found' });
     }
 
     res.json({
       session: result.rows[0]
     });
   } catch (error: unknown) {
-    console.error('Error fetching trading session:', error);
-    res.status(500).json({ error: (error instanceof Error ? error.message : String(error)) || 'Failed to fetch trading session' });
+    logger.error('Error fetching trading session:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch trading session' });
   }
 });
 
@@ -145,8 +146,8 @@ router.get('/engine/status', authenticateToken, async (req, res) => {
       activeSessions
     });
   } catch (error: unknown) {
-    console.error('Error fetching engine status:', error);
-    res.status(500).json({ error: (error instanceof Error ? error.message : String(error)) || 'Failed to fetch engine status' });
+    logger.error('Error fetching engine status:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch engine status' });
   }
 });
 

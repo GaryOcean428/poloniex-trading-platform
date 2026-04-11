@@ -428,7 +428,7 @@ class PaperTradingService extends EventEmitter {
             : Infinity;
 
           if (marginRatio <= 1.0) {
-            logger.warn(`[PT] Position ${position.id} margin ratio ${marginRatio.toFixed(2)} below maintenance`);
+            logger.warn(`[PT] Position ${position.id} margin ratio ${Number.isFinite(marginRatio) ? marginRatio.toFixed(2) : 'N/A'} below maintenance`);
           }
 
           // Issue #1: Liquidation check
@@ -1060,6 +1060,12 @@ class PaperTradingService extends EventEmitter {
     const riskAmount = session.currentValue * (session.riskParameters.riskPerTrade || 0.02);
     const stopLossDistance = session.riskParameters.stopLossPercent || 0.02;
     const price = marketData.price || marketData.close;
+
+    // Guard against zero/missing price to prevent division by zero
+    if (!price || price <= 0) {
+      logger.warn('[PT] Cannot calculate position size: price is zero or missing');
+      return 0;
+    }
     
     // Position size based on risk amount and stop loss
     const maxPositionValue = riskAmount / stopLossDistance;
@@ -1147,17 +1153,23 @@ class PaperTradingService extends EventEmitter {
         const exitPrice = reason === 'stop_loss' ? position.stopLoss : position.takeProfit;
         position._closePending = true;
         setTimeout(() => {
-          this.closePosition(session.id, positionId, reason, exitPrice).catch(() => {});
+          this.closePosition(session.id, positionId, reason, exitPrice).catch(err => {
+            logger.error(`[PT] Failed to close position ${positionId} (${reason}):`, err);
+          });
         }, 0);
       } else if (slTriggered) {
         position._closePending = true;
         setTimeout(() => {
-          this.closePosition(session.id, positionId, 'stop_loss', position.stopLoss).catch(() => {});
+          this.closePosition(session.id, positionId, 'stop_loss', position.stopLoss).catch(err => {
+            logger.error(`[PT] Failed to close position ${positionId} (stop_loss):`, err);
+          });
         }, 0);
       } else if (tpTriggered) {
         position._closePending = true;
         setTimeout(() => {
-          this.closePosition(session.id, positionId, 'take_profit', position.takeProfit).catch(() => {});
+          this.closePosition(session.id, positionId, 'take_profit', position.takeProfit).catch(err => {
+            logger.error(`[PT] Failed to close position ${positionId} (take_profit):`, err);
+          });
         }, 0);
       }
     }

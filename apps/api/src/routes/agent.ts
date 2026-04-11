@@ -4,6 +4,7 @@ import { enhancedAutonomousAgent } from '../services/enhancedAutonomousAgent.js'
 import { agentSettingsService } from '../services/agentSettingsService.js';
 import type { Request, Response } from 'express';
 import { pool } from '../db/connection.js';
+import { logger } from '../utils/logger.js';
 
 const router = express.Router();
 
@@ -52,7 +53,7 @@ router.post('/start', authenticateToken, async (req: Request, res: Response) => 
       session
     });
   } catch (error: unknown) {
-    console.error('Error starting agent:', error);
+    logger.error('Error starting agent:', error);
     const errMsg = error instanceof Error ? error.message : String(error);
     
     // Handle "already running" with structured 409
@@ -135,7 +136,7 @@ router.post('/stop', authenticateToken, async (req: Request, res: Response) => {
       message: 'Agent stopped successfully'
     });
   } catch (error: unknown) {
-    console.error('Error stopping agent:', error);
+    logger.error('Error stopping agent:', error);
     res.status(500).json({
       success: false,
       error: error instanceof Error ? error.message : 'Failed to stop agent'
@@ -173,7 +174,7 @@ router.post('/pause', authenticateToken, async (req: Request, res: Response) => 
       message: 'Agent paused successfully'
     });
   } catch (error: unknown) {
-    console.error('Error pausing agent:', error);
+    logger.error('Error pausing agent:', error);
     res.status(500).json({
       success: false,
       error: error instanceof Error ? error.message : 'Failed to pause agent'
@@ -233,7 +234,7 @@ router.post('/resume', authenticateToken, async (req: Request, res: Response) =>
       }
     });
   } catch (error: unknown) {
-    console.error('Error resuming agent:', error);
+    logger.error('Error resuming agent:', error);
     res.status(500).json({
       success: false,
       error: error instanceof Error ? error.message : 'Failed to resume agent'
@@ -263,7 +264,7 @@ router.get('/status', authenticateToken, async (req: Request, res: Response) => 
       status: status || null
     });
   } catch (error: unknown) {
-    console.error('Error getting agent status:', error);
+    logger.error('Error getting agent status:', error);
     res.json({
       success: true,
       status: null,
@@ -324,7 +325,7 @@ router.get('/health', authenticateToken, async (req: Request, res: Response) => 
       timestamp: new Date().toISOString()
     });
   } catch (error: unknown) {
-    console.error('Error checking agent health:', error);
+    logger.error('Error checking agent health:', error);
     res.status(503).json({
       success: false,
       error: 'Health check failed',
@@ -382,7 +383,7 @@ router.get('/activity', authenticateToken, async (req: Request, res: Response) =
         activity: []
       });
     }
-    console.error('Error getting activity:', error);
+    logger.error('Error getting activity:', error);
     res.json({
       success: true,
       activity: [],
@@ -439,7 +440,7 @@ router.get('/events', authenticateToken, async (req: Request, res: Response) => 
         events: []
       });
     } else {
-      console.error('Agent events query failed:', error instanceof Error ? error.message : String(error));
+      logger.error('Agent events query failed:', error instanceof Error ? error.message : String(error));
       res.json({
         success: true,
         events: [],
@@ -490,7 +491,7 @@ router.get('/strategies', authenticateToken, async (req: Request, res: Response)
         strategies: []
       });
     }
-    console.error('Error getting strategies:', error);
+    logger.error('Error getting strategies:', error);
     res.json({
       success: true,
       strategies: [],
@@ -641,7 +642,7 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
         dailyPerformance
       });
     } catch (dbError: unknown) {
-      console.warn('Trades table query failed, returning default performance:', dbError instanceof Error ? dbError.message : String(dbError));
+      logger.warn('Trades table query failed, returning default performance: ' + (dbError instanceof Error ? dbError.message : String(dbError)));
       // Return default performance if trades table doesn't exist
       res.json({
         success: true,
@@ -650,7 +651,7 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
       });
     }
   } catch (error: unknown) {
-    console.error('Error getting performance:', error);
+    logger.error('Error getting performance:', error);
     res.status(500).json({
       success: false,
       error: error instanceof Error ? error.message : 'Failed to get performance'
@@ -714,7 +715,7 @@ router.get('/capabilities', authenticateToken, async (req: Request, res: Respons
       strategies: profiles
     });
   } catch (error: unknown) {
-    console.error('Error getting agent capability profiles:', error);
+    logger.error('Error getting agent capability profiles:', error);
     res.json({
       success: true,
       capabilitySummary: {
@@ -756,7 +757,7 @@ router.get('/circuit-breaker', authenticateToken, async (req: Request, res: Resp
     const cbStatus = enhancedAutonomousAgent.getCircuitBreakerStatus(status.id);
     res.json({ success: true, circuitBreaker: cbStatus });
   } catch (error: unknown) {
-    console.error('Error getting circuit breaker status:', error);
+    logger.error('Error getting circuit breaker status:', error);
     res.json({
       success: true,
       circuitBreaker: {
@@ -809,7 +810,7 @@ router.get('/learnings', authenticateToken, async (req: Request, res: Response) 
         learnings: []
       });
     }
-    console.error('Error getting learnings:', error);
+    logger.error('Error getting learnings:', error);
     res.json({
       success: true,
       learnings: [],
@@ -854,7 +855,7 @@ router.put('/config', authenticateToken, async (req: Request, res: Response) => 
       message: 'Configuration updated successfully'
     });
   } catch (error: unknown) {
-    console.error('Error updating config:', error);
+    logger.error('Error updating config:', error);
     res.status(500).json({
       success: false,
       error: error instanceof Error ? error.message : 'Failed to update configuration'
@@ -879,7 +880,7 @@ router.get('/activity/live', authenticateToken, async (req: Request, res: Respon
       activities: []
     });
   } catch (error: unknown) {
-    console.error('Error getting live activity:', error);
+    logger.error('Error getting live activity:', error);
     res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
   }
 });
@@ -901,7 +902,7 @@ router.get('/strategies/active', authenticateToken, async (req: Request, res: Re
       strategies: []
     });
   } catch (error: unknown) {
-    console.error('Error getting active strategies:', error);
+    logger.error('Error getting active strategies:', error);
     res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
   }
 });
@@ -922,7 +923,7 @@ router.get('/strategies/pending-approval', authenticateToken, async (req: Reques
       strategies: []
     });
   } catch (error: unknown) {
-    console.error('Error getting pending strategies:', error);
+    logger.error('Error getting pending strategies:', error);
     res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
   }
 });
@@ -943,7 +944,7 @@ router.get('/strategy/current', authenticateToken, async (req: Request, res: Res
       generation: null
     });
   } catch (error: unknown) {
-    console.error('Error getting current strategy:', error);
+    logger.error('Error getting current strategy:', error);
     res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
   }
 });
@@ -964,7 +965,7 @@ router.get('/strategy/recent', authenticateToken, async (req: Request, res: Resp
       strategies: []
     });
   } catch (error: unknown) {
-    console.error('Error getting recent strategies:', error);
+    logger.error('Error getting recent strategies:', error);
     res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
   }
 });
@@ -985,7 +986,7 @@ router.get('/backtest/results', authenticateToken, async (req: Request, res: Res
       results: []
     });
   } catch (error: unknown) {
-    console.error('Error getting backtest results:', error);
+    logger.error('Error getting backtest results:', error);
     res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
   }
 });
@@ -1006,7 +1007,7 @@ router.post('/strategy/:id/approve', authenticateToken, async (req: Request, res
       message: 'Strategy approved'
     });
   } catch (error: unknown) {
-    console.error('Error approving strategy:', error);
+    logger.error('Error approving strategy:', error);
     res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
   }
 });
@@ -1027,7 +1028,7 @@ router.post('/strategy/:id/reject', authenticateToken, async (req: Request, res:
       message: 'Strategy rejected'
     });
   } catch (error: unknown) {
-    console.error('Error rejecting strategy:', error);
+    logger.error('Error rejecting strategy:', error);
     res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
   }
 });
@@ -1048,7 +1049,7 @@ router.post('/strategy/:id/pause', authenticateToken, async (req: Request, res: 
       message: 'Strategy paused'
     });
   } catch (error: unknown) {
-    console.error('Error pausing strategy:', error);
+    logger.error('Error pausing strategy:', error);
     res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
   }
 });
@@ -1069,7 +1070,7 @@ router.post('/strategy/:id/resume', authenticateToken, async (req: Request, res:
       message: 'Strategy resumed'
     });
   } catch (error: unknown) {
-    console.error('Error resuming strategy:', error);
+    logger.error('Error resuming strategy:', error);
     res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
   }
 });
@@ -1090,7 +1091,7 @@ router.post('/strategy/:id/retire', authenticateToken, async (req: Request, res:
       message: 'Strategy retired'
     });
   } catch (error: unknown) {
-    console.error('Error retiring strategy:', error);
+    logger.error('Error retiring strategy:', error);
     res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
   }
 });
@@ -1117,7 +1118,7 @@ router.get('/strategies', authenticateToken, async (req: Request, res: Response)
       strategies
     });
   } catch (error: unknown) {
-    console.error('Error getting strategies:', error);
+    logger.error('Error getting strategies:', error);
     res.json({
       success: true,
       strategies: [],
@@ -1149,7 +1150,7 @@ router.get('/strategies/:sessionId', authenticateToken, async (req: Request, res
       strategies
     });
   } catch (error: unknown) {
-    console.error('Error getting session strategies:', error);
+    logger.error('Error getting session strategies:', error);
     res.json({
       success: true,
       strategies: [],
@@ -1185,7 +1186,7 @@ router.get('/settings', authenticateToken, async (req: Request, res: Response) =
       }
     });
   } catch (error: unknown) {
-    console.error('Error getting agent settings:', error);
+    logger.error('Error getting agent settings:', error);
     res.status(500).json({
       success: false,
       error: error instanceof Error ? error.message : 'Failed to get agent settings'
@@ -1230,7 +1231,7 @@ router.post('/settings', authenticateToken, async (req: Request, res: Response) 
       settings
     });
   } catch (error: unknown) {
-    console.error('Error saving agent settings:', error);
+    logger.error('Error saving agent settings:', error);
     res.status(500).json({
       success: false,
       error: error instanceof Error ? error.message : 'Failed to save agent settings'

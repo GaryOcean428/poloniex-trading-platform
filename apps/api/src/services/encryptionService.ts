@@ -6,6 +6,7 @@
 
 import crypto from 'crypto';
 import { env } from '../config/env.js';
+import { logger } from '../utils/logger.js';
 
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 16; // For AES, this is always 16
@@ -26,7 +27,7 @@ export class EncryptionService {
     }
 
     if (!env.API_ENCRYPTION_KEY && env.NODE_ENV === 'production') {
-      console.warn('API_ENCRYPTION_KEY not set - using JWT_SECRET for API key encryption (not recommended for production)');
+      logger.warn('API_ENCRYPTION_KEY not set - using JWT_SECRET for API key encryption (not recommended for production)');
     }
 
     // Derive a consistent key from the master secret
@@ -58,7 +59,7 @@ export class EncryptionService {
         tag: tag.toString('hex')
       };
     } catch (error) {
-      console.error('Encryption error:', error);
+      logger.error('Encryption error:', error);
       throw new Error('Failed to encrypt data');
     }
   }
@@ -82,7 +83,7 @@ export class EncryptionService {
       
       return decrypted;
     } catch (error) {
-      console.error('Decryption error:', error);
+      logger.error('Decryption error:', error);
       throw new Error('Failed to decrypt data');
     }
   }
