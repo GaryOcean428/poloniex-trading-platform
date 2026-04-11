@@ -16,7 +16,7 @@ router.use(authenticateToken);
 // Require admin role for all admin routes
 router.use(async (req: express.Request, res: express.Response, next: express.NextFunction) => {
   try {
-    const userId = (req as any).user?.id || (req as any).user?.userId;
+    const userId = req.user?.id || req.user?.userId;
     if (!userId) {
       return res.status(403).json({ success: false, error: 'Admin access required' });
     }
