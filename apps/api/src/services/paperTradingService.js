@@ -122,6 +122,12 @@ class PaperTradingService extends EventEmitter {
         
         // Load positions for this session
         await this.loadSessionPositions(session.id);
+
+        // Restart strategy execution for recovered sessions that have a strategy
+        if (session.strategy) {
+          this.startStrategyExecution(session.id);
+          logger.info(`♻️ Restarted strategy execution for recovered session ${session.id}`);
+        }
       }
 
       logger.info(`📊 Loaded ${result.rows.length} active paper trading sessions`);

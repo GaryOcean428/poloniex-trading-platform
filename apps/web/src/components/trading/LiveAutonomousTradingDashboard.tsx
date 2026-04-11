@@ -11,6 +11,7 @@ import { Slider } from '@/components/ui/Slider';
 import { liveAutonomousTradingEngine, LiveAutonomousSession } from '@/services/liveAutonomousTradingEngine';
 import { autonomousTradingAPI, BankingConfig, RiskToleranceConfig } from '@/services/autonomousTradingAPI';
 import { AutonomousSettings } from '@/services/autonomousTradingEngine';
+import { useAuth } from '@/hooks/useAuth';
 import {
   Brain,
   CheckCircle,
@@ -33,6 +34,7 @@ import {
 } from 'lucide-react';
 
 const LiveAutonomousTradingDashboard: React.FC = () => {
+  const { user } = useAuth();
   const [session, setSession] = useState<LiveAutonomousSession | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -144,7 +146,10 @@ const LiveAutonomousTradingDashboard: React.FC = () => {
     setError(null);
 
     try {
-      const sessionId = await liveAutonomousTradingEngine.startAutonomousTrading('user_123', settings);
+      if (!user?.id) {
+        throw new Error('You must be logged in to start autonomous trading');
+      }
+      const sessionId = await liveAutonomousTradingEngine.startAutonomousTrading(user.id, settings);
       const newSession = liveAutonomousTradingEngine.getAutonomousSession(sessionId);
       setSession(newSession);
     } catch (err) {
