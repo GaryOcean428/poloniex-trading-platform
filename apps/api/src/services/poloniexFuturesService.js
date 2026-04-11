@@ -141,11 +141,8 @@ class PoloniexFuturesService {
         logger.info(`Making Poloniex v3 futures ${method} request to ${requestPath}`, {
           url: fullUrl,
           hasApiKey: !!credentials.apiKey,
-          apiKeyPrefix: credentials.apiKey?.substring(0, 8),
           timestamp,
-          signaturePreview: signature.substring(0, 20) + '...',
           headers: {
-            key: credentials.apiKey?.substring(0, 8) + '...',
             signTimestamp: timestamp,
             signatureMethod: headers.signatureMethod,
             signatureVersion: headers.signatureVersion
@@ -173,8 +170,7 @@ class PoloniexFuturesService {
           status: error.response?.status,
           statusText: error.response?.statusText,
           data: error.response?.data,
-          message: error.message,
-          headers: error.config?.headers
+          message: error.message
         });
         throw error;
       }
