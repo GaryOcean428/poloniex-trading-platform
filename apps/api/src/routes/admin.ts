@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { authenticateToken } from '../middleware/auth.js';
+import { logger } from '../utils/logger.js';
 
 const router = express.Router();
 const __filename = fileURLToPath(import.meta.url);
@@ -48,7 +49,7 @@ function getMigrationFiles(): string[] {
 // Admin endpoint to run migrations
 router.post('/migrate', async (req, res) => {
   try {
-    console.log('🚀 Starting database migrations...');
+    logger.info('🚀 Starting database migrations...');
     const migrationFiles = getMigrationFiles();
     const checkUsersTable = await pool.query(`
       SELECT EXISTS (
@@ -82,7 +83,7 @@ router.post('/migrate', async (req, res) => {
     if (checkDemoUser.rows.length === 0) {
       const demoPassword = process.env.DEMO_USER_PASSWORD;
       if (!demoPassword) {
-        console.warn('⚠️ DEMO_USER_PASSWORD is not set — skipping demo user creation. Set the env var to create the demo account.');
+        logger.warn('⚠️ DEMO_USER_PASSWORD is not set — skipping demo user creation. Set the env var to create the demo account.');
       } else {
         const bcrypt = await import('bcryptjs');
         const passwordHash = await bcrypt.hash(demoPassword, 12);
@@ -144,7 +145,7 @@ router.post('/migrate', async (req, res) => {
     `);
     results.tables = tablesResult.rows.map(r => r.tablename);
 
-    console.log('🎉 Migrations completed successfully');
+    logger.info('🎉 Migrations completed successfully');
     
     res.json({
       success: true,
@@ -153,7 +154,7 @@ router.post('/migrate', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ Migration failed:', error);
+    logger.error('❌ Migration failed:', error);
     res.status(500).json({
       success: false,
       error: 'Migration failed'
@@ -195,7 +196,7 @@ export default router;
 // Endpoint to reset demo user password
 router.post('/reset-demo-password', async (req, res) => {
   try {
-    console.log('🔐 Resetting demo user password...');
+    logger.info('🔐 Resetting demo user password...');
     
     const { password } = req.body;
     if (!password || typeof password !== 'string' || password.length < 8) {
@@ -223,7 +224,7 @@ router.post('/reset-demo-password', async (req, res) => {
       });
     }
     
-    console.log('✅ Demo user password reset successfully');
+    logger.info('✅ Demo user password reset successfully');
     
     res.json({
       success: true,
@@ -232,7 +233,7 @@ router.post('/reset-demo-password', async (req, res) => {
     });
     
   } catch (error) {
-    console.error('❌ Password reset failed:', error);
+    logger.error('❌ Password reset failed:', error);
     res.status(500).json({
       success: false,
       error: 'Password reset failed'
@@ -243,7 +244,7 @@ router.post('/reset-demo-password', async (req, res) => {
 // Endpoint to reset GaryOcean user password
 router.post('/reset-gary-password', async (req, res) => {
   try {
-    console.log('🔐 Resetting GaryOcean user password...');
+    logger.info('🔐 Resetting GaryOcean user password...');
     
     const { password } = req.body;
     if (!password || typeof password !== 'string' || password.length < 8) {
@@ -271,7 +272,7 @@ router.post('/reset-gary-password', async (req, res) => {
       });
     }
     
-    console.log('✅ GaryOcean user password reset successfully');
+    logger.info('✅ GaryOcean user password reset successfully');
     
     res.json({
       success: true,
@@ -280,7 +281,7 @@ router.post('/reset-gary-password', async (req, res) => {
     });
     
   } catch (error) {
-    console.error('❌ Password reset failed:', error);
+    logger.error('❌ Password reset failed:', error);
     res.status(500).json({
       success: false,
       error: 'Password reset failed'

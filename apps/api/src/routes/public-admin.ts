@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import { pool } from '../db/connection.js';
 import { authRateLimiter } from '../config/security.js';
+import { logger } from '../utils/logger.js';
 
 const router = express.Router();
 
@@ -71,7 +72,7 @@ router.post('/reset-password', async (req, res) => {
       user: { id: result.rows[0].id, username: result.rows[0].username }
     });
   } catch (error) {
-    console.error('Password reset error:', error);
+    logger.error('Password reset error:', error);
     res.status(500).json({ error: 'Failed to reset password' });
   }
 });
@@ -117,7 +118,7 @@ router.post('/reset-garyocean', async (req, res) => {
       user: { id: result.rows[0].id, username: result.rows[0].username }
     });
   } catch (error) {
-    console.error('Password reset error:', error);
+    logger.error('Password reset error:', error);
     res.status(500).json({ error: 'Failed to reset password' });
   }
 });
@@ -152,7 +153,7 @@ router.post('/run-migration', async (req, res) => {
       res.status(400).json({ error: 'Unknown migration number' });
     }
   } catch (error: unknown) {
-    console.error('Migration error:', error);
+    logger.error('Migration error:', error);
     res.status(500).json({ error: 'Failed to run migration' });
   }
 });

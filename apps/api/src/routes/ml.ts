@@ -5,6 +5,7 @@ import simpleMlService from '../services/simpleMlService.js';
 import poloniexFuturesService from '../services/poloniexFuturesService.js';
 import { strategyLearningEngine } from '../services/strategyLearningEngine.js';
 import parallelStrategyRunner from '../services/parallelStrategyRunner.js';
+import { logger } from '../utils/logger.js';
 
 const router = express.Router();
 
@@ -44,7 +45,7 @@ router.get('/performance/:symbol', authenticateToken, async (req, res) => {
         currentPrice = ohlcvData[ohlcvData.length - 1].close;
       }
     } catch (dataError: unknown) {
-      console.error('Failed to fetch historical data:', dataError instanceof Error ? dataError.message : String(dataError));
+      logger.error('Failed to fetch historical data: ' + (dataError instanceof Error ? dataError.message : String(dataError)));
       // Return fallback data instead of 503
       return res.json({
         symbol,
@@ -76,7 +77,7 @@ router.get('/performance/:symbol', authenticateToken, async (req, res) => {
           signal = await mlPredictionService.getTradingSignal(symbol, ohlcvData, currentPrice);
           usePythonML = true; // Re-enable on success (allows recovery after transient errors)
         } catch (workerError: unknown) {
-          console.warn('ML worker failed, falling back to simple ML:', workerError instanceof Error ? workerError.message : String(workerError));
+          logger.warn('ML worker failed, falling back to simple ML: ' + (workerError instanceof Error ? workerError.message : String(workerError)));
           usePythonML = false; // Disable for a while to avoid repeated timeouts
           throw workerError; // Re-throw to use fallback
         }
@@ -84,7 +85,7 @@ router.get('/performance/:symbol', authenticateToken, async (req, res) => {
         throw new Error('ML worker temporarily disabled, using simple ML');
       }
     } catch {
-      console.warn('[ML] Using simpleMlService as fallback — ml-worker unavailable');
+      logger.warn('[ML] Using simpleMlService as fallback — ml-worker unavailable');
       // Use JavaScript-based simple ML service
       predictions = await simpleMlService.getMultiHorizonPredictions(symbol, ohlcvData);
       signal = await simpleMlService.getTradingSignal(symbol, ohlcvData, currentPrice);
@@ -99,7 +100,7 @@ router.get('/performance/:symbol', authenticateToken, async (req, res) => {
     });
 
   } catch (error: unknown) {
-    console.error('ML performance endpoint error:', error);
+    logger.error('ML performance endpoint error:', error);
     
     // Return fallback data when ML models unavailable
     res.json({
@@ -149,7 +150,7 @@ router.post('/train/:symbol', authenticateToken, async (req, res) => {
         throw new Error('ML worker temporarily disabled, using simple ML');
       }
     } catch (workerError: unknown) {
-      console.warn('ML worker training failed, falling back to simple ML:', workerError instanceof Error ? workerError.message : String(workerError));
+      logger.warn('ML worker training failed, falling back to simple ML: ' + (workerError instanceof Error ? workerError.message : String(workerError)));
       usePythonML = false;
       results = {
         mode: 'fallback',
@@ -167,7 +168,7 @@ router.post('/train/:symbol', authenticateToken, async (req, res) => {
     });
 
   } catch (error: unknown) {
-    console.error('ML training endpoint error:', error);
+    logger.error('ML training endpoint error:', error);
     res.status(500).json({
       error: 'Failed to train ML models',
       message: error instanceof Error ? error.message : String(error)
