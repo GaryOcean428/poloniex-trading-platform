@@ -155,13 +155,17 @@ class MLPredictionService {
       };
 
       const timeout = setTimeout(() => {
-        sub.unsubscribe(responseChannel).catch(() => {});
+        sub.unsubscribe(responseChannel).catch(err => {
+          logger.warn('Redis unsubscribe failed on timeout:', err);
+        });
         settle(reject, new Error(`ML worker Redis timeout after ${REQUEST_TIMEOUT_MS}ms`));
       }, REQUEST_TIMEOUT_MS);
 
       const onMessage = (message) => {
         clearTimeout(timeout);
-        sub.unsubscribe(responseChannel).catch(() => {});
+        sub.unsubscribe(responseChannel).catch(err => {
+          logger.warn('Redis unsubscribe failed on message:', err);
+        });
         try {
           const result = JSON.parse(message);
           if (result.status === 'error') {
@@ -177,7 +181,9 @@ class MLPredictionService {
       sub.subscribe(responseChannel, onMessage).then(() => {
         pub.publish(PREDICT_REQUEST_CHANNEL, JSON.stringify({ ...payload, requestId })).catch((err) => {
           clearTimeout(timeout);
-          sub.unsubscribe(responseChannel).catch(() => {});
+          sub.unsubscribe(responseChannel).catch(err => {
+            logger.warn('Redis unsubscribe failed on publish error:', err);
+          });
           settle(reject, new Error(`Failed to publish ML predict request: ${err.message}`));
         });
       }).catch((err) => {

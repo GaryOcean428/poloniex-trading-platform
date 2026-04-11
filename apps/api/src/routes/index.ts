@@ -9,8 +9,6 @@ export { default as apiKeyRoutes } from './apiKeys.js';
 
 // Trading Routes
 export { default as futuresRoutes } from './futures.js';
-export { default as futuresRoutesNew } from './futures';
-export { default as spotTradingRoutes } from './spotTrading.js';
 export { default as backtestRoutes } from './backtest.js';
 export { default as paperTradingRoutes } from './paper-trading.js';
 export { default as autonomousTraderRoutes } from './autonomousTrader.js';
@@ -23,7 +21,6 @@ export { default as confidenceScoringRoutes } from './confidenceScoring.js';
 
 // Market Data & Analysis
 export { default as marketsRoutes } from './markets.js';
-export { default as marketDataRoutes } from './marketData.js';
 export { default as proxyRoutes } from './proxy.js';
 
 // ML & AI
@@ -41,4 +38,3 @@ export { default as publicAdminRoutes } from './public-admin.js';
 export { default as statusRoutes } from './status.js';
 export { default as debugRoutes } from './debug.js';
 export { default as versionCheckRoutes } from './version-check.js';
-export { default as deployVersionRoutes } from './deploy-version.js';

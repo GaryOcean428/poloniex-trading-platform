@@ -1,10 +1,19 @@
 import express from 'express';
 import { logger } from '../utils/logger.js';
+import { authenticateToken } from '../middleware/auth.js';
 
 const router = express.Router();
 
+// Health check — no auth required (used by monitoring)
+router.get('/health', (_req, res) => {
+  res.json({ status: 'ok', service: 'confidence-scoring' });
+});
+
+// All other routes require authentication
+router.use(authenticateToken);
+
 // Root endpoint for confidence scoring
-router.get('/', (req, res) => {
+router.get('/', (_req, res) => {
   res.json({ 
     status: 'ok', 
     service: 'confidence-scoring', 
@@ -16,13 +25,8 @@ router.get('/', (req, res) => {
   });
 });
 
-// Health check for confidence scoring
-router.get('/health', (req, res) => {
-  res.json({ status: 'ok', service: 'confidence-scoring' });
-});
-
 // Get confidence scores
-router.get('/scores', (req, res) => {
+router.get('/scores', (_req, res) => {
   try {
     // TODO: Implement actual confidence scoring logic
     res.json({
@@ -31,10 +35,10 @@ router.get('/scores', (req, res) => {
       timestamp: new Date().toISOString()
     });
   } catch (error) {
-    logger.error('Error fetching confidence scores', { error: error.message, stack: error.stack });
+    const errMsg = error instanceof Error ? error.message : String(error);
+    logger.error('Error fetching confidence scores', { error: errMsg });
     res.status(500).json({
-      error: 'Failed to fetch confidence scores',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error: 'Failed to fetch confidence scores'
     });
   }
 });
@@ -60,10 +64,10 @@ router.post('/calculate', (req, res) => {
       timestamp: new Date().toISOString()
     });
   } catch (error) {
-    logger.error('Error calculating confidence score', { error: error.message, stack: error.stack });
+    const errMsg = error instanceof Error ? error.message : String(error);
+    logger.error('Error calculating confidence score', { error: errMsg });
     res.status(500).json({
-      error: 'Failed to calculate confidence score',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error: 'Failed to calculate confidence score'
     });
   }
 });
