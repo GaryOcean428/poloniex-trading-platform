@@ -1,7 +1,7 @@
 import { pool } from '../db/connection.js';
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { logger } from '../utils/logger.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -78,4 +78,22 @@ export async function runAllMigrations(): Promise<void> {
   } finally {
     client.release();
   }
+}
+
+const isDirectExecution = () => {
+  const executedFile = process.argv[1];
+  if (!executedFile) return false;
+  return import.meta.url === pathToFileURL(path.resolve(executedFile)).href;
+};
+
+if (isDirectExecution()) {
+  runAllMigrations()
+    .then(() => {
+      logger.info('All migrations executed successfully');
+      process.exit(0);
+    })
+    .catch((error) => {
+      logger.error('Migration execution failed', { error: error instanceof Error ? error.message : String(error) });
+      process.exit(1);
+    });
 }

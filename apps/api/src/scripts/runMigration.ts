@@ -10,7 +10,7 @@ async function runMigration(migrationFile: string): Promise<void> {
   try {
     console.log(`Running migration: ${migrationFile}`);
     
-    const migrationPath = path.join(__dirname, '../../migrations', migrationFile);
+    const migrationPath = path.join(__dirname, '../../database/migrations', migrationFile);
     const sql = fs.readFileSync(migrationPath, 'utf8');
     
     // Execute migration
@@ -28,7 +28,7 @@ async function main(): Promise<void> {
   
   if (!migrationFile) {
     console.error('Usage: npm run migrate <migration-file>');
-    console.error('Example: npm run migrate 006_autonomous_agent_tables.sql');
+    console.error('Example: npm run migrate 006_add_encryption_fields.sql');
     process.exit(1);
   }
   

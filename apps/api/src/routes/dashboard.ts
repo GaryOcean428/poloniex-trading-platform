@@ -245,8 +245,7 @@ router.get('/balance', authenticateToken, async (req: Request, res: Response) =>
       logger.info('Credentials retrieved successfully', { 
         userId, 
         hasCredentials: !!credentials,
-        exchange: credentials?.exchange,
-        apiKeyPrefix: credentials?.apiKey?.substring(0, 8) 
+        exchange: credentials?.exchange
       });
     } catch (credError: unknown) {
       const ce = credError as { message?: string; stack?: string };
@@ -284,8 +283,7 @@ router.get('/balance', authenticateToken, async (req: Request, res: Response) =>
     try {
       logger.info('Attempting to fetch Futures balance...', { 
         userId,
-        exchange: credentials.exchange,
-        apiKeyPrefix: credentials.apiKey.substring(0, 8)
+        exchange: credentials.exchange
       });
       
       const futuresBalance = await poloniexFuturesService.getAccountBalance(credentials);
