@@ -87,7 +87,7 @@ router.get('/orderbook/:symbol', async (req: Request, res: Response) => {
   try {
     const { symbol } = req.params;
     const { depth = '20' } = req.query;
-    const orderbook = await poloniexFuturesService.getOrderBook(symbol, parseInt(depth as string));
+    const orderbook = await poloniexFuturesService.getOrderBook(symbol, parseInt(depth as string, 10));
     res.json(orderbook);
   } catch (error: unknown) {
     const err = error as { response?: { status?: number; data?: unknown }; message?: string };
@@ -123,7 +123,7 @@ router.get('/klines/:symbol', async (req: Request, res: Response) => {
     };
     
     const poloniexInterval = intervalMap[interval as string] || 'HOUR_1'; // Default to 1h
-    const klines = await poloniexFuturesService.getKlines(symbol, poloniexInterval, { limit: parseInt(limit as string) });
+    const klines = await poloniexFuturesService.getKlines(symbol, poloniexInterval, { limit: parseInt(limit as string, 10) });
     res.json(klines);
   } catch (error: unknown) {
     const err = error as { response?: { status?: number; data?: unknown }; message?: string };
