@@ -2,6 +2,7 @@ import jwt from 'jsonwebtoken';
 import { logger } from '../utils/logger.js';
 
 const AUTH_LOG_COOLDOWN_MS = 60_000;
+const MAX_AUTH_LOG_KEYS = 20;
 const authFailureLogState = new Map();
 
 const normalizeAuthHeader = (authHeader) => {
@@ -15,12 +16,12 @@ const extractBearerToken = (authHeader) => {
   const normalizedHeader = normalizeAuthHeader(authHeader);
   if (!normalizedHeader) return null;
 
-  const [scheme, ...tokenParts] = normalizedHeader.split(/\s+/);
-  if (!scheme || scheme.toLowerCase() !== 'bearer' || tokenParts.length === 0) {
+  const match = normalizedHeader.match(/^Bearer\s+(\S+)$/i);
+  if (!match || !match[1]) {
     return null;
   }
 
-  const token = tokenParts.join(' ').trim();
+  const token = match[1].trim();
   if (!token || token === 'null' || token === 'undefined') {
     return null;
   }
@@ -39,9 +40,21 @@ const logJwtVerificationFailure = (errorMessage) => {
   const now = Date.now();
   const previous = authFailureLogState.get(key);
 
+  if (!previous && authFailureLogState.size >= MAX_AUTH_LOG_KEYS) {
+    const oldestEntry = Array.from(authFailureLogState.entries())
+      .sort((a, b) => a[1].lastLoggedAt - b[1].lastLoggedAt)[0];
+    if (oldestEntry) {
+      authFailureLogState.delete(oldestEntry[0]);
+    }
+  }
+
   if (!previous || now - previous.lastLoggedAt >= AUTH_LOG_COOLDOWN_MS) {
+    if (previous?.suppressedCount > 0) {
+      logger.warn('JWT verification failed', { error: key, suppressed: previous.suppressedCount });
+    } else {
+      logger.warn('JWT verification failed', { error: key });
+    }
     authFailureLogState.set(key, { lastLoggedAt: now, suppressedCount: 0 });
-    logger.warn('JWT verification failed', { error: key, suppressed: 0 });
     return;
   }
 
