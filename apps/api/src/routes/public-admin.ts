@@ -1,4 +1,5 @@
 import express from 'express';
+import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import { pool } from '../db/connection.js';
 import { authRateLimiter } from '../config/security.js';
@@ -16,7 +17,18 @@ function validateAdminKey(adminKey: string | undefined): boolean {
   if (!expectedKey || expectedKey === 'CHANGE_ME_IN_PRODUCTION') {
     return false;
   }
-  return adminKey === expectedKey;
+  if (!adminKey) {
+    return false;
+  }
+  // Use constant-time comparison to prevent timing attacks
+  const adminBuf = Buffer.from(adminKey, 'utf8');
+  const expectedBuf = Buffer.from(expectedKey, 'utf8');
+  if (adminBuf.length !== expectedBuf.length) {
+    // Still perform a comparison to avoid leaking length via timing
+    crypto.timingSafeEqual(expectedBuf, expectedBuf);
+    return false;
+  }
+  return crypto.timingSafeEqual(adminBuf, expectedBuf);
 }
 
 // Public password reset endpoint (no authentication required)

@@ -155,7 +155,7 @@ router.get('/overview', authenticateToken, async (req: Request, res: Response) =
           realizedPnl: String(trade.realizedPnl || '0'),
           commission: String(trade.feeAmt || trade.fee || '0'),
           commissionAsset: trade.feeCcy || trade.commissionAsset || 'USDT',
-          time: parseInt(String(trade.cTime || trade.ts || trade.time || Date.now()))
+          time: parseInt(String(trade.cTime || trade.ts || trade.time || Date.now()), 10)
         }))
       : [];
 
@@ -511,7 +511,7 @@ router.get('/bills', authenticateToken, async (req: Request, res: Response) => {
       });
     }
 
-    const limit = parseInt(req.query.limit as string) || 10;
+    const limit = parseInt(req.query.limit as string, 10) || 10;
     
     let bills;
     try {
@@ -708,7 +708,7 @@ router.get('/transfer/history', authenticateToken, async (req: Request, res: Res
       });
     }
 
-    const limit = parseInt(req.query.limit as string) || 50;
+    const limit = parseInt(req.query.limit as string, 10) || 50;
     const history = await poloniexSpotService.getTransferHistory(credentials, { limit });
 
     res.json({

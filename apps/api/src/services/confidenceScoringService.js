@@ -58,6 +58,10 @@ class ConfidenceScoringService extends EventEmitter {
       // Confidence trajectory buffer length (number of past scores to retain)
       trajectoryLength: 20,
 
+      // Minimum trades for partial sub-score computation
+      minTradesForPerformanceScore: 5,
+      minTradesForConsistencyScore: 10,
+
       // Max number of trajectory keys to retain (prevents unbounded Map growth)
       maxTrajectoryKeys: 1000
     };
@@ -204,6 +208,15 @@ class ConfidenceScoringService extends EventEmitter {
 
       // Add unreliable-estimate warning when censored/uncensored fits diverge
       if (confidenceAssessment?.censoringInfo?.estimateUnreliable) {
+        // Compute confidence using only uncensored data for the divergence message
+        const confidenceWithoutCensored = uncensoredData
+          ? Math.round(
+              (this.calculatePerformanceScore(uncensoredData) * this.scoringParameters.performanceWeight) +
+              (this.calculateConsistencyScore(uncensoredData) * this.scoringParameters.consistencyWeight) +
+              (riskScore * this.scoringParameters.riskWeight) +
+              (marketConditionScore * this.scoringParameters.marketConditionWeight)
+            )
+          : Math.round(confidenceScore);
         confidenceAssessment.warnings.push({
           type: 'censored_data_divergence',
           message: `Censored trades alter confidence by ${Math.abs(Math.round(confidenceScore) - confidenceWithoutCensored)} points. Performance estimate may be unreliable.`,

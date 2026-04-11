@@ -25,12 +25,14 @@ export function isCensored(session) {
   if (!session) return { isCensored: false, reason: null };
 
   // Max-drawdown limit was breached
-  if (session.censoringReason === 'max_drawdown') {
+  if (session.censorReason === 'max_drawdown') {
     return { isCensored: true, reason: 'max_drawdown' };
   }
 
   // Check current drawdown against configured limit
-  const drawdown = (session.initialCapital - session.currentValue) / session.initialCapital;
+  const drawdown = session.initialCapital > 0
+    ? (session.initialCapital - session.currentValue) / session.initialCapital
+    : 0;
   const maxDrawdownLimit = session.riskParameters?.maxDailyLoss ?? 0.05;
   if (drawdown >= maxDrawdownLimit) {
     return { isCensored: true, reason: 'max_drawdown' };
@@ -175,10 +177,7 @@ class PaperTradingService extends EventEmitter {
           maxPositionSize: 0.1, // 10% max position size
           stopLossPercent: 0.02, // 2% stop loss
           takeProfitPercent: 0.04 // 4% take profit
-        },
-        // QIG censoring: track whether session outcome is censored (true value unknown)
-        isCensored: false,
-        censorReason: null
+        }
       };
 
       // Store session in database
@@ -642,8 +641,9 @@ class PaperTradingService extends EventEmitter {
     // Base slippage
     let slippage = this.marketSimulation.slippage;
     
-    // Market impact based on position size
-    const marketImpact = this.marketSimulation.marketImpact * Math.log(size / 1000);
+    // Market impact based on position size (guard against non-positive size)
+    const sizeRatio = size > 0 ? size / 1000 : 1;
+    const marketImpact = this.marketSimulation.marketImpact * Math.log(Math.max(sizeRatio, Number.MIN_VALUE));
     
     // Random slippage variation (±20%)
     const randomFactor = 0.8 + (Math.random() * 0.4);
@@ -982,14 +982,15 @@ class PaperTradingService extends EventEmitter {
     if (leverage <= 1) return false; // No liquidation risk without leverage
 
     const maintenanceBuffer = 0.005; // 0.5% maintenance margin buffer
-    const liquidationThreshold = (1 / leverage) - maintenanceBuffer;
+    // Ensure threshold stays positive even at extreme leverage (e.g. 200x+)
+    const liquidationThreshold = Math.max((1 / leverage) - maintenanceBuffer, maintenanceBuffer);
 
     if (position.side === 'long') {
-      // Long liquidation: price drops below entry * (1 - 1/leverage + buffer)
+      // Long liquidation: price drops below entry * (1 - threshold)
       const liquidationPrice = position.entryPrice * (1 - liquidationThreshold);
       return currentPrice <= liquidationPrice;
     } else {
-      // Short liquidation: price rises above entry * (1 + 1/leverage - buffer)
+      // Short liquidation: price rises above entry * (1 + threshold)
       const liquidationPrice = position.entryPrice * (1 + liquidationThreshold);
       return currentPrice >= liquidationPrice;
     }
@@ -1001,12 +1002,14 @@ class PaperTradingService extends EventEmitter {
   performRiskCheck(session, signal, marketData) {
     try {
       // Check daily loss limit
-      const dailyLoss = (session.initialCapital - session.currentValue) / session.initialCapital;
+      const dailyLoss = session.initialCapital > 0
+        ? (session.initialCapital - session.currentValue) / session.initialCapital
+        : 0;
       if (dailyLoss > session.riskParameters.maxDailyLoss) {
         // Mark session as censored: P&L is bounded by the drawdown limit, not by
         // the strategy's natural behaviour.
         session.isCensored = true;
-        session.censoringReason = 'max_drawdown';
+        session.censorReason = 'max_drawdown';
         return {
           allowed: false,
           reason: 'daily_loss_limit_exceeded',
@@ -1022,7 +1025,7 @@ class PaperTradingService extends EventEmitter {
       if (positionPercent > session.riskParameters.maxPositionSize) {
         // Mark session as censored: return is bounded by the position-size cap.
         session.isCensored = true;
-        session.censoringReason = 'position_size_limit';
+        session.censorReason = 'position_size_limit';
         return {
           allowed: false,
           reason: 'position_size_limit_exceeded',
@@ -1106,6 +1109,8 @@ class PaperTradingService extends EventEmitter {
   checkStopLossTakeProfit(session, currentPrice) {
     for (const [positionId, position] of session.positions) {
       if (position.status !== 'open') continue;
+      // Guard against queuing multiple deferred closes for the same position
+      if (position._closePending) continue;
 
       // Issue #14: Evaluate SL and TP independently, then resolve conflicts
       // by choosing whichever price level was closer to being hit first.
@@ -1140,16 +1145,19 @@ class PaperTradingService extends EventEmitter {
           reason = slDistance <= tpDistance ? 'stop_loss' : 'take_profit';
         }
         const exitPrice = reason === 'stop_loss' ? position.stopLoss : position.takeProfit;
+        position._closePending = true;
         setTimeout(() => {
-          this.closePosition(session.id, positionId, reason, exitPrice);
+          this.closePosition(session.id, positionId, reason, exitPrice).catch(() => {});
         }, 0);
       } else if (slTriggered) {
+        position._closePending = true;
         setTimeout(() => {
-          this.closePosition(session.id, positionId, 'stop_loss', position.stopLoss);
+          this.closePosition(session.id, positionId, 'stop_loss', position.stopLoss).catch(() => {});
         }, 0);
       } else if (tpTriggered) {
+        position._closePending = true;
         setTimeout(() => {
-          this.closePosition(session.id, positionId, 'take_profit', position.takeProfit);
+          this.closePosition(session.id, positionId, 'take_profit', position.takeProfit).catch(() => {});
         }, 0);
       }
     }
@@ -1271,7 +1279,7 @@ class PaperTradingService extends EventEmitter {
       // Detect censoring before persisting
       const { isCensored: censored, reason: censoringReason } = isCensored(session);
       session.isCensored = censored;
-      session.censoringReason = censoringReason;
+      session.censorReason = censoringReason;
 
       if (censored) {
         logger.warn(`Paper trading session ${sessionId} flagged as censored: ${censoringReason}`);
@@ -1281,7 +1289,7 @@ class PaperTradingService extends EventEmitter {
       await query(`
         UPDATE paper_trading_sessions 
         SET status = 'stopped', ended_at = $1, updated_at = NOW(),
-            is_censored = $3, censoring_reason = $4
+            is_censored = $3, censor_reason = $4
         WHERE id = $2
       `, [session.endedAt, sessionId, censored, censoringReason]);
 

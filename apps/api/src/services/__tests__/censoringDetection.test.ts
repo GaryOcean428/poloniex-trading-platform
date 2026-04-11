@@ -46,8 +46,8 @@ describe('isCensored (paper trading session)', () => {
     expect(result.reason).toBe('max_drawdown');
   });
 
-  it('returns true when censoringReason is already set to max_drawdown', () => {
-    const session = { ...baseSession, censoringReason: 'max_drawdown' };
+  it('returns true when censorReason is already set to max_drawdown', () => {
+    const session = { ...baseSession, censorReason: 'max_drawdown' };
     const result = isCensored(session);
     expect(result.isCensored).toBe(true);
     expect(result.reason).toBe('max_drawdown');

@@ -95,7 +95,7 @@ router.get('/table/:tableName', async (req, res) => {
     res.json({
       success: true,
       tableName,
-      rowCount: parseInt(countResult.rows[0].count),
+      rowCount: parseInt(countResult.rows[0].count, 10),
       columns: structureResult.rows
     });
   } catch (error: unknown) {
@@ -231,7 +231,7 @@ router.get('/users', async (req, res) => {
     
     res.json({
       success: true,
-      totalUsers: parseInt(countResult.rows[0].count),
+      totalUsers: parseInt(countResult.rows[0].count, 10),
       demoUserExists: demoUserResult.rows.length > 0,
       demoUser: demoUserResult.rows[0] || null,
       garyUserExists: garyUserResult.rows.length > 0,

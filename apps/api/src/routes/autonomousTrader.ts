@@ -113,7 +113,7 @@ router.get('/status', authenticateToken, async (req: Request, res: Response) => 
         totalReturn: 0,
         drawdown: 0
       },
-      openPositions: parseInt(openPositionsResult.rows[0].count),
+      openPositions: parseInt(openPositionsResult.rows[0].count, 10),
       recentTrades: tradesResult.rows.map(trade => ({
         id: trade.id,
         symbol: trade.symbol,
@@ -147,7 +147,7 @@ router.get('/status', authenticateToken, async (req: Request, res: Response) => 
 router.get('/performance', authenticateToken, async (req: Request, res: Response) => {
   try {
     const userId = String(req.user.id);
-    const days = parseInt(req.query.days as string) || 30;
+    const days = parseInt(req.query.days as string, 10) || 30;
 
     // Get performance history
     const performanceResult = await pool.query(
@@ -175,7 +175,7 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
 
     const stats = statsResult.rows[0];
     const winRate = stats.total_trades > 0 
-      ? (parseInt(stats.winning_trades) / parseInt(stats.total_trades)) * 100 
+      ? (parseInt(stats.winning_trades, 10) / parseInt(stats.total_trades, 10)) * 100 
       : 0;
 
     res.json({
@@ -187,9 +187,9 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
         timestamp: p.timestamp
       })),
       statistics: {
-        totalTrades: parseInt(stats.total_trades),
-        winningTrades: parseInt(stats.winning_trades),
-        losingTrades: parseInt(stats.losing_trades),
+        totalTrades: parseInt(stats.total_trades, 10),
+        winningTrades: parseInt(stats.winning_trades, 10),
+        losingTrades: parseInt(stats.losing_trades, 10),
         winRate: winRate.toFixed(2),
         avgPnL: stats.avg_pnl ? parseFloat(stats.avg_pnl) : 0,
         totalPnL: stats.total_pnl ? parseFloat(stats.total_pnl) : 0,
@@ -213,7 +213,7 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
 router.get('/trades', authenticateToken, async (req: Request, res: Response) => {
   try {
     const userId = String(req.user.id);
-    const limit = parseInt(req.query.limit as string) || 50;
+    const limit = parseInt(req.query.limit as string, 10) || 50;
     const status = req.query.status as string;
 
     let query = `

@@ -525,9 +525,12 @@ class BacktestingEngine extends EventEmitter {
   }
 
   calculatePnL(position, exitPrice) {
-    const entryValue = position.size * position.entryPrice;
-    const exitValue = position.size * exitPrice;
-    return position.side === 'long' ? exitValue - entryValue : entryValue - exitValue;
+    const size = Number(position?.size) || 0;
+    const entry = Number(position?.entryPrice) || 0;
+    const exit = Number(exitPrice) || 0;
+    const entryValue = size * entry;
+    const exitValue = size * exit;
+    return position?.side === 'long' ? exitValue - entryValue : entryValue - exitValue;
   }
 
   calculateTradingFees(size, price, orderType = 'market') {

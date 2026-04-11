@@ -19,7 +19,7 @@ router.get('/health', (_req: Request, res: Response) => {
  * Get recent errors (requires auth)
  */
 router.get('/errors', authenticateToken, (req: Request, res: Response) => {
-  const limit = parseInt(req.query.limit as string) || 50;
+  const limit = parseInt(req.query.limit as string, 10) || 50;
   const errors = monitoringService.getRecentErrors(limit);
   
   res.json({
@@ -33,7 +33,7 @@ router.get('/errors', authenticateToken, (req: Request, res: Response) => {
  * Get recent warnings (requires auth)
  */
 router.get('/warnings', authenticateToken, (req: Request, res: Response) => {
-  const limit = parseInt(req.query.limit as string) || 50;
+  const limit = parseInt(req.query.limit as string, 10) || 50;
   const warnings = monitoringService.getRecentWarnings(limit);
   
   res.json({
