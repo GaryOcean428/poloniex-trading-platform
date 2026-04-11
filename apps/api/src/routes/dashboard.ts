@@ -545,6 +545,98 @@ router.get('/bills', authenticateToken, async (req: Request, res: Response) => {
 });
 
 /**
+ * GET /api/dashboard/trades
+ * Get exchange trade history from Poloniex API
+ * Returns actual executed trades from the exchange (not internal bot trades)
+ */
+router.get('/trades', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    let credentials;
+    try {
+      credentials = await apiCredentialsService.getCredentials(String(req.user.id));
+    } catch {
+      return res.json({
+        success: true,
+        data: { trades: [], summary: { total: 0, buys: 0, sells: 0, volume: 0 } },
+        mock: true,
+        message: 'No API credentials configured. Add your Poloniex API keys to view exchange trade history.'
+      });
+    }
+
+    if (!credentials) {
+      return res.json({
+        success: true,
+        data: { trades: [], summary: { total: 0, buys: 0, sells: 0, volume: 0 } },
+        mock: true,
+        message: 'No API credentials configured.'
+      });
+    }
+
+    const limit = parseInt(req.query.limit as string, 10) || 100;
+
+    let tradesData;
+    try {
+      tradesData = await poloniexFuturesService.getTradeHistory(credentials, { limit });
+    } catch (apiError: unknown) {
+      const apiErrMsg = apiError instanceof Error ? apiError.message : String(apiError);
+      logger.warn('Poloniex trade history API call failed:', apiErrMsg);
+      return res.json({
+        success: true,
+        data: { trades: [], summary: { total: 0, buys: 0, sells: 0, volume: 0 } },
+        mock: true,
+        warning: 'Unable to fetch exchange trade history. Please check API credentials.'
+      });
+    }
+
+    const trades = Array.isArray(tradesData)
+      ? tradesData.map((trade: TradeRow, index: number) => ({
+          id: trade.trdId || trade.tradeId || trade.id || `trade-${Date.now()}-${index}`,
+          symbol: trade.symbol || 'UNKNOWN',
+          orderId: trade.ordId || trade.orderId || '',
+          side: (trade.side === 'buy' || trade.side === 'BUY') ? 'buy' : 'sell',
+          price: String(trade.px || trade.fillPx || trade.price || '0'),
+          qty: String(trade.qty || trade.fillSz || trade.sz || trade.amount || '0'),
+          realizedPnl: String(trade.realizedPnl || '0'),
+          fee: String(trade.feeAmt || trade.fee || '0'),
+          feeCurrency: trade.feeCcy || trade.commissionAsset || 'USDT',
+          time: parseInt(String(trade.cTime || trade.ts || trade.time || Date.now()), 10),
+          source: 'exchange' as const
+        }))
+      : [];
+
+    const buys = trades.filter(t => t.side === 'buy').length;
+    const sells = trades.filter(t => t.side === 'sell').length;
+    const volume = trades.reduce((sum, t) => {
+      const price = parseFloat(t.price) || 0;
+      const qty = parseFloat(t.qty) || 0;
+      return sum + (price * qty);
+    }, 0);
+
+    res.json({
+      success: true,
+      data: {
+        trades,
+        summary: {
+          total: trades.length,
+          buys,
+          sells,
+          volume
+        }
+      }
+    });
+
+  } catch (error: unknown) {
+    logger.error('Error fetching exchange trades:', error);
+    const errMsg = error instanceof Error ? error.message : String(error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error',
+      details: errMsg
+    });
+  }
+});
+
+/**
  * GET /api/dashboard/balance/all
  * Get combined balance from both Spot and Futures accounts
  */

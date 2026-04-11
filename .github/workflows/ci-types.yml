@@ -1,17 +1,23 @@
-# Verify GitHub Actions doesn't conflict with Railway config
+name: TypeScript Type Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
 
 jobs:
   type-check:
     runs-on: ubuntu-latest
     env:
-      # If GitHub Actions uses Yarn, add same variable
       YARN_ENABLE_STRICT_SETTINGS: false
-      # Note: GitHub Actions may not need this if not using Yarn Berry
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-node@v3
+      - uses: actions/checkout@v4
+      - name: Enable Corepack
+        run: corepack enable
+      - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: corepack enable
+          cache: 'yarn'
       - run: yarn install --immutable
-      - run: yarn workspace backend tsc --noEmit
+      - run: yarn build

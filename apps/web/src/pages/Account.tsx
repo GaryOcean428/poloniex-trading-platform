@@ -46,6 +46,7 @@ const Account: React.FC = () => {
   }>>([]);
   const [recentLoading, setRecentLoading] = useState(false);
   const [recentError, setRecentError] = useState<string | null>(null);
+  const [tradeSummary, setTradeSummary] = useState<{ total: number; buys: number; sells: number }>({ total: 0, buys: 0, sells: 0 });
 
   // instantiate inside effect to avoid extra deps
 
@@ -171,6 +172,42 @@ const Account: React.FC = () => {
     return () => {
       mounted = false;
     };
+  }, []);
+
+  // Load exchange trade summary for dynamic trade counts
+  useEffect(() => {
+    let mounted = true;
+    const loadTradeSummary = async () => {
+      try {
+        const token = getAccessToken();
+        if (!token) return;
+
+        const { getBackendUrl } = await import('../utils/environment');
+        const API_BASE_URL = getBackendUrl();
+
+        const response = await fetch(`${API_BASE_URL}/api/dashboard/trades?limit=100`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        if (response.ok) {
+          const result = await response.json();
+          if (result.success && result.data?.summary && mounted) {
+            setTradeSummary({
+              total: result.data.summary.total || 0,
+              buys: result.data.summary.buys || 0,
+              sells: result.data.summary.sells || 0
+            });
+          }
+        }
+      } catch {
+        // Silently fail — display 0 trades if API is unreachable
+      }
+    };
+    loadTradeSummary();
+    return () => { mounted = false; };
   }, []);
 
   // Parse account data — cast to Record for optional extended fields from API
@@ -304,7 +341,7 @@ const Account: React.FC = () => {
                   <div className="flex justify-between items-start">
                     <div>
                       <p className="text-neutral-500 text-sm">Recent Activity</p>
-                      <p className="text-2xl font-bold mt-1">12 Trades</p>
+                      <p className="text-2xl font-bold mt-1">{tradeSummary.total} Trades</p>
                     </div>
                     <div className="bg-neutral-100 p-2 rounded-full">
                       <Clock className="h-6 w-6 text-neutral-600" />
@@ -316,14 +353,14 @@ const Account: React.FC = () => {
                         <ArrowUpRight className="h-4 w-4 mr-1 text-green-500" />
                         Buys
                       </span>
-                      <span className="font-medium">7 orders</span>
+                      <span className="font-medium">{tradeSummary.buys} orders</span>
                     </div>
                     <div className="flex justify-between items-center mt-1">
                       <span className="flex items-center text-neutral-500">
                         <ArrowDownRight className="h-4 w-4 mr-1 text-red-500" />
                         Sells
                       </span>
-                      <span className="font-medium">5 orders</span>
+                      <span className="font-medium">{tradeSummary.sells} orders</span>
                     </div>
                   </div>
                 </div>
