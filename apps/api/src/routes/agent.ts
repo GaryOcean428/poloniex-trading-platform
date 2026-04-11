@@ -354,7 +354,7 @@ router.get('/activity', authenticateToken, async (req: Request, res: Response) =
       });
     }
 
-    const limit = parseInt(req.query.limit as string) || 20;
+    const limit = parseInt(req.query.limit as string, 10) || 20;
 
     // Get user's active session
     const status = await enhancedAutonomousAgent.getAgentStatus(userId);
@@ -406,7 +406,7 @@ router.get('/events', authenticateToken, async (req: Request, res: Response) => 
       });
     }
 
-    const limit = parseInt(req.query.limit as string) || 50;
+    const limit = parseInt(req.query.limit as string, 10) || 50;
     const eventType = req.query.type as string | undefined;
     const mode = req.query.mode as string | undefined;
 
@@ -615,7 +615,7 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
             date: new Date(r.trade_date).toISOString().slice(0, 10),
             pnl: parseFloat(dayPnl.toFixed(2)),
             cumulativePnL: parseFloat(cumPnl.toFixed(2)),
-            trades: parseInt(r.daily_trades) || 0
+            trades: parseInt(r.daily_trades, 10) || 0
           };
         });
       } catch {
@@ -630,9 +630,9 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
           winRate: metrics.total_trades > 0 
             ? (parseFloat(metrics.winning_trades || 0) / parseFloat(metrics.total_trades)) * 100 
             : 0,
-          totalTrades: parseInt(metrics.total_trades || 0),
-          winningTrades: parseInt(metrics.winning_trades || 0),
-          losingTrades: parseInt(metrics.losing_trades || 0),
+          totalTrades: parseInt(metrics.total_trades || 0, 10),
+          winningTrades: parseInt(metrics.winning_trades || 0, 10),
+          losingTrades: parseInt(metrics.losing_trades || 0, 10),
           averageWin: parseFloat(metrics.avg_win || 0),
           averageLoss: parseFloat(metrics.avg_loss || 0),
           sharpeRatio: parseFloat(sharpeRatio.toFixed(2)),

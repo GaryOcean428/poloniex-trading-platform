@@ -13,6 +13,27 @@ const migrationsDir = path.join(__dirname, '../../database/migrations');
 // All admin routes require authentication
 router.use(authenticateToken);
 
+// Require admin role for all admin routes
+router.use(async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  try {
+    const userId = (req as any).user?.id || (req as any).user?.userId;
+    if (!userId) {
+      return res.status(403).json({ success: false, error: 'Admin access required' });
+    }
+    const result = await pool.query(
+      'SELECT role FROM users WHERE id = $1',
+      [userId]
+    );
+    const role = result.rows[0]?.role;
+    if (role !== 'admin') {
+      return res.status(403).json({ success: false, error: 'Admin access required' });
+    }
+    next();
+  } catch (_err) {
+    return res.status(500).json({ success: false, error: 'Authorization check failed' });
+  }
+});
+
 function getMigrationFiles(): string[] {
   if (!fs.existsSync(migrationsDir)) {
     throw new Error(`Migrations directory not found: ${migrationsDir}`);

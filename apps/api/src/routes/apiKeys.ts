@@ -27,10 +27,6 @@ const apiKeysRateLimiter = rateLimit({
     if (token) return token;
     // Return undefined to use default IP handling with IPv6 support
     return undefined;
-  },
-  skip: (req) => {
-    // Skip rate limiting for authenticated requests with valid tokens
-    return !!req.headers.authorization?.split(' ')[1];
   }
 });
 
@@ -171,7 +167,10 @@ router.get('/active', authenticateToken, async (req: Request, res: Response) => 
       hasCredentials: true,
       credentials: {
         apiKey: credentials.apiKey,
-        apiSecret: credentials.apiSecret,
+        // Mask API secret: only expose last 4 characters for verification
+        apiSecret: credentials.apiSecret
+          ? '••••••••' + credentials.apiSecret.slice(-4)
+          : '',
         exchange: exchange
       },
       timestamp: new Date().toISOString()
