@@ -1110,10 +1110,29 @@ class PaperTradingService extends EventEmitter {
         || (position.side === 'short' && currentPrice <= position.takeProfit);
 
       if (slTriggered && tpTriggered) {
-        // Both triggered — determine which was hit first based on distance
-        const slDistance = Math.abs(currentPrice - position.stopLoss);
-        const tpDistance = Math.abs(currentPrice - position.takeProfit);
-        const reason = slDistance <= tpDistance ? 'stop_loss' : 'take_profit';
+        // Both triggered — use candle high/low to infer which was hit first.
+        // For longs: SL is hit via low, TP via high. If the candle opened
+        // closer to the low the SL was likely hit before the TP (and vice-versa).
+        // Falls back to distance heuristic when candle data is unavailable.
+        const candle = this.marketData.get(session.symbol);
+        let reason;
+        const o = Number(candle?.open);
+        const h = Number(candle?.high);
+        const l = Number(candle?.low);
+        if (Number.isFinite(o) && Number.isFinite(h) && Number.isFinite(l)) {
+          if (position.side === 'long') {
+            // Long: SL hit at low, TP hit at high
+            reason = (o - l) <= (h - o) ? 'stop_loss' : 'take_profit';
+          } else {
+            // Short: SL hit at high, TP hit at low
+            reason = (h - o) <= (o - l) ? 'stop_loss' : 'take_profit';
+          }
+        } else {
+          // Fallback: distance heuristic
+          const slDistance = Math.abs(currentPrice - position.stopLoss);
+          const tpDistance = Math.abs(currentPrice - position.takeProfit);
+          reason = slDistance <= tpDistance ? 'stop_loss' : 'take_profit';
+        }
         const exitPrice = reason === 'stop_loss' ? position.stopLoss : position.takeProfit;
         setTimeout(() => {
           this.closePosition(session.id, positionId, reason, exitPrice);
