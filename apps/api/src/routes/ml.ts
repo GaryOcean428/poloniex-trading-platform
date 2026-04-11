@@ -46,8 +46,9 @@ router.get('/performance/:symbol', authenticateToken, async (req, res) => {
       }
     } catch (dataError: unknown) {
       logger.error('Failed to fetch historical data: ' + (dataError instanceof Error ? dataError.message : String(dataError)));
-      // Return fallback data instead of 503
-      return res.json({
+      // Return 503 with fallback data
+      return res.status(503).json({
+        success: false,
         symbol,
         predictions: {
           '1h': { price: 0, confidence: 0, direction: 'NEUTRAL' },
@@ -61,8 +62,7 @@ router.get('/performance/:symbol', authenticateToken, async (req, res) => {
         },
         currentPrice: 0,
         timestamp: new Date().toISOString(),
-        error: 'Data unavailable',
-        message: dataError instanceof Error ? dataError.message : String(dataError)
+        error: 'Data unavailable'
       });
     }
 
