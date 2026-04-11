@@ -24,6 +24,7 @@ const HEALTH_CHANNEL = 'ml:health';
 const REQUEST_TIMEOUT_MS = 5000;
 /** How long (ms) a Redis heartbeat is considered fresh */
 const HEARTBEAT_STALE_MS = 90_000;
+const ML_WORKER_NOT_CONFIGURED_CODE = 'ML_WORKER_NOT_CONFIGURED';
 
 class MLPredictionService {
   constructor() {
@@ -35,6 +36,8 @@ class MLPredictionService {
     this._subscriberConnected = false;
     /** Publisher/command client (shared) */
     this._publisher = null;
+    /** Whether missing ML worker transport config has been logged */
+    this._missingTransportLogged = false;
   }
 
   // ---------------------------------------------------------------------------
@@ -216,7 +219,14 @@ class MLPredictionService {
       }
     }
 
-    throw new Error('ML worker unreachable: neither ML_WORKER_URL nor REDIS_URL is configured');
+    if (!this._missingTransportLogged) {
+      this._missingTransportLogged = true;
+      logger.warn('ML worker transport is not configured; using simple ML fallback paths');
+    }
+
+    const missingTransportError = new Error('ML worker unreachable: neither ML_WORKER_URL nor REDIS_URL is configured');
+    missingTransportError.code = ML_WORKER_NOT_CONFIGURED_CODE;
+    throw missingTransportError;
   }
 
   // ---------------------------------------------------------------------------
@@ -240,6 +250,9 @@ class MLPredictionService {
       });
       return result;
     } catch (error) {
+      if (error?.code === ML_WORKER_NOT_CONFIGURED_CODE) {
+        throw error;
+      }
       logger.error(`ML prediction failed for ${symbol}:`, error);
       throw error;
     }
@@ -262,7 +275,9 @@ class MLPredictionService {
       });
       return result;
     } catch (error) {
-      logger.error(`ML signal generation failed for ${symbol}:`, error);
+      if (error?.code !== ML_WORKER_NOT_CONFIGURED_CODE) {
+        logger.error(`ML signal generation failed for ${symbol}:`, error);
+      }
       return { signal: 'HOLD', strength: 0, reason: `ML prediction error: ${error.message}`, error: true };
     }
   }
@@ -279,6 +294,9 @@ class MLPredictionService {
       logger.info(`ML models trained for ${symbol}:`, result);
       return result;
     } catch (error) {
+      if (error?.code === ML_WORKER_NOT_CONFIGURED_CODE) {
+        throw error;
+      }
       logger.error(`ML training failed for ${symbol}:`, error);
       throw error;
     }
@@ -295,6 +313,9 @@ class MLPredictionService {
       const result = await this._callWorker({ action: 'multi_horizon', symbol, data: ohlcvData });
       return result;
     } catch (error) {
+      if (error?.code === ML_WORKER_NOT_CONFIGURED_CODE) {
+        throw error;
+      }
       logger.error(`Multi-horizon prediction failed for ${symbol}:`, error);
       throw error;
     }
