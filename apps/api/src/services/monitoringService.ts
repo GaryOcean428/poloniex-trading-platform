@@ -368,7 +368,7 @@ class MonitoringService {
       message: event.message,
       timestamp: new Date().toISOString(),
       service: 'polytrade-api',
-      ...event.metadata,
+      metadata: event.metadata ?? {},
     }));
   }
 

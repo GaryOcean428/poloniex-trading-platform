@@ -126,9 +126,11 @@ class ConfidenceScoringService extends EventEmitter {
         ? { ...performanceData, trades: uncensoredTrades }
         : null;
 
-      // Calculate component scores on the full dataset
-      const performanceScore = this.calculatePerformanceScore(performanceData);
-      const consistencyScore = this.calculateConsistencyScore(performanceData);
+      // Calculate component scores — prefer uncensored data for performance
+      // and consistency when available (QIG: censoring-aware fitness).
+      const fitData = uncensoredData || performanceData;
+      const performanceScore = this.calculatePerformanceScore(fitData);
+      const consistencyScore = this.calculateConsistencyScore(fitData);
       const riskScore = this.calculateRiskScore(performanceData);
       const marketConditionScore = this.calculateMarketConditionScore(marketConditions, performanceData);
 
