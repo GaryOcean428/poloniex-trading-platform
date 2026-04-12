@@ -17,7 +17,6 @@ export * from './backtestingEngine.js';
 export * from './fullyAutonomousTrader.js';
 export * from './paperTradingService.js';
 export * from './persistentTradingEngine.js';
-export * from './mockTradingService.js';
 
 // Strategy Services
 export * from './strategyService.js';
