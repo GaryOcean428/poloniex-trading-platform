@@ -36,7 +36,7 @@ def load_historical_data(symbol: str, filepath: str = None) -> pd.DataFrame:
         DataFrame with OHLCV data
     """
     if filepath:
-        df = pd.DataFrame(filepath)
+        df = pd.read_csv(filepath)
         df['timestamp'] = pd.to_datetime(df['timestamp'])
         return df
     
