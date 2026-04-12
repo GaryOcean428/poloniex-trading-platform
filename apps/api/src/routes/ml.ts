@@ -286,10 +286,11 @@ router.post('/learning/recommendations/:strategyId/confirm', authenticateToken, 
       // If the trader fails to start (e.g. missing API keys), still return the
       // promotion result so the UI reflects the DB change, but include the warning.
       logger.warn(`[SLE→FAT] fullyAutonomousTrader.enableAutonomousTrading failed: ${fatErr instanceof Error ? fatErr.message : String(fatErr)}`);
-      return res.status(207).json({
+      // 202 Accepted: the DB promotion succeeded but execution has not yet started
+      return res.status(202).json({
         success: true,
         strategy,
-        message: `Strategy ${strategyId} promoted to live, but autonomous trader could not start: ${fatErr instanceof Error ? fatErr.message : 'unknown error'}`,
+        message: 'Strategy promoted to live but autonomous trader could not start. Check API credentials.',
         traderStarted: false,
       });
     }
@@ -301,7 +302,13 @@ router.post('/learning/recommendations/:strategyId/confirm', authenticateToken, 
       traderStarted: true,
     });
   } catch (error: unknown) {
-    res.status(400).json({ success: false, error: 'Promotion failed' });
+    logger.error(`[SLE] confirm-live failed for ${req.params.strategyId}:`, error);
+    const isKnown = error instanceof Error &&
+      (error.message.includes('not found') || error.message.includes('not in'));
+    res.status(isKnown ? 400 : 500).json({
+      success: false,
+      error: isKnown ? 'Strategy not found or not in recommended status' : 'Promotion failed',
+    });
   }
 });
 
