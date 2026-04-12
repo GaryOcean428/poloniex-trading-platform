@@ -3,6 +3,20 @@ import crypto from 'crypto';
 import { logger } from '../utils/logger.js';
 import { query } from '../db/connection.js';
 import rateLimiter from '../utils/rateLimiter.js';
+import { apiCache, getTtlForEndpoint } from '../utils/apiCache.js';
+
+/**
+ * Serialize query params deterministically (sorted keys) so that
+ * {b:2, a:1} and {a:1, b:2} produce the same cache key.
+ */
+function serializeParams(params) {
+  if (!params || Object.keys(params).length === 0) return '{}';
+  const sorted = Object.keys(params).sort().reduce((acc, k) => {
+    acc[k] = params[k];
+    return acc;
+  }, {});
+  return JSON.stringify(sorted);
+}
 
 /**
  * Poloniex Futures v3 API Client Service
@@ -92,6 +106,15 @@ class PoloniexFuturesService {
    * Uses proper Poloniex v3 authentication headers and endpoints
    */
   async makeRequest(credentials, method, endpoint, body = null, params = {}) {
+    // Check cache for GET requests before hitting the API
+    if (method === 'GET') {
+      const cacheKey = `GET:${endpoint}:${serializeParams(params)}`;
+      const cached = apiCache.get(cacheKey);
+      if (cached !== null) {
+        return cached;
+      }
+    }
+
     // Apply rate limiting
     return rateLimiter.execute(endpoint, async () => {
       try {
@@ -167,11 +190,23 @@ class PoloniexFuturesService {
         
         // Poloniex V3 API returns: { code: 200, data: {...}, msg: "Success" }
         // Extract the data field if present, otherwise return the full response
+        let result;
         if (response.data && typeof response.data === 'object' && 'data' in response.data) {
-          return response.data.data;
+          result = response.data.data;
+        } else {
+          result = response.data;
         }
-        
-        return response.data;
+
+        // Cache successful GET responses
+        if (method === 'GET') {
+          const ttl = getTtlForEndpoint(endpoint);
+          if (ttl > 0) {
+            const cacheKey = `GET:${endpoint}:${serializeParams(params)}`;
+            apiCache.set(cacheKey, result, ttl);
+          }
+        }
+
+        return result;
       } catch (error) {
         logger.error('Poloniex v3 futures API request error:', {
           endpoint: endpoint,
@@ -453,7 +488,11 @@ class PoloniexFuturesService {
       }
     });
     
-    return this.makeRequest(credentials, 'POST', '/trade/order', body);
+    const result = await this.makeRequest(credentials, 'POST', '/trade/order', body);
+    apiCache.invalidatePrefix('GET:/account/balance');
+    apiCache.invalidatePrefix('GET:/trade/position');
+    apiCache.invalidatePrefix('GET:/trade/order');
+    return result;
   }
 
   /**
@@ -462,7 +501,11 @@ class PoloniexFuturesService {
    */
   async placeMultipleOrders(credentials, orders) {
     const body = { orders };
-    return this.makeRequest(credentials, 'POST', '/trade/orders', body);
+    const result = await this.makeRequest(credentials, 'POST', '/trade/orders', body);
+    apiCache.invalidatePrefix('GET:/account/balance');
+    apiCache.invalidatePrefix('GET:/trade/position');
+    apiCache.invalidatePrefix('GET:/trade/order');
+    return result;
   }
 
   /**
@@ -474,7 +517,11 @@ class PoloniexFuturesService {
     if (orderId) body.orderId = orderId;
     if (clientOid) body.clientOid = clientOid;
     
-    return this.makeRequest(credentials, 'DELETE', '/trade/order', body);
+    const result = await this.makeRequest(credentials, 'DELETE', '/trade/order', body);
+    apiCache.invalidatePrefix('GET:/account/balance');
+    apiCache.invalidatePrefix('GET:/trade/position');
+    apiCache.invalidatePrefix('GET:/trade/order');
+    return result;
   }
 
   /**
@@ -486,7 +533,11 @@ class PoloniexFuturesService {
     if (orderIds.length > 0) body.orderIds = orderIds;
     if (clientOids.length > 0) body.clientOids = clientOids;
     
-    return this.makeRequest(credentials, 'DELETE', '/trade/batchOrders', body);
+    const result = await this.makeRequest(credentials, 'DELETE', '/trade/batchOrders', body);
+    apiCache.invalidatePrefix('GET:/account/balance');
+    apiCache.invalidatePrefix('GET:/trade/position');
+    apiCache.invalidatePrefix('GET:/trade/order');
+    return result;
   }
 
   /**
@@ -495,7 +546,11 @@ class PoloniexFuturesService {
    */
   async cancelAllOrders(credentials, symbol = null) {
     const body = symbol ? { symbol } : {};
-    return this.makeRequest(credentials, 'DELETE', '/trade/allOrders', body);
+    const result = await this.makeRequest(credentials, 'DELETE', '/trade/allOrders', body);
+    apiCache.invalidatePrefix('GET:/account/balance');
+    apiCache.invalidatePrefix('GET:/trade/position');
+    apiCache.invalidatePrefix('GET:/trade/order');
+    return result;
   }
 
   /**
@@ -537,7 +592,10 @@ class PoloniexFuturesService {
    */
   async closePosition(credentials, symbol, type = 'close_long') {
     const body = { symbol, type }; // type: 'close_long' or 'close_short'
-    return this.makeRequest(credentials, 'POST', '/trade/position', body);
+    const result = await this.makeRequest(credentials, 'POST', '/trade/position', body);
+    apiCache.invalidatePrefix('GET:/account/balance');
+    apiCache.invalidatePrefix('GET:/trade/position');
+    return result;
   }
 
   /**
@@ -545,7 +603,10 @@ class PoloniexFuturesService {
    * Endpoint: POST /v3/trade/positionAll
    */
   async closeAllPositions(credentials) {
-    return this.makeRequest(credentials, 'POST', '/trade/positionAll', {});
+    const result = await this.makeRequest(credentials, 'POST', '/trade/positionAll', {});
+    apiCache.invalidatePrefix('GET:/account/balance');
+    apiCache.invalidatePrefix('GET:/trade/position');
+    return result;
   }
 
   // =================== MARKET DATA (PUBLIC) ===================
@@ -554,6 +615,15 @@ class PoloniexFuturesService {
    * Make public request to Poloniex Futures v3 API (no authentication)
    */
   async makePublicRequest(method, endpoint, params = {}) {
+    // Check cache for GET requests before hitting the API
+    if (method === 'GET') {
+      const cacheKey = `GET:${endpoint}:${serializeParams(params)}`;
+      const cached = apiCache.get(cacheKey);
+      if (cached !== null) {
+        return cached;
+      }
+    }
+
     // Apply rate limiting
     return rateLimiter.execute(endpoint, async () => {
       try {
@@ -584,11 +654,23 @@ class PoloniexFuturesService {
         
         // Poloniex V3 API returns: { code: 200, data: [...], msg: "Success" }
         // Extract the data field if present, otherwise return the full response
+        let result;
         if (response.data && typeof response.data === 'object' && 'data' in response.data) {
-          return response.data.data;
+          result = response.data.data;
+        } else {
+          result = response.data;
         }
-        
-        return response.data;
+
+        // Cache successful GET responses
+        if (method === 'GET') {
+          const ttl = getTtlForEndpoint(endpoint);
+          if (ttl > 0) {
+            const cacheKey = `GET:${endpoint}:${serializeParams(params)}`;
+            apiCache.set(cacheKey, result, ttl);
+          }
+        }
+
+        return result;
       } catch (error) {
         logger.error('Poloniex v3 public API request error:', {
           endpoint: endpoint,
