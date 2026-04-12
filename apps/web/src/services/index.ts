@@ -21,7 +21,7 @@ export * from './autonomousTradingAPI';
 export * from './autonomousTradingEngine';
 export * from './liveAutonomousTradingEngine';
 export * from './liveTradingService';
-export * from './mockTradingService';
+export * from './paperTradingSimulatorService';
 export * from './claudeTradingService';
 
 // Backtesting Services

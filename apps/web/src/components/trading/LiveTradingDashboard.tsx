@@ -4,7 +4,7 @@ import {
     RiskLimits,
     liveTradingService
 } from '@/services/liveTradingService';
-import { ConfidenceMetrics, mockTradingService } from '@/services/mockTradingService';
+import { ConfidenceMetrics, paperTradingSimulatorService } from '@/services/paperTradingSimulatorService';
 import { Strategy } from '@/types';
 import {
     Activity,
@@ -54,7 +54,7 @@ const LiveTradingDashboard: React.FC<LiveTradingDashboardProps> = ({ strategies 
     useEffect(() => {
         if (selectedStrategy)
         {
-            const confidence = mockTradingService.getStrategyConfidenceAggregate(selectedStrategy.id);
+            const confidence = paperTradingSimulatorService.getStrategyConfidenceAggregate(selectedStrategy.id);
             setConfidenceMetrics(confidence);
         }
     }, [selectedStrategy]);

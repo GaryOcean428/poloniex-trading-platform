@@ -1,6 +1,6 @@
 import { advancedBacktestService } from "@/services/advancedBacktestService";
 import { liveTradingService } from "@/services/liveTradingService";
-import { mockTradingService } from "@/services/mockTradingService";
+import { paperTradingSimulatorService } from "@/services/paperTradingSimulatorService";
 import { StrategyParameters, StrategyTypeUnion } from "@/types";
 import { BacktestOptions, BacktestResult } from "@/types/backtest";
 // Import unified Strategy from @shared/types for type alias
@@ -532,7 +532,7 @@ export class AutonomousTradingEngine {
     }
 
     try {
-      const mockSessionId = await mockTradingService.startMockSession(
+      const mockSessionId = await paperTradingSimulatorService.startMockSession(
         bestStrategy,
         session.settings.initialBalance
       );
@@ -592,7 +592,7 @@ export class AutonomousTradingEngine {
       return;
     }
 
-    const mockSession = mockTradingService.getMockSession(
+    const mockSession = paperTradingSimulatorService.getMockSession(
       bestStrategy.mockTradingSessionId
     );
     if (!mockSession) {
@@ -600,7 +600,7 @@ export class AutonomousTradingEngine {
       return;
     }
 
-    const confidence = mockTradingService.calculateConfidenceScore(mockSession);
+    const confidence = paperTradingSimulatorService.calculateConfidenceScore(mockSession);
 
     this.addNotification(sessionId, {
       type: "INFO",
