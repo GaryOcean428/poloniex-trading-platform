@@ -30,6 +30,7 @@ import qigRoutes from './routes/qig.js';
 import publicAdminRoutes from './routes/public-admin.js';
 import versionCheckRoutes from './routes/version-check.js';
 import autonomousTraderRoutes from './routes/autonomousTrader.js';
+import reconciliationRoutes from './routes/reconciliation.js';
 
 // Import services
 import { logger } from './utils/logger.js';
@@ -38,6 +39,7 @@ import { agentScheduler } from './services/agentScheduler.js';
 import automatedTradingService from './services/automatedTradingService.js';
 import { enhancedAutonomousAgent } from './services/enhancedAutonomousAgent.js';
 import paperTradingService from './services/paperTradingService.js';
+import { stateReconciliationService } from './services/stateReconciliationService.js';
 import { runAllMigrations } from './scripts/runMigrations.js';
 import { refreshKnownDatabaseCollationVersions } from './scripts/refreshCollationVersion.js';
 
@@ -173,6 +175,7 @@ app.use('/api/status', statusRoutes);
 app.use('/api/debug', debugRoutes); // Debug, diagnostic, and test-balance routes (consolidated)
 app.use('/api/agent', agentRoutes); // Autonomous trading agent routes
 app.use('/api/autonomous', autonomousTraderRoutes); // Fully autonomous trading system
+app.use('/api/reconciliation', reconciliationRoutes); // State reconciliation service
 app.use('/api/monitoring', monitoringRoutes); // Monitoring and error tracking routes
 app.use('/api/admin', adminRoutes); // Admin routes for migrations
 app.use('/api/dashboard', dashboardRoutes); // Unified dashboard data endpoint
@@ -378,7 +381,19 @@ server.listen(PORT, '::', async () => {
     logger.error('❌ Database migration failed:', error);
     process.exit(1);
   }
-  
+
+  // Run state reconciliation for all active users before trading loops start
+  stateReconciliationService.reconcileAllActive().catch(error => {
+    logger.warn('[RECONCILE] Startup reconciliation encountered an error:', error);
+  });
+
+  // Periodic state reconciliation every 60 seconds for all active users
+  setInterval(() => {
+    stateReconciliationService.reconcileAllActive().catch(error => {
+      logger.warn('[RECONCILE] Periodic reconciliation encountered an error:', error);
+    });
+  }, 60_000);
+
   // Initialize and start automated trading service
   automatedTradingService.initialize().catch(error => {
     logger.error('Failed to initialize automated trading service:', error);
