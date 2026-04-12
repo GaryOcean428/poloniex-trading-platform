@@ -1,3 +1,9 @@
+/**
+ * SIMULATION ONLY — This service runs virtual paper trading for SLE evaluation.
+ * For live trade execution, use fullyAutonomousTrader.ts.
+ * Do NOT add live order placement to this file.
+ */
+
 import { EventEmitter } from 'events';
 import { logger } from '../utils/logger.js';
 import { query, pool } from '../db/connection.js';
