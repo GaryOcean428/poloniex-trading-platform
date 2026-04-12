@@ -96,6 +96,14 @@ class PoloniexFuturesService {
     return rateLimiter.execute(endpoint, async () => {
       try {
         const timestamp = Date.now().toString();
+
+        // Normalize symbol to _PERP format in body and params for all authenticated endpoints
+        if (body && typeof body === 'object' && body.symbol) {
+          body = { ...body, symbol: this.normalizeSymbol(body.symbol) };
+        }
+        if (params && typeof params === 'object' && params.symbol) {
+          params = { ...params, symbol: this.normalizeSymbol(params.symbol) };
+        }
         
         // Build the proper v3 endpoint path (without query string for signature)
         const requestPath = `/v3${endpoint}`;

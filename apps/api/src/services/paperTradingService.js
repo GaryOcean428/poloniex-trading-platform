@@ -1,9 +1,16 @@
+/**
+ * SIMULATION ONLY — This service runs virtual paper trading for SLE evaluation.
+ * For live trade execution, use fullyAutonomousTrader.ts.
+ * Do NOT add live order placement to this file.
+ */
+
 import { EventEmitter } from 'events';
 import { logger } from '../utils/logger.js';
 import { query, pool } from '../db/connection.js';
 import poloniexFuturesService from './poloniexFuturesService.js';
 import futuresWebSocket from '../websocket/futuresWebSocket.js';
 import backtestingEngine from './backtestingEngine.js';
+import { validateMarketData } from '../utils/marketDataValidator.js';
 
 /**
  * Determine whether a paper-trading session result is censored.
@@ -383,16 +390,20 @@ class PaperTradingService extends EventEmitter {
    */
   processMarketData(data) {
     try {
-      this.marketData.set(data.symbol, {
-        ...data,
+      const validated = validateMarketData(data, 'WebSocket');
+      if (!validated) {
+        return; // Reject invalid/zero-price market data
+      }
+      this.marketData.set(validated.symbol, {
+        ...validated,
         timestamp: new Date(),
         lastUpdate: Date.now()
       });
 
       // Update all sessions with this symbol
       for (const [sessionId, session] of this.activeSessions) {
-        if (session.symbol === data.symbol) {
-          this.updateSessionWithMarketData(session, data);
+        if (session.symbol === validated.symbol) {
+          this.updateSessionWithMarketData(session, validated);
         }
       }
     } catch (error) {
@@ -1547,15 +1558,21 @@ class PaperTradingService extends EventEmitter {
           const tickers = await poloniexFuturesService.getTickers(session.symbol);
           if (tickers && tickers[0]) {
             const t = tickers[0];
-            marketData = {
+            const rawTicker = {
               symbol: session.symbol,
-              price: parseFloat(t.markPx || t.markPrice || t.lastPx || '0'),
-              open: parseFloat(t.open || t.markPx || '0'),
-              high: parseFloat(t.high || t.markPx || '0'),
-              low: parseFloat(t.low || t.markPx || '0'),
-              volume: parseFloat(t.qty24h || t.vol || '0'),
+              price: t.markPx || t.markPrice || t.lastPx,
+              open: t.open,
+              high: t.high,
+              low: t.low,
+              volume: t.qty24h || t.vol,
               timestamp: Date.now()
             };
+            const validated = validateMarketData(rawTicker, 'REST ticker');
+            if (!validated) {
+              logger.warn(`[PT] REST ticker for ${session.symbol} failed validation, skipping cycle`);
+              return;
+            }
+            marketData = validated;
           }
         } catch (err) {
           logger.warn(`Could not fetch ticker for ${session.symbol}: ${err?.message || err}`);

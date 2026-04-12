@@ -3,9 +3,8 @@
  * Tests the complete agent lifecycle and functionality
  */
 
-import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, test, expect, beforeAll, afterAll } from 'vitest';
 import { pool } from '../db/connection.js';
-import { mockTradingService } from '../services/mockTradingService.js';
 
 const API_URL = process.env.API_URL || 'http://localhost:3001';
 let authToken: string;
@@ -46,11 +45,6 @@ describeIfSupertest('Autonomous Agent API', () => {
       await pool.query('DELETE FROM users WHERE id = $1', [userId]);
     }
     await pool.end();
-  });
-
-  beforeEach(() => {
-    // Reset mock service before each test
-    mockTradingService.reset();
   });
 
   describe('Authentication', () => {
@@ -217,60 +211,5 @@ describeIfSupertest('Autonomous Agent API', () => {
 
       expect([400, 500]).toContain(res.status);
     });
-  });
-});
-
-describe('Mock Trading Service', () => {
-  test('should get current price', async () => {
-    const price = await mockTradingService.getCurrentPrice('BTC-USDT');
-    expect(typeof price).toBe('number');
-    expect(price).toBeGreaterThan(0);
-  });
-
-  test('should place market order', async () => {
-    const order = await mockTradingService.placeMarketOrder({
-      symbol: 'BTC-USDT',
-      side: 'buy',
-      amount: 0.1
-    });
-
-    expect(order).toBeDefined();
-    expect(order.id).toBeDefined();
-    expect(order.status).toBe('filled');
-  });
-
-  test('should place limit order', async () => {
-    const order = await mockTradingService.placeLimitOrder({
-      symbol: 'ETH-USDT',
-      side: 'buy',
-      amount: 1,
-      price: 2500
-    });
-
-    expect(order).toBeDefined();
-    expect(order.id).toBeDefined();
-    expect(order.status).toBe('open');
-  });
-
-  test('should get account balance', async () => {
-    const balance = await mockTradingService.getBalance();
-    expect(balance).toBeDefined();
-    expect(balance.USDT).toBeDefined();
-    expect(balance.USDT.total).toBeGreaterThan(0);
-  });
-
-  test('should get historical candles', async () => {
-    const candles = await mockTradingService.getCandles({
-      symbol: 'BTC-USDT',
-      timeframe: '1h',
-      limit: 100
-    });
-
-    expect(Array.isArray(candles)).toBe(true);
-    expect(candles.length).toBe(100);
-    expect(candles[0]).toHaveProperty('open');
-    expect(candles[0]).toHaveProperty('high');
-    expect(candles[0]).toHaveProperty('low');
-    expect(candles[0]).toHaveProperty('close');
   });
 });

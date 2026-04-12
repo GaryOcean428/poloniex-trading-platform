@@ -16,6 +16,8 @@ import riskService from './riskService.js';
 import mlPredictionService from './mlPredictionService.js';
 import { apiCredentialsService } from './apiCredentialsService.js';
 import { logger } from '../utils/logger.js';
+import { validateMarketData } from '../utils/marketDataValidator.js';
+import { getPrecisions } from './marketCatalog.js';
 
 interface TradingConfig {
   userId: string;
@@ -396,10 +398,20 @@ class FullyAutonomousTrader extends EventEmitter {
     // Get historical data
     const ohlcv = await poloniexFuturesService.getHistoricalData(symbol, '15m', 100);
 
-    // Calculate technical indicators
-    const closes = ohlcv.map(c => c.close);
-    const highs = ohlcv.map(c => c.high);
-    const lows = ohlcv.map(c => c.low);
+    // Validate each kline and filter out any with invalid data; use the validated (normalized) candles
+    const validOhlcv = ohlcv
+      .map((c: any) => validateMarketData({ symbol, ...c, price: c.close }, 'kline'))
+      .filter((c): c is NonNullable<typeof c> => c !== null);
+
+    if (validOhlcv.length < 20) {
+      logger.warn(`[FAT] Insufficient valid kline data for ${symbol} (${validOhlcv.length} candles after validation)`);
+      throw new Error(`Insufficient valid kline data for ${symbol}`);
+    }
+
+    // Calculate technical indicators using validated candle data
+    const closes = validOhlcv.map(c => c.price);
+    const highs = validOhlcv.map(c => c.high);
+    const lows = validOhlcv.map(c => c.low);
 
     // Simple trend detection
     const sma20 = this.calculateSMA(closes, 20);
@@ -433,8 +445,10 @@ class FullyAutonomousTrader extends EventEmitter {
     };
 
     try {
-      const predictions = await mlPredictionService.getMultiHorizonPredictions(symbol, ohlcv);
-      const signal = await mlPredictionService.getTradingSignal(symbol, ohlcv, currentPrice);
+      // Map validated candles back to expected {close, high, low, open, volume} shape for ML service
+      const ohlcvForMl = validOhlcv.map(c => ({ close: c.price, high: c.high, low: c.low, open: c.open, volume: c.volume }));
+      const predictions = await mlPredictionService.getMultiHorizonPredictions(symbol, ohlcvForMl);
+      const signal = await mlPredictionService.getTradingSignal(symbol, ohlcvForMl, currentPrice);
       
       mlPrediction = {
         direction: signal.action === 'BUY' ? 'UP' : signal.action === 'SELL' ? 'DOWN' : 'NEUTRAL',
@@ -457,7 +471,9 @@ class FullyAutonomousTrader extends EventEmitter {
   }
 
   /**
-   * Generate trading signals based on market analysis
+   * Generate trading signals based on market analysis.
+   * For each symbol, checks strategy_performance for SLE-promoted live strategies
+   * and uses their parameters (leverage, strategy type) to influence signal generation.
    */
   private async generateTradingSignals(
     userId: string,
@@ -470,7 +486,31 @@ class FullyAutonomousTrader extends EventEmitter {
 
     for (const [symbol, analysis] of analyses) {
       try {
-        const signal = await this.generateSignal(symbol, analysis, config);
+        // Check if an SLE-promoted live strategy exists for this symbol.
+        // If so, use its leverage and strategy type instead of the default config.
+        let effectiveConfig = config;
+        try {
+          const liveStrategies = await pool.query(
+            `SELECT * FROM strategy_performance WHERE status = 'live' AND symbol = $1
+             ORDER BY confidence_score DESC NULLS LAST LIMIT 1`,
+            [symbol]
+          );
+          if (liveStrategies.rows.length > 0) {
+            const liveStrategy = liveStrategies.rows[0];
+            effectiveConfig = {
+              ...config,
+              leverage: parseFloat(liveStrategy.leverage) || config.leverage
+            };
+            logger.debug(
+              `[SLE] Using live strategy ${liveStrategy.strategy_id} params for ${symbol}: ` +
+              `leverage=${effectiveConfig.leverage}, type=${liveStrategy.strategy_type}`
+            );
+          }
+        } catch (sleErr) {
+          logger.warn(`[SLE] Failed to query live strategies for ${symbol}:`, sleErr);
+        }
+
+        const signal = await this.generateSignal(symbol, analysis, effectiveConfig);
         if (signal && signal.confidence >= config.confidenceThreshold) {
           signals.push(signal);
         }
@@ -492,9 +532,18 @@ class FullyAutonomousTrader extends EventEmitter {
     config: TradingConfig
   ): Promise<TradingSignal | null> {
     const ticker = await poloniexFuturesService.getTickers(symbol);
-    const currentPrice = parseFloat(ticker[0]?.markPx || ticker[0]?.markPrice || '0');
+    const rawTicker = ticker[0] ?? {};
+    const validatedTicker = validateMarketData(
+      { symbol, price: rawTicker.markPx || rawTicker.markPrice || rawTicker.lastPx, ...rawTicker },
+      'REST ticker (generateSignal)'
+    );
 
-    if (!currentPrice) return null;
+    if (!validatedTicker) {
+      logger.warn(`[FAT] Skipping signal generation for ${symbol}: invalid ticker price`);
+      return null;
+    }
+
+    const currentPrice = validatedTicker.price;
 
     let action: 'BUY' | 'SELL' | 'HOLD' = 'HOLD';
     let side: 'long' | 'short' = 'long';
@@ -690,6 +739,27 @@ class FullyAutonomousTrader extends EventEmitter {
         // Normalize symbol for futures API
         const normalizedSymbol = poloniexFuturesService.normalizeSymbol(signal.symbol);
 
+        // Format price to tick size and size to lot size via market catalog
+        let formattedPrice = signal.entryPrice;
+        let formattedOrderSize = orderSize;
+        try {
+          const precisions = await getPrecisions(normalizedSymbol);
+          if (precisions.tickSize && precisions.tickSize > 0) {
+            formattedPrice = Math.round(signal.entryPrice / precisions.tickSize) * precisions.tickSize;
+          }
+          if (precisions.lotSize && precisions.lotSize > 0) {
+            // Use Math.floor to avoid rounding up beyond available balance
+            formattedOrderSize = Math.floor(orderSize / precisions.lotSize) * precisions.lotSize;
+            if (formattedOrderSize <= 0) {
+              logger.warn(`[LIVE] Formatted order size is 0 after lot size rounding for ${normalizedSymbol}, skipping`);
+              return;
+            }
+          }
+          logger.info(`[LIVE] Size formatted: ${orderSize} -> ${formattedOrderSize} (lotSize=${precisions.lotSize})`);
+        } catch (_catalogErr) {
+          logger.warn(`[LIVE] Could not fetch precisions for ${normalizedSymbol}, using raw values`);
+        }
+
         // Set leverage on the exchange before placing the order.
         // The signal carries the strategy-specific leverage (already capped at
         // 25% of maxLeverage by leverageAwareStrategyFactory).
@@ -706,7 +776,7 @@ class FullyAutonomousTrader extends EventEmitter {
           symbol: normalizedSymbol,
           side: signal.side === 'long' ? 'buy' : 'sell',
           type: 'market',
-          size: orderSize
+          size: formattedOrderSize
         });
 
         orderId = order.orderId || order.id;
@@ -719,7 +789,7 @@ class FullyAutonomousTrader extends EventEmitter {
           allowed: true,
           reason: signal.reason,
           leverage: signal.leverage,
-          positionSize: orderSize
+          positionSize: formattedOrderSize
         });
 
         logger.info(`[LIVE] Order placed: ${orderId} for ${signal.symbol}`);
@@ -732,7 +802,7 @@ class FullyAutonomousTrader extends EventEmitter {
               symbol: normalizedSymbol,
               side: slSide,
               type: 'stop_market',
-              size: orderSize,
+              size: formattedOrderSize,
               stopPrice: signal.stopLoss,
               stopPriceType: 'TP',
               reduceOnly: true,
@@ -752,7 +822,7 @@ class FullyAutonomousTrader extends EventEmitter {
               symbol: normalizedSymbol,
               side: tpSide,
               type: 'stop_market',
-              size: orderSize,
+              size: formattedOrderSize,
               stopPrice: signal.takeProfit,
               stopPriceType: 'TP',
               reduceOnly: true,
