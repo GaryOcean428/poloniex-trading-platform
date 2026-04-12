@@ -5,6 +5,7 @@
 
 import { getBackendUrl } from '@/utils/environment';
 import { getAccessToken } from '@/utils/auth';
+import { deduplicatedFetch } from '@/utils/requestDeduplicator';
 
 const BASE_URL = getBackendUrl();
 
@@ -23,6 +24,7 @@ class APIClient {
 
   private async request<T>(endpoint: string, options: RequestOptions = {}): Promise<{ data: T }> {
     const url = `${this.baseURL}/api${endpoint}`;
+    const method = options.method || 'GET';
     
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -36,29 +38,38 @@ class APIClient {
     }
 
     const config: RequestInit = {
-      method: options.method || 'GET',
+      method,
       headers,
       credentials: 'include',
     };
 
-    if (options.body && options.method !== 'GET') {
+    if (options.body && method !== 'GET') {
       config.body = JSON.stringify(options.body);
     }
 
-    const response = await fetch(url, config);
+    const doFetch = async (): Promise<{ data: T }> => {
+      const response = await fetch(url, config);
 
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw {
-        response: {
-          status: response.status,
-          data: errorData,
-        },
-      };
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw {
+          response: {
+            status: response.status,
+            data: errorData,
+          },
+        };
+      }
+
+      const data = await response.json();
+      return { data };
+    };
+
+    // Deduplicate concurrent identical GET requests
+    if (method === 'GET') {
+      return deduplicatedFetch<{ data: T }>(url, doFetch);
     }
 
-    const data = await response.json();
-    return { data };
+    return doFetch();
   }
 
   async get<T>(endpoint: string, headers?: Record<string, string>): Promise<{ data: T }> {
