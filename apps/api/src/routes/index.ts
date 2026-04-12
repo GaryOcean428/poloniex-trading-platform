@@ -33,6 +33,7 @@ export { default as dashboardRoutes } from './dashboard.js';
 export { default as monitoringRoutes } from './monitoring.js';
 export { default as adminRoutes } from './admin.js';
 export { default as publicAdminRoutes } from './public-admin.js';
+export { default as reconciliationRoutes } from './reconciliation.js';
 
 // Utility Routes
 export { default as statusRoutes } from './status.js';
