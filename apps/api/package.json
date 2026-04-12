@@ -22,6 +22,8 @@
     "check:catalog": "node ../scripts/check-catalog.mjs",
     "migrate": "node --loader ts-node/esm src/scripts/runMigration.ts",
     "migrate:005": "node scripts/run-migration-005.js",
+    "test:connection": "tsx src/scripts/test_real_connection.ts",
+    "test:paper-cycle": "tsx src/scripts/test_paper_trade_cycle.ts",
     "test:watch": "jest --watch"
   },
   "dependencies": {
@@ -65,6 +67,7 @@
     "nodemon": "^3.1.10",
     "ts-jest": "^29.4.5",
     "ts-node": "^10.9.2",
+    "tsx": "^4.20.4",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.39.1",
     "vitest": "^3.2.4"

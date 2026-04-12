@@ -1,4 +1,4 @@
-import { ConfidenceMetrics, MockTradingSession, mockTradingService } from '@/services/mockTradingService';
+import { ConfidenceMetrics, MockTradingSession, paperTradingSimulatorService } from '@/services/paperTradingSimulatorService';
 import { Strategy } from '@/types';
 import {
     Activity,
@@ -38,13 +38,13 @@ const MockTradingDashboard: React.FC<MockTradingDashboardProps> = ({ strategies 
         const updatedConfidence = new Map<string, ConfidenceMetrics>();
 
         strategies.forEach(strategy => {
-            const sessions = mockTradingService.getStrategyMockSessions(strategy.id);
+            const sessions = paperTradingSimulatorService.getStrategyMockSessions(strategy.id);
             const activeSession = sessions.find(s => s.isActive);
 
             if (activeSession)
             {
                 updatedSessions.set(strategy.id, activeSession);
-                const confidence = mockTradingService.calculateConfidenceScore(activeSession);
+                const confidence = paperTradingSimulatorService.calculateConfidenceScore(activeSession);
                 updatedConfidence.set(strategy.id, confidence);
             }
         });
@@ -68,7 +68,7 @@ const MockTradingDashboard: React.FC<MockTradingDashboardProps> = ({ strategies 
         setIsStarting(true);
         try
         {
-            await mockTradingService.startMockSession(
+            await paperTradingSimulatorService.startMockSession(
                 selectedStrategy,
                 10000, // $10k initial balance
                 {
@@ -93,7 +93,7 @@ const MockTradingDashboard: React.FC<MockTradingDashboardProps> = ({ strategies 
         const session = activeSessions.get(strategyId);
         if (session)
         {
-            mockTradingService.stopMockSession(session.id);
+            paperTradingSimulatorService.stopMockSession(session.id);
             updateSessionsAndMetrics();
         }
     };

@@ -102,6 +102,7 @@ const MLLiveRecommendations: React.FC<MLLiveRecommendationsProps> = ({ pollInter
   const [error, setError] = useState<string | null>(null);
   const [engineRunning, setEngineRunning] = useState(false);
   const [engineToggling, setEngineToggling] = useState(false);
+  const [pendingLiveStrategyId, setPendingLiveStrategyId] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
     try {
@@ -169,7 +170,17 @@ const MLLiveRecommendations: React.FC<MLLiveRecommendationsProps> = ({ pollInter
       setError(err instanceof Error ? err.message : 'Confirmation failed');
     } finally {
       setConfirmingId(null);
+      setPendingLiveStrategyId(null);
     }
+  };
+
+  /** Show confirmation dialog before going live */
+  const handleRequestLive = (strategyId: string) => {
+    setPendingLiveStrategyId(strategyId);
+  };
+
+  const handleCancelLive = () => {
+    setPendingLiveStrategyId(null);
   };
 
   // ─────────────────── render ────────────────────────────────────────────────
@@ -321,7 +332,7 @@ const MLLiveRecommendations: React.FC<MLLiveRecommendationsProps> = ({ pollInter
                   ) : (
                     <div className="flex flex-wrap items-center gap-2">
                       <button
-                        onClick={() => handleConfirmLive(s.strategyId)}
+                        onClick={() => handleRequestLive(s.strategyId)}
                         disabled={isConfirming}
                         className="flex items-center gap-2 bg-green-600 text-white text-sm px-4 py-2 rounded hover:bg-green-700 disabled:opacity-50 transition-colors font-medium"
                       >
@@ -348,6 +359,46 @@ const MLLiveRecommendations: React.FC<MLLiveRecommendationsProps> = ({ pollInter
           </div>
         )}
       </div>
+
+      {/* Real-money confirmation dialog */}
+      {pendingLiveStrategyId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6 space-y-4">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="w-6 h-6 text-red-500 shrink-0 mt-0.5" />
+              <div>
+                <h3 className="font-bold text-gray-900 text-base">Confirm Live Trading with Real Money</h3>
+                <p className="text-sm text-gray-600 mt-1">
+                  You are about to promote strategy{' '}
+                  <span className="font-mono font-semibold">{pendingLiveStrategyId}</span>{' '}
+                  to <strong>live execution</strong>. This will place <strong>real orders</strong> using
+                  your Poloniex account balance.
+                </p>
+                <ul className="mt-2 text-sm text-gray-600 list-disc list-inside space-y-1">
+                  <li>Real funds will be at risk</li>
+                  <li>Orders will be placed automatically every trading cycle</li>
+                  <li>You can stop trading at any time from the Autonomous Trading panel</li>
+                </ul>
+              </div>
+            </div>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={handleCancelLive}
+                className="px-4 py-2 text-sm rounded border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleConfirmLive(pendingLiveStrategyId)}
+                disabled={confirmingId === pendingLiveStrategyId}
+                className="px-4 py-2 text-sm rounded bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 transition-colors font-semibold"
+              >
+                {confirmingId === pendingLiveStrategyId ? 'Confirming…' : 'Yes, Go Live'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
