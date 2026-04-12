@@ -1969,6 +1969,7 @@ __metadata:
     socket.io: "npm:^4.8.1"
     ts-jest: "npm:^29.4.5"
     ts-node: "npm:^10.9.2"
+    tsx: "npm:^4.20.4"
     typescript: "npm:^5.9.3"
     typescript-eslint: "npm:^8.39.1"
     vitest: "npm:^3.2.4"
