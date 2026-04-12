@@ -513,6 +513,8 @@ class FullyAutonomousTrader extends EventEmitter {
         const signal = await this.generateSignal(symbol, analysis, effectiveConfig);
         if (signal && signal.confidence >= config.confidenceThreshold) {
           signals.push(signal);
+        } else if (signal) {
+          logger.info(`[FAT] Signal filtered: confidence ${signal.confidence} < threshold ${config.confidenceThreshold} for ${symbol}`);
         }
       } catch (error) {
         logger.error(`Signal generation error for ${symbol}:`, error);
