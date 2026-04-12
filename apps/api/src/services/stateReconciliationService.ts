@@ -111,11 +111,23 @@ class StateReconciliationService {
         order_id: string | null;
       }[] = dbResult.rows;
 
-      // Estimate DB balance from open margin (quantity × entry_price summed)
-      // This is a rough heuristic used only for drift logging.
-      const dbBalance = dbTrades.reduce((sum, t) => {
-        return sum + parseFloat(t.quantity) * parseFloat(t.entry_price);
-      }, 0);
+      // Use the last recorded equity from autonomous_performance as DB balance.
+      // This is more meaningful than a heuristic notional sum.
+      let dbBalance: number | null = null;
+      try {
+        const perfResult = await pool.query(
+          `SELECT current_equity FROM autonomous_performance
+           WHERE user_id = $1
+           ORDER BY timestamp DESC
+           LIMIT 1`,
+          [userId]
+        );
+        if (perfResult.rows.length > 0 && perfResult.rows[0].current_equity != null) {
+          dbBalance = parseFloat(perfResult.rows[0].current_equity);
+        }
+      } catch (_perfErr) {
+        // autonomous_performance may not exist yet; skip
+      }
       result.dbBalance = dbBalance;
 
       // ── 5. Orphan detection: on exchange but not in DB ───────────────────────
@@ -211,7 +223,7 @@ class StateReconciliationService {
       }
 
       // ── 7. Balance drift check ───────────────────────────────────────────────
-      if (exchangeBalance !== null && exchangeBalance > 0 && dbBalance > 0) {
+      if (exchangeBalance !== null && dbBalance !== null && exchangeBalance > 0) {
         const drift = Math.abs(exchangeBalance - dbBalance) / exchangeBalance;
         result.balanceDrift = drift;
 

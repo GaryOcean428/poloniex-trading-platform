@@ -383,16 +383,24 @@ server.listen(PORT, '::', async () => {
   }
 
   // Run state reconciliation for all active users before trading loops start
-  stateReconciliationService.reconcileAllActive().catch(error => {
+  try {
+    await stateReconciliationService.reconcileAllActive();
+    logger.info('✅ Startup state reconciliation completed');
+  } catch (error) {
     logger.warn('[RECONCILE] Startup reconciliation encountered an error:', error);
-  });
+  }
 
-  // Periodic state reconciliation every 60 seconds for all active users
-  setInterval(() => {
-    stateReconciliationService.reconcileAllActive().catch(error => {
-      logger.warn('[RECONCILE] Periodic reconciliation encountered an error:', error);
-    });
-  }, 60_000);
+  // Periodic state reconciliation every 60 seconds (non-overlapping via recursive setTimeout)
+  const scheduleReconciliation = (): void => {
+    setTimeout(() => {
+      stateReconciliationService.reconcileAllActive()
+        .catch(error => {
+          logger.warn('[RECONCILE] Periodic reconciliation encountered an error:', error);
+        })
+        .finally(() => scheduleReconciliation());
+    }, 60_000);
+  };
+  scheduleReconciliation();
 
   // Initialize and start automated trading service
   automatedTradingService.initialize().catch(error => {
