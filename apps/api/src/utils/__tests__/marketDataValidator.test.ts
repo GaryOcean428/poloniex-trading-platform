@@ -22,8 +22,7 @@ describe('normalizeSymbolToPerp', () => {
   });
 
   it('converts BTCUSDTPERP to BTCUSDT_PERP', () => {
-    // The PERP suffix without underscore gets an underscore inserted
-    expect(normalizeSymbolToPerp('BTCUSDTPERP')).toMatch(/_PERP$/);
+    expect(normalizeSymbolToPerp('BTCUSDTPERP')).toBe('BTCUSDT_PERP');
   });
 
   it('uppercases the result', () => {

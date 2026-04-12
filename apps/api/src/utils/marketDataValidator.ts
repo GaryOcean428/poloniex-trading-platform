@@ -16,15 +16,12 @@ export interface ValidatedMarketData {
  */
 export function normalizeSymbolToPerp(symbol: string): string {
   if (!symbol) return symbol;
-  // Replace hyphens with underscores
+  // Replace hyphens with underscores and uppercase
   let s = symbol.replace(/-/g, '_').toUpperCase();
   // Already ends with _PERP
   if (s.endsWith('_PERP')) return s;
-  // Contains PERP without underscore separator (e.g. BTCUSDTPERP)
-  if (s.includes('PERP')) {
-    // Insert underscore before PERP if missing
-    return s.replace(/PERP$/, '_PERP').replace(/(__PERP)$/, '_PERP');
-  }
+  // Strip any existing PERP suffix (with or without leading underscore) then re-add with underscore
+  s = s.replace(/_?PERP$/, '');
   return `${s}_PERP`;
 }
 
@@ -64,12 +61,15 @@ export function validateMarketData(raw: Record<string, unknown>, source: string)
   }
 
   // 4. Extract OHLV fields with sensible fallbacks to price
-  const open   = isFinite(toNum(raw.open))   && toNum(raw.open)   > 0 ? toNum(raw.open)   : price;
-  const high   = isFinite(toNum(raw.high))   && toNum(raw.high)   > 0 ? toNum(raw.high)   : price;
-  const low    = isFinite(toNum(raw.low))    && toNum(raw.low)    > 0 ? toNum(raw.low)    : price;
-  const volume = isFinite(toNum(raw.volume ?? raw.qty24h ?? raw.vol)) && toNum(raw.volume ?? raw.qty24h ?? raw.vol) >= 0
-    ? toNum(raw.volume ?? raw.qty24h ?? raw.vol)
-    : 0;
+  const rawOpen   = toNum(raw.open);
+  const rawHigh   = toNum(raw.high);
+  const rawLow    = toNum(raw.low);
+  const rawVol    = toNum(raw.volume ?? raw.qty24h ?? raw.vol);
+
+  const open   = isFinite(rawOpen)  && rawOpen  > 0 ? rawOpen  : price;
+  const high   = isFinite(rawHigh)  && rawHigh  > 0 ? rawHigh  : price;
+  const low    = isFinite(rawLow)   && rawLow   > 0 ? rawLow   : price;
+  const volume = isFinite(rawVol)   && rawVol   >= 0 ? rawVol  : 0;
 
   // 5. Validate OHLC consistency: high >= low, high >= open, high >= close(price)
   if (high < low) {

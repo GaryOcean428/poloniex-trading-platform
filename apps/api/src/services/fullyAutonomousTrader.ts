@@ -398,21 +398,20 @@ class FullyAutonomousTrader extends EventEmitter {
     // Get historical data
     const ohlcv = await poloniexFuturesService.getHistoricalData(symbol, '15m', 100);
 
-    // Validate each kline and filter out any with invalid data
-    const validOhlcv = ohlcv.filter((c: any) => {
-      const validated = validateMarketData({ symbol, ...c, price: c.close }, 'kline');
-      return validated !== null;
-    });
+    // Validate each kline and filter out any with invalid data; use the validated (normalized) candles
+    const validOhlcv = ohlcv
+      .map((c: any) => validateMarketData({ symbol, ...c, price: c.close }, 'kline'))
+      .filter((c): c is NonNullable<typeof c> => c !== null);
 
     if (validOhlcv.length < 20) {
       logger.warn(`[FAT] Insufficient valid kline data for ${symbol} (${validOhlcv.length} candles after validation)`);
       throw new Error(`Insufficient valid kline data for ${symbol}`);
     }
 
-    // Calculate technical indicators
-    const closes = validOhlcv.map((c: any) => c.close);
-    const highs = validOhlcv.map((c: any) => c.high);
-    const lows = validOhlcv.map((c: any) => c.low);
+    // Calculate technical indicators using validated candle data
+    const closes = validOhlcv.map(c => c.price);
+    const highs = validOhlcv.map(c => c.high);
+    const lows = validOhlcv.map(c => c.low);
 
     // Simple trend detection
     const sma20 = this.calculateSMA(closes, 20);
@@ -446,8 +445,10 @@ class FullyAutonomousTrader extends EventEmitter {
     };
 
     try {
-      const predictions = await mlPredictionService.getMultiHorizonPredictions(symbol, ohlcv);
-      const signal = await mlPredictionService.getTradingSignal(symbol, ohlcv, currentPrice);
+      // Map validated candles back to expected {close, high, low, open, volume} shape for ML service
+      const ohlcvForMl = validOhlcv.map(c => ({ close: c.price, high: c.high, low: c.low, open: c.open, volume: c.volume }));
+      const predictions = await mlPredictionService.getMultiHorizonPredictions(symbol, ohlcvForMl);
+      const signal = await mlPredictionService.getTradingSignal(symbol, ohlcvForMl, currentPrice);
       
       mlPrediction = {
         direction: signal.action === 'BUY' ? 'UP' : signal.action === 'SELL' ? 'DOWN' : 'NEUTRAL',
@@ -721,13 +722,14 @@ class FullyAutonomousTrader extends EventEmitter {
             formattedPrice = Math.round(signal.entryPrice / precisions.tickSize) * precisions.tickSize;
           }
           if (precisions.lotSize && precisions.lotSize > 0) {
-            formattedOrderSize = Math.round(orderSize / precisions.lotSize) * precisions.lotSize;
+            // Use Math.floor to avoid rounding up beyond available balance
+            formattedOrderSize = Math.floor(orderSize / precisions.lotSize) * precisions.lotSize;
             if (formattedOrderSize <= 0) {
               logger.warn(`[LIVE] Formatted order size is 0 after lot size rounding for ${normalizedSymbol}, skipping`);
               return;
             }
           }
-          logger.info(`[LIVE] Price formatted: ${signal.entryPrice} -> ${formattedPrice}, size formatted: ${orderSize} -> ${formattedOrderSize}`);
+          logger.info(`[LIVE] Size formatted: ${orderSize} -> ${formattedOrderSize} (lotSize=${precisions.lotSize})`);
         } catch (_catalogErr) {
           logger.warn(`[LIVE] Could not fetch precisions for ${normalizedSymbol}, using raw values`);
         }
