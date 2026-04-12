@@ -13,7 +13,16 @@ import { createClient } from 'redis';
 import { randomUUID } from 'crypto';
 import { logger } from '../utils/logger.js';
 
-const ML_WORKER_URL = process.env.ML_WORKER_URL || '';
+const _rawMlWorkerUrl = process.env.ML_WORKER_URL || '';
+let ML_WORKER_URL = '';
+if (_rawMlWorkerUrl) {
+  try {
+    new URL(_rawMlWorkerUrl);
+    ML_WORKER_URL = _rawMlWorkerUrl;
+  } catch {
+    logger.error(`ML_WORKER_URL is not a valid URL: "${_rawMlWorkerUrl}" — ML worker HTTP disabled, will use simple ML fallback`);
+  }
+}
 const REDIS_URL = process.env.REDIS_URL || process.env.REDIS_PUBLIC_URL || '';
 
 const PREDICT_REQUEST_CHANNEL = 'ml:predict:request';
