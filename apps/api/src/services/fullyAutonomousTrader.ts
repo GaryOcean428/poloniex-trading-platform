@@ -16,6 +16,8 @@ import riskService from './riskService.js';
 import mlPredictionService from './mlPredictionService.js';
 import { apiCredentialsService } from './apiCredentialsService.js';
 import { logger } from '../utils/logger.js';
+import { validateMarketData } from '../utils/marketDataValidator.js';
+import { getPrecisions } from './marketCatalog.js';
 
 interface TradingConfig {
   userId: string;
@@ -396,10 +398,21 @@ class FullyAutonomousTrader extends EventEmitter {
     // Get historical data
     const ohlcv = await poloniexFuturesService.getHistoricalData(symbol, '15m', 100);
 
+    // Validate each kline and filter out any with invalid data
+    const validOhlcv = ohlcv.filter((c: any) => {
+      const validated = validateMarketData({ symbol, ...c, price: c.close }, 'kline');
+      return validated !== null;
+    });
+
+    if (validOhlcv.length < 20) {
+      logger.warn(`[FAT] Insufficient valid kline data for ${symbol} (${validOhlcv.length} candles after validation)`);
+      throw new Error(`Insufficient valid kline data for ${symbol}`);
+    }
+
     // Calculate technical indicators
-    const closes = ohlcv.map(c => c.close);
-    const highs = ohlcv.map(c => c.high);
-    const lows = ohlcv.map(c => c.low);
+    const closes = validOhlcv.map((c: any) => c.close);
+    const highs = validOhlcv.map((c: any) => c.high);
+    const lows = validOhlcv.map((c: any) => c.low);
 
     // Simple trend detection
     const sma20 = this.calculateSMA(closes, 20);
@@ -492,9 +505,18 @@ class FullyAutonomousTrader extends EventEmitter {
     config: TradingConfig
   ): Promise<TradingSignal | null> {
     const ticker = await poloniexFuturesService.getTickers(symbol);
-    const currentPrice = parseFloat(ticker[0]?.markPx || ticker[0]?.markPrice || '0');
+    const rawTicker = ticker[0] ?? {};
+    const validatedTicker = validateMarketData(
+      { symbol, price: rawTicker.markPx || rawTicker.markPrice || rawTicker.lastPx, ...rawTicker },
+      'REST ticker (generateSignal)'
+    );
 
-    if (!currentPrice) return null;
+    if (!validatedTicker) {
+      logger.warn(`[FAT] Skipping signal generation for ${symbol}: invalid ticker price`);
+      return null;
+    }
+
+    const currentPrice = validatedTicker.price;
 
     let action: 'BUY' | 'SELL' | 'HOLD' = 'HOLD';
     let side: 'long' | 'short' = 'long';
@@ -690,6 +712,26 @@ class FullyAutonomousTrader extends EventEmitter {
         // Normalize symbol for futures API
         const normalizedSymbol = poloniexFuturesService.normalizeSymbol(signal.symbol);
 
+        // Format price to tick size and size to lot size via market catalog
+        let formattedPrice = signal.entryPrice;
+        let formattedOrderSize = orderSize;
+        try {
+          const precisions = await getPrecisions(normalizedSymbol);
+          if (precisions.tickSize && precisions.tickSize > 0) {
+            formattedPrice = Math.round(signal.entryPrice / precisions.tickSize) * precisions.tickSize;
+          }
+          if (precisions.lotSize && precisions.lotSize > 0) {
+            formattedOrderSize = Math.round(orderSize / precisions.lotSize) * precisions.lotSize;
+            if (formattedOrderSize <= 0) {
+              logger.warn(`[LIVE] Formatted order size is 0 after lot size rounding for ${normalizedSymbol}, skipping`);
+              return;
+            }
+          }
+          logger.info(`[LIVE] Price formatted: ${signal.entryPrice} -> ${formattedPrice}, size formatted: ${orderSize} -> ${formattedOrderSize}`);
+        } catch (_catalogErr) {
+          logger.warn(`[LIVE] Could not fetch precisions for ${normalizedSymbol}, using raw values`);
+        }
+
         // Set leverage on the exchange before placing the order.
         // The signal carries the strategy-specific leverage (already capped at
         // 25% of maxLeverage by leverageAwareStrategyFactory).
@@ -706,7 +748,7 @@ class FullyAutonomousTrader extends EventEmitter {
           symbol: normalizedSymbol,
           side: signal.side === 'long' ? 'buy' : 'sell',
           type: 'market',
-          size: orderSize
+          size: formattedOrderSize
         });
 
         orderId = order.orderId || order.id;
@@ -719,7 +761,7 @@ class FullyAutonomousTrader extends EventEmitter {
           allowed: true,
           reason: signal.reason,
           leverage: signal.leverage,
-          positionSize: orderSize
+          positionSize: formattedOrderSize
         });
 
         logger.info(`[LIVE] Order placed: ${orderId} for ${signal.symbol}`);
@@ -732,7 +774,7 @@ class FullyAutonomousTrader extends EventEmitter {
               symbol: normalizedSymbol,
               side: slSide,
               type: 'stop_market',
-              size: orderSize,
+              size: formattedOrderSize,
               stopPrice: signal.stopLoss,
               stopPriceType: 'TP',
               reduceOnly: true,
@@ -752,7 +794,7 @@ class FullyAutonomousTrader extends EventEmitter {
               symbol: normalizedSymbol,
               side: tpSide,
               type: 'stop_market',
-              size: orderSize,
+              size: formattedOrderSize,
               stopPrice: signal.takeProfit,
               stopPriceType: 'TP',
               reduceOnly: true,
