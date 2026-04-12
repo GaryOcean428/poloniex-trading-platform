@@ -457,7 +457,9 @@ class FullyAutonomousTrader extends EventEmitter {
   }
 
   /**
-   * Generate trading signals based on market analysis
+   * Generate trading signals based on market analysis.
+   * For each symbol, checks strategy_performance for SLE-promoted live strategies
+   * and uses their parameters (leverage, strategy type) to influence signal generation.
    */
   private async generateTradingSignals(
     userId: string,
@@ -470,7 +472,31 @@ class FullyAutonomousTrader extends EventEmitter {
 
     for (const [symbol, analysis] of analyses) {
       try {
-        const signal = await this.generateSignal(symbol, analysis, config);
+        // Check if an SLE-promoted live strategy exists for this symbol.
+        // If so, use its leverage and strategy type instead of the default config.
+        let effectiveConfig = config;
+        try {
+          const liveStrategies = await pool.query(
+            `SELECT * FROM strategy_performance WHERE status = 'live' AND symbol = $1
+             ORDER BY confidence_score DESC NULLS LAST LIMIT 1`,
+            [symbol]
+          );
+          if (liveStrategies.rows.length > 0) {
+            const liveStrategy = liveStrategies.rows[0];
+            effectiveConfig = {
+              ...config,
+              leverage: parseFloat(liveStrategy.leverage) || config.leverage
+            };
+            logger.debug(
+              `[SLE] Using live strategy ${liveStrategy.strategy_id} params for ${symbol}: ` +
+              `leverage=${effectiveConfig.leverage}, type=${liveStrategy.strategy_type}`
+            );
+          }
+        } catch (sleErr) {
+          logger.warn(`[SLE] Failed to query live strategies for ${symbol}:`, sleErr);
+        }
+
+        const signal = await this.generateSignal(symbol, analysis, effectiveConfig);
         if (signal && signal.confidence >= config.confidenceThreshold) {
           signals.push(signal);
         }
