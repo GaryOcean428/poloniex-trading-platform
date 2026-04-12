@@ -110,8 +110,8 @@ export interface ConfidenceMetrics {
   };
 }
 
-export class MockTradingService {
-  private static instance: MockTradingService;
+export class PaperTradingSimulatorService {
+  private static instance: PaperTradingSimulatorService;
   private activeSessions: Map<string, MockTradingSession> = new Map();
   private marketDataCache: Map<string, MarketData[]> = new Map();
   private priceSubscriptions: Map<string, (data: MarketData) => void> =
@@ -121,11 +121,11 @@ export class MockTradingService {
 
   private constructor() {}
 
-  public static getInstance(): MockTradingService {
-    if (!MockTradingService.instance) {
-      MockTradingService.instance = new MockTradingService();
+  public static getInstance(): PaperTradingSimulatorService {
+    if (!PaperTradingSimulatorService.instance) {
+      PaperTradingSimulatorService.instance = new PaperTradingSimulatorService();
     }
-    return MockTradingService.instance;
+    return PaperTradingSimulatorService.instance;
   }
 
   /**
@@ -899,4 +899,4 @@ export class MockTradingService {
   }
 }
 
-export const mockTradingService = MockTradingService.getInstance();
+export const paperTradingSimulatorService = PaperTradingSimulatorService.getInstance();

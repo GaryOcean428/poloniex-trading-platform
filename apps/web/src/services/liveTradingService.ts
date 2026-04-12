@@ -1,7 +1,7 @@
 import {
   ConfidenceMetrics,
-  mockTradingService,
-} from "@/services/mockTradingService";
+  paperTradingSimulatorService,
+} from "@/services/paperTradingSimulatorService";
 import { poloniexApi } from "@/services/poloniexAPI";
 import { MarketData, Strategy } from "@/types";
 import { logger } from "@/utils/logger";
@@ -113,7 +113,7 @@ export class LiveTradingService {
     }
 
     // Verify confidence score from mock trading
-    const confidence = mockTradingService.getStrategyConfidenceAggregate(
+    const confidence = paperTradingSimulatorService.getStrategyConfidenceAggregate(
       config.strategy.id
     );
     if (
@@ -365,7 +365,7 @@ export class LiveTradingService {
     }
 
     // Check confidence score
-    const confidence = mockTradingService.getStrategyConfidenceAggregate(
+    const confidence = paperTradingSimulatorService.getStrategyConfidenceAggregate(
       config.strategy.id
     );
     if (
