@@ -78,6 +78,9 @@ export interface StrategyRecord {
 /** Bridge law exponent — frozen physics result (τ ∝ J^0.74, R²>0.96) */
 const BRIDGE_LAW_EXPONENT = 0.74;
 
+/** Default lookback period for strategy backtesting */
+const DEFAULT_STRATEGY_LOOKBACK = 20;
+
 /** Timeframes supported for multi-timeframe strategies (in minutes) */
 const SUPPORTED_TF_MINUTES: Record<string, number> = {
   '5m': 5,
@@ -505,19 +508,26 @@ class StrategyLearningEngine extends EventEmitter {
     const splitDate = new Date(startDate.getTime() + cappedTotalDays * 0.7 * 24 * 60 * 60 * 1000);
 
     try {
-      // Run backtest on test period (out-of-sample last 9 days)
-      const result = await (backtestingEngine as any).runBacktest({
-        strategyName: strategy.strategyId,
-        symbol: strategy.symbol,
-        timeframe: strategy.timeframe,
-        startDate: splitDate.toISOString(),
-        endDate: endDate.toISOString(),
-        leverage: strategy.leverage,
-        strategy: {
-          type: strategy.strategyType,
-          parameters: {},
-        },
-      });
+      // Register the strategy with the backtest engine before running
+      const strategyDef = {
+        type: strategy.strategyType,
+        parameters: {},
+        lookback: DEFAULT_STRATEGY_LOOKBACK,
+      };
+      (backtestingEngine as any).registerStrategy(strategy.strategyId, strategyDef);
+
+      // Run backtest on test period (out-of-sample)
+      // backtestingEngine.runBacktest expects (strategyName: string, config: object)
+      const result = await (backtestingEngine as any).runBacktest(
+        strategy.strategyId,
+        {
+          symbol: strategy.symbol,
+          timeframe: strategy.timeframe,
+          startDate: splitDate.toISOString(),
+          endDate: endDate.toISOString(),
+          leverage: strategy.leverage,
+        }
+      );
 
       return {
         sharpe: safeNum(result?.sharpeRatio ?? result?.metrics?.sharpeRatio),
@@ -756,21 +766,22 @@ class StrategyLearningEngine extends EventEmitter {
 
       await query(
         `INSERT INTO strategy_performance (
-          strategy_id, symbol, leverage, timeframe, strategy_type, regime_at_creation,
+          strategy_id, strategy_name, symbol, leverage, timeframe, strategy_type, regime_at_creation,
           backtest_sharpe, backtest_wr, backtest_max_dd,
           paper_sharpe, paper_wr, paper_pnl, paper_trades,
           live_sharpe, live_pnl, live_trades,
           is_censored, censor_reason, uncensored_sharpe, fitness_divergent,
           status, confidence_score, created_at, parent_strategy_id, generation
         ) VALUES (
-          $1, $2, $3, $4, $5, $6,
-          $7, $8, $9,
-          $10, $11, $12, $13,
-          $14, $15, $16,
-          $17, $18, $19, $20,
-          $21, $22, $23, $24, $25
+          $1, $2, $3, $4, $5, $6, $7,
+          $8, $9, $10,
+          $11, $12, $13, $14,
+          $15, $16, $17,
+          $18, $19, $20, $21,
+          $22, $23, $24, $25, $26
         )
         ON CONFLICT (strategy_id) DO UPDATE SET
+          strategy_name       = EXCLUDED.strategy_name,
           symbol              = EXCLUDED.symbol,
           leverage            = EXCLUDED.leverage,
           timeframe           = EXCLUDED.timeframe,
@@ -795,7 +806,7 @@ class StrategyLearningEngine extends EventEmitter {
           parent_strategy_id  = EXCLUDED.parent_strategy_id,
           generation          = EXCLUDED.generation`,
         [
-          s.strategyId, s.symbol, s.leverage, s.timeframe, s.strategyType, s.regimeAtCreation,
+          s.strategyId, s.strategyId, s.symbol, s.leverage, s.timeframe, s.strategyType, s.regimeAtCreation,
           s.backtestSharpe, s.backtestWr, s.backtestMaxDd,
           s.paperSharpe, s.paperWr, s.paperPnl, s.paperTrades,
           s.liveSharpe, s.livePnl, s.liveTrades,

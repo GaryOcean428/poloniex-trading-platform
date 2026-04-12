@@ -340,7 +340,7 @@ const Account: React.FC = () => {
                 <div className="bg-bg-tertiary rounded-lg shadow-md p-4 border border-border-subtle">
                   <div className="flex justify-between items-start">
                     <div>
-                      <p className="text-neutral-500 text-sm">Recent Activity</p>
+                      <p className="text-neutral-500 text-sm">Exchange Activity</p>
                       <p className="text-2xl font-bold mt-1">{tradeSummary.total} Trades</p>
                     </div>
                     <div className="bg-neutral-100 p-2 rounded-full">
