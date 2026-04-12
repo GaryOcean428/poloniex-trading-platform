@@ -5,6 +5,7 @@ import simpleMlService from '../services/simpleMlService.js';
 import poloniexFuturesService from '../services/poloniexFuturesService.js';
 import { strategyLearningEngine } from '../services/strategyLearningEngine.js';
 import parallelStrategyRunner from '../services/parallelStrategyRunner.js';
+import fullyAutonomousTrader from '../services/fullyAutonomousTrader.js';
 import { logger } from '../utils/logger.js';
 
 const router = express.Router();
@@ -259,14 +260,48 @@ router.get('/learning/recommendations', authenticateToken, async (req, res) => {
  * POST /api/ml/learning/recommendations/:strategyId/confirm
  * One-click user confirmation to promote a recommended strategy to live trading.
  * NEVER auto-promotes — always requires explicit user action.
+ * Calls strategyLearningEngine.confirmLivePromotion() then starts fullyAutonomousTrader
+ * in live mode for the strategy's symbol with its parameters.
  */
 router.post('/learning/recommendations/:strategyId/confirm', authenticateToken, async (req, res) => {
   try {
     const { strategyId } = req.params;
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+
+    // Step 1: Update strategy status to 'live' in strategy_performance
     const strategy = await strategyLearningEngine.confirmLivePromotion(strategyId);
-    res.json({ success: true, strategy, message: `Strategy ${strategyId} promoted to live trading` });
+
+    // Step 2: Enable autonomous trader in live mode with the strategy's parameters
+    try {
+      await fullyAutonomousTrader.enableAutonomousTrading(userId, {
+        paperTrading: false,
+        symbols: [strategy.symbol],
+        leverage: strategy.leverage,
+      });
+      logger.info(`[SLE→FAT] Live trading enabled for user ${userId}, strategy ${strategyId}, symbol ${strategy.symbol}`);
+    } catch (fatErr: unknown) {
+      // If the trader fails to start (e.g. missing API keys), still return the
+      // promotion result so the UI reflects the DB change, but include the warning.
+      logger.warn(`[SLE→FAT] fullyAutonomousTrader.enableAutonomousTrading failed: ${fatErr instanceof Error ? fatErr.message : String(fatErr)}`);
+      return res.status(207).json({
+        success: true,
+        strategy,
+        message: `Strategy ${strategyId} promoted to live, but autonomous trader could not start: ${fatErr instanceof Error ? fatErr.message : 'unknown error'}`,
+        traderStarted: false,
+      });
+    }
+
+    res.json({
+      success: true,
+      strategy,
+      message: `Strategy ${strategyId} promoted to live trading and autonomous trader started`,
+      traderStarted: true,
+    });
   } catch (error: unknown) {
-    res.status(400).json({ success: false, error: error instanceof Error ? error.message : String(error) });
+    res.status(400).json({ success: false, error: 'Promotion failed' });
   }
 });
 
