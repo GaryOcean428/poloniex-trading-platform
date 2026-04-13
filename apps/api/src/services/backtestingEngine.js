@@ -111,7 +111,9 @@ class BacktestingEngine extends EventEmitter {
         '1d': 86400, '1D': 86400
       };
       const seconds = intervalSeconds[timeframe] || 3600;
-      const rangeMs = endDate.getTime() - startDate.getTime();
+      const end = endDate instanceof Date ? endDate : new Date(endDate);
+      const start = startDate instanceof Date ? startDate : new Date(startDate);
+      const rangeMs = end.getTime() - start.getTime();
       const limit = Math.min(Math.ceil(rangeMs / (seconds * 1000)), 500);
 
       // getHistoricalData handles interval format conversion, V3 array parsing,
