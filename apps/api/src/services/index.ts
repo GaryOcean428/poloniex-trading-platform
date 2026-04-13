@@ -19,9 +19,6 @@ export * from './persistentTradingEngine.js';
 
 // Strategy Services
 export * from './strategyService.js';
-// Deprecated: strategyOptimizer replaced by strategyLearningEngine
-// export * from './strategyOptimizer.js';
-// Deprecated: autonomousStrategyGenerator replaced by strategyLearningEngine (see #466)
 export * from './pineScriptParser.js';
 export * from './templateStrategies.js';
 
@@ -30,7 +27,6 @@ export * from './mlPredictionService.js';
 export * from './simpleMlService.js';
 export * from './confidenceScoringService.js';
 export * from './contextAwarenessService.js';
-// Deprecated: enhancedAutonomousAgent replaced by SLE + fullyAutonomousTrader (see #466)
 
 // Market & Data Services
 export * from './poloniexFuturesService.js';

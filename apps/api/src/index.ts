@@ -15,8 +15,6 @@ import backtestRoutes from './routes/backtest.js';
 import paperTradingRoutes from './routes/paper-trading.js';
 import riskRoutes from './routes/risk.js';
 import confidenceScoringRoutes from './routes/confidenceScoring.js';
-// Deprecated: mock strategies route deleted (see #466)
-// import strategiesRoutes from './routes/strategies.js';
 import statusRoutes from './routes/status.js';
 import marketsRoutes from './routes/markets.js';
 import proxyRoutes from './routes/proxy.js';
@@ -37,9 +35,6 @@ import reconciliationRoutes from './routes/reconciliation.js';
 import { logger } from './utils/logger.js';
 import { persistentTradingEngine } from './services/persistentTradingEngine.js';
 import { agentScheduler } from './services/agentScheduler.js';
-// Deprecated services removed (see #466)
-// import automatedTradingService from './services/automatedTradingService.js';
-// import { enhancedAutonomousAgent } from './services/enhancedAutonomousAgent.js';
 import paperTradingService from './services/paperTradingService.js';
 import { stateReconciliationService } from './services/stateReconciliationService.js';
 import { runAllMigrations } from './scripts/runMigrations.js';
@@ -171,8 +166,6 @@ app.use('/api/backtest', backtestRoutes);
 app.use('/api/paper-trading', paperTradingRoutes);
 app.use('/api/risk', riskRoutes);
 app.use('/api/confidence-scoring', confidenceScoringRoutes);
-// Deprecated: mock strategies route deleted (see #466)
-// app.use('/api/strategies', strategiesRoutes);
 app.use('/api/trading-sessions', tradingSessionsRoutes);
 app.use('/api/status', statusRoutes);
 app.use('/api/debug', debugRoutes); // Debug, diagnostic, and test-balance routes (consolidated)
@@ -405,15 +398,10 @@ server.listen(PORT, '::', async () => {
   };
   scheduleReconciliation();
 
-  // Deprecated services removed (see #466)
-  // automatedTradingService.initialize() — replaced by fullyAutonomousTrader
-  
   // Start persistent trading engine
   persistentTradingEngine.start().catch(error => {
     logger.error('Failed to start persistent trading engine:', error);
   });
-  
-  // Deprecated: enhancedAutonomousAgent.setSocketIO(io) — replaced by SLE + fullyAutonomousTrader
   
   // Start agent scheduler (restores sessions from DB, starts always-run agents)
   agentScheduler.start().catch(error => {

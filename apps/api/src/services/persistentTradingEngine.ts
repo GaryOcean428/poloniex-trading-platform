@@ -277,7 +277,6 @@ export class PersistentTradingEngine extends EventEmitter {
         return { action: 'HOLD' };
       }
       
-      // Deprecated: automatedTradingService delegation removed.
       // The persistent engine now returns HOLD. 
       // Trading signals should be generated via fullyAutonomousTrader.
       logger.debug(`[PersistentEngine] Signal generation delegated to fullyAutonomousTrader (strategy: ${strategyConfig.type || 'unknown'})`);
