@@ -471,11 +471,11 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
       const tradesResult = await pool.query(
         `SELECT 
           COUNT(*) as total_trades,
-          SUM(CASE WHEN confidence > 50 THEN 1 ELSE 0 END) as winning_trades,
-          SUM(CASE WHEN confidence <= 50 THEN 1 ELSE 0 END) as losing_trades,
-          COALESCE(SUM(confidence), 0) as total_pnl,
-          AVG(CASE WHEN confidence > 50 THEN confidence END) as avg_win,
-          AVG(CASE WHEN confidence <= 50 THEN confidence END) as avg_loss
+          SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as winning_trades,
+          SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END) as losing_trades,
+          COALESCE(SUM(pnl), 0) as total_pnl,
+          AVG(CASE WHEN pnl > 0 THEN pnl END) as avg_win,
+          AVG(CASE WHEN pnl < 0 THEN pnl END) as avg_loss
         FROM autonomous_trades 
         WHERE user_id = $1${modeFilter}`,
         [userId]
@@ -508,6 +508,7 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
         const dailyResult = await pool.query(
           `SELECT
              DATE(created_at) as trade_date,
+             COALESCE(SUM(pnl), 0) as daily_pnl,
              COUNT(*) as daily_trades
            FROM autonomous_trades
            WHERE user_id = $1${modeFilter}
@@ -515,14 +516,15 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
            ORDER BY trade_date ASC`,
           [userId]
         );
-        const cumPnl = 0;
-        dailyPerformance = dailyResult.rows.map((r: { trade_date: string; daily_trades: string }) => {
-          const dayTrades = parseInt(r.daily_trades, 10) || 0;
+        let cumPnl = 0;
+        dailyPerformance = dailyResult.rows.map((r: { trade_date: string; daily_pnl: string; daily_trades: string }) => {
+          const dayPnl = parseFloat(r.daily_pnl) || 0;
+          cumPnl += dayPnl;
           return {
             date: new Date(r.trade_date).toISOString().slice(0, 10),
-            pnl: 0,
+            pnl: parseFloat(dayPnl.toFixed(2)),
             cumulativePnL: parseFloat(cumPnl.toFixed(2)),
-            trades: dayTrades
+            trades: parseInt(r.daily_trades, 10) || 0
           };
         });
       } catch {

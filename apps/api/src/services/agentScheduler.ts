@@ -33,6 +33,9 @@ class AgentScheduler {
 
     // fullyAutonomousTrader auto-restores configs from DB on construction (loadActiveConfigs)
 
+    // Start SLE globally (not per-user)
+    await strategyLearningEngine.start();
+
     // Check every minute for agents that should be running
     const checkJob = cron.schedule('* * * * *', async () => {
       await this.checkAndStartAgents();
@@ -84,7 +87,6 @@ class AgentScheduler {
             
             if (settings && settings.config) {
               await fullyAutonomousTrader.enableAutonomousTrading(userId, settings.config);
-              await strategyLearningEngine.start();
               await agentSettingsService.updateActiveStatus(userId, true);
             }
           }
@@ -122,7 +124,6 @@ class AgentScheduler {
 
           logger.info(`Restarting persistent agent for user ${row.user_id}`);
           await fullyAutonomousTrader.enableAutonomousTrading(row.user_id, row.config);
-          await strategyLearningEngine.start();
         } catch (error) {
           logger.error(`Error restarting agent for user ${row.user_id}:`, error);
         }
@@ -159,7 +160,6 @@ class AgentScheduler {
 
       logger.info(`Auto-starting agent for user ${userId} on login`);
       await fullyAutonomousTrader.enableAutonomousTrading(userId, settings.config);
-      await strategyLearningEngine.start();
       await agentSettingsService.updateActiveStatus(userId, true);
     } catch (error) {
       logger.error(`Error auto-starting agent for user ${userId}:`, error);
@@ -191,7 +191,6 @@ class AgentScheduler {
 
       logger.info(`Stopping agent for user ${userId} on logout`);
       await fullyAutonomousTrader.disableAutonomousTrading(userId);
-      await strategyLearningEngine.stop();
       await agentSettingsService.updateActiveStatus(userId, false);
     } catch (error) {
       logger.error(`Error stopping agent for user ${userId}:`, error);
