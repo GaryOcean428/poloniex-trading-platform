@@ -19,6 +19,12 @@ import { logger } from '../utils/logger.js';
 import { validateMarketData } from '../utils/marketDataValidator.js';
 import { getPrecisions } from './marketCatalog.js';
 
+/** Safe number formatting — returns fallback string for NaN/Infinity */
+function safeFixed(value: unknown, decimals: number, fallback = 'N/A'): string {
+  const n = Number(value);
+  return Number.isFinite(n) ? n.toFixed(decimals) : fallback;
+}
+
 interface TradingConfig {
   userId: string;
   initialCapital: number;
@@ -85,6 +91,22 @@ class FullyAutonomousTrader extends EventEmitter {
   private runningIntervals: Map<string, NodeJS.Timeout> = new Map();
   private performanceMetrics: Map<string, any> = new Map();
   private lastHeartbeat: Map<string, Date> = new Map();
+
+  // Circuit breaker state per user
+  private circuitBreakers: Map<string, {
+    consecutiveLosses: number;
+    dailyLoss: number;
+    dailyLossResetAt: Date;
+    isTripped: boolean;
+    trippedAt?: Date;
+    trippedReason?: string;
+  }> = new Map();
+
+  private static readonly MAX_CONSECUTIVE_LOSSES = 5;
+  private static readonly MAX_DAILY_LOSS_PERCENT = 3; // % of capital
+  private static readonly CIRCUIT_BREAKER_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour
+  private static readonly DRAWDOWN_SCALE_THRESHOLD = 10; // Start scaling at 10% drawdown
+  private static readonly DRAWDOWN_HALT_THRESHOLD = 20; // Full halt at 20% drawdown
 
   constructor() {
     super();
@@ -314,6 +336,13 @@ class FullyAutonomousTrader extends EventEmitter {
         return;
       }
 
+      // Circuit breaker: halt if consecutive losses or daily loss limit exceeded
+      const cbCheck = this.checkCircuitBreaker(userId);
+      if (!cbCheck.allowed) {
+        logger.warn(`[CB] Trading halted for user ${userId}: ${cbCheck.reason}`);
+        return;
+      }
+
       // Step 2: Analyze all markets
       const analyses = await this.analyzeMarkets(userId, config.symbols);
 
@@ -510,7 +539,7 @@ class FullyAutonomousTrader extends EventEmitter {
           logger.warn(`[SLE] Failed to query live strategies for ${symbol}:`, sleErr);
         }
 
-        const signal = await this.generateSignal(symbol, analysis, effectiveConfig);
+        const signal = await this.generateSignal(userId, symbol, analysis, effectiveConfig);
         if (signal && signal.confidence >= config.confidenceThreshold) {
           signals.push(signal);
         } else if (signal) {
@@ -529,6 +558,7 @@ class FullyAutonomousTrader extends EventEmitter {
    * Generate a trading signal for a symbol
    */
   private async generateSignal(
+    userId: string,
     symbol: string,
     analysis: MarketAnalysis,
     config: TradingConfig
@@ -602,12 +632,19 @@ class FullyAutonomousTrader extends EventEmitter {
 
     if (action === 'HOLD') return null;
 
-    // Calculate position size based on risk
+    // Calculate position size based on risk, then adjust for current drawdown
     // positionSize is in USDT (notional value)
     const slPercent = config.stopLossPercent / 100;
     const tpPercent = config.takeProfitPercent / 100;
     const riskAmount = (config.initialCapital * config.maxRiskPerTrade) / 100; // USDT risked
     const positionSizeUsdt = riskAmount / slPercent; // USDT notional
+
+    // Apply drawdown-adjusted sizing using cached performance metrics
+    const metrics = this.performanceMetrics.get(userId);
+    const currentEquity = metrics?.currentEquity ?? config.initialCapital;
+    const currentDrawdown = ((config.initialCapital - currentEquity) / config.initialCapital) * 100;
+    const baseSize = Math.min(positionSizeUsdt, config.initialCapital * 0.1); // USDT, max 10% of capital
+    const adjustedSize = this.getDrawdownAdjustedPositionSize(baseSize, currentDrawdown);
 
     // Calculate stop loss and take profit using config percentages
     const stopLoss = side === 'long' 
@@ -626,7 +663,7 @@ class FullyAutonomousTrader extends EventEmitter {
       entryPrice: currentPrice,
       stopLoss,
       takeProfit,
-      positionSize: Math.min(positionSizeUsdt, config.initialCapital * 0.1), // USDT, max 10% of capital
+      positionSize: adjustedSize,
       leverage: config.leverage,
       reason,
       indicators: factors
@@ -907,6 +944,7 @@ class FullyAutonomousTrader extends EventEmitter {
         if (pnlPercent < -slPercent) {
           logger.info(`Stop loss triggered for ${symbol}: ${pnlPercent.toFixed(2)}% (limit: -${slPercent}%)`);
           await this.closePosition(userId, symbol, 'stop_loss');
+          this.recordTradeResult(userId, unrealizedPnL, config?.initialCapital ?? 10000);
           continue;
         }
 
@@ -914,6 +952,7 @@ class FullyAutonomousTrader extends EventEmitter {
         if (pnlPercent > tpPercent) {
           logger.info(`Take profit triggered for ${symbol}: ${pnlPercent.toFixed(2)}% (limit: ${tpPercent}%)`);
           await this.closePosition(userId, symbol, 'take_profit');
+          this.recordTradeResult(userId, unrealizedPnL, config?.initialCapital ?? 10000);
           continue;
         }
 
@@ -926,6 +965,7 @@ class FullyAutonomousTrader extends EventEmitter {
             if ((isLong && analysis.trend === 'bearish') || (!isLong && analysis.trend === 'bullish')) {
               logger.info(`Trend reversal detected for ${symbol}, closing position`);
               await this.closePosition(userId, symbol, 'trend_reversal');
+              this.recordTradeResult(userId, unrealizedPnL, config?.initialCapital ?? 10000);
             }
           }
         }
@@ -1057,6 +1097,145 @@ class FullyAutonomousTrader extends EventEmitter {
     return this.performanceMetrics.get(userId) || null;
   }
 
+  // ──────────────────────────────────────────────────────────────────────────
+  // Circuit Breaker
+  // ──────────────────────────────────────────────────────────────────────────
+
+  private getNextDayReset(): Date {
+    const now = new Date();
+    const reset = new Date(now);
+    reset.setUTCHours(0, 0, 0, 0);
+    reset.setUTCDate(reset.getUTCDate() + 1);
+    return reset;
+  }
+
+  /**
+   * Initialize or get circuit breaker state for a user.
+   * Automatically resets the daily loss counter at UTC midnight.
+   */
+  private getCircuitBreaker(userId: string) {
+    if (!this.circuitBreakers.has(userId)) {
+      this.circuitBreakers.set(userId, {
+        consecutiveLosses: 0,
+        dailyLoss: 0,
+        dailyLossResetAt: this.getNextDayReset(),
+        isTripped: false
+      });
+    }
+    const cb = this.circuitBreakers.get(userId)!;
+    // Reset daily loss counter at UTC midnight
+    if (new Date() >= cb.dailyLossResetAt) {
+      cb.dailyLoss = 0;
+      cb.dailyLossResetAt = this.getNextDayReset();
+    }
+    return cb;
+  }
+
+  /**
+   * Check if the circuit breaker allows trading for this user.
+   * Auto-resets after the cooldown period.
+   * Returns { allowed: true } or { allowed: false, reason: string }
+   */
+  private checkCircuitBreaker(userId: string): { allowed: boolean; reason?: string } {
+    const cb = this.getCircuitBreaker(userId);
+
+    // Auto-reset after cooldown
+    if (cb.isTripped && cb.trippedAt) {
+      const elapsed = Date.now() - cb.trippedAt.getTime();
+      if (elapsed >= FullyAutonomousTrader.CIRCUIT_BREAKER_COOLDOWN_MS) {
+        logger.info(`[CB] Cooldown expired for user ${userId} — resetting`);
+        cb.isTripped = false;
+        cb.consecutiveLosses = 0;
+        cb.trippedReason = undefined;
+        cb.trippedAt = undefined;
+      }
+    }
+
+    if (cb.isTripped) {
+      return { allowed: false, reason: cb.trippedReason || 'Circuit breaker tripped' };
+    }
+    return { allowed: true };
+  }
+
+  /**
+   * Record a trade result and update circuit breaker state.
+   * Called after every position close.
+   */
+  private recordTradeResult(userId: string, pnl: number, capitalBase: number): void {
+    const cb = this.getCircuitBreaker(userId);
+
+    if (pnl < 0) {
+      cb.consecutiveLosses++;
+      cb.dailyLoss += Math.abs(pnl);
+    } else {
+      cb.consecutiveLosses = 0; // Reset on a win
+    }
+
+    // Check consecutive losses
+    if (cb.consecutiveLosses >= FullyAutonomousTrader.MAX_CONSECUTIVE_LOSSES) {
+      cb.isTripped = true;
+      cb.trippedAt = new Date();
+      cb.trippedReason = `${cb.consecutiveLosses} consecutive losses — pausing for cooldown`;
+      logger.warn(`[CB] TRIPPED for user ${userId}: ${cb.trippedReason}`);
+      this.emit('circuit_breaker_tripped', { userId, reason: cb.trippedReason, consecutiveLosses: cb.consecutiveLosses });
+    }
+
+    // Check daily loss limit
+    const dailyLossPercent = capitalBase > 0 ? (cb.dailyLoss / capitalBase) * 100 : 0;
+    if (dailyLossPercent >= FullyAutonomousTrader.MAX_DAILY_LOSS_PERCENT) {
+      cb.isTripped = true;
+      cb.trippedAt = new Date();
+      cb.trippedReason = `Daily loss limit reached (${safeFixed(dailyLossPercent, 1, '?')}% of capital) — halting until next day`;
+      logger.warn(`[CB] TRIPPED for user ${userId}: ${cb.trippedReason}`);
+      this.emit('circuit_breaker_tripped', { userId, reason: cb.trippedReason, dailyLossPercent });
+    }
+  }
+
+  /**
+   * Calculate drawdown-adjusted position size.
+   * Linear scale-down between DRAWDOWN_SCALE_THRESHOLD and DRAWDOWN_HALT_THRESHOLD.
+   * Returns 0 at or above DRAWDOWN_HALT_THRESHOLD.
+   */
+  private getDrawdownAdjustedPositionSize(basePositionSize: number, currentDrawdownPercent: number): number {
+    if (currentDrawdownPercent >= FullyAutonomousTrader.DRAWDOWN_HALT_THRESHOLD) {
+      return 0; // Full halt
+    }
+    if (currentDrawdownPercent <= FullyAutonomousTrader.DRAWDOWN_SCALE_THRESHOLD) {
+      return basePositionSize; // No reduction
+    }
+    // Linear scale-down between thresholds
+    const range = FullyAutonomousTrader.DRAWDOWN_HALT_THRESHOLD - FullyAutonomousTrader.DRAWDOWN_SCALE_THRESHOLD;
+    const excess = currentDrawdownPercent - FullyAutonomousTrader.DRAWDOWN_SCALE_THRESHOLD;
+    const scale = 1 - (excess / range);
+    return basePositionSize * Math.max(0, scale);
+  }
+
+  /**
+   * Get circuit breaker status for a user (for API exposure).
+   */
+  getCircuitBreakerStatus(userId: string): {
+    isTripped: boolean;
+    reason?: string;
+    consecutiveLosses: number;
+    dailyLossPercent: number;
+    cooldownRemaining?: number;
+  } {
+    const cb = this.getCircuitBreaker(userId);
+    const config = this.configs.get(userId);
+    const capitalBase = config ? config.initialCapital : 10000;
+    const dailyLossPercent = capitalBase > 0 ? (cb.dailyLoss / capitalBase) * 100 : 0;
+
+    return {
+      isTripped: cb.isTripped,
+      reason: cb.trippedReason,
+      consecutiveLosses: cb.consecutiveLosses,
+      dailyLossPercent: parseFloat(safeFixed(dailyLossPercent, 2, '0')),
+      cooldownRemaining: cb.isTripped && cb.trippedAt
+        ? Math.max(0, FullyAutonomousTrader.CIRCUIT_BREAKER_COOLDOWN_MS - (Date.now() - cb.trippedAt.getTime()))
+        : undefined
+    };
+  }
+
   /**
    * Helper: Calculate Simple Moving Average
    */
@@ -1098,6 +1277,9 @@ class FullyAutonomousTrader extends EventEmitter {
     return (rsi - 50) * 2;
   }
 }
+
+// Export class for testing and named export for singleton
+export { FullyAutonomousTrader };
 
 // Export singleton instance
 export const fullyAutonomousTrader = new FullyAutonomousTrader();
