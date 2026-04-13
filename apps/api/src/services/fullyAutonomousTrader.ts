@@ -1229,7 +1229,7 @@ class FullyAutonomousTrader extends EventEmitter {
       isTripped: cb.isTripped,
       reason: cb.trippedReason,
       consecutiveLosses: cb.consecutiveLosses,
-      dailyLossPercent: parseFloat(safeFixed(dailyLossPercent, 2, '0')),
+      dailyLossPercent: Number.isFinite(dailyLossPercent) ? parseFloat(dailyLossPercent.toFixed(2)) : 0,
       cooldownRemaining: cb.isTripped && cb.trippedAt
         ? Math.max(0, FullyAutonomousTrader.CIRCUIT_BREAKER_COOLDOWN_MS - (Date.now() - cb.trippedAt.getTime()))
         : undefined

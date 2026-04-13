@@ -167,7 +167,7 @@ describe('FullyAutonomousTrader – drawdown-adjusted position sizing', () => {
     trader = new FullyAutonomousTrader();
   });
 
-  it('returns full size below 10% drawdown', () => {
+  it('returns full size at or below 10% drawdown', () => {
     expect(priv(trader).getDrawdownAdjustedPositionSize(1000, 0)).toBe(1000);
     expect(priv(trader).getDrawdownAdjustedPositionSize(1000, 5)).toBe(1000);
     expect(priv(trader).getDrawdownAdjustedPositionSize(1000, 10)).toBe(1000);
