@@ -15,7 +15,6 @@ export { default as autonomousTraderRoutes } from './autonomousTrader.js';
 export { default as tradingSessionsRoutes } from './tradingSessions.js';
 
 // Strategy & Risk Management
-export { default as strategiesRoutes } from './strategies.js';
 export { default as riskRoutes } from './risk.js';
 export { default as confidenceScoringRoutes } from './confidenceScoring.js';
 

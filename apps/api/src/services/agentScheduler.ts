@@ -10,7 +10,8 @@
 
 import * as cron from 'node-cron';
 import { pool } from '../db/connection.js';
-import { enhancedAutonomousAgent } from './enhancedAutonomousAgent.js';
+import { fullyAutonomousTrader } from './fullyAutonomousTrader.js';
+import { strategyLearningEngine } from './strategyLearningEngine.js';
 import { agentSettingsService } from './agentSettingsService.js';
 import { logger } from '../utils/logger.js';
 
@@ -30,8 +31,7 @@ class AgentScheduler {
     logger.info('Starting agent scheduler...');
     this.isRunning = true;
 
-    // Restore agent sessions that were running before server restart
-    await enhancedAutonomousAgent.restoreRunningSessionsFromDB();
+    // fullyAutonomousTrader auto-restores configs from DB on construction (loadActiveConfigs)
 
     // Check every minute for agents that should be running
     const checkJob = cron.schedule('* * * * *', async () => {
@@ -73,17 +73,18 @@ class AgentScheduler {
 
       for (const userId of alwaysRunUsers) {
         try {
-          // Check if agent is already running
-          const status = await enhancedAutonomousAgent.getAgentStatus(userId);
+          // Check if trader is already running for this user
+          const traderStatus = await fullyAutonomousTrader.getStatus(userId);
           
-          if (!status || status.status !== 'running') {
+          if (!traderStatus.isRunning) {
             logger.info(`Starting persistent agent for user ${userId}`);
             
             // Get user's agent settings
             const settings = await agentSettingsService.getSettings(userId);
             
             if (settings && settings.config) {
-              await enhancedAutonomousAgent.startAgent(userId, settings.config);
+              await fullyAutonomousTrader.enableAutonomousTrading(userId, settings.config);
+              await strategyLearningEngine.start();
               await agentSettingsService.updateActiveStatus(userId, true);
             }
           }
@@ -112,15 +113,16 @@ class AgentScheduler {
 
       for (const row of result.rows) {
         try {
-          // Check if already restored by restoreRunningSessionsFromDB
-          const existing = await enhancedAutonomousAgent.getAgentStatus(row.user_id);
-          if (existing && existing.status === 'running') {
-            logger.info(`Agent already running for user ${row.user_id} (restored from session)`);
+          // Check if already running
+          const existing = await fullyAutonomousTrader.getStatus(row.user_id);
+          if (existing.isRunning) {
+            logger.info(`Agent already running for user ${row.user_id} (restored from config)`);
             continue;
           }
 
           logger.info(`Restarting persistent agent for user ${row.user_id}`);
-          await enhancedAutonomousAgent.startAgent(row.user_id, row.config);
+          await fullyAutonomousTrader.enableAutonomousTrading(row.user_id, row.config);
+          await strategyLearningEngine.start();
         } catch (error) {
           logger.error(`Error restarting agent for user ${row.user_id}:`, error);
         }
@@ -149,14 +151,15 @@ class AgentScheduler {
       }
 
       // Check if agent is already running
-      const status = await enhancedAutonomousAgent.getAgentStatus(userId);
-      if (status && status.status === 'running') {
+      const traderStatus = await fullyAutonomousTrader.getStatus(userId);
+      if (traderStatus.isRunning) {
         logger.info(`Agent already running for user ${userId}`);
         return;
       }
 
       logger.info(`Auto-starting agent for user ${userId} on login`);
-      await enhancedAutonomousAgent.startAgent(userId, settings.config);
+      await fullyAutonomousTrader.enableAutonomousTrading(userId, settings.config);
+      await strategyLearningEngine.start();
       await agentSettingsService.updateActiveStatus(userId, true);
     } catch (error) {
       logger.error(`Error auto-starting agent for user ${userId}:`, error);
@@ -181,13 +184,14 @@ class AgentScheduler {
       }
 
       // Get current agent status
-      const status = await enhancedAutonomousAgent.getAgentStatus(userId);
-      if (!status || status.status !== 'running') {
+      const traderStatus = await fullyAutonomousTrader.getStatus(userId);
+      if (!traderStatus.isRunning) {
         return;
       }
 
       logger.info(`Stopping agent for user ${userId} on logout`);
-      await enhancedAutonomousAgent.stopAgent(status.id);
+      await fullyAutonomousTrader.disableAutonomousTrading(userId);
+      await strategyLearningEngine.stop();
       await agentSettingsService.updateActiveStatus(userId, false);
     } catch (error) {
       logger.error(`Error stopping agent for user ${userId}:`, error);

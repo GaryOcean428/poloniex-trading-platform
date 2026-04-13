@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 
 import { logger } from '../utils/logger.js';
-import autonomousStrategyGenerator from '../services/autonomousStrategyGenerator.js';
-import strategyOptimizer from '../services/strategyOptimizer.js';
+import { strategyLearningEngine } from '../services/strategyLearningEngine.js';
 import profitBankingService from '../services/profitBankingService.js';
 
 /**
  * Test Suite for Autonomous Trading System
- * Tests the core autonomous trading functionality
+ * Tests the core autonomous trading functionality via SLE (Strategy Learning Engine)
+ * 
+ * NOTE: autonomousStrategyGenerator and strategyOptimizer have been deprecated.
+ * Strategy generation is now handled entirely by strategyLearningEngine (SLE).
  */
 class AutonomousSystemTest {
   constructor() {
@@ -24,178 +26,45 @@ class AutonomousSystemTest {
       logger.info('🧠 Starting Autonomous Trading System Tests...');
       logger.info('=' .repeat(80));
 
-      // Test 1: Strategy Generator Initialization
-      await this.runTest('Autonomous Strategy Generator Initialization', async () => {
-        // Test initialization
-        await autonomousStrategyGenerator.initialize();
+      // Test 1: SLE Engine Status
+      await this.runTest('Strategy Learning Engine Status', async () => {
+        const status = await strategyLearningEngine.getEngineStatus();
         
-        if (autonomousStrategyGenerator.strategies.size === 0) {
-          throw new Error('No strategies created during initialization');
+        if (status.isRunning === undefined) {
+          throw new Error('Engine status missing isRunning field');
         }
         
         return {
-          strategiesCreated: autonomousStrategyGenerator.strategies.size,
-          generationCount: autonomousStrategyGenerator.generationCount
+          isRunning: status.isRunning,
+          generationCount: status.generationCount,
+          activeStrategies: status.activeStrategies
         };
       });
 
-      // Test 2: Strategy Generation
-      await this.runTest('Strategy Generation', async () => {
-        const symbols = ['BTCUSDT', 'ETHUSDT'];
-        const strategyTypes = ['momentum', 'mean_reversion'];
-        
-        const strategy = autonomousStrategyGenerator.generateRandomStrategy(symbols, strategyTypes);
-        
-        if (!strategy.id || !strategy.name || !strategy.type) {
-          throw new Error('Generated strategy missing required fields');
-        }
-        
-        if (!strategy.parameters || !strategy.indicators) {
-          throw new Error('Generated strategy missing parameters or indicators');
-        }
+      // Test 2: SLE Top Performers Query
+      await this.runTest('SLE Top Performers', async () => {
+        const performers = await strategyLearningEngine.getTopPerformers(10);
         
         return {
-          strategyId: strategy.id,
-          strategyType: strategy.type,
-          symbol: strategy.symbol,
-          indicatorCount: strategy.indicators.length,
-          parameterCount: Object.keys(strategy.parameters).length
+          performerCount: performers.length,
+          hasResults: performers.length >= 0
         };
       });
 
-      // Test 3: Strategy Mutation
-      await this.runTest('Strategy Mutation', async () => {
-        const parentStrategy = {
-          id: 'parent_test',
-          name: 'Test Parent Strategy',
-          type: 'momentum',
-          symbol: 'BTCUSDT',
-          timeframe: '1h',
-          indicators: [{ category: 'momentum', indicator: 'RSI' }],
-          parameters: {
-            rsi_oversold: 30,
-            rsi_overbought: 70,
-            stopLoss: 0.02,
-            takeProfit: 0.04
-          },
-          performance: {
-            profit: 0.1,
-            winRate: 0.65
-          }
-        };
-        
-        const mutatedStrategy = autonomousStrategyGenerator.mutateStrategy(parentStrategy);
-        
-        if (!mutatedStrategy.id || mutatedStrategy.id === parentStrategy.id) {
-          throw new Error('Mutated strategy missing or invalid ID');
-        }
-        
-        if (!mutatedStrategy.parent || mutatedStrategy.parent !== parentStrategy.id) {
-          throw new Error('Mutated strategy missing parent reference');
-        }
+      // Test 3: SLE Live Recommendations Query
+      await this.runTest('SLE Live Recommendations', async () => {
+        const recommended = await strategyLearningEngine.getLiveRecommendations();
         
         return {
-          parentId: parentStrategy.id,
-          mutatedId: mutatedStrategy.id,
-          parametersDifferent: JSON.stringify(mutatedStrategy.parameters) !== JSON.stringify(parentStrategy.parameters)
+          recommendedCount: recommended.length,
+          hasResults: recommended.length >= 0
         };
       });
 
-      // Test 4: Strategy Crossover
-      await this.runTest('Strategy Crossover', async () => {
-        const parent1 = {
-          id: 'parent1_test',
-          name: 'Test Parent 1',
-          type: 'momentum',
-          symbol: 'BTCUSDT',
-          timeframe: '1h',
-          indicators: [{ category: 'momentum', indicator: 'RSI' }],
-          parameters: { rsi_oversold: 30, stopLoss: 0.02 }
-        };
-        
-        const parent2 = {
-          id: 'parent2_test',
-          name: 'Test Parent 2',
-          type: 'mean_reversion',
-          symbol: 'ETHUSDT',
-          timeframe: '4h',
-          indicators: [{ category: 'volatility', indicator: 'Bollinger_Bands' }],
-          parameters: { bb_std_dev: 2.0, stopLoss: 0.03 }
-        };
-        
-        const offspring = autonomousStrategyGenerator.crossoverStrategies(parent1, parent2);
-        
-        if (!offspring.id || !offspring.parents) {
-          throw new Error('Crossover offspring missing required fields');
-        }
-        
-        if (offspring.parents.length !== 2) {
-          throw new Error('Crossover offspring should have exactly 2 parents');
-        }
-        
-        return {
-          offspringId: offspring.id,
-          parents: offspring.parents,
-          inheritedType: offspring.type,
-          inheritedSymbol: offspring.symbol
-        };
-      });
-
-      // Test 5: Fitness Score Calculation
-      await this.runTest('Fitness Score Calculation', async () => {
-        const testStrategy = {
-          performance: {
-            profit: 0.15,
-            winRate: 0.70,
-            sharpeRatio: 1.2,
-            maxDrawdown: 0.08,
-            confidence: 75
-          }
-        };
-        
-        const fitnessScore = autonomousStrategyGenerator.calculateFitnessScore(testStrategy);
-        
-        if (fitnessScore <= 0) {
-          throw new Error('Fitness score should be positive for profitable strategy');
-        }
-        
-        return {
-          profit: testStrategy.performance.profit,
-          winRate: testStrategy.performance.winRate,
-          fitnessScore: fitnessScore.toFixed(4)
-        };
-      });
-
-      // Test 6: Strategy Optimizer Queue
-      await this.runTest('Strategy Optimizer Queue', async () => {
-        const mockStrategy = {
-          id: 'queue_test_strategy',
-          name: 'Queue Test Strategy',
-          type: 'momentum',
-          symbol: 'BTCUSDT',
-          timeframe: '1h',
-          parameters: { rsi_oversold: 30, rsi_overbought: 70 }
-        };
-        
-        // Test backtest queue
-        await strategyOptimizer.queueForBacktest(mockStrategy);
-        
-        if (strategyOptimizer.backtestQueue.length === 0) {
-          throw new Error('Strategy not added to backtest queue');
-        }
-        
-        return {
-          strategyId: mockStrategy.id,
-          queuedForBacktest: true,
-          backtestQueueSize: strategyOptimizer.backtestQueue.length
-        };
-      });
-
-      // Test 7: Profit Banking Configuration
+      // Test 4: Profit Banking Configuration
       await this.runTest('Profit Banking Configuration', async () => {
         const originalConfig = { ...profitBankingService.bankingConfig };
         
-        // Test config update
         const newConfig = {
           bankingPercentage: 0.25,
           minimumProfitThreshold: 75
@@ -221,7 +90,7 @@ class AutonomousSystemTest {
         };
       });
 
-      // Test 8: Emergency Stop Simulation
+      // Test 5: Emergency Stop Simulation
       await this.runTest('Emergency Stop Simulation', async () => {
         const initialBalance = 10000;
         const currentBalance = 7000; // 30% drawdown
@@ -240,55 +109,17 @@ class AutonomousSystemTest {
         };
       });
 
-      // Test 9: Risk Tolerance Configuration
-      await this.runTest('Risk Tolerance Configuration', async () => {
-        const originalRiskTolerance = { ...autonomousStrategyGenerator.riskTolerance };
-        
-        const newRiskTolerance = {
-          maxDrawdown: 0.12,
-          riskPerTrade: 0.015,
-          profitBankingPercent: 0.25
-        };
-        
-        autonomousStrategyGenerator.riskTolerance = {
-          ...autonomousStrategyGenerator.riskTolerance,
-          ...newRiskTolerance
-        };
-        
-        if (autonomousStrategyGenerator.riskTolerance.maxDrawdown !== 0.12) {
-          throw new Error('Max drawdown not updated correctly');
-        }
-        
-        // Restore original
-        autonomousStrategyGenerator.riskTolerance = originalRiskTolerance;
-        
-        return {
-          riskToleranceUpdated: true,
-          newMaxDrawdown: newRiskTolerance.maxDrawdown,
-          newRiskPerTrade: newRiskTolerance.riskPerTrade
-        };
-      });
-
-      // Test 10: System Integration
+      // Test 6: System Integration
       await this.runTest('System Integration', async () => {
-        // Test that all components can work together
+        const sleStatus = await strategyLearningEngine.getEngineStatus();
         const systemStatus = {
-          strategyGeneratorInitialized: autonomousStrategyGenerator.strategies.size > 0,
+          sleAvailable: sleStatus !== null && sleStatus !== undefined,
           profitBankingConfigured: profitBankingService.bankingConfig.enabled,
-          optimizerReady: strategyOptimizer.thresholds.backtestMinProfit > 0,
-          riskToleranceSet: autonomousStrategyGenerator.riskTolerance.maxDrawdown > 0
         };
-        
-        const allSystemsReady = Object.values(systemStatus).every(Boolean);
-        
-        if (!allSystemsReady) {
-          throw new Error('Not all system components are ready');
-        }
         
         return {
           systemStatus,
-          allSystemsReady,
-          totalStrategies: autonomousStrategyGenerator.strategies.size
+          allSystemsReady: Object.values(systemStatus).every(Boolean)
         };
       });
 

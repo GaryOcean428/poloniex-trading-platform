@@ -1,6 +1,7 @@
 import express from 'express';
 import { authenticateToken } from '../middleware/auth.js';
-import { enhancedAutonomousAgent } from '../services/enhancedAutonomousAgent.js';
+import { fullyAutonomousTrader } from '../services/fullyAutonomousTrader.js';
+import { strategyLearningEngine } from '../services/strategyLearningEngine.js';
 import { agentSettingsService } from '../services/agentSettingsService.js';
 import type { Request, Response } from 'express';
 import { pool } from '../db/connection.js';
@@ -46,46 +47,30 @@ router.post('/start', authenticateToken, async (req: Request, res: Response) => 
     
     const config = req.body;
 
-    const session = await enhancedAutonomousAgent.startAgent(userId, config);
+    // Start both SLE (strategy brain) and fullyAutonomousTrader (execution engine)
+    await fullyAutonomousTrader.enableAutonomousTrading(userId, {
+      symbols: config.preferredPairs || ['BTC-USDT'],
+      maxDrawdown: config.maxDrawdown || 15,
+      maxRiskPerTrade: config.positionSize || 2,
+      paperTrading: config.executionMode === 'paper' || config.paperTrading || false,
+    });
+    await strategyLearningEngine.start();
+
+    const status = await fullyAutonomousTrader.getStatus(userId);
 
     res.json({
       success: true,
-      session
+      session: {
+        id: userId,
+        status: status.isRunning ? 'running' : 'starting',
+        startedAt: new Date().toISOString(),
+      }
     });
   } catch (error: unknown) {
     logger.error('Error starting agent:', error);
     const errMsg = error instanceof Error ? error.message : String(error);
     
-    // Handle "already running" with structured 409
-    if (errMsg.includes('already running')) {
-      try {
-        const catchUserId = (req.user?.id || req.user?.userId)?.toString();
-        const existingSession = catchUserId ? await enhancedAutonomousAgent.getAgentStatus(catchUserId) : null;
-        return res.status(409).json({
-          success: false,
-          error: 'An agent session is already active',
-          code: 'ALREADY_RUNNING',
-          existingSessionId: existingSession?.id || null,
-          existingState: existingSession?.status || 'unknown',
-          startedAt: existingSession?.startedAt || null,
-          resumeAllowed: existingSession?.status === 'paused',
-          takeoverAllowed: true
-        });
-      } catch {
-        return res.status(409).json({
-          success: false,
-          error: 'An agent session is already active',
-          code: 'ALREADY_RUNNING',
-          existingSessionId: null,
-          existingState: 'unknown',
-          startedAt: null,
-          resumeAllowed: false,
-          takeoverAllowed: true
-        });
-      }
-    }
-    
-    // Provide specific error codes for other errors
+    // Provide specific error codes for known errors
     let errorCode = 'UNKNOWN_ERROR';
     let statusCode = 500;
     
@@ -120,16 +105,9 @@ router.post('/stop', authenticateToken, async (req: Request, res: Response) => {
       });
     }
 
-    // Get active session
-    const status = await enhancedAutonomousAgent.getAgentStatus(userId);
-    if (!status) {
-      return res.status(404).json({
-        success: false,
-        error: 'No active agent session found'
-      });
-    }
-
-    await enhancedAutonomousAgent.stopAgent(status.id);
+    // Stop both fullyAutonomousTrader and SLE
+    await fullyAutonomousTrader.disableAutonomousTrading(userId);
+    await strategyLearningEngine.stop();
 
     res.json({
       success: true,
@@ -159,15 +137,8 @@ router.post('/pause', authenticateToken, async (req: Request, res: Response) => 
       });
     }
 
-    const status = await enhancedAutonomousAgent.getAgentStatus(userId);
-    if (!status) {
-      return res.status(404).json({
-        success: false,
-        error: 'No active agent session found'
-      });
-    }
-
-    await enhancedAutonomousAgent.pauseAgent(status.id);
+    // Pause trading (disable execution engine, keep SLE running for analysis)
+    await fullyAutonomousTrader.disableAutonomousTrading(userId);
 
     res.json({
       success: true,
@@ -197,40 +168,17 @@ router.post('/resume', authenticateToken, async (req: Request, res: Response) =>
       });
     }
 
-    const status = await enhancedAutonomousAgent.getAgentStatus(userId);
-    if (!status) {
-      return res.status(404).json({
-        success: false,
-        error: 'No active agent session found'
-      });
-    }
+    // Resume trading by re-enabling the execution engine
+    await fullyAutonomousTrader.enableAutonomousTrading(userId);
 
-    if (status.status !== 'paused') {
-      return res.status(400).json({
-        success: false,
-        error: `Cannot resume agent in '${status.status}' state. Agent must be paused.`,
-        code: 'INVALID_STATE'
-      });
-    }
-
-    // Resume the agent by updating state
-    try {
-      await pool.query(
-        'UPDATE agent_sessions SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
-        ['running', status.id]
-      );
-    } catch {
-      // DB update is best-effort; in-memory state is the source of truth
-    }
-    status.status = 'running';
+    const traderStatus = await fullyAutonomousTrader.getStatus(userId);
 
     res.json({
       success: true,
       message: 'Agent resumed successfully',
       session: {
-        id: status.id,
-        status: status.status,
-        startedAt: status.startedAt
+        id: userId,
+        status: traderStatus.isRunning ? 'running' : 'starting',
       }
     });
   } catch (error: unknown) {
@@ -257,11 +205,19 @@ router.get('/status', authenticateToken, async (req: Request, res: Response) => 
       });
     }
 
-    const status = await enhancedAutonomousAgent.getAgentStatus(userId);
+    // Composite status from both SLE and fullyAutonomousTrader
+    const traderStatus = await fullyAutonomousTrader.getStatus(userId);
+    const sleStatus = await strategyLearningEngine.getEngineStatus();
 
     res.json({
       success: true,
-      status: status || null
+      status: {
+        id: userId,
+        status: traderStatus.isRunning ? 'running' : (traderStatus.enabled ? 'enabled' : 'stopped'),
+        startedAt: traderStatus.lastHeartbeat,
+        trader: traderStatus,
+        sle: sleStatus,
+      }
     });
   } catch (error: unknown) {
     logger.error('Error getting agent status:', error);
@@ -297,15 +253,22 @@ router.get('/health', authenticateToken, async (req: Request, res: Response) => 
       // DB is down
     }
 
-    // Check if agent service is available
-    const agentAvailable = enhancedAutonomousAgent != null;
+    // Check if services are available
+    const agentAvailable = fullyAutonomousTrader != null && strategyLearningEngine != null;
     
-    // Check for active session
+    // Check for active trading session
     let activeSession = null;
     try {
-      activeSession = await enhancedAutonomousAgent.getAgentStatus(userId);
+      const traderStatus = await fullyAutonomousTrader.getStatus(userId);
+      if (traderStatus.isRunning) {
+        activeSession = {
+          id: userId,
+          status: 'running',
+          startedAt: traderStatus.lastHeartbeat
+        };
+      }
     } catch {
-      // Agent status unavailable
+      // Status unavailable
     }
 
     const allHealthy = dbHealthy && agentAvailable;
@@ -316,11 +279,7 @@ router.get('/health', authenticateToken, async (req: Request, res: Response) => 
       dependencies: {
         database: { healthy: dbHealthy, message: dbHealthy ? 'Connected' : 'Connection failed' },
         agentService: { healthy: agentAvailable, message: agentAvailable ? 'Available' : 'Unavailable' },
-        activeSession: activeSession ? {
-          id: activeSession.id,
-          status: activeSession.status,
-          startedAt: activeSession.startedAt
-        } : null
+        activeSession: activeSession || null
       },
       timestamp: new Date().toISOString()
     });
@@ -357,18 +316,10 @@ router.get('/activity', authenticateToken, async (req: Request, res: Response) =
 
     const limit = parseInt(req.query.limit as string, 10) || 20;
 
-    // Get user's active session
-    const status = await enhancedAutonomousAgent.getAgentStatus(userId);
-    if (!status) {
-      return res.json({
-        success: true,
-        activity: []
-      });
-    }
-
+    // Query activity from autonomous_trades table
     const result = await pool.query(
-      'SELECT * FROM agent_activity_log WHERE session_id = $1 ORDER BY created_at DESC LIMIT $2',
-      [status.id, limit]
+      'SELECT * FROM autonomous_trades WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2',
+      [userId, limit]
     );
 
     res.json({
@@ -465,32 +416,14 @@ router.get('/strategies', authenticateToken, async (req: Request, res: Response)
       });
     }
 
-    // Get user's active session
-    const status = await enhancedAutonomousAgent.getAgentStatus(userId);
-    if (!status) {
-      return res.json({
-        success: true,
-        strategies: []
-      });
-    }
-
-    const result = await pool.query(
-      'SELECT * FROM agent_strategies WHERE session_id = $1 ORDER BY created_at DESC',
-      [status.id]
-    );
+    // Get strategies from SLE (strategy_performance table)
+    const strategies = await strategyLearningEngine.getTopPerformers();
 
     res.json({
       success: true,
-      strategies: result.rows
+      strategies
     });
   } catch (error: unknown) {
-    // Return empty array if table doesn't exist yet or DB error occurs
-    if (isTableMissingError(error)) {
-      return res.json({
-        success: true,
-        strategies: []
-      });
-    }
     logger.error('Error getting strategies:', error);
     res.json({
       success: true,
@@ -528,70 +461,45 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
       maxDrawdown: 0
     };
 
-    const status = await enhancedAutonomousAgent.getAgentStatus(userId);
-    if (!status) {
-      return res.json({
-        success: true,
-        performance: defaultPerformance
-      });
-    }
+    const status = await fullyAutonomousTrader.getStatus(userId);
 
-    // Calculate performance metrics from trades
+    // Calculate performance metrics from autonomous_trades
     try {
       const mode = req.query.mode as string | undefined;
-      const modeFilter = mode ? ' AND execution_mode = $3' : '';
-      const queryParams: (string | Date)[] = [userId, status.startedAt];
-      if (mode) queryParams.push(mode);
+      const modeFilter = mode ? (mode === 'paper' ? ' AND order_id LIKE \'paper_%\'' : ' AND order_id NOT LIKE \'paper_%\'') : '';
       
       const tradesResult = await pool.query(
         `SELECT 
           COUNT(*) as total_trades,
-          SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as winning_trades,
-          SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END) as losing_trades,
-          SUM(pnl) as total_pnl,
-          AVG(CASE WHEN pnl > 0 THEN pnl END) as avg_win,
-          AVG(CASE WHEN pnl < 0 THEN pnl END) as avg_loss
-        FROM trades 
-        WHERE user_id = $1 AND created_at >= $2${modeFilter}`,
-        queryParams
+          SUM(CASE WHEN confidence > 50 THEN 1 ELSE 0 END) as winning_trades,
+          SUM(CASE WHEN confidence <= 50 THEN 1 ELSE 0 END) as losing_trades,
+          COALESCE(SUM(confidence), 0) as total_pnl,
+          AVG(CASE WHEN confidence > 50 THEN confidence END) as avg_win,
+          AVG(CASE WHEN confidence <= 50 THEN confidence END) as avg_loss
+        FROM autonomous_trades 
+        WHERE user_id = $1${modeFilter}`,
+        [userId]
       );
 
       const metrics = tradesResult.rows[0];
 
-      // Calculate Sharpe ratio and max drawdown from individual trade returns
-      let sharpeRatio = 0;
-      let maxDrawdown = 0;
-
+      // Fetch strategy_performance metrics from SLE
+      let strategySharpe = 0;
+      let strategyMaxDrawdown = 0;
       try {
-        const returnsResult = await pool.query(
-          `SELECT pnl FROM trades 
-           WHERE user_id = $1 AND created_at >= $2 AND pnl IS NOT NULL${modeFilter}
-           ORDER BY created_at ASC`,
-          queryParams
+        const spResult = await pool.query(
+          `SELECT AVG(COALESCE(paper_sharpe, backtest_sharpe, 0)) as avg_sharpe,
+                  MAX(COALESCE(paper_max_drawdown, backtest_max_drawdown, 0)) as max_drawdown
+           FROM strategy_performance
+           WHERE status NOT IN ('killed', 'retired', 'censored_rejected')
+             AND is_censored = FALSE`
         );
-
-        const pnls = returnsResult.rows.map((r: { pnl: string }) => parseFloat(r.pnl));
-        if (pnls.length > 1) {
-          // Sharpe ratio: mean(returns) / stddev(returns) * sqrt(252)
-          // 252 = standard number of trading days per year for annualization
-          const mean = pnls.reduce((a: number, b: number) => a + b, 0) / pnls.length;
-          const variance = pnls.reduce((a: number, b: number) => a + (b - mean) ** 2, 0) / (pnls.length - 1);
-          const stdDev = Math.sqrt(variance);
-          const TRADING_DAYS_PER_YEAR = 252;
-          sharpeRatio = stdDev > 0 ? (mean / stdDev) * Math.sqrt(TRADING_DAYS_PER_YEAR) : 0;
-
-          // Max drawdown: largest peak-to-trough decline in cumulative PnL
-          let peak = 0;
-          let cumPnl = 0;
-          for (const pnl of pnls) {
-            cumPnl += pnl;
-            if (cumPnl > peak) peak = cumPnl;
-            const drawdown = peak > 0 ? (peak - cumPnl) / peak : 0;
-            if (drawdown > maxDrawdown) maxDrawdown = drawdown;
-          }
+        if (spResult.rows.length > 0) {
+          strategySharpe = parseFloat(spResult.rows[0].avg_sharpe) || 0;
+          strategyMaxDrawdown = parseFloat(spResult.rows[0].max_drawdown) || 0;
         }
       } catch {
-        // Keep defaults of 0 if calculation fails
+        // strategy_performance may not exist yet
       }
 
       // Fetch daily P&L for charts
@@ -600,27 +508,25 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
         const dailyResult = await pool.query(
           `SELECT
              DATE(created_at) as trade_date,
-             SUM(pnl) as daily_pnl,
              COUNT(*) as daily_trades
-           FROM trades
-           WHERE user_id = $1 AND created_at >= $2 AND pnl IS NOT NULL${modeFilter}
+           FROM autonomous_trades
+           WHERE user_id = $1${modeFilter}
            GROUP BY DATE(created_at)
            ORDER BY trade_date ASC`,
-          queryParams
+          [userId]
         );
-        let cumPnl = 0;
-        dailyPerformance = dailyResult.rows.map((r: { trade_date: string; daily_pnl: string; daily_trades: string }) => {
-          const dayPnl = parseFloat(r.daily_pnl) || 0;
-          cumPnl += dayPnl;
+        const cumPnl = 0;
+        dailyPerformance = dailyResult.rows.map((r: { trade_date: string; daily_trades: string }) => {
+          const dayTrades = parseInt(r.daily_trades, 10) || 0;
           return {
             date: new Date(r.trade_date).toISOString().slice(0, 10),
-            pnl: parseFloat(dayPnl.toFixed(2)),
+            pnl: 0,
             cumulativePnL: parseFloat(cumPnl.toFixed(2)),
-            trades: parseInt(r.daily_trades, 10) || 0
+            trades: dayTrades
           };
         });
       } catch {
-        // Daily breakdown unavailable — return empty array
+        // Daily breakdown unavailable
       }
 
       res.json({
@@ -636,14 +542,15 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
           losingTrades: parseInt(metrics.losing_trades || 0, 10),
           averageWin: parseFloat(metrics.avg_win || 0),
           averageLoss: parseFloat(metrics.avg_loss || 0),
-          sharpeRatio: parseFloat(sharpeRatio.toFixed(2)),
-          maxDrawdown: parseFloat((maxDrawdown * 100).toFixed(2))
+          sharpeRatio: parseFloat(strategySharpe.toFixed(2)),
+          maxDrawdown: parseFloat((strategyMaxDrawdown * 100).toFixed(2)),
+          traderMetrics: status.metrics
         },
         dailyPerformance
       });
     } catch (dbError: unknown) {
-      logger.warn('Trades table query failed, returning default performance: ' + (dbError instanceof Error ? dbError.message : String(dbError)));
-      // Return default performance if trades table doesn't exist
+      logger.warn('Autonomous trades query failed, returning default performance: ' + (dbError instanceof Error ? dbError.message : String(dbError)));
+      // Return default performance if tables don't exist
       res.json({
         success: true,
         performance: defaultPerformance,
@@ -673,8 +580,8 @@ router.get('/capabilities', authenticateToken, async (req: Request, res: Respons
       });
     }
 
-    const status = await enhancedAutonomousAgent.getAgentStatus(userId);
-    if (!status) {
+    const traderStatus = await fullyAutonomousTrader.getStatus(userId);
+    if (!traderStatus.isRunning) {
       return res.json({
         success: true,
         capabilitySummary: {
@@ -688,7 +595,13 @@ router.get('/capabilities', authenticateToken, async (req: Request, res: Respons
       });
     }
 
-    const profiles = await enhancedAutonomousAgent.getSessionCapabilityProfiles(status.id);
+    // Get strategy capabilities from SLE
+    const performers = await strategyLearningEngine.getTopPerformers(50);
+    const profiles = performers.map(s => ({
+      strategyId: s.strategyId,
+      compositeScore: s.confidenceScore ?? 0,
+      capabilityClass: (s.confidenceScore ?? 0) >= 80 ? 'tier1' as const : (s.confidenceScore ?? 0) >= 50 ? 'tier2' as const : 'tier3' as const,
+    }));
     const summary = profiles.reduce(
       (acc, profile) => {
         acc.totalStrategies += 1;
@@ -742,19 +655,8 @@ router.get('/circuit-breaker', authenticateToken, async (req: Request, res: Resp
       return res.status(401).json({ success: false, error: 'User ID not found in token' });
     }
 
-    const status = await enhancedAutonomousAgent.getAgentStatus(userId);
-    if (!status) {
-      return res.json({
-        success: true,
-        circuitBreaker: {
-          isTripped: false,
-          consecutiveLosses: 0,
-          dailyLossPercent: 0
-        }
-      });
-    }
-
-    const cbStatus = enhancedAutonomousAgent.getCircuitBreakerStatus(status.id);
+    // Get circuit breaker status directly from fullyAutonomousTrader
+    const cbStatus = fullyAutonomousTrader.getCircuitBreakerStatus(userId);
     res.json({ success: true, circuitBreaker: cbStatus });
   } catch (error: unknown) {
     logger.error('Error getting circuit breaker status:', error);
@@ -785,17 +687,13 @@ router.get('/learnings', authenticateToken, async (req: Request, res: Response) 
       });
     }
 
-    const status = await enhancedAutonomousAgent.getAgentStatus(userId);
-    if (!status) {
-      return res.json({
-        success: true,
-        learnings: []
-      });
-    }
-
+    // Get learnings from strategy_performance (SLE data)
     const result = await pool.query(
-      'SELECT * FROM agent_learnings WHERE session_id = $1 ORDER BY created_at DESC LIMIT 10',
-      [status.id]
+      `SELECT id, strategy_type, status, backtest_sharpe, paper_sharpe, 
+              confidence_score, generation, regime, is_censored, updated_at as created_at
+       FROM strategy_performance
+       WHERE status NOT IN ('killed')
+       ORDER BY updated_at DESC LIMIT 10`
     );
 
     res.json({
@@ -836,19 +734,8 @@ router.put('/config', authenticateToken, async (req: Request, res: Response) => 
 
     const config = req.body;
 
-    const status = await enhancedAutonomousAgent.getAgentStatus(userId);
-    if (!status) {
-      return res.status(404).json({
-        success: false,
-        error: 'No active agent session found'
-      });
-    }
-
-    // Update config in database
-    await pool.query(
-      'UPDATE agent_sessions SET config = $1 WHERE id = $2',
-      [JSON.stringify(config), status.id]
-    );
+    // Update config via fullyAutonomousTrader
+    await fullyAutonomousTrader.enableAutonomousTrading(userId, config);
 
     res.json({
       success: true,
@@ -896,10 +783,12 @@ router.get('/strategies/active', authenticateToken, async (req: Request, res: Re
       return res.status(401).json({ success: false, error: 'User ID not found' });
     }
 
-    // Return empty array for now
+    // Return live strategies from SLE
+    const liveStrategies = await strategyLearningEngine.getTopPerformers(20);
+    const active = liveStrategies.filter(s => s.status === 'live' || s.status === 'paper_trading');
     res.json({
       success: true,
-      strategies: []
+      strategies: active
     });
   } catch (error: unknown) {
     logger.error('Error getting active strategies:', error);
@@ -918,9 +807,11 @@ router.get('/strategies/pending-approval', authenticateToken, async (req: Reques
       return res.status(401).json({ success: false, error: 'User ID not found' });
     }
 
+    // Return strategies with status = 'recommended' from SLE
+    const recommended = await strategyLearningEngine.getLiveRecommendations();
     res.json({
       success: true,
-      strategies: []
+      strategies: recommended
     });
   } catch (error: unknown) {
     logger.error('Error getting pending strategies:', error);
@@ -1002,9 +893,18 @@ router.post('/strategy/:id/approve', authenticateToken, async (req: Request, res
       return res.status(401).json({ success: false, error: 'User ID not found' });
     }
 
+    const strategyId = req.params.id;
+
+    // Confirm live promotion in SLE + enable trading in fullyAutonomousTrader
+    const strategy = await strategyLearningEngine.confirmLivePromotion(strategyId);
+    await fullyAutonomousTrader.enableAutonomousTrading(userId, {
+      paperTrading: false,
+    });
+
     res.json({
       success: true,
-      message: 'Strategy approved'
+      message: 'Strategy approved and live trading enabled',
+      strategy
     });
   } catch (error: unknown) {
     logger.error('Error approving strategy:', error);
@@ -1111,7 +1011,7 @@ router.get('/strategies', authenticateToken, async (req: Request, res: Response)
       });
     }
 
-    const strategies = await enhancedAutonomousAgent.getUserStrategies(userId);
+    const strategies = await strategyLearningEngine.getTopPerformers();
 
     res.json({
       success: true,
@@ -1142,8 +1042,10 @@ router.get('/strategies/:sessionId', authenticateToken, async (req: Request, res
       });
     }
 
-    const { sessionId } = req.params;
-    const strategies = await enhancedAutonomousAgent.getStrategies(sessionId);
+    const { sessionId: _sessionId } = req.params;
+    // Session-specific strategies are no longer tracked separately;
+    // return all top performers from SLE
+    const strategies = await strategyLearningEngine.getTopPerformers();
 
     res.json({
       success: true,

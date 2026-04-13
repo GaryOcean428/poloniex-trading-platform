@@ -5,7 +5,6 @@ import backtestingEngine from '../services/backtestingEngine.js';
 import paperTradingService from '../services/paperTradingService.js';
 import confidenceScoringService from '../services/confidenceScoringService.js';
 import poloniexFuturesService from '../services/poloniexFuturesService.js';
-import automatedTradingService from '../services/automatedTradingService.js';
 
 /**
  * Comprehensive Test Suite for Poloniex Futures Trading Platform
