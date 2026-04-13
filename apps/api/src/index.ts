@@ -15,7 +15,6 @@ import backtestRoutes from './routes/backtest.js';
 import paperTradingRoutes from './routes/paper-trading.js';
 import riskRoutes from './routes/risk.js';
 import confidenceScoringRoutes from './routes/confidenceScoring.js';
-import strategiesRoutes from './routes/strategies.js';
 import statusRoutes from './routes/status.js';
 import marketsRoutes from './routes/markets.js';
 import proxyRoutes from './routes/proxy.js';
@@ -169,7 +168,6 @@ app.use('/api/backtest', backtestRoutes);
 app.use('/api/paper-trading', paperTradingRoutes);
 app.use('/api/risk', riskRoutes);
 app.use('/api/confidence-scoring', confidenceScoringRoutes);
-app.use('/api/strategies', strategiesRoutes);
 app.use('/api/trading-sessions', tradingSessionsRoutes);
 app.use('/api/status', statusRoutes);
 app.use('/api/debug', debugRoutes); // Debug, diagnostic, and test-balance routes (consolidated)

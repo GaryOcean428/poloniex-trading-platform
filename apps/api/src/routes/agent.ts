@@ -1,6 +1,7 @@
 import express from 'express';
 import { authenticateToken } from '../middleware/auth.js';
-import { enhancedAutonomousAgent } from '../services/enhancedAutonomousAgent.js';
+import { strategyLearningEngine } from '../services/strategyLearningEngine.js';
+import { fullyAutonomousTrader } from '../services/fullyAutonomousTrader.js';
 import { agentSettingsService } from '../services/agentSettingsService.js';
 import type { Request, Response } from 'express';
 import { pool } from '../db/connection.js';
@@ -16,13 +17,12 @@ function isTableMissingError(error: unknown): boolean {
 
 /**
  * POST /api/agent/start
- * Start the autonomous trading agent
+ * Start the autonomous trading agent via SLE + fullyAutonomousTrader
  */
 router.post('/start', authenticateToken, async (req: Request, res: Response) => {
   try {
-    // Safely get user ID with fallback
     const userId = (req.user?.id || req.user?.userId)?.toString();
-    
+
     if (!userId) {
       return res.status(401).json({
         success: false,
@@ -30,11 +30,11 @@ router.post('/start', authenticateToken, async (req: Request, res: Response) => 
         code: 'NO_USER_ID'
       });
     }
-    
+
     // Check for API credentials first
     const { apiCredentialsService } = await import('../services/apiCredentialsService.js');
     const hasCredentials = await apiCredentialsService.hasCredentials(userId);
-    
+
     if (!hasCredentials) {
       return res.status(400).json({
         success: false,
@@ -43,52 +43,29 @@ router.post('/start', authenticateToken, async (req: Request, res: Response) => 
         action: 'redirect_to_api_keys'
       });
     }
-    
-    const config = req.body;
 
-    const session = await enhancedAutonomousAgent.startAgent(userId, config);
+    await strategyLearningEngine.start();
+    await fullyAutonomousTrader.enableAutonomousTrading(userId, { paperTrading: true });
 
     res.json({
       success: true,
-      session
+      message: 'Agent started successfully'
     });
   } catch (error: unknown) {
     logger.error('Error starting agent:', error);
     const errMsg = error instanceof Error ? error.message : String(error);
-    
-    // Handle "already running" with structured 409
-    if (errMsg.includes('already running')) {
-      try {
-        const catchUserId = (req.user?.id || req.user?.userId)?.toString();
-        const existingSession = catchUserId ? await enhancedAutonomousAgent.getAgentStatus(catchUserId) : null;
-        return res.status(409).json({
-          success: false,
-          error: 'An agent session is already active',
-          code: 'ALREADY_RUNNING',
-          existingSessionId: existingSession?.id || null,
-          existingState: existingSession?.status || 'unknown',
-          startedAt: existingSession?.startedAt || null,
-          resumeAllowed: existingSession?.status === 'paused',
-          takeoverAllowed: true
-        });
-      } catch {
-        return res.status(409).json({
-          success: false,
-          error: 'An agent session is already active',
-          code: 'ALREADY_RUNNING',
-          existingSessionId: null,
-          existingState: 'unknown',
-          startedAt: null,
-          resumeAllowed: false,
-          takeoverAllowed: true
-        });
-      }
+
+    if (errMsg.includes('already running') || errMsg.includes('Already running')) {
+      return res.status(409).json({
+        success: false,
+        error: 'Agent is already running',
+        code: 'ALREADY_RUNNING'
+      });
     }
-    
-    // Provide specific error codes for other errors
+
     let errorCode = 'UNKNOWN_ERROR';
     let statusCode = 500;
-    
+
     if (errMsg.includes('credentials')) {
       errorCode = 'CREDENTIALS_ERROR';
       statusCode = 400;
@@ -96,7 +73,7 @@ router.post('/start', authenticateToken, async (req: Request, res: Response) => 
       errorCode = 'API_ERROR';
       statusCode = 503;
     }
-    
+
     res.status(statusCode).json({
       success: false,
       error: errMsg,
@@ -107,12 +84,12 @@ router.post('/start', authenticateToken, async (req: Request, res: Response) => 
 
 /**
  * POST /api/agent/stop
- * Stop the autonomous trading agent
+ * Stop the autonomous trading agent via SLE + fullyAutonomousTrader
  */
 router.post('/stop', authenticateToken, async (req: Request, res: Response) => {
   try {
     const userId = (req.user?.id || req.user?.userId)?.toString();
-    
+
     if (!userId) {
       return res.status(401).json({
         success: false,
@@ -120,16 +97,8 @@ router.post('/stop', authenticateToken, async (req: Request, res: Response) => {
       });
     }
 
-    // Get active session
-    const status = await enhancedAutonomousAgent.getAgentStatus(userId);
-    if (!status) {
-      return res.status(404).json({
-        success: false,
-        error: 'No active agent session found'
-      });
-    }
-
-    await enhancedAutonomousAgent.stopAgent(status.id);
+    await strategyLearningEngine.stop();
+    await fullyAutonomousTrader.disableAutonomousTrading(userId);
 
     res.json({
       success: true,
@@ -146,12 +115,12 @@ router.post('/stop', authenticateToken, async (req: Request, res: Response) => {
 
 /**
  * POST /api/agent/pause
- * Pause the autonomous trading agent
+ * Pause the autonomous trading agent (SLE has no pause, stop is equivalent)
  */
 router.post('/pause', authenticateToken, async (req: Request, res: Response) => {
   try {
     const userId = (req.user?.id || req.user?.userId)?.toString();
-    
+
     if (!userId) {
       return res.status(401).json({
         success: false,
@@ -159,15 +128,7 @@ router.post('/pause', authenticateToken, async (req: Request, res: Response) => 
       });
     }
 
-    const status = await enhancedAutonomousAgent.getAgentStatus(userId);
-    if (!status) {
-      return res.status(404).json({
-        success: false,
-        error: 'No active agent session found'
-      });
-    }
-
-    await enhancedAutonomousAgent.pauseAgent(status.id);
+    await strategyLearningEngine.stop();
 
     res.json({
       success: true,
@@ -184,12 +145,12 @@ router.post('/pause', authenticateToken, async (req: Request, res: Response) => 
 
 /**
  * POST /api/agent/resume
- * Resume the autonomous trading agent
+ * Resume the autonomous trading agent via SLE start
  */
 router.post('/resume', authenticateToken, async (req: Request, res: Response) => {
   try {
     const userId = (req.user?.id || req.user?.userId)?.toString();
-    
+
     if (!userId) {
       return res.status(401).json({
         success: false,
@@ -197,41 +158,11 @@ router.post('/resume', authenticateToken, async (req: Request, res: Response) =>
       });
     }
 
-    const status = await enhancedAutonomousAgent.getAgentStatus(userId);
-    if (!status) {
-      return res.status(404).json({
-        success: false,
-        error: 'No active agent session found'
-      });
-    }
-
-    if (status.status !== 'paused') {
-      return res.status(400).json({
-        success: false,
-        error: `Cannot resume agent in '${status.status}' state. Agent must be paused.`,
-        code: 'INVALID_STATE'
-      });
-    }
-
-    // Resume the agent by updating state
-    try {
-      await pool.query(
-        'UPDATE agent_sessions SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
-        ['running', status.id]
-      );
-    } catch {
-      // DB update is best-effort; in-memory state is the source of truth
-    }
-    status.status = 'running';
+    await strategyLearningEngine.start();
 
     res.json({
       success: true,
-      message: 'Agent resumed successfully',
-      session: {
-        id: status.id,
-        status: status.status,
-        startedAt: status.startedAt
-      }
+      message: 'Agent resumed successfully'
     });
   } catch (error: unknown) {
     logger.error('Error resuming agent:', error);
@@ -244,12 +175,12 @@ router.post('/resume', authenticateToken, async (req: Request, res: Response) =>
 
 /**
  * GET /api/agent/status
- * Get current agent status
+ * Get current agent status (composite from SLE + fullyAutonomousTrader)
  */
 router.get('/status', authenticateToken, async (req: Request, res: Response) => {
   try {
     const userId = (req.user?.id || req.user?.userId)?.toString();
-    
+
     if (!userId) {
       return res.status(401).json({
         success: false,
@@ -257,11 +188,15 @@ router.get('/status', authenticateToken, async (req: Request, res: Response) => 
       });
     }
 
-    const status = await enhancedAutonomousAgent.getAgentStatus(userId);
+    const engineStatus = await strategyLearningEngine.getEngineStatus();
+    const traderStatus = await fullyAutonomousTrader.getStatus(userId);
 
     res.json({
       success: true,
-      status: status || null
+      status: {
+        engine: engineStatus,
+        trader: traderStatus
+      }
     });
   } catch (error: unknown) {
     logger.error('Error getting agent status:', error);
@@ -280,7 +215,7 @@ router.get('/status', authenticateToken, async (req: Request, res: Response) => 
 router.get('/health', authenticateToken, async (req: Request, res: Response) => {
   try {
     const userId = (req.user?.id || req.user?.userId)?.toString();
-    
+
     if (!userId) {
       return res.status(401).json({
         success: false,
@@ -297,30 +232,32 @@ router.get('/health', authenticateToken, async (req: Request, res: Response) => 
       // DB is down
     }
 
-    // Check if agent service is available
-    const agentAvailable = enhancedAutonomousAgent != null;
-    
-    // Check for active session
-    let activeSession = null;
+    // Check SLE status
+    const engineStatus = await strategyLearningEngine.getEngineStatus();
+    const sleHealthy = engineStatus != null;
+
+    // Check fullyAutonomousTrader status
+    let traderStatus = null;
     try {
-      activeSession = await enhancedAutonomousAgent.getAgentStatus(userId);
+      traderStatus = await fullyAutonomousTrader.getStatus(userId);
     } catch {
-      // Agent status unavailable
+      // Trader status unavailable
     }
 
-    const allHealthy = dbHealthy && agentAvailable;
+    const allHealthy = dbHealthy && sleHealthy;
 
     res.json({
       success: true,
       healthy: allHealthy,
       dependencies: {
         database: { healthy: dbHealthy, message: dbHealthy ? 'Connected' : 'Connection failed' },
-        agentService: { healthy: agentAvailable, message: agentAvailable ? 'Available' : 'Unavailable' },
-        activeSession: activeSession ? {
-          id: activeSession.id,
-          status: activeSession.status,
-          startedAt: activeSession.startedAt
-        } : null
+        strategyLearningEngine: { healthy: sleHealthy, isRunning: engineStatus?.isRunning ?? false, message: sleHealthy ? 'Available' : 'Unavailable' },
+        fullyAutonomousTrader: traderStatus ? {
+          healthy: true,
+          enabled: traderStatus.enabled,
+          isRunning: traderStatus.isRunning,
+          paperTrading: traderStatus.paperTrading
+        } : { healthy: false, message: 'Unavailable' }
       },
       timestamp: new Date().toISOString()
     });
@@ -332,7 +269,8 @@ router.get('/health', authenticateToken, async (req: Request, res: Response) => 
       code: 'HEALTH_CHECK_FAILED',
       dependencies: {
         database: { healthy: false, message: 'Unknown' },
-        agentService: { healthy: false, message: 'Unknown' }
+        strategyLearningEngine: { healthy: false, message: 'Unknown' },
+        fullyAutonomousTrader: { healthy: false, message: 'Unknown' }
       },
       retryable: true,
       timestamp: new Date().toISOString()
@@ -342,12 +280,12 @@ router.get('/health', authenticateToken, async (req: Request, res: Response) => 
 
 /**
  * GET /api/agent/activity
- * Get agent activity log
+ * Get agent activity log (can stay empty until audit logging is wired)
  */
 router.get('/activity', authenticateToken, async (req: Request, res: Response) => {
   try {
     const userId = (req.user?.id || req.user?.userId)?.toString();
-    
+
     if (!userId) {
       return res.status(401).json({
         success: false,
@@ -355,34 +293,11 @@ router.get('/activity', authenticateToken, async (req: Request, res: Response) =
       });
     }
 
-    const limit = parseInt(req.query.limit as string, 10) || 20;
-
-    // Get user's active session
-    const status = await enhancedAutonomousAgent.getAgentStatus(userId);
-    if (!status) {
-      return res.json({
-        success: true,
-        activity: []
-      });
-    }
-
-    const result = await pool.query(
-      'SELECT * FROM agent_activity_log WHERE session_id = $1 ORDER BY created_at DESC LIMIT $2',
-      [status.id, limit]
-    );
-
     res.json({
       success: true,
-      activity: result.rows
+      activity: []
     });
   } catch (error: unknown) {
-    // Return empty array if table doesn't exist yet or DB error occurs
-    if (isTableMissingError(error)) {
-      return res.json({
-        success: true,
-        activity: []
-      });
-    }
     logger.error('Error getting activity:', error);
     res.json({
       success: true,
@@ -452,12 +367,12 @@ router.get('/events', authenticateToken, async (req: Request, res: Response) => 
 
 /**
  * GET /api/agent/strategies
- * Get generated strategies
+ * Get top performing strategies from SLE
  */
 router.get('/strategies', authenticateToken, async (req: Request, res: Response) => {
   try {
     const userId = (req.user?.id || req.user?.userId)?.toString();
-    
+
     if (!userId) {
       return res.status(401).json({
         success: false,
@@ -465,32 +380,13 @@ router.get('/strategies', authenticateToken, async (req: Request, res: Response)
       });
     }
 
-    // Get user's active session
-    const status = await enhancedAutonomousAgent.getAgentStatus(userId);
-    if (!status) {
-      return res.json({
-        success: true,
-        strategies: []
-      });
-    }
-
-    const result = await pool.query(
-      'SELECT * FROM agent_strategies WHERE session_id = $1 ORDER BY created_at DESC',
-      [status.id]
-    );
+    const strategies = await strategyLearningEngine.getTopPerformers();
 
     res.json({
       success: true,
-      strategies: result.rows
+      strategies
     });
   } catch (error: unknown) {
-    // Return empty array if table doesn't exist yet or DB error occurs
-    if (isTableMissingError(error)) {
-      return res.json({
-        success: true,
-        strategies: []
-      });
-    }
     logger.error('Error getting strategies:', error);
     res.json({
       success: true,
@@ -502,12 +398,12 @@ router.get('/strategies', authenticateToken, async (req: Request, res: Response)
 
 /**
  * GET /api/agent/performance
- * Get performance metrics
+ * Get performance metrics from autonomous_trades + autonomous_performance
  */
 router.get('/performance', authenticateToken, async (req: Request, res: Response) => {
   try {
     const userId = (req.user?.id || req.user?.userId)?.toString();
-    
+
     if (!userId) {
       return res.status(401).json({
         success: false,
@@ -515,7 +411,6 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
       });
     }
 
-    // Default performance metrics
     const defaultPerformance = {
       totalPnl: 0,
       winRate: 0,
@@ -528,21 +423,12 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
       maxDrawdown: 0
     };
 
-    const status = await enhancedAutonomousAgent.getAgentStatus(userId);
-    if (!status) {
-      return res.json({
-        success: true,
-        performance: defaultPerformance
-      });
-    }
-
-    // Calculate performance metrics from trades
     try {
       const mode = req.query.mode as string | undefined;
-      const modeFilter = mode ? ' AND execution_mode = $3' : '';
-      const queryParams: (string | Date)[] = [userId, status.startedAt];
+      const modeFilter = mode ? ' AND execution_mode = $2' : '';
+      const queryParams: string[] = [userId];
       if (mode) queryParams.push(mode);
-      
+
       const tradesResult = await pool.query(
         `SELECT 
           COUNT(*) as total_trades,
@@ -551,36 +437,32 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
           SUM(pnl) as total_pnl,
           AVG(CASE WHEN pnl > 0 THEN pnl END) as avg_win,
           AVG(CASE WHEN pnl < 0 THEN pnl END) as avg_loss
-        FROM trades 
-        WHERE user_id = $1 AND created_at >= $2${modeFilter}`,
+        FROM autonomous_trades 
+        WHERE user_id = $1${modeFilter}`,
         queryParams
       );
 
       const metrics = tradesResult.rows[0];
 
-      // Calculate Sharpe ratio and max drawdown from individual trade returns
       let sharpeRatio = 0;
       let maxDrawdown = 0;
 
       try {
         const returnsResult = await pool.query(
-          `SELECT pnl FROM trades 
-           WHERE user_id = $1 AND created_at >= $2 AND pnl IS NOT NULL${modeFilter}
+          `SELECT pnl FROM autonomous_trades 
+           WHERE user_id = $1 AND pnl IS NOT NULL${modeFilter}
            ORDER BY created_at ASC`,
           queryParams
         );
 
         const pnls = returnsResult.rows.map((r: { pnl: string }) => parseFloat(r.pnl));
         if (pnls.length > 1) {
-          // Sharpe ratio: mean(returns) / stddev(returns) * sqrt(252)
-          // 252 = standard number of trading days per year for annualization
           const mean = pnls.reduce((a: number, b: number) => a + b, 0) / pnls.length;
           const variance = pnls.reduce((a: number, b: number) => a + (b - mean) ** 2, 0) / (pnls.length - 1);
           const stdDev = Math.sqrt(variance);
           const TRADING_DAYS_PER_YEAR = 252;
           sharpeRatio = stdDev > 0 ? (mean / stdDev) * Math.sqrt(TRADING_DAYS_PER_YEAR) : 0;
 
-          // Max drawdown: largest peak-to-trough decline in cumulative PnL
           let peak = 0;
           let cumPnl = 0;
           for (const pnl of pnls) {
@@ -594,7 +476,6 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
         // Keep defaults of 0 if calculation fails
       }
 
-      // Fetch daily P&L for charts
       let dailyPerformance: Array<{ date: string; pnl: number; cumulativePnL: number; trades: number }> = [];
       try {
         const dailyResult = await pool.query(
@@ -602,8 +483,8 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
              DATE(created_at) as trade_date,
              SUM(pnl) as daily_pnl,
              COUNT(*) as daily_trades
-           FROM trades
-           WHERE user_id = $1 AND created_at >= $2 AND pnl IS NOT NULL${modeFilter}
+           FROM autonomous_trades
+           WHERE user_id = $1 AND pnl IS NOT NULL${modeFilter}
            GROUP BY DATE(created_at)
            ORDER BY trade_date ASC`,
           queryParams
@@ -620,7 +501,7 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
           };
         });
       } catch {
-        // Daily breakdown unavailable — return empty array
+        // Daily breakdown unavailable
       }
 
       res.json({
@@ -628,8 +509,8 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
         mode: mode || 'all',
         performance: {
           totalPnl: parseFloat(metrics.total_pnl || 0),
-          winRate: metrics.total_trades > 0 
-            ? (parseFloat(metrics.winning_trades || 0) / parseFloat(metrics.total_trades)) * 100 
+          winRate: metrics.total_trades > 0
+            ? (parseFloat(metrics.winning_trades || 0) / parseFloat(metrics.total_trades)) * 100
             : 0,
           totalTrades: parseInt(metrics.total_trades || 0, 10),
           winningTrades: parseInt(metrics.winning_trades || 0, 10),
@@ -642,8 +523,7 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
         dailyPerformance
       });
     } catch (dbError: unknown) {
-      logger.warn('Trades table query failed, returning default performance: ' + (dbError instanceof Error ? dbError.message : String(dbError)));
-      // Return default performance if trades table doesn't exist
+      logger.warn('autonomous_trades table query failed, returning default performance: ' + (dbError instanceof Error ? dbError.message : String(dbError)));
       res.json({
         success: true,
         performance: defaultPerformance,
@@ -661,7 +541,7 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
 
 /**
  * GET /api/agent/capabilities
- * Get composite capability profile for the current session strategies
+ * Get composite capability profile from SLE strategy data
  */
 router.get('/capabilities', authenticateToken, async (req: Request, res: Response) => {
   try {
@@ -673,46 +553,19 @@ router.get('/capabilities', authenticateToken, async (req: Request, res: Respons
       });
     }
 
-    const status = await enhancedAutonomousAgent.getAgentStatus(userId);
-    if (!status) {
-      return res.json({
-        success: true,
-        capabilitySummary: {
-          totalStrategies: 0,
-          tier1: 0,
-          tier2: 0,
-          tier3: 0,
-          averageCompositeScore: 0
-        },
-        strategies: []
-      });
-    }
-
-    const profiles = await enhancedAutonomousAgent.getSessionCapabilityProfiles(status.id);
-    const summary = profiles.reduce(
-      (acc, profile) => {
-        acc.totalStrategies += 1;
-        acc[profile.capabilityClass] += 1;
-        acc.averageCompositeScore += profile.compositeScore;
-        return acc;
-      },
-      {
-        totalStrategies: 0,
-        tier1: 0,
-        tier2: 0,
-        tier3: 0,
-        averageCompositeScore: 0
-      }
-    );
-
-    if (summary.totalStrategies > 0) {
-      summary.averageCompositeScore = parseFloat((summary.averageCompositeScore / summary.totalStrategies).toFixed(2));
-    }
+    const strategies = await strategyLearningEngine.getTopPerformers();
+    const summary = {
+      totalStrategies: strategies.length,
+      backtesting: strategies.filter(s => s.status === 'backtesting').length,
+      paperTrading: strategies.filter(s => s.status === 'paper_trading').length,
+      recommended: strategies.filter(s => s.status === 'recommended').length,
+      live: strategies.filter(s => s.status === 'live').length
+    };
 
     res.json({
       success: true,
       capabilitySummary: summary,
-      strategies: profiles
+      strategies
     });
   } catch (error: unknown) {
     logger.error('Error getting agent capability profiles:', error);
@@ -720,10 +573,10 @@ router.get('/capabilities', authenticateToken, async (req: Request, res: Respons
       success: true,
       capabilitySummary: {
         totalStrategies: 0,
-        tier1: 0,
-        tier2: 0,
-        tier3: 0,
-        averageCompositeScore: 0
+        backtesting: 0,
+        paperTrading: 0,
+        recommended: 0,
+        live: 0
       },
       strategies: [],
       _fallback: true
@@ -733,7 +586,7 @@ router.get('/capabilities', authenticateToken, async (req: Request, res: Respons
 
 /**
  * GET /api/agent/circuit-breaker
- * Get the circuit breaker status for the current user's session
+ * Get the circuit breaker status from fullyAutonomousTrader
  */
 router.get('/circuit-breaker', authenticateToken, async (req: Request, res: Response) => {
   try {
@@ -742,19 +595,7 @@ router.get('/circuit-breaker', authenticateToken, async (req: Request, res: Resp
       return res.status(401).json({ success: false, error: 'User ID not found in token' });
     }
 
-    const status = await enhancedAutonomousAgent.getAgentStatus(userId);
-    if (!status) {
-      return res.json({
-        success: true,
-        circuitBreaker: {
-          isTripped: false,
-          consecutiveLosses: 0,
-          dailyLossPercent: 0
-        }
-      });
-    }
-
-    const cbStatus = enhancedAutonomousAgent.getCircuitBreakerStatus(status.id);
+    const cbStatus = fullyAutonomousTrader.getCircuitBreakerStatus(userId);
     res.json({ success: true, circuitBreaker: cbStatus });
   } catch (error: unknown) {
     logger.error('Error getting circuit breaker status:', error);
@@ -777,7 +618,7 @@ router.get('/circuit-breaker', authenticateToken, async (req: Request, res: Resp
 router.get('/learnings', authenticateToken, async (req: Request, res: Response) => {
   try {
     const userId = (req.user?.id || req.user?.userId)?.toString();
-    
+
     if (!userId) {
       return res.status(401).json({
         success: false,
@@ -785,31 +626,11 @@ router.get('/learnings', authenticateToken, async (req: Request, res: Response) 
       });
     }
 
-    const status = await enhancedAutonomousAgent.getAgentStatus(userId);
-    if (!status) {
-      return res.json({
-        success: true,
-        learnings: []
-      });
-    }
-
-    const result = await pool.query(
-      'SELECT * FROM agent_learnings WHERE session_id = $1 ORDER BY created_at DESC LIMIT 10',
-      [status.id]
-    );
-
     res.json({
       success: true,
-      learnings: result.rows
+      learnings: []
     });
   } catch (error: unknown) {
-    // Return empty array if table doesn't exist yet or DB error occurs
-    if (isTableMissingError(error)) {
-      return res.json({
-        success: true,
-        learnings: []
-      });
-    }
     logger.error('Error getting learnings:', error);
     res.json({
       success: true,
@@ -826,7 +647,7 @@ router.get('/learnings', authenticateToken, async (req: Request, res: Response) 
 router.put('/config', authenticateToken, async (req: Request, res: Response) => {
   try {
     const userId = (req.user?.id || req.user?.userId)?.toString();
-    
+
     if (!userId) {
       return res.status(401).json({
         success: false,
@@ -836,19 +657,19 @@ router.put('/config', authenticateToken, async (req: Request, res: Response) => 
 
     const config = req.body;
 
-    const status = await enhancedAutonomousAgent.getAgentStatus(userId);
-    if (!status) {
-      return res.status(404).json({
-        success: false,
-        error: 'No active agent session found'
-      });
+    // Update config in autonomous_trading_configs table
+    try {
+      await pool.query(
+        `UPDATE autonomous_trading_configs SET
+          max_drawdown = COALESCE($2, max_drawdown),
+          max_risk_per_trade = COALESCE($3, max_risk_per_trade),
+          updated_at = NOW()
+        WHERE user_id = $1`,
+        [userId, config.maxDrawdown, config.maxRiskPerTrade]
+      );
+    } catch {
+      // DB update is best-effort
     }
-
-    // Update config in database
-    await pool.query(
-      'UPDATE agent_sessions SET config = $1 WHERE id = $2',
-      [JSON.stringify(config), status.id]
-    );
 
     res.json({
       success: true,
@@ -909,7 +730,7 @@ router.get('/strategies/active', authenticateToken, async (req: Request, res: Re
 
 /**
  * GET /api/agent/strategies/pending-approval
- * Get strategies awaiting manual approval
+ * Get strategies recommended for live trading (pending user approval)
  */
 router.get('/strategies/pending-approval', authenticateToken, async (req: Request, res: Response) => {
   try {
@@ -918,9 +739,11 @@ router.get('/strategies/pending-approval', authenticateToken, async (req: Reques
       return res.status(401).json({ success: false, error: 'User ID not found' });
     }
 
+    const strategies = await strategyLearningEngine.getLiveRecommendations();
+
     res.json({
       success: true,
-      strategies: []
+      strategies
     });
   } catch (error: unknown) {
     logger.error('Error getting pending strategies:', error);
@@ -929,71 +752,9 @@ router.get('/strategies/pending-approval', authenticateToken, async (req: Reques
 });
 
 /**
- * GET /api/agent/strategy/current
- * Get currently generating strategy
- */
-router.get('/strategy/current', authenticateToken, async (req: Request, res: Response) => {
-  try {
-    const userId = (req.user?.id || req.user?.userId)?.toString();
-    if (!userId) {
-      return res.status(401).json({ success: false, error: 'User ID not found' });
-    }
-
-    res.json({
-      success: true,
-      generation: null
-    });
-  } catch (error: unknown) {
-    logger.error('Error getting current strategy:', error);
-    res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
-  }
-});
-
-/**
- * GET /api/agent/strategy/recent
- * Get recently generated strategies
- */
-router.get('/strategy/recent', authenticateToken, async (req: Request, res: Response) => {
-  try {
-    const userId = (req.user?.id || req.user?.userId)?.toString();
-    if (!userId) {
-      return res.status(401).json({ success: false, error: 'User ID not found' });
-    }
-
-    res.json({
-      success: true,
-      strategies: []
-    });
-  } catch (error: unknown) {
-    logger.error('Error getting recent strategies:', error);
-    res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
-  }
-});
-
-/**
- * GET /api/agent/backtest/results
- * Get backtest results
- */
-router.get('/backtest/results', authenticateToken, async (req: Request, res: Response) => {
-  try {
-    const userId = (req.user?.id || req.user?.userId)?.toString();
-    if (!userId) {
-      return res.status(401).json({ success: false, error: 'User ID not found' });
-    }
-
-    res.json({
-      success: true,
-      results: []
-    });
-  } catch (error: unknown) {
-    logger.error('Error getting backtest results:', error);
-    res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
-  }
-});
-
-/**
  * POST /api/agent/strategy/:id/approve
- * Approve a strategy for trading
+ * Approve a recommended strategy for live trading.
+ * Calls SLE confirmLivePromotion then starts fullyAutonomousTrader in live mode.
  */
 router.post('/strategy/:id/approve', authenticateToken, async (req: Request, res: Response) => {
   try {
@@ -1002,9 +763,21 @@ router.post('/strategy/:id/approve', authenticateToken, async (req: Request, res
       return res.status(401).json({ success: false, error: 'User ID not found' });
     }
 
+    const strategyId = req.params.id;
+
+    // Confirm live promotion in SLE (validates strategy is in 'recommended' status)
+    const strategy = await strategyLearningEngine.confirmLivePromotion(strategyId);
+
+    // Enable live trading via fullyAutonomousTrader with strategy parameters
+    await fullyAutonomousTrader.enableAutonomousTrading(userId, {
+      paperTrading: false,
+      symbols: [strategy.symbol],
+      leverage: strategy.leverage
+    });
+
     res.json({
       success: true,
-      message: 'Strategy approved'
+      strategy: { ...strategy, status: 'live' as const }
     });
   } catch (error: unknown) {
     logger.error('Error approving strategy:', error);
@@ -1014,7 +787,7 @@ router.post('/strategy/:id/approve', authenticateToken, async (req: Request, res
 
 /**
  * POST /api/agent/strategy/:id/reject
- * Reject a strategy
+ * Reject a recommended strategy by marking it as retired
  */
 router.post('/strategy/:id/reject', authenticateToken, async (req: Request, res: Response) => {
   try {
@@ -1023,6 +796,13 @@ router.post('/strategy/:id/reject', authenticateToken, async (req: Request, res:
       return res.status(401).json({ success: false, error: 'User ID not found' });
     }
 
+    const strategyId = req.params.id;
+
+    await pool.query(
+      `UPDATE strategy_performance SET status = 'retired' WHERE strategy_id = $1`,
+      [strategyId]
+    );
+
     res.json({
       success: true,
       message: 'Strategy rejected'
@@ -1030,132 +810,6 @@ router.post('/strategy/:id/reject', authenticateToken, async (req: Request, res:
   } catch (error: unknown) {
     logger.error('Error rejecting strategy:', error);
     res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
-  }
-});
-
-/**
- * POST /api/agent/strategy/:id/pause
- * Pause a running strategy
- */
-router.post('/strategy/:id/pause', authenticateToken, async (req: Request, res: Response) => {
-  try {
-    const userId = (req.user?.id || req.user?.userId)?.toString();
-    if (!userId) {
-      return res.status(401).json({ success: false, error: 'User ID not found' });
-    }
-
-    res.json({
-      success: true,
-      message: 'Strategy paused'
-    });
-  } catch (error: unknown) {
-    logger.error('Error pausing strategy:', error);
-    res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
-  }
-});
-
-/**
- * POST /api/agent/strategy/:id/resume
- * Resume a paused strategy
- */
-router.post('/strategy/:id/resume', authenticateToken, async (req: Request, res: Response) => {
-  try {
-    const userId = (req.user?.id || req.user?.userId)?.toString();
-    if (!userId) {
-      return res.status(401).json({ success: false, error: 'User ID not found' });
-    }
-
-    res.json({
-      success: true,
-      message: 'Strategy resumed'
-    });
-  } catch (error: unknown) {
-    logger.error('Error resuming strategy:', error);
-    res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
-  }
-});
-
-/**
- * POST /api/agent/strategy/:id/retire
- * Retire a strategy
- */
-router.post('/strategy/:id/retire', authenticateToken, async (req: Request, res: Response) => {
-  try {
-    const userId = (req.user?.id || req.user?.userId)?.toString();
-    if (!userId) {
-      return res.status(401).json({ success: false, error: 'User ID not found' });
-    }
-
-    res.json({
-      success: true,
-      message: 'Strategy retired'
-    });
-  } catch (error: unknown) {
-    logger.error('Error retiring strategy:', error);
-    res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
-  }
-});
-
-/**
- * GET /api/agent/strategies
- * Get all strategies for the user
- */
-router.get('/strategies', authenticateToken, async (req: Request, res: Response) => {
-  try {
-    const userId = (req.user?.id || req.user?.userId)?.toString();
-    
-    if (!userId) {
-      return res.status(401).json({
-        success: false,
-        error: 'User ID not found in token'
-      });
-    }
-
-    const strategies = await enhancedAutonomousAgent.getUserStrategies(userId);
-
-    res.json({
-      success: true,
-      strategies
-    });
-  } catch (error: unknown) {
-    logger.error('Error getting strategies:', error);
-    res.json({
-      success: true,
-      strategies: [],
-      _fallback: true
-    });
-  }
-});
-
-/**
- * GET /api/agent/strategies/:sessionId
- * Get strategies for a specific session
- */
-router.get('/strategies/:sessionId', authenticateToken, async (req: Request, res: Response) => {
-  try {
-    const userId = (req.user?.id || req.user?.userId)?.toString();
-    
-    if (!userId) {
-      return res.status(401).json({
-        success: false,
-        error: 'User ID not found in token'
-      });
-    }
-
-    const { sessionId } = req.params;
-    const strategies = await enhancedAutonomousAgent.getStrategies(sessionId);
-
-    res.json({
-      success: true,
-      strategies
-    });
-  } catch (error: unknown) {
-    logger.error('Error getting session strategies:', error);
-    res.json({
-      success: true,
-      strategies: [],
-      _fallback: true
-    });
   }
 });
 
