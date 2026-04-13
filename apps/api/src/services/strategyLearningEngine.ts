@@ -65,6 +65,7 @@ export interface StrategyRecord {
   createdAt: Date;
   parentStrategyId: string | null;
   generation: number;
+  backtestCount: number;
   // In-memory fields
   equityCurve?: number[];
   lastEquitySlope?: number;
@@ -379,6 +380,7 @@ class StrategyLearningEngine extends EventEmitter {
       createdAt: new Date(),
       parentStrategyId: null,
       generation: this.generationCount,
+      backtestCount: 0,
       equityCurve: [],
       lastEquitySlope: 0,
       phaseClock: 0,
@@ -425,6 +427,7 @@ class StrategyLearningEngine extends EventEmitter {
       uncensoredSharpe: null,
       fitnessDivergent: false,
       confidenceScore: null,
+      backtestCount: 0,
       equityCurve: [],
       lastEquitySlope: 0,
       phaseClock: 0,
@@ -462,6 +465,7 @@ class StrategyLearningEngine extends EventEmitter {
     for (const s of strategies) {
       try {
         const result = await this.runBacktestWithWalkForward(s);
+        s.backtestCount = (s.backtestCount ?? 0) + 1;
         s.backtestSharpe = safeNum(result.sharpe);
         s.backtestWr = safeNum(result.winRate);
         s.backtestMaxDd = safeNum(result.maxDrawdown);
@@ -523,8 +527,8 @@ class StrategyLearningEngine extends EventEmitter {
         {
           symbol: strategy.symbol,
           timeframe: strategy.timeframe,
-          startDate: splitDate.toISOString(),
-          endDate: endDate.toISOString(),
+          startDate: splitDate,
+          endDate: endDate,
           leverage: strategy.leverage,
         }
       );
@@ -771,14 +775,14 @@ class StrategyLearningEngine extends EventEmitter {
           paper_sharpe, paper_wr, paper_pnl, paper_trades,
           live_sharpe, live_pnl, live_trades,
           is_censored, censor_reason, uncensored_sharpe, fitness_divergent,
-          status, confidence_score, created_at, parent_strategy_id, generation
+          status, confidence_score, created_at, parent_strategy_id, generation, backtest_count
         ) VALUES (
           $1, $2, $3, $4, $5, $6, $7,
           $8, $9, $10,
           $11, $12, $13, $14,
           $15, $16, $17,
           $18, $19, $20, $21,
-          $22, $23, $24, $25, $26
+          $22, $23, $24, $25, $26, $27
         )
         ON CONFLICT (strategy_id) DO UPDATE SET
           strategy_name       = EXCLUDED.strategy_name,
@@ -804,14 +808,15 @@ class StrategyLearningEngine extends EventEmitter {
           status              = EXCLUDED.status,
           confidence_score    = EXCLUDED.confidence_score,
           parent_strategy_id  = EXCLUDED.parent_strategy_id,
-          generation          = EXCLUDED.generation`,
+          generation          = EXCLUDED.generation,
+          backtest_count      = EXCLUDED.backtest_count`,
         [
           s.strategyId, s.strategyId, s.symbol, s.leverage, s.timeframe, s.strategyType, s.regimeAtCreation,
           s.backtestSharpe, s.backtestWr, s.backtestMaxDd,
           s.paperSharpe, s.paperWr, s.paperPnl, s.paperTrades,
           s.liveSharpe, s.livePnl, s.liveTrades,
           s.isCensored, s.censorReason, s.uncensoredSharpe, s.fitnessDivergent,
-          s.status, s.confidenceScore, s.createdAt, s.parentStrategyId, s.generation,
+          s.status, s.confidenceScore, s.createdAt, s.parentStrategyId, s.generation, s.backtestCount ?? 0,
         ]
       );
     } catch (err) {
@@ -882,6 +887,7 @@ class StrategyLearningEngine extends EventEmitter {
       createdAt: new Date(String(row.created_at)),
       parentStrategyId: row.parent_strategy_id != null ? String(row.parent_strategy_id) : null,
       generation: safeNum(row.generation, 0),
+      backtestCount: safeNum(row.backtest_count, 0),
       equityCurve: [],
       lastEquitySlope: 0,
       phaseClock: 0,
