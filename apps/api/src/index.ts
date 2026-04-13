@@ -36,8 +36,6 @@ import reconciliationRoutes from './routes/reconciliation.js';
 import { logger } from './utils/logger.js';
 import { persistentTradingEngine } from './services/persistentTradingEngine.js';
 import { agentScheduler } from './services/agentScheduler.js';
-import automatedTradingService from './services/automatedTradingService.js';
-import { enhancedAutonomousAgent } from './services/enhancedAutonomousAgent.js';
 import paperTradingService from './services/paperTradingService.js';
 import { stateReconciliationService } from './services/stateReconciliationService.js';
 import { runAllMigrations } from './scripts/runMigrations.js';
@@ -402,18 +400,10 @@ server.listen(PORT, '::', async () => {
   };
   scheduleReconciliation();
 
-  // Initialize and start automated trading service
-  automatedTradingService.initialize().catch(error => {
-    logger.error('Failed to initialize automated trading service:', error);
-  });
-  
   // Start persistent trading engine
   persistentTradingEngine.start().catch(error => {
     logger.error('Failed to start persistent trading engine:', error);
   });
-  
-  // Wire Socket.IO to autonomous agent for real-time updates
-  enhancedAutonomousAgent.setSocketIO(io);
   
   // Start agent scheduler (restores sessions from DB, starts always-run agents)
   agentScheduler.start().catch(error => {

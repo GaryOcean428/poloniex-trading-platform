@@ -9,7 +9,6 @@ import { apiCredentialsService } from './apiCredentialsService.js';
 import { PoloniexFuturesService } from './poloniexFuturesService.js';
 import { pool } from '../db/connection.js';
 import { logger } from '../utils/logger.js';
-import automatedTradingService from './automatedTradingService.js';
 
 export interface TradingSession {
   id: string;
@@ -278,21 +277,10 @@ export class PersistentTradingEngine extends EventEmitter {
         return { action: 'HOLD' };
       }
       
-      // Create a strategy object compatible with automatedTradingService
-      const strategy = {
-        strategyType: strategyConfig.type || 'MOMENTUM',
-        parameters: strategyConfig.parameters || {},
-        symbol: strategyConfig.symbol
-      };
-      
-      // Delegate to automatedTradingService for actual strategy execution
-      const signal = await automatedTradingService.executeStrategyLogic(
-        strategy,
-        marketData,
-        positions
-      );
-      
-      return signal || { action: 'HOLD' };
+      // Strategy execution is now handled by fullyAutonomousTrader.
+      // This engine returns HOLD by default; active trading logic lives
+      // in FullyAutonomousTrader.executeTradingCycle().
+      return { action: 'HOLD' };
     } catch (error) {
       logger.error('Error generating trading signal:', error);
       return { action: 'HOLD' };

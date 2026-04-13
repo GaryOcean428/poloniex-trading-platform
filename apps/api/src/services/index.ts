@@ -12,7 +12,6 @@ export * from './encryptionService.js';
 export * from './userService.js';
 
 // Trading Services
-export * from './automatedTradingService.js';
 export * from './backtestingEngine.js';
 export * from './fullyAutonomousTrader.js';
 export * from './paperTradingService.js';
@@ -22,7 +21,6 @@ export * from './persistentTradingEngine.js';
 export * from './strategyService.js';
 // Deprecated: strategyOptimizer replaced by strategyLearningEngine
 // export * from './strategyOptimizer.js';
-export * from './autonomousStrategyGenerator.js';
 export * from './pineScriptParser.js';
 export * from './templateStrategies.js';
 
@@ -31,7 +29,6 @@ export * from './mlPredictionService.js';
 export * from './simpleMlService.js';
 export * from './confidenceScoringService.js';
 export * from './contextAwarenessService.js';
-export * from './enhancedAutonomousAgent.js';
 
 // Market & Data Services
 export * from './poloniexFuturesService.js';

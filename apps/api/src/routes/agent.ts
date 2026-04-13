@@ -1,6 +1,6 @@
 import express from 'express';
 import { authenticateToken } from '../middleware/auth.js';
-import { enhancedAutonomousAgent } from '../services/enhancedAutonomousAgent.js';
+import fullyAutonomousTrader from '../services/fullyAutonomousTrader.js';
 import { agentSettingsService } from '../services/agentSettingsService.js';
 import type { Request, Response } from 'express';
 import { pool } from '../db/connection.js';
@@ -46,7 +46,9 @@ router.post('/start', authenticateToken, async (req: Request, res: Response) => 
     
     const config = req.body;
 
-    const session = await enhancedAutonomousAgent.startAgent(userId, config);
+    await fullyAutonomousTrader.enableAutonomousTrading(userId, config);
+
+    const session = await fullyAutonomousTrader.getStatus(userId);
 
     res.json({
       success: true,
@@ -57,18 +59,18 @@ router.post('/start', authenticateToken, async (req: Request, res: Response) => 
     const errMsg = error instanceof Error ? error.message : String(error);
     
     // Handle "already running" with structured 409
-    if (errMsg.includes('already running')) {
+    if (errMsg.includes('already running') || errMsg.includes('already enabled')) {
       try {
         const catchUserId = (req.user?.id || req.user?.userId)?.toString();
-        const existingSession = catchUserId ? await enhancedAutonomousAgent.getAgentStatus(catchUserId) : null;
+        const existingStatus = catchUserId ? await fullyAutonomousTrader.getStatus(catchUserId) : null;
         return res.status(409).json({
           success: false,
           error: 'An agent session is already active',
           code: 'ALREADY_RUNNING',
-          existingSessionId: existingSession?.id || null,
-          existingState: existingSession?.status || 'unknown',
-          startedAt: existingSession?.startedAt || null,
-          resumeAllowed: existingSession?.status === 'paused',
+          existingSessionId: null,
+          existingState: existingStatus?.isRunning ? 'running' : 'unknown',
+          startedAt: null,
+          resumeAllowed: false,
           takeoverAllowed: true
         });
       } catch {
@@ -121,15 +123,15 @@ router.post('/stop', authenticateToken, async (req: Request, res: Response) => {
     }
 
     // Get active session
-    const status = await enhancedAutonomousAgent.getAgentStatus(userId);
-    if (!status) {
+    const status = await fullyAutonomousTrader.getStatus(userId);
+    if (!status || !status.isRunning) {
       return res.status(404).json({
         success: false,
         error: 'No active agent session found'
       });
     }
 
-    await enhancedAutonomousAgent.stopAgent(status.id);
+    await fullyAutonomousTrader.disableAutonomousTrading(userId);
 
     res.json({
       success: true,
@@ -159,15 +161,15 @@ router.post('/pause', authenticateToken, async (req: Request, res: Response) => 
       });
     }
 
-    const status = await enhancedAutonomousAgent.getAgentStatus(userId);
-    if (!status) {
+    const status = await fullyAutonomousTrader.getStatus(userId);
+    if (!status || !status.isRunning) {
       return res.status(404).json({
         success: false,
         error: 'No active agent session found'
       });
     }
 
-    await enhancedAutonomousAgent.pauseAgent(status.id);
+    await fullyAutonomousTrader.disableAutonomousTrading(userId);
 
     res.json({
       success: true,
@@ -197,7 +199,7 @@ router.post('/resume', authenticateToken, async (req: Request, res: Response) =>
       });
     }
 
-    const status = await enhancedAutonomousAgent.getAgentStatus(userId);
+    const status = await fullyAutonomousTrader.getStatus(userId);
     if (!status) {
       return res.status(404).json({
         success: false,
@@ -205,32 +207,24 @@ router.post('/resume', authenticateToken, async (req: Request, res: Response) =>
       });
     }
 
-    if (status.status !== 'paused') {
+    if (status.isRunning) {
       return res.status(400).json({
         success: false,
-        error: `Cannot resume agent in '${status.status}' state. Agent must be paused.`,
+        error: 'Agent is already running.',
         code: 'INVALID_STATE'
       });
     }
 
-    // Resume the agent by updating state
-    try {
-      await pool.query(
-        'UPDATE agent_sessions SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
-        ['running', status.id]
-      );
-    } catch {
-      // DB update is best-effort; in-memory state is the source of truth
-    }
-    status.status = 'running';
+    // Resume the agent by re-enabling trading
+    await fullyAutonomousTrader.enableAutonomousTrading(userId);
 
     res.json({
       success: true,
       message: 'Agent resumed successfully',
       session: {
-        id: status.id,
-        status: status.status,
-        startedAt: status.startedAt
+        id: null,
+        status: 'running',
+        startedAt: new Date().toISOString()
       }
     });
   } catch (error: unknown) {
@@ -257,7 +251,7 @@ router.get('/status', authenticateToken, async (req: Request, res: Response) => 
       });
     }
 
-    const status = await enhancedAutonomousAgent.getAgentStatus(userId);
+    const status = await fullyAutonomousTrader.getStatus(userId);
 
     res.json({
       success: true,
@@ -298,12 +292,12 @@ router.get('/health', authenticateToken, async (req: Request, res: Response) => 
     }
 
     // Check if agent service is available
-    const agentAvailable = enhancedAutonomousAgent != null;
+    const agentAvailable = fullyAutonomousTrader != null;
     
     // Check for active session
     let activeSession = null;
     try {
-      activeSession = await enhancedAutonomousAgent.getAgentStatus(userId);
+      activeSession = await fullyAutonomousTrader.getStatus(userId);
     } catch {
       // Agent status unavailable
     }
@@ -316,10 +310,10 @@ router.get('/health', authenticateToken, async (req: Request, res: Response) => 
       dependencies: {
         database: { healthy: dbHealthy, message: dbHealthy ? 'Connected' : 'Connection failed' },
         agentService: { healthy: agentAvailable, message: agentAvailable ? 'Available' : 'Unavailable' },
-        activeSession: activeSession ? {
-          id: activeSession.id,
-          status: activeSession.status,
-          startedAt: activeSession.startedAt
+        activeSession: activeSession?.isRunning ? {
+          id: null,
+          status: 'running',
+          startedAt: null
         } : null
       },
       timestamp: new Date().toISOString()
@@ -355,34 +349,14 @@ router.get('/activity', authenticateToken, async (req: Request, res: Response) =
       });
     }
 
-    const limit = parseInt(req.query.limit as string, 10) || 20;
+    const _limit = parseInt(req.query.limit as string, 10) || 20;
 
-    // Get user's active session
-    const status = await enhancedAutonomousAgent.getAgentStatus(userId);
-    if (!status) {
-      return res.json({
-        success: true,
-        activity: []
-      });
-    }
-
-    const result = await pool.query(
-      'SELECT * FROM agent_activity_log WHERE session_id = $1 ORDER BY created_at DESC LIMIT $2',
-      [status.id, limit]
-    );
-
+    // Deprecated agent_activity_log table — return empty until migrated
     res.json({
       success: true,
-      activity: result.rows
+      activity: []
     });
   } catch (error: unknown) {
-    // Return empty array if table doesn't exist yet or DB error occurs
-    if (isTableMissingError(error)) {
-      return res.json({
-        success: true,
-        activity: []
-      });
-    }
     logger.error('Error getting activity:', error);
     res.json({
       success: true,
@@ -465,32 +439,12 @@ router.get('/strategies', authenticateToken, async (req: Request, res: Response)
       });
     }
 
-    // Get user's active session
-    const status = await enhancedAutonomousAgent.getAgentStatus(userId);
-    if (!status) {
-      return res.json({
-        success: true,
-        strategies: []
-      });
-    }
-
-    const result = await pool.query(
-      'SELECT * FROM agent_strategies WHERE session_id = $1 ORDER BY created_at DESC',
-      [status.id]
-    );
-
+    // Deprecated agent_strategies table — return empty until migrated
     res.json({
       success: true,
-      strategies: result.rows
+      strategies: []
     });
   } catch (error: unknown) {
-    // Return empty array if table doesn't exist yet or DB error occurs
-    if (isTableMissingError(error)) {
-      return res.json({
-        success: true,
-        strategies: []
-      });
-    }
     logger.error('Error getting strategies:', error);
     res.json({
       success: true,
@@ -528,8 +482,8 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
       maxDrawdown: 0
     };
 
-    const status = await enhancedAutonomousAgent.getAgentStatus(userId);
-    if (!status) {
+    const status = await fullyAutonomousTrader.getStatus(userId);
+    if (!status || !status.isRunning) {
       return res.json({
         success: true,
         performance: defaultPerformance
@@ -539,8 +493,8 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
     // Calculate performance metrics from trades
     try {
       const mode = req.query.mode as string | undefined;
-      const modeFilter = mode ? ' AND execution_mode = $3' : '';
-      const queryParams: (string | Date)[] = [userId, status.startedAt];
+      const modeFilter = mode ? ' AND execution_mode = $2' : '';
+      const queryParams: (string)[] = [userId];
       if (mode) queryParams.push(mode);
       
       const tradesResult = await pool.query(
@@ -552,7 +506,7 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
           AVG(CASE WHEN pnl > 0 THEN pnl END) as avg_win,
           AVG(CASE WHEN pnl < 0 THEN pnl END) as avg_loss
         FROM trades 
-        WHERE user_id = $1 AND created_at >= $2${modeFilter}`,
+        WHERE user_id = $1${modeFilter}`,
         queryParams
       );
 
@@ -565,7 +519,7 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
       try {
         const returnsResult = await pool.query(
           `SELECT pnl FROM trades 
-           WHERE user_id = $1 AND created_at >= $2 AND pnl IS NOT NULL${modeFilter}
+           WHERE user_id = $1 AND pnl IS NOT NULL${modeFilter}
            ORDER BY created_at ASC`,
           queryParams
         );
@@ -603,7 +557,7 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
              SUM(pnl) as daily_pnl,
              COUNT(*) as daily_trades
            FROM trades
-           WHERE user_id = $1 AND created_at >= $2 AND pnl IS NOT NULL${modeFilter}
+           WHERE user_id = $1 AND pnl IS NOT NULL${modeFilter}
            GROUP BY DATE(created_at)
            ORDER BY trade_date ASC`,
           queryParams
@@ -673,46 +627,17 @@ router.get('/capabilities', authenticateToken, async (req: Request, res: Respons
       });
     }
 
-    const status = await enhancedAutonomousAgent.getAgentStatus(userId);
-    if (!status) {
-      return res.json({
-        success: true,
-        capabilitySummary: {
-          totalStrategies: 0,
-          tier1: 0,
-          tier2: 0,
-          tier3: 0,
-          averageCompositeScore: 0
-        },
-        strategies: []
-      });
-    }
-
-    const profiles = await enhancedAutonomousAgent.getSessionCapabilityProfiles(status.id);
-    const summary = profiles.reduce(
-      (acc, profile) => {
-        acc.totalStrategies += 1;
-        acc[profile.capabilityClass] += 1;
-        acc.averageCompositeScore += profile.compositeScore;
-        return acc;
-      },
-      {
+    // Capability profiles are not supported by fullyAutonomousTrader — return defaults
+    res.json({
+      success: true,
+      capabilitySummary: {
         totalStrategies: 0,
         tier1: 0,
         tier2: 0,
         tier3: 0,
         averageCompositeScore: 0
-      }
-    );
-
-    if (summary.totalStrategies > 0) {
-      summary.averageCompositeScore = parseFloat((summary.averageCompositeScore / summary.totalStrategies).toFixed(2));
-    }
-
-    res.json({
-      success: true,
-      capabilitySummary: summary,
-      strategies: profiles
+      },
+      strategies: []
     });
   } catch (error: unknown) {
     logger.error('Error getting agent capability profiles:', error);
@@ -742,19 +667,7 @@ router.get('/circuit-breaker', authenticateToken, async (req: Request, res: Resp
       return res.status(401).json({ success: false, error: 'User ID not found in token' });
     }
 
-    const status = await enhancedAutonomousAgent.getAgentStatus(userId);
-    if (!status) {
-      return res.json({
-        success: true,
-        circuitBreaker: {
-          isTripped: false,
-          consecutiveLosses: 0,
-          dailyLossPercent: 0
-        }
-      });
-    }
-
-    const cbStatus = enhancedAutonomousAgent.getCircuitBreakerStatus(status.id);
+    const cbStatus = fullyAutonomousTrader.getCircuitBreakerStatus(userId);
     res.json({ success: true, circuitBreaker: cbStatus });
   } catch (error: unknown) {
     logger.error('Error getting circuit breaker status:', error);
@@ -785,31 +698,12 @@ router.get('/learnings', authenticateToken, async (req: Request, res: Response) 
       });
     }
 
-    const status = await enhancedAutonomousAgent.getAgentStatus(userId);
-    if (!status) {
-      return res.json({
-        success: true,
-        learnings: []
-      });
-    }
-
-    const result = await pool.query(
-      'SELECT * FROM agent_learnings WHERE session_id = $1 ORDER BY created_at DESC LIMIT 10',
-      [status.id]
-    );
-
+    // Deprecated agent_learnings table — return empty until migrated
     res.json({
       success: true,
-      learnings: result.rows
+      learnings: []
     });
   } catch (error: unknown) {
-    // Return empty array if table doesn't exist yet or DB error occurs
-    if (isTableMissingError(error)) {
-      return res.json({
-        success: true,
-        learnings: []
-      });
-    }
     logger.error('Error getting learnings:', error);
     res.json({
       success: true,
@@ -836,19 +730,8 @@ router.put('/config', authenticateToken, async (req: Request, res: Response) => 
 
     const config = req.body;
 
-    const status = await enhancedAutonomousAgent.getAgentStatus(userId);
-    if (!status) {
-      return res.status(404).json({
-        success: false,
-        error: 'No active agent session found'
-      });
-    }
-
-    // Update config in database
-    await pool.query(
-      'UPDATE agent_sessions SET config = $1 WHERE id = $2',
-      [JSON.stringify(config), status.id]
-    );
+    // Update config via fullyAutonomousTrader
+    await fullyAutonomousTrader.enableAutonomousTrading(userId, config);
 
     res.json({
       success: true,
@@ -1111,11 +994,10 @@ router.get('/strategies', authenticateToken, async (req: Request, res: Response)
       });
     }
 
-    const strategies = await enhancedAutonomousAgent.getUserStrategies(userId);
-
+    // Deprecated agent strategies — return empty
     res.json({
       success: true,
-      strategies
+      strategies: []
     });
   } catch (error: unknown) {
     logger.error('Error getting strategies:', error);
@@ -1142,12 +1024,11 @@ router.get('/strategies/:sessionId', authenticateToken, async (req: Request, res
       });
     }
 
-    const { sessionId } = req.params;
-    const strategies = await enhancedAutonomousAgent.getStrategies(sessionId);
-
+    const { sessionId: _sessionId } = req.params;
+    // Deprecated agent session strategies — return empty
     res.json({
       success: true,
-      strategies
+      strategies: []
     });
   } catch (error: unknown) {
     logger.error('Error getting session strategies:', error);
