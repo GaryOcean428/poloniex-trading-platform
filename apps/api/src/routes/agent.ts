@@ -798,10 +798,17 @@ router.post('/strategy/:id/reject', authenticateToken, async (req: Request, res:
 
     const strategyId = req.params.id;
 
-    await pool.query(
-      `UPDATE strategy_performance SET status = 'retired' WHERE strategy_id = $1`,
+    const result = await pool.query(
+      `UPDATE strategy_performance SET status = 'retired' WHERE strategy_id = $1 AND status = 'recommended'`,
       [strategyId]
     );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Strategy not found or not in recommended status'
+      });
+    }
 
     res.json({
       success: true,
