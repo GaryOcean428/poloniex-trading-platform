@@ -478,6 +478,9 @@ class StrategyLearningEngine extends EventEmitter {
       avgReturn: 0,
       avgSharpeRatio: 0,
       equityCurve: [],
+      lastEquitySlope: 0,
+      phaseClock: 0,
+      // Genome-based evolution
       genome: childGenome,
       strategyType: inferStrategyType(childGenome) as StrategyType,
       // Mutate timeframe occasionally
