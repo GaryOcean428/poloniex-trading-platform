@@ -66,6 +66,7 @@ export interface StrategyRecord {
   parentStrategyId: string | null;
   generation: number;
   backtestCount: number;
+  avgReturn: number;
   // In-memory fields
   equityCurve?: number[];
   lastEquitySlope?: number;
@@ -156,6 +157,14 @@ class StrategyLearningEngine extends EventEmitter {
   // In-memory store of active strategy records
   private strategies: Map<string, StrategyRecord> = new Map();
 
+  /**
+   * Track whether we have attempted to auto-fix NOT NULL columns on
+   * strategy_performance. We try once per process lifetime to ALTER TABLE
+   * and set DEFAULT 0 on known problematic columns so future inserts
+   * never hit this class of error again.
+   */
+  private schemaFixAttempted = false;
+
   constructor() {
     super();
   }
@@ -169,6 +178,10 @@ class StrategyLearningEngine extends EventEmitter {
     }
     this.isRunning = true;
     logger.info('[SLE] Starting strategy learning engine');
+
+    // Attempt one-time schema fix for NOT NULL columns without defaults
+    await this.ensureSchemaDefaults();
+
     await this.loadActiveStrategies();
     this.scheduleNextCycle(0); // kick off immediately
   }
@@ -180,6 +193,29 @@ class StrategyLearningEngine extends EventEmitter {
       this.loopTimer = null;
     }
     logger.info('[SLE] Strategy learning engine stopped');
+  }
+
+  /**
+   * One-time attempt to ALTER TABLE strategy_performance and set DEFAULT 0
+   * on columns that have NOT NULL but no default. This prevents the
+   * recurring whack-a-mole pattern where migrations add NOT NULL columns
+   * that the INSERT doesn't know about.
+   */
+  private async ensureSchemaDefaults(): Promise<void> {
+    if (this.schemaFixAttempted) return;
+    this.schemaFixAttempted = true;
+    const columnsToFix = ['backtest_count', 'avg_return'];
+    for (const col of columnsToFix) {
+      try {
+        await query(`ALTER TABLE strategy_performance ALTER COLUMN ${col} SET DEFAULT 0`);
+        logger.info(`[SLE] Set DEFAULT 0 on strategy_performance.${col}`);
+      } catch (err: any) {
+        // Column may not exist or already has a default — both are fine
+        if (!err.message?.includes('does not exist')) {
+          logger.debug(`[SLE] Could not set default on ${col}: ${err.message}`);
+        }
+      }
+    }
   }
 
   // ─────────────────────────── main loop ────────────────────────────────────
@@ -381,6 +417,7 @@ class StrategyLearningEngine extends EventEmitter {
       parentStrategyId: null,
       generation: this.generationCount,
       backtestCount: 0,
+      avgReturn: 0,
       equityCurve: [],
       lastEquitySlope: 0,
       phaseClock: 0,
@@ -428,6 +465,7 @@ class StrategyLearningEngine extends EventEmitter {
       fitnessDivergent: false,
       confidenceScore: null,
       backtestCount: 0,
+      avgReturn: 0,
       equityCurve: [],
       lastEquitySlope: 0,
       phaseClock: 0,
@@ -775,14 +813,14 @@ class StrategyLearningEngine extends EventEmitter {
           paper_sharpe, paper_wr, paper_pnl, paper_trades,
           live_sharpe, live_pnl, live_trades,
           is_censored, censor_reason, uncensored_sharpe, fitness_divergent,
-          status, confidence_score, created_at, parent_strategy_id, generation, backtest_count
+          status, confidence_score, created_at, parent_strategy_id, generation, backtest_count, avg_return
         ) VALUES (
           $1, $2, $3, $4, $5, $6, $7,
           $8, $9, $10,
           $11, $12, $13, $14,
           $15, $16, $17,
           $18, $19, $20, $21,
-          $22, $23, $24, $25, $26, $27
+          $22, $23, $24, $25, $26, $27, $28
         )
         ON CONFLICT (strategy_id) DO UPDATE SET
           strategy_name       = EXCLUDED.strategy_name,
@@ -809,14 +847,15 @@ class StrategyLearningEngine extends EventEmitter {
           confidence_score    = EXCLUDED.confidence_score,
           parent_strategy_id  = EXCLUDED.parent_strategy_id,
           generation          = EXCLUDED.generation,
-          backtest_count      = EXCLUDED.backtest_count`,
+          backtest_count      = EXCLUDED.backtest_count,
+          avg_return          = EXCLUDED.avg_return`,
         [
           s.strategyId, s.strategyId, s.symbol, s.leverage, s.timeframe, s.strategyType, s.regimeAtCreation,
           s.backtestSharpe, s.backtestWr, s.backtestMaxDd,
           s.paperSharpe, s.paperWr, s.paperPnl, s.paperTrades,
           s.liveSharpe, s.livePnl, s.liveTrades,
           s.isCensored, s.censorReason, s.uncensoredSharpe, s.fitnessDivergent,
-          s.status, s.confidenceScore, s.createdAt, s.parentStrategyId, s.generation, s.backtestCount ?? 0,
+          s.status, s.confidenceScore, s.createdAt, s.parentStrategyId, s.generation, s.backtestCount ?? 0, s.avgReturn ?? 0,
         ]
       );
     } catch (err) {
@@ -888,6 +927,7 @@ class StrategyLearningEngine extends EventEmitter {
       parentStrategyId: row.parent_strategy_id != null ? String(row.parent_strategy_id) : null,
       generation: safeNum(row.generation, 0),
       backtestCount: safeNum(row.backtest_count, 0),
+      avgReturn: safeNum(row.avg_return, 0),
       equityCurve: [],
       lastEquitySlope: 0,
       phaseClock: 0,
