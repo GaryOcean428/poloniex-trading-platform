@@ -547,7 +547,9 @@ CREATE TABLE IF NOT EXISTS strategy_performance (
     win_rate             DECIMAL(5, 2),
     backtest_count       INTEGER,
     last_backtest_date   TIMESTAMP WITH TIME ZONE,
-    updated_at           TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    updated_at           TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    -- Composable signal genome (JSONB) — stores entry/exit conditions and risk params
+    signal_genome        JSONB
 );
 
 CREATE INDEX IF NOT EXISTS idx_sp_symbol_type ON strategy_performance(symbol, strategy_type, regime_at_creation, status);

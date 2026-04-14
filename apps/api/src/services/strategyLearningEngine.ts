@@ -23,6 +23,13 @@ import { logger } from '../utils/logger.js';
 import backtestingEngine from './backtestingEngine.js';
 import confidenceScoringService from './confidenceScoringService.js';
 import parallelStrategyRunner from './parallelStrategyRunner.js';
+import {
+  SignalGenome,
+  generateRandomGenome,
+  mutateGenome,
+  crossoverGenomes,
+  inferStrategyType,
+} from './signalGenome.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -45,6 +52,8 @@ export interface StrategyRecord {
   leverage: number;
   timeframe: string;
   strategyType: StrategyType;
+  /** Composable signal genome — when present, this drives signal generation instead of strategyType */
+  genome?: SignalGenome | null;
   regimeAtCreation: MarketRegime;
   backtestSharpe: number | null;
   backtestWr: number | null;
@@ -116,10 +125,10 @@ const PHASE_CLOCK_KILL_CYCLES = 5;
 /** Loop interval: 30 minutes between learning cycles */
 const LOOP_INTERVAL_MS = 30 * 60 * 1000;
 
-/** Regime types that are "trending" (for crossover guard) */
+/** Regime types that are "trending" (for backward compat labelling) */
 const TRENDING_TYPES: StrategyType[] = ['momentum', 'trend_following', 'breakout'];
-/** Regime types that are "mean-reverting" */
-const REVERTING_TYPES: StrategyType[] = ['mean_reversion', 'scalping'];
+/** Regime types that are "mean-reverting" (for backward compat labelling) */
+const _REVERTING_TYPES: StrategyType[] = ['mean_reversion', 'scalping'];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helper utilities
@@ -130,8 +139,8 @@ export function bridgeLawWeight(tfMinutes: number): number {
   return Math.pow(60 / tfMinutes, BRIDGE_LAW_EXPONENT);
 }
 
-/** Check whether two strategy types live in the same regime basin */
-function sameRegimeBasin(type1: StrategyType, type2: StrategyType): boolean {
+/** Check whether two strategy types live in the same regime basin (retained for backward compat) */
+function _sameRegimeBasin(type1: StrategyType, type2: StrategyType): boolean {
   const t1trending = TRENDING_TYPES.includes(type1);
   const t2trending = TRENDING_TYPES.includes(type2);
   return t1trending === t2trending; // both trending or both reverting
@@ -215,6 +224,14 @@ class StrategyLearningEngine extends EventEmitter {
           logger.debug(`[SLE] Could not set default on ${col}: ${err.message}`);
         }
       }
+    }
+
+    // Ensure signal_genome JSONB column exists (added by migration 021)
+    try {
+      await query(`ALTER TABLE strategy_performance ADD COLUMN IF NOT EXISTS signal_genome JSONB`);
+      logger.info('[SLE] Ensured signal_genome column exists on strategy_performance');
+    } catch (err: any) {
+      logger.debug(`[SLE] Could not add signal_genome column: ${err.message}`);
     }
   }
 
@@ -343,22 +360,15 @@ class StrategyLearningEngine extends EventEmitter {
       let strategy: StrategyRecord;
 
       if (parents.length >= 2 && Math.random() < 0.6) {
-        // Regime-conditioned crossover: only cross strategies in same basin
-        const compatible = parents.filter((_, idx) =>
-          parents.some((p2, idx2) => idx !== idx2 && sameRegimeBasin(parents[idx].strategyType, p2.strategyType))
-        );
-        if (compatible.length >= 2) {
-          const p1 = compatible[Math.floor(Math.random() * compatible.length)];
-          const p2 = compatible.filter(p => sameRegimeBasin(p.strategyType, p1.strategyType) && p.strategyId !== p1.strategyId);
-          if (p2.length > 0) {
-            strategy = this.crossoverStrategies(p1, p2[Math.floor(Math.random() * p2.length)], regime);
-          } else {
-            strategy = this.mutateStrategy(p1, regime);
-          }
-        } else if (parents.length > 0) {
-          strategy = this.mutateStrategy(parents[Math.floor(Math.random() * parents.length)], regime);
+        // Genome crossover: any two parents can crossover since genomes are composable.
+        // The old sameRegimeBasin guard is no longer needed — the genome itself
+        // determines the strategy's behaviour, not a type label.
+        const p1 = parents[Math.floor(Math.random() * parents.length)];
+        const otherParents = parents.filter(p => p.strategyId !== p1.strategyId);
+        if (otherParents.length > 0) {
+          strategy = this.crossoverStrategies(p1, otherParents[Math.floor(Math.random() * otherParents.length)], regime);
         } else {
-          strategy = this.generateRandom(symbols, regime);
+          strategy = this.mutateStrategy(p1, regime);
         }
       } else if (parents.length > 0 && Math.random() < 0.5) {
         strategy = this.mutateStrategy(parents[Math.floor(Math.random() * parents.length)], regime);
@@ -379,18 +389,11 @@ class StrategyLearningEngine extends EventEmitter {
     const tfKeys = Object.keys(SUPPORTED_TF_MINUTES);
     const timeframe = tfKeys[Math.floor(Math.random() * tfKeys.length)];
 
-    // All regimes generate all strategy types — reverting types listed first
-    // in ranging so they're slightly more likely when the array is sampled
-    // uniformly, but all types get a chance to prove themselves in backtesting.
-    let candidateTypes: StrategyType[];
-    if (regime === 'trending') {
-      candidateTypes = [...TRENDING_TYPES, ...REVERTING_TYPES];
-    } else if (regime === 'ranging') {
-      candidateTypes = [...REVERTING_TYPES, ...TRENDING_TYPES];
-    } else {
-      candidateTypes = [...TRENDING_TYPES, ...REVERTING_TYPES];
-    }
-    const strategyType = candidateTypes[Math.floor(Math.random() * candidateTypes.length)];
+    // Generate a composable signal genome with random conditions
+    const genome = generateRandomGenome();
+
+    // Infer a human-readable strategy type label from the genome
+    const strategyType = inferStrategyType(genome) as StrategyType;
 
     return {
       strategyId: id,
@@ -398,6 +401,7 @@ class StrategyLearningEngine extends EventEmitter {
       leverage: [1, 2, 5, 10][Math.floor(Math.random() * 4)],
       timeframe,
       strategyType,
+      genome,
       regimeAtCreation: regime,
       backtestSharpe: null,
       backtestWr: null,
@@ -428,11 +432,18 @@ class StrategyLearningEngine extends EventEmitter {
 
   private crossoverStrategies(parent1: StrategyRecord, parent2: StrategyRecord, regime: MarketRegime): StrategyRecord {
     const id = `cross_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+
+    // Genome crossover: splice conditions from both parents
+    const genome1 = parent1.genome ?? generateRandomGenome();
+    const genome2 = parent2.genome ?? generateRandomGenome();
+    const childGenome = crossoverGenomes(genome1, genome2);
+
     return {
       ...this.generateRandom([parent1.symbol, parent2.symbol], regime),
       strategyId: id,
       symbol: Math.random() < 0.5 ? parent1.symbol : parent2.symbol,
-      strategyType: Math.random() < 0.5 ? parent1.strategyType : parent2.strategyType,
+      strategyType: inferStrategyType(childGenome) as StrategyType,
+      genome: childGenome,
       timeframe: Math.random() < 0.5 ? parent1.timeframe : parent2.timeframe,
       leverage: Math.round((parent1.leverage + parent2.leverage) / 2),
       parentStrategyId: parent1.strategyId,
@@ -443,6 +454,11 @@ class StrategyLearningEngine extends EventEmitter {
   private mutateStrategy(parent: StrategyRecord, regime: MarketRegime): StrategyRecord {
     const id = `mut_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
     const tfKeys = Object.keys(SUPPORTED_TF_MINUTES);
+
+    // Mutate the genome: threshold perturbation, add/remove/swap conditions
+    const parentGenome = parent.genome ?? generateRandomGenome();
+    const childGenome = mutateGenome(parentGenome);
+
     return {
       ...parent,
       strategyId: id,
@@ -471,6 +487,9 @@ class StrategyLearningEngine extends EventEmitter {
       equityCurve: [],
       lastEquitySlope: 0,
       phaseClock: 0,
+      // Genome-based evolution
+      genome: childGenome,
+      strategyType: inferStrategyType(childGenome) as StrategyType,
       // Mutate timeframe occasionally
       timeframe: Math.random() < 0.15 ? tfKeys[Math.floor(Math.random() * tfKeys.length)] : parent.timeframe,
       // Mutate leverage slightly
@@ -553,11 +572,15 @@ class StrategyLearningEngine extends EventEmitter {
 
     try {
       // Register the strategy with the backtest engine before running
-      const strategyDef = {
+      // Pass the genome so the engine evaluates conditions, not a type switch
+      const strategyDef: Record<string, any> = {
         type: strategy.strategyType,
         parameters: {},
         lookback: DEFAULT_STRATEGY_LOOKBACK,
       };
+      if (strategy.genome) {
+        strategyDef.genome = strategy.genome;
+      }
       (backtestingEngine as any).registerStrategy(strategy.strategyId, strategyDef);
 
       // Run backtest on test period (out-of-sample)
@@ -815,14 +838,16 @@ class StrategyLearningEngine extends EventEmitter {
           paper_sharpe, paper_wr, paper_pnl, paper_trades,
           live_sharpe, live_pnl, live_trades,
           is_censored, censor_reason, uncensored_sharpe, fitness_divergent,
-          status, confidence_score, created_at, parent_strategy_id, generation, backtest_count, avg_return
+          status, confidence_score, created_at, parent_strategy_id, generation, backtest_count, avg_return,
+          signal_genome
         ) VALUES (
           $1, $2, $3, $4, $5, $6, $7,
           $8, $9, $10,
           $11, $12, $13, $14,
           $15, $16, $17,
           $18, $19, $20, $21,
-          $22, $23, $24, $25, $26, $27, $28
+          $22, $23, $24, $25, $26, $27, $28,
+          $29
         )
         ON CONFLICT (strategy_id) DO UPDATE SET
           strategy_name       = EXCLUDED.strategy_name,
@@ -850,7 +875,8 @@ class StrategyLearningEngine extends EventEmitter {
           parent_strategy_id  = EXCLUDED.parent_strategy_id,
           generation          = EXCLUDED.generation,
           backtest_count      = EXCLUDED.backtest_count,
-          avg_return          = EXCLUDED.avg_return`,
+          avg_return          = EXCLUDED.avg_return,
+          signal_genome       = EXCLUDED.signal_genome`,
         [
           s.strategyId, s.strategyId, s.symbol, s.leverage, s.timeframe, s.strategyType, s.regimeAtCreation,
           s.backtestSharpe, s.backtestWr, s.backtestMaxDd,
@@ -858,6 +884,7 @@ class StrategyLearningEngine extends EventEmitter {
           s.liveSharpe, s.livePnl, s.liveTrades,
           s.isCensored, s.censorReason, s.uncensoredSharpe, s.fitnessDivergent,
           s.status, s.confidenceScore, s.createdAt, s.parentStrategyId, s.generation, s.backtestCount ?? 0, s.avgReturn ?? 0,
+          s.genome ? JSON.stringify(s.genome) : null,
         ]
       );
     } catch (err) {
@@ -902,12 +929,25 @@ class StrategyLearningEngine extends EventEmitter {
   }
 
   private rowToRecord(row: any): StrategyRecord {
+    // Deserialize genome from DB JSONB column
+    let genome: SignalGenome | null = null;
+    if (row.signal_genome) {
+      try {
+        genome = typeof row.signal_genome === 'string'
+          ? JSON.parse(row.signal_genome)
+          : row.signal_genome;
+      } catch {
+        genome = null;
+      }
+    }
+
     return {
       strategyId: String(row.strategy_id),
       symbol: String(row.symbol),
       leverage: safeNum(row.leverage, 1),
       timeframe: String(row.timeframe),
       strategyType: String(row.strategy_type) as StrategyType,
+      genome,
       regimeAtCreation: (String(row.regime_at_creation) || 'unknown') as MarketRegime,
       backtestSharpe: row.backtest_sharpe != null ? safeNum(row.backtest_sharpe) : null,
       backtestWr: row.backtest_wr != null ? safeNum(row.backtest_wr) : null,

@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 import { logger } from '../utils/logger.js';
 import { query } from '../db/connection.js';
 import poloniexFuturesService from './poloniexFuturesService.js';
+import { buildIndicatorMap, evaluateGenomeEntry, evaluateGenomeExit, strategyTypeToGenome } from './signalGenome.js';
 
 /** Coerce a value to a finite number suitable for DB insertion. */
 function safeNum(v, fallback = 0) {
@@ -330,14 +331,32 @@ class BacktestingEngine extends EventEmitter {
   async generateTradingSignals(strategy, indicators, currentCandle) {
     const signals = { entry: null, exit: null };
     try {
-      switch (strategy.type) {
-        case 'trend_following': signals.entry = this.generateTrendFollowingSignals(indicators, strategy.parameters); break;
-        case 'momentum': signals.entry = this.generateMomentumSignals(indicators, strategy.parameters); break;
-        case 'mean_reversion': signals.entry = this.generateMeanReversionSignals(indicators, strategy.parameters); break;
-        case 'breakout': signals.entry = this.generateBreakoutSignals(indicators, strategy.parameters); break;
-        case 'scalping': signals.entry = this.generateScalpingSignals(indicators, strategy.parameters); break;
-        case 'custom': if (strategy.customLogic) signals.entry = await strategy.customLogic(indicators, currentCandle); break;
+      // ── Genome-based evaluation (primary path) ──────────────────────────
+      const genome = strategy.genome || null;
+      if (genome && genome.entryConditions && genome.entryConditions.length > 0) {
+        const indicatorMap = buildIndicatorMap(indicators);
+        const prevIndicatorMap = strategy._prevIndicatorMap || null;
+        signals.entry = evaluateGenomeEntry(genome, indicatorMap, prevIndicatorMap);
+        // Store current indicator map for next candle's crosses_above/crosses_below
+        strategy._prevIndicatorMap = indicatorMap;
+        return signals;
       }
+
+      // ── Legacy fallback: convert type to genome on-the-fly ──────────────
+      if (strategy.type && strategy.type !== 'custom') {
+        const fallbackGenome = strategyTypeToGenome(strategy.type, strategy.parameters);
+        const indicatorMap = buildIndicatorMap(indicators);
+        const prevIndicatorMap = strategy._prevIndicatorMap || null;
+        signals.entry = evaluateGenomeEntry(fallbackGenome, indicatorMap, prevIndicatorMap);
+        strategy._prevIndicatorMap = indicatorMap;
+        return signals;
+      }
+
+      // ── Custom logic (user-defined function) ────────────────────────────
+      if (strategy.type === 'custom' && strategy.customLogic) {
+        signals.entry = await strategy.customLogic(indicators, currentCandle);
+      }
+
       return signals;
     } catch (error) { logger.error('Error generating trading signals:', error); return signals; }
   }

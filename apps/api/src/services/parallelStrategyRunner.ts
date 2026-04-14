@@ -106,6 +106,7 @@ class ParallelStrategyRunner extends EventEmitter {
         strategy: {
           type: strategy.strategyType,
           parameters: {},
+          genome: strategy.genome ?? undefined,
         },
       });
 
