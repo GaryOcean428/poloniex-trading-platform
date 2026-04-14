@@ -80,8 +80,8 @@ export interface StrategyRecord {
 /** Bridge law exponent — frozen physics result (τ ∝ J^0.74, R²>0.96) */
 const BRIDGE_LAW_EXPONENT = 0.74;
 
-/** Default lookback period for strategy backtesting */
-const DEFAULT_STRATEGY_LOOKBACK = 20;
+/** Default lookback period — must be >= 50 to support SMA50 and MACD(26) */
+const DEFAULT_STRATEGY_LOOKBACK = 50;
 
 /** Timeframes supported for multi-timeframe strategies (in minutes) */
 const SUPPORTED_TF_MINUTES: Record<string, number> = {
@@ -379,12 +379,14 @@ class StrategyLearningEngine extends EventEmitter {
     const tfKeys = Object.keys(SUPPORTED_TF_MINUTES);
     const timeframe = tfKeys[Math.floor(Math.random() * tfKeys.length)];
 
-    // Regime-biased type selection
+    // All regimes generate all strategy types — reverting types listed first
+    // in ranging so they're slightly more likely when the array is sampled
+    // uniformly, but all types get a chance to prove themselves in backtesting.
     let candidateTypes: StrategyType[];
     if (regime === 'trending') {
-      candidateTypes = TRENDING_TYPES;
+      candidateTypes = [...TRENDING_TYPES, ...REVERTING_TYPES];
     } else if (regime === 'ranging') {
-      candidateTypes = REVERTING_TYPES;
+      candidateTypes = [...REVERTING_TYPES, ...TRENDING_TYPES];
     } else {
       candidateTypes = [...TRENDING_TYPES, ...REVERTING_TYPES];
     }
