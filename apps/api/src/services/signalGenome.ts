@@ -256,9 +256,14 @@ export const ALL_INDICATORS: IndicatorType[] = [
   'ema_cross_9_20', 'sma_cross_20_50',
 ];
 
-/** Default threshold ranges per indicator type */
+/**
+ * Default threshold ranges per indicator type.
+ * Raw price-level indicators (sma20, sma50, etc.) have wide ranges as they are
+ * not used in NORMALISED_INDICATORS — genomes generate conditions using
+ * normalised indicators only.  The ranges are retained for completeness.
+ */
 const THRESHOLD_RANGES: Record<IndicatorType, [number, number]> = {
-  sma20:          [0, 100000],     // price level — will be overridden contextually
+  sma20:          [0, 100000],     // raw price level — not used in genome generation
   sma50:          [0, 100000],
   ema9:           [0, 100000],
   ema20:          [0, 100000],

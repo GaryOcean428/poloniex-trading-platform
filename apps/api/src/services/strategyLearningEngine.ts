@@ -125,11 +125,6 @@ const PHASE_CLOCK_KILL_CYCLES = 5;
 /** Loop interval: 30 minutes between learning cycles */
 const LOOP_INTERVAL_MS = 30 * 60 * 1000;
 
-/** Regime types that are "trending" (for backward compat labelling) */
-const TRENDING_TYPES: StrategyType[] = ['momentum', 'trend_following', 'breakout'];
-/** Regime types that are "mean-reverting" (for backward compat labelling) */
-const _REVERTING_TYPES: StrategyType[] = ['mean_reversion', 'scalping'];
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Helper utilities
 // ─────────────────────────────────────────────────────────────────────────────
@@ -137,13 +132,6 @@ const _REVERTING_TYPES: StrategyType[] = ['mean_reversion', 'scalping'];
 /** Bridge law timeframe weight: w(tf) = (60 / tfMinutes)^0.74 */
 export function bridgeLawWeight(tfMinutes: number): number {
   return Math.pow(60 / tfMinutes, BRIDGE_LAW_EXPONENT);
-}
-
-/** Check whether two strategy types live in the same regime basin (retained for backward compat) */
-function _sameRegimeBasin(type1: StrategyType, type2: StrategyType): boolean {
-  const t1trending = TRENDING_TYPES.includes(type1);
-  const t2trending = TRENDING_TYPES.includes(type2);
-  return t1trending === t2trending; // both trending or both reverting
 }
 
 function safeNum(v: unknown, fallback = 0): number {
@@ -226,7 +214,9 @@ class StrategyLearningEngine extends EventEmitter {
       }
     }
 
-    // Ensure signal_genome JSONB column exists (added by migration 021)
+    // Ensure signal_genome JSONB column exists — defensive fallback in case
+    // migration 021 hasn't been applied yet. Uses the same pattern as the
+    // backtest_count/avg_return fixes above. Idempotent via IF NOT EXISTS.
     try {
       await query(`ALTER TABLE strategy_performance ADD COLUMN IF NOT EXISTS signal_genome JSONB`);
       logger.info('[SLE] Ensured signal_genome column exists on strategy_performance');

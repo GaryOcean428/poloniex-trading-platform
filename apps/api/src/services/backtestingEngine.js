@@ -55,6 +55,8 @@ class BacktestingEngine extends EventEmitter {
     this.results = new Map();
     this.strategies = new Map();
     this.historicalData = new Map();
+    /** Previous indicator maps per strategy, for crosses_above/crosses_below evaluation */
+    this._prevIndicatorMaps = new Map();
     this.marketSimulation = {
       slippage: 0.001,
       latency: 50,
@@ -331,14 +333,15 @@ class BacktestingEngine extends EventEmitter {
   async generateTradingSignals(strategy, indicators, currentCandle) {
     const signals = { entry: null, exit: null };
     try {
+      const strategyId = strategy.id || strategy.name || 'default';
+
       // ── Genome-based evaluation (primary path) ──────────────────────────
       const genome = strategy.genome || null;
       if (genome && genome.entryConditions && genome.entryConditions.length > 0) {
         const indicatorMap = buildIndicatorMap(indicators);
-        const prevIndicatorMap = strategy._prevIndicatorMap || null;
+        const prevIndicatorMap = this._prevIndicatorMaps.get(strategyId) || null;
         signals.entry = evaluateGenomeEntry(genome, indicatorMap, prevIndicatorMap);
-        // Store current indicator map for next candle's crosses_above/crosses_below
-        strategy._prevIndicatorMap = indicatorMap;
+        this._prevIndicatorMaps.set(strategyId, indicatorMap);
         return signals;
       }
 
@@ -346,9 +349,9 @@ class BacktestingEngine extends EventEmitter {
       if (strategy.type && strategy.type !== 'custom') {
         const fallbackGenome = strategyTypeToGenome(strategy.type, strategy.parameters);
         const indicatorMap = buildIndicatorMap(indicators);
-        const prevIndicatorMap = strategy._prevIndicatorMap || null;
+        const prevIndicatorMap = this._prevIndicatorMaps.get(strategyId) || null;
         signals.entry = evaluateGenomeEntry(fallbackGenome, indicatorMap, prevIndicatorMap);
-        strategy._prevIndicatorMap = indicatorMap;
+        this._prevIndicatorMaps.set(strategyId, indicatorMap);
         return signals;
       }
 
