@@ -45,6 +45,28 @@ export const PHASE_TRANSITION_HT = 0.106;
 export const REPULSIVE_THRESHOLD = 2.0;
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Regime weight tuning constants
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Max weight assigned in disordered regime (near-zero: don't trust strategies) */
+const DISORDERED_MAX_WEIGHT = 0.1;
+
+/** Floor weight in geometric regime (even at edges, maintain minimum trust) */
+const GEOMETRIC_FLOOR_WEIGHT = 0.3;
+
+/** Taper factor in geometric regime (1 - floor = range of taper) */
+const GEOMETRIC_TAPER = 0.7;
+
+/** Base inversion weight for repulsive regime (strategies reversed) */
+const REPULSIVE_BASE_INVERSION = -0.5;
+
+/** Additional inversion scaling with depth into repulsive regime */
+const REPULSIVE_DEPTH_SCALE = -0.5;
+
+/** Scale factor mapping |ρ|=1 correlation to strong coupling J ≈ 4 */
+export const COUPLING_SCALE_FACTOR = 4.0;
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Regime classification
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -87,7 +109,7 @@ export function regimeWeight(kappa: number): number {
   switch (regime) {
     case 'disordered':
       // Linearly ramp from 0 at κ=0 to threshold at κ=h_t
-      return Math.max(0, kappa / PHASE_TRANSITION_HT) * 0.1;
+      return Math.max(0, kappa / PHASE_TRANSITION_HT) * DISORDERED_MAX_WEIGHT;
 
     case 'geometric': {
       // Full weight when κ is well within geometric regime
@@ -95,14 +117,14 @@ export function regimeWeight(kappa: number): number {
       const midpoint = (PHASE_TRANSITION_HT + REPULSIVE_THRESHOLD) / 2;
       const halfRange = (REPULSIVE_THRESHOLD - PHASE_TRANSITION_HT) / 2;
       const distFromMid = Math.abs(kappa - midpoint) / halfRange;
-      return Math.max(0.3, 1.0 - 0.7 * distFromMid);
+      return Math.max(GEOMETRIC_FLOOR_WEIGHT, 1.0 - GEOMETRIC_TAPER * distFromMid);
     }
 
     case 'repulsive': {
       // Strategies should be inverted — negative weight
       // Deeper into repulsive = stronger inversion signal
       const depth = Math.min((kappa - REPULSIVE_THRESHOLD) / REPULSIVE_THRESHOLD, 1.0);
-      return -0.5 - 0.5 * depth;
+      return REPULSIVE_BASE_INVERSION + REPULSIVE_DEPTH_SCALE * depth;
     }
   }
 }
@@ -507,5 +529,5 @@ export function pairwiseCoupling(returnsA: number[], returnsB: number[]): number
 
   // Scale correlation to coupling: J = |ρ| × scale factor
   // At ρ=1, J should be in the strong coupling regime (> 2.5)
-  return correlation * 4.0;
+  return correlation * COUPLING_SCALE_FACTOR;
 }

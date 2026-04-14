@@ -24,6 +24,28 @@ import {
 } from './qigFrozenLaws.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Dual-framing thresholds (C3 Figure-8 evaluation)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Max drawdown beyond which the backward framing fails (catastrophic loss) */
+const CATASTROPHIC_DRAWDOWN_THRESHOLD = 0.15;
+
+/** Fragility above which the backward framing fails (imminent regime change) */
+const HIGH_FRAGILITY_THRESHOLD = 0.7;
+
+/** Win rate above which (combined with high Sharpe) signals likely overfitting */
+const SUSPICIOUS_WIN_RATE = 0.85;
+
+/** Sharpe above which (combined with high win rate) signals likely overfitting */
+const SUSPICIOUS_SHARPE = 3.0;
+
+/** Minimum Sharpe required in disordered regime (no coherent structure) */
+const DISORDERED_MIN_SHARPE = 2.0;
+
+/** Minimum win rate required in disordered regime */
+const DISORDERED_MIN_WIN_RATE = 0.55;
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -142,7 +164,7 @@ function evaluateForwardFraming(
 
     case 'disordered':
       // No coherent structure — require very strong signal to pass
-      return metrics.sharpe > 2.0 && metrics.winRate > 0.55;
+      return metrics.sharpe > DISORDERED_MIN_SHARPE && metrics.winRate > DISORDERED_MIN_WIN_RATE;
 
     case 'repulsive':
       // Inverted geometry — a NEGATIVE Sharpe might actually be good
@@ -169,13 +191,13 @@ function evaluateBackwardFraming(
   fragility: number
 ): boolean {
   // Catastrophic drawdown check
-  if (metrics.maxDrawdown > 0.15) return false;
+  if (metrics.maxDrawdown > CATASTROPHIC_DRAWDOWN_THRESHOLD) return false;
 
   // Geometric fragility check — market about to break
-  if (fragility > 0.7) return false;
+  if (fragility > HIGH_FRAGILITY_THRESHOLD) return false;
 
   // Overfitting check — suspiciously perfect results
-  if (metrics.winRate > 0.85 && metrics.sharpe > 3.0) return false;
+  if (metrics.winRate > SUSPICIOUS_WIN_RATE && metrics.sharpe > SUSPICIOUS_SHARPE) return false;
 
   return true;
 }

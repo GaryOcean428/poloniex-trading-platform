@@ -142,6 +142,9 @@ const PAPER_THRESHOLDS = {
 /** Fitness divergence threshold triggering "unreliable" flag */
 const FITNESS_DIVERGENCE_THRESHOLD = 0.20;
 
+/** QIG geometric fragility threshold for warning (EXP-013 leading indicator) */
+const QIG_FRAGILITY_WARNING_THRESHOLD = 0.6;
+
 /** Phase clock: if persistent negative slope for this many cycles, kill the strategy */
 const PHASE_CLOCK_KILL_CYCLES = 5;
 
@@ -405,7 +408,7 @@ class StrategyLearningEngine extends EventEmitter {
       const fidelity = priceAutocorrelation(returns);
       const fragility = geometricFragility(fidelity, r2);
 
-      if (fragility > 0.6) {
+      if (fragility > QIG_FRAGILITY_WARNING_THRESHOLD) {
         logger.warn(
           `[SLE] QIG geometric fragility HIGH: ${fragility.toFixed(3)} ` +
           `(fidelity=${fidelity.toFixed(3)}, R²=${r2.toFixed(3)}) — ` +
