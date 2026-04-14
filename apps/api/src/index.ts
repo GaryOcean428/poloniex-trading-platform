@@ -222,8 +222,8 @@ if (process.env.NODE_ENV === 'production') {
       );
 
       // SPA fallback: Serve index.html for all non-API, non-static-file routes
-      // This ensures routes like /dashboard/live, /strategies, etc. work correctly
-      app.get('*', (req: Request, res: Response) => {
+      // Express 5 / path-to-regexp v8 requires named wildcard: {*path}
+      app.get('{*path}', (req: Request, res: Response) => {
         // Only serve index.html for non-API routes
         if (!req.path.startsWith('/api')) {
           logger.debug(`SPA fallback: serving index.html for ${req.path}`);

@@ -28,6 +28,12 @@ const DEFAULT_SIGNAL: MLSignal = {
   reason: 'No signal data available'
 };
 
+/** Safe number formatting — returns fallback string when value is missing or not a number */
+function safeFixed(val: unknown, decimals: number, fallback = 'N/A'): string {
+  const n = Number(val);
+  return Number.isFinite(n) ? n.toFixed(decimals) : fallback;
+}
+
 const MLModelPerformance: React.FC<{ symbol: string }> = ({ symbol }) => {
   const [performanceData, setPerformanceData] = useState<MLPerformanceData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -93,15 +99,18 @@ const MLModelPerformance: React.FC<{ symbol: string }> = ({ symbol }) => {
   const signal: MLSignal = performanceData.signal ?? DEFAULT_SIGNAL;
 
   // Normalize confidence values: backend may return 0-1 or 0-100
-  const formatConfidence = (val: number): string => {
-    if (val > 1) return val.toFixed(0);
-    return (val * 100).toFixed(0);
+  const formatConfidence = (val: unknown): string => {
+    const n = Number(val);
+    if (!Number.isFinite(n)) return '0';
+    if (n > 1) return n.toFixed(0);
+    return (n * 100).toFixed(0);
   };
 
   // Format prediction price from backend response
   const formatPredictionPrice = (pred: any): string => {
-    if (pred?.price !== null) return `$${pred.price.toFixed(2)}`;
-    if (pred?.prediction !== null) return `$${pred.prediction.toFixed(2)}`;
+    // Use loose != null to catch both null and undefined
+    if (pred?.price != null) return `$${safeFixed(pred.price, 2, '—')}`;
+    if (pred?.prediction != null) return `$${safeFixed(pred.prediction, 2, '—')}`;
     return 'N/A';
   };
 
@@ -128,7 +137,7 @@ const MLModelPerformance: React.FC<{ symbol: string }> = ({ symbol }) => {
           </div>
           <div className="text-right">
             <p className="text-sm text-gray-400">Strength</p>
-            <p className="text-2xl font-bold text-white">{((signal.strength ?? 0) * 100).toFixed(1)}%</p>
+            <p className="text-2xl font-bold text-white">{safeFixed((signal.strength ?? 0) * 100, 1, '0.0')}%</p>
           </div>
         </div>
         <p className="text-sm text-gray-300 mt-2">{signal.reason}</p>
@@ -156,11 +165,11 @@ const MLModelPerformance: React.FC<{ symbol: string }> = ({ symbol }) => {
                 <div className="mt-2 space-y-1">
                   <div className="flex justify-between text-xs">
                     <span className="text-gray-400">Confidence</span>
-                    <span className="text-blue-400">{formatConfidence(pred.confidence || 0)}%</span>
+                    <span className="text-blue-400">{formatConfidence(pred.confidence)}%</span>
                   </div>
                   <div className="flex justify-between text-xs">
                     <span className="text-gray-400">Agreement</span>
-                    <span className="text-green-400">{formatConfidence(pred.agreement || 0)}%</span>
+                    <span className="text-green-400">{formatConfidence(pred.agreement)}%</span>
                   </div>
                 </div>
               </div>
@@ -178,10 +187,10 @@ const MLModelPerformance: React.FC<{ symbol: string }> = ({ symbol }) => {
               <div key={model} className="bg-gray-700 rounded p-3">
                 <p className="text-xs text-gray-400 uppercase">{model}</p>
                 <p className="text-lg font-bold text-white mt-1">
-                  ${(prediction as number).toFixed(2)}
+                  ${safeFixed(prediction, 2, '—')}
                 </p>
                 <p className="text-xs text-blue-400 mt-1">
-                  {formatConfidence(predictions['1h'].individual_confidences?.[model] || 0)}%
+                  {formatConfidence(predictions['1h'].individual_confidences?.[model])}%
                 </p>
               </div>
             ))}
@@ -194,20 +203,23 @@ const MLModelPerformance: React.FC<{ symbol: string }> = ({ symbol }) => {
         <div>
           <h4 className="text-sm font-semibold text-gray-300 mb-3">Model Weights</h4>
           <div className="space-y-2">
-            {Object.entries(predictions['1h'].weights).map(([model, weight]: [string, any]) => (
-              <div key={model} className="flex items-center">
-                <span className="text-sm text-gray-400 w-24 uppercase">{model}</span>
-                <div className="flex-1 bg-gray-700 rounded-full h-2">
-                  <div 
-                    className="bg-blue-500 h-2 rounded-full" 
-                    style={{ width: `${(weight as number) * 100}%` }}
-                  ></div>
+            {Object.entries(predictions['1h'].weights).map(([model, weight]: [string, any]) => {
+              const pct = Number.isFinite(Number(weight)) ? Number(weight) * 100 : 0;
+              return (
+                <div key={model} className="flex items-center">
+                  <span className="text-sm text-gray-400 w-24 uppercase">{model}</span>
+                  <div className="flex-1 bg-gray-700 rounded-full h-2">
+                    <div 
+                      className="bg-blue-500 h-2 rounded-full" 
+                      style={{ width: `${pct}%` }}
+                    ></div>
+                  </div>
+                  <span className="text-sm text-gray-300 ml-3 w-12 text-right">
+                    {pct.toFixed(0)}%
+                  </span>
                 </div>
-                <span className="text-sm text-gray-300 ml-3 w-12 text-right">
-                  {((weight as number) * 100).toFixed(0)}%
-                </span>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

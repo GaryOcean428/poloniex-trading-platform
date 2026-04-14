@@ -221,10 +221,13 @@ class BacktestingEngine extends EventEmitter {
   async runBacktestSimulation(strategy, historicalData, config) {
     let currentPosition = null, stopLoss = null, takeProfit = null;
     const leverage = config.leverage ?? 1;
+    // Use enough lookback for all indicators: SMA50 needs 50, MACD needs 26,
+    // so minimum useful lookback is 50. Never go below what the strategy requests.
+    const lookback = Math.max(strategy.lookback || 50, 50);
     for (let i = 0; i < historicalData.length; i++) {
       const currentCandle = historicalData[i];
-      const previousCandles = historicalData.slice(Math.max(0, i - (strategy.lookback || 20)), i);
-      if (previousCandles.length < (strategy.lookback || 20)) continue;
+      const previousCandles = historicalData.slice(Math.max(0, i - lookback), i);
+      if (previousCandles.length < lookback) continue;
       const indicators = this.calculateTechnicalIndicators(previousCandles, currentCandle);
       const signals = await this.generateTradingSignals(strategy, indicators, currentCandle);
       if (currentPosition) {
@@ -285,11 +288,6 @@ class BacktestingEngine extends EventEmitter {
 
   /**
    * Calculate the liquidation price for a position.
-   *
-   * @param {number} entryPrice  Entry price
-   * @param {'long'|'short'} side Position side
-   * @param {number} leverage    Effective leverage
-   * @returns {number} Liquidation price
    */
   calculateLiquidationPrice(entryPrice, side, leverage) {
     if (leverage <= 1) return side === 'long' ? 0 : Infinity;
@@ -301,10 +299,6 @@ class BacktestingEngine extends EventEmitter {
 
   /**
    * Calculate required margin for a position.
-   *
-   * @param {number} positionSize  Notional position size (USDT)
-   * @param {number} leverage      Effective leverage
-   * @returns {number} Required margin (USDT)
    */
   calculateRequiredMargin(positionSize, leverage) {
     return leverage > 0 ? positionSize / leverage : positionSize;
@@ -312,12 +306,6 @@ class BacktestingEngine extends EventEmitter {
 
   /**
    * Estimate periodic funding cost for a leveraged position.
-   * Uses a simplified model: fundingRate × notionalValue per interval.
-   *
-   * @param {number} notionalValue  Position notional value (USDT)
-   * @param {number} fundingRate    Funding rate per interval (e.g. 0.0001 = 0.01%)
-   * @param {number} intervals      Number of funding intervals
-   * @returns {number} Total funding cost (USDT, always positive = cost)
    */
   calculateFundingCost(notionalValue, fundingRate, intervals) {
     return Math.abs(fundingRate) * notionalValue * intervals;
@@ -330,7 +318,7 @@ class BacktestingEngine extends EventEmitter {
     const volumes = historicalData.map(d => d.volume);
     return {
       sma20: this.calculateSMA(closes, 20), sma50: this.calculateSMA(closes, 50),
-      ema20: this.calculateEMA(closes, 20), ema50: this.calculateEMA(closes, 50),
+      ema9: this.calculateEMA(closes, 9), ema20: this.calculateEMA(closes, 20), ema50: this.calculateEMA(closes, 50),
       rsi: this.calculateRSI(closes, 14), macd: this.calculateMACD(closes),
       bollingerBands: this.calculateBollingerBands(closes, 20, 2),
       atr: this.calculateATR(highs, lows, closes, 14),
@@ -347,6 +335,7 @@ class BacktestingEngine extends EventEmitter {
         case 'momentum': signals.entry = this.generateMomentumSignals(indicators, strategy.parameters); break;
         case 'mean_reversion': signals.entry = this.generateMeanReversionSignals(indicators, strategy.parameters); break;
         case 'breakout': signals.entry = this.generateBreakoutSignals(indicators, strategy.parameters); break;
+        case 'scalping': signals.entry = this.generateScalpingSignals(indicators, strategy.parameters); break;
         case 'custom': if (strategy.customLogic) signals.entry = await strategy.customLogic(indicators, currentCandle); break;
       }
       return signals;
@@ -354,7 +343,7 @@ class BacktestingEngine extends EventEmitter {
   }
 
   generateMomentumSignals(indicators, params) {
-    const { rsi_oversold = 30, rsi_overbought = 70, macd_threshold = 0 } = params || {};
+    const { rsi_oversold = 35, rsi_overbought = 65, macd_threshold = 0 } = params || {};
     if (indicators.rsi == null || indicators.macd == null) return null;
     if (indicators.rsi < rsi_oversold && indicators.macd.histogram > macd_threshold) return { side: 'long', strength: Math.abs(indicators.rsi - 50) / 50, reason: 'momentum_long' };
     if (indicators.rsi > rsi_overbought && indicators.macd.histogram < -macd_threshold) return { side: 'short', strength: Math.abs(indicators.rsi - 50) / 50, reason: 'momentum_short' };
@@ -362,7 +351,7 @@ class BacktestingEngine extends EventEmitter {
   }
 
   generateMeanReversionSignals(indicators, params) {
-    const { rsi_extreme = 20 } = params || {};
+    const { rsi_extreme = 30 } = params || {};
     if (!indicators.bollingerBands || indicators.rsi == null) return null;
     const { upper, lower } = indicators.bollingerBands;
     const currentPrice = indicators.current.price;
@@ -381,7 +370,7 @@ class BacktestingEngine extends EventEmitter {
   }
 
   generateBreakoutSignals(indicators, params) {
-    const { volumeThreshold = 1.5 } = params || {};
+    const { volumeThreshold = 1.3 } = params || {};
     if (!indicators.bollingerBands) return null;
     const { upper, lower } = indicators.bollingerBands;
     const currentPrice = indicators.current.price;
@@ -391,6 +380,26 @@ class BacktestingEngine extends EventEmitter {
     const volumeConfirmed = avgVolume > 0 && (currentVolume / avgVolume) >= volumeThreshold;
     if (currentPrice > upper && volumeConfirmed) return { side: 'long', strength: Math.min((currentPrice - upper) / (upper - lower), 1), reason: 'breakout_long' };
     if (currentPrice < lower && volumeConfirmed) return { side: 'short', strength: Math.min((lower - currentPrice) / (upper - lower), 1), reason: 'breakout_short' };
+    return null;
+  }
+
+  /**
+   * Scalping signal generator — fast-paced entries using EMA9/EMA20 crossover
+   * with RSI momentum confirmation. Designed for short timeframes (5m, 15m).
+   */
+  generateScalpingSignals(indicators, params) {
+    const { rsi_low = 40, rsi_high = 60 } = params || {};
+    const fastEMA = indicators.ema9;
+    const slowEMA = indicators.ema20;
+    if (fastEMA == null || slowEMA == null || indicators.rsi == null) return null;
+    // Long: fast EMA crosses above slow EMA + RSI has room to run (not overbought)
+    if (fastEMA > slowEMA && indicators.rsi < rsi_high && indicators.rsi > rsi_low) {
+      return { side: 'long', strength: Math.min(((fastEMA - slowEMA) / slowEMA) * 50, 1), reason: 'scalping_long' };
+    }
+    // Short: fast EMA crosses below slow EMA + RSI has room to fall
+    if (fastEMA < slowEMA && indicators.rsi > (100 - rsi_high) && indicators.rsi < (100 - rsi_low)) {
+      return { side: 'short', strength: Math.min(((slowEMA - fastEMA) / slowEMA) * 50, 1), reason: 'scalping_short' };
+    }
     return null;
   }
 
@@ -440,13 +449,11 @@ class BacktestingEngine extends EventEmitter {
     const portfolioValue = this.currentBacktest.portfolio.totalValue;
     if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
       logger.warn(`Invalid currentPrice (${currentPrice}) in calculatePositionSize, using portfolio fraction`);
-      // Fall back to dollar-based sizing without price conversion
       const baseDollar = portfolioValue * minPositionSize;
       const maxDollar = portfolioValue * maxPositionSize;
       const strengthMultiplier = Math.min(signal.strength || 1, 1);
       return Math.min(Math.max(baseDollar * strengthMultiplier, baseDollar), maxDollar);
     }
-    // Calculate dollar allocation, then convert to asset units
     const baseDollar = portfolioValue * minPositionSize;
     const maxDollar = portfolioValue * maxPositionSize;
     const strengthMultiplier = Math.min(signal.strength || 1, 1);
@@ -686,11 +693,6 @@ class BacktestingEngine extends EventEmitter {
    * Walk-forward validation: splits historical data into train (70%) + test (30%).
    * Runs backtest simulation on out-of-sample test period only.
    * Returns out-of-sample metrics to prevent overfitting.
-   *
-   * @param {string} strategyName
-   * @param {Object} config - same as runBacktest config
-   * @param {number} trainFraction - fraction used for training (default 0.7)
-   * @returns {Object} Out-of-sample backtest metrics
    */
   async runWalkForwardValidation(strategyName, config, trainFraction = 0.7) {
     try {
