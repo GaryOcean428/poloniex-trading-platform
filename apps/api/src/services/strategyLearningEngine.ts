@@ -76,6 +76,7 @@ export interface StrategyRecord {
   generation: number;
   backtestCount: number;
   avgReturn: number;
+  avgSharpeRatio: number;
   // In-memory fields
   equityCurve?: number[];
   lastEquitySlope?: number;
@@ -414,6 +415,7 @@ class StrategyLearningEngine extends EventEmitter {
       generation: this.generationCount,
       backtestCount: 0,
       avgReturn: 0,
+      avgSharpeRatio: 0,
       equityCurve: [],
       lastEquitySlope: 0,
       phaseClock: 0,
@@ -474,10 +476,8 @@ class StrategyLearningEngine extends EventEmitter {
       confidenceScore: null,
       backtestCount: 0,
       avgReturn: 0,
+      avgSharpeRatio: 0,
       equityCurve: [],
-      lastEquitySlope: 0,
-      phaseClock: 0,
-      // Genome-based evolution
       genome: childGenome,
       strategyType: inferStrategyType(childGenome) as StrategyType,
       // Mutate timeframe occasionally
@@ -828,7 +828,7 @@ class StrategyLearningEngine extends EventEmitter {
           paper_sharpe, paper_wr, paper_pnl, paper_trades,
           live_sharpe, live_pnl, live_trades,
           is_censored, censor_reason, uncensored_sharpe, fitness_divergent,
-          status, confidence_score, created_at, parent_strategy_id, generation, backtest_count, avg_return,
+          status, confidence_score, created_at, parent_strategy_id, generation, backtest_count, avg_return, avg_sharpe_ratio,
           signal_genome
         ) VALUES (
           $1, $2, $3, $4, $5, $6, $7,
@@ -836,8 +836,8 @@ class StrategyLearningEngine extends EventEmitter {
           $11, $12, $13, $14,
           $15, $16, $17,
           $18, $19, $20, $21,
-          $22, $23, $24, $25, $26, $27, $28,
-          $29
+          $22, $23, $24, $25, $26, $27, $28, $29,
+          $30
         )
         ON CONFLICT (strategy_id) DO UPDATE SET
           strategy_name       = EXCLUDED.strategy_name,
@@ -866,6 +866,7 @@ class StrategyLearningEngine extends EventEmitter {
           generation          = EXCLUDED.generation,
           backtest_count      = EXCLUDED.backtest_count,
           avg_return          = EXCLUDED.avg_return,
+          avg_sharpe_ratio    = EXCLUDED.avg_sharpe_ratio,
           signal_genome       = EXCLUDED.signal_genome`,
         [
           s.strategyId, s.strategyId, s.symbol, s.leverage, s.timeframe, s.strategyType, s.regimeAtCreation,
@@ -873,7 +874,7 @@ class StrategyLearningEngine extends EventEmitter {
           s.paperSharpe, s.paperWr, s.paperPnl, s.paperTrades,
           s.liveSharpe, s.livePnl, s.liveTrades,
           s.isCensored, s.censorReason, s.uncensoredSharpe, s.fitnessDivergent,
-          s.status, s.confidenceScore, s.createdAt, s.parentStrategyId, s.generation, s.backtestCount ?? 0, s.avgReturn ?? 0,
+          s.status, s.confidenceScore, s.createdAt, s.parentStrategyId, s.generation, s.backtestCount ?? 0, s.avgReturn ?? 0, s.avgSharpeRatio ?? 0,
           s.genome ? JSON.stringify(s.genome) : null,
         ]
       );
@@ -960,6 +961,7 @@ class StrategyLearningEngine extends EventEmitter {
       generation: safeNum(row.generation, 0),
       backtestCount: safeNum(row.backtest_count, 0),
       avgReturn: safeNum(row.avg_return, 0),
+      avgSharpeRatio: safeNum(row.avg_sharpe_ratio, 0),
       equityCurve: [],
       lastEquitySlope: 0,
       phaseClock: 0,
