@@ -139,6 +139,15 @@ function safeNum(v: unknown, fallback = 0): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
+/**
+ * Clamp a number to fit NUMERIC(6,4) — max absolute value 99.9999.
+ * Prevents "numeric field overflow" PostgreSQL errors.
+ */
+function clampNumeric64(v: number | null | undefined): number | null {
+  if (v == null || !Number.isFinite(v)) return null;
+  return Math.max(-99.9999, Math.min(99.9999, v));
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // StrategyLearningEngine
 // ─────────────────────────────────────────────────────────────────────────────
@@ -214,9 +223,29 @@ class StrategyLearningEngine extends EventEmitter {
       }
     }
 
+    // Widen numeric columns that are too narrow (NUMERIC(6,4) overflows at ±100).
+    // backtest_sharpe, backtest_max_dd, and confidence_score can legitimately exceed 100.
+    const columnsToWiden = [
+      'backtest_sharpe', 'backtest_wr', 'backtest_max_dd',
+      'paper_sharpe', 'paper_wr', 'paper_pnl',
+      'live_sharpe', 'live_pnl',
+      'uncensored_sharpe', 'confidence_score',
+      'avg_sharpe_ratio', 'avg_return',
+    ];
+    for (const col of columnsToWiden) {
+      try {
+        await query(`ALTER TABLE strategy_performance ALTER COLUMN ${col} TYPE NUMERIC(12,6)`);
+        logger.info(`[SLE] Widened strategy_performance.${col} to NUMERIC(12,6)`);
+      } catch (err: any) {
+        // Column doesn't exist or is already wider — fine
+        if (!err.message?.includes('does not exist')) {
+          logger.debug(`[SLE] Could not widen ${col}: ${err.message}`);
+        }
+      }
+    }
+
     // Ensure signal_genome JSONB column exists — defensive fallback in case
-    // migration 021 hasn't been applied yet. Uses the same pattern as the
-    // backtest_count/avg_return fixes above. Idempotent via IF NOT EXISTS.
+    // migration 021 hasn't been applied yet.
     try {
       await query(`ALTER TABLE strategy_performance ADD COLUMN IF NOT EXISTS signal_genome JSONB`);
       logger.info('[SLE] Ensured signal_genome column exists on strategy_performance');
@@ -350,9 +379,6 @@ class StrategyLearningEngine extends EventEmitter {
       let strategy: StrategyRecord;
 
       if (parents.length >= 2 && Math.random() < 0.6) {
-        // Genome crossover: any two parents can crossover since genomes are composable.
-        // The old sameRegimeBasin guard is no longer needed — the genome itself
-        // determines the strategy's behaviour, not a type label.
         const p1 = parents[Math.floor(Math.random() * parents.length)];
         const otherParents = parents.filter(p => p.strategyId !== p1.strategyId);
         if (otherParents.length > 0) {
@@ -574,7 +600,6 @@ class StrategyLearningEngine extends EventEmitter {
       (backtestingEngine as any).registerStrategy(strategy.strategyId, strategyDef);
 
       // Run backtest on test period (out-of-sample)
-      // backtestingEngine.runBacktest expects (strategyName: string, config: object)
       const result = await (backtestingEngine as any).runBacktest(
         strategy.strategyId,
         {
@@ -885,6 +910,7 @@ class StrategyLearningEngine extends EventEmitter {
           s.status, s.confidenceScore, s.createdAt, s.parentStrategyId, s.generation, s.backtestCount ?? 0, s.avgReturn ?? 0,
           avgSharpeRatio,
           s.genome ? JSON.stringify(s.genome) : null,
+          clampNumeric64(avgSharpeRatio),
         ]
       );
     } catch (err) {
