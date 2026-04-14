@@ -31,14 +31,14 @@ packages = ["proprietary_core"]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.0.0",
+    "pytest>=9.0.3",
     "ruff>=0.5.0",
     "mypy>=1.10.0",
 ]
 
 [tool.uv]
 dev-dependencies = [
-    "pytest>=8.0.0",
+    "pytest>=9.0.3",
     "ruff>=0.5.0",
     "mypy>=1.10.0",
 ]
