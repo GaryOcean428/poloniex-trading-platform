@@ -139,6 +139,15 @@ function safeNum(v: unknown, fallback = 0): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
+/**
+ * Clamp a number to fit NUMERIC(6,4) — max absolute value 99.9999.
+ * Prevents "numeric field overflow" PostgreSQL errors.
+ */
+function clampNumeric64(v: number | null | undefined): number | null {
+  if (v == null || !Number.isFinite(v)) return null;
+  return Math.max(-99.9999, Math.min(99.9999, v));
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // StrategyLearningEngine
 // ─────────────────────────────────────────────────────────────────────────────
@@ -201,7 +210,9 @@ class StrategyLearningEngine extends EventEmitter {
   private async ensureSchemaDefaults(): Promise<void> {
     if (this.schemaFixAttempted) return;
     this.schemaFixAttempted = true;
-    const columnsToFix = ['backtest_count', 'avg_return'];
+    // Fix ALL known NOT NULL columns that lack defaults.
+    // avg_sharpe_ratio was the missing one crashing every cycle.
+    const columnsToFix = ['backtest_count', 'avg_return', 'avg_sharpe_ratio'];
     for (const col of columnsToFix) {
       try {
         await query(`ALTER TABLE strategy_performance ALTER COLUMN ${col} SET DEFAULT 0`);
@@ -214,9 +225,29 @@ class StrategyLearningEngine extends EventEmitter {
       }
     }
 
+    // Widen numeric columns that are too narrow (NUMERIC(6,4) overflows at ±100).
+    // backtest_sharpe, backtest_max_dd, and confidence_score can legitimately exceed 100.
+    const columnsToWiden = [
+      'backtest_sharpe', 'backtest_wr', 'backtest_max_dd',
+      'paper_sharpe', 'paper_wr', 'paper_pnl',
+      'live_sharpe', 'live_pnl',
+      'uncensored_sharpe', 'confidence_score',
+      'avg_sharpe_ratio', 'avg_return',
+    ];
+    for (const col of columnsToWiden) {
+      try {
+        await query(`ALTER TABLE strategy_performance ALTER COLUMN ${col} TYPE NUMERIC(12,6)`);
+        logger.info(`[SLE] Widened strategy_performance.${col} to NUMERIC(12,6)`);
+      } catch (err: any) {
+        // Column doesn't exist or is already wider — fine
+        if (!err.message?.includes('does not exist')) {
+          logger.debug(`[SLE] Could not widen ${col}: ${err.message}`);
+        }
+      }
+    }
+
     // Ensure signal_genome JSONB column exists — defensive fallback in case
-    // migration 021 hasn't been applied yet. Uses the same pattern as the
-    // backtest_count/avg_return fixes above. Idempotent via IF NOT EXISTS.
+    // migration 021 hasn't been applied yet.
     try {
       await query(`ALTER TABLE strategy_performance ADD COLUMN IF NOT EXISTS signal_genome JSONB`);
       logger.info('[SLE] Ensured signal_genome column exists on strategy_performance');
@@ -350,9 +381,6 @@ class StrategyLearningEngine extends EventEmitter {
       let strategy: StrategyRecord;
 
       if (parents.length >= 2 && Math.random() < 0.6) {
-        // Genome crossover: any two parents can crossover since genomes are composable.
-        // The old sameRegimeBasin guard is no longer needed — the genome itself
-        // determines the strategy's behaviour, not a type label.
         const p1 = parents[Math.floor(Math.random() * parents.length)];
         const otherParents = parents.filter(p => p.strategyId !== p1.strategyId);
         if (otherParents.length > 0) {
@@ -574,7 +602,6 @@ class StrategyLearningEngine extends EventEmitter {
       (backtestingEngine as any).registerStrategy(strategy.strategyId, strategyDef);
 
       // Run backtest on test period (out-of-sample)
-      // backtestingEngine.runBacktest expects (strategyName: string, config: object)
       const result = await (backtestingEngine as any).runBacktest(
         strategy.strategyId,
         {
@@ -821,6 +848,9 @@ class StrategyLearningEngine extends EventEmitter {
       // Update in-memory map
       this.strategies.set(s.strategyId, s);
 
+      // Compute avg_sharpe_ratio: use backtestSharpe as the initial value
+      const avgSharpeRatio = safeNum(s.backtestSharpe);
+
       await query(
         `INSERT INTO strategy_performance (
           strategy_id, strategy_name, symbol, leverage, timeframe, strategy_type, regime_at_creation,
@@ -829,7 +859,7 @@ class StrategyLearningEngine extends EventEmitter {
           live_sharpe, live_pnl, live_trades,
           is_censored, censor_reason, uncensored_sharpe, fitness_divergent,
           status, confidence_score, created_at, parent_strategy_id, generation, backtest_count, avg_return,
-          signal_genome
+          signal_genome, avg_sharpe_ratio
         ) VALUES (
           $1, $2, $3, $4, $5, $6, $7,
           $8, $9, $10,
@@ -837,7 +867,7 @@ class StrategyLearningEngine extends EventEmitter {
           $15, $16, $17,
           $18, $19, $20, $21,
           $22, $23, $24, $25, $26, $27, $28,
-          $29
+          $29, $30
         )
         ON CONFLICT (strategy_id) DO UPDATE SET
           strategy_name       = EXCLUDED.strategy_name,
@@ -866,15 +896,17 @@ class StrategyLearningEngine extends EventEmitter {
           generation          = EXCLUDED.generation,
           backtest_count      = EXCLUDED.backtest_count,
           avg_return          = EXCLUDED.avg_return,
-          signal_genome       = EXCLUDED.signal_genome`,
+          signal_genome       = EXCLUDED.signal_genome,
+          avg_sharpe_ratio    = EXCLUDED.avg_sharpe_ratio`,
         [
           s.strategyId, s.strategyId, s.symbol, s.leverage, s.timeframe, s.strategyType, s.regimeAtCreation,
-          s.backtestSharpe, s.backtestWr, s.backtestMaxDd,
-          s.paperSharpe, s.paperWr, s.paperPnl, s.paperTrades,
-          s.liveSharpe, s.livePnl, s.liveTrades,
-          s.isCensored, s.censorReason, s.uncensoredSharpe, s.fitnessDivergent,
-          s.status, s.confidenceScore, s.createdAt, s.parentStrategyId, s.generation, s.backtestCount ?? 0, s.avgReturn ?? 0,
+          clampNumeric64(s.backtestSharpe), clampNumeric64(s.backtestWr), clampNumeric64(s.backtestMaxDd),
+          clampNumeric64(s.paperSharpe), clampNumeric64(s.paperWr), clampNumeric64(s.paperPnl), s.paperTrades,
+          clampNumeric64(s.liveSharpe), clampNumeric64(s.livePnl), s.liveTrades,
+          s.isCensored, s.censorReason, clampNumeric64(s.uncensoredSharpe), s.fitnessDivergent,
+          s.status, clampNumeric64(s.confidenceScore), s.createdAt, s.parentStrategyId, s.generation, s.backtestCount ?? 0, s.avgReturn ?? 0,
           s.genome ? JSON.stringify(s.genome) : null,
+          clampNumeric64(avgSharpeRatio),
         ]
       );
     } catch (err) {
