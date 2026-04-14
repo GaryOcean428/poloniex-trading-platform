@@ -245,8 +245,6 @@ class StrategyLearningEngine extends EventEmitter {
   private async ensureSchemaDefaults(): Promise<void> {
     if (this.schemaFixAttempted) return;
     this.schemaFixAttempted = true;
-    // Fix ALL known NOT NULL columns that lack defaults.
-    // avg_sharpe_ratio was the missing one crashing every cycle.
     const columnsToFix = ['backtest_count', 'avg_return', 'avg_sharpe_ratio'];
     for (const col of columnsToFix) {
       try {
@@ -1042,8 +1040,11 @@ class StrategyLearningEngine extends EventEmitter {
       // Update in-memory map
       this.strategies.set(s.strategyId, s);
 
-      // Compute avg_sharpe_ratio: use backtestSharpe as the initial value
-      const avgSharpeRatio = safeNum(s.backtestSharpe);
+      // Compute avg_sharpe_ratio as the best available Sharpe across lifecycle phases.
+      // Strategies with no trades or insufficient data will have all Sharpe fields as
+      // null (e.g. during early backtesting or when a backtest produces zero trades).
+      // Fall back to 0.0 to satisfy the NOT NULL constraint on this column.
+      const avgSharpeRatio = s.liveSharpe ?? s.paperSharpe ?? s.backtestSharpe ?? 0.0;
 
       await query(
         `INSERT INTO strategy_performance (
