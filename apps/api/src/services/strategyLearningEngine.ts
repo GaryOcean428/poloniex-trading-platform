@@ -201,7 +201,7 @@ class StrategyLearningEngine extends EventEmitter {
   private async ensureSchemaDefaults(): Promise<void> {
     if (this.schemaFixAttempted) return;
     this.schemaFixAttempted = true;
-    const columnsToFix = ['backtest_count', 'avg_return'];
+    const columnsToFix = ['backtest_count', 'avg_return', 'avg_sharpe_ratio'];
     for (const col of columnsToFix) {
       try {
         await query(`ALTER TABLE strategy_performance ALTER COLUMN ${col} SET DEFAULT 0`);
@@ -821,6 +821,12 @@ class StrategyLearningEngine extends EventEmitter {
       // Update in-memory map
       this.strategies.set(s.strategyId, s);
 
+      // Compute avg_sharpe_ratio as the best available Sharpe across lifecycle phases.
+      // Strategies with no trades or insufficient data will have all Sharpe fields as
+      // null (e.g. during early backtesting or when a backtest produces zero trades).
+      // Fall back to 0.0 to satisfy the NOT NULL constraint on this column.
+      const avgSharpeRatio = s.liveSharpe ?? s.paperSharpe ?? s.backtestSharpe ?? 0.0;
+
       await query(
         `INSERT INTO strategy_performance (
           strategy_id, strategy_name, symbol, leverage, timeframe, strategy_type, regime_at_creation,
@@ -829,6 +835,7 @@ class StrategyLearningEngine extends EventEmitter {
           live_sharpe, live_pnl, live_trades,
           is_censored, censor_reason, uncensored_sharpe, fitness_divergent,
           status, confidence_score, created_at, parent_strategy_id, generation, backtest_count, avg_return,
+          avg_sharpe_ratio,
           signal_genome
         ) VALUES (
           $1, $2, $3, $4, $5, $6, $7,
@@ -837,7 +844,8 @@ class StrategyLearningEngine extends EventEmitter {
           $15, $16, $17,
           $18, $19, $20, $21,
           $22, $23, $24, $25, $26, $27, $28,
-          $29
+          $29,
+          $30
         )
         ON CONFLICT (strategy_id) DO UPDATE SET
           strategy_name       = EXCLUDED.strategy_name,
@@ -866,6 +874,7 @@ class StrategyLearningEngine extends EventEmitter {
           generation          = EXCLUDED.generation,
           backtest_count      = EXCLUDED.backtest_count,
           avg_return          = EXCLUDED.avg_return,
+          avg_sharpe_ratio    = EXCLUDED.avg_sharpe_ratio,
           signal_genome       = EXCLUDED.signal_genome`,
         [
           s.strategyId, s.strategyId, s.symbol, s.leverage, s.timeframe, s.strategyType, s.regimeAtCreation,
@@ -874,6 +883,7 @@ class StrategyLearningEngine extends EventEmitter {
           s.liveSharpe, s.livePnl, s.liveTrades,
           s.isCensored, s.censorReason, s.uncensoredSharpe, s.fitnessDivergent,
           s.status, s.confidenceScore, s.createdAt, s.parentStrategyId, s.generation, s.backtestCount ?? 0, s.avgReturn ?? 0,
+          avgSharpeRatio,
           s.genome ? JSON.stringify(s.genome) : null,
         ]
       );
