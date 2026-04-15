@@ -1,6 +1,6 @@
 /**
  * Environment Configuration and Validation
- * 
+ *
  * Validates required environment variables and provides secure configuration
  * for the backend service using Zod for runtime validation.
  */
@@ -31,6 +31,7 @@ const envSchema = z.object({
   POLONIEX_API_KEY: z.string().optional(),
   POLONIEX_API_SECRET: z.string().optional(),
   REDIS_URL: z.string().optional(),
+  ML_WORKER_URL: z.string().url().optional(),
 });
 
 export type EnvironmentConfig = z.infer<typeof envSchema>;
@@ -41,22 +42,22 @@ export type EnvironmentConfig = z.infer<typeof envSchema>;
 export function validateEnvironment(): EnvironmentConfig {
   try {
     const validated = envSchema.parse(process.env);
-    
+
     // Production-specific warnings
     if (validated.NODE_ENV === 'production') {
       if (!validated.FRONTEND_URL) {
         logger.warn('FRONTEND_URL not set in production - CORS may not work correctly');
       }
-      
+
       if (!validated.API_ENCRYPTION_KEY) {
         logger.warn('API_ENCRYPTION_KEY not set - using JWT_SECRET for API key encryption');
       }
-      
+
       if (!validated.POLONIEX_API_KEY || !validated.POLONIEX_API_SECRET) {
         logger.warn('Poloniex API credentials not set - trading features will be limited');
       }
     }
-    
+
     // Log successful validation
     logger.info('Environment validation passed', {
       NODE_ENV: validated.NODE_ENV,
@@ -69,7 +70,7 @@ export function validateEnvironment(): EnvironmentConfig {
       HAS_REDIS: !!validated.REDIS_URL,
       CORS_ORIGINS_COUNT: validated.CORS_ALLOWED_ORIGINS?.length || 0
     });
-    
+
     return validated;
   } catch (error) {
     if (error instanceof z.ZodError) {
