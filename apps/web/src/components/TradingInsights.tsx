@@ -57,7 +57,6 @@ const TradingInsights: React.FC<TradingInsightsProps> = ({
       setInsights(prev => [insight, ...prev.slice(0, 4)]); // Keep last 5 insights
     } catch (_err) {
       setError('Failed to generate trading insight');
-      // console.error('Trading insight error:', err);
     } finally {
       setLoading(false);
     }
@@ -69,7 +68,7 @@ const TradingInsights: React.FC<TradingInsightsProps> = ({
     setUserQuery('');
   };
 
-  const getInsightIcon = (type: TradingInsight['type']) => {
+  const getInsightIcon = (type?: TradingInsight['type']) => {
     switch (type) {
       case 'recommendation':
         return <TrendingUp className="h-4 w-4" />;
@@ -107,7 +106,7 @@ const TradingInsights: React.FC<TradingInsightsProps> = ({
                 ? 'bg-green-100 text-green-800' 
                 : 'bg-yellow-100 text-yellow-800'
             }`}>
-              {connectionStatus === 'connected' ? '🤖 Claude Sonnet 4.5' : '🧪 Mock'}
+              {connectionStatus === 'connected' ? '\uD83E\uDD16 Claude Sonnet 4.5' : '\uD83E\uDDEA Mock'}
             </div>
           </div>
           <div className="flex items-center space-x-2">
@@ -180,18 +179,18 @@ const TradingInsights: React.FC<TradingInsightsProps> = ({
               <div className="flex items-start justify-between mb-2">
                 <div className="flex items-center space-x-2">
                   {getInsightIcon(insight.type)}
-                  <h4 className="text-sm font-medium text-gray-900">{insight.title}</h4>
+                  <h4 className="text-sm font-medium text-gray-900">{insight.title || 'Insight'}</h4>
                 </div>
                 <div className="flex items-center space-x-2 text-xs text-gray-500">
                   <Clock className="h-3 w-3" />
-                  <span>{insight.timeframe}</span>
-                  <span className={`font-medium ${getConfidenceColor(insight.confidence)}`}>
-                    {insight.confidence}%
+                  <span>{insight.timeframe || 'N/A'}</span>
+                  <span className={`font-medium ${getConfidenceColor(insight.confidence ?? 0)}`}>
+                    {insight.confidence ?? 0}%
                   </span>
                 </div>
               </div>
               
-              <p className="text-sm text-gray-600 leading-relaxed">{insight.content}</p>
+              <p className="text-sm text-gray-600 leading-relaxed">{insight.content || ''}</p>
               
               <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-100">
                 <span className={`text-xs px-2 py-1 rounded-full ${
@@ -200,10 +199,10 @@ const TradingInsights: React.FC<TradingInsightsProps> = ({
                   insight.type === 'market_outlook' ? 'bg-purple-100 text-purple-800' :
                   'bg-gray-100 text-gray-800'
                 }`}>
-                  {insight.type.replace('_', ' ').toUpperCase()}
+                  {(insight.type ?? 'analysis').replace('_', ' ').toUpperCase()}
                 </span>
                 <span className="text-xs text-gray-400">
-                  {insight.createdAt.toLocaleTimeString()}
+                  {insight.createdAt instanceof Date ? insight.createdAt.toLocaleTimeString() : 'now'}
                 </span>
               </div>
             </div>
