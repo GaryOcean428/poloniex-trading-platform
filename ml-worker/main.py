@@ -3,7 +3,6 @@ ML Worker FastAPI Server
 Serves ML predictions via HTTP and listens on Redis pub/sub.
 """
 
-import asyncio
 import json
 import logging
 import os
