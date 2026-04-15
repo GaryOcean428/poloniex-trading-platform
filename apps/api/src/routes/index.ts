@@ -26,6 +26,7 @@ export { default as proxyRoutes } from './proxy.js';
 export { default as mlRoutes } from './ml.js';
 export { default as qigRoutes } from './qig.js';
 export { default as agentRoutes } from './agent.js';
+export { default as aiRoutes } from './ai.js';
 
 // Monitoring & Admin
 export { default as dashboardRoutes } from './dashboard.js';
