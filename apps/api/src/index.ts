@@ -30,6 +30,7 @@ import publicAdminRoutes from './routes/public-admin.js';
 import versionCheckRoutes from './routes/version-check.js';
 import autonomousTraderRoutes from './routes/autonomousTrader.js';
 import reconciliationRoutes from './routes/reconciliation.js';
+import aiRoutes from './routes/ai.js';
 
 // Import services
 import { logger } from './utils/logger.js';
@@ -177,6 +178,7 @@ app.use('/api/admin', adminRoutes); // Admin routes for migrations
 app.use('/api/dashboard', dashboardRoutes); // Unified dashboard data endpoint
 app.use('/api/ml', mlRoutes); // ML model predictions and performance
 app.use('/api/qig', qigRoutes); // QIG-enhanced predictions with information geometry
+app.use('/api/ai', aiRoutes); // AI trading insights
 app.use('/api/public-admin', publicAdminRoutes); // Public admin routes for password reset
 
 // Legacy proxy routes (deprecated - use futures API instead)
@@ -353,7 +355,7 @@ io.on('connection', (socket) => {
 
 // Start server
 server.listen(PORT, '::', async () => {
-  logger.info(`✅ Backend startup complete`, {
+  logger.info(`\u2705 Backend startup complete`, {
     port: PORT,
     env: process.env.NODE_ENV || 'development',
     timestamp: new Date().toISOString(),
@@ -368,20 +370,20 @@ server.listen(PORT, '::', async () => {
   try {
     logger.info('Refreshing PostgreSQL collation metadata...');
     await refreshKnownDatabaseCollationVersions();
-    logger.info('✅ PostgreSQL collation metadata refresh completed');
+    logger.info('\u2705 PostgreSQL collation metadata refresh completed');
 
     logger.info('Running database migrations...');
     await runAllMigrations();
-    logger.info('✅ Database migrations completed');
+    logger.info('\u2705 Database migrations completed');
   } catch (error) {
-    logger.error('❌ Database migration failed:', error);
+    logger.error('\u274c Database migration failed:', error);
     process.exit(1);
   }
 
   // Run state reconciliation for all active users before trading loops start
   try {
     await stateReconciliationService.reconcileAllActive();
-    logger.info('✅ Startup state reconciliation completed');
+    logger.info('\u2705 Startup state reconciliation completed');
   } catch (error) {
     logger.warn('[RECONCILE] Startup reconciliation encountered an error:', error);
   }
@@ -417,7 +419,7 @@ server.listen(PORT, '::', async () => {
   if (process.env.NODE_ENV === 'production') {
     setInterval(() => {
       const memUsage = process.memoryUsage();
-      logger.info('💓 Backend heartbeat', {
+      logger.info('\ud83d\udc93 Backend heartbeat', {
         uptime: Math.floor(process.uptime()),
         memory: {
           heapUsed: Math.round(memUsage.heapUsed / 1024 / 1024),
