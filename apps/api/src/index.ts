@@ -56,15 +56,11 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
+// Railway/Cloud proxies set X-Forwarded-* headers. Trust the first proxy hop
+// to enable accurate client IP detection and avoid express-rate-limit
+// ERR_ERL_UNEXPECTED_X_FORWARDED_FOR warnings.
 app.set('trust proxy', 1);
 const server = createServer(app);
-
-// Railway/Cloud proxies set X-Forwarded-* headers. Express defaults to not trusting
-// proxies, which breaks accurate client IP detection (and triggers express-rate-limit
-// ERR_ERL_UNEXPECTED_X_FORWARDED_FOR). Trust the first proxy hop in production.
-if (env.NODE_ENV === 'production') {
-  app.set('trust proxy', 1);
-}
 
 // Use Railway PORT environment variable or fallback to .clinerules compliant port range (8765-8799)
 const PORT = env.PORT;
