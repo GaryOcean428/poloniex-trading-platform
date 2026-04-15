@@ -260,6 +260,15 @@ class StrategyLearningEngine extends EventEmitter {
 
     // Widen numeric columns that are too narrow (NUMERIC(6,4) overflows at ±100).
     // backtest_sharpe, backtest_max_dd, and confidence_score can legitimately exceed 100.
+    // Drop dependent view before altering column types (PostgreSQL blocks ALTER
+    // on columns used by views). Re-create it after all ALTERs complete.
+    try {
+      await query('DROP VIEW IF EXISTS strategy_performance_summary CASCADE');
+      logger.info('[SLE] Dropped strategy_performance_summary view for schema migration');
+    } catch (err: any) {
+      logger.debug(`[SLE] Could not drop view: ${err.message}`);
+    }
+
     const columnsToWiden = [
       'backtest_sharpe', 'backtest_wr', 'backtest_max_dd',
       'paper_sharpe', 'paper_wr', 'paper_pnl',
@@ -277,6 +286,32 @@ class StrategyLearningEngine extends EventEmitter {
           logger.debug(`[SLE] Could not widen ${col}: ${err.message}`);
         }
       }
+    }
+
+    // Recreate the view after column type changes
+    try {
+      await query(`
+        CREATE OR REPLACE VIEW strategy_performance_summary AS
+        SELECT
+            s.name,
+            s.type,
+            s.description,
+            COALESCE(sp.avg_return, 0) as avg_return,
+            COALESCE(sp.avg_sharpe_ratio, 0) as avg_sharpe_ratio,
+            COALESCE(sp.avg_max_drawdown, 0) as avg_max_drawdown,
+            COALESCE(sp.win_rate, 0) as win_rate,
+            COALESCE(sp.confidence_score, 0) as confidence_score,
+            COALESCE(sp.backtest_count, 0) as backtest_count,
+            sp.last_backtest_date,
+            s.created_at,
+            s.updated_at
+        FROM strategy_definitions s
+        LEFT JOIN strategy_performance sp ON s.name = sp.strategy_name
+        WHERE s.is_active = true
+      `);
+      logger.info('[SLE] Recreated strategy_performance_summary view');
+    } catch (err: any) {
+      logger.warn(`[SLE] Could not recreate view: ${err.message}`);
     }
 
     // Ensure signal_genome JSONB column exists — defensive fallback in case
@@ -1099,9 +1134,8 @@ class StrategyLearningEngine extends EventEmitter {
           s.paperSharpe, s.paperWr, s.paperPnl, s.paperTrades,
           s.liveSharpe, s.livePnl, s.liveTrades,
           s.isCensored, s.censorReason, s.uncensoredSharpe, s.fitnessDivergent,
-          s.status, s.confidenceScore, s.createdAt, s.parentStrategyId, s.generation, s.backtestCount ?? 0, s.avgReturn ?? 0, s.avgSharpeRatio ?? 0,
+          s.status, s.confidenceScore, s.createdAt, s.parentStrategyId, s.generation, s.backtestCount ?? 0, clampNumeric64(s.avgReturn ?? 0), clampNumeric64(avgSharpeRatio),
           s.genome ? JSON.stringify(s.genome) : null,
-          clampNumeric64(avgSharpeRatio),
         ]
       );
     } catch (err) {
