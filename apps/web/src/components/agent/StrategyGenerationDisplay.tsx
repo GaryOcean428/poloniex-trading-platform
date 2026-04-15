@@ -63,7 +63,7 @@ const StrategyGenerationDisplay: React.FC<StrategyGenerationDisplayProps> = ({
       const interval = setInterval(() => {
         fetchCurrentGeneration();
         fetchRecentStrategies();
-      }, 3000); // Update every 3 seconds for real-time feel
+      }, 30000); // Update every 30 seconds
 
       return () => clearInterval(interval);
     }
