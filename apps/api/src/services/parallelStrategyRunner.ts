@@ -96,6 +96,11 @@ class ParallelStrategyRunner extends EventEmitter {
       const virtualCapital = BASE_VIRTUAL_CAPITAL * capitalMultiplier;
 
       // Create isolated paper trading session
+      const strategyConfig = {
+        type: strategy.strategyType,
+        parameters: {},
+        genome: strategy.genome ?? undefined,
+      };
       const session = await paperTradingService.createSession({
         name: `PSR_${strategy.strategyId}`,
         strategyName: strategy.strategyId,
@@ -103,12 +108,13 @@ class ParallelStrategyRunner extends EventEmitter {
         timeframe: strategy.timeframe,
         initialCapital: virtualCapital,
         leverage: strategy.leverage,
-        strategy: {
-          type: strategy.strategyType,
-          parameters: {},
-          genome: strategy.genome ?? undefined,
-        },
+        strategy: strategyConfig,
       });
+
+      // CRITICAL: Actually start the session so it subscribes to market data
+      // and runs the 60s strategy execution loop. Without this, paper sessions
+      // sit idle with 0 trades and never accumulate metrics for promotion.
+      await paperTradingService.startSession(session.id, strategyConfig);
 
       const metrics: StrategyMetrics = {
         strategyId: strategy.strategyId,
