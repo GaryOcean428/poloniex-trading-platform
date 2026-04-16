@@ -483,6 +483,33 @@ class PaperTradingService extends EventEmitter {
 
       // Update session totals
       session.unrealizedPnl = totalUnrealizedPnl;
+
+      // Deduct perpetual funding rate every 8 hours for open positions
+      // Longs pay funding, shorts receive it (when rate > 0)
+      const FUNDING_RATE = 0.0001; // 0.01% per 8h — Poloniex perpetual default
+      const FUNDING_INTERVAL_MS = 8 * 60 * 60 * 1000;
+      const now = Date.now();
+      if (!session._lastFundingTime) {
+        const created = session.createdAt ? new Date(session.createdAt).getTime() : NaN;
+        session._lastFundingTime = isNaN(created) ? now : created;
+      }
+      while (now - session._lastFundingTime >= FUNDING_INTERVAL_MS) {
+        session._lastFundingTime += FUNDING_INTERVAL_MS;
+        let totalFunding = 0;
+        for (const [, position] of session.positions) {
+          if (position.status === 'open') {
+            const currentPrice = position.currentPrice || position.entryPrice;
+            const notional = position.size * currentPrice;
+            const fundingSign = position.side === 'long' ? 1 : -1;
+            totalFunding += notional * FUNDING_RATE * fundingSign;
+          }
+        }
+        if (totalFunding !== 0) {
+          session.cash -= totalFunding;
+          logger.debug(`[PT] Session ${session.id} funding: $${totalFunding > 0 ? '-' : '+'}${Math.abs(totalFunding).toFixed(4)}`);
+        }
+      }
+
       session.currentValue = session.cash + session.margin + totalUnrealizedPnl;
       session.lastUpdateAt = new Date();
 
