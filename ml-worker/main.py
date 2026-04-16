@@ -132,6 +132,38 @@ def _handle_predict(payload: dict) -> dict:
             signal = predictor.get_trading_signal(data, current_price)
             return {"status": "success", "symbol": symbol, **signal}
 
+        if action == "qig_analyze":
+            # QIG physics-based market analysis (no ML models needed)
+            try:
+                from qig_engine import full_qig_analysis, market_state_distance
+            except ImportError:
+                return {"status": "error", "error": "QIG engine not available"}
+
+            closes = data["close"].tolist()
+            highs = data["high"].tolist()
+            lows = data["low"].tolist()
+            current_price = float(payload.get("current_price", closes[-1] if closes else 0))
+
+            # Run full QIG analysis — regime, geometric confidence, convergence
+            # Pass empty predictions dict when no ML predictions available
+            ml_predictions = payload.get("predictions", {})
+            analysis = full_qig_analysis(closes, highs, lows, ml_predictions, current_price)
+
+            return {
+                "status": "success",
+                "symbol": symbol,
+                "regime": analysis.regime.regime.value,
+                "regime_confidence": analysis.regime.confidence,
+                "volatility_ratio": analysis.regime.volatility_ratio,
+                "trend_strength": analysis.regime.trend_strength,
+                "regime_age_bars": analysis.regime.regime_age_bars,
+                "recommended_strategy": analysis.regime.recommended_strategy,
+                "geometric_confidence": analysis.geometric_confidence,
+                "geometric_agreement": analysis.geometric_agreement,
+                "regime_weights": analysis.regime_weights,
+                "qig_available": analysis.qig_available,
+            }
+
         return {"status": "error", "error": f"Unknown action: {action}"}
 
     except Exception as exc:

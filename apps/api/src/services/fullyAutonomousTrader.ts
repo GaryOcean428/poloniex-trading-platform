@@ -104,6 +104,14 @@ interface MarketAnalysis {
     confidence: number;
     targetPrice: number;
   };
+  qig?: {
+    regime: 'trending' | 'transitional' | 'ranging';
+    regimeConfidence: number;
+    volatilityRatio: number;
+    trendStrength: number;
+    recommendedStrategy: string;
+    geometricConfidence: number;
+  } | null;
 }
 
 class FullyAutonomousTrader extends EventEmitter {
@@ -550,6 +558,31 @@ class FullyAutonomousTrader extends EventEmitter {
       }
     }
 
+    // QIG physics-based regime analysis (fire-and-forget — non-blocking)
+    let qig: MarketAnalysis['qig'] = null;
+    try {
+      const ohlcvForQig = validOhlcv.map(c => ({
+        close: c.price, high: c.high, low: c.low, open: c.open,
+        volume: c.volume, timestamp: Date.now(),
+      }));
+      const qigResult = await mlPredictionService.getQIGAnalysis(
+        symbol, ohlcvForQig, currentPrice
+      );
+      if (qigResult && qigResult.regime) {
+        qig = {
+          regime: qigResult.regime,
+          regimeConfidence: qigResult.regime_confidence || 0,
+          volatilityRatio: qigResult.volatility_ratio || 1,
+          trendStrength: qigResult.trend_strength || 0,
+          recommendedStrategy: qigResult.recommended_strategy || 'unknown',
+          geometricConfidence: qigResult.geometric_confidence || 0,
+        };
+        logger.info(`[QIG] ${symbol}: regime=${qig.regime} conf=${qig.regimeConfidence} strategy=${qig.recommendedStrategy}`);
+      }
+    } catch (_qigError) {
+      // Non-critical — FAT works without QIG
+    }
+
     return {
       symbol,
       trend,
@@ -557,7 +590,8 @@ class FullyAutonomousTrader extends EventEmitter {
       momentum,
       support,
       resistance,
-      mlPrediction
+      mlPrediction,
+      qig
     };
   }
 
@@ -716,16 +750,46 @@ class FullyAutonomousTrader extends EventEmitter {
     const maxPossibleScore = genome ? 130 : 90;
     confidence = Math.min(Math.round((Math.abs(totalScore) / maxPossibleScore) * 100), 100);
 
+    // QIG regime modifier: adjust confidence based on market phase
+    let qigSizeMultiplier = 1.0;
+    if (analysis.qig) {
+      const regime = analysis.qig.regime;
+      const regimeConf = analysis.qig.regimeConfidence;
+
+      if (regime === 'transitional') {
+        // Most dangerous regime — reduce confidence and size
+        confidence = Math.round(confidence * 0.7);
+        qigSizeMultiplier = 0.5;
+        logger.info(`[QIG] Transitional regime — reducing confidence to ${confidence}%, size ×0.5`);
+      } else if (regime === 'trending' && totalScore > 0 && analysis.qig.trendStrength > 0.3) {
+        // Confirmed trend — slight confidence boost
+        confidence = Math.min(Math.round(confidence * 1.15), 100);
+        qigSizeMultiplier = 1.2;
+      } else if (regime === 'ranging' && Math.abs(totalScore) < config.signalScoreThreshold * 1.5) {
+        // Ranging with weak signal — reduce conviction
+        confidence = Math.round(confidence * 0.85);
+        qigSizeMultiplier = 0.8;
+      }
+
+      // Apply geometric confidence as a floor — if QIG says low confidence, trust it
+      if (analysis.qig.geometricConfidence > 0 && analysis.qig.geometricConfidence < 0.3) {
+        confidence = Math.min(confidence, 40);
+        qigSizeMultiplier = Math.min(qigSizeMultiplier, 0.6);
+      }
+    }
+
     if (totalScore > config.signalScoreThreshold) {
       action = 'BUY';
       side = 'long';
       reason = `Bullish: Trend=${factors.trend}, Mom=${safeFixed(factors.momentum, 1)}, ML=${safeFixed(factors.ml, 1)}` +
-        (factors.genome ? `, Genome=${factors.genome}` : '');
+        (factors.genome ? `, Genome=${factors.genome}` : '') +
+        (analysis.qig ? `, QIG=${analysis.qig.regime}` : '');
     } else if (totalScore < -config.signalScoreThreshold) {
       action = 'SELL';
       side = 'short';
       reason = `Bearish: Trend=${factors.trend}, Mom=${safeFixed(factors.momentum, 1)}, ML=${safeFixed(factors.ml, 1)}` +
-        (factors.genome ? `, Genome=${factors.genome}` : '');
+        (factors.genome ? `, Genome=${factors.genome}` : '') +
+        (analysis.qig ? `, QIG=${analysis.qig.regime}` : '');
     }
 
     if (action === 'HOLD') return null;
@@ -742,7 +806,8 @@ class FullyAutonomousTrader extends EventEmitter {
     const currentEquity = metrics?.currentEquity ?? config.initialCapital;
     const currentDrawdown = ((config.initialCapital - currentEquity) / config.initialCapital) * 100;
     const baseSize = Math.min(positionSizeUsdt, config.initialCapital * MAX_POSITION_FRACTION);
-    const adjustedSize = this.getDrawdownAdjustedPositionSize(baseSize, currentDrawdown);
+    const drawdownAdjusted = this.getDrawdownAdjustedPositionSize(baseSize, currentDrawdown);
+    const adjustedSize = drawdownAdjusted * qigSizeMultiplier;
 
     // Calculate stop loss and take profit using config percentages
     const stopLoss = side === 'long'
