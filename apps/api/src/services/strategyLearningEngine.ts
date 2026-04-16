@@ -106,6 +106,8 @@ const BRIDGE_LAW_EXPONENT = 0.74;
 const DEFAULT_STRATEGY_LOOKBACK = 50;
 const SUPPORTED_TF_MINUTES: Record<string, number> = { '5m': 5, '15m': 15, '1h': 60, '4h': 240 };
 const BACKTEST_THRESHOLDS = { minSharpe: 1.0, minWinRate: 0.45, maxDrawdown: 0.15 };
+/** Minimum capital floor for drawdown calculations — prevents tiny balances from false-killing strategies */
+const MIN_CAPITAL_FLOOR = 27;
 const PAPER_THRESHOLDS = { minSharpe: 0.8, minPnl: 0, minTrades: 30, minDays: 7, minConfidence: 60 };
 const FITNESS_DIVERGENCE_THRESHOLD = 0.20;
 const QIG_FRAGILITY_WARNING_THRESHOLD = 0.6;
@@ -171,10 +173,10 @@ class StrategyLearningEngine extends EventEmitter {
       const result = await pool.query(
         `SELECT user_id FROM api_credentials WHERE is_active = true LIMIT 1`
       );
-      if (result.rows.length === 0) return this.cachedBalance || 27; // safe floor
+      if (result.rows.length === 0) return this.cachedBalance || MIN_CAPITAL_FLOOR;
       const userId = result.rows[0].user_id;
       const credentials = await apiCredentialsService.getCredentials(userId);
-      if (!credentials) return this.cachedBalance || 27;
+      if (!credentials) return this.cachedBalance || MIN_CAPITAL_FLOOR;
       const balance = await poloniexFuturesService.getAccountBalance(credentials);
       const avail = parseFloat(balance?.availMgn ?? balance?.eq ?? '0');
       if (avail > 0) {
@@ -182,10 +184,10 @@ class StrategyLearningEngine extends EventEmitter {
         this.lastBalanceFetchTime = now;
         logger.info(`[SLE] Fetched actual balance: $${avail.toFixed(2)} USDT`);
       }
-      return this.cachedBalance || 27;
+      return this.cachedBalance || MIN_CAPITAL_FLOOR;
     } catch (err) {
       logger.warn('[SLE] Failed to fetch balance, using cached:', err instanceof Error ? err.message : String(err));
-      return this.cachedBalance || 27;
+      return this.cachedBalance || MIN_CAPITAL_FLOOR;
     }
   }
 
@@ -359,7 +361,7 @@ class StrategyLearningEngine extends EventEmitter {
       const strategyDef: Record<string, any> = { type: strategy.strategyType, parameters: {}, lookback: DEFAULT_STRATEGY_LOOKBACK };
       if (strategy.genome) { strategyDef.genome = strategy.genome; }
       (backtestingEngine as any).registerStrategy(strategy.strategyId, strategyDef);
-      const result = await (backtestingEngine as any).runBacktest(strategy.strategyId, { symbol: strategy.symbol, timeframe: strategy.timeframe, startDate: splitDate, endDate, leverage: strategy.leverage, initialCapital: this.cachedBalance || 27 });
+      const result = await (backtestingEngine as any).runBacktest(strategy.strategyId, { symbol: strategy.symbol, timeframe: strategy.timeframe, startDate: splitDate, endDate, leverage: strategy.leverage, initialCapital: this.cachedBalance || MIN_CAPITAL_FLOOR });
       return {
         sharpe: safeNum(result?.sharpeRatio ?? result?.metrics?.sharpeRatio),
         winRate: safeNum(result?.winRate ?? result?.metrics?.winRate) / 100,
@@ -412,7 +414,7 @@ class StrategyLearningEngine extends EventEmitter {
       if ((s.phaseClock ?? 0) >= PHASE_CLOCK_KILL_CYCLES) killReason = `phase_clock_${s.phaseClock}_negative_cycles`;
       if (s.fitnessDivergent && s.isCensored) { killReason = 'fitness_divergent_and_censored'; s.status = 'censored_rejected'; }
       else if (s.fitnessDivergent) killReason = 'fitness_divergent_unreliable_estimate';
-      if (s.paperPnl !== null && s.paperTrades > 5) { const ddPct = Math.abs(Math.min(0, s.paperPnl)) / 1000; if (ddPct > 0.10) killReason = `drawdown_${(ddPct * 100).toFixed(1)}pct`; }
+      if (s.paperPnl !== null && s.paperTrades > 5) { const capital = Math.max(this.cachedBalance, MIN_CAPITAL_FLOOR); const ddPct = Math.abs(Math.min(0, s.paperPnl)) / capital; if (ddPct > 0.10) killReason = `drawdown_${(ddPct * 100).toFixed(1)}pct`; }
       if (killReason) {
         s.status = s.status === 'censored_rejected' ? 'censored_rejected' : 'killed';
         await parallelStrategyRunner.removeStrategy(s.strategyId, killReason);

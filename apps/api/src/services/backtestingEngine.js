@@ -224,6 +224,10 @@ class BacktestingEngine extends EventEmitter {
   async runBacktestSimulation(strategy, historicalData, config) {
     let currentPosition = null, stopLoss = null, takeProfit = null;
     const leverage = config.leverage ?? 1;
+    // Poloniex perpetual funding rate: ~0.01% every 8 hours (3× daily)
+    const FUNDING_RATE = 0.0001;
+    const FUNDING_INTERVAL_MS = 8 * 60 * 60 * 1000; // 8h in ms
+    let lastFundingTime = 0;
     // Use enough lookback for all indicators: SMA50 needs 50, MACD needs 26,
     // so minimum useful lookback is 50. Never go below what the strategy requests.
     const lookback = Math.max(strategy.lookback || 50, 50);
@@ -231,6 +235,23 @@ class BacktestingEngine extends EventEmitter {
       const currentCandle = historicalData[i];
       const previousCandles = historicalData.slice(Math.max(0, i - lookback), i);
       if (previousCandles.length < lookback) continue;
+
+      // Apply funding rate to open positions every 8h
+      if (currentPosition) {
+        const candleTs = new Date(currentCandle.timestamp).getTime();
+        if (!isNaN(candleTs)) {
+          if (lastFundingTime === 0) lastFundingTime = candleTs;
+          while (candleTs - lastFundingTime >= FUNDING_INTERVAL_MS) {
+            lastFundingTime += FUNDING_INTERVAL_MS;
+            const notional = currentPosition.size * currentCandle.close;
+          const fundingSign = currentPosition.side === 'long' ? 1 : -1;
+          const fundingCost = notional * FUNDING_RATE * fundingSign;
+          this.currentBacktest.portfolio.cash -= fundingCost;
+          this.currentBacktest.portfolio.totalValue -= fundingCost;
+          }
+        }
+      }
+
       const indicators = this.calculateTechnicalIndicators(previousCandles, currentCandle);
       const signals = await this.generateTradingSignals(strategy, indicators, currentCandle);
       if (currentPosition) {
@@ -251,7 +272,9 @@ class BacktestingEngine extends EventEmitter {
       }
       if (!currentPosition && signals.entry) {
         const entryResult = await this.executeEntry(signals.entry, currentCandle, config);
-        if (entryResult.success) { currentPosition = entryResult.position; stopLoss = entryResult.stopLoss; takeProfit = entryResult.takeProfit; }
+        if (entryResult.success) {
+          currentPosition = entryResult.position; stopLoss = entryResult.stopLoss; takeProfit = entryResult.takeProfit;
+        }
       }
       this.updatePortfolioValue(currentCandle, currentPosition);
       this.currentBacktest.equity_curve.push({ timestamp: currentCandle.timestamp, totalValue: this.currentBacktest.portfolio.totalValue, cash: this.currentBacktest.portfolio.cash, unrealizedPnl: this.currentBacktest.portfolio.unrealizedPnl });
