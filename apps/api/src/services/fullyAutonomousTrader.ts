@@ -14,10 +14,13 @@ import { pool } from '../db/connection.js';
 import { logger } from '../utils/logger.js';
 import { validateMarketData } from '../utils/marketDataValidator.js';
 import { apiCredentialsService } from './apiCredentialsService.js';
+import backtestingEngine from './backtestingEngine.js';
 import { getPrecisions } from './marketCatalog.js';
 import mlPredictionService from './mlPredictionService.js';
 import poloniexFuturesService from './poloniexFuturesService.js';
 import riskService from './riskService.js';
+import { buildIndicatorMap, evaluateGenomeEntry, type SignalGenome } from './signalGenome.js';
+import simpleMlService from './simpleMlService.js';
 
 /** Safe number formatting — returns fallback string for NaN/Infinity */
 function safeFixed(value: unknown, decimals: number, fallback = 'N/A'): string {
@@ -324,6 +327,11 @@ class FullyAutonomousTrader extends EventEmitter {
 
     logger.info(`Starting autonomous trading for user ${userId} (cycle: ${config.tradingCycleSeconds}s)`);
 
+    // Bootstrap ML models with historical data (fire-and-forget)
+    this.bootstrapMlModels(config.symbols).catch(err => {
+      logger.debug('ML bootstrap skipped (worker may be unavailable):', err instanceof Error ? err.message : String(err));
+    });
+
     // Run immediately
     this.tradingCycle(userId).catch(err => {
       logger.error(`Trading cycle error for user ${userId}:`, err);
@@ -358,6 +366,11 @@ class FullyAutonomousTrader extends EventEmitter {
     try {
       // Update heartbeat to signal the trading loop is active
       this.updateHeartbeat(userId);
+
+      // Step 0: Reconcile DB positions with exchange (live mode only)
+      if (!config.paperTrading) {
+        await this.reconcilePositions(userId);
+      }
 
       // Step 1: Check risk limits
       const riskCheck = await this.checkRiskLimits(userId);
@@ -520,7 +533,21 @@ class FullyAutonomousTrader extends EventEmitter {
         targetPrice: predictions['1h'].price
       };
     } catch (_error) {
-      logger.warn(`ML prediction unavailable for ${symbol}`);
+      // Fall back to local simple ML service when ml-worker is unavailable
+      try {
+        const ohlcvForMl = validOhlcv.map(c => ({ close: c.price, high: c.high, low: c.low, open: c.open, volume: c.volume }));
+        const predictions = await simpleMlService.getMultiHorizonPredictions(symbol, ohlcvForMl);
+        const signal = await simpleMlService.getTradingSignal(symbol, ohlcvForMl, currentPrice);
+
+        mlPrediction = {
+          direction: signal.action === 'BUY' ? 'UP' : signal.action === 'SELL' ? 'DOWN' : 'NEUTRAL',
+          confidence: signal.confidence * 0.7, // Discount local predictions
+          targetPrice: predictions['1h'].price
+        };
+        logger.debug(`Using local ML fallback for ${symbol}`);
+      } catch (_fallbackError) {
+        logger.warn(`ML prediction unavailable for ${symbol} (both primary and fallback)`);
+      }
     }
 
     return {
@@ -551,8 +578,9 @@ class FullyAutonomousTrader extends EventEmitter {
     for (const [symbol, analysis] of analyses) {
       try {
         // Check if an SLE-promoted live strategy exists for this symbol.
-        // If so, use its leverage and strategy type instead of the default config.
+        // If so, use its leverage and signal genome for evolved signal generation.
         let effectiveConfig = config;
+        let liveGenome: SignalGenome | null = null;
         try {
           const liveStrategies = await pool.query(
             `SELECT * FROM strategy_performance WHERE status = 'live' AND symbol = $1
@@ -565,16 +593,25 @@ class FullyAutonomousTrader extends EventEmitter {
               ...config,
               leverage: parseFloat(liveStrategy.leverage) || config.leverage
             };
+            // Extract signal genome if available
+            if (liveStrategy.signal_genome) {
+              try {
+                liveGenome = typeof liveStrategy.signal_genome === 'string'
+                  ? JSON.parse(liveStrategy.signal_genome)
+                  : liveStrategy.signal_genome;
+              } catch { /* genome parse failure — use default signals */ }
+            }
             logger.debug(
               `[SLE] Using live strategy ${liveStrategy.strategy_id} params for ${symbol}: ` +
-              `leverage=${effectiveConfig.leverage}, type=${liveStrategy.strategy_type}`
+              `leverage=${effectiveConfig.leverage}, type=${liveStrategy.strategy_type}` +
+              (liveGenome ? `, genome=${liveGenome.entryConditions.length} conditions` : '')
             );
           }
         } catch (sleErr) {
           logger.warn(`[SLE] Failed to query live strategies for ${symbol}:`, sleErr);
         }
 
-        const signal = await this.generateSignal(userId, symbol, analysis, effectiveConfig);
+        const signal = await this.generateSignal(userId, symbol, analysis, effectiveConfig, liveGenome);
         if (signal && signal.confidence >= config.confidenceThreshold) {
           signals.push(signal);
         } else if (signal) {
@@ -590,13 +627,16 @@ class FullyAutonomousTrader extends EventEmitter {
   }
 
   /**
-   * Generate a trading signal for a symbol
+   * Generate a trading signal for a symbol.
+   * When a live genome from SLE is available, it contributes the highest-weight
+   * factor (±40) since it represents a pre-tested, evolved strategy.
    */
   private async generateSignal(
     userId: string,
     symbol: string,
     analysis: MarketAnalysis,
-    config: TradingConfig
+    config: TradingConfig,
+    genome?: SignalGenome | null
   ): Promise<TradingSignal | null> {
     const ticker = await poloniexFuturesService.getTickers(symbol);
     const rawTicker = ticker[0] ?? {};
@@ -618,12 +658,33 @@ class FullyAutonomousTrader extends EventEmitter {
     let reason = '';
 
     // Multi-factor signal generation
-    const factors = {
+    const factors: Record<string, number> = {
       trend: 0,
       momentum: 0,
       ml: 0,
-      volatility: 0
+      volatility: 0,
+      genome: 0
     };
+
+    // Genome factor (±40) — highest weight, from SLE-evolved strategy
+    if (genome && genome.entryConditions && genome.entryConditions.length > 0) {
+      try {
+        // Compute full indicator set using backtesting engine's TA library
+        const ohlcv = await poloniexFuturesService.getHistoricalData(symbol, '15m', 100);
+        if (ohlcv && ohlcv.length >= 20) {
+          const currentCandle = ohlcv[ohlcv.length - 1];
+          const indicators = backtestingEngine.calculateTechnicalIndicators(ohlcv, currentCandle);
+          const indicatorMap = buildIndicatorMap(indicators);
+          const genomeSignal = evaluateGenomeEntry(genome, indicatorMap);
+          if (genomeSignal) {
+            factors.genome = genomeSignal.side === 'long' ? 40 : -40;
+            logger.info(`[FAT+SLE] Genome signal: ${genomeSignal.side} (${genomeSignal.reason})`);
+          }
+        }
+      } catch (genomeErr) {
+        logger.warn(`[FAT] Genome evaluation failed for ${symbol}:`, genomeErr);
+      }
+    }
 
     // Trend factor (±30)
     if (analysis.trend === 'bullish') {
@@ -650,19 +711,21 @@ class FullyAutonomousTrader extends EventEmitter {
     }
 
     // Calculate raw score and normalize confidence to 0-100 scale
-    // Max possible |score| is ~90 (30+20+30+10), so normalize accordingly
-    const totalScore = factors.trend + factors.momentum + factors.ml + factors.volatility;
-    const maxPossibleScore = 90;
+    // Max possible |score| is ~130 (40+30+20+30+10) with genome, ~90 without
+    const totalScore = factors.trend + factors.momentum + factors.ml + factors.volatility + factors.genome;
+    const maxPossibleScore = genome ? 130 : 90;
     confidence = Math.min(Math.round((Math.abs(totalScore) / maxPossibleScore) * 100), 100);
 
     if (totalScore > config.signalScoreThreshold) {
       action = 'BUY';
       side = 'long';
-      reason = `Bullish: Trend=${factors.trend}, Momentum=${factors.momentum.toFixed(1)}, ML=${factors.ml.toFixed(1)}`;
+      reason = `Bullish: Trend=${factors.trend}, Mom=${safeFixed(factors.momentum, 1)}, ML=${safeFixed(factors.ml, 1)}` +
+        (factors.genome ? `, Genome=${factors.genome}` : '');
     } else if (totalScore < -config.signalScoreThreshold) {
       action = 'SELL';
       side = 'short';
-      reason = `Bearish: Trend=${factors.trend}, Momentum=${factors.momentum.toFixed(1)}, ML=${factors.ml.toFixed(1)}`;
+      reason = `Bearish: Trend=${factors.trend}, Mom=${safeFixed(factors.momentum, 1)}, ML=${safeFixed(factors.ml, 1)}` +
+        (factors.genome ? `, Genome=${factors.genome}` : '');
     }
 
     if (action === 'HOLD') return null;
@@ -990,6 +1053,91 @@ class FullyAutonomousTrader extends EventEmitter {
     } catch (err) {
       // Non-fatal — never break the trading loop for logging failures
       logger.warn('Failed to write agent_event:', err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  /**
+   * Bootstrap ML worker with historical OHLCV data for each symbol.
+   * Called once on startup — silently succeeds or fails.
+   */
+  private async bootstrapMlModels(symbols: string[]): Promise<void> {
+    for (const symbol of symbols) {
+      try {
+        const ohlcv = await poloniexFuturesService.getKlines(symbol, '1hour', 500);
+        if (ohlcv && ohlcv.length > 50) {
+          const trainingData = ohlcv.map((c: Record<string, unknown>) => ({
+            close: Number(c.close ?? c.price ?? 0),
+            high: Number(c.high ?? 0),
+            low: Number(c.low ?? 0),
+            open: Number(c.open ?? 0),
+            volume: Number(c.volume ?? 0),
+          }));
+          await mlPredictionService.trainModels(symbol, trainingData);
+          logger.info(`ML models bootstrapped for ${symbol} with ${trainingData.length} candles`);
+        }
+      } catch (_err) {
+        // Non-critical — simpleMlService fallback handles predictions
+      }
+    }
+  }
+
+  /**
+   * Reconcile DB position state with actual exchange positions.
+   * Logs drift but does not auto-close — lets the human investigate.
+   */
+  private async reconcilePositions(userId: string): Promise<void> {
+    try {
+      const credentials = await apiCredentialsService.getCredentials(userId);
+      if (!credentials) return;
+
+      // Get actual positions from Poloniex
+      const exchangePositions = await poloniexFuturesService.getPositions(credentials);
+      const openSymbols = new Set(
+        (exchangePositions || [])
+          .filter((p: Record<string, unknown>) => Number(p.qty || p.currentQty || 0) !== 0)
+          .map((p: Record<string, unknown>) => String(p.symbol))
+      );
+
+      // Get DB open trades (non-paper)
+      const dbResult = await pool.query(
+        `SELECT symbol, order_id FROM autonomous_trades
+         WHERE user_id = $1 AND status = 'open' AND paper_trade = false`,
+        [userId]
+      );
+      const dbSymbols = new Set(dbResult.rows.map((r: { symbol: string }) => r.symbol));
+
+      // Drift detection
+      const inDbNotExchange = [...dbSymbols].filter(s => !openSymbols.has(s));
+      const inExchangeNotDb = [...openSymbols].filter(s => !dbSymbols.has(s));
+
+      if (inDbNotExchange.length > 0) {
+        logger.warn(
+          `[RECONCILE] DB shows open positions not on exchange: ${inDbNotExchange.join(', ')} — ` +
+          `marking as closed`
+        );
+        for (const symbol of inDbNotExchange) {
+          await pool.query(
+            `UPDATE autonomous_trades SET status = 'closed', closed_at = NOW(),
+             close_reason = 'reconciliation: position not found on exchange'
+             WHERE user_id = $1 AND symbol = $2 AND status = 'open' AND paper_trade = false`,
+            [userId, symbol]
+          );
+        }
+      }
+
+      if (inExchangeNotDb.length > 0) {
+        logger.warn(
+          `[RECONCILE] Exchange has positions not tracked in DB: ${inExchangeNotDb.join(', ')} — ` +
+          `these may have been opened manually or by another system`
+        );
+        await this.logAgentEvent(userId, {
+          eventType: 'reconciliation_drift',
+          executionMode: 'live',
+          description: `Untracked exchange positions: ${inExchangeNotDb.join(', ')}`,
+        });
+      }
+    } catch (error) {
+      logger.warn('[RECONCILE] Position reconciliation failed:', error);
     }
   }
 
