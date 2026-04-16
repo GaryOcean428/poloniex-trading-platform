@@ -13,10 +13,10 @@ interface StrategyGeneration {
   status: 'generating' | 'analyzing' | 'backtesting' | 'completed' | 'failed';
   progress: number;
   current_step: string;
-  indicators: string[];
-  entry_conditions: string[];
-  exit_conditions: string[];
-  risk_parameters: {
+  indicators?: string[];
+  entry_conditions?: string[];
+  exit_conditions?: string[];
+  risk_parameters?: {
     stop_loss: number;
     take_profit: number;
     position_size: number;
@@ -202,7 +202,7 @@ const StrategyGenerationDisplay: React.FC<StrategyGenerationDisplayProps> = ({
                   Technical Indicators
                 </h4>
                 <div className="space-y-2">
-                  {currentGeneration.indicators.map((indicator, idx) => (
+                  {(currentGeneration.indicators ?? []).map((indicator, idx) => (
                     <div 
                       key={idx}
                       className="flex items-center gap-2 text-sm text-gray-600 bg-gray-50 rounded-lg p-2"
@@ -224,19 +224,19 @@ const StrategyGenerationDisplay: React.FC<StrategyGenerationDisplayProps> = ({
                   <div className="flex justify-between items-center text-sm bg-gray-50 rounded-lg p-2">
                     <span className="text-gray-600">Stop Loss</span>
                     <span className="font-semibold text-red-600">
-                      {currentGeneration.risk_parameters.stop_loss}%
+                      {currentGeneration.risk_parameters?.stop_loss ?? 0}%
                     </span>
                   </div>
                   <div className="flex justify-between items-center text-sm bg-gray-50 rounded-lg p-2">
                     <span className="text-gray-600">Take Profit</span>
                     <span className="font-semibold text-green-600">
-                      {currentGeneration.risk_parameters.take_profit}%
+                      {currentGeneration.risk_parameters?.take_profit ?? 0}%
                     </span>
                   </div>
                   <div className="flex justify-between items-center text-sm bg-gray-50 rounded-lg p-2">
                     <span className="text-gray-600">Position Size</span>
                     <span className="font-semibold text-gray-900">
-                      {currentGeneration.risk_parameters.position_size}%
+                      {currentGeneration.risk_parameters?.position_size ?? 0}%
                     </span>
                   </div>
                 </div>
@@ -250,7 +250,7 @@ const StrategyGenerationDisplay: React.FC<StrategyGenerationDisplayProps> = ({
                 Entry Conditions
               </h4>
               <div className="space-y-2">
-                {currentGeneration.entry_conditions.map((condition, idx) => (
+                {(currentGeneration.entry_conditions ?? []).map((condition, idx) => (
                   <div 
                     key={idx}
                     className="text-sm text-gray-600 bg-green-50 border border-green-200 rounded-lg p-3"
@@ -268,7 +268,7 @@ const StrategyGenerationDisplay: React.FC<StrategyGenerationDisplayProps> = ({
                 Exit Conditions
               </h4>
               <div className="space-y-2">
-                {currentGeneration.exit_conditions.map((condition, idx) => (
+                {(currentGeneration.exit_conditions ?? []).map((condition, idx) => (
                   <div 
                     key={idx}
                     className="text-sm text-gray-600 bg-red-50 border border-red-200 rounded-lg p-3"
