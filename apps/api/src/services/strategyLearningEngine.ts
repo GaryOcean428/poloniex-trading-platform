@@ -170,8 +170,10 @@ class StrategyLearningEngine extends EventEmitter {
     await this.killUnderperformers();
     await this.promotePaperToRecommended();
     await this.updateGenerationWeights();
+    const paperCount = Array.from(this.strategies.values()).filter(s => s.status === 'paper_trading').length;
+    const recCount = Array.from(this.strategies.values()).filter(s => s.status === 'recommended').length;
     this.emit('cycleComplete', { generation: this.generationCount, regime });
-    logger.info(`[SLE] Generation ${this.generationCount} complete`);
+    logger.info(`[SLE] Generation ${this.generationCount} complete — regime=${regime}, generated=${newStrategies.length}, backtest_pass=${backtestPassed.length}, paper=${paperCount}, recommended=${recCount}`);
   }
 
   private async checkQIGRegimeTransition(): Promise<void> {
@@ -325,8 +327,15 @@ class StrategyLearningEngine extends EventEmitter {
       if (strategy.genome) { strategyDef.genome = strategy.genome; }
       (backtestingEngine as any).registerStrategy(strategy.strategyId, strategyDef);
       const result = await (backtestingEngine as any).runBacktest(strategy.strategyId, { symbol: strategy.symbol, timeframe: strategy.timeframe, startDate: splitDate, endDate, leverage: strategy.leverage });
-      return { sharpe: safeNum(result?.sharpeRatio ?? result?.metrics?.sharpeRatio), winRate: safeNum(result?.winRate ?? result?.metrics?.winRate), maxDrawdown: safeNum(result?.maxDrawdown ?? result?.metrics?.maxDrawdownPercent) };
-    } catch { return { sharpe: -1, winRate: 0, maxDrawdown: 1 }; }
+      return {
+        sharpe: safeNum(result?.sharpeRatio ?? result?.metrics?.sharpeRatio),
+        winRate: safeNum(result?.winRate ?? result?.metrics?.winRate) / 100,
+        maxDrawdown: safeNum(result?.maxDrawdown ?? result?.metrics?.maxDrawdownPercent) / 100,
+      };
+    } catch (err) {
+      logger.warn(`[SLE] Backtest failed for ${strategy.strategyId}:`, err instanceof Error ? err.message : String(err));
+      return { sharpe: -1, winRate: 0, maxDrawdown: 1 };
+    }
   }
 
   private async promoteToParallelPaper(strategy: StrategyRecord): Promise<void> {
@@ -395,7 +404,7 @@ class StrategyLearningEngine extends EventEmitter {
       if (safeNum(s.paperSharpe) < PAPER_THRESHOLDS.minSharpe || safeNum(s.paperPnl) <= PAPER_THRESHOLDS.minPnl) continue;
       try {
         const score = await (confidenceScoringService as any).calculateConfidenceScore(s.strategyId, s.symbol, s.timeframe);
-        s.confidenceScore = safeNum(score?.score ?? score);
+        s.confidenceScore = safeNum(score?.confidenceScore ?? score?.score ?? score);
         if (s.confidenceScore >= PAPER_THRESHOLDS.minConfidence) {
           s.status = 'recommended'; await this.upsertStrategyPerformance(s); this.emit('liveRecommendation', s);
           logger.info(`[SLE] \uD83C\uDFAF Strategy ${s.strategyId} RECOMMENDED for live: confidence=${s.confidenceScore.toFixed(1)}`);
