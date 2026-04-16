@@ -1,55 +1,55 @@
-import express, { Request, Response, NextFunction } from 'express';
-import cors from 'cors';
 import compression from 'compression';
-import path from 'path';
+import cors from 'cors';
+import express, { NextFunction, Request, Response } from 'express';
 import fs from 'fs';
-import { fileURLToPath } from 'url';
 import { createServer } from 'http';
+import path from 'path';
 import { Server as SocketIOServer } from 'socket.io';
+import { fileURLToPath } from 'url';
 
 // Import routes
-import authRoutes from './routes/auth.js';
-import apiKeyRoutes from './routes/apiKeys.js';
-import futuresRoutes from './routes/futures.js';
-import backtestRoutes from './routes/backtest.js';
-import paperTradingRoutes from './routes/paper-trading.js';
-import riskRoutes from './routes/risk.js';
-import confidenceScoringRoutes from './routes/confidenceScoring.js';
-import statusRoutes from './routes/status.js';
-import marketsRoutes from './routes/markets.js';
-import proxyRoutes from './routes/proxy.js';
-import tradingSessionsRoutes from './routes/tradingSessions.js';
-import debugRoutes from './routes/debug.js';
-import agentRoutes from './routes/agent.js';
-import monitoringRoutes from './routes/monitoring.js';
 import adminRoutes from './routes/admin.js';
-import dashboardRoutes from './routes/dashboard.js';
-import mlRoutes from './routes/ml.js';
-import qigRoutes from './routes/qig.js';
-import publicAdminRoutes from './routes/public-admin.js';
-import versionCheckRoutes from './routes/version-check.js';
-import autonomousTraderRoutes from './routes/autonomousTrader.js';
-import reconciliationRoutes from './routes/reconciliation.js';
+import agentRoutes from './routes/agent.js';
 import aiRoutes from './routes/ai.js';
+import apiKeyRoutes from './routes/apiKeys.js';
+import authRoutes from './routes/auth.js';
+import autonomousTraderRoutes from './routes/autonomousTrader.js';
+import backtestRoutes from './routes/backtest.js';
+import confidenceScoringRoutes from './routes/confidenceScoring.js';
+import dashboardRoutes from './routes/dashboard.js';
+import debugRoutes from './routes/debug.js';
+import futuresRoutes from './routes/futures.js';
+import marketsRoutes from './routes/markets.js';
+import mlRoutes from './routes/ml.js';
+import monitoringRoutes from './routes/monitoring.js';
+import paperTradingRoutes from './routes/paper-trading.js';
+import proxyRoutes from './routes/proxy.js';
+import publicAdminRoutes from './routes/public-admin.js';
+import qigRoutes from './routes/qig.js';
+import reconciliationRoutes from './routes/reconciliation.js';
+import riskRoutes from './routes/risk.js';
+import statusRoutes from './routes/status.js';
+import tradingSessionsRoutes from './routes/tradingSessions.js';
+import versionCheckRoutes from './routes/version-check.js';
 
 // Import services
-import { logger } from './utils/logger.js';
-import { persistentTradingEngine } from './services/persistentTradingEngine.js';
+import { refreshKnownDatabaseCollationVersions } from './scripts/refreshCollationVersion.js';
+import { runAllMigrations } from './scripts/runMigrations.js';
 import { agentScheduler } from './services/agentScheduler.js';
 import paperTradingService from './services/paperTradingService.js';
+import { persistentTradingEngine } from './services/persistentTradingEngine.js';
 import { stateReconciliationService } from './services/stateReconciliationService.js';
-import { runAllMigrations } from './scripts/runMigrations.js';
-import { refreshKnownDatabaseCollationVersions } from './scripts/refreshCollationVersion.js';
+import { logger } from './utils/logger.js';
 
 // Import environment configuration (dotenv.config() is called inside env.ts)
 import { env } from './config/env.js';
-import { 
-  securityHeaders, 
-  rateLimiter, 
-  authRateLimiter, 
-  createCorsOptions, 
-  securityLogger, 
-  sanitizeRequest 
+import {
+  authRateLimiter,
+  createCorsOptions,
+  rateLimiter,
+  sanitizeRequest,
+  securityHeaders,
+  securityLogger
 } from './config/security.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -132,7 +132,7 @@ app.get('/api/health', async (_req: Request, res: Response) => {
   } catch (error) {
     logger.error('Failed to fetch public IP:', error);
   }
-  
+
   res.json({
     status: 'healthy',
     timestamp: new Date().toISOString(),
@@ -197,10 +197,10 @@ if (process.env.NODE_ENV === 'production') {
   } else {
     const distPath = path.resolve(__dirname, '../../web/dist');
     logger.info(`Checking for frontend dist at: ${distPath}`);
-    
+
     if (fs.existsSync(distPath)) {
       logger.info('Frontend dist found, serving static files');
-      
+
       // Serve frontend static files with proper MIME types
       app.use(
         express.static(distPath, {
@@ -295,21 +295,21 @@ process.on('uncaughtException', (error) => {
 // Graceful shutdown handler
 const gracefulShutdown = (signal: string): void => {
   logger.info(`${signal} signal received: starting graceful shutdown`);
-  
+
   // Set a timeout to force exit if graceful shutdown takes too long
   const forceExitTimeout = setTimeout(() => {
     logger.error('Graceful shutdown timeout exceeded, forcing exit');
     process.exit(1);
   }, 10000); // 10 second timeout
-  
+
   // First, stop the trading engine
   persistentTradingEngine.stop().then(() => {
     logger.info('Trading engine stopped');
-    
+
     // Then close Socket.IO to disconnect all websocket connections
     io.close(() => {
       logger.info('Socket.IO server closed');
-    
+
       // Then close the HTTP server
       server.close(() => {
         logger.info('HTTP server closed');
@@ -368,7 +368,7 @@ server.listen(PORT, '::', async () => {
   logger.info(`Server running on port ${PORT}`);
   logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
   logger.info(`Socket.IO server initialized`);
-  
+
   // Run database migrations before starting services
   try {
     logger.info('Refreshing PostgreSQL collation metadata...');
@@ -407,7 +407,7 @@ server.listen(PORT, '::', async () => {
   persistentTradingEngine.start().catch(error => {
     logger.error('Failed to start persistent trading engine:', error);
   });
-  
+
   // Start agent scheduler (restores sessions from DB, starts always-run agents)
   agentScheduler.start().catch(error => {
     logger.error('Failed to start agent scheduler:', error);
@@ -417,7 +417,7 @@ server.listen(PORT, '::', async () => {
   paperTradingService.initialize().catch(error => {
     logger.error('Failed to initialize paper trading service:', error);
   });
-  
+
   // Health heartbeat for production monitoring
   if (process.env.NODE_ENV === 'production') {
     setInterval(() => {
