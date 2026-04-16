@@ -16,6 +16,12 @@ function safeErrorDetails(error: unknown): string | undefined {
   return typeof detail === 'string' ? detail : JSON.stringify(detail);
 }
 
+/** Extract upstream HTTP status from an Axios-style error, defaulting to 500. */
+function safeErrorStatus(error: unknown): number {
+  const err = error as { response?: { status?: number } };
+  return err?.response?.status || 500;
+}
+
 // =================== PUBLIC ENDPOINTS ===================
 
 /**
@@ -177,7 +183,7 @@ router.get('/balance', authenticateToken, async (req: Request, res: Response) =>
     res.json(balance);
   } catch (error: unknown) {
     logger.error('Error fetching account balance:', error);
-    res.status(err.response?.status || 500).json({
+    res.status(safeErrorStatus(error)).json({
       error: 'Failed to fetch account balance',
       details: safeErrorDetails(error)
     });
@@ -202,7 +208,7 @@ router.get('/positions', authenticateToken, async (req: Request, res: Response) 
     res.json(positions);
   } catch (error: unknown) {
     logger.error('Error fetching positions:', error);
-    res.status(err.response?.status || 500).json({
+    res.status(safeErrorStatus(error)).json({
       error: 'Failed to fetch positions',
       details: safeErrorDetails(error)
     });
@@ -229,7 +235,7 @@ router.get('/trades', authenticateToken, async (req: Request, res: Response) => 
     res.json(trades);
   } catch (error: unknown) {
     logger.error('Error fetching trade history:', error);
-    res.status(err.response?.status || 500).json({
+    res.status(safeErrorStatus(error)).json({
       error: 'Failed to fetch trade history',
       details: safeErrorDetails(error)
     });
@@ -255,7 +261,7 @@ router.get('/orders', authenticateToken, async (req: Request, res: Response) => 
     res.json(orders);
   } catch (error: unknown) {
     logger.error('Error fetching orders:', error);
-    res.status(err.response?.status || 500).json({
+    res.status(safeErrorStatus(error)).json({
       error: 'Failed to fetch orders',
       details: safeErrorDetails(error)
     });
@@ -290,7 +296,7 @@ router.post('/order', authenticateToken, async (req: Request, res: Response) => 
     res.json(order);
   } catch (error: unknown) {
     logger.error('Error placing order:', error);
-    res.status(err.response?.status || 500).json({
+    res.status(safeErrorStatus(error)).json({
       error: 'Failed to place order',
       details: safeErrorDetails(error)
     });
@@ -324,7 +330,7 @@ router.delete('/order/:orderId', authenticateToken, async (req: Request, res: Re
     res.json(result);
   } catch (error: unknown) {
     logger.error('Error canceling order:', error);
-    res.status(err.response?.status || 500).json({
+    res.status(safeErrorStatus(error)).json({
       error: 'Failed to cancel order',
       details: safeErrorDetails(error)
     });
@@ -357,7 +363,7 @@ router.delete('/orders', authenticateToken, async (req: Request, res: Response) 
     res.json(result);
   } catch (error: unknown) {
     logger.error('Error canceling all orders:', error);
-    res.status(err.response?.status || 500).json({
+    res.status(safeErrorStatus(error)).json({
       error: 'Failed to cancel all orders',
       details: safeErrorDetails(error)
     });
@@ -383,7 +389,7 @@ router.get('/leverage/:symbol', authenticateToken, async (req: Request, res: Res
     res.json(leverage);
   } catch (error: unknown) {
     logger.error('Error fetching leverage:', error);
-    res.status(err.response?.status || 500).json({
+    res.status(safeErrorStatus(error)).json({
       error: 'Failed to fetch leverage',
       details: safeErrorDetails(error)
     });
@@ -416,7 +422,7 @@ router.post('/leverage', authenticateToken, async (req: Request, res: Response) 
     res.json(result);
   } catch (error: unknown) {
     logger.error('Error setting leverage:', error);
-    res.status(err.response?.status || 500).json({
+    res.status(safeErrorStatus(error)).json({
       error: 'Failed to set leverage',
       details: safeErrorDetails(error)
     });
@@ -455,7 +461,7 @@ router.post('/position/close', authenticateToken, async (req: Request, res: Resp
     res.json(result);
   } catch (error: unknown) {
     logger.error('Error closing position:', error);
-    res.status(err.response?.status || 500).json({
+    res.status(safeErrorStatus(error)).json({
       error: 'Failed to close position',
       details: safeErrorDetails(error)
     });
@@ -480,7 +486,7 @@ router.post('/positions/close-all', authenticateToken, async (req: Request, res:
     res.json(result);
   } catch (error: unknown) {
     logger.error('Error closing all positions:', error);
-    res.status(err.response?.status || 500).json({
+    res.status(safeErrorStatus(error)).json({
       error: 'Failed to close all positions',
       details: safeErrorDetails(error)
     });
@@ -506,7 +512,7 @@ router.get('/position-mode/:symbol', authenticateToken, async (req: Request, res
     res.json(mode);
   } catch (error: unknown) {
     logger.error('Error fetching position mode:', error);
-    res.status(err.response?.status || 500).json({
+    res.status(safeErrorStatus(error)).json({
       error: 'Failed to fetch position mode',
       details: safeErrorDetails(error)
     });
@@ -545,7 +551,7 @@ router.post('/position-mode', authenticateToken, async (req: Request, res: Respo
     res.json(result);
   } catch (error: unknown) {
     logger.error('Error switching position mode:', error);
-    res.status(err.response?.status || 500).json({
+    res.status(safeErrorStatus(error)).json({
       error: 'Failed to switch position mode',
       details: safeErrorDetails(error)
     });
@@ -584,7 +590,7 @@ router.post('/position/margin', authenticateToken, async (req: Request, res: Res
     res.json(result);
   } catch (error: unknown) {
     logger.error('Error adjusting margin:', error);
-    res.status(err.response?.status || 500).json({
+    res.status(safeErrorStatus(error)).json({
       error: 'Failed to adjust margin',
       details: safeErrorDetails(error)
     });
@@ -730,7 +736,7 @@ router.get('/user-risk-limit/:symbol', authenticateToken, async (req: Request, r
     res.json(userRiskLimit);
   } catch (error: unknown) {
     logger.error(`Error fetching user risk limit for ${req.params.symbol}:`, error);
-    res.status(err.response?.status || 500).json({
+    res.status(safeErrorStatus(error)).json({
       error: 'Failed to fetch user risk limit',
       details: safeErrorDetails(error)
     });
@@ -808,7 +814,7 @@ router.get('/order-history', authenticateToken, async (req: Request, res: Respon
     res.json(orders);
   } catch (error: unknown) {
     logger.error('Error fetching order history:', error);
-    res.status(err.response?.status || 500).json({
+    res.status(safeErrorStatus(error)).json({
       error: 'Failed to fetch order history',
       details: safeErrorDetails(error)
     });
@@ -833,7 +839,7 @@ router.get('/position-history', authenticateToken, async (req: Request, res: Res
     res.json(history);
   } catch (error: unknown) {
     logger.error('Error fetching position history:', error);
-    res.status(err.response?.status || 500).json({
+    res.status(safeErrorStatus(error)).json({
       error: 'Failed to fetch position history',
       details: safeErrorDetails(error)
     });
@@ -858,7 +864,7 @@ router.get('/account/bills', authenticateToken, async (req: Request, res: Respon
     res.json(bills);
   } catch (error: unknown) {
     logger.error('Error fetching account bills:', error);
-    const status = err.response?.status || 500;
+    const status = safeErrorStatus(error);
     res.status(status).json({
       success: false,
       error: 'Failed to fetch account bills',

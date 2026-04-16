@@ -261,7 +261,7 @@ class MonitoringService {
     const avgMemory = recentMetrics.reduce((a, b) => a + b.memory, 0) / recentMetrics.length;
     const avgErrorRate = recentMetrics.reduce((a, b) => a + b.errorRate, 0) / recentMetrics.length;
 
-    let status = 'healthy';
+    let status: SystemHealthReport['status'] = 'healthy';
     const issues: string[] = [];
 
     if (avgCpu > 80) {
