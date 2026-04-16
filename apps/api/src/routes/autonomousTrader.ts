@@ -85,7 +85,7 @@ router.get('/status', authenticateToken, async (req: Request, res: Response) => 
     const tradesResult = await pool.query(
       `SELECT * FROM autonomous_trades 
        WHERE user_id = $1 
-       ORDER BY entry_time DESC 
+       ORDER BY created_at DESC 
        LIMIT 10`,
       [userId]
     );
@@ -122,11 +122,10 @@ router.get('/status', authenticateToken, async (req: Request, res: Response) => 
         exitPrice: trade.exit_price ? parseFloat(trade.exit_price) : null,
         quantity: parseFloat(trade.quantity),
         pnl: trade.pnl ? parseFloat(trade.pnl) : null,
-        pnlPercentage: trade.pnl_percentage ? parseFloat(trade.pnl_percentage) : null,
         status: trade.status,
-        exitReason: trade.exit_reason,
-        entryTime: trade.entry_time,
-        exitTime: trade.exit_time,
+        exitReason: trade.close_reason,
+        entryTime: trade.created_at,
+        exitTime: trade.closed_at,
         confidence: trade.confidence ? parseFloat(trade.confidence) : null,
         reason: trade.reason
       }))
@@ -228,7 +227,7 @@ router.get('/trades', authenticateToken, async (req: Request, res: Response) => 
       params.push(status);
     }
 
-    query += ` ORDER BY entry_time DESC LIMIT $${params.length + 1}`;
+    query += ` ORDER BY created_at DESC LIMIT $${params.length + 1}`;
     params.push(limit);
 
     const result = await pool.query(query, params);
@@ -242,15 +241,13 @@ router.get('/trades', authenticateToken, async (req: Request, res: Response) => 
         entryPrice: parseFloat(trade.entry_price),
         exitPrice: trade.exit_price ? parseFloat(trade.exit_price) : null,
         quantity: parseFloat(trade.quantity),
-        leverage: trade.leverage,
-        stopLoss: parseFloat(trade.stop_loss),
-        takeProfit: parseFloat(trade.take_profit),
+        stopLoss: trade.stop_loss ? parseFloat(trade.stop_loss) : null,
+        takeProfit: trade.take_profit ? parseFloat(trade.take_profit) : null,
         pnl: trade.pnl ? parseFloat(trade.pnl) : null,
-        pnlPercentage: trade.pnl_percentage ? parseFloat(trade.pnl_percentage) : null,
         status: trade.status,
-        exitReason: trade.exit_reason,
-        entryTime: trade.entry_time,
-        exitTime: trade.exit_time,
+        exitReason: trade.close_reason,
+        entryTime: trade.created_at,
+        exitTime: trade.closed_at,
         confidence: trade.confidence ? parseFloat(trade.confidence) : null,
         reason: trade.reason
       }))
