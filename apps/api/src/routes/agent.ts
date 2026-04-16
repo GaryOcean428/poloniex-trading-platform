@@ -204,7 +204,8 @@ router.get('/activity', authenticateToken, async (req: Request, res: Response) =
   try {
     const userId = (req.user?.id || req.user?.userId)?.toString();
     if (!userId) return res.status(401).json({ success: false, error: 'User ID not found in token' });
-    const limit = Math.min(parseInt(req.query.limit as string, 10) || 20, 100);
+    const rawLimit = parseInt(req.query.limit as string, 10);
+    const limit = Math.min(Math.max(Number.isFinite(rawLimit) ? rawLimit : 20, 1), 100);
     const result = await pool.query(
       `SELECT * FROM agent_events WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2`,
       [userId, limit]
@@ -221,7 +222,8 @@ router.get('/events', authenticateToken, async (req: Request, res: Response) => 
   try {
     const userId = (req.user?.id || req.user?.userId)?.toString();
     if (!userId) return res.status(401).json({ success: false, error: 'User ID not found in token' });
-    const limit = parseInt(req.query.limit as string, 10) || 50;
+    const rawEventsLimit = parseInt(req.query.limit as string, 10);
+    const limit = Math.min(Math.max(Number.isFinite(rawEventsLimit) ? rawEventsLimit : 50, 1), 500);
     const eventType = req.query.type as string | undefined;
     const mode = req.query.mode as string | undefined;
     let queryText = `SELECT * FROM agent_events WHERE user_id = $1`;
@@ -387,15 +389,21 @@ router.get('/strategy/current', authenticateToken, async (_req: Request, res: Re
     const sle = strategyLearningEngine as any;
     const strategies = Array.from(sle.strategies?.values?.() ?? []);
     const running = strategies.filter((s: any) => ['paper_trading', 'live', 'recommended'].includes(s.status));
+    const isRunning = sle.isRunning as boolean;
 
     res.json({
       success: true,
       generation: {
+        id: `gen-${sle.generationCount ?? 0}`,
+        strategy_name: `Generation ${sle.generationCount ?? 0}`,
         number: sle.generationCount ?? 0,
-        status: sle.isRunning ? 'running' : 'stopped',
+        status: isRunning ? 'analyzing' : 'completed',
+        progress: isRunning ? 50 : 100,
+        current_step: isRunning ? 'Evaluating strategies' : 'Idle',
         strategiesActive: running.length,
         totalStrategies: strategies.length,
         lastCycleAt: new Date().toISOString(),
+        created_at: new Date().toISOString(),
       }
     });
   } catch (error: unknown) {
@@ -410,7 +418,8 @@ router.get('/strategy/current', authenticateToken, async (_req: Request, res: Re
  */
 router.get('/strategy/recent', authenticateToken, async (req: Request, res: Response) => {
   try {
-    const limit = Math.min(parseInt(req.query.limit as string) || 10, 50);
+    const rawRecentLimit = parseInt(req.query.limit as string, 10);
+    const limit = Math.min(Math.max(Number.isFinite(rawRecentLimit) ? rawRecentLimit : 10, 1), 50);
     const result = await pool.query(
       `SELECT strategy_id, strategy_name, symbol, timeframe, strategy_type,
               regime_at_creation, backtest_sharpe, backtest_wr, backtest_max_dd,
@@ -438,7 +447,8 @@ router.get('/strategy/recent', authenticateToken, async (req: Request, res: Resp
 router.get('/backtest/results', authenticateToken, async (req: Request, res: Response) => {
   try {
     const strategyId = req.query.strategy_id as string;
-    const limit = Math.min(parseInt(req.query.limit as string) || 10, 100);
+    const rawBtLimit = parseInt(req.query.limit as string, 10);
+    const limit = Math.min(Math.max(Number.isFinite(rawBtLimit) ? rawBtLimit : 10, 1), 100);
     let result;
     if (strategyId) {
       result = await pool.query(`SELECT * FROM backtest_results WHERE strategy_name = $1 ORDER BY created_at DESC LIMIT $2`, [strategyId, limit]);

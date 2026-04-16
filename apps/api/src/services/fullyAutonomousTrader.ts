@@ -352,6 +352,11 @@ class FullyAutonomousTrader extends EventEmitter {
       const cbCheck = this.checkCircuitBreaker(userId);
       if (!cbCheck.allowed) {
         logger.warn(`[CB] Trading halted for user ${userId}: ${cbCheck.reason}`);
+        await this.logAgentEvent(userId, {
+          eventType: 'circuit_breaker',
+          executionMode: config.paperTrading ? 'paper' : 'live',
+          description: `Circuit breaker tripped: ${cbCheck.reason}`,
+        });
         return;
       }
 
@@ -900,8 +905,8 @@ class FullyAutonomousTrader extends EventEmitter {
       // Log trade (both paper and live)
       await pool.query(
         `INSERT INTO autonomous_trades 
-         (user_id, symbol, side, entry_price, quantity, stop_loss, take_profit, confidence, reason, order_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+         (user_id, symbol, side, entry_price, quantity, stop_loss, take_profit, confidence, reason, order_id, paper_trade)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
         [
           userId,
           signal.symbol,
@@ -912,15 +917,61 @@ class FullyAutonomousTrader extends EventEmitter {
           signal.takeProfit,
           signal.confidence,
           signal.reason,
-          orderId
+          orderId,
+          config.paperTrading
         ]
       );
+
+      // Write to agent_events so the dashboard can show activity
+      await this.logAgentEvent(userId, {
+        eventType: 'trade_executed',
+        executionMode: config.paperTrading ? 'paper' : 'live',
+        description: `${signal.side.toUpperCase()} ${signal.symbol} @ ${safeFixed(signal.entryPrice, 8)}`,
+        confidence: signal.confidence,
+        market: signal.symbol,
+        orderId,
+        metadata: { reason: signal.reason, stopLoss: signal.stopLoss, takeProfit: signal.takeProfit, positionSize: signal.positionSize }
+      });
 
       this.emit('trade_executed', { userId, signal, orderId, paperTrading: config.paperTrading });
       logger.info(`${config.paperTrading ? '[PAPER]' : '[LIVE]'} Trade executed for user ${userId}: ${signal.symbol} ${signal.side}`);
 
     } catch (error) {
       logger.error(`Error executing signal for user ${userId}:`, error);
+    }
+  }
+
+  /**
+   * Write a structured event to the agent_events table for dashboard visibility.
+   */
+  private async logAgentEvent(userId: string, event: {
+    eventType: string;
+    executionMode?: string;
+    description: string;
+    confidence?: number;
+    market?: string;
+    orderId?: string;
+    metadata?: Record<string, unknown>;
+  }): Promise<void> {
+    try {
+      await pool.query(
+        `INSERT INTO agent_events
+         (user_id, event_type, execution_mode, description, confidence_score, market, resulting_order_id, metadata, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())`,
+        [
+          userId,
+          event.eventType,
+          event.executionMode ?? null,
+          event.description,
+          event.confidence ?? null,
+          event.market ?? null,
+          event.orderId ?? null,
+          event.metadata ? JSON.stringify(event.metadata) : null,
+        ]
+      );
+    } catch (err) {
+      // Non-fatal — never break the trading loop for logging failures
+      logger.warn('Failed to write agent_event:', err instanceof Error ? err.message : String(err));
     }
   }
 

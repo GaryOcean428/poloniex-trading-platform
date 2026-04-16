@@ -46,7 +46,7 @@ const StrategyApprovalQueue: React.FC<StrategyApprovalQueueProps> = ({ agentStat
       });
       
       if (response.data.success) {
-        setPendingStrategies(response.data.strategies);
+        setPendingStrategies(response.data.strategies ?? []);
       }
     } catch (_err: unknown) {
       // console.error('Error fetching pending strategies:', err);

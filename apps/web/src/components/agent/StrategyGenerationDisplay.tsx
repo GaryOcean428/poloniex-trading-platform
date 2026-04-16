@@ -97,7 +97,7 @@ const StrategyGenerationDisplay: React.FC<StrategyGenerationDisplayProps> = ({
       });
 
       if (response.data.success) {
-        setRecentStrategies(response.data.strategies);
+        setRecentStrategies(response.data.strategies ?? []);
       }
     } catch (_err: unknown) {
       // console.error('Error fetching recent strategies:', err);

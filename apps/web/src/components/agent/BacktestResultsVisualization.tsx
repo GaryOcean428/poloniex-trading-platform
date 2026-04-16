@@ -70,9 +70,10 @@ const BacktestResultsVisualization: React.FC<BacktestResultsVisualizationProps> 
       });
       
       if (response.data.success) {
-        setResults(response.data.results);
-        if (response.data.results.length > 0 && !selectedResult) {
-          setSelectedResult(response.data.results[0]);
+        const results = response.data.results ?? [];
+        setResults(results);
+        if (results.length > 0 && !selectedResult) {
+          setSelectedResult(results[0]);
         }
       }
     } catch (_err: unknown) {

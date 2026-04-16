@@ -75,7 +75,7 @@ const ActiveStrategiesPanel: React.FC<ActiveStrategiesPanelProps> = ({ agentStat
       });
       
       if (response.data.success) {
-        setStrategies(response.data.strategies);
+        setStrategies(response.data.strategies ?? []);
       }
     } catch (_err: unknown) {
       // console.error('Error fetching active strategies:', err);
@@ -240,14 +240,14 @@ const ActiveStrategiesPanel: React.FC<ActiveStrategiesPanelProps> = ({ agentStat
           </div>
 
           {/* Open Positions */}
-          {strategy.positions.length > 0 && (
+          {(strategy.positions ?? []).length > 0 && (
             <div className="p-6">
               <h4 className="text-sm font-semibold text-gray-700 mb-4 flex items-center gap-2">
                 <Target className="w-4 h-4 text-blue-600" />
-                Open Positions ({strategy.positions.length})
+                Open Positions ({(strategy.positions ?? []).length})
               </h4>
               <div className="space-y-3">
-                {strategy.positions.map((position) => (
+                {(strategy.positions ?? []).map((position) => (
                   <div 
                     key={position.id}
                     className={`border rounded-lg p-4 ${getPnLBgColor(position.unrealized_pnl)}`}
@@ -308,7 +308,7 @@ const ActiveStrategiesPanel: React.FC<ActiveStrategiesPanelProps> = ({ agentStat
           )}
 
           {/* No Positions State */}
-          {strategy.positions.length === 0 && (
+          {(strategy.positions ?? []).length === 0 && (
             <div className="p-6 text-center">
               <Target className="w-12 h-12 text-gray-300 mx-auto mb-3" />
               <p className="text-gray-500 text-sm">No open positions</p>

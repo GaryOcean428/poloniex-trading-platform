@@ -459,11 +459,11 @@ const AgentOverviewPanel: React.FC<AgentOverviewPanelProps> = ({
                 })()}
 
                 {/* Max Drawdown */}
-                {pipelineSummary?.risk?.averageMaxDrawdown !== null && (
+                {pipelineSummary?.risk?.averageMaxDrawdown != null && (
                   <div className="flex items-center justify-between p-2.5 bg-gray-50 rounded-lg">
                     <span className="text-sm text-gray-600">Avg Max Drawdown</span>
                     <span className="text-sm font-semibold text-orange-600">
-                      {safeNum(pipelineSummary.risk.averageMaxDrawdown).toFixed(1)}%
+                      {safeNum(pipelineSummary?.risk?.averageMaxDrawdown).toFixed(1)}%
                     </span>
                   </div>
                 )}

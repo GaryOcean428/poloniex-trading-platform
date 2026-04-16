@@ -65,7 +65,7 @@ const LiveTradingActivityFeed: React.FC<LiveTradingActivityFeedProps> = ({
       });
       
       if (response.data.success) {
-        setActivities(response.data.activities);
+        setActivities(response.data.activities ?? []);
       }
     } catch (_err: unknown) {
       // console.error('Error fetching live activities:', err);
