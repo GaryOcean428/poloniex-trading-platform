@@ -11,5 +11,5 @@ UPDATE autonomous_trades
   WHERE paper_trade IS NULL OR paper_trade = true;
 
 -- Composite index for performance queries: WHERE user_id = $1 ORDER BY created_at DESC
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_autonomous_trades_user_created_desc
+CREATE INDEX IF NOT EXISTS idx_autonomous_trades_user_created_desc
   ON autonomous_trades (user_id, created_at DESC);
