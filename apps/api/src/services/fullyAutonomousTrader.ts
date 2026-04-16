@@ -535,7 +535,7 @@ class FullyAutonomousTrader extends EventEmitter {
     } catch (_error) {
       // Fall back to local simple ML service when ml-worker is unavailable
       try {
-        const ohlcvForMl = validOhlcv.map(c => ({ close: c.price, high: c.high, low: c.low, open: c.open, volume: c.volume }));
+        const ohlcvForMl = validOhlcv.map(c => ({ close: c.price, high: c.high, low: c.low, open: c.open, volume: c.volume, timestamp: Date.now() }));
         const predictions = await simpleMlService.getMultiHorizonPredictions(symbol, ohlcvForMl);
         const signal = await simpleMlService.getTradingSignal(symbol, ohlcvForMl, currentPrice);
 
@@ -1108,7 +1108,7 @@ class FullyAutonomousTrader extends EventEmitter {
 
       // Drift detection
       const inDbNotExchange = [...dbSymbols].filter(s => !openSymbols.has(s));
-      const inExchangeNotDb = [...openSymbols].filter(s => !dbSymbols.has(s));
+      const inExchangeNotDb = ([...openSymbols] as string[]).filter(s => !dbSymbols.has(s));
 
       if (inDbNotExchange.length > 0) {
         logger.warn(
