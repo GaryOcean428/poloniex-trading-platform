@@ -27,11 +27,13 @@
  */
 
 import { EventEmitter } from 'events';
-import { query } from '../db/connection.js';
+import { query, pool } from '../db/connection.js';
 import { logger } from '../utils/logger.js';
 import backtestingEngine from './backtestingEngine.js';
 import confidenceScoringService from './confidenceScoringService.js';
 import parallelStrategyRunner from './parallelStrategyRunner.js';
+import { apiCredentialsService } from './apiCredentialsService.js';
+import poloniexFuturesService from './poloniexFuturesService.js';
 import {
   computeQIGFitness,
   detectRegimeTransition,
@@ -132,6 +134,8 @@ class StrategyLearningEngine extends EventEmitter {
   private strategies: Map<string, StrategyRecord> = new Map();
   private previousKappa = 0;
   private lastQIGRegime: QIGRegime = 'geometric';
+  private cachedBalance: number = 0;
+  private lastBalanceFetchTime = 0;
 
   constructor() { super(); }
 
@@ -158,9 +162,38 @@ class StrategyLearningEngine extends EventEmitter {
     }, delayMs);
   }
 
+  private async fetchActualBalance(): Promise<number> {
+    const now = Date.now();
+    if (this.cachedBalance > 0 && now - this.lastBalanceFetchTime < 10 * 60 * 1000) {
+      return this.cachedBalance;
+    }
+    try {
+      const result = await pool.query(
+        `SELECT user_id FROM api_credentials WHERE is_active = true LIMIT 1`
+      );
+      if (result.rows.length === 0) return this.cachedBalance || 27; // safe floor
+      const userId = result.rows[0].user_id;
+      const credentials = await apiCredentialsService.getCredentials(userId);
+      if (!credentials) return this.cachedBalance || 27;
+      const balance = await poloniexFuturesService.getAccountBalance(credentials);
+      const avail = parseFloat(balance?.availMgn ?? balance?.eq ?? '0');
+      if (avail > 0) {
+        this.cachedBalance = avail;
+        this.lastBalanceFetchTime = now;
+        logger.info(`[SLE] Fetched actual balance: $${avail.toFixed(2)} USDT`);
+      }
+      return this.cachedBalance || 27;
+    } catch (err) {
+      logger.warn('[SLE] Failed to fetch balance, using cached:', err instanceof Error ? err.message : String(err));
+      return this.cachedBalance || 27;
+    }
+  }
+
   private async runOneCycle(): Promise<void> {
     this.generationCount++;
     logger.info(`[SLE] === Generation ${this.generationCount} ===`);
+    await this.fetchActualBalance();
+    parallelStrategyRunner.setBaseCapital(this.cachedBalance);
     const regime = await this.detectCurrentRegime();
     await this.checkQIGRegimeTransition();
     const newStrategies = await this.generateVariants(regime);
@@ -326,7 +359,7 @@ class StrategyLearningEngine extends EventEmitter {
       const strategyDef: Record<string, any> = { type: strategy.strategyType, parameters: {}, lookback: DEFAULT_STRATEGY_LOOKBACK };
       if (strategy.genome) { strategyDef.genome = strategy.genome; }
       (backtestingEngine as any).registerStrategy(strategy.strategyId, strategyDef);
-      const result = await (backtestingEngine as any).runBacktest(strategy.strategyId, { symbol: strategy.symbol, timeframe: strategy.timeframe, startDate: splitDate, endDate, leverage: strategy.leverage });
+      const result = await (backtestingEngine as any).runBacktest(strategy.strategyId, { symbol: strategy.symbol, timeframe: strategy.timeframe, startDate: splitDate, endDate, leverage: strategy.leverage, initialCapital: this.cachedBalance || 27 });
       return {
         sharpe: safeNum(result?.sharpeRatio ?? result?.metrics?.sharpeRatio),
         winRate: safeNum(result?.winRate ?? result?.metrics?.winRate) / 100,

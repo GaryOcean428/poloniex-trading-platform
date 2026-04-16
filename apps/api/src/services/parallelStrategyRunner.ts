@@ -44,8 +44,8 @@ export interface StrategyMetrics {
 /** Max strategies running paper trading concurrently */
 const MAX_PARALLEL_SLOTS = 10;
 
-/** Base virtual capital for paper trading (USDT) */
-const BASE_VIRTUAL_CAPITAL = 1000;
+/** Default base virtual capital for paper trading (USDT) — overridden by actual balance */
+const DEFAULT_VIRTUAL_CAPITAL = 1000;
 
 /** Kill drawdown threshold per strategy (reserved for future kill logic) */
 const _KILL_DRAWDOWN_THRESHOLD = 0.10; // 10%
@@ -67,8 +67,19 @@ class ParallelStrategyRunner extends EventEmitter {
   /** Queue for strategies waiting for an open slot */
   private waitingQueue: StrategyRecord[] = [];
 
+  /** Actual account balance used as base for paper capital allocation */
+  private baseCapital: number = DEFAULT_VIRTUAL_CAPITAL;
+
   constructor() {
     super();
+  }
+
+  /** Update base capital from actual account balance */
+  setBaseCapital(amount: number): void {
+    if (amount > 0) {
+      this.baseCapital = amount;
+      logger.info(`[PSR] Base capital set to $${amount.toFixed(2)} USDT`);
+    }
   }
 
   // ─────────────────────────── slot management ──────────────────────────────
@@ -93,7 +104,7 @@ class ParallelStrategyRunner extends EventEmitter {
       // Allocate virtual capital proportional to backtest Sharpe (min 10% of base)
       const sharpe = strategy.backtestSharpe ?? 0.5;
       const capitalMultiplier = Math.max(0.1, Math.min(2.0, sharpe)); // cap at 2×
-      const virtualCapital = BASE_VIRTUAL_CAPITAL * capitalMultiplier;
+      const virtualCapital = this.baseCapital * capitalMultiplier;
 
       // Create isolated paper trading session
       const strategyConfig = {
@@ -204,7 +215,7 @@ class ParallelStrategyRunner extends EventEmitter {
         is_censored: unknown;
         censor_reason: unknown;
       };
-      const initialCapital = Number(row.initial_capital) || BASE_VIRTUAL_CAPITAL;
+      const initialCapital = Number(row.initial_capital) || this.baseCapital;
       const currentValue = Number(row.current_value) || initialCapital;
       const pnl = Number(row.realized_pnl) + Number(row.unrealized_pnl);
       const totalTrades = Number(row.total_trades) || 0;
