@@ -1,16 +1,16 @@
 /**
  * Security Middleware Configuration
- * 
+ *
  * Configures comprehensive security middleware including helmet, CORS hardening,
  * rate limiting, and other security measures.
  */
 
-import helmet from 'helmet';
-import rateLimit from 'express-rate-limit';
 import type { CorsOptions } from 'cors';
-import type { Request, Response, NextFunction } from 'express';
-import { env } from './env.js';
+import type { NextFunction, Request, Response } from 'express';
+import rateLimit from 'express-rate-limit';
+import helmet from 'helmet';
 import { logger } from '../utils/logger.js';
+import { env } from './env.js';
 
 /**
  * Enhanced security headers configuration using helmet
@@ -150,7 +150,7 @@ export function securityLogger(req: Request, _res: Response, next: NextFunction)
   const userAgent = req.get('User-Agent') || '';
   const referer = req.get('Referer') || '';
 
-  const isSuspicious = suspiciousPatterns.some(pattern => 
+  const isSuspicious = suspiciousPatterns.some(pattern =>
     pattern.test(url) || pattern.test(userAgent) || pattern.test(referer)
   );
 

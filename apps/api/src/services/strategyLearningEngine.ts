@@ -27,12 +27,12 @@
  */
 
 import { EventEmitter } from 'events';
-import { query, pool } from '../db/connection.js';
+import { pool, query } from '../db/connection.js';
 import { logger } from '../utils/logger.js';
+import { apiCredentialsService } from './apiCredentialsService.js';
 import backtestingEngine from './backtestingEngine.js';
 import confidenceScoringService from './confidenceScoringService.js';
 import parallelStrategyRunner from './parallelStrategyRunner.js';
-import { apiCredentialsService } from './apiCredentialsService.js';
 import poloniexFuturesService from './poloniexFuturesService.js';
 import {
   computeQIGFitness,

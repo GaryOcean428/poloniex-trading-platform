@@ -13,9 +13,9 @@
  */
 
 import { EventEmitter } from 'events';
+import { query } from '../db/connection.js';
 import { logger } from '../utils/logger.js';
 import paperTradingService from './paperTradingService.js';
-import { query } from '../db/connection.js';
 import type { StrategyRecord } from './strategyLearningEngine.js';
 
 // ─────────────────────────────────────────────────────────────────────────────

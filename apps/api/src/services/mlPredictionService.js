@@ -9,8 +9,8 @@
  *                          --simpleMlService (final fallback)
  */
 
-import { createClient } from 'redis';
 import { randomUUID } from 'crypto';
+import { createClient } from 'redis';
 import { logger } from '../utils/logger.js';
 
 const _rawMlWorkerUrl = process.env.ML_WORKER_URL || '';
