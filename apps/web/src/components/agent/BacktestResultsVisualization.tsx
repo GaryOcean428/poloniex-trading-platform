@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
-import { BarChart3, TrendingUp, TrendingDown, DollarSign, Activity } from 'lucide-react';
-import axios from 'axios';
 import { getAccessToken } from '@/utils/auth';
 import { getBackendUrl } from '@/utils/environment';
 import { safeNum } from '@/utils/safeNum';
+import axios from 'axios';
+import { Activity, BarChart3, DollarSign, TrendingDown, TrendingUp } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
 
 const API_BASE_URL = getBackendUrl();
 
@@ -61,14 +61,14 @@ const BacktestResultsVisualization: React.FC<BacktestResultsVisualizationProps> 
   const fetchBacktestResults = async () => {
     try {
       const token = getAccessToken();
-      const url = strategyId 
+      const url = strategyId
         ? `${API_BASE_URL}/api/agent/backtest/results?strategy_id=${strategyId}`
         : `${API_BASE_URL}/api/agent/backtest/results?limit=10`;
-      
+
       const response = await axios.get(url, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      
+
       if (response.data.success) {
         const results = response.data.results ?? [];
         setResults(results);
@@ -141,10 +141,10 @@ const BacktestResultsVisualization: React.FC<BacktestResultsVisualizationProps> 
               points={`
                 0,200
                 ${result.equity_curve.map((point, idx) => {
-                  const x = (idx / (result.equity_curve.length - 1)) * 800;
-                  const y = 200 - ((point.equity - minEquity + padding) / (range + 2 * padding)) * 200;
-                  return `${x},${y}`;
-                }).join(' ')}
+                const x = (idx / (result.equity_curve.length - 1)) * 800;
+                const y = 200 - ((point.equity - minEquity + padding) / (range + 2 * padding)) * 200;
+                return `${x},${y}`;
+              }).join(' ')}
                 800,200
               `}
               fill="url(#equityGradient)"
@@ -208,10 +208,10 @@ const BacktestResultsVisualization: React.FC<BacktestResultsVisualizationProps> 
               points={`
                 0,0
                 ${result.equity_curve.map((point, idx) => {
-                  const x = (idx / (result.equity_curve.length - 1)) * 800;
-                  const y = (Math.abs(point.drawdown) / maxDrawdown) * 150;
-                  return `${x},${y}`;
-                }).join(' ')}
+                const x = (idx / (result.equity_curve.length - 1)) * 800;
+                const y = (Math.abs(point.drawdown) / maxDrawdown) * 150;
+                return `${x},${y}`;
+              }).join(' ')}
                 800,0
               `}
               fill="#ef4444"
@@ -298,7 +298,7 @@ const BacktestResultsVisualization: React.FC<BacktestResultsVisualizationProps> 
               <div>
                 <h3 className="text-2xl font-bold text-gray-900">{selectedResult.strategy_name}</h3>
                 <p className="text-sm text-gray-600 mt-1">
-                  {selectedResult.symbol} • {selectedResult.timeframe} • 
+                  {selectedResult.symbol} • {selectedResult.timeframe} •
                   {new Date(selectedResult.start_date).toLocaleDateString()} - {new Date(selectedResult.end_date).toLocaleDateString()}
                 </p>
               </div>

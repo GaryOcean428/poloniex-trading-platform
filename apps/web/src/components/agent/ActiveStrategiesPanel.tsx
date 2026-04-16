@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
-import { TrendingUp, TrendingDown, Activity, Target, CheckCircle, XCircle } from 'lucide-react';
-import axios from 'axios';
 import { getAccessToken } from '@/utils/auth';
 import { getBackendUrl } from '@/utils/environment';
 import { safeNum } from '@/utils/safeNum';
+import axios from 'axios';
+import { Activity, CheckCircle, Target, TrendingDown, TrendingUp, XCircle } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
 
 const API_BASE_URL = getBackendUrl();
 
@@ -54,7 +54,7 @@ const ActiveStrategiesPanel: React.FC<ActiveStrategiesPanelProps> = ({ agentStat
   useEffect(() => {
     if (agentStatus === 'running') {
       fetchActiveStrategies();
-      
+
       const interval = setInterval(() => {
         fetchActiveStrategies();
       }, 15000); // Update every 15 seconds
@@ -73,7 +73,7 @@ const ActiveStrategiesPanel: React.FC<ActiveStrategiesPanelProps> = ({ agentStat
       const response = await axios.get(`${API_BASE_URL}/api/agent/strategies/active`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      
+
       if (response.data.success) {
         setStrategies(response.data.strategies ?? []);
       }
@@ -129,7 +129,7 @@ const ActiveStrategiesPanel: React.FC<ActiveStrategiesPanelProps> = ({ agentStat
   return (
     <div className="space-y-6">
       {strategies.map((strategy) => (
-        <div 
+        <div
           key={strategy.id}
           className="bg-white rounded-lg shadow-lg overflow-hidden"
         >
@@ -155,11 +155,10 @@ const ActiveStrategiesPanel: React.FC<ActiveStrategiesPanelProps> = ({ agentStat
                     ({strategy.total_pnl_percent >= 0 ? '+' : ''}{safeNum(strategy.total_pnl_percent).toFixed(2)}%)
                   </p>
                 </div>
-                <span className={`px-4 py-2 rounded-full text-sm font-semibold ${
-                  strategy.status === 'live' 
-                    ? 'bg-green-100 text-green-700' 
+                <span className={`px-4 py-2 rounded-full text-sm font-semibold ${strategy.status === 'live'
+                    ? 'bg-green-100 text-green-700'
                     : 'bg-blue-100 text-blue-700'
-                }`}>
+                  }`}>
                   {strategy.status === 'live' ? 'LIVE' : 'PAPER'}
                 </span>
               </div>
@@ -248,17 +247,16 @@ const ActiveStrategiesPanel: React.FC<ActiveStrategiesPanelProps> = ({ agentStat
               </h4>
               <div className="space-y-3">
                 {(strategy.positions ?? []).map((position) => (
-                  <div 
+                  <div
                     key={position.id}
                     className={`border rounded-lg p-4 ${getPnLBgColor(position.unrealized_pnl)}`}
                   >
                     <div className="flex items-center justify-between mb-3">
                       <div className="flex items-center gap-3">
-                        <div className={`px-3 py-1 rounded-full text-xs font-bold ${
-                          position.side === 'long' 
-                            ? 'bg-green-100 text-green-700' 
+                        <div className={`px-3 py-1 rounded-full text-xs font-bold ${position.side === 'long'
+                            ? 'bg-green-100 text-green-700'
                             : 'bg-red-100 text-red-700'
-                        }`}>
+                          }`}>
                           {position.side.toUpperCase()}
                         </div>
                         <h5 className="text-lg font-bold text-gray-900">{position.symbol}</h5>

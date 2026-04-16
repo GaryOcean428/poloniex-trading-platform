@@ -1,10 +1,10 @@
-import express from 'express';
-import { authenticateToken } from '../middleware/auth.js';
-import { strategyLearningEngine } from '../services/strategyLearningEngine.js';
-import { fullyAutonomousTrader } from '../services/fullyAutonomousTrader.js';
-import { agentSettingsService } from '../services/agentSettingsService.js';
 import type { Request, Response } from 'express';
+import express from 'express';
 import { pool } from '../db/connection.js';
+import { authenticateToken } from '../middleware/auth.js';
+import { agentSettingsService } from '../services/agentSettingsService.js';
+import { fullyAutonomousTrader } from '../services/fullyAutonomousTrader.js';
+import { strategyLearningEngine } from '../services/strategyLearningEngine.js';
 import { logger } from '../utils/logger.js';
 
 const router = express.Router();
@@ -22,7 +22,7 @@ function isTableMissingError(error: unknown): boolean {
 router.post('/start', authenticateToken, async (req: Request, res: Response) => {
   try {
     const userId = (req.user?.id || req.user?.userId)?.toString();
-    
+
     if (!userId) {
       return res.status(401).json({
         success: false,
@@ -30,11 +30,11 @@ router.post('/start', authenticateToken, async (req: Request, res: Response) => 
         code: 'NO_USER_ID'
       });
     }
-    
+
     // Check for API credentials first
     const { apiCredentialsService } = await import('../services/apiCredentialsService.js');
     const hasCredentials = await apiCredentialsService.hasCredentials(userId);
-    
+
     if (!hasCredentials) {
       return res.status(400).json({
         success: false,
@@ -43,7 +43,7 @@ router.post('/start', authenticateToken, async (req: Request, res: Response) => 
         action: 'redirect_to_api_keys'
       });
     }
-    
+
     const config = req.body;
 
     // Start the strategy learning engine (generates + evaluates strategies)
@@ -69,7 +69,7 @@ router.post('/start', authenticateToken, async (req: Request, res: Response) => 
   } catch (error: unknown) {
     logger.error('Error starting agent:', error);
     const errMsg = error instanceof Error ? error.message : String(error);
-    
+
     if (errMsg.includes('already') || errMsg.includes('Already')) {
       try {
         const catchUserId = (req.user?.id || req.user?.userId)?.toString();
@@ -93,10 +93,10 @@ router.post('/start', authenticateToken, async (req: Request, res: Response) => 
         });
       }
     }
-    
+
     let errorCode = 'UNKNOWN_ERROR';
     let statusCode = 500;
-    
+
     if (errMsg.includes('credentials')) {
       errorCode = 'CREDENTIALS_ERROR';
       statusCode = 400;
@@ -104,7 +104,7 @@ router.post('/start', authenticateToken, async (req: Request, res: Response) => 
       errorCode = 'API_ERROR';
       statusCode = 503;
     }
-    
+
     res.status(statusCode).json({
       success: false,
       error: errMsg,

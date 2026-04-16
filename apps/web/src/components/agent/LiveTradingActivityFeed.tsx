@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Activity, TrendingUp, TrendingDown, Target, AlertTriangle, CheckCircle, XCircle, Clock } from 'lucide-react';
-import axios from 'axios';
 import { getAccessToken } from '@/utils/auth';
 import { getBackendUrl } from '@/utils/environment';
 import { safeNum } from '@/utils/safeNum';
+import axios from 'axios';
+import { Activity, AlertTriangle, CheckCircle, Clock, Target, TrendingDown, TrendingUp, XCircle } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
 
 const API_BASE_URL = getBackendUrl();
 
@@ -27,9 +27,9 @@ interface LiveTradingActivityFeedProps {
   maxItems?: number;
 }
 
-const LiveTradingActivityFeed: React.FC<LiveTradingActivityFeedProps> = ({ 
-  agentStatus, 
-  maxItems = 50 
+const LiveTradingActivityFeed: React.FC<LiveTradingActivityFeedProps> = ({
+  agentStatus,
+  maxItems = 50
 }) => {
   const [activities, setActivities] = useState<TradeActivity[]>([]);
   const [filter, setFilter] = useState<string>('all');
@@ -40,7 +40,7 @@ const LiveTradingActivityFeed: React.FC<LiveTradingActivityFeedProps> = ({
   useEffect(() => {
     if (agentStatus === 'running') {
       fetchActivities();
-      
+
       const interval = setInterval(() => {
         fetchActivities();
       }, 2000); // Update every 2 seconds for real-time feel
@@ -63,7 +63,7 @@ const LiveTradingActivityFeed: React.FC<LiveTradingActivityFeedProps> = ({
       const response = await axios.get(`${API_BASE_URL}/api/agent/activity/live?limit=${maxItems}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      
+
       if (response.data.success) {
         setActivities(response.data.activities ?? []);
       }
@@ -121,8 +121,8 @@ const LiveTradingActivityFeed: React.FC<LiveTradingActivityFeedProps> = ({
     return 'text-gray-600';
   };
 
-  const filteredActivities = filter === 'all' 
-    ? activities 
+  const filteredActivities = filter === 'all'
+    ? activities
     : activities.filter(a => a.type === filter);
 
   if (agentStatus !== 'running') {
@@ -166,51 +166,46 @@ const LiveTradingActivityFeed: React.FC<LiveTradingActivityFeedProps> = ({
           <div className="flex gap-2 flex-wrap">
             <button
               onClick={() => setFilter('all')}
-              className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors ${
-                filter === 'all'
+              className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors ${filter === 'all'
                   ? 'bg-blue-600 text-white'
                   : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-              }`}
+                }`}
             >
               All
             </button>
             <button
               onClick={() => setFilter('entry')}
-              className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors ${
-                filter === 'entry'
+              className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors ${filter === 'entry'
                   ? 'bg-green-600 text-white'
                   : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-              }`}
+                }`}
             >
               Entries
             </button>
             <button
               onClick={() => setFilter('exit')}
-              className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors ${
-                filter === 'exit'
+              className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors ${filter === 'exit'
                   ? 'bg-blue-600 text-white'
                   : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-              }`}
+                }`}
             >
               Exits
             </button>
             <button
               onClick={() => setFilter('signal')}
-              className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors ${
-                filter === 'signal'
+              className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors ${filter === 'signal'
                   ? 'bg-purple-600 text-white'
                   : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-              }`}
+                }`}
             >
               Signals
             </button>
             <button
               onClick={() => setFilter('error')}
-              className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors ${
-                filter === 'error'
+              className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors ${filter === 'error'
                   ? 'bg-red-600 text-white'
                   : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-              }`}
+                }`}
             >
               Errors
             </button>
@@ -228,7 +223,7 @@ const LiveTradingActivityFeed: React.FC<LiveTradingActivityFeedProps> = ({
       </div>
 
       {/* Activity Feed */}
-      <div 
+      <div
         ref={feedRef}
         className="h-96 overflow-y-auto p-4 space-y-2"
         onScroll={(e) => {
@@ -263,11 +258,10 @@ const LiveTradingActivityFeed: React.FC<LiveTradingActivityFeedProps> = ({
                         {activity.side && (
                           <>
                             <span className="text-gray-600">•</span>
-                            <span className={`text-xs font-bold px-2 py-0.5 rounded ${
-                              activity.side === 'long' 
-                                ? 'bg-green-100 text-green-700' 
+                            <span className={`text-xs font-bold px-2 py-0.5 rounded ${activity.side === 'long'
+                                ? 'bg-green-100 text-green-700'
                                 : 'bg-red-100 text-red-700'
-                            }`}>
+                              }`}>
                               {activity.side.toUpperCase()}
                             </span>
                           </>
@@ -309,8 +303,8 @@ const LiveTradingActivityFeed: React.FC<LiveTradingActivityFeedProps> = ({
           <div className="text-center py-12">
             <Activity className="w-12 h-12 text-gray-300 mx-auto mb-3" />
             <p className="text-gray-500">
-              {filter === 'all' 
-                ? 'No activity yet. Waiting for trading signals...' 
+              {filter === 'all'
+                ? 'No activity yet. Waiting for trading signals...'
                 : `No ${filter} activities to display`}
             </p>
           </div>

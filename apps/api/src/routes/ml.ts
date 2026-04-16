@@ -10,6 +10,13 @@ import { logger } from '../utils/logger.js';
 
 const router = express.Router();
 
+const isDev = process.env.NODE_ENV === 'development';
+
+/** Sanitize error messages — only expose details in development */
+function safeErrorMsg(error: unknown): string {
+  if (isDev) return error instanceof Error ? error.message : String(error);
+  return 'Internal server error';
+}
 // Flag to use simple ML service if ml-worker fails
 let usePythonML = true;
 
@@ -119,7 +126,7 @@ router.get('/performance/:symbol', authenticateToken, async (req, res) => {
       currentPrice: 0,
       timestamp: new Date().toISOString(),
       error: 'ML models unavailable',
-      message: error instanceof Error ? error instanceof Error ? error.message : String(error) : String(error)
+      message: error instanceof Error ? error.message : String(error)
     });
   }
 });
@@ -193,7 +200,7 @@ router.get('/health', async (req, res) => {
   } catch (error: unknown) {
     res.status(500).json({ 
       status: 'unhealthy',
-      error: error instanceof Error ? error.message : String(error) 
+      error: safeErrorMsg(error) 
     });
   }
 });
@@ -212,7 +219,7 @@ router.get('/learning/status', authenticateToken, async (req, res) => {
     const runnerStatus = parallelStrategyRunner.getStatus();
     res.json({ success: true, engine: engineStatus, parallelRunner: runnerStatus });
   } catch (error: unknown) {
-    res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ success: false, error: safeErrorMsg(error) });
   }
 });
 
@@ -225,7 +232,7 @@ router.post('/learning/start', authenticateToken, async (req, res) => {
     await strategyLearningEngine.start();
     res.json({ success: true, message: 'Strategy learning engine started' });
   } catch (error: unknown) {
-    res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ success: false, error: safeErrorMsg(error) });
   }
 });
 
@@ -238,7 +245,7 @@ router.post('/learning/stop', authenticateToken, async (req, res) => {
     await strategyLearningEngine.stop();
     res.json({ success: true, message: 'Strategy learning engine stopped' });
   } catch (error: unknown) {
-    res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ success: false, error: safeErrorMsg(error) });
   }
 });
 
@@ -252,7 +259,7 @@ router.get('/learning/recommendations', authenticateToken, async (req, res) => {
     const recommendations = await strategyLearningEngine.getLiveRecommendations();
     res.json({ success: true, recommendations });
   } catch (error: unknown) {
-    res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ success: false, error: safeErrorMsg(error) });
   }
 });
 
@@ -322,7 +329,7 @@ router.get('/learning/top-performers', authenticateToken, async (req, res) => {
     const performers = await strategyLearningEngine.getTopPerformers(limit);
     res.json({ success: true, performers });
   } catch (error: unknown) {
-    res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ success: false, error: safeErrorMsg(error) });
   }
 });
 
@@ -338,7 +345,7 @@ router.get('/learning/parallel-runner', authenticateToken, async (req, res) => {
     ]);
     res.json({ success: true, status, metrics: allMetrics });
   } catch (error: unknown) {
-    res.status(500).json({ success: false, error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ success: false, error: safeErrorMsg(error) });
   }
 });
 

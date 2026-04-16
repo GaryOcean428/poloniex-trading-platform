@@ -1,25 +1,24 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Link } from 'react-router-dom';
-import {
-  DollarSign,
-  TrendingUp,
-  TrendingDown as _TrendingDown,
-  Activity,
-  Clock,
-  Target,
-  BarChart3,
-  Shield,
-  AlertTriangle,
-  CheckCircle2,
-  ArrowUpRight,
-  ArrowDownRight,
-  Percent,
-  RefreshCw,
-} from 'lucide-react';
-import axios from 'axios';
 import { getAccessToken } from '@/utils/auth';
 import { getBackendUrl } from '@/utils/environment';
 import { safeNum } from '@/utils/safeNum';
+import axios from 'axios';
+import {
+  Activity,
+  AlertTriangle,
+  ArrowDownRight,
+  ArrowUpRight,
+  BarChart3,
+  CheckCircle2,
+  Clock,
+  DollarSign,
+  Percent,
+  RefreshCw,
+  Shield,
+  Target,
+  TrendingUp
+} from 'lucide-react';
+import React, { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 
 const API_BASE_URL = getBackendUrl();
 
@@ -275,13 +274,12 @@ const AgentOverviewPanel: React.FC<AgentOverviewPanelProps> = ({
               {/* Risk Level */}
               <div className="flex items-center justify-between p-2.5 bg-gray-50 rounded-lg">
                 <span className="text-sm text-gray-600">Risk</span>
-                <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
-                  riskRating === 'low' ? 'bg-green-100 text-green-700' :
-                  riskRating === 'medium' ? 'bg-yellow-100 text-yellow-700' :
-                  riskRating === 'high' ? 'bg-orange-100 text-orange-700' :
-                  riskRating === 'very_high' ? 'bg-red-100 text-red-700' :
-                  'bg-gray-100 text-gray-600'
-                }`}>
+                <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${riskRating === 'low' ? 'bg-green-100 text-green-700' :
+                    riskRating === 'medium' ? 'bg-yellow-100 text-yellow-700' :
+                      riskRating === 'high' ? 'bg-orange-100 text-orange-700' :
+                        riskRating === 'very_high' ? 'bg-red-100 text-red-700' :
+                          'bg-gray-100 text-gray-600'
+                  }`}>
                   {riskRating === 'unknown' ? 'N/A' : riskRating.replace(/_/g, ' ')}
                 </span>
               </div>
@@ -293,11 +291,10 @@ const AgentOverviewPanel: React.FC<AgentOverviewPanelProps> = ({
                   <div className="flex items-center gap-2">
                     <div className="w-16 h-1.5 bg-gray-200 rounded-full overflow-hidden">
                       <div
-                        className={`h-full rounded-full ${
-                          pipelineSummary.confidence.score >= 70 ? 'bg-green-500' :
-                          pipelineSummary.confidence.score >= 40 ? 'bg-yellow-500' :
-                          'bg-red-500'
-                        }`}
+                        className={`h-full rounded-full ${pipelineSummary.confidence.score >= 70 ? 'bg-green-500' :
+                            pipelineSummary.confidence.score >= 40 ? 'bg-yellow-500' :
+                              'bg-red-500'
+                          }`}
                         style={{ width: `${pipelineSummary.confidence.score}%` }}
                       />
                     </div>

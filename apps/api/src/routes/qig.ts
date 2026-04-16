@@ -70,7 +70,7 @@ router.get('/predictions/:symbol', authenticateToken, async (req, res) => {
     logger.error('QIG prediction error:', error);
     res.status(500).json({
       error: 'Failed to generate QIG predictions',
-      message: error instanceof Error ? error instanceof Error ? error.message : String(error) : String(error)
+      message: error instanceof Error ? error.message : String(error)
     });
   }
 });
@@ -110,7 +110,7 @@ router.get('/metrics/:symbol', authenticateToken, async (req, res) => {
     logger.error('QIG metrics error:', error);
     res.status(500).json({
       error: 'Failed to compute QIG metrics',
-      message: error instanceof Error ? error instanceof Error ? error.message : String(error) : String(error)
+      message: error instanceof Error ? error.message : String(error)
     });
   }
 });
@@ -184,7 +184,7 @@ router.get('/compare/:symbol', authenticateToken, async (req, res) => {
     logger.error('QIG comparison error:', error);
     res.status(500).json({
       error: 'Failed to compare predictions',
-      message: error instanceof Error ? error instanceof Error ? error.message : String(error) : String(error)
+      message: error instanceof Error ? error.message : String(error)
     });
   }
 });

@@ -1,6 +1,6 @@
 /**
  * Fully Autonomous Trading System
- * 
+ *
  * This system operates completely autonomously:
  * - Analyzes markets 24/7
  * - Generates and tests strategies automatically
@@ -11,19 +11,37 @@
 
 import { EventEmitter } from 'events';
 import { pool } from '../db/connection.js';
-import poloniexFuturesService from './poloniexFuturesService.js';
-import riskService from './riskService.js';
-import mlPredictionService from './mlPredictionService.js';
-import { apiCredentialsService } from './apiCredentialsService.js';
 import { logger } from '../utils/logger.js';
 import { validateMarketData } from '../utils/marketDataValidator.js';
+import { apiCredentialsService } from './apiCredentialsService.js';
 import { getPrecisions } from './marketCatalog.js';
+import mlPredictionService from './mlPredictionService.js';
+import poloniexFuturesService from './poloniexFuturesService.js';
+import riskService from './riskService.js';
 
 /** Safe number formatting — returns fallback string for NaN/Infinity */
 function safeFixed(value: unknown, decimals: number, fallback = 'N/A'): string {
   const n = Number(value);
   return Number.isFinite(n) ? n.toFixed(decimals) : fallback;
 }
+
+// ─── Trading defaults (single source of truth) ───
+const DEFAULT_RISK_PER_TRADE = 2;       // 2% per trade
+const DEFAULT_MAX_DRAWDOWN = 10;        // 10% max drawdown
+const DEFAULT_DAILY_RETURN_TARGET = 1;  // 1% daily target
+const DEFAULT_STOP_LOSS_PCT = 2;        // 2% stop loss
+const DEFAULT_TAKE_PROFIT_PCT = 4;      // 4% take profit (2:1 R:R)
+const DEFAULT_LEVERAGE = 3;             // Conservative leverage
+const DEFAULT_MAX_POSITIONS = 3;        // Max concurrent positions
+const DEFAULT_CYCLE_SECONDS = 60;       // 1-minute trading cycle
+const DEFAULT_CONFIDENCE_THRESHOLD = 65; // 65% minimum confidence
+const DEFAULT_SIGNAL_THRESHOLD = 30;    // ±30 raw score threshold
+const DEFAULT_PAPER_CAPITAL = 10000;    // Virtual capital for paper mode
+const DEFAULT_SYMBOLS = ['BTC_USDT_PERP', 'ETH_USDT_PERP', 'SOL_USDT_PERP'];
+const MIN_CAPITAL = 10;                 // Minimum capital to continue trading
+const MAX_POSITION_FRACTION = 0.1;      // Max 10% of capital per position
+const VOLATILITY_HIGH = 0.03;           // >3% = high volatility
+const VOLATILITY_MEDIUM = 0.01;         // >1% = medium volatility
 
 interface TradingConfig {
   userId: string;
@@ -207,25 +225,25 @@ class FullyAutonomousTrader extends EventEmitter {
     // Create default config
     const tradingConfig: TradingConfig = {
       userId,
-      initialCapital: config?.paperTrading ? 10000 : availableBalance, // Use virtual capital for paper trading
-      maxRiskPerTrade: config?.maxRiskPerTrade || 2, // 2% per trade
-      maxDrawdown: config?.maxDrawdown || 10, // 10% max drawdown
-      targetDailyReturn: config?.targetDailyReturn || 1, // 1% daily target
-      symbols: config?.symbols || ['BTC_USDT_PERP', 'ETH_USDT_PERP', 'SOL_USDT_PERP'],
+      initialCapital: config?.paperTrading ? DEFAULT_PAPER_CAPITAL : availableBalance,
+      maxRiskPerTrade: config?.maxRiskPerTrade || DEFAULT_RISK_PER_TRADE,
+      maxDrawdown: config?.maxDrawdown || DEFAULT_MAX_DRAWDOWN,
+      targetDailyReturn: config?.targetDailyReturn || DEFAULT_DAILY_RETURN_TARGET,
+      symbols: config?.symbols || DEFAULT_SYMBOLS,
       enabled: true,
-      paperTrading: config?.paperTrading !== undefined ? config.paperTrading : true, // Default to paper trading for safety
-      stopLossPercent: config?.stopLossPercent || 2, // 2% stop loss
-      takeProfitPercent: config?.takeProfitPercent || 4, // 4% take profit (2:1 R:R)
-      leverage: config?.leverage || 3, // Conservative leverage
-      maxConcurrentPositions: config?.maxConcurrentPositions || 3,
-      tradingCycleSeconds: config?.tradingCycleSeconds || 60, // 1 minute default
-      confidenceThreshold: config?.confidenceThreshold || 65, // 65% minimum confidence
-      signalScoreThreshold: config?.signalScoreThreshold || 30 // ±30 raw score threshold
+      paperTrading: config?.paperTrading !== undefined ? config.paperTrading : true,
+      stopLossPercent: config?.stopLossPercent || DEFAULT_STOP_LOSS_PCT,
+      takeProfitPercent: config?.takeProfitPercent || DEFAULT_TAKE_PROFIT_PCT,
+      leverage: config?.leverage || DEFAULT_LEVERAGE,
+      maxConcurrentPositions: config?.maxConcurrentPositions || DEFAULT_MAX_POSITIONS,
+      tradingCycleSeconds: config?.tradingCycleSeconds || DEFAULT_CYCLE_SECONDS,
+      confidenceThreshold: config?.confidenceThreshold || DEFAULT_CONFIDENCE_THRESHOLD,
+      signalScoreThreshold: config?.signalScoreThreshold || DEFAULT_SIGNAL_THRESHOLD,
     };
 
     // Save to database
     await pool.query(
-      `INSERT INTO autonomous_trading_configs 
+      `INSERT INTO autonomous_trading_configs
        (user_id, initial_capital, max_risk_per_trade, max_drawdown, target_daily_return, symbols, enabled, paper_trading)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        ON CONFLICT (user_id) DO UPDATE SET
@@ -406,7 +424,7 @@ class FullyAutonomousTrader extends EventEmitter {
       }
 
       // Check if we have capital
-      if (currentEquity < 10) {
+      if (currentEquity < MIN_CAPITAL) {
         return { canTrade: false, reason: 'Insufficient capital' };
       }
 
@@ -474,7 +492,7 @@ class FullyAutonomousTrader extends EventEmitter {
     // Calculate volatility
     const returns = closes.slice(1).map((price, i) => (price - closes[i]) / closes[i]);
     const volatility = this.calculateStdDev(returns);
-    const volatilityLevel = volatility > 0.03 ? 'high' : volatility > 0.01 ? 'medium' : 'low';
+    const volatilityLevel = volatility > VOLATILITY_HIGH ? 'high' : volatility > VOLATILITY_MEDIUM ? 'medium' : 'low';
 
     // Calculate momentum (RSI-like)
     const momentum = this.calculateMomentum(closes);
@@ -495,7 +513,7 @@ class FullyAutonomousTrader extends EventEmitter {
       const ohlcvForMl = validOhlcv.map(c => ({ close: c.price, high: c.high, low: c.low, open: c.open, volume: c.volume }));
       const predictions = await mlPredictionService.getMultiHorizonPredictions(symbol, ohlcvForMl);
       const signal = await mlPredictionService.getTradingSignal(symbol, ohlcvForMl, currentPrice);
-      
+
       mlPrediction = {
         direction: signal.action === 'BUY' ? 'UP' : signal.action === 'SELL' ? 'DOWN' : 'NEUTRAL',
         confidence: signal.confidence,
@@ -660,11 +678,11 @@ class FullyAutonomousTrader extends EventEmitter {
     const metrics = this.performanceMetrics.get(userId);
     const currentEquity = metrics?.currentEquity ?? config.initialCapital;
     const currentDrawdown = ((config.initialCapital - currentEquity) / config.initialCapital) * 100;
-    const baseSize = Math.min(positionSizeUsdt, config.initialCapital * 0.1); // USDT, max 10% of capital
+    const baseSize = Math.min(positionSizeUsdt, config.initialCapital * MAX_POSITION_FRACTION);
     const adjustedSize = this.getDrawdownAdjustedPositionSize(baseSize, currentDrawdown);
 
     // Calculate stop loss and take profit using config percentages
-    const stopLoss = side === 'long' 
+    const stopLoss = side === 'long'
       ? currentPrice * (1 - slPercent)
       : currentPrice * (1 + slPercent);
 
@@ -696,7 +714,7 @@ class FullyAutonomousTrader extends EventEmitter {
 
     // Execute top signal
     const signal = signals[0];
-    
+
     try {
       logger.info(`${config.paperTrading ? '[PAPER]' : '[LIVE]'} Executing signal for ${signal.symbol}: ${signal.action} at ${signal.entryPrice}`);
 
@@ -722,7 +740,7 @@ class FullyAutonomousTrader extends EventEmitter {
         // Get current positions
         const currentPositions = await poloniexFuturesService.getPositions(credentials);
         const activePositions = Array.isArray(currentPositions) ? currentPositions : [];
-        const positionCount = activePositions.filter((p: any) => 
+        const positionCount = activePositions.filter((p: any) =>
           parseFloat(p.qty || p.positionAmt || '0') !== 0
         ).length;
 
@@ -891,7 +909,7 @@ class FullyAutonomousTrader extends EventEmitter {
       } else {
         // Paper trading - check virtual position limits
         const openPaperTrades = await pool.query(
-          `SELECT COUNT(*) as count FROM autonomous_trades 
+          `SELECT COUNT(*) as count FROM autonomous_trades
            WHERE user_id = $1 AND status = 'open' AND order_id LIKE 'paper_%'`,
           [userId]
         );
@@ -904,7 +922,7 @@ class FullyAutonomousTrader extends EventEmitter {
 
       // Log trade (both paper and live)
       await pool.query(
-        `INSERT INTO autonomous_trades 
+        `INSERT INTO autonomous_trades
          (user_id, symbol, side, entry_price, quantity, stop_loss, take_profit, confidence, reason, order_id, paper_trade)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
         [
@@ -1101,10 +1119,10 @@ class FullyAutonomousTrader extends EventEmitter {
     try {
       // Use the bulk close endpoint for efficiency
       await poloniexFuturesService.closeAllPositions(credentials);
-      
+
       // Update all open trades in DB
       await pool.query(
-        `UPDATE autonomous_trades 
+        `UPDATE autonomous_trades
          SET status = 'closed', close_reason = 'trading_disabled', closed_at = NOW()
          WHERE user_id = $1 AND status = 'open'`,
         [userId]
@@ -1142,7 +1160,7 @@ class FullyAutonomousTrader extends EventEmitter {
 
       // Save to database
       await pool.query(
-        `INSERT INTO autonomous_performance 
+        `INSERT INTO autonomous_performance
          (user_id, current_equity, total_return, drawdown, timestamp)
          VALUES ($1, $2, $3, $4, $5)`,
         [userId, metrics.currentEquity, metrics.totalReturn, metrics.drawdown, metrics.timestamp]
