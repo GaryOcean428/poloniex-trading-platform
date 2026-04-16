@@ -5,6 +5,61 @@
 
 import { logger } from '../utils/logger.js';
 
+// ─── Named constants for all tuning parameters ───
+
+const INDICATOR_PERIODS = {
+  SMA_SHORT: 20,
+  SMA_LONG: 50,
+  EMA_FAST: 12,
+  EMA_SLOW: 26,
+  MOMENTUM_LOOKBACK: 10,
+} as const;
+
+const RSI_THRESHOLDS = {
+  OVERSOLD: 30,
+  LOW: 45,
+  NEUTRAL: 50,
+  HIGH: 55,
+  OVERBOUGHT: 70,
+} as const;
+
+const DEFAULT_RSI = 50; // Neutral RSI when insufficient data
+
+const MACD_CONFIG = {
+  SIGNAL_APPROXIMATION_FACTOR: 0.9, // Simplified EMA-of-MACD approximation
+} as const;
+
+const PREDICTION_HORIZON_FACTORS: Record<string, number> = {
+  '1h': 0.005,
+  '4h': 0.02,
+  '24h': 0.05,
+} as const;
+
+const SIGNAL_WEIGHTS = {
+  SMA_CROSS: 0.2,
+  EMA_CROSS: 0.2,
+  RSI_EXTREME: 0.3,
+  RSI_MODERATE: 0.1,
+  MACD_HISTOGRAM: 0.2,
+  MOMENTUM: 0.2,
+} as const;
+
+const DIRECTION_THRESHOLDS = {
+  NET_SCORE_MIN: 0.2,
+  CONFIDENCE_MULTIPLIER: 50,
+  CONFIDENCE_BASE: 30,
+  CONFIDENCE_CAP: 85,
+  NEUTRAL_CONFIDENCE: 40,
+  NEUTRAL_DAMPENING: 0.3,
+} as const;
+
+const SIGNAL_TIERS = {
+  STRONG:   { minScore: 3, confidence: 80, strength: 0.8 },
+  MODERATE: { minScore: 2, confidence: 70, strength: 0.65 },
+  MILD:     { minScore: 1, confidence: 60, strength: 0.5 },
+  NEUTRAL:  { minScore: 0, confidence: 50, strength: 0.3 },
+} as const;
+
 interface OHLCVData {
   timestamp: number;
   open: number;
@@ -58,7 +113,7 @@ class SimpleMlService {
    * Calculate RSI (Relative Strength Index)
    */
   private calculateRSI(data: number[], period: number = 14): number {
-    if (data.length < period + 1) return 50; // Neutral
+    if (data.length < period + 1) return DEFAULT_RSI;
     
     const changes = [];
     for (let i = 1; i < data.length; i++) {
@@ -80,13 +135,13 @@ class SimpleMlService {
    * Calculate MACD (Moving Average Convergence Divergence)
    */
   private calculateMACD(data: number[]): { macd: number; signal: number; histogram: number } {
-    const ema12 = this.calculateEMA(data, 12);
-    const ema26 = this.calculateEMA(data, 26);
+    const ema12 = this.calculateEMA(data, INDICATOR_PERIODS.EMA_FAST);
+    const ema26 = this.calculateEMA(data, INDICATOR_PERIODS.EMA_SLOW);
     const macd = ema12 - ema26;
     
     // For signal line, we'd need to calculate EMA of MACD values
     // Simplified: use a basic approximation
-    const signal = macd * 0.9; // Approximation
+    const signal = macd * MACD_CONFIG.SIGNAL_APPROXIMATION_FACTOR;
     const histogram = macd - signal;
     
     return { macd, signal, histogram };
@@ -105,27 +160,27 @@ class SimpleMlService {
       const currentPrice = closePrices[closePrices.length - 1];
       
       // Calculate technical indicators
-      const sma20 = this.calculateSMA(closePrices, 20);
-      const sma50 = this.calculateSMA(closePrices, 50);
-      const ema12 = this.calculateEMA(closePrices, 12);
+      const sma20 = this.calculateSMA(closePrices, INDICATOR_PERIODS.SMA_SHORT);
+      const sma50 = this.calculateSMA(closePrices, INDICATOR_PERIODS.SMA_LONG);
+      const ema12 = this.calculateEMA(closePrices, INDICATOR_PERIODS.EMA_FAST);
       const rsi = this.calculateRSI(closePrices);
       const macd = this.calculateMACD(closePrices);
       
       // Determine trend strength
       const trendStrength = Math.abs(currentPrice - sma20) / sma20;
-      const momentum = (currentPrice - closePrices[closePrices.length - 10]) / closePrices[closePrices.length - 10];
+      const momentum = (currentPrice - closePrices[closePrices.length - INDICATOR_PERIODS.MOMENTUM_LOOKBACK]) / closePrices[closePrices.length - INDICATOR_PERIODS.MOMENTUM_LOOKBACK];
       
       // Calculate predictions for different horizons
       const predictions = {
-        '1h': this.predictPrice(currentPrice, sma20, ema12, rsi, macd, trendStrength, momentum, 0.005),
-        '4h': this.predictPrice(currentPrice, sma20, ema12, rsi, macd, trendStrength, momentum, 0.02),
-        '24h': this.predictPrice(currentPrice, sma50, ema12, rsi, macd, trendStrength, momentum, 0.05)
+        '1h': this.predictPrice(currentPrice, sma20, ema12, rsi, macd, trendStrength, momentum, PREDICTION_HORIZON_FACTORS['1h']),
+        '4h': this.predictPrice(currentPrice, sma20, ema12, rsi, macd, trendStrength, momentum, PREDICTION_HORIZON_FACTORS['4h']),
+        '24h': this.predictPrice(currentPrice, sma50, ema12, rsi, macd, trendStrength, momentum, PREDICTION_HORIZON_FACTORS['24h'])
       };
       
       logger.info(`Simple ML predictions for ${symbol}:`, predictions);
       
       return predictions;
-    } catch (error: any) {
+    } catch (error) {
       logger.error('Simple ML prediction error:', error);
       throw error;
     }
@@ -146,21 +201,21 @@ class SimpleMlService {
   ): Prediction {
     // Bullish signals
     let bullishScore = 0;
-    if (currentPrice > sma) bullishScore += 0.2;
-    if (currentPrice > ema) bullishScore += 0.2;
-    if (rsi < 30) bullishScore += 0.3; // Oversold
-    if (rsi > 50 && rsi < 70) bullishScore += 0.1; // Healthy uptrend
-    if (macd.histogram > 0) bullishScore += 0.2;
-    if (momentum > 0) bullishScore += 0.2;
+    if (currentPrice > sma) bullishScore += SIGNAL_WEIGHTS.SMA_CROSS;
+    if (currentPrice > ema) bullishScore += SIGNAL_WEIGHTS.EMA_CROSS;
+    if (rsi < RSI_THRESHOLDS.OVERSOLD) bullishScore += SIGNAL_WEIGHTS.RSI_EXTREME;
+    if (rsi > RSI_THRESHOLDS.NEUTRAL && rsi < RSI_THRESHOLDS.OVERBOUGHT) bullishScore += SIGNAL_WEIGHTS.RSI_MODERATE;
+    if (macd.histogram > 0) bullishScore += SIGNAL_WEIGHTS.MACD_HISTOGRAM;
+    if (momentum > 0) bullishScore += SIGNAL_WEIGHTS.MOMENTUM;
     
     // Bearish signals
     let bearishScore = 0;
-    if (currentPrice < sma) bearishScore += 0.2;
-    if (currentPrice < ema) bearishScore += 0.2;
-    if (rsi > 70) bearishScore += 0.3; // Overbought
-    if (rsi < 50 && rsi > 30) bearishScore += 0.1; // Healthy downtrend
-    if (macd.histogram < 0) bearishScore += 0.2;
-    if (momentum < 0) bearishScore += 0.2;
+    if (currentPrice < sma) bearishScore += SIGNAL_WEIGHTS.SMA_CROSS;
+    if (currentPrice < ema) bearishScore += SIGNAL_WEIGHTS.EMA_CROSS;
+    if (rsi > RSI_THRESHOLDS.OVERBOUGHT) bearishScore += SIGNAL_WEIGHTS.RSI_EXTREME;
+    if (rsi < RSI_THRESHOLDS.NEUTRAL && rsi > RSI_THRESHOLDS.OVERSOLD) bearishScore += SIGNAL_WEIGHTS.RSI_MODERATE;
+    if (macd.histogram < 0) bearishScore += SIGNAL_WEIGHTS.MACD_HISTOGRAM;
+    if (momentum < 0) bearishScore += SIGNAL_WEIGHTS.MOMENTUM;
     
     // Determine direction and confidence
     const netScore = bullishScore - bearishScore;
@@ -168,18 +223,18 @@ class SimpleMlService {
     let confidence: number;
     let priceChange: number;
     
-    if (netScore > 0.2) {
+    if (netScore > DIRECTION_THRESHOLDS.NET_SCORE_MIN) {
       direction = 'BULLISH';
-      confidence = Math.min(netScore * 50 + 30, 85);
+      confidence = Math.min(netScore * DIRECTION_THRESHOLDS.CONFIDENCE_MULTIPLIER + DIRECTION_THRESHOLDS.CONFIDENCE_BASE, DIRECTION_THRESHOLDS.CONFIDENCE_CAP);
       priceChange = horizonFactor * (1 + trendStrength);
-    } else if (netScore < -0.2) {
+    } else if (netScore < -DIRECTION_THRESHOLDS.NET_SCORE_MIN) {
       direction = 'BEARISH';
-      confidence = Math.min(Math.abs(netScore) * 50 + 30, 85);
+      confidence = Math.min(Math.abs(netScore) * DIRECTION_THRESHOLDS.CONFIDENCE_MULTIPLIER + DIRECTION_THRESHOLDS.CONFIDENCE_BASE, DIRECTION_THRESHOLDS.CONFIDENCE_CAP);
       priceChange = -horizonFactor * (1 + trendStrength);
     } else {
       direction = 'NEUTRAL';
-      confidence = 40;
-      priceChange = horizonFactor * 0.3 * (Math.random() - 0.5);
+      confidence = DIRECTION_THRESHOLDS.NEUTRAL_CONFIDENCE;
+      priceChange = horizonFactor * DIRECTION_THRESHOLDS.NEUTRAL_DAMPENING * (Math.random() - 0.5);
     }
     
     const predictedPrice = currentPrice * (1 + priceChange);
@@ -199,8 +254,8 @@ class SimpleMlService {
       const closePrices = ohlcvData.map(d => d.close);
       
       // Calculate indicators
-      const sma20 = this.calculateSMA(closePrices, 20);
-      const sma50 = this.calculateSMA(closePrices, 50);
+      const sma20 = this.calculateSMA(closePrices, INDICATOR_PERIODS.SMA_SHORT);
+      const sma50 = this.calculateSMA(closePrices, INDICATOR_PERIODS.SMA_LONG);
       const rsi = this.calculateRSI(closePrices);
       const macd = this.calculateMACD(closePrices);
       
@@ -224,10 +279,10 @@ class SimpleMlService {
       else { bearishPoints += 1; bearishReasons.push('price<SMA50'); }
 
       // Momentum: RSI zones
-      if (rsi < 30) { bullishPoints += 2; bullishReasons.push('RSI oversold'); }
-      else if (rsi < 45) { bullishPoints += 1; bullishReasons.push('RSI low'); }
-      else if (rsi > 70) { bearishPoints += 2; bearishReasons.push('RSI overbought'); }
-      else if (rsi > 55) { bearishPoints += 1; bearishReasons.push('RSI high'); }
+      if (rsi < RSI_THRESHOLDS.OVERSOLD) { bullishPoints += 2; bullishReasons.push('RSI oversold'); }
+      else if (rsi < RSI_THRESHOLDS.LOW) { bullishPoints += 1; bullishReasons.push('RSI low'); }
+      else if (rsi > RSI_THRESHOLDS.OVERBOUGHT) { bearishPoints += 2; bearishReasons.push('RSI overbought'); }
+      else if (rsi > RSI_THRESHOLDS.HIGH) { bearishPoints += 1; bearishReasons.push('RSI high'); }
 
       // MACD histogram direction
       if (macd.histogram > 0) { bullishPoints += 1; bullishReasons.push('MACD bullish'); }
@@ -236,52 +291,52 @@ class SimpleMlService {
       const netScore = bullishPoints - bearishPoints;
       // Max possible net score is ~5 (all bullish), min is ~-5 (all bearish)
 
-      if (netScore >= 3) {
+      if (netScore >= SIGNAL_TIERS.STRONG.minScore) {
         action = 'BUY';
-        confidence = 80;
-        strength = 0.8;
+        confidence = SIGNAL_TIERS.STRONG.confidence;
+        strength = SIGNAL_TIERS.STRONG.strength;
         reason = `Strong bullish: ${bullishReasons.join(', ')}`;
-      } else if (netScore >= 2) {
+      } else if (netScore >= SIGNAL_TIERS.MODERATE.minScore) {
         action = 'BUY';
-        confidence = 70;
-        strength = 0.65;
+        confidence = SIGNAL_TIERS.MODERATE.confidence;
+        strength = SIGNAL_TIERS.MODERATE.strength;
         reason = `Moderate bullish: ${bullishReasons.join(', ')}`;
-      } else if (netScore >= 1) {
+      } else if (netScore >= SIGNAL_TIERS.MILD.minScore) {
         action = 'BUY';
-        confidence = 60;
-        strength = 0.5;
+        confidence = SIGNAL_TIERS.MILD.confidence;
+        strength = SIGNAL_TIERS.MILD.strength;
         reason = `Mild bullish: ${bullishReasons.join(', ')}`;
-      } else if (netScore <= -3) {
+      } else if (netScore <= -SIGNAL_TIERS.STRONG.minScore) {
         action = 'SELL';
-        confidence = 80;
-        strength = 0.8;
+        confidence = SIGNAL_TIERS.STRONG.confidence;
+        strength = SIGNAL_TIERS.STRONG.strength;
         reason = `Strong bearish: ${bearishReasons.join(', ')}`;
-      } else if (netScore <= -2) {
+      } else if (netScore <= -SIGNAL_TIERS.MODERATE.minScore) {
         action = 'SELL';
-        confidence = 70;
-        strength = 0.65;
+        confidence = SIGNAL_TIERS.MODERATE.confidence;
+        strength = SIGNAL_TIERS.MODERATE.strength;
         reason = `Moderate bearish: ${bearishReasons.join(', ')}`;
-      } else if (netScore <= -1) {
+      } else if (netScore <= -SIGNAL_TIERS.MILD.minScore) {
         action = 'SELL';
-        confidence = 60;
-        strength = 0.5;
+        confidence = SIGNAL_TIERS.MILD.confidence;
+        strength = SIGNAL_TIERS.MILD.strength;
         reason = `Mild bearish: ${bearishReasons.join(', ')}`;
       } else {
         action = 'HOLD';
-        confidence = 50;
-        strength = 0.3;
+        confidence = SIGNAL_TIERS.NEUTRAL.confidence;
+        strength = SIGNAL_TIERS.NEUTRAL.strength;
         reason = 'Evenly split signals - no clear direction';
       }
       
       logger.info(`Trading signal for ${symbol}:`, { action, confidence, strength });
       
       return { action, confidence, reason, strength };
-    } catch (error: any) {
+    } catch (error) {
       logger.error('Trading signal error:', error);
       return {
         action: 'HOLD',
         confidence: 0,
-        reason: `Error generating signal: ${error.message}`,
+        reason: `Error generating signal: ${error instanceof Error ? error.message : String(error)}`,
         strength: 0
       };
     }

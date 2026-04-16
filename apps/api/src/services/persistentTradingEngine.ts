@@ -10,15 +10,59 @@ import { PoloniexFuturesService } from './poloniexFuturesService.js';
 import { pool } from '../db/connection.js';
 import { logger } from '../utils/logger.js';
 
+// ─── Engine-specific types (not shared — these are internal to PersistentTradingEngine) ───
+
+interface StrategyConfig {
+  symbol: string;
+  type: string;
+  defaultSize: number;
+  leverage?: number;
+}
+
+type PositionState = Record<string, unknown>;
+
+interface SessionPerformanceMetrics {
+  lastBalance?: number;
+  lastCheckTime?: string;
+  lastSignal?: string;
+  lastPrice?: number;
+  [key: string]: unknown;
+}
+
+interface CandleData {
+  timestamp: number;
+  open: string;
+  high: string;
+  low: string;
+  close: string;
+  volume: string;
+}
+
+interface EngineMarketData {
+  symbol: string;
+  price: number;
+  open: number;
+  high: number;
+  low: number;
+  volume: number;
+  timestamp: Date;
+  candles: CandleData[];
+}
+
+interface EngineTradingSignal {
+  action: 'BUY' | 'SELL' | 'CLOSE' | 'HOLD';
+  size?: number;
+}
+
 export interface TradingSession {
   id: string;
   userId: string;
   sessionName: string | null;
   isActive: boolean;
-  strategyConfig: any;
-  riskConfig: any;
-  positionState: any;
-  performanceMetrics: any;
+  strategyConfig: StrategyConfig;
+  riskConfig: Record<string, unknown>;
+  positionState: PositionState;
+  performanceMetrics: SessionPerformanceMetrics;
   startedAt: Date;
   stoppedAt: Date | null;
   lastHeartbeatAt: Date;
@@ -235,7 +279,7 @@ export class PersistentTradingEngine extends EventEmitter {
   /**
    * Get current market data for a symbol
    */
-  private async getMarketData(symbol: string): Promise<any> {
+  private async getMarketData(symbol: string): Promise<EngineMarketData | null> {
     try {
       // Get historical candles to provide current market data with context
       const poloniexService = new PoloniexFuturesService();
@@ -267,11 +311,11 @@ export class PersistentTradingEngine extends EventEmitter {
    * Generate trading signal based on strategy configuration
    */
   private async generateTradingSignal(
-    strategyConfig: any,
-    marketData: any,
-    _positions: any,
-    _positionState: any
-  ): Promise<any> {
+    strategyConfig: StrategyConfig,
+    marketData: EngineMarketData,
+    _positions: unknown,
+    _positionState: PositionState
+  ): Promise<EngineTradingSignal> {
     try {
       if (!marketData || !marketData.price || marketData.price === 0) {
         return { action: 'HOLD' };
@@ -292,8 +336,8 @@ export class PersistentTradingEngine extends EventEmitter {
    */
   private async executeTrade(
     context: StrategyExecutionContext,
-    signal: any,
-    _marketData: any
+    signal: EngineTradingSignal,
+    _marketData: EngineMarketData
   ): Promise<void> {
     const { poloniexService, credentials, session } = context;
     
@@ -339,7 +383,7 @@ export class PersistentTradingEngine extends EventEmitter {
   /**
    * Update session performance metrics
    */
-  private async updateSessionMetrics(sessionId: string, metrics: any): Promise<void> {
+  private async updateSessionMetrics(sessionId: string, metrics: SessionPerformanceMetrics): Promise<void> {
     try {
       await pool.query(
         `UPDATE trading_sessions 
@@ -374,8 +418,8 @@ export class PersistentTradingEngine extends EventEmitter {
    */
   async startSession(
     userId: string,
-    strategyConfig: any,
-    riskConfig?: any,
+    strategyConfig: StrategyConfig,
+    riskConfig?: Record<string, unknown>,
     sessionName?: string
   ): Promise<string> {
     try {
