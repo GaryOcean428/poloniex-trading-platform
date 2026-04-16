@@ -54,10 +54,10 @@ const DIRECTION_THRESHOLDS = {
 } as const;
 
 const SIGNAL_TIERS = {
-  STRONG:   { minScore: 3, confidence: 80, strength: 0.8 },
+  STRONG: { minScore: 3, confidence: 80, strength: 0.8 },
   MODERATE: { minScore: 2, confidence: 70, strength: 0.65 },
-  MILD:     { minScore: 1, confidence: 60, strength: 0.5 },
-  NEUTRAL:  { minScore: 0, confidence: 50, strength: 0.3 },
+  MILD: { minScore: 1, confidence: 60, strength: 0.5 },
+  NEUTRAL: { minScore: 0, confidence: 50, strength: 0.3 },
 } as const;
 
 interface OHLCVData {
@@ -98,14 +98,14 @@ class SimpleMlService {
   private calculateEMA(data: number[], period: number): number {
     if (data.length === 0) return 0;
     if (data.length < period) return this.calculateSMA(data, data.length);
-    
+
     const multiplier = 2 / (period + 1);
     let ema = this.calculateSMA(data.slice(0, period), period);
-    
+
     for (let i = period; i < data.length; i++) {
       ema = (data[i] - ema) * multiplier + ema;
     }
-    
+
     return ema;
   }
 
@@ -114,18 +114,18 @@ class SimpleMlService {
    */
   private calculateRSI(data: number[], period: number = 14): number {
     if (data.length < period + 1) return DEFAULT_RSI;
-    
+
     const changes = [];
     for (let i = 1; i < data.length; i++) {
       changes.push(data[i] - data[i - 1]);
     }
-    
+
     const gains = changes.map(c => c > 0 ? c : 0);
     const losses = changes.map(c => c < 0 ? Math.abs(c) : 0);
-    
+
     const avgGain = this.calculateSMA(gains, period);
     const avgLoss = this.calculateSMA(losses, period);
-    
+
     if (avgLoss === 0) return 100;
     const rs = avgGain / avgLoss;
     return 100 - (100 / (1 + rs));
@@ -138,12 +138,12 @@ class SimpleMlService {
     const ema12 = this.calculateEMA(data, INDICATOR_PERIODS.EMA_FAST);
     const ema26 = this.calculateEMA(data, INDICATOR_PERIODS.EMA_SLOW);
     const macd = ema12 - ema26;
-    
+
     // For signal line, we'd need to calculate EMA of MACD values
     // Simplified: use a basic approximation
     const signal = macd * MACD_CONFIG.SIGNAL_APPROXIMATION_FACTOR;
     const histogram = macd - signal;
-    
+
     return { macd, signal, histogram };
   }
 
@@ -158,27 +158,27 @@ class SimpleMlService {
     try {
       const closePrices = ohlcvData.map(d => d.close);
       const currentPrice = closePrices[closePrices.length - 1];
-      
+
       // Calculate technical indicators
       const sma20 = this.calculateSMA(closePrices, INDICATOR_PERIODS.SMA_SHORT);
       const sma50 = this.calculateSMA(closePrices, INDICATOR_PERIODS.SMA_LONG);
       const ema12 = this.calculateEMA(closePrices, INDICATOR_PERIODS.EMA_FAST);
       const rsi = this.calculateRSI(closePrices);
       const macd = this.calculateMACD(closePrices);
-      
+
       // Determine trend strength
       const trendStrength = Math.abs(currentPrice - sma20) / sma20;
       const momentum = (currentPrice - closePrices[closePrices.length - INDICATOR_PERIODS.MOMENTUM_LOOKBACK]) / closePrices[closePrices.length - INDICATOR_PERIODS.MOMENTUM_LOOKBACK];
-      
+
       // Calculate predictions for different horizons
       const predictions = {
         '1h': this.predictPrice(currentPrice, sma20, ema12, rsi, macd, trendStrength, momentum, PREDICTION_HORIZON_FACTORS['1h']),
         '4h': this.predictPrice(currentPrice, sma20, ema12, rsi, macd, trendStrength, momentum, PREDICTION_HORIZON_FACTORS['4h']),
         '24h': this.predictPrice(currentPrice, sma50, ema12, rsi, macd, trendStrength, momentum, PREDICTION_HORIZON_FACTORS['24h'])
       };
-      
+
       logger.info(`Simple ML predictions for ${symbol}:`, predictions);
-      
+
       return predictions;
     } catch (error) {
       logger.error('Simple ML prediction error:', error);
@@ -207,7 +207,7 @@ class SimpleMlService {
     if (rsi > RSI_THRESHOLDS.NEUTRAL && rsi < RSI_THRESHOLDS.OVERBOUGHT) bullishScore += SIGNAL_WEIGHTS.RSI_MODERATE;
     if (macd.histogram > 0) bullishScore += SIGNAL_WEIGHTS.MACD_HISTOGRAM;
     if (momentum > 0) bullishScore += SIGNAL_WEIGHTS.MOMENTUM;
-    
+
     // Bearish signals
     let bearishScore = 0;
     if (currentPrice < sma) bearishScore += SIGNAL_WEIGHTS.SMA_CROSS;
@@ -216,13 +216,13 @@ class SimpleMlService {
     if (rsi < RSI_THRESHOLDS.NEUTRAL && rsi > RSI_THRESHOLDS.OVERSOLD) bearishScore += SIGNAL_WEIGHTS.RSI_MODERATE;
     if (macd.histogram < 0) bearishScore += SIGNAL_WEIGHTS.MACD_HISTOGRAM;
     if (momentum < 0) bearishScore += SIGNAL_WEIGHTS.MOMENTUM;
-    
+
     // Determine direction and confidence
     const netScore = bullishScore - bearishScore;
     let direction: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
     let confidence: number;
     let priceChange: number;
-    
+
     if (netScore > DIRECTION_THRESHOLDS.NET_SCORE_MIN) {
       direction = 'BULLISH';
       confidence = Math.min(netScore * DIRECTION_THRESHOLDS.CONFIDENCE_MULTIPLIER + DIRECTION_THRESHOLDS.CONFIDENCE_BASE, DIRECTION_THRESHOLDS.CONFIDENCE_CAP);
@@ -236,9 +236,9 @@ class SimpleMlService {
       confidence = DIRECTION_THRESHOLDS.NEUTRAL_CONFIDENCE;
       priceChange = horizonFactor * DIRECTION_THRESHOLDS.NEUTRAL_DAMPENING * (Math.random() - 0.5);
     }
-    
+
     const predictedPrice = currentPrice * (1 + priceChange);
-    
+
     return {
       price: Math.round(predictedPrice * 100) / 100,
       confidence: Math.round(confidence),
@@ -252,13 +252,13 @@ class SimpleMlService {
   async getTradingSignal(symbol: string, ohlcvData: OHLCVData[], currentPrice: number): Promise<TradingSignal> {
     try {
       const closePrices = ohlcvData.map(d => d.close);
-      
+
       // Calculate indicators
       const sma20 = this.calculateSMA(closePrices, INDICATOR_PERIODS.SMA_SHORT);
       const sma50 = this.calculateSMA(closePrices, INDICATOR_PERIODS.SMA_LONG);
       const rsi = this.calculateRSI(closePrices);
       const macd = this.calculateMACD(closePrices);
-      
+
       // Determine signal using a scoring approach instead of rigid conditions
       let action: 'BUY' | 'SELL' | 'HOLD' = 'HOLD';
       let confidence = 0;
@@ -327,9 +327,9 @@ class SimpleMlService {
         strength = SIGNAL_TIERS.NEUTRAL.strength;
         reason = 'Evenly split signals - no clear direction';
       }
-      
+
       logger.info(`Trading signal for ${symbol}:`, { action, confidence, strength });
-      
+
       return { action, confidence, reason, strength };
     } catch (error) {
       logger.error('Trading signal error:', error);

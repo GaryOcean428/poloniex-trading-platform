@@ -190,7 +190,7 @@ class MonitoringService {
     };
 
     this.healthMetrics.push(metric);
-    
+
     // Keep only last 100 health metrics
     if (this.healthMetrics.length > 100) {
       this.healthMetrics.shift();
@@ -249,7 +249,7 @@ class MonitoringService {
    */
   getSystemHealth(): SystemHealthReport {
     const recentMetrics = this.healthMetrics.slice(-10);
-    
+
     if (recentMetrics.length === 0) {
       return {
         status: 'unknown',
@@ -298,7 +298,7 @@ class MonitoringService {
    */
   getErrorStats(): ErrorStatsReport {
     const last24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const recentErrors = this.errorLogs.filter(log => 
+    const recentErrors = this.errorLogs.filter(log =>
       log.timestamp >= last24h && log.level === 'error'
     );
 
@@ -321,7 +321,7 @@ class MonitoringService {
    */
   private calculateErrorRate(): number {
     const last5Minutes = new Date(Date.now() - 5 * 60 * 1000);
-    const recentErrors = this.errorLogs.filter(log => 
+    const recentErrors = this.errorLogs.filter(log =>
       log.timestamp >= last5Minutes && log.level === 'error'
     );
     return recentErrors.length / 5; // Errors per minute

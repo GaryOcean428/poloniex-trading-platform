@@ -5,12 +5,12 @@
  */
 
 import { EventEmitter } from 'events';
+import { pool, query } from '../db/connection.js';
 import { logger } from '../utils/logger.js';
-import { query, pool } from '../db/connection.js';
-import poloniexFuturesService from './poloniexFuturesService.js';
+import { validateMarketData } from '../utils/marketDataValidator.js';
 import futuresWebSocket from '../websocket/futuresWebSocket.js';
 import backtestingEngine from './backtestingEngine.js';
-import { validateMarketData } from '../utils/marketDataValidator.js';
+import poloniexFuturesService from './poloniexFuturesService.js';
 
 /**
  * Determine whether a paper-trading session result is censored.
@@ -78,7 +78,7 @@ class PaperTradingService extends EventEmitter {
      * the ML loop can compare performance and evolve via selection pressure.
      */
     this.parallelStrategies = new Map();
-    
+
     // Market simulation parameters
     this.marketSimulation = {
       slippage: 0.001, // 0.1% slippage
@@ -120,7 +120,7 @@ class PaperTradingService extends EventEmitter {
   async loadActiveSessions() {
     try {
       const result = await query(`
-        SELECT * FROM paper_trading_sessions 
+        SELECT * FROM paper_trading_sessions
         WHERE status = 'active'
         ORDER BY started_at DESC
       `);
@@ -128,7 +128,7 @@ class PaperTradingService extends EventEmitter {
       for (const sessionData of result.rows) {
         const session = this.createSessionFromData(sessionData);
         this.activeSessions.set(session.id, session);
-        
+
         // Load positions for this session
         await this.loadSessionPositions(session.id);
 
@@ -151,7 +151,7 @@ class PaperTradingService extends EventEmitter {
   async createSession(config) {
     try {
       const sessionId = `pts_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      
+
       const session = {
         id: sessionId,
         name: config.name || `Paper Session ${new Date().toISOString().split('T')[0]}`,
@@ -222,7 +222,7 @@ class PaperTradingService extends EventEmitter {
       this._registerParallelStrategy(session.symbol, sessionId, null);
 
       logger.info(`📝 Created paper trading session: ${session.name} (${sessionId})`);
-      
+
       this.emit('sessionCreated', session);
       return session;
     } catch (error) {
@@ -282,7 +282,7 @@ class PaperTradingService extends EventEmitter {
 
       logger.info(`🚀 Started paper trading session: ${sessionId}`);
       this.emit('sessionStarted', session);
-      
+
       return session;
     } catch (error) {
       logger.error('Error starting paper trading session:', error);
@@ -419,7 +419,7 @@ class PaperTradingService extends EventEmitter {
   updateSessionWithMarketData(session, marketData) {
     try {
       const currentPrice = marketData.price || marketData.close;
-      
+
       // Update unrealized P&L for open positions
       let totalUnrealizedPnl = 0;
 
@@ -516,7 +516,7 @@ class PaperTradingService extends EventEmitter {
 
       // Get historical data for technical analysis
       const historicalData = await this.getHistoricalDataForSignal(session.symbol, session.timeframe);
-      
+
       if (historicalData.length < 20) return; // Need enough data for indicators
 
       // Calculate technical indicators
@@ -569,7 +569,7 @@ class PaperTradingService extends EventEmitter {
 
       // Calculate position size
       const positionSize = this.calculatePositionSize(session, signal, marketData);
-      
+
       // Simulate order execution
       const executionResult = await this.simulateOrderExecution(
         session,
@@ -593,7 +593,7 @@ class PaperTradingService extends EventEmitter {
         });
 
         logger.info(`📈 Executed entry signal for ${session.id}: ${signal.side} ${positionSize} at ${executionResult.executionPrice}`);
-        
+
         this.emit('positionOpened', {
           sessionId: session.id,
           position,
@@ -653,16 +653,16 @@ class PaperTradingService extends EventEmitter {
   calculateExecutionPrice(basePrice, side, size) {
     // Base slippage
     let slippage = this.marketSimulation.slippage;
-    
+
     // Market impact based on position size (guard against non-positive size)
     const sizeRatio = size > 0 ? size / 1000 : 1;
     const marketImpact = this.marketSimulation.marketImpact * Math.log(Math.max(sizeRatio, Number.MIN_VALUE));
-    
+
     // Random slippage variation (±20%)
     const randomFactor = 0.8 + (Math.random() * 0.4);
-    
+
     const totalSlippage = (slippage + marketImpact) * randomFactor;
-    
+
     // Apply slippage against the trader
     if (side === 'long') {
       return basePrice * (1 + totalSlippage);
@@ -677,7 +677,7 @@ class PaperTradingService extends EventEmitter {
   async createPosition(session, positionData) {
     try {
       const positionId = `pos_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      
+
       const position = {
         id: positionId,
         sessionId: session.id,
@@ -804,7 +804,7 @@ class PaperTradingService extends EventEmitter {
       }
       session.margin -= entryMarginUsed;
       session.totalTrades++;
-      
+
       if (realizedPnl > 0) {
         session.winningTrades++;
       } else {
@@ -887,7 +887,7 @@ class PaperTradingService extends EventEmitter {
       }
 
       logger.info(`📉 Closed position ${positionId} for session ${sessionId}: P&L = ${realizedPnl.toFixed(2)}`);
-      
+
       this.emit('positionClosed', {
         sessionId,
         position,
@@ -908,7 +908,7 @@ class PaperTradingService extends EventEmitter {
   async createTradeRecord(session, position, type, pnl = 0) {
     try {
       const tradeId = `trade_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      
+
       const trade = {
         id: tradeId,
         sessionId: session.id,
@@ -962,7 +962,7 @@ class PaperTradingService extends EventEmitter {
   calculateUnrealizedPnl(position, currentPrice) {
     const entryValue = position.size * position.entryPrice;
     const currentValue = position.size * currentPrice;
-    
+
     if (position.side === 'long') {
       return currentValue - entryValue;
     } else {
@@ -1034,7 +1034,7 @@ class PaperTradingService extends EventEmitter {
       const positionSize = this.calculatePositionSize(session, signal, marketData);
       const positionValue = positionSize * marketData.price;
       const positionPercent = positionValue / session.currentValue;
-      
+
       if (positionPercent > session.riskParameters.maxPositionSize) {
         // Mark session as censored: return is bounded by the position-size cap.
         session.isCensored = true;
@@ -1079,11 +1079,11 @@ class PaperTradingService extends EventEmitter {
       logger.warn('[PT] Cannot calculate position size: price is zero or missing');
       return 0;
     }
-    
+
     // Position size based on risk amount and stop loss
     const maxPositionValue = riskAmount / stopLossDistance;
     const maxPositionSize = maxPositionValue / price;
-    
+
     // Apply position size limits
     const maxAllowedValue = session.currentValue * session.riskParameters.maxPositionSize;
     const maxAllowedSize = maxAllowedValue / price;
@@ -1104,7 +1104,7 @@ class PaperTradingService extends EventEmitter {
    */
   calculateStopLoss(entryPrice, side, riskParams) {
     const stopLossPercent = riskParams.stopLossPercent || 0.02;
-    
+
     if (side === 'long') {
       return entryPrice * (1 - stopLossPercent);
     } else {
@@ -1114,7 +1114,7 @@ class PaperTradingService extends EventEmitter {
 
   calculateTakeProfit(entryPrice, side, riskParams) {
     const takeProfitPercent = riskParams.takeProfitPercent || 0.04;
-    
+
     if (side === 'long') {
       return entryPrice * (1 + takeProfitPercent);
     } else {
@@ -1202,7 +1202,7 @@ class PaperTradingService extends EventEmitter {
     // Poloniex Futures fees: 0.01% maker / 0.075% taker
     const makerFeeRate = 0.0001; // 0.01%
     const takerFeeRate = 0.00075; // 0.075%
-    
+
     const feeRate = orderType === 'limit' ? makerFeeRate : takerFeeRate;
     return size * price * feeRate;
   }
@@ -1312,7 +1312,7 @@ class PaperTradingService extends EventEmitter {
 
       // Update database
       await query(`
-        UPDATE paper_trading_sessions 
+        UPDATE paper_trading_sessions
         SET status = 'stopped', ended_at = $1, updated_at = NOW(),
             is_censored = $3, censor_reason = $4
         WHERE id = $2
@@ -1324,7 +1324,7 @@ class PaperTradingService extends EventEmitter {
       this._unregisterParallelStrategy(session.symbol, sessionId);
 
       logger.info(`⏹️ Stopped paper trading session: ${sessionId}${session.isCensored ? ' [CENSORED]' : ''}`);
-      
+
       this.emit('sessionStopped', session);
       return session;
     } catch (error) {
@@ -1339,7 +1339,7 @@ class PaperTradingService extends EventEmitter {
   async updateSessionInDatabase(session) {
     try {
       await query(`
-        UPDATE paper_trading_sessions 
+        UPDATE paper_trading_sessions
         SET current_value = $1, unrealized_pnl = $2, realized_pnl = $3,
             total_trades = $4, winning_trades = $5,
             is_censored = $6, censor_reason = $7, updated_at = NOW()
@@ -1427,7 +1427,7 @@ class PaperTradingService extends EventEmitter {
   async loadSessionPositions(sessionId) {
     try {
       const result = await query(`
-        SELECT * FROM paper_trading_positions 
+        SELECT * FROM paper_trading_positions
         WHERE session_id = $1
         ORDER BY entry_time DESC
       `, [sessionId]);

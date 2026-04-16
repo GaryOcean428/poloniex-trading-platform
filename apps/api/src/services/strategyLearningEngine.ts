@@ -33,26 +33,26 @@ import backtestingEngine from './backtestingEngine.js';
 import confidenceScoringService from './confidenceScoringService.js';
 import parallelStrategyRunner from './parallelStrategyRunner.js';
 import {
-  SignalGenome,
-  generateRandomGenome,
-  mutateGenome,
-  crossoverGenomes,
-  inferStrategyType,
-} from './signalGenome.js';
+  computeQIGFitness,
+  detectRegimeTransition,
+  type QIGFitnessResult,
+} from './qig/qigFitnessFunction.js';
 import {
-  estimateKappa,
   classifyRegime,
-  geometricFragility,
   constitutiveR2,
+  estimateKappa,
+  geometricFragility,
   priceAutocorrelation,
   shouldResetStrategies,
   type QIGRegime,
 } from './qig/qigFrozenLaws.js';
 import {
-  computeQIGFitness,
-  detectRegimeTransition,
-  type QIGFitnessResult,
-} from './qig/qigFitnessFunction.js';
+  SignalGenome,
+  crossoverGenomes,
+  generateRandomGenome,
+  inferStrategyType,
+  mutateGenome,
+} from './signalGenome.js';
 
 export type MarketRegime = 'trending' | 'ranging' | 'volatile' | 'unknown';
 export type StrategyType = 'momentum' | 'mean_reversion' | 'breakout' | 'trend_following' | 'scalping';
