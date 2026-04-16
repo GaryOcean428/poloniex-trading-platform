@@ -365,12 +365,14 @@ class PaperTradingService extends EventEmitter {
   subscribeToMarketData() {
     try {
       // Listen for market data updates from futures WebSocket
-      futuresWebSocket.on('marketData', (data) => {
+      // NOTE: futuresWebSocket emits 'ticker', not 'marketData'
+      futuresWebSocket.on('ticker', (data) => {
         this.processMarketData(data);
       });
 
       // Listen for order book updates
-      futuresWebSocket.on('orderBook', (data) => {
+      // NOTE: futuresWebSocket emits 'orderbook' (lowercase b)
+      futuresWebSocket.on('orderbook', (data) => {
         this.processOrderBookData(data);
       });
 

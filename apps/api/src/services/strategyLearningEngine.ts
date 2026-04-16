@@ -132,7 +132,6 @@ class StrategyLearningEngine extends EventEmitter {
   private strategies: Map<string, StrategyRecord> = new Map();
   private previousKappa = 0;
   private lastQIGRegime: QIGRegime = 'geometric';
-  private schemaFixAttempted = false;
 
   constructor() { super(); }
 
@@ -140,7 +139,7 @@ class StrategyLearningEngine extends EventEmitter {
     if (this.isRunning) { logger.warn('[SLE] Already running'); return; }
     this.isRunning = true;
     logger.info('[SLE] Starting strategy learning engine');
-    await this.ensureSchemaDefaults();
+    // Schema defaults are now handled by migration 023_sle_schema_defaults.sql
     await this.loadActiveStrategies();
     this.scheduleNextCycle(0);
   }
@@ -149,89 +148,6 @@ class StrategyLearningEngine extends EventEmitter {
     this.isRunning = false;
     if (this.loopTimer) { clearTimeout(this.loopTimer); this.loopTimer = null; }
     logger.info('[SLE] Strategy learning engine stopped');
-  }
-
-  private async ensureSchemaDefaults(): Promise<void> {
-    if (this.schemaFixAttempted) return;
-    this.schemaFixAttempted = true;
-    const columnsToFix = ['backtest_count', 'avg_return', 'avg_sharpe_ratio', 'avg_max_drawdown', 'win_rate'];
-    for (const col of columnsToFix) {
-      try {
-        await query(`ALTER TABLE strategy_performance ALTER COLUMN ${col} SET DEFAULT 0`);
-        logger.info(`[SLE] Set DEFAULT 0 on strategy_performance.${col}`);
-      } catch (err: any) {
-        if (!err.message?.includes('does not exist')) {
-          logger.debug(`[SLE] Could not set default on ${col}: ${err.message}`);
-        }
-      }
-    }
-
-    // Drop NOT NULL on columns not in INSERT params array
-    const columnsToDropNotNull = ['avg_max_drawdown', 'win_rate', 'last_backtest_date'];
-    for (const col of columnsToDropNotNull) {
-      try {
-        await query(`ALTER TABLE strategy_performance ALTER COLUMN ${col} DROP NOT NULL`);
-        logger.info(`[SLE] Dropped NOT NULL on strategy_performance.${col}`);
-      } catch (err: any) {
-        if (!err.message?.includes('does not exist')) {
-          logger.debug(`[SLE] Could not drop NOT NULL on ${col}: ${err.message}`);
-        }
-      }
-    }
-
-    // Drop view before ALTER TABLE (PG blocks ALTER on columns used by views)
-    try {
-      await query('DROP VIEW IF EXISTS strategy_performance_summary CASCADE');
-      logger.info('[SLE] Dropped strategy_performance_summary view for schema migration');
-    } catch (err: any) {
-      logger.debug(`[SLE] Could not drop view: ${err.message}`);
-    }
-
-    const columnsToWiden = [
-      'backtest_sharpe', 'backtest_wr', 'backtest_max_dd',
-      'paper_sharpe', 'paper_wr', 'paper_pnl',
-      'live_sharpe', 'live_pnl',
-      'uncensored_sharpe', 'confidence_score',
-      'avg_sharpe_ratio', 'avg_return',
-    ];
-    for (const col of columnsToWiden) {
-      try {
-        await query(`ALTER TABLE strategy_performance ALTER COLUMN ${col} TYPE NUMERIC(12,6)`);
-        logger.info(`[SLE] Widened strategy_performance.${col} to NUMERIC(12,6)`);
-      } catch (err: any) {
-        if (!err.message?.includes('does not exist')) {
-          logger.debug(`[SLE] Could not widen ${col}: ${err.message}`);
-        }
-      }
-    }
-
-    // Recreate view after column changes
-    try {
-      await query(`
-        CREATE OR REPLACE VIEW strategy_performance_summary AS
-        SELECT s.name, s.type, s.description,
-            COALESCE(sp.avg_return, 0) as avg_return,
-            COALESCE(sp.avg_sharpe_ratio, 0) as avg_sharpe_ratio,
-            COALESCE(sp.avg_max_drawdown, 0) as avg_max_drawdown,
-            COALESCE(sp.win_rate, 0) as win_rate,
-            COALESCE(sp.confidence_score, 0) as confidence_score,
-            COALESCE(sp.backtest_count, 0) as backtest_count,
-            sp.last_backtest_date, s.created_at, s.updated_at
-        FROM strategy_definitions s
-        LEFT JOIN strategy_performance sp ON s.name = sp.strategy_name
-        WHERE s.is_active = true
-      `);
-      logger.info('[SLE] Recreated strategy_performance_summary view');
-    } catch (err: any) {
-      logger.warn(`[SLE] Could not recreate view: ${err.message}`);
-    }
-
-    try {
-      await query(`ALTER TABLE strategy_performance ADD COLUMN IF NOT EXISTS signal_genome JSONB`);
-      logger.info('[SLE] Ensured signal_genome column exists on strategy_performance');
-    } catch (err: any) {
-      logger.debug(`[SLE] Could not add signal_genome column: ${err.message}`);
-    }
   }
 
   private scheduleNextCycle(delayMs: number): void {
