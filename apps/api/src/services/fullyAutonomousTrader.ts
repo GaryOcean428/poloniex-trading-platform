@@ -91,6 +91,7 @@ class FullyAutonomousTrader extends EventEmitter {
   private runningIntervals: Map<string, NodeJS.Timeout> = new Map();
   private performanceMetrics: Map<string, any> = new Map();
   private lastHeartbeat: Map<string, Date> = new Map();
+  private cycleInFlight: Set<string> = new Set();
 
   // Circuit breaker state per user
   private circuitBreakers: Map<string, {
@@ -296,6 +297,13 @@ class FullyAutonomousTrader extends EventEmitter {
       return;
     }
 
+    // Clear any existing interval for this user to prevent duplicates
+    const existing = this.runningIntervals.get(userId);
+    if (existing) {
+      clearInterval(existing);
+      this.runningIntervals.delete(userId);
+    }
+
     logger.info(`Starting autonomous trading for user ${userId} (cycle: ${config.tradingCycleSeconds}s)`);
 
     // Run immediately
@@ -303,13 +311,17 @@ class FullyAutonomousTrader extends EventEmitter {
       logger.error(`Trading cycle error for user ${userId}:`, err);
     });
 
-    // Then run at configured interval
+    // Then run at configured interval with overlap guard
     const cycleMs = config.tradingCycleSeconds * 1000;
     const interval = setInterval(async () => {
+      if (this.cycleInFlight.has(userId)) return; // Skip if previous cycle still running
+      this.cycleInFlight.add(userId);
       try {
         await this.tradingCycle(userId);
       } catch (err) {
         logger.error(`Trading cycle error for user ${userId}:`, err);
+      } finally {
+        this.cycleInFlight.delete(userId);
       }
     }, cycleMs);
 

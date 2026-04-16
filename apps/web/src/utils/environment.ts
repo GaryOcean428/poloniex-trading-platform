@@ -107,8 +107,8 @@ export const shouldUseMockMode = (hasCredentials: boolean = false): boolean => {
     return !hasCredentials;
   }
 
-  // In production, require credentials - don't fall back to mock mode
-  return !hasCredentials;
+  // In production, never auto-enable mock mode — missing credentials should fail explicitly
+  return false;
 };
 
 // Get base URL for the application

@@ -117,7 +117,7 @@ router.post('/stop', authenticateToken, async (req: Request, res: Response) => {
   try {
     const userId = (req.user?.id || req.user?.userId)?.toString();
     if (!userId) return res.status(401).json({ success: false, error: 'User ID not found in token' });
-    await strategyLearningEngine.stop();
+    // Only stop the per-user trader — SLE is global and must not be stopped per-user
     try { await fullyAutonomousTrader.disableAutonomousTrading(userId); } catch { /* may not be enabled */ }
     res.json({ success: true, message: 'Agent stopped successfully' });
   } catch (error: unknown) {
@@ -130,7 +130,8 @@ router.post('/pause', authenticateToken, async (req: Request, res: Response) => 
   try {
     const userId = (req.user?.id || req.user?.userId)?.toString();
     if (!userId) return res.status(401).json({ success: false, error: 'User ID not found in token' });
-    await strategyLearningEngine.stop();
+    // Only disable per-user trader — SLE is global and must not be stopped per-user
+    try { await fullyAutonomousTrader.disableAutonomousTrading(userId); } catch { /* may not be enabled */ }
     res.json({ success: true, message: 'Agent paused successfully' });
   } catch (error: unknown) {
     logger.error('Error pausing agent:', error);
@@ -168,7 +169,7 @@ router.get('/status', authenticateToken, async (req: Request, res: Response) => 
     });
   } catch (error: unknown) {
     logger.error('Error getting agent status:', error);
-    res.json({ success: true, status: null, _fallback: true });
+    res.status(500).json({ success: false, error: 'Failed to get agent status' });
   }
 });
 
@@ -199,8 +200,21 @@ router.get('/health', authenticateToken, async (req: Request, res: Response) => 
   }
 });
 
-router.get('/activity', authenticateToken, async (_req: Request, res: Response) => {
-  res.json({ success: true, activity: [] });
+router.get('/activity', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const userId = (req.user?.id || req.user?.userId)?.toString();
+    if (!userId) return res.status(401).json({ success: false, error: 'User ID not found in token' });
+    const limit = Math.min(parseInt(req.query.limit as string, 10) || 20, 100);
+    const result = await pool.query(
+      `SELECT * FROM agent_events WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2`,
+      [userId, limit]
+    );
+    res.json({ success: true, activity: result.rows });
+  } catch (error: unknown) {
+    if (isTableMissingError(error)) return res.json({ success: true, activity: [] });
+    logger.error('Agent activity query failed:', error instanceof Error ? error.message : String(error));
+    res.json({ success: true, activity: [], _fallback: true });
+  }
 });
 
 router.get('/events', authenticateToken, async (req: Request, res: Response) => {
@@ -244,7 +258,7 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
     if (!traderStatus.enabled && !traderStatus.metrics) return res.json({ success: true, performance: defaultPerformance, dailyPerformance: [] });
     try {
       const mode = req.query.mode as string | undefined;
-      const modeFilter = mode === 'paper' ? " AND paper_trade = true" : mode === 'live' ? " AND paper_trade = false" : '';
+      const modeFilter = mode === 'paper' ? " AND order_id LIKE 'paper_%'" : mode === 'live' ? " AND (order_id IS NULL OR order_id NOT LIKE 'paper_%')" : '';
       const tradesResult = await pool.query(`SELECT COUNT(*) as total_trades, SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as winning_trades, SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END) as losing_trades, SUM(pnl) as total_pnl, AVG(CASE WHEN pnl > 0 THEN pnl END) as avg_win, AVG(CASE WHEN pnl < 0 THEN pnl END) as avg_loss FROM autonomous_trades WHERE user_id = $1${modeFilter}`, [userId]);
       const metrics = tradesResult.rows[0];
       let sharpeRatio = 0; let maxDrawdown = 0;
