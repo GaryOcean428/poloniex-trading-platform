@@ -93,7 +93,20 @@ const AutonomousAgentDashboard: React.FC = () => {
     timestamp: string;
   } | null>(null);
   const [riskAppetite, setRiskAppetite] = usePersistedState<'conservative' | 'balanced' | 'aggressive'>('agent_risk_appetite', 'balanced');
-  const [executionMode, setExecutionMode] = usePersistedState<'backtest' | 'paper' | 'live'>('agent_execution_mode', 'paper');
+  // Execution Mode is a SAFETY OVERRIDE, not a pipeline stage. The pipeline
+  // (generated → backtest → paper → live) runs internally under 'auto'.
+  // 'paper_only' blocks live promotion regardless of strategy performance
+  // (debug/trust-building). 'pause' halts all new orders at every stage.
+  // Legacy value 'paper' is coerced to 'paper_only' for back-compat with
+  // any persisted localStorage entries from before this migration.
+  const [executionModeRaw, setExecutionModeRaw] = usePersistedState<'auto' | 'paper_only' | 'pause' | 'backtest' | 'paper' | 'live'>('agent_execution_mode', 'auto');
+  const executionMode: 'auto' | 'paper_only' | 'pause' =
+    executionModeRaw === 'paper' || executionModeRaw === 'paper_only'
+      ? 'paper_only'
+      : executionModeRaw === 'pause'
+        ? 'pause'
+        : 'auto';  // 'backtest' | 'live' | 'auto' all normalise to 'auto'
+  const setExecutionMode = (v: 'auto' | 'paper_only' | 'pause') => setExecutionModeRaw(v);
   const [performanceMode, setPerformanceMode] = useState<'all' | 'backtest' | 'paper' | 'live'>('all');
   const [agentEvents, setAgentEvents] = useState<Array<{
     id: string;
@@ -318,7 +331,7 @@ const AutonomousAgentDashboard: React.FC = () => {
 
       const response = await axios.post(
         `${API_BASE_URL}/api/agent/start`,
-        { ...config, ...riskConfig, paperTrading: executionMode === 'paper', executionMode },
+        { ...config, ...riskConfig, paperTrading: executionMode === 'paper_only', executionMode },
         { headers: getAuthHeaders() }
       );
       
@@ -578,14 +591,17 @@ const AutonomousAgentDashboard: React.FC = () => {
               ))}
             </div>
           </div>
-          {/* Execution Mode */}
+          {/* Execution Mode — safety override on the autonomous pipeline.
+              'Auto' runs the full generated→backtest→paper→live pipeline.
+              'Paper-Only' blocks live promotion for debug / trust-building.
+              'Pause' halts all new orders at every stage. */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">Execution Mode</label>
             <div className="grid grid-cols-3 gap-2">
               {([
-                { value: 'backtest', label: 'Backtest', desc: 'Historical simulation', icon: '📊', bgClass: 'border-purple-500 bg-purple-50' },
-                { value: 'paper', label: 'Paper', desc: 'Simulated capital', icon: '📝', bgClass: 'border-blue-500 bg-blue-50' },
-                { value: 'live', label: 'Live', desc: 'Real capital', icon: '⚡', bgClass: 'border-red-500 bg-red-50' }
+                { value: 'auto', label: 'Auto', desc: 'Pipeline decides (default)', icon: '🤖', bgClass: 'border-green-500 bg-green-50' },
+                { value: 'paper_only', label: 'Paper-Only', desc: 'Block live promotion', icon: '📝', bgClass: 'border-blue-500 bg-blue-50' },
+                { value: 'pause', label: 'Pause', desc: 'No new orders', icon: '⏸️', bgClass: 'border-amber-500 bg-amber-50' }
               ] as const).map(opt => (
                 <button key={opt.value}
                   onClick={() => setExecutionMode(opt.value)}
@@ -598,18 +614,20 @@ const AutonomousAgentDashboard: React.FC = () => {
                 </button>
               ))}
             </div>
-            {executionMode === 'live' && (
+            {executionMode === 'auto' && (
               <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg">
-                <p className="text-red-800 text-sm font-medium">⚠️ Live Trading — Real money will be used</p>
-                <p className="text-red-600 text-xs mt-1">Ensure you have reviewed your risk settings and account balance.</p>
+                <p className="text-red-800 text-sm font-medium">⚠️ Auto Mode — real capital may be used once strategies earn live tier</p>
+                <p className="text-red-600 text-xs mt-1">The pipeline self-promotes strategies from paper to live once they clear the multi-metric gates. Switch to Paper-Only to block live promotion.</p>
               </div>
             )}
           </div>
         </div>
       </div>
 
-      {/* Emergency Stop — visible when live trading is active */}
-      {agentStatus?.status === 'running' && (executionMode === 'live' || agentStatus?.config?.executionMode === 'live') && (
+      {/* Emergency Stop — visible when live trading is active. "Auto" mode
+          may be running live-promoted strategies; the safe configurations
+          ('paper_only', 'pause') won't reach live. */}
+      {agentStatus?.status === 'running' && executionMode === 'auto' && agentStatus?.config?.executionMode !== 'paper_only' && agentStatus?.config?.executionMode !== 'pause' && (
         <div className="bg-red-50 border-2 border-red-300 rounded-lg p-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <Shield className="w-6 h-6 text-red-600" />

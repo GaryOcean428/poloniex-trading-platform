@@ -56,6 +56,28 @@ import {
   inferStrategyType,
   mutateGenome,
 } from './signalGenome.js';
+import {
+  ALL_STRATEGY_CLASSES,
+  DEFAULT_BANDIT_COUNTER,
+  sampleBestClass,
+  type BanditCounter,
+  type StrategyClass,
+} from './thompsonBandit.js';
+
+export type StrategyStatusTransitionReason =
+  | 'created'
+  | 'backtest_passed'
+  | 'backtest_failed'
+  | 'promoted_paper'
+  | 'promoted_live'
+  | 'demoted_recalibrating'
+  | 'retired_oscillation'
+  | 'retired_recalibration_limit'
+  | 'killed_phase_clock'
+  | 'killed_drawdown'
+  | 'killed_fitness_divergent'
+  | 'killed_anderson_reset'
+  | string;
 
 export type MarketRegime = 'trending' | 'ranging' | 'volatile' | 'unknown';
 export type StrategyType = 'momentum' | 'mean_reversion' | 'breakout' | 'trend_following' | 'scalping';
@@ -243,8 +265,20 @@ class StrategyLearningEngine extends EventEmitter {
   private async andersonResetStrategies(newRegime: QIGRegime): Promise<void> {
     const active = Array.from(this.strategies.values()).filter(s => s.status === 'paper_trading' || s.status === 'backtesting');
     for (const s of active) {
+      const fromStatus = s.status;
       s.status = 'killed'; s.censorReason = `anderson_regime_reset_${newRegime}`;
-      try { await parallelStrategyRunner.removeStrategy(s.strategyId, s.censorReason); await this.upsertStrategyPerformance(s); } catch (err) { logger.debug(`[SLE] Anderson reset: failed to kill ${s.strategyId}:`, err); }
+      try {
+        await parallelStrategyRunner.removeStrategy(s.strategyId, s.censorReason);
+        await this.upsertStrategyPerformance(s);
+        await this.recordStrategyStateEvent(
+          s.strategyId,
+          fromStatus,
+          'killed',
+          'killed_anderson_reset',
+          { newRegime, previousRegime: s.regimeAtCreation },
+          `anderson_regime_reset_${newRegime}`,
+        );
+      } catch (err) { logger.debug(`[SLE] Anderson reset: failed to kill ${s.strategyId}:`, err); }
     }
     logger.info(`[SLE] Anderson reset complete: killed ${active.length} strategies, new regime: ${newRegime}`);
   }
@@ -417,9 +451,28 @@ class StrategyLearningEngine extends EventEmitter {
       else if (s.fitnessDivergent) killReason = 'fitness_divergent_unreliable_estimate';
       if (s.paperPnl !== null && s.paperTrades > 5) { const capital = Math.max(this.cachedBalance, MIN_CAPITAL_FLOOR); const ddPct = Math.abs(Math.min(0, s.paperPnl)) / capital; if (ddPct > 0.10) killReason = `drawdown_${(ddPct * 100).toFixed(1)}pct`; }
       if (killReason) {
+        const fromStatus = 'paper_trading';
         s.status = s.status === 'censored_rejected' ? 'censored_rejected' : 'killed';
         await parallelStrategyRunner.removeStrategy(s.strategyId, killReason);
         await this.upsertStrategyPerformance(s);
+        await this.recordStrategyStateEvent(
+          s.strategyId,
+          fromStatus,
+          s.status,
+          killReason.startsWith('phase_clock')
+            ? 'killed_phase_clock'
+            : killReason.startsWith('drawdown')
+              ? 'killed_drawdown'
+              : 'killed_fitness_divergent',
+          {
+            phaseClock: s.phaseClock,
+            paperPnl: s.paperPnl,
+            paperTrades: s.paperTrades,
+            isCensored: s.isCensored,
+            fitnessDivergent: s.fitnessDivergent,
+          },
+          killReason,
+        );
         logger.info(`[SLE] Killed strategy ${s.strategyId}: ${killReason}`);
         await this.cloneTopPerformer(s.regimeAtCreation);
       }
@@ -442,7 +495,22 @@ class StrategyLearningEngine extends EventEmitter {
         const score = await (confidenceScoringService as any).calculateConfidenceScore(s.strategyId, s.symbol, s.timeframe);
         s.confidenceScore = safeNum(score?.confidenceScore ?? score?.score ?? score);
         if (s.confidenceScore >= PAPER_THRESHOLDS.minConfidence) {
-          s.status = 'recommended'; await this.upsertStrategyPerformance(s); this.emit('liveRecommendation', s);
+          const fromStatus = 'paper_trading';
+          s.status = 'recommended';
+          await this.upsertStrategyPerformance(s);
+          await this.recordStrategyStateEvent(
+            s.strategyId,
+            fromStatus,
+            'recommended',
+            'promoted_paper',
+            {
+              paperSharpe: s.paperSharpe,
+              paperTrades: s.paperTrades,
+              paperPnl: s.paperPnl,
+              confidence: s.confidenceScore,
+            },
+          );
+          this.emit('liveRecommendation', s);
           logger.info(`[SLE] \uD83C\uDFAF Strategy ${s.strategyId} RECOMMENDED for live: confidence=${s.confidenceScore.toFixed(1)}`);
         }
       } catch (err) { logger.warn(`[SLE] Confidence scoring failed for ${s.strategyId}:`, err); }
@@ -453,11 +521,149 @@ class StrategyLearningEngine extends EventEmitter {
     const s = this.strategies.get(strategyId);
     if (!s) throw new Error(`Strategy ${strategyId} not found`);
     if (s.status !== 'recommended') throw new Error(`Strategy ${strategyId} is not recommended (current: ${s.status})`);
-    s.status = 'live'; await this.upsertStrategyPerformance(s); this.emit('liveConfirmed', s);
+    const fromStatus = s.status;
+    s.status = 'live';
+    await this.upsertStrategyPerformance(s);
+    await this.recordStrategyStateEvent(
+      strategyId,
+      fromStatus,
+      'live',
+      'promoted_live',
+      {
+        liveSharpe: s.liveSharpe,
+        confidence: s.confidenceScore,
+        symbol: s.symbol,
+        leverage: s.leverage,
+      },
+    );
+    this.emit('liveConfirmed', s);
     logger.info(`[SLE] User confirmed live promotion for ${strategyId}`); return s;
   }
 
   private async updateGenerationWeights(): Promise<void> { await this.loadActiveStrategies(); }
+
+  /**
+   * Append an immutable event to strategy_state_events. Every status
+   * transition — promotion, demotion, kill, reactivation — should go
+   * through this so the audit log is complete. Fail-soft: logs but
+   * doesn't throw, since event-log failures must never block trading.
+   */
+  async recordStrategyStateEvent(
+    strategyId: string,
+    fromStatus: string | null,
+    toStatus: string,
+    reason: StrategyStatusTransitionReason,
+    metadata: Record<string, unknown> | null = null,
+    detail: string | null = null,
+  ): Promise<void> {
+    try {
+      await query(
+        `INSERT INTO strategy_state_events
+           (strategy_id, from_status, to_status, reason, detail, metadata, engine_version)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          strategyId,
+          fromStatus,
+          toStatus,
+          reason,
+          detail,
+          metadata ? JSON.stringify(metadata) : null,
+          getEngineVersion(),
+        ],
+      );
+    } catch (err) {
+      logger.warn('[SLE] recordStrategyStateEvent failed (fail-soft)', {
+        strategyId,
+        fromStatus,
+        toStatus,
+        reason,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /**
+   * Load Thompson-bandit class counters for the given regime. Missing
+   * (class, regime) pairs default to the Beta(1,1) uniform prior.
+   * Used by the generator to bias new-from-scratch strategies toward
+   * classes that are currently winning.
+   */
+  async loadBanditCountersForRegime(regime: MarketRegime): Promise<Map<StrategyClass, BanditCounter>> {
+    const out = new Map<StrategyClass, BanditCounter>();
+    try {
+      const result = await query(
+        `SELECT strategy_class, wins, losses
+           FROM bandit_class_counters
+          WHERE regime = $1`,
+        [regime],
+      );
+      for (const row of result.rows as Array<Record<string, unknown>>) {
+        out.set(String(row.strategy_class) as StrategyClass, {
+          wins: Number(row.wins),
+          losses: Number(row.losses),
+        });
+      }
+    } catch (err) {
+      logger.debug('[SLE] loadBanditCountersForRegime failed — falling back to uniform prior', {
+        regime,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+    for (const klass of ALL_STRATEGY_CLASSES) {
+      if (!out.has(klass)) out.set(klass, DEFAULT_BANDIT_COUNTER);
+    }
+    return out;
+  }
+
+  /**
+   * Update a Thompson-bandit counter after a terminal trade outcome.
+   * Upserts into bandit_class_counters so the posterior persists
+   * across restarts. Fail-soft.
+   */
+  async updateBanditCounter(
+    strategyClass: StrategyClass,
+    regime: MarketRegime,
+    winIncrement: number,
+    lossIncrement: number,
+  ): Promise<void> {
+    try {
+      await query(
+        `INSERT INTO bandit_class_counters (strategy_class, regime, wins, losses)
+         VALUES ($1, $2, 1 + $3, 1 + $4)
+         ON CONFLICT (strategy_class, regime) DO UPDATE SET
+           wins = bandit_class_counters.wins + $3,
+           losses = bandit_class_counters.losses + $4,
+           last_updated_at = NOW()`,
+        [strategyClass, regime, winIncrement, lossIncrement],
+      );
+    } catch (err) {
+      logger.warn('[SLE] updateBanditCounter failed (fail-soft)', {
+        strategyClass,
+        regime,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /**
+   * Sample a class via Thompson posterior for the given regime.
+   * Used by generateRandom to bias new-from-scratch generation toward
+   * classes that are currently winning. Returns null when the bandit
+   * cannot be consulted (DB down, etc.) so callers can fall back to
+   * uniform random.
+   */
+  async sampleBanditClassForRegime(regime: MarketRegime): Promise<StrategyClass | null> {
+    try {
+      const counters = await this.loadBanditCountersForRegime(regime);
+      return sampleBestClass(counters);
+    } catch (err) {
+      logger.debug('[SLE] sampleBanditClassForRegime failed', {
+        regime,
+        err: err instanceof Error ? err.message : String(err),
+      });
+      return null;
+    }
+  }
 
   async upsertStrategyPerformance(s: StrategyRecord): Promise<void> {
     try {
