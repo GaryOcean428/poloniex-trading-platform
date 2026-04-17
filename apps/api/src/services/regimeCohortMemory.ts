@@ -67,7 +67,7 @@ export async function freezeCohort(input: FreezeInput): Promise<number | null> {
         getEngineVersion(),
       ],
     );
-    return result.rows[0]?.id ?? null;
+    return (result.rows as any[])[0]?.id ?? null;
   } catch (err) {
     logger.error('[regimeCohortMemory] freezeCohort failed', {
       strategyId: input.strategyId,
@@ -98,7 +98,7 @@ export async function findChampionsForRegime(
          LIMIT $2`,
       [regime, limit],
     );
-    return result.rows.map(rowToCohort);
+    return (result.rows as any[]).map((r) => rowToCohort(r as Record<string, unknown>));
   } catch (err) {
     logger.warn('[regimeCohortMemory] findChampionsForRegime failed', {
       regime,

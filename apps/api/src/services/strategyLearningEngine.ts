@@ -597,7 +597,7 @@ class StrategyLearningEngine extends EventEmitter {
           WHERE regime = $1`,
         [regime],
       );
-      for (const row of result.rows as Array<Record<string, unknown>>) {
+      for (const row of (result.rows as any[]) as Array<Record<string, unknown>>) {
         out.set(String(row.strategy_class) as StrategyClass, {
           wins: Number(row.wins),
           losses: Number(row.losses),
