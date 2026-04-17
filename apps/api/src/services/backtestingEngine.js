@@ -1,8 +1,8 @@
 import { EventEmitter } from 'events';
-import { logger } from '../utils/logger.js';
 import { query } from '../db/connection.js';
+import { logger } from '../utils/logger.js';
 import poloniexFuturesService from './poloniexFuturesService.js';
-import { buildIndicatorMap, evaluateGenomeEntry, evaluateGenomeExit, strategyTypeToGenome } from './signalGenome.js';
+import { buildIndicatorMap, evaluateGenomeEntry, strategyTypeToGenome } from './signalGenome.js';
 
 /** Coerce a value to a finite number suitable for DB insertion. */
 function safeNum(v, fallback = 0) {
@@ -244,10 +244,10 @@ class BacktestingEngine extends EventEmitter {
           while (candleTs - lastFundingTime >= FUNDING_INTERVAL_MS) {
             lastFundingTime += FUNDING_INTERVAL_MS;
             const notional = currentPosition.size * currentCandle.close;
-          const fundingSign = currentPosition.side === 'long' ? 1 : -1;
-          const fundingCost = notional * FUNDING_RATE * fundingSign;
-          this.currentBacktest.portfolio.cash -= fundingCost;
-          this.currentBacktest.portfolio.totalValue -= fundingCost;
+            const fundingSign = currentPosition.side === 'long' ? 1 : -1;
+            const fundingCost = notional * FUNDING_RATE * fundingSign;
+            this.currentBacktest.portfolio.cash -= fundingCost;
+            this.currentBacktest.portfolio.totalValue -= fundingCost;
           }
         }
       }
