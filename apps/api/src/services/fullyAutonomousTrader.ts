@@ -11,6 +11,7 @@
 
 import { EventEmitter } from 'events';
 import { pool } from '../db/connection.js';
+import { getEngineVersion } from '../utils/engineVersion.js';
 import { logger } from '../utils/logger.js';
 import { validateMarketData } from '../utils/marketDataValidator.js';
 import { apiCredentialsService } from './apiCredentialsService.js';
@@ -1051,8 +1052,8 @@ class FullyAutonomousTrader extends EventEmitter {
       // Log trade (both paper and live)
       await pool.query(
         `INSERT INTO autonomous_trades
-         (user_id, symbol, side, entry_price, quantity, stop_loss, take_profit, confidence, reason, order_id, paper_trade)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+         (user_id, symbol, side, entry_price, quantity, stop_loss, take_profit, confidence, reason, order_id, paper_trade, engine_version)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
         [
           userId,
           signal.symbol,
@@ -1064,7 +1065,8 @@ class FullyAutonomousTrader extends EventEmitter {
           signal.confidence,
           signal.reason,
           orderId,
-          config.paperTrading
+          config.paperTrading,
+          getEngineVersion(),
         ]
       );
 

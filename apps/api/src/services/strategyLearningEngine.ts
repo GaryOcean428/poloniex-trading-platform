@@ -28,6 +28,7 @@
 
 import { EventEmitter } from 'events';
 import { pool, query } from '../db/connection.js';
+import { getEngineVersion } from '../utils/engineVersion.js';
 import { logger } from '../utils/logger.js';
 import { apiCredentialsService } from './apiCredentialsService.js';
 import backtestingEngine from './backtestingEngine.js';
@@ -470,7 +471,7 @@ class StrategyLearningEngine extends EventEmitter {
           live_sharpe, live_pnl, live_trades,
           is_censored, censor_reason, uncensored_sharpe, fitness_divergent,
           status, confidence_score, created_at, parent_strategy_id, generation, backtest_count, avg_return, avg_sharpe_ratio,
-          signal_genome
+          signal_genome, engine_version
         ) VALUES (
           $1, $2, $3, $4, $5, $6, $7,
           $8, $9, $10,
@@ -478,7 +479,7 @@ class StrategyLearningEngine extends EventEmitter {
           $15, $16, $17,
           $18, $19, $20, $21,
           $22, $23, $24, $25, $26, $27, $28, $29,
-          $30
+          $30, $31
         )
         ON CONFLICT (strategy_id) DO UPDATE SET
           strategy_name       = EXCLUDED.strategy_name,
@@ -508,7 +509,8 @@ class StrategyLearningEngine extends EventEmitter {
           backtest_count      = EXCLUDED.backtest_count,
           avg_return          = EXCLUDED.avg_return,
           avg_sharpe_ratio    = EXCLUDED.avg_sharpe_ratio,
-          signal_genome       = EXCLUDED.signal_genome`,
+          signal_genome       = EXCLUDED.signal_genome,
+          engine_version      = EXCLUDED.engine_version`,
         [
           s.strategyId, s.strategyId, s.symbol, s.leverage, s.timeframe, s.strategyType, s.regimeAtCreation,
           s.backtestSharpe, s.backtestWr, s.backtestMaxDd,
@@ -516,7 +518,7 @@ class StrategyLearningEngine extends EventEmitter {
           s.liveSharpe, s.livePnl, s.liveTrades,
           s.isCensored, s.censorReason, s.uncensoredSharpe, s.fitnessDivergent,
           s.status, s.confidenceScore, s.createdAt, s.parentStrategyId, s.generation, s.backtestCount ?? 0, clampNumeric64(s.avgReturn ?? 0), clampNumeric64(avgSharpeRatio),
-          s.genome ? JSON.stringify(s.genome) : null,
+          s.genome ? JSON.stringify(s.genome) : null, getEngineVersion(),
         ]
       );
     } catch (err) { logger.error(`[SLE] DB upsert failed for ${s.strategyId}:`, err); }

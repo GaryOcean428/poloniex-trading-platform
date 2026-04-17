@@ -1,5 +1,6 @@
 import { EventEmitter } from 'events';
 import { query } from '../db/connection.js';
+import { getEngineVersion } from '../utils/engineVersion.js';
 import { logger } from '../utils/logger.js';
 import poloniexFuturesService from './poloniexFuturesService.js';
 import { buildIndicatorMap, evaluateGenomeEntry, strategyTypeToGenome } from './signalGenome.js';
@@ -722,8 +723,8 @@ class BacktestingEngine extends EventEmitter {
           total_trades, winning_trades, losing_trades, win_rate,
           profit_factor, expectancy, average_win, average_loss,
           created_at, config, metrics,
-          is_censored, censoring_reason
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
+          is_censored, censoring_reason, engine_version
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)
       `, [
         backtestId, this.currentBacktest.strategyName, this.currentBacktest.config.symbol,
         this.currentBacktest.config.timeframe, this.currentBacktest.config.startDate,
@@ -743,7 +744,7 @@ class BacktestingEngine extends EventEmitter {
         safeNum(this.currentBacktest.metrics.averageWin),
         safeNum(this.currentBacktest.metrics.averageLoss),
         new Date(), JSON.stringify(this.currentBacktest.config), JSON.stringify(this.currentBacktest.metrics),
-        isCensored, censoringReason
+        isCensored, censoringReason, getEngineVersion(),
       ]);
       this.currentBacktest.id = backtestId;
       this.currentBacktest.isCensored = isCensored;
