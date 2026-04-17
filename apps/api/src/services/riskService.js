@@ -5,6 +5,7 @@
 
 import { logger } from '../utils/logger.js';
 import { pool } from '../db/connection.js';
+import { evaluatePreTradeVetoes } from './riskKernel.js';
 
 class RiskService {
   constructor() {
@@ -21,9 +22,20 @@ class RiskService {
    * @param {Object} order - Order to validate
    * @param {Object} account - Account information
    * @param {Object} marketInfo - Market catalog info for the symbol
-   * @returns {Promise<Object>} { allowed: boolean, reason?: string }
+   * @param {Object} [kernelInputs] - Optional inputs for the blast-door
+   *   kernel. When supplied, runs the pre-trade vetoes (per-symbol
+   *   exposure, self-match, unrealised-drawdown kill, strategy leverage
+   *   tier, symbol-allowed-at-equity). Shape:
+   *     {
+   *       kernelOrder:   { symbol, side, notional, leverage, price },
+   *       accountState:  { equityUsdt, unrealizedPnlUsdt,
+   *                        openPositions:[{symbol,side,notional}],
+   *                        restingOrders:[{symbol,side,price}] },
+   *       strategy:      { liveTier: 0..5 }
+   *     }
+   * @returns {Promise<Object>} { allowed: boolean, reason?: string, code?: string }
    */
-  async checkOrderRisk(order, account, marketInfo) {
+  async checkOrderRisk(order, account, marketInfo, kernelInputs = null) {
     try {
       // 1. Check leverage cap from market catalog
       if (marketInfo.maxLeverage && order.leverage > marketInfo.maxLeverage) {
@@ -77,6 +89,27 @@ class RiskService {
           reason: killSwitchCheck.reason
         });
         return killSwitchCheck;
+      }
+
+      // 6. Blast-door kernel vetoes (per-symbol exposure, self-match,
+      //    unrealised-drawdown kill, strategy leverage tier, symbol gate).
+      //    Only runs when the caller has assembled kernelInputs — older
+      //    call sites that don't have account state / open positions
+      //    continue to work with the legacy checks above.
+      if (kernelInputs) {
+        const kernelDecision = evaluatePreTradeVetoes(
+          kernelInputs.kernelOrder,
+          kernelInputs.accountState,
+          kernelInputs.strategy,
+        );
+        if (!kernelDecision.allowed) {
+          logger.warn('Risk check failed: kernel veto', {
+            accountId: account.id,
+            code: kernelDecision.code,
+            reason: kernelDecision.reason,
+          });
+          return kernelDecision;
+        }
       }
 
       logger.info('Risk check passed', {
