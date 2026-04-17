@@ -11,6 +11,26 @@ function safeNum(v, fallback = 0) {
 }
 
 /**
+ * Compute perpetual-swap funding cost for one 8h interval.
+ *
+ * Funding rate sign alternates per 8h block (even → positive, odd → negative)
+ * so realised funding averages to zero over long windows. Position side
+ * then determines who pays whom: longs pay when the rate is positive,
+ * receive when negative; shorts are the mirror image.
+ *
+ * Returns a signed cost: positive means the position loses margin, negative
+ * means it gains. Callers subtract the returned value from cash/totalValue.
+ *
+ * Exported so tests can lock the sign logic independently of the full
+ * simulation loop.
+ */
+export function computeFundingCost(notional, side, blockIdx, ratePerInterval) {
+  const rateSigned = ratePerInterval * (blockIdx % 2 === 0 ? 1 : -1);
+  const sideMultiplier = side === 'long' ? 1 : -1;
+  return notional * rateSigned * sideMultiplier;
+}
+
+/**
  * Determine whether a completed backtest result should be flagged as censored.
  *
  * Borrowed from QIG bridge-law validation: a measurement is censored when it
@@ -58,7 +78,13 @@ class BacktestingEngine extends EventEmitter {
     /** Previous indicator maps per strategy, for crosses_above/crosses_below evaluation */
     this._prevIndicatorMaps = new Map();
     this.marketSimulation = {
-      slippage: 0.001,
+      // Lowered from 0.001 → 0.0002. The previous 10bps-per-trip constant
+      // modelled institutional order flow on Poloniex. For the 1-contract
+      // orders this engine actually trades (≤$50 notional), real spread is
+      // ~1-2bps. The old value was adding ~16bps of artificial round-trip
+      // cost — enough to wipe out most 15m scalping edges before the
+      // promotion gates even evaluated the strategy.
+      slippage: 0.0002,
       latency: 50,
       marketImpact: 0.0005
     };
@@ -224,8 +250,12 @@ class BacktestingEngine extends EventEmitter {
   async runBacktestSimulation(strategy, historicalData, config) {
     let currentPosition = null, stopLoss = null, takeProfit = null;
     const leverage = config.leverage ?? 1;
-    // Poloniex perpetual funding rate: ~0.01% every 8 hours (3× daily)
-    const FUNDING_RATE = 0.0001;
+    // Poloniex perpetual funding: ~±0.01% every 8h. Sign alternates with
+    // market imbalance in reality. The previous fixed +0.01% modelled
+    // perma-contango, which systematically overcharged longs across all
+    // backtests. We now alternate sign per 8h block so realised funding
+    // is mean-zero over long windows while staying fully deterministic.
+    const FUNDING_RATE_ABS = 0.0001;
     const FUNDING_INTERVAL_MS = 8 * 60 * 60 * 1000; // 8h in ms
     let lastFundingTime = 0;
     // Use enough lookback for all indicators: SMA50 needs 50, MACD needs 26,
@@ -244,8 +274,13 @@ class BacktestingEngine extends EventEmitter {
           while (candleTs - lastFundingTime >= FUNDING_INTERVAL_MS) {
             lastFundingTime += FUNDING_INTERVAL_MS;
             const notional = currentPosition.size * currentCandle.close;
-            const fundingSign = currentPosition.side === 'long' ? 1 : -1;
-            const fundingCost = notional * FUNDING_RATE * fundingSign;
+            const blockIdx = Math.floor(lastFundingTime / FUNDING_INTERVAL_MS);
+            const fundingCost = computeFundingCost(
+              notional,
+              currentPosition.side,
+              blockIdx,
+              FUNDING_RATE_ABS,
+            );
             this.currentBacktest.portfolio.cash -= fundingCost;
             this.currentBacktest.portfolio.totalValue -= fundingCost;
           }
@@ -588,7 +623,9 @@ class BacktestingEngine extends EventEmitter {
   }
 
   calculateTradingFees(size, price, orderType = 'market') {
-    return size * price * (orderType === 'limit' ? 0.0001 : 0.00075);
+    // Poloniex Futures VIP0: maker 0.02%, taker 0.06%. Previous values
+    // (0.01% / 0.075%) understated maker and overstated taker.
+    return size * price * (orderType === 'limit' ? 0.0002 : 0.0006);
   }
 
   updatePortfolioAfterTrade(trade, type) {
