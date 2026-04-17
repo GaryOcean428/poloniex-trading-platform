@@ -6,6 +6,7 @@
 
 import { EventEmitter } from 'events';
 import { pool, query } from '../db/connection.js';
+import { getEngineVersion } from '../utils/engineVersion.js';
 import { logger } from '../utils/logger.js';
 import { validateMarketData } from '../utils/marketDataValidator.js';
 import futuresWebSocket from '../websocket/futuresWebSocket.js';
@@ -195,8 +196,8 @@ class PaperTradingService extends EventEmitter {
           id, session_name, strategy_name, symbol, timeframe,
           initial_capital, current_value, unrealized_pnl, realized_pnl,
           total_trades, winning_trades, status, started_at,
-          is_censored, censor_reason
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+          is_censored, censor_reason, engine_version
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
       `, [
         session.id,
         session.name,
@@ -213,6 +214,7 @@ class PaperTradingService extends EventEmitter {
         session.startedAt,
         session.isCensored,
         session.censorReason,
+        getEngineVersion(),
       ]);
 
       // Add to active sessions

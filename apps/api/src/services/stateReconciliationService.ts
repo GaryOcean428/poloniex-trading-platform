@@ -9,6 +9,7 @@
 import { pool } from '../db/connection.js';
 import poloniexFuturesService from './poloniexFuturesService.js';
 import { apiCredentialsService } from './apiCredentialsService.js';
+import { getEngineVersion } from '../utils/engineVersion.js';
 import { logger } from '../utils/logger.js';
 
 export interface OrphanedPosition {
@@ -159,15 +160,16 @@ class StateReconciliationService {
           try {
             await pool.query(
               `INSERT INTO autonomous_trades
-               (user_id, symbol, side, entry_price, quantity, reason, status)
-               VALUES ($1, $2, $3, $4, $5, $6, 'open')`,
+               (user_id, symbol, side, entry_price, quantity, reason, status, engine_version)
+               VALUES ($1, $2, $3, $4, $5, $6, 'open', $7)`,
               [
                 userId,
                 symbol,
                 side,
                 entryPrice,
                 size,
-                'reconciled'
+                'reconciled',
+                getEngineVersion(),
               ]
             );
             logger.info(
