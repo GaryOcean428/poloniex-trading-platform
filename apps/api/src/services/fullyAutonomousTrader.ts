@@ -1,6 +1,6 @@
 /**
  * Fully Autonomous Trading System
- * 
+ *
  * This system operates completely autonomously:
  * - Analyzes markets 24/7
  * - Generates and tests strategies automatically
@@ -11,19 +11,40 @@
 
 import { EventEmitter } from 'events';
 import { pool } from '../db/connection.js';
-import poloniexFuturesService from './poloniexFuturesService.js';
-import riskService from './riskService.js';
-import mlPredictionService from './mlPredictionService.js';
-import { apiCredentialsService } from './apiCredentialsService.js';
 import { logger } from '../utils/logger.js';
 import { validateMarketData } from '../utils/marketDataValidator.js';
+import { apiCredentialsService } from './apiCredentialsService.js';
+import backtestingEngine from './backtestingEngine.js';
 import { getPrecisions } from './marketCatalog.js';
+import mlPredictionService from './mlPredictionService.js';
+import poloniexFuturesService from './poloniexFuturesService.js';
+import riskService from './riskService.js';
+import { buildIndicatorMap, evaluateGenomeEntry, type SignalGenome } from './signalGenome.js';
+import simpleMlService from './simpleMlService.js';
 
 /** Safe number formatting — returns fallback string for NaN/Infinity */
 function safeFixed(value: unknown, decimals: number, fallback = 'N/A'): string {
   const n = Number(value);
   return Number.isFinite(n) ? n.toFixed(decimals) : fallback;
 }
+
+// ─── Trading defaults (single source of truth) ───
+const DEFAULT_RISK_PER_TRADE = 2;       // 2% per trade
+const DEFAULT_MAX_DRAWDOWN = 10;        // 10% max drawdown
+const DEFAULT_DAILY_RETURN_TARGET = 1;  // 1% daily target
+const DEFAULT_STOP_LOSS_PCT = 2;        // 2% stop loss
+const DEFAULT_TAKE_PROFIT_PCT = 4;      // 4% take profit (2:1 R:R)
+const DEFAULT_LEVERAGE = 3;             // Conservative leverage
+const DEFAULT_MAX_POSITIONS = 3;        // Max concurrent positions
+const DEFAULT_CYCLE_SECONDS = 60;       // 1-minute trading cycle
+const DEFAULT_CONFIDENCE_THRESHOLD = 65; // 65% minimum confidence
+const DEFAULT_SIGNAL_THRESHOLD = 30;    // ±30 raw score threshold
+const DEFAULT_PAPER_CAPITAL = 10000;    // Virtual capital for paper mode
+const DEFAULT_SYMBOLS = ['BTC_USDT_PERP', 'ETH_USDT_PERP', 'SOL_USDT_PERP'];
+const MIN_CAPITAL = 10;                 // Minimum capital to continue trading
+const MAX_POSITION_FRACTION = 0.1;      // Max 10% of capital per position
+const VOLATILITY_HIGH = 0.03;           // >3% = high volatility
+const VOLATILITY_MEDIUM = 0.01;         // >1% = medium volatility
 
 interface TradingConfig {
   userId: string;
@@ -83,6 +104,14 @@ interface MarketAnalysis {
     confidence: number;
     targetPrice: number;
   };
+  qig?: {
+    regime: 'trending' | 'transitional' | 'ranging';
+    regimeConfidence: number;
+    volatilityRatio: number;
+    trendStrength: number;
+    recommendedStrategy: string;
+    geometricConfidence: number;
+  } | null;
 }
 
 class FullyAutonomousTrader extends EventEmitter {
@@ -91,6 +120,7 @@ class FullyAutonomousTrader extends EventEmitter {
   private runningIntervals: Map<string, NodeJS.Timeout> = new Map();
   private performanceMetrics: Map<string, any> = new Map();
   private lastHeartbeat: Map<string, Date> = new Map();
+  private cycleInFlight: Set<string> = new Set();
 
   // Circuit breaker state per user
   private circuitBreakers: Map<string, {
@@ -206,25 +236,25 @@ class FullyAutonomousTrader extends EventEmitter {
     // Create default config
     const tradingConfig: TradingConfig = {
       userId,
-      initialCapital: config?.paperTrading ? 10000 : availableBalance, // Use virtual capital for paper trading
-      maxRiskPerTrade: config?.maxRiskPerTrade || 2, // 2% per trade
-      maxDrawdown: config?.maxDrawdown || 10, // 10% max drawdown
-      targetDailyReturn: config?.targetDailyReturn || 1, // 1% daily target
-      symbols: config?.symbols || ['BTC_USDT_PERP', 'ETH_USDT_PERP', 'SOL_USDT_PERP'],
+      initialCapital: config?.paperTrading ? DEFAULT_PAPER_CAPITAL : availableBalance,
+      maxRiskPerTrade: config?.maxRiskPerTrade || DEFAULT_RISK_PER_TRADE,
+      maxDrawdown: config?.maxDrawdown || DEFAULT_MAX_DRAWDOWN,
+      targetDailyReturn: config?.targetDailyReturn || DEFAULT_DAILY_RETURN_TARGET,
+      symbols: config?.symbols || DEFAULT_SYMBOLS,
       enabled: true,
-      paperTrading: config?.paperTrading !== undefined ? config.paperTrading : true, // Default to paper trading for safety
-      stopLossPercent: config?.stopLossPercent || 2, // 2% stop loss
-      takeProfitPercent: config?.takeProfitPercent || 4, // 4% take profit (2:1 R:R)
-      leverage: config?.leverage || 3, // Conservative leverage
-      maxConcurrentPositions: config?.maxConcurrentPositions || 3,
-      tradingCycleSeconds: config?.tradingCycleSeconds || 60, // 1 minute default
-      confidenceThreshold: config?.confidenceThreshold || 65, // 65% minimum confidence
-      signalScoreThreshold: config?.signalScoreThreshold || 30 // ±30 raw score threshold
+      paperTrading: config?.paperTrading !== undefined ? config.paperTrading : true,
+      stopLossPercent: config?.stopLossPercent || DEFAULT_STOP_LOSS_PCT,
+      takeProfitPercent: config?.takeProfitPercent || DEFAULT_TAKE_PROFIT_PCT,
+      leverage: config?.leverage || DEFAULT_LEVERAGE,
+      maxConcurrentPositions: config?.maxConcurrentPositions || DEFAULT_MAX_POSITIONS,
+      tradingCycleSeconds: config?.tradingCycleSeconds || DEFAULT_CYCLE_SECONDS,
+      confidenceThreshold: config?.confidenceThreshold || DEFAULT_CONFIDENCE_THRESHOLD,
+      signalScoreThreshold: config?.signalScoreThreshold || DEFAULT_SIGNAL_THRESHOLD,
     };
 
     // Save to database
     await pool.query(
-      `INSERT INTO autonomous_trading_configs 
+      `INSERT INTO autonomous_trading_configs
        (user_id, initial_capital, max_risk_per_trade, max_drawdown, target_daily_return, symbols, enabled, paper_trading)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        ON CONFLICT (user_id) DO UPDATE SET
@@ -296,20 +326,36 @@ class FullyAutonomousTrader extends EventEmitter {
       return;
     }
 
+    // Clear any existing interval for this user to prevent duplicates
+    const existing = this.runningIntervals.get(userId);
+    if (existing) {
+      clearInterval(existing);
+      this.runningIntervals.delete(userId);
+    }
+
     logger.info(`Starting autonomous trading for user ${userId} (cycle: ${config.tradingCycleSeconds}s)`);
+
+    // Bootstrap ML models with historical data (fire-and-forget)
+    this.bootstrapMlModels(config.symbols).catch(err => {
+      logger.debug('ML bootstrap skipped (worker may be unavailable):', err instanceof Error ? err.message : String(err));
+    });
 
     // Run immediately
     this.tradingCycle(userId).catch(err => {
       logger.error(`Trading cycle error for user ${userId}:`, err);
     });
 
-    // Then run at configured interval
+    // Then run at configured interval with overlap guard
     const cycleMs = config.tradingCycleSeconds * 1000;
     const interval = setInterval(async () => {
+      if (this.cycleInFlight.has(userId)) return; // Skip if previous cycle still running
+      this.cycleInFlight.add(userId);
       try {
         await this.tradingCycle(userId);
       } catch (err) {
         logger.error(`Trading cycle error for user ${userId}:`, err);
+      } finally {
+        this.cycleInFlight.delete(userId);
       }
     }, cycleMs);
 
@@ -329,6 +375,11 @@ class FullyAutonomousTrader extends EventEmitter {
       // Update heartbeat to signal the trading loop is active
       this.updateHeartbeat(userId);
 
+      // Step 0: Reconcile DB positions with exchange (live mode only)
+      if (!config.paperTrading) {
+        await this.reconcilePositions(userId);
+      }
+
       // Step 1: Check risk limits
       const riskCheck = await this.checkRiskLimits(userId);
       if (!riskCheck.canTrade) {
@@ -340,6 +391,11 @@ class FullyAutonomousTrader extends EventEmitter {
       const cbCheck = this.checkCircuitBreaker(userId);
       if (!cbCheck.allowed) {
         logger.warn(`[CB] Trading halted for user ${userId}: ${cbCheck.reason}`);
+        await this.logAgentEvent(userId, {
+          eventType: 'circuit_breaker',
+          executionMode: config.paperTrading ? 'paper' : 'live',
+          description: `Circuit breaker tripped: ${cbCheck.reason}`,
+        });
         return;
       }
 
@@ -389,7 +445,7 @@ class FullyAutonomousTrader extends EventEmitter {
       }
 
       // Check if we have capital
-      if (currentEquity < 10) {
+      if (currentEquity < MIN_CAPITAL) {
         return { canTrade: false, reason: 'Insufficient capital' };
       }
 
@@ -457,7 +513,7 @@ class FullyAutonomousTrader extends EventEmitter {
     // Calculate volatility
     const returns = closes.slice(1).map((price, i) => (price - closes[i]) / closes[i]);
     const volatility = this.calculateStdDev(returns);
-    const volatilityLevel = volatility > 0.03 ? 'high' : volatility > 0.01 ? 'medium' : 'low';
+    const volatilityLevel = volatility > VOLATILITY_HIGH ? 'high' : volatility > VOLATILITY_MEDIUM ? 'medium' : 'low';
 
     // Calculate momentum (RSI-like)
     const momentum = this.calculateMomentum(closes);
@@ -478,14 +534,53 @@ class FullyAutonomousTrader extends EventEmitter {
       const ohlcvForMl = validOhlcv.map(c => ({ close: c.price, high: c.high, low: c.low, open: c.open, volume: c.volume }));
       const predictions = await mlPredictionService.getMultiHorizonPredictions(symbol, ohlcvForMl);
       const signal = await mlPredictionService.getTradingSignal(symbol, ohlcvForMl, currentPrice);
-      
+
       mlPrediction = {
         direction: signal.action === 'BUY' ? 'UP' : signal.action === 'SELL' ? 'DOWN' : 'NEUTRAL',
         confidence: signal.confidence,
         targetPrice: predictions['1h'].price
       };
     } catch (_error) {
-      logger.warn(`ML prediction unavailable for ${symbol}`);
+      // Fall back to local simple ML service when ml-worker is unavailable
+      try {
+        const ohlcvForMl = validOhlcv.map(c => ({ close: c.price, high: c.high, low: c.low, open: c.open, volume: c.volume, timestamp: Date.now() }));
+        const predictions = await simpleMlService.getMultiHorizonPredictions(symbol, ohlcvForMl);
+        const signal = await simpleMlService.getTradingSignal(symbol, ohlcvForMl, currentPrice);
+
+        mlPrediction = {
+          direction: signal.action === 'BUY' ? 'UP' : signal.action === 'SELL' ? 'DOWN' : 'NEUTRAL',
+          confidence: signal.confidence * 0.7, // Discount local predictions
+          targetPrice: predictions['1h'].price
+        };
+        logger.debug(`Using local ML fallback for ${symbol}`);
+      } catch (_fallbackError) {
+        logger.warn(`ML prediction unavailable for ${symbol} (both primary and fallback)`);
+      }
+    }
+
+    // QIG physics-based regime analysis (fire-and-forget — non-blocking)
+    let qig: MarketAnalysis['qig'] = null;
+    try {
+      const ohlcvForQig = validOhlcv.map(c => ({
+        close: c.price, high: c.high, low: c.low, open: c.open,
+        volume: c.volume, timestamp: Date.now(),
+      }));
+      const qigResult = await mlPredictionService.getQIGAnalysis(
+        symbol, ohlcvForQig, currentPrice
+      );
+      if (qigResult && qigResult.regime) {
+        qig = {
+          regime: qigResult.regime,
+          regimeConfidence: qigResult.regime_confidence || 0,
+          volatilityRatio: qigResult.volatility_ratio || 1,
+          trendStrength: qigResult.trend_strength || 0,
+          recommendedStrategy: qigResult.recommended_strategy || 'unknown',
+          geometricConfidence: qigResult.geometric_confidence || 0,
+        };
+        logger.info(`[QIG] ${symbol}: regime=${qig.regime} conf=${qig.regimeConfidence} strategy=${qig.recommendedStrategy}`);
+      }
+    } catch (_qigError) {
+      // Non-critical — FAT works without QIG
     }
 
     return {
@@ -495,7 +590,8 @@ class FullyAutonomousTrader extends EventEmitter {
       momentum,
       support,
       resistance,
-      mlPrediction
+      mlPrediction,
+      qig
     };
   }
 
@@ -516,8 +612,9 @@ class FullyAutonomousTrader extends EventEmitter {
     for (const [symbol, analysis] of analyses) {
       try {
         // Check if an SLE-promoted live strategy exists for this symbol.
-        // If so, use its leverage and strategy type instead of the default config.
+        // If so, use its leverage and signal genome for evolved signal generation.
         let effectiveConfig = config;
+        let liveGenome: SignalGenome | null = null;
         try {
           const liveStrategies = await pool.query(
             `SELECT * FROM strategy_performance WHERE status = 'live' AND symbol = $1
@@ -530,16 +627,25 @@ class FullyAutonomousTrader extends EventEmitter {
               ...config,
               leverage: parseFloat(liveStrategy.leverage) || config.leverage
             };
+            // Extract signal genome if available
+            if (liveStrategy.signal_genome) {
+              try {
+                liveGenome = typeof liveStrategy.signal_genome === 'string'
+                  ? JSON.parse(liveStrategy.signal_genome)
+                  : liveStrategy.signal_genome;
+              } catch { /* genome parse failure — use default signals */ }
+            }
             logger.debug(
               `[SLE] Using live strategy ${liveStrategy.strategy_id} params for ${symbol}: ` +
-              `leverage=${effectiveConfig.leverage}, type=${liveStrategy.strategy_type}`
+              `leverage=${effectiveConfig.leverage}, type=${liveStrategy.strategy_type}` +
+              (liveGenome ? `, genome=${liveGenome.entryConditions.length} conditions` : '')
             );
           }
         } catch (sleErr) {
           logger.warn(`[SLE] Failed to query live strategies for ${symbol}:`, sleErr);
         }
 
-        const signal = await this.generateSignal(userId, symbol, analysis, effectiveConfig);
+        const signal = await this.generateSignal(userId, symbol, analysis, effectiveConfig, liveGenome);
         if (signal && signal.confidence >= config.confidenceThreshold) {
           signals.push(signal);
         } else if (signal) {
@@ -555,13 +661,16 @@ class FullyAutonomousTrader extends EventEmitter {
   }
 
   /**
-   * Generate a trading signal for a symbol
+   * Generate a trading signal for a symbol.
+   * When a live genome from SLE is available, it contributes the highest-weight
+   * factor (±40) since it represents a pre-tested, evolved strategy.
    */
   private async generateSignal(
     userId: string,
     symbol: string,
     analysis: MarketAnalysis,
-    config: TradingConfig
+    config: TradingConfig,
+    genome?: SignalGenome | null
   ): Promise<TradingSignal | null> {
     const ticker = await poloniexFuturesService.getTickers(symbol);
     const rawTicker = ticker[0] ?? {};
@@ -583,12 +692,33 @@ class FullyAutonomousTrader extends EventEmitter {
     let reason = '';
 
     // Multi-factor signal generation
-    const factors = {
+    const factors: Record<string, number> = {
       trend: 0,
       momentum: 0,
       ml: 0,
-      volatility: 0
+      volatility: 0,
+      genome: 0
     };
+
+    // Genome factor (±40) — highest weight, from SLE-evolved strategy
+    if (genome && genome.entryConditions && genome.entryConditions.length > 0) {
+      try {
+        // Compute full indicator set using backtesting engine's TA library
+        const ohlcv = await poloniexFuturesService.getHistoricalData(symbol, '15m', 100);
+        if (ohlcv && ohlcv.length >= 20) {
+          const currentCandle = ohlcv[ohlcv.length - 1];
+          const indicators = backtestingEngine.calculateTechnicalIndicators(ohlcv, currentCandle);
+          const indicatorMap = buildIndicatorMap(indicators);
+          const genomeSignal = evaluateGenomeEntry(genome, indicatorMap);
+          if (genomeSignal) {
+            factors.genome = genomeSignal.side === 'long' ? 40 : -40;
+            logger.info(`[FAT+SLE] Genome signal: ${genomeSignal.side} (${genomeSignal.reason})`);
+          }
+        }
+      } catch (genomeErr) {
+        logger.warn(`[FAT] Genome evaluation failed for ${symbol}:`, genomeErr);
+      }
+    }
 
     // Trend factor (±30)
     if (analysis.trend === 'bullish') {
@@ -615,19 +745,51 @@ class FullyAutonomousTrader extends EventEmitter {
     }
 
     // Calculate raw score and normalize confidence to 0-100 scale
-    // Max possible |score| is ~90 (30+20+30+10), so normalize accordingly
-    const totalScore = factors.trend + factors.momentum + factors.ml + factors.volatility;
-    const maxPossibleScore = 90;
+    // Max possible |score| is ~130 (40+30+20+30+10) with genome, ~90 without
+    const totalScore = factors.trend + factors.momentum + factors.ml + factors.volatility + factors.genome;
+    const maxPossibleScore = genome ? 130 : 90;
     confidence = Math.min(Math.round((Math.abs(totalScore) / maxPossibleScore) * 100), 100);
+
+    // QIG regime modifier: adjust confidence based on market phase
+    let qigSizeMultiplier = 1.0;
+    if (analysis.qig) {
+      const regime = analysis.qig.regime;
+      const regimeConf = analysis.qig.regimeConfidence;
+
+      if (regime === 'transitional') {
+        // Most dangerous regime — reduce confidence and size
+        confidence = Math.round(confidence * 0.7);
+        qigSizeMultiplier = 0.5;
+        logger.info(`[QIG] Transitional regime — reducing confidence to ${confidence}%, size ×0.5`);
+      } else if (regime === 'trending' && totalScore > 0 && analysis.qig.trendStrength > 0.3) {
+        // Confirmed trend — slight confidence boost
+        confidence = Math.min(Math.round(confidence * 1.15), 100);
+        qigSizeMultiplier = 1.2;
+      } else if (regime === 'ranging' && Math.abs(totalScore) < config.signalScoreThreshold * 1.5) {
+        // Ranging with weak signal — reduce conviction
+        confidence = Math.round(confidence * 0.85);
+        qigSizeMultiplier = 0.8;
+      }
+
+      // Apply geometric confidence as a floor — if QIG says low confidence, trust it
+      if (analysis.qig.geometricConfidence > 0 && analysis.qig.geometricConfidence < 0.3) {
+        confidence = Math.min(confidence, 40);
+        qigSizeMultiplier = Math.min(qigSizeMultiplier, 0.6);
+      }
+    }
 
     if (totalScore > config.signalScoreThreshold) {
       action = 'BUY';
       side = 'long';
-      reason = `Bullish: Trend=${factors.trend}, Momentum=${factors.momentum.toFixed(1)}, ML=${factors.ml.toFixed(1)}`;
+      reason = `Bullish: Trend=${factors.trend}, Mom=${safeFixed(factors.momentum, 1)}, ML=${safeFixed(factors.ml, 1)}` +
+        (factors.genome ? `, Genome=${factors.genome}` : '') +
+        (analysis.qig ? `, QIG=${analysis.qig.regime}` : '');
     } else if (totalScore < -config.signalScoreThreshold) {
       action = 'SELL';
       side = 'short';
-      reason = `Bearish: Trend=${factors.trend}, Momentum=${factors.momentum.toFixed(1)}, ML=${factors.ml.toFixed(1)}`;
+      reason = `Bearish: Trend=${factors.trend}, Mom=${safeFixed(factors.momentum, 1)}, ML=${safeFixed(factors.ml, 1)}` +
+        (factors.genome ? `, Genome=${factors.genome}` : '') +
+        (analysis.qig ? `, QIG=${analysis.qig.regime}` : '');
     }
 
     if (action === 'HOLD') return null;
@@ -643,11 +805,12 @@ class FullyAutonomousTrader extends EventEmitter {
     const metrics = this.performanceMetrics.get(userId);
     const currentEquity = metrics?.currentEquity ?? config.initialCapital;
     const currentDrawdown = ((config.initialCapital - currentEquity) / config.initialCapital) * 100;
-    const baseSize = Math.min(positionSizeUsdt, config.initialCapital * 0.1); // USDT, max 10% of capital
-    const adjustedSize = this.getDrawdownAdjustedPositionSize(baseSize, currentDrawdown);
+    const baseSize = Math.min(positionSizeUsdt, config.initialCapital * MAX_POSITION_FRACTION);
+    const drawdownAdjusted = this.getDrawdownAdjustedPositionSize(baseSize, currentDrawdown);
+    const adjustedSize = drawdownAdjusted * qigSizeMultiplier;
 
     // Calculate stop loss and take profit using config percentages
-    const stopLoss = side === 'long' 
+    const stopLoss = side === 'long'
       ? currentPrice * (1 - slPercent)
       : currentPrice * (1 + slPercent);
 
@@ -679,7 +842,7 @@ class FullyAutonomousTrader extends EventEmitter {
 
     // Execute top signal
     const signal = signals[0];
-    
+
     try {
       logger.info(`${config.paperTrading ? '[PAPER]' : '[LIVE]'} Executing signal for ${signal.symbol}: ${signal.action} at ${signal.entryPrice}`);
 
@@ -705,7 +868,7 @@ class FullyAutonomousTrader extends EventEmitter {
         // Get current positions
         const currentPositions = await poloniexFuturesService.getPositions(credentials);
         const activePositions = Array.isArray(currentPositions) ? currentPositions : [];
-        const positionCount = activePositions.filter((p: any) => 
+        const positionCount = activePositions.filter((p: any) =>
           parseFloat(p.qty || p.positionAmt || '0') !== 0
         ).length;
 
@@ -874,7 +1037,7 @@ class FullyAutonomousTrader extends EventEmitter {
       } else {
         // Paper trading - check virtual position limits
         const openPaperTrades = await pool.query(
-          `SELECT COUNT(*) as count FROM autonomous_trades 
+          `SELECT COUNT(*) as count FROM autonomous_trades
            WHERE user_id = $1 AND status = 'open' AND order_id LIKE 'paper_%'`,
           [userId]
         );
@@ -887,9 +1050,9 @@ class FullyAutonomousTrader extends EventEmitter {
 
       // Log trade (both paper and live)
       await pool.query(
-        `INSERT INTO autonomous_trades 
-         (user_id, symbol, side, entry_price, quantity, stop_loss, take_profit, confidence, reason, order_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        `INSERT INTO autonomous_trades
+         (user_id, symbol, side, entry_price, quantity, stop_loss, take_profit, confidence, reason, order_id, paper_trade)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
         [
           userId,
           signal.symbol,
@@ -900,15 +1063,146 @@ class FullyAutonomousTrader extends EventEmitter {
           signal.takeProfit,
           signal.confidence,
           signal.reason,
-          orderId
+          orderId,
+          config.paperTrading
         ]
       );
+
+      // Write to agent_events so the dashboard can show activity
+      await this.logAgentEvent(userId, {
+        eventType: 'trade_executed',
+        executionMode: config.paperTrading ? 'paper' : 'live',
+        description: `${signal.side.toUpperCase()} ${signal.symbol} @ ${safeFixed(signal.entryPrice, 8)}`,
+        confidence: signal.confidence,
+        market: signal.symbol,
+        orderId,
+        metadata: { reason: signal.reason, stopLoss: signal.stopLoss, takeProfit: signal.takeProfit, positionSize: signal.positionSize }
+      });
 
       this.emit('trade_executed', { userId, signal, orderId, paperTrading: config.paperTrading });
       logger.info(`${config.paperTrading ? '[PAPER]' : '[LIVE]'} Trade executed for user ${userId}: ${signal.symbol} ${signal.side}`);
 
     } catch (error) {
       logger.error(`Error executing signal for user ${userId}:`, error);
+    }
+  }
+
+  /**
+   * Write a structured event to the agent_events table for dashboard visibility.
+   */
+  private async logAgentEvent(userId: string, event: {
+    eventType: string;
+    executionMode?: string;
+    description: string;
+    confidence?: number;
+    market?: string;
+    orderId?: string;
+    metadata?: Record<string, unknown>;
+  }): Promise<void> {
+    try {
+      await pool.query(
+        `INSERT INTO agent_events
+         (user_id, event_type, execution_mode, description, confidence_score, market, resulting_order_id, metadata, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())`,
+        [
+          userId,
+          event.eventType,
+          event.executionMode ?? null,
+          event.description,
+          event.confidence ?? null,
+          event.market ?? null,
+          event.orderId ?? null,
+          event.metadata ? JSON.stringify(event.metadata) : null,
+        ]
+      );
+    } catch (err) {
+      // Non-fatal — never break the trading loop for logging failures
+      logger.warn('Failed to write agent_event:', err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  /**
+   * Bootstrap ML worker with historical OHLCV data for each symbol.
+   * Called once on startup — silently succeeds or fails.
+   */
+  private async bootstrapMlModels(symbols: string[]): Promise<void> {
+    for (const symbol of symbols) {
+      try {
+        const ohlcv = await poloniexFuturesService.getKlines(symbol, '1hour', 500);
+        if (ohlcv && ohlcv.length > 50) {
+          const trainingData = ohlcv.map((c: Record<string, unknown>) => ({
+            close: Number(c.close ?? c.price ?? 0),
+            high: Number(c.high ?? 0),
+            low: Number(c.low ?? 0),
+            open: Number(c.open ?? 0),
+            volume: Number(c.volume ?? 0),
+          }));
+          await mlPredictionService.trainModels(symbol, trainingData);
+          logger.info(`ML models bootstrapped for ${symbol} with ${trainingData.length} candles`);
+        }
+      } catch (_err) {
+        // Non-critical — simpleMlService fallback handles predictions
+      }
+    }
+  }
+
+  /**
+   * Reconcile DB position state with actual exchange positions.
+   * Logs drift but does not auto-close — lets the human investigate.
+   */
+  private async reconcilePositions(userId: string): Promise<void> {
+    try {
+      const credentials = await apiCredentialsService.getCredentials(userId);
+      if (!credentials) return;
+
+      // Get actual positions from Poloniex
+      const exchangePositions = await poloniexFuturesService.getPositions(credentials);
+      const openSymbols = new Set(
+        (exchangePositions || [])
+          .filter((p: Record<string, unknown>) => Number(p.qty || p.currentQty || 0) !== 0)
+          .map((p: Record<string, unknown>) => String(p.symbol))
+      );
+
+      // Get DB open trades (non-paper)
+      const dbResult = await pool.query(
+        `SELECT symbol, order_id FROM autonomous_trades
+         WHERE user_id = $1 AND status = 'open' AND paper_trade = false`,
+        [userId]
+      );
+      const dbSymbols = new Set(dbResult.rows.map((r: { symbol: string }) => r.symbol));
+
+      // Drift detection
+      const inDbNotExchange = [...dbSymbols].filter(s => !openSymbols.has(s));
+      const inExchangeNotDb = ([...openSymbols] as string[]).filter(s => !dbSymbols.has(s));
+
+      if (inDbNotExchange.length > 0) {
+        logger.warn(
+          `[RECONCILE] DB shows open positions not on exchange: ${inDbNotExchange.join(', ')} — ` +
+          `marking as closed`
+        );
+        for (const symbol of inDbNotExchange) {
+          await pool.query(
+            `UPDATE autonomous_trades SET status = 'closed', closed_at = NOW(),
+             close_reason = 'reconciliation: position not found on exchange'
+             WHERE user_id = $1 AND symbol = $2 AND status = 'open' AND paper_trade = false`,
+            [userId, symbol]
+          );
+        }
+      }
+
+      if (inExchangeNotDb.length > 0) {
+        logger.warn(
+          `[RECONCILE] Exchange has positions not tracked in DB: ${inExchangeNotDb.join(', ')} — ` +
+          `these may have been opened manually or by another system`
+        );
+        await this.logAgentEvent(userId, {
+          eventType: 'reconciliation_drift',
+          executionMode: 'live',
+          description: `Untracked exchange positions: ${inExchangeNotDb.join(', ')}`,
+        });
+      }
+    } catch (error) {
+      logger.warn('[RECONCILE] Position reconciliation failed:', error);
     }
   }
 
@@ -1038,10 +1332,10 @@ class FullyAutonomousTrader extends EventEmitter {
     try {
       // Use the bulk close endpoint for efficiency
       await poloniexFuturesService.closeAllPositions(credentials);
-      
+
       // Update all open trades in DB
       await pool.query(
-        `UPDATE autonomous_trades 
+        `UPDATE autonomous_trades
          SET status = 'closed', close_reason = 'trading_disabled', closed_at = NOW()
          WHERE user_id = $1 AND status = 'open'`,
         [userId]
@@ -1079,7 +1373,7 @@ class FullyAutonomousTrader extends EventEmitter {
 
       // Save to database
       await pool.query(
-        `INSERT INTO autonomous_performance 
+        `INSERT INTO autonomous_performance
          (user_id, current_equity, total_return, drawdown, timestamp)
          VALUES ($1, $2, $3, $4, $5)`,
         [userId, metrics.currentEquity, metrics.totalReturn, metrics.drawdown, metrics.timestamp]

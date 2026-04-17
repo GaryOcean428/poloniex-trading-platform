@@ -31,6 +31,7 @@ router.use(async (req: express.Request, res: express.Response, next: express.Nex
     }
     next();
   } catch (_err) {
+    logger.error('Admin auth check failed:', _err instanceof Error ? _err.message : String(_err));
     return res.status(500).json({ success: false, error: 'Authorization check failed' });
   }
 });
@@ -184,6 +185,7 @@ router.get('/db-status', async (req, res) => {
       agentSessionCount: agentSessionCount.rows[0].count
     });
   } catch (_error) {
+    logger.error('DB status check failed:', _error instanceof Error ? _error.message : String(_error));
     res.status(500).json({
       success: false,
       error: 'Failed to get database status'

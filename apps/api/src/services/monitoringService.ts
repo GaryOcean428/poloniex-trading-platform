@@ -8,7 +8,7 @@ interface ErrorLog {
   level: 'error' | 'warn' | 'info';
   message: string;
   stack?: string;
-  context?: any;
+  context?: Record<string, unknown>;
   userId?: string;
 }
 
@@ -17,7 +17,7 @@ interface PerformanceMetric {
   operation: string;
   duration: number;
   success: boolean;
-  metadata?: any;
+  metadata?: Record<string, unknown>;
 }
 
 interface HealthMetric {
@@ -26,6 +26,38 @@ interface HealthMetric {
   memory: number;
   activeConnections: number;
   errorRate: number;
+}
+
+interface PerformanceStats {
+  operation: string;
+  totalCalls: number;
+  successRate: number;
+  avgDuration: number;
+  minDuration: number;
+  maxDuration: number;
+  p95Duration: number;
+  p99Duration: number;
+}
+
+interface SystemHealthReport {
+  status: 'healthy' | 'degraded' | 'unhealthy' | 'unknown';
+  message?: string;
+  issues?: string[];
+  metrics?: {
+    cpu: string;
+    memory: string;
+    errorRate: string;
+    totalErrors: number;
+    totalWarnings: number;
+  };
+  timestamp?: Date;
+}
+
+interface ErrorStatsReport {
+  total24h: number;
+  totalAllTime: number;
+  errorsByType: Record<string, number>;
+  recentErrors: ErrorLog[];
 }
 
 class MonitoringService {
@@ -40,7 +72,7 @@ class MonitoringService {
   /**
    * Log an error
    */
-  logError(error: Error, context?: any, userId?: string): void {
+  logError(error: Error, context?: Record<string, unknown>, userId?: string): void {
     const errorLog: ErrorLog = {
       timestamp: new Date(),
       level: 'error',
@@ -66,7 +98,7 @@ class MonitoringService {
   /**
    * Log a warning
    */
-  logWarning(message: string, context?: any, userId?: string): void {
+  logWarning(message: string, context?: Record<string, unknown>, userId?: string): void {
     const warningLog: ErrorLog = {
       timestamp: new Date(),
       level: 'warn',
@@ -85,7 +117,7 @@ class MonitoringService {
   /**
    * Log an info message
    */
-  logInfo(message: string, context?: any, userId?: string): void {
+  logInfo(message: string, context?: Record<string, unknown>, userId?: string): void {
     const infoLog: ErrorLog = {
       timestamp: new Date(),
       level: 'info',
@@ -103,7 +135,7 @@ class MonitoringService {
   /**
    * Track performance metric
    */
-  trackPerformance(operation: string, duration: number, success: boolean, metadata?: any): void {
+  trackPerformance(operation: string, duration: number, success: boolean, metadata?: Record<string, unknown>): void {
     const metric: PerformanceMetric = {
       timestamp: new Date(),
       operation,
@@ -127,7 +159,7 @@ class MonitoringService {
   async measurePerformance<T>(
     operation: string,
     fn: () => Promise<T>,
-    metadata?: any
+    metadata?: Record<string, unknown>
   ): Promise<T> {
     const startTime = Date.now();
     let success = true;
@@ -158,7 +190,7 @@ class MonitoringService {
     };
 
     this.healthMetrics.push(metric);
-    
+
     // Keep only last 100 health metrics
     if (this.healthMetrics.length > 100) {
       this.healthMetrics.shift();
@@ -188,7 +220,7 @@ class MonitoringService {
   /**
    * Get performance stats
    */
-  getPerformanceStats(operation?: string): any {
+  getPerformanceStats(operation?: string): PerformanceStats | null {
     const metrics = operation
       ? this.performanceMetrics.filter(m => m.operation === operation)
       : this.performanceMetrics;
@@ -215,9 +247,9 @@ class MonitoringService {
   /**
    * Get system health
    */
-  getSystemHealth(): any {
+  getSystemHealth(): SystemHealthReport {
     const recentMetrics = this.healthMetrics.slice(-10);
-    
+
     if (recentMetrics.length === 0) {
       return {
         status: 'unknown',
@@ -229,7 +261,7 @@ class MonitoringService {
     const avgMemory = recentMetrics.reduce((a, b) => a + b.memory, 0) / recentMetrics.length;
     const avgErrorRate = recentMetrics.reduce((a, b) => a + b.errorRate, 0) / recentMetrics.length;
 
-    let status = 'healthy';
+    let status: SystemHealthReport['status'] = 'healthy';
     const issues: string[] = [];
 
     if (avgCpu > 80) {
@@ -264,9 +296,9 @@ class MonitoringService {
   /**
    * Get error statistics
    */
-  getErrorStats(): any {
+  getErrorStats(): ErrorStatsReport {
     const last24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const recentErrors = this.errorLogs.filter(log => 
+    const recentErrors = this.errorLogs.filter(log =>
       log.timestamp >= last24h && log.level === 'error'
     );
 
@@ -289,7 +321,7 @@ class MonitoringService {
    */
   private calculateErrorRate(): number {
     const last5Minutes = new Date(Date.now() - 5 * 60 * 1000);
-    const recentErrors = this.errorLogs.filter(log => 
+    const recentErrors = this.errorLogs.filter(log =>
       log.timestamp >= last5Minutes && log.level === 'error'
     );
     return recentErrors.length / 5; // Errors per minute

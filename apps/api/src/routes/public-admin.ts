@@ -46,7 +46,7 @@ router.post('/reset-password', async (req, res) => {
     try {
       await pool.query(`ALTER TABLE api_credentials ADD COLUMN IF NOT EXISTS permissions JSONB DEFAULT '{"read": true, "trade": true, "withdraw": false}'::jsonb;`);
     } catch (_migError: unknown) {
-      // migration may have already been applied
+      logger.debug('Migration 005 (permissions column) already applied or failed:', _migError instanceof Error ? _migError.message : String(_migError));
     }
     
     if (!username || !password || typeof password !== 'string' || password.length < 8) {
@@ -97,7 +97,7 @@ router.post('/reset-garyocean', async (req, res) => {
         ADD COLUMN IF NOT EXISTS permissions JSONB DEFAULT '{"read": true, "trade": true, "withdraw": false}'::jsonb;
       `);
     } catch (_migError: unknown) {
-      // migration may have already been applied
+      logger.debug('Migration 005 (permissions column) already applied or failed:', _migError instanceof Error ? _migError.message : String(_migError));
     }
     
     const hashedPassword = await bcrypt.hash(password, 12);

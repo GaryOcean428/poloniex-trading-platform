@@ -9,8 +9,8 @@
  *                          --simpleMlService (final fallback)
  */
 
-import { createClient } from 'redis';
 import { randomUUID } from 'crypto';
+import { createClient } from 'redis';
 import { logger } from '../utils/logger.js';
 
 const _rawMlWorkerUrl = process.env.ML_WORKER_URL || '';
@@ -308,6 +308,34 @@ class MLPredictionService {
       }
       logger.error(`ML training failed for ${symbol}:`, error);
       throw error;
+    }
+  }
+
+  /**
+   * QIG physics-based market analysis — regime classification, geometric confidence.
+   * Works even without trained ML models.
+   * @param {string} symbol - Trading pair symbol
+   * @param {Array} ohlcvData - Historical OHLCV data ({close, high, low, open, volume, timestamp})
+   * @param {number} currentPrice - Current market price
+   * @param {Object} [predictions] - Optional ML predictions to include in analysis
+   * @returns {Promise<Object>} QIG analysis with regime, confidence, recommended strategy
+   */
+  async getQIGAnalysis(symbol, ohlcvData, currentPrice, predictions = {}) {
+    try {
+      const result = await this._callWorker({
+        action: 'qig_analyze',
+        symbol,
+        data: ohlcvData,
+        current_price: currentPrice,
+        predictions,
+      });
+      return result;
+    } catch (error) {
+      if (error?.code === ML_WORKER_NOT_CONFIGURED_CODE) {
+        throw error;
+      }
+      logger.warn(`QIG analysis unavailable for ${symbol}:`, error?.message || error);
+      return null;
     }
   }
 

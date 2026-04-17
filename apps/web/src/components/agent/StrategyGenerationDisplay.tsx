@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
-import { Brain, TrendingUp, Activity, CheckCircle, Clock, Zap, Target, BarChart3 } from 'lucide-react';
-import axios from 'axios';
 import { getAccessToken } from '@/utils/auth';
 import { getBackendUrl } from '@/utils/environment';
 import { safeNum } from '@/utils/safeNum';
+import axios from 'axios';
+import { Activity, BarChart3, Brain, CheckCircle, Clock, Target, TrendingUp, Zap } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
 
 const API_BASE_URL = getBackendUrl();
 
@@ -59,7 +59,7 @@ const StrategyGenerationDisplay: React.FC<StrategyGenerationDisplayProps> = ({
     if (agentStatus === 'running') {
       fetchCurrentGeneration();
       fetchRecentStrategies();
-      
+
       const interval = setInterval(() => {
         fetchCurrentGeneration();
         fetchRecentStrategies();
@@ -75,7 +75,7 @@ const StrategyGenerationDisplay: React.FC<StrategyGenerationDisplayProps> = ({
       const response = await axios.get(`${API_BASE_URL}/api/agent/strategy/current`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      
+
       if (response.data.success && response.data.generation) {
         setCurrentGeneration(response.data.generation);
         setIsGenerating(response.data.generation.status !== 'completed' && response.data.generation.status !== 'failed');
@@ -95,9 +95,9 @@ const StrategyGenerationDisplay: React.FC<StrategyGenerationDisplayProps> = ({
       const response = await axios.get(`${API_BASE_URL}/api/agent/strategy/recent?limit=5`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      
+
       if (response.data.success) {
-        setRecentStrategies(response.data.strategies);
+        setRecentStrategies(response.data.strategies ?? []);
       }
     } catch (_err: unknown) {
       // console.error('Error fetching recent strategies:', err);
@@ -184,7 +184,7 @@ const StrategyGenerationDisplay: React.FC<StrategyGenerationDisplayProps> = ({
                 <span>{currentGeneration.progress}%</span>
               </div>
               <div className="w-full bg-white/20 rounded-full h-3 overflow-hidden">
-                <div 
+                <div
                   className="bg-white h-full rounded-full transition-all duration-500 ease-out"
                   style={{ width: `${currentGeneration.progress}%` }}
                 />
@@ -203,7 +203,7 @@ const StrategyGenerationDisplay: React.FC<StrategyGenerationDisplayProps> = ({
                 </h4>
                 <div className="space-y-2">
                   {(currentGeneration.indicators ?? []).map((indicator, idx) => (
-                    <div 
+                    <div
                       key={idx}
                       className="flex items-center gap-2 text-sm text-gray-600 bg-gray-50 rounded-lg p-2"
                     >
@@ -251,7 +251,7 @@ const StrategyGenerationDisplay: React.FC<StrategyGenerationDisplayProps> = ({
               </h4>
               <div className="space-y-2">
                 {(currentGeneration.entry_conditions ?? []).map((condition, idx) => (
-                  <div 
+                  <div
                     key={idx}
                     className="text-sm text-gray-600 bg-green-50 border border-green-200 rounded-lg p-3"
                   >
@@ -269,7 +269,7 @@ const StrategyGenerationDisplay: React.FC<StrategyGenerationDisplayProps> = ({
               </h4>
               <div className="space-y-2">
                 {(currentGeneration.exit_conditions ?? []).map((condition, idx) => (
-                  <div 
+                  <div
                     key={idx}
                     className="text-sm text-gray-600 bg-red-50 border border-red-200 rounded-lg p-3"
                   >
@@ -335,7 +335,7 @@ const StrategyGenerationDisplay: React.FC<StrategyGenerationDisplayProps> = ({
           </div>
           <div className="divide-y divide-gray-200">
             {recentStrategies.map((strategy) => (
-              <div 
+              <div
                 key={strategy.id}
                 className="p-4 hover:bg-gray-50 transition-colors"
               >

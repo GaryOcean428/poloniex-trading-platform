@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
-import { Shield, Clock, AlertCircle } from 'lucide-react';
-import axios from 'axios';
 import { getAccessToken } from '@/utils/auth';
 import { getBackendUrl } from '@/utils/environment';
+import axios from 'axios';
+import { AlertCircle, Clock, Shield } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
 import StrategyControlPanel from './StrategyControlPanel';
 
 const API_BASE_URL = getBackendUrl();
@@ -28,7 +28,7 @@ const StrategyApprovalQueue: React.FC<StrategyApprovalQueueProps> = ({ agentStat
 
   useEffect(() => {
     fetchPendingStrategies();
-    
+
     if (agentStatus === 'running') {
       const interval = setInterval(() => {
         fetchPendingStrategies();
@@ -44,9 +44,9 @@ const StrategyApprovalQueue: React.FC<StrategyApprovalQueueProps> = ({ agentStat
       const response = await axios.get(`${API_BASE_URL}/api/agent/strategies/pending-approval`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      
+
       if (response.data.success) {
-        setPendingStrategies(response.data.strategies);
+        setPendingStrategies(response.data.strategies ?? []);
       }
     } catch (_err: unknown) {
       // console.error('Error fetching pending strategies:', err);
@@ -110,8 +110,8 @@ const StrategyApprovalQueue: React.FC<StrategyApprovalQueueProps> = ({ agentStat
                 </p>
               </div>
             </div>
-            <StrategyControlPanel 
-              strategy={strategy} 
+            <StrategyControlPanel
+              strategy={strategy}
               onUpdate={fetchPendingStrategies}
             />
           </div>
@@ -125,8 +125,8 @@ const StrategyApprovalQueue: React.FC<StrategyApprovalQueueProps> = ({ agentStat
           <div className="text-sm text-blue-800">
             <p className="font-semibold mb-1">Manual Approval Required</p>
             <p className="text-blue-700">
-              High-risk strategies or those with unusual parameters require manual approval before 
-              proceeding to paper trading. Review the backtest results and risk parameters carefully 
+              High-risk strategies or those with unusual parameters require manual approval before
+              proceeding to paper trading. Review the backtest results and risk parameters carefully
               before approving.
             </p>
           </div>

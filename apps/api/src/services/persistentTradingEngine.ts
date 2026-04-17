@@ -5,20 +5,64 @@
  */
 
 import { EventEmitter } from 'events';
-import { apiCredentialsService } from './apiCredentialsService.js';
-import { PoloniexFuturesService } from './poloniexFuturesService.js';
 import { pool } from '../db/connection.js';
 import { logger } from '../utils/logger.js';
+import { apiCredentialsService } from './apiCredentialsService.js';
+import { PoloniexFuturesService } from './poloniexFuturesService.js';
+
+// ─── Engine-specific types (not shared — these are internal to PersistentTradingEngine) ───
+
+interface StrategyConfig {
+  symbol: string;
+  type: string;
+  defaultSize: number;
+  leverage?: number;
+}
+
+type PositionState = Record<string, unknown>;
+
+interface SessionPerformanceMetrics {
+  lastBalance?: number;
+  lastCheckTime?: string;
+  lastSignal?: string;
+  lastPrice?: number;
+  [key: string]: unknown;
+}
+
+interface CandleData {
+  timestamp: number;
+  open: string;
+  high: string;
+  low: string;
+  close: string;
+  volume: string;
+}
+
+interface EngineMarketData {
+  symbol: string;
+  price: number;
+  open: number;
+  high: number;
+  low: number;
+  volume: number;
+  timestamp: Date;
+  candles: CandleData[];
+}
+
+interface EngineTradingSignal {
+  action: 'BUY' | 'SELL' | 'CLOSE' | 'HOLD';
+  size?: number;
+}
 
 export interface TradingSession {
   id: string;
   userId: string;
   sessionName: string | null;
   isActive: boolean;
-  strategyConfig: any;
-  riskConfig: any;
-  positionState: any;
-  performanceMetrics: any;
+  strategyConfig: StrategyConfig;
+  riskConfig: Record<string, unknown>;
+  positionState: PositionState;
+  performanceMetrics: SessionPerformanceMetrics;
   startedAt: Date;
   stoppedAt: Date | null;
   lastHeartbeatAt: Date;
@@ -125,7 +169,7 @@ export class PersistentTradingEngine extends EventEmitter {
     try {
       // Get user's API credentials
       const credentials = await apiCredentialsService.getCredentials(session.userId);
-      
+
       if (!credentials) {
         logger.warn(`No credentials found for user ${session.userId}, skipping session ${session.id}`);
         return;
@@ -146,7 +190,7 @@ export class PersistentTradingEngine extends EventEmitter {
       };
 
       this.activeContexts.set(session.id, context);
-      
+
       logger.info(`✅ Initialized trading context for session ${session.id} (user: ${session.userId})`);
     } catch (error) {
       logger.error(`Error initializing session ${session.id}:`, error);
@@ -225,7 +269,7 @@ export class PersistentTradingEngine extends EventEmitter {
       };
 
       await this.updateSessionMetrics(session.id, updatedMetrics);
-      
+
     } catch (error) {
       logger.error(`Error executing strategy for session ${session.id}:`, error);
       this.emit('error', { sessionId: session.id, error });
@@ -235,17 +279,17 @@ export class PersistentTradingEngine extends EventEmitter {
   /**
    * Get current market data for a symbol
    */
-  private async getMarketData(symbol: string): Promise<any> {
+  private async getMarketData(symbol: string): Promise<EngineMarketData | null> {
     try {
       // Get historical candles to provide current market data with context
       const poloniexService = new PoloniexFuturesService();
       const candles = await poloniexService.getHistoricalData(symbol, '1h', 24);
-      
+
       if (!candles || candles.length === 0) {
         logger.warn(`No market data available for ${symbol}`);
         return null;
       }
-      
+
       const lastCandle = candles[candles.length - 1];
       return {
         symbol,
@@ -267,17 +311,17 @@ export class PersistentTradingEngine extends EventEmitter {
    * Generate trading signal based on strategy configuration
    */
   private async generateTradingSignal(
-    strategyConfig: any,
-    marketData: any,
-    _positions: any,
-    _positionState: any
-  ): Promise<any> {
+    strategyConfig: StrategyConfig,
+    marketData: EngineMarketData,
+    _positions: unknown,
+    _positionState: PositionState
+  ): Promise<EngineTradingSignal> {
     try {
       if (!marketData || !marketData.price || marketData.price === 0) {
         return { action: 'HOLD' };
       }
-      
-      // The persistent engine now returns HOLD. 
+
+      // The persistent engine now returns HOLD.
       // Trading signals should be generated via fullyAutonomousTrader.
       logger.debug(`[PersistentEngine] Signal generation delegated to fullyAutonomousTrader (strategy: ${strategyConfig.type || 'unknown'})`);
       return { action: 'HOLD' };
@@ -292,14 +336,14 @@ export class PersistentTradingEngine extends EventEmitter {
    */
   private async executeTrade(
     context: StrategyExecutionContext,
-    signal: any,
-    _marketData: any
+    signal: EngineTradingSignal,
+    _marketData: EngineMarketData
   ): Promise<void> {
     const { poloniexService, credentials, session } = context;
-    
+
     try {
       logger.info(`Executing trade for session ${session.id}: ${signal.action}`);
-      
+
       // Place order through Poloniex API
       const orderData = {
         symbol: session.strategyConfig.symbol,
@@ -310,10 +354,10 @@ export class PersistentTradingEngine extends EventEmitter {
       };
 
       const result = await poloniexService.placeOrder(credentials, orderData);
-      
+
       logger.info(`Trade executed successfully for session ${session.id}:`, result);
       this.emit('trade-executed', { sessionId: session.id, signal, result });
-      
+
     } catch (error) {
       logger.error(`Error executing trade for session ${session.id}:`, error);
       throw error;
@@ -326,8 +370,8 @@ export class PersistentTradingEngine extends EventEmitter {
   private async updateSessionHeartbeat(sessionId: string): Promise<void> {
     try {
       await pool.query(
-        `UPDATE trading_sessions 
-         SET last_heartbeat_at = CURRENT_TIMESTAMP 
+        `UPDATE trading_sessions
+         SET last_heartbeat_at = CURRENT_TIMESTAMP
          WHERE id = $1`,
         [sessionId]
       );
@@ -339,11 +383,11 @@ export class PersistentTradingEngine extends EventEmitter {
   /**
    * Update session performance metrics
    */
-  private async updateSessionMetrics(sessionId: string, metrics: any): Promise<void> {
+  private async updateSessionMetrics(sessionId: string, metrics: SessionPerformanceMetrics): Promise<void> {
     try {
       await pool.query(
-        `UPDATE trading_sessions 
-         SET performance_metrics = $1, updated_at = CURRENT_TIMESTAMP 
+        `UPDATE trading_sessions
+         SET performance_metrics = $1, updated_at = CURRENT_TIMESTAMP
          WHERE id = $2`,
         [JSON.stringify(metrics), sessionId]
       );
@@ -374,15 +418,15 @@ export class PersistentTradingEngine extends EventEmitter {
    */
   async startSession(
     userId: string,
-    strategyConfig: any,
-    riskConfig?: any,
+    strategyConfig: StrategyConfig,
+    riskConfig?: Record<string, unknown>,
     sessionName?: string
   ): Promise<string> {
     try {
       // Create new session in database
       const result = await pool.query(
         `INSERT INTO trading_sessions (
-          user_id, session_name, is_active, strategy_config, risk_config, 
+          user_id, session_name, is_active, strategy_config, risk_config,
           position_state, performance_metrics
         ) VALUES ($1, $2, true, $3, $4, $5, $6)
         RETURNING id`,
@@ -423,8 +467,8 @@ export class PersistentTradingEngine extends EventEmitter {
     try {
       // Update database
       await pool.query(
-        `UPDATE trading_sessions 
-         SET is_active = false, stopped_at = CURRENT_TIMESTAMP 
+        `UPDATE trading_sessions
+         SET is_active = false, stopped_at = CURRENT_TIMESTAMP
          WHERE id = $1`,
         [sessionId]
       );

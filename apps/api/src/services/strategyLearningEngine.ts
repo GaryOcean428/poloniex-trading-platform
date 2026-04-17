@@ -27,32 +27,34 @@
  */
 
 import { EventEmitter } from 'events';
-import { query } from '../db/connection.js';
+import { pool, query } from '../db/connection.js';
 import { logger } from '../utils/logger.js';
+import { apiCredentialsService } from './apiCredentialsService.js';
 import backtestingEngine from './backtestingEngine.js';
 import confidenceScoringService from './confidenceScoringService.js';
 import parallelStrategyRunner from './parallelStrategyRunner.js';
-import {
-  SignalGenome,
-  generateRandomGenome,
-  mutateGenome,
-  crossoverGenomes,
-  inferStrategyType,
-} from './signalGenome.js';
-import {
-  estimateKappa,
-  classifyRegime,
-  geometricFragility,
-  constitutiveR2,
-  priceAutocorrelation,
-  shouldResetStrategies,
-  type QIGRegime,
-} from './qig/qigFrozenLaws.js';
+import poloniexFuturesService from './poloniexFuturesService.js';
 import {
   computeQIGFitness,
   detectRegimeTransition,
   type QIGFitnessResult,
 } from './qig/qigFitnessFunction.js';
+import {
+  classifyRegime,
+  constitutiveR2,
+  estimateKappa,
+  geometricFragility,
+  priceAutocorrelation,
+  shouldResetStrategies,
+  type QIGRegime,
+} from './qig/qigFrozenLaws.js';
+import {
+  SignalGenome,
+  crossoverGenomes,
+  generateRandomGenome,
+  inferStrategyType,
+  mutateGenome,
+} from './signalGenome.js';
 
 export type MarketRegime = 'trending' | 'ranging' | 'volatile' | 'unknown';
 export type StrategyType = 'momentum' | 'mean_reversion' | 'breakout' | 'trend_following' | 'scalping';
@@ -104,6 +106,8 @@ const BRIDGE_LAW_EXPONENT = 0.74;
 const DEFAULT_STRATEGY_LOOKBACK = 50;
 const SUPPORTED_TF_MINUTES: Record<string, number> = { '5m': 5, '15m': 15, '1h': 60, '4h': 240 };
 const BACKTEST_THRESHOLDS = { minSharpe: 1.0, minWinRate: 0.45, maxDrawdown: 0.15 };
+/** Minimum capital floor for drawdown calculations — prevents tiny balances from false-killing strategies */
+const MIN_CAPITAL_FLOOR = 27;
 const PAPER_THRESHOLDS = { minSharpe: 0.8, minPnl: 0, minTrades: 30, minDays: 7, minConfidence: 60 };
 const FITNESS_DIVERGENCE_THRESHOLD = 0.20;
 const QIG_FRAGILITY_WARNING_THRESHOLD = 0.6;
@@ -132,7 +136,8 @@ class StrategyLearningEngine extends EventEmitter {
   private strategies: Map<string, StrategyRecord> = new Map();
   private previousKappa = 0;
   private lastQIGRegime: QIGRegime = 'geometric';
-  private schemaFixAttempted = false;
+  private cachedBalance: number = 0;
+  private lastBalanceFetchTime = 0;
 
   constructor() { super(); }
 
@@ -140,7 +145,7 @@ class StrategyLearningEngine extends EventEmitter {
     if (this.isRunning) { logger.warn('[SLE] Already running'); return; }
     this.isRunning = true;
     logger.info('[SLE] Starting strategy learning engine');
-    await this.ensureSchemaDefaults();
+    // Schema defaults are now handled by migration 023_sle_schema_defaults.sql
     await this.loadActiveStrategies();
     this.scheduleNextCycle(0);
   }
@@ -151,89 +156,6 @@ class StrategyLearningEngine extends EventEmitter {
     logger.info('[SLE] Strategy learning engine stopped');
   }
 
-  private async ensureSchemaDefaults(): Promise<void> {
-    if (this.schemaFixAttempted) return;
-    this.schemaFixAttempted = true;
-    const columnsToFix = ['backtest_count', 'avg_return', 'avg_sharpe_ratio', 'avg_max_drawdown', 'win_rate'];
-    for (const col of columnsToFix) {
-      try {
-        await query(`ALTER TABLE strategy_performance ALTER COLUMN ${col} SET DEFAULT 0`);
-        logger.info(`[SLE] Set DEFAULT 0 on strategy_performance.${col}`);
-      } catch (err: any) {
-        if (!err.message?.includes('does not exist')) {
-          logger.debug(`[SLE] Could not set default on ${col}: ${err.message}`);
-        }
-      }
-    }
-
-    // Drop NOT NULL on columns not in INSERT params array
-    const columnsToDropNotNull = ['avg_max_drawdown', 'win_rate', 'last_backtest_date'];
-    for (const col of columnsToDropNotNull) {
-      try {
-        await query(`ALTER TABLE strategy_performance ALTER COLUMN ${col} DROP NOT NULL`);
-        logger.info(`[SLE] Dropped NOT NULL on strategy_performance.${col}`);
-      } catch (err: any) {
-        if (!err.message?.includes('does not exist')) {
-          logger.debug(`[SLE] Could not drop NOT NULL on ${col}: ${err.message}`);
-        }
-      }
-    }
-
-    // Drop view before ALTER TABLE (PG blocks ALTER on columns used by views)
-    try {
-      await query('DROP VIEW IF EXISTS strategy_performance_summary CASCADE');
-      logger.info('[SLE] Dropped strategy_performance_summary view for schema migration');
-    } catch (err: any) {
-      logger.debug(`[SLE] Could not drop view: ${err.message}`);
-    }
-
-    const columnsToWiden = [
-      'backtest_sharpe', 'backtest_wr', 'backtest_max_dd',
-      'paper_sharpe', 'paper_wr', 'paper_pnl',
-      'live_sharpe', 'live_pnl',
-      'uncensored_sharpe', 'confidence_score',
-      'avg_sharpe_ratio', 'avg_return',
-    ];
-    for (const col of columnsToWiden) {
-      try {
-        await query(`ALTER TABLE strategy_performance ALTER COLUMN ${col} TYPE NUMERIC(12,6)`);
-        logger.info(`[SLE] Widened strategy_performance.${col} to NUMERIC(12,6)`);
-      } catch (err: any) {
-        if (!err.message?.includes('does not exist')) {
-          logger.debug(`[SLE] Could not widen ${col}: ${err.message}`);
-        }
-      }
-    }
-
-    // Recreate view after column changes
-    try {
-      await query(`
-        CREATE OR REPLACE VIEW strategy_performance_summary AS
-        SELECT s.name, s.type, s.description,
-            COALESCE(sp.avg_return, 0) as avg_return,
-            COALESCE(sp.avg_sharpe_ratio, 0) as avg_sharpe_ratio,
-            COALESCE(sp.avg_max_drawdown, 0) as avg_max_drawdown,
-            COALESCE(sp.win_rate, 0) as win_rate,
-            COALESCE(sp.confidence_score, 0) as confidence_score,
-            COALESCE(sp.backtest_count, 0) as backtest_count,
-            sp.last_backtest_date, s.created_at, s.updated_at
-        FROM strategy_definitions s
-        LEFT JOIN strategy_performance sp ON s.name = sp.strategy_name
-        WHERE s.is_active = true
-      `);
-      logger.info('[SLE] Recreated strategy_performance_summary view');
-    } catch (err: any) {
-      logger.warn(`[SLE] Could not recreate view: ${err.message}`);
-    }
-
-    try {
-      await query(`ALTER TABLE strategy_performance ADD COLUMN IF NOT EXISTS signal_genome JSONB`);
-      logger.info('[SLE] Ensured signal_genome column exists on strategy_performance');
-    } catch (err: any) {
-      logger.debug(`[SLE] Could not add signal_genome column: ${err.message}`);
-    }
-  }
-
   private scheduleNextCycle(delayMs: number): void {
     if (!this.isRunning) return;
     this.loopTimer = setTimeout(async () => {
@@ -242,9 +164,38 @@ class StrategyLearningEngine extends EventEmitter {
     }, delayMs);
   }
 
+  private async fetchActualBalance(): Promise<number> {
+    const now = Date.now();
+    if (this.cachedBalance > 0 && now - this.lastBalanceFetchTime < 10 * 60 * 1000) {
+      return this.cachedBalance;
+    }
+    try {
+      const result = await pool.query(
+        `SELECT user_id FROM api_credentials WHERE is_active = true LIMIT 1`
+      );
+      if (result.rows.length === 0) return this.cachedBalance || MIN_CAPITAL_FLOOR;
+      const userId = result.rows[0].user_id;
+      const credentials = await apiCredentialsService.getCredentials(userId);
+      if (!credentials) return this.cachedBalance || MIN_CAPITAL_FLOOR;
+      const balance = await poloniexFuturesService.getAccountBalance(credentials);
+      const avail = parseFloat(balance?.availMgn ?? balance?.eq ?? '0');
+      if (avail > 0) {
+        this.cachedBalance = avail;
+        this.lastBalanceFetchTime = now;
+        logger.info(`[SLE] Fetched actual balance: $${avail.toFixed(2)} USDT`);
+      }
+      return this.cachedBalance || MIN_CAPITAL_FLOOR;
+    } catch (err) {
+      logger.warn('[SLE] Failed to fetch balance, using cached:', err instanceof Error ? err.message : String(err));
+      return this.cachedBalance || MIN_CAPITAL_FLOOR;
+    }
+  }
+
   private async runOneCycle(): Promise<void> {
     this.generationCount++;
     logger.info(`[SLE] === Generation ${this.generationCount} ===`);
+    await this.fetchActualBalance();
+    parallelStrategyRunner.setBaseCapital(this.cachedBalance);
     const regime = await this.detectCurrentRegime();
     await this.checkQIGRegimeTransition();
     const newStrategies = await this.generateVariants(regime);
@@ -254,8 +205,10 @@ class StrategyLearningEngine extends EventEmitter {
     await this.killUnderperformers();
     await this.promotePaperToRecommended();
     await this.updateGenerationWeights();
+    const paperCount = Array.from(this.strategies.values()).filter(s => s.status === 'paper_trading').length;
+    const recCount = Array.from(this.strategies.values()).filter(s => s.status === 'recommended').length;
     this.emit('cycleComplete', { generation: this.generationCount, regime });
-    logger.info(`[SLE] Generation ${this.generationCount} complete`);
+    logger.info(`[SLE] Generation ${this.generationCount} complete — regime=${regime}, generated=${newStrategies.length}, backtest_pass=${backtestPassed.length}, paper=${paperCount}, recommended=${recCount}`);
   }
 
   private async checkQIGRegimeTransition(): Promise<void> {
@@ -408,9 +361,16 @@ class StrategyLearningEngine extends EventEmitter {
       const strategyDef: Record<string, any> = { type: strategy.strategyType, parameters: {}, lookback: DEFAULT_STRATEGY_LOOKBACK };
       if (strategy.genome) { strategyDef.genome = strategy.genome; }
       (backtestingEngine as any).registerStrategy(strategy.strategyId, strategyDef);
-      const result = await (backtestingEngine as any).runBacktest(strategy.strategyId, { symbol: strategy.symbol, timeframe: strategy.timeframe, startDate: splitDate, endDate, leverage: strategy.leverage });
-      return { sharpe: safeNum(result?.sharpeRatio ?? result?.metrics?.sharpeRatio), winRate: safeNum(result?.winRate ?? result?.metrics?.winRate), maxDrawdown: safeNum(result?.maxDrawdown ?? result?.metrics?.maxDrawdownPercent) };
-    } catch { return { sharpe: -1, winRate: 0, maxDrawdown: 1 }; }
+      const result = await (backtestingEngine as any).runBacktest(strategy.strategyId, { symbol: strategy.symbol, timeframe: strategy.timeframe, startDate: splitDate, endDate, leverage: strategy.leverage, initialCapital: this.cachedBalance || MIN_CAPITAL_FLOOR });
+      return {
+        sharpe: safeNum(result?.sharpeRatio ?? result?.metrics?.sharpeRatio),
+        winRate: safeNum(result?.winRate ?? result?.metrics?.winRate) / 100,
+        maxDrawdown: safeNum(result?.maxDrawdown ?? result?.metrics?.maxDrawdownPercent) / 100,
+      };
+    } catch (err) {
+      logger.warn(`[SLE] Backtest failed for ${strategy.strategyId}:`, err instanceof Error ? err.message : String(err));
+      return { sharpe: -1, winRate: 0, maxDrawdown: 1 };
+    }
   }
 
   private async promoteToParallelPaper(strategy: StrategyRecord): Promise<void> {
@@ -454,7 +414,7 @@ class StrategyLearningEngine extends EventEmitter {
       if ((s.phaseClock ?? 0) >= PHASE_CLOCK_KILL_CYCLES) killReason = `phase_clock_${s.phaseClock}_negative_cycles`;
       if (s.fitnessDivergent && s.isCensored) { killReason = 'fitness_divergent_and_censored'; s.status = 'censored_rejected'; }
       else if (s.fitnessDivergent) killReason = 'fitness_divergent_unreliable_estimate';
-      if (s.paperPnl !== null && s.paperTrades > 5) { const ddPct = Math.abs(Math.min(0, s.paperPnl)) / 1000; if (ddPct > 0.10) killReason = `drawdown_${(ddPct * 100).toFixed(1)}pct`; }
+      if (s.paperPnl !== null && s.paperTrades > 5) { const capital = Math.max(this.cachedBalance, MIN_CAPITAL_FLOOR); const ddPct = Math.abs(Math.min(0, s.paperPnl)) / capital; if (ddPct > 0.10) killReason = `drawdown_${(ddPct * 100).toFixed(1)}pct`; }
       if (killReason) {
         s.status = s.status === 'censored_rejected' ? 'censored_rejected' : 'killed';
         await parallelStrategyRunner.removeStrategy(s.strategyId, killReason);
@@ -479,7 +439,7 @@ class StrategyLearningEngine extends EventEmitter {
       if (safeNum(s.paperSharpe) < PAPER_THRESHOLDS.minSharpe || safeNum(s.paperPnl) <= PAPER_THRESHOLDS.minPnl) continue;
       try {
         const score = await (confidenceScoringService as any).calculateConfidenceScore(s.strategyId, s.symbol, s.timeframe);
-        s.confidenceScore = safeNum(score?.score ?? score);
+        s.confidenceScore = safeNum(score?.confidenceScore ?? score?.score ?? score);
         if (s.confidenceScore >= PAPER_THRESHOLDS.minConfidence) {
           s.status = 'recommended'; await this.upsertStrategyPerformance(s); this.emit('liveRecommendation', s);
           logger.info(`[SLE] \uD83C\uDFAF Strategy ${s.strategyId} RECOMMENDED for live: confidence=${s.confidenceScore.toFixed(1)}`);

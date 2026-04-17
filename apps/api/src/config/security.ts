@@ -1,16 +1,16 @@
 /**
  * Security Middleware Configuration
- * 
+ *
  * Configures comprehensive security middleware including helmet, CORS hardening,
  * rate limiting, and other security measures.
  */
 
-import helmet from 'helmet';
-import rateLimit from 'express-rate-limit';
 import type { CorsOptions } from 'cors';
-import type { Request, Response, NextFunction } from 'express';
-import { env } from './env.js';
+import type { NextFunction, Request, Response } from 'express';
+import rateLimit from 'express-rate-limit';
+import helmet from 'helmet';
 import { logger } from '../utils/logger.js';
+import { env } from './env.js';
 
 /**
  * Enhanced security headers configuration using helmet
@@ -80,6 +80,9 @@ export function createCorsOptions(): CorsOptions {
     'https://healthcheck.railway.app',
     // Prefer FRONTEND_URL when provided
     ...(env.FRONTEND_URL ? [env.FRONTEND_URL] : []),
+    // Allow backend's own origin (Swagger, health page, internal calls)
+    // RAILWAY_PUBLIC_DOMAIN is auto-set by Railway, not in our Zod schema
+    ...(process.env.RAILWAY_PUBLIC_DOMAIN ? [`https://${process.env.RAILWAY_PUBLIC_DOMAIN}`] : []),
     // Custom set via env variable
     ...(env.CORS_ALLOWED_ORIGINS || []),
     // Local development fallbacks when not in production
@@ -105,9 +108,11 @@ export function createCorsOptions(): CorsOptions {
         return callback(null, true);
       }
 
-      // Log blocked origins for debugging
+      // Log blocked origins for debugging (limit spam with rate limiting)
       logger.warn('CORS blocked origin', { origin });
-      return callback(new Error('Not allowed by CORS'), false);
+      // Return false instead of an Error to avoid Express treating this as a 500.
+      // The browser still sees a proper CORS rejection.
+      return callback(null, false);
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -145,7 +150,7 @@ export function securityLogger(req: Request, _res: Response, next: NextFunction)
   const userAgent = req.get('User-Agent') || '';
   const referer = req.get('Referer') || '';
 
-  const isSuspicious = suspiciousPatterns.some(pattern => 
+  const isSuspicious = suspiciousPatterns.some(pattern =>
     pattern.test(url) || pattern.test(userAgent) || pattern.test(referer)
   );
 

@@ -1,10 +1,10 @@
-import express from 'express';
-import { authenticateToken } from '../middleware/auth.js';
-import { strategyLearningEngine } from '../services/strategyLearningEngine.js';
-import { fullyAutonomousTrader } from '../services/fullyAutonomousTrader.js';
-import { agentSettingsService } from '../services/agentSettingsService.js';
 import type { Request, Response } from 'express';
+import express from 'express';
 import { pool } from '../db/connection.js';
+import { authenticateToken } from '../middleware/auth.js';
+import { agentSettingsService } from '../services/agentSettingsService.js';
+import { fullyAutonomousTrader } from '../services/fullyAutonomousTrader.js';
+import { strategyLearningEngine } from '../services/strategyLearningEngine.js';
 import { logger } from '../utils/logger.js';
 
 const router = express.Router();
@@ -22,7 +22,7 @@ function isTableMissingError(error: unknown): boolean {
 router.post('/start', authenticateToken, async (req: Request, res: Response) => {
   try {
     const userId = (req.user?.id || req.user?.userId)?.toString();
-    
+
     if (!userId) {
       return res.status(401).json({
         success: false,
@@ -30,11 +30,11 @@ router.post('/start', authenticateToken, async (req: Request, res: Response) => 
         code: 'NO_USER_ID'
       });
     }
-    
+
     // Check for API credentials first
     const { apiCredentialsService } = await import('../services/apiCredentialsService.js');
     const hasCredentials = await apiCredentialsService.hasCredentials(userId);
-    
+
     if (!hasCredentials) {
       return res.status(400).json({
         success: false,
@@ -43,7 +43,7 @@ router.post('/start', authenticateToken, async (req: Request, res: Response) => 
         action: 'redirect_to_api_keys'
       });
     }
-    
+
     const config = req.body;
 
     // Start the strategy learning engine (generates + evaluates strategies)
@@ -69,7 +69,7 @@ router.post('/start', authenticateToken, async (req: Request, res: Response) => 
   } catch (error: unknown) {
     logger.error('Error starting agent:', error);
     const errMsg = error instanceof Error ? error.message : String(error);
-    
+
     if (errMsg.includes('already') || errMsg.includes('Already')) {
       try {
         const catchUserId = (req.user?.id || req.user?.userId)?.toString();
@@ -93,10 +93,10 @@ router.post('/start', authenticateToken, async (req: Request, res: Response) => 
         });
       }
     }
-    
+
     let errorCode = 'UNKNOWN_ERROR';
     let statusCode = 500;
-    
+
     if (errMsg.includes('credentials')) {
       errorCode = 'CREDENTIALS_ERROR';
       statusCode = 400;
@@ -104,7 +104,7 @@ router.post('/start', authenticateToken, async (req: Request, res: Response) => 
       errorCode = 'API_ERROR';
       statusCode = 503;
     }
-    
+
     res.status(statusCode).json({
       success: false,
       error: errMsg,
@@ -117,7 +117,7 @@ router.post('/stop', authenticateToken, async (req: Request, res: Response) => {
   try {
     const userId = (req.user?.id || req.user?.userId)?.toString();
     if (!userId) return res.status(401).json({ success: false, error: 'User ID not found in token' });
-    await strategyLearningEngine.stop();
+    // Only stop the per-user trader — SLE is global and must not be stopped per-user
     try { await fullyAutonomousTrader.disableAutonomousTrading(userId); } catch { /* may not be enabled */ }
     res.json({ success: true, message: 'Agent stopped successfully' });
   } catch (error: unknown) {
@@ -130,7 +130,8 @@ router.post('/pause', authenticateToken, async (req: Request, res: Response) => 
   try {
     const userId = (req.user?.id || req.user?.userId)?.toString();
     if (!userId) return res.status(401).json({ success: false, error: 'User ID not found in token' });
-    await strategyLearningEngine.stop();
+    // Only disable per-user trader — SLE is global and must not be stopped per-user
+    try { await fullyAutonomousTrader.disableAutonomousTrading(userId); } catch { /* may not be enabled */ }
     res.json({ success: true, message: 'Agent paused successfully' });
   } catch (error: unknown) {
     logger.error('Error pausing agent:', error);
@@ -168,7 +169,7 @@ router.get('/status', authenticateToken, async (req: Request, res: Response) => 
     });
   } catch (error: unknown) {
     logger.error('Error getting agent status:', error);
-    res.json({ success: true, status: null, _fallback: true });
+    res.status(500).json({ success: false, error: 'Failed to get agent status' });
   }
 });
 
@@ -199,15 +200,30 @@ router.get('/health', authenticateToken, async (req: Request, res: Response) => 
   }
 });
 
-router.get('/activity', authenticateToken, async (_req: Request, res: Response) => {
-  res.json({ success: true, activity: [] });
+router.get('/activity', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const userId = (req.user?.id || req.user?.userId)?.toString();
+    if (!userId) return res.status(401).json({ success: false, error: 'User ID not found in token' });
+    const rawLimit = parseInt(req.query.limit as string, 10);
+    const limit = Math.min(Math.max(Number.isFinite(rawLimit) ? rawLimit : 20, 1), 100);
+    const result = await pool.query(
+      `SELECT * FROM agent_events WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2`,
+      [userId, limit]
+    );
+    res.json({ success: true, activity: result.rows });
+  } catch (error: unknown) {
+    if (isTableMissingError(error)) return res.json({ success: true, activity: [] });
+    logger.error('Agent activity query failed:', error instanceof Error ? error.message : String(error));
+    res.json({ success: true, activity: [], _fallback: true });
+  }
 });
 
 router.get('/events', authenticateToken, async (req: Request, res: Response) => {
   try {
     const userId = (req.user?.id || req.user?.userId)?.toString();
     if (!userId) return res.status(401).json({ success: false, error: 'User ID not found in token' });
-    const limit = parseInt(req.query.limit as string, 10) || 50;
+    const rawEventsLimit = parseInt(req.query.limit as string, 10);
+    const limit = Math.min(Math.max(Number.isFinite(rawEventsLimit) ? rawEventsLimit : 50, 1), 500);
     const eventType = req.query.type as string | undefined;
     const mode = req.query.mode as string | undefined;
     let queryText = `SELECT * FROM agent_events WHERE user_id = $1`;
@@ -244,7 +260,7 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
     if (!traderStatus.enabled && !traderStatus.metrics) return res.json({ success: true, performance: defaultPerformance, dailyPerformance: [] });
     try {
       const mode = req.query.mode as string | undefined;
-      const modeFilter = mode === 'paper' ? " AND paper_trade = true" : mode === 'live' ? " AND paper_trade = false" : '';
+      const modeFilter = mode === 'paper' ? " AND order_id LIKE 'paper_%'" : mode === 'live' ? " AND (order_id IS NULL OR order_id NOT LIKE 'paper_%')" : '';
       const tradesResult = await pool.query(`SELECT COUNT(*) as total_trades, SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as winning_trades, SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END) as losing_trades, SUM(pnl) as total_pnl, AVG(CASE WHEN pnl > 0 THEN pnl END) as avg_win, AVG(CASE WHEN pnl < 0 THEN pnl END) as avg_loss FROM autonomous_trades WHERE user_id = $1${modeFilter}`, [userId]);
       const metrics = tradesResult.rows[0];
       let sharpeRatio = 0; let maxDrawdown = 0;
@@ -373,15 +389,21 @@ router.get('/strategy/current', authenticateToken, async (_req: Request, res: Re
     const sle = strategyLearningEngine as any;
     const strategies = Array.from(sle.strategies?.values?.() ?? []);
     const running = strategies.filter((s: any) => ['paper_trading', 'live', 'recommended'].includes(s.status));
+    const isRunning = sle.isRunning as boolean;
 
     res.json({
       success: true,
       generation: {
+        id: `gen-${sle.generationCount ?? 0}`,
+        strategy_name: `Generation ${sle.generationCount ?? 0}`,
         number: sle.generationCount ?? 0,
-        status: sle.isRunning ? 'running' : 'stopped',
+        status: isRunning ? 'analyzing' : 'completed',
+        progress: isRunning ? 50 : 100,
+        current_step: isRunning ? 'Evaluating strategies' : 'Idle',
         strategiesActive: running.length,
         totalStrategies: strategies.length,
         lastCycleAt: new Date().toISOString(),
+        created_at: new Date().toISOString(),
       }
     });
   } catch (error: unknown) {
@@ -396,7 +418,8 @@ router.get('/strategy/current', authenticateToken, async (_req: Request, res: Re
  */
 router.get('/strategy/recent', authenticateToken, async (req: Request, res: Response) => {
   try {
-    const limit = Math.min(parseInt(req.query.limit as string) || 10, 50);
+    const rawRecentLimit = parseInt(req.query.limit as string, 10);
+    const limit = Math.min(Math.max(Number.isFinite(rawRecentLimit) ? rawRecentLimit : 10, 1), 50);
     const result = await pool.query(
       `SELECT strategy_id, strategy_name, symbol, timeframe, strategy_type,
               regime_at_creation, backtest_sharpe, backtest_wr, backtest_max_dd,
@@ -424,7 +447,8 @@ router.get('/strategy/recent', authenticateToken, async (req: Request, res: Resp
 router.get('/backtest/results', authenticateToken, async (req: Request, res: Response) => {
   try {
     const strategyId = req.query.strategy_id as string;
-    const limit = Math.min(parseInt(req.query.limit as string) || 10, 100);
+    const rawBtLimit = parseInt(req.query.limit as string, 10);
+    const limit = Math.min(Math.max(Number.isFinite(rawBtLimit) ? rawBtLimit : 10, 1), 100);
     let result;
     if (strategyId) {
       result = await pool.query(`SELECT * FROM backtest_results WHERE strategy_name = $1 ORDER BY created_at DESC LIMIT $2`, [strategyId, limit]);
