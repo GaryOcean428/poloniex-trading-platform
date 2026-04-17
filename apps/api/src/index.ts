@@ -38,6 +38,7 @@ import { runAllMigrations } from './scripts/runMigrations.js';
 import { agentScheduler } from './services/agentScheduler.js';
 import paperTradingService from './services/paperTradingService.js';
 import { persistentTradingEngine } from './services/persistentTradingEngine.js';
+import { startPipelineHealthProbe } from './services/pipelineHealthProbe.js';
 import { stateReconciliationService } from './services/stateReconciliationService.js';
 import { logger } from './utils/logger.js';
 
@@ -417,6 +418,13 @@ server.listen(PORT, '::', async () => {
   paperTradingService.initialize().catch(error => {
     logger.error('Failed to initialize paper trading service:', error);
   });
+
+  // Pipeline health probe: converts silent failures into pagable alerts.
+  // Catches the "paper mode selected but zero paper trades" bug class
+  // within minutes instead of weeks.
+  if (process.env.NODE_ENV !== 'test') {
+    startPipelineHealthProbe();
+  }
 
   // Health heartbeat for production monitoring
   if (process.env.NODE_ENV === 'production') {
