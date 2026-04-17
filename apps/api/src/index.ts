@@ -421,9 +421,14 @@ server.listen(PORT, '::', async () => {
 
   // Pipeline health probe: converts silent failures into pagable alerts.
   // Catches the "paper mode selected but zero paper trades" bug class
-  // within minutes instead of weeks.
+  // within minutes instead of weeks. The predicate wires the trades-
+  // floor alert to the trading engine's running state so intentional
+  // pauses don't page.
   if (process.env.NODE_ENV !== 'test') {
-    startPipelineHealthProbe();
+    startPipelineHealthProbe(
+      undefined,
+      () => persistentTradingEngine.isEngineRunning(),
+    );
   }
 
   // Health heartbeat for production monitoring

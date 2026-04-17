@@ -55,11 +55,24 @@ describe('monitoringService pipeline heartbeat', () => {
     const base = new Date('2026-04-17T12:00:00Z');
     monitoringService.recordTradeEvent('paper', base);
 
-    const oneHourAndOneMinuteLater = new Date(base.getTime() + 61 * 60_000);
-    // The minute the trade was recorded has rotated out of the 60-slot ring.
+    // Ring is TRADES_RING_SLOTS (360) minutes wide. After 361 minutes the
+    // original slot has rotated out; a 360-minute window sees 0 trades.
+    const pastRingLater = new Date(base.getTime() + 361 * 60_000);
     expect(
-      monitoringService.getTradesInLastMinutes('paper', 60, oneHourAndOneMinuteLater),
+      monitoringService.getTradesInLastMinutes('paper', 360, pastRingLater),
     ).toBe(0);
+  });
+
+  it('retains trades across a 6-hour rolling window', () => {
+    const base = new Date('2026-04-17T12:00:00Z');
+    monitoringService.recordTradeEvent('paper', base);
+
+    // Five hours later, the trade should still be in the 360-slot ring
+    // because the floor window is 360 minutes (6h).
+    const fiveHoursLater = new Date(base.getTime() + 5 * 60 * 60_000);
+    expect(
+      monitoringService.getTradesInLastMinutes('paper', 360, fiveHoursLater),
+    ).toBe(1);
   });
 
   it('returns 0 trades for a stage that never recorded any', () => {
@@ -112,9 +125,17 @@ describe('pipelineHealthProbe wiring', () => {
   });
 
   it('does not fire trades-floor alert before window has elapsed since probe start', () => {
-    startPipelineHealthProbe(60_000);
-    // Immediately run a probe tick — trades-floor check must be gated on
-    // uptime ≥ floor window so a freshly-booted server does not page.
+    // Predicate returns true (expected trading), but uptime gate should
+    // still block the alert because we just started.
+    startPipelineHealthProbe(60_000, () => true);
+    __internal.runProbeTick(new Date());
+    expect(alertingService.getAlertStats().counts.tradeFloorBreaches).toBe(0);
+  });
+
+  it('does not fire trades-floor alert when predicate says not expected-trading', () => {
+    // Predicate reports paused — suppresses the alert even after uptime
+    // gate clears. This is the Sourcery-flagged regression guard.
+    startPipelineHealthProbe(60_000, () => false);
     __internal.runProbeTick(new Date());
     expect(alertingService.getAlertStats().counts.tradeFloorBreaches).toBe(0);
   });

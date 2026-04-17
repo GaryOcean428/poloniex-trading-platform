@@ -15,6 +15,28 @@ import { logger } from '../utils/logger.js';
 
 const DEFAULT_PROBE_INTERVAL_MS = 60_000;
 
+/**
+ * A predicate the probe calls to decide whether the system is in a
+ * state where trades *should* be happening. When this returns false,
+ * the trades-floor alert is suppressed — a Paused or Paper-Only
+ * configuration doesn't page. Default reads from persistentTradingEngine.
+ *
+ * Exposed so tests can inject a deterministic predicate.
+ */
+export type IsExpectedTradingPredicate = () => boolean;
+
+/**
+ * Default predicate — reports false so the probe does NOT alert on
+ * trades-per-hour floor unless a caller explicitly wires in a live
+ * state source. This module stays free of service dependencies so
+ * tests that import it don't cascade into encryption / env
+ * validation.
+ *
+ * index.ts wires the real predicate at boot:
+ *   startPipelineHealthProbe(60_000, () => persistentTradingEngine.isEngineRunning())
+ */
+const defaultIsExpectedTrading: IsExpectedTradingPredicate = () => false;
+
 type ProbeHandle = {
   stop: () => void;
   runOnce: () => void;
@@ -24,17 +46,25 @@ type ProbeHandle = {
 let activeProbe: ProbeHandle | null = null;
 /** First-observed tick timestamp — used to avoid firing trades-floor alerts before the system has been up long enough to produce trades. */
 let probeStartedAt: Date | null = null;
+let isExpectedTrading: IsExpectedTradingPredicate = defaultIsExpectedTrading;
 
 /**
  * Decide whether a trades-floor alert is appropriate given current state.
- * We only page when the generator or backtest stage has been alive long
- * enough that paper trades *should* have fired by now.
+ * Three gates must all be true before we page:
+ *   1. Probe has been up at least the full floor window.
+ *   2. The trading engine says it is currently running (not Paused).
+ *   3. (Monitoring data width matches the window — asserted at build by
+ *      TRADES_PER_HOUR_FLOOR_WINDOW_MIN ≤ TRADES_RING_SLOTS.)
+ *
+ * Sourcery flagged that an assumed `expected_running` state without this
+ * gate would page on intentionally-paused / paper-only configurations.
  */
 function shouldEvaluateTradesFloor(now: Date): boolean {
   if (!probeStartedAt) return false;
   const uptimeMs = now.getTime() - probeStartedAt.getTime();
   const windowMs = monitoringService.getTradesPerHourFloorWindowMinutes() * 60_000;
-  return uptimeMs >= windowMs;
+  if (uptimeMs < windowMs) return false;
+  return isExpectedTrading();
 }
 
 function runProbeTick(now: Date = new Date()): void {
@@ -62,9 +92,12 @@ function runProbeTick(now: Date = new Date()): void {
 
 export function startPipelineHealthProbe(
   intervalMs: number = DEFAULT_PROBE_INTERVAL_MS,
+  predicate: IsExpectedTradingPredicate | undefined = defaultIsExpectedTrading,
 ): ProbeHandle {
+  const effectivePredicate = predicate ?? defaultIsExpectedTrading;
   if (activeProbe) return activeProbe;
   probeStartedAt = new Date();
+  isExpectedTrading = effectivePredicate;
   const timer = setInterval(() => runProbeTick(), intervalMs);
   timer.unref?.();
   activeProbe = {
@@ -72,6 +105,7 @@ export function startPipelineHealthProbe(
       clearInterval(timer);
       activeProbe = null;
       probeStartedAt = null;
+      isExpectedTrading = defaultIsExpectedTrading;
     },
     runOnce: () => runProbeTick(),
     intervalMs,

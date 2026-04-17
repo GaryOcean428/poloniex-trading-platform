@@ -65,7 +65,7 @@ interface PipelineHeartbeat {
   lastSeen: Date;
   tickCount: number;
   tradeCount: number;              // trades (paper or live) recorded since boot
-  tradesPerHourRing: number[];     // rolling 60-minute ring buffer, one slot per minute
+  tradesRing: number[];            // rolling ring buffer, one slot per minute, TRADES_RING_SLOTS long
   ringHead: number;                // index of current minute in ring
   ringMinute: number;              // minute-of-epoch at ringHead
 }
@@ -79,8 +79,14 @@ const STAGE_SILENT_THRESHOLD_MS: Record<PipelineStage, number> = {
   reconciliation: 10 * 60_000,     // reconciler runs every 5 min, 2x buffer
 };
 
-/** Silent-floor alert: < 1 trade in this window triggers. */
-const TRADES_PER_HOUR_FLOOR_WINDOW_MIN = 360;  // 6 hours
+/**
+ * Silent-floor alert: < 1 trade in this window triggers.
+ * Must be ≤ TRADES_RING_SLOTS or the probe will evaluate against a
+ * shorter window than it advertises — Sourcery called this out on
+ * the first pass. Keep these two aligned.
+ */
+export const TRADES_PER_HOUR_FLOOR_WINDOW_MIN = 360;  // 6 hours
+export const TRADES_RING_SLOTS = 360;
 
 interface ErrorStatsReport {
   total24h: number;
@@ -459,7 +465,7 @@ class MonitoringService {
         lastSeen: now,
         tickCount: 1,
         tradeCount: 0,
-        tradesPerHourRing: new Array(60).fill(0),
+        tradesRing: new Array(TRADES_RING_SLOTS).fill(0),
         ringHead: 0,
         ringMinute: Math.floor(now.getTime() / 60_000),
       });
@@ -473,21 +479,21 @@ class MonitoringService {
   recordTradeEvent(stage: 'paper' | 'live', now: Date = new Date()): void {
     const hb = this.pipelineHeartbeats.get(stage) ?? this.initStageHeartbeat(stage, now);
     this.advanceTradeRing(hb, now);
-    hb.tradesPerHourRing[hb.ringHead] += 1;
+    hb.tradesRing[hb.ringHead] += 1;
     hb.tradeCount += 1;
     hb.lastSeen = now;
   }
 
-  /** Trades observed in the rolling last N minutes (max 60). */
+  /** Trades observed in the rolling last N minutes (max TRADES_RING_SLOTS). */
   getTradesInLastMinutes(stage: 'paper' | 'live', minutes: number, now: Date = new Date()): number {
     const hb = this.pipelineHeartbeats.get(stage);
     if (!hb) return 0;
     this.advanceTradeRing(hb, now);
-    const window = Math.max(1, Math.min(60, Math.floor(minutes)));
+    const window = Math.max(1, Math.min(TRADES_RING_SLOTS, Math.floor(minutes)));
     let total = 0;
     for (let i = 0; i < window; i++) {
-      const idx = (hb.ringHead - i + 60) % 60;
-      total += hb.tradesPerHourRing[idx];
+      const idx = (hb.ringHead - i + TRADES_RING_SLOTS) % TRADES_RING_SLOTS;
+      total += hb.tradesRing[idx];
     }
     return total;
   }
@@ -547,7 +553,7 @@ class MonitoringService {
       lastSeen: now,
       tickCount: 0,
       tradeCount: 0,
-      tradesPerHourRing: new Array(60).fill(0),
+      tradesRing: new Array(TRADES_RING_SLOTS).fill(0),
       ringHead: 0,
       ringMinute: Math.floor(now.getTime() / 60_000),
     };
@@ -556,24 +562,24 @@ class MonitoringService {
   }
 
   /**
-   * Rotate the trades-per-hour ring forward to the current minute, zeroing
-   * any slots we pass through (those minutes had no trades).
+   * Rotate the trades ring forward to the current minute, zeroing any
+   * slots we pass through (those minutes had no trades).
    */
   private advanceTradeRing(hb: PipelineHeartbeat, now: Date): void {
     const currentMinute = Math.floor(now.getTime() / 60_000);
     const delta = currentMinute - hb.ringMinute;
     if (delta <= 0) return;
-    const steps = Math.min(delta, 60);
+    const steps = Math.min(delta, TRADES_RING_SLOTS);
     for (let i = 0; i < steps; i++) {
-      hb.ringHead = (hb.ringHead + 1) % 60;
-      hb.tradesPerHourRing[hb.ringHead] = 0;
+      hb.ringHead = (hb.ringHead + 1) % TRADES_RING_SLOTS;
+      hb.tradesRing[hb.ringHead] = 0;
     }
     hb.ringMinute = currentMinute;
   }
 
   private sumRing(hb: PipelineHeartbeat, now: Date): number {
     this.advanceTradeRing(hb, now);
-    return hb.tradesPerHourRing.reduce((a, b) => a + b, 0);
+    return hb.tradesRing.reduce((a, b) => a + b, 0);
   }
 
   /**

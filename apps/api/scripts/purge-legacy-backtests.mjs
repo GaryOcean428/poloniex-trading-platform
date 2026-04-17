@@ -30,12 +30,29 @@ import pg from 'pg';
 
 const { Pool } = pg;
 
-const TARGET_TABLES = [
+const TARGET_TABLES = Object.freeze([
   'backtest_results',
   'strategy_performance',
   'autonomous_trades',
   'paper_trading_sessions',
-];
+]);
+const TARGET_TABLES_SET = new Set(TARGET_TABLES);
+
+/**
+ * Defense-in-depth: even though table names today come from the frozen
+ * TARGET_TABLES constant, a future refactor (config-driven purge, etc.)
+ * could route a user-controlled value into the table slot. Assert the
+ * allowlist before interpolating into SQL so that regression can never
+ * become an injection surface.
+ */
+function assertAllowlistedTable(table) {
+  if (!TARGET_TABLES_SET.has(table)) {
+    throw new Error(
+      `[purge] Refusing to operate on non-allowlisted table: ${String(table)}. ` +
+      `Permitted: ${[...TARGET_TABLES_SET].join(', ')}`,
+    );
+  }
+}
 
 function requireFlag() {
   if (process.env.PURGE_LEGACY_BACKTESTS !== 'true') {
@@ -63,6 +80,7 @@ function getFlagValue(argv, name) {
 
 /** Pure function — count legacy rows. Exported for tests. */
 export async function countLegacyRows(pool, table) {
+  assertAllowlistedTable(table);
   const { rows } = await pool.query(
     `SELECT COUNT(*)::int AS n FROM ${table} WHERE engine_version IS NULL AND deleted_at IS NULL`,
   );
@@ -71,6 +89,7 @@ export async function countLegacyRows(pool, table) {
 
 /** Pure function — soft-delete legacy rows and return count. Exported for tests. */
 export async function softDeleteLegacyRows(pool, table) {
+  assertAllowlistedTable(table);
   const { rowCount } = await pool.query(
     `UPDATE ${table}
      SET deleted_at = NOW()
