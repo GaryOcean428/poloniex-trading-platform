@@ -44,6 +44,7 @@ import { getMaxLeverage } from './marketCatalog.js';
 import mlPredictionService from './mlPredictionService.js';
 import { monitoringService } from './monitoringService.js';
 import poloniexFuturesService from './poloniexFuturesService.js';
+import { sampleBeta, type BanditCounter } from './thompsonBandit.js';
 import {
   evaluatePreTradeVetoes,
   type KernelAccountState,
@@ -82,12 +83,32 @@ const ATR_PERIOD = 14;
 /** Redis channel for trade-outcome feedback to ml-worker. */
 const TRADE_OUTCOME_CHANNEL = 'ml:trade:outcome';
 
+/**
+ * Contextual bandit: after this many total trades of a (signalKey,
+ * regime) pair, start using the Beta posterior to gate new orders.
+ * Below this, we're in exploration mode — every signal with sufficient
+ * raw strength is accepted so the bandit has data to learn from.
+ */
+const BANDIT_EXPLORATION_TRADES = 5;
+
+/**
+ * When the bandit gate is active, the posterior-sampled confidence
+ * θ ~ Beta(α, β) must clear this floor for the signal to proceed.
+ * θ is roughly "probability this (signalKey, regime) combo wins
+ * its next trade." 0.4 = 40%, a reasonable not-obviously-losing bar.
+ */
+const BANDIT_MIN_POSTERIOR = 0.4;
+
 interface LiveSignalTick {
   readonly at: Date;
   readonly symbol: string;
   readonly signal: 'BUY' | 'SELL' | 'HOLD';
   readonly strength: number;
   readonly reason: string;
+  readonly regime: string;
+  readonly signalKey: string;
+  readonly banditPosterior: number;
+  readonly effectiveStrength: number;
 }
 
 interface StartOptions {
@@ -103,6 +124,8 @@ export class LiveSignalEngine extends EventEmitter {
   private tickInFlight = false;
   private dryRun = false;
   private tickMs = DEFAULT_TICK_MS;
+  /** Latest close time already processed by the bandit reconciler. */
+  private lastReconcileAt: Date = new Date(Date.now() - 60 * 60_000);  // look back 1h on boot
 
   async start(options: StartOptions = {}): Promise<void> {
     this.symbols = options.symbols ?? [...DEFAULT_WATCH_SYMBOLS];
@@ -140,6 +163,11 @@ export class LiveSignalEngine extends EventEmitter {
     }
     this.tickInFlight = true;
     try {
+      // First: reconcile any closes since last tick to feed the bandit.
+      // This is the online-learning half — without it, the Thompson
+      // posterior never updates and the gate is dead weight.
+      await this.reconcileClosedTrades();
+
       for (const symbol of this.symbols) {
         try {
           await this.processSymbol(symbol);
@@ -152,6 +180,63 @@ export class LiveSignalEngine extends EventEmitter {
       monitoringService.recordPipelineHeartbeat('live');
     } finally {
       this.tickInFlight = false;
+    }
+  }
+
+  /**
+   * Pull autonomous_trades rows closed since lastReconcileAt whose
+   * reason was set by this engine (prefix live_signal|), parse out the
+   * bandit key + regime, and apply the win/loss to the Beta posterior.
+   *
+   * Also publishes a 'closed' trade-outcome event so the ml-worker's
+   * online-training data feed sees the realised P&L.
+   */
+  private async reconcileClosedTrades(): Promise<void> {
+    try {
+      const result = await pool.query(
+        `SELECT symbol, reason, pnl, closed_at, exit_price, entry_price, quantity
+           FROM autonomous_trades
+          WHERE status = 'closed'
+            AND closed_at > $1
+            AND reason LIKE 'live_signal|%'
+          ORDER BY closed_at ASC
+          LIMIT 100`,
+        [this.lastReconcileAt],
+      );
+      const rows = (result.rows as Array<Record<string, unknown>>) ?? [];
+      for (const row of rows) {
+        const reason = String(row.reason ?? '');
+        const keyMatch = reason.match(/key=([^|]+)/);
+        const regimeMatch = reason.match(/regime=([^|]+)/);
+        const signalKey = keyMatch?.[1];
+        const regime = regimeMatch?.[1];
+        const pnl = Number(row.pnl ?? 0);
+        const closedAt = row.closed_at ? new Date(row.closed_at as string) : new Date();
+
+        if (signalKey && regime) {
+          await this.recordTradeOutcome(signalKey, regime, pnl);
+          // Push a 'closed' outcome event to the ml-worker too.
+          await this.publishOutcomeEvent({
+            symbol: row.symbol,
+            phase: 'closed',
+            signalKey,
+            regime,
+            realizedPnl: pnl,
+            entryPrice: Number(row.entry_price ?? 0),
+            exitPrice: Number(row.exit_price ?? 0),
+            quantity: Number(row.quantity ?? 0),
+            closedAt: closedAt.toISOString(),
+          });
+        }
+
+        if (closedAt > this.lastReconcileAt) {
+          this.lastReconcileAt = closedAt;
+        }
+      }
+    } catch (err) {
+      logger.debug('[LiveSignal] reconcileClosedTrades failed (fail-soft)', {
+        err: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 
@@ -177,17 +262,52 @@ export class LiveSignalEngine extends EventEmitter {
 
     // 2. Ask the ml-worker ensemble for a trading signal.
     const raw = await mlPredictionService.getTradingSignal(symbol, ohlcv, currentPrice);
+    const rawSignal = this.normaliseSignal(raw?.signal);
+    const rawStrength = Number(raw?.strength) || 0;
+    const rawReason = String(raw?.reason ?? 'ml_signal');
+
+    // 2a. Contextual bandit: extract (signalKey, regime) and sample
+    //     Beta posterior. Below BANDIT_EXPLORATION_TRADES total trades
+    //     for this combo, we let everything through (exploration).
+    //     Once we have enough data, the posterior gates the signal.
+    const regime = this.detectSimpleRegime(ohlcv);
+    const signalKey = this.extractSignalKey(rawReason);
+    const counter = await this.loadBanditCounter(signalKey, regime);
+    const banditPosterior = sampleBeta(counter.wins, counter.losses);
+    const totalTrials = (counter.wins - 1) + (counter.losses - 1);  // subtract Beta(1,1) prior
+    const banditActive = totalTrials >= BANDIT_EXPLORATION_TRADES;
+    const banditMultiplier = banditActive ? banditPosterior : 1.0;
+    const effectiveStrength = rawStrength * banditMultiplier;
+
     const signal: LiveSignalTick = {
       at: new Date(),
       symbol,
-      signal: this.normaliseSignal(raw?.signal),
-      strength: Number(raw?.strength) || 0,
-      reason: String(raw?.reason ?? 'ml_signal'),
+      signal: rawSignal,
+      strength: rawStrength,
+      reason: rawReason,
+      regime,
+      signalKey,
+      banditPosterior,
+      effectiveStrength,
     };
     this.emit('signal', signal);
 
     if (signal.signal === 'HOLD' || signal.strength < MIN_SIGNAL_STRENGTH) {
       logger.debug(`[LiveSignal] ${symbol} hold`, signal);
+      return;
+    }
+
+    // 2b. Bandit gate. Active only once we have enough trials; until
+    //     then we let raw strength speak for itself (exploration phase).
+    if (banditActive && banditPosterior < BANDIT_MIN_POSTERIOR) {
+      logger.info(`[LiveSignal] ${symbol} bandit gate`, {
+        signalKey,
+        regime,
+        banditPosterior: banditPosterior.toFixed(3),
+        wins: counter.wins,
+        losses: counter.losses,
+        rawStrength: rawStrength.toFixed(3),
+      });
       return;
     }
 
@@ -233,6 +353,104 @@ export class LiveSignalEngine extends EventEmitter {
     if (v === 'BUY' || v === 'LONG') return 'BUY';
     if (v === 'SELL' || v === 'SHORT') return 'SELL';
     return 'HOLD';
+  }
+
+  /**
+   * Lightweight regime proxy from recent price action. The ml-worker's
+   * QIG regime classifier is authoritative for signal generation; this
+   * proxy exists so the contextual bandit has a stable key without
+   * round-tripping QIG on every tick.
+   *
+   * Buckets into 'trending_up' | 'trending_down' | 'ranging' based on
+   * the sign and magnitude of the last-60-candle log return.
+   */
+  private detectSimpleRegime(ohlcv: Array<{ close: number }>): string {
+    const n = Math.min(60, ohlcv.length);
+    if (n < 10) return 'unknown';
+    const lastClose = Number(ohlcv[ohlcv.length - 1]?.close);
+    const firstClose = Number(ohlcv[ohlcv.length - n]?.close);
+    if (!Number.isFinite(lastClose) || !Number.isFinite(firstClose) || firstClose <= 0) {
+      return 'unknown';
+    }
+    const logReturn = Math.log(lastClose / firstClose);
+    // 2% move over 60 candles is the rough trending/ranging boundary on 15m BTC.
+    if (logReturn > 0.02) return 'trending_up';
+    if (logReturn < -0.02) return 'trending_down';
+    return 'ranging';
+  }
+
+  /**
+   * Condense the ml-worker's reason string into a stable bandit key.
+   * The reason typically looks like "regime=creator strategy=breakout".
+   * We normalise to the strategy portion so the bandit learns per-
+   * strategy-family, not per-unique-message.
+   */
+  private extractSignalKey(reason: string): string {
+    const match = reason.match(/strategy=([a-zA-Z_]+)/);
+    if (match) return `ml_${match[1]}`;
+    // Fall back to the whole prefix before whitespace; truncate for DB column width.
+    return `ml_${reason.split(/\s+/)[0] ?? 'unknown'}`.slice(0, 60);
+  }
+
+  /**
+   * Load the Beta(wins, losses) posterior for this (signalKey, regime)
+   * combo from bandit_class_counters. Returns the Beta(1,1) uniform
+   * prior when no row exists yet.
+   */
+  private async loadBanditCounter(signalKey: string, regime: string): Promise<BanditCounter> {
+    try {
+      const result = await pool.query(
+        `SELECT wins, losses FROM bandit_class_counters
+          WHERE strategy_class = $1 AND regime = $2`,
+        [signalKey, regime],
+      );
+      const row = (result.rows as Array<{ wins: unknown; losses: unknown }>)[0];
+      if (!row) return { wins: 1, losses: 1 };
+      return {
+        wins: Number(row.wins) || 1,
+        losses: Number(row.losses) || 1,
+      };
+    } catch (err) {
+      logger.debug('[LiveSignal] loadBanditCounter failed', {
+        err: err instanceof Error ? err.message : String(err),
+      });
+      return { wins: 1, losses: 1 };
+    }
+  }
+
+  /**
+   * Apply a trade outcome to the bandit posterior. Called by the
+   * trade-close hook (exit-time fill reconciliation). Fail-soft: a DB
+   * hiccup during outcome recording cannot break the trading loop.
+   */
+  async recordTradeOutcome(
+    signalKey: string,
+    regime: string,
+    realisedPnl: number,
+  ): Promise<void> {
+    const winIncrement = realisedPnl > 0 ? 1 : 0;
+    const lossIncrement = realisedPnl > 0 ? 0 : 1;
+    try {
+      await pool.query(
+        `INSERT INTO bandit_class_counters (strategy_class, regime, wins, losses)
+         VALUES ($1, $2, 1 + $3, 1 + $4)
+         ON CONFLICT (strategy_class, regime) DO UPDATE SET
+           wins = bandit_class_counters.wins + $3,
+           losses = bandit_class_counters.losses + $4,
+           last_updated_at = NOW()`,
+        [signalKey, regime, winIncrement, lossIncrement],
+      );
+      logger.info('[LiveSignal] bandit updated', {
+        signalKey,
+        regime,
+        realisedPnl,
+        win: winIncrement === 1,
+      });
+    } catch (err) {
+      logger.warn('[LiveSignal] recordTradeOutcome failed (fail-soft)', {
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   /**
@@ -343,6 +561,11 @@ export class LiveSignalEngine extends EventEmitter {
     });
 
     try {
+      // Encode bandit key + regime into the reason column so the
+      // close-hook can look them up cheaply (no schema change needed
+      // for this iteration). Format: live_signal|key=...|regime=...|src=...
+      const reasonEncoded =
+        `live_signal|key=${signal.signalKey}|regime=${signal.regime}|src=${signal.reason}`;
       await pool.query(
         `INSERT INTO autonomous_trades
            (symbol, side, entry_price, quantity, stop_loss, take_profit,
@@ -355,8 +578,8 @@ export class LiveSignalEngine extends EventEmitter {
           quantity,
           stopLoss,
           takeProfit,
-          signal.strength,
-          `live_signal:${signal.reason}`,
+          signal.effectiveStrength,
+          reasonEncoded,
           false,
           getEngineVersion(),
         ],
@@ -384,16 +607,14 @@ export class LiveSignalEngine extends EventEmitter {
   /**
    * Publish a trade-outcome event on the Redis channel the ml-worker
    * listens on. Online training of the ensemble lives in the Python
-   * side; this is just the data feed.
+   * side; this method just produces the data feed. Fire-and-forget:
+   * Redis outages must not block trading.
    */
   private async publishOutcomeEvent(payload: Record<string, unknown>): Promise<void> {
     try {
-      // Re-use the publisher held by mlPredictionService. Keeping it
-      // private-friendly via the public service interface — we expose
-      // a new helper for this in a later iteration. For now log.
-      logger.info('[LiveSignal] outcome event', {
-        channel: TRADE_OUTCOME_CHANNEL,
-        payload,
+      await mlPredictionService.publishTradeOutcome({
+        ...payload,
+        engineVersion: getEngineVersion(),
       });
     } catch (err) {
       logger.debug('[LiveSignal] outcome publish failed', {

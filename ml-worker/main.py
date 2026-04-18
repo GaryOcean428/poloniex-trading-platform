@@ -82,6 +82,88 @@ def _start_redis_listener():
 
 
 # ---------------------------------------------------------------------------
+# Trade-outcome listener (online training data feed)
+# ---------------------------------------------------------------------------
+
+# In-memory ring buffer of recent trade outcomes. The ensemble predictor
+# can read this to adjust model weights online, or a downstream training
+# job can flush it to disk. Kept bounded so the process can't OOM on a
+# prolonged downstream outage.
+_TRADE_OUTCOMES: list[dict] = []
+_TRADE_OUTCOMES_MAX = 10_000
+_TRADE_OUTCOMES_LOCK = threading.Lock()
+
+
+def get_recent_trade_outcomes(limit: int = 500) -> list[dict]:
+    """Expose the outcome buffer for other modules (ensemble weighting,
+    contextual-bandit updates, REST debug endpoint)."""
+    with _TRADE_OUTCOMES_LOCK:
+        return list(_TRADE_OUTCOMES[-limit:])
+
+
+def _record_trade_outcome(payload: dict) -> None:
+    with _TRADE_OUTCOMES_LOCK:
+        _TRADE_OUTCOMES.append(payload)
+        if len(_TRADE_OUTCOMES) > _TRADE_OUTCOMES_MAX:
+            # Drop oldest 10% in one shot rather than per-append shift.
+            del _TRADE_OUTCOMES[: _TRADE_OUTCOMES_MAX // 10]
+
+
+def _start_trade_outcome_listener():
+    """Subscribe to ml:trade:outcome and persist outcomes for online learning.
+
+    This is the data-feed half of the online training loop. The trading
+    loop (Node side) publishes one envelope per trade phase
+    (submitted / filled / closed); this thread ingests them, writes to
+    the bounded buffer, and exposes them via get_recent_trade_outcomes().
+
+    The ensemble predictor (or a future online-training job) can consume
+    these to re-weight models toward what actually worked in live trades.
+    """
+    if not REDIS_URL:
+        logger.info("REDIS_URL not set — trade-outcome listener disabled")
+        return
+
+    try:
+        import redis
+    except ImportError:
+        logger.warning("redis package not installed — trade-outcome listener disabled")
+        return
+
+    def _listener():
+        CHANNEL = "ml:trade:outcome"
+        try:
+            r = redis.from_url(REDIS_URL, decode_responses=True)
+            pubsub = r.pubsub()
+            pubsub.subscribe(CHANNEL)
+            logger.info(f"Trade-outcome listener subscribed to {CHANNEL}")
+
+            for message in pubsub.listen():
+                if message["type"] != "message":
+                    continue
+                try:
+                    payload = json.loads(message["data"])
+                    _record_trade_outcome(payload)
+                    logger.info(
+                        "trade_outcome",
+                        extra={
+                            "symbol": payload.get("symbol"),
+                            "phase": payload.get("phase"),
+                            "signal": payload.get("signal"),
+                            "strength": payload.get("strength"),
+                            "realized_pnl": payload.get("realizedPnl"),
+                        },
+                    )
+                except Exception as exc:
+                    logger.error(f"Trade-outcome handler error: {exc}", exc_info=True)
+        except Exception as exc:
+            logger.error(f"Trade-outcome listener crashed: {exc}", exc_info=True)
+
+    t = threading.Thread(target=_listener, daemon=True, name="trade-outcome-listener")
+    t.start()
+
+
+# ---------------------------------------------------------------------------
 # Shared prediction logic
 # ---------------------------------------------------------------------------
 
@@ -178,6 +260,7 @@ def _handle_predict(payload: dict) -> dict:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _start_redis_listener()
+    _start_trade_outcome_listener()
     logger.info("ML worker started")
     yield
     logger.info("ML worker shutting down")
