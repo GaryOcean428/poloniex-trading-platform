@@ -133,25 +133,25 @@ class BacktestingEngine extends EventEmitter {
    */
   async fetchHistoricalDataFromAPI(symbol, timeframe, startDate, endDate) {
     try {
-      // Calculate how many candles we need based on the time range and interval
-      const intervalSeconds = {
-        '1m': 60, '5m': 300, '15m': 900, '30m': 1800,
-        '1h': 3600, '1H': 3600, '2h': 7200,
-        '4h': 14400, '4H': 14400, '12h': 43200,
-        '1d': 86400, '1D': 86400
-      };
-      const seconds = intervalSeconds[timeframe] || 3600;
       const end = endDate instanceof Date ? endDate : new Date(endDate);
       const start = startDate instanceof Date ? startDate : new Date(startDate);
-      const rangeMs = end.getTime() - start.getTime();
-      const limit = Math.min(Math.ceil(rangeMs / (seconds * 1000)), 500);
-
-      // getHistoricalData handles interval format conversion, V3 array parsing,
-      // and non-array response guarding internally
-      const data = await poloniexFuturesService.getHistoricalData(symbol, timeframe, limit);
+      // Pass startTime/endTime explicitly so the fetcher returns candles
+      // IN the requested window (the IS or OOS slice), not "last N".
+      // The service will loop internally to cover windows larger than
+      // Poloniex's 500-per-call limit. limit below is only a per-call
+      // ceiling; the total fetched is determined by the time range.
+      const data = await poloniexFuturesService.getHistoricalData(
+        symbol,
+        timeframe,
+        500,
+        { startTime: start, endTime: end },
+      );
 
       if (!Array.isArray(data) || data.length === 0) {
-        logger.warn(`No historical data returned for ${symbol} (${timeframe}), limit=${limit}`);
+        logger.warn(`No historical data returned for ${symbol} (${timeframe})`, {
+          startDate: start.toISOString(),
+          endDate: end.toISOString(),
+        });
         return [];
       }
 

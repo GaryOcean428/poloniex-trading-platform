@@ -743,10 +743,16 @@ class PoloniexFuturesService {
    * Get historical OHLCV data for ML training and analysis
    * @param {string} symbol - Trading symbol (e.g., 'BTCUSDTPERP')
    * @param {string} interval - Candle interval ('1m', '5m', '15m', '30m', '1h', '4h', '1d')
-   * @param {number} limit - Number of candles to fetch (max 1500)
+   * @param {number} limit - Fallback candle count (per-call cap 500). Only used
+   *   to size the default "last N candles" window when opts.startTime is not
+   *   supplied. When opts.startTime is supplied, the window size is determined
+   *   by the time range and this value becomes a per-call hint.
+   * @param {Object} [opts] - Optional fetch options
+   * @param {Date|number} [opts.startTime] - Window start. When supplied with endTime, overrides the default "last N candles" behavior.
+   * @param {Date|number} [opts.endTime] - Window end. Defaults to now.
    * @returns {Promise<Array>} Array of OHLCV data [{timestamp, open, high, low, close, volume}]
    */
-  async getHistoricalData(symbol, interval = '1h', limit = 200) {
+  async getHistoricalData(symbol, interval = '1h', limit = 200, opts = {}) {
     try {
       // Map interval to Poloniex V3 format and seconds for time calculation
       const intervalMap = {
@@ -769,21 +775,67 @@ class PoloniexFuturesService {
         throw new Error(`Invalid interval: ${interval}. Use 1m, 5m, 15m, 30m, 1h, 2h, 4h, 12h, or 1d`);
       }
 
-      // Poloniex limits to 500 candles per request (not 1500)
-      const actualLimit = Math.min(limit, 500);
+      const POLONIEX_MAX_PER_CALL = 500;
+      const MAX_LOOP_CALLS = 50;  // safety ceiling — see MAX_TOTAL_CANDLES below
+      const intervalMs = intervalConfig.seconds * 1000;
 
-      // Calculate time range
-      const endTime = Date.now();
-      const startTime = endTime - (intervalConfig.seconds * 1000 * actualLimit);
+      // Resolve time range. If caller supplied explicit startTime (e.g. the
+      // backtest walk-forward windows), honor it exactly. Otherwise fall
+      // back to "last N candles" for backward compat with the old callers.
+      const rawEnd = opts.endTime != null
+        ? (opts.endTime instanceof Date ? opts.endTime.getTime() : Number(opts.endTime))
+        : Date.now();
+      const rawStart = opts.startTime != null
+        ? (opts.startTime instanceof Date ? opts.startTime.getTime() : Number(opts.startTime))
+        : null;
+      // Validate — NaN or inverted ranges would silently produce huge
+      // loops or empty results. Fail loudly.
+      if (!Number.isFinite(rawEnd)) {
+        throw new Error(`getHistoricalData: invalid opts.endTime (${String(opts.endTime)})`);
+      }
+      if (rawStart != null && !Number.isFinite(rawStart)) {
+        throw new Error(`getHistoricalData: invalid opts.startTime (${String(opts.startTime)})`);
+      }
+      if (rawStart != null && rawStart >= rawEnd) {
+        throw new Error(
+          `getHistoricalData: startTime (${rawStart}) must be < endTime (${rawEnd})`,
+        );
+      }
+      const cap = Math.min(limit, POLONIEX_MAX_PER_CALL);
+      const endTime = rawEnd;
+      const startTime = rawStart ?? (endTime - intervalMs * cap);
 
-      // Fetch candles using V3 format
-      const params = {
-        limit: actualLimit,
-        sTime: Math.floor(startTime),
-        eTime: Math.floor(endTime)
-      };
-
-      const candles = await this.getKlines(symbol, intervalConfig.format, params);
+      // Compute candles needed in the window. Poloniex V3 returns up to 500
+      // per call, so when the window needs more we loop forward 500 at a
+      // time. This is the fix for the "fetcher ignored sTime and always
+      // returned last-N" bug that was producing 29-candle IS windows.
+      const totalNeeded = Math.ceil((endTime - startTime) / intervalMs);
+      const callsNeeded = Math.ceil(totalNeeded / POLONIEX_MAX_PER_CALL);
+      const numCalls = Math.min(callsNeeded, MAX_LOOP_CALLS);
+      if (callsNeeded > MAX_LOOP_CALLS) {
+        logger.warn(
+          `getHistoricalData: window truncated — wanted ${callsNeeded} chunks for ${symbol} ${interval}, capped at ${MAX_LOOP_CALLS} (~${MAX_LOOP_CALLS * POLONIEX_MAX_PER_CALL} candles). Use a coarser timeframe or narrower window for full coverage.`,
+          { symbol, interval, callsNeeded, totalNeeded },
+        );
+      }
+      let cursor = startTime;
+      const all = [];
+      for (let i = 0; i < numCalls; i++) {
+        const chunkEnd = Math.min(cursor + POLONIEX_MAX_PER_CALL * intervalMs, endTime);
+        const params = {
+          limit: POLONIEX_MAX_PER_CALL,
+          sTime: Math.floor(cursor),
+          eTime: Math.floor(chunkEnd),
+        };
+        const chunk = await this.getKlines(symbol, intervalConfig.format, params);
+        if (!chunk || !Array.isArray(chunk) || chunk.length === 0) break;
+        all.push(...chunk);
+        // Advance cursor just past the last received candle. If chunk
+        // length < 500 we assume no more data in that stride.
+        cursor = chunkEnd;
+        if (chunk.length < POLONIEX_MAX_PER_CALL) break;
+      }
+      const candles = all;
 
       // Transform to standard OHLCV format
       if (!candles || !Array.isArray(candles)) {
