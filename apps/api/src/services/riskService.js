@@ -23,15 +23,19 @@ class RiskService {
    * @param {Object} account - Account information
    * @param {Object} marketInfo - Market catalog info for the symbol
    * @param {Object} [kernelInputs] - Optional inputs for the blast-door
-   *   kernel. When supplied, runs the pre-trade vetoes (per-symbol
-   *   exposure, self-match, unrealised-drawdown kill, per-symbol max
-   *   leverage from the exchange catalog). Shape:
+   *   kernel. When supplied, runs the pre-trade vetoes (drawdown kill,
+   *   execution-mode override, self-match, per-symbol exposure, symbol
+   *   max leverage). Shape:
    *     {
-   *       kernelOrder:       { symbol, side, notional, leverage, price },
-   *       accountState:      { equityUsdt, unrealizedPnlUsdt,
-   *                            openPositions:[{symbol,side,notional}],
-   *                            restingOrders:[{symbol,side,price}] },
-   *       symbolMaxLeverage: number  // from marketCatalog.getMaxLeverage
+   *       kernelOrder:  { symbol, side, notional, leverage, price },
+   *       accountState: { equityUsdt, unrealizedPnlUsdt,
+   *                       openPositions:[{symbol,side,notional}],
+   *                       restingOrders:[{symbol,side,price}] },
+   *       context: {
+   *         isLive: boolean,                // true for real-capital orders
+   *         mode: 'auto' | 'paper_only' | 'pause',
+   *         symbolMaxLeverage: number       // from marketCatalog
+   *       }
    *     }
    * @returns {Promise<Object>} { allowed: boolean, reason?: string, code?: string }
    */
@@ -100,7 +104,7 @@ class RiskService {
         const kernelDecision = evaluatePreTradeVetoes(
           kernelInputs.kernelOrder,
           kernelInputs.accountState,
-          kernelInputs.symbolMaxLeverage,
+          kernelInputs.context,
         );
         if (!kernelDecision.allowed) {
           logger.warn('Risk check failed: kernel veto', {

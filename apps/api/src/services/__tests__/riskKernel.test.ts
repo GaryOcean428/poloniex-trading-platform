@@ -11,12 +11,14 @@ import { describe, expect, it } from 'vitest';
 import {
   PER_SYMBOL_EXPOSURE_MAX_MULTIPLIER,
   UNREALIZED_DRAWDOWN_KILL_THRESHOLD,
+  checkExecutionMode,
   checkPerSymbolExposure,
   checkSelfMatch,
   checkSymbolMaxLeverage,
   checkUnrealizedDrawdown,
   evaluatePreTradeVetoes,
   type KernelAccountState,
+  type KernelContext,
   type KernelOrder,
 } from '../riskKernel.js';
 
@@ -39,6 +41,9 @@ const emptyAccount: KernelAccountState = {
 // smaller alts as low as 20x. Kernel accepts whatever the caller passes.
 const BTC_MAX_LEV = 100;
 const SOL_MAX_LEV = 50;
+
+const autoContext: KernelContext = { isLive: false, mode: 'auto', symbolMaxLeverage: BTC_MAX_LEV };
+const liveAutoContext: KernelContext = { isLive: true, mode: 'auto', symbolMaxLeverage: BTC_MAX_LEV };
 
 describe('checkPerSymbolExposure', () => {
   it('allows an order when total notional stays under the 1.5× cap', () => {
@@ -177,18 +182,40 @@ describe('checkSymbolMaxLeverage', () => {
   });
 });
 
+describe('checkExecutionMode', () => {
+  it('allows any order under auto mode', () => {
+    expect(checkExecutionMode(true, 'auto').allowed).toBe(true);
+    expect(checkExecutionMode(false, 'auto').allowed).toBe(true);
+  });
+
+  it('blocks all orders under pause mode', () => {
+    expect(checkExecutionMode(true, 'pause').code).toBe('execution_mode_paused');
+    expect(checkExecutionMode(false, 'pause').code).toBe('execution_mode_paused');
+  });
+
+  it('blocks live orders under paper_only mode', () => {
+    const decision = checkExecutionMode(true, 'paper_only');
+    expect(decision.allowed).toBe(false);
+    expect(decision.code).toBe('execution_mode_paper_only_blocks_live');
+  });
+
+  it('allows paper orders under paper_only mode', () => {
+    expect(checkExecutionMode(false, 'paper_only').allowed).toBe(true);
+  });
+});
+
 describe('evaluatePreTradeVetoes composition', () => {
-  it('passes a clean order', () => {
-    expect(
-      evaluatePreTradeVetoes(btcOrder, emptyAccount, BTC_MAX_LEV).allowed,
-    ).toBe(true);
+  it('passes a clean paper order', () => {
+    expect(evaluatePreTradeVetoes(btcOrder, emptyAccount, autoContext).allowed).toBe(true);
+  });
+
+  it('passes a clean live order under auto mode', () => {
+    expect(evaluatePreTradeVetoes(btcOrder, emptyAccount, liveAutoContext).allowed).toBe(true);
   });
 
   it('passes a clean short order', () => {
-    // Shorts go through the same vetoes; side-aware logic only lives
-    // in checkSelfMatch and downstream trade execution.
     expect(
-      evaluatePreTradeVetoes({ ...btcOrder, side: 'short' }, emptyAccount, BTC_MAX_LEV).allowed,
+      evaluatePreTradeVetoes({ ...btcOrder, side: 'short' }, emptyAccount, autoContext).allowed,
     ).toBe(true);
   });
 
@@ -199,16 +226,40 @@ describe('evaluatePreTradeVetoes composition', () => {
       openPositions: [{ symbol: 'BTC_USDT_PERP', side: 'long', notional: 500 }],
       restingOrders: [{ symbol: 'BTC_USDT_PERP', side: 'sell', price: 69_000 }],
     };
-    const decision = evaluatePreTradeVetoes({ ...btcOrder, side: 'buy' }, state, BTC_MAX_LEV);
+    const decision = evaluatePreTradeVetoes({ ...btcOrder, side: 'buy' }, state, autoContext);
     expect(decision.allowed).toBe(false);
     expect(decision.code).toBe('unrealized_drawdown_kill_switch');
+  });
+
+  it('execution-mode pause blocks even a clean order', () => {
+    const decision = evaluatePreTradeVetoes(btcOrder, emptyAccount, {
+      ...autoContext,
+      mode: 'pause',
+    });
+    expect(decision.code).toBe('execution_mode_paused');
+  });
+
+  it('execution-mode paper_only blocks a live order', () => {
+    const decision = evaluatePreTradeVetoes(btcOrder, emptyAccount, {
+      ...liveAutoContext,
+      mode: 'paper_only',
+    });
+    expect(decision.code).toBe('execution_mode_paper_only_blocks_live');
+  });
+
+  it('execution-mode paper_only allows a paper order', () => {
+    const decision = evaluatePreTradeVetoes(btcOrder, emptyAccount, {
+      ...autoContext,
+      mode: 'paper_only',
+    });
+    expect(decision.allowed).toBe(true);
   });
 
   it('falls through to leverage cap when earlier checks pass', () => {
     const decision = evaluatePreTradeVetoes(
       { ...btcOrder, symbol: 'SOL_USDT_PERP', leverage: 75 },
       emptyAccount,
-      SOL_MAX_LEV,
+      { isLive: false, mode: 'auto', symbolMaxLeverage: SOL_MAX_LEV },
     );
     expect(decision.code).toBe('symbol_max_leverage');
   });

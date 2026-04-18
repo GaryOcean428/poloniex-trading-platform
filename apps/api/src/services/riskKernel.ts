@@ -74,7 +74,11 @@ export type KernelVetoCode =
   | 'per_symbol_exposure_cap'
   | 'self_match'
   | 'unrealized_drawdown_kill_switch'
-  | 'symbol_max_leverage';
+  | 'symbol_max_leverage'
+  | 'execution_mode_paused'
+  | 'execution_mode_paper_only_blocks_live';
+
+export type ExecutionMode = 'auto' | 'paper_only' | 'pause';
 
 // ───────── Thresholds ─────────
 export const PER_SYMBOL_EXPOSURE_MAX_MULTIPLIER = 1.5;           // 1.5× equity per symbol
@@ -147,7 +151,36 @@ export function checkUnrealizedDrawdown(
   return { allowed: true };
 }
 
-// ───────── Check 4: Per-symbol max leverage from exchange catalog ─────────
+// ───────── Check 4: Execution-mode global override ─────────
+
+/**
+ * Global operator-controlled safety override. `pause` blocks ALL
+ * orders; `paper_only` blocks live orders but allows paper; `auto`
+ * lets everything through. Read from the agent_execution_mode
+ * singleton table (see executionModeService).
+ */
+export function checkExecutionMode(
+  isLiveOrder: boolean,
+  mode: ExecutionMode,
+): KernelDecision {
+  if (mode === 'pause') {
+    return {
+      allowed: false,
+      code: 'execution_mode_paused',
+      reason: 'Execution Mode is Pause — no new orders at any stage.',
+    };
+  }
+  if (mode === 'paper_only' && isLiveOrder) {
+    return {
+      allowed: false,
+      code: 'execution_mode_paper_only_blocks_live',
+      reason: 'Execution Mode is Paper-Only — live order blocked; route to paper instead.',
+    };
+  }
+  return { allowed: true };
+}
+
+// ───────── Check 5: Per-symbol max leverage from exchange catalog ─────────
 
 /**
  * Enforces the exchange's per-symbol maxLeverage (BTC/ETH up to 100×,
@@ -175,26 +208,37 @@ export function checkSymbolMaxLeverage(
 
 // ───────── Composer ─────────
 
+export interface KernelContext {
+  /** True for live (real-capital) orders; false for paper-only. */
+  isLive: boolean;
+  /** From agent_execution_mode — global safety override. */
+  mode: ExecutionMode;
+  /** From marketCatalog.getMaxLeverage(symbol) — exchange ceiling. */
+  symbolMaxLeverage: SymbolMaxLeverage;
+}
+
 /**
  * Run all kernel vetoes in priority order. First failure stops the chain
  * and is returned. If all pass, returns { allowed: true }.
  *
  * Priority:
- *   1. Unrealised-drawdown kill-switch (global, highest priority).
- *   2. Self-match (legal compliance, Corporations Act s.1041B).
- *   3. Per-symbol exposure (correlated-stack blast door).
- *   4. Symbol max leverage (exchange ceiling).
+ *   1. Unrealised-drawdown kill-switch (account-saving).
+ *   2. Execution-mode global override (operator kill-switch).
+ *   3. Self-match (legal compliance, Corporations Act s.1041B).
+ *   4. Per-symbol exposure (correlated-stack blast door).
+ *   5. Symbol max leverage (exchange ceiling).
  */
 export function evaluatePreTradeVetoes(
   order: KernelOrder,
   state: KernelAccountState,
-  symbolMaxLeverage: SymbolMaxLeverage,
+  context: KernelContext,
 ): KernelDecision {
   const checks: KernelDecision[] = [
     checkUnrealizedDrawdown(state),
+    checkExecutionMode(context.isLive, context.mode),
     checkSelfMatch(order, state),
     checkPerSymbolExposure(order, state),
-    checkSymbolMaxLeverage(order, symbolMaxLeverage),
+    checkSymbolMaxLeverage(order, context.symbolMaxLeverage),
   ];
   for (const d of checks) {
     if (!d.allowed) return d;

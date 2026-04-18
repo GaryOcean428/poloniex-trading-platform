@@ -3,6 +3,11 @@ import express from 'express';
 import { pool } from '../db/connection.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { agentSettingsService } from '../services/agentSettingsService.js';
+import {
+  getExecutionModeRecord,
+  setExecutionMode,
+  type ExecutionMode,
+} from '../services/executionModeService.js';
 import { fullyAutonomousTrader } from '../services/fullyAutonomousTrader.js';
 import { strategyLearningEngine } from '../services/strategyLearningEngine.js';
 import { logger } from '../utils/logger.js';
@@ -460,6 +465,58 @@ router.get('/backtest/results', authenticateToken, async (req: Request, res: Res
     if (isTableMissingError(error)) return res.json({ success: true, results: [] });
     logger.error('Error fetching backtest results:', error);
     res.status(500).json({ success: false, error: 'Failed to fetch backtest results' });
+  }
+});
+
+/**
+ * GET /api/agent/execution-mode
+ * Returns the current global execution mode + metadata.
+ */
+router.get('/execution-mode', authenticateToken, async (_req: Request, res: Response) => {
+  try {
+    const record = await getExecutionModeRecord();
+    if (!record) {
+      return res.status(500).json({ success: false, error: 'Execution mode singleton missing' });
+    }
+    return res.json({
+      success: true,
+      mode: record.mode,
+      updatedAt: record.updatedAt.toISOString(),
+      updatedBy: record.updatedBy,
+      reason: record.reason,
+    });
+  } catch (error: unknown) {
+    logger.error('Error reading execution mode:', error);
+    return res.status(500).json({ success: false, error: 'Failed to read execution mode' });
+  }
+});
+
+/**
+ * PUT /api/agent/execution-mode
+ * Update the global execution mode. Body: { mode, reason? }
+ * mode ∈ { 'auto', 'paper_only', 'pause' }.
+ */
+router.put('/execution-mode', authenticateToken, async (req: Request, res: Response) => {
+  const { mode, reason } = (req.body ?? {}) as { mode?: string; reason?: string };
+  if (mode !== 'auto' && mode !== 'paper_only' && mode !== 'pause') {
+    return res.status(400).json({
+      success: false,
+      error: `mode must be one of: auto, paper_only, pause`,
+    });
+  }
+  const operator = (req.user?.email || req.user?.id || req.user?.userId || 'unknown').toString();
+  try {
+    const record = await setExecutionMode(mode as ExecutionMode, operator, reason ?? null);
+    return res.json({
+      success: true,
+      mode: record.mode,
+      updatedAt: record.updatedAt.toISOString(),
+      updatedBy: record.updatedBy,
+      reason: record.reason,
+    });
+  } catch (error: unknown) {
+    logger.error('Error updating execution mode:', error);
+    return res.status(500).json({ success: false, error: 'Failed to update execution mode' });
   }
 });
 
