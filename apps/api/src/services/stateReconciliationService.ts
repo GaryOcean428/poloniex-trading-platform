@@ -208,8 +208,8 @@ class StateReconciliationService {
             await pool.query(
               `UPDATE autonomous_trades
                SET status = 'closed',
-                   close_reason = 'reconciled_not_on_exchange',
-                   closed_at = NOW()
+                   exit_reason = 'reconciled_not_on_exchange',
+                   exit_time = NOW()
                WHERE id = $1`,
               [dbTrade.id]
             );

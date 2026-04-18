@@ -243,6 +243,16 @@ const AutonomousAgentDashboard: React.FC = () => {
     };
   }, []);
 
+  // Re-fetch timeline events whenever the user changes the filter pill
+  // (All / trade decision / state change / risk action / health alert /
+  // error). Without this the filter only took effect on the next
+  // running-polling tick — so from the user's perspective the buttons
+  // looked dead when the agent was stopped.
+  useEffect(() => {
+    fetchEvents();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eventFilter]);
+
   // Polling interval — adjusts based on agent status with exponential backoff on errors
   useEffect(() => {
     const isActive = agentStatus?.status === 'running';
@@ -1104,7 +1114,7 @@ const AutonomousAgentDashboard: React.FC = () => {
       </div>
 
       {/* Performance Analytics */}
-      <PerformanceAnalytics agentStatus={agentStatus?.status} />
+      <PerformanceAnalytics agentStatus={agentStatus?.status} performanceMode={performanceMode} />
 
       {/* Agent Activity Timeline */}
       <div className="bg-white rounded-lg shadow-lg overflow-hidden">

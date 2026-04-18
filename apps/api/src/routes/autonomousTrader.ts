@@ -123,9 +123,9 @@ router.get('/status', authenticateToken, async (req: Request, res: Response) => 
         quantity: parseFloat(trade.quantity),
         pnl: trade.pnl ? parseFloat(trade.pnl) : null,
         status: trade.status,
-        exitReason: trade.close_reason,
-        entryTime: trade.created_at,
-        exitTime: trade.closed_at,
+        exitReason: trade.exit_reason,
+        entryTime: trade.entry_time ?? trade.created_at,
+        exitTime: trade.exit_time,
         confidence: trade.confidence ? parseFloat(trade.confidence) : null,
         reason: trade.reason
       }))
@@ -245,9 +245,9 @@ router.get('/trades', authenticateToken, async (req: Request, res: Response) => 
         takeProfit: trade.take_profit ? parseFloat(trade.take_profit) : null,
         pnl: trade.pnl ? parseFloat(trade.pnl) : null,
         status: trade.status,
-        exitReason: trade.close_reason,
-        entryTime: trade.created_at,
-        exitTime: trade.closed_at,
+        exitReason: trade.exit_reason,
+        entryTime: trade.entry_time ?? trade.created_at,
+        exitTime: trade.exit_time,
         confidence: trade.confidence ? parseFloat(trade.confidence) : null,
         reason: trade.reason
       }))
