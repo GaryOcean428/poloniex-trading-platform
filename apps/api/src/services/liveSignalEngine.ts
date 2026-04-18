@@ -311,6 +311,27 @@ export class LiveSignalEngine extends EventEmitter {
       return;
     }
 
+    // 2c. Stacking guard: if we already have an open autonomous_trade
+    //      row on this symbol from the live-signal engine, don't stack.
+    //      Market orders on the same side accumulate into one net
+    //      Poloniex position — the exposure cap catches the extreme,
+    //      but we'd still burn fees stacking 60x/hour into the same
+    //      trade. Let existing position play out; managePositions or
+    //      the SL/TP exit will flip the DB row to 'closed' and free
+    //      this symbol for a fresh signal.
+    const openCheck = await pool.query(
+      `SELECT 1 FROM autonomous_trades
+        WHERE symbol = $1
+          AND status = 'open'
+          AND reason LIKE 'live_signal|%'
+        LIMIT 1`,
+      [symbol],
+    );
+    if ((openCheck.rowCount ?? 0) > 0) {
+      logger.debug(`[LiveSignal] ${symbol} has open live_signal trade — skipping new entry`);
+      return;
+    }
+
     // 3. Translate signal to a KernelOrder shape.
     const atr = this.computeATR(ohlcv, ATR_PERIOD);
     const order = this.buildOrder(symbol, signal, currentPrice, atr);
@@ -612,9 +633,17 @@ export class LiveSignalEngine extends EventEmitter {
         type: 'market',
         size: quantity,
       });
-      orderId = exchangeOrder?.orderId ?? exchangeOrder?.id;
+      // Poloniex v3 futures returns the exchange order id as `ordId`.
+      // Keep `orderId`/`id` fallbacks so mocked tests + any future
+      // adapter variants still work without changing this line.
+      orderId =
+        exchangeOrder?.ordId ??
+        exchangeOrder?.orderId ??
+        exchangeOrder?.id ??
+        exchangeOrder?.clientOid;
       logger.info('[LiveSignal] exchange order placed', {
         orderId,
+        rawResponseKeys: exchangeOrder ? Object.keys(exchangeOrder) : [],
         symbol: order.symbol,
         side: exchangeSide,
         size: quantity,
