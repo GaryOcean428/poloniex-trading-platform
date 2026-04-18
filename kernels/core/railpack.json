@@ -29,7 +29,7 @@
     }
   },
   "deploy": {
-    "startCommand": "/app/.venv/bin/uvicorn health:app --host :: --port $PORT",
+    "startCommand": "/app/.venv/bin/uvicorn health:app --host 0.0.0.0 --port $PORT",
     "healthCheckPath": "/health",
     "healthCheckTimeout": 120,
     "restartPolicyType": "ON_FAILURE",
