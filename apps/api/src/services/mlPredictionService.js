@@ -138,6 +138,18 @@ class MLPredictionService {
         throw new Error(`ml-worker HTTP ${resp.status}: ${text}`);
       }
       return await resp.json();
+    } catch (err) {
+      // Surface the real cause so "fetch failed" stops being opaque.
+      // undici/Node's global fetch wraps the actual network error on
+      // err.cause (TypeError with ENOTFOUND/ECONNREFUSED/ETIMEDOUT/etc.)
+      // — without this, every log line just reads "fetch failed".
+      const cause = err?.cause;
+      const causeCode = cause?.code || cause?.errno;
+      const causeMsg = cause?.message;
+      if (causeCode || causeMsg) {
+        throw new Error(`${err.message} [${causeCode ?? 'no-code'}: ${causeMsg ?? 'no-msg'}]`);
+      }
+      throw err;
     } finally {
       clearTimeout(timer);
     }
