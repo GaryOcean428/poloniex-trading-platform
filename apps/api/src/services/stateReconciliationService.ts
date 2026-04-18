@@ -9,6 +9,7 @@
 import { pool } from '../db/connection.js';
 import poloniexFuturesService from './poloniexFuturesService.js';
 import { apiCredentialsService } from './apiCredentialsService.js';
+import { monitoringService } from './monitoringService.js';
 import { getEngineVersion } from '../utils/engineVersion.js';
 import { logger } from '../utils/logger.js';
 
@@ -258,6 +259,7 @@ class StateReconciliationService {
    * Run reconciliation for all users with an active autonomous trading config.
    */
   async reconcileAllActive(): Promise<void> {
+    monitoringService.recordPipelineHeartbeat('reconciliation');
     try {
       const activeConfigs = await pool.query(
         `SELECT DISTINCT user_id FROM autonomous_trading_configs WHERE enabled = true`

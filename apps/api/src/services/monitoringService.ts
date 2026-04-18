@@ -501,6 +501,17 @@ class MonitoringService {
   /**
    * Which pipeline stages are silent beyond threshold? Used by the alerting
    * service's silent-failure probe.
+   *
+   * **Never-seen stages are NOT flagged.** A stage is silent only if it
+   * has ticked at least once AND has since gone quiet longer than its
+   * threshold. Otherwise a freshly-booted server pages on every stage
+   * that hasn't yet been wired to call recordPipelineHeartbeat — which
+   * is a class of alert that looked like a real outage in production
+   * (alertCount:161 over ~16h before being caught).
+   *
+   * The corresponding boot-time liveness concern ("a stage should have
+   * started but never did") is covered by the backend heartbeat emitted
+   * from index.ts, not by this probe.
    */
   getSilentPipelineStages(now: Date = new Date()): Array<{
     stage: PipelineStage;
@@ -510,8 +521,9 @@ class MonitoringService {
     const silent: Array<{ stage: PipelineStage; silentMs: number; thresholdMs: number }> = [];
     for (const stage of Object.keys(STAGE_SILENT_THRESHOLD_MS) as PipelineStage[]) {
       const hb = this.pipelineHeartbeats.get(stage);
+      if (!hb) continue;  // never reported — not silent, just unwired
       const thresholdMs = STAGE_SILENT_THRESHOLD_MS[stage];
-      const silentMs = hb ? now.getTime() - hb.lastSeen.getTime() : Number.POSITIVE_INFINITY;
+      const silentMs = now.getTime() - hb.lastSeen.getTime();
       if (silentMs > thresholdMs) {
         silent.push({ stage, silentMs, thresholdMs });
       }

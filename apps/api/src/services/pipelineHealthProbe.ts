@@ -18,12 +18,16 @@ const DEFAULT_PROBE_INTERVAL_MS = 60_000;
 /**
  * A predicate the probe calls to decide whether the system is in a
  * state where trades *should* be happening. When this returns false,
- * the trades-floor alert is suppressed — a Paused or Paper-Only
- * configuration doesn't page. Default reads from persistentTradingEngine.
+ * the trades-floor alert is suppressed.
  *
- * Exposed so tests can inject a deterministic predicate.
+ * Returning a Promise is supported so the real predicate can query
+ * database state (option C in the design doc: "only alert once the
+ * pipeline has proven it *can* produce passing strategies").
+ *
+ * Default is sync `false` so tests / fresh boots stay silent unless a
+ * caller explicitly wires in a live state source.
  */
-export type IsExpectedTradingPredicate = () => boolean;
+export type IsExpectedTradingPredicate = () => boolean | Promise<boolean>;
 
 /**
  * Default predicate — reports false so the probe does NOT alert on
@@ -32,8 +36,7 @@ export type IsExpectedTradingPredicate = () => boolean;
  * tests that import it don't cascade into encryption / env
  * validation.
  *
- * index.ts wires the real predicate at boot:
- *   startPipelineHealthProbe(60_000, () => persistentTradingEngine.isEngineRunning())
+ * index.ts wires the real predicate at boot.
  */
 const defaultIsExpectedTrading: IsExpectedTradingPredicate = () => false;
 
@@ -47,6 +50,13 @@ let activeProbe: ProbeHandle | null = null;
 /** First-observed tick timestamp — used to avoid firing trades-floor alerts before the system has been up long enough to produce trades. */
 let probeStartedAt: Date | null = null;
 let isExpectedTrading: IsExpectedTradingPredicate = defaultIsExpectedTrading;
+/**
+ * Re-entrancy guard. The probe tick is async (DB-backed predicate) and
+ * can legitimately take >60s under DB pressure; without this, overlapping
+ * ticks would pile up and inflate DB load on an already-struggling
+ * system. Sourcery flagged this on #489.
+ */
+let tickInFlight = false;
 
 /**
  * Decide whether a trades-floor alert is appropriate given current state.
@@ -59,22 +69,28 @@ let isExpectedTrading: IsExpectedTradingPredicate = defaultIsExpectedTrading;
  * Sourcery flagged that an assumed `expected_running` state without this
  * gate would page on intentionally-paused / paper-only configurations.
  */
-function shouldEvaluateTradesFloor(now: Date): boolean {
+async function shouldEvaluateTradesFloor(now: Date): Promise<boolean> {
   if (!probeStartedAt) return false;
   const uptimeMs = now.getTime() - probeStartedAt.getTime();
   const windowMs = monitoringService.getTradesPerHourFloorWindowMinutes() * 60_000;
   if (uptimeMs < windowMs) return false;
-  return isExpectedTrading();
+  const result = isExpectedTrading();
+  return result instanceof Promise ? await result : result;
 }
 
-function runProbeTick(now: Date = new Date()): void {
+async function runProbeTick(now: Date = new Date()): Promise<void> {
+  if (tickInFlight) {
+    logger.debug('pipelineHealthProbe tick skipped — previous tick still in flight');
+    return;
+  }
+  tickInFlight = true;
   try {
     const silentStages = monitoringService.getSilentPipelineStages(now);
     for (const { stage, silentMs, thresholdMs } of silentStages) {
       alertingService.alertPipelineSilent(stage as PipelineStage, silentMs, thresholdMs);
     }
 
-    if (!shouldEvaluateTradesFloor(now)) return;
+    if (!(await shouldEvaluateTradesFloor(now))) return;
 
     const windowMin = monitoringService.getTradesPerHourFloorWindowMinutes();
     for (const stage of ['paper', 'live'] as const) {
@@ -87,6 +103,8 @@ function runProbeTick(now: Date = new Date()): void {
     logger.error('pipelineHealthProbe tick failed', {
       error: err instanceof Error ? err.message : String(err),
     });
+  } finally {
+    tickInFlight = false;
   }
 }
 
@@ -98,7 +116,10 @@ export function startPipelineHealthProbe(
   if (activeProbe) return activeProbe;
   probeStartedAt = new Date();
   isExpectedTrading = effectivePredicate;
-  const timer = setInterval(() => runProbeTick(), intervalMs);
+  // Explicit `void` so Node doesn't emit an unhandled-rejection warning
+  // if the tick rejects in a way the internal try/finally misses. The
+  // re-entrancy guard above already serialises overlapping ticks.
+  const timer = setInterval(() => { void runProbeTick(); }, intervalMs);
   timer.unref?.();
   activeProbe = {
     stop: () => {
@@ -106,8 +127,9 @@ export function startPipelineHealthProbe(
       activeProbe = null;
       probeStartedAt = null;
       isExpectedTrading = defaultIsExpectedTrading;
+      tickInFlight = false;
     },
-    runOnce: () => runProbeTick(),
+    runOnce: () => { void runProbeTick(); },
     intervalMs,
   };
   logger.info('pipelineHealthProbe started', { intervalMs });
