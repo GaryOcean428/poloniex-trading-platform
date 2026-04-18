@@ -50,6 +50,13 @@ let activeProbe: ProbeHandle | null = null;
 /** First-observed tick timestamp — used to avoid firing trades-floor alerts before the system has been up long enough to produce trades. */
 let probeStartedAt: Date | null = null;
 let isExpectedTrading: IsExpectedTradingPredicate = defaultIsExpectedTrading;
+/**
+ * Re-entrancy guard. The probe tick is async (DB-backed predicate) and
+ * can legitimately take >60s under DB pressure; without this, overlapping
+ * ticks would pile up and inflate DB load on an already-struggling
+ * system. Sourcery flagged this on #489.
+ */
+let tickInFlight = false;
 
 /**
  * Decide whether a trades-floor alert is appropriate given current state.
@@ -72,6 +79,11 @@ async function shouldEvaluateTradesFloor(now: Date): Promise<boolean> {
 }
 
 async function runProbeTick(now: Date = new Date()): Promise<void> {
+  if (tickInFlight) {
+    logger.debug('pipelineHealthProbe tick skipped — previous tick still in flight');
+    return;
+  }
+  tickInFlight = true;
   try {
     const silentStages = monitoringService.getSilentPipelineStages(now);
     for (const { stage, silentMs, thresholdMs } of silentStages) {
@@ -91,6 +103,8 @@ async function runProbeTick(now: Date = new Date()): Promise<void> {
     logger.error('pipelineHealthProbe tick failed', {
       error: err instanceof Error ? err.message : String(err),
     });
+  } finally {
+    tickInFlight = false;
   }
 }
 
@@ -102,7 +116,10 @@ export function startPipelineHealthProbe(
   if (activeProbe) return activeProbe;
   probeStartedAt = new Date();
   isExpectedTrading = effectivePredicate;
-  const timer = setInterval(() => runProbeTick(), intervalMs);
+  // Explicit `void` so Node doesn't emit an unhandled-rejection warning
+  // if the tick rejects in a way the internal try/finally misses. The
+  // re-entrancy guard above already serialises overlapping ticks.
+  const timer = setInterval(() => { void runProbeTick(); }, intervalMs);
   timer.unref?.();
   activeProbe = {
     stop: () => {
@@ -110,8 +127,9 @@ export function startPipelineHealthProbe(
       activeProbe = null;
       probeStartedAt = null;
       isExpectedTrading = defaultIsExpectedTrading;
+      tickInFlight = false;
     },
-    runOnce: () => runProbeTick(),
+    runOnce: () => { void runProbeTick(); },
     intervalMs,
   };
   logger.info('pipelineHealthProbe started', { intervalMs });

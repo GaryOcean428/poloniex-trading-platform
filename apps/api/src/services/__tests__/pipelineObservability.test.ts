@@ -148,23 +148,23 @@ describe('pipelineHealthProbe wiring', () => {
     stopPipelineHealthProbe();
   });
 
-  it('does not fire trades-floor alert before window has elapsed since probe start', () => {
+  it('does not fire trades-floor alert before window has elapsed since probe start', async () => {
     // Predicate returns true (expected trading), but uptime gate should
     // still block the alert because we just started.
     startPipelineHealthProbe(60_000, () => true);
-    __internal.runProbeTick(new Date());
+    await __internal.runProbeTick(new Date());
     expect(alertingService.getAlertStats().counts.tradeFloorBreaches).toBe(0);
   });
 
-  it('does not fire trades-floor alert when predicate says not expected-trading', () => {
+  it('does not fire trades-floor alert when predicate says not expected-trading', async () => {
     // Predicate reports paused — suppresses the alert even after uptime
     // gate clears. This is the Sourcery-flagged regression guard.
     startPipelineHealthProbe(60_000, () => false);
-    __internal.runProbeTick(new Date());
+    await __internal.runProbeTick(new Date());
     expect(alertingService.getAlertStats().counts.tradeFloorBreaches).toBe(0);
   });
 
-  it('detects silent stages via monitoring and fires an alert via alerting', () => {
+  it('detects silent stages via monitoring and fires an alert via alerting', async () => {
     const t0 = new Date('2026-04-17T12:00:00Z');
     monitoringService.recordPipelineHeartbeat('paper');
     // Simulate 20 min passing (paper threshold is 10 min).
@@ -174,7 +174,30 @@ describe('pipelineHealthProbe wiring', () => {
     monitoringService.recordPipelineHeartbeat('paper');
 
     // Now pretend it's t1 and probe.
-    __internal.runProbeTick(t1);
+    await __internal.runProbeTick(t1);
     expect(alertingService.getAlertStats().counts.pipelineSilent).toBeGreaterThan(0);
+  });
+
+  it('skips overlapping ticks (re-entrancy guard)', async () => {
+    // Inject a predicate that never resolves so we can observe the
+    // guard behavior: a second tick called while the first is in
+    // flight should be skipped (not queued, not failed).
+    let release: () => void;
+    const block = new Promise<void>((res) => { release = res; });
+    startPipelineHealthProbe(60_000, async () => { await block; return false; });
+
+    // Fire-and-forget the first tick (don't await — it's stuck on `block`).
+    const first = __internal.runProbeTick(new Date());
+    // Second tick fires immediately; the guard should make it return
+    // quickly without waiting on the first.
+    await __internal.runProbeTick(new Date());
+
+    // Release the blocked first tick and await it so vitest doesn't
+    // warn about unhandled promises.
+    release!();
+    await first;
+    // No explicit assertion on the guard's internal state — the fact
+    // that the second tick resolved while the first was still pending
+    // is the proof.
   });
 });

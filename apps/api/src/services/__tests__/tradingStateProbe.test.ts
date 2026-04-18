@@ -2,11 +2,16 @@
  * tradingStateProbe — Option C predicate tests.
  *
  * The DB call is mocked via the db/connection module so we can exercise
- * all three states (active strategies present, no active but recent
- * promotion, nothing at all) without a real DB.
+ * every branch (active strategies, no active but recent promotion,
+ * nothing at all) without a real DB.
+ *
+ * The implementation issues TWO queries: active-count first, then the
+ * MAX-promoted-at fallback only when active-count is zero. These tests
+ * mirror that by queuing responses in the order the implementation
+ * consumes them.
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../db/connection.js', () => ({
   query: vi.fn(),
@@ -18,30 +23,28 @@ import {
   shouldExpectPaperTrades,
 } from '../tradingStateProbe.js';
 
-const mockedQuery = query as unknown as ReturnType<typeof vi.fn>;
+const mockedQuery = vi.mocked(query);
 
 describe('shouldExpectPaperTrades', () => {
   beforeEach(() => {
     mockedQuery.mockReset();
   });
-  afterEach(() => {
-    mockedQuery.mockReset();
-  });
 
-  it('returns true when any strategy is active in paper/recommended/live', async () => {
-    mockedQuery.mockResolvedValueOnce({
-      rows: [{ active_count: 3, last_paper_promo: null }],
-    });
+  it('returns true when any strategy is active (skips MAX query entirely)', async () => {
+    mockedQuery.mockResolvedValueOnce({ rows: [{ n: 3 }] });
     expect(await shouldExpectPaperTrades()).toBe(true);
+    // Short-circuit: MAX query never ran.
+    expect(mockedQuery).toHaveBeenCalledTimes(1);
   });
 
   it('returns true when no active strategies but promotion was recent (<24h)', async () => {
     const now = new Date('2026-04-18T12:00:00Z');
     const oneHourAgo = new Date(now.getTime() - 60 * 60_000).toISOString();
-    mockedQuery.mockResolvedValueOnce({
-      rows: [{ active_count: 0, last_paper_promo: oneHourAgo }],
-    });
+    mockedQuery
+      .mockResolvedValueOnce({ rows: [{ n: 0 }] })
+      .mockResolvedValueOnce({ rows: [{ last_paper_promo: oneHourAgo }] });
     expect(await shouldExpectPaperTrades(now)).toBe(true);
+    expect(mockedQuery).toHaveBeenCalledTimes(2);
   });
 
   it('returns false when no active strategies and last promotion was > 24h ago', async () => {
@@ -49,21 +52,23 @@ describe('shouldExpectPaperTrades', () => {
     const twoDaysAgo = new Date(
       now.getTime() - 2 * TRADING_STATE_RECENT_PASS_WINDOW_MS,
     ).toISOString();
-    mockedQuery.mockResolvedValueOnce({
-      rows: [{ active_count: 0, last_paper_promo: twoDaysAgo }],
-    });
+    mockedQuery
+      .mockResolvedValueOnce({ rows: [{ n: 0 }] })
+      .mockResolvedValueOnce({ rows: [{ last_paper_promo: twoDaysAgo }] });
     expect(await shouldExpectPaperTrades(now)).toBe(false);
   });
 
   it('returns false when there has never been a paper promotion', async () => {
-    mockedQuery.mockResolvedValueOnce({
-      rows: [{ active_count: 0, last_paper_promo: null }],
-    });
+    mockedQuery
+      .mockResolvedValueOnce({ rows: [{ n: 0 }] })
+      .mockResolvedValueOnce({ rows: [{ last_paper_promo: null }] });
     expect(await shouldExpectPaperTrades()).toBe(false);
   });
 
   it('returns false on empty result set', async () => {
-    mockedQuery.mockResolvedValueOnce({ rows: [] });
+    mockedQuery
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
     expect(await shouldExpectPaperTrades()).toBe(false);
   });
 

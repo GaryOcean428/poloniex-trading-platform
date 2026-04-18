@@ -27,28 +27,42 @@ import { logger } from '../utils/logger.js';
 export const TRADING_STATE_RECENT_PASS_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /**
- * Cheap DB query — one row, two aggregate columns. Called every
- * 60s by the probe tick. Fails soft: returns false on any error so
- * a DB hiccup doesn't trigger a spurious alert cascade.
+ * Called every 60s by the probe tick. Split into two narrow queries so
+ * the expensive half (MAX(promoted_paper_at) over all rows) only runs
+ * in the uncommon "no active strategy" branch. Both queries hit
+ * partial indexes from migrations 027 and 028.
+ *
+ * Fails soft: returns false on any error so a DB hiccup doesn't
+ * trigger a spurious alert cascade.
  */
 export async function shouldExpectPaperTrades(
   now: Date = new Date(),
 ): Promise<boolean> {
   try {
-    const result = await query(
-      `SELECT
-         COUNT(*) FILTER (
-           WHERE status IN ('paper_trading', 'recommended', 'live')
-         )::int AS active_count,
-         MAX(promoted_paper_at) AS last_paper_promo
-       FROM strategy_performance
-       WHERE deleted_at IS NULL`,
+    // Query A: uses idx_strategy_performance_status_tier (partial,
+    // WHERE deleted_at IS NULL). Returns fast — in the steady state
+    // this is the only query that runs.
+    const activeResult = await query(
+      `SELECT COUNT(*)::int AS n
+         FROM strategy_performance
+        WHERE deleted_at IS NULL
+          AND status IN ('paper_trading', 'recommended', 'live')`,
     );
-    const row = (result.rows as any[])[0] ?? {};
-    const activeCount = Number(row.active_count ?? 0);
-    const lastPromo = row.last_paper_promo ? new Date(row.last_paper_promo as string) : null;
+    const activeCount = Number((activeResult.rows as any[])[0]?.n ?? 0);
     if (activeCount > 0) return true;
-    if (!lastPromo) return false;
+
+    // Query B: uses idx_strategy_performance_promoted_paper_at
+    // (migration 028, partial WHERE promoted_paper_at IS NOT NULL).
+    // Only runs when zero strategies are currently paper/live.
+    const promoResult = await query(
+      `SELECT MAX(promoted_paper_at) AS last_paper_promo
+         FROM strategy_performance
+        WHERE deleted_at IS NULL
+          AND promoted_paper_at IS NOT NULL`,
+    );
+    const rawPromo = (promoResult.rows as any[])[0]?.last_paper_promo;
+    if (!rawPromo) return false;
+    const lastPromo = new Date(rawPromo as string);
     return now.getTime() - lastPromo.getTime() < TRADING_STATE_RECENT_PASS_WINDOW_MS;
   } catch (err) {
     logger.debug('[tradingStateProbe] shouldExpectPaperTrades failed (fail-soft)', {
