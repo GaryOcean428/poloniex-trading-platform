@@ -88,6 +88,17 @@ const STAGE_SILENT_THRESHOLD_MS: Record<PipelineStage, number> = {
 export const TRADES_PER_HOUR_FLOOR_WINDOW_MIN = 360;  // 6 hours
 export const TRADES_RING_SLOTS = 360;
 
+/**
+ * Backtest-pass-rate alert threshold: if this many consecutive SLE
+ * generations produce zero passing strategies, something is wrong
+ * with the generator or the gates. This is the "Option C blind spot"
+ * guard — the trades-floor alert can't catch it because the pipeline
+ * is *expected* to be silent when no strategy has ever passed.
+ *
+ * 20 generations × 30 min cycle interval = 10h before paging.
+ */
+export const BACKTEST_STALL_THRESHOLD = 20;
+
 interface ErrorStatsReport {
   total24h: number;
   totalAllTime: number;
@@ -104,6 +115,14 @@ class MonitoringService {
   private warningCount = 0;
   private activeConnectionCount = 0;
   private pipelineHeartbeats: Map<PipelineStage, PipelineHeartbeat> = new Map();
+  /** Count of consecutive SLE generations with zero passing strategies. Reset on any pass. */
+  private generationsSinceLastPass = 0;
+  /** Most recent generation outcome (for snapshot UIs). */
+  private lastGenerationOutcome: {
+    at: Date;
+    passed: number;
+    total: number;
+  } | null = null;
 
   /**
    * Log an error
@@ -560,6 +579,34 @@ class MonitoringService {
     return TRADES_PER_HOUR_FLOOR_WINDOW_MIN;
   }
 
+  /**
+   * Record the outcome of one SLE generation. `passed` is how many of
+   * `total` generated strategies cleared the backtest gate. Maintains
+   * the `generationsSinceLastPass` counter that the probe reads.
+   */
+  recordGenerationOutcome(passed: number, total: number, at: Date = new Date()): void {
+    this.lastGenerationOutcome = { at, passed, total };
+    if (passed > 0) {
+      this.generationsSinceLastPass = 0;
+    } else {
+      this.generationsSinceLastPass += 1;
+    }
+  }
+
+  /** Consecutive SLE generations with zero passing strategies. */
+  getGenerationsSinceLastPass(): number {
+    return this.generationsSinceLastPass;
+  }
+
+  /** Most recent generation outcome snapshot for UI / status endpoints. */
+  getLastGenerationOutcome(): { at: Date; passed: number; total: number } | null {
+    return this.lastGenerationOutcome;
+  }
+
+  getBacktestStallThreshold(): number {
+    return BACKTEST_STALL_THRESHOLD;
+  }
+
   private initStageHeartbeat(stage: PipelineStage, now: Date): PipelineHeartbeat {
     const hb: PipelineHeartbeat = {
       lastSeen: now,
@@ -605,6 +652,8 @@ class MonitoringService {
     this.warningCount = 0;
     this.activeConnectionCount = 0;
     this.pipelineHeartbeats = new Map();
+    this.generationsSinceLastPass = 0;
+    this.lastGenerationOutcome = null;
   }
 }
 

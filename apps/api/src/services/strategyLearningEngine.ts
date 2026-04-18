@@ -242,6 +242,10 @@ class StrategyLearningEngine extends EventEmitter {
     const newStrategies = await this.generateVariants(regime);
     monitoringService.recordPipelineHeartbeat('backtest');
     const backtestPassed = await this.backtestVariants(newStrategies);
+    // Record generation outcome for the backtest-stall alert. Closes
+    // the Option-C blind spot: consecutive zero-pass generations must
+    // page even when no paper strategies exist yet.
+    monitoringService.recordGenerationOutcome(backtestPassed.length, newStrategies.length);
     for (const s of backtestPassed) { await this.promoteToParallelPaper(s); }
     await this.evaluatePaperSessions();
     await this.killUnderperformers();

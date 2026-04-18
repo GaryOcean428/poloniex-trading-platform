@@ -104,6 +104,41 @@ describe('monitoringService pipeline heartbeat', () => {
   });
 });
 
+describe('monitoringService backtest-pass-rate tracker', () => {
+  beforeEach(() => {
+    monitoringService.reset();
+  });
+
+  it('starts at 0 consecutive zero-pass generations', () => {
+    expect(monitoringService.getGenerationsSinceLastPass()).toBe(0);
+  });
+
+  it('increments on each zero-pass generation', () => {
+    monitoringService.recordGenerationOutcome(0, 6);
+    monitoringService.recordGenerationOutcome(0, 6);
+    monitoringService.recordGenerationOutcome(0, 6);
+    expect(monitoringService.getGenerationsSinceLastPass()).toBe(3);
+  });
+
+  it('resets to 0 on any generation with at least one pass', () => {
+    monitoringService.recordGenerationOutcome(0, 6);
+    monitoringService.recordGenerationOutcome(0, 6);
+    monitoringService.recordGenerationOutcome(1, 6);
+    expect(monitoringService.getGenerationsSinceLastPass()).toBe(0);
+  });
+
+  it('captures the most recent outcome for UI snapshots', () => {
+    const t = new Date('2026-04-18T02:16:16Z');
+    monitoringService.recordGenerationOutcome(2, 6, t);
+    const snap = monitoringService.getLastGenerationOutcome();
+    expect(snap).toEqual({ at: t, passed: 2, total: 6 });
+  });
+
+  it('exposes the stall threshold constant (≥20 consecutive zero-pass)', () => {
+    expect(monitoringService.getBacktestStallThreshold()).toBeGreaterThanOrEqual(20);
+  });
+});
+
 describe('alertingService silent-failure + trades-floor alerts', () => {
   beforeEach(() => {
     alertingService.resetAlertCounts();

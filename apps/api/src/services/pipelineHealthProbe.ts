@@ -90,6 +90,17 @@ async function runProbeTick(now: Date = new Date()): Promise<void> {
       alertingService.alertPipelineSilent(stage as PipelineStage, silentMs, thresholdMs);
     }
 
+    // Backtest-stall alert — the Option-C blind spot. Fires when the
+    // generator has produced too many consecutive zero-pass generations,
+    // regardless of whether paper-trading is "expected" yet. Runs every
+    // tick so a stall is caught within the 60s probe cadence once the
+    // threshold trips.
+    const consecutive = monitoringService.getGenerationsSinceLastPass();
+    if (consecutive >= monitoringService.getBacktestStallThreshold()) {
+      const lastPass = monitoringService.getLastGenerationOutcome();
+      alertingService.alertBacktestStall(consecutive, lastPass?.at ?? null);
+    }
+
     if (!(await shouldEvaluateTradesFloor(now))) return;
 
     const windowMin = monitoringService.getTradesPerHourFloorWindowMinutes();
