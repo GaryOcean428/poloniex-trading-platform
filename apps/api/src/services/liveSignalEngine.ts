@@ -328,7 +328,12 @@ export class LiveSignalEngine extends EventEmitter {
       [symbol],
     );
     if ((openCheck.rowCount ?? 0) > 0) {
-      logger.debug(`[LiveSignal] ${symbol} has open live_signal trade — skipping new entry`);
+      // Info (not debug) so operators can see the guard firing in
+      // prod without enabling verbose logging. This is the single
+      // line that tells you "the signal passed all gates but we
+      // deliberately did not trade because an open position already
+      // exists" — worth seeing.
+      logger.info(`[LiveSignal] ${symbol} has open live_signal trade — skipping new entry`);
       return;
     }
 
