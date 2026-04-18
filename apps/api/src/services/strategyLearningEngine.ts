@@ -74,6 +74,11 @@ import {
   evaluateRollingDrawdownDemotion,
   type TradeOutcome,
 } from './demotionPolicy.js';
+import {
+  ANCHOR_STRATEGIES,
+  getAnchorsForRegime,
+  type AnchorStrategyDef,
+} from './anchorStrategies.js';
 
 export type StrategyStatusTransitionReason =
   | 'created'
@@ -330,6 +335,16 @@ class StrategyLearningEngine extends EventEmitter {
    * collapses to uniform class sampling — the generator still produces
    * 6 variants per cycle so there's no dead zone.
    *
+   * Additionally, ANCHOR STRATEGIES (hand-crafted seeds in
+   * anchorStrategies.ts) are always injected when their affine regime
+   * matches and they're not already active. Anchors solve the cold-
+   * start problem: without real winners the bandit has nothing to
+   * bias toward, and the random-genome generator produces Sharpe ≈ 0
+   * strategies. Anchors are tuned classical patterns that should
+   * produce > 10 trades with positive expectancy on crypto 15m/1h
+   * data, giving the bandit a real winning distribution to warp
+   * toward.
+   *
    * Old elitism-on-paper_sharpe-DESC is gone. No 30% fallback — the
    * bandit is the whole story.
    */
@@ -338,7 +353,31 @@ class StrategyLearningEngine extends EventEmitter {
     const banditCounters = await this.loadBanditCountersForRegime(regime);
     const allParents = await this.loadBestPerformers(regime, 20);
     const variants: StrategyRecord[] = [];
-    for (let i = 0; i < 6; i++) {
+
+    // Inject anchor strategies first — they're the cold-start cure.
+    // An anchor is re-queued whenever it's NOT currently active in
+    // any stage (backtesting/paper_trading/recommended/live). That
+    // lets a failed anchor be re-tested the next cycle with the
+    // most recent data (market conditions may have shifted).
+    const activeIds = new Set(
+      Array.from(this.strategies.values())
+        .filter((s) =>
+          s.status === 'backtesting' ||
+          s.status === 'paper_trading' ||
+          s.status === 'recalibrating' ||
+          s.status === 'recommended' ||
+          s.status === 'live',
+        )
+        .map((s) => s.strategyId),
+    );
+    for (const anchor of getAnchorsForRegime(regime)) {
+      if (activeIds.has(anchor.id)) continue;
+      variants.push(this.anchorToStrategyRecord(anchor, regime));
+    }
+
+    // Top-up the cycle with evolved variants so total is 6.
+    const evolvedCount = Math.max(0, 6 - variants.length);
+    for (let i = 0; i < evolvedCount; i++) {
       // Sample the preferred class for this variant (Thompson draw —
       // independent draws across the 6 variants give natural diversity
       // while still biasing toward winning classes).
@@ -368,6 +407,35 @@ class StrategyLearningEngine extends EventEmitter {
     }
     logger.info(`[SLE] Generated ${variants.length} variants for regime '${regime}'`);
     return variants;
+  }
+
+  /**
+   * Convert an AnchorStrategyDef into a StrategyRecord that the
+   * backtest pipeline can consume. Uses the anchor's stable ID (not
+   * a generated one) so the same anchor can be re-tested each cycle
+   * without creating duplicate DB rows.
+   */
+  private anchorToStrategyRecord(
+    anchor: AnchorStrategyDef,
+    regime: MarketRegime,
+  ): StrategyRecord {
+    return {
+      strategyId: anchor.id,
+      symbol: anchor.symbol,
+      leverage: anchor.leverage,
+      timeframe: anchor.timeframe,
+      strategyType: anchor.strategyType,
+      genome: anchor.genome,
+      regimeAtCreation: regime,
+      backtestSharpe: null, backtestWr: null, backtestMaxDd: null,
+      paperSharpe: null, paperWr: null, paperPnl: null, paperTrades: 0,
+      liveSharpe: null, livePnl: null, liveTrades: 0,
+      isCensored: false, censorReason: null, uncensoredSharpe: null, fitnessDivergent: false,
+      status: 'backtesting', confidenceScore: null, createdAt: new Date(),
+      parentStrategyId: null, generation: this.generationCount,
+      backtestCount: 0, avgReturn: 0, avgSharpeRatio: 0,
+      equityCurve: [], lastEquitySlope: 0, phaseClock: 0,
+    };
   }
 
   /**
