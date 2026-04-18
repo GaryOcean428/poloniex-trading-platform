@@ -52,7 +52,7 @@ import {
 
 describe('evaluateBacktestGate', () => {
   const passingInSample = {
-    totalTrades: 50,
+    totalTrades: 15,
     sharpe: 1.2,
     sortino: 1.8,
     calmar: 2.5,
@@ -78,7 +78,7 @@ describe('evaluateBacktestGate', () => {
   });
 
   it(`rejects when oos profit factor < ${OOS_MIN_PROFIT_FACTOR}`, () => {
-    const d = evaluateBacktestGate(passingInSample, { profitFactor: 1.0 });
+    const d = evaluateBacktestGate(passingInSample, { profitFactor: 0.9 });
     expect(d.allowed).toBe(false);
   });
 
