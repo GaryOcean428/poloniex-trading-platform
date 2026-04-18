@@ -64,6 +64,16 @@ import {
   type BanditCounter,
   type StrategyClass,
 } from './thompsonBandit.js';
+import {
+  evaluateBacktestGate,
+  evaluatePaperGate,
+  type BacktestMetrics as BacktestGateMetrics,
+  type PaperStats,
+} from './promotionGates.js';
+import {
+  evaluateRollingDrawdownDemotion,
+  type TradeOutcome,
+} from './demotionPolicy.js';
 
 export type StrategyStatusTransitionReason =
   | 'created'
@@ -85,6 +95,7 @@ export type StrategyType = 'momentum' | 'mean_reversion' | 'breakout' | 'trend_f
 export type StrategyStatus =
   | 'backtesting'
   | 'paper_trading'
+  | 'recalibrating'
   | 'recommended'
   | 'live'
   | 'retired'
@@ -129,10 +140,15 @@ export interface StrategyRecord {
 const BRIDGE_LAW_EXPONENT = 0.74;
 const DEFAULT_STRATEGY_LOOKBACK = 50;
 const SUPPORTED_TF_MINUTES: Record<string, number> = { '5m': 5, '15m': 15, '1h': 60, '4h': 240 };
-const BACKTEST_THRESHOLDS = { minSharpe: 1.0, minWinRate: 0.45, maxDrawdown: 0.15 };
+// BACKTEST_THRESHOLDS — DELETED. Backtest promotion now runs through
+// evaluateBacktestGate in promotionGates.ts with multi-metric cross-
+// checking (Sharpe, Sortino, Calmar, PF, DD) + OOS window.
 /** Minimum capital floor for drawdown calculations — prevents tiny balances from false-killing strategies */
 const MIN_CAPITAL_FLOOR = 27;
-const PAPER_THRESHOLDS = { minSharpe: 0.8, minPnl: 0, minTrades: 30, minDays: 7, minConfidence: 60 };
+// PAPER_THRESHOLDS — DELETED. Paper → live promotion now runs through
+// evaluatePaperGate in promotionGates.ts. Confidence score is retained
+// as a secondary gate below (PAPER_MIN_CONFIDENCE).
+const PAPER_MIN_CONFIDENCE = 60;
 const FITNESS_DIVERGENCE_THRESHOLD = 0.20;
 const QIG_FRAGILITY_WARNING_THRESHOLD = 0.6;
 const PHASE_CLOCK_KILL_CYCLES = 5;
@@ -302,32 +318,84 @@ class StrategyLearningEngine extends EventEmitter {
     } catch (err) { logger.warn('[SLE] Regime detection failed:', err); return this.lastKnownRegime; }
   }
 
+  /**
+   * Hard-cut variant generation: Thompson bandit picks the preferred
+   * strategy class for this regime; parents for crossover/mutate are
+   * drawn from loadBestPerformers filtered to that class when possible.
+   * Cold start (Beta(1,1) uniform prior with zero history) naturally
+   * collapses to uniform class sampling — the generator still produces
+   * 6 variants per cycle so there's no dead zone.
+   *
+   * Old elitism-on-paper_sharpe-DESC is gone. No 30% fallback — the
+   * bandit is the whole story.
+   */
   private async generateVariants(regime: MarketRegime): Promise<StrategyRecord[]> {
     const symbols = ['BTC_USDT_PERP', 'ETH_USDT_PERP', 'SOL_USDT_PERP', 'XRP_USDT_PERP'];
-    const parents = await this.loadBestPerformers(regime);
+    const banditCounters = await this.loadBanditCountersForRegime(regime);
+    const allParents = await this.loadBestPerformers(regime, 20);
     const variants: StrategyRecord[] = [];
     for (let i = 0; i < 6; i++) {
+      // Sample the preferred class for this variant (Thompson draw —
+      // independent draws across the 6 variants give natural diversity
+      // while still biasing toward winning classes).
+      const preferredClass = sampleBestClass(banditCounters);
+      const classParents = allParents.filter(
+        (p) => (p.strategyType as StrategyClass) === preferredClass,
+      );
+
       let s: StrategyRecord;
-      if (parents.length >= 2 && Math.random() < 0.6) {
-        const p1 = parents[Math.floor(Math.random() * parents.length)];
-        const others = parents.filter(p => p.strategyId !== p1.strategyId);
-        s = others.length > 0 ? this.crossoverStrategies(p1, others[Math.floor(Math.random() * others.length)], regime) : this.mutateStrategy(p1, regime);
-      } else if (parents.length > 0 && Math.random() < 0.5) {
-        s = this.mutateStrategy(parents[Math.floor(Math.random() * parents.length)], regime);
-      } else { s = this.generateRandom(symbols, regime); }
+      if (classParents.length >= 2 && Math.random() < 0.6) {
+        const p1 = classParents[Math.floor(Math.random() * classParents.length)];
+        const others = classParents.filter((p) => p.strategyId !== p1.strategyId);
+        s = others.length > 0
+          ? this.crossoverStrategies(p1, others[Math.floor(Math.random() * others.length)], regime)
+          : this.mutateStrategy(p1, regime);
+      } else if (classParents.length > 0 && Math.random() < 0.5) {
+        s = this.mutateStrategy(
+          classParents[Math.floor(Math.random() * classParents.length)],
+          regime,
+        );
+      } else {
+        // Cold start for this class, or chosen not to mutate: generate
+        // a fresh genome nudged toward the preferred class.
+        s = this.generateRandom(symbols, regime, preferredClass);
+      }
       variants.push(s);
     }
     logger.info(`[SLE] Generated ${variants.length} variants for regime '${regime}'`);
     return variants;
   }
 
-  private generateRandom(symbols: string[], regime: MarketRegime): StrategyRecord {
+  /**
+   * Generate a new-from-scratch strategy. When `preferredClass` is
+   * provided (from the Thompson bandit), the genome is regenerated
+   * until inferStrategyType matches — up to 5 attempts before we
+   * accept whatever class the random genome suggests. This avoids
+   * biasing too hard when the bandit's pick is unachievable on
+   * current indicators.
+   */
+  private generateRandom(
+    symbols: string[],
+    regime: MarketRegime,
+    preferredClass?: StrategyClass,
+  ): StrategyRecord {
     const id = `sle_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
     const symbol = symbols[Math.floor(Math.random() * symbols.length)];
     const tfKeys = Object.keys(SUPPORTED_TF_MINUTES);
-    const genome = generateRandomGenome();
+
+    let genome = generateRandomGenome();
+    if (preferredClass) {
+      for (let attempt = 0; attempt < 5; attempt++) {
+        if ((inferStrategyType(genome) as StrategyClass) === preferredClass) break;
+        genome = generateRandomGenome();
+      }
+    }
+
     return {
-      strategyId: id, symbol, leverage: [1, 2, 5, 10][Math.floor(Math.random() * 4)],
+      strategyId: id, symbol,
+      // Leverage is chosen by strategy; the risk kernel enforces the
+      // per-symbol exchange maximum at order-submit time.
+      leverage: [1, 2, 3, 5, 10][Math.floor(Math.random() * 5)],
       timeframe: tfKeys[Math.floor(Math.random() * tfKeys.length)],
       strategyType: inferStrategyType(genome) as StrategyType, genome, regimeAtCreation: regime,
       backtestSharpe: null, backtestWr: null, backtestMaxDd: null,
@@ -366,16 +434,61 @@ class StrategyLearningEngine extends EventEmitter {
     const passed: StrategyRecord[] = [];
     for (const s of strategies) {
       try {
-        const result = await this.runBacktestWithWalkForward(s);
+        const { inSample, outOfSample } = await this.runBacktestWithWalkForward(s);
         s.backtestCount = (s.backtestCount ?? 0) + 1;
-        s.backtestSharpe = safeNum(result.sharpe); s.backtestWr = safeNum(result.winRate); s.backtestMaxDd = safeNum(result.maxDrawdown);
-        const qigResult = this.evaluateWithQIGFitness(result);
-        const rawPasses = safeNum(result.sharpe) >= BACKTEST_THRESHOLDS.minSharpe && safeNum(result.winRate) >= BACKTEST_THRESHOLDS.minWinRate && safeNum(result.maxDrawdown) <= BACKTEST_THRESHOLDS.maxDrawdown;
-        const passes = qigResult ? (qigResult.dualFramingPass && rawPasses) : rawPasses;
-        if (passes) { s.status = 'paper_trading'; passed.push(s); logger.info(`[SLE] Backtest PASS: ${s.strategyId} sharpe=${result.sharpe?.toFixed(2)}`); }
-        else { s.status = 'retired'; }
+        // Persist OOS metrics to strategy_performance (they're the more
+        // honest signal — IS is what we tuned on, OOS is what we'll face).
+        s.backtestSharpe = outOfSample.sharpe;
+        s.backtestWr = 0; // winRate not exposed through gate; kept as 0 for back-compat
+        s.backtestMaxDd = outOfSample.maxDrawdown;
+
+        // Hard-cut: multi-metric gate + QIG dual-framing. Old
+        // BACKTEST_THRESHOLDS constants are gone.
+        const gate = evaluateBacktestGate(inSample, { profitFactor: outOfSample.profitFactor });
+        const qigResult = this.evaluateWithQIGFitness({
+          sharpe: inSample.sharpe,
+          winRate: 0.5,
+          maxDrawdown: inSample.maxDrawdown,
+        });
+        const qigPass = qigResult ? qigResult.dualFramingPass : true;
+        const passes = gate.allowed && qigPass;
+
+        if (passes) {
+          s.status = 'paper_trading';
+          passed.push(s);
+          logger.info(
+            `[SLE] Backtest PASS: ${s.strategyId} sharpe=${inSample.sharpe.toFixed(2)} pf=${inSample.profitFactor.toFixed(2)} trades=${inSample.totalTrades}`,
+          );
+          await this.recordStrategyStateEvent(
+            s.strategyId,
+            'backtesting',
+            'paper_trading',
+            'backtest_passed',
+            {
+              inSample: { sharpe: inSample.sharpe, sortino: inSample.sortino, calmar: inSample.calmar, profitFactor: inSample.profitFactor, trades: inSample.totalTrades, maxDD: inSample.maxDrawdown },
+              outOfSample: { profitFactor: outOfSample.profitFactor, trades: outOfSample.totalTrades },
+            },
+          );
+        } else {
+          s.status = 'retired';
+          logger.info(
+            `[SLE] Backtest FAIL: ${s.strategyId} — ${gate.reason ?? (qigPass ? 'unknown' : 'qig_framing')}`,
+          );
+          await this.recordStrategyStateEvent(
+            s.strategyId,
+            'backtesting',
+            'retired',
+            'backtest_failed',
+            {
+              failingMetrics: gate.failingMetrics ?? [],
+              qigDualFramingPass: qigPass,
+            },
+          );
+        }
         await this.upsertStrategyPerformance(s);
-      } catch (err) { logger.warn(`[SLE] Backtest error for ${s.strategyId}:`, err); }
+      } catch (err) {
+        logger.warn(`[SLE] Backtest error for ${s.strategyId}:`, err);
+      }
     }
     return passed;
   }
@@ -388,26 +501,66 @@ class StrategyLearningEngine extends EventEmitter {
     } catch { return null; }
   }
 
-  private async runBacktestWithWalkForward(strategy: StrategyRecord): Promise<{ sharpe: number; winRate: number; maxDrawdown: number }> {
+  /**
+   * Runs the strategy on two disjoint windows — in-sample (first 70%)
+   * and out-of-sample (last 30%) — and returns the full metric set
+   * needed by evaluateBacktestGate. This is the hard-cut replacement
+   * for the old single-window backtest: the multi-metric gate requires
+   * an untouched OOS holdout to guard against overfit / survivorship.
+   */
+  private async runBacktestWithWalkForward(strategy: StrategyRecord): Promise<{
+    inSample: BacktestGateMetrics;
+    outOfSample: BacktestGateMetrics;
+  }> {
     const tfMinutes = SUPPORTED_TF_MINUTES[strategy.timeframe] ?? 60;
     const minOOSDays = Math.max(9, Math.ceil((100 * tfMinutes) / (24 * 60)));
     const cappedTotalDays = Math.min(Math.ceil(minOOSDays / 0.3), 90);
     const endDate = new Date();
     const startDate = new Date(endDate.getTime() - cappedTotalDays * 24 * 60 * 60 * 1000);
     const splitDate = new Date(startDate.getTime() + cappedTotalDays * 0.7 * 24 * 60 * 60 * 1000);
-    try {
-      const strategyDef: Record<string, any> = { type: strategy.strategyType, parameters: {}, lookback: DEFAULT_STRATEGY_LOOKBACK };
-      if (strategy.genome) { strategyDef.genome = strategy.genome; }
-      (backtestingEngine as any).registerStrategy(strategy.strategyId, strategyDef);
-      const result = await (backtestingEngine as any).runBacktest(strategy.strategyId, { symbol: strategy.symbol, timeframe: strategy.timeframe, startDate: splitDate, endDate, leverage: strategy.leverage, initialCapital: this.cachedBalance || MIN_CAPITAL_FLOOR });
-      return {
-        sharpe: safeNum(result?.sharpeRatio ?? result?.metrics?.sharpeRatio),
-        winRate: safeNum(result?.winRate ?? result?.metrics?.winRate) / 100,
-        maxDrawdown: safeNum(result?.maxDrawdown ?? result?.metrics?.maxDrawdownPercent) / 100,
+
+    const runWindow = async (from: Date, to: Date): Promise<BacktestGateMetrics> => {
+      const strategyDef: Record<string, any> = {
+        type: strategy.strategyType,
+        parameters: {},
+        lookback: DEFAULT_STRATEGY_LOOKBACK,
       };
+      if (strategy.genome) strategyDef.genome = strategy.genome;
+      (backtestingEngine as any).registerStrategy(strategy.strategyId, strategyDef);
+      const r = await (backtestingEngine as any).runBacktest(strategy.strategyId, {
+        symbol: strategy.symbol,
+        timeframe: strategy.timeframe,
+        startDate: from,
+        endDate: to,
+        leverage: strategy.leverage,
+        initialCapital: this.cachedBalance || MIN_CAPITAL_FLOOR,
+      });
+      const m = r?.metrics ?? r ?? {};
+      return {
+        totalTrades: safeNum(m.totalTrades),
+        sharpe: safeNum(m.sharpeRatio ?? r?.sharpeRatio),
+        sortino: safeNum(m.sortinoRatio),
+        calmar: safeNum(m.calmarRatio),
+        profitFactor: safeNum(m.profitFactor),
+        maxDrawdown: safeNum(m.maxDrawdownPercent ?? r?.maxDrawdown) / 100,
+      };
+    };
+
+    try {
+      const [inSample, outOfSample] = await Promise.all([
+        runWindow(startDate, splitDate),
+        runWindow(splitDate, endDate),
+      ]);
+      return { inSample, outOfSample };
     } catch (err) {
-      logger.warn(`[SLE] Backtest failed for ${strategy.strategyId}:`, err instanceof Error ? err.message : String(err));
-      return { sharpe: -1, winRate: 0, maxDrawdown: 1 };
+      logger.warn(
+        `[SLE] Backtest failed for ${strategy.strategyId}:`,
+        err instanceof Error ? err.message : String(err),
+      );
+      const failed: BacktestGateMetrics = {
+        totalTrades: 0, sharpe: -1, sortino: -1, calmar: -1, profitFactor: 0, maxDrawdown: 1,
+      };
+      return { inSample: failed, outOfSample: failed };
     }
   }
 
@@ -445,14 +598,35 @@ class StrategyLearningEngine extends EventEmitter {
     return denom === 0 ? 0 : (n * sumXY - sumX * sumY) / denom;
   }
 
+  /**
+   * Per-cycle sweep that either demotes a strategy to `recalibrating`
+   * (recoverable — keeps the genome, re-enters backtest next cycle)
+   * or kills it outright (phase-clock runaway, fitness-divergence).
+   *
+   * Hard-cut from the old "if paperPnl/capital < -10% → kill" branch:
+   * drawdown no longer kills, it demotes. User spec: "in 5 or less
+   * trades loses 10% → reverts back down." The rolling window is
+   * evaluated via demotionPolicy.evaluateRollingDrawdownDemotion.
+   */
   private async killUnderperformers(): Promise<void> {
-    const paperStrategies = Array.from(this.strategies.values()).filter(s => s.status === 'paper_trading');
+    const paperStrategies = Array.from(this.strategies.values()).filter(
+      (s) => s.status === 'paper_trading',
+    );
     for (const s of paperStrategies) {
+      // 1. Hard-kill criteria (phase-clock runaway, fitness-divergence).
+      //    These indicate the strategy is fundamentally broken, not just
+      //    temporarily underperforming — recalibration won't help.
       let killReason: string | null = null;
-      if ((s.phaseClock ?? 0) >= PHASE_CLOCK_KILL_CYCLES) killReason = `phase_clock_${s.phaseClock}_negative_cycles`;
-      if (s.fitnessDivergent && s.isCensored) { killReason = 'fitness_divergent_and_censored'; s.status = 'censored_rejected'; }
-      else if (s.fitnessDivergent) killReason = 'fitness_divergent_unreliable_estimate';
-      if (s.paperPnl !== null && s.paperTrades > 5) { const capital = Math.max(this.cachedBalance, MIN_CAPITAL_FLOOR); const ddPct = Math.abs(Math.min(0, s.paperPnl)) / capital; if (ddPct > 0.10) killReason = `drawdown_${(ddPct * 100).toFixed(1)}pct`; }
+      if ((s.phaseClock ?? 0) >= PHASE_CLOCK_KILL_CYCLES) {
+        killReason = `phase_clock_${s.phaseClock}_negative_cycles`;
+      }
+      if (s.fitnessDivergent && s.isCensored) {
+        killReason = 'fitness_divergent_and_censored';
+        s.status = 'censored_rejected';
+      } else if (s.fitnessDivergent) {
+        killReason = 'fitness_divergent_unreliable_estimate';
+      }
+
       if (killReason) {
         const fromStatus = 'paper_trading';
         s.status = s.status === 'censored_rejected' ? 'censored_rejected' : 'killed';
@@ -462,11 +636,7 @@ class StrategyLearningEngine extends EventEmitter {
           s.strategyId,
           fromStatus,
           s.status,
-          killReason.startsWith('phase_clock')
-            ? 'killed_phase_clock'
-            : killReason.startsWith('drawdown')
-              ? 'killed_drawdown'
-              : 'killed_fitness_divergent',
+          killReason.startsWith('phase_clock') ? 'killed_phase_clock' : 'killed_fitness_divergent',
           {
             phaseClock: s.phaseClock,
             paperPnl: s.paperPnl,
@@ -477,8 +647,63 @@ class StrategyLearningEngine extends EventEmitter {
           killReason,
         );
         logger.info(`[SLE] Killed strategy ${s.strategyId}: ${killReason}`);
-        await this.cloneTopPerformer(s.regimeAtCreation);
+        continue;
       }
+
+      // 2. Rolling-drawdown demotion to 'recalibrating'. Preserves genome
+      //    so the next cycle's backtest can re-evaluate. Strategies that
+      //    recover bounce back to paper; strategies that bounce and lose
+      //    repeatedly hit the 3-demotions-in-30-days retirement.
+      const recentTrades = await this.loadRecentTradeOutcomes(s.strategyId);
+      const demotion = evaluateRollingDrawdownDemotion(recentTrades);
+      if (demotion.demote) {
+        const fromStatus = 'paper_trading';
+        s.status = 'recalibrating';
+        await parallelStrategyRunner.removeStrategy(s.strategyId, demotion.reason ?? 'demoted');
+        await this.upsertStrategyPerformance(s);
+        await this.recordStrategyStateEvent(
+          s.strategyId,
+          fromStatus,
+          'recalibrating',
+          'demoted_recalibrating',
+          {
+            triggeringDrawdownPct: demotion.triggeringDrawdownPct,
+            recentTradeCount: recentTrades.length,
+          },
+          demotion.reason,
+        );
+        logger.info(
+          `[SLE] Demoted strategy ${s.strategyId} → recalibrating: ${demotion.reason}`,
+        );
+      }
+    }
+  }
+
+  /**
+   * Fetch the strategy's most-recent trade outcomes for the rolling-
+   * drawdown check. Returns an empty array if unavailable — the
+   * demotion policy treats "not enough data" as "don't demote."
+   */
+  private async loadRecentTradeOutcomes(
+    strategyId: string,
+    limit = 10,
+  ): Promise<TradeOutcome[]> {
+    try {
+      const result = await query(
+        `SELECT realised_pnl, margin_committed
+           FROM paper_trading_positions
+          WHERE strategy_name = $1 AND status = 'closed'
+          ORDER BY closed_at DESC
+          LIMIT $2`,
+        [strategyId, limit],
+      );
+      return ((result.rows as any[]) ?? []).map((r) => ({
+        realisedPnl: safeNum(r.realised_pnl),
+        marginCommitted: Math.max(0.0001, safeNum(r.margin_committed, 1)),
+      })).reverse(); // oldest first so rolling window sees trailing trades
+    } catch (err) {
+      logger.debug('[SLE] loadRecentTradeOutcomes failed (fail-soft):', err);
+      return [];
     }
   }
 
@@ -487,37 +712,78 @@ class StrategyLearningEngine extends EventEmitter {
     catch (err) { logger.warn('[SLE] Clone top performer failed:', err); }
   }
 
+  /**
+   * Paper → recommended (live-candidate) promotion via multi-metric
+   * evaluatePaperGate + confidence score. The old numeric
+   * PAPER_THRESHOLDS (minSharpe, minDays, minPnl) are gone — the
+   * gate module is the single source of truth.
+   *
+   * User spec hardcoded at the module level: ≥10 paper trades,
+   * positive cumulative PnL, no single loss >5%, rolling-20-trade DD
+   * ≤10%. Confidence score ≥ 60 layered on top as an orthogonal check.
+   */
   private async promotePaperToRecommended(): Promise<void> {
-    const paperStrategies = Array.from(this.strategies.values()).filter(s => s.status === 'paper_trading' && !s.isCensored && !s.fitnessDivergent);
-    for (const s of paperStrategies) {
-      if ((s.paperTrades ?? 0) < PAPER_THRESHOLDS.minTrades) continue;
-      const daysSince = (Date.now() - s.createdAt.getTime()) / (1000 * 60 * 60 * 24);
-      if (daysSince < PAPER_THRESHOLDS.minDays) continue;
-      if (safeNum(s.paperSharpe) < PAPER_THRESHOLDS.minSharpe || safeNum(s.paperPnl) <= PAPER_THRESHOLDS.minPnl) continue;
+    const candidates = Array.from(this.strategies.values()).filter(
+      (s) => s.status === 'paper_trading' && !s.isCensored && !s.fitnessDivergent,
+    );
+    for (const s of candidates) {
+      const paperStats = await this.buildPaperStats(s);
+      const gate = evaluatePaperGate(paperStats);
+      if (!gate.allowed) continue;
+
       try {
-        const score = await (confidenceScoringService as any).calculateConfidenceScore(s.strategyId, s.symbol, s.timeframe);
+        const score = await (confidenceScoringService as any).calculateConfidenceScore(
+          s.strategyId,
+          s.symbol,
+          s.timeframe,
+        );
         s.confidenceScore = safeNum(score?.confidenceScore ?? score?.score ?? score);
-        if (s.confidenceScore >= PAPER_THRESHOLDS.minConfidence) {
-          const fromStatus = 'paper_trading';
-          s.status = 'recommended';
-          await this.upsertStrategyPerformance(s);
-          await this.recordStrategyStateEvent(
-            s.strategyId,
-            fromStatus,
-            'recommended',
-            'promoted_paper',
-            {
-              paperSharpe: s.paperSharpe,
-              paperTrades: s.paperTrades,
-              paperPnl: s.paperPnl,
-              confidence: s.confidenceScore,
-            },
-          );
-          this.emit('liveRecommendation', s);
-          logger.info(`[SLE] \uD83C\uDFAF Strategy ${s.strategyId} RECOMMENDED for live: confidence=${s.confidenceScore.toFixed(1)}`);
-        }
-      } catch (err) { logger.warn(`[SLE] Confidence scoring failed for ${s.strategyId}:`, err); }
+        if (s.confidenceScore < PAPER_MIN_CONFIDENCE) continue;
+
+        const fromStatus = 'paper_trading';
+        s.status = 'recommended';
+        await this.upsertStrategyPerformance(s);
+        await this.recordStrategyStateEvent(
+          s.strategyId,
+          fromStatus,
+          'recommended',
+          'promoted_paper',
+          {
+            paperSharpe: s.paperSharpe,
+            paperTrades: s.paperTrades,
+            paperPnl: s.paperPnl,
+            confidence: s.confidenceScore,
+            largestSingleLossPct: paperStats.largestSingleLossPct,
+            rolling20DD: paperStats.rolling20TradeMaxDrawdown,
+          },
+        );
+        this.emit('liveRecommendation', s);
+        logger.info(
+          `[SLE] 🎯 Strategy ${s.strategyId} RECOMMENDED for live: confidence=${s.confidenceScore.toFixed(1)}`,
+        );
+      } catch (err) {
+        logger.warn(`[SLE] Confidence scoring failed for ${s.strategyId}:`, err);
+      }
     }
+  }
+
+  /** Build the PaperStats input expected by evaluatePaperGate. */
+  private async buildPaperStats(s: StrategyRecord): Promise<PaperStats> {
+    const recent = await this.loadRecentTradeOutcomes(s.strategyId, 20);
+    const largestSingleLossPct = recent.reduce((worst, t) => {
+      if (t.realisedPnl >= 0 || t.marginCommitted <= 0) return worst;
+      const lossPct = Math.abs(t.realisedPnl) / t.marginCommitted;
+      return Math.max(worst, lossPct);
+    }, 0);
+    const rolling20DD = recent.reduce((acc, t) => acc + t.realisedPnl, 0) /
+      Math.max(1, recent.reduce((acc, t) => acc + Math.abs(t.marginCommitted), 0));
+    return {
+      totalTrades: s.paperTrades ?? 0,
+      cumulativePnl: safeNum(s.paperPnl),
+      largestSingleLossPct,
+      rolling20TradeMaxDrawdown: Math.max(0, -rolling20DD),
+      profitablePaperTrades: recent.filter((t) => t.realisedPnl > 0).length,
+    };
   }
 
   async confirmLivePromotion(strategyId: string): Promise<StrategyRecord> {

@@ -41,7 +41,13 @@ export interface RetirementDecision {
 }
 
 // ───────── Thresholds ─────────
-export const ROLLING_DEMOTION_WINDOW = 20;
+// User spec: "if paper and live trades at low amounts lose 10% or something
+// in 5 or less trades then it reverts back down." Window is 5, not 20 —
+// this is deliberately noise-sensitive so recalibration fires quickly on a
+// tiny account where a 3-trade losing streak is a meaningful fraction of
+// capital. The statistician's caution about false-positives is accepted
+// as the cost of being operator-aligned.
+export const ROLLING_DEMOTION_WINDOW = 5;
 export const ROLLING_DEMOTION_THRESHOLD = -0.10;  // −10% of margin committed
 export const RECALIBRATION_LIMIT_PER_30_DAYS = 3;
 export const OSCILLATION_PROMOTION_CYCLES = 3;
