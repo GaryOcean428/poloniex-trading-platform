@@ -743,7 +743,10 @@ class PoloniexFuturesService {
    * Get historical OHLCV data for ML training and analysis
    * @param {string} symbol - Trading symbol (e.g., 'BTCUSDTPERP')
    * @param {string} interval - Candle interval ('1m', '5m', '15m', '30m', '1h', '4h', '1d')
-   * @param {number} limit - Number of candles to fetch (max 500 per call; loops to fill larger ranges)
+   * @param {number} limit - Fallback candle count (per-call cap 500). Only used
+   *   to size the default "last N candles" window when opts.startTime is not
+   *   supplied. When opts.startTime is supplied, the window size is determined
+   *   by the time range and this value becomes a per-call hint.
    * @param {Object} [opts] - Optional fetch options
    * @param {Date|number} [opts.startTime] - Window start. When supplied with endTime, overrides the default "last N candles" behavior.
    * @param {Date|number} [opts.endTime] - Window end. Defaults to now.
@@ -773,26 +776,48 @@ class PoloniexFuturesService {
       }
 
       const POLONIEX_MAX_PER_CALL = 500;
+      const MAX_LOOP_CALLS = 50;  // safety ceiling — see MAX_TOTAL_CANDLES below
       const intervalMs = intervalConfig.seconds * 1000;
 
       // Resolve time range. If caller supplied explicit startTime (e.g. the
       // backtest walk-forward windows), honor it exactly. Otherwise fall
       // back to "last N candles" for backward compat with the old callers.
-      const endTime = opts.endTime
+      const rawEnd = opts.endTime != null
         ? (opts.endTime instanceof Date ? opts.endTime.getTime() : Number(opts.endTime))
         : Date.now();
-      const explicitStart = opts.startTime != null
+      const rawStart = opts.startTime != null
         ? (opts.startTime instanceof Date ? opts.startTime.getTime() : Number(opts.startTime))
         : null;
+      // Validate — NaN or inverted ranges would silently produce huge
+      // loops or empty results. Fail loudly.
+      if (!Number.isFinite(rawEnd)) {
+        throw new Error(`getHistoricalData: invalid opts.endTime (${String(opts.endTime)})`);
+      }
+      if (rawStart != null && !Number.isFinite(rawStart)) {
+        throw new Error(`getHistoricalData: invalid opts.startTime (${String(opts.startTime)})`);
+      }
+      if (rawStart != null && rawStart >= rawEnd) {
+        throw new Error(
+          `getHistoricalData: startTime (${rawStart}) must be < endTime (${rawEnd})`,
+        );
+      }
       const cap = Math.min(limit, POLONIEX_MAX_PER_CALL);
-      const startTime = explicitStart ?? (endTime - intervalMs * cap);
+      const endTime = rawEnd;
+      const startTime = rawStart ?? (endTime - intervalMs * cap);
 
       // Compute candles needed in the window. Poloniex V3 returns up to 500
       // per call, so when the window needs more we loop forward 500 at a
       // time. This is the fix for the "fetcher ignored sTime and always
       // returned last-N" bug that was producing 29-candle IS windows.
       const totalNeeded = Math.ceil((endTime - startTime) / intervalMs);
-      const numCalls = Math.min(Math.ceil(totalNeeded / POLONIEX_MAX_PER_CALL), 50); // hard ceiling on call loops
+      const callsNeeded = Math.ceil(totalNeeded / POLONIEX_MAX_PER_CALL);
+      const numCalls = Math.min(callsNeeded, MAX_LOOP_CALLS);
+      if (callsNeeded > MAX_LOOP_CALLS) {
+        logger.warn(
+          `getHistoricalData: window truncated — wanted ${callsNeeded} chunks for ${symbol} ${interval}, capped at ${MAX_LOOP_CALLS} (~${MAX_LOOP_CALLS * POLONIEX_MAX_PER_CALL} candles). Use a coarser timeframe or narrower window for full coverage.`,
+          { symbol, interval, callsNeeded, totalNeeded },
+        );
+      }
       let cursor = startTime;
       const all = [];
       for (let i = 0; i < numCalls; i++) {
