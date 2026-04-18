@@ -14,10 +14,17 @@
 
 import { query } from '../db/connection.js';
 import { logger } from '../utils/logger.js';
-
-export type ExecutionMode = 'auto' | 'paper_only' | 'pause';
+// Re-export from riskKernel so the kernel + service + routes share one
+// definition and can't drift. Tests and routes can import from either
+// module without risk.
+export type { ExecutionMode } from './riskKernel.js';
+import type { ExecutionMode } from './riskKernel.js';
 
 const CACHE_TTL_MS = 30 * 1000;
+// Shorter TTL on fail-closed entries so a recovered DB is picked up
+// within a minute, but long enough that a sustained outage doesn't
+// send one query per order.
+const FAIL_CLOSED_CACHE_TTL_MS = 30 * 1000;
 
 interface ModeRecord {
   mode: ExecutionMode;
@@ -28,6 +35,7 @@ interface ModeRecord {
 
 let cached: ModeRecord | null = null;
 let cachedAt = 0;
+let cachedIsFailClosed = false;
 
 /**
  * Read the current mode. Cached for CACHE_TTL_MS. On DB error we
@@ -36,7 +44,8 @@ let cachedAt = 0;
  */
 export async function getCurrentExecutionMode(): Promise<ExecutionMode> {
   const now = Date.now();
-  if (cached && now - cachedAt < CACHE_TTL_MS) return cached.mode;
+  const effectiveTtl = cachedIsFailClosed ? FAIL_CLOSED_CACHE_TTL_MS : CACHE_TTL_MS;
+  if (cached && now - cachedAt < effectiveTtl) return cached.mode;
   try {
     const result = await query(
       `SELECT mode, updated_at, updated_by, reason
@@ -46,6 +55,9 @@ export async function getCurrentExecutionMode(): Promise<ExecutionMode> {
     const row = (result.rows as any[])[0];
     if (!row) {
       logger.warn('[executionMode] agent_execution_mode singleton missing — defaulting to pause');
+      // Cache the fail-closed state so subsequent calls don't re-query
+      // the DB while the singleton is missing.
+      cacheFailClosed(now, 'singleton_missing');
       return 'pause';
     }
     cached = {
@@ -55,13 +67,29 @@ export async function getCurrentExecutionMode(): Promise<ExecutionMode> {
       reason: row.reason ?? null,
     };
     cachedAt = now;
+    cachedIsFailClosed = false;
     return cached.mode;
   } catch (err) {
     logger.error('[executionMode] DB read failed — failing closed to pause', {
       err: err instanceof Error ? err.message : String(err),
     });
+    // Cache the fail-closed decision. Sourcery flagged that without
+    // this, every order submission during a DB outage re-queries and
+    // re-logs, amplifying DB pressure on an already-struggling system.
+    cacheFailClosed(now, 'db_read_failed');
     return 'pause';
   }
+}
+
+function cacheFailClosed(now: number, reason: string): void {
+  cached = {
+    mode: 'pause',
+    updatedAt: new Date(now),
+    updatedBy: 'fail_closed',
+    reason,
+  };
+  cachedAt = now;
+  cachedIsFailClosed = true;
 }
 
 /** Full record for UI/audit endpoints. */
@@ -118,4 +146,5 @@ export async function isLiveExecutionAllowed(): Promise<boolean> {
 export function __resetExecutionModeCache(): void {
   cached = null;
   cachedAt = 0;
+  cachedIsFailClosed = false;
 }

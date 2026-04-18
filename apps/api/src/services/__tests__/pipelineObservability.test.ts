@@ -137,6 +137,21 @@ describe('monitoringService backtest-pass-rate tracker', () => {
   it('exposes the stall threshold constant (≥20 consecutive zero-pass)', () => {
     expect(monitoringService.getBacktestStallThreshold()).toBeGreaterThanOrEqual(20);
   });
+
+  it('getLastPassAt only advances on generations that actually passed', () => {
+    const t0 = new Date('2026-04-18T00:00:00Z');
+    const t1 = new Date('2026-04-18T00:30:00Z');
+    const t2 = new Date('2026-04-18T01:00:00Z');
+
+    monitoringService.recordGenerationOutcome(0, 6, t0); // no pass
+    expect(monitoringService.getLastPassAt()).toBeNull();
+
+    monitoringService.recordGenerationOutcome(2, 6, t1); // pass
+    expect(monitoringService.getLastPassAt()).toEqual(t1);
+
+    monitoringService.recordGenerationOutcome(0, 6, t2); // no pass — lastPassAt must stay at t1
+    expect(monitoringService.getLastPassAt()).toEqual(t1);
+  });
 });
 
 describe('alertingService silent-failure + trades-floor alerts', () => {

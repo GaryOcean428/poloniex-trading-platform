@@ -551,10 +551,12 @@ class StrategyLearningEngine extends EventEmitter {
     };
 
     try {
-      const [inSample, outOfSample] = await Promise.all([
-        runWindow(startDate, splitDate),
-        runWindow(splitDate, endDate),
-      ]);
+      // Sequential, not Promise.all — the backtesting engine keeps
+      // mutable per-strategy state keyed by strategyId
+      // (currentBacktest, _prevIndicatorMaps, etc.). Concurrent windows
+      // on the same ID would race and cross-contaminate the metrics.
+      const inSample = await runWindow(startDate, splitDate);
+      const outOfSample = await runWindow(splitDate, endDate);
       return { inSample, outOfSample };
     } catch (err) {
       logger.warn(
@@ -771,21 +773,44 @@ class StrategyLearningEngine extends EventEmitter {
     }
   }
 
-  /** Build the PaperStats input expected by evaluatePaperGate. */
+  /**
+   * Build the PaperStats input expected by evaluatePaperGate.
+   *
+   * rolling20TradeMaxDrawdown is a true peak-to-trough drawdown over
+   * the cumulative-PnL curve of the last 20 trades, normalised by the
+   * sum of margin committed across those trades. The previous
+   * implementation computed net-return-over-margin, which is a
+   * different metric — Sourcery flagged the semantic mismatch.
+   */
   private async buildPaperStats(s: StrategyRecord): Promise<PaperStats> {
     const recent = await this.loadRecentTradeOutcomes(s.strategyId, 20);
+
     const largestSingleLossPct = recent.reduce((worst, t) => {
       if (t.realisedPnl >= 0 || t.marginCommitted <= 0) return worst;
       const lossPct = Math.abs(t.realisedPnl) / t.marginCommitted;
       return Math.max(worst, lossPct);
     }, 0);
-    const rolling20DD = recent.reduce((acc, t) => acc + t.realisedPnl, 0) /
-      Math.max(1, recent.reduce((acc, t) => acc + Math.abs(t.marginCommitted), 0));
+
+    // Peak-to-trough drawdown along the cumulative equity curve.
+    let equity = 0;
+    let peak = 0;
+    let maxDrawdownAbs = 0;
+    let totalMargin = 0;
+    for (const t of recent) {
+      equity += t.realisedPnl;
+      totalMargin += Math.abs(t.marginCommitted);
+      if (equity > peak) peak = equity;
+      const drawdown = peak - equity;
+      if (drawdown > maxDrawdownAbs) maxDrawdownAbs = drawdown;
+    }
+    const rolling20TradeMaxDrawdown =
+      totalMargin > 0 ? maxDrawdownAbs / totalMargin : 0;
+
     return {
       totalTrades: s.paperTrades ?? 0,
       cumulativePnl: safeNum(s.paperPnl),
       largestSingleLossPct,
-      rolling20TradeMaxDrawdown: Math.max(0, -rolling20DD),
+      rolling20TradeMaxDrawdown,
       profitablePaperTrades: recent.filter((t) => t.realisedPnl > 0).length,
     };
   }

@@ -117,12 +117,19 @@ class MonitoringService {
   private pipelineHeartbeats: Map<PipelineStage, PipelineHeartbeat> = new Map();
   /** Count of consecutive SLE generations with zero passing strategies. Reset on any pass. */
   private generationsSinceLastPass = 0;
-  /** Most recent generation outcome (for snapshot UIs). */
+  /** Most recent generation outcome (pass or fail) — for snapshot UIs. */
   private lastGenerationOutcome: {
     at: Date;
     passed: number;
     total: number;
   } | null = null;
+  /**
+   * Timestamp of the last generation that produced ≥1 passing
+   * strategy. Distinct from lastGenerationOutcome.at (which updates
+   * every cycle regardless of outcome). Used by the backtest-stall
+   * alert to surface "how long since we last saw a pass?".
+   */
+  private lastPassAt: Date | null = null;
 
   /**
    * Log an error
@@ -588,6 +595,7 @@ class MonitoringService {
     this.lastGenerationOutcome = { at, passed, total };
     if (passed > 0) {
       this.generationsSinceLastPass = 0;
+      this.lastPassAt = at;
     } else {
       this.generationsSinceLastPass += 1;
     }
@@ -601,6 +609,11 @@ class MonitoringService {
   /** Most recent generation outcome snapshot for UI / status endpoints. */
   getLastGenerationOutcome(): { at: Date; passed: number; total: number } | null {
     return this.lastGenerationOutcome;
+  }
+
+  /** Timestamp of the last generation that produced ≥1 passing strategy, or null. */
+  getLastPassAt(): Date | null {
+    return this.lastPassAt;
   }
 
   getBacktestStallThreshold(): number {
@@ -654,6 +667,7 @@ class MonitoringService {
     this.pipelineHeartbeats = new Map();
     this.generationsSinceLastPass = 0;
     this.lastGenerationOutcome = null;
+    this.lastPassAt = null;
   }
 }
 

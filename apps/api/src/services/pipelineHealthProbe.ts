@@ -97,8 +97,11 @@ async function runProbeTick(now: Date = new Date()): Promise<void> {
     // threshold trips.
     const consecutive = monitoringService.getGenerationsSinceLastPass();
     if (consecutive >= monitoringService.getBacktestStallThreshold()) {
-      const lastPass = monitoringService.getLastGenerationOutcome();
-      alertingService.alertBacktestStall(consecutive, lastPass?.at ?? null);
+      // getLastPassAt only advances on generations that produced ≥1
+      // pass — distinct from lastGenerationOutcome.at (which moves
+      // every cycle). This surfaces the actual "how long since we saw
+      // a pass?" duration to the alerting pipeline.
+      alertingService.alertBacktestStall(consecutive, monitoringService.getLastPassAt());
     }
 
     if (!(await shouldEvaluateTradesFloor(now))) return;
