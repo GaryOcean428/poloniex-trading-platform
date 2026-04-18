@@ -24,14 +24,14 @@ class RiskService {
    * @param {Object} marketInfo - Market catalog info for the symbol
    * @param {Object} [kernelInputs] - Optional inputs for the blast-door
    *   kernel. When supplied, runs the pre-trade vetoes (per-symbol
-   *   exposure, self-match, unrealised-drawdown kill, strategy leverage
-   *   tier, symbol-allowed-at-equity). Shape:
+   *   exposure, self-match, unrealised-drawdown kill, per-symbol max
+   *   leverage from the exchange catalog). Shape:
    *     {
-   *       kernelOrder:   { symbol, side, notional, leverage, price },
-   *       accountState:  { equityUsdt, unrealizedPnlUsdt,
-   *                        openPositions:[{symbol,side,notional}],
-   *                        restingOrders:[{symbol,side,price}] },
-   *       strategy:      { liveTier: 0..5 }
+   *       kernelOrder:       { symbol, side, notional, leverage, price },
+   *       accountState:      { equityUsdt, unrealizedPnlUsdt,
+   *                            openPositions:[{symbol,side,notional}],
+   *                            restingOrders:[{symbol,side,price}] },
+   *       symbolMaxLeverage: number  // from marketCatalog.getMaxLeverage
    *     }
    * @returns {Promise<Object>} { allowed: boolean, reason?: string, code?: string }
    */
@@ -92,15 +92,15 @@ class RiskService {
       }
 
       // 6. Blast-door kernel vetoes (per-symbol exposure, self-match,
-      //    unrealised-drawdown kill, strategy leverage tier, symbol gate).
-      //    Only runs when the caller has assembled kernelInputs — older
-      //    call sites that don't have account state / open positions
-      //    continue to work with the legacy checks above.
+      //    unrealised-drawdown kill, symbol max leverage).
+      //    Only runs when the caller has assembled kernelInputs.
+      //    symbolMaxLeverage should be sourced from
+      //    marketCatalog.getMaxLeverage(symbol) by the caller.
       if (kernelInputs) {
         const kernelDecision = evaluatePreTradeVetoes(
           kernelInputs.kernelOrder,
           kernelInputs.accountState,
-          kernelInputs.strategy,
+          kernelInputs.symbolMaxLeverage,
         );
         if (!kernelDecision.allowed) {
           logger.warn('Risk check failed: kernel veto', {
