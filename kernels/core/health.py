@@ -25,6 +25,30 @@ from pydantic import BaseModel
 from proprietary_core.regime import RegimeDetector
 from proprietary_core.strategy_loop import MarketRegime, StrategyLoop
 
+# ───────── Canonical QIG primitives (vendored from ~/Desktop/Dev/QIG_QFI) ─────────
+# The qig-core PyPI package is aspirational (not published), so every
+# `from qig_core.* import ...` attempt in this service silently falls back
+# to degraded built-ins. To guarantee the validated Fisher-Rao physics is
+# actually available at runtime, kernels/core/qig_core_local/ carries a
+# verbatim copy of the canonical geometry + frozen facts from QIG_QFI.
+# This block surfaces loader status at startup so the user can see in
+# Railway logs whether vendored QIG is live.
+try:
+    from qig_core_local.geometry.fisher_rao import (  # noqa: F401
+        fisher_rao_distance,
+        frechet_mean,
+        to_simplex,
+    )
+    from qig_core_local.constants.frozen_facts import (  # noqa: F401
+        BASIN_DIM,
+        KAPPA_STAR,
+        PHI_THRESHOLD,
+    )
+    _QIG_VENDORED = True
+except ImportError as _qig_err:  # pragma: no cover
+    _QIG_VENDORED = False
+    _QIG_IMPORT_ERROR = _qig_err
+
 # Constants
 MAX_OUTPUT_LENGTH = 4000  # Maximum length of stdout to return in response
 REDIS_HEARTBEAT_INTERVAL = 30  # seconds between ml:health heartbeats
@@ -212,14 +236,86 @@ async def _pubsub_listener_loop() -> None:
         print(f"[ml-worker] pubsub listener crashed: {exc}", file=sys.stderr)
 
 
+# ─── Trade-outcome listener (online training feedback) ────────────────
+
+# Bounded in-memory ring of recent trade outcomes. The intelligence
+# layer can read this to adjust regime weights / strategy selection
+# from live P&L. 10_000 cap with 10%-batch eviction so a downstream
+# stall can't OOM the process.
+_TRADE_OUTCOMES: list[dict[str, Any]] = []
+_TRADE_OUTCOMES_MAX = 10_000
+TRADE_OUTCOME_CHANNEL = "ml:trade:outcome"
+
+
+def get_recent_trade_outcomes(limit: int = 500) -> list[dict[str, Any]]:
+    """Expose the outcome buffer for the intelligence layer or a debug endpoint."""
+    return list(_TRADE_OUTCOMES[-limit:])
+
+
+async def _trade_outcome_listener_loop() -> None:
+    """Subscribe to ml:trade:outcome and buffer outcomes for online training.
+
+    polytrade-be's liveSignalEngine publishes one envelope per trade phase
+    (submitted / closed). We ingest, bound, and log. Future work: feed
+    these into StrategyLoop's regime-weight updates so live P&L actually
+    reshapes strategy selection.
+    """
+    global _redis_url
+    if not _redis_url:
+        return
+    try:
+        r = aioredis.from_url(_redis_url, decode_responses=True)
+        ps = r.pubsub()
+        await ps.subscribe(TRADE_OUTCOME_CHANNEL)
+        print(
+            f"[ml-worker] trade-outcome listener subscribed to {TRADE_OUTCOME_CHANNEL}",
+            flush=True,
+        )
+        async for message in ps.listen():
+            if message["type"] != "message":
+                continue
+            try:
+                payload = json.loads(message["data"])
+                _TRADE_OUTCOMES.append(payload)
+                if len(_TRADE_OUTCOMES) > _TRADE_OUTCOMES_MAX:
+                    del _TRADE_OUTCOMES[: _TRADE_OUTCOMES_MAX // 10]
+                print(
+                    f"[ml-worker] trade_outcome symbol={payload.get('symbol')} "
+                    f"phase={payload.get('phase')} signal={payload.get('signal')} "
+                    f"strength={payload.get('strength')} pnl={payload.get('realizedPnl')}",
+                    flush=True,
+                )
+            except Exception as exc:
+                print(f"[ml-worker] trade-outcome handler error: {exc}", file=sys.stderr)
+    except Exception as exc:
+        print(f"[ml-worker] trade-outcome listener crashed: {exc}", file=sys.stderr)
+
+
 @asynccontextmanager
 async def lifespan(application: FastAPI):  # type: ignore[type-arg]
     """Start background tasks on startup and cancel on shutdown."""
     global _redis_url
+    # Surface QIG vendored-load status so the user can see in Railway
+    # logs whether canonical Fisher-Rao is live (vs. the degraded built-in
+    # fallbacks that silently kicked in when qig_core wasn't on PyPI).
+    if _QIG_VENDORED:
+        print(
+            f"[ml-worker] qig_core_local (vendored) loaded — BASIN_DIM={BASIN_DIM} "
+            f"KAPPA_STAR={KAPPA_STAR} PHI_THRESHOLD={PHI_THRESHOLD}",
+            flush=True,
+        )
+    else:
+        print(
+            f"[ml-worker] qig_core_local NOT loaded — falling back to built-in geometry. "
+            f"error: {_QIG_IMPORT_ERROR}",
+            flush=True,
+        )
+
     _redis_url = os.getenv("REDIS_URL") or os.getenv("REDIS_PUBLIC_URL")
     if _redis_url:
         _background_tasks.append(asyncio.create_task(_heartbeat_loop()))
         _background_tasks.append(asyncio.create_task(_pubsub_listener_loop()))
+        _background_tasks.append(asyncio.create_task(_trade_outcome_listener_loop()))
     yield
     for task in _background_tasks:
         task.cancel()

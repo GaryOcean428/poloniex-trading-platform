@@ -93,12 +93,17 @@ const AutonomousAgentDashboard: React.FC = () => {
     timestamp: string;
   } | null>(null);
   const [riskAppetite, setRiskAppetite] = usePersistedState<'conservative' | 'balanced' | 'aggressive'>('agent_risk_appetite', 'balanced');
-  // Execution Mode is a SAFETY OVERRIDE, not a pipeline stage. The pipeline
-  // (generated → backtest → paper → live) runs internally under 'auto'.
-  // 'paper_only' blocks live promotion regardless of strategy performance
-  // (debug/trust-building). 'pause' halts all new orders at every stage.
-  // Legacy value 'paper' is coerced to 'paper_only' for back-compat with
-  // any persisted localStorage entries from before this migration.
+  // Execution Mode is a SAFETY OVERRIDE enforced by the server-side risk
+  // kernel. The UI fetches it on mount and pushes updates via PUT; the
+  // cache in localStorage is just an optimistic UI value so the buttons
+  // feel responsive before the PUT completes.
+  //
+  // 'auto'        — pipeline decides; live trading permitted
+  // 'paper_only'  — kernel blocks all live orders; paper continues
+  // 'pause'       — kernel blocks ALL new orders at every stage
+  //
+  // Legacy localStorage values ('paper' | 'backtest' | 'live') coerce to
+  // the nearest valid server-side mode.
   const [executionModeRaw, setExecutionModeRaw] = usePersistedState<'auto' | 'paper_only' | 'pause' | 'backtest' | 'paper' | 'live'>('agent_execution_mode', 'auto');
   const executionMode: 'auto' | 'paper_only' | 'pause' =
     executionModeRaw === 'paper' || executionModeRaw === 'paper_only'
@@ -106,7 +111,55 @@ const AutonomousAgentDashboard: React.FC = () => {
       : executionModeRaw === 'pause'
         ? 'pause'
         : 'auto';  // 'backtest' | 'live' | 'auto' all normalise to 'auto'
-  const setExecutionMode = (v: 'auto' | 'paper_only' | 'pause') => setExecutionModeRaw(v);
+  const [executionModeUpdating, setExecutionModeUpdating] = useState(false);
+
+  /** PUT the new mode to the server and reflect the returned value. */
+  const setExecutionMode = useCallback(async (v: 'auto' | 'paper_only' | 'pause') => {
+    // Optimistic local update so the button highlight is instant.
+    setExecutionModeRaw(v);
+    setExecutionModeUpdating(true);
+    try {
+      const token = getAccessToken();
+      const response = await axios.put(
+        `${API_BASE_URL}/api/agent/execution-mode`,
+        { mode: v, reason: 'ui_toggle' },
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      if (response.data?.success && response.data?.mode) {
+        setExecutionModeRaw(response.data.mode);
+      }
+    } catch (err) {
+      // Revert the optimistic update if the server rejected.
+      console.error('Failed to update execution mode', err);
+      // Best-effort refetch of the authoritative value.
+      try {
+        const token = getAccessToken();
+        const response = await axios.get(`${API_BASE_URL}/api/agent/execution-mode`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (response.data?.mode) setExecutionModeRaw(response.data.mode);
+      } catch {
+        // swallow; UI will show the last good value
+      }
+    } finally {
+      setExecutionModeUpdating(false);
+    }
+  }, [setExecutionModeRaw]);
+
+  /** Pull server-authoritative mode on mount so UI matches reality. */
+  useEffect(() => {
+    (async () => {
+      try {
+        const token = getAccessToken();
+        const response = await axios.get(`${API_BASE_URL}/api/agent/execution-mode`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (response.data?.mode) setExecutionModeRaw(response.data.mode);
+      } catch (err) {
+        // Endpoint may be missing in older backends; keep localStorage value.
+      }
+    })();
+  }, [setExecutionModeRaw]);
   const [performanceMode, setPerformanceMode] = useState<'all' | 'backtest' | 'paper' | 'live'>('all');
   const [agentEvents, setAgentEvents] = useState<Array<{
     id: string;
@@ -605,7 +658,7 @@ const AutonomousAgentDashboard: React.FC = () => {
               ] as const).map(opt => (
                 <button key={opt.value}
                   onClick={() => setExecutionMode(opt.value)}
-                  disabled={agentStatus?.status === 'running'}
+                  disabled={executionModeUpdating}
                   className={`p-3 rounded-lg border-2 text-left transition-all disabled:opacity-50 ${
                     executionMode === opt.value ? opt.bgClass : 'border-gray-200 hover:border-gray-300'
                   }`}>
