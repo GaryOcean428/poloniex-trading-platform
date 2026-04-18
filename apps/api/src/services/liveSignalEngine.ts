@@ -194,12 +194,12 @@ export class LiveSignalEngine extends EventEmitter {
   private async reconcileClosedTrades(): Promise<void> {
     try {
       const result = await pool.query(
-        `SELECT symbol, reason, pnl, closed_at, exit_price, entry_price, quantity
+        `SELECT symbol, reason, pnl, exit_time, exit_price, entry_price, quantity
            FROM autonomous_trades
           WHERE status = 'closed'
-            AND closed_at > $1
+            AND exit_time > $1
             AND reason LIKE 'live_signal|%'
-          ORDER BY closed_at ASC
+          ORDER BY exit_time ASC
           LIMIT 100`,
         [this.lastReconcileAt],
       );
@@ -211,7 +211,7 @@ export class LiveSignalEngine extends EventEmitter {
         const signalKey = keyMatch?.[1];
         const regime = regimeMatch?.[1];
         const pnl = Number(row.pnl ?? 0);
-        const closedAt = row.closed_at ? new Date(row.closed_at as string) : new Date();
+        const closedAt = row.exit_time ? new Date(row.exit_time as string) : new Date();
 
         if (signalKey && regime) {
           await this.recordTradeOutcome(signalKey, regime, pnl);
@@ -316,9 +316,11 @@ export class LiveSignalEngine extends EventEmitter {
     const order = this.buildOrder(symbol, signal, currentPrice, atr);
     if (!order) return;
 
-    // 4. Fetch live account state for the kernel.
-    const accountState = await this.loadAccountState(symbol);
-    if (!accountState) return;
+    // 4. Fetch live account state for the kernel (also returns
+    //    userId + credentials so we can submit the order downstream
+    //    without another DB round-trip).
+    const accountCtx = await this.loadAccountContext(symbol);
+    if (!accountCtx) return;
     const symbolMaxLeverage = (await getMaxLeverage(symbol)) ?? order.leverage;
     const mode = await getCurrentExecutionMode();
     const context: KernelContext = {
@@ -328,7 +330,7 @@ export class LiveSignalEngine extends EventEmitter {
     };
 
     // 5. Blast-door kernel vetoes.
-    const decision = evaluatePreTradeVetoes(order, accountState, context);
+    const decision = evaluatePreTradeVetoes(order, accountCtx.state, context);
     if (!decision.allowed) {
       logger.info('[LiveSignal] kernel veto', {
         symbol,
@@ -345,7 +347,7 @@ export class LiveSignalEngine extends EventEmitter {
 
     // 6. Submit. The existing poloniexFuturesService handles the
     //    actual exchange call; ml-worker never touches the exchange.
-    await this.submitOrder(order, signal, atr);
+    await this.submitOrder(order, signal, atr, accountCtx.userId, accountCtx.credentials);
   }
 
   private normaliseSignal(s: unknown): 'BUY' | 'SELL' | 'HOLD' {
@@ -494,11 +496,21 @@ export class LiveSignalEngine extends EventEmitter {
   }
 
   /**
-   * Assemble the KernelAccountState the kernel needs. Uses the
-   * authenticated Poloniex account (there's exactly one on this
-   * platform at the moment).
+   * Assemble the KernelAccountState the kernel needs + return the
+   * operating userId and credentials so the caller can also submit
+   * orders and record DB rows without re-loading credentials.
+   *
+   * Uses the authenticated Poloniex account (there's exactly one on
+   * this platform at the moment).
    */
-  private async loadAccountState(symbol: string): Promise<KernelAccountState | null> {
+  private async loadAccountContext(symbol: string): Promise<
+    | {
+        state: KernelAccountState;
+        userId: string;
+        credentials: { apiKey: string; apiSecret: string; passphrase?: string };
+      }
+    | null
+  > {
     try {
       const userRow = await pool.query(
         `SELECT user_id FROM user_api_credentials WHERE exchange = 'poloniex' LIMIT 1`,
@@ -523,10 +535,14 @@ export class LiveSignalEngine extends EventEmitter {
       })).filter((p) => p.symbol.length > 0);
 
       return {
-        equityUsdt,
-        unrealizedPnlUsdt,
-        openPositions,
-        restingOrders: [],  // Not needed for market orders; self-match prevention still runs
+        state: {
+          equityUsdt,
+          unrealizedPnlUsdt,
+          openPositions,
+          restingOrders: [],  // Not needed for market orders; self-match prevention still runs
+        },
+        userId,
+        credentials,
       };
     } catch (err) {
       logger.warn(`[LiveSignal] ${symbol} — failed to load account state`, {
@@ -537,12 +553,26 @@ export class LiveSignalEngine extends EventEmitter {
   }
 
   /**
-   * Write the order to the DB + hand off to the exchange adapter +
-   * publish an outcome event for ml-worker training. Intentionally
-   * does NOT block on the fill — the order-status reconciler picks
-   * up fills/partials asynchronously.
+   * Place the order on the exchange, persist it to the DB, and
+   * publish an outcome event for ml-worker training. Sequence:
+   *
+   *   1. Set per-symbol leverage on the exchange.
+   *   2. Submit the market order (size in base units).
+   *   3. Best-effort place reduce-only exchange-side SL + TP.
+   *   4. INSERT the row into autonomous_trades with the returned
+   *      orderId so positionManagement can close against it later.
+   *
+   * Fail-soft: an exchange error is logged and recorded to the
+   * outcome event; we still record a DB row only on successful
+   * placement so the reconciler doesn't see phantom opens.
    */
-  private async submitOrder(order: KernelOrder, signal: LiveSignalTick, atr: number): Promise<void> {
+  private async submitOrder(
+    order: KernelOrder,
+    signal: LiveSignalTick,
+    atr: number,
+    userId: string,
+    credentials: { apiKey: string; apiSecret: string; passphrase?: string },
+  ): Promise<void> {
     const quantity = order.notional / order.price;
     const stopLoss = order.side === 'long'
       ? order.price - atr * ATR_STOP_MULTIPLIER
@@ -550,6 +580,8 @@ export class LiveSignalEngine extends EventEmitter {
     const takeProfit = order.side === 'long'
       ? order.price + atr * ATR_TAKE_PROFIT_MULTIPLIER
       : order.price - atr * ATR_TAKE_PROFIT_MULTIPLIER;
+    const exchangeSide = order.side === 'long' ? 'buy' : 'sell';
+    const closeSide = order.side === 'long' ? 'sell' : 'buy';
 
     logger.info('[LiveSignal] submitting order', {
       order,
@@ -560,39 +592,121 @@ export class LiveSignalEngine extends EventEmitter {
       signal,
     });
 
+    // 1. Leverage — non-fatal if exchange rejects; order still proceeds.
     try {
-      // Encode bandit key + regime into the reason column so the
-      // close-hook can look them up cheaply (no schema change needed
-      // for this iteration). Format: live_signal|key=...|regime=...|src=...
+      await poloniexFuturesService.setLeverage(credentials, order.symbol, order.leverage);
+    } catch (levErr) {
+      logger.warn('[LiveSignal] setLeverage failed (non-fatal)', {
+        symbol: order.symbol,
+        leverage: order.leverage,
+        err: levErr instanceof Error ? levErr.message : String(levErr),
+      });
+    }
+
+    // 2. Market order — this is the point of no return.
+    let orderId: string | undefined;
+    try {
+      const exchangeOrder = await poloniexFuturesService.placeOrder(credentials, {
+        symbol: order.symbol,
+        side: exchangeSide,
+        type: 'market',
+        size: quantity,
+      });
+      orderId = exchangeOrder?.orderId ?? exchangeOrder?.id;
+      logger.info('[LiveSignal] exchange order placed', {
+        orderId,
+        symbol: order.symbol,
+        side: exchangeSide,
+        size: quantity,
+      });
+    } catch (err) {
+      logger.error('[LiveSignal] exchange placeOrder failed', {
+        err: err instanceof Error ? err.message : String(err),
+      });
+      await this.publishOutcomeEvent({
+        symbol: order.symbol,
+        phase: 'rejected',
+        reason: err instanceof Error ? err.message : String(err),
+      });
+      return;
+    }
+
+    // 3. Best-effort exchange-side SL + TP (reduce-only). Failures
+    //    are logged but don't roll back — the server-side managed
+    //    loop handles SL/TP as a fallback.
+    if (stopLoss > 0 && Number.isFinite(stopLoss)) {
+      try {
+        await poloniexFuturesService.placeOrder(credentials, {
+          symbol: order.symbol,
+          side: closeSide,
+          type: 'stop_market',
+          size: quantity,
+          stopPrice: stopLoss,
+          stopPriceType: 'TP',
+          reduceOnly: true,
+        });
+      } catch (slErr) {
+        logger.warn('[LiveSignal] SL placement failed (non-fatal)', {
+          err: slErr instanceof Error ? slErr.message : String(slErr),
+        });
+      }
+    }
+    if (takeProfit > 0 && Number.isFinite(takeProfit)) {
+      try {
+        await poloniexFuturesService.placeOrder(credentials, {
+          symbol: order.symbol,
+          side: closeSide,
+          type: 'stop_market',
+          size: quantity,
+          stopPrice: takeProfit,
+          stopPriceType: 'TP',
+          reduceOnly: true,
+        });
+      } catch (tpErr) {
+        logger.warn('[LiveSignal] TP placement failed (non-fatal)', {
+          err: tpErr instanceof Error ? tpErr.message : String(tpErr),
+        });
+      }
+    }
+
+    // 4. Persist. Encode bandit key + regime into `reason` so the
+    //    close-hook can look them up cheaply (no schema change).
+    //    Format: live_signal|key=...|regime=...|src=...
+    try {
       const reasonEncoded =
         `live_signal|key=${signal.signalKey}|regime=${signal.regime}|src=${signal.reason}`;
       await pool.query(
         `INSERT INTO autonomous_trades
-           (symbol, side, entry_price, quantity, stop_loss, take_profit,
-            confidence, reason, paper_trade, engine_version)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+           (user_id, symbol, side, entry_price, quantity, leverage,
+            stop_loss, take_profit, confidence, reason, order_id,
+            paper_trade, engine_version)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
         [
+          userId,
           order.symbol,
-          order.side === 'long' ? 'buy' : 'sell',
+          exchangeSide,
           order.price,
           quantity,
+          order.leverage,
           stopLoss,
           takeProfit,
           signal.effectiveStrength,
           reasonEncoded,
+          orderId ?? null,
           false,
           getEngineVersion(),
         ],
       );
       monitoringService.recordTradeEvent('live');
     } catch (err) {
-      logger.error('[LiveSignal] DB insert failed', {
+      logger.error('[LiveSignal] DB insert failed after exchange placement', {
+        orderId,
         err: err instanceof Error ? err.message : String(err),
       });
     }
 
-    // Fire-and-forget outcome event (initial — fills will be reported
-    // by the reconciler when they land).
+    // Fire-and-forget outcome event (fills will be reported by the
+    // reconciler when they land).
     await this.publishOutcomeEvent({
       symbol: order.symbol,
       signal: signal.signal,
@@ -601,6 +715,7 @@ export class LiveSignalEngine extends EventEmitter {
       phase: 'submitted',
       price: order.price,
       quantity,
+      orderId,
     });
   }
 

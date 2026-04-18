@@ -122,9 +122,13 @@ router.post('/stop', authenticateToken, async (req: Request, res: Response) => {
   try {
     const userId = (req.user?.id || req.user?.userId)?.toString();
     if (!userId) return res.status(401).json({ success: false, error: 'User ID not found in token' });
-    // Only stop the per-user trader — SLE is global and must not be stopped per-user
+    // Global halt: flip execution mode to 'pause' so the risk kernel
+    // vetoes every order submission (liveSignalEngine, fullyAutonomousTrader,
+    // paperTradingService all cascade through this one switch).
+    const operator = (req.user?.email || req.user?.id || req.user?.userId || 'header_stop').toString();
+    await setExecutionMode('pause', operator, 'Header Stop button');
     try { await fullyAutonomousTrader.disableAutonomousTrading(userId); } catch { /* may not be enabled */ }
-    res.json({ success: true, message: 'Agent stopped successfully' });
+    res.json({ success: true, message: 'Agent stopped successfully', mode: 'pause' });
   } catch (error: unknown) {
     logger.error('Error stopping agent:', error);
     res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'Failed to stop agent' });
@@ -135,9 +139,11 @@ router.post('/pause', authenticateToken, async (req: Request, res: Response) => 
   try {
     const userId = (req.user?.id || req.user?.userId)?.toString();
     if (!userId) return res.status(401).json({ success: false, error: 'User ID not found in token' });
-    // Only disable per-user trader — SLE is global and must not be stopped per-user
-    try { await fullyAutonomousTrader.disableAutonomousTrading(userId); } catch { /* may not be enabled */ }
-    res.json({ success: true, message: 'Agent paused successfully' });
+    // Global halt — same as /stop but keeps the per-user trader state
+    // alive so it resumes cleanly on /resume.
+    const operator = (req.user?.email || req.user?.id || req.user?.userId || 'header_pause').toString();
+    await setExecutionMode('pause', operator, 'Header Pause button');
+    res.json({ success: true, message: 'Agent paused successfully', mode: 'pause' });
   } catch (error: unknown) {
     logger.error('Error pausing agent:', error);
     res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'Failed to pause agent' });
@@ -148,8 +154,10 @@ router.post('/resume', authenticateToken, async (req: Request, res: Response) =>
   try {
     const userId = (req.user?.id || req.user?.userId)?.toString();
     if (!userId) return res.status(401).json({ success: false, error: 'User ID not found in token' });
+    const operator = (req.user?.email || req.user?.id || req.user?.userId || 'header_resume').toString();
+    await setExecutionMode('auto', operator, 'Header Resume button');
     await strategyLearningEngine.start();
-    res.json({ success: true, message: 'Agent resumed successfully' });
+    res.json({ success: true, message: 'Agent resumed successfully', mode: 'auto' });
   } catch (error: unknown) {
     logger.error('Error resuming agent:', error);
     res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'Failed to resume agent' });
@@ -162,11 +170,22 @@ router.get('/status', authenticateToken, async (req: Request, res: Response) => 
     if (!userId) return res.status(401).json({ success: false, error: 'User ID not found in token' });
     const sleStatus = await strategyLearningEngine.getEngineStatus();
     const traderStatus = await fullyAutonomousTrader.getStatus(userId);
+    const execMode = await getExecutionModeRecord();
+    // Resolve a single user-facing status. When execution mode is
+    // paused, surface that as the dominant state even if the SLE
+    // generation loop happens to be mid-tick — this is what the
+    // header Pause/Stop buttons advertise.
+    const running = traderStatus.isRunning || sleStatus.isRunning;
+    let status: 'running' | 'paused' | 'stopped';
+    if (execMode?.mode === 'pause') status = 'paused';
+    else if (running) status = 'running';
+    else status = 'stopped';
     res.json({
       success: true,
       status: {
         id: userId,
-        status: traderStatus.isRunning || sleStatus.isRunning ? 'running' : 'stopped',
+        status,
+        executionMode: execMode?.mode ?? null,
         startedAt: null,
         sle: sleStatus,
         trader: traderStatus

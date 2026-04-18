@@ -1194,8 +1194,8 @@ class FullyAutonomousTrader extends EventEmitter {
         );
         for (const symbol of inDbNotExchange) {
           await pool.query(
-            `UPDATE autonomous_trades SET status = 'closed', closed_at = NOW(),
-             close_reason = 'reconciliation: position not found on exchange'
+            `UPDATE autonomous_trades SET status = 'closed', exit_time = NOW(),
+             exit_reason = 'reconciliation: position not found on exchange'
              WHERE user_id = $1 AND symbol = $2 AND status = 'open' AND paper_trade = false`,
             [userId, symbol]
           );
@@ -1311,7 +1311,7 @@ class FullyAutonomousTrader extends EventEmitter {
       try {
         await pool.query(
           `UPDATE autonomous_trades
-           SET status = 'closed', close_reason = $3, closed_at = NOW(),
+           SET status = 'closed', exit_reason = $3, exit_time = NOW(),
                exit_price = $4, pnl = $5
            WHERE user_id = $1 AND symbol = $2 AND status = 'open'`,
           [userId, symbol, reason, exitPrice, pnl]
@@ -1320,7 +1320,7 @@ class FullyAutonomousTrader extends EventEmitter {
         // Columns may not exist yet — fall back to basic update
         await pool.query(
           `UPDATE autonomous_trades
-           SET status = 'closed', close_reason = $3, closed_at = NOW()
+           SET status = 'closed', exit_reason = $3, exit_time = NOW()
            WHERE user_id = $1 AND symbol = $2 AND status = 'open'`,
           [userId, symbol, reason]
         );
@@ -1348,7 +1348,7 @@ class FullyAutonomousTrader extends EventEmitter {
       // Update all open trades in DB
       await pool.query(
         `UPDATE autonomous_trades
-         SET status = 'closed', close_reason = 'trading_disabled', closed_at = NOW()
+         SET status = 'closed', exit_reason = 'trading_disabled', exit_time = NOW()
          WHERE user_id = $1 AND status = 'open'`,
         [userId]
       );
