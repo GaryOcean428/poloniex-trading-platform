@@ -30,11 +30,19 @@ interface PerformanceData {
 interface PerformanceAnalyticsProps {
   agentStatus?: string;
   timeRange?: '24h' | '7d' | '30d' | 'all';
+  /**
+   * Execution-mode filter from the parent's Performance Mode tabs.
+   * The backend accepts 'paper' | 'live' (derived from order_id prefix)
+   * and treats anything else as "all modes combined". Passing this
+   * makes the tabs functional rather than decorative.
+   */
+  performanceMode?: 'all' | 'backtest' | 'paper' | 'live';
 }
 
-const PerformanceAnalytics: React.FC<PerformanceAnalyticsProps> = ({ 
+const PerformanceAnalytics: React.FC<PerformanceAnalyticsProps> = ({
   agentStatus,
-  timeRange = '7d'
+  timeRange = '7d',
+  performanceMode = 'all'
 }) => {
   const [data, setData] = useState<PerformanceData | null>(null);
   const [selectedRange, setSelectedRange] = useState(timeRange);
@@ -42,7 +50,7 @@ const PerformanceAnalytics: React.FC<PerformanceAnalyticsProps> = ({
 
   useEffect(() => {
     fetchPerformanceData();
-    
+
     if (agentStatus === 'running') {
       const interval = setInterval(() => {
         fetchPerformanceData();
@@ -50,13 +58,20 @@ const PerformanceAnalytics: React.FC<PerformanceAnalyticsProps> = ({
 
       return () => clearInterval(interval);
     }
-  }, [agentStatus, selectedRange]);
+  }, [agentStatus, selectedRange, performanceMode]);
 
   const fetchPerformanceData = async () => {
     try {
       const token = getAccessToken();
+      // The backend supports mode=paper|live; any other value (incl.
+      // 'all' and 'backtest') yields combined results — backtest data
+      // lives in a separate table served by BacktestResultsVisualization.
+      const modeParam =
+        performanceMode === 'paper' || performanceMode === 'live'
+          ? `&mode=${performanceMode}`
+          : '';
       const response = await axios.get(
-        `${API_BASE_URL}/api/agent/performance?range=${selectedRange}`,
+        `${API_BASE_URL}/api/agent/performance?range=${selectedRange}${modeParam}`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
       
