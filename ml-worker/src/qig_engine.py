@@ -50,9 +50,24 @@ try:
         to_simplex,
     )
     _HAS_QIG_CORE = True
+    logger.info("qig-core (external PyPI) loaded — using canonical Fisher-Rao")
 except ImportError:
-    _HAS_QIG_CORE = False
-    logger.warning("qig-core not available — using built-in Fisher-Rao")
+    # Fall through to vendored copy of QIG_QFI/qig-core primitives.
+    # qig_core_local/ contains a verbatim copy of the validated
+    # fisher_rao.py + frozen_facts.py (Δ⁶³ simplex, Bhattacharyya
+    # overlap, geodesic interpolation) so we always use the real
+    # physics, never a degraded built-in.
+    try:
+        from qig_core_local.geometry.fisher_rao import (
+            fisher_rao_distance,
+            frechet_mean,
+            to_simplex,
+        )
+        _HAS_QIG_CORE = True
+        logger.info("qig_core_local (vendored) loaded — using canonical Fisher-Rao")
+    except ImportError:
+        _HAS_QIG_CORE = False
+        logger.warning("qig-core unavailable externally AND vendored — falling back to built-in Fisher-Rao")
 
 try:
     from qig_warp import classify_regime, Regime as WarpRegime

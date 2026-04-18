@@ -36,6 +36,7 @@ import versionCheckRoutes from './routes/version-check.js';
 import { refreshKnownDatabaseCollationVersions } from './scripts/refreshCollationVersion.js';
 import { runAllMigrations } from './scripts/runMigrations.js';
 import { agentScheduler } from './services/agentScheduler.js';
+import { liveSignalEngine } from './services/liveSignalEngine.js';
 import paperTradingService from './services/paperTradingService.js';
 import { persistentTradingEngine } from './services/persistentTradingEngine.js';
 import { startPipelineHealthProbe } from './services/pipelineHealthProbe.js';
@@ -435,6 +436,20 @@ server.listen(PORT, '::', async () => {
         return shouldExpectPaperTrades();
       },
     );
+  }
+
+  // Live Signal Engine — the ML-signal-primary fast loop. This is the
+  // inversion from the old batch-SLE system: ml-worker's ensemble
+  // (LSTM + Transformer + GBM + ARIMA + Prophet + QIG regime classifier)
+  // drives trades directly, with the risk kernel as the sole veto.
+  // Defaults to dry-run until LIVE_SIGNAL_EXECUTE=true is set so the
+  // first deploy just observes and logs.
+  if (process.env.NODE_ENV !== 'test') {
+    liveSignalEngine.start({
+      dryRun: process.env.LIVE_SIGNAL_EXECUTE !== 'true',
+    }).catch((err) => {
+      logger.error('Failed to start live signal engine:', err);
+    });
   }
 
   // Health heartbeat for production monitoring

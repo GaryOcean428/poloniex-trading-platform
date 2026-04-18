@@ -157,7 +157,12 @@ const PAPER_MIN_CONFIDENCE = 60;
 const FITNESS_DIVERGENCE_THRESHOLD = 0.20;
 const QIG_FRAGILITY_WARNING_THRESHOLD = 0.6;
 const PHASE_CLOCK_KILL_CYCLES = 5;
-const LOOP_INTERVAL_MS = 30 * 60 * 1000;
+// Dropped from 30 min → 5 min per user directive ("why so infrequent").
+// The SLE is now secondary (sandbox for genome experimentation); live
+// trading runs through liveSignalEngine at 60s cadence. Keep a 5-min
+// backstop here so genome exploration still advances between live-
+// signal ticks if the user wants to switch back.
+const LOOP_INTERVAL_MS = 5 * 60 * 1000;
 
 export function bridgeLawWeight(tfMinutes: number): number {
   return Math.pow(60 / tfMinutes, BRIDGE_LAW_EXPONENT);

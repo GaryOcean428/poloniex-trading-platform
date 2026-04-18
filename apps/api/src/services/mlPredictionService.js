@@ -359,6 +359,40 @@ class MLPredictionService {
   }
 
   /**
+   * Publish a trade-outcome event on the ml:trade:outcome channel
+   * so the ml-worker can feed it into online training. Fire-and-forget
+   * by design — the ml-worker side is responsible for persistence and
+   * back-pressure; a Redis outage must not block the trading loop.
+   *
+   * Payload shape (loose by design; ml-worker treats unknown keys as
+   * metadata):
+   *   {
+   *     symbol, signal, strength, reason,
+   *     phase: 'submitted' | 'filled' | 'closed',
+   *     entryPrice, exitPrice?, quantity, realizedPnl?,
+   *     engineVersion, ts
+   *   }
+   */
+  async publishTradeOutcome(payload) {
+    const envelope = {
+      ...payload,
+      ts: payload.ts ?? Date.now(),
+    };
+    try {
+      const pub = await this._getPublisher();
+      if (!pub) {
+        logger.debug('publishTradeOutcome skipped — Redis publisher unavailable', { envelope });
+        return false;
+      }
+      await pub.publish('ml:trade:outcome', JSON.stringify(envelope));
+      return true;
+    } catch (err) {
+      logger.warn('publishTradeOutcome failed (fail-soft):', err.message);
+      return false;
+    }
+  }
+
+  /**
    * Check if ML worker service is available.
    * Checks Redis heartbeat first, then falls back to an HTTP health probe.
    * @returns {Promise<boolean>}
