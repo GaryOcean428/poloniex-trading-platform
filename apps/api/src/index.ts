@@ -40,6 +40,7 @@ import paperTradingService from './services/paperTradingService.js';
 import { persistentTradingEngine } from './services/persistentTradingEngine.js';
 import { startPipelineHealthProbe } from './services/pipelineHealthProbe.js';
 import { stateReconciliationService } from './services/stateReconciliationService.js';
+import { shouldExpectPaperTrades } from './services/tradingStateProbe.js';
 import { logger } from './utils/logger.js';
 
 // Import environment configuration (dotenv.config() is called inside env.ts)
@@ -421,13 +422,18 @@ server.listen(PORT, '::', async () => {
 
   // Pipeline health probe: converts silent failures into pagable alerts.
   // Catches the "paper mode selected but zero paper trades" bug class
-  // within minutes instead of weeks. The predicate wires the trades-
-  // floor alert to the trading engine's running state so intentional
-  // pauses don't page.
+  // within minutes instead of weeks. The predicate gates the trades-
+  // floor alert on BOTH the engine being up AND the pipeline having
+  // recently produced (or currently having) paper-eligible strategies —
+  // this suppresses the startup false-positive where alerting fires
+  // just because no strategy has cleared backtest yet.
   if (process.env.NODE_ENV !== 'test') {
     startPipelineHealthProbe(
       undefined,
-      () => persistentTradingEngine.isEngineRunning(),
+      async () => {
+        if (!persistentTradingEngine.isEngineRunning()) return false;
+        return shouldExpectPaperTrades();
+      },
     );
   }
 

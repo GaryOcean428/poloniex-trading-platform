@@ -41,6 +41,30 @@ describe('monitoringService pipeline heartbeat', () => {
     expect(paperEntry!.silentMs).toBeGreaterThanOrEqual(10 * 60_000);
   });
 
+  it('does NOT flag never-seen stages as silent (prevents boot-time false positives)', () => {
+    // Reset ensures no stage has ticked yet.
+    monitoringService.reset();
+    // Probe runs immediately on boot — nothing should appear silent.
+    const silent = monitoringService.getSilentPipelineStages(new Date('2026-04-18T12:00:00Z'));
+    expect(silent).toEqual([]);
+  });
+
+  it('flags only seen-then-silent stages, not never-seen ones', () => {
+    monitoringService.reset();
+    const t0 = new Date('2026-04-17T12:00:00Z');
+    vi.setSystemTime(t0);
+    // Paper ticks once, generator never ticks.
+    monitoringService.recordPipelineHeartbeat('paper');
+
+    const t1 = new Date(t0.getTime() + 20 * 60_000);
+    const silent = monitoringService.getSilentPipelineStages(t1);
+    // Paper (seen, now silent) is flagged.
+    expect(silent.find((s) => s.stage === 'paper')).toBeDefined();
+    // Generator (never seen) is NOT flagged — the production alert-
+    // storm bug we fixed.
+    expect(silent.find((s) => s.stage === 'generator')).toBeUndefined();
+  });
+
   it('counts trades in the rolling 60-minute ring', () => {
     const base = new Date('2026-04-17T12:00:00Z');
     monitoringService.recordTradeEvent('paper', base);

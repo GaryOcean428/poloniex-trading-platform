@@ -33,6 +33,7 @@ import { logger } from '../utils/logger.js';
 import { apiCredentialsService } from './apiCredentialsService.js';
 import backtestingEngine from './backtestingEngine.js';
 import confidenceScoringService from './confidenceScoringService.js';
+import { monitoringService } from './monitoringService.js';
 import parallelStrategyRunner from './parallelStrategyRunner.js';
 import poloniexFuturesService from './poloniexFuturesService.js';
 import {
@@ -217,11 +218,13 @@ class StrategyLearningEngine extends EventEmitter {
   private async runOneCycle(): Promise<void> {
     this.generationCount++;
     logger.info(`[SLE] === Generation ${this.generationCount} ===`);
+    monitoringService.recordPipelineHeartbeat('generator');
     await this.fetchActualBalance();
     parallelStrategyRunner.setBaseCapital(this.cachedBalance);
     const regime = await this.detectCurrentRegime();
     await this.checkQIGRegimeTransition();
     const newStrategies = await this.generateVariants(regime);
+    monitoringService.recordPipelineHeartbeat('backtest');
     const backtestPassed = await this.backtestVariants(newStrategies);
     for (const s of backtestPassed) { await this.promoteToParallelPaper(s); }
     await this.evaluatePaperSessions();

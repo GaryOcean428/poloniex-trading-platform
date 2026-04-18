@@ -14,6 +14,7 @@ import { pool } from '../db/connection.js';
 import { getEngineVersion } from '../utils/engineVersion.js';
 import { logger } from '../utils/logger.js';
 import { validateMarketData } from '../utils/marketDataValidator.js';
+import { monitoringService } from './monitoringService.js';
 import { apiCredentialsService } from './apiCredentialsService.js';
 import backtestingEngine from './backtestingEngine.js';
 import { getPrecisions } from './marketCatalog.js';
@@ -844,6 +845,12 @@ class FullyAutonomousTrader extends EventEmitter {
     // Execute top signal
     const signal = signals[0];
 
+    // Heartbeat the appropriate stage so the silent-failure probe
+    // sees the dispatch loop as alive. Paper-mode signals feed the
+    // 'paper' stage (paperTradingService also heartbeats when it
+    // actually executes); live signals feed 'live'.
+    monitoringService.recordPipelineHeartbeat(config.paperTrading ? 'paper' : 'live');
+
     try {
       logger.info(`${config.paperTrading ? '[PAPER]' : '[LIVE]'} Executing signal for ${signal.symbol}: ${signal.action} at ${signal.entryPrice}`);
 
@@ -1082,6 +1089,9 @@ class FullyAutonomousTrader extends EventEmitter {
       });
 
       this.emit('trade_executed', { userId, signal, orderId, paperTrading: config.paperTrading });
+      // Feed the trades-per-hour rolling ring — this is the signal
+      // the silent-floor alert uses to verify the pipeline is alive.
+      monitoringService.recordTradeEvent(config.paperTrading ? 'paper' : 'live');
       logger.info(`${config.paperTrading ? '[PAPER]' : '[LIVE]'} Trade executed for user ${userId}: ${signal.symbol} ${signal.side}`);
 
     } catch (error) {
