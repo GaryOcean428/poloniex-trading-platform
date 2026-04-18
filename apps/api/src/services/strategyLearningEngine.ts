@@ -355,23 +355,33 @@ class StrategyLearningEngine extends EventEmitter {
     const variants: StrategyRecord[] = [];
 
     // Inject anchor strategies first — they're the cold-start cure.
-    // An anchor is re-queued whenever it's NOT currently active in
-    // any stage (backtesting/paper_trading/recommended/live). That
-    // lets a failed anchor be re-tested the next cycle with the
-    // most recent data (market conditions may have shifted).
+    // An anchor is re-queued whenever it's NOT currently already
+    // somewhere in the pipeline. The "active" filter includes
+    // recalibrating too: those are being re-tested by their own
+    // recalibration path, so re-injecting them would cause a double-
+    // backtest in the same cycle. We only re-queue anchors whose
+    // lifecycle has ended (killed / retired / absent).
+    const activeStatuses: StrategyStatus[] = [
+      'backtesting',
+      'paper_trading',
+      'recalibrating',
+      'recommended',
+      'live',
+    ];
     const activeIds = new Set(
       Array.from(this.strategies.values())
-        .filter((s) =>
-          s.status === 'backtesting' ||
-          s.status === 'paper_trading' ||
-          s.status === 'recalibrating' ||
-          s.status === 'recommended' ||
-          s.status === 'live',
-        )
+        .filter((s) => activeStatuses.includes(s.status))
         .map((s) => s.strategyId),
     );
-    for (const anchor of getAnchorsForRegime(regime)) {
-      if (activeIds.has(anchor.id)) continue;
+    // Cap anchors at the total batch size (6). If the anchor list ever
+    // grows beyond 6, the generator stops being a "6 variants per cycle"
+    // system, which would break the budgeting assumptions in
+    // parallelStrategyRunner and in the backtest-stall alert math.
+    const ANCHORS_PER_CYCLE_CAP = 6;
+    const anchorsToInject = getAnchorsForRegime(regime)
+      .filter((a) => !activeIds.has(a.id))
+      .slice(0, ANCHORS_PER_CYCLE_CAP);
+    for (const anchor of anchorsToInject) {
       variants.push(this.anchorToStrategyRecord(anchor, regime));
     }
 
