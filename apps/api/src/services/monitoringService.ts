@@ -70,12 +70,26 @@ interface PipelineHeartbeat {
   ringMinute: number;              // minute-of-epoch at ringHead
 }
 
-/** Expected max silence per stage before a liveness alert fires. */
+/**
+ * Expected max silence per stage before a liveness alert fires.
+ *
+ * The SLE main loop runs every 30 minutes — each cycle emits one
+ * generator + one backtest heartbeat, then the loop sleeps. Thresholds
+ * must exceed that interval or the alert fires every cycle gap (false
+ * positive we observed in production as alertCount:12+ on generator).
+ *
+ * Set to 45 min = 30 min cycle + 15 min buffer for straggling cycles
+ * (heavy backtest, DB contention, etc.). A genuine stall — SLE loop
+ * dies or hangs — shows up as >>45 min silence.
+ *
+ * Paper / live / reconciliation tick on their own faster cadence
+ * (market events / 5-min reconcile loop) so tighter thresholds stay.
+ */
 const STAGE_SILENT_THRESHOLD_MS: Record<PipelineStage, number> = {
-  generator: 15 * 60_000,          // new strategies at least every 15 min
-  backtest: 10 * 60_000,           // backtest loop ticks more frequently
-  paper: 10 * 60_000,              // signal generation cycle
-  live: 10 * 60_000,               // live trade cycle
+  generator: 45 * 60_000,          // 30-min cycle + 15-min buffer
+  backtest: 45 * 60_000,           // same — both tick once per cycle
+  paper: 10 * 60_000,              // paper loop runs on market ticks
+  live: 10 * 60_000,               // live order path runs on signals
   reconciliation: 10 * 60_000,     // reconciler runs every 5 min, 2x buffer
 };
 

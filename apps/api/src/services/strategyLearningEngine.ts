@@ -767,6 +767,19 @@ class StrategyLearningEngine extends EventEmitter {
    * Fetch the strategy's most-recent trade outcomes for the rolling-
    * drawdown check. Returns an empty array if unavailable — the
    * demotion policy treats "not enough data" as "don't demote."
+   *
+   * Schema notes:
+   *   - paper_trading_positions uses realized_pnl (American), not
+   *     realised_pnl. Keep the SQL canonical; the TypeScript side
+   *     uses the British spelling by convention.
+   *   - strategy_name lives on paper_trading_sessions, not the
+   *     position rows — JOIN through.
+   *   - There is no margin_committed column. Position notional
+   *     (size × entry_price) is used as the denominator for the
+   *     drawdown-ratio calculation. That's gross exposure; for the
+   *     demotion policy's "sum(pnl) / sum(committed)" ratio this is
+   *     the right number.
+   *   - exit_time is the closed timestamp, not closed_at.
    */
   private async loadRecentTradeOutcomes(
     strategyId: string,
@@ -774,16 +787,19 @@ class StrategyLearningEngine extends EventEmitter {
   ): Promise<TradeOutcome[]> {
     try {
       const result = await query(
-        `SELECT realised_pnl, margin_committed
-           FROM paper_trading_positions
-          WHERE strategy_name = $1 AND status = 'closed'
-          ORDER BY closed_at DESC
+        `SELECT p.realized_pnl AS realized_pnl,
+                (p.size * p.entry_price) AS notional
+           FROM paper_trading_positions p
+           JOIN paper_trading_sessions s ON p.session_id = s.id
+          WHERE s.strategy_name = $1
+            AND p.status = 'closed'
+          ORDER BY p.exit_time DESC
           LIMIT $2`,
         [strategyId, limit],
       );
       return ((result.rows as any[]) ?? []).map((r) => ({
-        realisedPnl: safeNum(r.realised_pnl),
-        marginCommitted: Math.max(0.0001, safeNum(r.margin_committed, 1)),
+        realisedPnl: safeNum(r.realized_pnl),
+        marginCommitted: Math.max(0.0001, safeNum(r.notional, 1)),
       })).reverse(); // oldest first so rolling window sees trailing trades
     } catch (err) {
       logger.debug('[SLE] loadRecentTradeOutcomes failed (fail-soft):', err);
