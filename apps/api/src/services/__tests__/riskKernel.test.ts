@@ -1,31 +1,29 @@
 /**
- * Commit 4 — Risk Kernel tests.
+ * Risk kernel tests — four pre-trade vetoes.
  *
- * Every veto is exercised with both an allowing input and a blocking
- * input so a future refactor can't silently disable a guard. The red
- * team called this the "blast door" — these tests are the door's
- * hinges.
+ * The kernel is pure sync — callers (riskService) pre-load
+ * symbolMaxLeverage from the exchange catalog and pass it in. Tests
+ * exercise allow/block/edge for every veto and the composer's priority
+ * ordering.
  */
 
 import { describe, expect, it } from 'vitest';
 import {
-  DEFAULT_UNPROVEN_LEVERAGE_CAP,
-  MIN_EQUITY_FOR_ETH_USDT,
   PER_SYMBOL_EXPOSURE_MAX_MULTIPLIER,
   UNREALIZED_DRAWDOWN_KILL_THRESHOLD,
+  checkExecutionMode,
   checkPerSymbolExposure,
   checkSelfMatch,
-  checkStrategyLeverageCap,
-  checkSymbolAllowedAtEquity,
+  checkSymbolMaxLeverage,
   checkUnrealizedDrawdown,
   evaluatePreTradeVetoes,
   type KernelAccountState,
+  type KernelContext,
   type KernelOrder,
-  type KernelStrategyMeta,
 } from '../riskKernel.js';
 
 const btcOrder: KernelOrder = {
-  symbol: 'BTC-USDT',
+  symbol: 'BTC_USDT_PERP',
   side: 'long',
   notional: 10,
   leverage: 3,
@@ -39,17 +37,21 @@ const emptyAccount: KernelAccountState = {
   restingOrders: [],
 };
 
-const provenStrategy: KernelStrategyMeta = { liveTier: 3 };
-const unprovenStrategy: KernelStrategyMeta = { liveTier: 0 };
+// Catalog-realistic maxLeverage values: BTC/ETH 100x, mid-caps 50x,
+// smaller alts as low as 20x. Kernel accepts whatever the caller passes.
+const BTC_MAX_LEV = 100;
+const SOL_MAX_LEV = 50;
+
+const autoContext: KernelContext = { isLive: false, mode: 'auto', symbolMaxLeverage: BTC_MAX_LEV };
+const liveAutoContext: KernelContext = { isLive: true, mode: 'auto', symbolMaxLeverage: BTC_MAX_LEV };
 
 describe('checkPerSymbolExposure', () => {
   it('allows an order when total notional stays under the 1.5× cap', () => {
     const state: KernelAccountState = {
       ...emptyAccount,
       equityUsdt: 100,
-      openPositions: [{ symbol: 'BTC-USDT', side: 'long', notional: 100 }],
+      openPositions: [{ symbol: 'BTC_USDT_PERP', side: 'long', notional: 100 }],
     };
-    // Cap = 150. Existing 100 + new 10 = 110 → allowed.
     expect(checkPerSymbolExposure({ ...btcOrder, notional: 10 }, state).allowed).toBe(true);
   });
 
@@ -57,24 +59,38 @@ describe('checkPerSymbolExposure', () => {
     const state: KernelAccountState = {
       ...emptyAccount,
       equityUsdt: 100,
-      openPositions: [{ symbol: 'BTC-USDT', side: 'long', notional: 145 }],
+      openPositions: [{ symbol: 'BTC_USDT_PERP', side: 'long', notional: 145 }],
     };
     const decision = checkPerSymbolExposure({ ...btcOrder, notional: 10 }, state);
     expect(decision.allowed).toBe(false);
     expect(decision.code).toBe('per_symbol_exposure_cap');
   });
 
+  it('sums long and short exposure on the same symbol — both add to the cap', () => {
+    // A short position still counts toward gross exposure; the kernel
+    // doesn't net longs against shorts because a -2% candle moves both
+    // against margin (via maintenance-margin stack).
+    const state: KernelAccountState = {
+      ...emptyAccount,
+      equityUsdt: 100,
+      openPositions: [
+        { symbol: 'BTC_USDT_PERP', side: 'long', notional: 80 },
+        { symbol: 'BTC_USDT_PERP', side: 'short', notional: 60 },
+      ],
+    };
+    expect(checkPerSymbolExposure({ ...btcOrder, notional: 20 }, state).allowed).toBe(false);
+  });
+
   it('ignores positions on a different symbol', () => {
     const state: KernelAccountState = {
       ...emptyAccount,
       equityUsdt: 100,
-      openPositions: [{ symbol: 'ETH-USDT', side: 'long', notional: 500 }],
+      openPositions: [{ symbol: 'ETH_USDT_PERP', side: 'long', notional: 500 }],
     };
     expect(checkPerSymbolExposure(btcOrder, state).allowed).toBe(true);
   });
 
-  it(`uses the ${PER_SYMBOL_EXPOSURE_MAX_MULTIPLIER}× multiplier`, () => {
-    // Constant must not drift below 1.5× without a deliberate change + test update.
+  it(`constant check: ${PER_SYMBOL_EXPOSURE_MAX_MULTIPLIER}× multiplier`, () => {
     expect(PER_SYMBOL_EXPOSURE_MAX_MULTIPLIER).toBeGreaterThanOrEqual(1.5);
   });
 });
@@ -84,10 +100,10 @@ describe('checkSelfMatch', () => {
     expect(checkSelfMatch(btcOrder, emptyAccount).allowed).toBe(true);
   });
 
-  it('blocks a buy that would lift the account\'s own sell', () => {
+  it("blocks a buy that would lift the account's own sell", () => {
     const state: KernelAccountState = {
       ...emptyAccount,
-      restingOrders: [{ symbol: 'BTC-USDT', side: 'sell', price: 69_900 }],
+      restingOrders: [{ symbol: 'BTC_USDT_PERP', side: 'sell', price: 69_900 }],
     };
     const decision = checkSelfMatch({ ...btcOrder, side: 'buy', price: 70_000 }, state);
     expect(decision.allowed).toBe(false);
@@ -95,10 +111,10 @@ describe('checkSelfMatch', () => {
     expect(decision.reason).toContain('s.1041B');
   });
 
-  it('blocks a sell that would hit the account\'s own buy', () => {
+  it("blocks a sell that would hit the account's own buy (short entry crossing own long-exit)", () => {
     const state: KernelAccountState = {
       ...emptyAccount,
-      restingOrders: [{ symbol: 'BTC-USDT', side: 'buy', price: 70_100 }],
+      restingOrders: [{ symbol: 'BTC_USDT_PERP', side: 'buy', price: 70_100 }],
     };
     const decision = checkSelfMatch({ ...btcOrder, side: 'sell', price: 70_000 }, state);
     expect(decision.allowed).toBe(false);
@@ -107,7 +123,7 @@ describe('checkSelfMatch', () => {
   it('ignores resting orders on a different symbol', () => {
     const state: KernelAccountState = {
       ...emptyAccount,
-      restingOrders: [{ symbol: 'ETH-USDT', side: 'sell', price: 69_000 }],
+      restingOrders: [{ symbol: 'ETH_USDT_PERP', side: 'sell', price: 69_000 }],
     };
     expect(checkSelfMatch(btcOrder, state).allowed).toBe(true);
   });
@@ -142,88 +158,109 @@ describe('checkUnrealizedDrawdown', () => {
   });
 });
 
-describe('checkStrategyLeverageCap', () => {
-  it('allows 3× for a proven tier-3 strategy', () => {
-    expect(
-      checkStrategyLeverageCap({ ...btcOrder, leverage: 3 }, provenStrategy).allowed,
-    ).toBe(true);
+describe('checkSymbolMaxLeverage', () => {
+  it('allows BTC 100× when catalog says 100', () => {
+    expect(checkSymbolMaxLeverage({ ...btcOrder, leverage: 100 }, BTC_MAX_LEV).allowed).toBe(true);
   });
 
-  it('blocks 20× on a brand-new strategy (tier 0)', () => {
-    const decision = checkStrategyLeverageCap(
-      { ...btcOrder, leverage: 20 },
-      unprovenStrategy,
+  it('allows BTC 3× (typical conservative tier)', () => {
+    expect(checkSymbolMaxLeverage({ ...btcOrder, leverage: 3 }, BTC_MAX_LEV).allowed).toBe(true);
+  });
+
+  it('blocks SOL 75× when catalog caps at 50', () => {
+    const decision = checkSymbolMaxLeverage(
+      { ...btcOrder, symbol: 'SOL_USDT_PERP', leverage: 75 },
+      SOL_MAX_LEV,
     );
     expect(decision.allowed).toBe(false);
-    expect(decision.code).toBe('strategy_leverage_cap');
+    expect(decision.code).toBe('symbol_max_leverage');
   });
 
-  it(`falls back to ${DEFAULT_UNPROVEN_LEVERAGE_CAP}× for unrecognised tiers`, () => {
-    const decision = checkStrategyLeverageCap(
-      { ...btcOrder, leverage: 10 },
-      { liveTier: 99 },
-    );
+  it('blocks BTC 150× even though the request is higher than any catalog value', () => {
+    const decision = checkSymbolMaxLeverage({ ...btcOrder, leverage: 150 }, BTC_MAX_LEV);
     expect(decision.allowed).toBe(false);
   });
 });
 
-describe('checkSymbolAllowedAtEquity', () => {
-  it('allows BTC at any equity level', () => {
-    const state = { ...emptyAccount, equityUsdt: 5 };
-    expect(checkSymbolAllowedAtEquity(btcOrder, state).allowed).toBe(true);
+describe('checkExecutionMode', () => {
+  it('allows any order under auto mode', () => {
+    expect(checkExecutionMode(true, 'auto').allowed).toBe(true);
+    expect(checkExecutionMode(false, 'auto').allowed).toBe(true);
   });
 
-  it(`blocks non-BTC symbols when equity < $${MIN_EQUITY_FOR_ETH_USDT}`, () => {
-    const ethOrder: KernelOrder = { ...btcOrder, symbol: 'ETH-USDT' };
-    const state = { ...emptyAccount, equityUsdt: 27.15 };
-    const decision = checkSymbolAllowedAtEquity(ethOrder, state);
+  it('blocks all orders under pause mode', () => {
+    expect(checkExecutionMode(true, 'pause').code).toBe('execution_mode_paused');
+    expect(checkExecutionMode(false, 'pause').code).toBe('execution_mode_paused');
+  });
+
+  it('blocks live orders under paper_only mode', () => {
+    const decision = checkExecutionMode(true, 'paper_only');
     expect(decision.allowed).toBe(false);
-    expect(decision.code).toBe('symbol_not_allowed_at_equity');
+    expect(decision.code).toBe('execution_mode_paper_only_blocks_live');
   });
 
-  it('allows ETH once equity clears the threshold', () => {
-    const ethOrder: KernelOrder = { ...btcOrder, symbol: 'ETH-USDT' };
-    const state = { ...emptyAccount, equityUsdt: 150 };
-    expect(checkSymbolAllowedAtEquity(ethOrder, state).allowed).toBe(true);
-  });
-
-  it('recognises common BTC symbol aliases', () => {
-    const state = { ...emptyAccount, equityUsdt: 10 };
-    for (const alias of ['BTC-USDT', 'BTCUSDT', 'BTC_USDT', 'BTC-USDT-PERP']) {
-      expect(checkSymbolAllowedAtEquity({ ...btcOrder, symbol: alias }, state).allowed).toBe(true);
-    }
+  it('allows paper orders under paper_only mode', () => {
+    expect(checkExecutionMode(false, 'paper_only').allowed).toBe(true);
   });
 });
 
 describe('evaluatePreTradeVetoes composition', () => {
-  it('passes a clean order', () => {
-    expect(evaluatePreTradeVetoes(btcOrder, emptyAccount, provenStrategy).allowed).toBe(true);
+  it('passes a clean paper order', () => {
+    expect(evaluatePreTradeVetoes(btcOrder, emptyAccount, autoContext).allowed).toBe(true);
+  });
+
+  it('passes a clean live order under auto mode', () => {
+    expect(evaluatePreTradeVetoes(btcOrder, emptyAccount, liveAutoContext).allowed).toBe(true);
+  });
+
+  it('passes a clean short order', () => {
+    expect(
+      evaluatePreTradeVetoes({ ...btcOrder, side: 'short' }, emptyAccount, autoContext).allowed,
+    ).toBe(true);
   });
 
   it('surfaces the unrealised-drawdown veto before any other', () => {
     const state: KernelAccountState = {
       ...emptyAccount,
       unrealizedPnlUsdt: -20,
-      // Also has a self-match opportunity AND exposure breach, but
-      // drawdown kill-switch fires first per documented priority.
-      openPositions: [{ symbol: 'BTC-USDT', side: 'long', notional: 500 }],
-      restingOrders: [{ symbol: 'BTC-USDT', side: 'sell', price: 69_000 }],
+      openPositions: [{ symbol: 'BTC_USDT_PERP', side: 'long', notional: 500 }],
+      restingOrders: [{ symbol: 'BTC_USDT_PERP', side: 'sell', price: 69_000 }],
     };
-    const decision = evaluatePreTradeVetoes(
-      { ...btcOrder, side: 'buy' },
-      state,
-      provenStrategy,
-    );
+    const decision = evaluatePreTradeVetoes({ ...btcOrder, side: 'buy' }, state, autoContext);
     expect(decision.allowed).toBe(false);
     expect(decision.code).toBe('unrealized_drawdown_kill_switch');
   });
 
+  it('execution-mode pause blocks even a clean order', () => {
+    const decision = evaluatePreTradeVetoes(btcOrder, emptyAccount, {
+      ...autoContext,
+      mode: 'pause',
+    });
+    expect(decision.code).toBe('execution_mode_paused');
+  });
+
+  it('execution-mode paper_only blocks a live order', () => {
+    const decision = evaluatePreTradeVetoes(btcOrder, emptyAccount, {
+      ...liveAutoContext,
+      mode: 'paper_only',
+    });
+    expect(decision.code).toBe('execution_mode_paper_only_blocks_live');
+  });
+
+  it('execution-mode paper_only allows a paper order', () => {
+    const decision = evaluatePreTradeVetoes(btcOrder, emptyAccount, {
+      ...autoContext,
+      mode: 'paper_only',
+    });
+    expect(decision.allowed).toBe(true);
+  });
+
   it('falls through to leverage cap when earlier checks pass', () => {
     const decision = evaluatePreTradeVetoes(
-      { ...btcOrder, leverage: 20 },
+      { ...btcOrder, symbol: 'SOL_USDT_PERP', leverage: 75 },
       emptyAccount,
-      unprovenStrategy,
+      { isLive: false, mode: 'auto', symbolMaxLeverage: SOL_MAX_LEV },
     );
-    expect(decision.code).toBe('strategy_leverage_cap');
+    expect(decision.code).toBe('symbol_max_leverage');
   });
 });

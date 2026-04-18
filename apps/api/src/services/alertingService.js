@@ -19,6 +19,7 @@ class AlertingService {
       lossBreaches: 0,
       pipelineSilent: 0,
       tradeFloorBreaches: 0,
+      backtestStalls: 0,
     };
 
     // Dedupe repeated silent alerts for the same stage in the same window.
@@ -269,6 +270,45 @@ class AlertingService {
   }
 
   /**
+   * Backtest-stall alert: the generator has produced N consecutive
+   * generations with zero strategies clearing the backtest gate.
+   * This is the Option-C blind spot — the trades-floor alert
+   * correctly stays silent because nothing is expected to paper-trade
+   * yet, but that's only acceptable if the generator is CAPABLE of
+   * producing passes. Persistent zero-pass is a generator / gate
+   * calibration problem that must page loudly.
+   *
+   * 30-min cooldown matches the other silent-class alerts.
+   *
+   * @param {number} consecutiveGenerations - how many zero-pass generations in a row
+   * @param {Date|null} lastPassAt - timestamp of the most recent pass, if any
+   */
+  alertBacktestStall(consecutiveGenerations, lastPassAt) {
+    const now = Date.now();
+    const key = 'backtest_stall';
+    const lastAlert = this._silentAlertCooldown[key] ?? 0;
+    if (now - lastAlert < this._silentAlertCooldownMs) {
+      return false;
+    }
+    this._silentAlertCooldown[key] = now;
+    this.alertCounts.backtestStalls++;
+
+    logger.error('ALERT: Backtest stall — generator producing no passing strategies', {
+      alertType: 'backtest_stall',
+      consecutiveGenerations,
+      lastPassAt: lastPassAt ? lastPassAt.toISOString() : null,
+      alertCount: this.alertCounts.backtestStalls,
+      timestamp: new Date().toISOString(),
+    });
+
+    this.logCriticalAlert('Backtest Stall', {
+      consecutiveGenerations,
+      lastPassAt: lastPassAt ? lastPassAt.toISOString() : null,
+    });
+    return true;
+  }
+
+  /**
    * Get alert statistics
    * @returns {Object} Alert counts and stats
    */
@@ -290,6 +330,7 @@ class AlertingService {
       lossBreaches: 0,
       pipelineSilent: 0,
       tradeFloorBreaches: 0,
+      backtestStalls: 0,
     };
     this._silentAlertCooldown = {};
     logger.info('Alert counts reset', { timestamp: new Date().toISOString() });

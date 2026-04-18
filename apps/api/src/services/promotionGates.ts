@@ -47,16 +47,21 @@ export interface GateDecision {
 }
 
 // ───────── Backtest → Paper thresholds ─────────
-export const BACKTEST_MIN_TRADES = 200;
-export const BACKTEST_MIN_SHARPE = 1.0;
-export const BACKTEST_MIN_SORTINO = 1.5;
-export const BACKTEST_MIN_CALMAR = 2.0;
-export const BACKTEST_MIN_PROFIT_FACTOR = 1.5;
-export const BACKTEST_MAX_DRAWDOWN = 0.15;      // 15%
-export const OOS_MIN_PROFIT_FACTOR = 1.3;
+// Tuned for 15m-bar scalps on 30-90 day windows where "reliably prove"
+// (user's phrase) means enough trades to be not-random but not so many
+// that the first pass is blocked for weeks. Statistician's 200-trade
+// ideal relaxed to 30 as a practical floor; the multi-metric stack
+// (Sharpe + Sortino + Calmar + PF + DD) keeps survivorship bias in check.
+export const BACKTEST_MIN_TRADES = 30;
+export const BACKTEST_MIN_SHARPE = 0.8;
+export const BACKTEST_MIN_SORTINO = 1.2;
+export const BACKTEST_MIN_CALMAR = 1.5;
+export const BACKTEST_MIN_PROFIT_FACTOR = 1.3;
+export const BACKTEST_MAX_DRAWDOWN = 0.20;      // aligned with aggressive-mode 20% DD ceiling
+export const OOS_MIN_PROFIT_FACTOR = 1.1;
 
 // ───────── Paper → Live thresholds ─────────
-export const PAPER_MIN_TRADES = 20;
+export const PAPER_MIN_TRADES = 10;
 export const PAPER_MAX_SINGLE_LOSS = 0.05;      // 5% of margin
 export const PAPER_MAX_ROLLING_DD = 0.10;       // 10%
 

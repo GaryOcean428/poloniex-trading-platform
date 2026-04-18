@@ -56,10 +56,13 @@ export interface KernelAccountState {
   restingOrders: KernelRestingOrder[];
 }
 
-export interface KernelStrategyMeta {
-  /** 0 = paper/recalibrating, 1-5 = live tiers with increasing capital cap */
-  liveTier: number;
-}
+/**
+ * Per-symbol max leverage sourced from the Poloniex catalog
+ * (see marketCatalog.getMaxLeverage). BTC/ETH perps advertise up to
+ * 100x; alts vary between 20x and 75x. Callers look up the value for
+ * the order's symbol and pass it in — kernel stays pure sync.
+ */
+export type SymbolMaxLeverage = number;
 
 export interface KernelDecision {
   allowed: boolean;
@@ -71,27 +74,15 @@ export type KernelVetoCode =
   | 'per_symbol_exposure_cap'
   | 'self_match'
   | 'unrealized_drawdown_kill_switch'
-  | 'strategy_leverage_cap'
-  | 'symbol_not_allowed_at_equity';
+  | 'symbol_max_leverage'
+  | 'execution_mode_paused'
+  | 'execution_mode_paper_only_blocks_live';
 
-// ───────── Thresholds (shipping defaults) ─────────
+export type ExecutionMode = 'auto' | 'paper_only' | 'pause';
+
+// ───────── Thresholds ─────────
 export const PER_SYMBOL_EXPOSURE_MAX_MULTIPLIER = 1.5;           // 1.5× equity per symbol
 export const UNREALIZED_DRAWDOWN_KILL_THRESHOLD = -0.15;         // −15% of equity
-export const STRATEGY_LEVERAGE_CAP_BY_TIER: Record<number, number> = {
-  0: 1,  // paper/recalibrating
-  1: 3,
-  2: 5,
-  3: 10,
-  4: 15,
-  5: 20,
-};
-export const DEFAULT_UNPROVEN_LEVERAGE_CAP = 5;
-export const MIN_EQUITY_FOR_ETH_USDT = 100;
-export const BTC_SYMBOL_ALIASES = ['BTC-USDT', 'BTCUSDT', 'BTC_USDT', 'BTC-USDT-PERP'];
-
-export function isBtcSymbol(symbol: string): boolean {
-  return BTC_SYMBOL_ALIASES.includes(symbol.toUpperCase());
-}
 
 function isLong(side: KernelOrder['side']): boolean {
   return side === 'long' || side === 'buy';
@@ -160,36 +151,56 @@ export function checkUnrealizedDrawdown(
   return { allowed: true };
 }
 
-// ───────── Check 4: Strategy-tier leverage cap ─────────
+// ───────── Check 4: Execution-mode global override ─────────
 
-export function checkStrategyLeverageCap(
-  order: KernelOrder,
-  strategy: KernelStrategyMeta,
+/**
+ * Global operator-controlled safety override. `pause` blocks ALL
+ * orders; `paper_only` blocks live orders but allows paper; `auto`
+ * lets everything through. Read from the agent_execution_mode
+ * singleton table (see executionModeService).
+ */
+export function checkExecutionMode(
+  isLiveOrder: boolean,
+  mode: ExecutionMode,
 ): KernelDecision {
-  const cap =
-    STRATEGY_LEVERAGE_CAP_BY_TIER[strategy.liveTier] ?? DEFAULT_UNPROVEN_LEVERAGE_CAP;
-  if (order.leverage > cap) {
+  if (mode === 'pause') {
     return {
       allowed: false,
-      code: 'strategy_leverage_cap',
-      reason: `Leverage ${order.leverage}× exceeds tier ${strategy.liveTier} cap of ${cap}×. Strategy must earn higher tiers via profitable live trades.`,
+      code: 'execution_mode_paused',
+      reason: 'Execution Mode is Pause — no new orders at any stage.',
+    };
+  }
+  if (mode === 'paper_only' && isLiveOrder) {
+    return {
+      allowed: false,
+      code: 'execution_mode_paper_only_blocks_live',
+      reason: 'Execution Mode is Paper-Only — live order blocked; route to paper instead.',
     };
   }
   return { allowed: true };
 }
 
-// ───────── Check 5: Symbol allowed at current equity ─────────
+// ───────── Check 5: Per-symbol max leverage from exchange catalog ─────────
 
-export function checkSymbolAllowedAtEquity(
+/**
+ * Enforces the exchange's per-symbol maxLeverage (BTC/ETH up to 100×,
+ * alts 20-75×). Callers read `marketCatalog.getMaxLeverage(symbol)`
+ * and pass it in — kernel stays pure sync.
+ *
+ * This is the exchange ceiling; the per-symbol exposure cap (1.5× equity
+ * notional) will typically bind first at tiny account sizes. Example:
+ * at $27 equity, the exposure cap pins a $2 BTC trade at ≤$40.5 notional
+ * regardless of the 100× leverage BTC technically allows.
+ */
+export function checkSymbolMaxLeverage(
   order: KernelOrder,
-  state: KernelAccountState,
+  symbolMaxLeverage: SymbolMaxLeverage,
 ): KernelDecision {
-  if (isBtcSymbol(order.symbol)) return { allowed: true };
-  if (state.equityUsdt < MIN_EQUITY_FOR_ETH_USDT) {
+  if (order.leverage > symbolMaxLeverage) {
     return {
       allowed: false,
-      code: 'symbol_not_allowed_at_equity',
-      reason: `${order.symbol} requires account equity ≥ $${MIN_EQUITY_FOR_ETH_USDT} (current $${state.equityUsdt.toFixed(2)}). ETH perp min contract ~$35 notional — not viable at tiny sizes.`,
+      code: 'symbol_max_leverage',
+      reason: `Leverage ${order.leverage}× exceeds ${order.symbol} exchange max of ${symbolMaxLeverage}×.`,
     };
   }
   return { allowed: true };
@@ -197,30 +208,37 @@ export function checkSymbolAllowedAtEquity(
 
 // ───────── Composer ─────────
 
+export interface KernelContext {
+  /** True for live (real-capital) orders; false for paper-only. */
+  isLive: boolean;
+  /** From agent_execution_mode — global safety override. */
+  mode: ExecutionMode;
+  /** From marketCatalog.getMaxLeverage(symbol) — exchange ceiling. */
+  symbolMaxLeverage: SymbolMaxLeverage;
+}
+
 /**
  * Run all kernel vetoes in priority order. First failure stops the chain
  * and is returned. If all pass, returns { allowed: true }.
  *
  * Priority:
- *   1. Unrealised-drawdown kill-switch (global, highest priority —
- *      blocks even position-flattening orders if we ever route those
- *      through the kernel, which we don't).
- *   2. Self-match (legal compliance).
- *   3. Per-symbol exposure (correlated-stack blast door).
- *   4. Strategy leverage cap (per-strategy earn-your-size gating).
- *   5. Symbol-allowed-at-equity (capital adequacy).
+ *   1. Unrealised-drawdown kill-switch (account-saving).
+ *   2. Execution-mode global override (operator kill-switch).
+ *   3. Self-match (legal compliance, Corporations Act s.1041B).
+ *   4. Per-symbol exposure (correlated-stack blast door).
+ *   5. Symbol max leverage (exchange ceiling).
  */
 export function evaluatePreTradeVetoes(
   order: KernelOrder,
   state: KernelAccountState,
-  strategy: KernelStrategyMeta,
+  context: KernelContext,
 ): KernelDecision {
   const checks: KernelDecision[] = [
     checkUnrealizedDrawdown(state),
+    checkExecutionMode(context.isLive, context.mode),
     checkSelfMatch(order, state),
     checkPerSymbolExposure(order, state),
-    checkStrategyLeverageCap(order, strategy),
-    checkSymbolAllowedAtEquity(order, state),
+    checkSymbolMaxLeverage(order, context.symbolMaxLeverage),
   ];
   for (const d of checks) {
     if (!d.allowed) return d;
