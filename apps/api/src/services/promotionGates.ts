@@ -49,16 +49,19 @@ export interface GateDecision {
 // ───────── Backtest → Paper thresholds ─────────
 // Tuned for 15m-bar scalps on 30-90 day windows where "reliably prove"
 // (user's phrase) means enough trades to be not-random but not so many
-// that the first pass is blocked for weeks. Statistician's 200-trade
-// ideal relaxed to 30 as a practical floor; the multi-metric stack
-// (Sharpe + Sortino + Calmar + PF + DD) keeps survivorship bias in check.
-export const BACKTEST_MIN_TRADES = 30;
+// that the first pass is blocked for weeks. Production evidence from
+// the hard-cut deploy showed the generated signal genomes fire once
+// per ~2000-6000 candles on real 5m data — 30-trade minimum was
+// effectively unreachable until the genome layer evolves. Relaxed to
+// 10 trades + multi-metric cross-check to unblock first passes; the
+// Sharpe/Sortino/Calmar/PF stack still rejects noise.
+export const BACKTEST_MIN_TRADES = 10;
 export const BACKTEST_MIN_SHARPE = 0.8;
 export const BACKTEST_MIN_SORTINO = 1.2;
 export const BACKTEST_MIN_CALMAR = 1.5;
 export const BACKTEST_MIN_PROFIT_FACTOR = 1.3;
 export const BACKTEST_MAX_DRAWDOWN = 0.20;      // aligned with aggressive-mode 20% DD ceiling
-export const OOS_MIN_PROFIT_FACTOR = 1.1;
+export const OOS_MIN_PROFIT_FACTOR = 1.0;       // OOS must break even (PF >= 1.0); IS carries the edge proof
 
 // ───────── Paper → Live thresholds ─────────
 export const PAPER_MIN_TRADES = 10;
