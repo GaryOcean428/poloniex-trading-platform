@@ -469,6 +469,30 @@ router.get('/strategy/recent', authenticateToken, async (req: Request, res: Resp
 /**
  * GET /api/agent/backtest/results?strategy_id=X&limit=N
  * Returns backtest results, optionally filtered by strategy.
+ *
+ * Unit conventions for columns returned by `SELECT *` from backtest_results
+ * (verified 2026-04-19 against production rows with engine_version set —
+ * see the PnL units canonical form PR):
+ *   - total_return        : PERCENT form (e.g. 0.0248 = 0.0248%). Engine
+ *                           writes `((totalValue - initial) / initial) * 100`.
+ *                           NOTE: canonical going forward is DECIMAL; new
+ *                           rows from backtestingEngine.js now store decimal
+ *                           form. Legacy rows with PERCENT form are fenced
+ *                           off by `engine_version IS NOT NULL` plus the
+ *                           pre-insert validator in backtestingEngine.js.
+ *   - win_rate            : PERCENT form (e.g. 42.86 = 42.86%).
+ *   - profit_factor       : RATIO (e.g. 1.55 = 1.55x gross win / gross loss).
+ *   - max_drawdown        : DOLLARS (absolute drawdown amount — peak-trough).
+ *   - max_drawdown_percent: PERCENT form (e.g. 5.89 = 5.89%).
+ *   - sharpe_ratio        : RATIO (annualised).
+ *   - initial_capital / final_value : DOLLARS.
+ *
+ * Frontend contract: treat `total_return` and `max_drawdown_percent` as
+ * already-percent — do NOT multiply by 100. The `agent_strategies.performance`
+ * JSON served by /api/backtest/pipeline/summary follows a DIFFERENT convention
+ * (decimal) and must be multiplied by 100 at render. This mismatch is the
+ * root cause of the mixed-unit bug fixed in this PR; the engine is being
+ * migrated to decimal so both paths converge.
  */
 router.get('/backtest/results', authenticateToken, async (req: Request, res: Response) => {
   try {
