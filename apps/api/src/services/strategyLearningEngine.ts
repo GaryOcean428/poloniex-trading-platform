@@ -62,6 +62,7 @@ import {
   DEFAULT_BANDIT_COUNTER,
   sampleBestClass,
   type BanditCounter,
+  type LeverageBucket,
   type StrategyClass,
 } from './thompsonBandit.js';
 import {
@@ -984,14 +985,25 @@ class StrategyLearningEngine extends EventEmitter {
    * (class, regime) pairs default to the Beta(1,1) uniform prior.
    * Used by the generator to bias new-from-scratch strategies toward
    * classes that are currently winning.
+   *
+   * Post-migration 030 the table is keyed on
+   * (strategy_class × regime × leverage_bucket). Generator-time class
+   * selection does not know the leverage a future trade will run at,
+   * so we aggregate across buckets here: the generator's job is to
+   * pick a strategy *family* likely to win under this regime, and
+   * summing wins/losses across buckets preserves that signal while
+   * the live-signal bandit handles the per-bucket gating.
    */
   async loadBanditCountersForRegime(regime: MarketRegime): Promise<Map<StrategyClass, BanditCounter>> {
     const out = new Map<StrategyClass, BanditCounter>();
     try {
       const result = await query(
-        `SELECT strategy_class, wins, losses
+        `SELECT strategy_class,
+                SUM(wins)::bigint   AS wins,
+                SUM(losses)::bigint AS losses
            FROM bandit_class_counters
-          WHERE regime = $1`,
+          WHERE regime = $1
+          GROUP BY strategy_class`,
         [regime],
       );
       for (const row of (result.rows as any[]) as Array<Record<string, unknown>>) {
@@ -1016,27 +1028,32 @@ class StrategyLearningEngine extends EventEmitter {
    * Update a Thompson-bandit counter after a terminal trade outcome.
    * Upserts into bandit_class_counters so the posterior persists
    * across restarts. Fail-soft.
+   *
+   * Callers must supply the leverage bucket the trade executed at
+   * (low/mid/high) — migration 030 made it part of the primary key.
    */
   async updateBanditCounter(
     strategyClass: StrategyClass,
     regime: MarketRegime,
+    leverageBucket: LeverageBucket,
     winIncrement: number,
     lossIncrement: number,
   ): Promise<void> {
     try {
       await query(
-        `INSERT INTO bandit_class_counters (strategy_class, regime, wins, losses)
-         VALUES ($1, $2, 1 + $3, 1 + $4)
-         ON CONFLICT (strategy_class, regime) DO UPDATE SET
-           wins = bandit_class_counters.wins + $3,
-           losses = bandit_class_counters.losses + $4,
+        `INSERT INTO bandit_class_counters (strategy_class, regime, leverage_bucket, wins, losses)
+         VALUES ($1, $2, $3, 1 + $4, 1 + $5)
+         ON CONFLICT (strategy_class, regime, leverage_bucket) DO UPDATE SET
+           wins = bandit_class_counters.wins + $4,
+           losses = bandit_class_counters.losses + $5,
            last_updated_at = NOW()`,
-        [strategyClass, regime, winIncrement, lossIncrement],
+        [strategyClass, regime, leverageBucket, winIncrement, lossIncrement],
       );
     } catch (err) {
       logger.warn('[SLE] updateBanditCounter failed (fail-soft)', {
         strategyClass,
         regime,
+        leverageBucket,
         err: err instanceof Error ? err.message : String(err),
       });
     }

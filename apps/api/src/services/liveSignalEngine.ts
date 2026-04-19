@@ -44,7 +44,12 @@ import { getMaxLeverage } from './marketCatalog.js';
 import mlPredictionService from './mlPredictionService.js';
 import { monitoringService } from './monitoringService.js';
 import poloniexFuturesService from './poloniexFuturesService.js';
-import { sampleBeta, type BanditCounter } from './thompsonBandit.js';
+import {
+  bucketOfLeverage,
+  sampleBeta,
+  type BanditCounter,
+  type LeverageBucket,
+} from './thompsonBandit.js';
 import {
   evaluatePreTradeVetoes,
   type KernelAccountState,
@@ -107,6 +112,7 @@ interface LiveSignalTick {
   readonly reason: string;
   readonly regime: string;
   readonly signalKey: string;
+  readonly leverageBucket: LeverageBucket;
   readonly banditPosterior: number;
   readonly effectiveStrength: number;
 }
@@ -194,7 +200,7 @@ export class LiveSignalEngine extends EventEmitter {
   private async reconcileClosedTrades(): Promise<void> {
     try {
       const result = await pool.query(
-        `SELECT symbol, reason, pnl, exit_time, exit_price, entry_price, quantity, exit_reason
+        `SELECT symbol, reason, pnl, exit_time, exit_price, entry_price, quantity, exit_reason, leverage
            FROM autonomous_trades
           WHERE status = 'closed'
             AND exit_time > $1
@@ -208,8 +214,23 @@ export class LiveSignalEngine extends EventEmitter {
         const reason = String(row.reason ?? '');
         const keyMatch = reason.match(/key=([^|]+)/);
         const regimeMatch = reason.match(/regime=([^|]+)/);
+        const levMatch = reason.match(/lev=([a-z]+)/);
         const signalKey = keyMatch?.[1];
         const regime = regimeMatch?.[1];
+        // Prefer the encoded lev= token (survives schema changes to the
+        // leverage column); fall back to bucketing the row's leverage
+        // column for legacy rows that were inserted before this field
+        // was encoded in reason. Final fallback: 'mid' (same default as
+        // the migration).
+        let leverageBucket: LeverageBucket;
+        if (levMatch && (['low', 'mid', 'high'] as const).includes(levMatch[1] as LeverageBucket)) {
+          leverageBucket = levMatch[1] as LeverageBucket;
+        } else {
+          const rowLeverage = Number(row.leverage);
+          leverageBucket = Number.isFinite(rowLeverage) && rowLeverage > 0
+            ? bucketOfLeverage(rowLeverage)
+            : 'mid';
+        }
         const pnl = Number(row.pnl ?? 0);
         const exitReason = String(row.exit_reason ?? '');
         const closedAt = row.exit_time ? new Date(row.exit_time as string) : new Date();
@@ -231,13 +252,14 @@ export class LiveSignalEngine extends EventEmitter {
         const hasRealExit = Number(row.exit_price ?? 0) > 0;
 
         if (signalKey && regime && !isReconcilerClose && hasRealExit) {
-          await this.recordTradeOutcome(signalKey, regime, pnl);
+          await this.recordTradeOutcome(signalKey, regime, leverageBucket, pnl);
           // Push a 'closed' outcome event to the ml-worker too.
           await this.publishOutcomeEvent({
             symbol: row.symbol,
             phase: 'closed',
             signalKey,
             regime,
+            leverageBucket,
             realizedPnl: pnl,
             entryPrice: Number(row.entry_price ?? 0),
             exitPrice: Number(row.exit_price ?? 0),
@@ -289,13 +311,19 @@ export class LiveSignalEngine extends EventEmitter {
     const rawStrength = Number(raw?.strength) || 0;
     const rawReason = String(raw?.reason ?? 'ml_signal');
 
-    // 2a. Contextual bandit: extract (signalKey, regime) and sample
-    //     Beta posterior. Below BANDIT_EXPLORATION_TRADES total trades
-    //     for this combo, we let everything through (exploration).
+    // 2a. Contextual bandit: extract (signalKey, regime, leverageBucket)
+    //     and sample Beta posterior. Below BANDIT_EXPLORATION_TRADES total
+    //     trades for this combo, we let everything through (exploration).
     //     Once we have enough data, the posterior gates the signal.
+    //
+    //     leverageBucket is derived from the prospective order leverage —
+    //     buildOrder uses the same default, so the bucket we gate on
+    //     matches the bucket the trade would actually execute at.
     const regime = this.detectSimpleRegime(ohlcv);
     const signalKey = this.extractSignalKey(rawReason);
-    const counter = await this.loadBanditCounter(signalKey, regime);
+    const prospectiveLeverage = this.prospectiveLeverage();
+    const leverageBucket = bucketOfLeverage(prospectiveLeverage);
+    const counter = await this.loadBanditCounter(signalKey, regime, leverageBucket);
     const banditPosterior = sampleBeta(counter.wins, counter.losses);
     const totalTrials = (counter.wins - 1) + (counter.losses - 1);  // subtract Beta(1,1) prior
     const banditActive = totalTrials >= BANDIT_EXPLORATION_TRADES;
@@ -310,6 +338,7 @@ export class LiveSignalEngine extends EventEmitter {
       reason: rawReason,
       regime,
       signalKey,
+      leverageBucket,
       banditPosterior,
       effectiveStrength,
     };
@@ -326,6 +355,7 @@ export class LiveSignalEngine extends EventEmitter {
       logger.info(`[LiveSignal] ${symbol} bandit gate`, {
         signalKey,
         regime,
+        leverageBucket,
         banditPosterior: banditPosterior.toFixed(3),
         wins: counter.wins,
         losses: counter.losses,
@@ -457,16 +487,21 @@ export class LiveSignalEngine extends EventEmitter {
   }
 
   /**
-   * Load the Beta(wins, losses) posterior for this (signalKey, regime)
-   * combo from bandit_class_counters. Returns the Beta(1,1) uniform
-   * prior when no row exists yet.
+   * Load the Beta(wins, losses) posterior for this
+   * (signalKey, regime, leverageBucket) combo from
+   * bandit_class_counters. Returns the Beta(1,1) uniform prior when
+   * no row exists yet.
    */
-  private async loadBanditCounter(signalKey: string, regime: string): Promise<BanditCounter> {
+  private async loadBanditCounter(
+    signalKey: string,
+    regime: string,
+    leverageBucket: LeverageBucket,
+  ): Promise<BanditCounter> {
     try {
       const result = await pool.query(
         `SELECT wins, losses FROM bandit_class_counters
-          WHERE strategy_class = $1 AND regime = $2`,
-        [signalKey, regime],
+          WHERE strategy_class = $1 AND regime = $2 AND leverage_bucket = $3`,
+        [signalKey, regime, leverageBucket],
       );
       const row = (result.rows as Array<{ wins: unknown; losses: unknown }>)[0];
       if (!row) return { wins: 1, losses: 1 };
@@ -490,23 +525,25 @@ export class LiveSignalEngine extends EventEmitter {
   async recordTradeOutcome(
     signalKey: string,
     regime: string,
+    leverageBucket: LeverageBucket,
     realisedPnl: number,
   ): Promise<void> {
     const winIncrement = realisedPnl > 0 ? 1 : 0;
     const lossIncrement = realisedPnl > 0 ? 0 : 1;
     try {
       await pool.query(
-        `INSERT INTO bandit_class_counters (strategy_class, regime, wins, losses)
-         VALUES ($1, $2, 1 + $3, 1 + $4)
-         ON CONFLICT (strategy_class, regime) DO UPDATE SET
-           wins = bandit_class_counters.wins + $3,
-           losses = bandit_class_counters.losses + $4,
+        `INSERT INTO bandit_class_counters (strategy_class, regime, leverage_bucket, wins, losses)
+         VALUES ($1, $2, $3, 1 + $4, 1 + $5)
+         ON CONFLICT (strategy_class, regime, leverage_bucket) DO UPDATE SET
+           wins = bandit_class_counters.wins + $4,
+           losses = bandit_class_counters.losses + $5,
            last_updated_at = NOW()`,
-        [signalKey, regime, winIncrement, lossIncrement],
+        [signalKey, regime, leverageBucket, winIncrement, lossIncrement],
       );
       logger.info('[LiveSignal] bandit updated', {
         signalKey,
         regime,
+        leverageBucket,
         realisedPnl,
         win: winIncrement === 1,
       });
@@ -540,6 +577,17 @@ export class LiveSignalEngine extends EventEmitter {
     return sumTR / n;
   }
 
+  /**
+   * The leverage we expect to trade at, computed before buildOrder so
+   * the bandit gate can key on its bucket. Must stay in lock-step with
+   * buildOrder's `leverage` assignment — keeping it in one place
+   * prevents a mismatch between the posterior we gate on and the
+   * posterior we update.
+   */
+  private prospectiveLeverage(): number {
+    return 3; // Conservative default; risk kernel caps at symbol max
+  }
+
   private buildOrder(
     symbol: string,
     signal: LiveSignalTick,
@@ -547,7 +595,7 @@ export class LiveSignalEngine extends EventEmitter {
     atr: number,
   ): KernelOrder | null {
     const side = signal.signal === 'BUY' ? 'long' : 'short';
-    const leverage = 3;  // Conservative default; risk kernel caps at symbol max
+    const leverage = this.prospectiveLeverage();
     const notional = INITIAL_POSITION_USDT * leverage;
     const _atrStopDistance = atr * ATR_STOP_MULTIPLIER;     // reserved for order-payload extension
     const _atrTpDistance = atr * ATR_TAKE_PROFIT_MULTIPLIER; // reserved for order-payload extension
@@ -739,12 +787,14 @@ export class LiveSignalEngine extends EventEmitter {
       }
     }
 
-    // 4. Persist. Encode bandit key + regime into `reason` so the
-    //    close-hook can look them up cheaply (no schema change).
-    //    Format: live_signal|key=...|regime=...|src=...
+    // 4. Persist. Encode bandit key + regime + leverage bucket into
+    //    `reason` so the close-hook can look them up cheaply (no schema
+    //    change). Encoding the bucket lets the reconciler recover it
+    //    even if the leverage column is null on some legacy row.
+    //    Format: live_signal|key=...|regime=...|lev=...|src=...
     try {
       const reasonEncoded =
-        `live_signal|key=${signal.signalKey}|regime=${signal.regime}|src=${signal.reason}`;
+        `live_signal|key=${signal.signalKey}|regime=${signal.regime}|lev=${signal.leverageBucket}|src=${signal.reason}`;
       await pool.query(
         `INSERT INTO autonomous_trades
            (user_id, symbol, side, entry_price, quantity, leverage,
