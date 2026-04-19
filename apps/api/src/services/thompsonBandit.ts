@@ -50,6 +50,30 @@ export const ALL_STRATEGY_CLASSES: StrategyClass[] = [
 ];
 
 /**
+ * Leverage bucket for the third dimension of the bandit key.
+ *
+ * Different leverage regimes behave fundamentally differently on the
+ * same (strategy_class × regime) — e.g. a 15x short in a ranging market
+ * has a dramatically different win/loss distribution than a 2x short
+ * in the same regime. Bucketing lets the posterior learn that distinction
+ * without a per-integer-leverage combinatorial explosion.
+ *
+ * Buckets:
+ *   low:  leverage <= 3x   (capital-preserving, scalp-style)
+ *   mid:  4x <= leverage <= 10x   (default live-signal band)
+ *   high: leverage >= 11x  (aggressive, only allowed where symbol max permits)
+ */
+export type LeverageBucket = 'low' | 'mid' | 'high';
+
+export const ALL_LEVERAGE_BUCKETS: LeverageBucket[] = ['low', 'mid', 'high'];
+
+export function bucketOfLeverage(leverage: number): LeverageBucket {
+  if (leverage <= 3) return 'low';
+  if (leverage <= 10) return 'mid';
+  return 'high';
+}
+
+/**
  * Sample from Beta(α, β) using the Gamma-ratio method.
  *   x ~ Gamma(α, 1), y ~ Gamma(β, 1)  →  x/(x+y) ~ Beta(α, β)
  *
