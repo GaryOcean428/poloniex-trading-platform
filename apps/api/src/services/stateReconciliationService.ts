@@ -132,6 +132,16 @@ class StateReconciliationService {
       }
       result.dbBalance = dbBalance;
 
+      // Normalize buy/sell (DB convention for liveSignal rows) to
+      // long/short (exchange convention). Used in both orphan and
+      // ghost paths. The ghost path got this in PR #501; the orphan
+      // path missed it — caught 2026-04-19 when a duplicate orphan
+      // row appeared ~1min after the first live trade opened
+      // (DB row side='buy', exchange side='long' → no match → orphan
+      // inserted with quantity=1 contract, entry_price=0).
+      const normalizeDbSide = (s: string): 'long' | 'short' =>
+        s === 'buy' || s === 'long' ? 'long' : 'short';
+
       // ── 5. Orphan detection: on exchange but not in DB ───────────────────────
       for (const exPos of exchangePositions) {
         const symbol: string = exPos.symbol ?? exPos.instId ?? '';
@@ -141,9 +151,12 @@ class StateReconciliationService {
         const side: string =
           parseFloat(exPos.qty ?? '0') > 0 ? 'long' : 'short';
 
-        // Check if this exchange symbol+side is already in the DB
+        // Check if this exchange symbol+side is already in the DB.
+        // DB side may be 'buy'/'sell' (liveSignal) or 'long'/'short'
+        // (fullyAutonomousTrader) — normalize both sides to long/short
+        // before comparing.
         const matched = dbTrades.some(
-          t => t.symbol === symbol && t.side === side
+          t => t.symbol === symbol && normalizeDbSide(t.side) === side,
         );
 
         if (!matched) {
@@ -186,15 +199,8 @@ class StateReconciliationService {
       }
 
       // ── 6. Ghost detection: in DB but not on exchange ────────────────────────
-      // Normalize both DB and exchange sides to long/short so liveSignalEngine
-      // rows (stored as buy/sell) compare correctly against the exchange
-      // (long/short). Without this normalization, every live-signal row was
-      // treated as a ghost-not-on-exchange because 'buy' !== 'long'.
-      const normalizeSide = (s: string): 'long' | 'short' =>
-        s === 'buy' || s === 'long' ? 'long' : 'short';
-
       for (const dbTrade of dbTrades) {
-        const dbSide = normalizeSide(dbTrade.side);
+        const dbSide = normalizeDbSide(dbTrade.side);
         const matched = exchangePositions.some(exPos => {
           const exSymbol: string = exPos.symbol ?? exPos.instId ?? '';
           const exQty = parseFloat(exPos.qty ?? exPos.availQty ?? '0');
