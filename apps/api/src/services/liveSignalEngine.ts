@@ -40,7 +40,7 @@ import { getEngineVersion } from '../utils/engineVersion.js';
 import { logger } from '../utils/logger.js';
 import { apiCredentialsService } from './apiCredentialsService.js';
 import { getCurrentExecutionMode } from './executionModeService.js';
-import { getMaxLeverage } from './marketCatalog.js';
+import { getMaxLeverage, getPrecisions } from './marketCatalog.js';
 import mlPredictionService from './mlPredictionService.js';
 import { monitoringService } from './monitoringService.js';
 import poloniexFuturesService from './poloniexFuturesService.js';
@@ -693,9 +693,47 @@ export class LiveSignalEngine extends EventEmitter {
     const exchangeSide = order.side === 'long' ? 'buy' : 'sell';
     const closeSide = order.side === 'long' ? 'sell' : 'buy';
 
+    // Round quantity to the symbol's lot-size step. Poloniex v3 rejects
+    // sub-lot orders with `Param error sz` — diagnosed 2026-04-19 when
+    // the PR #506 error surfacer finally showed the real reason every
+    // tick's "exchange order placed" was actually failing silently.
+    // At $2 notional × 3x leverage = $6, which is below 1 BTC contract
+    // (~$7.6) and well below 1 ETH contract (~$23.6) — so lot rounding
+    // produces 0 contracts and we skip. The fullyAutonomousTrader path
+    // already uses this pattern.
+    let formattedSize = quantity;
+    try {
+      const precisions = await getPrecisions(order.symbol);
+      if (precisions.lotSize && precisions.lotSize > 0) {
+        formattedSize = Math.floor(quantity / precisions.lotSize) * precisions.lotSize;
+      }
+    } catch (err) {
+      logger.warn('[LiveSignal] getPrecisions failed, using raw quantity', {
+        symbol: order.symbol,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+    if (formattedSize <= 0) {
+      logger.info('[LiveSignal] size below lot minimum — skipping', {
+        symbol: order.symbol,
+        rawQuantity: quantity,
+        notionalUsdt: order.notional,
+        hint: 'Raise LIVE_POSITION_USDT or use higher leverage to clear min contract notional',
+      });
+      await this.publishOutcomeEvent({
+        symbol: order.symbol,
+        phase: 'skipped',
+        reason: 'size_below_lot_minimum',
+        rawQuantity: quantity,
+        notionalUsdt: order.notional,
+      });
+      return;
+    }
+
     logger.info('[LiveSignal] submitting order', {
       order,
-      quantity,
+      rawQuantity: quantity,
+      formattedSize,
       stopLoss,
       takeProfit,
       atr,
@@ -720,7 +758,7 @@ export class LiveSignalEngine extends EventEmitter {
         symbol: order.symbol,
         side: exchangeSide,
         type: 'market',
-        size: quantity,
+        size: formattedSize,
       });
       // Poloniex v3 futures returns the exchange order id as `ordId`.
       // Keep `orderId`/`id` fallbacks so mocked tests + any future
@@ -735,7 +773,7 @@ export class LiveSignalEngine extends EventEmitter {
         rawResponseKeys: exchangeOrder ? Object.keys(exchangeOrder) : [],
         symbol: order.symbol,
         side: exchangeSide,
-        size: quantity,
+        size: formattedSize,
       });
     } catch (err) {
       logger.error('[LiveSignal] exchange placeOrder failed', {
@@ -758,7 +796,7 @@ export class LiveSignalEngine extends EventEmitter {
           symbol: order.symbol,
           side: closeSide,
           type: 'stop_market',
-          size: quantity,
+          size: formattedSize,
           stopPrice: stopLoss,
           stopPriceType: 'TP',
           reduceOnly: true,
@@ -775,7 +813,7 @@ export class LiveSignalEngine extends EventEmitter {
           symbol: order.symbol,
           side: closeSide,
           type: 'stop_market',
-          size: quantity,
+          size: formattedSize,
           stopPrice: takeProfit,
           stopPriceType: 'TP',
           reduceOnly: true,
@@ -806,7 +844,7 @@ export class LiveSignalEngine extends EventEmitter {
           order.symbol,
           exchangeSide,
           order.price,
-          quantity,
+          formattedSize,
           order.leverage,
           stopLoss,
           takeProfit,
@@ -834,7 +872,7 @@ export class LiveSignalEngine extends EventEmitter {
       reason: signal.reason,
       phase: 'submitted',
       price: order.price,
-      quantity,
+      quantity: formattedSize,
       orderId,
     });
   }
