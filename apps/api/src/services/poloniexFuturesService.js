@@ -516,34 +516,76 @@ class PoloniexFuturesService {
   /**
    * Place a futures order
    * Endpoint: POST /v3/trade/order
+   *
+   * Poloniex v3 Futures body schema (verified against
+   * https://api-docs.poloniex.com/v3/futures/api/trade/place-order
+   * on 2026-04-19 after production Param error surfaced via PR #506):
+   *
+   *   Required: symbol, side (UPPER), mgnMode, posSide, type (UPPER), sz
+   *   sz is a STRING, in CONTRACTS (not base asset). Caller is
+   *   responsible for converting base-asset quantity → contracts via
+   *   marketCatalog.lotSize (1 contract = lotSize base units).
+   *   Optional: clOrdId, px (limit only), reduceOnly, timeInForce,
+   *   stpMode, and trigger-order-specific fields.
+   *
+   * Caller still passes the ergonomic shape (`side: 'buy'`,
+   * `type: 'market'`, `size: <base asset>`); this method normalises
+   * to v3 wire form. `lotSize` in the optional 4th arg (or the
+   * catalog lookup) tells us how to convert size → sz.
    */
-  async placeOrder(credentials, orderData) {
+  async placeOrder(credentials, orderData, opts = {}) {
+    // Normalise side + type to UPPER per v3 spec.
+    const side = String(orderData.side ?? '').toUpperCase();
+    const typeRaw = String(orderData.type ?? 'market').toLowerCase();
+    const typeUpper = typeRaw === 'market' ? 'MARKET'
+      : typeRaw === 'limit' ? 'LIMIT'
+      : typeRaw === 'limit_maker' ? 'LIMIT_MAKER'
+      // stop_market / stop_limit — historical names; map conservatively to MARKET.
+      // If the caller wanted a true trigger order, they should be using the
+      // dedicated trigger endpoint, not this one.
+      : typeRaw === 'stop_market' ? 'MARKET'
+      : typeRaw === 'stop_limit' ? 'LIMIT'
+      : typeRaw.toUpperCase();
+
+    // Convert size (base asset) → sz (contracts). lotSize is the size of one
+    // contract in base-asset units. e.g. BTC_USDT_PERP lotSize = 0.001 means
+    // 1 contract = 0.001 BTC; if caller wants 0.001 BTC exposure, pass
+    // size=0.001 and lotSize=0.001 → sz=1.
+    const lotSize = Number(opts.lotSize ?? orderData.lotSize ?? 0);
+    let szContracts;
+    if (lotSize > 0 && Number.isFinite(Number(orderData.size))) {
+      szContracts = Math.round(Number(orderData.size) / lotSize);
+    } else {
+      // Fallback: caller already passed contract count (integer). Don't
+      // silently mangle; just pass through. If Poloniex rejects with
+      // "Param error sz" it's the caller's problem to pass lotSize.
+      szContracts = Math.round(Number(orderData.size));
+    }
+
     const body = {
-      clientOid: orderData.clientOid || this.generateClientOrderId(),
+      clOrdId: orderData.clientOid || orderData.clOrdId || this.generateClientOrderId(),
       symbol: orderData.symbol,
-      side: orderData.side, // 'buy' or 'sell'
-      type: orderData.type, // 'limit', 'market', 'stop_limit', 'stop_market'
-      size: orderData.size,
-      price: orderData.price,
-      timeInForce: orderData.timeInForce || 'GTC',
-      postOnly: orderData.postOnly || false,
-      hidden: orderData.hidden || false,
-      iceberg: orderData.iceberg || false,
-      visibleSize: orderData.visibleSize,
-      stopPrice: orderData.stopPrice,
-      stopPriceType: orderData.stopPriceType || 'TP',
-      reduceOnly: orderData.reduceOnly || false,
-      closeOrder: orderData.closeOrder || false,
-      forceHold: orderData.forceHold || false
+      side,                                                      // 'BUY' | 'SELL'
+      mgnMode: (opts.mgnMode ?? orderData.mgnMode ?? 'CROSS').toUpperCase(),
+      posSide: (opts.posSide ?? orderData.posSide ?? 'BOTH').toUpperCase(),
+      type: typeUpper,                                           // 'MARKET' | 'LIMIT' | 'LIMIT_MAKER'
+      sz: String(szContracts),                                   // STRING, in contracts
     };
-    
-    // Remove undefined values
+
+    // Limit-only fields
+    if (typeUpper === 'LIMIT' || typeUpper === 'LIMIT_MAKER') {
+      if (orderData.price !== undefined) body.px = String(orderData.price);
+      if (orderData.timeInForce) body.timeInForce = orderData.timeInForce;
+    }
+    if (orderData.reduceOnly) body.reduceOnly = true;
+
+    // Remove undefined values defensively.
     Object.keys(body).forEach(key => {
       if (body[key] === undefined) {
         delete body[key];
       }
     });
-    
+
     const result = await this.makeRequest(credentials, 'POST', '/trade/order', body);
     apiCache.invalidatePrefix('GET:/account/balance');
     apiCache.invalidatePrefix('GET:/trade/position');
