@@ -3,6 +3,7 @@ import { authenticateToken } from '../middleware/auth.js';
 import backtestingEngine from '../services/backtestingEngine.js';
 import { pool } from '../db/connection.js';
 import { logger } from '../utils/logger.js';
+import { normalizeAgentStrategyPerformance } from '../services/agentStrategyPerformance.js';
 import type { Request, Response } from 'express';
 
 interface BacktestConfig {
@@ -545,7 +546,13 @@ router.get('/pipeline/results', authenticateToken, async (req: Request, res: Res
         averageScore: parseFloat(row.average_score) || 0,
         recommendation: row.recommendation || 'pending',
         reasoning: row.reasoning || '',
-        performance: row.performance || {},
+        // Transitional normaliser: legacy agent_strategies.performance rows
+        // stored totalReturn/maxDrawdown as percent form (the root cause of
+        // the "−89.60% / PF 1.14" contradiction on the prod Backtest card).
+        // normalizeAgentStrategyPerformance coerces legacy rows to canonical
+        // decimal form on the way out so the UI contract (strict decimal)
+        // holds even before the DB rows are backfilled.
+        performance: normalizeAgentStrategyPerformance(row.performance),
         confidence: {
           score: parseFloat(row.average_score) || 0,
           level: getConfidenceLevel(parseFloat(row.average_score) || 0),
@@ -613,7 +620,16 @@ router.get('/pipeline/summary', authenticateToken, async (req: Request, res: Res
       totalPaperTrading = strategies.filter((s: StrategyRow) => s.status === 'paper_trading').length;
       totalLive = strategies.filter((s: StrategyRow) => ['live', 'deployed'].includes(s.status)).length;
 
-      // Collect max drawdowns from performance data
+      // Collect max drawdowns from performance data.
+      //
+      // `normalizePercentLikeValue` was the legacy magnitude-sniffing helper
+      // used before the canonical-unit convention (PR #502 / this PR). It
+      // coerces "decimal-looking" (|x| ≤ 1) values to percent by ×100 and
+      // leaves larger values alone — same behaviour the old mixed-unit rows
+      // accidentally depended on. Kept here because `averageMaxDrawdown` is
+      // consumed by `getRiskRating()` below on a 10/20/30% scale (percent).
+      // The per-strategy `performance` we hand to the UI is normalised to
+      // decimal separately via `normalizeAgentStrategyPerformance` below.
       const drawdowns: number[] = [];
       for (const s of strategies) {
         const perf = s.performance;
@@ -646,7 +662,13 @@ router.get('/pipeline/summary', authenticateToken, async (req: Request, res: Res
         symbol: s.symbol,
         timeframe: s.timeframe,
         status: s.status,
-        performance: s.performance || {}
+        // Transitional normaliser: legacy rows stored totalReturn/maxDrawdown
+        // in percent form. UI expects strict decimal. See comment in
+        // agentStrategyPerformance.ts for details and the planned deprecation
+        // path once legacy rows are backfilled.
+        performance: normalizeAgentStrategyPerformance(
+          (s.performance as Record<string, unknown> | null) ?? {}
+        ) as unknown as Record<string, number>
       }));
     } catch (dbError: unknown) {
       logger.warn('agent_strategies table not available yet', { error: dbError instanceof Error ? dbError.message : String(dbError) });
