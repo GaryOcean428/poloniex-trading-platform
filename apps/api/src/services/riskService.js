@@ -5,6 +5,7 @@
 
 import { logger } from '../utils/logger.js';
 import { pool } from '../db/connection.js';
+import { evaluatePreTradeVetoes } from './riskKernel.js';
 
 class RiskService {
   constructor() {
@@ -21,9 +22,24 @@ class RiskService {
    * @param {Object} order - Order to validate
    * @param {Object} account - Account information
    * @param {Object} marketInfo - Market catalog info for the symbol
-   * @returns {Promise<Object>} { allowed: boolean, reason?: string }
+   * @param {Object} [kernelInputs] - Optional inputs for the blast-door
+   *   kernel. When supplied, runs the pre-trade vetoes (drawdown kill,
+   *   execution-mode override, self-match, per-symbol exposure, symbol
+   *   max leverage). Shape:
+   *     {
+   *       kernelOrder:  { symbol, side, notional, leverage, price },
+   *       accountState: { equityUsdt, unrealizedPnlUsdt,
+   *                       openPositions:[{symbol,side,notional}],
+   *                       restingOrders:[{symbol,side,price}] },
+   *       context: {
+   *         isLive: boolean,                // true for real-capital orders
+   *         mode: 'auto' | 'paper_only' | 'pause',
+   *         symbolMaxLeverage: number       // from marketCatalog
+   *       }
+   *     }
+   * @returns {Promise<Object>} { allowed: boolean, reason?: string, code?: string }
    */
-  async checkOrderRisk(order, account, marketInfo) {
+  async checkOrderRisk(order, account, marketInfo, kernelInputs = null) {
     try {
       // 1. Check leverage cap from market catalog
       if (marketInfo.maxLeverage && order.leverage > marketInfo.maxLeverage) {
@@ -77,6 +93,27 @@ class RiskService {
           reason: killSwitchCheck.reason
         });
         return killSwitchCheck;
+      }
+
+      // 6. Blast-door kernel vetoes (per-symbol exposure, self-match,
+      //    unrealised-drawdown kill, symbol max leverage).
+      //    Only runs when the caller has assembled kernelInputs.
+      //    symbolMaxLeverage should be sourced from
+      //    marketCatalog.getMaxLeverage(symbol) by the caller.
+      if (kernelInputs) {
+        const kernelDecision = evaluatePreTradeVetoes(
+          kernelInputs.kernelOrder,
+          kernelInputs.accountState,
+          kernelInputs.context,
+        );
+        if (!kernelDecision.allowed) {
+          logger.warn('Risk check failed: kernel veto', {
+            accountId: account.id,
+            code: kernelDecision.code,
+            reason: kernelDecision.reason,
+          });
+          return kernelDecision;
+        }
       }
 
       logger.info('Risk check passed', {

@@ -36,9 +36,12 @@ import versionCheckRoutes from './routes/version-check.js';
 import { refreshKnownDatabaseCollationVersions } from './scripts/refreshCollationVersion.js';
 import { runAllMigrations } from './scripts/runMigrations.js';
 import { agentScheduler } from './services/agentScheduler.js';
+import { liveSignalEngine } from './services/liveSignalEngine.js';
 import paperTradingService from './services/paperTradingService.js';
 import { persistentTradingEngine } from './services/persistentTradingEngine.js';
+import { startPipelineHealthProbe } from './services/pipelineHealthProbe.js';
 import { stateReconciliationService } from './services/stateReconciliationService.js';
+import { shouldExpectPaperTrades } from './services/tradingStateProbe.js';
 import { logger } from './utils/logger.js';
 
 // Import environment configuration (dotenv.config() is called inside env.ts)
@@ -417,6 +420,37 @@ server.listen(PORT, '::', async () => {
   paperTradingService.initialize().catch(error => {
     logger.error('Failed to initialize paper trading service:', error);
   });
+
+  // Pipeline health probe: converts silent failures into pagable alerts.
+  // Catches the "paper mode selected but zero paper trades" bug class
+  // within minutes instead of weeks. The predicate gates the trades-
+  // floor alert on BOTH the engine being up AND the pipeline having
+  // recently produced (or currently having) paper-eligible strategies —
+  // this suppresses the startup false-positive where alerting fires
+  // just because no strategy has cleared backtest yet.
+  if (process.env.NODE_ENV !== 'test') {
+    startPipelineHealthProbe(
+      undefined,
+      async () => {
+        if (!persistentTradingEngine.isEngineRunning()) return false;
+        return shouldExpectPaperTrades();
+      },
+    );
+  }
+
+  // Live Signal Engine — the ML-signal-primary fast loop. This is the
+  // inversion from the old batch-SLE system: ml-worker's ensemble
+  // (LSTM + Transformer + GBM + ARIMA + Prophet + QIG regime classifier)
+  // drives trades directly, with the risk kernel as the sole veto.
+  // Defaults to dry-run until LIVE_SIGNAL_EXECUTE=true is set so the
+  // first deploy just observes and logs.
+  if (process.env.NODE_ENV !== 'test') {
+    liveSignalEngine.start({
+      dryRun: process.env.LIVE_SIGNAL_EXECUTE !== 'true',
+    }).catch((err) => {
+      logger.error('Failed to start live signal engine:', err);
+    });
+  }
 
   // Health heartbeat for production monitoring
   if (process.env.NODE_ENV === 'production') {

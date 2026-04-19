@@ -138,6 +138,18 @@ class MLPredictionService {
         throw new Error(`ml-worker HTTP ${resp.status}: ${text}`);
       }
       return await resp.json();
+    } catch (err) {
+      // Surface the real cause so "fetch failed" stops being opaque.
+      // undici/Node's global fetch wraps the actual network error on
+      // err.cause (TypeError with ENOTFOUND/ECONNREFUSED/ETIMEDOUT/etc.)
+      // — without this, every log line just reads "fetch failed".
+      const cause = err?.cause;
+      const causeCode = cause?.code || cause?.errno;
+      const causeMsg = cause?.message;
+      if (causeCode || causeMsg) {
+        throw new Error(`${err.message} [${causeCode ?? 'no-code'}: ${causeMsg ?? 'no-msg'}]`);
+      }
+      throw err;
     } finally {
       clearTimeout(timer);
     }
@@ -355,6 +367,40 @@ class MLPredictionService {
       }
       logger.error(`Multi-horizon prediction failed for ${symbol}:`, error);
       throw error;
+    }
+  }
+
+  /**
+   * Publish a trade-outcome event on the ml:trade:outcome channel
+   * so the ml-worker can feed it into online training. Fire-and-forget
+   * by design — the ml-worker side is responsible for persistence and
+   * back-pressure; a Redis outage must not block the trading loop.
+   *
+   * Payload shape (loose by design; ml-worker treats unknown keys as
+   * metadata):
+   *   {
+   *     symbol, signal, strength, reason,
+   *     phase: 'submitted' | 'filled' | 'closed',
+   *     entryPrice, exitPrice?, quantity, realizedPnl?,
+   *     engineVersion, ts
+   *   }
+   */
+  async publishTradeOutcome(payload) {
+    const envelope = {
+      ...payload,
+      ts: payload.ts ?? Date.now(),
+    };
+    try {
+      const pub = await this._getPublisher();
+      if (!pub) {
+        logger.debug('publishTradeOutcome skipped — Redis publisher unavailable', { envelope });
+        return false;
+      }
+      await pub.publish('ml:trade:outcome', JSON.stringify(envelope));
+      return true;
+    } catch (err) {
+      logger.warn('publishTradeOutcome failed (fail-soft):', err.message);
+      return false;
     }
   }
 

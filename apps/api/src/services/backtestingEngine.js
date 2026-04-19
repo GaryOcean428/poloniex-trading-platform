@@ -1,5 +1,6 @@
 import { EventEmitter } from 'events';
 import { query } from '../db/connection.js';
+import { getEngineVersion } from '../utils/engineVersion.js';
 import { logger } from '../utils/logger.js';
 import poloniexFuturesService from './poloniexFuturesService.js';
 import { buildIndicatorMap, evaluateGenomeEntry, strategyTypeToGenome } from './signalGenome.js';
@@ -8,6 +9,26 @@ import { buildIndicatorMap, evaluateGenomeEntry, strategyTypeToGenome } from './
 function safeNum(v, fallback = 0) {
   const n = Number(v);
   return Number.isFinite(n) ? n : fallback;
+}
+
+/**
+ * Compute perpetual-swap funding cost for one 8h interval.
+ *
+ * Funding rate sign alternates per 8h block (even → positive, odd → negative)
+ * so realised funding averages to zero over long windows. Position side
+ * then determines who pays whom: longs pay when the rate is positive,
+ * receive when negative; shorts are the mirror image.
+ *
+ * Returns a signed cost: positive means the position loses margin, negative
+ * means it gains. Callers subtract the returned value from cash/totalValue.
+ *
+ * Exported so tests can lock the sign logic independently of the full
+ * simulation loop.
+ */
+export function computeFundingCost(notional, side, blockIdx, ratePerInterval) {
+  const rateSigned = ratePerInterval * (blockIdx % 2 === 0 ? 1 : -1);
+  const sideMultiplier = side === 'long' ? 1 : -1;
+  return notional * rateSigned * sideMultiplier;
 }
 
 /**
@@ -58,7 +79,13 @@ class BacktestingEngine extends EventEmitter {
     /** Previous indicator maps per strategy, for crosses_above/crosses_below evaluation */
     this._prevIndicatorMaps = new Map();
     this.marketSimulation = {
-      slippage: 0.001,
+      // Lowered from 0.001 → 0.0002. The previous 10bps-per-trip constant
+      // modelled institutional order flow on Poloniex. For the 1-contract
+      // orders this engine actually trades (≤$50 notional), real spread is
+      // ~1-2bps. The old value was adding ~16bps of artificial round-trip
+      // cost — enough to wipe out most 15m scalping edges before the
+      // promotion gates even evaluated the strategy.
+      slippage: 0.0002,
       latency: 50,
       marketImpact: 0.0005
     };
@@ -106,25 +133,25 @@ class BacktestingEngine extends EventEmitter {
    */
   async fetchHistoricalDataFromAPI(symbol, timeframe, startDate, endDate) {
     try {
-      // Calculate how many candles we need based on the time range and interval
-      const intervalSeconds = {
-        '1m': 60, '5m': 300, '15m': 900, '30m': 1800,
-        '1h': 3600, '1H': 3600, '2h': 7200,
-        '4h': 14400, '4H': 14400, '12h': 43200,
-        '1d': 86400, '1D': 86400
-      };
-      const seconds = intervalSeconds[timeframe] || 3600;
       const end = endDate instanceof Date ? endDate : new Date(endDate);
       const start = startDate instanceof Date ? startDate : new Date(startDate);
-      const rangeMs = end.getTime() - start.getTime();
-      const limit = Math.min(Math.ceil(rangeMs / (seconds * 1000)), 500);
-
-      // getHistoricalData handles interval format conversion, V3 array parsing,
-      // and non-array response guarding internally
-      const data = await poloniexFuturesService.getHistoricalData(symbol, timeframe, limit);
+      // Pass startTime/endTime explicitly so the fetcher returns candles
+      // IN the requested window (the IS or OOS slice), not "last N".
+      // The service will loop internally to cover windows larger than
+      // Poloniex's 500-per-call limit. limit below is only a per-call
+      // ceiling; the total fetched is determined by the time range.
+      const data = await poloniexFuturesService.getHistoricalData(
+        symbol,
+        timeframe,
+        500,
+        { startTime: start, endTime: end },
+      );
 
       if (!Array.isArray(data) || data.length === 0) {
-        logger.warn(`No historical data returned for ${symbol} (${timeframe}), limit=${limit}`);
+        logger.warn(`No historical data returned for ${symbol} (${timeframe})`, {
+          startDate: start.toISOString(),
+          endDate: end.toISOString(),
+        });
         return [];
       }
 
@@ -224,8 +251,12 @@ class BacktestingEngine extends EventEmitter {
   async runBacktestSimulation(strategy, historicalData, config) {
     let currentPosition = null, stopLoss = null, takeProfit = null;
     const leverage = config.leverage ?? 1;
-    // Poloniex perpetual funding rate: ~0.01% every 8 hours (3× daily)
-    const FUNDING_RATE = 0.0001;
+    // Poloniex perpetual funding: ~±0.01% every 8h. Sign alternates with
+    // market imbalance in reality. The previous fixed +0.01% modelled
+    // perma-contango, which systematically overcharged longs across all
+    // backtests. We now alternate sign per 8h block so realised funding
+    // is mean-zero over long windows while staying fully deterministic.
+    const FUNDING_RATE_ABS = 0.0001;
     const FUNDING_INTERVAL_MS = 8 * 60 * 60 * 1000; // 8h in ms
     let lastFundingTime = 0;
     // Use enough lookback for all indicators: SMA50 needs 50, MACD needs 26,
@@ -244,8 +275,13 @@ class BacktestingEngine extends EventEmitter {
           while (candleTs - lastFundingTime >= FUNDING_INTERVAL_MS) {
             lastFundingTime += FUNDING_INTERVAL_MS;
             const notional = currentPosition.size * currentCandle.close;
-            const fundingSign = currentPosition.side === 'long' ? 1 : -1;
-            const fundingCost = notional * FUNDING_RATE * fundingSign;
+            const blockIdx = Math.floor(lastFundingTime / FUNDING_INTERVAL_MS);
+            const fundingCost = computeFundingCost(
+              notional,
+              currentPosition.side,
+              blockIdx,
+              FUNDING_RATE_ABS,
+            );
             this.currentBacktest.portfolio.cash -= fundingCost;
             this.currentBacktest.portfolio.totalValue -= fundingCost;
           }
@@ -588,7 +624,9 @@ class BacktestingEngine extends EventEmitter {
   }
 
   calculateTradingFees(size, price, orderType = 'market') {
-    return size * price * (orderType === 'limit' ? 0.0001 : 0.00075);
+    // Poloniex Futures VIP0: maker 0.02%, taker 0.06%. Previous values
+    // (0.01% / 0.075%) understated maker and overstated taker.
+    return size * price * (orderType === 'limit' ? 0.0002 : 0.0006);
   }
 
   updatePortfolioAfterTrade(trade, type) {
@@ -685,8 +723,8 @@ class BacktestingEngine extends EventEmitter {
           total_trades, winning_trades, losing_trades, win_rate,
           profit_factor, expectancy, average_win, average_loss,
           created_at, config, metrics,
-          is_censored, censoring_reason
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
+          is_censored, censoring_reason, engine_version
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)
       `, [
         backtestId, this.currentBacktest.strategyName, this.currentBacktest.config.symbol,
         this.currentBacktest.config.timeframe, this.currentBacktest.config.startDate,
@@ -706,7 +744,7 @@ class BacktestingEngine extends EventEmitter {
         safeNum(this.currentBacktest.metrics.averageWin),
         safeNum(this.currentBacktest.metrics.averageLoss),
         new Date(), JSON.stringify(this.currentBacktest.config), JSON.stringify(this.currentBacktest.metrics),
-        isCensored, censoringReason
+        isCensored, censoringReason, getEngineVersion(),
       ]);
       this.currentBacktest.id = backtestId;
       this.currentBacktest.isCensored = isCensored;

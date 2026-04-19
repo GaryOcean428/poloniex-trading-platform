@@ -10,7 +10,7 @@ const API_BASE_URL = getBackendUrl();
 interface Strategy {
   id: string;
   strategy_name: string;
-  status: 'generated' | 'backtested' | 'paper_trading' | 'approved' | 'live' | 'paused' | 'retired';
+  status: 'generated' | 'backtested' | 'paper_trading' | 'approved' | 'live' | 'paused' | 'retired' | 'recalibrating';
   backtest_score: number;
   paper_trading_score?: number;
   risk_level: 'low' | 'medium' | 'high';

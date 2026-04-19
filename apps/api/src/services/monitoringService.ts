@@ -53,6 +53,66 @@ interface SystemHealthReport {
   timestamp?: Date;
 }
 
+/** Pipeline stage heartbeat — see recordPipelineHeartbeat. */
+export type PipelineStage =
+  | 'generator'
+  | 'backtest'
+  | 'paper'
+  | 'live'
+  | 'reconciliation';
+
+interface PipelineHeartbeat {
+  lastSeen: Date;
+  tickCount: number;
+  tradeCount: number;              // trades (paper or live) recorded since boot
+  tradesRing: number[];            // rolling ring buffer, one slot per minute, TRADES_RING_SLOTS long
+  ringHead: number;                // index of current minute in ring
+  ringMinute: number;              // minute-of-epoch at ringHead
+}
+
+/**
+ * Expected max silence per stage before a liveness alert fires.
+ *
+ * The SLE main loop runs every 30 minutes — each cycle emits one
+ * generator + one backtest heartbeat, then the loop sleeps. Thresholds
+ * must exceed that interval or the alert fires every cycle gap (false
+ * positive we observed in production as alertCount:12+ on generator).
+ *
+ * Set to 45 min = 30 min cycle + 15 min buffer for straggling cycles
+ * (heavy backtest, DB contention, etc.). A genuine stall — SLE loop
+ * dies or hangs — shows up as >>45 min silence.
+ *
+ * Paper / live / reconciliation tick on their own faster cadence
+ * (market events / 5-min reconcile loop) so tighter thresholds stay.
+ */
+const STAGE_SILENT_THRESHOLD_MS: Record<PipelineStage, number> = {
+  generator: 45 * 60_000,          // 30-min cycle + 15-min buffer
+  backtest: 45 * 60_000,           // same — both tick once per cycle
+  paper: 10 * 60_000,              // paper loop runs on market ticks
+  live: 10 * 60_000,               // live order path runs on signals
+  reconciliation: 10 * 60_000,     // reconciler runs every 5 min, 2x buffer
+};
+
+/**
+ * Silent-floor alert: < 1 trade in this window triggers.
+ * Must be ≤ TRADES_RING_SLOTS or the probe will evaluate against a
+ * shorter window than it advertises — Sourcery called this out on
+ * the first pass. Keep these two aligned.
+ */
+export const TRADES_PER_HOUR_FLOOR_WINDOW_MIN = 360;  // 6 hours
+export const TRADES_RING_SLOTS = 360;
+
+/**
+ * Backtest-pass-rate alert threshold: if this many consecutive SLE
+ * generations produce zero passing strategies, something is wrong
+ * with the generator or the gates. This is the "Option C blind spot"
+ * guard — the trades-floor alert can't catch it because the pipeline
+ * is *expected* to be silent when no strategy has ever passed.
+ *
+ * 20 generations × 30 min cycle interval = 10h before paging.
+ */
+export const BACKTEST_STALL_THRESHOLD = 20;
+
 interface ErrorStatsReport {
   total24h: number;
   totalAllTime: number;
@@ -68,6 +128,22 @@ class MonitoringService {
   private errorCount = 0;
   private warningCount = 0;
   private activeConnectionCount = 0;
+  private pipelineHeartbeats: Map<PipelineStage, PipelineHeartbeat> = new Map();
+  /** Count of consecutive SLE generations with zero passing strategies. Reset on any pass. */
+  private generationsSinceLastPass = 0;
+  /** Most recent generation outcome (pass or fail) — for snapshot UIs. */
+  private lastGenerationOutcome: {
+    at: Date;
+    passed: number;
+    total: number;
+  } | null = null;
+  /**
+   * Timestamp of the last generation that produced ≥1 passing
+   * strategy. Distinct from lastGenerationOutcome.at (which updates
+   * every cycle regardless of outcome). Used by the backtest-stall
+   * alert to surface "how long since we last saw a pass?".
+   */
+  private lastPassAt: Date | null = null;
 
   /**
    * Log an error
@@ -414,6 +490,185 @@ class MonitoringService {
   }
 
   /**
+   * Record that a pipeline stage executed a tick. Called from each stage's
+   * main loop. Silent-failure alerts fire when a stage hasn't reported in
+   * longer than its expected interval (see STAGE_SILENT_THRESHOLD_MS).
+   */
+  recordPipelineHeartbeat(stage: PipelineStage): void {
+    const now = new Date();
+    const existing = this.pipelineHeartbeats.get(stage);
+    if (existing) {
+      existing.lastSeen = now;
+      existing.tickCount += 1;
+    } else {
+      this.pipelineHeartbeats.set(stage, {
+        lastSeen: now,
+        tickCount: 1,
+        tradeCount: 0,
+        tradesRing: new Array(TRADES_RING_SLOTS).fill(0),
+        ringHead: 0,
+        ringMinute: Math.floor(now.getTime() / 60_000),
+      });
+    }
+  }
+
+  /**
+   * Record a completed trade (paper or live). Feeds the trades-per-hour
+   * rolling ring used by the silent-floor alert.
+   */
+  recordTradeEvent(stage: 'paper' | 'live', now: Date = new Date()): void {
+    const hb = this.pipelineHeartbeats.get(stage) ?? this.initStageHeartbeat(stage, now);
+    this.advanceTradeRing(hb, now);
+    hb.tradesRing[hb.ringHead] += 1;
+    hb.tradeCount += 1;
+    hb.lastSeen = now;
+  }
+
+  /** Trades observed in the rolling last N minutes (max TRADES_RING_SLOTS). */
+  getTradesInLastMinutes(stage: 'paper' | 'live', minutes: number, now: Date = new Date()): number {
+    const hb = this.pipelineHeartbeats.get(stage);
+    if (!hb) return 0;
+    this.advanceTradeRing(hb, now);
+    const window = Math.max(1, Math.min(TRADES_RING_SLOTS, Math.floor(minutes)));
+    let total = 0;
+    for (let i = 0; i < window; i++) {
+      const idx = (hb.ringHead - i + TRADES_RING_SLOTS) % TRADES_RING_SLOTS;
+      total += hb.tradesRing[idx];
+    }
+    return total;
+  }
+
+  /**
+   * Which pipeline stages are silent beyond threshold? Used by the alerting
+   * service's silent-failure probe.
+   *
+   * **Never-seen stages are NOT flagged.** A stage is silent only if it
+   * has ticked at least once AND has since gone quiet longer than its
+   * threshold. Otherwise a freshly-booted server pages on every stage
+   * that hasn't yet been wired to call recordPipelineHeartbeat — which
+   * is a class of alert that looked like a real outage in production
+   * (alertCount:161 over ~16h before being caught).
+   *
+   * The corresponding boot-time liveness concern ("a stage should have
+   * started but never did") is covered by the backend heartbeat emitted
+   * from index.ts, not by this probe.
+   */
+  getSilentPipelineStages(now: Date = new Date()): Array<{
+    stage: PipelineStage;
+    silentMs: number;
+    thresholdMs: number;
+  }> {
+    const silent: Array<{ stage: PipelineStage; silentMs: number; thresholdMs: number }> = [];
+    for (const stage of Object.keys(STAGE_SILENT_THRESHOLD_MS) as PipelineStage[]) {
+      const hb = this.pipelineHeartbeats.get(stage);
+      if (!hb) continue;  // never reported — not silent, just unwired
+      const thresholdMs = STAGE_SILENT_THRESHOLD_MS[stage];
+      const silentMs = now.getTime() - hb.lastSeen.getTime();
+      if (silentMs > thresholdMs) {
+        silent.push({ stage, silentMs, thresholdMs });
+      }
+    }
+    return silent;
+  }
+
+  /** Snapshot of all pipeline heartbeats for UI / status endpoints. */
+  getPipelineHeartbeatSnapshot(now: Date = new Date()): Array<{
+    stage: PipelineStage;
+    lastSeenAt: string | null;
+    silentMs: number | null;
+    thresholdMs: number;
+    tickCount: number;
+    tradeCount: number;
+    tradesPerHour: number;
+  }> {
+    return (Object.keys(STAGE_SILENT_THRESHOLD_MS) as PipelineStage[]).map((stage) => {
+      const hb = this.pipelineHeartbeats.get(stage);
+      return {
+        stage,
+        lastSeenAt: hb ? hb.lastSeen.toISOString() : null,
+        silentMs: hb ? now.getTime() - hb.lastSeen.getTime() : null,
+        thresholdMs: STAGE_SILENT_THRESHOLD_MS[stage],
+        tickCount: hb?.tickCount ?? 0,
+        tradeCount: hb?.tradeCount ?? 0,
+        tradesPerHour: hb ? this.sumRing(hb, now) : 0,
+      };
+    });
+  }
+
+  /** Constant exposed for tests / alerting config. */
+  getTradesPerHourFloorWindowMinutes(): number {
+    return TRADES_PER_HOUR_FLOOR_WINDOW_MIN;
+  }
+
+  /**
+   * Record the outcome of one SLE generation. `passed` is how many of
+   * `total` generated strategies cleared the backtest gate. Maintains
+   * the `generationsSinceLastPass` counter that the probe reads.
+   */
+  recordGenerationOutcome(passed: number, total: number, at: Date = new Date()): void {
+    this.lastGenerationOutcome = { at, passed, total };
+    if (passed > 0) {
+      this.generationsSinceLastPass = 0;
+      this.lastPassAt = at;
+    } else {
+      this.generationsSinceLastPass += 1;
+    }
+  }
+
+  /** Consecutive SLE generations with zero passing strategies. */
+  getGenerationsSinceLastPass(): number {
+    return this.generationsSinceLastPass;
+  }
+
+  /** Most recent generation outcome snapshot for UI / status endpoints. */
+  getLastGenerationOutcome(): { at: Date; passed: number; total: number } | null {
+    return this.lastGenerationOutcome;
+  }
+
+  /** Timestamp of the last generation that produced ≥1 passing strategy, or null. */
+  getLastPassAt(): Date | null {
+    return this.lastPassAt;
+  }
+
+  getBacktestStallThreshold(): number {
+    return BACKTEST_STALL_THRESHOLD;
+  }
+
+  private initStageHeartbeat(stage: PipelineStage, now: Date): PipelineHeartbeat {
+    const hb: PipelineHeartbeat = {
+      lastSeen: now,
+      tickCount: 0,
+      tradeCount: 0,
+      tradesRing: new Array(TRADES_RING_SLOTS).fill(0),
+      ringHead: 0,
+      ringMinute: Math.floor(now.getTime() / 60_000),
+    };
+    this.pipelineHeartbeats.set(stage, hb);
+    return hb;
+  }
+
+  /**
+   * Rotate the trades ring forward to the current minute, zeroing any
+   * slots we pass through (those minutes had no trades).
+   */
+  private advanceTradeRing(hb: PipelineHeartbeat, now: Date): void {
+    const currentMinute = Math.floor(now.getTime() / 60_000);
+    const delta = currentMinute - hb.ringMinute;
+    if (delta <= 0) return;
+    const steps = Math.min(delta, TRADES_RING_SLOTS);
+    for (let i = 0; i < steps; i++) {
+      hb.ringHead = (hb.ringHead + 1) % TRADES_RING_SLOTS;
+      hb.tradesRing[hb.ringHead] = 0;
+    }
+    hb.ringMinute = currentMinute;
+  }
+
+  private sumRing(hb: PipelineHeartbeat, now: Date): number {
+    this.advanceTradeRing(hb, now);
+    return hb.tradesRing.reduce((a, b) => a + b, 0);
+  }
+
+  /**
    * Reset all metrics (for testing)
    */
   reset(): void {
@@ -423,6 +678,10 @@ class MonitoringService {
     this.errorCount = 0;
     this.warningCount = 0;
     this.activeConnectionCount = 0;
+    this.pipelineHeartbeats = new Map();
+    this.generationsSinceLastPass = 0;
+    this.lastGenerationOutcome = null;
+    this.lastPassAt = null;
   }
 }
 

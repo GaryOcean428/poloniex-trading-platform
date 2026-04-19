@@ -11,8 +11,10 @@
 
 import { EventEmitter } from 'events';
 import { pool } from '../db/connection.js';
+import { getEngineVersion } from '../utils/engineVersion.js';
 import { logger } from '../utils/logger.js';
 import { validateMarketData } from '../utils/marketDataValidator.js';
+import { monitoringService } from './monitoringService.js';
 import { apiCredentialsService } from './apiCredentialsService.js';
 import backtestingEngine from './backtestingEngine.js';
 import { getPrecisions } from './marketCatalog.js';
@@ -843,6 +845,12 @@ class FullyAutonomousTrader extends EventEmitter {
     // Execute top signal
     const signal = signals[0];
 
+    // Heartbeat the appropriate stage so the silent-failure probe
+    // sees the dispatch loop as alive. Paper-mode signals feed the
+    // 'paper' stage (paperTradingService also heartbeats when it
+    // actually executes); live signals feed 'live'.
+    monitoringService.recordPipelineHeartbeat(config.paperTrading ? 'paper' : 'live');
+
     try {
       logger.info(`${config.paperTrading ? '[PAPER]' : '[LIVE]'} Executing signal for ${signal.symbol}: ${signal.action} at ${signal.entryPrice}`);
 
@@ -1051,8 +1059,8 @@ class FullyAutonomousTrader extends EventEmitter {
       // Log trade (both paper and live)
       await pool.query(
         `INSERT INTO autonomous_trades
-         (user_id, symbol, side, entry_price, quantity, stop_loss, take_profit, confidence, reason, order_id, paper_trade)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+         (user_id, symbol, side, entry_price, quantity, stop_loss, take_profit, confidence, reason, order_id, paper_trade, engine_version)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
         [
           userId,
           signal.symbol,
@@ -1064,7 +1072,8 @@ class FullyAutonomousTrader extends EventEmitter {
           signal.confidence,
           signal.reason,
           orderId,
-          config.paperTrading
+          config.paperTrading,
+          getEngineVersion(),
         ]
       );
 
@@ -1080,6 +1089,9 @@ class FullyAutonomousTrader extends EventEmitter {
       });
 
       this.emit('trade_executed', { userId, signal, orderId, paperTrading: config.paperTrading });
+      // Feed the trades-per-hour rolling ring — this is the signal
+      // the silent-floor alert uses to verify the pipeline is alive.
+      monitoringService.recordTradeEvent(config.paperTrading ? 'paper' : 'live');
       logger.info(`${config.paperTrading ? '[PAPER]' : '[LIVE]'} Trade executed for user ${userId}: ${signal.symbol} ${signal.side}`);
 
     } catch (error) {
@@ -1182,8 +1194,8 @@ class FullyAutonomousTrader extends EventEmitter {
         );
         for (const symbol of inDbNotExchange) {
           await pool.query(
-            `UPDATE autonomous_trades SET status = 'closed', closed_at = NOW(),
-             close_reason = 'reconciliation: position not found on exchange'
+            `UPDATE autonomous_trades SET status = 'closed', exit_time = NOW(),
+             exit_reason = 'reconciliation: position not found on exchange'
              WHERE user_id = $1 AND symbol = $2 AND status = 'open' AND paper_trade = false`,
             [userId, symbol]
           );
@@ -1299,7 +1311,7 @@ class FullyAutonomousTrader extends EventEmitter {
       try {
         await pool.query(
           `UPDATE autonomous_trades
-           SET status = 'closed', close_reason = $3, closed_at = NOW(),
+           SET status = 'closed', exit_reason = $3, exit_time = NOW(),
                exit_price = $4, pnl = $5
            WHERE user_id = $1 AND symbol = $2 AND status = 'open'`,
           [userId, symbol, reason, exitPrice, pnl]
@@ -1308,7 +1320,7 @@ class FullyAutonomousTrader extends EventEmitter {
         // Columns may not exist yet — fall back to basic update
         await pool.query(
           `UPDATE autonomous_trades
-           SET status = 'closed', close_reason = $3, closed_at = NOW()
+           SET status = 'closed', exit_reason = $3, exit_time = NOW()
            WHERE user_id = $1 AND symbol = $2 AND status = 'open'`,
           [userId, symbol, reason]
         );
@@ -1336,7 +1348,7 @@ class FullyAutonomousTrader extends EventEmitter {
       // Update all open trades in DB
       await pool.query(
         `UPDATE autonomous_trades
-         SET status = 'closed', close_reason = 'trading_disabled', closed_at = NOW()
+         SET status = 'closed', exit_reason = 'trading_disabled', exit_time = NOW()
          WHERE user_id = $1 AND status = 'open'`,
         [userId]
       );
