@@ -712,9 +712,11 @@ export class LiveSignalEngine extends EventEmitter {
     // produces 0 contracts and we skip. The fullyAutonomousTrader path
     // already uses this pattern.
     let formattedSize = quantity;
+    let symbolLotSize = 0;
     try {
       const precisions = await getPrecisions(order.symbol);
       if (precisions.lotSize && precisions.lotSize > 0) {
+        symbolLotSize = precisions.lotSize;
         formattedSize = Math.floor(quantity / precisions.lotSize) * precisions.lotSize;
       }
     } catch (err) {
@@ -769,6 +771,7 @@ export class LiveSignalEngine extends EventEmitter {
         side: exchangeSide,
         type: 'market',
         size: formattedSize,
+        lotSize: symbolLotSize,
       });
       // Poloniex v3 futures returns the exchange order id as `ordId`.
       // Keep `orderId`/`id` fallbacks so mocked tests + any future
@@ -800,15 +803,20 @@ export class LiveSignalEngine extends EventEmitter {
     // 3. Best-effort exchange-side SL + TP (reduce-only). Failures
     //    are logged but don't roll back — the server-side managed
     //    loop handles SL/TP as a fallback.
-    if (stopLoss > 0 && Number.isFinite(stopLoss)) {
+    // Stop-market trigger orders currently fall back to MARKET in the
+    // placeOrder body mapping — they aren't true trigger orders until we
+    // wire the dedicated Poloniex v3 trigger-order endpoint. Skipping
+    // SL/TP exchange-side placement for now; managePositions in the
+    // trader loop catches SL/TP on the backend side. Leaving the block
+    // for future re-enablement once the trigger endpoint is plumbed.
+    if (false && stopLoss > 0 && Number.isFinite(stopLoss)) {
       try {
         await poloniexFuturesService.placeOrder(credentials, {
           symbol: order.symbol,
           side: closeSide,
           type: 'stop_market',
           size: formattedSize,
-          stopPrice: stopLoss,
-          stopPriceType: 'TP',
+          lotSize: symbolLotSize,
           reduceOnly: true,
         });
       } catch (slErr) {
@@ -817,15 +825,14 @@ export class LiveSignalEngine extends EventEmitter {
         });
       }
     }
-    if (takeProfit > 0 && Number.isFinite(takeProfit)) {
+    if (false && takeProfit > 0 && Number.isFinite(takeProfit)) {
       try {
         await poloniexFuturesService.placeOrder(credentials, {
           symbol: order.symbol,
           side: closeSide,
           type: 'stop_market',
           size: formattedSize,
-          stopPrice: takeProfit,
-          stopPriceType: 'TP',
+          lotSize: symbolLotSize,
           reduceOnly: true,
         });
       } catch (tpErr) {
