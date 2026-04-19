@@ -186,12 +186,20 @@ class StateReconciliationService {
       }
 
       // ── 6. Ghost detection: in DB but not on exchange ────────────────────────
+      // Normalize both DB and exchange sides to long/short so liveSignalEngine
+      // rows (stored as buy/sell) compare correctly against the exchange
+      // (long/short). Without this normalization, every live-signal row was
+      // treated as a ghost-not-on-exchange because 'buy' !== 'long'.
+      const normalizeSide = (s: string): 'long' | 'short' =>
+        s === 'buy' || s === 'long' ? 'long' : 'short';
+
       for (const dbTrade of dbTrades) {
+        const dbSide = normalizeSide(dbTrade.side);
         const matched = exchangePositions.some(exPos => {
           const exSymbol: string = exPos.symbol ?? exPos.instId ?? '';
           const exQty = parseFloat(exPos.qty ?? exPos.availQty ?? '0');
           const exSide = exQty > 0 ? 'long' : 'short';
-          return exSymbol === dbTrade.symbol && exSide === dbTrade.side;
+          return exSymbol === dbTrade.symbol && exSide === dbSide;
         });
 
         if (!matched) {
@@ -256,25 +264,66 @@ class StateReconciliationService {
   }
 
   /**
-   * Run reconciliation for all users with an active autonomous trading config.
+   * Run reconciliation for every user who is currently "live" in some sense:
+   *
+   *   1. Users with an active autonomous_trading_configs row (legacy path).
+   *   2. Users with any open live_signal trade in autonomous_trades (the
+   *      liveSignalEngine path, which doesn't require autonomous_trading_configs).
+   *
+   * Without (2) we get the exact bug from 2026-04-18: 6 DB rows stuck in
+   * status='open' for 12h with no exchange position, and the 60s reconciler
+   * never touched them because autonomous_trading_configs was empty.
+   *
+   * Dedupe across both sets so a user with both an active config AND open
+   * live-signal trades only reconciles once per tick.
    */
   async reconcileAllActive(): Promise<void> {
     monitoringService.recordPipelineHeartbeat('reconciliation');
     try {
-      const activeConfigs = await pool.query(
-        `SELECT DISTINCT user_id FROM autonomous_trading_configs WHERE enabled = true`
-      );
+      const userIds = new Set<string>();
 
-      for (const row of activeConfigs.rows) {
-        const result = await this.reconcile(String(row.user_id));
+      // Source 1: active autonomous_trading_configs
+      try {
+        const activeConfigs = await pool.query(
+          `SELECT DISTINCT user_id FROM autonomous_trading_configs WHERE enabled = true`,
+        );
+        for (const row of activeConfigs.rows as Array<{ user_id: string }>) {
+          userIds.add(String(row.user_id));
+        }
+      } catch (err) {
+        logger.warn('[RECONCILE] autonomous_trading_configs lookup failed', {
+          err: err instanceof Error ? err.message : String(err),
+        });
+      }
+
+      // Source 2: users with an open live-signal trade. This is the
+      // liveSignalEngine's footprint — if phantom rows accumulate here,
+      // the stacking guard freezes all future entries until reconciler
+      // catches them. Covering this surface is the whole point of P2.
+      try {
+        const liveSignalUsers = await pool.query(
+          `SELECT DISTINCT user_id FROM autonomous_trades
+            WHERE status = 'open' AND reason LIKE 'live_signal|%'`,
+        );
+        for (const row of liveSignalUsers.rows as Array<{ user_id: string }>) {
+          userIds.add(String(row.user_id));
+        }
+      } catch (err) {
+        logger.warn('[RECONCILE] live-signal-users lookup failed', {
+          err: err instanceof Error ? err.message : String(err),
+        });
+      }
+
+      for (const userId of userIds) {
+        const result = await this.reconcile(userId);
         if (result.orphans.length > 0 || result.ghosts.length > 0) {
           logger.warn(
-            `[RECONCILE] State drift detected for user ${row.user_id}`,
+            `[RECONCILE] State drift detected for user ${userId}`,
             {
               orphans: result.orphans.length,
               ghosts: result.ghosts.length,
-              balanceDrift: result.balanceDrift
-            }
+              balanceDrift: result.balanceDrift,
+            },
           );
         }
       }
