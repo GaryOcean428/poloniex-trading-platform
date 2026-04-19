@@ -311,19 +311,32 @@ export class LiveSignalEngine extends EventEmitter {
       return;
     }
 
-    // 2c. Stacking guard: if we already have an open autonomous_trade
-    //      row on this symbol from the live-signal engine, don't stack.
-    //      Market orders on the same side accumulate into one net
-    //      Poloniex position — the exposure cap catches the extreme,
-    //      but we'd still burn fees stacking 60x/hour into the same
-    //      trade. Let existing position play out; managePositions or
-    //      the SL/TP exit will flip the DB row to 'closed' and free
-    //      this symbol for a fresh signal.
+    // 2c. Stacking guard: if we already have a RECENT open
+    //      autonomous_trade row on this symbol from the live-signal
+    //      engine, don't stack. Market orders on the same side
+    //      accumulate into one net Poloniex position — the exposure
+    //      cap catches the extreme, but we'd still burn fees stacking
+    //      60x/hour into the same trade. Let the existing position
+    //      play out; managePositions or the SL/TP exit will flip the
+    //      DB row to 'closed' and free this symbol for a fresh signal.
+    //
+    //      Time-bounded (60 min): the 2026-04-18 phantom-rows incident
+    //      had 6 rows stuck in status='open' for 12+ hours because
+    //      order_id was never captured; the guard read them as "open
+    //      positions" and silently blocked every signal. The periodic
+    //      reconciler (stateReconciliationService) now catches
+    //      phantoms within 60s, but this 60-min window is a belt on top
+    //      of those braces — if reconciliation is itself broken, we
+    //      still resume trading within an hour rather than indefinitely.
+    //      ATR-scaled stops/takes resolve most real trades in tens of
+    //      minutes; anything open >1h is outside our strategy envelope.
     const openCheck = await pool.query(
       `SELECT 1 FROM autonomous_trades
         WHERE symbol = $1
           AND status = 'open'
           AND reason LIKE 'live_signal|%'
+          AND (entry_time > NOW() - INTERVAL '60 minutes'
+               OR (entry_time IS NULL AND created_at > NOW() - INTERVAL '60 minutes'))
         LIMIT 1`,
       [symbol],
     );
