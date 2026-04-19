@@ -194,7 +194,7 @@ export class LiveSignalEngine extends EventEmitter {
   private async reconcileClosedTrades(): Promise<void> {
     try {
       const result = await pool.query(
-        `SELECT symbol, reason, pnl, exit_time, exit_price, entry_price, quantity
+        `SELECT symbol, reason, pnl, exit_time, exit_price, entry_price, quantity, exit_reason
            FROM autonomous_trades
           WHERE status = 'closed'
             AND exit_time > $1
@@ -211,9 +211,26 @@ export class LiveSignalEngine extends EventEmitter {
         const signalKey = keyMatch?.[1];
         const regime = regimeMatch?.[1];
         const pnl = Number(row.pnl ?? 0);
+        const exitReason = String(row.exit_reason ?? '');
         const closedAt = row.exit_time ? new Date(row.exit_time as string) : new Date();
 
-        if (signalKey && regime) {
+        // Skip reconciler-driven closes from bandit learning. A phantom
+        // row that stateReconciliationService closed with
+        // exit_reason='reconciled_not_on_exchange' (or similar) never
+        // actually executed on the exchange — pnl=0 is a synthetic
+        // placeholder, not a realized loss. Counting these as losses
+        // poisons the Thompson posterior: observed 2026-04-19 that one
+        // reconciliation pass of 97 phantom ghosts tanked
+        // ml_breakout|ranging from Beta(1,1) to ~Beta(1,97), putting
+        // the bandit gate posterior around 0.002 and silently blocking
+        // all new entries. Only real filled+closed trades (non-zero
+        // exit_price AND non-reconciliation exit_reason) feed the
+        // bandit.
+        const isReconcilerClose =
+          exitReason.startsWith('reconciled_') || exitReason === 'reconciled_phantom_no_exchange_position';
+        const hasRealExit = Number(row.exit_price ?? 0) > 0;
+
+        if (signalKey && regime && !isReconcilerClose && hasRealExit) {
           await this.recordTradeOutcome(signalKey, regime, pnl);
           // Push a 'closed' outcome event to the ml-worker too.
           await this.publishOutcomeEvent({
@@ -226,6 +243,12 @@ export class LiveSignalEngine extends EventEmitter {
             exitPrice: Number(row.exit_price ?? 0),
             quantity: Number(row.quantity ?? 0),
             closedAt: closedAt.toISOString(),
+          });
+        } else if (isReconcilerClose) {
+          logger.debug('[LiveSignal] skipping bandit update for reconciler-closed row', {
+            symbol: row.symbol,
+            exitReason,
+            pnl,
           });
         }
 
