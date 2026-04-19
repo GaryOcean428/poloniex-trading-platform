@@ -5,14 +5,12 @@ import axios from 'axios';
 import { getAccessToken } from '@/utils/auth';
 import { usePersistedState } from '@/hooks/usePersistedState';
 import { getBackendUrl } from '@/utils/environment';
-import StrategyGenerationDisplay from './StrategyGenerationDisplay';
 import ActiveStrategiesPanel from './ActiveStrategiesPanel';
-import BacktestResultsVisualization from './BacktestResultsVisualization';
-import StrategyApprovalQueue from './StrategyApprovalQueue';
 import LiveTradingActivityFeed from './LiveTradingActivityFeed';
-import PerformanceAnalytics from './PerformanceAnalytics';
-import AgentOverviewPanel from './AgentOverviewPanel';
 import MLLiveRecommendations from './MLLiveRecommendations';
+import PerformanceAnalytics from './PerformanceAnalytics';
+import StateOfTheBotCard from './StateOfTheBotCard';
+import StrategyApprovalQueue from './StrategyApprovalQueue';
 import { safeNum } from '@/utils/safeNum';
 
 const API_BASE_URL = getBackendUrl();
@@ -1007,25 +1005,20 @@ const AutonomousAgentDashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* Profitability & Agent Oversight Panel */}
-      <AgentOverviewPanel
-        agentStatus={agentStatus?.status}
-        startedAt={agentStatus?.startedAt}
-        circuitBreakerTripped={circuitBreaker?.isTripped}
-      />
+      {/*
+        State-of-the-Bot card: single-source-of-truth "what is the bot
+        doing right now and is it making money?" headline. Replaces the
+        old AgentOverviewPanel + StrategyGenerationDisplay combo which
+        showed placeholder zeros (Stop Loss 0%, Take Profit 0%) and
+        legacy Backtest Results numbers (−733% avg across 704 strategies)
+        that were meaningless for operational visibility.
 
-      {/* Real-Time Strategy Generation Display */}
-      <StrategyGenerationDisplay
-        agentStatus={agentStatus?.status}
-        strategiesGenerated={agentStatus?.strategiesGenerated}
-        backtestsCompleted={agentStatus?.backtestsCompleted}
-        paperTradesExecuted={agentStatus?.paperTradesExecuted}
-        lastActivity={activity[0]?.description}
-        startedAt={agentStatus?.startedAt}
-        errorCount={activity.filter(a => a.activity_type === 'error').length}
-      />
+        The detailed strategy pipeline lives on /backtesting if the user
+        wants it — this dashboard surfaces only live operational state.
+      */}
+      <StateOfTheBotCard />
 
-      {/* Strategy Approval Queue */}
+      {/* Strategy Approval Queue (Recalibrating Strategies) */}
       <StrategyApprovalQueue agentStatus={agentStatus?.status} />
 
       {/* ML Self-Learning Engine — Live Recommendations (one-click confirmation required) */}
@@ -1183,77 +1176,28 @@ const AutonomousAgentDashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* Backtest Results Visualization */}
-      <BacktestResultsVisualization />
+      {/*
+        Removed in the 2026-04-19 prune:
+        - <BacktestResultsVisualization /> — displayed unfiltered aggregates
+          across 1,791 NULL-engine_version legacy rows, producing −733%
+          avg / +3813% best / −23581% worst that the user correctly flagged
+          as nonsensical. The detailed per-strategy view on /backtesting
+          now filters by engine_version.
+        - Strategy Pipeline sub-card — the "Start the agent to generate..."
+          copy was stale while the agent was running, and the category
+          counts duplicated info shown better in ActiveStrategiesPanel.
+        - Capability Tiers card — the capabilities endpoint returns
+          hardcoded zeros; the block only ever appeared filled during
+          a brief transition period that's now over.
 
-      {/* Strategy Pipeline Summary — link to Backtesting for detailed view */}
-      <div className="bg-white rounded-lg shadow-lg overflow-hidden">
-        <div className="p-6 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <BarChart3 className="w-5 h-5 text-cyan-600" />
-            <div>
-              <h2 className="text-lg font-bold text-gray-900">Strategy Pipeline</h2>
-              <p className="text-sm text-gray-500">
-                {strategies.length > 0
-                  ? `${strategies.length} strategies generated — view full pipeline on Backtesting`
-                  : 'Start the agent to generate AI-powered trading strategies'}
-              </p>
-            </div>
-          </div>
-          <Link
-            to="/backtesting"
-            className="inline-flex items-center px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors text-sm"
-          >
-            View Pipeline
-          </Link>
-        </div>
-        {strategies.length > 0 && (
-          <div className="border-t border-gray-200 px-6 py-4">
-            <div className="flex gap-6 text-sm">
-              {['generated', 'backtested', 'paper_trading', 'live'].map(status => {
-                const count = strategies.filter(s => s.status === status).length;
-                return (
-                  <div key={status} className="flex items-center gap-2">
-                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${getStrategyStatusColor(status)}`}>
-                      {status.replace('_', ' ')}
-                    </span>
-                    <span className="text-gray-600 font-medium">{count}</span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-      </div>
-
-      {capabilitySummary && capabilitySummary.totalStrategies > 0 && (
+        Strategy pipeline details live on /backtesting. Sidebar nav
+        handles that transition.
+      */}
+      {/* Capability Tiers card retired — data source returned hardcoded zeros. */}
+      {false && (
         <div className="bg-white rounded-lg shadow-lg overflow-hidden">
           <div className="p-6">
-            <h2 className="text-lg font-bold text-gray-900 mb-2">Capability Tiers</h2>
-            <p className="text-sm text-gray-500 mb-4">
-              Composite scoring with adaptive improvement hints for autonomous strategy quality.
-            </p>
             <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-sm">
-              <div className="p-3 bg-gray-50 rounded-lg">
-                <div className="text-gray-500">Strategies</div>
-                <div className="text-xl font-semibold text-gray-900">{capabilitySummary.totalStrategies}</div>
-              </div>
-              <div className="p-3 bg-emerald-50 rounded-lg">
-                <div className="text-emerald-700">Tier 1</div>
-                <div className="text-xl font-semibold text-emerald-800">{capabilitySummary.tier1}</div>
-              </div>
-              <div className="p-3 bg-blue-50 rounded-lg">
-                <div className="text-blue-700">Tier 2</div>
-                <div className="text-xl font-semibold text-blue-800">{capabilitySummary.tier2}</div>
-              </div>
-              <div className="p-3 bg-orange-50 rounded-lg">
-                <div className="text-orange-700">Tier 3</div>
-                <div className="text-xl font-semibold text-orange-800">{capabilitySummary.tier3}</div>
-              </div>
-              <div className="p-3 bg-purple-50 rounded-lg">
-                <div className="text-purple-700">Avg Score</div>
-                <div className="text-xl font-semibold text-purple-800">{safeNum(capabilitySummary.averageCompositeScore).toFixed(2)}</div>
-              </div>
             </div>
           </div>
         </div>

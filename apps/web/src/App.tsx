@@ -8,14 +8,12 @@ import ConnectionHealth from './components/ConnectionHealth';
 
 import { EnvDebug } from './components/EnvDebug';
 import { ConnectionTest } from './components/ConnectionTest';
-import PWAInstallPrompt from './components/PWAInstallPrompt';
 import { TradingProvider } from './context/TradingContext';
 import { SettingsProvider } from './context/SettingsContext';
 import { WebSocketProvider } from './context/WebSocketContext';
 import { AuthProvider } from './context/AuthContext';
 import { MobileMenuProvider } from './context/MobileMenuContext';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import Integration from './components/Integration';
 import ToastContainer from './components/ToastContainer';
 import RouteGuard from './components/RouteGuard';
 import { BrowserCompatibility } from './utils/extensionErrorHandler';
@@ -146,7 +144,15 @@ function App() {
                         </Suspense>
                       </RouteGuard>
                 </AppLayout>
-                <Integration />
+                {/*
+                  <Integration /> was previously rendered globally here,
+                  which leaked the Poloniex/TradingView/Chrome-Extension
+                  status panel + Setup Instructions onto every
+                  authenticated page. Removed as part of the 2026-04-19
+                  scorched-earth prune — the panel is a setup helper,
+                  not ongoing operational UI. If reintroduced, gate it
+                  behind the /login route (or a Settings subpage).
+                */}
                 <ToastContainer />
 
                 {/* Debug components - only in development */}
@@ -157,7 +163,13 @@ function App() {
                     <ConnectionTest />
                   </>
                 )}
-                <PWAInstallPrompt />
+                {/*
+                  <PWAInstallPrompt /> removed from global render in the
+                  2026-04-19 prune. For a trading tool the user babysits
+                  on desktop, the install nag is pure noise. Component
+                  code is preserved; reintroduce behind a Settings
+                  toggle if we ever want to offer it explicitly.
+                */}
                 </MobileMenuProvider>
                 </TradingProvider>
               </WebSocketProvider>

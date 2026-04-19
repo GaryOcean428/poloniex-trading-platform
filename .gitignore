@@ -223,3 +223,7 @@ uv.lock
 # Docker volumes
 postgres_data/
 redis_data/
+
+# Playwright MCP session artefacts + ad-hoc screenshots
+.playwright-mcp/
+agent-dashboard-*.png

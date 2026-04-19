@@ -3,12 +3,14 @@ import express from 'express';
 import { pool } from '../db/connection.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { agentSettingsService } from '../services/agentSettingsService.js';
+import { apiCredentialsService } from '../services/apiCredentialsService.js';
 import {
   getExecutionModeRecord,
   setExecutionMode,
   type ExecutionMode,
 } from '../services/executionModeService.js';
 import { fullyAutonomousTrader } from '../services/fullyAutonomousTrader.js';
+import poloniexFuturesService from '../services/poloniexFuturesService.js';
 import { strategyLearningEngine } from '../services/strategyLearningEngine.js';
 import { logger } from '../utils/logger.js';
 
@@ -473,17 +475,203 @@ router.get('/backtest/results', authenticateToken, async (req: Request, res: Res
     const strategyId = req.query.strategy_id as string;
     const rawBtLimit = parseInt(req.query.limit as string, 10);
     const limit = Math.min(Math.max(Number.isFinite(rawBtLimit) ? rawBtLimit : 10, 1), 100);
+    // engine_version IS NOT NULL: drop the 1,791 legacy rows that
+    // pre-date the engine_version migration (PR #496). They have
+    // unit-mismatched total_return values that pollute aggregates
+    // (e.g. −733% avg, −23581% worst) and are scheduled for hard
+    // delete in the separate legacy-purge PR.
     let result;
     if (strategyId) {
-      result = await pool.query(`SELECT * FROM backtest_results WHERE strategy_name = $1 ORDER BY created_at DESC LIMIT $2`, [strategyId, limit]);
+      result = await pool.query(
+        `SELECT * FROM backtest_results
+          WHERE strategy_name = $1 AND engine_version IS NOT NULL
+          ORDER BY created_at DESC LIMIT $2`,
+        [strategyId, limit],
+      );
     } else {
-      result = await pool.query(`SELECT * FROM backtest_results ORDER BY created_at DESC LIMIT $1`, [limit]);
+      result = await pool.query(
+        `SELECT * FROM backtest_results
+          WHERE engine_version IS NOT NULL
+          ORDER BY created_at DESC LIMIT $1`,
+        [limit],
+      );
     }
     res.json({ success: true, results: result.rows });
   } catch (error: unknown) {
     if (isTableMissingError(error)) return res.json({ success: true, results: [] });
     logger.error('Error fetching backtest results:', error);
     res.status(500).json({ success: false, error: 'Failed to fetch backtest results' });
+  }
+});
+
+/**
+ * GET /api/agent/state-of-bot
+ *
+ * Single-payload "what is the bot doing right now?" view used by the
+ * new State-of-the-Bot card. Aggregates real-time posture (phase,
+ * execution mode, last tick), P&L for 24h/7d/30d/all-time, activity
+ * stats (trades/hr, recent win rate), exchange vs DB position count
+ * (divergence = phantom state — the class of bug we caught on
+ * 2026-04-18 where 6 DB rows stayed "open" while the exchange showed
+ * zero positions), balance, and current leverage.
+ *
+ * Phase precedence (priority order — first match wins):
+ *   1. paused       → execution_mode = 'pause'
+ *   2. degraded     → Poloniex unreachable OR no tick in > 5 min
+ *   3. skipping     → last tick produced a signal, no order placed
+ *   4. trading      → a trade opened within the last tick interval
+ *   5. evaluating   → tick fired, no qualifying signal
+ */
+router.get('/state-of-bot', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const userId = (req.user?.id || req.user?.userId)?.toString();
+    if (!userId) return res.status(401).json({ success: false, error: 'User ID not found in token' });
+
+    // Execution mode (cached in executionModeService, so this is cheap).
+    const modeRecord = await getExecutionModeRecord();
+    const executionMode = modeRecord?.mode ?? 'auto';
+
+    // P&L buckets from autonomous_trades. Closed + pnl IS NOT NULL.
+    // Only rows with reason LIKE 'live_signal|%' to stay aligned with
+    // the live signal engine; legacy/paper rows skew the headline.
+    const pnlResult = await pool.query(
+      `SELECT
+         COALESCE(SUM(pnl) FILTER (WHERE exit_time > NOW() - INTERVAL '24 hours'), 0) AS pnl_24h,
+         COUNT(*)          FILTER (WHERE exit_time > NOW() - INTERVAL '24 hours')      AS trades_24h,
+         COALESCE(SUM(pnl) FILTER (WHERE exit_time > NOW() - INTERVAL '7 days'), 0)    AS pnl_7d,
+         COUNT(*)          FILTER (WHERE exit_time > NOW() - INTERVAL '7 days')        AS trades_7d,
+         COALESCE(SUM(pnl) FILTER (WHERE exit_time > NOW() - INTERVAL '30 days'), 0)   AS pnl_30d,
+         COUNT(*)          FILTER (WHERE exit_time > NOW() - INTERVAL '30 days')       AS trades_30d,
+         COALESCE(SUM(pnl), 0) AS pnl_all,
+         COUNT(*)               AS trades_all
+       FROM autonomous_trades
+       WHERE status = 'closed' AND pnl IS NOT NULL AND reason LIKE 'live_signal|%'
+         AND user_id = $1`,
+      [userId],
+    );
+    const pnl = pnlResult.rows[0] as Record<string, string>;
+
+    // Win rate over last 20 closed trades.
+    const lastTradesResult = await pool.query(
+      `SELECT pnl FROM autonomous_trades
+        WHERE status = 'closed' AND pnl IS NOT NULL AND reason LIKE 'live_signal|%' AND user_id = $1
+        ORDER BY exit_time DESC LIMIT 20`,
+      [userId],
+    );
+    const lastTrades = lastTradesResult.rows as Array<{ pnl: string }>;
+    const winRateLast20 =
+      lastTrades.length === 0
+        ? 0
+        : lastTrades.filter((r) => Number(r.pnl) > 0).length / lastTrades.length;
+
+    // Open-trade counts: exchange-authoritative vs DB-authoritative.
+    // Divergence = phantom state — should alarm.
+    const dbOpenResult = await pool.query(
+      `SELECT COUNT(*) AS n FROM autonomous_trades
+        WHERE status = 'open' AND reason LIKE 'live_signal|%' AND user_id = $1`,
+      [userId],
+    );
+    const dbOpenPositions = parseInt((dbOpenResult.rows[0] as { n: string }).n, 10) || 0;
+
+    let exchangeOpenPositions = 0;
+    let balance = { equity: 0, currency: 'USDT' as const };
+    let currentLeverage = 0;
+    let poloniexReachable = true;
+    try {
+      const credentials = await apiCredentialsService.getCredentials(userId, 'poloniex');
+      if (credentials) {
+        const [positions, bal] = await Promise.all([
+          poloniexFuturesService.getPositions(credentials),
+          poloniexFuturesService.getAccountBalance(credentials),
+        ]);
+        const positionsList = Array.isArray(positions) ? positions : [];
+        exchangeOpenPositions = positionsList.filter((p: Record<string, unknown>) => {
+          const qty = Math.abs(Number(p.qty ?? p.size ?? p.positionAmt ?? 0));
+          return qty > 0;
+        }).length;
+        // Derive leverage from the largest open position; 0 when flat.
+        currentLeverage = positionsList.reduce(
+          (max: number, p: Record<string, unknown>) => Math.max(max, Number(p.leverage ?? 0)),
+          0,
+        );
+        balance = {
+          equity: Number(bal?.totalBalance ?? bal?.eq ?? 0),
+          currency: 'USDT',
+        };
+      }
+    } catch (err) {
+      poloniexReachable = false;
+      logger.warn('[state-of-bot] Poloniex unreachable', {
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    // Last tick + phase derivation from strategyLearningEngine +
+    // monitoringService heartbeat. We treat > 5 min silence as degraded.
+    const engineStatus = await strategyLearningEngine.getEngineStatus().catch(() => null);
+    const lastTickAt = (engineStatus as { lastActivityAt?: string } | null)?.lastActivityAt ?? null;
+    const lastTickAgeMs = lastTickAt ? Date.now() - new Date(lastTickAt).getTime() : null;
+    const stale = lastTickAgeMs !== null && lastTickAgeMs > 5 * 60_000;
+
+    // Trades placed in the last tick interval (~60s). If > 0, phase = trading.
+    const recentOpenResult = await pool.query(
+      `SELECT COUNT(*) AS n FROM autonomous_trades
+        WHERE reason LIKE 'live_signal|%' AND user_id = $1
+          AND (entry_time > NOW() - INTERVAL '90 seconds' OR created_at > NOW() - INTERVAL '90 seconds')`,
+      [userId],
+    );
+    const recentlyOpened = parseInt((recentOpenResult.rows[0] as { n: string }).n, 10) || 0;
+
+    let phase: 'paused' | 'degraded' | 'skipping' | 'trading' | 'evaluating';
+    let phaseReason: string;
+    if (executionMode === 'pause') {
+      phase = 'paused';
+      phaseReason = modeRecord?.reason || 'Execution mode set to pause';
+    } else if (!poloniexReachable || stale) {
+      phase = 'degraded';
+      phaseReason = !poloniexReachable
+        ? 'Poloniex exchange unreachable'
+        : `Last tick ${Math.round((lastTickAgeMs ?? 0) / 60_000)} min ago — expected every minute`;
+    } else if (recentlyOpened > 0) {
+      phase = 'trading';
+      phaseReason = `${recentlyOpened} order${recentlyOpened === 1 ? '' : 's'} placed in last 90s`;
+    } else if (dbOpenPositions > 0) {
+      phase = 'skipping';
+      phaseReason = `${dbOpenPositions} open live-signal position${dbOpenPositions === 1 ? '' : 's'} — stacking guard blocks new entries until they close`;
+    } else {
+      phase = 'evaluating';
+      phaseReason = 'No qualifying signal this tick — watching';
+    }
+
+    // Trades/hr = closed + opened in last 24h, normalized.
+    const tradesPerHour = Number(pnl.trades_24h) / 24;
+
+    res.json({
+      success: true,
+      phase,
+      phaseReason,
+      executionMode,
+      lastTickAt,
+      pnl: {
+        '24h': { realized: Number(pnl.pnl_24h), trades: parseInt(pnl.trades_24h, 10) || 0 },
+        '7d':  { realized: Number(pnl.pnl_7d),  trades: parseInt(pnl.trades_7d, 10)  || 0 },
+        '30d': { realized: Number(pnl.pnl_30d), trades: parseInt(pnl.trades_30d, 10) || 0 },
+        all:   { realized: Number(pnl.pnl_all), trades: parseInt(pnl.trades_all, 10) || 0 },
+      },
+      tradesPerHour,
+      winRateLast20,
+      exchangeOpenPositions,
+      dbOpenPositions,
+      positionStateInSync: exchangeOpenPositions === dbOpenPositions,
+      balance,
+      currentLeverage,
+    });
+  } catch (error: unknown) {
+    logger.error('Error building state-of-bot:', error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to build state-of-bot',
+    });
   }
 });
 
