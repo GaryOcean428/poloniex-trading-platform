@@ -180,16 +180,44 @@ class PoloniexFuturesService {
           }
         });
         const response = await axios(config);
-        
+
+        // Poloniex V3 API envelope: { code: 200, data: {...}, msg: "Success" }.
+        // A non-200 body code is an application error even when HTTP is 200 —
+        // most commonly seen on POST /v3/trade/order where HTTP returns 200
+        // but the body is { code: <non-200>, msg: "<reason>" } with no data.
+        // Previously we silently returned that error object as if it were the
+        // result, causing the exchange-order placeOrder path to look successful
+        // while actually failing (diagnosed 2026-04-19: every liveSignal tick
+        // was "placing" an order that never executed, then the reconciler was
+        // closing the phantom DB row seconds later).
+        const bodyCode = response?.data?.code;
+        const bodyMsg = response?.data?.msg;
+        const isApplicationError =
+          bodyCode !== undefined &&
+          bodyCode !== null &&
+          bodyCode !== 200 &&
+          bodyCode !== 0 &&
+          String(bodyCode) !== 'SUCCESS';
+
         logger.info('Poloniex API response received', {
           endpoint: requestPath,
           status: response.status,
           hasData: !!response.data,
-          dataKeys: response.data ? Object.keys(response.data) : []
+          dataKeys: response.data ? Object.keys(response.data) : [],
+          bodyCode,
+          bodyMsg,
         });
-        
-        // Poloniex V3 API returns: { code: 200, data: {...}, msg: "Success" }
-        // Extract the data field if present, otherwise return the full response
+
+        if (isApplicationError) {
+          const err = new Error(`Poloniex ${requestPath} returned code=${bodyCode}: ${bodyMsg ?? 'no message'}`);
+          // Attach context so callers that care (submitOrder) can surface it.
+          err.poloniexCode = bodyCode;
+          err.poloniexMsg = bodyMsg;
+          err.endpoint = requestPath;
+          throw err;
+        }
+
+        // Extract the data field if present, otherwise return the full response.
         let result;
         if (response.data && typeof response.data === 'object' && 'data' in response.data) {
           result = response.data.data;
