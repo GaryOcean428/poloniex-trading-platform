@@ -354,9 +354,37 @@ class PoloniexFuturesService {
   /**
    * Set leverage for a position
    * Endpoint: POST /v3/position/leverage
+   *
+   * Poloniex V3 expects `lever` (stringified) NOT `leverage`, plus `mgnMode`
+   * (CROSS|ISOLATED). In one-way/`BOTH` position mode, `posSide` is optional
+   * but if supplied must be `BOTH`. Sending `{ symbol, leverage }` as we did
+   * previously produced `{ code: 400, msg: "Param error lever" }` on the
+   * live API (Railway prod, 2026-04-19), which caused every live tick to
+   * log a (non-fatal) leverage-set failure right before order placement.
+   *
+   * The web UI already used the correct shape — see
+   * apps/web/src/context/FuturesContext.tsx::setLeverage which posts
+   * `{ symbol, lever, mgnMode }`. This brings the server-side call in line.
+   *
+   * @param {Object} credentials
+   * @param {string} symbol             e.g. 'BTC_USDT_PERP'
+   * @param {number|string} leverage    numeric leverage (2..125)
+   * @param {Object} [opts]
+   * @param {'CROSS'|'ISOLATED'} [opts.mgnMode='CROSS']  margin mode;
+   *   defaults to CROSS per shared/constants.ts::FUTURES_DEFAULTS
+   *   and the agent dashboard default.
+   * @param {'LONG'|'SHORT'|'BOTH'} [opts.posSide]  position side; omitted
+   *   by default since the account runs in one-way (BOTH) mode.
    */
-  async setLeverage(credentials, symbol, leverage) {
-    const body = { symbol, leverage };
+  async setLeverage(credentials, symbol, leverage, opts = {}) {
+    const body = {
+      symbol,
+      lever: String(leverage),
+      mgnMode: opts.mgnMode || 'CROSS',
+    };
+    if (opts.posSide) {
+      body.posSide = opts.posSide;
+    }
     return this.makeRequest(credentials, 'POST', '/position/leverage', body);
   }
 
