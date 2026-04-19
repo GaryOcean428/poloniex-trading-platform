@@ -81,7 +81,18 @@ export type KernelVetoCode =
 export type ExecutionMode = 'auto' | 'paper_only' | 'pause';
 
 // ───────── Thresholds ─────────
-export const PER_SYMBOL_EXPOSURE_MAX_MULTIPLIER = 1.5;           // 1.5× equity per symbol
+/**
+ * Per-symbol gross notional cap as multiple of equity. Notional-based,
+ * not margin-based — so at high leverage the effective margin commit
+ * per unit of notional is small. At a $27 equity and Poloniex BTC
+ * perp's 0.001 lot × $75k price = $75 minimum notional per order,
+ * a 1.5× cap ($40.72) made it impossible to place the smallest
+ * compliant order. 3.0× ($81) allows a single BTC lot while still
+ * bounding stacked correlated positions; with 15× leverage that's
+ * only ~18% of equity in margin commit. TODO: migrate to a
+ * margin-based cap when the risk kernel gets its next iteration.
+ */
+export const PER_SYMBOL_EXPOSURE_MAX_MULTIPLIER = 3.0;
 export const UNREALIZED_DRAWDOWN_KILL_THRESHOLD = -0.15;         // −15% of equity
 
 function isLong(side: KernelOrder['side']): boolean {
@@ -187,10 +198,9 @@ export function checkExecutionMode(
  * alts 20-75×). Callers read `marketCatalog.getMaxLeverage(symbol)`
  * and pass it in — kernel stays pure sync.
  *
- * This is the exchange ceiling; the per-symbol exposure cap (1.5× equity
- * notional) will typically bind first at tiny account sizes. Example:
- * at $27 equity, the exposure cap pins a $2 BTC trade at ≤$40.5 notional
- * regardless of the 100× leverage BTC technically allows.
+ * This is the exchange ceiling; the per-symbol exposure cap (see
+ * PER_SYMBOL_EXPOSURE_MAX_MULTIPLIER, currently 3.0× equity notional)
+ * typically binds first at tiny account sizes.
  */
 export function checkSymbolMaxLeverage(
   order: KernelOrder,
