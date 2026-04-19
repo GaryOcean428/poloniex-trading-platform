@@ -490,9 +490,11 @@ router.get('/strategy/recent', authenticateToken, async (req: Request, res: Resp
  * Frontend contract: treat `total_return` and `max_drawdown_percent` as
  * already-percent — do NOT multiply by 100. The `agent_strategies.performance`
  * JSON served by /api/backtest/pipeline/summary follows a DIFFERENT convention
- * (decimal) and must be multiplied by 100 at render. This mismatch is the
- * root cause of the mixed-unit bug fixed in this PR; the engine is being
- * migrated to decimal so both paths converge.
+ * (decimal) and must be multiplied by 100 at render. Legacy rows with percent
+ * form are coerced to decimal by `normalizeAgentStrategyPerformance` on the
+ * backtest-pipeline route; new canonical rows go through the pre-write
+ * `validateAgentStrategyPerformance` guard in
+ * `apps/api/src/services/agentStrategyPerformance.ts`.
  */
 router.get('/backtest/results', authenticateToken, async (req: Request, res: Response) => {
   try {
