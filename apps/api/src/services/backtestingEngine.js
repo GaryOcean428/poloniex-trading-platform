@@ -44,6 +44,58 @@ export function computeFundingCost(notional, side, blockIdx, ratePerInterval) {
  * @param {object} backtest - The currentBacktest object after simulation.
  * @returns {{ isCensored: boolean, reason: string|null }}
  */
+/**
+ * Pre-insert guardrail for `backtest_results` rows.
+ *
+ * Refuses metric rows whose values fall outside their canonical unit window.
+ * Catches the class of unit-mismatch bug that produced the −733% / +3813% /
+ * −23581% aggregates in production (tracked in the PnL canonical form PR).
+ *
+ * Canonical windows:
+ *   totalReturn   : DECIMAL, |x| ≤ 10 (i.e. −1000% … +1000% return)
+ *   winRate       : PERCENT, 0 ≤ x ≤ 100
+ *   profitFactor  : RATIO,   0 ≤ x ≤ 1000 (9999.99 sentinel for zero-loss)
+ *   maxDrawdown   : DOLLARS, ≥ 0 and finite
+ *   maxDrawdownPct: PERCENT, 0 ≤ x ≤ 100
+ *
+ * Throws a plain Error on violation; the caller logs and skips the row.
+ *
+ * @param {Object} row — metrics object with camelCase keys.
+ */
+function validateBacktestMetrics(row) {
+  if (row == null || typeof row !== 'object') {
+    throw new Error('validateBacktestMetrics: row is not an object');
+  }
+  if (!Number.isFinite(row.totalReturn) || Math.abs(row.totalReturn) > 10) {
+    throw new Error(
+      `Invalid totalReturn: ${row.totalReturn} (expected decimal form where 0.1 = 10%; |x| must be ≤ 10). Row refused.`
+    );
+  }
+  if (!Number.isFinite(row.winRate) || row.winRate < 0 || row.winRate > 100) {
+    throw new Error(
+      `Invalid winRate: ${row.winRate} (expected percent form 0 ≤ x ≤ 100). Row refused.`
+    );
+  }
+  // profitFactor of 9999.99 is the "no loss" sentinel used in calculateProfitFactor.
+  if (!Number.isFinite(row.profitFactor) || row.profitFactor < 0 || (row.profitFactor > 1000 && row.profitFactor !== 9999.99)) {
+    throw new Error(
+      `Invalid profitFactor: ${row.profitFactor} (expected ratio 0 ≤ x ≤ 1000, or 9999.99 sentinel). Row refused.`
+    );
+  }
+  if (!Number.isFinite(row.maxDrawdown) || row.maxDrawdown < 0) {
+    throw new Error(
+      `Invalid maxDrawdown: ${row.maxDrawdown} (expected finite dollar amount ≥ 0). Row refused.`
+    );
+  }
+  if (!Number.isFinite(row.maxDrawdownPercent) || row.maxDrawdownPercent < 0 || row.maxDrawdownPercent > 100) {
+    throw new Error(
+      `Invalid maxDrawdownPercent: ${row.maxDrawdownPercent} (expected percent form 0 ≤ x ≤ 100). Row refused.`
+    );
+  }
+}
+
+export { validateBacktestMetrics };
+
 function detectBacktestCensoring(backtest) {
   if (!backtest) return { isCensored: false, reason: null };
 
@@ -649,9 +701,20 @@ class BacktestingEngine extends EventEmitter {
     const totalTrades = trades.filter(t => t.type === 'exit').length;
     const winningTrades = trades.filter(t => t.type === 'exit' && t.pnl > 0).length;
     const losingTrades = trades.filter(t => t.type === 'exit' && t.pnl <= 0).length;
+    // Canonical unit conventions for backtest_results columns (matched to
+    // apps/api/src/routes/agent.ts::/backtest/results comment):
+    //   totalReturn   : DECIMAL (−0.006 = −0.6%) — UI multiplies by 100 once.
+    //   winRate       : PERCENT (42.86 = 42.86%).
+    //   maxDrawdown   : DOLLARS (absolute $ peak-to-trough loss).
+    //   maxDrawdownPct: PERCENT (5.89 = 5.89%).
+    //   profitFactor  : RATIO (1.55 = 1.55x).
+    // See validateBacktestMetrics() below for the pre-insert guardrails that
+    // refuse rows with out-of-convention values (the class of bug that
+    // produced the −733% / +3813% / −23581% aggregates).
     const winRate = totalTrades > 0 ? (winningTrades / totalTrades) * 100 : 0;
     const initialCapital = this.currentBacktest.config.initialCapital || 100000;
-    const totalReturn = ((portfolio.totalValue - initialCapital) / initialCapital) * 100;
+    // Decimal form: (final − initial) / initial. Callers render via ×100.
+    const totalReturn = (portfolio.totalValue - initialCapital) / initialCapital;
     let maxValue = portfolio.totalValue, maxDrawdown = 0, maxDrawdownPercent = 0;
     for (const point of equity_curve) {
       if (point.totalValue > maxValue) maxValue = point.totalValue;
@@ -664,7 +727,11 @@ class BacktestingEngine extends EventEmitter {
       totalTrades, winningTrades, losingTrades, winRate, totalReturn, maxDrawdown, maxDrawdownPercent,
       sharpeRatio: this.calculateSharpeRatio(dailyReturns),
       sortinoRatio: this.calculateSortinoRatio(dailyReturns),
-      calmarRatio: maxDrawdownPercent > 0 ? totalReturn / maxDrawdownPercent : 0,
+      // Calmar = annualised return / max drawdown. With totalReturn now decimal
+      // and maxDrawdownPercent still percent, divide (totalReturn * 100) by
+      // maxDrawdownPercent so the ratio keeps the same meaning it had before
+      // the decimal migration.
+      calmarRatio: maxDrawdownPercent > 0 ? (totalReturn * 100) / maxDrawdownPercent : 0,
       averageWin: winningTrades > 0 ? trades.filter(t => t.type === 'exit' && t.pnl > 0).reduce((s, t) => s + t.pnl, 0) / winningTrades : 0,
       averageLoss: losingTrades > 0 ? trades.filter(t => t.type === 'exit' && t.pnl <= 0).reduce((s, t) => s + t.pnl, 0) / losingTrades : 0,
       profitFactor: this.calculateProfitFactor(trades),
@@ -715,6 +782,18 @@ class BacktestingEngine extends EventEmitter {
     try {
       const backtestId = `backtest_${Date.now()}`;
       const { isCensored, reason: censoringReason } = detectBacktestCensoring(this.currentBacktest);
+      // Refuse rows whose metrics don't match canonical unit conventions.
+      // If the engine ever regresses to mixed units (the source of the
+      // −89.60% / PF 1.14 / 5.89% DD contradiction), this throws loudly
+      // rather than silently polluting aggregates.
+      try {
+        validateBacktestMetrics(this.currentBacktest.metrics);
+      } catch (validationError) {
+        logger.error(
+          `Refusing to persist backtest ${backtestId} for ${this.currentBacktest.strategyName}: ${validationError.message}`
+        );
+        return;
+      }
       await query(`
         INSERT INTO backtest_results (
           id, strategy_name, symbol, timeframe, start_date, end_date,

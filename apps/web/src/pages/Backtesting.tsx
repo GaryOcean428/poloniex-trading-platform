@@ -121,10 +121,18 @@ interface PipelineResult {
 // ─── Helper Components ────────────────────────────────────────────────────────
 
 const MINIMUM_TRADES_FOR_CONFIDENCE = 30;
-const toPercent = (value: number | null | undefined): number => {
+// Canonical unit convention (per apps/api/src/routes/agent.ts comments):
+//   agent_strategies.performance.totalReturn : decimal (−0.006 = −0.6%)
+//   agent_strategies.performance.winRate     : decimal (0.4286 = 42.86%)
+//   agent_strategies.performance.maxDrawdown : decimal (0.05 = 5%)
+// `decimalToPercent` multiplies by 100 exactly once at render time. Replaces
+// the old magnitude-sniffing `toPercent` heuristic that silently mis-formatted
+// when rows stored different conventions (the cause of the −89.60% / PF 1.14
+// contradiction the user saw on the Backtest card).
+const decimalToPercent = (value: number | null | undefined): number => {
   const n = Number(value ?? 0);
   if (!Number.isFinite(n)) return 0;
-  return Math.abs(n) <= 1 ? n * 100 : n;
+  return n * 100;
 };
 
 const ConfidenceMeter: React.FC<{ score: number; level: string; paperTrades?: number }> = ({ score, level, paperTrades }) => {
@@ -593,7 +601,7 @@ const Backtesting: React.FC = () => {
                               <p className={`text-sm font-bold ${
                                 (strategy.performance.totalReturn || 0) >= 0 ? 'text-green-600' : 'text-red-600'
                               }`}>
-                                {toPercent(strategy.performance.totalReturn).toFixed(2)}%
+                                {decimalToPercent(strategy.performance.totalReturn).toFixed(2)}%
                               </p>
                             </div>
                           )}
@@ -612,7 +620,7 @@ const Backtesting: React.FC = () => {
                             <div className="bg-bg-secondary p-3 rounded">
                               <p className="text-xs text-text-muted">Max Drawdown</p>
                               <p className="text-sm font-bold text-red-600">
-                                {(strategy.performance.maxDrawdown || 0).toFixed(2)}%
+                                {decimalToPercent(strategy.performance.maxDrawdown).toFixed(2)}%
                               </p>
                             </div>
                           )}

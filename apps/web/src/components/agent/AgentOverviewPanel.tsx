@@ -130,14 +130,26 @@ const AgentOverviewPanel: React.FC<AgentOverviewPanelProps> = ({
     return `${prefix}${safeNum(Math.abs(value)).toFixed(2)}`;
   };
 
+  // Format a percent value (already in "percent units", e.g. 42.86 → "+42.9%").
+  // Use this when the source already stores percent form (DB win_rate column,
+  // paper_trading.winRate, averageReturnPct, avgMaxDrawdown from pipeline).
   const formatPercent = (value: number): string => {
     const prefix = value >= 0 ? '+' : '';
     return `${prefix}${safeNum(value).toFixed(1)}%`;
   };
 
-  const toPercent = (value: number | undefined | null): number => {
-    const n = safeNum(value ?? 0);
-    return Math.abs(n) <= 1 ? n * 100 : n;
+  // Canonical decimal → percent conversion.
+  //
+  // Replaces the old magnitude-sniffing `toPercent` heuristic, which silently
+  // mis-formatted when upstream rows stored different conventions (the cause
+  // of the −89.60% / PF 1.14 / −5.89% DD contradiction the user saw on the
+  // Backtest card). The rule going forward: `agent_strategies.performance`
+  // values (winRate, totalReturn, maxDrawdown) are decimal (0.4286 = 42.86%),
+  // and the UI multiplies by 100 exactly once here. Short-form returns a
+  // number suitable for sort/compare; `formatPercent(decimalToPercent(n))`
+  // produces the signed string for rendering.
+  const decimalToPercent = (value: number | undefined | null): number => {
+    return safeNum(value ?? 0) * 100;
   };
 
   const pnlColor = (value: number): string =>
@@ -189,15 +201,24 @@ const AgentOverviewPanel: React.FC<AgentOverviewPanelProps> = ({
   const health = getHealthLabel();
   const riskRating = pipelineSummary?.risk?.rating || 'unknown';
 
-  // Find best and worst strategies from breakdown
-  // API returns { performance: { winRate, totalReturn, ... } } — flatten for display
+  // Find best and worst strategies from breakdown.
+  // API returns { performance: { winRate, totalReturn, maxDrawdown, ... } } — flatten
+  // for display. Canonical unit conventions (per ../api/src/routes/agent.ts and
+  // ../api/src/services/backtestingEngine.js):
+  //   - performance.winRate    : decimal (0.4286 = 42.86%)
+  //   - performance.totalReturn: decimal (−0.006 = −0.6%)
+  //   - performance.maxDrawdown: decimal (0.05 = 5%)
+  //   - performance.profitFactor: ratio (1.55 = 1.55x)
+  //   - performance.totalTrades: count
+  // We multiply by 100 exactly once here (via decimalToPercent) to produce
+  // percent-form numbers the sort/compare/render code consumes.
   const rawBreakdown = pipelineSummary?.strategyBreakdown || [];
   const breakdown = rawBreakdown.map((s: any) => ({
     strategyName: s.strategyName ?? s.name ?? 'Unnamed strategy',
     status: s.status ?? 'unknown',
     totalTrades: safeNum(s.totalTrades ?? s.performance?.totalTrades ?? 0),
-    winRatePct: toPercent(s.winRate ?? s.performance?.winRate ?? 0),
-    returnPct: toPercent(s.pnl ?? s.performance?.totalReturn ?? 0),
+    winRatePct: decimalToPercent(s.winRate ?? s.performance?.winRate ?? 0),
+    returnPct: decimalToPercent(s.pnl ?? s.performance?.totalReturn ?? 0),
   }));
   const sortedByReturn = [...breakdown].sort((a, b) => b.returnPct - a.returnPct);
   const bestStrategy = sortedByReturn[0] || null;
