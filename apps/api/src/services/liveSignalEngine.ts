@@ -78,6 +78,16 @@ const OHLCV_TIMEFRAME = '15m';
 /** Live position sizing (USDT notional) — graduated ladder. */
 const INITIAL_POSITION_USDT = Number(process.env.LIVE_POSITION_USDT) || 2;
 
+/**
+ * Base leverage applied to the order before the symbol-max catalog cap.
+ * At small account sizes the critical constraint is lot-size × price —
+ * e.g. BTC lotSize=0.001 @ $75k = $75 minNotional per lot. A $5 position
+ * at 3x leverage is only $15 notional, which rounds to 0 lots. Higher
+ * leverage is how a $27 account ever places a compliant BTC order.
+ * Risk kernel still caps at symbolMaxLeverage (100× BTC, varies by alt).
+ */
+const DEFAULT_LEVERAGE = Number(process.env.LIVE_LEVERAGE) || 3;
+
 /** ATR-scaling: stop = ATR × this, take-profit = ATR × this × 2. */
 const ATR_STOP_MULTIPLIER = 1.5;
 const ATR_TAKE_PROFIT_MULTIPLIER = 3.0;
@@ -585,7 +595,7 @@ export class LiveSignalEngine extends EventEmitter {
    * posterior we update.
    */
   private prospectiveLeverage(): number {
-    return 3; // Conservative default; risk kernel caps at symbol max
+    return DEFAULT_LEVERAGE;
   }
 
   private buildOrder(
