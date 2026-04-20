@@ -168,14 +168,21 @@ export function currentLeverage(
   const regimeStability = s.regimeWeights.equilibrium + 0.5 * s.regimeWeights.efficient;
   const surpriseDiscount = 1 - 0.5 * s.neurochemistry.norepinephrine;
 
-  // Novice floor: newborn Monkey caps at 10x for exploration. The floor
-  // exists so her first witnessed-bootstrap trade can clear the exchange
-  // min notional on a sub-$20 account; without it a $0.95 margin × 3x =
-  // $2.85 notional never clears ETH's ~$22 min, observed for 6h at birth.
-  // Scales up to 33x once fully sovereign.
-  const sovereignCap = Math.max(10, 3 + 30 * s.sovereignty);
+  // Novice floor: newborn Monkey caps at 20x for exploration. Scales
+  // up to 33x once fully sovereign.
+  const sovereignCap = Math.max(20, 3 + 30 * s.sovereignty);
 
-  const rawLev = sovereignCap * kappaProxim * regimeStability * surpriseDiscount;
+  // Newborn mode (Pillar 1 exploration): until she has lived trades,
+  // the regime × κ × surprise compression (≈ 0.43) crushes the cap so
+  // hard that her first trade can't clear the exchange min notional on
+  // a small account. E.g. $1.89 × (10 × 0.43) = $7.57 vs ETH's $23 min.
+  // Newborn bypasses the compression and uses 80% of the cap directly
+  // — she has no data to judge regime with anyway. Once sov > 0.1
+  // (~first witnessed close), fall into the full formula.
+  const newborn = s.sovereignty < 0.1;
+  const rawLev = newborn
+    ? sovereignCap * 0.8
+    : sovereignCap * kappaProxim * regimeStability * surpriseDiscount;
   const lev = Math.max(1, Math.min(maxLeverageBoundary, Math.round(rawLev)));
 
   return {
