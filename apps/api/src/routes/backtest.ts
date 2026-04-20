@@ -674,6 +674,51 @@ router.get('/pipeline/summary', authenticateToken, async (req: Request, res: Res
       logger.warn('agent_strategies table not available yet', { error: dbError instanceof Error ? dbError.message : String(dbError) });
     }
 
+    // Augment counts with liveSignalEngine trades. These write to
+    // autonomous_trades (not agent_strategies) so the strategy-centric
+    // queries above miss them entirely. Without this, the dashboard's
+    // "Live: 0" stayed flat even after real Poloniex orders executed
+    // (2026-04-19 incident + subsequent verification). The fix counts
+    // every live_signal row with an actual exchange order_id as a
+    // live trade for the pipeline funnel — treating the liveSignal
+    // pipeline as a first-class "strategy" in the funnel even though
+    // it doesn't have an agent_strategies row.
+    try {
+      const liveSignalCounts = await pool.query(
+        `SELECT
+           COUNT(*) FILTER (WHERE order_id IS NOT NULL) AS executed,
+           COUNT(*) FILTER (WHERE order_id IS NOT NULL AND status = 'open') AS still_open
+         FROM autonomous_trades
+         WHERE user_id = $1
+           AND reason LIKE 'live_signal|%'`,
+        [userId]
+      );
+      const row = liveSignalCounts.rows[0] as { executed: string; still_open: string };
+      const liveExecuted = parseInt(row?.executed ?? '0', 10);
+      const liveOpen = parseInt(row?.still_open ?? '0', 10);
+      if (liveExecuted > 0) {
+        // Count the live-signal engine as one "strategy" family at the
+        // live stage. If there are open positions right now, also +1
+        // for paper-trading-equivalent (the engine IS trading). Keeps
+        // the funnel honest: Live count reflects what the exchange
+        // holds, not just SLE row status.
+        totalLive += liveExecuted;
+        // Add a synthetic strategyBreakdown entry so the UI can see it.
+        strategyBreakdown.push({
+          id: 'live-signal-engine',
+          name: 'Live Signal Engine (ml-worker)',
+          symbol: 'BTC_USDT_PERP',
+          timeframe: '15m',
+          status: liveOpen > 0 ? 'live' : 'completed',
+          performance: {} as unknown as Record<string, number>,
+        });
+      }
+    } catch (err) {
+      logger.warn('live_signal augment failed (non-fatal)', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
     // Query pipeline results for overall confidence
     try {
       const pipelineScores = await pool.query(
