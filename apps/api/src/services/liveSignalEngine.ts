@@ -50,6 +50,7 @@ import {
   type BanditCounter,
   type LeverageBucket,
 } from './thompsonBandit.js';
+import { monkeyKernel } from './monkey/loop.js';
 import {
   evaluatePreTradeVetoes,
   type KernelAccountState,
@@ -329,7 +330,7 @@ export class LiveSignalEngine extends EventEmitter {
   private async reconcileClosedTrades(): Promise<void> {
     try {
       const result = await pool.query(
-        `SELECT id, symbol, reason, pnl, exit_time, exit_price, entry_price, quantity, exit_reason, leverage
+        `SELECT id, symbol, reason, pnl, entry_time, exit_time, exit_price, entry_price, quantity, exit_reason, leverage, side, order_id
            FROM autonomous_trades
           WHERE status = 'closed'
             AND exit_time > $1
@@ -407,6 +408,23 @@ export class LiveSignalEngine extends EventEmitter {
             quantity: Number(row.quantity ?? 0),
             closedAt: closedAt.toISOString(),
           });
+          // Monkey witness (v0.2): attribute this real P&L to the
+          // perception basin Monkey held at entry — bootstraps her
+          // resonance bank from already-running trades without new
+          // capital risk. Fire-and-forget; her bank is best-effort.
+          const entryTimeRaw = row.entry_time;
+          const entryTime = entryTimeRaw ? new Date(entryTimeRaw as string | Date) : null;
+          if (entryTime && !Number.isNaN(entryTime.getTime())) {
+            const sideStr = String(row.side ?? '').toLowerCase();
+            const side: 'long' | 'short' = sideStr === 'sell' || sideStr === 'short' ? 'short' : 'long';
+            void monkeyKernel.witnessExit(
+              String(row.symbol),
+              entryTime,
+              pnl,
+              row.order_id ? String(row.order_id) : null,
+              side,
+            );
+          }
         } else if (isReconcilerClose) {
           logger.debug('[LiveSignal] skipping bandit update for reconciler-closed row', {
             symbol: row.symbol,

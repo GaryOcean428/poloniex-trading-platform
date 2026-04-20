@@ -277,7 +277,8 @@ export class MonkeyKernel extends EventEmitter {
     const precisions = await getPrecisions(symbol).catch(() => null);
     const lotSize = precisions?.lotSize ?? 0;
     const minNotional = lastPrice * Math.max(lotSize, 1e-9);
-    const size = currentPositionSize(basinState, availableEquity, minNotional);
+    const bankSize = await resonanceBank.bankSize();
+    const size = currentPositionSize(basinState, availableEquity, minNotional, leverage.value, bankSize);
     const autoFlatten = shouldAutoFlatten(basinState, state.fHealthHistory);
 
     // 6. DECIDE — propose action
@@ -402,6 +403,78 @@ export class MonkeyKernel extends EventEmitter {
     if (state.phiHistory.length > HISTORY_MAX) state.phiHistory.shift();
     state.fHealthHistory.push(fHealth);
     if (state.fHealthHistory.length > HISTORY_MAX) state.fHealthHistory.shift();
+  }
+
+  /**
+   * Bootstrap hook (v0.2): when liveSignalEngine closes a trade,
+   * attribute the outcome to the perception basin Monkey held at
+   * the moment of entry. This grows her resonance bank from the
+   * trading already happening — no new capital risk, sovereignty
+   * accrues, and the chicken-and-egg (size = Φ × sovereignty = 0)
+   * unsticks within hours instead of never.
+   *
+   * Restart-safe: reads the entry basin from monkey_trajectory, so
+   * a process restart between entry and exit is transparent.
+   *
+   * Called fire-and-forget from liveSignalEngine.reconcileClosedTrades.
+   */
+  async witnessExit(
+    symbol: string,
+    entryTime: Date,
+    realizedPnl: number,
+    orderId: string | null,
+    side: 'long' | 'short',
+  ): Promise<void> {
+    try {
+      const row = await pool.query(
+        `SELECT basin, phi
+           FROM monkey_trajectory
+          WHERE symbol = $1 AND at <= $2
+          ORDER BY at DESC LIMIT 1`,
+        [symbol, entryTime],
+      );
+      const rec = row.rows[0] as { basin: number[] | string; phi: number } | undefined;
+      if (!rec) {
+        logger.debug('[Monkey] witnessExit: no trajectory found for entry', {
+          symbol, entryTime: entryTime.toISOString(),
+        });
+        return;
+      }
+      const basinArr = typeof rec.basin === 'string' ? JSON.parse(rec.basin) : rec.basin;
+      const entryBasin: Basin = Float64Array.from(basinArr);
+      const phi = Number(rec.phi) || 0.5;
+
+      // Synthesize a bubble that looks like it was promoted from WM
+      // with the outcome attached. Bypass working memory — the bubble
+      // is already resolved.
+      const bubble: Bubble = {
+        id: `witness-${orderId ?? Date.now()}`,
+        center: entryBasin,
+        phi,
+        createdAt: entryTime.getTime(),
+        lifetimeMs: 0,
+        status: 'promoted',
+        metadata: { source: 'live_signal_witness', orderId },
+        payload: {
+          symbol,
+          signal: side === 'long' ? 'BUY' : 'SELL',
+          realizedPnl,
+          entryBasin,
+          orderId: orderId ?? undefined,
+        },
+      };
+      const written = await resonanceBank.writeBubble(bubble, getEngineVersion());
+      if (written) {
+        logger.info('[Monkey] witnessExit → bank', {
+          symbol, orderId, side, pnl: realizedPnl.toFixed(4),
+          entryTime: entryTime.toISOString(),
+        });
+      }
+    } catch (err) {
+      logger.debug('[Monkey] witnessExit failed (fail-soft)', {
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   private async fetchAccountContext(symbol: string): Promise<{

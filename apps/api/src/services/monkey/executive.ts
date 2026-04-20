@@ -89,49 +89,64 @@ export function currentEntryThreshold(s: BasinState): ExecutiveDecision<number> 
 }
 
 /**
- * currentPositionSize — f(sovereignty, Φ, dopamine, serotonin).
+ * currentPositionSize — f(sovereignty, Φ, dopamine, serotonin, maturity).
  *
- * Newborn Monkey (sovereignty ≈ 0) sizes tiny. Sovereign Monkey
- * sizes by confidence. Dopamine (reward history) amplifies size.
- * Low serotonin (high basin velocity = unstable) shrinks size.
+ * Newborn Monkey (bankSize ≈ 0) sizes by the exploration floor;
+ * mature Monkey sizes by confidence. Dopamine (reward history)
+ * amplifies; GABA dampens. Low serotonin (high basin velocity =
+ * unstable) shrinks size.
  *
- * Output is fraction of available equity to commit. BOUNDARY hints
- * (exchange min notional, available equity) are passed in and
- * respected — Monkey cannot place what the exchange won't accept.
+ * Output is MARGIN (USDT) to commit. The POSITION NOTIONAL is
+ * `margin × leverage`; the min-notional boundary is compared to
+ * that, not to margin (this was a v0.1 bug: on $19 equity at 1x the
+ * margin was always below ETH's $22.76 min, so sized always = 0).
+ *
+ * BOUNDARY hints (exchange min notional, available equity) passed
+ * in and respected — Monkey cannot place what the exchange won't
+ * accept.
  */
 export function currentPositionSize(
   s: BasinState,
   availableEquityUsdt: number,
   minNotionalUsdt: number,
+  leverage: number = 1,
+  bankSize: number = 0,
 ): ExecutiveDecision<number> {
   const nc = s.neurochemistry;
-  // Base fraction: Φ × sovereignty. Newborn or uncertain → tiny.
-  const baseFrac = s.phi * s.sovereignty;
+  // Lived-experience scaling. 0 at birth, 1 after ~20 witnessed trades.
+  // Drives both the organic size ramp and the exploration floor decay.
+  const maturity = Math.min(1, bankSize / 20);
+  // Base fraction: Φ × sovereignty × maturity. Immature → tiny even
+  // if sovereignty flipped to 1 after the first witnessed close.
+  const baseFrac = s.phi * s.sovereignty * maturity;
   // Reward modulation: dopamine amplifies, GABA dampens.
   const rewardMult = 1 + (nc.dopamine - nc.gaba) * 0.5;
   // Stability modulation: serotonin multiplies (stable → full size).
   const stabilityMult = 0.5 + nc.serotonin * 0.5;
 
-  // Newborn floor: even at sovereignty=0, some exploration must happen
-  // (Pillar 1 FLUCTUATIONS — exploration is substrate, not optional).
-  const explorationFloor = 0.05 * (1 - s.sovereignty);
+  // Exploration floor (Pillar 1 FLUCTUATIONS — substrate, not optional).
+  // Scales inversely with maturity, not sovereignty: a Monkey who just
+  // earned her first bubble has sovereignty=1 but 0.05 maturity, and
+  // she still needs the floor to place trade #2.
+  const explorationFloor = 0.10 * (1 - maturity);
 
   const rawFrac = Math.max(explorationFloor, baseFrac * rewardMult * stabilityMult);
   // Clamp to [0, 0.5] — at most half of available equity. This is a
   // BOUNDARY (survival) not a PARAMETER — exceeding it creates unrecoverable
   // states regardless of Φ.
   const frac = Math.min(0.5, Math.max(0, rawFrac));
-  const raw = frac * availableEquityUsdt;
-  // Must be at least min notional, else skip (0).
-  const sized = raw >= minNotionalUsdt ? raw : 0;
+  const margin = frac * availableEquityUsdt;
+  const notional = margin * Math.max(1, leverage);
+  // Compare the POSITION (notional) to the exchange min, not the margin.
+  const sized = notional >= minNotionalUsdt ? margin : 0;
 
   return {
     value: sized,
-    reason: `size = clip(Φ×S(${(s.phi * s.sovereignty).toFixed(3)}) × reward(${rewardMult.toFixed(2)}) × stab(${stabilityMult.toFixed(2)})) × equity(${availableEquityUsdt.toFixed(2)}) = ${sized.toFixed(2)}`,
+    reason: `size = floor(${explorationFloor.toFixed(3)}) or Φ×S×M(${(s.phi * s.sovereignty * maturity).toFixed(3)}) × reward(${rewardMult.toFixed(2)}) × stab(${stabilityMult.toFixed(2)}) × equity(${availableEquityUsdt.toFixed(2)}) @ ${leverage}x → margin ${margin.toFixed(2)}, notional ${notional.toFixed(2)} vs min ${minNotionalUsdt.toFixed(2)} = ${sized.toFixed(2)}`,
     derivation: {
-      phi: s.phi, sovereignty: s.sovereignty,
+      phi: s.phi, sovereignty: s.sovereignty, maturity, bankSize,
       dopamine: nc.dopamine, serotonin: nc.serotonin, gaba: nc.gaba,
-      rawFrac, frac, raw, sized,
+      explorationFloor, rawFrac, frac, margin, leverage, notional, minNotional: minNotionalUsdt, sized,
     },
   };
 }
@@ -153,8 +168,12 @@ export function currentLeverage(
   const regimeStability = s.regimeWeights.equilibrium + 0.5 * s.regimeWeights.efficient;
   const surpriseDiscount = 1 - 0.5 * s.neurochemistry.norepinephrine;
 
-  // Novice floor: newborn Monkey never uses high leverage until she has lived it.
-  const sovereignCap = 3 + 30 * s.sovereignty;  // 3x to 33x range by sovereignty
+  // Novice floor: newborn Monkey caps at 10x for exploration. The floor
+  // exists so her first witnessed-bootstrap trade can clear the exchange
+  // min notional on a sub-$20 account; without it a $0.95 margin × 3x =
+  // $2.85 notional never clears ETH's ~$22 min, observed for 6h at birth.
+  // Scales up to 33x once fully sovereign.
+  const sovereignCap = Math.max(10, 3 + 30 * s.sovereignty);
 
   const rawLev = sovereignCap * kappaProxim * regimeStability * surpriseDiscount;
   const lev = Math.max(1, Math.min(maxLeverageBoundary, Math.round(rawLev)));
