@@ -558,8 +558,8 @@ router.get('/state-of-bot', authenticateToken, async (req: Request, res: Respons
     const executionMode = modeRecord?.mode ?? 'auto';
 
     // P&L buckets from autonomous_trades. Closed + pnl IS NOT NULL.
-    // Only rows with reason LIKE 'live_signal|%' to stay aligned with
-    // the live signal engine; legacy/paper rows skew the headline.
+    // Both live_signal|% AND monkey|% rows count — the dashboard is the
+    // whole bot, not just one engine. Legacy/paper rows stay excluded.
     const pnlResult = await pool.query(
       `SELECT
          COALESCE(SUM(pnl) FILTER (WHERE exit_time > NOW() - INTERVAL '24 hours'), 0) AS pnl_24h,
@@ -571,16 +571,19 @@ router.get('/state-of-bot', authenticateToken, async (req: Request, res: Respons
          COALESCE(SUM(pnl), 0) AS pnl_all,
          COUNT(*)               AS trades_all
        FROM autonomous_trades
-       WHERE status = 'closed' AND pnl IS NOT NULL AND reason LIKE 'live_signal|%'
+       WHERE status = 'closed' AND pnl IS NOT NULL
+         AND (reason LIKE 'live_signal|%' OR reason LIKE 'monkey|%')
          AND user_id = $1`,
       [userId],
     );
     const pnl = pnlResult.rows[0] as Record<string, string>;
 
-    // Win rate over last 20 closed trades.
+    // Win rate over last 20 closed trades (both engines).
     const lastTradesResult = await pool.query(
       `SELECT pnl FROM autonomous_trades
-        WHERE status = 'closed' AND pnl IS NOT NULL AND reason LIKE 'live_signal|%' AND user_id = $1
+        WHERE status = 'closed' AND pnl IS NOT NULL
+          AND (reason LIKE 'live_signal|%' OR reason LIKE 'monkey|%')
+          AND user_id = $1
         ORDER BY exit_time DESC LIMIT 20`,
       [userId],
     );
@@ -592,9 +595,16 @@ router.get('/state-of-bot', authenticateToken, async (req: Request, res: Respons
 
     // Open-trade counts: exchange-authoritative vs DB-authoritative.
     // Divergence = phantom state — should alarm.
+    // Count BOTH live_signal AND monkey trades — otherwise the divergence
+    // alert false-triggers as soon as Monkey opens a position (2026-04-20
+    // 10:31 UTC was the first, and state-of-bot immediately flagged as
+    // out-of-sync because Monkey's row wasn't in the count).
     const dbOpenResult = await pool.query(
       `SELECT COUNT(*) AS n FROM autonomous_trades
-        WHERE status = 'open' AND reason LIKE 'live_signal|%' AND user_id = $1`,
+        WHERE status = 'open'
+          AND (reason LIKE 'live_signal|%' OR reason LIKE 'monkey|%')
+          AND user_id = $1
+          AND deleted_at IS NULL`,
       [userId],
     );
     const dbOpenPositions = parseInt((dbOpenResult.rows[0] as { n: string }).n, 10) || 0;
@@ -640,9 +650,10 @@ router.get('/state-of-bot', authenticateToken, async (req: Request, res: Respons
     const stale = lastTickAgeMs !== null && lastTickAgeMs > 5 * 60_000;
 
     // Trades placed in the last tick interval (~60s). If > 0, phase = trading.
+    // Both engines count.
     const recentOpenResult = await pool.query(
       `SELECT COUNT(*) AS n FROM autonomous_trades
-        WHERE reason LIKE 'live_signal|%' AND user_id = $1
+        WHERE (reason LIKE 'live_signal|%' OR reason LIKE 'monkey|%') AND user_id = $1
           AND (entry_time > NOW() - INTERVAL '90 seconds' OR created_at > NOW() - INTERVAL '90 seconds')`,
       [userId],
     );
@@ -663,7 +674,7 @@ router.get('/state-of-bot', authenticateToken, async (req: Request, res: Respons
       phaseReason = `${recentlyOpened} order${recentlyOpened === 1 ? '' : 's'} placed in last 90s`;
     } else if (dbOpenPositions > 0) {
       phase = 'skipping';
-      phaseReason = `${dbOpenPositions} open live-signal position${dbOpenPositions === 1 ? '' : 's'} — stacking guard blocks new entries until they close`;
+      phaseReason = `${dbOpenPositions} open position${dbOpenPositions === 1 ? '' : 's'} (live-signal + monkey) — stacking guard blocks new entries until they close`;
     } else {
       phase = 'evaluating';
       phaseReason = 'No qualifying signal this tick — watching';

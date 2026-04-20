@@ -302,20 +302,26 @@ class StateReconciliationService {
         });
       }
 
-      // Source 2: users with an open live-signal trade. This is the
-      // liveSignalEngine's footprint — if phantom rows accumulate here,
-      // the stacking guard freezes all future entries until reconciler
-      // catches them. Covering this surface is the whole point of P2.
+      // Source 2: users with an open auto-trader row. This is the
+      // liveSignalEngine's + Monkey's footprint — if phantom rows
+      // accumulate on either, the stacking guard freezes all future
+      // entries until reconciler catches them. Covering this surface is
+      // the whole point of P2. Post-v0.3 Monkey is also a producer of
+      // open rows (reason LIKE 'monkey|%'); omitting her hides any
+      // phantoms she leaves behind (observed 2026-04-20 — state-of-bot
+      // read 1 DB open vs 2 exchange open because this query excluded
+      // Monkey's ETH row).
       try {
-        const liveSignalUsers = await pool.query(
+        const traderUsers = await pool.query(
           `SELECT DISTINCT user_id FROM autonomous_trades
-            WHERE status = 'open' AND reason LIKE 'live_signal|%'`,
+            WHERE status = 'open'
+              AND (reason LIKE 'live_signal|%' OR reason LIKE 'monkey|%')`,
         );
-        for (const row of liveSignalUsers.rows as Array<{ user_id: string }>) {
+        for (const row of traderUsers.rows as Array<{ user_id: string }>) {
           userIds.add(String(row.user_id));
         }
       } catch (err) {
-        logger.warn('[RECONCILE] live-signal-users lookup failed', {
+        logger.warn('[RECONCILE] auto-trader users lookup failed', {
           err: err instanceof Error ? err.message : String(err),
         });
       }
