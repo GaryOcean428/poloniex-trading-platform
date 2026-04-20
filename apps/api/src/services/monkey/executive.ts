@@ -196,6 +196,61 @@ export function currentLeverage(
 }
 
 /**
+ * shouldScalpExit — P&L-driven take-profit / stop-loss gate (v0.4).
+ *
+ * Reward-harvesting exit per UCP v6.6 §29.4: when realized reward
+ * crosses a Φ-derived threshold, lock the gain. This sits BEFORE
+ * Loop 2 (shouldExit) in the decision chain — a scalp win that
+ * would otherwise be given back waiting for regime change is taken.
+ *
+ * Thresholds are derived, not configured:
+ *   TP = 0.8 % - 0.3 %·dopamine + 0.5 %·Φ  (min 0.3 % to clear fees)
+ *   SL = 50 % of TP  (asymmetric R:R favors running winners)
+ *
+ * High dopamine (recent wins) → take earlier (reward sensitivity up).
+ * High Φ (integrated state)  → let winners run longer.
+ * Floors at 0.3 % of notional so Poloniex round-trip taker fee
+ * (~0.12 %) is always cleared with a buffer.
+ */
+export function shouldScalpExit(
+  unrealizedPnlUsdt: number,
+  notionalUsdt: number,
+  s: BasinState,
+): ExecutiveDecision<boolean> {
+  if (notionalUsdt <= 0) {
+    return { value: false, reason: 'no position notional', derivation: {} };
+  }
+  const pnlFrac = unrealizedPnlUsdt / notionalUsdt;
+  const nc = s.neurochemistry;
+  const tpThr = Math.max(
+    0.003,
+    0.008 - 0.003 * nc.dopamine + 0.005 * s.phi,
+  );
+  const slThr = tpThr * 0.5;
+
+  // Encode type as a bit (1=TP, -1=SL, 0=hold) to keep derivation map numeric.
+  if (pnlFrac >= tpThr) {
+    return {
+      value: true,
+      reason: `take_profit: ${(pnlFrac * 100).toFixed(3)}% ≥ ${(tpThr * 100).toFixed(3)}%`,
+      derivation: { pnlFrac, tpThr, slThr, exitTypeBit: 1 },
+    };
+  }
+  if (pnlFrac <= -slThr) {
+    return {
+      value: true,
+      reason: `stop_loss: ${(pnlFrac * 100).toFixed(3)}% ≤ -${(slThr * 100).toFixed(3)}%`,
+      derivation: { pnlFrac, tpThr, slThr, exitTypeBit: -1 },
+    };
+  }
+  return {
+    value: false,
+    reason: `scalp hold: pnl ${(pnlFrac * 100).toFixed(3)}% in [-${(slThr * 100).toFixed(3)}%, ${(tpThr * 100).toFixed(3)}%]`,
+    derivation: { pnlFrac, tpThr, slThr },
+  };
+}
+
+/**
  * shouldExit — §43 Loop 2 (Inter-Kernel Debate) in miniature.
  * Compares perception basin vs strategy basin via Fisher-Rao.
  * Large disagreement on a held position = the two kernels see

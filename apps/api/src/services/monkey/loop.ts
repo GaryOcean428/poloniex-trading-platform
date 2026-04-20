@@ -59,12 +59,15 @@ import {
   currentPositionSize,
   shouldAutoFlatten,
   shouldExit,
+  shouldScalpExit,
   type BasinState,
 } from './executive.js';
 
 /** Default Monkey watchlist — matches liveSignalEngine for side-by-side. */
 const DEFAULT_SYMBOLS = ['BTC_USDT_PERP', 'ETH_USDT_PERP'];
-const DEFAULT_TICK_MS = Number(process.env.MONKEY_TICK_MS) || 60_000;
+// v0.4: faster tick so scalp TP/SL exits catch sub-minute wiggles.
+// Full perception runs per tick; DB + compute cost is modest.
+const DEFAULT_TICK_MS = Number(process.env.MONKEY_TICK_MS) || 30_000;
 /** OHLCV window ml-worker also uses. */
 const OHLCV_LOOKBACK = 200;
 const OHLCV_TIMEFRAME = '15m';
@@ -302,17 +305,34 @@ export class MonkeyKernel extends EventEmitter {
       reason = autoFlatten.reason;
       derivation.autoFlatten = autoFlatten.derivation;
     } else if (heldSide) {
-      // In an open position: check ML-driven exit via Loop 2 miniature
-      // (perception vs strategy — strategy is just "the basin that opened
-      // the trade" for v0.1; real strategy kernel comes in v0.2)
-      const exit = shouldExit(basin, state.identityBasin, heldSide, basinState);
-      if (exit.value) {
-        action = 'exit';
-        reason = exit.reason;
-        derivation.exit = exit.derivation;
-      } else {
-        action = 'hold';
-        reason = exit.reason;
+      // v0.4: Scalp TP/SL gate runs FIRST in the held-position branch.
+      // Only applies to Monkey's own open rows; if she doesn't find one,
+      // fall through to Loop 2 (covers orphan/manual positions).
+      let scalpFired = false;
+      const openRow = await this.findOpenMonkeyTrade(symbol);
+      if (openRow) {
+        const positionNotional = Number(openRow.entry_price) * Number(openRow.quantity);
+        const sidesign = heldSide === 'long' ? 1 : -1;
+        const unrealizedPnl = (lastPrice - Number(openRow.entry_price)) * Number(openRow.quantity) * sidesign;
+        const scalp = shouldScalpExit(unrealizedPnl, positionNotional, basinState);
+        derivation.scalp = { ...scalp.derivation, unrealizedPnl, markPrice: lastPrice, tradeId: String(openRow.id) };
+        if (scalp.value) {
+          action = 'scalp_exit';
+          reason = scalp.reason;
+          scalpFired = true;
+        }
+      }
+      if (!scalpFired) {
+        // Loop 2 debate — perception vs identity
+        const exit = shouldExit(basin, state.identityBasin, heldSide, basinState);
+        if (exit.value) {
+          action = 'exit';
+          reason = exit.reason;
+          derivation.exit = exit.derivation;
+        } else {
+          action = 'hold';
+          reason = exit.reason;
+        }
       }
     } else if (mlStrength >= entryThr.value && mlSignal !== 'HOLD' && size.value > 0) {
       action = mlSignal === 'BUY' ? 'enter_long' : 'enter_short';
@@ -335,28 +355,48 @@ export class MonkeyKernel extends EventEmitter {
     // 6b. EXECUTE — gated by MONKEY_EXECUTE=true. Observe-only otherwise.
     let executed = false;
     let monkeyOrderId: string | null = null;
-    if (
-      process.env.MONKEY_EXECUTE === 'true' &&
-      (action === 'enter_long' || action === 'enter_short') &&
-      size.value > 0
-    ) {
-      const execResult = await this.executeEntry({
-        symbol,
-        side: action === 'enter_long' ? 'long' : 'short',
-        marginUsdt: size.value,
-        leverage: leverage.value,
-        entryPrice: lastPrice,
-        minNotional,
-        phi,
-        kappa: state.kappa,
-        sovereignty,
-        trajectoryId: null,
-      });
-      executed = execResult.executed;
-      monkeyOrderId = execResult.orderId;
-      if (!executed) {
-        // Reclassify: she tried but something vetoed. Log reason but keep action labeled.
-        reason += ` | execute: ${execResult.reason}`;
+    if (process.env.MONKEY_EXECUTE === 'true') {
+      if ((action === 'enter_long' || action === 'enter_short') && size.value > 0) {
+        const execResult = await this.executeEntry({
+          symbol,
+          side: action === 'enter_long' ? 'long' : 'short',
+          marginUsdt: size.value,
+          leverage: leverage.value,
+          entryPrice: lastPrice,
+          minNotional,
+          phi,
+          kappa: state.kappa,
+          sovereignty,
+          trajectoryId: null,
+        });
+        executed = execResult.executed;
+        monkeyOrderId = execResult.orderId;
+        if (!executed) {
+          reason += ` | execute: ${execResult.reason}`;
+        }
+      } else if (action === 'scalp_exit' && heldSide) {
+        const scalpDeriv = derivation.scalp as Record<string, unknown> | undefined;
+        const tradeId = scalpDeriv?.tradeId ? String(scalpDeriv.tradeId) : null;
+        const exitTypeBit = Number(scalpDeriv?.exitTypeBit ?? 0);
+        const exitType = exitTypeBit === 1 ? 'take_profit' : exitTypeBit === -1 ? 'stop_loss' : 'scalp_exit';
+        const pnlAtDecision = Number(scalpDeriv?.unrealizedPnl ?? 0);
+        if (tradeId) {
+          const closeResult = await this.closeHeldPosition({
+            symbol,
+            tradeId,
+            heldSide,
+            markPrice: lastPrice,
+            exitReason: exitType,
+            pnlAtDecision,
+          });
+          executed = closeResult.executed;
+          monkeyOrderId = closeResult.orderId;
+          if (!executed) {
+            reason += ` | close: ${closeResult.reason}`;
+          } else {
+            reason += ` | closed@${lastPrice.toFixed(2)} pnl=${pnlAtDecision.toFixed(4)}`;
+          }
+        }
       }
     }
 
@@ -439,6 +479,147 @@ export class MonkeyKernel extends EventEmitter {
     if (state.phiHistory.length > HISTORY_MAX) state.phiHistory.shift();
     state.fHealthHistory.push(fHealth);
     if (state.fHealthHistory.length > HISTORY_MAX) state.fHealthHistory.shift();
+  }
+
+  /**
+   * Look up Monkey's most recent open trade row for a symbol. Used by
+   * the scalp-exit gate (v0.4) to compute unrealized P&L.
+   */
+  private async findOpenMonkeyTrade(symbol: string): Promise<
+    | { id: string; entry_price: string; quantity: string; leverage: number; order_id: string | null }
+    | null
+  > {
+    try {
+      const result = await pool.query(
+        `SELECT id, entry_price, quantity, leverage, order_id
+           FROM autonomous_trades
+          WHERE reason LIKE 'monkey|%' AND status = 'open' AND symbol = $1
+          ORDER BY entry_time DESC LIMIT 1`,
+        [symbol],
+      );
+      const row = result.rows[0] as
+        | { id: string; entry_price: string; quantity: string; leverage: number; order_id: string | null }
+        | undefined;
+      return row ?? null;
+    } catch (err) {
+      logger.debug('[Monkey] findOpenMonkeyTrade failed', {
+        err: err instanceof Error ? err.message : String(err),
+      });
+      return null;
+    }
+  }
+
+  /**
+   * Close a Monkey-owned position (v0.4). Submits opposite-side market
+   * order and updates autonomous_trades with exit_price/pnl/exit_reason.
+   * The reconciler will then pick up the closed row and fire
+   * monkeyKernel.witnessExit → resonance-bank write.
+   */
+  private async closeHeldPosition(req: {
+    symbol: string;
+    tradeId: string;
+    heldSide: 'long' | 'short';
+    markPrice: number;
+    exitReason: string;
+    pnlAtDecision: number;
+  }): Promise<{ executed: boolean; orderId: string | null; reason: string }> {
+    const { symbol, tradeId, heldSide, markPrice, exitReason, pnlAtDecision } = req;
+
+    // Load credentials + position to know size to close.
+    let credentials: { apiKey: string; apiSecret: string; passphrase?: string };
+    try {
+      const userRow = await pool.query(
+        `SELECT user_id FROM user_api_credentials WHERE exchange = 'poloniex' LIMIT 1`,
+      );
+      const userId = String((userRow.rows[0] as { user_id?: string } | undefined)?.user_id ?? '');
+      if (!userId) return { executed: false, orderId: null, reason: 'no_credentials' };
+      const c = await apiCredentialsService.getCredentials(userId, 'poloniex');
+      if (!c) return { executed: false, orderId: null, reason: 'credentials_missing' };
+      credentials = c;
+    } catch (err) {
+      return {
+        executed: false, orderId: null,
+        reason: `close_credentials_failed: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+
+    // Read exchange position size (tradeId's quantity may diverge from
+    // actual exchange state if partial fills or reconciler updates).
+    let exchangeQty = 0;
+    try {
+      const positions = await poloniexFuturesService.getPositions(credentials);
+      const forSymbol = (Array.isArray(positions) ? positions : []).find(
+        (p: Record<string, unknown>) => String(p.symbol ?? '') === symbol,
+      );
+      exchangeQty = Math.abs(Number(forSymbol?.qty ?? forSymbol?.size ?? 0));
+    } catch (err) {
+      return {
+        executed: false, orderId: null,
+        reason: `position_read_failed: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+    if (exchangeQty <= 0) {
+      // Position vanished between decide and close — reconciler will
+      // catch the DB row; nothing for us to close on-exchange.
+      await pool.query(
+        `UPDATE autonomous_trades SET status='closed', exit_price=$1, exit_time=NOW(),
+                exit_reason='vanished_before_close', pnl=$2 WHERE id=$3`,
+        [markPrice, pnlAtDecision, tradeId],
+      ).catch(() => { /* non-fatal */ });
+      return { executed: false, orderId: null, reason: 'exchange_position_vanished' };
+    }
+
+    // Lot-size round.
+    let formattedSize = exchangeQty;
+    let symbolLotSize = 0;
+    try {
+      const precisions = await getPrecisions(symbol);
+      if (precisions.lotSize && precisions.lotSize > 0) {
+        symbolLotSize = precisions.lotSize;
+        formattedSize = Math.floor(exchangeQty / precisions.lotSize) * precisions.lotSize;
+      }
+    } catch { /* use raw */ }
+    if (formattedSize <= 0) {
+      return { executed: false, orderId: null, reason: 'lot_rounding_zero_on_close' };
+    }
+
+    const closeSide: 'buy' | 'sell' = heldSide === 'long' ? 'sell' : 'buy';
+
+    let orderId: string | null = null;
+    try {
+      const exchangeOrder = await poloniexFuturesService.placeOrder(credentials, {
+        symbol, side: closeSide, type: 'market', size: formattedSize, lotSize: symbolLotSize,
+        reduceOnly: true,
+      });
+      orderId =
+        exchangeOrder?.ordId ?? exchangeOrder?.orderId ??
+        exchangeOrder?.id ?? exchangeOrder?.clientOid ?? null;
+    } catch (err) {
+      return {
+        executed: false, orderId: null,
+        reason: `close_exchange_rejected: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+
+    try {
+      await pool.query(
+        `UPDATE autonomous_trades
+            SET status = 'closed', exit_price = $1, exit_time = NOW(),
+                exit_reason = $2, exit_order_id = $3, pnl = $4
+          WHERE id = $5`,
+        [markPrice, exitReason, orderId, pnlAtDecision, tradeId],
+      );
+    } catch (err) {
+      logger.error('[Monkey] close DB update failed — ORPHAN RISK (reconciler will catch)', {
+        tradeId, err: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    logger.info('[Monkey] POSITION CLOSED', {
+      symbol, heldSide, markPrice, orderId, tradeId,
+      pnl: pnlAtDecision.toFixed(4), exitReason,
+    });
+    return { executed: true, orderId, reason: 'closed' };
   }
 
   /**
