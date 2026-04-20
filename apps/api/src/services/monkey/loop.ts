@@ -49,9 +49,12 @@ import {
   velocity,
   type Basin,
 } from './basin.js';
+import { BasinSync } from './basin_sync.js';
+import { detectMode, MODE_PROFILES, MonkeyMode } from './modes.js';
 import { computeNeurochemicals, summarizeNC, type NeurochemicalState } from './neurochemistry.js';
 import { perceive, refract, type OHLCVCandle } from './perception.js';
 import { resonanceBank } from './resonance_bank.js';
+import { computeSelfObservation, type SelfObservation } from './self_observation.js';
 import { WorkingMemory, type Bubble } from './working_memory.js';
 import {
   currentEntryThreshold,
@@ -83,6 +86,8 @@ interface SymbolState {
   phiHistory: number[];
   /** Rolling f_health for auto-flatten trend check. */
   fHealthHistory: number[];
+  /** Rolling identity-drift history (Fisher-Rao) for mode detection. */
+  driftHistory: number[];
   /** Basin trajectory for repetition detection (Loop 1). */
   basinHistory: Basin[];
   /** Working memory (qig-cache) for recent bubbles. */
@@ -92,6 +97,10 @@ interface SymbolState {
   /** Active bubble id for the currently open position (if any). */
   openBubbleId: string | null;
   sessionTicks: number;
+  /** Last mode (for transition logging). */
+  lastMode: MonkeyMode | null;
+  /** Mode-specific tickMs last applied — used by adaptive-tick governor. */
+  currentTickMs: number;
 }
 
 /**
@@ -105,6 +114,14 @@ export class MonkeyKernel extends EventEmitter {
   private symbols: string[] = [...DEFAULT_SYMBOLS];
   private tickInFlight = false;
   private symbolStates: Map<string, SymbolState> = new Map();
+  /** Self-observation summary refreshed every ~60 ticks for entry bias. */
+  private selfObs: SelfObservation | null = null;
+  private selfObsLastUpdate = 0;
+  private static readonly SELF_OBS_REFRESH_MS = 5 * 60_000;  // 5 min
+  /** Basin-sync instance (v0.5 single-kernel; v0.6 parallel sub-kernels). */
+  private readonly basinSync = new BasinSync(
+    process.env.MONKEY_INSTANCE_ID || 'monkey-primary',
+  );
 
   /**
    * Start Monkey's heartbeat. She ticks alongside liveSignalEngine —
@@ -142,15 +159,18 @@ export class MonkeyKernel extends EventEmitter {
       identityBasin: uniformBasin(BASIN_DIM),  // Newborn starts uniform; crystallizes after N trades
       phiHistory: [],
       fHealthHistory: [],
+      driftHistory: [],
       basinHistory: [],
       wm: new WorkingMemory({
         promoteCallback: async (b: Bubble) => {
           await resonanceBank.writeBubble(b, getEngineVersion());
         },
       }),
-      kappa: KAPPA_STAR,  // Start at the universal fixed point
+      kappa: KAPPA_STAR,
       openBubbleId: null,
       sessionTicks: 0,
+      lastMode: null,
+      currentTickMs: this.tickMs,
     };
   }
 
@@ -277,18 +297,63 @@ export class MonkeyKernel extends EventEmitter {
       identityBasin: state.identityBasin,
     };
 
+    // v0.5: DETECT MODE — one of EXPLORATION / INVESTIGATION / INTEGRATION / DRIFT.
+    // driftHistory is maintained here so mode detector has the delta.
+    const driftNow = fisherRao(basin, state.identityBasin);
+    state.driftHistory.push(driftNow);
+    if (state.driftHistory.length > HISTORY_MAX) state.driftHistory.shift();
+    const modeDecision = detectMode({
+      basin,
+      identityBasin: state.identityBasin,
+      phi,
+      kappa: state.kappa,
+      basinVelocity: bv,
+      neurochemistry: nc,
+      phiHistory: state.phiHistory,
+      fHealthHistory: state.fHealthHistory,
+      driftHistory: state.driftHistory,
+    });
+    const mode = modeDecision.value;
+    if (state.lastMode !== null && state.lastMode !== mode) {
+      logger.info('[Monkey] mode transition', {
+        symbol,
+        from: state.lastMode,
+        to: mode,
+        reason: modeDecision.reason,
+      });
+    }
+    state.lastMode = mode;
+
+    // Refresh self-observation entry bias every SELF_OBS_REFRESH_MS.
+    const now = Date.now();
+    if (now - this.selfObsLastUpdate > MonkeyKernel.SELF_OBS_REFRESH_MS) {
+      this.selfObs = await computeSelfObservation(24);
+      this.selfObsLastUpdate = now;
+    }
+    const selfObsBias = this.selfObs?.entryBias[mode] ?? 1.0;
+
+    // v0.5: Basin sync — publish own state; pull observer-effect influence.
+    const syncPublish = this.basinSync.update({
+      basin,
+      phi,
+      kappa: state.kappa,
+      mode,
+      driftFromIdentity: driftNow,
+    }).catch(() => { /* non-fatal */ });
+    void syncPublish;
+
     // 4. REMEMBER — add bubble; tick working memory
     const bubble = state.wm.add(basin, phi, { symbol, tick: state.sessionTicks });
     const wmStats = await state.wm.tick();
 
-    // 5. DERIVE — executive computes what Monkey would do
-    const entryThr = currentEntryThreshold(basinState);
-    const leverage = currentLeverage(basinState, (await getMaxLeverage(symbol)) ?? 10);
+    // 5. DERIVE — executive computes what Monkey would do (mode-aware)
+    const entryThr = currentEntryThreshold(basinState, mode, selfObsBias);
+    const leverage = currentLeverage(basinState, (await getMaxLeverage(symbol)) ?? 10, mode);
     const precisions = await getPrecisions(symbol).catch(() => null);
     const lotSize = precisions?.lotSize ?? 0;
     const minNotional = lastPrice * Math.max(lotSize, 1e-9);
     const bankSize = await resonanceBank.bankSize();
-    const size = currentPositionSize(basinState, availableEquity, minNotional, leverage.value, bankSize);
+    const size = currentPositionSize(basinState, availableEquity, minNotional, leverage.value, bankSize, mode);
     const autoFlatten = shouldAutoFlatten(basinState, state.fHealthHistory);
 
     // 6. DECIDE — propose action
@@ -298,6 +363,8 @@ export class MonkeyKernel extends EventEmitter {
       phi, kappa: state.kappa, sovereignty, basinVelocity: bv,
       regimeWeights, nc,
       fHealth, mlSignal, mlStrength,
+      mode: { value: mode, reason: modeDecision.reason, ...modeDecision.derivation },
+      selfObsBias,
     };
 
     if (autoFlatten.value) {
@@ -305,16 +372,14 @@ export class MonkeyKernel extends EventEmitter {
       reason = autoFlatten.reason;
       derivation.autoFlatten = autoFlatten.derivation;
     } else if (heldSide) {
-      // v0.4: Scalp TP/SL gate runs FIRST in the held-position branch.
-      // Only applies to Monkey's own open rows; if she doesn't find one,
-      // fall through to Loop 2 (covers orphan/manual positions).
+      // v0.4+v0.5: Scalp TP/SL gate runs FIRST with mode-specific thresholds.
       let scalpFired = false;
       const openRow = await this.findOpenMonkeyTrade(symbol);
       if (openRow) {
         const positionNotional = Number(openRow.entry_price) * Number(openRow.quantity);
         const sidesign = heldSide === 'long' ? 1 : -1;
         const unrealizedPnl = (lastPrice - Number(openRow.entry_price)) * Number(openRow.quantity) * sidesign;
-        const scalp = shouldScalpExit(unrealizedPnl, positionNotional, basinState);
+        const scalp = shouldScalpExit(unrealizedPnl, positionNotional, basinState, mode);
         derivation.scalp = { ...scalp.derivation, unrealizedPnl, markPrice: lastPrice, tradeId: String(openRow.id) };
         if (scalp.value) {
           action = 'scalp_exit';
@@ -334,19 +399,25 @@ export class MonkeyKernel extends EventEmitter {
           reason = exit.reason;
         }
       }
-    } else if (mlStrength >= entryThr.value && mlSignal !== 'HOLD' && size.value > 0) {
+    } else if (
+      MODE_PROFILES[mode].canEnter &&
+      mlStrength >= entryThr.value &&
+      mlSignal !== 'HOLD' &&
+      size.value > 0
+    ) {
       action = mlSignal === 'BUY' ? 'enter_long' : 'enter_short';
-      reason = `ml ${mlSignal}@${mlStrength.toFixed(3)} >= thr ${entryThr.value.toFixed(3)}; margin=${size.value.toFixed(2)} lev=${leverage.value}x notional=${(size.value * leverage.value).toFixed(2)}`;
+      reason = `[${mode}] ml ${mlSignal}@${mlStrength.toFixed(3)} >= thr ${entryThr.value.toFixed(3)}; margin=${size.value.toFixed(2)} lev=${leverage.value}x notional=${(size.value * leverage.value).toFixed(2)}`;
       derivation.entryThreshold = entryThr.derivation;
       derivation.size = size.derivation;
       derivation.leverage = leverage.derivation;
     } else {
       action = 'hold';
-      const why =
-        mlStrength < entryThr.value
-          ? `ml ${mlStrength.toFixed(3)} < thr ${entryThr.value.toFixed(3)}`
+      const why = !MODE_PROFILES[mode].canEnter
+        ? `mode=${mode} blocks entry (${MODE_PROFILES[mode].description})`
+        : mlStrength < entryThr.value
+          ? `[${mode}] ml ${mlStrength.toFixed(3)} < thr ${entryThr.value.toFixed(3)}`
           : size.value <= 0
-          ? `size ${size.value.toFixed(2)} below min notional ${minNotional.toFixed(2)}`
+          ? `[${mode}] size ${size.value.toFixed(2)} below min notional ${minNotional.toFixed(2)}`
           : 'no qualifying signal';
       reason = why;
       derivation.entryThreshold = entryThr.derivation;
@@ -401,19 +472,34 @@ export class MonkeyKernel extends EventEmitter {
     }
 
     // Info-level log — the user asked for end-to-end observability.
-    // Every tick, Monkey announces her state + decision.
-    logger.info(`[Monkey] ${symbol} ${action}${executed ? ' EXECUTED' : ''}`, {
+    logger.info(`[Monkey] ${symbol} [${mode}] ${action}${executed ? ' EXECUTED' : ''}`, {
+      mode,
       phi: phi.toFixed(3),
       kappa: state.kappa.toFixed(2),
       nc: summarizeNC(nc),
       reg: `q${regimeWeights.quantum.toFixed(2)}/e${regimeWeights.efficient.toFixed(2)}/eq${regimeWeights.equilibrium.toFixed(2)}`,
       bv: bv.toFixed(3),
+      drift: driftNow.toFixed(3),
       fh: fHealth.toFixed(3),
       sov: sovereignty.toFixed(3),
       wm: `${wmStats.alive}a/${wmStats.promoted}prom/${wmStats.popped}pop`,
+      selfObsBias: selfObsBias.toFixed(2),
       orderId: monkeyOrderId ?? undefined,
       reason,
     });
+
+    // Persist mode observation for later Loop-1 aggregation + UI.
+    try {
+      await pool.query(
+        `INSERT INTO monkey_modes (symbol, mode, phi, kappa, drift, basin_velocity, reason)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [symbol, mode, phi, state.kappa, driftNow, bv, modeDecision.reason],
+      );
+    } catch (err) {
+      logger.debug('[Monkey] monkey_modes insert failed (fail-soft)', {
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
 
     // 7. PERSIST trajectory + decision to DB (for audit + Loop 1 self-obs)
     let trajectoryId: number | null = null;
@@ -479,6 +565,33 @@ export class MonkeyKernel extends EventEmitter {
     if (state.phiHistory.length > HISTORY_MAX) state.phiHistory.shift();
     state.fHealthHistory.push(fHealth);
     if (state.fHealthHistory.length > HISTORY_MAX) state.fHealthHistory.shift();
+
+    // v0.5 adaptive cadence: take the minimum tickMs across all symbols so
+    // the shortest-cadence mode wins. Kernel-wide tick is rescheduled only
+    // when the aggregate target differs from the current interval.
+    state.currentTickMs = MODE_PROFILES[mode].tickMs;
+    this.maybeRescheduleTick();
+  }
+
+  /**
+   * If the mode-aggregate target tickMs has shifted from current, restart
+   * the interval at the new cadence. Called at the tail of each symbol's
+   * processSymbol() so the kernel adapts within a tick or two of a mode
+   * transition.
+   */
+  private maybeRescheduleTick(): void {
+    const targets = [...this.symbolStates.values()].map((s) => s.currentTickMs);
+    if (targets.length === 0) return;
+    const target = Math.min(...targets);
+    if (target !== this.tickMs && target > 0) {
+      logger.info('[Monkey] rescheduling tick', { from: this.tickMs, to: target });
+      this.tickMs = target;
+      if (this.timer) {
+        clearInterval(this.timer);
+        this.timer = setInterval(() => void this.tick(), this.tickMs);
+        this.timer.unref?.();
+      }
+    }
   }
 
   /**
