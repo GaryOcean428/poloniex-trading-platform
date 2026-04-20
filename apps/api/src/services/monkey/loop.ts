@@ -50,6 +50,7 @@ import {
   type Basin,
 } from './basin.js';
 import { BasinSync } from './basin_sync.js';
+import { BusEventType, getKernelBus, type KernelBus } from './kernel_bus.js';
 import { detectMode, MODE_PROFILES, MonkeyMode } from './modes.js';
 import { computeNeurochemicals, summarizeNC, type NeurochemicalState } from './neurochemistry.js';
 import { perceive, refract, type OHLCVCandle } from './perception.js';
@@ -122,6 +123,10 @@ export class MonkeyKernel extends EventEmitter {
   private readonly basinSync = new BasinSync(
     process.env.MONKEY_INSTANCE_ID || 'monkey-primary',
   );
+  /** Kernel bus — pub/sub for inter-kernel comms (v0.6a). */
+  private readonly bus: KernelBus = getKernelBus();
+  /** Instance identifier — will differ between parallel sub-Monkeys in v0.6b. */
+  private readonly instanceId: string = process.env.MONKEY_INSTANCE_ID || 'monkey-primary';
 
   /**
    * Start Monkey's heartbeat. She ticks alongside liveSignalEngine —
@@ -320,6 +325,12 @@ export class MonkeyKernel extends EventEmitter {
         from: state.lastMode,
         to: mode,
         reason: modeDecision.reason,
+      });
+      this.bus.publish({
+        type: BusEventType.MODE_TRANSITION,
+        source: this.instanceId,
+        symbol,
+        payload: { from: state.lastMode, to: mode, reason: modeDecision.reason, phi, kappa: state.kappa },
       });
     }
     state.lastMode = mode;
@@ -732,6 +743,12 @@ export class MonkeyKernel extends EventEmitter {
       symbol, heldSide, markPrice, orderId, tradeId,
       pnl: pnlAtDecision.toFixed(4), exitReason,
     });
+    this.bus.publish({
+      type: BusEventType.EXIT_TRIGGERED,
+      source: this.instanceId,
+      symbol,
+      payload: { heldSide, markPrice, orderId, tradeId, pnl: pnlAtDecision, exitReason },
+    });
     return { executed: true, orderId, reason: 'closed' };
   }
 
@@ -808,6 +825,12 @@ export class MonkeyKernel extends EventEmitter {
       logger.info('[Monkey] kernel veto', {
         symbol, side, notional: notionalUsdt, leverage,
         code: decision.code, reason: decision.reason,
+      });
+      this.bus.publish({
+        type: BusEventType.KERNEL_VETO,
+        source: this.instanceId,
+        symbol,
+        payload: { side, notional: notionalUsdt, leverage, code: decision.code, reason: decision.reason },
       });
       return { executed: false, orderId: null, reason: `veto:${decision.code}:${decision.reason}` };
     }
@@ -900,6 +923,16 @@ export class MonkeyKernel extends EventEmitter {
       sov: req.sovereignty.toFixed(3),
     });
 
+    this.bus.publish({
+      type: BusEventType.ENTRY_EXECUTED,
+      source: this.instanceId,
+      symbol,
+      payload: {
+        side, orderId, margin: marginUsdt, notional: notionalUsdt, leverage,
+        entryPrice, phi: req.phi, kappa: req.kappa, sovereignty: req.sovereignty,
+      },
+    });
+
     return { executed: true, orderId, reason: 'placed' };
   }
 
@@ -966,6 +999,18 @@ export class MonkeyKernel extends EventEmitter {
         logger.info('[Monkey] witnessExit → bank', {
           symbol, orderId, side, pnl: realizedPnl.toFixed(4),
           entryTime: entryTime.toISOString(),
+        });
+        this.bus.publish({
+          type: BusEventType.BANK_WRITE,
+          source: this.instanceId,
+          symbol,
+          payload: { orderId, side, realizedPnl, entryTime: entryTime.toISOString() },
+        });
+        this.bus.publish({
+          type: BusEventType.OUTCOME,
+          source: this.instanceId,
+          symbol,
+          payload: { orderId, side, realizedPnl, win: realizedPnl > 0 },
         });
       }
     } catch (err) {
