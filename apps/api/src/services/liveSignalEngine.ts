@@ -334,7 +334,7 @@ export class LiveSignalEngine extends EventEmitter {
            FROM autonomous_trades
           WHERE status = 'closed'
             AND exit_time > $1
-            AND reason LIKE 'live_signal|%'
+            AND (reason LIKE 'live_signal|%' OR reason LIKE 'monkey|%')
           ORDER BY exit_time ASC
           LIMIT 100`,
         [this.lastReconcileAt],
@@ -408,10 +408,21 @@ export class LiveSignalEngine extends EventEmitter {
             quantity: Number(row.quantity ?? 0),
             closedAt: closedAt.toISOString(),
           });
-          // Monkey witness (v0.2): attribute this real P&L to the
-          // perception basin Monkey held at entry — bootstraps her
-          // resonance bank from already-running trades without new
-          // capital risk. Fire-and-forget; her bank is best-effort.
+        } else if (isReconcilerClose) {
+          logger.debug('[LiveSignal] skipping bandit update for reconciler-closed row', {
+            symbol: row.symbol,
+            exitReason,
+            pnl,
+          });
+        }
+
+        // Monkey witness (v0.2/v0.3): for both live_signal and monkey-
+        // originated trades with a real exit, attribute the P&L to the
+        // perception basin at entry_time. Live-signal closes bootstrap
+        // her bank; her own closes reinforce the basins she acted on.
+        // Runs outside the bandit branch because only live_signal rows
+        // carry a signalKey — monkey rows have reason='monkey|...'.
+        if (!isReconcilerClose && hasRealExit) {
           const entryTimeRaw = row.entry_time;
           const entryTime = entryTimeRaw ? new Date(entryTimeRaw as string | Date) : null;
           if (entryTime && !Number.isNaN(entryTime.getTime())) {
@@ -425,12 +436,6 @@ export class LiveSignalEngine extends EventEmitter {
               side,
             );
           }
-        } else if (isReconcilerClose) {
-          logger.debug('[LiveSignal] skipping bandit update for reconciler-closed row', {
-            symbol: row.symbol,
-            exitReason,
-            pnl,
-          });
         }
 
         // Mark this row as processed regardless of which branch we took
