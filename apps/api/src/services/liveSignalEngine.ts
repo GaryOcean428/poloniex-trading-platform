@@ -163,6 +163,21 @@ export class LiveSignalEngine extends EventEmitter {
   private tickMs = DEFAULT_TICK_MS;
   /** Latest close time already processed by the bandit reconciler. */
   private lastReconcileAt: Date = new Date(Date.now() - 60 * 60_000);  // look back 1h on boot
+  /**
+   * Row IDs already fed to the bandit. Prevents re-feeding the same
+   * closed trade when multiple rows share an exit_time (e.g. kill-
+   * switch flatten closing 5 positions in one transaction all got
+   * exit_time=NOW(); millisecond-precision JS Date vs microsecond-
+   * precision Postgres timestamp lets the `> lastReconcileAt` filter
+   * mis-match-match on the next tick).
+   *
+   * Bounded to the 500 most-recent IDs via FIFO eviction — keeps
+   * memory flat while covering the window needed for close→tick
+   * cycles (liveSignal runs 60s, so 500 entries covers 8h+ of trades).
+   */
+  private processedBanditIds: Set<string> = new Set();
+  private processedBanditIdsOrder: string[] = [];
+  private static readonly PROCESSED_BANDIT_IDS_MAX = 500;
 
   async start(options: StartOptions = {}): Promise<void> {
     this.symbols = options.symbols ?? [...DEFAULT_WATCH_SYMBOLS];
@@ -314,7 +329,7 @@ export class LiveSignalEngine extends EventEmitter {
   private async reconcileClosedTrades(): Promise<void> {
     try {
       const result = await pool.query(
-        `SELECT symbol, reason, pnl, exit_time, exit_price, entry_price, quantity, exit_reason, leverage
+        `SELECT id, symbol, reason, pnl, exit_time, exit_price, entry_price, quantity, exit_reason, leverage
            FROM autonomous_trades
           WHERE status = 'closed'
             AND exit_time > $1
@@ -325,6 +340,18 @@ export class LiveSignalEngine extends EventEmitter {
       );
       const rows = (result.rows as Array<Record<string, unknown>>) ?? [];
       for (const row of rows) {
+        // Row-ID dedup: Postgres timestamps have microsecond precision
+        // and JS Date only millisecond precision, so `exit_time >
+        // lastReconcileAt` can re-match the same row if the timestamp
+        // has sub-ms digits lost on the round-trip. Additionally, batch
+        // closes (e.g. kill-switch flatten) give multiple rows the
+        // identical exit_time=NOW() — those would all re-feed every
+        // tick without this guard. 2026-04-20 incident: 5 bulk-closed
+        // rows fed the bandit 5 losses per tick for an unbounded time.
+        const rowId = String(row.id ?? '');
+        if (rowId && this.processedBanditIds.has(rowId)) {
+          continue;
+        }
         const reason = String(row.reason ?? '');
         const keyMatch = reason.match(/key=([^|]+)/);
         const regimeMatch = reason.match(/regime=([^|]+)/);
@@ -386,6 +413,18 @@ export class LiveSignalEngine extends EventEmitter {
             exitReason,
             pnl,
           });
+        }
+
+        // Mark this row as processed regardless of which branch we took
+        // — even skipped rows shouldn't be revisited. FIFO-bound the
+        // Set so memory stays flat over long uptimes.
+        if (rowId) {
+          this.processedBanditIds.add(rowId);
+          this.processedBanditIdsOrder.push(rowId);
+          if (this.processedBanditIdsOrder.length > LiveSignalEngine.PROCESSED_BANDIT_IDS_MAX) {
+            const evicted = this.processedBanditIdsOrder.shift();
+            if (evicted) this.processedBanditIds.delete(evicted);
+          }
         }
 
         if (closedAt > this.lastReconcileAt) {
