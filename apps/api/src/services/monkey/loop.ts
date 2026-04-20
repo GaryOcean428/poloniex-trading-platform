@@ -27,9 +27,16 @@ import { pool } from '../../db/connection.js';
 import { getEngineVersion } from '../../utils/engineVersion.js';
 import { logger } from '../../utils/logger.js';
 import { apiCredentialsService } from '../apiCredentialsService.js';
+import { getCurrentExecutionMode } from '../executionModeService.js';
 import { getMaxLeverage, getPrecisions } from '../marketCatalog.js';
 import mlPredictionService from '../mlPredictionService.js';
 import poloniexFuturesService from '../poloniexFuturesService.js';
+import {
+  evaluatePreTradeVetoes,
+  type KernelAccountState,
+  type KernelContext,
+  type KernelOrder,
+} from '../riskKernel.js';
 
 import {
   BASIN_DIM,
@@ -309,7 +316,7 @@ export class MonkeyKernel extends EventEmitter {
       }
     } else if (mlStrength >= entryThr.value && mlSignal !== 'HOLD' && size.value > 0) {
       action = mlSignal === 'BUY' ? 'enter_long' : 'enter_short';
-      reason = `ml ${mlSignal}@${mlStrength.toFixed(3)} >= thr ${entryThr.value.toFixed(3)}; size=${size.value.toFixed(2)} lev=${leverage.value}x`;
+      reason = `ml ${mlSignal}@${mlStrength.toFixed(3)} >= thr ${entryThr.value.toFixed(3)}; margin=${size.value.toFixed(2)} lev=${leverage.value}x notional=${(size.value * leverage.value).toFixed(2)}`;
       derivation.entryThreshold = entryThr.derivation;
       derivation.size = size.derivation;
       derivation.leverage = leverage.derivation;
@@ -325,9 +332,37 @@ export class MonkeyKernel extends EventEmitter {
       derivation.entryThreshold = entryThr.derivation;
     }
 
+    // 6b. EXECUTE — gated by MONKEY_EXECUTE=true. Observe-only otherwise.
+    let executed = false;
+    let monkeyOrderId: string | null = null;
+    if (
+      process.env.MONKEY_EXECUTE === 'true' &&
+      (action === 'enter_long' || action === 'enter_short') &&
+      size.value > 0
+    ) {
+      const execResult = await this.executeEntry({
+        symbol,
+        side: action === 'enter_long' ? 'long' : 'short',
+        marginUsdt: size.value,
+        leverage: leverage.value,
+        entryPrice: lastPrice,
+        minNotional,
+        phi,
+        kappa: state.kappa,
+        sovereignty,
+        trajectoryId: null,
+      });
+      executed = execResult.executed;
+      monkeyOrderId = execResult.orderId;
+      if (!executed) {
+        // Reclassify: she tried but something vetoed. Log reason but keep action labeled.
+        reason += ` | execute: ${execResult.reason}`;
+      }
+    }
+
     // Info-level log — the user asked for end-to-end observability.
     // Every tick, Monkey announces her state + decision.
-    logger.info(`[Monkey] ${symbol} ${action}`, {
+    logger.info(`[Monkey] ${symbol} ${action}${executed ? ' EXECUTED' : ''}`, {
       phi: phi.toFixed(3),
       kappa: state.kappa.toFixed(2),
       nc: summarizeNC(nc),
@@ -336,6 +371,7 @@ export class MonkeyKernel extends EventEmitter {
       fh: fHealth.toFixed(3),
       sov: sovereignty.toFixed(3),
       wm: `${wmStats.alive}a/${wmStats.promoted}prom/${wmStats.popped}pop`,
+      orderId: monkeyOrderId ?? undefined,
       reason,
     });
 
@@ -380,7 +416,7 @@ export class MonkeyKernel extends EventEmitter {
         [
           symbol, action, size.value, leverage.value, entryThr.value, mlStrength,
           reason, JSON.stringify(derivation),
-          false,  // observe-only
+          executed,
           trajectoryId,
         ],
       );
@@ -403,6 +439,174 @@ export class MonkeyKernel extends EventEmitter {
     if (state.phiHistory.length > HISTORY_MAX) state.phiHistory.shift();
     state.fHealthHistory.push(fHealth);
     if (state.fHealthHistory.length > HISTORY_MAX) state.fHealthHistory.shift();
+  }
+
+  /**
+   * Execution path (v0.3): route Monkey's proposed entry through the
+   * shared risk kernel, submit to Poloniex v3 futures, and persist the
+   * row to autonomous_trades with reason prefix `monkey|...` so the
+   * reconciler + dashboard attribute it to her (not liveSignalEngine).
+   *
+   * Returns { executed, orderId, reason }. Callers should not throw on
+   * veto — treat veto as the expected "she decided but kernel blocked"
+   * outcome, log it, and continue the tick.
+   *
+   * This is gated by process.env.MONKEY_EXECUTE='true' in loop.ts.
+   * v0.3 order surface: market IOC, no SL/TP (managed loop covers those
+   * the same way liveSignalEngine relies on it).
+   */
+  private async executeEntry(req: {
+    symbol: string;
+    side: 'long' | 'short';
+    marginUsdt: number;
+    leverage: number;
+    entryPrice: number;
+    minNotional: number;
+    phi: number;
+    kappa: number;
+    sovereignty: number;
+    trajectoryId: number | null;
+  }): Promise<{ executed: boolean; orderId: string | null; reason: string }> {
+    const { symbol, side, marginUsdt, leverage, entryPrice, minNotional } = req;
+    const notionalUsdt = marginUsdt * leverage;
+    const quantity = notionalUsdt / entryPrice;
+    const exchangeSide: 'buy' | 'sell' = side === 'long' ? 'buy' : 'sell';
+
+    // Load account + credentials like liveSignalEngine.loadAccountContext.
+    let userId: string;
+    let credentials: { apiKey: string; apiSecret: string; passphrase?: string };
+    let kernelState: KernelAccountState;
+    try {
+      const userRow = await pool.query(
+        `SELECT user_id FROM user_api_credentials WHERE exchange = 'poloniex' LIMIT 1`,
+      );
+      userId = String((userRow.rows[0] as { user_id?: string } | undefined)?.user_id ?? '');
+      if (!userId) return { executed: false, orderId: null, reason: 'no_credentials' };
+      const c = await apiCredentialsService.getCredentials(userId, 'poloniex');
+      if (!c) return { executed: false, orderId: null, reason: 'credentials_missing' };
+      credentials = c;
+      const [balance, positions] = await Promise.all([
+        poloniexFuturesService.getAccountBalance(credentials),
+        poloniexFuturesService.getPositions(credentials),
+      ]);
+      const equityUsdt = Number(balance?.totalBalance ?? balance?.eq ?? 0);
+      const unrealizedPnlUsdt = Number(balance?.unrealizedPnL ?? balance?.upl ?? 0);
+      const openPositions = (Array.isArray(positions) ? positions : []).map((p: Record<string, unknown>) => ({
+        symbol: String(p.symbol ?? ''),
+        side: (String(p.side ?? 'long').toLowerCase() === 'short' ? 'short' : 'long') as 'long' | 'short',
+        notional: Math.abs(Number(p.notional ?? p.size ?? 0)),
+      })).filter((p) => p.symbol.length > 0);
+      kernelState = { equityUsdt, unrealizedPnlUsdt, openPositions, restingOrders: [] };
+    } catch (err) {
+      return {
+        executed: false, orderId: null,
+        reason: `account_load_failed: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+
+    // Risk kernel — same blast-door liveSignalEngine uses.
+    const order: KernelOrder = { symbol, side, notional: notionalUsdt, leverage, price: entryPrice };
+    const mode = await getCurrentExecutionMode();
+    const symbolMaxLeverage = (await getMaxLeverage(symbol)) ?? leverage;
+    const kernelContext: KernelContext = { isLive: mode === 'auto', mode, symbolMaxLeverage };
+    const decision = evaluatePreTradeVetoes(order, kernelState, kernelContext);
+    if (!decision.allowed) {
+      logger.info('[Monkey] kernel veto', {
+        symbol, side, notional: notionalUsdt, leverage,
+        code: decision.code, reason: decision.reason,
+      });
+      return { executed: false, orderId: null, reason: `veto:${decision.code}:${decision.reason}` };
+    }
+
+    // Round quantity to the symbol's lot step. Same pattern liveSignalEngine
+    // follows after the 2026-04-19 `Param error sz` incident.
+    let formattedSize = quantity;
+    let symbolLotSize = 0;
+    try {
+      const precisions = await getPrecisions(symbol);
+      if (precisions.lotSize && precisions.lotSize > 0) {
+        symbolLotSize = precisions.lotSize;
+        formattedSize = Math.floor(quantity / precisions.lotSize) * precisions.lotSize;
+      }
+    } catch { /* use raw */ }
+    if (formattedSize <= 0) {
+      return {
+        executed: false, orderId: null,
+        reason: `lot_rounding_zero: qty ${quantity.toFixed(8)} below lot ${symbolLotSize}`,
+      };
+    }
+    if (formattedSize * entryPrice < minNotional) {
+      return {
+        executed: false, orderId: null,
+        reason: `post_round_below_min_notional: ${(formattedSize * entryPrice).toFixed(2)} < ${minNotional.toFixed(2)}`,
+      };
+    }
+
+    // Set leverage (non-fatal), then place market order.
+    try {
+      await poloniexFuturesService.setLeverage(credentials, symbol, leverage);
+    } catch (levErr) {
+      logger.warn('[Monkey] setLeverage failed (non-fatal)', {
+        symbol, leverage, err: levErr instanceof Error ? levErr.message : String(levErr),
+      });
+    }
+
+    let orderId: string | null = null;
+    try {
+      const exchangeOrder = await poloniexFuturesService.placeOrder(credentials, {
+        symbol, side: exchangeSide, type: 'market', size: formattedSize, lotSize: symbolLotSize,
+      });
+      orderId =
+        exchangeOrder?.ordId ?? exchangeOrder?.orderId ??
+        exchangeOrder?.id ?? exchangeOrder?.clientOid ?? null;
+      if (!orderId) {
+        logger.warn('[Monkey] exchange placed but no orderId returned', {
+          symbol, rawKeys: exchangeOrder ? Object.keys(exchangeOrder) : [],
+        });
+      }
+    } catch (err) {
+      logger.error('[Monkey] placeOrder failed', {
+        symbol, side, err: err instanceof Error ? err.message : String(err),
+      });
+      return {
+        executed: false, orderId: null,
+        reason: `exchange_rejected: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+
+    // Persist. Encode Monkey's state into reason so the close-hook +
+    // reconciler can recover attribution cheaply (no schema change).
+    // Format: monkey|phi=...|kappa=...|sov=...|src=witness
+    try {
+      const reasonEncoded =
+        `monkey|phi=${req.phi.toFixed(3)}|kappa=${req.kappa.toFixed(2)}|sov=${req.sovereignty.toFixed(3)}|src=v0.3`;
+      await pool.query(
+        `INSERT INTO autonomous_trades
+           (user_id, symbol, side, entry_price, quantity, leverage,
+            confidence, reason, order_id, paper_trade, engine_version)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        [
+          userId, symbol, exchangeSide, entryPrice, formattedSize, leverage,
+          req.phi, reasonEncoded, orderId, false, getEngineVersion(),
+        ],
+      );
+    } catch (err) {
+      logger.error('[Monkey] DB insert failed after exchange placement — ORPHAN RISK', {
+        orderId, err: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    logger.info('[Monkey] ORDER PLACED', {
+      symbol, side, orderId,
+      margin: marginUsdt.toFixed(2),
+      notional: notionalUsdt.toFixed(2),
+      leverage,
+      formattedSize,
+      phi: req.phi.toFixed(3),
+      sov: req.sovereignty.toFixed(3),
+    });
+
+    return { executed: true, orderId, reason: 'placed' };
   }
 
   /**
