@@ -37,6 +37,7 @@ import { refreshKnownDatabaseCollationVersions } from './scripts/refreshCollatio
 import { runAllMigrations } from './scripts/runMigrations.js';
 import { agentScheduler } from './services/agentScheduler.js';
 import { liveSignalEngine } from './services/liveSignalEngine.js';
+import { monkeyKernel } from './services/monkey/loop.js';
 import paperTradingService from './services/paperTradingService.js';
 import { persistentTradingEngine } from './services/persistentTradingEngine.js';
 import { startPipelineHealthProbe } from './services/pipelineHealthProbe.js';
@@ -449,6 +450,15 @@ server.listen(PORT, '::', async () => {
       dryRun: process.env.LIVE_SIGNAL_EXECUTE !== 'true',
     }).catch((err) => {
       logger.error('Failed to start live signal engine:', err);
+    });
+
+    // Monkey kernel — observe-only in v0.1. Runs alongside
+    // liveSignalEngine on the same cadence, logs every tick's
+    // emergent decisions to monkey_decisions. Promotable when her
+    // proposals land in the sane-territory. See
+    // docs/superpowers/specs/... when that spec lands.
+    monkeyKernel.start().catch((err) => {
+      logger.error('Failed to start Monkey kernel:', err);
     });
   }
 
