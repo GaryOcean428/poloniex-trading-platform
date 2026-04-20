@@ -83,16 +83,18 @@ export type ExecutionMode = 'auto' | 'paper_only' | 'pause';
 // ───────── Thresholds ─────────
 /**
  * Per-symbol gross notional cap as multiple of equity. Notional-based,
- * not margin-based — so at high leverage the effective margin commit
- * per unit of notional is small. At a $27 equity and Poloniex BTC
- * perp's 0.001 lot × $75k price = $75 minimum notional per order,
- * a 1.5× cap ($40.72) made it impossible to place the smallest
- * compliant order. 3.0× ($81) allows a single BTC lot while still
- * bounding stacked correlated positions; with 15× leverage that's
- * only ~18% of equity in margin commit. TODO: migrate to a
- * margin-based cap when the risk kernel gets its next iteration.
+ * not margin-based — at high leverage the effective margin commit per
+ * unit of notional is small. Poloniex BTC perp's structural min is
+ * 0.001 lot × spot-price-USDT per contract. At current prices (~$75k
+ * BTC), that's ~$75 per single lot. As equity shrinks, even a 3× cap
+ * fails: on $19 equity, 3× = $56.78, below the $75 floor. Raised to
+ * 5× ($94.65 here) so 1 BTC lot fits with headroom while still
+ * preventing stacked correlated positions. At 16× leverage a single
+ * $75 lot commits $4.70 margin (~25 % of equity) — within prudence.
+ * TODO: migrate to a margin-based cap when the risk kernel gets its
+ * next iteration.
  */
-export const PER_SYMBOL_EXPOSURE_MAX_MULTIPLIER = 3.0;
+export const PER_SYMBOL_EXPOSURE_MAX_MULTIPLIER = 5.0;
 export const UNREALIZED_DRAWDOWN_KILL_THRESHOLD = -0.15;         // −15% of equity
 
 function isLong(side: KernelOrder['side']): boolean {
