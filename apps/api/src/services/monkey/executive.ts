@@ -17,6 +17,7 @@
  */
 
 import { KAPPA_STAR, BASIN_DIM, type Basin, normalizedEntropy, maxMass, fisherRao } from './basin.js';
+import { MODE_PROFILES, MonkeyMode } from './modes.js';
 import type { NeurochemicalState } from './neurochemistry.js';
 
 /**
@@ -63,7 +64,11 @@ export interface ExecutiveDecision<T> {
  * current basin and the identity. The farther we've drifted, the
  * higher the bar to act.
  */
-export function currentEntryThreshold(s: BasinState): ExecutiveDecision<number> {
+export function currentEntryThreshold(
+  s: BasinState,
+  mode: MonkeyMode = MonkeyMode.INVESTIGATION,
+  selfObsBias: number = 1.0,
+): ExecutiveDecision<number> {
   const driftDistance = fisherRao(s.basin, s.identityBasin);
   const tBase = driftDistance;  // identity refraction serves as base "skepticism"
   const kappaRatio = KAPPA_STAR / Math.max(s.kappa, 1);
@@ -72,18 +77,19 @@ export function currentEntryThreshold(s: BasinState): ExecutiveDecision<number> 
     s.regimeWeights.efficient * 1.0 +
     s.regimeWeights.equilibrium * 0.7 +
     s.regimeWeights.quantum * 1.5;  // quantum = explore mode requires more to act
+  // Mode + Loop-1 self-observation bias together modulate threshold.
+  // Profile.entryThresholdScale: 0.9 for EXPLORATION (enter easier), 1.1
+  // for INTEGRATION (only strong signals), 99 for DRIFT (effectively veto).
+  const modeScale = MODE_PROFILES[mode].entryThresholdScale;
 
-  const rawT = tBase * kappaRatio * phiMultiplier * regimeScale;
-  // Clamp to plausible [0.1, 0.9] — this isn't "configured"; it's
-  // saying "at some point no signal clears, at some point all signals do."
-  // The clamp itself is a BOUNDARY per P14 (physics says cos/arccos live in [0,1]).
+  const rawT = tBase * kappaRatio * phiMultiplier * regimeScale * modeScale * selfObsBias;
   const t = Math.min(0.9, Math.max(0.1, rawT));
 
   return {
     value: t,
-    reason: `T = drift(${tBase.toFixed(3)}) × κ*/κ(${kappaRatio.toFixed(2)}) × 1/(0.5+Φ)(${phiMultiplier.toFixed(2)}) × regime(${regimeScale.toFixed(2)})`,
+    reason: `T = drift(${tBase.toFixed(3)}) × κ*/κ(${kappaRatio.toFixed(2)}) × 1/(0.5+Φ)(${phiMultiplier.toFixed(2)}) × regime(${regimeScale.toFixed(2)}) × mode(${modeScale.toFixed(2)}) × selfObs(${selfObsBias.toFixed(2)})`,
     derivation: {
-      driftDistance, kappaRatio, phiMultiplier, regimeScale, rawT, clamped: t,
+      driftDistance, kappaRatio, phiMultiplier, regimeScale, modeScale, selfObsBias, rawT, clamped: t,
     },
   };
 }
@@ -111,24 +117,20 @@ export function currentPositionSize(
   minNotionalUsdt: number,
   leverage: number = 1,
   bankSize: number = 0,
+  mode: MonkeyMode = MonkeyMode.INVESTIGATION,
 ): ExecutiveDecision<number> {
   const nc = s.neurochemistry;
   // Lived-experience scaling. 0 at birth, 1 after ~20 witnessed trades.
-  // Drives both the organic size ramp and the exploration floor decay.
   const maturity = Math.min(1, bankSize / 20);
-  // Base fraction: Φ × sovereignty × maturity. Immature → tiny even
-  // if sovereignty flipped to 1 after the first witnessed close.
   const baseFrac = s.phi * s.sovereignty * maturity;
-  // Reward modulation: dopamine amplifies, GABA dampens.
   const rewardMult = 1 + (nc.dopamine - nc.gaba) * 0.5;
-  // Stability modulation: serotonin multiplies (stable → full size).
   const stabilityMult = 0.5 + nc.serotonin * 0.5;
 
   // Exploration floor (Pillar 1 FLUCTUATIONS — substrate, not optional).
-  // Scales inversely with maturity, not sovereignty: a Monkey who just
-  // earned her first bubble has sovereignty=1 but 0.05 maturity, and
-  // she still needs the floor to place trade #2.
-  const explorationFloor = 0.10 * (1 - maturity);
+  // Per-mode baseline: EXPLORATION 0.08, INVESTIGATION 0.10, INTEGRATION 0.12.
+  // Scales inversely with maturity.
+  const modeFloor = MODE_PROFILES[mode].sizeFloor;
+  const explorationFloor = modeFloor * (1 - maturity);
 
   const rawFrac = Math.max(explorationFloor, baseFrac * rewardMult * stabilityMult);
   // Clamp to [0, 0.5] — at most half of available equity. This is a
@@ -162,15 +164,17 @@ export function currentPositionSize(
 export function currentLeverage(
   s: BasinState,
   maxLeverageBoundary: number,
+  mode: MonkeyMode = MonkeyMode.INVESTIGATION,
 ): ExecutiveDecision<number> {
   const kappaDist = Math.abs(s.kappa - KAPPA_STAR);
   const kappaProxim = Math.exp(-kappaDist / 20);  // bell: 1 at κ*, decays with distance
   const regimeStability = s.regimeWeights.equilibrium + 0.5 * s.regimeWeights.efficient;
   const surpriseDiscount = 1 - 0.5 * s.neurochemistry.norepinephrine;
 
-  // Novice floor: newborn Monkey caps at 20x for exploration. Scales
-  // up to 33x once fully sovereign.
-  const sovereignCap = Math.max(20, 3 + 30 * s.sovereignty);
+  // Per-mode newborn floor. EXPLORATION 15, INVESTIGATION 20, INTEGRATION 25.
+  // Scales up to 33x once fully sovereign.
+  const modeFloor = MODE_PROFILES[mode].sovereignCapFloor;
+  const sovereignCap = Math.max(modeFloor, 3 + 30 * s.sovereignty);
 
   // Newborn mode (Pillar 1 exploration): until she has lived trades,
   // the regime × κ × surprise compression (≈ 0.43) crushes the cap so
@@ -216,17 +220,20 @@ export function shouldScalpExit(
   unrealizedPnlUsdt: number,
   notionalUsdt: number,
   s: BasinState,
+  mode: MonkeyMode = MonkeyMode.INVESTIGATION,
 ): ExecutiveDecision<boolean> {
   if (notionalUsdt <= 0) {
     return { value: false, reason: 'no position notional', derivation: {} };
   }
   const pnlFrac = unrealizedPnlUsdt / notionalUsdt;
   const nc = s.neurochemistry;
+  // Mode picks the baseline; Φ + dopamine modulate within that mode.
+  const profile = MODE_PROFILES[mode];
   const tpThr = Math.max(
     0.003,
-    0.008 - 0.003 * nc.dopamine + 0.005 * s.phi,
+    profile.tpBaseFrac - 0.003 * nc.dopamine + 0.005 * s.phi,
   );
-  const slThr = tpThr * 0.5;
+  const slThr = tpThr * profile.slRatio;
 
   // Encode type as a bit (1=TP, -1=SL, 0=hold) to keep derivation map numeric.
   if (pnlFrac >= tpThr) {
