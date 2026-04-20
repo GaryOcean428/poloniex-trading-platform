@@ -95,6 +95,27 @@ const ATR_TAKE_PROFIT_MULTIPLIER = 3.0;
 /** How many recent candles to use for the ATR calculation. */
 const ATR_PERIOD = 14;
 
+/**
+ * ML-driven exit: close an open position when the current ML signal
+ * flips to the opposite direction with this much conviction. Mirrors
+ * the entry MIN_SIGNAL_STRENGTH — same "the ML trusts the direction"
+ * threshold used for opens applies to closes. Without this, exits
+ * relied solely on ATR stops, so stacked losing positions sat bleeding
+ * for 14 hours while ML kept predicting BUY (2026-04-19 incident).
+ */
+const EXIT_SIGNAL_STRENGTH = Number(process.env.LIVE_EXIT_STRENGTH) || 0.35;
+
+/**
+ * Kill-switch auto-flatten threshold. When total unrealized P&L as
+ * a fraction of equity drops below this, close ALL open positions and
+ * force execution_mode=pause. The risk kernel already vetoes NEW
+ * orders at this threshold via checkUnrealizedDrawdown; this carries
+ * out the "flatten and pause 24h" promise the kernel message makes
+ * but previously had no code behind. Threshold stays symmetric with
+ * the kernel's UNREALIZED_DRAWDOWN_KILL_THRESHOLD (-15%).
+ */
+const KILL_SWITCH_DD_THRESHOLD = -0.15;
+
 /** Redis channel for trade-outcome feedback to ml-worker. */
 const TRADE_OUTCOME_CHANNEL = 'ml:trade:outcome';
 
@@ -184,6 +205,16 @@ export class LiveSignalEngine extends EventEmitter {
       // posterior never updates and the gate is dead weight.
       await this.reconcileClosedTrades();
 
+      // Second: kill-switch auto-flatten. Runs regardless of
+      // execution_mode because it's safety, not strategy. The kernel's
+      // checkUnrealizedDrawdown already vetoes new orders at this
+      // threshold; this method carries out the "flatten" promise that
+      // the kernel message implies but previously had no code behind.
+      // 2026-04-19 incident: 5 stacked longs sat at -41.84% DD for
+      // hours because veto blocked new orders but nothing closed
+      // existing ones.
+      await this.checkAutoFlatten();
+
       for (const symbol of this.symbols) {
         try {
           await this.processSymbol(symbol);
@@ -196,6 +227,79 @@ export class LiveSignalEngine extends EventEmitter {
       monitoringService.recordPipelineHeartbeat('live');
     } finally {
       this.tickInFlight = false;
+    }
+  }
+
+  /**
+   * Kill-switch auto-flatten. On every tick, check total unrealized
+   * P&L / equity. If it's below KILL_SWITCH_DD_THRESHOLD (-15%),
+   * call closeAllPositions + force execution_mode=pause with an
+   * audit reason. Idempotent — if no positions are open, it's a
+   * no-op.
+   *
+   * Intentionally simple: close everything, let the human review.
+   * Partial flattening, halving, or scaling out would be strategy;
+   * this is a safety floor.
+   */
+  private async checkAutoFlatten(): Promise<void> {
+    try {
+      const userRow = await pool.query(
+        `SELECT user_id FROM user_api_credentials WHERE exchange = 'poloniex' LIMIT 1`,
+      );
+      const userId = (userRow.rows[0] as { user_id?: string } | undefined)?.user_id;
+      if (!userId) return;
+
+      const credentials = await apiCredentialsService.getCredentials(userId, 'poloniex');
+      if (!credentials) return;
+
+      const balance = await poloniexFuturesService.getAccountBalance(credentials);
+      const equity = Number(balance?.totalBalance ?? balance?.eq ?? 0);
+      const upl = Number(balance?.unrealizedPnL ?? balance?.upl ?? 0);
+      if (!Number.isFinite(equity) || equity <= 0) return;
+      const ddRatio = upl / equity;
+
+      if (ddRatio <= KILL_SWITCH_DD_THRESHOLD) {
+        logger.error('[LiveSignal] kill-switch auto-flatten TRIGGERED', {
+          equity,
+          upl,
+          ddRatio,
+          threshold: KILL_SWITCH_DD_THRESHOLD,
+        });
+        try {
+          await poloniexFuturesService.closeAllPositions(credentials);
+          logger.error('[LiveSignal] all positions closed via kill-switch');
+        } catch (closeErr) {
+          logger.error('[LiveSignal] kill-switch closeAllPositions failed — positions may still be open', {
+            err: closeErr instanceof Error ? closeErr.message : String(closeErr),
+          });
+        }
+        // Close any open live_signal DB rows too, so stacking guard + reconciler
+        // see the correct state on next tick.
+        try {
+          await pool.query(
+            `UPDATE autonomous_trades
+                SET status = 'closed', exit_time = NOW(),
+                    exit_reason = 'kill_switch_auto_flatten',
+                    pnl = COALESCE(pnl, 0)
+              WHERE user_id = $1 AND status = 'open' AND reason LIKE 'live_signal|%'`,
+            [userId],
+          );
+        } catch { /* non-fatal */ }
+        // Force pause so no new orders fire until a human resumes.
+        try {
+          await pool.query(
+            `UPDATE agent_execution_mode
+                SET mode = 'pause', updated_by = 'kill_switch', updated_at = NOW(),
+                    reason = $1
+              WHERE id = 1`,
+            [`Auto-flatten at DD=${(ddRatio * 100).toFixed(2)}% <= ${(KILL_SWITCH_DD_THRESHOLD * 100).toFixed(0)}% threshold`],
+          );
+        } catch { /* non-fatal */ }
+      }
+    } catch (err) {
+      logger.warn('[LiveSignal] checkAutoFlatten failed (fail-soft)', {
+        err: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 
@@ -354,12 +458,59 @@ export class LiveSignalEngine extends EventEmitter {
     };
     this.emit('signal', signal);
 
+    // 2b. Fetch exchange state up front. Used for both the ML-driven
+    //     exit check and the stacking guard. Exchange is authoritative:
+    //     the DB had phantom rows through most of 2026-04-19, and
+    //     time-bounded-DB guards let stacked losing positions
+    //     accumulate for 14 hours. Exchange state is ground truth.
+    const accountCtx = await this.loadAccountContext(symbol);
+    if (!accountCtx) return;
+    const existingPos = accountCtx.state.openPositions.find((p) => p.symbol === symbol);
+
+    // 2c. ML-driven exit. If we already hold a position on this
+    //     symbol and the current ML signal flips to the opposite
+    //     direction with entry-level conviction, close the position.
+    //     Mirrors entry logic — same threshold that opens a trade
+    //     also closes one when reversed. Without this, exits relied
+    //     solely on ATR-scaled SL/TP bands, which is why the 5
+    //     stacked longs on 2026-04-19 sat bleeding for 14 hours
+    //     while ML kept saying BUY and price dropped ~3%.
+    if (existingPos) {
+      const isLongHeld = existingPos.side === 'long';
+      const isShortHeld = existingPos.side === 'short';
+      const signalsFlip = (isLongHeld && signal.signal === 'SELL') ||
+                          (isShortHeld && signal.signal === 'BUY');
+      if (signalsFlip && signal.strength >= EXIT_SIGNAL_STRENGTH) {
+        logger.info('[LiveSignal] ML-driven exit — signal flipped', {
+          symbol,
+          held: existingPos.side,
+          signalNow: signal.signal,
+          strength: signal.strength,
+          threshold: EXIT_SIGNAL_STRENGTH,
+        });
+        await this.closeExistingPosition(
+          symbol,
+          existingPos.side,
+          'ml_signal_flip',
+          accountCtx.credentials,
+          signal.signalKey,
+          signal.regime,
+          signal.leverageBucket,
+        );
+        return;
+      }
+      // Hold: position exists + signal doesn't warrant exit.
+      logger.info(`[LiveSignal] ${symbol} holding — position open, signal ${signal.signal}@${signal.strength.toFixed(3)} does not warrant exit`);
+      return;
+    }
+
+    // 2d. No existing exchange position — normal entry flow from here.
     if (signal.signal === 'HOLD' || signal.strength < MIN_SIGNAL_STRENGTH) {
       logger.debug(`[LiveSignal] ${symbol} hold`, signal);
       return;
     }
 
-    // 2b. Bandit gate. Active only once we have enough trials; until
+    // 2e. Bandit gate. Active only once we have enough trials; until
     //     then we let raw strength speak for itself (exploration phase).
     if (banditActive && banditPosterior < BANDIT_MIN_POSTERIOR) {
       logger.info(`[LiveSignal] ${symbol} bandit gate`, {
@@ -374,55 +525,12 @@ export class LiveSignalEngine extends EventEmitter {
       return;
     }
 
-    // 2c. Stacking guard: if we already have a RECENT open
-    //      autonomous_trade row on this symbol from the live-signal
-    //      engine, don't stack. Market orders on the same side
-    //      accumulate into one net Poloniex position — the exposure
-    //      cap catches the extreme, but we'd still burn fees stacking
-    //      60x/hour into the same trade. Let the existing position
-    //      play out; managePositions or the SL/TP exit will flip the
-    //      DB row to 'closed' and free this symbol for a fresh signal.
-    //
-    //      Time-bounded (60 min): the 2026-04-18 phantom-rows incident
-    //      had 6 rows stuck in status='open' for 12+ hours because
-    //      order_id was never captured; the guard read them as "open
-    //      positions" and silently blocked every signal. The periodic
-    //      reconciler (stateReconciliationService) now catches
-    //      phantoms within 60s, but this 60-min window is a belt on top
-    //      of those braces — if reconciliation is itself broken, we
-    //      still resume trading within an hour rather than indefinitely.
-    //      ATR-scaled stops/takes resolve most real trades in tens of
-    //      minutes; anything open >1h is outside our strategy envelope.
-    const openCheck = await pool.query(
-      `SELECT 1 FROM autonomous_trades
-        WHERE symbol = $1
-          AND status = 'open'
-          AND reason LIKE 'live_signal|%'
-          AND (entry_time > NOW() - INTERVAL '60 minutes'
-               OR (entry_time IS NULL AND created_at > NOW() - INTERVAL '60 minutes'))
-        LIMIT 1`,
-      [symbol],
-    );
-    if ((openCheck.rowCount ?? 0) > 0) {
-      // Info (not debug) so operators can see the guard firing in
-      // prod without enabling verbose logging. This is the single
-      // line that tells you "the signal passed all gates but we
-      // deliberately did not trade because an open position already
-      // exists" — worth seeing.
-      logger.info(`[LiveSignal] ${symbol} has open live_signal trade — skipping new entry`);
-      return;
-    }
-
     // 3. Translate signal to a KernelOrder shape.
     const atr = this.computeATR(ohlcv, ATR_PERIOD);
     const order = this.buildOrder(symbol, signal, currentPrice, atr);
     if (!order) return;
 
-    // 4. Fetch live account state for the kernel (also returns
-    //    userId + credentials so we can submit the order downstream
-    //    without another DB round-trip).
-    const accountCtx = await this.loadAccountContext(symbol);
-    if (!accountCtx) return;
+    // 4. Build kernel context from the already-fetched accountCtx.
     const symbolMaxLeverage = (await getMaxLeverage(symbol)) ?? order.leverage;
     const mode = await getCurrentExecutionMode();
     const context: KernelContext = {
@@ -686,6 +794,77 @@ export class LiveSignalEngine extends EventEmitter {
    * outcome event; we still record a DB row only on successful
    * placement so the reconciler doesn't see phantom opens.
    */
+  /**
+   * Close the existing Poloniex position for a symbol via the v3
+   * close-position endpoint, and mark any matching open DB rows as
+   * closed. The exchange side of this is one call — Poloniex nets
+   * stacked same-side entries into one position per symbol, and
+   * `/v3/trade/position` with `type=close_long` or `close_short`
+   * closes the full net position at market.
+   *
+   * Called on ML-driven signal flip from processSymbol. Also feeds
+   * the bandit via recordTradeOutcome — exit P&L from reconciler
+   * will finish the feedback loop once the close fills and the
+   * next reconcileClosedTrades picks it up. Here we pre-emit the
+   * 'close_initiated' event so the ml-worker knows.
+   */
+  private async closeExistingPosition(
+    symbol: string,
+    heldSide: 'long' | 'short',
+    closeReason: string,
+    credentials: { apiKey: string; apiSecret: string; passphrase?: string },
+    signalKey: string,
+    regime: string,
+    leverageBucket: LeverageBucket,
+  ): Promise<void> {
+    const closeType = heldSide === 'long' ? 'close_long' : 'close_short';
+    try {
+      const resp = await poloniexFuturesService.closePosition(credentials, symbol, closeType);
+      logger.info('[LiveSignal] position close submitted', {
+        symbol,
+        heldSide,
+        closeType,
+        closeReason,
+        exchangeResp: resp,
+      });
+    } catch (err) {
+      logger.error('[LiveSignal] closePosition failed', {
+        symbol,
+        err: err instanceof Error ? err.message : String(err),
+      });
+      return;
+    }
+
+    // Flip matching DB rows to closed. The reconciler would catch
+    // them on its next cycle anyway, but being prompt keeps the
+    // dashboard honest.
+    try {
+      await pool.query(
+        `UPDATE autonomous_trades
+            SET status = 'closed', exit_time = NOW(),
+                exit_reason = $2,
+                pnl = COALESCE(pnl, 0)
+          WHERE symbol = $1
+            AND status = 'open'
+            AND reason LIKE 'live_signal|%'`,
+        [symbol, closeReason],
+      );
+    } catch (err) {
+      logger.warn('[LiveSignal] DB close-row update failed (reconciler will catch up)', {
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    await this.publishOutcomeEvent({
+      symbol,
+      phase: 'close_initiated',
+      reason: closeReason,
+      signalKey,
+      regime,
+      leverageBucket,
+    });
+  }
+
   private async submitOrder(
     order: KernelOrder,
     signal: LiveSignalTick,
