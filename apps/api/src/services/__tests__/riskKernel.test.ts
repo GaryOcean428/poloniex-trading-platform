@@ -46,7 +46,8 @@ const autoContext: KernelContext = { isLive: false, mode: 'auto', symbolMaxLever
 const liveAutoContext: KernelContext = { isLive: true, mode: 'auto', symbolMaxLeverage: BTC_MAX_LEV };
 
 describe('checkPerSymbolExposure', () => {
-  it('allows an order when total notional stays under the 1.5× cap', () => {
+  it(`allows an order when total notional stays under the ${PER_SYMBOL_EXPOSURE_MAX_MULTIPLIER}× cap`, () => {
+    // equity 100 × 5 = 500 cap; 100 + 10 = 110 ≪ 500 → allowed
     const state: KernelAccountState = {
       ...emptyAccount,
       equityUsdt: 100,
@@ -56,10 +57,11 @@ describe('checkPerSymbolExposure', () => {
   });
 
   it('blocks an order that would push same-symbol notional over the cap', () => {
+    // equity 100 × 5 = 500 cap; 495 + 10 = 505 > 500 → blocked
     const state: KernelAccountState = {
       ...emptyAccount,
       equityUsdt: 100,
-      openPositions: [{ symbol: 'BTC_USDT_PERP', side: 'long', notional: 145 }],
+      openPositions: [{ symbol: 'BTC_USDT_PERP', side: 'long', notional: 495 }],
     };
     const decision = checkPerSymbolExposure({ ...btcOrder, notional: 10 }, state);
     expect(decision.allowed).toBe(false);
@@ -70,12 +72,13 @@ describe('checkPerSymbolExposure', () => {
     // A short position still counts toward gross exposure; the kernel
     // doesn't net longs against shorts because a -2% candle moves both
     // against margin (via maintenance-margin stack).
+    // equity 100 × 5 = 500 cap; 300 + 200 + 20 = 520 > 500 → blocked
     const state: KernelAccountState = {
       ...emptyAccount,
       equityUsdt: 100,
       openPositions: [
-        { symbol: 'BTC_USDT_PERP', side: 'long', notional: 80 },
-        { symbol: 'BTC_USDT_PERP', side: 'short', notional: 60 },
+        { symbol: 'BTC_USDT_PERP', side: 'long', notional: 300 },
+        { symbol: 'BTC_USDT_PERP', side: 'short', notional: 200 },
       ],
     };
     expect(checkPerSymbolExposure({ ...btcOrder, notional: 20 }, state).allowed).toBe(false);
