@@ -289,15 +289,18 @@ export class LiveSignalEngine extends EventEmitter {
             err: closeErr instanceof Error ? closeErr.message : String(closeErr),
           });
         }
-        // Close any open live_signal DB rows too, so stacking guard + reconciler
-        // see the correct state on next tick.
+        // Close any open live_signal OR monkey DB rows too, so stacking guard
+        // + reconciler see the correct state on next tick. Kill-switch flattens
+        // the exchange net position unconditionally; the DB rows for BOTH
+        // engines have to close to match.
         try {
           await pool.query(
             `UPDATE autonomous_trades
                 SET status = 'closed', exit_time = NOW(),
                     exit_reason = 'kill_switch_auto_flatten',
                     pnl = COALESCE(pnl, 0)
-              WHERE user_id = $1 AND status = 'open' AND reason LIKE 'live_signal|%'`,
+              WHERE user_id = $1 AND status = 'open'
+                AND (reason LIKE 'live_signal|%' OR reason LIKE 'monkey|%')`,
             [userId],
           );
         } catch { /* non-fatal */ }
