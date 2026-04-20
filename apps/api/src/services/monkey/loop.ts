@@ -27,9 +27,16 @@ import { pool } from '../../db/connection.js';
 import { getEngineVersion } from '../../utils/engineVersion.js';
 import { logger } from '../../utils/logger.js';
 import { apiCredentialsService } from '../apiCredentialsService.js';
+import { getCurrentExecutionMode } from '../executionModeService.js';
 import { getMaxLeverage, getPrecisions } from '../marketCatalog.js';
 import mlPredictionService from '../mlPredictionService.js';
 import poloniexFuturesService from '../poloniexFuturesService.js';
+import {
+  evaluatePreTradeVetoes,
+  type KernelAccountState,
+  type KernelContext,
+  type KernelOrder,
+} from '../riskKernel.js';
 
 import {
   BASIN_DIM,
@@ -42,9 +49,13 @@ import {
   velocity,
   type Basin,
 } from './basin.js';
+import { BasinSync } from './basin_sync.js';
+import { BusEventType, getKernelBus, type KernelBus } from './kernel_bus.js';
+import { detectMode, MODE_PROFILES, MonkeyMode } from './modes.js';
 import { computeNeurochemicals, summarizeNC, type NeurochemicalState } from './neurochemistry.js';
 import { perceive, refract, type OHLCVCandle } from './perception.js';
 import { resonanceBank } from './resonance_bank.js';
+import { computeSelfObservation, type SelfObservation } from './self_observation.js';
 import { WorkingMemory, type Bubble } from './working_memory.js';
 import {
   currentEntryThreshold,
@@ -52,12 +63,15 @@ import {
   currentPositionSize,
   shouldAutoFlatten,
   shouldExit,
+  shouldScalpExit,
   type BasinState,
 } from './executive.js';
 
 /** Default Monkey watchlist — matches liveSignalEngine for side-by-side. */
 const DEFAULT_SYMBOLS = ['BTC_USDT_PERP', 'ETH_USDT_PERP'];
-const DEFAULT_TICK_MS = Number(process.env.MONKEY_TICK_MS) || 60_000;
+// v0.4: faster tick so scalp TP/SL exits catch sub-minute wiggles.
+// Full perception runs per tick; DB + compute cost is modest.
+const DEFAULT_TICK_MS = Number(process.env.MONKEY_TICK_MS) || 30_000;
 /** OHLCV window ml-worker also uses. */
 const OHLCV_LOOKBACK = 200;
 const OHLCV_TIMEFRAME = '15m';
@@ -73,6 +87,8 @@ interface SymbolState {
   phiHistory: number[];
   /** Rolling f_health for auto-flatten trend check. */
   fHealthHistory: number[];
+  /** Rolling identity-drift history (Fisher-Rao) for mode detection. */
+  driftHistory: number[];
   /** Basin trajectory for repetition detection (Loop 1). */
   basinHistory: Basin[];
   /** Working memory (qig-cache) for recent bubbles. */
@@ -82,6 +98,10 @@ interface SymbolState {
   /** Active bubble id for the currently open position (if any). */
   openBubbleId: string | null;
   sessionTicks: number;
+  /** Last mode (for transition logging). */
+  lastMode: MonkeyMode | null;
+  /** Mode-specific tickMs last applied — used by adaptive-tick governor. */
+  currentTickMs: number;
 }
 
 /**
@@ -95,6 +115,18 @@ export class MonkeyKernel extends EventEmitter {
   private symbols: string[] = [...DEFAULT_SYMBOLS];
   private tickInFlight = false;
   private symbolStates: Map<string, SymbolState> = new Map();
+  /** Self-observation summary refreshed every ~60 ticks for entry bias. */
+  private selfObs: SelfObservation | null = null;
+  private selfObsLastUpdate = 0;
+  private static readonly SELF_OBS_REFRESH_MS = 5 * 60_000;  // 5 min
+  /** Basin-sync instance (v0.5 single-kernel; v0.6 parallel sub-kernels). */
+  private readonly basinSync = new BasinSync(
+    process.env.MONKEY_INSTANCE_ID || 'monkey-primary',
+  );
+  /** Kernel bus — pub/sub for inter-kernel comms (v0.6a). */
+  private readonly bus: KernelBus = getKernelBus();
+  /** Instance identifier — will differ between parallel sub-Monkeys in v0.6b. */
+  private readonly instanceId: string = process.env.MONKEY_INSTANCE_ID || 'monkey-primary';
 
   /**
    * Start Monkey's heartbeat. She ticks alongside liveSignalEngine —
@@ -132,15 +164,18 @@ export class MonkeyKernel extends EventEmitter {
       identityBasin: uniformBasin(BASIN_DIM),  // Newborn starts uniform; crystallizes after N trades
       phiHistory: [],
       fHealthHistory: [],
+      driftHistory: [],
       basinHistory: [],
       wm: new WorkingMemory({
         promoteCallback: async (b: Bubble) => {
           await resonanceBank.writeBubble(b, getEngineVersion());
         },
       }),
-      kappa: KAPPA_STAR,  // Start at the universal fixed point
+      kappa: KAPPA_STAR,
       openBubbleId: null,
       sessionTicks: 0,
+      lastMode: null,
+      currentTickMs: this.tickMs,
     };
   }
 
@@ -267,17 +302,69 @@ export class MonkeyKernel extends EventEmitter {
       identityBasin: state.identityBasin,
     };
 
+    // v0.5: DETECT MODE — one of EXPLORATION / INVESTIGATION / INTEGRATION / DRIFT.
+    // driftHistory is maintained here so mode detector has the delta.
+    const driftNow = fisherRao(basin, state.identityBasin);
+    state.driftHistory.push(driftNow);
+    if (state.driftHistory.length > HISTORY_MAX) state.driftHistory.shift();
+    const modeDecision = detectMode({
+      basin,
+      identityBasin: state.identityBasin,
+      phi,
+      kappa: state.kappa,
+      basinVelocity: bv,
+      neurochemistry: nc,
+      phiHistory: state.phiHistory,
+      fHealthHistory: state.fHealthHistory,
+      driftHistory: state.driftHistory,
+    });
+    const mode = modeDecision.value;
+    if (state.lastMode !== null && state.lastMode !== mode) {
+      logger.info('[Monkey] mode transition', {
+        symbol,
+        from: state.lastMode,
+        to: mode,
+        reason: modeDecision.reason,
+      });
+      this.bus.publish({
+        type: BusEventType.MODE_TRANSITION,
+        source: this.instanceId,
+        symbol,
+        payload: { from: state.lastMode, to: mode, reason: modeDecision.reason, phi, kappa: state.kappa },
+      });
+    }
+    state.lastMode = mode;
+
+    // Refresh self-observation entry bias every SELF_OBS_REFRESH_MS.
+    const now = Date.now();
+    if (now - this.selfObsLastUpdate > MonkeyKernel.SELF_OBS_REFRESH_MS) {
+      this.selfObs = await computeSelfObservation(24);
+      this.selfObsLastUpdate = now;
+    }
+    const selfObsBias = this.selfObs?.entryBias[mode] ?? 1.0;
+
+    // v0.5: Basin sync — publish own state; pull observer-effect influence.
+    const syncPublish = this.basinSync.update({
+      basin,
+      phi,
+      kappa: state.kappa,
+      mode,
+      driftFromIdentity: driftNow,
+    }).catch(() => { /* non-fatal */ });
+    void syncPublish;
+
     // 4. REMEMBER — add bubble; tick working memory
     const bubble = state.wm.add(basin, phi, { symbol, tick: state.sessionTicks });
     const wmStats = await state.wm.tick();
 
-    // 5. DERIVE — executive computes what Monkey would do
-    const entryThr = currentEntryThreshold(basinState);
-    const leverage = currentLeverage(basinState, (await getMaxLeverage(symbol)) ?? 10);
+    // 5. DERIVE — executive computes what Monkey would do (mode-aware)
+    const entryThr = currentEntryThreshold(basinState, mode, selfObsBias);
+    const leverage = currentLeverage(basinState, (await getMaxLeverage(symbol)) ?? 10, mode);
     const precisions = await getPrecisions(symbol).catch(() => null);
     const lotSize = precisions?.lotSize ?? 0;
     const minNotional = lastPrice * Math.max(lotSize, 1e-9);
-    const size = currentPositionSize(basinState, availableEquity, minNotional);
+    const bankSize = await resonanceBank.bankSize();
+    const size = currentPositionSize(basinState, availableEquity, minNotional, leverage.value, bankSize, mode);
     const autoFlatten = shouldAutoFlatten(basinState, state.fHealthHistory);
 
     // 6. DECIDE — propose action
@@ -287,6 +374,8 @@ export class MonkeyKernel extends EventEmitter {
       phi, kappa: state.kappa, sovereignty, basinVelocity: bv,
       regimeWeights, nc,
       fHealth, mlSignal, mlStrength,
+      mode: { value: mode, reason: modeDecision.reason, ...modeDecision.derivation },
+      selfObsBias,
     };
 
     if (autoFlatten.value) {
@@ -294,49 +383,134 @@ export class MonkeyKernel extends EventEmitter {
       reason = autoFlatten.reason;
       derivation.autoFlatten = autoFlatten.derivation;
     } else if (heldSide) {
-      // In an open position: check ML-driven exit via Loop 2 miniature
-      // (perception vs strategy — strategy is just "the basin that opened
-      // the trade" for v0.1; real strategy kernel comes in v0.2)
-      const exit = shouldExit(basin, state.identityBasin, heldSide, basinState);
-      if (exit.value) {
-        action = 'exit';
-        reason = exit.reason;
-        derivation.exit = exit.derivation;
-      } else {
-        action = 'hold';
-        reason = exit.reason;
+      // v0.4+v0.5: Scalp TP/SL gate runs FIRST with mode-specific thresholds.
+      let scalpFired = false;
+      const openRow = await this.findOpenMonkeyTrade(symbol);
+      if (openRow) {
+        const positionNotional = Number(openRow.entry_price) * Number(openRow.quantity);
+        const sidesign = heldSide === 'long' ? 1 : -1;
+        const unrealizedPnl = (lastPrice - Number(openRow.entry_price)) * Number(openRow.quantity) * sidesign;
+        const scalp = shouldScalpExit(unrealizedPnl, positionNotional, basinState, mode);
+        derivation.scalp = { ...scalp.derivation, unrealizedPnl, markPrice: lastPrice, tradeId: String(openRow.id) };
+        if (scalp.value) {
+          action = 'scalp_exit';
+          reason = scalp.reason;
+          scalpFired = true;
+        }
       }
-    } else if (mlStrength >= entryThr.value && mlSignal !== 'HOLD' && size.value > 0) {
+      if (!scalpFired) {
+        // Loop 2 debate — perception vs identity
+        const exit = shouldExit(basin, state.identityBasin, heldSide, basinState);
+        if (exit.value) {
+          action = 'exit';
+          reason = exit.reason;
+          derivation.exit = exit.derivation;
+        } else {
+          action = 'hold';
+          reason = exit.reason;
+        }
+      }
+    } else if (
+      MODE_PROFILES[mode].canEnter &&
+      mlStrength >= entryThr.value &&
+      mlSignal !== 'HOLD' &&
+      size.value > 0
+    ) {
       action = mlSignal === 'BUY' ? 'enter_long' : 'enter_short';
-      reason = `ml ${mlSignal}@${mlStrength.toFixed(3)} >= thr ${entryThr.value.toFixed(3)}; size=${size.value.toFixed(2)} lev=${leverage.value}x`;
+      reason = `[${mode}] ml ${mlSignal}@${mlStrength.toFixed(3)} >= thr ${entryThr.value.toFixed(3)}; margin=${size.value.toFixed(2)} lev=${leverage.value}x notional=${(size.value * leverage.value).toFixed(2)}`;
       derivation.entryThreshold = entryThr.derivation;
       derivation.size = size.derivation;
       derivation.leverage = leverage.derivation;
     } else {
       action = 'hold';
-      const why =
-        mlStrength < entryThr.value
-          ? `ml ${mlStrength.toFixed(3)} < thr ${entryThr.value.toFixed(3)}`
+      const why = !MODE_PROFILES[mode].canEnter
+        ? `mode=${mode} blocks entry (${MODE_PROFILES[mode].description})`
+        : mlStrength < entryThr.value
+          ? `[${mode}] ml ${mlStrength.toFixed(3)} < thr ${entryThr.value.toFixed(3)}`
           : size.value <= 0
-          ? `size ${size.value.toFixed(2)} below min notional ${minNotional.toFixed(2)}`
+          ? `[${mode}] size ${size.value.toFixed(2)} below min notional ${minNotional.toFixed(2)}`
           : 'no qualifying signal';
       reason = why;
       derivation.entryThreshold = entryThr.derivation;
     }
 
+    // 6b. EXECUTE — gated by MONKEY_EXECUTE=true. Observe-only otherwise.
+    let executed = false;
+    let monkeyOrderId: string | null = null;
+    if (process.env.MONKEY_EXECUTE === 'true') {
+      if ((action === 'enter_long' || action === 'enter_short') && size.value > 0) {
+        const execResult = await this.executeEntry({
+          symbol,
+          side: action === 'enter_long' ? 'long' : 'short',
+          marginUsdt: size.value,
+          leverage: leverage.value,
+          entryPrice: lastPrice,
+          minNotional,
+          phi,
+          kappa: state.kappa,
+          sovereignty,
+          trajectoryId: null,
+        });
+        executed = execResult.executed;
+        monkeyOrderId = execResult.orderId;
+        if (!executed) {
+          reason += ` | execute: ${execResult.reason}`;
+        }
+      } else if (action === 'scalp_exit' && heldSide) {
+        const scalpDeriv = derivation.scalp as Record<string, unknown> | undefined;
+        const tradeId = scalpDeriv?.tradeId ? String(scalpDeriv.tradeId) : null;
+        const exitTypeBit = Number(scalpDeriv?.exitTypeBit ?? 0);
+        const exitType = exitTypeBit === 1 ? 'take_profit' : exitTypeBit === -1 ? 'stop_loss' : 'scalp_exit';
+        const pnlAtDecision = Number(scalpDeriv?.unrealizedPnl ?? 0);
+        if (tradeId) {
+          const closeResult = await this.closeHeldPosition({
+            symbol,
+            tradeId,
+            heldSide,
+            markPrice: lastPrice,
+            exitReason: exitType,
+            pnlAtDecision,
+          });
+          executed = closeResult.executed;
+          monkeyOrderId = closeResult.orderId;
+          if (!executed) {
+            reason += ` | close: ${closeResult.reason}`;
+          } else {
+            reason += ` | closed@${lastPrice.toFixed(2)} pnl=${pnlAtDecision.toFixed(4)}`;
+          }
+        }
+      }
+    }
+
     // Info-level log — the user asked for end-to-end observability.
-    // Every tick, Monkey announces her state + decision.
-    logger.info(`[Monkey] ${symbol} ${action}`, {
+    logger.info(`[Monkey] ${symbol} [${mode}] ${action}${executed ? ' EXECUTED' : ''}`, {
+      mode,
       phi: phi.toFixed(3),
       kappa: state.kappa.toFixed(2),
       nc: summarizeNC(nc),
       reg: `q${regimeWeights.quantum.toFixed(2)}/e${regimeWeights.efficient.toFixed(2)}/eq${regimeWeights.equilibrium.toFixed(2)}`,
       bv: bv.toFixed(3),
+      drift: driftNow.toFixed(3),
       fh: fHealth.toFixed(3),
       sov: sovereignty.toFixed(3),
       wm: `${wmStats.alive}a/${wmStats.promoted}prom/${wmStats.popped}pop`,
+      selfObsBias: selfObsBias.toFixed(2),
+      orderId: monkeyOrderId ?? undefined,
       reason,
     });
+
+    // Persist mode observation for later Loop-1 aggregation + UI.
+    try {
+      await pool.query(
+        `INSERT INTO monkey_modes (symbol, mode, phi, kappa, drift, basin_velocity, reason)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [symbol, mode, phi, state.kappa, driftNow, bv, modeDecision.reason],
+      );
+    } catch (err) {
+      logger.debug('[Monkey] monkey_modes insert failed (fail-soft)', {
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
 
     // 7. PERSIST trajectory + decision to DB (for audit + Loop 1 self-obs)
     let trajectoryId: number | null = null;
@@ -379,7 +553,7 @@ export class MonkeyKernel extends EventEmitter {
         [
           symbol, action, size.value, leverage.value, entryThr.value, mlStrength,
           reason, JSON.stringify(derivation),
-          false,  // observe-only
+          executed,
           trajectoryId,
         ],
       );
@@ -402,6 +576,448 @@ export class MonkeyKernel extends EventEmitter {
     if (state.phiHistory.length > HISTORY_MAX) state.phiHistory.shift();
     state.fHealthHistory.push(fHealth);
     if (state.fHealthHistory.length > HISTORY_MAX) state.fHealthHistory.shift();
+
+    // v0.5 adaptive cadence: take the minimum tickMs across all symbols so
+    // the shortest-cadence mode wins. Kernel-wide tick is rescheduled only
+    // when the aggregate target differs from the current interval.
+    state.currentTickMs = MODE_PROFILES[mode].tickMs;
+    this.maybeRescheduleTick();
+  }
+
+  /**
+   * If the mode-aggregate target tickMs has shifted from current, restart
+   * the interval at the new cadence. Called at the tail of each symbol's
+   * processSymbol() so the kernel adapts within a tick or two of a mode
+   * transition.
+   */
+  private maybeRescheduleTick(): void {
+    const targets = [...this.symbolStates.values()].map((s) => s.currentTickMs);
+    if (targets.length === 0) return;
+    const target = Math.min(...targets);
+    if (target !== this.tickMs && target > 0) {
+      logger.info('[Monkey] rescheduling tick', { from: this.tickMs, to: target });
+      this.tickMs = target;
+      if (this.timer) {
+        clearInterval(this.timer);
+        this.timer = setInterval(() => void this.tick(), this.tickMs);
+        this.timer.unref?.();
+      }
+    }
+  }
+
+  /**
+   * Look up Monkey's most recent open trade row for a symbol. Used by
+   * the scalp-exit gate (v0.4) to compute unrealized P&L.
+   */
+  private async findOpenMonkeyTrade(symbol: string): Promise<
+    | { id: string; entry_price: string; quantity: string; leverage: number; order_id: string | null }
+    | null
+  > {
+    try {
+      const result = await pool.query(
+        `SELECT id, entry_price, quantity, leverage, order_id
+           FROM autonomous_trades
+          WHERE reason LIKE 'monkey|%' AND status = 'open' AND symbol = $1
+          ORDER BY entry_time DESC LIMIT 1`,
+        [symbol],
+      );
+      const row = result.rows[0] as
+        | { id: string; entry_price: string; quantity: string; leverage: number; order_id: string | null }
+        | undefined;
+      return row ?? null;
+    } catch (err) {
+      logger.debug('[Monkey] findOpenMonkeyTrade failed', {
+        err: err instanceof Error ? err.message : String(err),
+      });
+      return null;
+    }
+  }
+
+  /**
+   * Close a Monkey-owned position (v0.4). Submits opposite-side market
+   * order and updates autonomous_trades with exit_price/pnl/exit_reason.
+   * The reconciler will then pick up the closed row and fire
+   * monkeyKernel.witnessExit → resonance-bank write.
+   */
+  private async closeHeldPosition(req: {
+    symbol: string;
+    tradeId: string;
+    heldSide: 'long' | 'short';
+    markPrice: number;
+    exitReason: string;
+    pnlAtDecision: number;
+  }): Promise<{ executed: boolean; orderId: string | null; reason: string }> {
+    const { symbol, tradeId, heldSide, markPrice, exitReason, pnlAtDecision } = req;
+
+    // Load credentials + position to know size to close.
+    let credentials: { apiKey: string; apiSecret: string; passphrase?: string };
+    try {
+      const userRow = await pool.query(
+        `SELECT user_id FROM user_api_credentials WHERE exchange = 'poloniex' LIMIT 1`,
+      );
+      const userId = String((userRow.rows[0] as { user_id?: string } | undefined)?.user_id ?? '');
+      if (!userId) return { executed: false, orderId: null, reason: 'no_credentials' };
+      const c = await apiCredentialsService.getCredentials(userId, 'poloniex');
+      if (!c) return { executed: false, orderId: null, reason: 'credentials_missing' };
+      credentials = c;
+    } catch (err) {
+      return {
+        executed: false, orderId: null,
+        reason: `close_credentials_failed: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+
+    // Read exchange position size (tradeId's quantity may diverge from
+    // actual exchange state if partial fills or reconciler updates).
+    let exchangeQty = 0;
+    try {
+      const positions = await poloniexFuturesService.getPositions(credentials);
+      const forSymbol = (Array.isArray(positions) ? positions : []).find(
+        (p: Record<string, unknown>) => String(p.symbol ?? '') === symbol,
+      );
+      exchangeQty = Math.abs(Number(forSymbol?.qty ?? forSymbol?.size ?? 0));
+    } catch (err) {
+      return {
+        executed: false, orderId: null,
+        reason: `position_read_failed: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+    if (exchangeQty <= 0) {
+      // Position vanished between decide and close — reconciler will
+      // catch the DB row; nothing for us to close on-exchange.
+      await pool.query(
+        `UPDATE autonomous_trades SET status='closed', exit_price=$1, exit_time=NOW(),
+                exit_reason='vanished_before_close', pnl=$2 WHERE id=$3`,
+        [markPrice, pnlAtDecision, tradeId],
+      ).catch(() => { /* non-fatal */ });
+      return { executed: false, orderId: null, reason: 'exchange_position_vanished' };
+    }
+
+    // Lot-size round.
+    let formattedSize = exchangeQty;
+    let symbolLotSize = 0;
+    try {
+      const precisions = await getPrecisions(symbol);
+      if (precisions.lotSize && precisions.lotSize > 0) {
+        symbolLotSize = precisions.lotSize;
+        formattedSize = Math.floor(exchangeQty / precisions.lotSize) * precisions.lotSize;
+      }
+    } catch { /* use raw */ }
+    if (formattedSize <= 0) {
+      return { executed: false, orderId: null, reason: 'lot_rounding_zero_on_close' };
+    }
+
+    const closeSide: 'buy' | 'sell' = heldSide === 'long' ? 'sell' : 'buy';
+
+    let orderId: string | null = null;
+    try {
+      const exchangeOrder = await poloniexFuturesService.placeOrder(credentials, {
+        symbol, side: closeSide, type: 'market', size: formattedSize, lotSize: symbolLotSize,
+        reduceOnly: true,
+      });
+      orderId =
+        exchangeOrder?.ordId ?? exchangeOrder?.orderId ??
+        exchangeOrder?.id ?? exchangeOrder?.clientOid ?? null;
+    } catch (err) {
+      return {
+        executed: false, orderId: null,
+        reason: `close_exchange_rejected: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+
+    try {
+      await pool.query(
+        `UPDATE autonomous_trades
+            SET status = 'closed', exit_price = $1, exit_time = NOW(),
+                exit_reason = $2, exit_order_id = $3, pnl = $4
+          WHERE id = $5`,
+        [markPrice, exitReason, orderId, pnlAtDecision, tradeId],
+      );
+    } catch (err) {
+      logger.error('[Monkey] close DB update failed — ORPHAN RISK (reconciler will catch)', {
+        tradeId, err: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    logger.info('[Monkey] POSITION CLOSED', {
+      symbol, heldSide, markPrice, orderId, tradeId,
+      pnl: pnlAtDecision.toFixed(4), exitReason,
+    });
+    this.bus.publish({
+      type: BusEventType.EXIT_TRIGGERED,
+      source: this.instanceId,
+      symbol,
+      payload: { heldSide, markPrice, orderId, tradeId, pnl: pnlAtDecision, exitReason },
+    });
+    return { executed: true, orderId, reason: 'closed' };
+  }
+
+  /**
+   * Execution path (v0.3): route Monkey's proposed entry through the
+   * shared risk kernel, submit to Poloniex v3 futures, and persist the
+   * row to autonomous_trades with reason prefix `monkey|...` so the
+   * reconciler + dashboard attribute it to her (not liveSignalEngine).
+   *
+   * Returns { executed, orderId, reason }. Callers should not throw on
+   * veto — treat veto as the expected "she decided but kernel blocked"
+   * outcome, log it, and continue the tick.
+   *
+   * This is gated by process.env.MONKEY_EXECUTE='true' in loop.ts.
+   * v0.3 order surface: market IOC, no SL/TP (managed loop covers those
+   * the same way liveSignalEngine relies on it).
+   */
+  private async executeEntry(req: {
+    symbol: string;
+    side: 'long' | 'short';
+    marginUsdt: number;
+    leverage: number;
+    entryPrice: number;
+    minNotional: number;
+    phi: number;
+    kappa: number;
+    sovereignty: number;
+    trajectoryId: number | null;
+  }): Promise<{ executed: boolean; orderId: string | null; reason: string }> {
+    const { symbol, side, marginUsdt, leverage, entryPrice, minNotional } = req;
+    const notionalUsdt = marginUsdt * leverage;
+    const quantity = notionalUsdt / entryPrice;
+    const exchangeSide: 'buy' | 'sell' = side === 'long' ? 'buy' : 'sell';
+
+    // Load account + credentials like liveSignalEngine.loadAccountContext.
+    let userId: string;
+    let credentials: { apiKey: string; apiSecret: string; passphrase?: string };
+    let kernelState: KernelAccountState;
+    try {
+      const userRow = await pool.query(
+        `SELECT user_id FROM user_api_credentials WHERE exchange = 'poloniex' LIMIT 1`,
+      );
+      userId = String((userRow.rows[0] as { user_id?: string } | undefined)?.user_id ?? '');
+      if (!userId) return { executed: false, orderId: null, reason: 'no_credentials' };
+      const c = await apiCredentialsService.getCredentials(userId, 'poloniex');
+      if (!c) return { executed: false, orderId: null, reason: 'credentials_missing' };
+      credentials = c;
+      const [balance, positions] = await Promise.all([
+        poloniexFuturesService.getAccountBalance(credentials),
+        poloniexFuturesService.getPositions(credentials),
+      ]);
+      const equityUsdt = Number(balance?.totalBalance ?? balance?.eq ?? 0);
+      const unrealizedPnlUsdt = Number(balance?.unrealizedPnL ?? balance?.upl ?? 0);
+      const openPositions = (Array.isArray(positions) ? positions : []).map((p: Record<string, unknown>) => ({
+        symbol: String(p.symbol ?? ''),
+        side: (String(p.side ?? 'long').toLowerCase() === 'short' ? 'short' : 'long') as 'long' | 'short',
+        notional: Math.abs(Number(p.notional ?? p.size ?? 0)),
+      })).filter((p) => p.symbol.length > 0);
+      kernelState = { equityUsdt, unrealizedPnlUsdt, openPositions, restingOrders: [] };
+    } catch (err) {
+      return {
+        executed: false, orderId: null,
+        reason: `account_load_failed: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+
+    // Risk kernel — same blast-door liveSignalEngine uses.
+    const order: KernelOrder = { symbol, side, notional: notionalUsdt, leverage, price: entryPrice };
+    const mode = await getCurrentExecutionMode();
+    const symbolMaxLeverage = (await getMaxLeverage(symbol)) ?? leverage;
+    const kernelContext: KernelContext = { isLive: mode === 'auto', mode, symbolMaxLeverage };
+    const decision = evaluatePreTradeVetoes(order, kernelState, kernelContext);
+    if (!decision.allowed) {
+      logger.info('[Monkey] kernel veto', {
+        symbol, side, notional: notionalUsdt, leverage,
+        code: decision.code, reason: decision.reason,
+      });
+      this.bus.publish({
+        type: BusEventType.KERNEL_VETO,
+        source: this.instanceId,
+        symbol,
+        payload: { side, notional: notionalUsdt, leverage, code: decision.code, reason: decision.reason },
+      });
+      return { executed: false, orderId: null, reason: `veto:${decision.code}:${decision.reason}` };
+    }
+
+    // Round quantity to the symbol's lot step. Same pattern liveSignalEngine
+    // follows after the 2026-04-19 `Param error sz` incident.
+    let formattedSize = quantity;
+    let symbolLotSize = 0;
+    try {
+      const precisions = await getPrecisions(symbol);
+      if (precisions.lotSize && precisions.lotSize > 0) {
+        symbolLotSize = precisions.lotSize;
+        formattedSize = Math.floor(quantity / precisions.lotSize) * precisions.lotSize;
+      }
+    } catch { /* use raw */ }
+    if (formattedSize <= 0) {
+      return {
+        executed: false, orderId: null,
+        reason: `lot_rounding_zero: qty ${quantity.toFixed(8)} below lot ${symbolLotSize}`,
+      };
+    }
+    if (formattedSize * entryPrice < minNotional) {
+      return {
+        executed: false, orderId: null,
+        reason: `post_round_below_min_notional: ${(formattedSize * entryPrice).toFixed(2)} < ${minNotional.toFixed(2)}`,
+      };
+    }
+
+    // Set leverage (non-fatal), then place market order.
+    try {
+      await poloniexFuturesService.setLeverage(credentials, symbol, leverage);
+    } catch (levErr) {
+      logger.warn('[Monkey] setLeverage failed (non-fatal)', {
+        symbol, leverage, err: levErr instanceof Error ? levErr.message : String(levErr),
+      });
+    }
+
+    let orderId: string | null = null;
+    try {
+      const exchangeOrder = await poloniexFuturesService.placeOrder(credentials, {
+        symbol, side: exchangeSide, type: 'market', size: formattedSize, lotSize: symbolLotSize,
+      });
+      orderId =
+        exchangeOrder?.ordId ?? exchangeOrder?.orderId ??
+        exchangeOrder?.id ?? exchangeOrder?.clientOid ?? null;
+      if (!orderId) {
+        logger.warn('[Monkey] exchange placed but no orderId returned', {
+          symbol, rawKeys: exchangeOrder ? Object.keys(exchangeOrder) : [],
+        });
+      }
+    } catch (err) {
+      logger.error('[Monkey] placeOrder failed', {
+        symbol, side, err: err instanceof Error ? err.message : String(err),
+      });
+      return {
+        executed: false, orderId: null,
+        reason: `exchange_rejected: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+
+    // Persist. Encode Monkey's state into reason so the close-hook +
+    // reconciler can recover attribution cheaply (no schema change).
+    // Format: monkey|phi=...|kappa=...|sov=...|src=witness
+    try {
+      const reasonEncoded =
+        `monkey|phi=${req.phi.toFixed(3)}|kappa=${req.kappa.toFixed(2)}|sov=${req.sovereignty.toFixed(3)}|src=v0.3`;
+      await pool.query(
+        `INSERT INTO autonomous_trades
+           (user_id, symbol, side, entry_price, quantity, leverage,
+            confidence, reason, order_id, paper_trade, engine_version)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        [
+          userId, symbol, exchangeSide, entryPrice, formattedSize, leverage,
+          req.phi, reasonEncoded, orderId, false, getEngineVersion(),
+        ],
+      );
+    } catch (err) {
+      logger.error('[Monkey] DB insert failed after exchange placement — ORPHAN RISK', {
+        orderId, err: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    logger.info('[Monkey] ORDER PLACED', {
+      symbol, side, orderId,
+      margin: marginUsdt.toFixed(2),
+      notional: notionalUsdt.toFixed(2),
+      leverage,
+      formattedSize,
+      phi: req.phi.toFixed(3),
+      sov: req.sovereignty.toFixed(3),
+    });
+
+    this.bus.publish({
+      type: BusEventType.ENTRY_EXECUTED,
+      source: this.instanceId,
+      symbol,
+      payload: {
+        side, orderId, margin: marginUsdt, notional: notionalUsdt, leverage,
+        entryPrice, phi: req.phi, kappa: req.kappa, sovereignty: req.sovereignty,
+      },
+    });
+
+    return { executed: true, orderId, reason: 'placed' };
+  }
+
+  /**
+   * Bootstrap hook (v0.2): when liveSignalEngine closes a trade,
+   * attribute the outcome to the perception basin Monkey held at
+   * the moment of entry. This grows her resonance bank from the
+   * trading already happening — no new capital risk, sovereignty
+   * accrues, and the chicken-and-egg (size = Φ × sovereignty = 0)
+   * unsticks within hours instead of never.
+   *
+   * Restart-safe: reads the entry basin from monkey_trajectory, so
+   * a process restart between entry and exit is transparent.
+   *
+   * Called fire-and-forget from liveSignalEngine.reconcileClosedTrades.
+   */
+  async witnessExit(
+    symbol: string,
+    entryTime: Date,
+    realizedPnl: number,
+    orderId: string | null,
+    side: 'long' | 'short',
+  ): Promise<void> {
+    try {
+      const row = await pool.query(
+        `SELECT basin, phi
+           FROM monkey_trajectory
+          WHERE symbol = $1 AND at <= $2
+          ORDER BY at DESC LIMIT 1`,
+        [symbol, entryTime],
+      );
+      const rec = row.rows[0] as { basin: number[] | string; phi: number } | undefined;
+      if (!rec) {
+        logger.debug('[Monkey] witnessExit: no trajectory found for entry', {
+          symbol, entryTime: entryTime.toISOString(),
+        });
+        return;
+      }
+      const basinArr = typeof rec.basin === 'string' ? JSON.parse(rec.basin) : rec.basin;
+      const entryBasin: Basin = Float64Array.from(basinArr);
+      const phi = Number(rec.phi) || 0.5;
+
+      // Synthesize a bubble that looks like it was promoted from WM
+      // with the outcome attached. Bypass working memory — the bubble
+      // is already resolved.
+      const bubble: Bubble = {
+        id: `witness-${orderId ?? Date.now()}`,
+        center: entryBasin,
+        phi,
+        createdAt: entryTime.getTime(),
+        lifetimeMs: 0,
+        status: 'promoted',
+        metadata: { source: 'live_signal_witness', orderId },
+        payload: {
+          symbol,
+          signal: side === 'long' ? 'BUY' : 'SELL',
+          realizedPnl,
+          entryBasin,
+          orderId: orderId ?? undefined,
+        },
+      };
+      const written = await resonanceBank.writeBubble(bubble, getEngineVersion());
+      if (written) {
+        logger.info('[Monkey] witnessExit → bank', {
+          symbol, orderId, side, pnl: realizedPnl.toFixed(4),
+          entryTime: entryTime.toISOString(),
+        });
+        this.bus.publish({
+          type: BusEventType.BANK_WRITE,
+          source: this.instanceId,
+          symbol,
+          payload: { orderId, side, realizedPnl, entryTime: entryTime.toISOString() },
+        });
+        this.bus.publish({
+          type: BusEventType.OUTCOME,
+          source: this.instanceId,
+          symbol,
+          payload: { orderId, side, realizedPnl, win: realizedPnl > 0 },
+        });
+      }
+    } catch (err) {
+      logger.debug('[Monkey] witnessExit failed (fail-soft)', {
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   private async fetchAccountContext(symbol: string): Promise<{

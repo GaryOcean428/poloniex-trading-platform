@@ -50,6 +50,7 @@ import {
   type BanditCounter,
   type LeverageBucket,
 } from './thompsonBandit.js';
+import { monkeyKernel } from './monkey/loop.js';
 import {
   evaluatePreTradeVetoes,
   type KernelAccountState,
@@ -329,11 +330,11 @@ export class LiveSignalEngine extends EventEmitter {
   private async reconcileClosedTrades(): Promise<void> {
     try {
       const result = await pool.query(
-        `SELECT id, symbol, reason, pnl, exit_time, exit_price, entry_price, quantity, exit_reason, leverage
+        `SELECT id, symbol, reason, pnl, entry_time, exit_time, exit_price, entry_price, quantity, exit_reason, leverage, side, order_id
            FROM autonomous_trades
           WHERE status = 'closed'
             AND exit_time > $1
-            AND reason LIKE 'live_signal|%'
+            AND (reason LIKE 'live_signal|%' OR reason LIKE 'monkey|%')
           ORDER BY exit_time ASC
           LIMIT 100`,
         [this.lastReconcileAt],
@@ -413,6 +414,28 @@ export class LiveSignalEngine extends EventEmitter {
             exitReason,
             pnl,
           });
+        }
+
+        // Monkey witness (v0.2/v0.3): for both live_signal and monkey-
+        // originated trades with a real exit, attribute the P&L to the
+        // perception basin at entry_time. Live-signal closes bootstrap
+        // her bank; her own closes reinforce the basins she acted on.
+        // Runs outside the bandit branch because only live_signal rows
+        // carry a signalKey — monkey rows have reason='monkey|...'.
+        if (!isReconcilerClose && hasRealExit) {
+          const entryTimeRaw = row.entry_time;
+          const entryTime = entryTimeRaw ? new Date(entryTimeRaw as string | Date) : null;
+          if (entryTime && !Number.isNaN(entryTime.getTime())) {
+            const sideStr = String(row.side ?? '').toLowerCase();
+            const side: 'long' | 'short' = sideStr === 'sell' || sideStr === 'short' ? 'short' : 'long';
+            void monkeyKernel.witnessExit(
+              String(row.symbol),
+              entryTime,
+              pnl,
+              row.order_id ? String(row.order_id) : null,
+              side,
+            );
+          }
         }
 
         // Mark this row as processed regardless of which branch we took

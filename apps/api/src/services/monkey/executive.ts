@@ -17,6 +17,7 @@
  */
 
 import { KAPPA_STAR, BASIN_DIM, type Basin, normalizedEntropy, maxMass, fisherRao } from './basin.js';
+import { MODE_PROFILES, MonkeyMode } from './modes.js';
 import type { NeurochemicalState } from './neurochemistry.js';
 
 /**
@@ -63,7 +64,11 @@ export interface ExecutiveDecision<T> {
  * current basin and the identity. The farther we've drifted, the
  * higher the bar to act.
  */
-export function currentEntryThreshold(s: BasinState): ExecutiveDecision<number> {
+export function currentEntryThreshold(
+  s: BasinState,
+  mode: MonkeyMode = MonkeyMode.INVESTIGATION,
+  selfObsBias: number = 1.0,
+): ExecutiveDecision<number> {
   const driftDistance = fisherRao(s.basin, s.identityBasin);
   const tBase = driftDistance;  // identity refraction serves as base "skepticism"
   const kappaRatio = KAPPA_STAR / Math.max(s.kappa, 1);
@@ -72,66 +77,78 @@ export function currentEntryThreshold(s: BasinState): ExecutiveDecision<number> 
     s.regimeWeights.efficient * 1.0 +
     s.regimeWeights.equilibrium * 0.7 +
     s.regimeWeights.quantum * 1.5;  // quantum = explore mode requires more to act
+  // Mode + Loop-1 self-observation bias together modulate threshold.
+  // Profile.entryThresholdScale: 0.9 for EXPLORATION (enter easier), 1.1
+  // for INTEGRATION (only strong signals), 99 for DRIFT (effectively veto).
+  const modeScale = MODE_PROFILES[mode].entryThresholdScale;
 
-  const rawT = tBase * kappaRatio * phiMultiplier * regimeScale;
-  // Clamp to plausible [0.1, 0.9] — this isn't "configured"; it's
-  // saying "at some point no signal clears, at some point all signals do."
-  // The clamp itself is a BOUNDARY per P14 (physics says cos/arccos live in [0,1]).
+  const rawT = tBase * kappaRatio * phiMultiplier * regimeScale * modeScale * selfObsBias;
   const t = Math.min(0.9, Math.max(0.1, rawT));
 
   return {
     value: t,
-    reason: `T = drift(${tBase.toFixed(3)}) × κ*/κ(${kappaRatio.toFixed(2)}) × 1/(0.5+Φ)(${phiMultiplier.toFixed(2)}) × regime(${regimeScale.toFixed(2)})`,
+    reason: `T = drift(${tBase.toFixed(3)}) × κ*/κ(${kappaRatio.toFixed(2)}) × 1/(0.5+Φ)(${phiMultiplier.toFixed(2)}) × regime(${regimeScale.toFixed(2)}) × mode(${modeScale.toFixed(2)}) × selfObs(${selfObsBias.toFixed(2)})`,
     derivation: {
-      driftDistance, kappaRatio, phiMultiplier, regimeScale, rawT, clamped: t,
+      driftDistance, kappaRatio, phiMultiplier, regimeScale, modeScale, selfObsBias, rawT, clamped: t,
     },
   };
 }
 
 /**
- * currentPositionSize — f(sovereignty, Φ, dopamine, serotonin).
+ * currentPositionSize — f(sovereignty, Φ, dopamine, serotonin, maturity).
  *
- * Newborn Monkey (sovereignty ≈ 0) sizes tiny. Sovereign Monkey
- * sizes by confidence. Dopamine (reward history) amplifies size.
- * Low serotonin (high basin velocity = unstable) shrinks size.
+ * Newborn Monkey (bankSize ≈ 0) sizes by the exploration floor;
+ * mature Monkey sizes by confidence. Dopamine (reward history)
+ * amplifies; GABA dampens. Low serotonin (high basin velocity =
+ * unstable) shrinks size.
  *
- * Output is fraction of available equity to commit. BOUNDARY hints
- * (exchange min notional, available equity) are passed in and
- * respected — Monkey cannot place what the exchange won't accept.
+ * Output is MARGIN (USDT) to commit. The POSITION NOTIONAL is
+ * `margin × leverage`; the min-notional boundary is compared to
+ * that, not to margin (this was a v0.1 bug: on $19 equity at 1x the
+ * margin was always below ETH's $22.76 min, so sized always = 0).
+ *
+ * BOUNDARY hints (exchange min notional, available equity) passed
+ * in and respected — Monkey cannot place what the exchange won't
+ * accept.
  */
 export function currentPositionSize(
   s: BasinState,
   availableEquityUsdt: number,
   minNotionalUsdt: number,
+  leverage: number = 1,
+  bankSize: number = 0,
+  mode: MonkeyMode = MonkeyMode.INVESTIGATION,
 ): ExecutiveDecision<number> {
   const nc = s.neurochemistry;
-  // Base fraction: Φ × sovereignty. Newborn or uncertain → tiny.
-  const baseFrac = s.phi * s.sovereignty;
-  // Reward modulation: dopamine amplifies, GABA dampens.
+  // Lived-experience scaling. 0 at birth, 1 after ~20 witnessed trades.
+  const maturity = Math.min(1, bankSize / 20);
+  const baseFrac = s.phi * s.sovereignty * maturity;
   const rewardMult = 1 + (nc.dopamine - nc.gaba) * 0.5;
-  // Stability modulation: serotonin multiplies (stable → full size).
   const stabilityMult = 0.5 + nc.serotonin * 0.5;
 
-  // Newborn floor: even at sovereignty=0, some exploration must happen
-  // (Pillar 1 FLUCTUATIONS — exploration is substrate, not optional).
-  const explorationFloor = 0.05 * (1 - s.sovereignty);
+  // Exploration floor (Pillar 1 FLUCTUATIONS — substrate, not optional).
+  // Per-mode baseline: EXPLORATION 0.08, INVESTIGATION 0.10, INTEGRATION 0.12.
+  // Scales inversely with maturity.
+  const modeFloor = MODE_PROFILES[mode].sizeFloor;
+  const explorationFloor = modeFloor * (1 - maturity);
 
   const rawFrac = Math.max(explorationFloor, baseFrac * rewardMult * stabilityMult);
   // Clamp to [0, 0.5] — at most half of available equity. This is a
   // BOUNDARY (survival) not a PARAMETER — exceeding it creates unrecoverable
   // states regardless of Φ.
   const frac = Math.min(0.5, Math.max(0, rawFrac));
-  const raw = frac * availableEquityUsdt;
-  // Must be at least min notional, else skip (0).
-  const sized = raw >= minNotionalUsdt ? raw : 0;
+  const margin = frac * availableEquityUsdt;
+  const notional = margin * Math.max(1, leverage);
+  // Compare the POSITION (notional) to the exchange min, not the margin.
+  const sized = notional >= minNotionalUsdt ? margin : 0;
 
   return {
     value: sized,
-    reason: `size = clip(Φ×S(${(s.phi * s.sovereignty).toFixed(3)}) × reward(${rewardMult.toFixed(2)}) × stab(${stabilityMult.toFixed(2)})) × equity(${availableEquityUsdt.toFixed(2)}) = ${sized.toFixed(2)}`,
+    reason: `size = floor(${explorationFloor.toFixed(3)}) or Φ×S×M(${(s.phi * s.sovereignty * maturity).toFixed(3)}) × reward(${rewardMult.toFixed(2)}) × stab(${stabilityMult.toFixed(2)}) × equity(${availableEquityUsdt.toFixed(2)}) @ ${leverage}x → margin ${margin.toFixed(2)}, notional ${notional.toFixed(2)} vs min ${minNotionalUsdt.toFixed(2)} = ${sized.toFixed(2)}`,
     derivation: {
-      phi: s.phi, sovereignty: s.sovereignty,
+      phi: s.phi, sovereignty: s.sovereignty, maturity, bankSize,
       dopamine: nc.dopamine, serotonin: nc.serotonin, gaba: nc.gaba,
-      rawFrac, frac, raw, sized,
+      explorationFloor, rawFrac, frac, margin, leverage, notional, minNotional: minNotionalUsdt, sized,
     },
   };
 }
@@ -147,16 +164,29 @@ export function currentPositionSize(
 export function currentLeverage(
   s: BasinState,
   maxLeverageBoundary: number,
+  mode: MonkeyMode = MonkeyMode.INVESTIGATION,
 ): ExecutiveDecision<number> {
   const kappaDist = Math.abs(s.kappa - KAPPA_STAR);
   const kappaProxim = Math.exp(-kappaDist / 20);  // bell: 1 at κ*, decays with distance
   const regimeStability = s.regimeWeights.equilibrium + 0.5 * s.regimeWeights.efficient;
   const surpriseDiscount = 1 - 0.5 * s.neurochemistry.norepinephrine;
 
-  // Novice floor: newborn Monkey never uses high leverage until she has lived it.
-  const sovereignCap = 3 + 30 * s.sovereignty;  // 3x to 33x range by sovereignty
+  // Per-mode newborn floor. EXPLORATION 15, INVESTIGATION 20, INTEGRATION 25.
+  // Scales up to 33x once fully sovereign.
+  const modeFloor = MODE_PROFILES[mode].sovereignCapFloor;
+  const sovereignCap = Math.max(modeFloor, 3 + 30 * s.sovereignty);
 
-  const rawLev = sovereignCap * kappaProxim * regimeStability * surpriseDiscount;
+  // Newborn mode (Pillar 1 exploration): until she has lived trades,
+  // the regime × κ × surprise compression (≈ 0.43) crushes the cap so
+  // hard that her first trade can't clear the exchange min notional on
+  // a small account. E.g. $1.89 × (10 × 0.43) = $7.57 vs ETH's $23 min.
+  // Newborn bypasses the compression and uses 80% of the cap directly
+  // — she has no data to judge regime with anyway. Once sov > 0.1
+  // (~first witnessed close), fall into the full formula.
+  const newborn = s.sovereignty < 0.1;
+  const rawLev = newborn
+    ? sovereignCap * 0.8
+    : sovereignCap * kappaProxim * regimeStability * surpriseDiscount;
   const lev = Math.max(1, Math.min(maxLeverageBoundary, Math.round(rawLev)));
 
   return {
@@ -166,6 +196,64 @@ export function currentLeverage(
       kappa: s.kappa, kappaDist, kappaProxim, regimeStability,
       surprise: s.neurochemistry.norepinephrine, surpriseDiscount, sovereignCap, rawLev, lev,
     },
+  };
+}
+
+/**
+ * shouldScalpExit — P&L-driven take-profit / stop-loss gate (v0.4).
+ *
+ * Reward-harvesting exit per UCP v6.6 §29.4: when realized reward
+ * crosses a Φ-derived threshold, lock the gain. This sits BEFORE
+ * Loop 2 (shouldExit) in the decision chain — a scalp win that
+ * would otherwise be given back waiting for regime change is taken.
+ *
+ * Thresholds are derived, not configured:
+ *   TP = 0.8 % - 0.3 %·dopamine + 0.5 %·Φ  (min 0.3 % to clear fees)
+ *   SL = 50 % of TP  (asymmetric R:R favors running winners)
+ *
+ * High dopamine (recent wins) → take earlier (reward sensitivity up).
+ * High Φ (integrated state)  → let winners run longer.
+ * Floors at 0.3 % of notional so Poloniex round-trip taker fee
+ * (~0.12 %) is always cleared with a buffer.
+ */
+export function shouldScalpExit(
+  unrealizedPnlUsdt: number,
+  notionalUsdt: number,
+  s: BasinState,
+  mode: MonkeyMode = MonkeyMode.INVESTIGATION,
+): ExecutiveDecision<boolean> {
+  if (notionalUsdt <= 0) {
+    return { value: false, reason: 'no position notional', derivation: {} };
+  }
+  const pnlFrac = unrealizedPnlUsdt / notionalUsdt;
+  const nc = s.neurochemistry;
+  // Mode picks the baseline; Φ + dopamine modulate within that mode.
+  const profile = MODE_PROFILES[mode];
+  const tpThr = Math.max(
+    0.003,
+    profile.tpBaseFrac - 0.003 * nc.dopamine + 0.005 * s.phi,
+  );
+  const slThr = tpThr * profile.slRatio;
+
+  // Encode type as a bit (1=TP, -1=SL, 0=hold) to keep derivation map numeric.
+  if (pnlFrac >= tpThr) {
+    return {
+      value: true,
+      reason: `take_profit: ${(pnlFrac * 100).toFixed(3)}% ≥ ${(tpThr * 100).toFixed(3)}%`,
+      derivation: { pnlFrac, tpThr, slThr, exitTypeBit: 1 },
+    };
+  }
+  if (pnlFrac <= -slThr) {
+    return {
+      value: true,
+      reason: `stop_loss: ${(pnlFrac * 100).toFixed(3)}% ≤ -${(slThr * 100).toFixed(3)}%`,
+      derivation: { pnlFrac, tpThr, slThr, exitTypeBit: -1 },
+    };
+  }
+  return {
+    value: false,
+    reason: `scalp hold: pnl ${(pnlFrac * 100).toFixed(3)}% in [-${(slThr * 100).toFixed(3)}%, ${(tpThr * 100).toFixed(3)}%]`,
+    derivation: { pnlFrac, tpThr, slThr },
   };
 }
 
