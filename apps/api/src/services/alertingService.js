@@ -287,17 +287,31 @@ class AlertingService {
     const now = Date.now();
     const key = 'backtest_stall';
     const lastAlert = this._silentAlertCooldown[key] ?? 0;
-    if (now - lastAlert < this._silentAlertCooldownMs) {
+
+    // Escalating cooldown: fire 3 times at the base 30-min interval,
+    // then back off to 6h so a persistent generator-stall doesn't
+    // spam the critical-alert channel every 30 min for days. Initial
+    // 3 fires stay prompt so an operator sees the problem early;
+    // subsequent fires are reminders, not noise. 2026-04-19: logs
+    // showed 26 consecutive fires over 13h for a single ongoing
+    // stall (169 generations without a pass).
+    const baseCooldownMs = this._silentAlertCooldownMs;
+    const sixHoursMs = 6 * 60 * 60 * 1000;
+    const priorFires = this.alertCounts.backtestStalls ?? 0;
+    const effectiveCooldown = priorFires >= 3 ? sixHoursMs : baseCooldownMs;
+
+    if (now - lastAlert < effectiveCooldown) {
       return false;
     }
     this._silentAlertCooldown[key] = now;
-    this.alertCounts.backtestStalls++;
+    this.alertCounts.backtestStalls = priorFires + 1;
 
     logger.error('ALERT: Backtest stall — generator producing no passing strategies', {
       alertType: 'backtest_stall',
       consecutiveGenerations,
       lastPassAt: lastPassAt ? lastPassAt.toISOString() : null,
       alertCount: this.alertCounts.backtestStalls,
+      nextAlertInMs: effectiveCooldown,
       timestamp: new Date().toISOString(),
     });
 
