@@ -294,6 +294,7 @@ async def ml_predict(request: Request):
 # resonance bank stays in Postgres via the TS side.
 
 from monkey_kernel import (  # noqa: E402
+    AccountContext,
     AutonomicKernel,
     AutonomicTickInputs,
     ExecBasinState,
@@ -301,13 +302,18 @@ from monkey_kernel import (  # noqa: E402
     NeurochemicalState,
     OHLCVCandle,
     PerceptionInputs,
+    SymbolState,
+    TickDecision,
+    TickInputs,
     basin_direction,
     current_entry_threshold,
     current_leverage,
     current_position_size,
     detect_mode,
+    fresh_symbol_state,
     perceive,
     refract,
+    run_tick,
     should_dca_add,
     should_exit,
     should_profit_harvest,
@@ -317,6 +323,12 @@ from monkey_kernel import (  # noqa: E402
 import numpy as np  # noqa: E402
 
 _autonomic_instances: dict[str, AutonomicKernel] = {}
+
+# v0.8.3: per-(instance, symbol) tick state. Kept in-process for now —
+# TS shadow-mode calls pass state in every call via `prev_state`; Python
+# only caches it so the next call can skip the round-trip if the TS side
+# trusts the worker. v0.8.7 makes this canonical state.
+_symbol_states: dict[tuple[str, str], SymbolState] = {}
 
 
 def _get_autonomic(instance_id: str) -> AutonomicKernel:
@@ -624,6 +636,176 @@ async def monkey_perception_perceive(request: Request):
     return {
         "raw": raw.tolist(),
         "refracted": refracted.tolist(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# v0.8.3 — /monkey/tick/run
+# ---------------------------------------------------------------------------
+
+
+def _symbol_state_to_dict(st: SymbolState) -> dict:
+    return {
+        "symbol": st.symbol,
+        "identity_basin": st.identity_basin.tolist(),
+        "last_basin": st.last_basin.tolist() if st.last_basin is not None else None,
+        "kappa": st.kappa,
+        "session_ticks": st.session_ticks,
+        "last_mode": st.last_mode,
+        "basin_history": [b.tolist() for b in st.basin_history],
+        "phi_history": list(st.phi_history),
+        "fhealth_history": list(st.fhealth_history),
+        "drift_history": list(st.drift_history),
+        "dca_add_count": st.dca_add_count,
+        "last_entry_at_ms": st.last_entry_at_ms,
+        "peak_pnl_usdt": st.peak_pnl_usdt,
+        "peak_tracked_trade_id": st.peak_tracked_trade_id,
+    }
+
+
+def _symbol_state_from_dict(d: dict) -> SymbolState:
+    last_basin = d.get("last_basin")
+    return SymbolState(
+        symbol=str(d["symbol"]),
+        identity_basin=np.asarray(d["identity_basin"], dtype=np.float64),
+        last_basin=np.asarray(last_basin, dtype=np.float64)
+                    if last_basin is not None else None,
+        kappa=float(d.get("kappa", 64.0)),
+        session_ticks=int(d.get("session_ticks", 0)),
+        last_mode=d.get("last_mode"),
+        basin_history=[
+            np.asarray(b, dtype=np.float64) for b in d.get("basin_history", [])
+        ],
+        phi_history=[float(x) for x in d.get("phi_history", [])],
+        fhealth_history=[float(x) for x in d.get("fhealth_history", [])],
+        drift_history=[float(x) for x in d.get("drift_history", [])],
+        dca_add_count=int(d.get("dca_add_count", 0)),
+        last_entry_at_ms=d.get("last_entry_at_ms"),
+        peak_pnl_usdt=d.get("peak_pnl_usdt"),
+        peak_tracked_trade_id=d.get("peak_tracked_trade_id"),
+    )
+
+
+def _decision_to_dict(dec: TickDecision) -> dict:
+    return {
+        "action": dec.action,
+        "reason": dec.reason,
+        "mode": dec.mode,
+        "size_usdt": dec.size_usdt,
+        "leverage": dec.leverage,
+        "entry_threshold": dec.entry_threshold,
+        "phi": dec.phi,
+        "kappa": dec.kappa,
+        "basin_velocity": dec.basin_velocity,
+        "f_health": dec.f_health,
+        "drift_from_identity": dec.drift_from_identity,
+        "basin_direction": dec.basin_direction,
+        "tape_trend": dec.tape_trend,
+        "side_candidate": dec.side_candidate,
+        "side_override": dec.side_override,
+        "neurochemistry": dec.neurochemistry.as_dict(),
+        "derivation": dec.derivation,
+        "basin": dec.basin.tolist(),
+        "is_dca_add": dec.is_dca_add,
+        "is_reverse": dec.is_reverse,
+    }
+
+
+@app.post("/monkey/tick/run")
+async def monkey_tick_run(request: Request):
+    """Run one decision tick. Stateless from the HTTP caller's view —
+    caller passes `prev_state` (or omits for a newborn symbol), receives
+    back `decision` + `new_state`. Per-(instance, symbol) state is also
+    cached in-process so the next call can skip state transfer once
+    Python owns the loop (v0.8.7).
+
+    Request body:
+      {
+        "instance_id": "monkey-primary",
+        "inputs": {
+          "symbol": "BTC_USDT_PERP",
+          "ohlcv": [{"timestamp", "open", "high", "low", "close", "volume"}],
+          "ml_signal": "BUY"|"SELL"|"HOLD",
+          "ml_strength": 0..1,
+          "account": { equity_fraction, margin_fraction, open_positions,
+                       available_equity, exchange_held_side?, own_position_* },
+          "bank_size": int, "sovereignty": 0..1,
+          "max_leverage": int, "min_notional": float,
+          "size_fraction": 1.0, "self_obs_bias": {...}?
+        },
+        "prev_state": {... SymbolState JSON ...}  // or null for newborn
+      }
+
+    Response:
+      { "decision": {...TickDecision...}, "new_state": {...SymbolState...} }
+    """
+    payload = await request.json()
+    instance_id = str(payload.get("instance_id", "monkey-primary"))
+    inp = payload["inputs"]
+
+    candles = [
+        OHLCVCandle(
+            timestamp=float(c.get("timestamp", 0)),
+            open=float(c["open"]),
+            high=float(c["high"]),
+            low=float(c["low"]),
+            close=float(c["close"]),
+            volume=float(c["volume"]),
+        )
+        for c in inp["ohlcv"]
+    ]
+    acct_d = inp["account"]
+    account = AccountContext(
+        equity_fraction=float(acct_d.get("equity_fraction", 0.0)),
+        margin_fraction=float(acct_d.get("margin_fraction", 0.0)),
+        open_positions=int(acct_d.get("open_positions", 0)),
+        available_equity=float(acct_d.get("available_equity", 0.0)),
+        exchange_held_side=acct_d.get("exchange_held_side"),
+        own_position_entry_price=(
+            float(acct_d["own_position_entry_price"])
+            if acct_d.get("own_position_entry_price") is not None else None
+        ),
+        own_position_quantity=(
+            float(acct_d["own_position_quantity"])
+            if acct_d.get("own_position_quantity") is not None else None
+        ),
+        own_position_trade_id=acct_d.get("own_position_trade_id"),
+    )
+    tick_inputs = TickInputs(
+        symbol=str(inp["symbol"]),
+        ohlcv=candles,
+        ml_signal=str(inp.get("ml_signal", "HOLD")),
+        ml_strength=float(inp.get("ml_strength", 0.0)),
+        account=account,
+        bank_size=int(inp.get("bank_size", 0)),
+        sovereignty=float(inp.get("sovereignty", 0.0)),
+        max_leverage=int(inp.get("max_leverage", 10)),
+        min_notional=float(inp.get("min_notional", 5.0)),
+        size_fraction=float(inp.get("size_fraction", 1.0)),
+        self_obs_bias=inp.get("self_obs_bias"),
+    )
+
+    # State resolution: caller-provided wins, else in-process cache, else
+    # newborn seeded from uniform basin.
+    key = (instance_id, tick_inputs.symbol)
+    prev_state_payload = payload.get("prev_state")
+    if prev_state_payload is not None:
+        state = _symbol_state_from_dict(prev_state_payload)
+    elif key in _symbol_states:
+        state = _symbol_states[key]
+    else:
+        # Seed with uniform basin — caller should provide identity for
+        # existing symbols, but we don't require it.
+        from monkey_kernel.basin import uniform_basin
+        state = fresh_symbol_state(tick_inputs.symbol, uniform_basin(64))
+
+    autonomic = _get_autonomic(instance_id)
+    decision, new_state = run_tick(tick_inputs, state, autonomic)
+    _symbol_states[key] = new_state
+
+    return {
+        "decision": _decision_to_dict(decision),
+        "new_state": _symbol_state_to_dict(new_state),
     }
 
 
