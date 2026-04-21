@@ -68,6 +68,7 @@ import {
   currentLeverage,
   currentPositionSize,
   shouldAutoFlatten,
+  shouldDCAAdd,
   shouldExit,
   shouldProfitHarvest,
   shouldScalpExit,
@@ -136,6 +137,11 @@ interface SymbolState {
   /** Trade id of the position currently being peak-tracked. If the open
    *  trade id changes (new position), peak resets. */
   peakTrackedTradeId: string | null;
+  /** v0.6.2: most recent entry time for this position (initial or DCA add).
+   *  Used for DCA cooldown gating. Null when flat. */
+  lastEntryAtMs: number | null;
+  /** v0.6.2: count of DCA adds on current position (0 = only initial entry). */
+  dcaAddCount: number;
 }
 
 /**
@@ -236,6 +242,8 @@ export class MonkeyKernel extends EventEmitter {
       currentTickMs: this.tickMs,
       peakPnlUsdt: null,
       peakTrackedTradeId: null,
+      lastEntryAtMs: null,
+      dcaAddCount: 0,
     };
   }
 
@@ -536,8 +544,41 @@ export class MonkeyKernel extends EventEmitter {
           reason = exit.reason;
           derivation.exit = exit.derivation;
         } else {
-          action = 'hold';
-          reason = exit.reason;
+          // 4. v0.6.2 — DCA add eligibility. Can she add to the position
+          //    at a better price while the ML signal still supports the
+          //    side? Five guard rails in shouldDCAAdd; plus ML-gate +
+          //    mode-entry-allowed + size>0 + matching side here.
+          const initialEntryPrice = openRow ? Number(openRow.entry_price) : lastPrice;
+          const dca = shouldDCAAdd({
+            heldSide,
+            sideCandidate,
+            currentPrice: lastPrice,
+            initialEntryPrice,
+            addCount: state.dcaAddCount,
+            lastAddAtMs: state.lastEntryAtMs ?? 0,
+            nowMs: Date.now(),
+            sovereignty,
+          });
+          derivation.dca = dca.derivation;
+          if (
+            dca.value &&
+            MODE_PROFILES[mode].canEnter &&
+            mlStrength >= entryThr.value &&
+            mlSignal !== 'HOLD' &&
+            size.value > 0
+          ) {
+            // DCA add — treated as enter_long/short by execute block but
+            // tagged via derivation.dca so the persisted row reflects it.
+            action = sideCandidate === 'long' ? 'enter_long' : 'enter_short';
+            reason = `DCA_ADD[${state.dcaAddCount + 1}/${1}] ${dca.reason} | side=${sideCandidate} margin=${size.value.toFixed(2)} lev=${leverage.value}x`;
+            derivation.entryThreshold = entryThr.derivation;
+            derivation.size = size.derivation;
+            derivation.leverage = leverage.derivation;
+            derivation.isDCAAdd = true;
+          } else {
+            action = 'hold';
+            reason = `${exit.reason} | dca: ${dca.reason}`;
+          }
         }
       }
     } else if (
@@ -571,6 +612,7 @@ export class MonkeyKernel extends EventEmitter {
     let monkeyOrderId: string | null = null;
     if (process.env.MONKEY_EXECUTE === 'true') {
       if ((action === 'enter_long' || action === 'enter_short') && size.value > 0) {
+        const isDCA = Boolean(derivation.isDCAAdd);
         const execResult = await this.executeEntry({
           symbol,
           side: action === 'enter_long' ? 'long' : 'short',
@@ -582,11 +624,23 @@ export class MonkeyKernel extends EventEmitter {
           kappa: state.kappa,
           sovereignty,
           trajectoryId: null,
+          isDCAAdd: isDCA,
+          dcaAddIndex: isDCA ? state.dcaAddCount + 1 : 0,
         });
         executed = execResult.executed;
         monkeyOrderId = execResult.orderId;
         if (!executed) {
           reason += ` | execute: ${execResult.reason}`;
+        } else {
+          // v0.6.2 bookkeeping
+          state.lastEntryAtMs = Date.now();
+          if (isDCA) {
+            state.dcaAddCount += 1;
+          } else {
+            state.dcaAddCount = 0;  // fresh position
+            state.peakPnlUsdt = null;
+            state.peakTrackedTradeId = null;
+          }
         }
       } else if (action === 'scalp_exit' && heldSide) {
         const scalpDeriv = derivation.scalp as Record<string, unknown> | undefined;
@@ -611,9 +665,11 @@ export class MonkeyKernel extends EventEmitter {
           executed = closeResult.executed;
           monkeyOrderId = closeResult.orderId;
           if (executed) {
-            // Clear peak tracking now the trade is closed.
+            // Clear trade-level state now the position is closed.
             state.peakPnlUsdt = null;
             state.peakTrackedTradeId = null;
+            state.dcaAddCount = 0;
+            state.lastEntryAtMs = null;
           }
           if (!executed) {
             reason += ` | close: ${closeResult.reason}`;
@@ -765,13 +821,31 @@ export class MonkeyKernel extends EventEmitter {
         `SELECT id, entry_price, quantity, leverage, order_id
            FROM autonomous_trades
           WHERE reason LIKE $2 AND status = 'open' AND symbol = $1
-          ORDER BY entry_time DESC LIMIT 1`,
+          ORDER BY entry_time ASC`,
         [symbol, reasonPattern],
       );
-      const row = result.rows[0] as
-        | { id: string; entry_price: string; quantity: string; leverage: number; order_id: string | null }
-        | undefined;
-      return row ?? null;
+      const rows = result.rows as Array<{
+        id: string; entry_price: string; quantity: string; leverage: number; order_id: string | null;
+      }>;
+      if (rows.length === 0) return null;
+      if (rows.length === 1) return rows[0];
+      // v0.6.2: multi-row position (DCA). Return an AGGREGATE pseudo-row:
+      //   quantity = sum; entry_price = weighted average by quantity.
+      //   id/order_id carry the oldest row so harvest/scalp reference a
+      //   stable anchor across ticks. leverage = first row's leverage
+      //   (they should match; risk kernel enforces).
+      const totalQty = rows.reduce((s, r) => s + Math.abs(Number(r.quantity) || 0), 0);
+      const weightedPrice = rows.reduce(
+        (s, r) => s + Number(r.entry_price) * Math.abs(Number(r.quantity) || 0),
+        0,
+      ) / totalQty;
+      return {
+        id: rows[0].id,
+        entry_price: String(weightedPrice),
+        quantity: String(totalQty),
+        leverage: rows[0].leverage,
+        order_id: rows[0].order_id,
+      };
     } catch (err) {
       logger.debug('[Monkey] findOpenMonkeyTrade failed', {
         err: err instanceof Error ? err.message : String(err),
@@ -872,14 +946,41 @@ export class MonkeyKernel extends EventEmitter {
       };
     }
 
+    // v0.6.2: close ALL open monkey rows for this (kernel, symbol). DCA
+    // adds created multiple rows for one logical position; the exchange
+    // flattened them all in one market close above (size = total exchange
+    // qty). Each row shares the realized pnl proportionally by quantity.
     try {
-      await pool.query(
-        `UPDATE autonomous_trades
-            SET status = 'closed', exit_price = $1, exit_time = NOW(),
-                exit_reason = $2, exit_order_id = $3, pnl = $4
-          WHERE id = $5`,
-        [markPrice, exitReason, orderId, pnlAtDecision, tradeId],
+      const openRows = await pool.query(
+        `SELECT id, quantity FROM autonomous_trades
+          WHERE reason LIKE $1 AND status = 'open' AND symbol = $2
+          ORDER BY entry_time ASC`,
+        [`monkey|kernel=${this.instanceId}|%`, symbol],
       );
+      const rows = openRows.rows as Array<{ id: string; quantity: string }>;
+      const totalQty = rows.reduce((s, r) => s + Math.abs(Number(r.quantity) || 0), 0);
+      if (rows.length === 0 || totalQty === 0) {
+        // Fallback — single-row close (covers edge case of race)
+        await pool.query(
+          `UPDATE autonomous_trades
+              SET status = 'closed', exit_price = $1, exit_time = NOW(),
+                  exit_reason = $2, exit_order_id = $3, pnl = $4
+            WHERE id = $5`,
+          [markPrice, exitReason, orderId, pnlAtDecision, tradeId],
+        );
+      } else {
+        for (const row of rows) {
+          const qtyShare = Math.abs(Number(row.quantity) || 0) / totalQty;
+          const rowPnl = pnlAtDecision * qtyShare;
+          await pool.query(
+            `UPDATE autonomous_trades
+                SET status = 'closed', exit_price = $1, exit_time = NOW(),
+                    exit_reason = $2, exit_order_id = $3, pnl = $4
+              WHERE id = $5`,
+            [markPrice, exitReason, orderId, rowPnl, row.id],
+          );
+        }
+      }
     } catch (err) {
       logger.error('[Monkey] close DB update failed — ORPHAN RISK (reconciler will catch)', {
         tradeId, err: err instanceof Error ? err.message : String(err),
@@ -924,6 +1025,10 @@ export class MonkeyKernel extends EventEmitter {
     kappa: number;
     sovereignty: number;
     trajectoryId: number | null;
+    /** v0.6.2: true when this is a DCA add, not an initial entry. */
+    isDCAAdd?: boolean;
+    /** 0 = initial entry; 1, 2, … for nth DCA add. */
+    dcaAddIndex?: number;
   }): Promise<{ executed: boolean; orderId: string | null; reason: string }> {
     const { symbol, side, marginUsdt, leverage, entryPrice, minNotional } = req;
     const notionalUsdt = marginUsdt * leverage;
@@ -1041,10 +1146,11 @@ export class MonkeyKernel extends EventEmitter {
     // Persist. Encode kernel + Monkey's state into reason so the
     // close-hook + reconciler can recover attribution cheaply (no
     // schema change).
-    // Format: monkey|kernel=<id>|phi=...|kappa=...|sov=...|src=<ver>
+    // Format: monkey|kernel=<id>|phi=...|kappa=...|sov=...|dca=<N>|src=<ver>
     try {
+      const dcaTag = req.isDCAAdd ? `|dca=${req.dcaAddIndex ?? 1}` : '';
       const reasonEncoded =
-        `monkey|kernel=${this.instanceId}|phi=${req.phi.toFixed(3)}|kappa=${req.kappa.toFixed(2)}|sov=${req.sovereignty.toFixed(3)}|src=v0.6b`;
+        `monkey|kernel=${this.instanceId}|phi=${req.phi.toFixed(3)}|kappa=${req.kappa.toFixed(2)}|sov=${req.sovereignty.toFixed(3)}${dcaTag}|src=v0.6.2`;
       await pool.query(
         `INSERT INTO autonomous_trades
            (user_id, symbol, side, entry_price, quantity, leverage,
@@ -1061,7 +1167,7 @@ export class MonkeyKernel extends EventEmitter {
       });
     }
 
-    logger.info('[Monkey] ORDER PLACED', {
+    logger.info(req.isDCAAdd ? '[Monkey] DCA_ADD PLACED' : '[Monkey] ORDER PLACED', {
       symbol, side, orderId,
       margin: marginUsdt.toFixed(2),
       notional: notionalUsdt.toFixed(2),
@@ -1069,6 +1175,7 @@ export class MonkeyKernel extends EventEmitter {
       formattedSize,
       phi: req.phi.toFixed(3),
       sov: req.sovereignty.toFixed(3),
+      dcaAddIndex: req.dcaAddIndex ?? 0,
     });
 
     this.bus.publish({
@@ -1078,6 +1185,7 @@ export class MonkeyKernel extends EventEmitter {
       payload: {
         side, orderId, margin: marginUsdt, notional: notionalUsdt, leverage,
         entryPrice, phi: req.phi, kappa: req.kappa, sovereignty: req.sovereignty,
+        isDCAAdd: Boolean(req.isDCAAdd), dcaAddIndex: req.dcaAddIndex ?? 0,
       },
     });
 
