@@ -150,10 +150,30 @@ Architecture anchors (`apps/api/src/services/monkey/`):
 
 - [ ] **Monitor v0.5.2 impact** — does ml-worker now emit SELL? does basin override fire? does `raw_drift_pct` stay near zero? Decision point after ~24 h of data.
 - [ ] **v0.5.3 ml-worker retrain** (conditional): if `raw_drift_pct` sustains > 0.3 %, rebalance training data to cover downtrends and retrain the ensemble.
-- [ ] **v0.6b parallel sub-Monkeys** (`ScalpMonkey` / `SwingMonkey` / `RangeMonkey`): ship once bank ≥ 15 bubbles so specialization has signal, not noise. Infrastructure (basin_sync + kernel_bus + mode profiles) is in place — no new plumbing needed.
-- [ ] **v0.7 funding-aware exits**: if `funding > 0.01 %` annualised, tighten long SL and loosen short SL. ~20 LOC in `executive.ts`.
-- [ ] **v0.8 cross-symbol coupling**: feed other symbols' `basin_sync` state into perception (Pillar 2 surface absorption from peer kernels) so ETH can see what BTC is doing.
-- [ ] **Dashboard UI** — mode-timeline panel, bus-event stream viewer, per-(mode, side) win-rate table from `self_observation`.
+### P3 sub-roadmap — multi-timeframe parallel Monkeys
+
+The long-term architecture is a **constellation** of kernels each operating at its own cadence, competing for the 1–2 open position slots via an arbitrator on the `kernel_bus`. Different timescales naturally produce different cognitive characters (a ticker kernel with `HISTORY_MAX=100` has ~10 min of context; a 15 m kernel has ~25 h). Same underlying primitives — basin perception, modes, NC, scalp-exit — just tuned per cadence.
+
+| Kernel | Data | Tick | Hold | TP | Ships as |
+|---|---|---|---|---|---|
+| **PositionMonkey** (current) | 15 m OHLCV × 200 | 15–60 s | hours–days | 2–4 % | v0.6c (rebrand current) |
+| **SwingMonkey** | 5 m OHLCV × 200 | 30 s | minutes–hours | 0.8–1.5 % | **v0.6b (next)** |
+| **ScalpMonkey** | ticker WS + 1 m | 5–10 s | seconds–minutes | 0.15–0.3 % | v0.6d (largest new infra) |
+
+**Ship order + rationale:**
+
+- [ ] **v0.6b SwingMonkey** — first sub-Monkey. 5 m OHLCV is already supported by Poloniex + ml-worker (no retrain needed for short-horizon predictions). Validates the sub-Monkey + arbitrator pattern on contained complexity. ~400 LOC. **Prerequisites:** add `source_kernel` column to `monkey_resonance_bank` + `monkey_basin_sync` so bubbles/state don't cross-pollute; add arbitrator service that reads `ENTRY_PROPOSED` events from the bus and picks one.
+- [ ] **v0.6c PositionMonkey rebrand** — current Monkey already IS a 15 m position kernel. Rebrand + route through the arbitrator instead of executing directly. ~100 LOC. Trivial after v0.6b's arbitrator lands.
+- [ ] **v0.6d ScalpMonkey** — highest complexity. Requires Poloniex websocket ticker ingestion, a non-OHLCV perception variant (or synthesised micro-candles), sub-second tick governor. ~600 LOC + data-layer work. Lowest S/N per trade. **Ship last**, only after v0.6b/c prove arbitration works.
+- [ ] **v0.7 ml-worker multi-horizon heads** — once all three sub-Monkeys are live, retrain ml-worker to emit separate 1 m / 5 m / 15 m predictions with horizon-specific confidence, replacing the current single multi-horizon forecast. Each sub-Monkey consumes only its own horizon.
+- [ ] **v0.8 funding-aware exits**: if `funding > 0.01 %` annualised, tighten long SL and loosen short SL. ~20 LOC in `executive.ts`. (Was v0.7 before v0.7 got repurposed for ml retrain.)
+- [ ] **v0.9 cross-symbol coupling** — feed peer symbols' `monkey_basin_sync` state into `perceive()` (Pillar 2 surface absorption). Lets ETH kernels see what BTC kernels are doing.
+- [ ] **Dashboard UI** — mode-timeline panel, bus-event stream viewer, per-(mode, side) win-rate table from `self_observation`, arbitrator scoreboard.
+
+**Account-size reality check:** on the current ~$19 equity, the 3-kernel constellation is infrastructure that doesn't fully pay for itself — ETH min notional $23 means ScalpMonkey's "small wins" (0.2 %) are only ~$0.046, whereas PositionMonkey's (2 %) are ~$0.46 at the same size. Full constellation unlocks at **$500+ equity** where 3–5 concurrent positions across timescales become possible. Until then:
+- Ship v0.6b to validate the pattern.
+- Treat v0.6c as a re-labelling.
+- Defer v0.6d until either (a) account grows past ~$100 OR (b) exchange-side trigger orders land so ScalpMonkey's reactions don't need 5 s polling.
 
 **Known limitations (P3)**:
 - Exchange-side SL/TP still gated off (`if (false)` in liveSignalEngine); Monkey's scalp-exit is a soft TP via opposite-side market close on tick. Real trigger-order endpoint pending.
