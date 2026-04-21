@@ -143,19 +143,38 @@ export function currentPositionSize(
   // Clamp to [0, 0.5] — at most half of available equity. This is a
   // BOUNDARY (survival) not a PARAMETER — exceeding it creates unrecoverable
   // states regardless of Φ.
-  const frac = Math.min(0.5, Math.max(0, rawFrac));
-  const margin = frac * availableEquityUsdt;
-  const notional = margin * Math.max(1, leverage);
-  // Compare the POSITION (notional) to the exchange min, not the margin.
+  let frac = Math.min(0.5, Math.max(0, rawFrac));
+  let margin = frac * availableEquityUsdt;
+  let notional = margin * Math.max(1, leverage);
+
+  // v0.6.6 "lift to minimum" — if we're below exchange min notional but
+  // a fraction within the 0.5 safety clamp CAN clear it, auto-raise to
+  // just enough. Observed 2026-04-21: when liveSignal's committed margin
+  // shrank availableEquity to $5.20, the 9% exploration floor produced
+  // $0.47 margin × 14x = $6.54 notional — below the $23 ETH min even
+  // though $1.70 margin (33%) would clear it cleanly.
+  let liftedToMin = false;
+  if (notional < minNotionalUsdt && availableEquityUsdt > 0 && leverage > 0) {
+    const BUFFER = 1.05;  // 5% headroom so lot-rounding doesn't put us just under
+    const requiredFrac = (minNotionalUsdt * BUFFER) / (leverage * availableEquityUsdt);
+    if (requiredFrac <= 0.5) {
+      frac = Math.max(frac, requiredFrac);
+      margin = frac * availableEquityUsdt;
+      notional = margin * leverage;
+      liftedToMin = true;
+    }
+  }
+
   const sized = notional >= minNotionalUsdt ? margin : 0;
 
   return {
     value: sized,
-    reason: `size = floor(${explorationFloor.toFixed(3)}) or Φ×S×M(${(s.phi * s.sovereignty * maturity).toFixed(3)}) × reward(${rewardMult.toFixed(2)}) × stab(${stabilityMult.toFixed(2)}) × equity(${availableEquityUsdt.toFixed(2)}) @ ${leverage}x → margin ${margin.toFixed(2)}, notional ${notional.toFixed(2)} vs min ${minNotionalUsdt.toFixed(2)} = ${sized.toFixed(2)}`,
+    reason: `size = ${liftedToMin ? 'lifted-to-min ' : ''}floor(${explorationFloor.toFixed(3)}) or Φ×S×M(${(s.phi * s.sovereignty * maturity).toFixed(3)}) × reward(${rewardMult.toFixed(2)}) × stab(${stabilityMult.toFixed(2)}) × equity(${availableEquityUsdt.toFixed(2)}) @ ${leverage}x → margin ${margin.toFixed(2)}, notional ${notional.toFixed(2)} vs min ${minNotionalUsdt.toFixed(2)} = ${sized.toFixed(2)}`,
     derivation: {
       phi: s.phi, sovereignty: s.sovereignty, maturity, bankSize,
       dopamine: nc.dopamine, serotonin: nc.serotonin, gaba: nc.gaba,
-      explorationFloor, rawFrac, frac, margin, leverage, notional, minNotional: minNotionalUsdt, sized,
+      explorationFloor, rawFrac, frac, margin, leverage, notional,
+      minNotional: minNotionalUsdt, sized, liftedToMin: liftedToMin ? 1 : 0,
     },
   };
 }
