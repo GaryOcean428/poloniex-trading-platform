@@ -207,6 +207,77 @@ export function currentLeverage(
 }
 
 /**
+ * shouldDCAAdd — permit a dollar-cost-average add to an existing
+ * position (v0.6.2). This is the "buy lower if it'll recover" path.
+ *
+ * DCA is hazardous by default — the classic failure is "averaging into a
+ * loser until liquidated." Five guard rails here, ALL must pass:
+ *
+ *   1. SAME SIDE   proposed side matches currently held side (no reversal)
+ *   2. BETTER PRICE for long: now < entry × 0.99; for short: > × 1.01
+ *   3. COOLDOWN    ≥ COOLDOWN_MS since last add (no flurry on one candle)
+ *   4. ADD CAP     addCount < MAX_ADDS_PER_POSITION (v0.6.2 = 1)
+ *   5. EARNED      sovereignty > 0.1 — newborn can't DCA
+ *
+ * The "fresh signal" requirement is already enforced externally:
+ * `mlStrength >= entryThr` — same gate first-entries pass.
+ *
+ * If all pass, DCA add is allowed at the CURRENT position-size rules
+ * (same currentPositionSize call). Aggregate exposure is bounded by the
+ * risk-kernel per-symbol cap (5× equity).
+ */
+export const DCA_MAX_ADDS_PER_POSITION = 1;
+export const DCA_COOLDOWN_MS = 15 * 60 * 1000;           // 15 min
+export const DCA_BETTER_PRICE_FRAC = 0.01;                // ≥ 1 % better entry
+export const DCA_MIN_SOVEREIGNTY = 0.1;
+
+export function shouldDCAAdd(req: {
+  heldSide: 'long' | 'short';
+  sideCandidate: 'long' | 'short';
+  currentPrice: number;
+  initialEntryPrice: number;
+  addCount: number;
+  lastAddAtMs: number;
+  nowMs: number;
+  sovereignty: number;
+}): ExecutiveDecision<boolean> {
+  const {
+    heldSide, sideCandidate, currentPrice, initialEntryPrice,
+    addCount, lastAddAtMs, nowMs, sovereignty,
+  } = req;
+
+  if (heldSide !== sideCandidate) {
+    return { value: false, reason: `side mismatch (${sideCandidate} vs held ${heldSide})`, derivation: { rule: 1 } };
+  }
+  if (addCount >= DCA_MAX_ADDS_PER_POSITION) {
+    return { value: false, reason: `add cap reached (${addCount}/${DCA_MAX_ADDS_PER_POSITION})`, derivation: { rule: 4, addCount } };
+  }
+  if (nowMs - lastAddAtMs < DCA_COOLDOWN_MS) {
+    const secRemain = Math.round((DCA_COOLDOWN_MS - (nowMs - lastAddAtMs)) / 1000);
+    return { value: false, reason: `cooldown (${secRemain}s remaining)`, derivation: { rule: 3, secRemain } };
+  }
+  if (sovereignty < DCA_MIN_SOVEREIGNTY) {
+    return { value: false, reason: `sovereignty too low (${sovereignty.toFixed(3)} < ${DCA_MIN_SOVEREIGNTY})`, derivation: { rule: 5, sovereignty } };
+  }
+  const priceDelta = (currentPrice - initialEntryPrice) / initialEntryPrice;
+  const priceIsBetter = heldSide === 'long'
+    ? priceDelta < -DCA_BETTER_PRICE_FRAC   // lower for long
+    : priceDelta > +DCA_BETTER_PRICE_FRAC;  // higher for short
+  if (!priceIsBetter) {
+    return {
+      value: false,
+      reason: `price not better (${(priceDelta * 100).toFixed(3)}% from entry vs ±${(DCA_BETTER_PRICE_FRAC * 100).toFixed(1)}% required)`,
+      derivation: { rule: 2, priceDelta },
+    };
+  }
+  return {
+    value: true,
+    reason: `DCA_OK: ${(priceDelta * 100).toFixed(2)}% from entry, addCount=${addCount}, sov=${sovereignty.toFixed(2)}`,
+    derivation: { rule: 0, priceDelta, addCount, sovereignty },
+  };
+}
+
+/**
  * shouldProfitHarvest — early-exit WHILE IN PROFIT (v0.6.1).
  *
  * Runs BEFORE shouldScalpExit. When a trade has been in profit, the peak
