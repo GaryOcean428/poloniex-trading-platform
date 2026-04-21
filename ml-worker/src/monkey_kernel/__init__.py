@@ -66,6 +66,12 @@ from .basin_sync import (
     convergence_summary,
 )
 from .modes import MODE_PROFILES, ModeProfile, MonkeyMode, detect_mode
+from .parameters import (
+    ParameterRegistry,
+    ParamValue,
+    VariableCategory,
+    get_registry,
+)
 from .perception import OHLCVCandle, PerceptionInputs, perceive, refract
 from .perception_scalars import basin_direction, trend_proxy
 from .resonance_bank import (
@@ -106,13 +112,17 @@ __all__ = [
     "ModeProfile",
     "MonkeyMode",
     "NeurochemicalState",
+    "ParamValue",
+    "ParameterRegistry",
     "SleepCycleManager",
     "SleepPhase",
+    "VariableCategory",
     "basin_direction",
     "current_entry_threshold",
     "current_leverage",
     "current_position_size",
     "detect_mode",
+    "get_registry",
     "should_dca_add",
     "should_exit",
     "should_profit_harvest",
