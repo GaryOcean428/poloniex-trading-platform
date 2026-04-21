@@ -469,3 +469,44 @@ def should_exit(
         "reason": f"holding: disagreement {disagreement:.3f} < {threshold:.3f}",
         "derivation": {"disagreement": disagreement, "threshold": threshold},
     }
+
+
+# ═══════════════════════════════════════════════════════════════
+#  shouldAutoFlatten — Pillar 1 zombie-collapse catastrophic exit
+# ═══════════════════════════════════════════════════════════════
+
+
+def should_auto_flatten(
+    *,
+    s: ExecBasinState,
+    recent_fhealths: list[float],
+) -> dict[str, Any]:
+    """When Monkey's own state goes zombie (entropy collapse across
+    multiple ticks), flatten regardless of position P&L. Replaces the
+    hardcoded −15% DD kill switch with a Pillar 1 derivation — the
+    threshold emerges from basin entropy, not an external percentage.
+
+    Ported from apps/api/src/services/monkey/executive.ts:shouldAutoFlatten.
+    Thresholds `f_health mean < 0.3` and `trend < −0.1` stay as
+    SAFETY_BOUND constants per P25 — they are catastrophic-collapse
+    envelopes, not operational thresholds.
+    """
+    if len(recent_fhealths) < 5:
+        return {
+            "value": False,
+            "reason": "insufficient history",
+            "derivation": {},
+        }
+    recent = recent_fhealths[-10:]
+    mean = sum(recent) / len(recent)
+    trend = recent[-1] - recent[0]
+    catastrophic = mean < 0.3 and trend < -0.1
+    return {
+        "value": catastrophic,
+        "reason": (
+            f"f_health mean {mean:.3f}, trend {trend:.3f} — basin dying, FLATTEN"
+            if catastrophic
+            else f"f_health OK (mean {mean:.3f})"
+        ),
+        "derivation": {"f_health_mean": mean, "f_health_trend": trend},
+    }
