@@ -311,8 +311,12 @@ export function logTickParityDiffs(
   }
   logParityDiff('tick.entry_threshold', tsDecision.entry_threshold, pyDecision.entry_threshold);
   logParityDiff('tick.leverage', tsDecision.leverage, pyDecision.leverage);
+  // Size tolerance wider (0.1 USDT) — rounding and sizeFraction edge-case
+  // arithmetic can legitimately differ between TS and Python by a few cents.
   logParityDiff('tick.size_usdt', tsDecision.size_usdt, pyDecision.size_usdt, 0.1);
   logParityDiff('tick.phi', tsDecision.phi, pyDecision.phi);
+  // κ tolerance 0.5 — EMA smoothing with f64 vs f64 can drift by ~0.3
+  // across 100-tick histories; 0.5 catches real divergence, not FP noise.
   logParityDiff('tick.kappa', tsDecision.kappa, pyDecision.kappa, 0.5);
   logParityDiff('tick.side_override', tsDecision.side_override, pyDecision.side_override);
 }
