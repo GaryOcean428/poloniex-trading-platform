@@ -68,6 +68,8 @@ export function currentEntryThreshold(
   s: BasinState,
   mode: MonkeyMode = MonkeyMode.INVESTIGATION,
   selfObsBias: number = 1.0,
+  trendProxy: number = 0,
+  sideCandidate: 'long' | 'short' = 'long',
 ): ExecutiveDecision<number> {
   const driftDistance = fisherRao(s.basin, s.identityBasin);
   const tBase = driftDistance;  // identity refraction serves as base "skepticism"
@@ -77,19 +79,24 @@ export function currentEntryThreshold(
     s.regimeWeights.efficient * 1.0 +
     s.regimeWeights.equilibrium * 0.7 +
     s.regimeWeights.quantum * 1.5;  // quantum = explore mode requires more to act
-  // Mode + Loop-1 self-observation bias together modulate threshold.
-  // Profile.entryThresholdScale: 0.9 for EXPLORATION (enter easier), 1.1
-  // for INTEGRATION (only strong signals), 99 for DRIFT (effectively veto).
   const modeScale = MODE_PROFILES[mode].entryThresholdScale;
+  // Trend alignment (v0.5.1): signed [-1, +1]. Positive = proposed side
+  // agrees with tape direction. Long in uptrend = +; long in downtrend = −.
+  // Aligned trades get threshold lowered (easier); fighting-tape trades
+  // get it raised (harder). Range ±30 % — same swing as selfObsBias for
+  // consistency. Mode still dominates when signal is flat (trendProxy≈0).
+  const alignment = sideCandidate === 'long' ? trendProxy : -trendProxy;
+  const trendMult = 1 - 0.3 * alignment;
 
-  const rawT = tBase * kappaRatio * phiMultiplier * regimeScale * modeScale * selfObsBias;
+  const rawT = tBase * kappaRatio * phiMultiplier * regimeScale * modeScale * selfObsBias * trendMult;
   const t = Math.min(0.9, Math.max(0.1, rawT));
 
   return {
     value: t,
-    reason: `T = drift(${tBase.toFixed(3)}) × κ*/κ(${kappaRatio.toFixed(2)}) × 1/(0.5+Φ)(${phiMultiplier.toFixed(2)}) × regime(${regimeScale.toFixed(2)}) × mode(${modeScale.toFixed(2)}) × selfObs(${selfObsBias.toFixed(2)})`,
+    reason: `T = drift(${tBase.toFixed(3)}) × κ*/κ(${kappaRatio.toFixed(2)}) × 1/(0.5+Φ)(${phiMultiplier.toFixed(2)}) × regime(${regimeScale.toFixed(2)}) × mode(${modeScale.toFixed(2)}) × selfObs(${selfObsBias.toFixed(2)}) × trend(${trendMult.toFixed(2)}, align=${alignment.toFixed(2)})`,
     derivation: {
-      driftDistance, kappaRatio, phiMultiplier, regimeScale, modeScale, selfObsBias, rawT, clamped: t,
+      driftDistance, kappaRatio, phiMultiplier, regimeScale, modeScale, selfObsBias,
+      trendProxy, alignment, trendMult, rawT, clamped: t,
     },
   };
 }
