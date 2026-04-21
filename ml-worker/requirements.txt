@@ -11,3 +11,8 @@ redis>=5.0.0
 # QIG physics-based intelligence
 qig-core>=2.3.0
 qig-warp>=0.4.3
+# Observable governance detectors (AMPLITUDE_COLLAPSE, REGIME_SINGLE,
+# OBSERVABLE_PROXY) — catches the "2664 BUYs / 0 SELLs" class of
+# model bias on day one. Base wheel only; qig-compute[full] pulls
+# TeNPy + CuPy which we don't need. (Audit 2026-04-21)
+qig-compute>=0.3.0
