@@ -620,6 +620,28 @@ export class MonkeyKernel extends EventEmitter {
           action = 'exit';
           reason = exit.reason;
           derivation.exit = exit.derivation;
+        } else if (
+          // 3b. v0.7.1 — OVERRIDE REVERSAL. When basin + tape quorum
+          // flipped sideCandidate AGAINST the currently-held side, she
+          // wants to reverse, not add. Poloniex v3 one-way position
+          // mode NETS a reverse-direction order against the existing
+          // position — so naive "submit SHORT while LONG" just cancels
+          // the long and leaves the exchange flat. Fix: flatten-first,
+          // then submit new direction. Observed 2026-04-21 09:29 UTC
+          // when she attempted a basin-override short while ETH long
+          // was open; short vanished via netting.
+          sideOverride &&
+          sideCandidate !== heldSide &&
+          MODE_PROFILES[mode].canEnter &&
+          mlStrength >= entryThr.value &&
+          size.value > 0
+        ) {
+          action = sideCandidate === 'long' ? 'reverse_long' : 'reverse_short';
+          reason = `OVERRIDE_REVERSE[${heldSide}→${sideCandidate}] basin=${basinDir.toFixed(2)} tape=${tapeTrend.toFixed(2)}; flatten-then-open margin=${size.value.toFixed(2)} lev=${leverage.value}x`;
+          derivation.entryThreshold = entryThr.derivation;
+          derivation.size = size.derivation;
+          derivation.leverage = leverage.derivation;
+          derivation.isReverse = true;
         } else {
           // 4. v0.6.2 — DCA add eligibility. Can she add to the position
           //    at a better price while the ML signal still supports the
@@ -752,6 +774,63 @@ export class MonkeyKernel extends EventEmitter {
             reason += ` | close: ${closeResult.reason}`;
           } else {
             reason += ` | closed@${lastPrice.toFixed(2)} pnl=${pnlAtDecision.toFixed(4)}`;
+          }
+        }
+      } else if ((action === 'reverse_long' || action === 'reverse_short') && heldSide) {
+        // v0.7.1 — flatten-then-reverse. Two-phase:
+        //   1. reduce-only close the existing opposite-side position
+        //   2. brief settle delay so the exchange nets cleanly
+        //   3. fresh executeEntry in the new direction
+        const newSide: 'long' | 'short' = action === 'reverse_long' ? 'long' : 'short';
+        const existingRowId = ownOpenRow ? String(ownOpenRow.id) : null;
+        // Use current unrealized as pnl estimate for the close row update.
+        let pnlAtDecision = 0;
+        if (ownOpenRow) {
+          const entryP = Number(ownOpenRow.entry_price);
+          const qty = Number(ownOpenRow.quantity);
+          const sidesign = heldSide === 'long' ? 1 : -1;
+          pnlAtDecision = (lastPrice - entryP) * qty * sidesign;
+        }
+        if (existingRowId) {
+          const closeResult = await this.closeHeldPosition({
+            symbol,
+            tradeId: existingRowId,
+            heldSide,
+            markPrice: lastPrice,
+            exitReason: 'override_reverse',
+            pnlAtDecision,
+          });
+          if (closeResult.executed) {
+            state.peakPnlUsdt = null;
+            state.peakTrackedTradeId = null;
+            state.dcaAddCount = 0;
+            state.lastEntryAtMs = null;
+            // Settle delay — give the exchange ~500ms to flatten net.
+            await new Promise((resolve) => setTimeout(resolve, 500));
+            const execResult = await this.executeEntry({
+              symbol,
+              side: newSide,
+              marginUsdt: size.value,
+              leverage: leverage.value,
+              entryPrice: lastPrice,
+              minNotional,
+              phi,
+              kappa: state.kappa,
+              sovereignty,
+              trajectoryId: null,
+              isDCAAdd: false,
+              dcaAddIndex: 0,
+            });
+            executed = execResult.executed;
+            monkeyOrderId = execResult.orderId;
+            if (executed) {
+              state.lastEntryAtMs = Date.now();
+              reason += ` | closed@${lastPrice.toFixed(2)} pnl=${pnlAtDecision.toFixed(4)} | new ${newSide} orderId=${monkeyOrderId}`;
+            } else {
+              reason += ` | flattened ok, new-entry failed: ${execResult.reason}`;
+            }
+          } else {
+            reason += ` | flatten failed: ${closeResult.reason}; reverse aborted`;
           }
         }
       }
