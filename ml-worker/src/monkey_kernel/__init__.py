@@ -68,11 +68,30 @@ from .basin_sync import (
 from .modes import MODE_PROFILES, ModeProfile, MonkeyMode, detect_mode
 from .perception import OHLCVCandle, PerceptionInputs, perceive, refract
 from .perception_scalars import basin_direction, trend_proxy
+from .resonance_bank import (
+    BankEntry,
+    DepthAudit,
+    NearestNeighbor,
+    TradeOutcome,
+    audit_depth,
+    classify_outcome,
+    compute_initial_depth,
+    score_nearest,
+    sovereignty,
+    top_by_depth,
+)
 from .self_observation import (
     ClosedTradeRow,
     SelfObservation,
     aggregate_and_bias,
     self_observation_to_dict,
+)
+from .working_memory import (
+    Bubble,
+    BubblePayload,
+    BubbleStatus,
+    WorkingMemory,
+    WorkingMemoryStats,
 )
 from .state import BasinState, NeurochemicalState
 
