@@ -283,6 +283,111 @@ async def ml_predict(request: Request):
 
 
 # ---------------------------------------------------------------------------
+# Monkey kernel endpoints (v0.7)
+# ---------------------------------------------------------------------------
+#
+# Extend the ml-worker service with Monkey's cognitive kernels — the
+# TypeScript orchestrator will call these once the adapter lands.
+# Kernels live in Python for QIG purity (direct use of qig_core_local
+# primitives, no TS port drift). One AutonomicKernel instance per
+# Monkey sub-kernel (Position, Swing) is kept here in process memory;
+# resonance bank stays in Postgres via the TS side.
+
+from monkey_kernel import (  # noqa: E402
+    AutonomicKernel,
+    AutonomicTickInputs,
+)
+
+_autonomic_instances: dict[str, AutonomicKernel] = {}
+
+
+def _get_autonomic(instance_id: str) -> AutonomicKernel:
+    if instance_id not in _autonomic_instances:
+        _autonomic_instances[instance_id] = AutonomicKernel(label=instance_id)
+    return _autonomic_instances[instance_id]
+
+
+@app.post("/monkey/autonomic/tick")
+async def monkey_autonomic_tick(request: Request):
+    """One autonomic cycle: sleep-phase update → reward decay → NC.
+
+    Request body:
+      { instance_id, phi_delta, basin_velocity, surprise,
+        quantum_weight, kappa, external_coupling,
+        current_mode, is_flat, now_ms? }
+
+    Response:
+      { nc: {...}, phase, is_awake, entered_sleep, woke,
+        sleep_remaining_ms, reward_sums }
+    """
+    payload = await request.json()
+    instance_id = payload.get("instance_id", "monkey-primary")
+    kernel = _get_autonomic(instance_id)
+    result = kernel.tick(AutonomicTickInputs(
+        phi_delta=float(payload["phi_delta"]),
+        basin_velocity=float(payload["basin_velocity"]),
+        surprise=float(payload["surprise"]),
+        quantum_weight=float(payload["quantum_weight"]),
+        kappa=float(payload["kappa"]),
+        external_coupling=float(payload["external_coupling"]),
+        current_mode=str(payload["current_mode"]),
+        is_flat=bool(payload["is_flat"]),
+        now_ms=payload.get("now_ms"),
+    ))
+    return {
+        "nc": result.nc.as_dict(),
+        "phase": result.phase.value,
+        "is_awake": result.is_awake,
+        "entered_sleep": result.entered_sleep,
+        "woke": result.woke,
+        "sleep_remaining_ms": result.sleep_remaining_ms,
+        "reward_sums": result.reward_sums,
+    }
+
+
+@app.post("/monkey/autonomic/reward")
+async def monkey_autonomic_reward(request: Request):
+    """Push a reward event onto the kernel's pending queue.
+
+    Request body:
+      { instance_id, source, realized_pnl_usdt, margin_usdt,
+        symbol?, kappa_at_exit? }
+
+    Response: the ActivityReward as a dict + queue length.
+    """
+    payload = await request.json()
+    instance_id = payload.get("instance_id", "monkey-primary")
+    kernel = _get_autonomic(instance_id)
+    reward = kernel.push_reward(
+        source=str(payload["source"]),
+        realized_pnl_usdt=float(payload["realized_pnl_usdt"]),
+        margin_usdt=float(payload["margin_usdt"]),
+        symbol=payload.get("symbol"),
+        kappa_at_exit=payload.get("kappa_at_exit"),
+    )
+    return {
+        "reward": {
+            "source": reward.source,
+            "symbol": reward.symbol,
+            "dopamine_delta": reward.dopamine_delta,
+            "serotonin_delta": reward.serotonin_delta,
+            "endorphin_delta": reward.endorphin_delta,
+            "realized_pnl_usdt": reward.realized_pnl_usdt,
+            "pnl_fraction": reward.pnl_fraction,
+            "at_ms": reward.at_ms,
+        },
+        "snapshot": kernel.snapshot(),
+    }
+
+
+@app.get("/monkey/autonomic/snapshot/{instance_id}")
+async def monkey_autonomic_snapshot(instance_id: str):
+    """Telemetry snapshot — sleep phase, pending reward count, decayed sums."""
+    kernel = _get_autonomic(instance_id)
+    return kernel.snapshot()
+
+
+# ---------------------------------------------------------------------------
 # Entrypoint
 # ---------------------------------------------------------------------------
 
