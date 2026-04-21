@@ -69,6 +69,7 @@ import {
   currentPositionSize,
   shouldAutoFlatten,
   shouldExit,
+  shouldProfitHarvest,
   shouldScalpExit,
   type BasinState,
 } from './executive.js';
@@ -128,6 +129,13 @@ interface SymbolState {
   lastMode: MonkeyMode | null;
   /** Mode-specific tickMs last applied — used by adaptive-tick governor. */
   currentTickMs: number;
+  /** v0.6.1: high-water-mark unrealized PnL on the currently-held trade.
+   *  Reset to null on close. Survives kernel restarts? No — will re-peak
+   *  as ticks come in, which is safer than over-claiming. */
+  peakPnlUsdt: number | null;
+  /** Trade id of the position currently being peak-tracked. If the open
+   *  trade id changes (new position), peak resets. */
+  peakTrackedTradeId: string | null;
 }
 
 /**
@@ -226,6 +234,8 @@ export class MonkeyKernel extends EventEmitter {
       sessionTicks: 0,
       lastMode: null,
       currentTickMs: this.tickMs,
+      peakPnlUsdt: null,
+      peakTrackedTradeId: null,
     };
   }
 
@@ -463,23 +473,63 @@ export class MonkeyKernel extends EventEmitter {
       reason = autoFlatten.reason;
       derivation.autoFlatten = autoFlatten.derivation;
     } else if (heldSide) {
-      // v0.4+v0.5: Scalp TP/SL gate runs FIRST with mode-specific thresholds.
-      let scalpFired = false;
+      // Exit-gate order (v0.6.1):
+      //   1. profit harvest (trailing + trend-flip, only while green)
+      //   2. scalp TP/SL
+      //   3. Loop 2 regime-shift (shouldExit)
+      let exitFired = false;
       const openRow = await this.findOpenMonkeyTrade(symbol);
       if (openRow) {
         const positionNotional = Number(openRow.entry_price) * Number(openRow.quantity);
         const sidesign = heldSide === 'long' ? 1 : -1;
         const unrealizedPnl = (lastPrice - Number(openRow.entry_price)) * Number(openRow.quantity) * sidesign;
-        const scalp = shouldScalpExit(unrealizedPnl, positionNotional, basinState, mode);
-        derivation.scalp = { ...scalp.derivation, unrealizedPnl, markPrice: lastPrice, tradeId: String(openRow.id) };
-        if (scalp.value) {
-          action = 'scalp_exit';
-          reason = scalp.reason;
-          scalpFired = true;
+        const tradeId = String(openRow.id);
+
+        // Reset peak tracking when we detect a NEW trade vs what we
+        // were peak-tracking. (Covers reconciler-replaced rows.)
+        if (state.peakTrackedTradeId !== tradeId) {
+          state.peakPnlUsdt = unrealizedPnl;
+          state.peakTrackedTradeId = tradeId;
+        } else {
+          state.peakPnlUsdt = Math.max(state.peakPnlUsdt ?? 0, unrealizedPnl);
+        }
+
+        // 1. Profit harvest — trailing stop + trend-flip, only while green
+        const harvest = shouldProfitHarvest(
+          unrealizedPnl,
+          state.peakPnlUsdt ?? 0,
+          positionNotional,
+          tapeTrend,
+          heldSide,
+          basinState,
+        );
+        derivation.harvest = { ...harvest.derivation, unrealizedPnl, peakPnl: state.peakPnlUsdt, tradeId };
+        if (harvest.value) {
+          action = 'scalp_exit';  // executes via same close path
+          reason = harvest.reason;
+          exitFired = true;
+          // Tag the exit type so closeHeldPosition stores the right exit_reason
+          derivation.scalp = {
+            exitTypeBit: harvest.derivation.exitTypeBit,
+            unrealizedPnl,
+            markPrice: lastPrice,
+            tradeId,
+          };
+        }
+
+        // 2. Scalp TP/SL (only if harvest didn't fire)
+        if (!exitFired) {
+          const scalp = shouldScalpExit(unrealizedPnl, positionNotional, basinState, mode);
+          derivation.scalp = { ...scalp.derivation, unrealizedPnl, markPrice: lastPrice, tradeId };
+          if (scalp.value) {
+            action = 'scalp_exit';
+            reason = scalp.reason;
+            exitFired = true;
+          }
         }
       }
-      if (!scalpFired) {
-        // Loop 2 debate — perception vs identity
+      if (!exitFired) {
+        // 3. Loop 2 debate — perception vs identity
         const exit = shouldExit(basin, state.identityBasin, heldSide, basinState);
         if (exit.value) {
           action = 'exit';
@@ -542,7 +592,12 @@ export class MonkeyKernel extends EventEmitter {
         const scalpDeriv = derivation.scalp as Record<string, unknown> | undefined;
         const tradeId = scalpDeriv?.tradeId ? String(scalpDeriv.tradeId) : null;
         const exitTypeBit = Number(scalpDeriv?.exitTypeBit ?? 0);
-        const exitType = exitTypeBit === 1 ? 'take_profit' : exitTypeBit === -1 ? 'stop_loss' : 'scalp_exit';
+        const exitType =
+          exitTypeBit === 1 ? 'take_profit' :
+          exitTypeBit === -1 ? 'stop_loss' :
+          exitTypeBit === 2 ? 'trailing_harvest' :
+          exitTypeBit === 3 ? 'trend_flip_harvest' :
+          'scalp_exit';
         const pnlAtDecision = Number(scalpDeriv?.unrealizedPnl ?? 0);
         if (tradeId) {
           const closeResult = await this.closeHeldPosition({
@@ -555,6 +610,11 @@ export class MonkeyKernel extends EventEmitter {
           });
           executed = closeResult.executed;
           monkeyOrderId = closeResult.orderId;
+          if (executed) {
+            // Clear peak tracking now the trade is closed.
+            state.peakPnlUsdt = null;
+            state.peakTrackedTradeId = null;
+          }
           if (!executed) {
             reason += ` | close: ${closeResult.reason}`;
           } else {
