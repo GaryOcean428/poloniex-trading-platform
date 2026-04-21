@@ -44,6 +44,7 @@ from .executive import (
     should_scalp_exit,
 )
 from .modes import MODE_PROFILES, ModeProfile, MonkeyMode, detect_mode
+from .perception import OHLCVCandle, PerceptionInputs, perceive, refract
 from .perception_scalars import basin_direction, trend_proxy
 from .state import BasinState, NeurochemicalState
 
