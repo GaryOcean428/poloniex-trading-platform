@@ -52,7 +52,15 @@ import {
 import { callAutonomicTick } from './autonomic_client.js';
 import { BasinSync } from './basin_sync.js';
 import { BusEventType, getKernelBus, type KernelBus } from './kernel_bus.js';
-import { logParityDiff } from './kernel_client.js';
+import {
+  callTickRun,
+  isShadowTickEnabled,
+  logParityDiff,
+  logTickParityDiffs,
+  type TickRunAccount,
+  type TickRunOHLCV,
+  type TickRunSymbolState,
+} from './kernel_client.js';
 import { detectMode, MODE_PROFILES, MonkeyMode } from './modes.js';
 import { computeNeurochemicals, summarizeNC, type NeurochemicalState } from './neurochemistry.js';
 import {
@@ -318,6 +326,29 @@ export class MonkeyKernel extends EventEmitter {
   private async processSymbol(symbol: string): Promise<void> {
     const state = this.symbolStates.get(symbol);
     if (!state) return;
+
+    // v0.8.3b: snapshot serializable state BEFORE any mutation for the
+    // Python shadow tick. Captured here so Python sees the same "prior
+    // state" the TS pipeline starts from.
+    const shadowPrevState: TickRunSymbolState | null = isShadowTickEnabled()
+      ? {
+          symbol,
+          identity_basin: Array.from(state.identityBasin),
+          last_basin: state.lastBasin ? Array.from(state.lastBasin) : null,
+          kappa: state.kappa,
+          session_ticks: state.sessionTicks,
+          last_mode: state.lastMode,
+          basin_history: state.basinHistory.map((b) => Array.from(b)),
+          phi_history: [...state.phiHistory],
+          fhealth_history: [...state.fHealthHistory],
+          drift_history: [...state.driftHistory],
+          dca_add_count: state.dcaAddCount,
+          last_entry_at_ms: state.lastEntryAtMs,
+          peak_pnl_usdt: state.peakPnlUsdt,
+          peak_tracked_trade_id: state.peakTrackedTradeId,
+        }
+      : null;
+
     state.sessionTicks++;
 
     // 1. Fetch inputs (same as liveSignalEngine sees).
@@ -531,7 +562,8 @@ export class MonkeyKernel extends EventEmitter {
     // 5. DERIVE — executive computes what Monkey would do (mode-aware)
     // tapeTrend already computed above for side-override check.
     const entryThr = currentEntryThreshold(basinState, mode, selfObsBias, tapeTrend, sideCandidate);
-    const leverage = currentLeverage(basinState, (await getMaxLeverage(symbol)) ?? 10, mode, tapeTrend);
+    const maxLevBoundary = (await getMaxLeverage(symbol)) ?? 10;
+    const leverage = currentLeverage(basinState, maxLevBoundary, mode, tapeTrend);
     const precisions = await getPrecisions(symbol).catch(() => null);
     const lotSize = precisions?.lotSize ?? 0;
     const minNotional = lastPrice * Math.max(lotSize, 1e-9);
@@ -733,6 +765,64 @@ export class MonkeyKernel extends EventEmitter {
           : 'no qualifying signal';
       reason = why;
       derivation.entryThreshold = entryThr.derivation;
+    }
+
+    // v0.8.3b — shadow the full Python tick pipeline. Fire-and-forget:
+    // Python's decision is NOT authoritative; we only log parity diffs.
+    // TS remains the live path. Gated by MONKEY_TICK_PY_SHADOW=true.
+    if (shadowPrevState !== null) {
+      const shadowOhlcv: TickRunOHLCV[] = ohlcv.map((c) => ({
+        timestamp: Number(c.timestamp ?? 0),
+        open: Number(c.open),
+        high: Number(c.high),
+        low: Number(c.low),
+        close: Number(c.close),
+        volume: Number(c.volume),
+      }));
+      const shadowAccount: TickRunAccount = {
+        equity_fraction: equityFraction,
+        margin_fraction: marginFraction,
+        open_positions: openPositions,
+        available_equity: availableEquity,
+        exchange_held_side: exchangeHeldSide,
+        own_position_entry_price: ownOpenRow ? Number(ownOpenRow.entry_price) : null,
+        own_position_quantity: ownOpenRow ? Number(ownOpenRow.quantity) : null,
+        own_position_trade_id: ownOpenRow ? String(ownOpenRow.id) : null,
+      };
+      void callTickRun({
+        instance_id: this.instanceId,
+        inputs: {
+          symbol,
+          ohlcv: shadowOhlcv,
+          ml_signal: mlSignal,
+          ml_strength: mlStrength,
+          account: shadowAccount,
+          bank_size: bankSize,
+          sovereignty,
+          max_leverage: maxLevBoundary,
+          min_notional: minNotional,
+          size_fraction: this.sizeFraction,
+          self_obs_bias: this.selfObs?.entryBias ?? null,
+        },
+        prev_state: shadowPrevState,
+      }).then((pyResult) => {
+        logTickParityDiffs(symbol, {
+          action,
+          entry_threshold: entryThr.value,
+          leverage: leverage.value,
+          size_usdt: size.value,
+          mode,
+          side_candidate: sideCandidate,
+          side_override: sideOverride,
+          phi,
+          kappa: state.kappa,
+        }, pyResult.decision);
+      }).catch((err) => {
+        logger.debug('[shadow-tick] tick/run parity fetch failed', {
+          symbol,
+          err: err instanceof Error ? err.message : String(err),
+        });
+      });
     }
 
     // 6b. EXECUTE — gated by MONKEY_EXECUTE=true. Observe-only otherwise.

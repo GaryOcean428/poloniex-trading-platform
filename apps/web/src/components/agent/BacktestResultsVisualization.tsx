@@ -435,7 +435,7 @@ const BacktestResultsVisualization: React.FC<BacktestResultsVisualizationProps> 
                 <p className={`text-2xl font-bold ${getReturnColor(selectedResult.total_return)}`}>
                   {(() => {
                     const pnl = safeNum(selectedResult.final_value - selectedResult.initial_capital);
-                    return `${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`;
+                    return `${pnl >= 0 ? '+' : ''}$${safeNum(pnl).toFixed(2)}`;
                   })()}
                 </p>
               </div>
