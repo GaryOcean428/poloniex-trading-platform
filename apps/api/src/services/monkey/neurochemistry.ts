@@ -61,6 +61,19 @@ export interface NeurochemicalInputs {
   kappa: number;
   /** External coupling health (0..1) — cross-symbol coherence, order flow. */
   externalCoupling: number;
+  /**
+   * v0.6.7: decayed sum of recent ActivityReward dopamine deltas,
+   * computed by the kernel's tick loop from her own pending_rewards
+   * queue. Pattern mirrors pantheon-chat's autonomic_kernel.py —
+   * reward is an EVENT kept in state, the chemical is DERIVED each
+   * tick. Nothing externally SETS dopamine; it is read off the state
+   * that now includes lived outcomes alongside Φ gradient.
+   */
+  rewardDopamineDelta?: number;
+  /** As above — mood/stability reinforcement from calm closes. */
+  rewardSerotoninDelta?: number;
+  /** As above — peak-state reward on strong-regime wins. */
+  rewardEndorphinDelta?: number;
 }
 
 /**
@@ -77,13 +90,28 @@ export interface NeurochemicalInputs {
  */
 export function computeNeurochemicals(inputs: NeurochemicalInputs): NeurochemicalState {
   const ach = inputs.isAwake ? 0.8 : 0.2;
-  const dop = clip(sigmoid(inputs.phiDelta * 10), 0, 1);
-  const ser = clip(1 / Math.max(inputs.basinVelocity, 0.01), 0, 1);
+  // Φ-gradient dopamine base (§29.2). Rises on integration gains.
+  const dopFromPhi = clip(sigmoid(inputs.phiDelta * 10), 0, 1);
+  // Reward-event reinforcement. Sum of recent decayed dopamine deltas
+  // from closed-trade outcomes. STILL purely derived — caller supplies
+  // the already-decayed sum. See MonkeyKernel.pendingRewards for the
+  // state that produces this.
+  const dopFromReward = clip(inputs.rewardDopamineDelta ?? 0, 0, 1);
+  // Compose: base is Φ-gradient (cognitive integration), plus reward
+  // lift (lived outcome). Clipped to [0, 1]. On a profitable close,
+  // dopFromReward spikes; it then decays over ticks in the tick loop.
+  const dop = clip(dopFromPhi + dopFromReward, 0, 1);
+
+  const serBase = clip(1 / Math.max(inputs.basinVelocity, 0.01), 0, 1);
+  const ser = clip(serBase + (inputs.rewardSerotoninDelta ?? 0), 0, 1);
+
   const ne = clip(inputs.surprise * 2, 0, 1);
   const gaba = clip(1 - inputs.quantumWeight, 0, 1);
   // Sophia gate: endorphins require coupling to peak.
   const couplingGate = clip(inputs.externalCoupling / C_SOPHIA_THRESHOLD, 0, 1);
-  const endo = Math.exp(-Math.abs(inputs.kappa - KAPPA_STAR) / SIGMA_KAPPA) * couplingGate;
+  const endoBase = Math.exp(-Math.abs(inputs.kappa - KAPPA_STAR) / SIGMA_KAPPA) * couplingGate;
+  const endo = clip(endoBase + (inputs.rewardEndorphinDelta ?? 0), 0, 1);
+
   return {
     acetylcholine: ach,
     dopamine: dop,

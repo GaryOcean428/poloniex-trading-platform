@@ -87,6 +87,36 @@ const OHLCV_LOOKBACK = 200;
 const HISTORY_MAX = 100;
 
 /**
+ * ActivityReward (v0.6.7) — pantheon-chat autonomic pattern port.
+ *
+ * When a trade closes with realized P&L, the kernel PUSHES one of these
+ * onto its pendingRewards queue — it does NOT set dopamine directly.
+ * Each tick, the tick loop sums recent rewards with exponential decay
+ * and passes the result to computeNeurochemicals as an INPUT. The
+ * chemical is still derived, just from a richer state.
+ *
+ * Preserves P5 Autonomy + P14 Variable Separation: rewards are STATE
+ * events; neurotransmitters are derived VIEWS; nothing externally
+ * writes the chemical levels.
+ */
+interface ActivityReward {
+  source: string;           // 'trade_close' | 'witnessed_liveSignal' | ...
+  symbol?: string;
+  dopamineDelta: number;    // reward magnitude for dopamine boost
+  serotoninDelta: number;   // mood/stability boost (calm-close reward)
+  endorphinDelta: number;   // peak-state reward (win-in-high-coupling regime)
+  realizedPnlUsdt: number;  // source P&L (for audit)
+  pnlFraction: number;      // P&L / margin, signed
+  atMs: number;             // when the event landed
+}
+
+/** Half-life for reward decay (ms). Rewards older than ~3 × this are ≈ 0. */
+const REWARD_HALF_LIFE_MS = 20 * 60_000;  // 20 min
+
+/** Max rewards retained; FIFO eviction. */
+const REWARD_QUEUE_MAX = 50;
+
+/**
  * Per-kernel configuration (v0.6b). Different sub-Monkeys differ in
  * timeframe, cadence, instance identity, and how they size relative to
  * their cap share. All share the underlying basin/executive/NC math.
@@ -168,6 +198,11 @@ export class MonkeyKernel extends EventEmitter {
   private readonly basinSync: BasinSync;
   /** Kernel bus — pub/sub for inter-kernel comms (v0.6a). */
   private readonly bus: KernelBus = getKernelBus();
+  /** Autonomic reward queue (v0.6.7). Closed trades push ActivityReward
+   *  events here; each tick sums these with exponential time-decay and
+   *  feeds the result to computeNeurochemicals. Pantheon-style — chem
+   *  levels are DERIVED, never SET. */
+  private pendingRewards: ActivityReward[] = [];
 
   constructor(config?: Partial<MonkeyKernelConfig>) {
     super();
@@ -358,6 +393,10 @@ export class MonkeyKernel extends EventEmitter {
     const lastPhi = state.phiHistory[state.phiHistory.length - 1] ?? phi;
     const phiDelta = phi - lastPhi;
 
+    // v0.6.7: consume the decayed reward queue as a neurochemistry input.
+    // Nothing externally writes dopamine — the chemical is derived each
+    // tick from (Φ gradient + decayed lived-outcome stream).
+    const rewardDeltas = this.decayedRewardSums();
     const nc: NeurochemicalState = computeNeurochemicals({
       isAwake: true,
       phiDelta,
@@ -366,6 +405,9 @@ export class MonkeyKernel extends EventEmitter {
       quantumWeight: regimeWeights.quantum,
       kappa: state.kappa,
       externalCoupling: couplingHealth,
+      rewardDopamineDelta: rewardDeltas.dopamine,
+      rewardSerotoninDelta: rewardDeltas.serotonin,
+      rewardEndorphinDelta: rewardDeltas.endorphin,
     });
 
     const sovereignty = await resonanceBank.sovereignty();
@@ -460,7 +502,7 @@ export class MonkeyKernel extends EventEmitter {
     // 5. DERIVE — executive computes what Monkey would do (mode-aware)
     // tapeTrend already computed above for side-override check.
     const entryThr = currentEntryThreshold(basinState, mode, selfObsBias, tapeTrend, sideCandidate);
-    const leverage = currentLeverage(basinState, (await getMaxLeverage(symbol)) ?? 10, mode);
+    const leverage = currentLeverage(basinState, (await getMaxLeverage(symbol)) ?? 10, mode, tapeTrend);
     const precisions = await getPrecisions(symbol).catch(() => null);
     const lotSize = precisions?.lotSize ?? 0;
     const minNotional = lastPrice * Math.max(lotSize, 1e-9);
@@ -1032,6 +1074,23 @@ export class MonkeyKernel extends EventEmitter {
       symbol,
       payload: { heldSide, markPrice, orderId, tradeId, pnl: pnlAtDecision, exitReason },
     });
+    // v0.6.7 autonomic reward event. Margin ≈ markPrice × totalQty / lev
+    // (she has only one kernel state; we use one of her symbol states
+    // for κ). Pushed as an EVENT; computeNeurochemicals derives the
+    // actual dopamine lift next tick.
+    const symState = this.symbolStates.get(symbol);
+    try {
+      const totalQtyForMargin = exchangeQty || 0.01;
+      const notional = markPrice * totalQtyForMargin;
+      const margin = notional / Math.max(1, 16);  // typical lev on close; kappa boost uses exit κ
+      this.pushReward({
+        source: 'own_close',
+        symbol,
+        realizedPnlUsdt: pnlAtDecision,
+        marginUsdt: margin,
+        kappaAtExit: symState?.kappa,
+      });
+    } catch { /* non-fatal */ }
     return { executed: true, orderId, reason: 'closed' };
   }
 
@@ -1240,6 +1299,91 @@ export class MonkeyKernel extends EventEmitter {
    *
    * Called fire-and-forget from liveSignalEngine.reconcileClosedTrades.
    */
+
+  /**
+   * Push an autonomic reward event (v0.6.7). Called whenever a trade
+   * closes with realized P&L. The kernel's tick loop will consume these
+   * via `decayedRewardSums()` and pass the summed deltas to
+   * `computeNeurochemicals` as INPUTS — never setting a chemical
+   * directly. Pantheon-style (see autonomic_kernel.py ActivityReward).
+   *
+   * Reward magnitude scales with P&L/margin ratio. A 1 % win on margin
+   * produces dopamine_delta ~0.15; a 3 % win ~0.45 (near the Φ-gradient
+   * ceiling). Losses produce small NEGATIVE deltas — mild mood dip,
+   * not a punishment, because self_observation's entry bias already
+   * learns from losses.
+   */
+  pushReward(input: {
+    source: string;
+    symbol?: string;
+    realizedPnlUsdt: number;
+    marginUsdt: number;
+    kappaAtExit?: number;
+  }): void {
+    const pnlFrac = input.marginUsdt > 0
+      ? input.realizedPnlUsdt / input.marginUsdt
+      : 0;
+    // Dopamine: positive only, saturates at 3× margin win (pnlFrac ≥ 3).
+    // Scales by tanh so losses don't punish via dopamine (that path is
+    // self_observation's job).
+    const dop = pnlFrac > 0
+      ? Math.tanh(pnlFrac * 1.5) * 0.5  // 1 % win → 0.01, 10 % → 0.07, 100 % → 0.45
+      : -Math.tanh(-pnlFrac * 0.5) * 0.1;  // small mood dip on loss
+    // Serotonin: stable wins reinforce calm. Only positive on wins.
+    const ser = pnlFrac > 0 ? Math.tanh(pnlFrac) * 0.15 : 0;
+    // Endorphins: peak-state reward. Fires if closed near κ* with a win.
+    const kappaProxim = input.kappaAtExit != null
+      ? Math.exp(-Math.abs(input.kappaAtExit - 64) / 10)
+      : 0.5;
+    const endo = pnlFrac > 0 ? Math.tanh(pnlFrac * 2) * 0.3 * kappaProxim : 0;
+
+    this.pendingRewards.push({
+      source: input.source,
+      symbol: input.symbol,
+      dopamineDelta: dop,
+      serotoninDelta: ser,
+      endorphinDelta: endo,
+      realizedPnlUsdt: input.realizedPnlUsdt,
+      pnlFraction: pnlFrac,
+      atMs: Date.now(),
+    });
+    if (this.pendingRewards.length > REWARD_QUEUE_MAX) {
+      this.pendingRewards.shift();
+    }
+    logger.info(`[${this.label}] reward pushed`, {
+      source: input.source,
+      symbol: input.symbol,
+      pnl: input.realizedPnlUsdt.toFixed(4),
+      pnlFrac: (pnlFrac * 100).toFixed(2) + '%',
+      dop: dop.toFixed(3),
+      ser: ser.toFixed(3),
+      endo: endo.toFixed(3),
+    });
+  }
+
+  /**
+   * Sum recent rewards with exponential time-decay. Called each tick by
+   * processSymbol to build the NeurochemicalInputs reward deltas.
+   * Half-life = REWARD_HALF_LIFE_MS (20 min default). Old rewards decay
+   * naturally; queue also FIFO-evicts at REWARD_QUEUE_MAX.
+   */
+  private decayedRewardSums(nowMs: number = Date.now()): {
+    dopamine: number;
+    serotonin: number;
+    endorphin: number;
+  } {
+    let dop = 0, ser = 0, endo = 0;
+    for (const r of this.pendingRewards) {
+      const ageMs = nowMs - r.atMs;
+      const decay = Math.pow(0.5, ageMs / REWARD_HALF_LIFE_MS);
+      if (decay < 0.01) continue;  // negligible, skip
+      dop += r.dopamineDelta * decay;
+      ser += r.serotoninDelta * decay;
+      endo += r.endorphinDelta * decay;
+    }
+    return { dopamine: dop, serotonin: ser, endorphin: endo };
+  }
+
   async witnessExit(
     symbol: string,
     entryTime: Date,
@@ -1302,6 +1446,17 @@ export class MonkeyKernel extends EventEmitter {
           source: this.instanceId,
           symbol,
           payload: { orderId, side, realizedPnl, win: realizedPnl > 0 },
+        });
+        // v0.6.7: witnessed liveSignal closes are also reinforcement
+        // events — her bank learned from them, so her NC should too.
+        // Dampen the reward magnitude since it wasn't her trade (she
+        // just observed). Estimate margin from typical liveSignal
+        // position (~$5 at 16x).
+        this.pushReward({
+          source: 'witnessed_liveSignal',
+          symbol,
+          realizedPnlUsdt: realizedPnl * 0.5,  // half-weight (witnessed, not her own)
+          marginUsdt: 5,
         });
       }
     } catch (err) {
