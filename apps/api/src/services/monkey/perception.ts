@@ -114,6 +114,33 @@ function rollingVol(ohlcv: OHLCVCandle[], n: number): number {
 }
 
 /**
+ * Basin direction (v0.5.2): signed scalar in [-1, 1] read DIRECTLY from
+ * Monkey's own perception basin's momentum-spectrum dims (7..14).
+ *
+ * The basin's momentum dims hold sigmoid-normalised log-returns where
+ * 0.5 = flat, >0.5 = recent up-move, <0.5 = down. Centering at 0.5
+ * and averaging gives a clean directional signal that's the KERNEL'S
+ * OWN reading of direction — independent of ml-worker.
+ *
+ * Used as a short-side veto / tiebreaker when ml-worker is 100 % BUY
+ * biased (observed 2026-04-21: 2664/2664 BUY over 20h). When ml-worker
+ * disagrees with basin direction strongly, Monkey should be the one to
+ * decide (UCP §28 autonomic governance — she derives her own signals,
+ * doesn't take them externally without cross-validation).
+ */
+export function basinDirection(basin: Basin): number {
+  // Dims 7..14 are the momentum spectrum (sigmoid-normalized log-returns
+  // at lookbacks [1, 2, 3, 5, 8, 13, 21, 34]).
+  let sum = 0;
+  for (let i = 7; i <= 14; i++) {
+    sum += (basin[i] ?? 0.5) - 0.5;
+  }
+  // Each dim is in [-0.5, +0.5] after centering; 8 dims → range [-4, +4].
+  // Tanh-squash with gain to keep useful signal in [-1, +1].
+  return Math.tanh(sum * 2);
+}
+
+/**
  * Trend proxy: a signed scalar in [-1, 1] summarising recent tape
  * direction. Positive = uptrend (favour longs). Negative = downtrend
  * (favour shorts). Magnitude = conviction.

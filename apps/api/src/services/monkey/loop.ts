@@ -53,7 +53,13 @@ import { BasinSync } from './basin_sync.js';
 import { BusEventType, getKernelBus, type KernelBus } from './kernel_bus.js';
 import { detectMode, MODE_PROFILES, MonkeyMode } from './modes.js';
 import { computeNeurochemicals, summarizeNC, type NeurochemicalState } from './neurochemistry.js';
-import { perceive, refract, trendProxy as computeTrendProxy, type OHLCVCandle } from './perception.js';
+import {
+  basinDirection as computeBasinDirection,
+  perceive,
+  refract,
+  trendProxy as computeTrendProxy,
+  type OHLCVCandle,
+} from './perception.js';
 import { resonanceBank } from './resonance_bank.js';
 import { computeSelfObservation, type SelfObservation } from './self_observation.js';
 import { WorkingMemory, type Bubble } from './working_memory.js';
@@ -341,10 +347,27 @@ export class MonkeyKernel extends EventEmitter {
       this.selfObs = await computeSelfObservation(24);
       this.selfObsLastUpdate = now;
     }
-    // Side candidate from ML signal — BUY→long, SELL→short. HOLD falls
-    // back to long (bias won't matter; entry gate will block on signal).
-    const sideCandidate: 'long' | 'short' =
-      mlSignal === 'SELL' ? 'short' : 'long';
+    // Side candidate: start from ML signal, then allow Monkey's own
+    // direction-reading to override if it strongly disagrees (v0.5.2).
+    // ml-worker has been observed 100 % BUY-biased — so her own basin +
+    // recent tape have to be able to say "no, short instead" when the
+    // evidence is clear. Override fires ONLY when both her basin view
+    // AND the tape trend agree against ml-worker (two-signal quorum).
+    const basinDir = computeBasinDirection(basin);
+    const tapeTrend = computeTrendProxy(ohlcv);
+    const mlSide: 'long' | 'short' = mlSignal === 'SELL' ? 'short' : 'long';
+    let sideCandidate: 'long' | 'short' = mlSide;
+    let sideOverride = false;
+    // Agreement: if both basin and tape are strongly negative, short;
+    // if both strongly positive, long; else defer to ml.
+    const OVERRIDE_THRESHOLD = 0.35;
+    if (basinDir < -OVERRIDE_THRESHOLD && tapeTrend < -OVERRIDE_THRESHOLD && mlSide === 'long') {
+      sideCandidate = 'short';
+      sideOverride = true;
+    } else if (basinDir > OVERRIDE_THRESHOLD && tapeTrend > OVERRIDE_THRESHOLD && mlSide === 'short') {
+      sideCandidate = 'long';
+      sideOverride = true;
+    }
     const selfObsBias = this.selfObs?.entryBias[mode]?.[sideCandidate] ?? 1.0;
 
     // v0.5: Basin sync — publish own state; pull observer-effect influence.
@@ -362,10 +385,8 @@ export class MonkeyKernel extends EventEmitter {
     const wmStats = await state.wm.tick();
 
     // 5. DERIVE — executive computes what Monkey would do (mode-aware)
-    // Trend proxy (v0.5.1): signed tape-direction scalar in [-1, 1].
-    // Gates entry against fighting the tape; aligns with it.
-    const trendProxy = computeTrendProxy(ohlcv);
-    const entryThr = currentEntryThreshold(basinState, mode, selfObsBias, trendProxy, sideCandidate);
+    // tapeTrend already computed above for side-override check.
+    const entryThr = currentEntryThreshold(basinState, mode, selfObsBias, tapeTrend, sideCandidate);
     const leverage = currentLeverage(basinState, (await getMaxLeverage(symbol)) ?? 10, mode);
     const precisions = await getPrecisions(symbol).catch(() => null);
     const lotSize = precisions?.lotSize ?? 0;
@@ -383,8 +404,11 @@ export class MonkeyKernel extends EventEmitter {
       fHealth, mlSignal, mlStrength,
       mode: { value: mode, reason: modeDecision.reason, ...modeDecision.derivation },
       selfObsBias,
-      trendProxy,
       sideCandidate,
+      basinDir,
+      tapeTrend,
+      mlSide,
+      sideOverride,
     };
 
     if (autoFlatten.value) {
@@ -425,8 +449,10 @@ export class MonkeyKernel extends EventEmitter {
       mlSignal !== 'HOLD' &&
       size.value > 0
     ) {
-      action = mlSignal === 'BUY' ? 'enter_long' : 'enter_short';
-      reason = `[${mode}] ml ${mlSignal}@${mlStrength.toFixed(3)} >= thr ${entryThr.value.toFixed(3)}; margin=${size.value.toFixed(2)} lev=${leverage.value}x notional=${(size.value * leverage.value).toFixed(2)}`;
+      // sideCandidate already reflects any basin+tape override of the ML signal.
+      action = sideCandidate === 'long' ? 'enter_long' : 'enter_short';
+      const overrideTag = sideOverride ? ` OVERRIDE(basin${basinDir.toFixed(2)}/tape${tapeTrend.toFixed(2)})` : '';
+      reason = `[${mode}] ml ${mlSignal}@${mlStrength.toFixed(3)} >= thr ${entryThr.value.toFixed(3)}; side=${sideCandidate}${overrideTag}; margin=${size.value.toFixed(2)} lev=${leverage.value}x notional=${(size.value * leverage.value).toFixed(2)}`;
       derivation.entryThreshold = entryThr.derivation;
       derivation.size = size.derivation;
       derivation.leverage = leverage.derivation;
@@ -504,7 +530,10 @@ export class MonkeyKernel extends EventEmitter {
       sov: sovereignty.toFixed(3),
       wm: `${wmStats.alive}a/${wmStats.promoted}prom/${wmStats.popped}pop`,
       selfObsBias: selfObsBias.toFixed(2),
-      trend: trendProxy.toFixed(3),
+      tape: tapeTrend.toFixed(3),
+      basinDir: basinDir.toFixed(3),
+      side: sideCandidate,
+      override: sideOverride,
       orderId: monkeyOrderId ?? undefined,
       reason,
     });
