@@ -1,5 +1,11 @@
 # Roadmap Progress Tracker
 
+> **⚠️ SUPERSEDED (2026-04-21).** This tracker captures Phase 1 (API compliance,
+> core trading, completed Nov 2025). Since then the project has moved into live
+> trading + cognitive-kernel work ("Monkey", Phase P3 in the canonical roadmap).
+>
+> **Canonical current roadmap:** [`.agent-os/roadmap.md`](../../.agent-os/roadmap.md)
+
 **Last Updated:** 2025-11-24 (Final update - Phase 1 complete)  
 **Current Phase:** Phase 1 - Foundation & Compliance  
 **Overall Progress:** 100% ✅ COMPLETE
