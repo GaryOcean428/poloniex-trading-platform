@@ -49,8 +49,10 @@ import {
   velocity,
   type Basin,
 } from './basin.js';
+import { callAutonomicTick } from './autonomic_client.js';
 import { BasinSync } from './basin_sync.js';
 import { BusEventType, getKernelBus, type KernelBus } from './kernel_bus.js';
+import { logParityDiff } from './kernel_client.js';
 import { detectMode, MODE_PROFILES, MonkeyMode } from './modes.js';
 import { computeNeurochemicals, summarizeNC, type NeurochemicalState } from './neurochemistry.js';
 import {
@@ -409,6 +411,33 @@ export class MonkeyKernel extends EventEmitter {
       rewardSerotoninDelta: rewardDeltas.serotonin,
       rewardEndorphinDelta: rewardDeltas.endorphin,
     });
+
+    // v0.7.10 shadow-mode: call the Python autonomic kernel in parallel
+    // and log parity diffs. TS path remains authoritative until
+    // MONKEY_KERNEL_PY=true flips the default. Fire-and-forget — shadow
+    // latency must not block the tick.
+    if (process.env.MONKEY_KERNEL_PY_SHADOW === 'true') {
+      void callAutonomicTick({
+        instanceId: this.instanceId,
+        phiDelta,
+        basinVelocity: bv,
+        surprise: Math.abs(phiDelta) * 2,
+        quantumWeight: regimeWeights.quantum,
+        kappa: state.kappa,
+        externalCoupling: couplingHealth,
+        currentMode: state.lastMode ?? 'investigation',
+        isFlat: !exchangeHeldSide,
+      }).then((pyResult) => {
+        logParityDiff('nc.dopamine', nc.dopamine, pyResult.nc.dopamine);
+        logParityDiff('nc.serotonin', nc.serotonin, pyResult.nc.serotonin);
+        logParityDiff('nc.endorphins', nc.endorphins, pyResult.nc.endorphins);
+        logParityDiff('nc.norepinephrine', nc.norepinephrine, pyResult.nc.norepinephrine);
+      }).catch((err) => {
+        logger.debug('[shadow] autonomic parity fetch failed', {
+          err: err instanceof Error ? err.message : String(err),
+        });
+      });
+    }
 
     const sovereignty = await resonanceBank.sovereignty();
 
