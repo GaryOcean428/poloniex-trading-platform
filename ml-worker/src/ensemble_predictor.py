@@ -232,21 +232,50 @@ class EnsemblePredictor:
 
     def get_trading_signal(self, data: pd.DataFrame, current_price: float) -> Dict:
         """
-        Generate trading signal based on ensemble predictions
+        Generate trading signal based on ensemble predictions.
+
+        Signal dispatch uses a volatility-adaptive threshold so the
+        BUY/SELL gate scales with the market's own noise level. The
+        previous hardcoded ±1% threshold was observed producing 100%
+        BUY over 20h on ETH perp (2664/2664 on 2026-04-21) — the fixed
+        bar was below typical predicted drift in a mildly bullish
+        market, so every horizon tripped BUY and nothing ever tripped
+        SELL.
+
+        Replacement:
+            threshold = max(0.30%, 0.5 × recent return stdev)
+        where stdev is computed over the last 60 candles. This makes
+        the threshold ~1 sigma of recent moves — if the model's
+        forecast diverges from the current price by more than typical
+        noise, emit a direction. Otherwise HOLD.
+
+        Raw ensemble drift (mean predicted return across horizons) is
+        included in the result for bias diagnostics.
 
         Args:
             data: Recent OHLCV data
             current_price: Current market price
 
         Returns:
-            Dict with signal, strength, and reasoning
+            Dict with signal, strength, reasoning, and raw_drift_pct
         """
         # Get multi-horizon predictions
         predictions = self.predict_multi_horizon(data)
 
+        # Volatility-adaptive threshold (replaces hardcoded 1.0%).
+        # Uses pct-return stdev over last ~60 candles (15h of 15m bars).
+        vol_window = min(60, max(10, len(data) - 1))
+        try:
+            pct_returns = data['close'].pct_change().dropna().iloc[-vol_window:] * 100.0
+            recent_vol = float(pct_returns.std()) if len(pct_returns) > 1 else 1.0
+        except Exception:
+            recent_vol = 1.0
+        threshold_pct = max(0.30, 0.5 * max(recent_vol, 0.0))
+
         # Analyze predictions
         signals = []
         confidences = []
+        signed_returns = []  # for diagnostic raw-drift logging
 
         for horizon, pred in predictions.items():
             if 'error' in pred:
@@ -258,12 +287,14 @@ class EnsemblePredictor:
 
             # Calculate expected price change
             price_change_pct = ((predicted_price - current_price) / current_price) * 100
+            signed_returns.append(price_change_pct)
 
-            # Generate signal based on price change and confidence
-            if price_change_pct > 1.0 and confidence > 0.6 and agreement > 0.7:
+            # Generate signal based on price change and confidence.
+            # Symmetric threshold ensures BUY and SELL have identical bars.
+            if price_change_pct > threshold_pct and confidence > 0.6 and agreement > 0.7:
                 signals.append('BUY')
                 confidences.append(confidence * agreement)
-            elif price_change_pct < -1.0 and confidence > 0.6 and agreement > 0.7:
+            elif price_change_pct < -threshold_pct and confidence > 0.6 and agreement > 0.7:
                 signals.append('SELL')
                 confidences.append(confidence * agreement)
             else:
@@ -275,8 +306,16 @@ class EnsemblePredictor:
                 'signal': 'HOLD',
                 'strength': 0,
                 'reason': 'Insufficient prediction data',
-                'predictions': predictions
+                'predictions': predictions,
+                'threshold_pct': threshold_pct,
+                'raw_drift_pct': 0.0,
             }
+
+        # Raw ensemble drift — mean signed return across horizons. If this
+        # is systematically positive across many calls, the model is
+        # structurally bull-biased (training-data skew). Surface it in the
+        # response so the Node side / dashboard can monitor.
+        raw_drift_pct = float(np.mean(signed_returns)) if signed_returns else 0.0
 
         # Determine overall signal
         buy_count = signals.count('BUY')
@@ -295,10 +334,17 @@ class EnsemblePredictor:
         return {
             'signal': signal,
             'strength': float(strength),
-            'reason': f"{signal} signal from {max(buy_count, sell_count)}/{len(signals)} horizons",
+            'reason': f"{signal} signal from {max(buy_count, sell_count)}/{len(signals)} horizons (thr=±{threshold_pct:.2f}%)",
             'predictions': predictions,
             'current_price': current_price,
-            'timestamp': datetime.now().isoformat()
+            'timestamp': datetime.now().isoformat(),
+            'threshold_pct': threshold_pct,
+            'raw_drift_pct': raw_drift_pct,
+            'horizon_votes': {
+                'BUY': buy_count,
+                'SELL': sell_count,
+                'HOLD': signals.count('HOLD'),
+            },
         }
 
     def save_models(self, path: str):
