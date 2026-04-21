@@ -191,6 +191,7 @@ export function currentLeverage(
   s: BasinState,
   maxLeverageBoundary: number,
   mode: MonkeyMode = MonkeyMode.INVESTIGATION,
+  tapeTrend: number = 0,
 ): ExecutiveDecision<number> {
   const kappaDist = Math.abs(s.kappa - KAPPA_STAR);
   const kappaProxim = Math.exp(-kappaDist / 20);  // bell: 1 at κ*, decays with distance
@@ -202,6 +203,38 @@ export function currentLeverage(
   const modeFloor = MODE_PROFILES[mode].sovereignCapFloor;
   const sovereignCap = Math.max(modeFloor, 3 + 30 * s.sovereignty);
 
+  // ─── USER CONTRIBUTION POINT — flatness leverage boost (v0.6.7) ───
+  //
+  // The standard formula `regimeStability × kappaProxim × surpriseDiscount`
+  // COMPRESSES leverage on any non-equilibrium signal. Problem: the
+  // quantum dim (basin[0]) is computed from absolute ATR, so a genuinely
+  // calm market with small ATR still reads as "quantum" and pins
+  // regimeStability low, crushing leverage down (~14x observed). On a
+  // truly flat tape, leverage should go UP — small moves amplify into
+  // real wins without amplifying risk proportionally.
+  //
+  // `tapeTrend` is the signed log-return over 50 candles, squashed to
+  // [-1, +1]. Magnitude near 0 = genuinely calm market.
+  //
+  // Pick a flatness → leverage multiplier. Candidates:
+  //   flatness = Math.max(0, 1 - Math.abs(tapeTrend) * K)    ∈ [0, 1]
+  //   flatMult = 1 + BOOST * flatness                        ∈ [1, 1+BOOST]
+  // with K and BOOST the shape knobs. Examples:
+  //
+  //   K=3,  BOOST=0.3    conservative: up to +30% at dead flat, decays fast
+  //   K=5,  BOOST=0.5    moderate   : up to +50% at dead flat, decays at |t|>0.2
+  //   K=10, BOOST=0.8    aggressive : up to +80% at dead flat, decays at |t|>0.1
+  //
+  // User's pick (2026-04-21): aggressive. "On flat movement would allow
+  // for quicker ins and outs on higher leverage." Small moves at 25x
+  // margin-gain produce real wins on $20 account where 14x would
+  // barely clear fees.
+  const FLATNESS_K = 10;        // narrow "flat" band: boost only when |tape| < ~0.10
+  const FLATNESS_BOOST = 0.8;   // up to +80% leverage at dead-flat (33 → ~59 ceiling)
+  const flatness = Math.max(0, 1 - Math.abs(tapeTrend) * FLATNESS_K);
+  const flatMult = 1 + FLATNESS_BOOST * flatness;
+  // ────────────────────────────────────────────────────────────────────
+
   // Newborn mode (Pillar 1 exploration): until she has lived trades,
   // the regime × κ × surprise compression (≈ 0.43) crushes the cap so
   // hard that her first trade can't clear the exchange min notional on
@@ -212,7 +245,7 @@ export function currentLeverage(
   const newborn = s.sovereignty < 0.1;
   const rawLev = newborn
     ? sovereignCap * 0.8
-    : sovereignCap * kappaProxim * regimeStability * surpriseDiscount;
+    : sovereignCap * kappaProxim * regimeStability * surpriseDiscount * flatMult;
   const lev = Math.max(1, Math.min(maxLeverageBoundary, Math.round(rawLev)));
 
   return {
