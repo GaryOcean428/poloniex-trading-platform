@@ -26,6 +26,7 @@
 import { fisherRao, type Basin } from './basin.js';
 import type { ExecutiveDecision } from './executive.js';
 import type { NeurochemicalState } from './neurochemistry.js';
+import { basinDirection } from './perception.js';
 
 export enum MonkeyMode {
   EXPLORATION = 'exploration',
@@ -183,10 +184,23 @@ export function detectMode(inp: ModeInputs): ExecutiveDecision<MonkeyMode> {
   let mode: MonkeyMode;
   let reason: string;
 
-  if (fHealthNow > 0.97 && Math.abs(mot.curiosity) < 0.005 && inp.basinVelocity < 0.015) {
-    // DRIFT: diffuse basin + no curiosity + slow change = ambiguous state
+  // v0.6.5: basinDir gates DRIFT. With strong directional conviction
+  // from the momentum spectrum, she is NOT in an ambiguous state — even
+  // if fHealth is high (the noise-floor dims 39..54 structurally push
+  // fHealth > 0.97 as a baseline). DRIFT previously mis-fired 24% of
+  // ticks because of this, blocking all entries despite clear signals.
+  const basinDir = basinDirection(inp.basin);
+  const hasDirection = Math.abs(basinDir) > 0.30;
+
+  if (
+    fHealthNow > 0.97 &&
+    Math.abs(mot.curiosity) < 0.005 &&
+    inp.basinVelocity < 0.015 &&
+    !hasDirection
+  ) {
+    // DRIFT: diffuse basin + no curiosity + slow change + no direction
     mode = MonkeyMode.DRIFT;
-    reason = `fh=${fHealthNow.toFixed(3)} diffuse, curiosity=${mot.curiosity.toFixed(4)} flat, bv=${inp.basinVelocity.toFixed(3)}`;
+    reason = `fh=${fHealthNow.toFixed(3)} diffuse, curiosity=${mot.curiosity.toFixed(4)} flat, bv=${inp.basinVelocity.toFixed(3)}, basinDir=${basinDir.toFixed(2)} flat`;
   } else if (driftNow > 0.30 && mot.curiosity > 0.002) {
     // EXPLORATION: high drift + expanding perception volume
     mode = MonkeyMode.EXPLORATION;
