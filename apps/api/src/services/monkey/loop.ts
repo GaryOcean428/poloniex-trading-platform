@@ -465,9 +465,22 @@ export class MonkeyKernel extends EventEmitter {
     const lotSize = precisions?.lotSize ?? 0;
     const minNotional = lastPrice * Math.max(lotSize, 1e-9);
     const bankSize = await resonanceBank.bankSize();
-    // sizeFraction scales her share of the equity-based cap so parallel
-    // sub-kernels stay out of each other's way. (0.5 each = 1.0 combined.)
-    const cappedEquity = availableEquity * this.sizeFraction;
+    // sizeFraction scales her share of equity so parallel sub-kernels
+    // stay out of each other's way. (0.5 each = 1.0 combined.) On small
+    // accounts this would halve margin below exchange min notional for
+    // BOTH kernels — observed 2026-04-21: $19 × 0.5 × 0.09 × 12x = $10
+    // notional, below ETH's $23 min. So: effective sizeFraction bumps
+    // back to 1.0 when capped equity × explorationFloor × newborn-leverage
+    // can't reach min notional. On larger accounts this stays at the
+    // configured 0.5 and both kernels share cleanly; the risk-kernel 5×
+    // exposure cap still bounds combined concurrency.
+    const expFloorApprox = 0.10;               // modes.ts EXPLORATION/INVESTIGATION baseline
+    const maxNewbornLev = 20;                  // newborn sovereignCap floor
+    const minNeededForMinNotional = minNotional / (expFloorApprox * maxNewbornLev);
+    const effectiveSizeFraction = availableEquity * this.sizeFraction < minNeededForMinNotional
+      ? 1.0
+      : this.sizeFraction;
+    const cappedEquity = availableEquity * effectiveSizeFraction;
     const size = currentPositionSize(basinState, cappedEquity, minNotional, leverage.value, bankSize, mode);
     const autoFlatten = shouldAutoFlatten(basinState, state.fHealthHistory);
 
