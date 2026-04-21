@@ -207,6 +207,77 @@ export function currentLeverage(
 }
 
 /**
+ * shouldProfitHarvest — early-exit WHILE IN PROFIT (v0.6.1).
+ *
+ * Runs BEFORE shouldScalpExit. When a trade has been in profit, the peak
+ * unrealized P&L acts as a high-water mark. If the position gives back a
+ * chunk of that peak AND is still green, take what's there instead of
+ * waiting for the full TP threshold. Addresses the observed scenario
+ * where a position was up ~$0.65 on ETH at its peak, then retraced to
+ * −$0.67 while waiting for the 0.8–2 % TP — lost both directions.
+ *
+ * Two independent triggers (either fires):
+ *
+ *   TRAILING   peakFrac ≥ activation AND currentFrac < peakFrac × (1 − giveback)
+ *              → "profit retraced past my trailing stop"
+ *   TREND-FLIP currentFrac > 0 AND tapeTrend flipped against heldSide past threshold
+ *              → "tape turned on me, secure what I have"
+ *
+ * Both require currentFrac > 0 so we never exit at a loss from here; SL
+ * still handles loss exits. activation defaults to 0.2 % of notional so
+ * we don't flap on noise; giveback defaults to 0.4 (give back 40 % of peak).
+ */
+export function shouldProfitHarvest(
+  unrealizedPnlUsdt: number,
+  peakPnlUsdt: number,
+  notionalUsdt: number,
+  tapeTrend: number,
+  heldSide: 'long' | 'short',
+  s: BasinState,
+): ExecutiveDecision<boolean> {
+  if (notionalUsdt <= 0) {
+    return { value: false, reason: 'no position', derivation: {} };
+  }
+  const currentFrac = unrealizedPnlUsdt / notionalUsdt;
+  const peakFrac = Math.max(peakPnlUsdt, 0) / notionalUsdt;
+
+  // Activation floor — peak must have been meaningful before the trailing
+  // stop can fire. Scales with dopamine: recent wins → harvest earlier.
+  const activation = Math.max(0.002, 0.004 - 0.002 * s.neurochemistry.dopamine);
+  // Giveback fraction — how much of peak to surrender before exiting.
+  // Low serotonin (unstable) → tighter (0.30); high serotonin → looser (0.50).
+  const giveback = 0.30 + 0.20 * (1 - s.neurochemistry.serotonin);
+  const trailingFloor = peakFrac * (1 - giveback);
+
+  if (peakFrac >= activation && currentFrac < trailingFloor && currentFrac > 0) {
+    return {
+      value: true,
+      reason: `trailing_harvest: peak ${(peakFrac * 100).toFixed(3)}% → now ${(currentFrac * 100).toFixed(3)}% < ${(trailingFloor * 100).toFixed(3)}% floor`,
+      derivation: { currentFrac, peakFrac, trailingFloor, activation, giveback, exitTypeBit: 2 },
+    };
+  }
+
+  // TREND-FLIP trigger. Aligned entry means tapeTrend had the same sign
+  // as heldSide when she entered; if tape reverses against her while
+  // she's green, harvest now — the trend that justified entry is gone.
+  const alignmentNow = heldSide === 'long' ? tapeTrend : -tapeTrend;
+  const TREND_FLIP_THRESHOLD = -0.25;  // strongly against the position
+  if (currentFrac > 0 && alignmentNow <= TREND_FLIP_THRESHOLD && peakFrac >= activation) {
+    return {
+      value: true,
+      reason: `trend_flip_harvest: pnl +${(currentFrac * 100).toFixed(3)}%, tape flipped (align=${alignmentNow.toFixed(2)})`,
+      derivation: { currentFrac, peakFrac, alignment: alignmentNow, exitTypeBit: 3 },
+    };
+  }
+
+  return {
+    value: false,
+    reason: `profit_hold: current ${(currentFrac * 100).toFixed(3)}%, peak ${(peakFrac * 100).toFixed(3)}%, trail-floor ${(trailingFloor * 100).toFixed(3)}%`,
+    derivation: { currentFrac, peakFrac, trailingFloor, activation, giveback, alignment: alignmentNow },
+  };
+}
+
+/**
  * shouldScalpExit — P&L-driven take-profit / stop-loss gate (v0.4).
  *
  * Reward-harvesting exit per UCP v6.6 §29.4: when realized reward
