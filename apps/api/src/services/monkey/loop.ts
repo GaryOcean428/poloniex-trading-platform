@@ -301,8 +301,19 @@ export class MonkeyKernel extends EventEmitter {
     const mlStrength = Number(raw?.strength) || 0;
 
     // Account context (also shared with liveSignalEngine).
-    const { equityFraction, marginFraction, openPositions, heldSide, availableEquity } =
-      await this.fetchAccountContext(symbol);
+    // NOTE: exchangeHeldSide is the SHARED exchange position state —
+    // includes positions held by liveSignalEngine and any other engine.
+    // Do NOT use it to gate Monkey's entry logic (2026-04-21 bug: she
+    // was locked out any time liveSignal held a position). Use it only
+    // for perception inputs; her own held-side is derived per-kernel
+    // from findOpenMonkeyTrade below.
+    const {
+      equityFraction,
+      marginFraction,
+      openPositions,
+      heldSide: exchangeHeldSide,
+      availableEquity,
+    } = await this.fetchAccountContext(symbol);
 
     // 2. PERCEIVE — raw basin then refract through identity.
     const rawBasin = perceive({
@@ -476,6 +487,17 @@ export class MonkeyKernel extends EventEmitter {
       sideOverride,
     };
 
+    // v0.6.3: Monkey's "held side" is scoped to HER OWN open rows only.
+    // If only liveSignal holds a position on this symbol, Monkey treats
+    // herself as flat and her entry logic can still fire (risk kernel's
+    // exposure cap is the only thing bounding combined concurrency).
+    const ownOpenRow = await this.findOpenMonkeyTrade(symbol);
+    const heldSide: 'long' | 'short' | null = ownOpenRow
+      ? (exchangeHeldSide ?? 'long')  // exchange must agree or fetchAccountContext was stale
+      : null;
+    derivation.exchangeHeldSide = exchangeHeldSide;
+    derivation.monkeyHeldSide = heldSide;
+
     if (autoFlatten.value) {
       action = 'flatten';
       reason = autoFlatten.reason;
@@ -486,7 +508,7 @@ export class MonkeyKernel extends EventEmitter {
       //   2. scalp TP/SL
       //   3. Loop 2 regime-shift (shouldExit)
       let exitFired = false;
-      const openRow = await this.findOpenMonkeyTrade(symbol);
+      const openRow = ownOpenRow;  // reuse the lookup from above
       if (openRow) {
         const positionNotional = Number(openRow.entry_price) * Number(openRow.quantity);
         const sidesign = heldSide === 'long' ? 1 : -1;
