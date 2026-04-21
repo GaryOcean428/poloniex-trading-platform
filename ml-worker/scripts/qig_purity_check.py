@@ -63,11 +63,31 @@ ALLOWLIST_PATH_PREFIXES = {
     "ml-worker/tests/",
 }
 
-# ML-prediction layer — NOT QIG cognition. TF.keras models in
-# ml-worker/src/models/ use Adam + LayerNormalization by design for
-# ensemble price prediction; they do NOT ingest or produce Δ⁶³ basin
-# coordinates. Fisher-Rao purity doesn't apply to them.
-# (Audit 2026-04-21 — see QIG_MIGRATION.md for the rationale.)
+# ── Purity scope rationale (audit 2026-04-21 P5) ─────────────────
+#
+# Purity rules apply to QIG COGNITION (modules that ingest, transform,
+# or emit Δ⁶³ basin coordinates). Two categories of code are legitimately
+# out of scope:
+#
+#   1. ML-prediction layer (ml-worker/src/models/) — TF.keras ensemble
+#      price predictors. They use Adam / LayerNormalization / MSE by
+#      design because they model RETURNS, not consciousness. Their
+#      outputs are scalars (BUY/SELL/HOLD + strength) consumed by the
+#      perception layer AT THE BOUNDARY; they never touch basin coords.
+#      Allowlisted below by path prefix so forbidden tokens in their
+#      source don't false-flag the QIG scan.
+#
+#   2. observable_governance.py — operates on scalar ensemble outputs
+#      (amplitudes, regime labels) to detect model bias, NOT on basin
+#      geometry. Excluded by default scan root selection in main() below
+#      (we only scan monkey_kernel/ + qig_core_local/ + qig_engine.py).
+#      If its scope ever expands to basin coordinates, move it under
+#      monkey_kernel/ so it enters the purity scan automatically.
+#
+# Adding a new non-QIG module? Either give it a path under one of these
+# prefixes or leave it outside monkey_kernel/. Do not add a blanket
+# allowlist entry for files that would otherwise fail the scan.
+# ──────────────────────────────────────────────────────────────────
 ML_PREDICTION_LAYER_PREFIXES = {
     "ml-worker/src/models/",
     "src/models/",  # when purity-check is run from inside ml-worker/

@@ -118,10 +118,13 @@ def _vol_ratio(ohlcv: Sequence[OHLCVCandle], n: int) -> float:
 # ═══════════════════════════════════════════════════════════════
 
 
-def perceive(inputs: PerceptionInputs, *, rng: np.random.Generator | None = None) -> np.ndarray:
+def perceive(inputs: PerceptionInputs) -> np.ndarray:
     """Raw perception → 64-D basin on Δ⁶³. Caller should refract against
-    identity basin afterwards (slerp at 30 % max per Pillar 2)."""
-    rng = rng or np.random.default_rng()
+    identity basin afterwards (slerp at 30 % max per Pillar 2).
+
+    v0.8.0: perception is deterministic given inputs — no PRNG parameter.
+    Noise floor (dims 39..54) is a fixed constant for cross-language parity.
+    """
     v = np.zeros(BASIN_DIM, dtype=np.float64)
     ohlcv = inputs.ohlcv
     last_close = float(ohlcv[-1].close) if len(ohlcv) > 0 else 1.0
@@ -170,9 +173,12 @@ def perceive(inputs: PerceptionInputs, *, rng: np.random.Generator | None = None
         rng_span = hi - lo
         v[31 + i] = _clip01((last_close - lo) / rng_span) if rng_span > 0 else 0.5
 
-    # dims 39..54 — Pillar 1 noise floor (prevents zombie collapse)
-    noise = rng.uniform(0.005, 0.006, size=16)
-    v[39:55] = noise
+    # dims 39..54 — Pillar 1 noise floor (prevents zombie collapse).
+    # Fixed constant (v0.8.0): deterministic cross-language parity with TS side.
+    # A non-zero floor is the Pillar 1 requirement; the per-tick variance was
+    # decorative. to_simplex normalises so adding 16 identical small values
+    # still contributes uniform mass to keep the basin off the boundary.
+    v[39:55] = 0.0055
 
     # dims 55..63 — Account/coupling
     v[55] = _clip01(inputs.equity_fraction)
