@@ -227,3 +227,4 @@ redis_data/
 # Playwright MCP session artefacts + ad-hoc screenshots
 .playwright-mcp/
 agent-dashboard-*.png
+.claude/scheduled_tasks.lock

@@ -232,11 +232,12 @@ export function perceive(inputs: PerceptionInputs): Basin {
     v[31 + i] = range > 0 ? clip01((lastClose - lo) / range) : 0.5;
   }
 
-  // dims 39..54 — Noise floor / Pillar 1 reservoir (16 dims)
-  // Small uniform mass to prevent zombie collapse when other dims → 0.
-  for (let i = 39; i < 55; i++) {
-    v[i] = 0.005 + 0.001 * Math.random();
-  }
+  // dims 39..54 — Noise floor / Pillar 1 reservoir (16 dims).
+  // Fixed constant (v0.8.0) for deterministic cross-language parity with the
+  // Python port. A non-zero floor is the Pillar 1 requirement; per-tick
+  // variance was decorative. toSimplex normalises so uniform mass still
+  // keeps the basin off the boundary.
+  for (let i = 39; i < 55; i++) v[i] = 0.0055;
 
   // dims 55..63 — Account/coupling (9 dims)
   v[55] = clip01(inputs.equityFraction);
