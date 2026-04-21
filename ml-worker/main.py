@@ -299,11 +299,15 @@ from monkey_kernel import (  # noqa: E402
     ExecBasinState,
     MonkeyMode,
     NeurochemicalState,
+    OHLCVCandle,
+    PerceptionInputs,
     basin_direction,
     current_entry_threshold,
     current_leverage,
     current_position_size,
     detect_mode,
+    perceive,
+    refract,
     should_dca_add,
     should_exit,
     should_profit_harvest,
@@ -565,6 +569,48 @@ async def monkey_mode_detect(request: Request):
         fhealth_history=list(map(float, payload.get("fhealth_history", []))),
         drift_history=list(map(float, payload.get("drift_history", []))),
     )
+
+
+@app.post("/monkey/perception/perceive")
+async def monkey_perception_perceive(request: Request):
+    """Construct Δ⁶³ basin from OHLCV + ML posture + account context.
+    Then refract against identity basin (Pillar 2 surface absorption).
+    Returns both the raw and refracted basins so the caller can store.
+    """
+    payload = await request.json()
+    candles = [
+        OHLCVCandle(
+            timestamp=float(c.get("timestamp", 0)),
+            open=float(c["open"]),
+            high=float(c["high"]),
+            low=float(c["low"]),
+            close=float(c["close"]),
+            volume=float(c["volume"]),
+        )
+        for c in payload["ohlcv"]
+    ]
+    inputs = PerceptionInputs(
+        ohlcv=candles,
+        ml_signal=str(payload.get("ml_signal", "HOLD")),
+        ml_strength=float(payload.get("ml_strength", 0.0)),
+        ml_effective_strength=float(payload.get("ml_effective_strength", 0.0)),
+        equity_fraction=float(payload.get("equity_fraction", 0.0)),
+        margin_fraction=float(payload.get("margin_fraction", 0.0)),
+        open_positions=int(payload.get("open_positions", 0)),
+        session_age_ticks=int(payload.get("session_age_ticks", 0)),
+    )
+    raw = perceive(inputs)
+    identity_list = payload.get("identity_basin")
+    if identity_list is not None:
+        identity = np.asarray(identity_list, dtype=np.float64)
+        external_weight = float(payload.get("external_weight", 0.30))
+        refracted = refract(raw, identity, external_weight=external_weight)
+    else:
+        refracted = raw
+    return {
+        "raw": raw.tolist(),
+        "refracted": refracted.tolist(),
+    }
 
 
 # ---------------------------------------------------------------------------
