@@ -50,7 +50,7 @@ import {
   type BanditCounter,
   type LeverageBucket,
 } from './thompsonBandit.js';
-import { monkeyKernel } from './monkey/loop.js';
+import { allMonkeyKernels } from './monkey/loop.js';
 import {
   evaluatePreTradeVetoes,
   type KernelAccountState,
@@ -431,13 +431,17 @@ export class LiveSignalEngine extends EventEmitter {
           if (entryTime && !Number.isNaN(entryTime.getTime())) {
             const sideStr = String(row.side ?? '').toLowerCase();
             const side: 'long' | 'short' = sideStr === 'sell' || sideStr === 'short' ? 'short' : 'long';
-            void monkeyKernel.witnessExit(
-              String(row.symbol),
-              entryTime,
-              pnl,
-              row.order_id ? String(row.order_id) : null,
-              side,
-            );
+            // Fan-out: every sub-Monkey kernel receives the witness so
+            // each of their banks bootstraps from liveSignal outcomes.
+            for (const k of allMonkeyKernels) {
+              void k.witnessExit(
+                String(row.symbol),
+                entryTime,
+                pnl,
+                row.order_id ? String(row.order_id) : null,
+                side,
+              );
+            }
           }
         }
 

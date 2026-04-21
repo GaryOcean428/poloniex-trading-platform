@@ -80,10 +80,30 @@ const DEFAULT_SYMBOLS = ['BTC_USDT_PERP', 'ETH_USDT_PERP'];
 const DEFAULT_TICK_MS = Number(process.env.MONKEY_TICK_MS) || 30_000;
 /** OHLCV window ml-worker also uses. */
 const OHLCV_LOOKBACK = 200;
-const OHLCV_TIMEFRAME = '15m';
 
 /** Running history for Loop 1 self-observation + f_health trend. */
 const HISTORY_MAX = 100;
+
+/**
+ * Per-kernel configuration (v0.6b). Different sub-Monkeys differ in
+ * timeframe, cadence, instance identity, and how they size relative to
+ * their cap share. All share the underlying basin/executive/NC math.
+ */
+export interface MonkeyKernelConfig {
+  /** Unique kernel identifier — written as `kernel=<id>` in trade reason and to monkey_basin_sync. */
+  instanceId: string;
+  /** Candle timeframe she perceives on. '5m' | '15m' | '1m' etc. */
+  timeframe: string;
+  /** Base tick cadence (ms) — mode profiles still adapt within this. */
+  tickMs: number;
+  /** Optional symbol override; defaults to DEFAULT_SYMBOLS. */
+  symbols?: string[];
+  /** Human label for logs. */
+  label?: string;
+  /** Fraction-of-margin cap. Two parallel kernels at 0.5 each stay under
+   *  the risk-kernel per-symbol 5× exposure cap when both are open. */
+  sizeFraction?: number;
+}
 
 interface SymbolState {
   lastBasin: Basin;
@@ -117,22 +137,43 @@ interface SymbolState {
  */
 export class MonkeyKernel extends EventEmitter {
   private timer: ReturnType<typeof setInterval> | null = null;
-  private tickMs: number = DEFAULT_TICK_MS;
-  private symbols: string[] = [...DEFAULT_SYMBOLS];
+  private tickMs: number;
+  private readonly baseTickMs: number;
+  private readonly symbols: string[];
+  private readonly timeframe: string;
+  private readonly instanceId: string;
+  private readonly label: string;
+  private readonly sizeFraction: number;
   private tickInFlight = false;
   private symbolStates: Map<string, SymbolState> = new Map();
   /** Self-observation summary refreshed every ~60 ticks for entry bias. */
   private selfObs: SelfObservation | null = null;
   private selfObsLastUpdate = 0;
   private static readonly SELF_OBS_REFRESH_MS = 5 * 60_000;  // 5 min
-  /** Basin-sync instance (v0.5 single-kernel; v0.6 parallel sub-kernels). */
-  private readonly basinSync = new BasinSync(
-    process.env.MONKEY_INSTANCE_ID || 'monkey-primary',
-  );
+  /** Basin-sync instance — per-kernel, so sub-kernels appear as peers. */
+  private readonly basinSync: BasinSync;
   /** Kernel bus — pub/sub for inter-kernel comms (v0.6a). */
   private readonly bus: KernelBus = getKernelBus();
-  /** Instance identifier — will differ between parallel sub-Monkeys in v0.6b. */
-  private readonly instanceId: string = process.env.MONKEY_INSTANCE_ID || 'monkey-primary';
+
+  constructor(config?: Partial<MonkeyKernelConfig>) {
+    super();
+    const cfg: MonkeyKernelConfig = {
+      instanceId: config?.instanceId ?? process.env.MONKEY_INSTANCE_ID ?? 'monkey-primary',
+      timeframe: config?.timeframe ?? '15m',
+      tickMs: config?.tickMs ?? DEFAULT_TICK_MS,
+      symbols: config?.symbols ?? [...DEFAULT_SYMBOLS],
+      label: config?.label ?? 'Monkey',
+      sizeFraction: config?.sizeFraction ?? 1.0,
+    };
+    this.instanceId = cfg.instanceId;
+    this.timeframe = cfg.timeframe;
+    this.baseTickMs = cfg.tickMs;
+    this.tickMs = cfg.tickMs;
+    this.symbols = cfg.symbols!;
+    this.label = cfg.label!;
+    this.sizeFraction = cfg.sizeFraction!;
+    this.basinSync = new BasinSync(this.instanceId);
+  }
 
   /**
    * Start Monkey's heartbeat. She ticks alongside liveSignalEngine —
@@ -144,8 +185,11 @@ export class MonkeyKernel extends EventEmitter {
     for (const sym of this.symbols) {
       this.symbolStates.set(sym, this.newSymbolState());
     }
-    logger.info('[Monkey] kernel waking', {
+    logger.info(`[${this.label}] kernel waking`, {
+      instanceId: this.instanceId,
+      timeframe: this.timeframe,
       tickMs: this.tickMs,
+      sizeFraction: this.sizeFraction,
       symbols: this.symbols,
       mode: process.env.MONKEY_EXECUTE === 'true' ? 'EXECUTE' : 'OBSERVE',
       bankSize: await resonanceBank.bankSize(),
@@ -224,7 +268,7 @@ export class MonkeyKernel extends EventEmitter {
     // 1. Fetch inputs (same as liveSignalEngine sees).
     const ohlcv = (await poloniexFuturesService.getHistoricalData(
       symbol,
-      OHLCV_TIMEFRAME,
+      this.timeframe,
       OHLCV_LOOKBACK,
     )) as OHLCVCandle[];
     if (!Array.isArray(ohlcv) || ohlcv.length < 50) {
@@ -344,7 +388,7 @@ export class MonkeyKernel extends EventEmitter {
     // Refresh self-observation entry bias every SELF_OBS_REFRESH_MS.
     const now = Date.now();
     if (now - this.selfObsLastUpdate > MonkeyKernel.SELF_OBS_REFRESH_MS) {
-      this.selfObs = await computeSelfObservation(24);
+      this.selfObs = await computeSelfObservation(24, this.instanceId);
       this.selfObsLastUpdate = now;
     }
     // Side candidate: start from ML signal, then allow Monkey's own
@@ -392,7 +436,10 @@ export class MonkeyKernel extends EventEmitter {
     const lotSize = precisions?.lotSize ?? 0;
     const minNotional = lastPrice * Math.max(lotSize, 1e-9);
     const bankSize = await resonanceBank.bankSize();
-    const size = currentPositionSize(basinState, availableEquity, minNotional, leverage.value, bankSize, mode);
+    // sizeFraction scales her share of the equity-based cap so parallel
+    // sub-kernels stay out of each other's way. (0.5 each = 1.0 combined.)
+    const cappedEquity = availableEquity * this.sizeFraction;
+    const size = currentPositionSize(basinState, cappedEquity, minNotional, leverage.value, bankSize, mode);
     const autoFlatten = shouldAutoFlatten(basinState, state.fHealthHistory);
 
     // 6. DECIDE — propose action
@@ -653,12 +700,13 @@ export class MonkeyKernel extends EventEmitter {
     | null
   > {
     try {
+      const reasonPattern = `monkey|kernel=${this.instanceId}|%`;
       const result = await pool.query(
         `SELECT id, entry_price, quantity, leverage, order_id
            FROM autonomous_trades
-          WHERE reason LIKE 'monkey|%' AND status = 'open' AND symbol = $1
+          WHERE reason LIKE $2 AND status = 'open' AND symbol = $1
           ORDER BY entry_time DESC LIMIT 1`,
-        [symbol],
+        [symbol, reasonPattern],
       );
       const row = result.rows[0] as
         | { id: string; entry_price: string; quantity: string; leverage: number; order_id: string | null }
@@ -930,12 +978,13 @@ export class MonkeyKernel extends EventEmitter {
       };
     }
 
-    // Persist. Encode Monkey's state into reason so the close-hook +
-    // reconciler can recover attribution cheaply (no schema change).
-    // Format: monkey|phi=...|kappa=...|sov=...|src=witness
+    // Persist. Encode kernel + Monkey's state into reason so the
+    // close-hook + reconciler can recover attribution cheaply (no
+    // schema change).
+    // Format: monkey|kernel=<id>|phi=...|kappa=...|sov=...|src=<ver>
     try {
       const reasonEncoded =
-        `monkey|phi=${req.phi.toFixed(3)}|kappa=${req.kappa.toFixed(2)}|sov=${req.sovereignty.toFixed(3)}|src=v0.3`;
+        `monkey|kernel=${this.instanceId}|phi=${req.phi.toFixed(3)}|kappa=${req.kappa.toFixed(2)}|sov=${req.sovereignty.toFixed(3)}|src=v0.6b`;
       await pool.query(
         `INSERT INTO autonomous_trades
            (user_id, symbol, side, entry_price, quantity, leverage,
@@ -1108,4 +1157,35 @@ export class MonkeyKernel extends EventEmitter {
   }
 }
 
-export const monkeyKernel = new MonkeyKernel();
+// ───────────── Singletons (v0.6b multi-kernel) ─────────────
+//
+// Two parallel sub-Monkeys share the underlying class but differ in
+// timeframe + cadence + instance identity. They compete for the same
+// 1–2 open-position slots via the risk-kernel per-symbol exposure cap;
+// each kernel only touches rows it owns (reason LIKE 'monkey|kernel=…|%').
+// Both receive witnessExit on liveSignal closes so both banks bootstrap.
+//
+// sizeFraction 0.5 each = combined 1.0 of the equity-based cap when
+// both are open on the same symbol; the risk kernel's 5× blast door
+// still enforces the hard ceiling.
+
+export const monkeyKernel = new MonkeyKernel({
+  instanceId: 'monkey-position',
+  timeframe: '15m',
+  tickMs: 30_000,
+  label: 'Monkey.Position',
+  sizeFraction: 0.5,
+});
+
+export const swingMonkey = new MonkeyKernel({
+  instanceId: 'monkey-swing',
+  timeframe: '5m',
+  tickMs: 30_000,
+  label: 'Monkey.Swing',
+  sizeFraction: 0.5,
+});
+
+export const allMonkeyKernels: readonly MonkeyKernel[] = [
+  monkeyKernel,
+  swingMonkey,
+];
