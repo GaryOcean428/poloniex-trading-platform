@@ -571,6 +571,20 @@ async def monkey_mode_detect(request: Request):
     )
 
 
+@app.get("/governance/status")
+async def governance_status():
+    """Observable-governance telemetry — signal distribution, drift
+    stats, and any detector violations (AMPLITUDE_COLLAPSE,
+    REGIME_SINGLE, etc.). Per audit P2 2026-04-21. Call from
+    dashboard / alerts to monitor for ensemble bias.
+    """
+    try:
+        from observable_governance import report_as_dict
+        return report_as_dict()
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc), "available": False}
+
+
 @app.post("/monkey/perception/perceive")
 async def monkey_perception_perceive(request: Request):
     """Construct Δ⁶³ basin from OHLCV + ML posture + account context.
