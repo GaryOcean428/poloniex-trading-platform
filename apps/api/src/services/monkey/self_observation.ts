@@ -183,10 +183,18 @@ function computeEntryBias(
  */
 export async function computeSelfObservation(
   lookbackHours: number = 24,
+  instanceId?: string,
 ): Promise<SelfObservation> {
   const byModeSide = buildEmptyByModeSide();
 
   try {
+    // Scope to a specific kernel instance when provided (v0.6b multi-
+    // kernel). Pattern 'monkey|kernel=<id>|%' matches that kernel's own
+    // rows only; fallback 'monkey|%' gives all-Monkey aggregate for a
+    // callers passing no instanceId.
+    const reasonPattern = instanceId
+      ? `monkey|kernel=${instanceId}|%`
+      : 'monkey|%';
     const result = await pool.query(
       `SELECT at.pnl::float AS pnl,
               at.side        AS side,
@@ -194,12 +202,12 @@ export async function computeSelfObservation(
               md.derivation->'mode'->>'value' AS mode
          FROM autonomous_trades at
          JOIN monkey_decisions md ON md.reason = at.reason
-        WHERE at.reason LIKE 'monkey|%'
+        WHERE at.reason LIKE $2
           AND at.status = 'closed'
           AND at.exit_time > NOW() - ($1::int * INTERVAL '1 hour')
           AND md.proposed_action IN ('enter_long', 'enter_short')
           AND md.executed = true`,
-      [lookbackHours],
+      [lookbackHours, reasonPattern],
     );
     const rows = (result.rows as Array<Record<string, unknown>>) ?? [];
     for (const row of rows) {

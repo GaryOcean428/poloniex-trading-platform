@@ -37,7 +37,7 @@ import { refreshKnownDatabaseCollationVersions } from './scripts/refreshCollatio
 import { runAllMigrations } from './scripts/runMigrations.js';
 import { agentScheduler } from './services/agentScheduler.js';
 import { liveSignalEngine } from './services/liveSignalEngine.js';
-import { monkeyKernel } from './services/monkey/loop.js';
+import { monkeyKernel, swingMonkey } from './services/monkey/loop.js';
 import paperTradingService from './services/paperTradingService.js';
 import { persistentTradingEngine } from './services/persistentTradingEngine.js';
 import { startPipelineHealthProbe } from './services/pipelineHealthProbe.js';
@@ -452,13 +452,14 @@ server.listen(PORT, '::', async () => {
       logger.error('Failed to start live signal engine:', err);
     });
 
-    // Monkey kernel — observe-only in v0.1. Runs alongside
-    // liveSignalEngine on the same cadence, logs every tick's
-    // emergent decisions to monkey_decisions. Promotable when her
-    // proposals land in the sane-territory. See
-    // docs/superpowers/specs/... when that spec lands.
+    // Monkey v0.6b — two parallel sub-kernels sharing the bank + bus:
+    //   Position (15 m, slow, patient) and Swing (5 m, tactical).
+    // They share the 5× exposure cap via sizeFraction=0.5 each.
     monkeyKernel.start().catch((err) => {
-      logger.error('Failed to start Monkey kernel:', err);
+      logger.error('Failed to start Monkey.Position kernel:', err);
+    });
+    swingMonkey.start().catch((err) => {
+      logger.error('Failed to start Monkey.Swing kernel:', err);
     });
   }
 
