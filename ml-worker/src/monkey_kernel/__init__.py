@@ -33,6 +33,18 @@ from .autonomic import (
     SleepCycleManager,
     SleepPhase,
 )
+from .executive import (
+    ExecBasinState,
+    current_entry_threshold,
+    current_leverage,
+    current_position_size,
+    should_dca_add,
+    should_exit,
+    should_profit_harvest,
+    should_scalp_exit,
+)
+from .modes import MODE_PROFILES, ModeProfile, MonkeyMode, detect_mode
+from .perception_scalars import basin_direction, trend_proxy
 from .state import BasinState, NeurochemicalState
 
 __all__ = [
@@ -41,7 +53,21 @@ __all__ = [
     "AutonomicTickInputs",
     "AutonomicTickResult",
     "BasinState",
+    "ExecBasinState",
+    "MODE_PROFILES",
+    "ModeProfile",
+    "MonkeyMode",
     "NeurochemicalState",
     "SleepCycleManager",
     "SleepPhase",
+    "basin_direction",
+    "current_entry_threshold",
+    "current_leverage",
+    "current_position_size",
+    "detect_mode",
+    "should_dca_add",
+    "should_exit",
+    "should_profit_harvest",
+    "should_scalp_exit",
+    "trend_proxy",
 ]

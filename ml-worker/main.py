@@ -296,7 +296,21 @@ async def ml_predict(request: Request):
 from monkey_kernel import (  # noqa: E402
     AutonomicKernel,
     AutonomicTickInputs,
+    ExecBasinState,
+    MonkeyMode,
+    NeurochemicalState,
+    basin_direction,
+    current_entry_threshold,
+    current_leverage,
+    current_position_size,
+    detect_mode,
+    should_dca_add,
+    should_exit,
+    should_profit_harvest,
+    should_scalp_exit,
+    trend_proxy,
 )
+import numpy as np  # noqa: E402
 
 _autonomic_instances: dict[str, AutonomicKernel] = {}
 
@@ -385,6 +399,172 @@ async def monkey_autonomic_snapshot(instance_id: str):
     """Telemetry snapshot — sleep phase, pending reward count, decayed sums."""
     kernel = _get_autonomic(instance_id)
     return kernel.snapshot()
+
+
+# ── Executive decisions + mode detection ──────────────────────────
+
+
+def _deserialize_basin_state(payload: dict) -> ExecBasinState:
+    nc_payload = payload["neurochemistry"]
+    nc = NeurochemicalState(
+        acetylcholine=float(nc_payload["acetylcholine"]),
+        dopamine=float(nc_payload["dopamine"]),
+        serotonin=float(nc_payload["serotonin"]),
+        norepinephrine=float(nc_payload["norepinephrine"]),
+        gaba=float(nc_payload["gaba"]),
+        endorphins=float(nc_payload["endorphins"]),
+    )
+    return ExecBasinState(
+        basin=np.asarray(payload["basin"], dtype=np.float64),
+        identity_basin=np.asarray(payload["identity_basin"], dtype=np.float64),
+        phi=float(payload["phi"]),
+        kappa=float(payload["kappa"]),
+        regime_weights={k: float(v) for k, v in payload["regime_weights"].items()},
+        sovereignty=float(payload["sovereignty"]),
+        basin_velocity=float(payload["basin_velocity"]),
+        neurochemistry=nc,
+    )
+
+
+@app.post("/monkey/executive/decide")
+async def monkey_executive_decide(request: Request):
+    """Aggregate executive pass.
+
+    Request body includes: basin_state (see _deserialize_basin_state),
+    ohlcv closes array, ml_signal/ml_strength, held_side/own_position,
+    available_equity, min_notional, max_leverage, bank_size,
+    self_obs_bias, mode (optional), symbol.
+
+    Response: entry threshold + size + leverage + harvest/scalp/DCA
+    decisions for this tick. TS orchestrator composes into action.
+    """
+    payload = await request.json()
+    state = _deserialize_basin_state(payload["basin_state"])
+    closes = payload.get("closes", [])
+    ml_signal = str(payload.get("ml_signal", "HOLD")).upper()
+    ml_strength = float(payload.get("ml_strength", 0.0))
+    held_side = payload.get("held_side")  # 'long' | 'short' | None
+    available_equity = float(payload["available_equity"])
+    min_notional = float(payload["min_notional"])
+    max_leverage = float(payload["max_leverage"])
+    bank_size = int(payload.get("bank_size", 0))
+    self_obs_bias = float(payload.get("self_obs_bias", 1.0))
+
+    mode_str = payload.get("mode")
+    mode = MonkeyMode(mode_str) if mode_str else MonkeyMode.INVESTIGATION
+    tape = trend_proxy(closes) if closes else 0.0
+    bd = basin_direction(state.basin)
+
+    # Direction candidate: ml default, with basin-override quorum.
+    ml_side = "short" if ml_signal == "SELL" else "long"
+    side_candidate = ml_side
+    side_override = False
+    OVERRIDE_THRESHOLD = 0.35
+    if bd < -OVERRIDE_THRESHOLD and tape < -OVERRIDE_THRESHOLD and ml_side == "long":
+        side_candidate = "short"
+        side_override = True
+    elif bd > OVERRIDE_THRESHOLD and tape > OVERRIDE_THRESHOLD and ml_side == "short":
+        side_candidate = "long"
+        side_override = True
+
+    entry = current_entry_threshold(
+        state,
+        mode=mode,
+        self_obs_bias=self_obs_bias,
+        tape_trend=tape,
+        side_candidate=side_candidate,  # type: ignore[arg-type]
+    )
+    leverage = current_leverage(
+        state, max_leverage_boundary=max_leverage, mode=mode, tape_trend=tape,
+    )
+    size = current_position_size(
+        state,
+        available_equity_usdt=available_equity,
+        min_notional_usdt=min_notional,
+        leverage=leverage["value"],
+        bank_size=bank_size,
+        mode=mode,
+    )
+
+    # Optional exit evaluations when already holding
+    harvest = None
+    scalp = None
+    dca = None
+    loop2 = None
+    if held_side and payload.get("own_position"):
+        pos = payload["own_position"]
+        position_notional = float(pos["entry_price"]) * float(pos["quantity"])
+        sign = 1 if held_side == "long" else -1
+        last_price = float(payload.get("last_price", pos["entry_price"]))
+        unrealized = (last_price - float(pos["entry_price"])) * float(pos["quantity"]) * sign
+        peak = float(pos.get("peak_pnl_usdt", unrealized))
+
+        harvest = should_profit_harvest(
+            unrealized_pnl_usdt=unrealized,
+            peak_pnl_usdt=peak,
+            notional_usdt=position_notional,
+            tape_trend=tape,
+            held_side=held_side,
+            s=state,
+        )
+        scalp = should_scalp_exit(
+            unrealized_pnl_usdt=unrealized,
+            notional_usdt=position_notional,
+            s=state,
+            mode=mode,
+        )
+        loop2 = should_exit(
+            perception=state.basin,
+            strategy_forecast=state.identity_basin,
+            held_side=held_side,
+            s=state,
+        )
+        import time as _time
+        dca = should_dca_add(
+            held_side=held_side,
+            side_candidate=side_candidate,  # type: ignore[arg-type]
+            current_price=last_price,
+            initial_entry_price=float(pos["entry_price"]),
+            add_count=int(pos.get("dca_add_count", 0)),
+            last_add_at_ms=float(pos.get("last_entry_at_ms", 0)),
+            now_ms=float(payload.get("now_ms", _time.time() * 1000.0)),
+            sovereignty=state.sovereignty,
+        )
+
+    return {
+        "entry_threshold": entry,
+        "leverage": leverage,
+        "size": size,
+        "harvest": harvest,
+        "scalp": scalp,
+        "dca": dca,
+        "loop2": loop2,
+        "mode": mode.value,
+        "tape_trend": tape,
+        "basin_direction": bd,
+        "side_candidate": side_candidate,
+        "side_override": side_override,
+        "ml_side": ml_side,
+        "ml_strength_gate_clear": ml_strength >= entry["value"],
+    }
+
+
+@app.post("/monkey/mode/detect")
+async def monkey_mode_detect(request: Request):
+    """Classify cognitive mode from basin + histories."""
+    payload = await request.json()
+    state = _deserialize_basin_state(payload["basin_state"])
+    return detect_mode(
+        basin=state.basin,
+        identity_basin=state.identity_basin,
+        phi=state.phi,
+        kappa=state.kappa,
+        basin_velocity=state.basin_velocity,
+        neurochemistry=state.neurochemistry,
+        phi_history=list(map(float, payload.get("phi_history", []))),
+        fhealth_history=list(map(float, payload.get("fhealth_history", []))),
+        drift_history=list(map(float, payload.get("drift_history", []))),
+    )
 
 
 # ---------------------------------------------------------------------------
