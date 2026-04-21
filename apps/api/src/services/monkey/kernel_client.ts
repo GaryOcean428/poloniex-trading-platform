@@ -153,6 +153,170 @@ export async function callModeDetect(
   }
 }
 
+// ── Tick run — full pipeline shadow (v0.8.3b) ──
+
+export function isShadowTickEnabled(): boolean {
+  return process.env.MONKEY_TICK_PY_SHADOW === 'true';
+}
+
+/** OHLCV candle as the Python endpoint expects. */
+export interface TickRunOHLCV {
+  timestamp: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+/** Account context slice sent to /monkey/tick/run. */
+export interface TickRunAccount {
+  equity_fraction: number;
+  margin_fraction: number;
+  open_positions: number;
+  available_equity: number;
+  exchange_held_side?: string | null;
+  own_position_entry_price?: number | null;
+  own_position_quantity?: number | null;
+  own_position_trade_id?: string | null;
+}
+
+/** Inputs for one tick, matching Python TickInputs. */
+export interface TickRunInputs {
+  symbol: string;
+  ohlcv: TickRunOHLCV[];
+  ml_signal: string;
+  ml_strength: number;
+  account: TickRunAccount;
+  bank_size: number;
+  sovereignty: number;
+  max_leverage: number;
+  min_notional: number;
+  size_fraction: number;
+  self_obs_bias?: Record<string, Record<string, number>> | null;
+}
+
+/** Serialized Python SymbolState — carried across ticks. */
+export interface TickRunSymbolState {
+  symbol: string;
+  identity_basin: number[];
+  last_basin: number[] | null;
+  kappa: number;
+  session_ticks: number;
+  last_mode: string | null;
+  basin_history: number[][];
+  phi_history: number[];
+  fhealth_history: number[];
+  drift_history: number[];
+  dca_add_count: number;
+  last_entry_at_ms: number | null;
+  peak_pnl_usdt: number | null;
+  peak_tracked_trade_id: string | null;
+}
+
+export interface TickRunRequest {
+  instance_id: string;
+  inputs: TickRunInputs;
+  prev_state: TickRunSymbolState | null;
+}
+
+export interface TickRunDecision {
+  action: string;
+  reason: string;
+  mode: string;
+  size_usdt: number;
+  leverage: number;
+  entry_threshold: number;
+  phi: number;
+  kappa: number;
+  basin_velocity: number;
+  f_health: number;
+  drift_from_identity: number;
+  basin_direction: number;
+  tape_trend: number;
+  side_candidate: string;
+  side_override: boolean;
+  neurochemistry: Record<string, number>;
+  derivation: Record<string, unknown>;
+  basin: number[];
+  is_dca_add: boolean;
+  is_reverse: boolean;
+}
+
+export interface TickRunResponse {
+  decision: TickRunDecision;
+  new_state: TickRunSymbolState;
+}
+
+export async function callTickRun(
+  req: TickRunRequest,
+): Promise<TickRunResponse> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${ML_WORKER_URL}/monkey/tick/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      throw new Error(`tick/run ${res.status} ${await res.text()}`);
+    }
+    return (await res.json()) as TickRunResponse;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Log parity diffs between TS and Python full-pipeline tick decisions.
+ * Called from shadow path — fire-and-forget, non-blocking.
+ */
+export function logTickParityDiffs(
+  symbol: string,
+  tsDecision: {
+    action: string;
+    entry_threshold: number;
+    leverage: number;
+    size_usdt: number;
+    mode: string;
+    side_candidate: string;
+    side_override: boolean;
+    phi: number;
+    kappa: number;
+  },
+  pyDecision: TickRunDecision,
+): void {
+  if (tsDecision.action !== pyDecision.action) {
+    logger.warn('[shadow-tick] parity diff (action)', {
+      symbol,
+      ts: tsDecision.action,
+      py: pyDecision.action,
+    });
+  }
+  if (tsDecision.mode !== pyDecision.mode) {
+    logger.warn('[shadow-tick] parity diff (mode)', {
+      symbol,
+      ts: tsDecision.mode,
+      py: pyDecision.mode,
+    });
+  }
+  if (tsDecision.side_candidate !== pyDecision.side_candidate) {
+    logger.warn('[shadow-tick] parity diff (side_candidate)', {
+      symbol,
+      ts: tsDecision.side_candidate,
+      py: pyDecision.side_candidate,
+    });
+  }
+  logParityDiff('tick.entry_threshold', tsDecision.entry_threshold, pyDecision.entry_threshold);
+  logParityDiff('tick.leverage', tsDecision.leverage, pyDecision.leverage);
+  logParityDiff('tick.size_usdt', tsDecision.size_usdt, pyDecision.size_usdt, 0.1);
+  logParityDiff('tick.phi', tsDecision.phi, pyDecision.phi);
+  logParityDiff('tick.kappa', tsDecision.kappa, pyDecision.kappa, 0.5);
+  logParityDiff('tick.side_override', tsDecision.side_override, pyDecision.side_override);
+}
+
 // ── Parity-diff helper (v0.7.4 will use this) ──
 
 /**

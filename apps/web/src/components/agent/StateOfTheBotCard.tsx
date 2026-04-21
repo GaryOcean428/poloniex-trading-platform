@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 
 import { getAccessToken } from '@/utils/auth';
 import { getBackendUrl } from '@/utils/environment';
+import { safeNum } from '@/utils/safeNum';
 
 const API_BASE_URL = getBackendUrl();
 
@@ -53,10 +54,10 @@ const PHASE_STYLE: Record<Phase, { label: string; bg: string; text: string; icon
 
 const formatUSD = (v: number): string => {
   const prefix = v > 0 ? '+$' : v < 0 ? '-$' : '$';
-  return `${prefix}${Math.abs(v).toFixed(2)}`;
+  return `${prefix}${safeNum(Math.abs(v)).toFixed(2)}`;
 };
 
-const formatPct = (v: number): string => `${(v * 100).toFixed(1)}%`;
+const formatPct = (v: number): string => `${safeNum(v * 100).toFixed(1)}%`;
 
 const formatAge = (iso: string | null): string => {
   if (!iso) return '—';
@@ -177,7 +178,7 @@ const StateOfTheBotCard: React.FC = () => {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 px-6 py-4 border-b border-gray-100 text-sm">
         <div>
           <div className="text-gray-500">Trades/hr (24h)</div>
-          <div className="text-lg font-semibold text-gray-900">{state.tradesPerHour.toFixed(2)}</div>
+          <div className="text-lg font-semibold text-gray-900">{safeNum(state.tradesPerHour).toFixed(2)}</div>
         </div>
         <div>
           <div className="text-gray-500">Win rate (last 20)</div>
@@ -186,7 +187,7 @@ const StateOfTheBotCard: React.FC = () => {
         <div>
           <div className="text-gray-500">Balance</div>
           <div className="text-lg font-semibold text-gray-900">
-            ${state.balance.equity.toFixed(2)} {state.balance.currency}
+            ${safeNum(state.balance.equity).toFixed(2)} {state.balance.currency}
           </div>
         </div>
         <div>
