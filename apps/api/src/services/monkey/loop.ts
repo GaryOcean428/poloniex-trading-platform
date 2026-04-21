@@ -53,7 +53,7 @@ import { BasinSync } from './basin_sync.js';
 import { BusEventType, getKernelBus, type KernelBus } from './kernel_bus.js';
 import { detectMode, MODE_PROFILES, MonkeyMode } from './modes.js';
 import { computeNeurochemicals, summarizeNC, type NeurochemicalState } from './neurochemistry.js';
-import { perceive, refract, type OHLCVCandle } from './perception.js';
+import { perceive, refract, trendProxy as computeTrendProxy, type OHLCVCandle } from './perception.js';
 import { resonanceBank } from './resonance_bank.js';
 import { computeSelfObservation, type SelfObservation } from './self_observation.js';
 import { WorkingMemory, type Bubble } from './working_memory.js';
@@ -341,7 +341,11 @@ export class MonkeyKernel extends EventEmitter {
       this.selfObs = await computeSelfObservation(24);
       this.selfObsLastUpdate = now;
     }
-    const selfObsBias = this.selfObs?.entryBias[mode] ?? 1.0;
+    // Side candidate from ML signal — BUY→long, SELL→short. HOLD falls
+    // back to long (bias won't matter; entry gate will block on signal).
+    const sideCandidate: 'long' | 'short' =
+      mlSignal === 'SELL' ? 'short' : 'long';
+    const selfObsBias = this.selfObs?.entryBias[mode]?.[sideCandidate] ?? 1.0;
 
     // v0.5: Basin sync — publish own state; pull observer-effect influence.
     const syncPublish = this.basinSync.update({
@@ -358,7 +362,10 @@ export class MonkeyKernel extends EventEmitter {
     const wmStats = await state.wm.tick();
 
     // 5. DERIVE — executive computes what Monkey would do (mode-aware)
-    const entryThr = currentEntryThreshold(basinState, mode, selfObsBias);
+    // Trend proxy (v0.5.1): signed tape-direction scalar in [-1, 1].
+    // Gates entry against fighting the tape; aligns with it.
+    const trendProxy = computeTrendProxy(ohlcv);
+    const entryThr = currentEntryThreshold(basinState, mode, selfObsBias, trendProxy, sideCandidate);
     const leverage = currentLeverage(basinState, (await getMaxLeverage(symbol)) ?? 10, mode);
     const precisions = await getPrecisions(symbol).catch(() => null);
     const lotSize = precisions?.lotSize ?? 0;
@@ -376,6 +383,8 @@ export class MonkeyKernel extends EventEmitter {
       fHealth, mlSignal, mlStrength,
       mode: { value: mode, reason: modeDecision.reason, ...modeDecision.derivation },
       selfObsBias,
+      trendProxy,
+      sideCandidate,
     };
 
     if (autoFlatten.value) {
@@ -495,6 +504,7 @@ export class MonkeyKernel extends EventEmitter {
       sov: sovereignty.toFixed(3),
       wm: `${wmStats.alive}a/${wmStats.promoted}prom/${wmStats.popped}pop`,
       selfObsBias: selfObsBias.toFixed(2),
+      trend: trendProxy.toFixed(3),
       orderId: monkeyOrderId ?? undefined,
       reason,
     });

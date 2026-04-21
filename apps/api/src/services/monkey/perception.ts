@@ -113,6 +113,31 @@ function rollingVol(ohlcv: OHLCVCandle[], n: number): number {
   return sum / n;
 }
 
+/**
+ * Trend proxy: a signed scalar in [-1, 1] summarising recent tape
+ * direction. Positive = uptrend (favour longs). Negative = downtrend
+ * (favour shorts). Magnitude = conviction.
+ *
+ * Derivation: log-return over `lookback` candles, then tanh-squashed so
+ * a ±2 % move maps to ~±0.76 and ±5 % maps to ~±0.99. With 15 m candles
+ * and lookback=50, this sees ~12.5 hours of tape — long enough to filter
+ * out scalp-wiggle noise, short enough to pivot when a real reversal
+ * starts.
+ *
+ * Exported separately (not folded into the 64D basin) because it's used
+ * as a direction-gating signal, not as a geometric coordinate. The
+ * basin's momentum-spectrum dims already carry this information
+ * implicitly; this is the "call it out loud" view for entry logic.
+ */
+export function trendProxy(ohlcv: OHLCVCandle[], lookback: number = 50): number {
+  if (ohlcv.length < lookback + 1) return 0;
+  const last = ohlcv[ohlcv.length - 1].close;
+  const base = ohlcv[ohlcv.length - 1 - lookback].close;
+  if (base <= 0 || last <= 0) return 0;
+  const r = Math.log(last / base);
+  return Math.tanh(r * 50);
+}
+
 /** Normalized volume at lookback n (current vs mean of n). */
 function volRatio(ohlcv: OHLCVCandle[], n: number): number {
   if (ohlcv.length < n) return 1;
