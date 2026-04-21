@@ -43,9 +43,37 @@ from .executive import (
     should_profit_harvest,
     should_scalp_exit,
 )
+from .basin import (
+    Basin,
+    bhattacharyya_coefficient,
+    exp_map,
+    fisher_rao_distance,
+    frechet_mean,
+    inject_dirichlet_noise,
+    log_map,
+    max_mass,
+    normalized_entropy,
+    random_basin,
+    slerp_sqrt,
+    to_simplex,
+    uniform_basin,
+    velocity,
+)
+from .basin_sync import (
+    BasinSyncState,
+    ConvergenceSummary,
+    apply_observer_effect,
+    convergence_summary,
+)
 from .modes import MODE_PROFILES, ModeProfile, MonkeyMode, detect_mode
 from .perception import OHLCVCandle, PerceptionInputs, perceive, refract
 from .perception_scalars import basin_direction, trend_proxy
+from .self_observation import (
+    ClosedTradeRow,
+    SelfObservation,
+    aggregate_and_bias,
+    self_observation_to_dict,
+)
 from .state import BasinState, NeurochemicalState
 
 __all__ = [
