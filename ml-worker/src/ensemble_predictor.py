@@ -331,7 +331,7 @@ class EnsemblePredictor:
             signal = 'HOLD'
             strength = np.mean(confidences)
 
-        return {
+        result_dict = {
             'signal': signal,
             'strength': float(strength),
             'reason': f"{signal} signal from {max(buy_count, sell_count)}/{len(signals)} horizons (thr=±{threshold_pct:.2f}%)",
@@ -346,6 +346,20 @@ class EnsemblePredictor:
                 'HOLD': signals.count('HOLD'),
             },
         }
+        # v0.7.11: feed the observable-governance buffer so the
+        # AMPLITUDE_COLLAPSE / REGIME_SINGLE detectors can fire when
+        # the ensemble's signal distribution stops exercising the full
+        # output space.
+        try:
+            from observable_governance import record_tick  # type: ignore
+            record_tick(
+                raw_drift_pct=raw_drift_pct,
+                signal=signal,
+                regime=None,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        return result_dict
 
     def save_models(self, path: str):
         """Save all trained models"""
