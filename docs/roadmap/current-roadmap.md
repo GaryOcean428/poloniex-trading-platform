@@ -1,5 +1,12 @@
 # Poloniex Trading Platform - Project Roadmap
 
+> **⚠️ SUPERSEDED (2026-04-21).** This document captures Phase 1 (Railway
+> deployment configuration, Oct 2025) and remains accurate for that phase,
+> but is no longer the live roadmap.
+>
+> **Canonical current roadmap:** [`.agent-os/roadmap.md`](../../.agent-os/roadmap.md)
+> See Phase P3 (Cognitive Kernel "Monkey") there for 2026-04 work through v0.5.2.
+
 ## Current Status: Railway Deployment Configuration Phase ✅
 
 Last Updated: October 2, 2025
