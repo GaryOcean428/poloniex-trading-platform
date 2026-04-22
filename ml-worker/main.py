@@ -731,6 +731,90 @@ async def governance_ml_predict_parity(limit: int = 200):
 
 
 # ---------------------------------------------------------------------------
+# v0.8.7a — POST /risk/evaluate — Python port of riskKernel.ts
+# ---------------------------------------------------------------------------
+#
+# Pure pre-trade blast-door kernel. Called in Stage 1 of v0.8.7 as a
+# shadow alongside the TS riskService.evaluatePreTradeVetoes so we
+# can verify identical decisions on real inputs. Once parity is
+# proven, v0.8.8 cuts TS over to this endpoint and riskKernel.ts
+# retires.
+
+from trading.risk_kernel import (  # noqa: E402
+    KernelAccountState as _KernelAccountState,
+    KernelContext as _KernelContext,
+    KernelOpenPosition as _KernelOpenPosition,
+    KernelOrder as _KernelOrder,
+    KernelRestingOrder as _KernelRestingOrder,
+    evaluate_pre_trade_vetoes as _evaluate_pre_trade_vetoes,
+)
+
+
+@app.post("/risk/evaluate")
+async def risk_evaluate(request: Request):
+    """Run the pre-trade blast-door kernel on one order.
+
+    Request body mirrors the KernelInputs shape riskService.js assembles:
+      {
+        "kernelOrder":  {"symbol", "side", "notional", "leverage", "price"},
+        "accountState": {"equityUsdt", "unrealizedPnlUsdt",
+                         "openPositions":  [{"symbol","side","notional"}...],
+                         "restingOrders":  [{"symbol","side","price"}...]},
+        "context":      {"isLive", "mode", "symbolMaxLeverage"}
+      }
+
+    Response: {"allowed": bool, "reason"?: str, "code"?: str}
+    Matches KernelDecision from the TS reference.
+    """
+    body = await request.json()
+    try:
+        o = body["kernelOrder"]
+        order = _KernelOrder(
+            symbol=str(o["symbol"]),
+            side=str(o["side"]),
+            notional=float(o["notional"]),
+            leverage=float(o["leverage"]),
+            price=float(o["price"]),
+        )
+        a = body["accountState"]
+        state = _KernelAccountState(
+            equity_usdt=float(a["equityUsdt"]),
+            unrealized_pnl_usdt=float(a["unrealizedPnlUsdt"]),
+            open_positions=[
+                _KernelOpenPosition(
+                    symbol=str(p["symbol"]),
+                    side=str(p["side"]),
+                    notional=float(p["notional"]),
+                )
+                for p in a.get("openPositions", []) or []
+            ],
+            resting_orders=[
+                _KernelRestingOrder(
+                    symbol=str(r["symbol"]),
+                    side=str(r["side"]),
+                    price=float(r["price"]),
+                )
+                for r in a.get("restingOrders", []) or []
+            ],
+        )
+        c = body["context"]
+        ctx = _KernelContext(
+            is_live=bool(c["isLive"]),
+            mode=str(c["mode"]),
+            symbol_max_leverage=float(c["symbolMaxLeverage"]),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=f"bad kernel input: {exc}") from exc
+
+    decision = _evaluate_pre_trade_vetoes(order, state, ctx)
+    return {
+        "allowed": decision.allowed,
+        "reason": decision.reason,
+        "code": decision.code,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Monkey kernel endpoints (v0.7)
 # ---------------------------------------------------------------------------
 #
