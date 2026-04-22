@@ -34,6 +34,19 @@ from qig_core_local.geometry.fisher_rao import (
     frechet_mean,
 )
 
+from .parameters import get_registry
+
+_registry = get_registry()
+
+# Pre-registry defaults. Match v0.8.1/v0.8.6 migration seed values
+# exactly so behaviour is byte-identical registry-on vs -off.
+_DEFAULT_PHI_HISTORY_MAX = 200
+_DEFAULT_MAX_BUBBLES = 500
+_DEFAULT_BUBBLE_LIFETIME_MS = 15 * 60 * 1000.0
+_DEFAULT_BOOTSTRAP_POP = 0.15
+_DEFAULT_BOOTSTRAP_PROMOTE = 0.70
+_DEFAULT_BOOTSTRAP_MERGE = 0.15
+
 BubbleStatus = Literal["alive", "merged", "popped", "promoted"]
 
 
@@ -82,24 +95,57 @@ class WorkingMemory:
     Bootstrap defaults (permissive) until we have ≥ 10 samples.
     """
 
-    PHI_HISTORY_MAX: int = 200
+    # Registry-backed class attribute — read at init so each kernel
+    # instance picks up the current governance setting.
+    PHI_HISTORY_MAX: int = _DEFAULT_PHI_HISTORY_MAX
 
     def __init__(
         self,
         *,
-        default_lifetime_ms: float = 15 * 60 * 1000.0,
-        max_bubbles: int = 500,
+        default_lifetime_ms: Optional[float] = None,
+        max_bubbles: Optional[int] = None,
     ) -> None:
+        # All three knobs honour caller override first, then registry,
+        # then the hardcoded default. Caller override is only used by
+        # tests that need a deterministic fixture; production paths
+        # leave them None to let the registry govern.
         self.bubbles: list[Bubble] = []
-        self.default_lifetime_ms = default_lifetime_ms
-        self.max_bubbles = max_bubbles
+        self.default_lifetime_ms = (
+            float(default_lifetime_ms) if default_lifetime_ms is not None
+            else float(_registry.get(
+                "wm.default_bubble_lifetime_ms",
+                default=_DEFAULT_BUBBLE_LIFETIME_MS,
+            ))
+        )
+        self.max_bubbles = (
+            int(max_bubbles) if max_bubbles is not None
+            else int(_registry.get("wm.max_bubbles", default=_DEFAULT_MAX_BUBBLES))
+        )
+        self.PHI_HISTORY_MAX = int(_registry.get(
+            "wm.phi_history_max", default=_DEFAULT_PHI_HISTORY_MAX,
+        ))
         self._phi_history: list[float] = []
 
     # ─── adaptive thresholds (P25) ───
 
     def _adaptive_thresholds(self) -> dict[str, float]:
         if len(self._phi_history) < 10:
-            return {"pop": 0.15, "promote": 0.70, "merge": 0.15}
+            # Bootstrap phase — registry-backed SAFETY_BOUND fallbacks.
+            # These only apply until enough Φ history accumulates to
+            # derive the 25th/75th percentiles.
+            return {
+                "pop": _registry.get(
+                    "wm.bootstrap_pop_threshold", default=_DEFAULT_BOOTSTRAP_POP,
+                ),
+                "promote": _registry.get(
+                    "wm.bootstrap_promote_threshold",
+                    default=_DEFAULT_BOOTSTRAP_PROMOTE,
+                ),
+                "merge": _registry.get(
+                    "wm.bootstrap_merge_threshold",
+                    default=_DEFAULT_BOOTSTRAP_MERGE,
+                ),
+            }
 
         sorted_phi = sorted(self._phi_history)
 

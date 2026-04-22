@@ -36,9 +36,23 @@ from qig_core_local.geometry.fisher_rao import (
 from .parameters import get_registry
 
 _registry = get_registry()
-# Default used when DATABASE_URL is unset or the row is missing. Matches
-# v0.8.1 migration-034 seed value exactly.
+# Defaults used when DATABASE_URL is unset or the row is missing. Match
+# v0.8.1/v0.8.6 migration seed values exactly.
 _DEFAULT_MAX_EFFECTIVE_STRENGTH = 0.30
+_DEFAULT_STALE_WINDOW_MS = 120_000  # 2 minutes
+
+
+def get_stale_window_ms() -> int:
+    """Return the currently-governed peer-state staleness threshold.
+
+    Readers (caller of apply_observer_effect or equivalent orchestration
+    layer) should filter peer_states older than this against their own
+    clock before passing in. Read per call so governance edits apply
+    immediately.
+    """
+    return int(_registry.get(
+        "basin_sync.stale_window_ms", default=_DEFAULT_STALE_WINDOW_MS,
+    ))
 
 
 @dataclass
