@@ -590,6 +590,7 @@ def _decide_with_position(
         last_add_at_ms=state.last_entry_at_ms or 0,
         now_ms=now_ms,
         sovereignty=inputs.sovereignty,
+        s=basin_state,  # v0.8.4b — enables cooldown / better-price derivation from NC + bv
     )
     derivation["dca"] = dca["derivation"]
     if (

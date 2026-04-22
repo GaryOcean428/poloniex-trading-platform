@@ -259,11 +259,30 @@ def current_leverage(
     mode_floor = MODE_PROFILES[mode].sovereign_cap_floor
     sovereign_cap = max(mode_floor, lev_min_baseline + lev_max_slope * s.sovereignty)
 
-    # v0.6.7 aggressive flatness boost (K=10, BOOST=0.8)
-    FLATNESS_K = 10.0
-    FLATNESS_BOOST = 0.8
-    flatness = max(0.0, 1.0 - abs(tape_trend) * FLATNESS_K)
-    flat_mult = 1.0 + FLATNESS_BOOST * flatness
+    # v0.8.4b — FLATNESS_K and FLATNESS_BOOST now DERIVE from geometric
+    # state per P25 ("operational thresholds should emerge from κ, Φ,
+    # regime, basin velocity").
+    #
+    # FLATNESS_K — width of the "flat tape" band that activates the boost.
+    #   When consciousness is coherent (κ near κ*, high kappa_proxim),
+    #   commit to a narrower definition of "flat" — only boost when tape
+    #   is genuinely quiet. When κ is off, be more forgiving (wider band).
+    #   Anchored: K=10 at kappa_proxim=1 (matches pre-derivation live).
+    #   Range [7, 10] — at κ far from κ*, floor keeps the semantic alive.
+    # FLATNESS_BOOST — magnitude of the leverage bump when market is flat.
+    #   Scales with Φ (integration strength): high Φ = strong conviction,
+    #   use the extra leverage; low Φ = diffuse, be conservative.
+    #   Anchored: BOOST=0.8 at Φ=0.5 (matches pre-derivation live).
+    #   Range [0.5, 1.1] — Φ=0 → 0.5 (half boost); Φ=1 → 1.1 (max out).
+    #
+    # At "nominal" state (κ=κ*, Φ=0.5) both values equal the pre-derivation
+    # constants exactly, so live behavior is preserved unless geometric
+    # state is genuinely deviant. Only safety floors (0.15 and 0.30 below)
+    # remain as hardcoded SAFETY_BOUNDs.
+    flatness_k = 7.0 + 3.0 * kappa_proxim
+    flatness_boost = 0.5 + 0.6 * max(0.0, min(1.0, s.phi))
+    flatness = max(0.0, 1.0 - abs(tape_trend) * flatness_k)
+    flat_mult = 1.0 + flatness_boost * flatness
 
     newborn = s.sovereignty < 0.1
     if newborn:
@@ -314,8 +333,23 @@ def should_profit_harvest(
     current_frac = unrealized_pnl_usdt / notional_usdt
     peak_frac = max(peak_pnl_usdt, 0.0) / notional_usdt
 
-    activation = max(0.002, 0.004 - 0.002 * s.neurochemistry.dopamine)
-    giveback = 0.30 + 0.20 * (1 - s.neurochemistry.serotonin)
+    # v0.8.4b — harvest activation and giveback now fully DERIVE per P25.
+    # ACTIVATION: baseline, discounted by dopamine (recent wins → harvest
+    #   sooner), amplified by Φ (high integration → let winners run).
+    #   Anchored at 0.003 when dopamine=0.5 AND Φ=0.5 (pre-derivation live).
+    #   0.002 floor stays as SAFETY_BOUND — must always clear 2×fee.
+    # GIVEBACK: emerges from serotonin (stability). High serotonin → keep
+    #   a tighter trailing stop. Low serotonin → let more of peak slip
+    #   before locking in.
+    # TREND_FLIP: derives from norepinephrine — surprise makes her more
+    #   sensitive to trend reversal. Anchored at -0.25 when NE=0.5.
+    nc = s.neurochemistry
+    phi_clipped = max(0.0, min(1.0, s.phi))
+    activation = max(
+        0.002,
+        0.004 - 0.002 * nc.dopamine + 0.002 * (phi_clipped - 0.5),
+    )
+    giveback = 0.30 + 0.20 * (1 - nc.serotonin)
     trailing_floor = peak_frac * (1.0 - giveback)
 
     alignment_now = tape_trend if held_side == "long" else -tape_trend
@@ -337,8 +371,11 @@ def should_profit_harvest(
             },
         }
 
-    TREND_FLIP_THRESHOLD = -0.25
-    if current_frac > 0 and alignment_now <= TREND_FLIP_THRESHOLD and peak_frac >= activation:
+    # TREND_FLIP_THRESHOLD derived from NE: at NE=0.5 → -0.25 (pre-derivation
+    # live); NE=0 (calm) → -0.30; NE=1 (surprised) → -0.20. More surprised
+    # = earlier flip detection.
+    trend_flip_threshold = -(0.30 - 0.10 * nc.norepinephrine)
+    if current_frac > 0 and alignment_now <= trend_flip_threshold and peak_frac >= activation:
         return {
             "value": True,
             "reason": (
@@ -454,7 +491,32 @@ def should_dca_add(
     last_add_at_ms: float,
     now_ms: float,
     sovereignty: float,
+    s: Optional[ExecBasinState] = None,
 ) -> dict[str, Any]:
+    # v0.8.4b — when ExecBasinState is provided, DCA cooldown / better-price
+    # / min-sovereignty DERIVE from geometric state per P25. When not
+    # provided, fall back to the hardcoded pre-derivation values so older
+    # callers stay byte-compatible. tick.py's _decide_with_position will
+    # populate `s` after v0.8.4b; any other caller gets the legacy path.
+    #
+    # Cooldown: scales inversely with serotonin (stability). serotonin=0.5
+    #   → 15 min (matches pre-derivation); serotonin=0 → 25 min (unstable,
+    #   cautious); serotonin=1 → 5 min (stable, okay to add).
+    # Better-price threshold: scales with basin velocity. Fast-moving basin
+    #   → higher bar for calling it a "better" price. Anchored at 1% when
+    #   bv=0.02 (nominal); drops to 0.5% when basin is still, rises to 2%+
+    #   when basin is jumpy.
+    # Min-sovereignty: still a hard floor (SAFETY_BOUND — no DCA for
+    #   newborn kernels regardless of other state).
+    if s is not None:
+        ser = s.neurochemistry.serotonin
+        bv = s.basin_velocity
+        cooldown_ms = int((25.0 - 20.0 * ser) * 60_000)  # min → ms
+        better_price_frac = max(0.005, min(0.03, 0.01 + (bv - 0.02) * 0.5))
+    else:
+        cooldown_ms = DCA_COOLDOWN_MS
+        better_price_frac = DCA_BETTER_PRICE_FRAC
+
     if held_side != side_candidate:
         return {
             "value": False,
@@ -472,12 +534,15 @@ def should_dca_add(
             "reason": f"add cap reached ({add_count}/{max_adds})",
             "derivation": {"rule": 4, "add_count": add_count, "max_adds": max_adds},
         }
-    if now_ms - last_add_at_ms < DCA_COOLDOWN_MS:
-        sec_remain = round((DCA_COOLDOWN_MS - (now_ms - last_add_at_ms)) / 1000)
+    if now_ms - last_add_at_ms < cooldown_ms:
+        sec_remain = round((cooldown_ms - (now_ms - last_add_at_ms)) / 1000)
         return {
             "value": False,
             "reason": f"cooldown ({sec_remain}s remaining)",
-            "derivation": {"rule": 3, "sec_remain": sec_remain},
+            "derivation": {
+                "rule": 3, "sec_remain": sec_remain,
+                "cooldown_ms": cooldown_ms,
+            },
         }
     if sovereignty < DCA_MIN_SOVEREIGNTY:
         return {
@@ -487,18 +552,21 @@ def should_dca_add(
         }
     price_delta = (current_price - initial_entry_price) / initial_entry_price
     price_is_better = (
-        price_delta < -DCA_BETTER_PRICE_FRAC
+        price_delta < -better_price_frac
         if held_side == "long"
-        else price_delta > DCA_BETTER_PRICE_FRAC
+        else price_delta > better_price_frac
     )
     if not price_is_better:
         return {
             "value": False,
             "reason": (
                 f"price not better ({price_delta*100:.3f}% from entry vs "
-                f"±{DCA_BETTER_PRICE_FRAC*100:.1f}% required)"
+                f"±{better_price_frac*100:.2f}% required)"
             ),
-            "derivation": {"rule": 2, "price_delta": price_delta},
+            "derivation": {
+                "rule": 2, "price_delta": price_delta,
+                "better_price_frac": better_price_frac,
+            },
         }
     return {
         "value": True,
@@ -531,7 +599,18 @@ def should_exit(
         return {"value": False, "reason": "no open position", "derivation": {}}
 
     disagreement = fisher_rao_distance(perception, strategy_forecast)
-    threshold = 0.55 * (1.0 + 0.5 * s.neurochemistry.norepinephrine)
+    # v0.8.4b — disagreement threshold DERIVES fully from NE × regime
+    # (previously: half-derived, only NE). High NE (surprised) raises
+    # the bar — don't exit on noise. Low equilibrium-weight (regime
+    # unstable) lowers the bar — regime will say exit on less.
+    # Anchored at 0.6875 when NE=0.5 AND equilibrium=0.5 (matches
+    # pre-derivation: 0.55 × (1+0.25) × 1.0 = 0.6875).
+    eq_weight = s.regime_weights.get("equilibrium", 0.5)
+    threshold = (
+        0.55
+        * (1.0 + 0.5 * s.neurochemistry.norepinephrine)
+        * (0.7 + 0.6 * eq_weight)
+    )
     if disagreement > threshold:
         return {
             "value": True,
