@@ -213,6 +213,19 @@ export class MonkeyKernel extends EventEmitter {
    *  feeds the result to computeNeurochemicals. Pantheon-style — chem
    *  levels are DERIVED, never SET. */
   private pendingRewards: ActivityReward[] = [];
+  /**
+   * ML-outage observability counter (v0.8.3.5d). Increments every time
+   * mlPredictionService.getTradingSignal returns {error: true}. Used to
+   * emit a single warn-level log + bus ANOMALY event when the run goes
+   * from reachable → unreachable (and again on recovery), instead of
+   * logging on every tick. Existing position exits don't depend on the
+   * ML signal (verified in processSymbol lines 585–711: exit gates read
+   * basin state + P&L only), so the bot stays in a correct HOLD-safe
+   * mode during outages — but without this counter nothing surfaces
+   * that the bot is in defensive mode, which previously read as a
+   * "freeze" to the user (2026-04-22 incident during Stage 2 cut-over).
+   */
+  private mlOutageStreak = 0;
 
   constructor(config?: Partial<MonkeyKernelConfig>) {
     super();
@@ -367,6 +380,51 @@ export class MonkeyKernel extends EventEmitter {
     const raw = await mlPredictionService.getTradingSignal(symbol, ohlcv, lastPrice);
     const mlSignal = String(raw?.signal ?? 'HOLD').toUpperCase();
     const mlStrength = Number(raw?.strength) || 0;
+
+    // ML-unreachable observability (v0.8.3.5d). mlPredictionService already
+    // fail-opens to {signal:'HOLD', strength:0, error:true} on transport
+    // failure; the Monkey tick correctly holds new entries in that case
+    // (entry gate requires mlStrength >= threshold, 0 never clears any
+    // positive threshold), and exits keep firing from basin geometry. But
+    // the silent HOLD mode previously looked like a freeze from the user's
+    // POV (2026-04-22 incident). Fire a WARN + bus ANOMALY on the
+    // transition to/from ML-unreachable — edge-triggered, not per-tick,
+    // so logs don't flood during a long outage.
+    if (raw?.error === true) {
+      this.mlOutageStreak += 1;
+      if (this.mlOutageStreak === 1) {
+        logger.warn('[Monkey] ML unreachable — holding new entries, exits continue', {
+          symbol,
+          reason: raw?.reason,
+        });
+        this.bus.publish({
+          type: BusEventType.ANOMALY,
+          source: this.instanceId,
+          symbol,
+          payload: {
+            kind: 'ml_unreachable',
+            reason: raw?.reason ?? 'ml prediction errored',
+            entriesHeld: true,
+            exitsActive: true,
+          },
+        });
+      }
+    } else if (this.mlOutageStreak > 0) {
+      // Recovery — log once, publish once, reset counter.
+      logger.info('[Monkey] ML reachable again after %d tick outage', this.mlOutageStreak, {
+        symbol,
+      });
+      this.bus.publish({
+        type: BusEventType.ANOMALY,
+        source: this.instanceId,
+        symbol,
+        payload: {
+          kind: 'ml_recovered',
+          outageTicks: this.mlOutageStreak,
+        },
+      });
+      this.mlOutageStreak = 0;
+    }
 
     // Account context (also shared with liveSignalEngine).
     // NOTE: exchangeHeldSide is the SHARED exchange position state —
