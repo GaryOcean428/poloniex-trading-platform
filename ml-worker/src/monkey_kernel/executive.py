@@ -24,9 +24,34 @@ import numpy as np
 from qig_core_local.geometry.fisher_rao import fisher_rao_distance
 
 from .modes import MODE_PROFILES, MonkeyMode
+from .parameters import get_registry
 from .state import KAPPA_STAR, NeurochemicalState
 
 Side = Literal["long", "short"]
+
+
+# Module-level registry handle. Per-call .get() hits the in-process cache
+# after first load — no DB hit on the hot path. Refresh cadence is owned
+# by the tick loop via ParameterRegistry.tick().
+_registry = get_registry()
+
+
+# Fallback defaults — used only when DATABASE_URL is unset (tests,
+# staging) OR the named row is missing from monkey_parameters. These are
+# the exact values v0.8.1 seeded, kept here so behavior is identical if
+# the registry is unreachable. Per P25, these stay in code as the
+# SAFETY_BOUND floor — changing them requires a governance event in the
+# registry, never a code edit.
+_DEFAULT_ENTRY_THR_CLAMP_LOW = 0.1
+_DEFAULT_ENTRY_THR_CLAMP_HIGH = 0.9
+_DEFAULT_SIZE_MAX_FRACTION = 0.5
+_DEFAULT_SIZE_MIN_NOTIONAL_BUFFER = 1.05
+_DEFAULT_LEVERAGE_MIN_BASELINE = 3.0
+_DEFAULT_LEVERAGE_MAX_SLOPE = 30.0
+_DEFAULT_LEVERAGE_KAPPA_SIGMA = 20.0
+_DEFAULT_SCALP_TP_MIN_FLOOR = 0.003
+_DEFAULT_EXIT_ENTROPY_COLLAPSE = 0.4  # (referenced by should_auto_flatten semantic)
+_DEFAULT_DCA_MAX_ADDS = 1
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -83,7 +108,16 @@ def current_entry_threshold(
     trend_mult = 1.0 - 0.3 * alignment
 
     raw_t = t_base * kappa_ratio * phi_mult * regime_scale * mode_scale * self_obs_bias * trend_mult
-    t = _clamp(raw_t, 0.1, 0.9)
+    # Entry-threshold clamps are SAFETY_BOUNDS per P25 (floor prevents
+    # runaway entries on model hiccup; ceiling prevents permanent
+    # no-entry from drift). Live-tunable via parameter registry.
+    clamp_low = _registry.get(
+        "executive.entry_threshold.clamp_low", default=_DEFAULT_ENTRY_THR_CLAMP_LOW,
+    )
+    clamp_high = _registry.get(
+        "executive.entry_threshold.clamp_high", default=_DEFAULT_ENTRY_THR_CLAMP_HIGH,
+    )
+    t = _clamp(raw_t, clamp_low, clamp_high)
 
     return {
         "value": t,
@@ -132,18 +166,27 @@ def current_position_size(
     mode_floor = MODE_PROFILES[mode].size_floor
     exploration_floor = mode_floor * (1.0 - maturity)
 
+    # Size cap: max fraction of equity a single position can consume
+    # (SAFETY_BOUND). Lift-to-min buffer: multiplier over exchange min
+    # notional so lot rounding never drops us below (SAFETY_BOUND).
+    max_fraction = _registry.get(
+        "executive.size.max_fraction_of_equity", default=_DEFAULT_SIZE_MAX_FRACTION,
+    )
+    buffer_mult = _registry.get(
+        "executive.size.min_notional_buffer", default=_DEFAULT_SIZE_MIN_NOTIONAL_BUFFER,
+    )
+
     raw_frac = max(exploration_floor, base_frac * reward_mult * stability_mult)
-    frac = _clamp(raw_frac, 0.0, 0.5)
+    frac = _clamp(raw_frac, 0.0, max_fraction)
     margin = frac * available_equity_usdt
     notional = margin * max(1.0, leverage)
 
     # v0.6.6 lift-to-minimum: if we're below exchange min and a fraction
-    # within the 0.5 safety clamp CAN clear it, auto-raise.
+    # within the max_fraction safety clamp CAN clear it, auto-raise.
     lifted = False
     if notional < min_notional_usdt and available_equity_usdt > 0 and leverage > 0:
-        BUFFER = 1.05
-        required_frac = (min_notional_usdt * BUFFER) / (leverage * available_equity_usdt)
-        if required_frac <= 0.5:
+        required_frac = (min_notional_usdt * buffer_mult) / (leverage * available_equity_usdt)
+        if required_frac <= max_fraction:
             frac = max(frac, required_frac)
             margin = frac * available_equity_usdt
             notional = margin * leverage
@@ -191,8 +234,22 @@ def current_leverage(
     mode: MonkeyMode = MonkeyMode.INVESTIGATION,
     tape_trend: float = 0.0,
 ) -> dict[str, Any]:
+    # κ-proximity bell width: narrower sigma penalises drift from κ* harder.
+    # Baseline + slope: leverage floor + scaling span with sovereignty.
+    # All three are SAFETY_BOUNDS — drastic changes would reshape the
+    # whole leverage surface, so they're live-governed, not hardcoded.
+    kappa_sigma = _registry.get(
+        "executive.leverage.kappa_sigma", default=_DEFAULT_LEVERAGE_KAPPA_SIGMA,
+    )
+    lev_min_baseline = _registry.get(
+        "executive.leverage.min_baseline", default=_DEFAULT_LEVERAGE_MIN_BASELINE,
+    )
+    lev_max_slope = _registry.get(
+        "executive.leverage.max_sovereign_slope", default=_DEFAULT_LEVERAGE_MAX_SLOPE,
+    )
+
     kappa_dist = abs(s.kappa - KAPPA_STAR)
-    kappa_proxim = float(np.exp(-kappa_dist / 20.0))
+    kappa_proxim = float(np.exp(-kappa_dist / kappa_sigma))
     regime_stability = (
         s.regime_weights.get("equilibrium", 0.0)
         + 0.5 * s.regime_weights.get("efficient", 0.0)
@@ -200,7 +257,7 @@ def current_leverage(
     surprise_discount = 1.0 - 0.5 * s.neurochemistry.norepinephrine
 
     mode_floor = MODE_PROFILES[mode].sovereign_cap_floor
-    sovereign_cap = max(mode_floor, 3.0 + 30.0 * s.sovereignty)
+    sovereign_cap = max(mode_floor, lev_min_baseline + lev_max_slope * s.sovereignty)
 
     # v0.6.7 aggressive flatness boost (K=10, BOOST=0.8)
     FLATNESS_K = 10.0
@@ -331,7 +388,13 @@ def should_scalp_exit(
     pnl_frac = unrealized_pnl_usdt / notional_usdt
     nc = s.neurochemistry
     profile = MODE_PROFILES[mode]
-    tp_thr = max(0.003, profile.tp_base_frac - 0.003 * nc.dopamine + 0.005 * s.phi)
+    # Scalp TP floor: must clear exchange fees round-trip (2× taker
+    # ~=0.0015 on Poloniex VIP0). 0.003 gives a ~15bp margin. SAFETY_BOUND;
+    # the tp_base_frac + dopamine/Φ modulation sits on top of it.
+    tp_min_floor = _registry.get(
+        "executive.scalp.tp_min_floor", default=_DEFAULT_SCALP_TP_MIN_FLOOR,
+    )
+    tp_thr = max(tp_min_floor, profile.tp_base_frac - 0.003 * nc.dopamine + 0.005 * s.phi)
     sl_thr = tp_thr * profile.sl_ratio
 
     if pnl_frac >= tp_thr:
@@ -367,7 +430,15 @@ def should_scalp_exit(
 # ═══════════════════════════════════════════════════════════════
 
 
-DCA_MAX_ADDS_PER_POSITION = 1
+# DCA PARAMETERs — mixed dispositions per P25:
+# - max_adds_per_position is a hard SAFETY_BOUND (capacity risk
+#   ceiling; live-governed via registry)
+# - cooldown / better_price_frac / min_sovereignty are still literals
+#   here but flagged for v0.8.4b DERIVE work (should emerge from
+#   Φ/serotonin/basin-velocity). They'll move to _registry.get() +
+#   derivation formulas in that pass. For v0.8.4a they stay hardcoded
+#   so behavior is bit-identical to pre-merge live — zero decision
+#   change in this PR.
 DCA_COOLDOWN_MS = 15 * 60 * 1000
 DCA_BETTER_PRICE_FRAC = 0.01
 DCA_MIN_SOVEREIGNTY = 0.1
@@ -390,11 +461,16 @@ def should_dca_add(
             "reason": f"side mismatch ({side_candidate} vs held {held_side})",
             "derivation": {"rule": 1},
         }
-    if add_count >= DCA_MAX_ADDS_PER_POSITION:
+    # Live-governed SAFETY_BOUND — caps total risk exposure across
+    # martingale-style averaging attempts on a single position.
+    max_adds = int(_registry.get(
+        "executive.dca.max_adds_per_position", default=_DEFAULT_DCA_MAX_ADDS,
+    ))
+    if add_count >= max_adds:
         return {
             "value": False,
-            "reason": f"add cap reached ({add_count}/{DCA_MAX_ADDS_PER_POSITION})",
-            "derivation": {"rule": 4, "add_count": add_count},
+            "reason": f"add cap reached ({add_count}/{max_adds})",
+            "derivation": {"rule": 4, "add_count": add_count, "max_adds": max_adds},
         }
     if now_ms - last_add_at_ms < DCA_COOLDOWN_MS:
         sec_remain = round((DCA_COOLDOWN_MS - (now_ms - last_add_at_ms)) / 1000)
