@@ -22,3 +22,7 @@ psycopg[binary,pool]>=3.1.0
 # Async HTTP client for Poloniex v3 REST (v0.8.2). Matches the axios-
 # based TS client in apps/api/src/services/poloniexFuturesService.js.
 aiohttp>=3.9.0
+# Sync HTTP client for ingest_markets.py (ported from kernels/core
+# in v0.8.3.5a). Different from aiohttp (async) — ingest runs as a
+# subprocess from /run/ingest and uses blocking calls.
+requests>=2.31.0

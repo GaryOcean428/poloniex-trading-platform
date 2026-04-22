@@ -24,9 +24,34 @@ import numpy as np
 from qig_core_local.geometry.fisher_rao import fisher_rao_distance
 
 from .modes import MODE_PROFILES, MonkeyMode
+from .parameters import get_registry
 from .state import KAPPA_STAR, NeurochemicalState
 
 Side = Literal["long", "short"]
+
+
+# Module-level registry handle. Per-call .get() hits the in-process cache
+# after first load — no DB hit on the hot path. Refresh cadence is owned
+# by the tick loop via ParameterRegistry.tick().
+_registry = get_registry()
+
+
+# Fallback defaults — used only when DATABASE_URL is unset (tests,
+# staging) OR the named row is missing from monkey_parameters. These are
+# the exact values v0.8.1 seeded, kept here so behavior is identical if
+# the registry is unreachable. Per P25, these stay in code as the
+# SAFETY_BOUND floor — changing them requires a governance event in the
+# registry, never a code edit.
+_DEFAULT_ENTRY_THR_CLAMP_LOW = 0.1
+_DEFAULT_ENTRY_THR_CLAMP_HIGH = 0.9
+_DEFAULT_SIZE_MAX_FRACTION = 0.5
+_DEFAULT_SIZE_MIN_NOTIONAL_BUFFER = 1.05
+_DEFAULT_LEVERAGE_MIN_BASELINE = 3.0
+_DEFAULT_LEVERAGE_MAX_SLOPE = 30.0
+_DEFAULT_LEVERAGE_KAPPA_SIGMA = 20.0
+_DEFAULT_SCALP_TP_MIN_FLOOR = 0.003
+_DEFAULT_EXIT_ENTROPY_COLLAPSE = 0.4  # (referenced by should_auto_flatten semantic)
+_DEFAULT_DCA_MAX_ADDS = 1
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -83,7 +108,16 @@ def current_entry_threshold(
     trend_mult = 1.0 - 0.3 * alignment
 
     raw_t = t_base * kappa_ratio * phi_mult * regime_scale * mode_scale * self_obs_bias * trend_mult
-    t = _clamp(raw_t, 0.1, 0.9)
+    # Entry-threshold clamps are SAFETY_BOUNDS per P25 (floor prevents
+    # runaway entries on model hiccup; ceiling prevents permanent
+    # no-entry from drift). Live-tunable via parameter registry.
+    clamp_low = _registry.get(
+        "executive.entry_threshold.clamp_low", default=_DEFAULT_ENTRY_THR_CLAMP_LOW,
+    )
+    clamp_high = _registry.get(
+        "executive.entry_threshold.clamp_high", default=_DEFAULT_ENTRY_THR_CLAMP_HIGH,
+    )
+    t = _clamp(raw_t, clamp_low, clamp_high)
 
     return {
         "value": t,
@@ -132,18 +166,27 @@ def current_position_size(
     mode_floor = MODE_PROFILES[mode].size_floor
     exploration_floor = mode_floor * (1.0 - maturity)
 
+    # Size cap: max fraction of equity a single position can consume
+    # (SAFETY_BOUND). Lift-to-min buffer: multiplier over exchange min
+    # notional so lot rounding never drops us below (SAFETY_BOUND).
+    max_fraction = _registry.get(
+        "executive.size.max_fraction_of_equity", default=_DEFAULT_SIZE_MAX_FRACTION,
+    )
+    buffer_mult = _registry.get(
+        "executive.size.min_notional_buffer", default=_DEFAULT_SIZE_MIN_NOTIONAL_BUFFER,
+    )
+
     raw_frac = max(exploration_floor, base_frac * reward_mult * stability_mult)
-    frac = _clamp(raw_frac, 0.0, 0.5)
+    frac = _clamp(raw_frac, 0.0, max_fraction)
     margin = frac * available_equity_usdt
     notional = margin * max(1.0, leverage)
 
     # v0.6.6 lift-to-minimum: if we're below exchange min and a fraction
-    # within the 0.5 safety clamp CAN clear it, auto-raise.
+    # within the max_fraction safety clamp CAN clear it, auto-raise.
     lifted = False
     if notional < min_notional_usdt and available_equity_usdt > 0 and leverage > 0:
-        BUFFER = 1.05
-        required_frac = (min_notional_usdt * BUFFER) / (leverage * available_equity_usdt)
-        if required_frac <= 0.5:
+        required_frac = (min_notional_usdt * buffer_mult) / (leverage * available_equity_usdt)
+        if required_frac <= max_fraction:
             frac = max(frac, required_frac)
             margin = frac * available_equity_usdt
             notional = margin * leverage
@@ -191,8 +234,22 @@ def current_leverage(
     mode: MonkeyMode = MonkeyMode.INVESTIGATION,
     tape_trend: float = 0.0,
 ) -> dict[str, Any]:
+    # κ-proximity bell width: narrower sigma penalises drift from κ* harder.
+    # Baseline + slope: leverage floor + scaling span with sovereignty.
+    # All three are SAFETY_BOUNDS — drastic changes would reshape the
+    # whole leverage surface, so they're live-governed, not hardcoded.
+    kappa_sigma = _registry.get(
+        "executive.leverage.kappa_sigma", default=_DEFAULT_LEVERAGE_KAPPA_SIGMA,
+    )
+    lev_min_baseline = _registry.get(
+        "executive.leverage.min_baseline", default=_DEFAULT_LEVERAGE_MIN_BASELINE,
+    )
+    lev_max_slope = _registry.get(
+        "executive.leverage.max_sovereign_slope", default=_DEFAULT_LEVERAGE_MAX_SLOPE,
+    )
+
     kappa_dist = abs(s.kappa - KAPPA_STAR)
-    kappa_proxim = float(np.exp(-kappa_dist / 20.0))
+    kappa_proxim = float(np.exp(-kappa_dist / kappa_sigma))
     regime_stability = (
         s.regime_weights.get("equilibrium", 0.0)
         + 0.5 * s.regime_weights.get("efficient", 0.0)
@@ -200,13 +257,32 @@ def current_leverage(
     surprise_discount = 1.0 - 0.5 * s.neurochemistry.norepinephrine
 
     mode_floor = MODE_PROFILES[mode].sovereign_cap_floor
-    sovereign_cap = max(mode_floor, 3.0 + 30.0 * s.sovereignty)
+    sovereign_cap = max(mode_floor, lev_min_baseline + lev_max_slope * s.sovereignty)
 
-    # v0.6.7 aggressive flatness boost (K=10, BOOST=0.8)
-    FLATNESS_K = 10.0
-    FLATNESS_BOOST = 0.8
-    flatness = max(0.0, 1.0 - abs(tape_trend) * FLATNESS_K)
-    flat_mult = 1.0 + FLATNESS_BOOST * flatness
+    # v0.8.4b — FLATNESS_K and FLATNESS_BOOST now DERIVE from geometric
+    # state per P25 ("operational thresholds should emerge from κ, Φ,
+    # regime, basin velocity").
+    #
+    # FLATNESS_K — width of the "flat tape" band that activates the boost.
+    #   When consciousness is coherent (κ near κ*, high kappa_proxim),
+    #   commit to a narrower definition of "flat" — only boost when tape
+    #   is genuinely quiet. When κ is off, be more forgiving (wider band).
+    #   Anchored: K=10 at kappa_proxim=1 (matches pre-derivation live).
+    #   Range [7, 10] — at κ far from κ*, floor keeps the semantic alive.
+    # FLATNESS_BOOST — magnitude of the leverage bump when market is flat.
+    #   Scales with Φ (integration strength): high Φ = strong conviction,
+    #   use the extra leverage; low Φ = diffuse, be conservative.
+    #   Anchored: BOOST=0.8 at Φ=0.5 (matches pre-derivation live).
+    #   Range [0.5, 1.1] — Φ=0 → 0.5 (half boost); Φ=1 → 1.1 (max out).
+    #
+    # At "nominal" state (κ=κ*, Φ=0.5) both values equal the pre-derivation
+    # constants exactly, so live behavior is preserved unless geometric
+    # state is genuinely deviant. Only safety floors (0.15 and 0.30 below)
+    # remain as hardcoded SAFETY_BOUNDs.
+    flatness_k = 7.0 + 3.0 * kappa_proxim
+    flatness_boost = 0.5 + 0.6 * max(0.0, min(1.0, s.phi))
+    flatness = max(0.0, 1.0 - abs(tape_trend) * flatness_k)
+    flat_mult = 1.0 + flatness_boost * flatness
 
     newborn = s.sovereignty < 0.1
     if newborn:
@@ -257,8 +333,23 @@ def should_profit_harvest(
     current_frac = unrealized_pnl_usdt / notional_usdt
     peak_frac = max(peak_pnl_usdt, 0.0) / notional_usdt
 
-    activation = max(0.002, 0.004 - 0.002 * s.neurochemistry.dopamine)
-    giveback = 0.30 + 0.20 * (1 - s.neurochemistry.serotonin)
+    # v0.8.4b — harvest activation and giveback now fully DERIVE per P25.
+    # ACTIVATION: baseline, discounted by dopamine (recent wins → harvest
+    #   sooner), amplified by Φ (high integration → let winners run).
+    #   Anchored at 0.003 when dopamine=0.5 AND Φ=0.5 (pre-derivation live).
+    #   0.002 floor stays as SAFETY_BOUND — must always clear 2×fee.
+    # GIVEBACK: emerges from serotonin (stability). High serotonin → keep
+    #   a tighter trailing stop. Low serotonin → let more of peak slip
+    #   before locking in.
+    # TREND_FLIP: derives from norepinephrine — surprise makes her more
+    #   sensitive to trend reversal. Anchored at -0.25 when NE=0.5.
+    nc = s.neurochemistry
+    phi_clipped = max(0.0, min(1.0, s.phi))
+    activation = max(
+        0.002,
+        0.004 - 0.002 * nc.dopamine + 0.002 * (phi_clipped - 0.5),
+    )
+    giveback = 0.30 + 0.20 * (1 - nc.serotonin)
     trailing_floor = peak_frac * (1.0 - giveback)
 
     alignment_now = tape_trend if held_side == "long" else -tape_trend
@@ -280,8 +371,11 @@ def should_profit_harvest(
             },
         }
 
-    TREND_FLIP_THRESHOLD = -0.25
-    if current_frac > 0 and alignment_now <= TREND_FLIP_THRESHOLD and peak_frac >= activation:
+    # TREND_FLIP_THRESHOLD derived from NE: at NE=0.5 → -0.25 (pre-derivation
+    # live); NE=0 (calm) → -0.30; NE=1 (surprised) → -0.20. More surprised
+    # = earlier flip detection.
+    trend_flip_threshold = -(0.30 - 0.10 * nc.norepinephrine)
+    if current_frac > 0 and alignment_now <= trend_flip_threshold and peak_frac >= activation:
         return {
             "value": True,
             "reason": (
@@ -331,7 +425,13 @@ def should_scalp_exit(
     pnl_frac = unrealized_pnl_usdt / notional_usdt
     nc = s.neurochemistry
     profile = MODE_PROFILES[mode]
-    tp_thr = max(0.003, profile.tp_base_frac - 0.003 * nc.dopamine + 0.005 * s.phi)
+    # Scalp TP floor: must clear exchange fees round-trip (2× taker
+    # ~=0.0015 on Poloniex VIP0). 0.003 gives a ~15bp margin. SAFETY_BOUND;
+    # the tp_base_frac + dopamine/Φ modulation sits on top of it.
+    tp_min_floor = _registry.get(
+        "executive.scalp.tp_min_floor", default=_DEFAULT_SCALP_TP_MIN_FLOOR,
+    )
+    tp_thr = max(tp_min_floor, profile.tp_base_frac - 0.003 * nc.dopamine + 0.005 * s.phi)
     sl_thr = tp_thr * profile.sl_ratio
 
     if pnl_frac >= tp_thr:
@@ -367,7 +467,15 @@ def should_scalp_exit(
 # ═══════════════════════════════════════════════════════════════
 
 
-DCA_MAX_ADDS_PER_POSITION = 1
+# DCA PARAMETERs — mixed dispositions per P25:
+# - max_adds_per_position is a hard SAFETY_BOUND (capacity risk
+#   ceiling; live-governed via registry)
+# - cooldown / better_price_frac / min_sovereignty are still literals
+#   here but flagged for v0.8.4b DERIVE work (should emerge from
+#   Φ/serotonin/basin-velocity). They'll move to _registry.get() +
+#   derivation formulas in that pass. For v0.8.4a they stay hardcoded
+#   so behavior is bit-identical to pre-merge live — zero decision
+#   change in this PR.
 DCA_COOLDOWN_MS = 15 * 60 * 1000
 DCA_BETTER_PRICE_FRAC = 0.01
 DCA_MIN_SOVEREIGNTY = 0.1
@@ -383,25 +491,58 @@ def should_dca_add(
     last_add_at_ms: float,
     now_ms: float,
     sovereignty: float,
+    s: Optional[ExecBasinState] = None,
 ) -> dict[str, Any]:
+    # v0.8.4b — when ExecBasinState is provided, DCA cooldown / better-price
+    # / min-sovereignty DERIVE from geometric state per P25. When not
+    # provided, fall back to the hardcoded pre-derivation values so older
+    # callers stay byte-compatible. tick.py's _decide_with_position will
+    # populate `s` after v0.8.4b; any other caller gets the legacy path.
+    #
+    # Cooldown: scales inversely with serotonin (stability). serotonin=0.5
+    #   → 15 min (matches pre-derivation); serotonin=0 → 25 min (unstable,
+    #   cautious); serotonin=1 → 5 min (stable, okay to add).
+    # Better-price threshold: scales with basin velocity. Fast-moving basin
+    #   → higher bar for calling it a "better" price. Anchored at 1% when
+    #   bv=0.02 (nominal); drops to 0.5% when basin is still, rises to 2%+
+    #   when basin is jumpy.
+    # Min-sovereignty: still a hard floor (SAFETY_BOUND — no DCA for
+    #   newborn kernels regardless of other state).
+    if s is not None:
+        ser = s.neurochemistry.serotonin
+        bv = s.basin_velocity
+        cooldown_ms = int((25.0 - 20.0 * ser) * 60_000)  # min → ms
+        better_price_frac = max(0.005, min(0.03, 0.01 + (bv - 0.02) * 0.5))
+    else:
+        cooldown_ms = DCA_COOLDOWN_MS
+        better_price_frac = DCA_BETTER_PRICE_FRAC
+
     if held_side != side_candidate:
         return {
             "value": False,
             "reason": f"side mismatch ({side_candidate} vs held {held_side})",
             "derivation": {"rule": 1},
         }
-    if add_count >= DCA_MAX_ADDS_PER_POSITION:
+    # Live-governed SAFETY_BOUND — caps total risk exposure across
+    # martingale-style averaging attempts on a single position.
+    max_adds = int(_registry.get(
+        "executive.dca.max_adds_per_position", default=_DEFAULT_DCA_MAX_ADDS,
+    ))
+    if add_count >= max_adds:
         return {
             "value": False,
-            "reason": f"add cap reached ({add_count}/{DCA_MAX_ADDS_PER_POSITION})",
-            "derivation": {"rule": 4, "add_count": add_count},
+            "reason": f"add cap reached ({add_count}/{max_adds})",
+            "derivation": {"rule": 4, "add_count": add_count, "max_adds": max_adds},
         }
-    if now_ms - last_add_at_ms < DCA_COOLDOWN_MS:
-        sec_remain = round((DCA_COOLDOWN_MS - (now_ms - last_add_at_ms)) / 1000)
+    if now_ms - last_add_at_ms < cooldown_ms:
+        sec_remain = round((cooldown_ms - (now_ms - last_add_at_ms)) / 1000)
         return {
             "value": False,
             "reason": f"cooldown ({sec_remain}s remaining)",
-            "derivation": {"rule": 3, "sec_remain": sec_remain},
+            "derivation": {
+                "rule": 3, "sec_remain": sec_remain,
+                "cooldown_ms": cooldown_ms,
+            },
         }
     if sovereignty < DCA_MIN_SOVEREIGNTY:
         return {
@@ -411,18 +552,21 @@ def should_dca_add(
         }
     price_delta = (current_price - initial_entry_price) / initial_entry_price
     price_is_better = (
-        price_delta < -DCA_BETTER_PRICE_FRAC
+        price_delta < -better_price_frac
         if held_side == "long"
-        else price_delta > DCA_BETTER_PRICE_FRAC
+        else price_delta > better_price_frac
     )
     if not price_is_better:
         return {
             "value": False,
             "reason": (
                 f"price not better ({price_delta*100:.3f}% from entry vs "
-                f"±{DCA_BETTER_PRICE_FRAC*100:.1f}% required)"
+                f"±{better_price_frac*100:.2f}% required)"
             ),
-            "derivation": {"rule": 2, "price_delta": price_delta},
+            "derivation": {
+                "rule": 2, "price_delta": price_delta,
+                "better_price_frac": better_price_frac,
+            },
         }
     return {
         "value": True,
@@ -455,7 +599,18 @@ def should_exit(
         return {"value": False, "reason": "no open position", "derivation": {}}
 
     disagreement = fisher_rao_distance(perception, strategy_forecast)
-    threshold = 0.55 * (1.0 + 0.5 * s.neurochemistry.norepinephrine)
+    # v0.8.4b — disagreement threshold DERIVES fully from NE × regime
+    # (previously: half-derived, only NE). High NE (surprised) raises
+    # the bar — don't exit on noise. Low equilibrium-weight (regime
+    # unstable) lowers the bar — regime will say exit on less.
+    # Anchored at 0.6875 when NE=0.5 AND equilibrium=0.5 (matches
+    # pre-derivation: 0.55 × (1+0.25) × 1.0 = 0.6875).
+    eq_weight = s.regime_weights.get("equilibrium", 0.5)
+    threshold = (
+        0.55
+        * (1.0 + 0.5 * s.neurochemistry.norepinephrine)
+        * (0.7 + 0.6 * eq_weight)
+    )
     if disagreement > threshold:
         return {
             "value": True,

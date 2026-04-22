@@ -37,8 +37,21 @@ ALL_MODES: tuple[MonkeyMode, ...] = (
 )
 SIDES: tuple[Side, ...] = ("long", "short")
 
-MIN_SAMPLE_FOR_BIAS: int = 3
-MAX_BIAS_SWING: float = 0.30  # ±30% from neutral 1.0
+from .parameters import get_registry
+
+_registry = get_registry()
+
+# Defaults used when DATABASE_URL is unset or the row is missing from
+# monkey_parameters. Match v0.8.1 migration-034 seed values exactly so
+# behavior is identical registry-on vs registry-off.
+_DEFAULT_MIN_SAMPLE_FOR_BIAS: int = 3
+_DEFAULT_MAX_BIAS_SWING: float = 0.30
+
+# Legacy aliases — kept for any external caller that imported the
+# module-level constants directly. Docstring notes the registry is the
+# source of truth now.
+MIN_SAMPLE_FOR_BIAS: int = _DEFAULT_MIN_SAMPLE_FOR_BIAS
+MAX_BIAS_SWING: float = _DEFAULT_MAX_BIAS_SWING
 
 
 @dataclass
@@ -80,10 +93,19 @@ def _neutral_bias() -> dict[MonkeyMode, dict[Side, float]]:
 
 
 def _win_rate_to_bias(win_rate: float) -> float:
-    """Map win rate in [0, 1] to bias in [1-MAX, 1+MAX], centred at 0.5 → 1.0."""
+    """Map win rate in [0, 1] to bias in [1-MAX, 1+MAX], centred at 0.5 → 1.0.
+
+    MAX_BIAS_SWING is a P14 SAFETY_BOUND — capping how much a losing
+    streak can flip a mode's entry bias. Sourced from the parameter
+    registry (seeded in migration 034 as `self_obs.max_bias_swing`);
+    falls back to the 0.30 pre-derivation default when registry is
+    unreachable. Governance edits are the intended way to change it;
+    this function never writes.
+    """
+    max_swing = _registry.get("self_obs.max_bias_swing", default=_DEFAULT_MAX_BIAS_SWING)
     centred = win_rate - 0.5
-    raw = 1.0 - centred * 2 * MAX_BIAS_SWING
-    return max(1.0 - MAX_BIAS_SWING, min(1.0 + MAX_BIAS_SWING, raw))
+    raw = 1.0 - centred * 2 * max_swing
+    return max(1.0 - max_swing, min(1.0 + max_swing, raw))
 
 
 def _normalise_mode(raw: str) -> MonkeyMode:
@@ -99,6 +121,18 @@ def _normalise_side(raw: str) -> Side:
 
 
 # ─── Public API ───
+
+
+def _min_sample_for_bias() -> int:
+    """Fetch the bucket-sample floor from the registry.
+
+    Read on every aggregation call (not once at import) so governance
+    edits take effect on next rebuild without a restart. In-memory
+    cache absorbs the overhead.
+    """
+    return int(_registry.get(
+        "self_obs.min_sample_for_bias", default=_DEFAULT_MIN_SAMPLE_FOR_BIAS,
+    ))
 
 
 def aggregate_and_bias(
@@ -156,17 +190,20 @@ def aggregate_and_bias(
     all_w = side_pooled["long"]["wins"] + side_pooled["short"]["wins"]
     global_win_rate = all_w / all_t if all_t > 0 else 0.0
 
+    # Registry-backed per P14: live-governed SAFETY_BOUND. Cached in
+    # local `n` so the four-branch fallback below doesn't re-query.
+    n = _min_sample_for_bias()
     bias = _neutral_bias()
     for mode in ALL_MODES:
         for side in SIDES:
             bucket = by_ms[mode][side]
-            if bucket.trades >= MIN_SAMPLE_FOR_BIAS:
+            if bucket.trades >= n:
                 bias[mode][side] = _win_rate_to_bias(bucket.win_rate)
-            elif mode_pooled[mode]["trades"] >= MIN_SAMPLE_FOR_BIAS:
+            elif mode_pooled[mode]["trades"] >= n:
                 bias[mode][side] = _win_rate_to_bias(mode_pooled[mode]["win_rate"])
-            elif side_pooled[side]["trades"] >= MIN_SAMPLE_FOR_BIAS:
+            elif side_pooled[side]["trades"] >= n:
                 bias[mode][side] = _win_rate_to_bias(side_pooled[side]["win_rate"])
-            elif all_t >= MIN_SAMPLE_FOR_BIAS:
+            elif all_t >= n:
                 bias[mode][side] = _win_rate_to_bias(global_win_rate)
 
     return SelfObservation(
