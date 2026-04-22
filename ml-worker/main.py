@@ -1,23 +1,47 @@
 """
 ML Worker FastAPI Server
 Serves ML predictions via HTTP and listens on Redis pub/sub.
+
+v0.8.3.5a — unified deploy surface (previously split between
+/kernels/core/health.py and /ml-worker/main.py). /ml/predict now has
+two backends coexisting behind the ROUTE_VERSION env flag:
+
+  ROUTE_VERSION=v0.8    → StrategyLoop + RegimeDetector (deterministic,
+                          matches kernels/core/health.py live behavior)
+  anything else / unset → EnsemblePredictor (LSTM + Transformer + GBM
+                          + ARIMA + Prophet; requires trained weights
+                          at ./saved_models/)
+
+Stage 2 Railway cut-over sets ROUTE_VERSION=v0.8 so live behavior
+is preserved at deploy-flip time. The opposite backend runs in
+shadow mode when ML_PREDICT_SHADOW=true, logging parity diffs to
+/governance/ml-predict-parity for later promotion evidence.
 """
 
+import asyncio
 import json
 import logging
 import os
+import subprocess
 import sys
 import threading
+import time
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
 
 import pandas as pd
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
-# Ensure src/ is on the path so models can be imported
+# Ensure src/ is on the path so models + proprietary_core can be imported
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 
 from ensemble_predictor import EnsemblePredictor
+from proprietary_core.regime import RegimeDetector  # noqa: F401  (re-exported via StrategyLoop)
+from proprietary_core.strategy_loop import MarketRegime, StrategyLoop  # noqa: F401  (MarketRegime re-exported for ops)
 
 logger = logging.getLogger("ml-worker")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -164,10 +188,224 @@ def _start_trade_outcome_listener():
 
 
 # ---------------------------------------------------------------------------
-# Shared prediction logic
+# StrategyLoop prediction backend (v0.8.3.5a — ported from
+# /kernels/core/health.py::_run_prediction)
+# ---------------------------------------------------------------------------
+
+def _strategy_to_signal(strategy_value: str, regime: str) -> dict[str, Any]:
+    """Translate StrategyLoop output into the signal format expected by polytrade-be.
+
+    Identical to kernels/core/health.py:_strategy_to_signal. Output shape
+    must stay byte-for-byte compatible — polytrade-be's mlPredictionService
+    is calibrated against this mapping.
+    """
+    strategy = strategy_value.lower()
+    regime_l = regime.lower() if regime else "unknown"
+
+    action_map = {
+        "momentum": "BUY",
+        "breakout": "BUY",
+        "trend_follow": "BUY",
+        "mean_revert": "SELL",
+        "cash": "HOLD",
+    }
+    strength_map = {
+        "momentum": 0.75,
+        "breakout": 0.65,
+        "trend_follow": 0.70,
+        "mean_revert": 0.60,
+        "cash": 0.30,
+    }
+
+    action = action_map.get(strategy, "HOLD")
+    strength = strength_map.get(strategy, 0.30)
+    return {
+        "signal": action,
+        "strength": strength,
+        "reason": f"regime={regime_l} strategy={strategy}",
+    }
+
+
+def _regime_to_direction(regime: str, trend_strength: float) -> str:
+    """Map (regime, trend_strength) → BULLISH / BEARISH / NEUTRAL.
+
+    Identical to kernels/core/health.py:_regime_to_direction.
+    """
+    regime_l = (regime or "").lower()
+    if regime_l == "creator" and trend_strength > 0.1:
+        return "BULLISH"
+    if regime_l == "preserver" and trend_strength > 0.15:
+        return "BULLISH"
+    if regime_l in ("dissolver",):
+        return "NEUTRAL"
+    if trend_strength < -0.05:
+        return "BEARISH"
+    return "NEUTRAL"
+
+
+def _handle_predict_strategyloop(payload: dict) -> dict:
+    """Deterministic regime-based predictor.
+
+    Ported 1:1 from kernels/core/health.py:_run_prediction. Produces the
+    exact signal distribution polytrade-be's risk engine is calibrated
+    against. Default path once ROUTE_VERSION=v0.8 is set.
+    """
+    action = payload.get("action", "multi_horizon")
+    symbol = payload.get("symbol", "UNKNOWN")
+    data = payload.get("data", [])
+    current_price = float(payload.get("current_price", 0.0))
+
+    if action == "health":
+        return {"status": "healthy", "service": "ml-worker", "models": ["regime", "strategy_loop"]}
+
+    if not data:
+        raise ValueError("No OHLCV data provided")
+
+    prices: list[float] = []
+    for candle in data:
+        if isinstance(candle, dict):
+            close = candle.get("close") or candle.get("c")
+        else:
+            close = candle
+        if close is not None:
+            prices.append(float(close))
+
+    if not prices:
+        raise ValueError("Could not extract close prices from data")
+
+    if not current_price and prices:
+        current_price = prices[-1]
+
+    loop = StrategyLoop(symbol=symbol)
+    decision = None
+    for p in prices:
+        decision = loop.tick(price=p)
+
+    if decision is None or decision.regime is None:
+        neutral_pred = {"price": current_price, "confidence": 40, "direction": "NEUTRAL"}
+        if action == "signal":
+            return {"signal": "HOLD", "strength": 0.3, "reason": "Insufficient data for regime detection"}
+        return {"1h": neutral_pred, "4h": neutral_pred, "24h": neutral_pred}
+
+    regime_val = decision.regime.regime.value if decision.regime else "dissolver"
+    confidence_raw = decision.regime.confidence if decision.regime else 0.4
+    trend_strength = decision.regime.trend_strength if decision.regime else 0.0
+    direction = _regime_to_direction(regime_val, trend_strength)
+    confidence_pct = int(min(max(confidence_raw * 100, 10), 95))
+
+    if action == "signal":
+        sig = _strategy_to_signal(decision.selected_strategy.value, regime_val)
+        sig["strength"] = round(confidence_raw, 4)
+        return sig
+
+    horizon_decay = {"1h": 1.0, "4h": 0.85, "24h": 0.70}
+    result: dict[str, Any] = {}
+    for h, decay in horizon_decay.items():
+        h_conf = int(min(confidence_pct * decay, 95))
+        h_dir = direction if h_conf >= 45 else "NEUTRAL"
+        horizon_hours = {"1h": 1, "4h": 4, "24h": 24}[h]
+        price_change = trend_strength * 0.01 * horizon_hours * (1.0 if h_dir != "BEARISH" else -1.0)
+        predicted_price = round(current_price * (1.0 + price_change), 8)
+        result[h] = {"price": predicted_price, "confidence": h_conf, "direction": h_dir}
+
+    if action == "predict":
+        horizon = payload.get("horizon", "1h")
+        return result.get(horizon, result["1h"])
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Shadow-diff ring buffer + parity telemetry (v0.8.3.5a per advisor)
+# ---------------------------------------------------------------------------
+#
+# Every /ml/predict call can optionally fire the OTHER backend in the
+# background (fire-and-forget) and record a parity-diff row. Exposed at
+# /governance/ml-predict-parity on the same pattern as /governance/status
+# from v0.7.11. This is the evidence stream that lets us promote
+# EnsemblePredictor later — or detect it was broken before the swap.
+
+_PARITY_LOG: list[dict[str, Any]] = []
+_PARITY_LOG_MAX = 2_000
+_PARITY_LOG_LOCK = threading.Lock()
+
+
+def _record_parity(row: dict[str, Any]) -> None:
+    with _PARITY_LOG_LOCK:
+        _PARITY_LOG.append(row)
+        if len(_PARITY_LOG) > _PARITY_LOG_MAX:
+            del _PARITY_LOG[: _PARITY_LOG_MAX // 10]
+
+
+def _shadow_compare(payload: dict, live_result: dict, live_backend: str) -> None:
+    """Run the non-live backend in a thread, log the diff. Never raises.
+
+    Called from the /ml/predict path as fire-and-forget. Latency is
+    borne by the worker pool, not the caller.
+    """
+    shadow_backend = "ensemble" if live_backend == "strategyloop" else "strategyloop"
+    started = time.monotonic()
+    shadow_result: dict[str, Any] | None = None
+    err: str | None = None
+    try:
+        if shadow_backend == "ensemble":
+            shadow_result = _handle_predict_ensemble(payload)
+        else:
+            shadow_result = _handle_predict_strategyloop(payload)
+    except Exception as exc:
+        err = f"{type(exc).__name__}: {exc}"
+
+    # For the "signal" action we can diff signal+strength cleanly. For
+    # multi_horizon the shapes differ between backends — just record
+    # both payloads and let downstream tooling compare fields.
+    row = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "action": payload.get("action"),
+        "symbol": payload.get("symbol"),
+        "live_backend": live_backend,
+        "shadow_backend": shadow_backend,
+        "live_signal": live_result.get("signal"),
+        "shadow_signal": (shadow_result or {}).get("signal"),
+        "live_strength": live_result.get("strength"),
+        "shadow_strength": (shadow_result or {}).get("strength"),
+        "shadow_error": err,
+        "shadow_latency_ms": round((time.monotonic() - started) * 1000, 2),
+    }
+    _record_parity(row)
+
+
+# ---------------------------------------------------------------------------
+# Shared prediction logic (dispatcher)
 # ---------------------------------------------------------------------------
 
 def _handle_predict(payload: dict) -> dict:
+    """Route /ml/predict to the selected backend.
+
+    ROUTE_VERSION=v0.8  → StrategyLoop (live-equivalent to
+                          kernels/core). Ensure this is set on
+                          Railway at Stage 2 cut-over time.
+    unset / anything else → EnsemblePredictor (ml-worker's
+                            historical default).
+
+    If ML_PREDICT_SHADOW=true, also fires the OTHER backend in a
+    background thread for parity-diff evidence.
+    """
+    backend = "strategyloop" if os.environ.get("ROUTE_VERSION") == "v0.8" else "ensemble"
+    live_result = (
+        _handle_predict_strategyloop(payload) if backend == "strategyloop"
+        else _handle_predict_ensemble(payload)
+    )
+    if os.environ.get("ML_PREDICT_SHADOW") == "true":
+        t = threading.Thread(
+            target=_shadow_compare,
+            args=(payload, live_result, backend),
+            daemon=True, name="ml-predict-shadow",
+        )
+        t.start()
+    return live_result
+
+
+def _handle_predict_ensemble(payload: dict) -> dict:
     """Route a prediction request to the ensemble predictor."""
     action = payload.get("action", "predict")
     symbol = payload.get("symbol", "UNKNOWN")
@@ -269,17 +507,227 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="ML Worker", lifespan=lifespan)
 
 
+# ---------------------------------------------------------------------------
+# /ml/predict request shape (matches kernels/core/health.py byte-for-byte)
+# ---------------------------------------------------------------------------
+
+class PredictRequest(BaseModel):
+    """Mirrors kernels/core/health.py::PredictRequest.
+
+    Keep field names + defaults identical so Pydantic validation rejects
+    the same malformed inputs on both sides. Stage 1b byte-diff testing
+    depends on identical request parsing.
+    """
+
+    action: str = "multi_horizon"
+    symbol: str = "UNKNOWN"
+    data: list[Any] = []
+    horizon: str = "1h"
+    current_price: float = 0.0
+
+
+# ---------------------------------------------------------------------------
+# Routes
+# ---------------------------------------------------------------------------
+
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    """Liveness probe. Returns ok + basic service identity.
+
+    Matches the shape of kernels/core/health.py::health for deploy-cut
+    compatibility — Railway health-check + polytrade-be liveness code
+    both rely on {"status": "ok"} being present.
+    """
+    return {
+        "status": "ok",
+        "service": "ml-worker",
+        "version": "0.8.3.5a",
+        "route_version": os.environ.get("ROUTE_VERSION") or "default-ensemble",
+    }
+
+
+@app.get("/healthz")
+async def healthz():
+    """Kubernetes-style readiness alias. Plain 'ok' string body —
+    Railway's health-check sometimes probes /healthz instead of /health.
+    """
+    return JSONResponse(content={"ok": True}, status_code=200)
+
+
+@app.get("/")
+async def root():
+    """Root handler — surfaces endpoint map for ops / curl introspection.
+    Parity with kernels/core/health.py::root so flipping rootDirectory
+    doesn't make this 404.
+    """
+    return {
+        "service": "ml-worker",
+        "version": "0.8.3.5a",
+        "route_version": os.environ.get("ROUTE_VERSION") or "default-ensemble",
+        "endpoints": {
+            "health": "/health (GET)",
+            "healthz": "/healthz (GET)",
+            "status": "/api/status (GET)",
+            "predict": "/ml/predict (POST)",
+            "ingest": "/run/ingest (POST)",
+            "governance_status": "/governance/status (GET)",
+            "governance_ml_parity": "/governance/ml-predict-parity (GET)",
+            "monkey_tick": "/monkey/tick/run (POST)",
+            "monkey_autonomic_tick": "/monkey/autonomic/tick (POST)",
+            "monkey_executive_decide": "/monkey/executive/decide (POST)",
+            "monkey_perception_perceive": "/monkey/perception/perceive (POST)",
+            "monkey_mode_detect": "/monkey/mode/detect (POST)",
+        },
+    }
 
 
 @app.post("/ml/predict")
-async def ml_predict(request: Request):
-    payload = await request.json()
-    result = _handle_predict(payload)
-    status_code = 200 if result.get("status") != "error" else 422
-    return JSONResponse(content=result, status_code=status_code)
+async def ml_predict(request: PredictRequest):
+    """Dispatch to the selected backend via _handle_predict.
+
+    Error handling mirrors kernels/core/health.py::ml_predict:
+      - ValueError  → HTTP 400 (caller sent bad data)
+      - other       → HTTP 500 (backend blew up)
+      - success     → {"status": "success", ...result}
+    """
+    try:
+        result = _handle_predict(request.model_dump())
+        # EnsemblePredictor path may return {"status": "error", ...} rather
+        # than raising — honour that shape with 422.
+        if isinstance(result, dict) and result.get("status") == "error":
+            return JSONResponse(content=result, status_code=422)
+        return {"status": "success", **result}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(f"/ml/predict crashed: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+MAX_OUTPUT_LENGTH = 4000  # subprocess tail length for /run/ingest responses
+
+
+@app.post("/run/ingest")
+async def run_ingest():
+    """Trigger the markets-ingestion subprocess on demand.
+
+    Ported from kernels/core/health.py::run_ingest. The ingest script
+    lives at the repo root of ml-worker after the v0.8.3.5a merge.
+    Requires POLONIEX_API_KEY + POLONIEX_API_SECRET env vars.
+    """
+    script = Path(__file__).resolve().parent / "ingest_markets.py"
+
+    if not script.exists():
+        raise HTTPException(
+            status_code=500,
+            detail=f"ingest_markets.py not found at {script}",
+        )
+
+    if not os.getenv("POLONIEX_API_KEY") or not os.getenv("POLONIEX_API_SECRET"):
+        raise HTTPException(
+            status_code=500,
+            detail="POLONIEX_API_KEY and POLONIEX_API_SECRET must be set",
+        )
+
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(script)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            cwd=str(script.parent),
+            env=os.environ.copy(),
+            timeout=60 * 10,
+            text=True,
+            check=True,
+        )
+        return JSONResponse(
+            status_code=200,
+            content={
+                "ok": True,
+                "code": 0,
+                "message": "Ingestion completed successfully",
+                "output": proc.stdout[-MAX_OUTPUT_LENGTH:],
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+    except subprocess.TimeoutExpired as exc:
+        return JSONResponse(
+            status_code=504,
+            content={
+                "ok": False,
+                "error": "timeout",
+                "message": "Ingestion timed out after 10 minutes",
+                "output": (exc.stdout or "")[-MAX_OUTPUT_LENGTH:] if hasattr(exc, "stdout") else "",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+    except subprocess.CalledProcessError as exc:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "ok": False,
+                "code": exc.returncode,
+                "error": "process_failed",
+                "message": f"Ingestion failed with code {exc.returncode}",
+                "output": (exc.stdout or "")[-MAX_OUTPUT_LENGTH:],
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+    except Exception as exc:
+        logger.error(f"/run/ingest error: {exc}", exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={
+                "ok": False,
+                "error": "unknown",
+                "message": str(exc),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+
+
+@app.get("/api/status")
+async def api_status():
+    """Operational status snapshot. Ops-only; no TS callers today."""
+    return {
+        "service": "ml-worker",
+        "version": "0.8.3.5a",
+        "route_version": os.environ.get("ROUTE_VERSION") or "default-ensemble",
+        "shadow_enabled": os.environ.get("ML_PREDICT_SHADOW") == "true",
+        "redis_configured": bool(REDIS_URL),
+        "trade_outcomes_buffered": len(get_recent_trade_outcomes(limit=_TRADE_OUTCOMES_MAX)),
+        "parity_log_size": len(_PARITY_LOG),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@app.get("/governance/ml-predict-parity")
+async def governance_ml_predict_parity(limit: int = 200):
+    """Parity-diff ring buffer for /ml/predict backends.
+
+    Evidence stream for later promotion of EnsemblePredictor. Populated
+    only while ML_PREDICT_SHADOW=true. Same telemetry pattern as
+    /governance/status (v0.7.11).
+    """
+    with _PARITY_LOG_LOCK:
+        rows = list(_PARITY_LOG[-max(1, min(limit, _PARITY_LOG_MAX)):])
+    # Compute a fast summary so ops can eyeball drift without downloading rows.
+    diffs = 0
+    for r in rows:
+        if r.get("shadow_error"):
+            continue
+        if r.get("live_signal") != r.get("shadow_signal"):
+            diffs += 1
+    return {
+        "available": True,
+        "shadow_enabled": os.environ.get("ML_PREDICT_SHADOW") == "true",
+        "sample_count": len(rows),
+        "signal_disagreements": diffs,
+        "disagreement_ratio": (diffs / len(rows)) if rows else 0.0,
+        "rows": rows,
+    }
 
 
 # ---------------------------------------------------------------------------
