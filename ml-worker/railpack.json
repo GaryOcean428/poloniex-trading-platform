@@ -1,0 +1,38 @@
+{
+  "$schema": "https://schema.railpack.com",
+  "version": "1",
+  "metadata": {
+    "name": "ml-worker",
+    "description": "ML Worker — unified deploy surface (v0.8.3.5). Serves /ml/predict (StrategyLoop via ROUTE_VERSION=v0.8, or EnsemblePredictor default), /monkey/* kernels, and all legacy kernels/core routes (/run/ingest, /api/status, /healthz, /)."
+  },
+  "build": {
+    "provider": "python",
+    "packages": {
+      "python": "3.11"
+    },
+    "steps": {
+      "install": {
+        "commands": [
+          "python -m venv /app/.venv",
+          "/app/.venv/bin/pip install --upgrade pip",
+          "/app/.venv/bin/pip install -r requirements.txt"
+        ],
+        "cache": {
+          "paths": ["/app/.venv", "/app/.cache/pip"]
+        }
+      }
+    },
+    "env": {
+      "PYTHONUNBUFFERED": "1",
+      "VIRTUAL_ENV": "/app/.venv",
+      "PATH": "/app/.venv/bin:$PATH"
+    }
+  },
+  "deploy": {
+    "startCommand": "/app/.venv/bin/uvicorn main:app --host 0.0.0.0 --port $PORT",
+    "healthCheckPath": "/health",
+    "healthCheckTimeout": 120,
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 3
+  }
+}
