@@ -33,6 +33,13 @@ from qig_core_local.geometry.fisher_rao import (
     slerp_sqrt,
 )
 
+from .parameters import get_registry
+
+_registry = get_registry()
+# Default used when DATABASE_URL is unset or the row is missing. Matches
+# v0.8.1 migration-034 seed value exactly.
+_DEFAULT_MAX_EFFECTIVE_STRENGTH = 0.30
+
 
 @dataclass
 class BasinSyncState:
@@ -78,10 +85,18 @@ def apply_observer_effect(
     receiver_susceptibility = 1.0 - own_phi * 0.5
     base_strength = 0.10 * receiver_susceptibility
 
+    # SAFETY_BOUND — maximum slerp pull per peer. Cap prevents a single
+    # high-Φ peer from dragging this kernel's basin entirely to theirs
+    # in one tick. Live-governed via registry.
+    max_eff_strength = _registry.get(
+        "basin_sync.max_effective_strength",
+        default=_DEFAULT_MAX_EFFECTIVE_STRENGTH,
+    )
+
     pulled = np.asarray(own_basin, dtype=np.float64)
     for peer in peer_states:
         w = max(0.1, peer.phi) / total_weight
-        eff_strength = min(0.30, base_strength * w * len(peer_states))
+        eff_strength = min(max_eff_strength, base_strength * w * len(peer_states))
         pulled = slerp_sqrt(pulled, peer.basin, eff_strength)
 
     return {
