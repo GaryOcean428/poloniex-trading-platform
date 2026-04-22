@@ -748,6 +748,15 @@ from trading.risk_kernel import (  # noqa: E402
     KernelRestingOrder as _KernelRestingOrder,
     evaluate_pre_trade_vetoes as _evaluate_pre_trade_vetoes,
 )
+from trading.live_signal import (  # noqa: E402
+    OHLCVBar as _OHLCVBar,
+    build_order as _build_order,
+    compute_atr as _compute_atr,
+    detect_simple_regime as _detect_simple_regime,
+    extract_signal_key as _extract_signal_key,
+    normalise_signal as _normalise_signal,
+    signal_passes_entry_gate as _signal_passes_entry_gate,
+)
 
 
 @app.post("/risk/evaluate")
@@ -811,6 +820,107 @@ async def risk_evaluate(request: Request):
         "allowed": decision.allowed,
         "reason": decision.reason,
         "code": decision.code,
+    }
+
+
+# ---------------------------------------------------------------------------
+# v0.8.7b — POST /live/decide — pure decision functions from liveSignalEngine
+# ---------------------------------------------------------------------------
+#
+# Single endpoint covering the stateless pieces of the TS live-signal
+# engine: signal normalization, ATR, regime proxy, bandit key, order
+# shaping, entry gate. Everything that takes (ohlcv + ml_signal + ml_
+# strength) as input and returns a decision object as output — no DB
+# access, no exchange calls.
+#
+# Stage 1b (shadow mode) will wire the TS side to compare its own
+# decisions against this endpoint's output tick-by-tick. v0.8.7d ships
+# that wiring; this PR just exposes the surface.
+
+
+@app.post("/live/decide")
+async def live_decide(request: Request):
+    """Run the full pure pipeline on one set of inputs.
+
+    Request body (camelCase to match TS convention):
+      {
+        "ohlcv": [{"high", "low", "close"}...],   // ≥ 15 bars for ATR
+        "mlSignal": "BUY"|"SELL"|"HOLD"|...,       // raw worker output
+        "mlStrength": 0..1,                        // raw worker strength
+        "mlReason": "...",                          // for bandit-key extraction
+        "effectiveStrength": 0..1?,                 // bandit-weighted (optional)
+        "positionUsdt": float?,                     // override INITIAL_POSITION_USDT
+        "leverage": float?                          // override DEFAULT_LEVERAGE
+      }
+
+    Response: {
+      "normalisedSignal": "BUY"|"SELL"|"HOLD",
+      "regime": "trending_up"|...,
+      "signalKey": "ml_*",
+      "atr": float,
+      "entryGate": {"passed": bool, "reason": str},
+      "order": {"side", "leverage", "notional", "price", "atr", ...} | null
+    }
+    """
+    body = await request.json()
+    try:
+        ohlcv_raw = body.get("ohlcv") or []
+        ohlcv = [
+            _OHLCVBar(
+                high=float(b["high"]),
+                low=float(b["low"]),
+                close=float(b["close"]),
+            )
+            for b in ohlcv_raw
+        ]
+        raw_signal = body.get("mlSignal")
+        ml_strength = float(body.get("mlStrength") or 0.0)
+        ml_reason = str(body.get("mlReason") or "")
+        eff_strength_raw = body.get("effectiveStrength")
+        eff_strength = float(eff_strength_raw) if eff_strength_raw is not None else None
+        position_usdt = body.get("positionUsdt")
+        leverage = body.get("leverage")
+    except (TypeError, ValueError, KeyError) as exc:
+        raise HTTPException(status_code=400, detail=f"bad live-decide input: {exc}") from exc
+
+    signal = _normalise_signal(raw_signal)
+    closes = [b.close for b in ohlcv]
+    regime = _detect_simple_regime(closes)
+    signal_key = _extract_signal_key(ml_reason)
+    atr = _compute_atr(ohlcv)
+
+    gate = _signal_passes_entry_gate(
+        signal, ml_strength, effective_strength=eff_strength,
+    )
+
+    # Build order only when gate passes. TS reference computes order
+    # independently of gate — we mirror that (caller may want the
+    # shape even when blocked, for logging).
+    last_close = closes[-1] if closes else 0.0
+    decision_obj = _build_order(
+        signal, last_close, atr,
+        position_usdt=float(position_usdt) if position_usdt is not None else None,
+        leverage=float(leverage) if leverage is not None else None,
+    )
+    order_payload = None
+    if decision_obj is not None:
+        order_payload = {
+            "side": decision_obj.side,
+            "leverage": decision_obj.leverage,
+            "notional": decision_obj.notional,
+            "price": decision_obj.price,
+            "atr": decision_obj.atr,
+            "atrStopDistance": decision_obj.atr_stop_distance,
+            "atrTpDistance": decision_obj.atr_tp_distance,
+        }
+
+    return {
+        "normalisedSignal": signal,
+        "regime": regime,
+        "signalKey": signal_key,
+        "atr": atr,
+        "entryGate": {"passed": gate.passed, "reason": gate.reason},
+        "order": order_payload,
     }
 
 
