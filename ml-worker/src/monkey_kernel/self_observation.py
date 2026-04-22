@@ -123,6 +123,18 @@ def _normalise_side(raw: str) -> Side:
 # ─── Public API ───
 
 
+def _min_sample_for_bias() -> int:
+    """Fetch the bucket-sample floor from the registry.
+
+    Read on every aggregation call (not once at import) so governance
+    edits take effect on next rebuild without a restart. In-memory
+    cache absorbs the overhead.
+    """
+    return int(_registry.get(
+        "self_obs.min_sample_for_bias", default=_DEFAULT_MIN_SAMPLE_FOR_BIAS,
+    ))
+
+
 def aggregate_and_bias(
     rows: Iterable[ClosedTradeRow],
     *,
@@ -178,17 +190,20 @@ def aggregate_and_bias(
     all_w = side_pooled["long"]["wins"] + side_pooled["short"]["wins"]
     global_win_rate = all_w / all_t if all_t > 0 else 0.0
 
+    # Registry-backed per P14: live-governed SAFETY_BOUND. Cached in
+    # local `n` so the four-branch fallback below doesn't re-query.
+    n = _min_sample_for_bias()
     bias = _neutral_bias()
     for mode in ALL_MODES:
         for side in SIDES:
             bucket = by_ms[mode][side]
-            if bucket.trades >= MIN_SAMPLE_FOR_BIAS:
+            if bucket.trades >= n:
                 bias[mode][side] = _win_rate_to_bias(bucket.win_rate)
-            elif mode_pooled[mode]["trades"] >= MIN_SAMPLE_FOR_BIAS:
+            elif mode_pooled[mode]["trades"] >= n:
                 bias[mode][side] = _win_rate_to_bias(mode_pooled[mode]["win_rate"])
-            elif side_pooled[side]["trades"] >= MIN_SAMPLE_FOR_BIAS:
+            elif side_pooled[side]["trades"] >= n:
                 bias[mode][side] = _win_rate_to_bias(side_pooled[side]["win_rate"])
-            elif all_t >= MIN_SAMPLE_FOR_BIAS:
+            elif all_t >= n:
                 bias[mode][side] = _win_rate_to_bias(global_win_rate)
 
     return SelfObservation(
