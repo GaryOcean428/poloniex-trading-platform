@@ -80,6 +80,52 @@ describe('validateMarketData', () => {
     expect(result!.price).toBe(3000);
   });
 
+  // ── Poloniex v3 REST ticker (abbreviated field names) ───────────────────────
+
+  it('validates Poloniex v3 /market/tickers shape (abbreviated field names)', () => {
+    // Actual response from GET /v3/market/tickers?symbol=BTC_USDT_PERP
+    const raw = {
+      symbol: 'BTC_USDT_PERP',
+      s: 'BTC_USDT_PERP',
+      o: '77871.45',
+      l: '77420.1',
+      h: '79347.93',
+      c: '78178',
+      qty: '72098',
+      mPx: '78190.46',
+      bPx: '78177',
+      aPx: '78190.05',
+    };
+    const result = validateMarketData(raw, 'REST ticker v3');
+    expect(result).not.toBeNull();
+    expect(result!.price).toBe(78178);
+    expect(result!.open).toBe(77871.45);
+    expect(result!.high).toBe(79347.93);
+    expect(result!.low).toBe(77420.1);
+    expect(result!.volume).toBe(72098);
+  });
+
+  it('prefers long-form `price` over abbreviated `c` when both present', () => {
+    const raw = { symbol: 'BTC_USDT', price: 50000, c: '99999', o: 50000, h: 51000, l: 49000 };
+    const result = validateMarketData(raw, 'test');
+    expect(result!.price).toBe(50000);
+  });
+
+  it('prefers long-form `open/high/low` over abbreviated `o/h/l` when both present', () => {
+    const raw = { symbol: 'BTC_USDT', price: 50000, open: 49500, o: '99999', high: 51000, h: '1', low: 49000, l: '1' };
+    const result = validateMarketData(raw, 'test');
+    expect(result!.open).toBe(49500);
+    expect(result!.high).toBe(51000);
+    expect(result!.low).toBe(49000);
+  });
+
+  it('uses `mPx` as a price fallback when only mark price is available', () => {
+    const raw = { symbol: 'ETH_USDT', mPx: '3000', h: '3100', l: '2900', o: '2950' };
+    const result = validateMarketData(raw, 'test');
+    expect(result!.price).toBe(3000);
+    expect(result!.high).toBe(3100);
+  });
+
   it('falls back OHLV to price when fields are missing', () => {
     const raw = { symbol: 'BTC_USDT', price: 50000 };
     const result = validateMarketData(raw, 'minimal');

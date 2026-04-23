@@ -52,7 +52,11 @@ export function validateMarketData(raw: Record<string, unknown>, source: string)
     return NaN;
   };
 
-  const price = toNum(raw.price ?? raw.close ?? raw.markPx ?? raw.markPrice ?? raw.lastPx ?? NaN);
+  // Poloniex v3 /market/tickers uses abbreviated field names (c, mPx, h, l,
+  // o, qty); WebSockets and klines use long forms (price, close, high, low,
+  // open, volume). Long forms take precedence so explicit callers win over
+  // bulk-spread raw exchange payloads.
+  const price = toNum(raw.price ?? raw.close ?? raw.c ?? raw.markPx ?? raw.mPx ?? raw.markPrice ?? raw.lastPx ?? NaN);
 
   // 3. Validate price
   if (!isFinite(price) || isNaN(price) || price <= 0) {
@@ -61,10 +65,10 @@ export function validateMarketData(raw: Record<string, unknown>, source: string)
   }
 
   // 4. Extract OHLV fields with sensible fallbacks to price
-  const rawOpen   = toNum(raw.open);
-  const rawHigh   = toNum(raw.high);
-  const rawLow    = toNum(raw.low);
-  const rawVol    = toNum(raw.volume ?? raw.qty24h ?? raw.vol);
+  const rawOpen   = toNum(raw.open   ?? raw.o);
+  const rawHigh   = toNum(raw.high   ?? raw.h);
+  const rawLow    = toNum(raw.low    ?? raw.l);
+  const rawVol    = toNum(raw.volume ?? raw.qty24h ?? raw.vol ?? raw.qty);
 
   const open   = isFinite(rawOpen)  && rawOpen  > 0 ? rawOpen  : price;
   const high   = isFinite(rawHigh)  && rawHigh  > 0 ? rawHigh  : price;

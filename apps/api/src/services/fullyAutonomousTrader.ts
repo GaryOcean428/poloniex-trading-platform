@@ -684,7 +684,7 @@ class FullyAutonomousTrader extends EventEmitter {
     const ticker = await poloniexFuturesService.getTickers(symbol);
     const rawTicker = ticker[0] ?? {};
     const validatedTicker = validateMarketData(
-      { symbol, price: rawTicker.markPx || rawTicker.markPrice || rawTicker.lastPx, ...rawTicker },
+      { symbol, ...rawTicker },
       'REST ticker (generateSignal)'
     );
 
