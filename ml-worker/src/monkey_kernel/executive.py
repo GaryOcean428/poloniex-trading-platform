@@ -23,6 +23,7 @@ import numpy as np
 
 from qig_core_local.geometry.fisher_rao import fisher_rao_distance
 
+from .basin import max_mass, normalized_entropy
 from .modes import MODE_PROFILES, MonkeyMode
 from .parameters import get_registry
 from .state import KAPPA_STAR, NeurochemicalState
@@ -597,6 +598,24 @@ def should_exit(
 ) -> dict[str, Any]:
     if held_side is None:
         return {"value": False, "reason": "no open position", "derivation": {}}
+
+    # Pillar 1 SAFETY_BOUND guard — zombie basin collapse forces exit
+    # regardless of disagreement. Mirrors shouldExit() in executive.ts:480-490.
+    # These thresholds are catastrophic-collapse safety bounds (P25 permits
+    # hardcoded constants for safety). Entropy floor and dominance ceiling
+    # define the "basin has collapsed into a single mode" condition — holding
+    # through that is always wrong regardless of kernel agreement.
+    entropy = normalized_entropy(s.basin)
+    dominance = max_mass(s.basin)
+    if entropy < 0.4 or dominance > 0.5:
+        return {
+            "value": True,
+            "reason": (
+                f"Pillar 1 violated (entropy={entropy:.3f}, maxMass={dominance:.3f}) "
+                "- zombie state, exit"
+            ),
+            "derivation": {"entropy": entropy, "dominance": dominance},
+        }
 
     disagreement = fisher_rao_distance(perception, strategy_forecast)
     # v0.8.4b — disagreement threshold DERIVES fully from NE × regime

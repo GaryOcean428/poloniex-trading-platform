@@ -269,6 +269,66 @@ class TestDisagreementDerivation:
 
 
 # ────────────────────────────────────────────────────────────────
+# Pillar 1 guard — entropy collapse / dominance > 0.5 forces exit
+# ────────────────────────────────────────────────────────────────
+
+class TestPillar1Guard:
+    def test_collapsed_basin_forces_exit(self):
+        """Basin all mass on one node → entropy=0, dominance=1 → exit."""
+        s = _nominal_state()
+        # Replace uniform basin with a fully collapsed one (dominance = 1.0)
+        collapsed = np.zeros(64)
+        collapsed[5] = 1.0
+        s.basin = collapsed
+        r = should_exit(
+            perception=collapsed, strategy_forecast=collapsed,
+            held_side="long", s=s,
+        )
+        assert r["value"] is True
+        assert "Pillar 1 violated" in r["reason"]
+        assert r["derivation"]["dominance"] == pytest.approx(1.0, abs=1e-9)
+        assert r["derivation"]["entropy"] == pytest.approx(0.0, abs=1e-9)
+
+    def test_dominance_over_half_forces_exit(self):
+        """Even without full collapse, dominance > 0.5 triggers exit."""
+        s = _nominal_state()
+        skewed = np.full(64, 0.5 / 63)  # 63 nodes share 0.5
+        skewed[0] = 0.5 + 1e-6          # one node holds >0.5
+        s.basin = skewed
+        r = should_exit(
+            perception=skewed, strategy_forecast=skewed,
+            held_side="long", s=s,
+        )
+        assert r["value"] is True
+        assert "Pillar 1 violated" in r["reason"]
+
+    def test_healthy_basin_reaches_disagreement_branch(self):
+        """Uniform basin (entropy=1.0, dominance≈0.016) bypasses the guard."""
+        s = _nominal_state()
+        basin = np.ones(64) / 64
+        s.basin = basin
+        r = should_exit(
+            perception=basin, strategy_forecast=basin,
+            held_side="long", s=s,
+        )
+        # No disagreement between identical basins → hold, NOT exit.
+        assert r["value"] is False
+        assert "Pillar 1" not in r["reason"]
+
+    def test_no_position_short_circuits_before_guard(self):
+        """held_side=None returns 'no open position' regardless of basin health."""
+        s = _nominal_state()
+        collapsed = np.zeros(64); collapsed[0] = 1.0
+        s.basin = collapsed
+        r = should_exit(
+            perception=collapsed, strategy_forecast=collapsed,
+            held_side=None, s=s,
+        )
+        assert r["value"] is False
+        assert "no open position" in r["reason"]
+
+
+# ────────────────────────────────────────────────────────────────
 # DCA cooldown + better-price derivations
 # ────────────────────────────────────────────────────────────────
 
