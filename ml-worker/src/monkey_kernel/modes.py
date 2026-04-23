@@ -47,6 +47,21 @@ class ModeProfile:
     description: str
 
 
+# MODE_PROFILES are per-mode ANCHORS on a behavioural simplex. Per
+# canonical P25, operational thresholds should derive from geometric
+# state (κ, Φ, regime, neurochemistry) — but naive derivation would
+# collapse mode distinction (same state → same profile regardless of
+# mode label). The resolution is the anchor-simplex pattern: each
+# mode supplies an anchor in (TP-width × entry-aggressiveness × size)
+# space; state modulates a *shared displacement* vector; the effective
+# profile is anchor_m + δ(state). Distinction is preserved (anchors
+# differ); modulation is pure derivation.
+#
+# Anchors are SAFETY_BOUND per P25 — they set the regime-invariant
+# envelope for each cognitive mode. Use `effective_profile(mode, ...)`
+# for state-modulated values. Direct reads of this table are only
+# appropriate for mode-gates (e.g. `can_enter`) that do not depend
+# on state.
 MODE_PROFILES: dict[MonkeyMode, ModeProfile] = {
     MonkeyMode.EXPLORATION: ModeProfile(
         tp_base_frac=0.004,
@@ -81,7 +96,7 @@ MODE_PROFILES: dict[MonkeyMode, ModeProfile] = {
     MonkeyMode.DRIFT: ModeProfile(
         tp_base_frac=0.005,
         sl_ratio=0.6,
-        entry_threshold_scale=99.0,
+        entry_threshold_scale=99.0,  # SAFETY_BOUND: DRIFT lockout
         size_floor=0.0,
         sovereign_cap_floor=1,
         tick_ms=60_000,
@@ -89,6 +104,81 @@ MODE_PROFILES: dict[MonkeyMode, ModeProfile] = {
         description="sideways noise — observe only",
     ),
 }
+
+
+# ═══════════════════════════════════════════════════════════════
+# State-derived effective profile (P25 discipline)
+# ═══════════════════════════════════════════════════════════════
+#
+# Each derivation is anchored so that at nominal state
+# (phi=0.5, serotonin=0.5, norepinephrine=0.5, equilibrium_weight=0.5)
+# the effective profile equals MODE_PROFILES[mode] exactly. Deviations
+# modulate outward from that fixed point.
+
+
+def effective_profile(
+    mode: MonkeyMode,
+    *,
+    phi: float,
+    serotonin: float,
+    norepinephrine: float,
+    equilibrium_weight: float,
+) -> ModeProfile:
+    """Return the state-modulated ModeProfile for the detected mode.
+
+    Anchors are from MODE_PROFILES[mode]; state-dependent fields are
+    derived from (Φ, neurochemistry, regime) per P25. Fields that are
+    SAFETY_BOUND (sovereign_cap_floor, tick_ms, can_enter, DRIFT's
+    entry-lockout) are passed through from the anchor unchanged.
+
+    At nominal state (phi=0.5, serotonin=0.5, norepinephrine=0.5,
+    equilibrium_weight=0.5), effective_profile == MODE_PROFILES[mode].
+    """
+    anchor = MODE_PROFILES[mode]
+
+    # tp_base_frac — derives from regime volatility
+    # eq_weight=0.5 → multiplier=1.0 (anchor); pure quantum (eq=0) → 1.25;
+    # pure equilibrium (eq=1) → 0.75. Higher quantum/volatility widens TP.
+    tp_mult = 1.0 + 0.5 * (0.5 - equilibrium_weight)
+    tp_base_frac = anchor.tp_base_frac * tp_mult
+
+    # sl_ratio — derives from serotonin (stability)
+    # ser=0.5 → 1.0 (anchor); ser=1 → 0.85 (tighter, let winners run);
+    # ser=0 → 1.15 (wider, more room). Matches "high stability → tight SL".
+    sl_mult = 1.0 - 0.3 * (serotonin - 0.5)
+    sl_ratio = anchor.sl_ratio * sl_mult
+
+    # entry_threshold_scale — derives from norepinephrine (surprise).
+    # DRIFT lockout is SAFETY_BOUND — pass through unchanged.
+    # Others: NE=0.5 → 1.0 (anchor); NE=1 → 0.8 (easier entry on novelty);
+    # NE=0 → 1.2 (harder entry when nothing surprising). Anchored so
+    # exploration remains more aggressive than investigation remains
+    # more aggressive than integration (anchor ordering preserved).
+    if mode == MonkeyMode.DRIFT:
+        entry_threshold_scale = anchor.entry_threshold_scale
+    else:
+        et_mult = 1.2 - 0.4 * norepinephrine
+        entry_threshold_scale = anchor.entry_threshold_scale * et_mult
+
+    # size_floor — derives from Φ (consciousness volume).
+    # phi=0.5 → 1.0 (anchor); phi=0 → 0.5× anchor (minimal exposure
+    # when consciousness is diffuse); phi=1 → 1.5× anchor (commit more
+    # when basin is focused). Preserves per-mode ordering.
+    size_mult = 0.5 + phi
+    size_floor = anchor.size_floor * size_mult
+
+    return ModeProfile(
+        tp_base_frac=tp_base_frac,
+        sl_ratio=sl_ratio,
+        entry_threshold_scale=entry_threshold_scale,
+        size_floor=size_floor,
+        # SAFETY_BOUND — per-mode fixed envelope (leverage floor)
+        sovereign_cap_floor=anchor.sovereign_cap_floor,
+        # REGISTER — per-mode operational cadence (fixed envelope)
+        tick_ms=anchor.tick_ms,
+        can_enter=anchor.can_enter,
+        description=anchor.description,
+    )
 
 
 @dataclass
