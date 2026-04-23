@@ -666,8 +666,16 @@ export class MonkeyKernel extends EventEmitter {
     // herself as flat and her entry logic can still fire (risk kernel's
     // exposure cap is the only thing bounding combined concurrency).
     const ownOpenRow = await this.findOpenMonkeyTrade(symbol);
+    // v0.8.7d-8: when exchange says no position but DB has an open Monkey
+    // row, prefer the DB row's side over a hardcoded 'long' fallback.
+    // Previously: `exchangeHeldSide ?? 'long'` — caused OVERRIDE_REVERSE
+    // [long→short] loops whenever LiveSignal just closed a short and the
+    // exchange hadn't yet settled into the view Monkey reads, because
+    // Monkey's DB row said short but the fallback claimed long. DB row
+    // is authoritative for Monkey's own recent trades; reconciler closes
+    // stale rows within 60s when exchange disagrees permanently.
     const heldSide: 'long' | 'short' | null = ownOpenRow
-      ? (exchangeHeldSide ?? 'long')  // exchange must agree or fetchAccountContext was stale
+      ? (exchangeHeldSide ?? ownOpenRow.side)
       : null;
     derivation.exchangeHeldSide = exchangeHeldSide;
     derivation.monkeyHeldSide = heldSide;
@@ -1145,28 +1153,31 @@ export class MonkeyKernel extends EventEmitter {
    * the scalp-exit gate (v0.4) to compute unrealized P&L.
    */
   private async findOpenMonkeyTrade(symbol: string): Promise<
-    | { id: string; entry_price: string; quantity: string; leverage: number; order_id: string | null }
+    | { id: string; entry_price: string; quantity: string; leverage: number; order_id: string | null; side: 'long' | 'short' }
     | null
   > {
     try {
       const reasonPattern = `monkey|kernel=${this.instanceId}|%`;
       const result = await pool.query(
-        `SELECT id, entry_price, quantity, leverage, order_id
+        `SELECT id, entry_price, quantity, leverage, order_id, side
            FROM autonomous_trades
           WHERE reason LIKE $2 AND status = 'open' AND symbol = $1
           ORDER BY entry_time ASC`,
         [symbol, reasonPattern],
       );
       const rows = result.rows as Array<{
-        id: string; entry_price: string; quantity: string; leverage: number; order_id: string | null;
+        id: string; entry_price: string; quantity: string; leverage: number; order_id: string | null; side: string;
       }>;
+      const normSide = (s: string): 'long' | 'short' =>
+        s === 'buy' || s === 'long' ? 'long' : 'short';
       if (rows.length === 0) return null;
-      if (rows.length === 1) return rows[0];
+      if (rows.length === 1) return { ...rows[0], side: normSide(rows[0].side) };
       // v0.6.2: multi-row position (DCA). Return an AGGREGATE pseudo-row:
       //   quantity = sum; entry_price = weighted average by quantity.
       //   id/order_id carry the oldest row so harvest/scalp reference a
       //   stable anchor across ticks. leverage = first row's leverage
-      //   (they should match; risk kernel enforces).
+      //   (they should match; risk kernel enforces). side = oldest row's
+      //   side (DCA rows should share side; entry kernel enforces).
       const totalQty = rows.reduce((s, r) => s + Math.abs(Number(r.quantity) || 0), 0);
       const weightedPrice = rows.reduce(
         (s, r) => s + Number(r.entry_price) * Math.abs(Number(r.quantity) || 0),
@@ -1178,6 +1189,7 @@ export class MonkeyKernel extends EventEmitter {
         quantity: String(totalQty),
         leverage: rows[0].leverage,
         order_id: rows[0].order_id,
+        side: normSide(rows[0].side),
       };
     } catch (err) {
       logger.debug('[Monkey] findOpenMonkeyTrade failed', {
