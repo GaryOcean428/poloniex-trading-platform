@@ -356,3 +356,328 @@ export function logParityDiff(
     });
   }
 }
+
+// ─────────────────────────────────────────────────────────────────
+// v0.8.7d-1 — HTTP helpers for the four trading decision endpoints
+// shipped in v0.8.7a/b/c-1/c-2:
+//   POST /risk/evaluate         (v0.8.7a)  — pre-trade blast-door gates
+//   POST /live/decide           (v0.8.7b)  — signal threshold + sizing + ATR
+//   POST /live/exit-decide      (v0.8.7c-1) — stop-loss/take-profit/trailing
+//   POST /live/reconcile        (v0.8.7c-2) — DB-vs-exchange symbol diff
+//
+// Same pattern as callExecutiveDecide / callTickRun above: 5s timeout,
+// fire-and-forget on shadow, structured diff loggers alongside.
+// Shadow gating uses existing env var — one flag per shadow surface:
+//
+//   MONKEY_TICK_PY_SHADOW=true              → already wired (tick)
+//   RISK_KERNEL_PY_SHADOW=true              → v0.8.7d-2 wires
+//   LIVE_SIGNAL_PY_SHADOW=true              → v0.8.7d-3 wires
+//   AUTONOMOUS_TRADER_PY_SHADOW=true        → v0.8.7d-4 wires
+
+// ── /risk/evaluate ───────────────────────────────────────────────
+
+export function isRiskShadowEnabled(): boolean {
+  return process.env.RISK_KERNEL_PY_SHADOW === 'true';
+}
+
+export interface RiskKernelOrder {
+  symbol: string;
+  side: 'long' | 'short' | 'buy' | 'sell';
+  notional: number;
+  leverage: number;
+  price: number;
+}
+
+export interface RiskKernelOpenPosition {
+  symbol: string;
+  side: 'long' | 'short';
+  notional: number;
+}
+
+export interface RiskKernelRestingOrder {
+  symbol: string;
+  side: 'buy' | 'sell';
+  price: number;
+}
+
+export interface RiskKernelAccountState {
+  equityUsdt: number;
+  unrealizedPnlUsdt: number;
+  openPositions: RiskKernelOpenPosition[];
+  restingOrders: RiskKernelRestingOrder[];
+}
+
+export interface RiskKernelContext {
+  isLive: boolean;
+  mode: 'auto' | 'paper_only' | 'pause';
+  symbolMaxLeverage: number;
+}
+
+export interface RiskKernelRequest {
+  kernelOrder: RiskKernelOrder;
+  accountState: RiskKernelAccountState;
+  context: RiskKernelContext;
+}
+
+export interface RiskKernelDecision {
+  allowed: boolean;
+  reason?: string | null;
+  code?: string | null;
+}
+
+export async function callRiskEvaluate(
+  req: RiskKernelRequest,
+  timeoutMs: number = DEFAULT_TIMEOUT_MS,
+): Promise<RiskKernelDecision> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${ML_WORKER_URL}/risk/evaluate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`/risk/evaluate HTTP ${res.status}: ${text}`);
+    }
+    return (await res.json()) as RiskKernelDecision;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export function logRiskParityDiff(
+  ts: { allowed: boolean; code?: string | null },
+  py: RiskKernelDecision,
+): void {
+  // For risk, the meaningful diff is ALLOWED mismatch (safety) OR
+  // different veto code on a mutual-block (why we'd reject for a
+  // different reason). Not a numeric tolerance — it's boolean +
+  // string match.
+  if (ts.allowed !== py.allowed) {
+    logger.warn('[kernel_client] risk parity diff (allowed mismatch)', {
+      ts_allowed: ts.allowed, py_allowed: py.allowed,
+      ts_code: ts.code, py_code: py.code,
+    });
+    return;
+  }
+  if (!ts.allowed && ts.code !== py.code) {
+    logger.warn('[kernel_client] risk parity diff (veto code mismatch)', {
+      ts_code: ts.code, py_code: py.code,
+    });
+  }
+}
+
+// ── /live/decide ─────────────────────────────────────────────────
+
+export function isLiveSignalShadowEnabled(): boolean {
+  return process.env.LIVE_SIGNAL_PY_SHADOW === 'true';
+}
+
+export interface LiveDecideOHLCV {
+  high: number;
+  low: number;
+  close: number;
+}
+
+export interface LiveDecideRequest {
+  ohlcv: LiveDecideOHLCV[];
+  mlSignal: string;
+  mlStrength: number;
+  mlReason?: string;
+  effectiveStrength?: number;
+  positionUsdt?: number;
+  leverage?: number;
+}
+
+export interface LiveDecideOrder {
+  side: 'long' | 'short';
+  leverage: number;
+  notional: number;
+  price: number;
+  atr: number;
+  atrStopDistance: number;
+  atrTpDistance: number;
+}
+
+export interface LiveDecideResponse {
+  normalisedSignal: 'BUY' | 'SELL' | 'HOLD';
+  regime: 'trending_up' | 'trending_down' | 'ranging' | 'unknown';
+  signalKey: string;
+  atr: number;
+  entryGate: { passed: boolean; reason: string };
+  order: LiveDecideOrder | null;
+}
+
+export async function callLiveDecide(
+  req: LiveDecideRequest,
+  timeoutMs: number = DEFAULT_TIMEOUT_MS,
+): Promise<LiveDecideResponse> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${ML_WORKER_URL}/live/decide`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`/live/decide HTTP ${res.status}: ${text}`);
+    }
+    return (await res.json()) as LiveDecideResponse;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ── /live/exit-decide ────────────────────────────────────────────
+
+export function isExitShadowEnabled(): boolean {
+  return process.env.AUTONOMOUS_TRADER_PY_SHADOW === 'true';
+}
+
+export interface ExitDecidePosition {
+  symbol: string;
+  qty: number;           // signed: +long / -short
+  entryPrice: number;
+  unrealizedPnl: number;
+}
+
+export interface ExitDecideConfig {
+  stopLossPercent: number;
+  takeProfitPercent: number;
+}
+
+export interface ExitDecideAnalysis {
+  trend: 'bullish' | 'bearish' | 'neutral' | 'unknown';
+}
+
+export interface ExitDecideRequest {
+  position: ExitDecidePosition;
+  config: ExitDecideConfig;
+  analysis?: ExitDecideAnalysis;
+}
+
+export type ExitReason = 'stop_loss' | 'take_profit' | 'trend_reversal' | 'hold';
+
+export interface ExitDecideResponse {
+  shouldClose: boolean;
+  reason: ExitReason;
+  explanation: string;
+  pnlPercent: number;
+  stopLossThreshold: number;
+  takeProfitThreshold: number;
+}
+
+export async function callExitDecide(
+  req: ExitDecideRequest,
+  timeoutMs: number = DEFAULT_TIMEOUT_MS,
+): Promise<ExitDecideResponse> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${ML_WORKER_URL}/live/exit-decide`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`/live/exit-decide HTTP ${res.status}: ${text}`);
+    }
+    return (await res.json()) as ExitDecideResponse;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export function logExitParityDiff(
+  ts: { shouldClose: boolean; reason: string },
+  py: ExitDecideResponse,
+): void {
+  if (ts.shouldClose !== py.shouldClose) {
+    logger.warn('[kernel_client] exit parity diff (shouldClose mismatch)', {
+      ts, py_reason: py.reason,
+    });
+    return;
+  }
+  if (ts.shouldClose && ts.reason !== py.reason) {
+    logger.warn('[kernel_client] exit parity diff (reason mismatch)', {
+      ts_reason: ts.reason, py_reason: py.reason,
+    });
+  }
+}
+
+// ── /live/reconcile ──────────────────────────────────────────────
+
+export interface ReconcileDbRow {
+  symbol: string;
+  orderId?: string;
+}
+
+export interface ReconcileExchangePosition {
+  symbol: string;
+  qty: number;
+}
+
+export interface ReconcileRequest {
+  dbRows: ReconcileDbRow[];
+  exchangePositions: ReconcileExchangePosition[];
+}
+
+export interface ReconcileResponse {
+  matchedSymbols: string[];
+  phantomDbSymbols: string[];
+  orphanExchangeSymbols: string[];
+  hasDrift: boolean;
+}
+
+export async function callReconcile(
+  req: ReconcileRequest,
+  timeoutMs: number = DEFAULT_TIMEOUT_MS,
+): Promise<ReconcileResponse> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${ML_WORKER_URL}/live/reconcile`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`/live/reconcile HTTP ${res.status}: ${text}`);
+    }
+    return (await res.json()) as ReconcileResponse;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export function logReconcileParityDiff(
+  ts: { phantomDbSymbols: string[]; orphanExchangeSymbols: string[] },
+  py: ReconcileResponse,
+): void {
+  // Reconcile parity compares SETS (order-agnostic).
+  const eq = (a: string[], b: string[]) => {
+    if (a.length !== b.length) return false;
+    const bs = new Set(b);
+    return a.every((x) => bs.has(x));
+  };
+  if (!eq(ts.phantomDbSymbols, py.phantomDbSymbols)) {
+    logger.warn('[kernel_client] reconcile parity diff (phantoms mismatch)', {
+      ts: ts.phantomDbSymbols, py: py.phantomDbSymbols,
+    });
+  }
+  if (!eq(ts.orphanExchangeSymbols, py.orphanExchangeSymbols)) {
+    logger.warn('[kernel_client] reconcile parity diff (orphans mismatch)', {
+      ts: ts.orphanExchangeSymbols, py: py.orphanExchangeSymbols,
+    });
+  }
+}
