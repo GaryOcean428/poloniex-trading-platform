@@ -24,7 +24,7 @@ import numpy as np
 from qig_core_local.geometry.fisher_rao import fisher_rao_distance
 
 from .basin import max_mass, normalized_entropy
-from .modes import MODE_PROFILES, MonkeyMode
+from .modes import MODE_PROFILES, MonkeyMode, effective_profile
 from .parameters import get_registry
 from .state import KAPPA_STAR, NeurochemicalState
 
@@ -104,7 +104,17 @@ def current_entry_threshold(
         + s.regime_weights.get("equilibrium", 0.0) * 0.7
         + s.regime_weights.get("quantum", 0.0) * 1.5
     )
-    mode_scale = MODE_PROFILES[mode].entry_threshold_scale
+    # v0.8.5 — use state-modulated effective profile (anchor-simplex).
+    # DRIFT's entry-lockout (99) passes through as a SAFETY_BOUND; others
+    # derive from norepinephrine (surprise eases entry threshold).
+    mode_profile = effective_profile(
+        mode,
+        phi=s.phi,
+        serotonin=s.neurochemistry.serotonin,
+        norepinephrine=s.neurochemistry.norepinephrine,
+        equilibrium_weight=s.regime_weights.get("equilibrium", 0.5),
+    )
+    mode_scale = mode_profile.entry_threshold_scale
     alignment = tape_trend if side_candidate == "long" else -tape_trend
     trend_mult = 1.0 - 0.3 * alignment
 
@@ -164,7 +174,14 @@ def current_position_size(
     reward_mult = 1.0 + (nc.dopamine - nc.gaba) * 0.5
     stability_mult = 0.5 + nc.serotonin * 0.5
 
-    mode_floor = MODE_PROFILES[mode].size_floor
+    # v0.8.5 — size_floor derives from Φ (anchor × (0.5 + phi))
+    mode_floor = effective_profile(
+        mode,
+        phi=s.phi,
+        serotonin=nc.serotonin,
+        norepinephrine=nc.norepinephrine,
+        equilibrium_weight=s.regime_weights.get("equilibrium", 0.5),
+    ).size_floor
     exploration_floor = mode_floor * (1.0 - maturity)
 
     # Size cap: max fraction of equity a single position can consume
@@ -425,7 +442,15 @@ def should_scalp_exit(
 
     pnl_frac = unrealized_pnl_usdt / notional_usdt
     nc = s.neurochemistry
-    profile = MODE_PROFILES[mode]
+    # v0.8.5 — tp_base_frac and sl_ratio derive from regime + serotonin.
+    # Quantum regime (low eq) widens TP; high serotonin (stable) tightens SL.
+    profile = effective_profile(
+        mode,
+        phi=s.phi,
+        serotonin=nc.serotonin,
+        norepinephrine=nc.norepinephrine,
+        equilibrium_weight=s.regime_weights.get("equilibrium", 0.5),
+    )
     # Scalp TP floor: must clear exchange fees round-trip (2× taker
     # ~=0.0015 on Poloniex VIP0). 0.003 gives a ~15bp margin. SAFETY_BOUND;
     # the tp_base_frac + dopamine/Φ modulation sits on top of it.
