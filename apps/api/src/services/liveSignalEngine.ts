@@ -893,11 +893,21 @@ export class LiveSignalEngine extends EventEmitter {
       const equityUsdt = Number(balance?.totalBalance ?? balance?.eq ?? 0);
       const unrealizedPnlUsdt = Number(balance?.unrealizedPnL ?? balance?.upl ?? 0);
 
-      const openPositions = (Array.isArray(positions) ? positions : []).map((p: Record<string, unknown>) => ({
-        symbol: String(p.symbol ?? ''),
-        side: (String(p.side ?? 'long').toLowerCase() === 'short' ? 'short' : 'long') as 'long' | 'short',
-        notional: Math.abs(Number(p.notional ?? p.size ?? 0)),
-      })).filter((p) => p.symbol.length > 0);
+      // v0.8.7d-7 fix: Poloniex v3 `side` field is next-action direction
+      // (e.g. "SELL" for a SHORT position — the order side that opened it
+      // and the same side that would close it in one-way mode). Position
+      // direction is the SIGN of qty. Previous code misread "SELL" as not
+      // "short" and classified shorts as longs, causing LiveSignal's
+      // signal-flip exit logic to treat BUY signals as confirming a long
+      // (so BUY on a SHORT never triggered exit).
+      const openPositions = (Array.isArray(positions) ? positions : []).map((p: Record<string, unknown>) => {
+        const qtyNum = Number(p.qty ?? p.size ?? 0);
+        return {
+          symbol: String(p.symbol ?? ''),
+          side: (qtyNum < 0 ? 'short' : 'long') as 'long' | 'short',
+          notional: Math.abs(Number(p.notional ?? p.size ?? 0)),
+        };
+      }).filter((p) => p.symbol.length > 0);
 
       return {
         state: {

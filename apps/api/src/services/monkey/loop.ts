@@ -1752,8 +1752,17 @@ export class MonkeyKernel extends EventEmitter {
       const positionsList = Array.isArray(positions) ? positions : [];
       const forSymbol = positionsList.find((p: Record<string, unknown>) =>
         String(p.symbol ?? '') === symbol && Math.abs(Number(p.qty ?? p.size ?? 0)) > 0);
-      const heldSide: 'long' | 'short' | null = forSymbol
-        ? (String((forSymbol as Record<string, unknown>).side ?? 'long').toLowerCase() === 'short' ? 'short' : 'long')
+      // v0.8.7d-7 fix: Poloniex v3 one-way mode returns `side` as the
+      // next-action direction (BUY/SELL, also long/short for some fields),
+      // NOT the position direction. For a SHORT position, side="SELL".
+      // The sign of `qty` is the authoritative indicator (reconciler uses
+      // it correctly at stateReconciliationService.ts:152). Prior code
+      // read `p.side` and fell through the else branch ("sell" !== "short"
+      // → "long") causing Monkey to think shorts were longs, triggering
+      // the OVERRIDE_REVERSE[long→short] loop with 21002 close-rejections.
+      const qtyNum = forSymbol ? Number((forSymbol as Record<string, unknown>).qty ?? (forSymbol as Record<string, unknown>).size ?? 0) : 0;
+      const heldSide: 'long' | 'short' | null = forSymbol && qtyNum !== 0
+        ? (qtyNum < 0 ? 'short' : 'long')
         : null;
       return {
         equityFraction,
