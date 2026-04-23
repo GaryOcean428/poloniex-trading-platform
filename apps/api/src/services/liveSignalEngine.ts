@@ -52,6 +52,10 @@ import {
 } from './thompsonBandit.js';
 import { allMonkeyKernels } from './monkey/loop.js';
 import {
+  callLiveDecide,
+  isLiveSignalShadowEnabled,
+} from './monkey/kernel_client.js';
+import {
   evaluatePreTradeVetoes,
   type KernelAccountState,
   type KernelContext,
@@ -597,6 +601,70 @@ export class LiveSignalEngine extends EventEmitter {
     // 3. Translate signal to a KernelOrder shape.
     const atr = this.computeATR(ohlcv, ATR_PERIOD);
     const order = this.buildOrder(symbol, signal, currentPrice, atr);
+
+    // v0.8.7d-3: fire-and-forget shadow call to the Python live_signal
+    // pipeline. TS decision stays authoritative. The Python side runs
+    // the same normalise → regime → ATR → buildOrder chain; we log
+    // any observable divergence on the fields that matter for trading
+    // (signal direction, regime key, ATR value, order presence).
+    //
+    // Default OFF via LIVE_SIGNAL_PY_SHADOW env flag. Shadow errors
+    // (timeout, 500) swallowed at debug level — never block the tick.
+    if (isLiveSignalShadowEnabled()) {
+      const shadowPayload = {
+        ohlcv: ohlcv.map((b: { high: number; low: number; close: number }) => ({
+          high: Number(b.high), low: Number(b.low), close: Number(b.close),
+        })),
+        mlSignal: rawSignal,
+        mlStrength: rawStrength,
+        mlReason: rawReason,
+        effectiveStrength,
+      };
+      void callLiveDecide(shadowPayload).then((py) => {
+        // Direction match is the load-bearing comparison — if TS
+        // said BUY and Python said SELL, live trading could go the
+        // wrong way once we cut over. Log as WARN so it surfaces.
+        if (py.normalisedSignal !== rawSignal) {
+          logger.warn('[live-signal-shadow] signal mismatch', {
+            symbol, ts: rawSignal, py: py.normalisedSignal,
+          });
+        }
+        if (py.regime !== regime) {
+          logger.warn('[live-signal-shadow] regime mismatch', {
+            symbol, ts: regime, py: py.regime,
+          });
+        }
+        if (py.signalKey !== signalKey) {
+          logger.warn('[live-signal-shadow] signalKey mismatch', {
+            symbol, ts: signalKey, py: py.signalKey,
+          });
+        }
+        const atrDiff = Math.abs(Number(py.atr) - atr);
+        // ATR absolute tolerance of 0.01 handles normal float noise;
+        // anything larger indicates a window-slicing or summation bug.
+        if (atrDiff > 0.01) {
+          logger.warn('[live-signal-shadow] atr drift', {
+            symbol, ts: atr, py: py.atr, diff: atrDiff,
+          });
+        }
+        // Order-presence match: both built an order or both didn't.
+        // A mismatch here means one side would trade and the other
+        // wouldn't — most critical divergence on the live path.
+        const tsHasOrder = order !== null;
+        const pyHasOrder = py.order !== null;
+        if (tsHasOrder !== pyHasOrder) {
+          logger.warn('[live-signal-shadow] order-presence mismatch', {
+            symbol, tsHasOrder, pyHasOrder,
+          });
+        }
+      }).catch((err) => {
+        logger.debug('[live-signal-shadow] parity fetch failed', {
+          symbol,
+          err: err instanceof Error ? err.message : String(err),
+        });
+      });
+    }
+
     if (!order) return;
 
     // 4. Build kernel context from the already-fetched accountCtx.
