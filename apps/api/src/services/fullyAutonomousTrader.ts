@@ -1269,6 +1269,15 @@ class FullyAutonomousTrader extends EventEmitter {
     const slPercent = config?.stopLossPercent || 2;
     const tpPercent = config?.takeProfitPercent || 4;
     const trailingTrigger = slPercent; // Start trailing stop when profit exceeds SL distance
+    // v0.8.7d-6: ROI-based (margin-return) TP/SL gates, complementary to
+    // the price-move gates above. Uses Poloniex's `uplRatio` (= upl/im,
+    // i.e. return on initial margin). Fires BEFORE the price-move gates,
+    // so at 14× leverage a 0.7% price-move already trips the 10% ROI TP.
+    // Intended for aggressive profit-taking on leveraged positions where
+    // the conservative 4% price-move threshold takes hours to reach.
+    // Configurable via env; defaults 10% TP / 15% SL on margin return.
+    const roiTpPercent = parseFloat(process.env.ROI_TP_PERCENT ?? '10');
+    const roiSlPercent = parseFloat(process.env.ROI_SL_PERCENT ?? '15');
 
     try {
       const positions = await poloniexFuturesService.getPositions(credentials);
@@ -1301,9 +1310,44 @@ class FullyAutonomousTrader extends EventEmitter {
         // calculations at entry time: stopLoss = entry * (1 ± slPercent)).
         const pnlPercent = priceMovePct;
 
+        const roiPct = uplRatioRaw * 100;
+        const leverage = parseFloat(position.lever || position.leverage || '1');
+
         logger.info(`[FAT] ${symbol} ${isLong ? 'LONG' : 'SHORT'} pnl=${unrealizedPnL.toFixed(4)}u ` +
-          `priceMove=${priceMovePct.toFixed(3)}% roi=${(uplRatioRaw * 100).toFixed(2)}% ` +
-          `entry=${entryPrice} mark=${markPx}`);
+          `priceMove=${priceMovePct.toFixed(3)}% roi=${roiPct.toFixed(2)}% ` +
+          `entry=${entryPrice} mark=${markPx} lev=${leverage}x`);
+
+        // B. Parity invariant — priceMove should equal roi/leverage within
+        // float precision. If it doesn't, our understanding of one field is
+        // wrong (same class of bug as the contract-qty notional trap that
+        // v0.8.7d-5 fixed). Catches future Poloniex response-shape drift
+        // without requiring a diagnostic deploy.
+        if (leverage > 0 && Math.abs(roiPct) > 0.01) {
+          const impliedPriceMove = roiPct / leverage;
+          const divergence = Math.abs(priceMovePct - impliedPriceMove);
+          if (divergence > 0.5) {
+            // 0.5% absolute divergence after normalizing both metrics is
+            // well outside float noise; indicates field semantics drift.
+            logger.warn(`[FAT] pnl formula divergence for ${symbol}: ` +
+              `priceMove=${priceMovePct.toFixed(3)}% vs roi/lev=${impliedPriceMove.toFixed(3)}% ` +
+              `(Δ=${divergence.toFixed(3)}%); check Poloniex response shape`);
+          }
+        }
+
+        // A. ROI-based gates — fire first when hit, to catch leveraged
+        // gains before they revert. Price-move gates remain as a floor.
+        if (roiTpPercent > 0 && roiPct >= roiTpPercent) {
+          logger.info(`Take profit triggered (ROI) for ${symbol}: ${roiPct.toFixed(2)}% >= ${roiTpPercent}%`);
+          await this.closePosition(userId, symbol, 'take_profit_roi');
+          this.recordTradeResult(userId, unrealizedPnL, config?.initialCapital ?? 10000);
+          continue;
+        }
+        if (roiSlPercent > 0 && roiPct <= -roiSlPercent) {
+          logger.info(`Stop loss triggered (ROI) for ${symbol}: ${roiPct.toFixed(2)}% <= -${roiSlPercent}%`);
+          await this.closePosition(userId, symbol, 'stop_loss_roi');
+          this.recordTradeResult(userId, unrealizedPnL, config?.initialCapital ?? 10000);
+          continue;
+        }
 
         // v0.8.7d-4: fire-and-forget shadow call to /live/exit-decide.
         // TS exit-chain (below) remains authoritative; Python runs the
