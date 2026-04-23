@@ -39,7 +39,7 @@
     "hooks:install": "bash scripts/install-pre-commit-hook.sh",
     "ci:verify": "node scripts/verify-ci-commands.js",
     "sync:poloniex": "node scripts/sync-poloniex-futures-v3.js",
-    "py:ingest:markets": "python kernels/core/ingest_markets.py",
+    "py:ingest:markets": "python ml-worker/ingest_markets.py",
     "bundle:shared": "node scripts/bundle-shared.mjs",
     "install:all": "yarn install",
     "railway:validate": "node scripts/validate-railway-deployment.mjs",
