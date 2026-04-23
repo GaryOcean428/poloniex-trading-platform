@@ -1274,6 +1274,15 @@ class FullyAutonomousTrader extends EventEmitter {
       const positions = await poloniexFuturesService.getPositions(credentials);
       const activePositions = Array.isArray(positions) ? positions : [];
 
+      // DIAG v0.8.7d-5: log the raw Poloniex v3 position shape on every tick
+      // to verify field-name assumptions. Remove once confirmed.
+      if (activePositions.length > 0) {
+        logger.info(`[FAT DIAG] positions count=${activePositions.length}`, {
+          keys: Object.keys(activePositions[0] ?? {}),
+          sample: activePositions[0],
+        });
+      }
+
       for (const position of activePositions) {
         const qty = parseFloat(position.qty || position.positionAmt || '0');
         if (qty === 0) continue;
@@ -1285,6 +1294,9 @@ class FullyAutonomousTrader extends EventEmitter {
 
         // Calculate P&L percentage
         const pnlPercent = entryPrice > 0 ? (unrealizedPnL / (entryPrice * Math.abs(qty))) * 100 : 0;
+
+        // DIAG v0.8.7d-5: log the parsed values so we can see WHERE the bug is
+        logger.info(`[FAT DIAG] parsed ${symbol}: qty=${qty} entry=${entryPrice} uPnL=${unrealizedPnL} pnl%=${pnlPercent.toFixed(2)}`);
 
         // v0.8.7d-4: fire-and-forget shadow call to /live/exit-decide.
         // TS exit-chain (below) remains authoritative; Python runs the
