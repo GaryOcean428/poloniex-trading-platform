@@ -41,8 +41,15 @@ from .exit_decisions import (
     Trend,
     decide_exit,
 )
+from .reconciliation import (
+    ExchangePosition,
+    ReconciliationReport,
+    TrackedPosition,
+    reconcile_positions,
+)
 
 __all__ = [
+    "ExchangePosition",
     "ExitConfig",
     "ExitDecision",
     "ExitReason",
@@ -57,6 +64,8 @@ __all__ = [
     "PER_SYMBOL_EXPOSURE_MAX_MULTIPLIER",
     "PositionSide",
     "PositionSnapshot",
+    "ReconciliationReport",
+    "TrackedPosition",
     "Trend",
     "UNREALIZED_DRAWDOWN_KILL_THRESHOLD",
     "check_execution_mode",
@@ -66,4 +75,5 @@ __all__ = [
     "check_unrealized_drawdown",
     "decide_exit",
     "evaluate_pre_trade_vetoes",
+    "reconcile_positions",
 ]
