@@ -6,6 +6,11 @@
 import { logger } from '../utils/logger.js';
 import { pool } from '../db/connection.js';
 import { evaluatePreTradeVetoes } from './riskKernel.js';
+import {
+  callRiskEvaluate,
+  isRiskShadowEnabled,
+  logRiskParityDiff,
+} from './monkey/kernel_client.js';
 
 class RiskService {
   constructor() {
@@ -106,6 +111,27 @@ class RiskService {
           kernelInputs.accountState,
           kernelInputs.context,
         );
+
+        // v0.8.7d-2: fire-and-forget shadow call to the Python risk
+        // kernel when RISK_KERNEL_PY_SHADOW=true. TS decision stays
+        // authoritative. Latency of the shadow request does NOT block
+        // the live path — the await on the TS decision already
+        // completed above. A timeout / network failure in the shadow
+        // call logs at debug and is dropped; never impacts trading.
+        if (isRiskShadowEnabled()) {
+          // Deep-copy the inputs so the shadow call cannot mutate
+          // caller-provided objects on some future timeline. Cheap —
+          // kernelInputs is small (one order + account snapshot).
+          const shadowPayload = JSON.parse(JSON.stringify(kernelInputs));
+          void callRiskEvaluate(shadowPayload).then((pyDecision) => {
+            logRiskParityDiff(kernelDecision, pyDecision);
+          }).catch((err) => {
+            logger.debug('[risk-shadow] parity fetch failed', {
+              err: err instanceof Error ? err.message : String(err),
+            });
+          });
+        }
+
         if (!kernelDecision.allowed) {
           logger.warn('Risk check failed: kernel veto', {
             accountId: account.id,
