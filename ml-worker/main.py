@@ -757,6 +757,12 @@ from trading.live_signal import (  # noqa: E402
     normalise_signal as _normalise_signal,
     signal_passes_entry_gate as _signal_passes_entry_gate,
 )
+from trading.exit_decisions import (  # noqa: E402
+    ExitConfig as _ExitConfig,
+    MarketAnalysis as _MarketAnalysis,
+    PositionSnapshot as _PositionSnapshot,
+    decide_exit as _decide_exit,
+)
 
 
 @app.post("/risk/evaluate")
@@ -921,6 +927,82 @@ async def live_decide(request: Request):
         "atr": atr,
         "entryGate": {"passed": gate.passed, "reason": gate.reason},
         "order": order_payload,
+    }
+
+
+# ---------------------------------------------------------------------------
+# v0.8.7c-1 — POST /live/exit-decide — managePositions exit chain
+# ---------------------------------------------------------------------------
+#
+# Pure position-exit logic ported from fullyAutonomousTrader.
+# managePositions. Shadow-mode parity path for the TS side — same
+# input, same decision, same reason string shape.
+#
+# Caller passes the already-fetched position + analysis + config;
+# no Poloniex/DB calls here. Priority-ordered: stop_loss →
+# take_profit → trailing/trend_reversal → hold.
+
+
+@app.post("/live/exit-decide")
+async def live_exit_decide(request: Request):
+    """Evaluate exit decision for one open position.
+
+    Request body (camelCase to match TS convention):
+      {
+        "position": {
+          "symbol":        "BTC_USDT_PERP",
+          "qty":           1.0,          // signed: +long / -short
+          "entryPrice":    75000,
+          "unrealizedPnl": 50.0           // USDT
+        },
+        "config": {
+          "stopLossPercent":   2.0,       // e.g. 2 = 2%
+          "takeProfitPercent": 4.0
+        },
+        "analysis": {                     // optional
+          "trend": "bullish"|"bearish"|"neutral"|"unknown"
+        }
+      }
+
+    Response: {
+      "shouldClose":        bool,
+      "reason":             "stop_loss"|"take_profit"|"trend_reversal"|"hold",
+      "explanation":        str,
+      "pnlPercent":         float,
+      "stopLossThreshold":  float,
+      "takeProfitThreshold": float
+    }
+    """
+    body = await request.json()
+    try:
+        p = body["position"]
+        position = _PositionSnapshot(
+            symbol=str(p["symbol"]),
+            qty=float(p["qty"]),
+            entry_price=float(p["entryPrice"]),
+            unrealized_pnl=float(p["unrealizedPnl"]),
+        )
+        c = body.get("config") or {}
+        config = _ExitConfig(
+            stop_loss_percent=float(c.get("stopLossPercent", 2.0)),
+            take_profit_percent=float(c.get("takeProfitPercent", 4.0)),
+        )
+        a_raw = body.get("analysis")
+        analysis = (
+            _MarketAnalysis(trend=str(a_raw["trend"]))
+            if a_raw and "trend" in a_raw else None
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=f"bad exit-decide input: {exc}") from exc
+
+    decision = _decide_exit(position, config, analysis)
+    return {
+        "shouldClose": decision.should_close,
+        "reason": decision.reason,
+        "explanation": decision.explanation,
+        "pnlPercent": decision.pnl_percent,
+        "stopLossThreshold": decision.stop_loss_threshold,
+        "takeProfitThreshold": decision.take_profit_threshold,
     }
 
 

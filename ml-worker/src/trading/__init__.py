@@ -31,8 +31,21 @@ from .risk_kernel import (
     check_unrealized_drawdown,
     evaluate_pre_trade_vetoes,
 )
+from .exit_decisions import (
+    ExitConfig,
+    ExitDecision,
+    ExitReason,
+    MarketAnalysis,
+    PositionSnapshot,
+    Side as PositionSide,
+    Trend,
+    decide_exit,
+)
 
 __all__ = [
+    "ExitConfig",
+    "ExitDecision",
+    "ExitReason",
     "KernelAccountState",
     "KernelContext",
     "KernelDecision",
@@ -40,12 +53,17 @@ __all__ = [
     "KernelOrder",
     "KernelRestingOrder",
     "KernelVetoCode",
+    "MarketAnalysis",
     "PER_SYMBOL_EXPOSURE_MAX_MULTIPLIER",
+    "PositionSide",
+    "PositionSnapshot",
+    "Trend",
     "UNREALIZED_DRAWDOWN_KILL_THRESHOLD",
     "check_execution_mode",
     "check_per_symbol_exposure",
     "check_self_match",
     "check_symbol_max_leverage",
     "check_unrealized_drawdown",
+    "decide_exit",
     "evaluate_pre_trade_vetoes",
 ]
