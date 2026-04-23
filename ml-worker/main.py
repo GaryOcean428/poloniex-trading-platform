@@ -763,6 +763,11 @@ from trading.exit_decisions import (  # noqa: E402
     PositionSnapshot as _PositionSnapshot,
     decide_exit as _decide_exit,
 )
+from trading.reconciliation import (  # noqa: E402
+    ExchangePosition as _ExchangePosition,
+    TrackedPosition as _TrackedPosition,
+    reconcile_positions as _reconcile_positions,
+)
 
 
 @app.post("/risk/evaluate")
@@ -1003,6 +1008,70 @@ async def live_exit_decide(request: Request):
         "pnlPercent": decision.pnl_percent,
         "stopLossThreshold": decision.stop_loss_threshold,
         "takeProfitThreshold": decision.take_profit_threshold,
+    }
+
+
+# ---------------------------------------------------------------------------
+# v0.8.7c-2 — POST /live/reconcile — pure DB-vs-exchange diff
+# ---------------------------------------------------------------------------
+#
+# Ported from fullyAutonomousTrader.reconcilePositions. Caller hands
+# us the DB open-rows + exchange getPositions result; we return a
+# structured report with phantom_db / orphan_exchange / matched
+# symbol lists.
+#
+# The mutation side (UPDATE autonomous_trades SET status='closed' on
+# phantoms, logAgentEvent on orphans) stays TS — v0.8.7c-3 ports the
+# actual writes. Shadow-mode parity against TS side only compares
+# the diff output, which this endpoint exposes as a pure function.
+
+
+@app.post("/live/reconcile")
+async def live_reconcile(request: Request):
+    """Diff DB open positions against exchange open positions.
+
+    Request body:
+      {
+        "dbRows":  [{"symbol", "orderId"?}...],
+        "exchangePositions": [{"symbol", "qty"}...]
+      }
+
+    Response:
+      {
+        "matchedSymbols":         [str...],  // in both, healthy
+        "phantomDbSymbols":       [str...],  // DB says open, exchange doesn't
+        "orphanExchangeSymbols":  [str...],  // exchange has, DB doesn't
+        "hasDrift":               bool       // true iff any phantom/orphan
+      }
+
+    All symbol lists sorted ascending. Zero-qty exchange entries are
+    filtered out (matches TS behaviour at fullyAutonomousTrader:1174).
+    """
+    body = await request.json()
+    try:
+        db_rows = [
+            _TrackedPosition(
+                symbol=str(r["symbol"]),
+                order_id=str(r.get("orderId") or ""),
+            )
+            for r in (body.get("dbRows") or [])
+        ]
+        exchange_positions = [
+            _ExchangePosition(
+                symbol=str(p["symbol"]),
+                qty=float(p.get("qty") or 0),
+            )
+            for p in (body.get("exchangePositions") or [])
+        ]
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=f"bad reconcile input: {exc}") from exc
+
+    report = _reconcile_positions(db_rows, exchange_positions)
+    return {
+        "matchedSymbols": report.matched_symbols,
+        "phantomDbSymbols": report.phantom_db_symbols,
+        "orphanExchangeSymbols": report.orphan_exchange_symbols,
+        "hasDrift": report.has_drift,
     }
 
 
