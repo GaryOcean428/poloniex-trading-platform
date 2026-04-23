@@ -1596,13 +1596,16 @@ class PaperTradingService extends EventEmitter {
           const tickers = await poloniexFuturesService.getTickers(session.symbol);
           if (tickers && tickers[0]) {
             const t = tickers[0];
+            // Accept both Poloniex v3 abbreviated names (c/mPx/h/l/o/qty)
+            // and legacy long forms. Matches the validator's fallback chain
+            // (see apps/api/src/utils/marketDataValidator.ts).
             const rawTicker = {
               symbol: session.symbol,
-              price: t.markPx || t.markPrice || t.lastPx,
-              open: t.open,
-              high: t.high,
-              low: t.low,
-              volume: t.qty24h || t.vol,
+              price: t.c || t.markPx || t.mPx || t.markPrice || t.lastPx,
+              open: t.o || t.open,
+              high: t.h || t.high,
+              low: t.l || t.low,
+              volume: t.qty24h || t.qty || t.vol,
               timestamp: Date.now()
             };
             const validated = validateMarketData(rawTicker, 'REST ticker');

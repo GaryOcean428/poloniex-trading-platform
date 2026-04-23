@@ -1274,29 +1274,36 @@ class FullyAutonomousTrader extends EventEmitter {
       const positions = await poloniexFuturesService.getPositions(credentials);
       const activePositions = Array.isArray(positions) ? positions : [];
 
-      // DIAG v0.8.7d-5: log the raw Poloniex v3 position shape on every tick
-      // to verify field-name assumptions. Remove once confirmed.
-      if (activePositions.length > 0) {
-        logger.info(`[FAT DIAG] positions count=${activePositions.length}`, {
-          keys: Object.keys(activePositions[0] ?? {}),
-          sample: activePositions[0],
-        });
-      }
-
       for (const position of activePositions) {
         const qty = parseFloat(position.qty || position.positionAmt || '0');
         if (qty === 0) continue;
 
         const symbol = position.symbol;
-        const _currentPrice = parseFloat(position.markPx || position.markPrice || '0');
+        const markPx = parseFloat(position.markPx || position.markPrice || '0');
         const entryPrice = parseFloat(position.openAvgPx || position.entryPrice || '0');
         const unrealizedPnL = parseFloat(position.upl || position.unrealizedPnl || '0');
+        // Poloniex v3 provides uplRatio = upl / initial-margin (i.e. ROI on
+        // margin), sign carries direction. Prefer it when present; falls
+        // back to price-move computation (markPx vs entryPrice) when not.
+        const uplRatioRaw = parseFloat(position.uplRatio || '0');
+        const isLong = qty > 0;
 
-        // Calculate P&L percentage
-        const pnlPercent = entryPrice > 0 ? (unrealizedPnL / (entryPrice * Math.abs(qty))) * 100 : 0;
+        // Compute price-move % directly from mark/entry. Avoids the
+        // `entry * qty` notional trap: Poloniex qty is in CONTRACTS (e.g.
+        // 0.01 ETH per contract for ETH_USDT_PERP), so `entry * qty` is
+        // 100x too small for ETH-style symbols and the resulting pnl%
+        // never reaches the TP threshold.
+        const priceMovePct = markPx > 0 && entryPrice > 0
+          ? ((isLong ? (markPx - entryPrice) : (entryPrice - markPx)) / entryPrice) * 100
+          : 0;
 
-        // DIAG v0.8.7d-5: log the parsed values so we can see WHERE the bug is
-        logger.info(`[FAT DIAG] parsed ${symbol}: qty=${qty} entry=${entryPrice} uPnL=${unrealizedPnL} pnl%=${pnlPercent.toFixed(2)}`);
+        // pnlPercent is price-move-based (matches the SL/TP price
+        // calculations at entry time: stopLoss = entry * (1 ± slPercent)).
+        const pnlPercent = priceMovePct;
+
+        logger.info(`[FAT] ${symbol} ${isLong ? 'LONG' : 'SHORT'} pnl=${unrealizedPnL.toFixed(4)}u ` +
+          `priceMove=${priceMovePct.toFixed(3)}% roi=${(uplRatioRaw * 100).toFixed(2)}% ` +
+          `entry=${entryPrice} mark=${markPx}`);
 
         // v0.8.7d-4: fire-and-forget shadow call to /live/exit-decide.
         // TS exit-chain (below) remains authoritative; Python runs the
