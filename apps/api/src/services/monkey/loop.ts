@@ -182,6 +182,14 @@ interface SymbolState {
   lastEntryAtMs: number | null;
   /** v0.6.2: count of DCA adds on current position (0 = only initial entry). */
   dcaAddCount: number;
+  /** v0.8.7e: latest computed basinDir + tapeTrend from processSymbol, with
+   *  timestamp. Exposed via getLatestBasinSnapshot() for LiveSignal's
+   *  inter-engine agreement gate. Null until the first tick completes. */
+  latestBasinSnapshot: {
+    basinDir: number;
+    tapeTrend: number;
+    computedAtMs: number;
+  } | null;
 }
 
 /**
@@ -280,6 +288,25 @@ export class MonkeyKernel extends EventEmitter {
     logger.info('[Monkey] kernel sleeping');
   }
 
+  /**
+   * v0.8.7e: Read-only snapshot of the latest computed basin direction +
+   * tape trend for a symbol. Returns null if the kernel hasn't ticked
+   * that symbol yet, or if the snapshot is too stale (caller's problem).
+   *
+   * Used by liveSignalEngine's ml_signal_flip exit gate to require
+   * Monkey-basin agreement before closing a position (prevents the
+   * LiveSignal-closes-then-Monkey-reopens yo-yo observed in the
+   * 2026-04-24 trading log — 30 trades in 5h, net PNL -0.26 USDT
+   * from fee churn).
+   */
+  getLatestBasinSnapshot(symbol: string): {
+    basinDir: number;
+    tapeTrend: number;
+    computedAtMs: number;
+  } | null {
+    return this.symbolStates.get(symbol)?.latestBasinSnapshot ?? null;
+  }
+
   private newSymbolState(): SymbolState {
     return {
       lastBasin: uniformBasin(BASIN_DIM),
@@ -302,6 +329,7 @@ export class MonkeyKernel extends EventEmitter {
       peakTrackedTradeId: null,
       lastEntryAtMs: null,
       dcaAddCount: 0,
+      latestBasinSnapshot: null,
     };
   }
 
@@ -588,6 +616,14 @@ export class MonkeyKernel extends EventEmitter {
     // AND the tape trend agree against ml-worker (two-signal quorum).
     const basinDir = computeBasinDirection(basin);
     const tapeTrend = computeTrendProxy(ohlcv);
+    // v0.8.7e: expose latest basin/tape snapshot for LiveSignal's
+    // inter-engine agreement gate (Option C). Written before the
+    // override decision so LiveSignal sees raw directional state.
+    state.latestBasinSnapshot = {
+      basinDir,
+      tapeTrend,
+      computedAtMs: Date.now(),
+    };
     const mlSide: 'long' | 'short' = mlSignal === 'SELL' ? 'short' : 'long';
     let sideCandidate: 'long' | 'short' = mlSide;
     let sideOverride = false;
@@ -1824,3 +1860,29 @@ export const allMonkeyKernels: readonly MonkeyKernel[] = [
   monkeyKernel,
   swingMonkey,
 ];
+
+
+/**
+ * v0.8.7e — inter-engine agreement query.
+ *
+ * Returns the FRESHEST (latest computedAtMs) basin snapshot across all
+ * running Monkey kernels for a symbol, or null if no kernel has ticked
+ * that symbol yet. LiveSignal uses this to decide whether the Monkey
+ * basin agrees that its ml_signal_flip close is warranted — if Monkey
+ * still reads the basin as favoring the currently-held side, we'd
+ * immediately reopen (yo-yo), so LiveSignal defers.
+ */
+export function getFreshestMonkeyBasinSnapshot(symbol: string): {
+  basinDir: number;
+  tapeTrend: number;
+  computedAtMs: number;
+} | null {
+  let best: { basinDir: number; tapeTrend: number; computedAtMs: number } | null = null;
+  for (const k of allMonkeyKernels) {
+    const snap = k.getLatestBasinSnapshot(symbol);
+    if (snap && (best === null || snap.computedAtMs > best.computedAtMs)) {
+      best = snap;
+    }
+  }
+  return best;
+}

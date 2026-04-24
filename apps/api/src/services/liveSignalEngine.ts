@@ -50,7 +50,7 @@ import {
   type BanditCounter,
   type LeverageBucket,
 } from './thompsonBandit.js';
-import { allMonkeyKernels } from './monkey/loop.js';
+import { allMonkeyKernels, getFreshestMonkeyBasinSnapshot } from './monkey/loop.js';
 import {
   callLiveDecide,
   isLiveSignalShadowEnabled,
@@ -554,12 +554,64 @@ export class LiveSignalEngine extends EventEmitter {
       const signalsFlip = (isLongHeld && signal.signal === 'SELL') ||
                           (isShortHeld && signal.signal === 'BUY');
       if (signalsFlip && signal.strength >= EXIT_SIGNAL_STRENGTH) {
+        // v0.8.7e — Option C: inter-engine agreement gate.
+        // Require Monkey's basin direction to agree the signal has flipped
+        // against the currently-held side. Without this check, LiveSignal
+        // closes on every ML flip, Monkey immediately reopens because its
+        // basin still favors the held direction, and the two engines
+        // yo-yo (observed 2026-04-24: 30 trades in 5h, net -0.26 USDT
+        // from fee churn).
+        //
+        // Monkey's basinDir scalar: negative = short preference, positive
+        // = long preference. For the exit to make sense, Monkey should
+        // not strongly still-want the held side. We use a weak-agreement
+        // threshold: Monkey merely needs to have drifted AT LEAST to
+        // neutral (basin not strongly favoring the held side).
+        const monkeySnap = getFreshestMonkeyBasinSnapshot(symbol);
+        const MONKEY_AGREEMENT_THRESHOLD = 0.15;  // SAFETY_BOUND
+        const SNAPSHOT_MAX_AGE_MS = 120_000;       // 2× Monkey tick cadence
+        let monkeyAgrees = true;
+        let monkeyReason = 'no-snapshot';
+        if (monkeySnap !== null) {
+          const age = Date.now() - monkeySnap.computedAtMs;
+          if (age > SNAPSHOT_MAX_AGE_MS) {
+            monkeyReason = `snap-stale-${age}ms`;
+            // Stale → be permissive (don't let stale Monkey block a flip)
+            monkeyAgrees = true;
+          } else {
+            // Monkey disagrees with the exit if its basin still strongly
+            // favors the currently-held side. For a LONG hold with ML
+            // SELL signal: Monkey should not have basinDir > +threshold.
+            // For a SHORT hold with ML BUY signal: basinDir should not
+            // be < -threshold.
+            const favorsHeld = isLongHeld
+              ? monkeySnap.basinDir > MONKEY_AGREEMENT_THRESHOLD
+              : monkeySnap.basinDir < -MONKEY_AGREEMENT_THRESHOLD;
+            monkeyAgrees = !favorsHeld;
+            monkeyReason =
+              `basinDir=${monkeySnap.basinDir.toFixed(3)} ` +
+              `tape=${monkeySnap.tapeTrend.toFixed(3)} ` +
+              `held=${existingPos.side} ` +
+              `agrees=${monkeyAgrees}`;
+          }
+        }
+        if (!monkeyAgrees) {
+          logger.info('[LiveSignal] ML-flip exit DEFERRED — Monkey basin still favors held side', {
+            symbol,
+            held: existingPos.side,
+            signalNow: signal.signal,
+            strength: signal.strength,
+            monkey: monkeyReason,
+          });
+          return;
+        }
         logger.info('[LiveSignal] ML-driven exit — signal flipped', {
           symbol,
           held: existingPos.side,
           signalNow: signal.signal,
           strength: signal.strength,
           threshold: EXIT_SIGNAL_STRENGTH,
+          monkey: monkeyReason,
         });
         await this.closeExistingPosition(
           symbol,
