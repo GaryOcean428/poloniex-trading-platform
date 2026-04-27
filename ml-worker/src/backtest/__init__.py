@@ -15,8 +15,14 @@ Pipeline:
 This module runs OFFLINE only. It does not touch the live decision path.
 """
 from .spec import StrategySpec, default_spec
-from .replay import replay_ohlcv, BacktestResult, score_strategy
-from .sweep import sweep_axis, SweepResult
+from .replay import (
+    replay_ohlcv,
+    BacktestResult,
+    score_strategy,
+    ScoreWeights,
+    SCORE_PROFILES,
+)
+from .sweep import sweep_axis, SweepResult, Candidate
 
 __all__ = [
     "StrategySpec",
@@ -24,6 +30,9 @@ __all__ = [
     "replay_ohlcv",
     "BacktestResult",
     "score_strategy",
+    "ScoreWeights",
+    "SCORE_PROFILES",
     "sweep_axis",
     "SweepResult",
+    "Candidate",
 ]

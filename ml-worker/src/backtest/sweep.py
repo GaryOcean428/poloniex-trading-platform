@@ -19,7 +19,7 @@ from qig_warp.auto import navigate as qig_navigate
 from qig_warp.auto import NavigationResult
 
 from .spec import StrategySpec, AxisName, SWEEPABLE_AXES
-from .replay import replay_ohlcv, BacktestResult, score_strategy
+from .replay import replay_ohlcv, BacktestResult, score_strategy, ScoreWeights
 
 
 @dataclass
@@ -58,6 +58,7 @@ def sweep_axis(
     notional_per_trade: float = 50.0,
     leverage: float = 14.0,
     budget_s: float | None = None,
+    weights: ScoreWeights | None = None,
 ) -> SweepResult:
     """Sweep one strategy axis over a list of candidate values.
 
@@ -66,10 +67,13 @@ def sweep_axis(
     full sweep with screening-driven savings. Total runtime is bounded
     by `budget_s` if supplied.
 
-    Returns a SweepResult with all candidates ranked by composite score.
+    Returns a SweepResult with all candidates ranked by composite score
+    under the supplied weights (defaults to balanced profile).
     """
     if axis not in SWEEPABLE_AXES:
         raise ValueError(f"axis must be one of {SWEEPABLE_AXES}; got {axis}")
+    if weights is None:
+        weights = ScoreWeights.balanced()
 
     closes = np.asarray(closes, dtype=np.float64)
 
@@ -79,7 +83,7 @@ def sweep_axis(
 
     def fn(p: float) -> float:
         if p in bt_cache:
-            return score_strategy(bt_cache[p])
+            return score_strategy(bt_cache[p], weights=weights)
         spec = base_spec.with_(**{axis: float(p)})
         bt = replay_ohlcv(
             closes, spec,
@@ -88,7 +92,7 @@ def sweep_axis(
             leverage=leverage,
         )
         bt_cache[p] = bt
-        return float(score_strategy(bt))
+        return float(score_strategy(bt, weights=weights))
 
     nav = qig_navigate(fn, list(map(float, values)), budget_s=budget_s)
 
@@ -97,7 +101,7 @@ def sweep_axis(
     for p, bt in bt_cache.items():
         candidates.append(Candidate(
             spec=bt.spec,
-            score=score_strategy(bt),
+            score=score_strategy(bt, weights=weights),
             n_trades=bt.n_trades,
             win_rate=bt.win_rate,
             total_pnl=bt.total_pnl,

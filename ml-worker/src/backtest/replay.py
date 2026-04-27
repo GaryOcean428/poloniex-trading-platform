@@ -1,16 +1,40 @@
 """OHLCV replay engine — runs a StrategySpec through historical candles
 and returns realized PnL + win-rate + max-drawdown.
 
-Simplification: we model entry/exit as a stripped-down Monkey using only
-TP/SL/trailing-harvest. Side selection is by simple SMA crossover (SMA20
-vs SMA50). DCA logic uses the spec's dca_better_price gate. Fees applied
-on every fill (entry + exit + DCA add).
+⚠️  PROXY-FIDELITY DISCLOSURE — read before interpreting output.
 
-The full Monkey decision pipeline (basin / regime / NC modulation) is not
-replayed — that requires bubble-bank state which is path-dependent and
-expensive to simulate. The sweep is therefore an upper-bound proxy for
-how a derivation kernel would perform with these baseline anchors. It's
-sufficient for relative ranking of candidates; absolute PnL is approximate.
+What this engine simulates:
+  Entry  : SMA20 vs SMA50 crossover (within last 5 bars)
+  Exit   : Stop-loss → trailing-harvest (peak × (1 - giveback)) → window-end
+  DCA    : One add when price moves spec.dca_better_price favourably
+  Fees   : taker_fee_frac applied on entry + exit + DCA add fills
+
+What the LIVE Monkey kernel actually does (and this engine does NOT):
+  Entry  : basin_direction + ML signal + tape OVERRIDE quorum +
+           neurochemistry × mode_profile.entry_threshold_scale +
+           self_observation_bias + per-symbol exposure cap
+  Exit   : Loop 2 disagreement (Fisher-Rao perception vs identity) +
+           Pillar 1 zombie-basin guard + DRIFT trend-flip + scalp_TP
+           with mode-derived thresholds + ROI-based gate at higher level
+  DCA    : Bank-maturity gate, sovereignty floor, basin-direction
+           alignment, mode-confidence weighting
+  Fees   : Same — only correctly modeled component
+
+The replay is therefore a CANDIDATE FILTER, not a STRATEGY VALIDATOR.
+
+Use sweep output to:
+  ✓ Reject obviously-bad parameter values (TP=10%, SL_ratio=0.95, etc.)
+  ✓ Find the *order of magnitude* range that makes sense
+  ✓ Compare candidates RELATIVELY against the same baseline
+
+Do NOT use sweep output to:
+  ✗ Predict absolute live PnL ("Strategy A makes +$X in production")
+  ✗ Claim Strategy A beats Strategy B by exactly N% in live trading
+  ✗ Promote anything to live MODE_PROFILES without further validation
+
+For absolute fidelity, Phase C must inject the full kernel against
+replayed candles — a substantial build, intentionally deferred from
+the v0.9.0 scaffold.
 """
 from __future__ import annotations
 
@@ -265,26 +289,73 @@ def replay_ohlcv(
     )
 
 
-def score_strategy(result: BacktestResult) -> float:
+@dataclass(frozen=True)
+class ScoreWeights:
+    """Composite-score weights. Different profiles encode different
+    risk preferences without changing the underlying backtest.
+
+    Two strategies with identical composite scores can still have
+    radically different real-world profiles. Running the same sweep
+    under multiple weight profiles is the cheapest robustness check
+    available before promoting any candidate.
+
+    Defaults match the original "balanced" profile shipped in 55e29af.
+    """
+    pnl: float = 1.0
+    win_rate: float = 0.5
+    profit_factor: float = 0.25
+    max_drawdown_penalty: float = 1.5
+
+    @classmethod
+    def conservative(cls) -> "ScoreWeights":
+        """Heavy DD penalty, modest PnL weight. Prefers shallow-DD
+        strategies even at lower PnL — small consistent winners over
+        rare-big-wins-with-deep-drawdowns."""
+        return cls(pnl=1.0, win_rate=0.5, profit_factor=0.25,
+                   max_drawdown_penalty=3.0)
+
+    @classmethod
+    def balanced(cls) -> "ScoreWeights":
+        """The original v0.9.0 weights. Equal-ish weight on PnL and
+        risk, modest bonuses for win-rate and profit-factor."""
+        return cls(pnl=1.0, win_rate=0.5, profit_factor=0.25,
+                   max_drawdown_penalty=1.5)
+
+    @classmethod
+    def aggressive(cls) -> "ScoreWeights":
+        """Heavy on profit factor, light on DD penalty. Prefers
+        strategies with strong unit economics even if drawdowns are
+        deeper. Suitable for higher-equity / higher-tolerance accounts."""
+        return cls(pnl=1.0, win_rate=0.25, profit_factor=1.0,
+                   max_drawdown_penalty=0.5)
+
+
+# Public profile registry — keep the names CLI-stable.
+SCORE_PROFILES: dict[str, ScoreWeights] = {
+    "conservative": ScoreWeights.conservative(),
+    "balanced": ScoreWeights.balanced(),
+    "aggressive": ScoreWeights.aggressive(),
+}
+
+
+def score_strategy(result: BacktestResult,
+                   weights: ScoreWeights | None = None) -> float:
     """Composite score for a single backtest result.
 
-    Components (higher = better):
-      total_pnl                  — primary objective
-      win_rate                   — robustness signal
-      profit_factor              — efficiency signal
-      penalty for max_drawdown   — risk control
-
-    Returns a single float that qig_warp can rank.
+    score = pnl·w_pnl + win_rate·w_wr + (pf-1)·w_pf - max_dd·w_dd
 
     Edge cases:
-      n_trades=0  → score = 0 (strategy never traded; not interesting)
-      max_drawdown=0 → no penalty
+      n_trades=0       → score = 0 (strategy never traded; not interesting)
+      profit_factor=∞  → pf_term = 0 (avoid score blow-up on no-loss runs)
+      max_drawdown=0   → no penalty
     """
+    if weights is None:
+        weights = ScoreWeights.balanced()
     if result.n_trades == 0:
         return 0.0
-    pnl_term = result.total_pnl
-    wr_term = result.win_rate * 0.5  # bonus for hit-rate
-    dd_penalty = result.max_drawdown * 1.5
+    pnl_term = result.total_pnl * weights.pnl
+    wr_term = result.win_rate * weights.win_rate
     pf = result.profit_factor
-    pf_term = (pf - 1.0) * 0.25 if np.isfinite(pf) else 0.0
+    pf_term = (pf - 1.0) * weights.profit_factor if np.isfinite(pf) else 0.0
+    dd_penalty = result.max_drawdown * weights.max_drawdown_penalty
     return float(pnl_term + wr_term + pf_term - dd_penalty)

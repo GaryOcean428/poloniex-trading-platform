@@ -5,7 +5,8 @@ Usage:
   python -m backtest.cli \
       --closes-csv data/eth_15m_30d.csv \
       --axis tp_base_frac \
-      --values 0.002,0.004,0.008,0.012,0.016,0.024,0.032,0.048
+      --values 0.002,0.004,0.008,0.012,0.016,0.024,0.032,0.048 \
+      --profile conservative
 
   # Synthetic random-walk closes for smoke-testing the pipeline
   python -m backtest.cli \
@@ -13,7 +14,26 @@ Usage:
       --axis sl_ratio \
       --values 0.3,0.4,0.5,0.6,0.7
 
-Outputs JSON to stdout. Top-K candidates ranked by composite score.
+⚠️  PROXY-FIDELITY WARNING — please read.
+
+This sweep replays a STRIPPED-DOWN MONKEY (SMA20/50 crossover entry +
+TP/SL/trailing exit + DCA gate). The LIVE Monkey kernel uses much
+richer entry logic (basin direction, ML override, neurochemistry-
+modulated thresholds, self-observation bias).
+
+Sweep output is a CANDIDATE FILTER for which axis values are sane,
+NOT a STRATEGY VALIDATOR. Do not assume the same ranking holds in
+live trading. To get absolute fidelity, run the full kernel against
+replayed candles (Phase C work, not yet shipped).
+
+Score profiles:
+  conservative  — 3× DD penalty, prefers shallow-drawdown strategies
+  balanced      — original v0.9.0 weights
+  aggressive    — heavy profit-factor weight, light DD penalty
+
+Run the same sweep under all three profiles to surface strategies
+that win consistently vs. those that win only under one risk lens.
+
 DOES NOT promote anything to live MODE_PROFILES — that's Phase C.
 """
 from __future__ import annotations
@@ -29,6 +49,7 @@ import numpy as np
 
 from .spec import StrategySpec, SWEEPABLE_AXES, default_spec
 from .sweep import sweep_axis, Candidate
+from .replay import SCORE_PROFILES, ScoreWeights
 
 
 def _load_closes_csv(path: Path) -> np.ndarray:
@@ -98,6 +119,11 @@ def main(argv: list[str] | None = None) -> int:
                         help="Max runtime budget for qig_warp.navigate (s).")
     parser.add_argument("--top-k", type=int, default=5,
                         help="How many top candidates to print.")
+    parser.add_argument("--profile", choices=list(SCORE_PROFILES.keys()),
+                        default="balanced",
+                        help="Score weight profile (default: balanced). "
+                             "Run all three for the same axis to surface "
+                             "regime-robust candidates.")
     parser.add_argument("--starting-equity", type=float, default=100.0)
     parser.add_argument("--notional", type=float, default=50.0,
                         help="Notional USDT per trade.")
@@ -124,6 +150,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     base = default_spec()
+    weights = SCORE_PROFILES[args.profile]
     result = sweep_axis(
         closes=closes,
         base_spec=base,
@@ -133,6 +160,7 @@ def main(argv: list[str] | None = None) -> int:
         notional_per_trade=args.notional,
         leverage=args.leverage,
         budget_s=args.budget_s,
+        weights=weights,
     )
 
     out = {
@@ -140,6 +168,8 @@ def main(argv: list[str] | None = None) -> int:
         "source": source,
         "n_closes": len(closes),
         "axis": args.axis,
+        "score_profile": args.profile,
+        "score_weights": asdict(weights),
         "base_spec": asdict(base),
         "qig_warp": {
             "probes_used": result.nav.probes_used,
