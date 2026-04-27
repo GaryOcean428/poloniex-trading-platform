@@ -59,13 +59,20 @@ class ModeProfile:
 #
 # Anchors are SAFETY_BOUND per P25 — they set the regime-invariant
 # envelope for each cognitive mode. Use `effective_profile(mode, ...)`
-# for state-modulated values. Direct reads of this table are only
-# appropriate for mode-gates (e.g. `can_enter`) that do not depend
-# on state.
+# for state-modulated values, or `effective_profile_for_symbol(...)`
+# when the caller has a symbol context. Direct reads of this table
+# are only appropriate for mode-gates (e.g. `can_enter`) that do not
+# depend on state.
+#
+# v0.9.1 (2026-04-27): sl_ratio anchors revised to 0.7 (was 0.5/0.6/0.3)
+# per Phase B real-OHLCV sweep (commit 4e28558e) — sl_ratio=0.7 won 6/6
+# runs across both symbols × all 3 score profiles. Per-mode ordering
+# envelope preserved by retaining anchor differentials (EXPLORATION
+# tightest, INTEGRATION widest).
 MODE_PROFILES: dict[MonkeyMode, ModeProfile] = {
     MonkeyMode.EXPLORATION: ModeProfile(
         tp_base_frac=0.004,
-        sl_ratio=0.6,
+        sl_ratio=0.65,  # was 0.6 — bumped toward Phase-B winner, keeps tightest of the three
         entry_threshold_scale=0.9,
         size_floor=0.08,
         sovereign_cap_floor=15,
@@ -75,7 +82,7 @@ MODE_PROFILES: dict[MonkeyMode, ModeProfile] = {
     ),
     MonkeyMode.INVESTIGATION: ModeProfile(
         tp_base_frac=0.008,
-        sl_ratio=0.5,
+        sl_ratio=0.7,   # was 0.5 — Phase-B winner sl_ratio=0.7 (6/6 runs, both symbols, all profiles)
         entry_threshold_scale=1.0,
         size_floor=0.10,
         sovereign_cap_floor=20,
@@ -85,7 +92,7 @@ MODE_PROFILES: dict[MonkeyMode, ModeProfile] = {
     ),
     MonkeyMode.INTEGRATION: ModeProfile(
         tp_base_frac=0.020,
-        sl_ratio=0.3,
+        sl_ratio=0.75,  # was 0.3 — Phase-B winner; INTEGRATION lets winners run, widest SL
         entry_threshold_scale=1.1,
         size_floor=0.12,
         sovereign_cap_floor=25,
@@ -95,7 +102,7 @@ MODE_PROFILES: dict[MonkeyMode, ModeProfile] = {
     ),
     MonkeyMode.DRIFT: ModeProfile(
         tp_base_frac=0.005,
-        sl_ratio=0.6,
+        sl_ratio=0.6,   # unchanged — DRIFT can't enter (entry_threshold_scale=99) so SL only applies if held over
         entry_threshold_scale=99.0,  # SAFETY_BOUND: DRIFT lockout
         size_floor=0.0,
         sovereign_cap_floor=1,
@@ -104,6 +111,34 @@ MODE_PROFILES: dict[MonkeyMode, ModeProfile] = {
         description="sideways noise — observe only",
     ),
 }
+
+
+# ═══════════════════════════════════════════════════════════════
+# Symbol-aware TP scaling (Phase B finding 4e28558e)
+# ═══════════════════════════════════════════════════════════════
+#
+# Phase B sweep showed tp_base_frac is symbol-dependent:
+#   ETH-USDT-PERP top: ~0.020 (2% of notional — wider TP)
+#   BTC-USDT-PERP top: ~0.008 (0.8% — tighter, faster moves)
+# The MODE_PROFILES anchors are tuned for INVESTIGATION baseline, so
+# the symbol multiplier scales the anchor's tp_base_frac toward the
+# discovered winner. Anchors stay regime-invariant; the multiplier is
+# the symbol-context displacement.
+#
+# Default = 1.0 for symbols not yet swept (graceful fallback to anchor).
+# Per P14: this dict is a SAFETY_BOUND lookup, not a runtime parameter.
+# Updates require explicit governance review and a fresh Phase B run.
+SYMBOL_TP_MULTIPLIER: dict[str, float] = {
+    "ETH-USDT-PERP": 2.5,   # 0.008 anchor × 2.5 = 0.020 (matches Phase B winner)
+    "BTC-USDT-PERP": 1.0,   # 0.008 anchor × 1.0 = 0.008 (matches Phase B winner)
+}
+
+
+def get_symbol_tp_multiplier(symbol: str | None) -> float:
+    """Return the per-symbol TP multiplier; 1.0 for unknown symbols."""
+    if not symbol:
+        return 1.0
+    return SYMBOL_TP_MULTIPLIER.get(symbol, 1.0)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -133,6 +168,10 @@ def effective_profile(
 
     At nominal state (phi=0.5, serotonin=0.5, norepinephrine=0.5,
     equilibrium_weight=0.5), effective_profile == MODE_PROFILES[mode].
+
+    For symbol-aware TP scaling, use `effective_profile_for_symbol()`
+    instead — it composes the symbol multiplier on top of the state
+    derivation.
     """
     anchor = MODE_PROFILES[mode]
 
@@ -178,6 +217,47 @@ def effective_profile(
         tick_ms=anchor.tick_ms,
         can_enter=anchor.can_enter,
         description=anchor.description,
+    )
+
+
+def effective_profile_for_symbol(
+    mode: MonkeyMode,
+    symbol: str | None,
+    *,
+    phi: float,
+    serotonin: float,
+    norepinephrine: float,
+    equilibrium_weight: float,
+) -> ModeProfile:
+    """Like effective_profile, but composes the symbol-context TP
+    multiplier on top of the state derivation.
+
+    The symbol multiplier scales tp_base_frac only — sl_ratio,
+    entry_threshold_scale, size_floor remain symbol-agnostic. Phase B
+    didn't measure those as symbol-dependent.
+
+    For symbols not in SYMBOL_TP_MULTIPLIER the multiplier is 1.0,
+    so this function falls back to plain effective_profile() behaviour.
+    """
+    base = effective_profile(
+        mode,
+        phi=phi,
+        serotonin=serotonin,
+        norepinephrine=norepinephrine,
+        equilibrium_weight=equilibrium_weight,
+    )
+    sym_mult = get_symbol_tp_multiplier(symbol)
+    if sym_mult == 1.0:
+        return base
+    return ModeProfile(
+        tp_base_frac=base.tp_base_frac * sym_mult,
+        sl_ratio=base.sl_ratio,
+        entry_threshold_scale=base.entry_threshold_scale,
+        size_floor=base.size_floor,
+        sovereign_cap_floor=base.sovereign_cap_floor,
+        tick_ms=base.tick_ms,
+        can_enter=base.can_enter,
+        description=base.description,
     )
 
 
