@@ -18,7 +18,6 @@ import backtestRoutes from './routes/backtest.js';
 import confidenceScoringRoutes from './routes/confidenceScoring.js';
 import dashboardRoutes from './routes/dashboard.js';
 import debugRoutes from './routes/debug.js';
-import diagTagPreFixLegacy from './routes/_diag-tag-pre-fix-legacy.js';
 import futuresRoutes from './routes/futures.js';
 import marketsRoutes from './routes/markets.js';
 import mlRoutes from './routes/ml.js';
@@ -178,7 +177,6 @@ app.use('/api/confidence-scoring', confidenceScoringRoutes);
 app.use('/api/trading-sessions', tradingSessionsRoutes);
 app.use('/api/status', statusRoutes);
 app.use('/api/debug', debugRoutes); // Debug, diagnostic, and test-balance routes (consolidated)
-app.use('/api/_diag', diagTagPreFixLegacy); // TEMPORARY — revert after legacy tagging
 app.use('/api/agent', agentRoutes); // Autonomous trading agent routes
 app.use('/api/autonomous', autonomousTraderRoutes); // Fully autonomous trading system
 app.use('/api/reconciliation', reconciliationRoutes); // State reconciliation service
