@@ -23,14 +23,23 @@ def basin_direction(basin: np.ndarray) -> float:
     """Signed directional reading from the momentum-spectrum dims 7..14.
 
     Returns a scalar in [-1, 1]. Positive = recent uptrend seen in basin;
-    negative = downtrend; magnitude = conviction. Computed by centering
-    the 8 momentum-spectrum dims at 0.5 (their sigmoid-normalised
-    neutral) and tanh-squashing the sum. Independent of ml-worker's
-    opinion — Monkey's own directional reading.
+    negative = downtrend; magnitude = conviction. Independent of
+    ml-worker's opinion — Monkey's own directional reading.
+
+    BUG FIX (2026-04-24): the original code centred each dim at 0.5
+    (raw-sigmoid neutral). The basin is post-toSimplex normalised, so a
+    flat-momentum dim reads ≈ 0.5/Σ(v) ≈ 0.023, not 0.5. Subtracting 0.5
+    produced basinDir ≈ −1.0 on every tick — verified across 21,458
+    consecutive decisions on the TS side (2026-04-21 → 04-24), which
+    structurally killed DRIFT mode and forced OVERRIDE_REVERSE to a
+    permanent SHORT bias. Same symmetry as the TS fix: compare the
+    simplex mass in dims 7..14 to its uniform expectation 8/BASIN_DIM.
     """
-    # Sum of (dim - 0.5) across dims 7..14 (inclusive, 8 dims).
-    centred_sum = float(np.sum(basin[7:15]) - 0.5 * 8)
-    return float(np.tanh(centred_sum * 2.0))
+    BASIN_DIM = 64
+    MOM_NEUTRAL = 8 / BASIN_DIM  # 0.125 — uniform mass on 8 momentum dims
+    DIRECTION_GAIN = 16.0
+    mom_mass = float(np.sum(basin[7:15]))
+    return float(np.tanh((mom_mass - MOM_NEUTRAL) * DIRECTION_GAIN))
 
 
 def trend_proxy(closes: Sequence[float], lookback: int = 50) -> float:

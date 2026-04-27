@@ -130,14 +130,29 @@ function rollingVol(ohlcv: OHLCVCandle[], n: number): number {
  */
 export function basinDirection(basin: Basin): number {
   // Dims 7..14 are the momentum spectrum (sigmoid-normalized log-returns
-  // at lookbacks [1, 2, 3, 5, 8, 13, 21, 34]).
-  let sum = 0;
+  // at lookbacks [1, 2, 3, 5, 8, 13, 21, 34]) BEFORE toSimplex; after
+  // toSimplex they hold the simplex-normalised mass on those lookbacks.
+  //
+  // BUG FIX (2026-04-24): the original code subtracted 0.5 per dim,
+  // assuming raw-sigmoid values. After perceive()'s toSimplex(v) call,
+  // each dim is rescaled by 1/Σ(v) — a flat-momentum reading of 0.5 maps
+  // to ≈ 0.5/21.6 ≈ 0.023, not 0.5. The old centring constant produced
+  // basinDir ≈ −1.0 on every tick (verified across 21,458 consecutive
+  // monkey_decisions, 2026-04-21 → 2026-04-24), structurally killing
+  // DRIFT mode and forcing OVERRIDE_REVERSE into permanent SHORT bias.
+  //
+  // Correct formulation: compare the simplex mass in the momentum band
+  // to its uniform-distribution expectation (8/BASIN_DIM = 0.125). When
+  // raw momentum dims read above 0.5 (recent uptrend), they capture more
+  // mass than uniform → positive direction; when below 0.5 (downtrend),
+  // less mass → negative direction. Symmetric around the uniform baseline.
+  const MOM_NEUTRAL = 8 / BASIN_DIM;  // = 0.125, post-simplex uniform mass
+  const DIRECTION_GAIN = 16;          // tanh saturates at deviation ≈ ±0.16
+  let momMass = 0;
   for (let i = 7; i <= 14; i++) {
-    sum += (basin[i] ?? 0.5) - 0.5;
+    momMass += basin[i] ?? MOM_NEUTRAL / 8;
   }
-  // Each dim is in [-0.5, +0.5] after centering; 8 dims → range [-4, +4].
-  // Tanh-squash with gain to keep useful signal in [-1, +1].
-  return Math.tanh(sum * 2);
+  return Math.tanh((momMass - MOM_NEUTRAL) * DIRECTION_GAIN);
 }
 
 /**
