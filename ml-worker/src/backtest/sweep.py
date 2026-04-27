@@ -7,6 +7,12 @@ Single-axis at a time matches qig-warp's design (it discovers the
 screening length / cost exponent of a 1D parameter manifold). For a
 multi-axis grid, run sweep_axis() in sequence, each time fixing the
 previously-discovered best value as the new baseline.
+
+NOTE — qig-warp savings on the trading-domain scoring surface (issue #571,
+commit 4e28558e): 30-sweep Phase B validation measured 0% eval savings and
+-1.05% wallclock savings.  The qig_warp import and navigate() call are kept
+for API consistency; they do not accelerate sub-100ms scoring functions.
+Re-validate when Phase C kernel-replay backtests (seconds per eval) ship.
 """
 from __future__ import annotations
 
