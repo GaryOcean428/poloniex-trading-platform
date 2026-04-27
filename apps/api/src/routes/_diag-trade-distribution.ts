@@ -84,18 +84,19 @@ router.get('/trade-distribution', async (req: Request, res: Response) => {
       ORDER BY n DESC
     `);
 
-    // Mode distribution from monkey_decisions (was Monkey ever in DRIFT?).
-    // proposed_action is the field; mode lives inside derivation jsonb.
+    // Mode distribution from monkey_decisions — aggregated by mode_value
+    // alone (not the full derivation JSON, which fragments by per-tick noise).
+    // H2 hypothesis: DRIFT count == 0 in 72h while market has been flat,
+    // implying hasDirection gate (|basinDir| > 0.30) is too loose and
+    // Monkey trades flat-tape conditions.
     const byMode = await pool.query(`
       SELECT
-        derivation->>'mode'              AS mode_field,
-        derivation->'mode'->>'value'     AS mode_value,
-        COUNT(*)::int                    AS n
+        derivation->'mode'->>'value' AS mode_value,
+        COUNT(*)::int                AS n
       FROM monkey_decisions
       WHERE at > NOW() - INTERVAL '72 hours'
-      GROUP BY mode_field, mode_value
+      GROUP BY mode_value
       ORDER BY n DESC
-      LIMIT 30
     `);
 
     // Action distribution as a sanity check.
@@ -110,17 +111,32 @@ router.get('/trade-distribution', async (req: Request, res: Response) => {
       ORDER BY n DESC
     `);
 
-    // basinDirection distribution from monkey_decisions derivation (H2).
-    // Histogram bucketed in 0.10 increments.
+    // basinDirection distribution — text path because JSONB scalar values
+    // come out as text and need explicit cast. Bucket = round to 0.1.
+    // hasDirection gate fires at |basinDir| > 0.30 — H2 wants to know
+    // what the distribution looks like and whether 0.30 is too loose.
     const basinHist = await pool.query(`
       SELECT
-        FLOOR((derivation->'basinDir')::float * 10) / 10 AS basin_bucket,
+        ROUND((derivation->>'basinDir')::numeric, 1) AS basin_bucket,
         COUNT(*)::int AS n
       FROM monkey_decisions
       WHERE at > NOW() - INTERVAL '72 hours'
-        AND derivation->'basinDir' IS NOT NULL
+        AND derivation->>'basinDir' IS NOT NULL
+        AND derivation->>'basinDir' ~ '^-?[0-9.]+$'
       GROUP BY basin_bucket
       ORDER BY basin_bucket
+    `);
+
+    // Hits-of-DRIFT-mode count specifically — definitive answer for H2.
+    const driftCount = await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE derivation->'mode'->>'value' = 'drift')::int   AS drift_n,
+        COUNT(*) FILTER (WHERE derivation->'mode'->>'value' = 'exploration')::int AS exploration_n,
+        COUNT(*) FILTER (WHERE derivation->'mode'->>'value' = 'investigation')::int AS investigation_n,
+        COUNT(*) FILTER (WHERE derivation->'mode'->>'value' = 'integration')::int  AS integration_n,
+        COUNT(*)::int AS total_decisions
+      FROM monkey_decisions
+      WHERE at > NOW() - INTERVAL '72 hours'
     `);
 
     // Total over the window.
@@ -141,6 +157,7 @@ router.get('/trade-distribution', async (req: Request, res: Response) => {
       by_side: bySide.rows,
       by_engine: byEngine.rows,
       monkey_mode_distribution: byMode.rows,
+      monkey_mode_counts: driftCount.rows[0],
       monkey_action_distribution: byAction.rows,
       basin_direction_histogram: basinHist.rows,
     });
