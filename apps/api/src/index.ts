@@ -18,7 +18,6 @@ import backtestRoutes from './routes/backtest.js';
 import confidenceScoringRoutes from './routes/confidenceScoring.js';
 import dashboardRoutes from './routes/dashboard.js';
 import debugRoutes from './routes/debug.js';
-import diagTradeDistribution from './routes/_diag-trade-distribution.js';
 import futuresRoutes from './routes/futures.js';
 import marketsRoutes from './routes/markets.js';
 import mlRoutes from './routes/ml.js';
@@ -178,7 +177,6 @@ app.use('/api/confidence-scoring', confidenceScoringRoutes);
 app.use('/api/trading-sessions', tradingSessionsRoutes);
 app.use('/api/status', statusRoutes);
 app.use('/api/debug', debugRoutes); // Debug, diagnostic, and test-balance routes (consolidated)
-app.use('/api/_diag', diagTradeDistribution); // TEMPORARY — revert after data collection
 app.use('/api/agent', agentRoutes); // Autonomous trading agent routes
 app.use('/api/autonomous', autonomousTraderRoutes); // Fully autonomous trading system
 app.use('/api/reconciliation', reconciliationRoutes); // State reconciliation service
