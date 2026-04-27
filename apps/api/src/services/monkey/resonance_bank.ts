@@ -65,9 +65,57 @@ function rowToEntry(row: Record<string, unknown>): BankEntry {
 }
 
 export class ResonanceBank {
+  // In-memory dedup set — rebuilt from DB on first write.
+  // Prevents duplicate bank entries from concurrent promotions or
+  // startup replay (both kernels, and restart re-replay of history).
+  private readonly seenOrderIds = new Set<string>();
+  private seenOrderIdsLoaded = false;
+  private seenOrderIdsLoadingPromise: Promise<void> | null = null;
+
+  private async ensureSeenOrderIdsLoaded(): Promise<void> {
+    if (this.seenOrderIdsLoaded) return;
+    if (this.seenOrderIdsLoadingPromise) {
+      await this.seenOrderIdsLoadingPromise;
+      return;
+    }
+    this.seenOrderIdsLoadingPromise = (async () => {
+      try {
+        const result = await pool.query(
+          `SELECT order_id FROM monkey_resonance_bank WHERE order_id IS NOT NULL`,
+        );
+        for (const row of result.rows as Array<{ order_id: string }>) {
+          this.seenOrderIds.add(row.order_id);
+        }
+        this.seenOrderIdsLoaded = true;
+      } catch (err) {
+        logger.warn('[Monkey.bank] failed to load seen order IDs (dedup cache)', {
+          err: err instanceof Error ? err.message : String(err),
+        });
+        // Reset so the next call retries the load.
+        this.seenOrderIdsLoadingPromise = null;
+      }
+    })();
+    await this.seenOrderIdsLoadingPromise;
+  }
+
+  /**
+   * Returns true if the given orderId has already been promoted to the
+   * bank in this session or a prior one. Used in tests and for
+   * external dedup checks.
+   */
+  async hasOrderId(orderId: string): Promise<boolean> {
+    await this.ensureSeenOrderIdsLoaded();
+    return this.seenOrderIds.has(orderId);
+  }
+
   /**
    * Write a promoted bubble to the bank. Only call after the bubble
    * has a real outcome attached (payload.realizedPnl set).
+   *
+   * Idempotent on orderId: if the same orderId was already promoted
+   * (in this session or a prior one), the call is a no-op and returns
+   * null. This prevents double/triple-counting on container restart
+   * and when both Position and Swing kernels witness the same exit.
    */
   async writeBubble(bubble: Bubble, engineVersion: string): Promise<BankEntry | null> {
     if (!bubble.payload || bubble.payload.realizedPnl === undefined) {
@@ -75,6 +123,19 @@ export class ResonanceBank {
         bubbleId: bubble.id,
       });
       return null;
+    }
+
+    // Dedup guard: skip if this orderId was already promoted (same or prior session).
+    const orderId = bubble.payload.orderId ?? null;
+    if (orderId) {
+      await this.ensureSeenOrderIdsLoaded();
+      if (this.seenOrderIds.has(orderId)) {
+        logger.debug('[Monkey.bank] skip duplicate promotion', { orderId });
+        return null;
+      }
+      // Reserve the slot synchronously to block concurrent duplicate calls
+      // for the same orderId before the async INSERT completes.
+      this.seenOrderIds.add(orderId);
     }
 
     const entryBasin = Array.from(bubble.payload.entryBasin ?? bubble.center);
@@ -100,7 +161,7 @@ export class ResonanceBank {
           bubble.payload.symbol ?? 'UNKNOWN',
           pnl,
           outcome,
-          bubble.payload.orderId ?? null,
+          orderId,
           depth,
           bubble.phi,
           engineVersion,
@@ -114,6 +175,10 @@ export class ResonanceBank {
       });
       return rowToEntry(result.rows[0]);
     } catch (err) {
+      // Release the reservation so the entry can be retried in this session.
+      if (orderId) {
+        this.seenOrderIds.delete(orderId);
+      }
       logger.warn('[Monkey.bank] writeBubble failed', {
         err: err instanceof Error ? err.message : String(err),
       });
