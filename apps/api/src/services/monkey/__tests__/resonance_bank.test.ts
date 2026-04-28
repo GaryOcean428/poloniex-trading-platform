@@ -258,3 +258,79 @@ describe('ResonanceBank — orderId deduplication', () => {
     expect(retry!.orderId).toBe(ORDER_ID);
   });
 });
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #579 — Quarantine filter on retrieval queries
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Migration 036 added a `quarantined` BOOLEAN column to monkey_resonance_bank
+// and flagged all bubbles created before the basinDirection saturation fix
+// (commit 589c775, deployed 2026-04-27T02:39:32Z). Pre-fix bubbles have
+// warped geometric coordinates (basinDir pegged at -1.0) that poison
+// nearest-neighbour retrieval against any post-fix bearish-lean tick.
+//
+// The fix is a WHERE quarantined = false predicate on every retrieval site:
+//   findNearestBasins, sovereignty, bankSize.
+//
+// These tests verify the SQL emitted at each call site contains the filter
+// string. They don't run against a real DB; they assert on the query mock.
+
+describe('ResonanceBank — #579 quarantine filter', () => {
+  let bank: ResonanceBank;
+
+  beforeEach(() => {
+    bank = new ResonanceBank();
+    vi.mocked(pool.query).mockReset();
+  });
+
+  it('findNearestBasins includes WHERE quarantined = false', async () => {
+    vi.mocked(pool.query).mockResolvedValueOnce({ rows: [] } as never);
+    await bank.findNearestBasins(makeBasin(), null, 5, 100);
+    const sql = String(vi.mocked(pool.query).mock.calls[0][0] ?? '');
+    expect(sql).toMatch(/WHERE\s+quarantined\s*=\s*false/i);
+  });
+
+  it('findNearestBasins(symbol) preserves quarantine filter alongside symbol filter', async () => {
+    vi.mocked(pool.query).mockResolvedValueOnce({ rows: [] } as never);
+    await bank.findNearestBasins(makeBasin(), 'ETH_USDT_PERP', 5, 100);
+    const sql = String(vi.mocked(pool.query).mock.calls[0][0] ?? '');
+    expect(sql).toMatch(/quarantined\s*=\s*false/i);
+    expect(sql).toMatch(/AND\s+symbol\s*=\s*\$1/i);
+  });
+
+  it('sovereignty excludes quarantined bubbles', async () => {
+    vi.mocked(pool.query).mockResolvedValueOnce({
+      rows: [{ lived: 100, total: 100 }],
+    } as never);
+    await bank.sovereignty();
+    const sql = String(vi.mocked(pool.query).mock.calls[0][0] ?? '');
+    expect(sql).toMatch(/WHERE\s+quarantined\s*=\s*false/i);
+  });
+
+  it('bankSize excludes quarantined bubbles', async () => {
+    vi.mocked(pool.query).mockResolvedValueOnce({
+      rows: [{ n: 397 }],
+    } as never);
+    const n = await bank.bankSize();
+    expect(n).toBe(397);
+    const sql = String(vi.mocked(pool.query).mock.calls[0][0] ?? '');
+    expect(sql).toMatch(/WHERE\s+quarantined\s*=\s*false/i);
+  });
+
+  it('seenOrderIds load DOES NOT filter quarantined (we want to dedupe against ALL existing ids)', async () => {
+    // Quarantined orderIds still need to block re-write — we don't want
+    // to recreate a quarantined bubble's history under a fresh row.
+    vi.mocked(pool.query)
+      .mockResolvedValueOnce({ rows: [] } as never)  // load (no quarantine filter expected)
+      .mockResolvedValueOnce({ rows: [fakeDbRow('orderX')] } as never);  // INSERT
+
+    const bubble = makeBubble('orderX', 0.5);
+    await bank.writeBubble(bubble, 'test-v1');
+
+    // First call is the seen-orderIds load — must NOT filter quarantined.
+    const loadSql = String(vi.mocked(pool.query).mock.calls[0][0] ?? '');
+    expect(loadSql).toMatch(/SELECT\s+order_id\s+FROM\s+monkey_resonance_bank/i);
+    expect(loadSql).not.toMatch(/quarantined/i);
+  });
+});

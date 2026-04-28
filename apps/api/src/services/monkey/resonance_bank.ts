@@ -199,10 +199,15 @@ export class ResonanceBank {
     topK: number = 5,
     maxScan: number = 500,
   ): Promise<NearestNeighbor[]> {
-    let query = `SELECT * FROM monkey_resonance_bank`;
+    // #579 — exclude quarantined bubbles from retrieval. Pre-basin-fix
+    // bubbles (created before 589c775 / 2026-04-27T02:39:32Z) have warped
+    // geometric coordinates because basinDir was pegged at -1.0; including
+    // them in nearest-neighbour search poisons retrieval against any
+    // post-fix bearish-lean tick. Migration 036 marks the cutoff.
+    let query = `SELECT * FROM monkey_resonance_bank WHERE quarantined = false`;
     const params: unknown[] = [];
     if (symbol) {
-      query += ` WHERE symbol = $1`;
+      query += ` AND symbol = $1`;
       params.push(symbol);
     }
     query += ` ORDER BY last_accessed DESC LIMIT ${maxScan}`;
@@ -233,11 +238,16 @@ export class ResonanceBank {
    */
   async sovereignty(): Promise<number> {
     try {
+      // #579 — quarantined bubbles do not count toward sovereignty.
+      // Earned identity must come from valid lived experience; bubbles
+      // recorded under the saturated-basin bug have warped geometric
+      // labels even when the outcome label is correct.
       const result = await pool.query(
         `SELECT
            COUNT(*) FILTER (WHERE source = 'lived')::float AS lived,
            COUNT(*)::float AS total
-         FROM monkey_resonance_bank`,
+         FROM monkey_resonance_bank
+         WHERE quarantined = false`,
       );
       const row = result.rows[0] as { lived: number; total: number };
       if (!row.total) return 0;  // newborn Monkey
@@ -247,11 +257,15 @@ export class ResonanceBank {
     }
   }
 
-  /** Total bank size — Monkey's "age" in lived experiences. */
+  /** Total bank size — Monkey's "age" in lived experiences.
+   * #579 — excludes quarantined bubbles. Quarantined entries are
+   * preserved for forensic analysis but don't contribute to maturity
+   * gating (current_position_size, etc.).
+   */
   async bankSize(): Promise<number> {
     try {
       const result = await pool.query(
-        `SELECT COUNT(*)::int AS n FROM monkey_resonance_bank`,
+        `SELECT COUNT(*)::int AS n FROM monkey_resonance_bank WHERE quarantined = false`,
       );
       return Number((result.rows[0] as { n: number }).n);
     } catch {
