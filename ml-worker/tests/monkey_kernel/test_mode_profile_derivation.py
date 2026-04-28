@@ -115,9 +115,12 @@ class TestSlDerivation:
             norepinephrine=0.5, equilibrium_weight=0.5,
         )
         assert hi.sl_ratio < lo.sl_ratio
-        # anchor=0.5; hi-ser mult=0.85 → 0.425; lo-ser mult=1.15 → 0.575
-        assert hi.sl_ratio == pytest.approx(0.425, abs=1e-9)
-        assert lo.sl_ratio == pytest.approx(0.575, abs=1e-9)
+        # Multipliers: hi-ser → 0.85; lo-ser → 1.15. Anchor read at runtime
+        # so the test stays correct if the anchor moves (Phase B promoted
+        # INVESTIGATION sl_ratio anchor 0.5 → 0.7 in 558667a).
+        anchor = MODE_PROFILES[MonkeyMode.INVESTIGATION].sl_ratio
+        assert hi.sl_ratio == pytest.approx(anchor * 0.85, abs=1e-9)
+        assert lo.sl_ratio == pytest.approx(anchor * 1.15, abs=1e-9)
 
 
 # ────────────────────────────────────────────────────────────────

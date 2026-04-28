@@ -1602,6 +1602,175 @@ async def monkey_tick_run(request: Request):
     }
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# v0.8.7c-3 — Trading engine endpoints (Python order placement port)
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# Behind TRADING_ENGINE_PY=true env flag (default off). When unset, all
+# endpoints in this block return 503 Service Unavailable with a clear
+# message — TS continues to own order placement.
+#
+# When the flag is flipped (after #574 + #575 + #579 merge + 24-48h soak),
+# TS short-circuits before its own poloniexFuturesService.closePosition
+# / submitOrder calls and POSTs to these endpoints instead. v0.8.8 then
+# deletes the TS-side fullyAutonomousTrader / executeSignals / etc.
+
+from trading.order_placement import (  # noqa: E402
+    CloseRecord,
+    EntryRecord,
+    close_open_trades,
+    get_circuit_breaker,
+    insert_entry,
+    record_trade_result,
+    trading_engine_py_enabled,
+)
+from db.pool import get_async_pool  # noqa: E402
+from events.outcome_publisher import (  # noqa: E402
+    TradeOutcomeEvent,
+    publish_trade_outcome,
+)
+
+
+def _trading_engine_503():
+    return JSONResponse(
+        status_code=503,
+        content={
+            "error": "TRADING_ENGINE_PY=false",
+            "message": (
+                "Python trading-engine endpoints are dormant. TS side "
+                "owns order placement until TRADING_ENGINE_PY=true is "
+                "set on this service. Refer to v0.8.7c-3 / v0.8.8 plan."
+            ),
+        },
+    )
+
+
+@app.post("/trading/close-position")
+async def trading_close_position(request: Request):
+    """Close all open autonomous_trades rows for (user_id, symbol) and
+    publish a trade-outcome event. Mirrors fullyAutonomousTrader.ts:1435
+    closePosition's DB-write half (the exchange close itself happens
+    earlier on the TS side until v0.8.8 cut-over completes).
+
+    Request body: { user_id, symbol, exit_reason, exit_price, pnl,
+                    side?, entry_price?, quantity?, order_id? }
+
+    Response: { rows_updated, outcome_published }
+    """
+    if not trading_engine_py_enabled():
+        return _trading_engine_503()
+    body = await request.json()
+    record = CloseRecord(
+        user_id=str(body["user_id"]),
+        symbol=str(body["symbol"]),
+        exit_reason=str(body["exit_reason"]),
+        exit_price=float(body["exit_price"]),
+        pnl=float(body["pnl"]),
+        closed_at_ms=int(body.get("closed_at_ms") or 0),
+    )
+    pool = await get_async_pool()
+    rows_updated = await close_open_trades(pool, record)
+
+    outcome_published = False
+    if body.get("publish_outcome", True):
+        event = TradeOutcomeEvent(
+            user_id=record.user_id,
+            symbol=record.symbol,
+            side=str(body.get("side", "long")),
+            entry_price=float(body.get("entry_price", 0.0)),
+            exit_price=record.exit_price,
+            quantity=float(body.get("quantity", 0.0)),
+            pnl=record.pnl,
+            exit_reason=record.exit_reason,
+            order_id=str(body.get("order_id", "")),
+            closed_at_ms=record.closed_at_ms or int(time.time() * 1000),
+        )
+        outcome_published = await publish_trade_outcome(event)
+
+    return {
+        "rows_updated": rows_updated,
+        "outcome_published": outcome_published,
+    }
+
+
+@app.post("/trading/record-result")
+async def trading_record_result(request: Request):
+    """Update circuit-breaker state after a closed trade. Mirrors
+    fullyAutonomousTrader.ts:1618 recordTradeResult.
+
+    Request body: { user_id, pnl, capital_base }
+    Response: { is_tripped, consecutive_losses, daily_loss, tripped_reason? }
+    """
+    if not trading_engine_py_enabled():
+        return _trading_engine_503()
+    body = await request.json()
+    cb = record_trade_result(
+        user_id=str(body["user_id"]),
+        pnl=float(body["pnl"]),
+        capital_base=float(body["capital_base"]),
+    )
+    return {
+        "is_tripped": cb.is_tripped,
+        "consecutive_losses": cb.consecutive_losses,
+        "daily_loss": cb.daily_loss,
+        "tripped_reason": cb.tripped_reason,
+    }
+
+
+@app.get("/trading/circuit-breaker/{user_id}")
+async def trading_get_circuit_breaker(user_id: str):
+    """Read the current circuit-breaker state for a user. Cheap;
+    safe to poll. Same flag-gate as the write endpoints — when off,
+    callers shouldn't be reading Python-side state."""
+    if not trading_engine_py_enabled():
+        return _trading_engine_503()
+    cb = get_circuit_breaker(user_id)
+    return {
+        "user_id": user_id,
+        "is_tripped": cb.is_tripped,
+        "consecutive_losses": cb.consecutive_losses,
+        "daily_loss": cb.daily_loss,
+        "tripped_reason": cb.tripped_reason,
+        "tripped_at_ms": cb.tripped_at_ms,
+    }
+
+
+@app.post("/trading/insert-entry")
+async def trading_insert_entry(request: Request):
+    """Persist a newly-opened position to autonomous_trades. The
+    exchange-side order placement still happens on the TS side until
+    v0.8.8 cut-over; this endpoint only handles the DB write half so
+    the schema-write path is observable in shadow mode.
+
+    Request body: { user_id, symbol, side, entry_price, quantity,
+                    leverage, stop_loss?, take_profit?, confidence,
+                    reason, order_id, paper_trade?, engine_version? }
+
+    Response: { id }
+    """
+    if not trading_engine_py_enabled():
+        return _trading_engine_503()
+    body = await request.json()
+    record = EntryRecord(
+        user_id=str(body["user_id"]),
+        symbol=str(body["symbol"]),
+        side=str(body["side"]),
+        entry_price=float(body["entry_price"]),
+        quantity=float(body["quantity"]),
+        leverage=float(body["leverage"]),
+        stop_loss=(float(body["stop_loss"]) if body.get("stop_loss") is not None else None),
+        take_profit=(float(body["take_profit"]) if body.get("take_profit") is not None else None),
+        confidence=float(body.get("confidence", 0.0)),
+        reason=str(body.get("reason", "")),
+        order_id=str(body.get("order_id", "")),
+        paper_trade=bool(body.get("paper_trade", False)),
+        engine_version=str(body.get("engine_version", "v0.8.7c-3-py")),
+    )
+    pool = await get_async_pool()
+    new_id = await insert_entry(pool, record)
+    return {"id": new_id}
+
+
 # ---------------------------------------------------------------------------
 # Entrypoint
 # ---------------------------------------------------------------------------
