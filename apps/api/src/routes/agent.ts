@@ -333,7 +333,7 @@ router.get('/circuit-breaker', authenticateToken, async (req: Request, res: Resp
   try {
     const userId = (req.user?.id || req.user?.userId)?.toString();
     if (!userId) return res.status(401).json({ success: false, error: 'User ID not found in token' });
-    const cbStatus = fullyAutonomousTrader.getCircuitBreakerStatus(userId);
+    const cbStatus = await fullyAutonomousTrader.getCircuitBreakerStatus(userId);
     res.json({ success: true, circuitBreaker: cbStatus });
   } catch (error: unknown) {
     logger.error('Error getting circuit breaker status:', error);

@@ -37,6 +37,38 @@ function safeFixed(value: unknown, decimals: number, fallback = 'N/A'): string {
   return Number.isFinite(n) ? n.toFixed(decimals) : fallback;
 }
 
+/**
+ * Call a Python trading-engine endpoint on the ml-worker.
+ * Uses the same ML_WORKER_URL env var as mlPredictionService.
+ * Timeout: 5 seconds. Throws on non-2xx or network error.
+ */
+async function callTradingPy(
+  method: 'GET' | 'POST',
+  path: string,
+  body?: Record<string, unknown>
+): Promise<unknown> {
+  const base = (process.env.ML_WORKER_URL ?? '').replace(/\/$/, '');
+  if (!base) throw new Error('ML_WORKER_URL not configured');
+  const url = `${base}${path}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
+  try {
+    const resp = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal: controller.signal,
+    });
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '');
+      throw new Error(`ml-worker HTTP ${resp.status}: ${text}`);
+    }
+    return await resp.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // ─── Trading defaults (single source of truth) ───
 const DEFAULT_RISK_PER_TRADE = 2;       // 2% per trade
 const DEFAULT_MAX_DRAWDOWN = 10;        // 10% max drawdown
@@ -1064,25 +1096,54 @@ class FullyAutonomousTrader extends EventEmitter {
       }
 
       // Log trade (both paper and live)
-      await pool.query(
-        `INSERT INTO autonomous_trades
-         (user_id, symbol, side, entry_price, quantity, stop_loss, take_profit, confidence, reason, order_id, paper_trade, engine_version)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-        [
-          userId,
-          signal.symbol,
-          signal.side,
-          signal.entryPrice,
-          signal.positionSize / signal.entryPrice,
-          signal.stopLoss,
-          signal.takeProfit,
-          signal.confidence,
-          signal.reason,
-          orderId,
-          config.paperTrading,
-          getEngineVersion(),
-        ]
-      );
+      // ─── Python short-circuit: delegate DB insert to ml-worker ───
+      let pyInsertSuccess = false;
+      if (process.env.TRADING_ENGINE_PY === 'true') {
+        try {
+          await callTradingPy('POST', '/trading/insert-entry', {
+            user_id: userId,
+            symbol: signal.symbol,
+            side: signal.side,
+            entry_price: signal.entryPrice,
+            quantity: signal.positionSize / signal.entryPrice,
+            leverage: signal.leverage,
+            stop_loss: signal.stopLoss,
+            take_profit: signal.takeProfit,
+            confidence: signal.confidence,
+            reason: signal.reason,
+            order_id: orderId,
+            paper_trade: config.paperTrading,
+            engine_version: getEngineVersion(),
+          });
+          pyInsertSuccess = true;
+        } catch (pyErr) {
+          logger.warn(
+            `[PY] /trading/insert-entry failed, falling through to TS: ` +
+            `${pyErr instanceof Error ? pyErr.message : String(pyErr)}`
+          );
+        }
+      }
+      if (!pyInsertSuccess) {
+        await pool.query(
+          `INSERT INTO autonomous_trades
+           (user_id, symbol, side, entry_price, quantity, stop_loss, take_profit, confidence, reason, order_id, paper_trade, engine_version)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+          [
+            userId,
+            signal.symbol,
+            signal.side,
+            signal.entryPrice,
+            signal.positionSize / signal.entryPrice,
+            signal.stopLoss,
+            signal.takeProfit,
+            signal.confidence,
+            signal.reason,
+            orderId,
+            config.paperTrading,
+            getEngineVersion(),
+          ]
+        );
+      }
 
       // Write to agent_events so the dashboard can show activity
       await this.logAgentEvent(userId, {
@@ -1339,13 +1400,13 @@ class FullyAutonomousTrader extends EventEmitter {
         if (roiTpPercent > 0 && roiPct >= roiTpPercent) {
           logger.info(`Take profit triggered (ROI) for ${symbol}: ${roiPct.toFixed(2)}% >= ${roiTpPercent}%`);
           await this.closePosition(userId, symbol, 'take_profit_roi');
-          this.recordTradeResult(userId, unrealizedPnL, config?.initialCapital ?? 10000);
+          void this.recordTradeResult(userId, unrealizedPnL, config?.initialCapital ?? 10000);
           continue;
         }
         if (roiSlPercent > 0 && roiPct <= -roiSlPercent) {
           logger.info(`Stop loss triggered (ROI) for ${symbol}: ${roiPct.toFixed(2)}% <= -${roiSlPercent}%`);
           await this.closePosition(userId, symbol, 'stop_loss_roi');
-          this.recordTradeResult(userId, unrealizedPnL, config?.initialCapital ?? 10000);
+          void this.recordTradeResult(userId, unrealizedPnL, config?.initialCapital ?? 10000);
           continue;
         }
 
@@ -1398,7 +1459,7 @@ class FullyAutonomousTrader extends EventEmitter {
         if (pnlPercent < -slPercent) {
           logger.info(`Stop loss triggered for ${symbol}: ${pnlPercent.toFixed(2)}% (limit: -${slPercent}%)`);
           await this.closePosition(userId, symbol, 'stop_loss');
-          this.recordTradeResult(userId, unrealizedPnL, config?.initialCapital ?? 10000);
+          void this.recordTradeResult(userId, unrealizedPnL, config?.initialCapital ?? 10000);
           continue;
         }
 
@@ -1406,7 +1467,7 @@ class FullyAutonomousTrader extends EventEmitter {
         if (pnlPercent > tpPercent) {
           logger.info(`Take profit triggered for ${symbol}: ${pnlPercent.toFixed(2)}% (limit: ${tpPercent}%)`);
           await this.closePosition(userId, symbol, 'take_profit');
-          this.recordTradeResult(userId, unrealizedPnL, config?.initialCapital ?? 10000);
+          void this.recordTradeResult(userId, unrealizedPnL, config?.initialCapital ?? 10000);
           continue;
         }
 
@@ -1419,7 +1480,7 @@ class FullyAutonomousTrader extends EventEmitter {
             if ((isLong && analysis.trend === 'bearish') || (!isLong && analysis.trend === 'bullish')) {
               logger.info(`Trend reversal detected for ${symbol}, closing position`);
               await this.closePosition(userId, symbol, 'trend_reversal');
-              this.recordTradeResult(userId, unrealizedPnL, config?.initialCapital ?? 10000);
+              void this.recordTradeResult(userId, unrealizedPnL, config?.initialCapital ?? 10000);
             }
           }
         }
@@ -1453,6 +1514,29 @@ class FullyAutonomousTrader extends EventEmitter {
       // Use Poloniex close position endpoint for cleaner execution
       const closeType = qty > 0 ? 'close_long' : 'close_short';
       await poloniexFuturesService.closePosition(credentials, symbol, closeType);
+
+      // ─── Python short-circuit: delegate DB write to ml-worker ───
+      if (process.env.TRADING_ENGINE_PY === 'true') {
+        try {
+          await callTradingPy('POST', '/trading/close-position', {
+            user_id: userId,
+            symbol,
+            exit_reason: reason,
+            exit_price: exitPrice,
+            pnl,
+            closed_at_ms: Date.now(),
+          });
+          logger.info(`Position closed for user ${userId}: ${symbol} (${reason}) exit=${exitPrice} pnl=${pnl}`);
+          this.emit('position_closed', { userId, symbol, reason, exitPrice, pnl });
+          return;
+        } catch (pyErr) {
+          logger.warn(
+            `[PY] /trading/close-position failed, falling through to TS: ` +
+            `${pyErr instanceof Error ? pyErr.message : String(pyErr)}`
+          );
+        }
+      }
+      // ─────────────────────────────────────────────────────────────
 
       // Update autonomous_trades record with exit data
       // Try to update with exit_price and pnl; fall back to basic update if columns don't exist
@@ -1615,7 +1699,23 @@ class FullyAutonomousTrader extends EventEmitter {
    * Record a trade result and update circuit breaker state.
    * Called after every position close.
    */
-  private recordTradeResult(userId: string, pnl: number, capitalBase: number): void {
+  private async recordTradeResult(userId: string, pnl: number, capitalBase: number): Promise<void> {
+    if (process.env.TRADING_ENGINE_PY === 'true') {
+      try {
+        await callTradingPy('POST', '/trading/record-result', {
+          user_id: userId,
+          pnl,
+          capital_base: capitalBase,
+        });
+        return;
+      } catch (pyErr) {
+        logger.warn(
+          `[PY] /trading/record-result failed, falling through to TS: ` +
+          `${pyErr instanceof Error ? pyErr.message : String(pyErr)}`
+        );
+      }
+    }
+
     const cb = this.getCircuitBreaker(userId);
 
     if (pnl < 0) {
@@ -1667,13 +1767,43 @@ class FullyAutonomousTrader extends EventEmitter {
   /**
    * Get circuit breaker status for a user (for API exposure).
    */
-  getCircuitBreakerStatus(userId: string): {
+  async getCircuitBreakerStatus(userId: string): Promise<{
     isTripped: boolean;
     reason?: string;
     consecutiveLosses: number;
     dailyLossPercent: number;
     cooldownRemaining?: number;
-  } {
+  }> {
+    if (process.env.TRADING_ENGINE_PY === 'true') {
+      try {
+        const data = await callTradingPy('GET', `/trading/circuit-breaker/${encodeURIComponent(userId)}`) as {
+          is_tripped: boolean;
+          consecutive_losses: number;
+          daily_loss: number;
+          tripped_reason?: string;
+          tripped_at_ms?: number;
+        };
+        const config = this.configs.get(userId);
+        const capitalBase = config ? config.initialCapital : 10000;
+        const dailyLossPercent = capitalBase > 0 ? (data.daily_loss / capitalBase) * 100 : 0;
+        const cooldownRemaining = data.is_tripped && data.tripped_at_ms
+          ? Math.max(0, FullyAutonomousTrader.CIRCUIT_BREAKER_COOLDOWN_MS - (Date.now() - data.tripped_at_ms))
+          : undefined;
+        return {
+          isTripped: data.is_tripped,
+          reason: data.tripped_reason,
+          consecutiveLosses: data.consecutive_losses,
+          dailyLossPercent: Number.isFinite(dailyLossPercent) ? parseFloat(dailyLossPercent.toFixed(2)) : 0,
+          cooldownRemaining,
+        };
+      } catch (pyErr) {
+        logger.warn(
+          `[PY] /trading/circuit-breaker failed, falling through to TS: ` +
+          `${pyErr instanceof Error ? pyErr.message : String(pyErr)}`
+        );
+      }
+    }
+
     const cb = this.getCircuitBreaker(userId);
     const config = this.configs.get(userId);
     const capitalBase = config ? config.initialCapital : 10000;
