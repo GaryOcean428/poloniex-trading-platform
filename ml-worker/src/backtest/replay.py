@@ -35,6 +35,21 @@ Do NOT use sweep output to:
 For absolute fidelity, Phase C must inject the full kernel against
 replayed candles — a substantial build, intentionally deferred from
 the v0.9.0 scaffold.
+
+⚠️  QIG-WARP SAVINGS LIMITATION (validated 2026-04-27, commit 4e28558e).
+
+qig-warp screening provides 0% measured savings on this scoring surface.
+30/30 Phase B sweeps over real ETH/BTC OHLCV showed:
+  avg_wallclock_savings:  -1.05%   (essentially zero)
+  avg_eval_savings:        0.00%   (qig-warp ran every value)
+  agreement_rate_pct:    100.00%   (qw top == naive top)
+
+The qig-warp wrapper is retained for API consistency with the QIG package
+family but does not accelerate fast-eval domains where each scoring call
+is sub-100ms (~15ms here).  Phase C kernel-replay backtests are expected
+to be expensive enough (seconds per eval) for screening physics to
+re-engage; re-validate qig-warp savings when Phase C ships.
+See issue #571 for the full decision record (Path A chosen).
 """
 from __future__ import annotations
 
