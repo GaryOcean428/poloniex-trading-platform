@@ -1097,6 +1097,10 @@ class FullyAutonomousTrader extends EventEmitter {
 
       // Log trade (both paper and live)
       // ─── Python short-circuit: delegate DB insert to ml-worker ───
+      // Note: the Python /trading/insert-entry endpoint accepts a `leverage`
+      // field that the TS INSERT below omits (TS schema lacks the column).
+      // If the DB has no leverage column the Python call will fail and
+      // graceful-degradation falls through to the TS INSERT — no data loss.
       let pyInsertSuccess = false;
       if (process.env.TRADING_ENGINE_PY === 'true') {
         try {
