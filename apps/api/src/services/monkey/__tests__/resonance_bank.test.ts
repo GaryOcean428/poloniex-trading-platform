@@ -236,7 +236,39 @@ describe('ResonanceBank — orderId deduplication', () => {
     expect(vi.mocked(pool.query)).toHaveBeenCalledTimes(2);
   });
 
-  // ── Test 6: insert failure releases the reservation for retry ───────────
+  // ── Test 6: ensureSeenOrderIdsLoaded retries after initial SELECT fails ─
+
+  it('assertOrderIdCacheReady throws when initial SELECT fails, succeeds on retry', async () => {
+    // First load (SELECT order_id) rejects — cache stays cold.
+    vi.mocked(pool.query)
+      .mockRejectedValueOnce(new Error('initial SELECT order_id failed') as never)
+      .mockResolvedValueOnce({ rows: [] } as never);  // retry load succeeds
+
+    // First call surfaces the load failure explicitly.
+    await expect(bank.assertOrderIdCacheReady()).rejects.toThrow(/seen-orderIds cache not ready/);
+    expect(bank.isOrderIdCacheReady()).toBe(false);
+
+    // Retry succeeds — cache is now ready.
+    await expect(bank.assertOrderIdCacheReady()).resolves.toBeUndefined();
+    expect(bank.isOrderIdCacheReady()).toBe(true);
+
+    // 2 pool.query calls total — failed load + retry load.
+    expect(vi.mocked(pool.query)).toHaveBeenCalledTimes(2);
+  });
+
+  it('hasOrderId returns false when the cache has not loaded — caller must check isOrderIdCacheReady', async () => {
+    // Force the initial load to fail.
+    vi.mocked(pool.query).mockRejectedValueOnce(new Error('SELECT failed') as never);
+
+    // hasOrderId returns false even for an orderId that may exist in DB —
+    // it can only see the in-memory cache, which is cold.
+    const present = await bank.hasOrderId('any-id');
+    expect(present).toBe(false);
+    // The cache flag tells the caller this `false` is unreliable.
+    expect(bank.isOrderIdCacheReady()).toBe(false);
+  });
+
+  // ── Test 7: insert failure releases the reservation for retry ───────────
 
   it('insert failure releases orderId reservation so retry is possible', async () => {
     const ORDER_ID = '571832100000000001';

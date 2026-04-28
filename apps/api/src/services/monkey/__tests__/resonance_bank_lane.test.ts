@@ -141,15 +141,39 @@ describe('ResonanceBank — lane field', () => {
     expect(params).toEqual(['ETH_USDT_PERP', 'trend']);
   });
 
-  it('rowToEntry parses lane from DB row, defaults to swing', async () => {
+  it('rowToEntry parses lane from DB row when lane is present', async () => {
     vi.mocked(pool.query).mockResolvedValueOnce({
       rows: [fakeDbRow('order-1', 'trend')],
     } as never);
 
     const entries = await bank.findNearestBasins(makeBasin(), null, 5, 100);
-    // Since we get actual rows, check the entry has lane=trend
-    if (entries.length > 0) {
-      expect(entries[0].entry.lane).toBe('trend');
-    }
+    expect(entries).toHaveLength(1);
+    expect(entries[0].entry.lane).toBe('trend');
+  });
+
+  it('rowToEntry falls back to lane="swing" when DB lane is null', async () => {
+    const rowWithNullLane: Record<string, unknown> = {
+      ...fakeDbRow('order-2'),
+      lane: null,
+    };
+    vi.mocked(pool.query).mockResolvedValueOnce({
+      rows: [rowWithNullLane],
+    } as never);
+
+    const entries = await bank.findNearestBasins(makeBasin(), null, 5, 100);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].entry.lane).toBe('swing');
+  });
+
+  it('rowToEntry falls back to lane="swing" when DB lane field is missing entirely', async () => {
+    const rowWithoutLane: Record<string, unknown> = { ...fakeDbRow('order-3') };
+    delete rowWithoutLane.lane;
+    vi.mocked(pool.query).mockResolvedValueOnce({
+      rows: [rowWithoutLane],
+    } as never);
+
+    const entries = await bank.findNearestBasins(makeBasin(), null, 5, 100);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].entry.lane).toBe('swing');
   });
 });

@@ -554,7 +554,8 @@ export function chooseLane(
   s: BasinState,
   tapeTrend: number = 0,
 ): ExecutiveDecision<LaneType> {
-  const tau = 1.0 / Math.max(s.kappa, 1.0);
+  // κ → 0 must yield τ → ∞ (exploration); only clamp away from div-by-zero.
+  const tau = 1.0 / Math.max(s.kappa, 1e-6);
 
   const scalpScore = (1 - s.phi) * (1 - s.sovereignty) * (1 - Math.min(s.basinVelocity, 1));
   const trendScore = s.phi * s.sovereignty * Math.abs(tapeTrend);
@@ -569,30 +570,30 @@ export function chooseLane(
   };
 
   const maxS = Math.max(...Object.values(scores));
-  const expScores: Record<string, number> = {};
+  const expScores: Record<LaneType, number> = { scalp: 0, swing: 0, trend: 0, observe: 0 };
   let total = 0;
-  for (const [k, v] of Object.entries(scores)) {
+  for (const [k, v] of Object.entries(scores) as [LaneType, number][]) {
     const e = Math.exp((v - maxS) / Math.max(tau, 1e-6));
     expScores[k] = e;
     total += e;
   }
-  const probs: Record<string, number> = {};
-  for (const [k, v] of Object.entries(expScores)) {
+  const probs: Record<LaneType, number> = { scalp: 0, swing: 0, trend: 0, observe: 0 };
+  for (const [k, v] of Object.entries(expScores) as [LaneType, number][]) {
     probs[k] = v / total;
   }
 
   let lane: LaneType = 'swing';
   let maxProb = 0;
-  for (const [k, v] of Object.entries(probs)) {
+  for (const [k, v] of Object.entries(probs) as [LaneType, number][]) {
     if (v > maxProb) {
       maxProb = v;
-      lane = k as LaneType;
+      lane = k;
     }
   }
 
   return {
     value: lane,
-    reason: `lane=${lane} (tau=${tau.toFixed(4)}, scalp=${(probs.scalp ?? 0).toFixed(3)} swing=${(probs.swing ?? 0).toFixed(3)} trend=${(probs.trend ?? 0).toFixed(3)} observe=${(probs.observe ?? 0).toFixed(3)})`,
+    reason: `lane=${lane} (tau=${tau.toFixed(4)}, scalp=${probs.scalp.toFixed(3)} swing=${probs.swing.toFixed(3)} trend=${probs.trend.toFixed(3)} observe=${probs.observe.toFixed(3)})`,
     derivation: {
       tau,
       phi: s.phi,

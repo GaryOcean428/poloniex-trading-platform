@@ -733,7 +733,8 @@ def choose_lane(
       - bv >> 0 → observe (chaos — sit out)
       - moderate state → swing (default / backward-compat)
     """
-    tau = 1.0 / max(s.kappa, 1.0)
+    # κ → 0 must yield τ → ∞ (exploration); only clamp away from div-by-zero.
+    tau = 1.0 / max(s.kappa, 1e-6)
 
     # Raw scores: higher = more likely to be chosen
     scalp_score = (1.0 - s.phi) * (1.0 - s.sovereignty) * (1.0 - min(s.basin_velocity, 1.0))

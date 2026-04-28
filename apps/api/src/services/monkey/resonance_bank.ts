@@ -74,6 +74,7 @@ export class ResonanceBank {
   private readonly seenOrderIds = new Set<string>();
   private seenOrderIdsLoaded = false;
   private seenOrderIdsLoadingPromise: Promise<void> | null = null;
+  private seenOrderIdsLastLoadError: Error | null = null;
 
   private async ensureSeenOrderIdsLoaded(): Promise<void> {
     if (this.seenOrderIdsLoaded) return;
@@ -90,9 +91,12 @@ export class ResonanceBank {
           this.seenOrderIds.add(row.order_id);
         }
         this.seenOrderIdsLoaded = true;
+        this.seenOrderIdsLastLoadError = null;
       } catch (err) {
+        const e = err instanceof Error ? err : new Error(String(err));
+        this.seenOrderIdsLastLoadError = e;
         logger.warn('[Monkey.bank] failed to load seen order IDs (dedup cache)', {
-          err: err instanceof Error ? err.message : String(err),
+          err: e.message,
         });
         // Reset so the next call retries the load.
         this.seenOrderIdsLoadingPromise = null;
@@ -102,13 +106,40 @@ export class ResonanceBank {
   }
 
   /**
-   * Returns true if the given orderId has already been promoted to the
-   * bank in this session or a prior one. Used in tests and for
-   * external dedup checks.
+   * Returns true if the given orderId is in the in-memory dedup cache.
+   *
+   * IMPORTANT: a `false` return means "not in cache right now" — NOT
+   * "definitely never promoted." If the initial SELECT load failed
+   * (`isOrderIdCacheReady()` returns false), the cache is empty and
+   * every lookup will return false even for orderIds that exist in DB.
+   *
+   * Callers that need an authoritative dedup decision (vs. best-effort)
+   * should call `assertOrderIdCacheReady()` first or check
+   * `isOrderIdCacheReady()` and surface the cache state to the user.
    */
   async hasOrderId(orderId: string): Promise<boolean> {
     await this.ensureSeenOrderIdsLoaded();
     return this.seenOrderIds.has(orderId);
+  }
+
+  /** True iff the seen-orderIds cache has been successfully loaded from DB at
+   * least once in this session. Used by tests and external dedup callers
+   * that need to distinguish "absent" from "cache cold/failed".
+   */
+  isOrderIdCacheReady(): boolean {
+    return this.seenOrderIdsLoaded;
+  }
+
+  /** Throws if the seen-orderIds cache failed to load. Use before any
+   * decision that depends on `hasOrderId` returning false meaning
+   * "definitely never promoted."
+   */
+  async assertOrderIdCacheReady(): Promise<void> {
+    await this.ensureSeenOrderIdsLoaded();
+    if (!this.seenOrderIdsLoaded) {
+      const reason = this.seenOrderIdsLastLoadError?.message ?? 'unknown';
+      throw new Error(`[Monkey.bank] seen-orderIds cache not ready: ${reason}`);
+    }
   }
 
   /**

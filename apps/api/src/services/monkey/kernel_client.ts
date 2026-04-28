@@ -242,7 +242,7 @@ export interface TickRunDecision {
   is_dca_add: boolean;
   is_reverse: boolean;
   lane: 'scalp' | 'swing' | 'trend' | 'observe';
-  direction: string;
+  direction: 'long' | 'short' | 'flat';
   size_fraction: number;
   dca_intent: boolean;
 }

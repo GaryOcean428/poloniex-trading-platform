@@ -85,6 +85,18 @@ function mockFetch503() {
   });
 }
 
+/** Simulate a network-level failure where fetch rejects (DNS, connection, etc.) */
+function mockFetchNetworkError() {
+  fetchMock.mockRejectedValueOnce(new Error('ENETUNREACH ml-worker:8000'));
+}
+
+/** Simulate the AbortController firing on timeout — fetch rejects with AbortError. */
+function mockFetchAbort() {
+  const err = new Error('The operation was aborted.');
+  err.name = 'AbortError';
+  fetchMock.mockRejectedValueOnce(err);
+}
+
 // ── Test suites ──────────────────────────────────────────────────────────────
 
 describe('FullyAutonomousTrader Python bridge – closePosition', () => {
@@ -145,6 +157,33 @@ describe('FullyAutonomousTrader Python bridge – closePosition', () => {
     // TS fallback: pool.query UPDATE was called
     expect(pool.query).toHaveBeenCalledWith(expect.stringContaining('UPDATE autonomous_trades'), expect.any(Array));
   });
+
+  it('flag on but Python fetch rejects (network error) → falls through to TS path without throwing', async () => {
+    process.env.TRADING_ENGINE_PY = 'true';
+    process.env.ML_WORKER_URL = ML_WORKER;
+    mockFetchNetworkError();
+
+    await expect(
+      priv(trader).closePosition(USER, 'BTC_USDT_PERP', 'stop_loss'),
+    ).resolves.not.toThrow();
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    // TS fallback executed despite the rejected fetch
+    expect(pool.query).toHaveBeenCalledWith(expect.stringContaining('UPDATE autonomous_trades'), expect.any(Array));
+  });
+
+  it('flag on but Python fetch aborts (timeout) → falls through to TS path', async () => {
+    process.env.TRADING_ENGINE_PY = 'true';
+    process.env.ML_WORKER_URL = ML_WORKER;
+    mockFetchAbort();
+
+    await expect(
+      priv(trader).closePosition(USER, 'BTC_USDT_PERP', 'stop_loss'),
+    ).resolves.not.toThrow();
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(pool.query).toHaveBeenCalledWith(expect.stringContaining('UPDATE autonomous_trades'), expect.any(Array));
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -198,6 +237,19 @@ describe('FullyAutonomousTrader Python bridge – recordTradeResult', () => {
 
     expect(fetchMock).toHaveBeenCalledOnce();
     // TS fallback: in-memory CB state updated
+    const cb = priv(trader).getCircuitBreaker(USER);
+    expect(cb.consecutiveLosses).toBe(1);
+  });
+
+  it('flag on but Python fetch rejects (network error) → TS in-memory CB still updated', async () => {
+    process.env.TRADING_ENGINE_PY = 'true';
+    process.env.ML_WORKER_URL = ML_WORKER;
+    mockFetchNetworkError();
+
+    await expect(priv(trader).recordTradeResult(USER, -50, 10000)).resolves.not.toThrow();
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    // TS fallback: in-memory CB state updated despite the rejected fetch
     const cb = priv(trader).getCircuitBreaker(USER);
     expect(cb.consecutiveLosses).toBe(1);
   });
@@ -259,6 +311,19 @@ describe('FullyAutonomousTrader Python bridge – getCircuitBreakerStatus', () =
 
     expect(fetchMock).toHaveBeenCalledOnce();
     // TS fallback: returns TS in-memory state
+    expect(status.isTripped).toBe(false);
+    expect(status.consecutiveLosses).toBe(0);
+  });
+
+  it('flag on but Python fetch aborts (timeout) → returns TS in-memory state without throwing', async () => {
+    process.env.TRADING_ENGINE_PY = 'true';
+    process.env.ML_WORKER_URL = ML_WORKER;
+    mockFetchAbort();
+
+    const status = await trader.getCircuitBreakerStatus(USER);
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    // TS fallback: returns TS in-memory state, error did not bubble
     expect(status.isTripped).toBe(false);
     expect(status.consecutiveLosses).toBe(0);
   });
