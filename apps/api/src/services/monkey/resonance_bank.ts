@@ -216,6 +216,9 @@ export class ResonanceBank {
     // them in nearest-neighbour search poisons retrieval against any
     // post-fix bearish-lean tick. Migration 036 marks the cutoff.
     let query = `SELECT * FROM monkey_resonance_bank WHERE quarantined = false`;
+    // Dynamic $N placeholders: each filter appended in order, $1, $2, ...
+    // params.push() happens immediately after each placeholder is added so
+    // `params.length + 1` always yields the next correct index.
     const params: unknown[] = [];
     if (symbol) {
       query += ` AND symbol = $${params.length + 1}`;

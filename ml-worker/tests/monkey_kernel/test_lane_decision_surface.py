@@ -214,7 +214,7 @@ class TestChooseLaneTemperature:
         """τ in derivation equals 1/max(κ, 1)."""
         kappa = 40.0
         s = _nominal_state(kappa=kappa)
-        result = choose_lane(s)
+        result = choose_lane(s, tape_trend=0.0)
         assert result["derivation"]["tau"] == pytest.approx(1.0 / kappa, rel=1e-6)
 
 
