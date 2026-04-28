@@ -19,6 +19,7 @@ from typing import Iterable, Literal, Optional
 import numpy as np
 
 from qig_core_local.geometry.fisher_rao import Basin, fisher_rao_distance
+from .state import LaneType
 
 TradeOutcome = Literal["win", "loss", "breakeven", "exited_early"]
 
@@ -36,6 +37,7 @@ class BankEntry:
     access_count: int
     phi_at_creation: Optional[float]
     source: Literal["lived", "harvested"]
+    lane: LaneType = "swing"
 
 
 @dataclass
@@ -49,14 +51,18 @@ def score_nearest(
     entries: Iterable[BankEntry],
     *,
     top_k: int = 5,
+    lane: Optional[LaneType] = None,
 ) -> list[NearestNeighbor]:
     """Fisher-Rao nearest-neighbour search.
 
     Linear scan — bank is small enough that an ANN index is overkill.
     Caller prefilters by symbol if it wants "same-symbol nearest."
+    Optional lane filter for lane-conditioned bank retrieval.
     """
     scored: list[NearestNeighbor] = []
     for e in entries:
+        if lane is not None and e.lane != lane:
+            continue
         d = fisher_rao_distance(query_basin, e.entry_basin)
         scored.append(NearestNeighbor(entry=e, distance=d))
     scored.sort(key=lambda n: n.distance)

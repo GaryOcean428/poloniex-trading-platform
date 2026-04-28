@@ -24,6 +24,7 @@
 
 import { pool } from '../../db/connection.js';
 import { fisherRao, type Basin } from './basin.js';
+import type { LaneType } from './executive.js';
 import type { Bubble } from './working_memory.js';
 import { logger } from '../../utils/logger.js';
 
@@ -39,6 +40,7 @@ export interface BankEntry {
   accessCount: number;
   phiAtCreation: number | null;
   source: 'lived' | 'harvested';
+  lane: LaneType;
 }
 
 export interface NearestNeighbor {
@@ -61,6 +63,7 @@ function rowToEntry(row: Record<string, unknown>): BankEntry {
     accessCount: Number(row.access_count ?? 1),
     phiAtCreation: row.phi_at_creation != null ? Number(row.phi_at_creation) : null,
     source: (row.source as 'lived' | 'harvested') ?? 'lived',
+    lane: (row.lane as BankEntry['lane']) ?? 'swing',
   };
 }
 
@@ -142,6 +145,7 @@ export class ResonanceBank {
     const pnl = bubble.payload.realizedPnl;
     const outcome: BankEntry['tradeOutcome'] =
       pnl > 0 ? 'win' : pnl < 0 ? 'loss' : 'breakeven';
+    const lane = bubble.payload.lane ?? 'swing';
 
     // Basin depth initialized from Φ and modulated by outcome magnitude.
     // Hebbian: win → deepen, loss → shallow.
@@ -153,8 +157,8 @@ export class ResonanceBank {
       const result = await pool.query(
         `INSERT INTO monkey_resonance_bank
            (entry_basin, symbol, realized_pnl, trade_outcome, order_id,
-            basin_depth, phi_at_creation, source, engine_version)
-         VALUES ($1::jsonb, $2, $3, $4, $5, $6, $7, 'lived', $8)
+            basin_depth, phi_at_creation, source, engine_version, lane)
+         VALUES ($1::jsonb, $2, $3, $4, $5, $6, $7, 'lived', $8, $9)
          RETURNING *`,
         [
           JSON.stringify(entryBasin),
@@ -165,6 +169,7 @@ export class ResonanceBank {
           depth,
           bubble.phi,
           engineVersion,
+          lane,
         ],
       );
       logger.info('[Monkey.bank] promoted to resonance bank', {
@@ -198,6 +203,7 @@ export class ResonanceBank {
     symbol: string | null = null,
     topK: number = 5,
     maxScan: number = 500,
+    lane: BankEntry['lane'] | null = null,
   ): Promise<NearestNeighbor[]> {
     // #579 — exclude quarantined bubbles from retrieval. Pre-basin-fix
     // bubbles (created before 589c775 / 2026-04-27T02:39:32Z) have warped
@@ -206,9 +212,16 @@ export class ResonanceBank {
     // post-fix bearish-lean tick. Migration 036 marks the cutoff.
     let query = `SELECT * FROM monkey_resonance_bank WHERE quarantined = false`;
     const params: unknown[] = [];
+    let paramIdx = 1;
     if (symbol) {
-      query += ` AND symbol = $1`;
+      query += ` AND symbol = $${paramIdx}`;
       params.push(symbol);
+      paramIdx++;
+    }
+    if (lane) {
+      query += ` AND lane = $${paramIdx}`;
+      params.push(lane);
+      paramIdx++;
     }
     query += ` ORDER BY last_accessed DESC LIMIT ${maxScan}`;
 

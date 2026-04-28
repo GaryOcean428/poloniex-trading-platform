@@ -16,6 +16,7 @@ scalar derivation — numpy-free where it can be.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any, Literal, Optional
 
@@ -26,7 +27,7 @@ from qig_core_local.geometry.fisher_rao import fisher_rao_distance
 from .basin import max_mass, normalized_entropy
 from .modes import MODE_PROFILES, MonkeyMode, effective_profile
 from .parameters import get_registry
-from .state import KAPPA_STAR, NeurochemicalState
+from .state import KAPPA_STAR, LaneType, NeurochemicalState
 
 Side = Literal["long", "short"]
 
@@ -708,4 +709,68 @@ def should_auto_flatten(
             else f"f_health OK (mean {mean:.3f})"
         ),
         "derivation": {"f_health_mean": mean, "f_health_trend": trend},
+    }
+
+
+# ═══════════════════════════════════════════════════════════════
+#  choose_lane — lane selection via softmax over basin features
+# ═══════════════════════════════════════════════════════════════
+
+
+def choose_lane(
+    s: ExecBasinState,
+    *,
+    tape_trend: float = 0.0,
+) -> dict[str, Any]:
+    """Select execution lane from basin geometry via softmax.
+
+    Temperature τ = 1/κ — high κ = exploitation (pick best lane),
+    low κ = exploration (spread probability across lanes).
+
+    Scoring invariants (per issue #588):
+      - phi≈0, sovereignty≈0, bv≈0 → scalp (high reward density)
+      - phi≈1, sovereignty≈1, tape≈1 → trend (directional conviction)
+      - bv >> 0 → observe (chaos — sit out)
+      - moderate state → swing (default / backward-compat)
+    """
+    tau = 1.0 / max(s.kappa, 1.0)
+
+    # Raw scores: higher = more likely to be chosen
+    scalp_score = (1.0 - s.phi) * (1.0 - s.sovereignty) * (1.0 - min(s.basin_velocity, 1.0))
+    trend_score = s.phi * s.sovereignty * abs(tape_trend)
+    observe_score = min(s.basin_velocity, 1.0) * 0.8
+    swing_score = 0.3  # baseline — default lane
+
+    scores: dict[LaneType, float] = {
+        "scalp": scalp_score,
+        "swing": swing_score,
+        "trend": trend_score,
+        "observe": observe_score,
+    }
+
+    # Softmax with temperature τ
+    max_s = max(scores.values())
+    exp_scores = {k: math.exp((v - max_s) / max(tau, 1e-6)) for k, v in scores.items()}
+    total = sum(exp_scores.values())
+    probs = {k: v / total for k, v in exp_scores.items()}
+
+    # Pick lane with highest probability
+    lane: LaneType = max(probs, key=lambda k: probs[k])  # type: ignore[arg-type]
+
+    return {
+        "value": lane,
+        "reason": (
+            f"lane={lane} (tau={tau:.4f}, "
+            f"scalp={probs.get('scalp', 0):.3f} swing={probs.get('swing', 0):.3f} "
+            f"trend={probs.get('trend', 0):.3f} observe={probs.get('observe', 0):.3f})"
+        ),
+        "derivation": {
+            "tau": tau,
+            "raw_scores": scores,
+            "softmax_probs": probs,
+            "phi": s.phi,
+            "sovereignty": s.sovereignty,
+            "basin_velocity": s.basin_velocity,
+            "tape_trend": tape_trend,
+        },
     }

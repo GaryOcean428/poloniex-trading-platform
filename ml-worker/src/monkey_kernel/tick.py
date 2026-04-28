@@ -45,6 +45,7 @@ from .autonomic import AutonomicKernel, AutonomicTickInputs
 from .basin import normalized_entropy, velocity
 from .executive import (
     ExecBasinState,
+    choose_lane,
     current_entry_threshold,
     current_leverage,
     current_position_size,
@@ -58,7 +59,7 @@ from .modes import MODE_PROFILES, MonkeyMode, detect_mode
 from .parameters import get_registry
 from .perception import OHLCVCandle, PerceptionInputs, perceive, refract
 from .perception_scalars import basin_direction, trend_proxy
-from .state import NeurochemicalState
+from .state import LaneType, NeurochemicalState
 
 logger = logging.getLogger("monkey.tick")
 
@@ -158,6 +159,10 @@ class TickDecision:
     basin: np.ndarray
     is_dca_add: bool = False
     is_reverse: bool = False
+    lane: LaneType = "swing"
+    direction: str = "flat"   # long | short | flat
+    size_fraction: float = 1.0
+    dca_intent: bool = False
 
 
 # ── Public API ───────────────────────────────────────────────────
@@ -457,6 +462,23 @@ def run_tick(
     if len(state.fhealth_history) > history_max:
         state.fhealth_history = state.fhealth_history[-history_max:]
 
+    # ── Lane selection ────────────────────────────────────────────
+    lane_d = choose_lane(basin_state, tape_trend=tape_trend)
+    lane = lane_d["value"]
+    derivation["lane"] = lane_d["derivation"]
+
+    # direction: derived from action
+    if action.startswith("enter_long") or (held_side == "long" and action == "hold"):
+        direction = "long"
+    elif action.startswith("enter_short") or (held_side == "short" and action == "hold"):
+        direction = "short"
+    else:
+        direction = "flat"
+
+    # size_fraction pass-through; dca_intent from is_dca
+    effective_size_frac = inputs.size_fraction
+    dca_intent = is_dca
+
     return TickDecision(
         action=action,
         reason=reason,
@@ -478,6 +500,10 @@ def run_tick(
         basin=basin,
         is_dca_add=is_dca,
         is_reverse=is_reverse,
+        lane=lane,
+        direction=direction,
+        size_fraction=effective_size_frac,
+        dca_intent=dca_intent,
     ), state
 
 

@@ -9,7 +9,7 @@ numpy-friendly (numeric arrays round-trip as Python lists).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Literal, Optional
 
 import numpy as np
 
@@ -18,6 +18,11 @@ import numpy as np
 # Do not change without new experimental validation (qig-verification).
 BASIN_DIM: int = 64
 KAPPA_STAR: float = 64.0
+
+# Lane type — execution lane selection per tick. The kernel decides
+# which lane is locally optimal from basin geometry + recent lane-
+# conditioned reward. Default "swing" preserves backward-compat.
+LaneType = Literal["scalp", "swing", "trend", "observe"]
 
 
 @dataclass

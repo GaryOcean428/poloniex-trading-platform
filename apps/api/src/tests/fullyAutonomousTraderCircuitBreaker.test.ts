@@ -46,8 +46,8 @@ describe('FullyAutonomousTrader – circuit breaker', () => {
 
   // ── 1. Initial state ────────────────────────────────────────────────────
 
-  it('starts with circuit breaker not tripped', () => {
-    const status = trader.getCircuitBreakerStatus(USER);
+  it('starts with circuit breaker not tripped', async () => {
+    const status = await trader.getCircuitBreakerStatus(USER);
     expect(status.isTripped).toBe(false);
     expect(status.consecutiveLosses).toBe(0);
     expect(status.dailyLossPercent).toBe(0);
@@ -56,54 +56,54 @@ describe('FullyAutonomousTrader – circuit breaker', () => {
 
   // ── 2. Consecutive-loss tripping ────────────────────────────────────────
 
-  it('trips after MAX_CONSECUTIVE_LOSSES (5) consecutive losses', () => {
+  it('trips after MAX_CONSECUTIVE_LOSSES (5) consecutive losses', async () => {
     for (let i = 0; i < 5; i++) {
-      priv(trader).recordTradeResult(USER, -50, CAPITAL);
+      await priv(trader).recordTradeResult(USER, -50, CAPITAL);
     }
-    const status = trader.getCircuitBreakerStatus(USER);
+    const status = await trader.getCircuitBreakerStatus(USER);
     expect(status.isTripped).toBe(true);
     expect(status.consecutiveLosses).toBe(5);
     expect(status.reason).toMatch(/consecutive losses/i);
   });
 
-  it('does NOT trip after fewer than 5 consecutive losses', () => {
+  it('does NOT trip after fewer than 5 consecutive losses', async () => {
     for (let i = 0; i < 4; i++) {
-      priv(trader).recordTradeResult(USER, -50, CAPITAL);
+      await priv(trader).recordTradeResult(USER, -50, CAPITAL);
     }
-    expect(trader.getCircuitBreakerStatus(USER).isTripped).toBe(false);
+    expect((await trader.getCircuitBreakerStatus(USER)).isTripped).toBe(false);
   });
 
-  it('resets consecutive loss count after a winning trade', () => {
+  it('resets consecutive loss count after a winning trade', async () => {
     for (let i = 0; i < 3; i++) {
-      priv(trader).recordTradeResult(USER, -50, CAPITAL);
+      await priv(trader).recordTradeResult(USER, -50, CAPITAL);
     }
-    priv(trader).recordTradeResult(USER, +200, CAPITAL); // win resets streak
-    priv(trader).recordTradeResult(USER, -50, CAPITAL); // only 1 loss now
-    const status = trader.getCircuitBreakerStatus(USER);
+    await priv(trader).recordTradeResult(USER, +200, CAPITAL); // win resets streak
+    await priv(trader).recordTradeResult(USER, -50, CAPITAL); // only 1 loss now
+    const status = await trader.getCircuitBreakerStatus(USER);
     expect(status.isTripped).toBe(false);
     expect(status.consecutiveLosses).toBe(1);
   });
 
   // ── 3. Daily loss limit ──────────────────────────────────────────────────
 
-  it('trips when daily loss reaches 3% of capital', () => {
+  it('trips when daily loss reaches 3% of capital', async () => {
     // 3% of 10 000 = 300 USDT
-    priv(trader).recordTradeResult(USER, -301, CAPITAL);
-    const status = trader.getCircuitBreakerStatus(USER);
+    await priv(trader).recordTradeResult(USER, -301, CAPITAL);
+    const status = await trader.getCircuitBreakerStatus(USER);
     expect(status.isTripped).toBe(true);
     expect(status.reason).toMatch(/daily loss/i);
   });
 
-  it('does NOT trip when daily loss is just below 3% of capital', () => {
-    priv(trader).recordTradeResult(USER, -299, CAPITAL);
-    expect(trader.getCircuitBreakerStatus(USER).isTripped).toBe(false);
+  it('does NOT trip when daily loss is just below 3% of capital', async () => {
+    await priv(trader).recordTradeResult(USER, -299, CAPITAL);
+    expect((await trader.getCircuitBreakerStatus(USER)).isTripped).toBe(false);
   });
 
   // ── 4. checkCircuitBreaker blocks trading when tripped ──────────────────
 
-  it('checkCircuitBreaker returns allowed=false when tripped', () => {
+  it('checkCircuitBreaker returns allowed=false when tripped', async () => {
     for (let i = 0; i < 5; i++) {
-      priv(trader).recordTradeResult(USER, -100, CAPITAL);
+      await priv(trader).recordTradeResult(USER, -100, CAPITAL);
     }
     const result = priv(trader).checkCircuitBreaker(USER);
     expect(result.allowed).toBe(false);
@@ -118,12 +118,12 @@ describe('FullyAutonomousTrader – circuit breaker', () => {
 
   // ── 5. Cooldown auto-reset ───────────────────────────────────────────────
 
-  it('auto-resets after the 1-hour cooldown elapses', () => {
+  it('auto-resets after the 1-hour cooldown elapses', async () => {
     // Trip the breaker
     for (let i = 0; i < 5; i++) {
-      priv(trader).recordTradeResult(USER, -100, CAPITAL);
+      await priv(trader).recordTradeResult(USER, -100, CAPITAL);
     }
-    expect(trader.getCircuitBreakerStatus(USER).isTripped).toBe(true);
+    expect((await trader.getCircuitBreakerStatus(USER)).isTripped).toBe(true);
 
     // Backdate trippedAt so the cooldown appears to have elapsed
     const cb = priv(trader).getCircuitBreaker(USER);
@@ -132,12 +132,12 @@ describe('FullyAutonomousTrader – circuit breaker', () => {
     // checkCircuitBreaker should auto-reset
     const result = priv(trader).checkCircuitBreaker(USER);
     expect(result.allowed).toBe(true);
-    expect(trader.getCircuitBreakerStatus(USER).isTripped).toBe(false);
+    expect((await trader.getCircuitBreakerStatus(USER)).isTripped).toBe(false);
   });
 
-  it('does NOT reset before the cooldown elapses', () => {
+  it('does NOT reset before the cooldown elapses', async () => {
     for (let i = 0; i < 5; i++) {
-      priv(trader).recordTradeResult(USER, -100, CAPITAL);
+      await priv(trader).recordTradeResult(USER, -100, CAPITAL);
     }
 
     // Only 30 minutes have passed
@@ -149,11 +149,11 @@ describe('FullyAutonomousTrader – circuit breaker', () => {
 
   // ── 6. cooldownRemaining field ───────────────────────────────────────────
 
-  it('reports positive cooldownRemaining while tripped', () => {
+  it('reports positive cooldownRemaining while tripped', async () => {
     for (let i = 0; i < 5; i++) {
-      priv(trader).recordTradeResult(USER, -100, CAPITAL);
+      await priv(trader).recordTradeResult(USER, -100, CAPITAL);
     }
-    const status = trader.getCircuitBreakerStatus(USER);
+    const status = await trader.getCircuitBreakerStatus(USER);
     expect(status.cooldownRemaining).toBeGreaterThan(0);
   });
 });
