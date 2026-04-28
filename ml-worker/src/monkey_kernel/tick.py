@@ -45,6 +45,7 @@ from .autonomic import AutonomicKernel, AutonomicTickInputs
 from .basin import normalized_entropy, velocity
 from .executive import (
     ExecBasinState,
+    choose_lane,
     current_entry_threshold,
     current_leverage,
     current_position_size,
@@ -58,7 +59,7 @@ from .modes import MODE_PROFILES, MonkeyMode, detect_mode
 from .parameters import get_registry
 from .perception import OHLCVCandle, PerceptionInputs, perceive, refract
 from .perception_scalars import basin_direction, trend_proxy
-from .state import NeurochemicalState
+from .state import LaneType, NeurochemicalState
 
 logger = logging.getLogger("monkey.tick")
 
@@ -158,6 +159,11 @@ class TickDecision:
     basin: np.ndarray
     is_dca_add: bool = False
     is_reverse: bool = False
+    # v0.8.6 — expanded decision surface (#586)
+    lane: LaneType = "swing"
+    direction: str = "flat"        # "long" | "short" | "flat"
+    size_fraction: float = 0.0     # fraction of equity committed (0..1)
+    dca_intent: bool = False       # True when kernel intends a DCA add
 
 
 # ── Public API ───────────────────────────────────────────────────
@@ -318,6 +324,13 @@ def run_tick(
         neurochemistry=nc,
     )
 
+    # ── Lane selection (v0.8.6 #586) ──────────────────────────
+    # Kernel chooses lane via softmax over Fisher-Rao distances.
+    # bank_recent_reward_by_lane is not yet wired (#577/#578) so
+    # choose_lane falls back to basin-geometry-only scoring.
+    lane_d = choose_lane(basin_state, tape_trend=tape_trend)
+    kernel_lane = lane_d["value"]
+
     # ── Derive decisions ───────────────────────────────────────
     entry_thr_d = current_entry_threshold(
         basin_state,
@@ -372,6 +385,7 @@ def run_tick(
         "ml_side": ml_side,
         "side_override": side_override,
         "override_threshold": override_thr,
+        "lane": lane_d,
         "mode_changed": mode_changed,
     }
 
@@ -478,6 +492,12 @@ def run_tick(
         basin=basin,
         is_dca_add=is_dca,
         is_reverse=is_reverse,
+        lane=kernel_lane,
+        direction=side_candidate if action in (
+            "enter_long", "enter_short", "reverse_long", "reverse_short",
+        ) else "flat",
+        size_fraction=effective_size_fraction,
+        dca_intent=is_dca,
     ), state
 
 

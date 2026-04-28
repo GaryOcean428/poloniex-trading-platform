@@ -26,7 +26,7 @@ from qig_core_local.geometry.fisher_rao import fisher_rao_distance
 from .basin import max_mass, normalized_entropy
 from .modes import MODE_PROFILES, MonkeyMode, effective_profile
 from .parameters import get_registry
-from .state import KAPPA_STAR, NeurochemicalState
+from .state import KAPPA_STAR, LaneType, NeurochemicalState
 
 Side = Literal["long", "short"]
 
@@ -708,4 +708,144 @@ def should_auto_flatten(
             else f"f_health OK (mean {mean:.3f})"
         ),
         "derivation": {"f_health_mean": mean, "f_health_trend": trend},
+    }
+
+
+# ═══════════════════════════════════════════════════════════════
+#  choose_lane — v0.8.6 decision-surface expansion (#586)
+# ═══════════════════════════════════════════════════════════════
+#
+# Kernel selects its execution lane on each tick using a softmax over
+# lane-specific geometric scores. At low Φ / low sovereignty the kernel
+# defaults toward scalp (highest reward density per tick on small
+# notional). At high Φ / stable regime it can exploit swing or trend.
+#
+# Temperature τ = 1 / max(κ, 1) — high κ = more exploitation (lower T),
+# low κ = more exploration (higher T). Scores are basin-geometry-derived;
+# lane-conditioned bank reward history is injected via
+# `recent_reward_by_lane` when the resonance bank has enough data.
+# Until #577/#578 wire dedicated executors the lane is EMITTED but
+# execution routes through the existing swing path regardless of lane.
+#
+# QIG purity: all distances are Fisher-Rao, no cosine.
+
+
+_ALL_LANES: list[LaneType] = ["scalp", "swing", "trend", "observe"]
+
+# Geometric prior scores for each lane at nominal state (Φ=0.5, κ=κ*).
+# These represent the base "attraction" of each lane before conditioning.
+_LANE_BASE_SCORES: dict[str, float] = {
+    "scalp": 0.30,   # high freq — preferred at low notional
+    "swing": 0.40,   # intermediate hold — default prior
+    "trend": 0.20,   # directional — needs stability / high Φ
+    "observe": 0.10, # no-trade monitoring — floor score
+}
+
+
+def _lane_geometry_score(
+    lane: LaneType,
+    s: ExecBasinState,
+    tape_trend: float,
+) -> float:
+    """Basin-geometry-conditioned score for a lane (unnormalised).
+
+    Scalp score rises with: low basin_velocity (calm for scalping),
+        low Φ (not yet integrated — stay nimble), low equity/sovereignty.
+    Swing score rises with: moderate Φ, moderate velocity, low chaos.
+    Trend score rises with: high Φ, strong tape_trend magnitude, high sovereignty.
+    Observe score rises with: high basin_velocity (chaotic — sit out).
+
+    Design invariants verified by test_lane_decision_surface.py:
+      - phi=0, sov=0, bv=0  → scalp
+      - phi=1, sov=1, tape=1 → trend
+      - bv=10               → observe
+    """
+    phi = s.phi
+    sov = s.sovereignty
+    bv = s.basin_velocity
+    # Normalised tape direction conviction (unsigned)
+    tape_abs = min(1.0, abs(tape_trend))
+    # Chaos: 0 at bv=0, 1 at bv≈0.33+
+    chaos = min(1.0, bv * 3.0)
+    # Velocity dampener for "hold" lanes (swing/scalp). At bv=10 → 0.
+    calm = max(0.0, 1.0 - bv * 0.15)
+
+    if lane == "scalp":
+        # Prefer when: low Φ (nimble), low velocity (calm), low sovereignty (new)
+        return _LANE_BASE_SCORES["scalp"] * (1.0 - phi * 0.4) * calm * (1.0 - sov * 0.3)
+    if lane == "swing":
+        # Prefer when: moderate Φ (some integration), low chaos
+        phi_peak = 1.0 - abs(phi - 0.5) * 1.0  # peak at Φ = 0.5
+        return _LANE_BASE_SCORES["swing"] * max(0.1, phi_peak) * (0.5 + sov * 0.5) * calm
+    if lane == "trend":
+        # Prefer when: high Φ, strong directional tape, high sovereignty.
+        # (1 + phi*0.5) boosts trend at high Φ so it beats swing.
+        return _LANE_BASE_SCORES["trend"] * phi * tape_abs * max(0.1, sov) * (1.0 + phi * 0.5)
+    # observe — additive chaos term so very high velocity → observe dominates
+    return _LANE_BASE_SCORES["observe"] + 0.40 * chaos
+
+
+def choose_lane(
+    s: ExecBasinState,
+    *,
+    tape_trend: float = 0.0,
+    recent_reward_by_lane: dict[str, float] | None = None,
+) -> dict[str, Any]:
+    """Softmax lane selector conditioned on basin coords + κ.
+
+    Args:
+        s: executive basin state snapshot.
+        tape_trend: signed log-return proxy (tanh-squashed, [-1,1]).
+        recent_reward_by_lane: optional dict mapping lane names to
+            recent mean reward from the resonance bank (within-lane).
+            When provided, scores are multiplied by a reward amplifier.
+            If None, falls back to geometry-only scoring.
+
+    Returns dict with keys:
+        "value"      : LaneType chosen
+        "reason"     : human-readable derivation string
+        "derivation" : raw scores, softmax probs, temperature
+    """
+    # Temperature τ = 1/max(κ, 1). High κ → low T → exploitation.
+    tau = 1.0 / max(s.kappa, 1.0)
+
+    raw_scores: dict[str, float] = {}
+    for lane in _ALL_LANES:
+        geo = max(0.0, _lane_geometry_score(lane, s, tape_trend))
+        if recent_reward_by_lane:
+            reward = recent_reward_by_lane.get(lane, 0.0)
+            # Reward amplifier: exp of reward scaled to [0.5, 2.0] range.
+            reward_amp = max(0.5, min(2.0, 1.0 + reward))
+        else:
+            reward_amp = 1.0
+        raw_scores[lane] = geo * reward_amp
+
+    # Softmax with temperature τ.
+    max_score = max(raw_scores.values())
+    exp_scores = {
+        lane: float(np.exp((score - max_score) / max(tau, 1e-9)))
+        for lane, score in raw_scores.items()
+    }
+    total = sum(exp_scores.values())
+    probs = {lane: v / total for lane, v in exp_scores.items()}
+
+    chosen: LaneType = max(probs, key=lambda l: probs[l])  # type: ignore[assignment]
+
+    return {
+        "value": chosen,
+        "reason": (
+            f"lane={chosen} (τ={tau:.4f}) probs="
+            + ", ".join(f"{l}:{p:.3f}" for l, p in probs.items())
+        ),
+        "derivation": {
+            "tau": tau,
+            "kappa": s.kappa,
+            "phi": s.phi,
+            "sovereignty": s.sovereignty,
+            "basin_velocity": s.basin_velocity,
+            "tape_abs": min(1.0, abs(tape_trend)),
+            "raw_scores": raw_scores,
+            "softmax_probs": probs,
+            "chosen": chosen,
+        },
     }

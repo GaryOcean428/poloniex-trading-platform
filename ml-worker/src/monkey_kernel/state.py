@@ -9,9 +9,15 @@ numpy-friendly (numeric arrays round-trip as Python lists).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Literal, Optional
 
 import numpy as np
+
+# Lane choices for kernel decision surface (v0.8.6 #586).
+# observe = no-trade monitoring; scalp = high-frequency low-notional;
+# swing = intermediate hold (default / backward-compat);
+# trend = directional multi-session.
+LaneType = Literal["scalp", "swing", "trend", "observe"]
 
 
 # Δ⁶³ dimension — matches qig-core's BASIN_DIM and vex's frozen facts.

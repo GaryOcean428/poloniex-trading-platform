@@ -538,3 +538,112 @@ export function shouldAutoFlatten(
     derivation: { fHealthMean: mean, fHealthTrend: trend },
   };
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// Lane decision surface (v0.8.6 #586)
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * LaneType — execution lane the kernel can choose each tick.
+ *
+ * scalp   — high-frequency, low-notional. Preferred at small equity.
+ * swing   — intermediate hold. Default / backward-compat lane.
+ * trend   — directional multi-session. Requires high Φ + sovereignty.
+ * observe — no-trade monitoring. Emitted when basin is too chaotic.
+ */
+export type LaneType = 'scalp' | 'swing' | 'trend' | 'observe';
+
+const ALL_LANES: LaneType[] = ['scalp', 'swing', 'trend', 'observe'];
+
+// Geometric prior base scores for each lane at nominal state.
+const LANE_BASE_SCORES: Record<LaneType, number> = {
+  scalp:   0.30,
+  swing:   0.40,
+  trend:   0.20,
+  observe: 0.10,
+};
+
+function laneGeometryScore(lane: LaneType, s: BasinState, tapeAbs: number): number {
+  const { phi, sovereignty, basinVelocity } = s;
+  // Chaos: 0 at bv=0, 1 at bv≈0.33+
+  const chaos = Math.min(1, basinVelocity * 3);
+  // Velocity dampener for "hold" lanes (swing/scalp). At bv=10 → 0.
+  const calm = Math.max(0, 1 - basinVelocity * 0.15);
+
+  switch (lane) {
+    case 'scalp':
+      // Prefer: low Φ (nimble), low velocity (calm), low sovereignty (new)
+      return LANE_BASE_SCORES.scalp
+        * (1 - phi * 0.4)
+        * calm
+        * (1 - sovereignty * 0.3);
+    case 'swing': {
+      // Prefer: moderate Φ, low chaos
+      const phiPeak = Math.max(0.1, 1 - Math.abs(phi - 0.5));
+      return LANE_BASE_SCORES.swing * phiPeak * (0.5 + sovereignty * 0.5) * calm;
+    }
+    case 'trend':
+      // Prefer: high Φ, strong directional tape, high sovereignty.
+      // (1 + phi*0.5) boosts trend at high Φ so it beats swing.
+      return LANE_BASE_SCORES.trend * phi * tapeAbs * Math.max(0.1, sovereignty) * (1 + phi * 0.5);
+    case 'observe':
+      // Additive chaos term — very high velocity → observe dominates.
+      return LANE_BASE_SCORES.observe + 0.40 * chaos;
+  }
+}
+
+/**
+ * chooseLane — softmax lane selector conditioned on basin coords + κ.
+ *
+ * Temperature τ = 1/max(κ,1). High κ → low T → exploitation.
+ * Scores are geometry-derived; lane-conditioned bank reward history is
+ * injected via `recentRewardByLane` when the resonance bank has data.
+ * Until #577/#578 wire dedicated executors, lane=scalp and lane=trend
+ * are emitted but execution still routes through the swing path.
+ *
+ * QIG purity: all distances are Fisher-Rao, no cosine.
+ */
+export function chooseLane(
+  s: BasinState,
+  tapeTrend: number = 0,
+  recentRewardByLane?: Partial<Record<LaneType, number>>,
+): ExecutiveDecision<LaneType> {
+  const tau = 1 / Math.max(s.kappa, 1);
+  const tapeAbs = Math.min(1, Math.abs(tapeTrend));
+
+  const rawScores: Record<LaneType, number> = {} as Record<LaneType, number>;
+  for (const lane of ALL_LANES) {
+    const geo = Math.max(0, laneGeometryScore(lane, s, tapeAbs));
+    const reward = recentRewardByLane?.[lane] ?? 0;
+    const rewardAmp = Math.max(0.5, Math.min(2.0, 1 + reward));
+    rawScores[lane] = geo * rewardAmp;
+  }
+
+  // Softmax with temperature τ.
+  const maxScore = Math.max(...Object.values(rawScores));
+  const expScores: Record<LaneType, number> = {} as Record<LaneType, number>;
+  let total = 0;
+  for (const lane of ALL_LANES) {
+    const e = Math.exp((rawScores[lane] - maxScore) / Math.max(tau, 1e-9));
+    expScores[lane] = e;
+    total += e;
+  }
+  const probs: Record<LaneType, number> = {} as Record<LaneType, number>;
+  for (const lane of ALL_LANES) {
+    probs[lane] = expScores[lane] / total;
+  }
+
+  const chosen = ALL_LANES.reduce((best, l) => probs[l] > probs[best] ? l : best, ALL_LANES[0]);
+
+  const probStr = ALL_LANES.map((l) => `${l}:${probs[l].toFixed(3)}`).join(', ');
+  return {
+    value: chosen,
+    reason: `lane=${chosen} (τ=${tau.toFixed(4)}) probs=${probStr}`,
+    derivation: {
+      tau, kappa: s.kappa, phi: s.phi, sovereignty: s.sovereignty,
+      basinVelocity: s.basinVelocity, tapeAbs,
+      rawScores: rawScores as unknown as Record<string, number>,
+      softmaxProbs: probs as unknown as Record<string, number>,
+    },
+  };
+}

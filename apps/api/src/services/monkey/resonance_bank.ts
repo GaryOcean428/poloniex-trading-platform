@@ -25,6 +25,7 @@
 import { pool } from '../../db/connection.js';
 import { fisherRao, type Basin } from './basin.js';
 import type { Bubble } from './working_memory.js';
+import type { LaneType } from './executive.js';
 import { logger } from '../../utils/logger.js';
 
 export interface BankEntry {
@@ -39,6 +40,8 @@ export interface BankEntry {
   accessCount: number;
   phiAtCreation: number | null;
   source: 'lived' | 'harvested';
+  /** v0.8.6 (#586) — execution lane active when this bubble was recorded. */
+  lane: LaneType;
 }
 
 export interface NearestNeighbor {
@@ -61,6 +64,7 @@ function rowToEntry(row: Record<string, unknown>): BankEntry {
     accessCount: Number(row.access_count ?? 1),
     phiAtCreation: row.phi_at_creation != null ? Number(row.phi_at_creation) : null,
     source: (row.source as 'lived' | 'harvested') ?? 'lived',
+    lane: (row.lane as LaneType | null) ?? 'swing',
   };
 }
 
@@ -153,8 +157,8 @@ export class ResonanceBank {
       const result = await pool.query(
         `INSERT INTO monkey_resonance_bank
            (entry_basin, symbol, realized_pnl, trade_outcome, order_id,
-            basin_depth, phi_at_creation, source, engine_version)
-         VALUES ($1::jsonb, $2, $3, $4, $5, $6, $7, 'lived', $8)
+            basin_depth, phi_at_creation, source, engine_version, lane)
+         VALUES ($1::jsonb, $2, $3, $4, $5, $6, $7, 'lived', $8, $9)
          RETURNING *`,
         [
           JSON.stringify(entryBasin),
@@ -165,6 +169,7 @@ export class ResonanceBank {
           depth,
           bubble.phi,
           engineVersion,
+          bubble.payload.lane ?? 'swing',
         ],
       );
       logger.info('[Monkey.bank] promoted to resonance bank', {
@@ -192,12 +197,18 @@ export class ResonanceBank {
    *
    * Used by perception to answer "has Monkey seen anything like this
    * basin before, and what happened?"
+   *
+   * When *lane* is given, only entries for that lane are scored.
+   * This prevents cross-lane reward contamination (#586 §4): "what
+   * works in scalp at this basin state" is a separate query from
+   * "what works in swing at this basin state."
    */
   async findNearestBasins(
     basin: Basin,
     symbol: string | null = null,
     topK: number = 5,
     maxScan: number = 500,
+    lane: LaneType | null = null,
   ): Promise<NearestNeighbor[]> {
     // #579 — exclude quarantined bubbles from retrieval. Pre-basin-fix
     // bubbles (created before 589c775 / 2026-04-27T02:39:32Z) have warped
@@ -207,8 +218,14 @@ export class ResonanceBank {
     let query = `SELECT * FROM monkey_resonance_bank WHERE quarantined = false`;
     const params: unknown[] = [];
     if (symbol) {
-      query += ` AND symbol = $1`;
+      query += ` AND symbol = $${params.length + 1}`;
       params.push(symbol);
+    }
+    // #586 — lane-filtered retrieval. Each lane has a separate geometric
+    // signature; mixing them contaminates the reward landscape.
+    if (lane) {
+      query += ` AND lane = $${params.length + 1}`;
+      params.push(lane);
     }
     query += ` ORDER BY last_accessed DESC LIMIT ${maxScan}`;
 

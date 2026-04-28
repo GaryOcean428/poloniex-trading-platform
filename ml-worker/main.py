@@ -1501,6 +1501,11 @@ def _decision_to_dict(dec: TickDecision) -> dict:
         "basin": dec.basin.tolist(),
         "is_dca_add": dec.is_dca_add,
         "is_reverse": dec.is_reverse,
+        # v0.8.6 (#586) — expanded decision surface
+        "lane": dec.lane,
+        "direction": dec.direction,
+        "size_fraction": dec.size_fraction,
+        "dca_intent": dec.dca_intent,
     }
 
 

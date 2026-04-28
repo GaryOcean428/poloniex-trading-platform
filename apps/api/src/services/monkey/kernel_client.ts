@@ -241,6 +241,14 @@ export interface TickRunDecision {
   basin: number[];
   is_dca_add: boolean;
   is_reverse: boolean;
+  /** v0.8.6 (#586) — execution lane chosen by the kernel this tick. */
+  lane: string;
+  /** v0.8.6 (#586) — direction: "long" | "short" | "flat". */
+  direction: string;
+  /** v0.8.6 (#586) — fraction of equity committed (0..1). */
+  size_fraction: number;
+  /** v0.8.6 (#586) — true when kernel intends a DCA add. */
+  dca_intent: boolean;
 }
 
 export interface TickRunResponse {

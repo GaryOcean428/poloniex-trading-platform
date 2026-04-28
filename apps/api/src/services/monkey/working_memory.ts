@@ -43,6 +43,8 @@ export interface Bubble {
     realizedPnl?: number;
     entryBasin?: Basin;
     orderId?: string;
+    /** v0.8.6 (#586) — lane active when this bubble was recorded. */
+    lane?: 'scalp' | 'swing' | 'trend' | 'observe';
   };
   status: BubbleStatus;
   metadata: Record<string, unknown>;
