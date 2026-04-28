@@ -538,3 +538,67 @@ export function shouldAutoFlatten(
     derivation: { fHealthMean: mean, fHealthTrend: trend },
   };
 }
+
+
+// ═══════════════════════════════════════════════════════════════
+//  Lane selection — softmax over basin features (parity with Python)
+// ═══════════════════════════════════════════════════════════════
+
+export type LaneType = 'scalp' | 'swing' | 'trend' | 'observe';
+
+/**
+ * Select execution lane from basin geometry via softmax.
+ * Temperature τ = 1/κ — high κ = exploitation, low κ = exploration.
+ */
+export function chooseLane(
+  s: BasinState,
+  tapeTrend: number = 0,
+): ExecutiveDecision<LaneType> {
+  const tau = 1.0 / Math.max(s.kappa, 1.0);
+
+  const scalpScore = (1 - s.phi) * (1 - s.sovereignty) * (1 - Math.min(s.basinVelocity, 1));
+  const trendScore = s.phi * s.sovereignty * Math.abs(tapeTrend);
+  const observeScore = Math.min(s.basinVelocity, 1) * 0.8;
+  const swingScore = 0.3;
+
+  const scores: Record<LaneType, number> = {
+    scalp: scalpScore,
+    swing: swingScore,
+    trend: trendScore,
+    observe: observeScore,
+  };
+
+  const maxS = Math.max(...Object.values(scores));
+  const expScores: Record<string, number> = {};
+  let total = 0;
+  for (const [k, v] of Object.entries(scores)) {
+    const e = Math.exp((v - maxS) / Math.max(tau, 1e-6));
+    expScores[k] = e;
+    total += e;
+  }
+  const probs: Record<string, number> = {};
+  for (const [k, v] of Object.entries(expScores)) {
+    probs[k] = v / total;
+  }
+
+  let lane: LaneType = 'swing';
+  let maxProb = 0;
+  for (const [k, v] of Object.entries(probs)) {
+    if (v > maxProb) {
+      maxProb = v;
+      lane = k as LaneType;
+    }
+  }
+
+  return {
+    value: lane,
+    reason: `lane=${lane} (tau=${tau.toFixed(4)}, scalp=${(probs.scalp ?? 0).toFixed(3)} swing=${(probs.swing ?? 0).toFixed(3)} trend=${(probs.trend ?? 0).toFixed(3)} observe=${(probs.observe ?? 0).toFixed(3)})`,
+    derivation: {
+      tau,
+      phi: s.phi,
+      sovereignty: s.sovereignty,
+      basinVelocity: s.basinVelocity,
+      tapeTrend,
+    },
+  };
+}
