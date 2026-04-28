@@ -66,6 +66,8 @@ from .basin_sync import (
     convergence_summary,
 )
 from .modes import MODE_PROFILES, ModeProfile, MonkeyMode, detect_mode
+from .motivators import Layer1Motivators, compute_layer1_motivators
+from .emotions import Layer2BCognitiveEmotions, compute_layer2b_emotions
 from .parameters import (
     ParameterRegistry,
     ParamValue,
@@ -119,6 +121,8 @@ __all__ = [
     "MODE_PROFILES",
     "ModeProfile",
     "MonkeyMode",
+    "Layer1Motivators",
+    "Layer2BCognitiveEmotions",
     "AccountContext",
     "NeurochemicalState",
     "ParamValue",
@@ -134,6 +138,8 @@ __all__ = [
     "current_leverage",
     "current_position_size",
     "detect_mode",
+    "compute_layer1_motivators",
+    "compute_layer2b_emotions",
     "fresh_symbol_state",
     "get_registry",
     "run_tick",
