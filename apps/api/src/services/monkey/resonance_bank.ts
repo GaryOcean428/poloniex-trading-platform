@@ -65,9 +65,57 @@ function rowToEntry(row: Record<string, unknown>): BankEntry {
 }
 
 export class ResonanceBank {
+  // In-memory dedup set — rebuilt from DB on first write.
+  // Prevents duplicate bank entries from concurrent promotions or
+  // startup replay (both kernels, and restart re-replay of history).
+  private readonly seenOrderIds = new Set<string>();
+  private seenOrderIdsLoaded = false;
+  private seenOrderIdsLoadingPromise: Promise<void> | null = null;
+
+  private async ensureSeenOrderIdsLoaded(): Promise<void> {
+    if (this.seenOrderIdsLoaded) return;
+    if (this.seenOrderIdsLoadingPromise) {
+      await this.seenOrderIdsLoadingPromise;
+      return;
+    }
+    this.seenOrderIdsLoadingPromise = (async () => {
+      try {
+        const result = await pool.query(
+          `SELECT order_id FROM monkey_resonance_bank WHERE order_id IS NOT NULL`,
+        );
+        for (const row of result.rows as Array<{ order_id: string }>) {
+          this.seenOrderIds.add(row.order_id);
+        }
+        this.seenOrderIdsLoaded = true;
+      } catch (err) {
+        logger.warn('[Monkey.bank] failed to load seen order IDs (dedup cache)', {
+          err: err instanceof Error ? err.message : String(err),
+        });
+        // Reset so the next call retries the load.
+        this.seenOrderIdsLoadingPromise = null;
+      }
+    })();
+    await this.seenOrderIdsLoadingPromise;
+  }
+
+  /**
+   * Returns true if the given orderId has already been promoted to the
+   * bank in this session or a prior one. Used in tests and for
+   * external dedup checks.
+   */
+  async hasOrderId(orderId: string): Promise<boolean> {
+    await this.ensureSeenOrderIdsLoaded();
+    return this.seenOrderIds.has(orderId);
+  }
+
   /**
    * Write a promoted bubble to the bank. Only call after the bubble
    * has a real outcome attached (payload.realizedPnl set).
+   *
+   * Idempotent on orderId: if the same orderId was already promoted
+   * (in this session or a prior one), the call is a no-op and returns
+   * null. This prevents double/triple-counting on container restart
+   * and when both Position and Swing kernels witness the same exit.
    */
   async writeBubble(bubble: Bubble, engineVersion: string): Promise<BankEntry | null> {
     if (!bubble.payload || bubble.payload.realizedPnl === undefined) {
@@ -75,6 +123,19 @@ export class ResonanceBank {
         bubbleId: bubble.id,
       });
       return null;
+    }
+
+    // Dedup guard: skip if this orderId was already promoted (same or prior session).
+    const orderId = bubble.payload.orderId ?? null;
+    if (orderId) {
+      await this.ensureSeenOrderIdsLoaded();
+      if (this.seenOrderIds.has(orderId)) {
+        logger.debug('[Monkey.bank] skip duplicate promotion', { orderId });
+        return null;
+      }
+      // Reserve the slot synchronously to block concurrent duplicate calls
+      // for the same orderId before the async INSERT completes.
+      this.seenOrderIds.add(orderId);
     }
 
     const entryBasin = Array.from(bubble.payload.entryBasin ?? bubble.center);
@@ -100,7 +161,7 @@ export class ResonanceBank {
           bubble.payload.symbol ?? 'UNKNOWN',
           pnl,
           outcome,
-          bubble.payload.orderId ?? null,
+          orderId,
           depth,
           bubble.phi,
           engineVersion,
@@ -114,6 +175,10 @@ export class ResonanceBank {
       });
       return rowToEntry(result.rows[0]);
     } catch (err) {
+      // Release the reservation so the entry can be retried in this session.
+      if (orderId) {
+        this.seenOrderIds.delete(orderId);
+      }
       logger.warn('[Monkey.bank] writeBubble failed', {
         err: err instanceof Error ? err.message : String(err),
       });
@@ -134,10 +199,15 @@ export class ResonanceBank {
     topK: number = 5,
     maxScan: number = 500,
   ): Promise<NearestNeighbor[]> {
-    let query = `SELECT * FROM monkey_resonance_bank`;
+    // #579 — exclude quarantined bubbles from retrieval. Pre-basin-fix
+    // bubbles (created before 589c775 / 2026-04-27T02:39:32Z) have warped
+    // geometric coordinates because basinDir was pegged at -1.0; including
+    // them in nearest-neighbour search poisons retrieval against any
+    // post-fix bearish-lean tick. Migration 036 marks the cutoff.
+    let query = `SELECT * FROM monkey_resonance_bank WHERE quarantined = false`;
     const params: unknown[] = [];
     if (symbol) {
-      query += ` WHERE symbol = $1`;
+      query += ` AND symbol = $1`;
       params.push(symbol);
     }
     query += ` ORDER BY last_accessed DESC LIMIT ${maxScan}`;
@@ -168,11 +238,16 @@ export class ResonanceBank {
    */
   async sovereignty(): Promise<number> {
     try {
+      // #579 — quarantined bubbles do not count toward sovereignty.
+      // Earned identity must come from valid lived experience; bubbles
+      // recorded under the saturated-basin bug have warped geometric
+      // labels even when the outcome label is correct.
       const result = await pool.query(
         `SELECT
            COUNT(*) FILTER (WHERE source = 'lived')::float AS lived,
            COUNT(*)::float AS total
-         FROM monkey_resonance_bank`,
+         FROM monkey_resonance_bank
+         WHERE quarantined = false`,
       );
       const row = result.rows[0] as { lived: number; total: number };
       if (!row.total) return 0;  // newborn Monkey
@@ -182,11 +257,15 @@ export class ResonanceBank {
     }
   }
 
-  /** Total bank size — Monkey's "age" in lived experiences. */
+  /** Total bank size — Monkey's "age" in lived experiences.
+   * #579 — excludes quarantined bubbles. Quarantined entries are
+   * preserved for forensic analysis but don't contribute to maturity
+   * gating (current_position_size, etc.).
+   */
   async bankSize(): Promise<number> {
     try {
       const result = await pool.query(
-        `SELECT COUNT(*)::int AS n FROM monkey_resonance_bank`,
+        `SELECT COUNT(*)::int AS n FROM monkey_resonance_bank WHERE quarantined = false`,
       );
       return Number((result.rows[0] as { n: number }).n);
     } catch {

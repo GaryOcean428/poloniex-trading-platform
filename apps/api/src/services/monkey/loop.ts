@@ -73,6 +73,7 @@ import {
 import { resonanceBank } from './resonance_bank.js';
 import { computeSelfObservation, type SelfObservation } from './self_observation.js';
 import { WorkingMemory, type Bubble } from './working_memory.js';
+import { evaluateTurningSignal, shortsLive } from './turning_signal.js';
 import {
   currentEntryThreshold,
   currentLeverage,
@@ -627,6 +628,7 @@ export class MonkeyKernel extends EventEmitter {
     const mlSide: 'long' | 'short' = mlSignal === 'SELL' ? 'short' : 'long';
     let sideCandidate: 'long' | 'short' = mlSide;
     let sideOverride = false;
+    let turningSignalFired = false;
     // Agreement: if both basin and tape are strongly negative, short;
     // if both strongly positive, long; else defer to ml.
     const OVERRIDE_THRESHOLD = 0.35;
@@ -636,6 +638,38 @@ export class MonkeyKernel extends EventEmitter {
     } else if (basinDir > OVERRIDE_THRESHOLD && tapeTrend > OVERRIDE_THRESHOLD && mlSide === 'short') {
       sideCandidate = 'long';
       sideOverride = true;
+    }
+
+    // #575 — shorts as turning-signal. See ./turning_signal.ts for the
+    // condition logic + thresholds. Captures the turning-point earlier
+    // than OVERRIDE_REVERSE without retraining ml-worker.
+    if (evaluateTurningSignal({
+      sideCandidate, sideOverride, mlSignal, mlStrength, basinDir, tapeTrend,
+    })) {
+      sideCandidate = 'short';
+      sideOverride = true;
+      turningSignalFired = true;
+    }
+
+    // #575 gate — sequencing protection. Until #574 (resonance bank dedup)
+    // is merged AND #579 (pre-fix bubble quarantine) is verified clean in
+    // production, refuse to short. Default off via MONKEY_SHORTS_LIVE=false;
+    // flip to true after the dependent merges soak. The gate applies to
+    // BOTH OVERRIDE_REVERSE and turning-signal paths — we want a clean
+    // controlled re-activation of shorts, not partial enablement.
+    const SHORTS_LIVE = shortsLive();
+    const sideShortRefused = sideCandidate === 'short' && !SHORTS_LIVE;
+    if (sideShortRefused) {
+      logger.info('[Monkey] short refused — MONKEY_SHORTS_LIVE=false', {
+        symbol,
+        mlSide,
+        mlStrength,
+        basinDir,
+        tapeTrend,
+        wantedShort: true,
+        viaOverride: sideOverride && !turningSignalFired,
+        viaTurningSignal: turningSignalFired,
+      });
     }
     const selfObsBias = this.selfObs?.entryBias[mode]?.[sideCandidate] ?? 1.0;
 
@@ -797,7 +831,8 @@ export class MonkeyKernel extends EventEmitter {
           sideCandidate !== heldSide &&
           MODE_PROFILES[mode].canEnter &&
           mlStrength >= entryThr.value &&
-          size.value > 0
+          size.value > 0 &&
+          !sideShortRefused
         ) {
           action = sideCandidate === 'long' ? 'reverse_long' : 'reverse_short';
           reason = `OVERRIDE_REVERSE[${heldSide}→${sideCandidate}] basin=${basinDir.toFixed(2)} tape=${tapeTrend.toFixed(2)}; flatten-then-open margin=${size.value.toFixed(2)} lev=${leverage.value}x`;
@@ -827,7 +862,8 @@ export class MonkeyKernel extends EventEmitter {
             MODE_PROFILES[mode].canEnter &&
             mlStrength >= entryThr.value &&
             mlSignal !== 'HOLD' &&
-            size.value > 0
+            size.value > 0 &&
+            !sideShortRefused
           ) {
             // DCA add — treated as enter_long/short by execute block but
             // tagged via derivation.dca so the persisted row reflects it.
@@ -847,12 +883,16 @@ export class MonkeyKernel extends EventEmitter {
       MODE_PROFILES[mode].canEnter &&
       mlStrength >= entryThr.value &&
       mlSignal !== 'HOLD' &&
-      size.value > 0
+      size.value > 0 &&
+      !sideShortRefused
     ) {
       // sideCandidate already reflects any basin+tape override of the ML signal.
       action = sideCandidate === 'long' ? 'enter_long' : 'enter_short';
-      const overrideTag = sideOverride ? ` OVERRIDE(basin${basinDir.toFixed(2)}/tape${tapeTrend.toFixed(2)})` : '';
-      reason = `[${mode}] ml ${mlSignal}@${mlStrength.toFixed(3)} >= thr ${entryThr.value.toFixed(3)}; side=${sideCandidate}${overrideTag}; margin=${size.value.toFixed(2)} lev=${leverage.value}x notional=${(size.value * leverage.value).toFixed(2)}`;
+      const overrideTag = sideOverride
+        ? ` OVERRIDE(basin${basinDir.toFixed(2)}/tape${tapeTrend.toFixed(2)})`
+        : '';
+      const turningTag = turningSignalFired ? ' TURNING_SIGNAL' : '';
+      reason = `[${mode}] ml ${mlSignal}@${mlStrength.toFixed(3)} >= thr ${entryThr.value.toFixed(3)}; side=${sideCandidate}${overrideTag}${turningTag}; margin=${size.value.toFixed(2)} lev=${leverage.value}x notional=${(size.value * leverage.value).toFixed(2)}`;
       derivation.entryThreshold = entryThr.derivation;
       derivation.size = size.derivation;
       derivation.leverage = leverage.derivation;
