@@ -62,7 +62,7 @@ from .foresight import ForesightPredictor
 from .heart import HeartMonitor
 from .modes import MODE_PROFILES, MonkeyMode, detect_mode
 from .motivators import compute_motivators
-from .ocean import Ocean
+from .ocean import Ocean, ocean_interventions_live
 from .parameters import get_registry
 from .perception import OHLCVCandle, PerceptionInputs, perceive, refract
 from .perception_scalars import basin_direction, trend_proxy
@@ -365,6 +365,25 @@ def run_tick(
     # below in the basin_history block (same cap).
     state.integration_history.append((phi, mot.i_q))
 
+    # ── Ocean intervention application (PR 1 — OCEAN_INTERVENTIONS_LIVE) ──
+    # MUSHROOM_MICRO is applied here (before basin_state is built) so
+    # the κ perturbation takes effect this tick. DREAM and ESCAPE are
+    # applied later in the action-decision block (they override the
+    # action; basin_state computation isn't affected). With flag off,
+    # interventions are logged but not applied.
+    intervention_applied: dict[str, Any] = {
+        "fired": ocean_state.intervention,
+        "live": ocean_interventions_live(),
+        "applied": [],
+    }
+    if (
+        ocean_interventions_live()
+        and ocean_state.intervention == "MUSHROOM_MICRO"
+    ):
+        # +5 perturbation per directive — small kick to break Φ plateau.
+        state.kappa = state.kappa + 5.0
+        intervention_applied["applied"].append("MUSHROOM_MICRO:+5kappa")
+
     # ── Mode detect ────────────────────────────────────────────
     drift_now = fisher_rao_distance(basin, state.identity_basin)
     state.drift_history.append(drift_now)
@@ -517,6 +536,7 @@ def run_tick(
             "spread": ocean_state.spread,
             "diagnostics": ocean_state.diagnostics,
         },
+        "ocean_handler": intervention_applied,
     }
 
     own_pos = _has_own_position(inputs.account)
@@ -526,7 +546,26 @@ def run_tick(
     derivation["exchange_held_side"] = inputs.account.exchange_held_side
     derivation["monkey_held_side"] = held_side
 
-    if auto_flatten_d["value"]:
+    # PR 1 — Ocean DREAM / ESCAPE handlers. ESCAPE forces flatten,
+    # DREAM forces hold (skip executive). MUSHROOM_MICRO already
+    # applied above (κ perturbation; executive proceeds normally).
+    # SLEEP/WAKE flow through autonomic.is_awake regardless of flag.
+    flag_live = ocean_interventions_live()
+    if flag_live and ocean_state.intervention == "ESCAPE":
+        action = "flatten"
+        reason = (
+            f"OCEAN.ESCAPE — phi={phi:.3f} below 0.15 safety bound; "
+            "flatten and skip entries"
+        )
+        intervention_applied["applied"].append("ESCAPE:flatten")
+    elif flag_live and ocean_state.intervention == "DREAM":
+        action = "hold"
+        reason = (
+            f"OCEAN.DREAM — phi={phi:.3f} below 0.5; "
+            "consolidation tick, executive skipped"
+        )
+        intervention_applied["applied"].append("DREAM:hold")
+    elif auto_flatten_d["value"]:
         action = "flatten"
         reason = auto_flatten_d["reason"]
         derivation["auto_flatten"] = auto_flatten_d["derivation"]

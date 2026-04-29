@@ -26,6 +26,7 @@ land downstream.
 from __future__ import annotations
 
 import logging
+import os
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -39,6 +40,17 @@ from qig_core_local.geometry.fisher_rao import fisher_rao_distance
 
 
 logger = logging.getLogger("monkey_kernel.ocean")
+
+
+def ocean_interventions_live() -> bool:
+    """Default-off env flag. When false (the default), Ocean still
+    EMITS the intervention field for telemetry, but the orchestrator
+    does NOT branch on it — normal tick flow continues. When true,
+    DREAM/MUSHROOM_MICRO/ESCAPE handlers fire (skip executive,
+    perturb κ, force flatten respectively). SLEEP/WAKE go through
+    autonomic.is_awake regardless of the flag.
+    """
+    return os.environ.get("OCEAN_INTERVENTIONS_LIVE", "").strip().lower() == "true"
 
 
 # ═══════════════════════════════════════════════════════════════
