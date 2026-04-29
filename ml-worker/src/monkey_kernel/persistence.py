@@ -324,6 +324,79 @@ class PersistentMemory:
             for r in reversed(raw)
         ]
 
+    # ── SymbolState histories (Tier 9 Stage 2 dependency) ────────
+    #
+    # Stage 2's stud regime classification reads basin_velocity which
+    # comes from the prior basin → current basin step. Without
+    # persistence, every redeploy starts cold and h_trade reads
+    # near-zero for the warmup window. Persisting the per-symbol
+    # histories means the tick after a redeploy already has its
+    # window populated.
+    #
+    # All 5 histories use the same key shape:
+    #   monkey:symbol:{instance}:{symbol}:{family}_history
+
+    def _symbol_history_key(self, symbol: str, family: str) -> str:
+        return f"monkey:symbol:{self.instance_id}:{symbol}:{family}_history"
+
+    def push_symbol_history(
+        self, symbol: str, family: str, value: Any, max_len: int,
+    ) -> bool:
+        return self._lpush_json(
+            self._symbol_history_key(symbol, family),
+            value,
+            max_len,
+            TTL_PHI_HISTORY,  # 24h for all symbol histories
+        )
+
+    def load_symbol_history(
+        self, symbol: str, family: str, max_len: int,
+    ) -> list[Any]:
+        """Returns OLDEST-FIRST list. LPUSH gives newest-first;
+        we reverse to match the orchestrator's append-on-end pattern."""
+        raw = self._lrange_json(
+            self._symbol_history_key(symbol, family), max_len,
+        )
+        return list(reversed(raw))
+
+    def push_phi(self, symbol: str, phi: float) -> bool:
+        return self.push_symbol_history(symbol, "phi", float(phi), MAX_PHI_HISTORY)
+
+    def load_phi_history(self, symbol: str) -> list[float]:
+        return [float(x) for x in self.load_symbol_history(symbol, "phi", MAX_PHI_HISTORY)]
+
+    def push_basin(self, symbol: str, basin: np.ndarray) -> bool:
+        return self.push_symbol_history(
+            symbol, "basin", _basin_to_jsonable(basin), MAX_BASIN_HISTORY,
+        )
+
+    def load_basin_history(self, symbol: str) -> list[np.ndarray]:
+        return [
+            _basin_from_jsonable(x)
+            for x in self.load_symbol_history(symbol, "basin", MAX_BASIN_HISTORY)
+        ]
+
+    def push_drift(self, symbol: str, drift: float) -> bool:
+        return self.push_symbol_history(symbol, "drift", float(drift), MAX_PHI_HISTORY)
+
+    def load_drift_history(self, symbol: str) -> list[float]:
+        return [float(x) for x in self.load_symbol_history(symbol, "drift", MAX_PHI_HISTORY)]
+
+    def push_fhealth(self, symbol: str, f_health: float) -> bool:
+        return self.push_symbol_history(symbol, "fhealth", float(f_health), MAX_PHI_HISTORY)
+
+    def load_fhealth_history(self, symbol: str) -> list[float]:
+        return [float(x) for x in self.load_symbol_history(symbol, "fhealth", MAX_PHI_HISTORY)]
+
+    def push_integration(self, symbol: str, phi: float, i_q: float) -> bool:
+        return self.push_symbol_history(
+            symbol, "integration", [float(phi), float(i_q)], MAX_PHI_HISTORY,
+        )
+
+    def load_integration_history(self, symbol: str) -> list[tuple[float, float]]:
+        raw = self.load_symbol_history(symbol, "integration", MAX_PHI_HISTORY)
+        return [(float(p), float(iq)) for p, iq in raw]
+
     # ── Foresight: trajectory ────────────────────────────────────
 
     def push_foresight_step(

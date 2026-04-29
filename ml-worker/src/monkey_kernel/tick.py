@@ -65,6 +65,7 @@ from .heart import HeartMonitor
 from .modes import MODE_PROFILES, MonkeyMode, detect_mode
 from .motivators import compute_motivators
 from .ocean import Ocean, ocean_interventions_live
+from .persistence import PersistentMemory
 from .parameters import get_registry
 from .perception import OHLCVCandle, PerceptionInputs, perceive, refract
 from .perception_scalars import basin_direction, trend_proxy
@@ -230,6 +231,7 @@ def run_tick(
     ocean: Optional[Ocean] = None,
     foresight: Optional[ForesightPredictor] = None,
     heart: Optional[HeartMonitor] = None,
+    persistence: Optional["PersistentMemory"] = None,
 ) -> tuple[TickDecision, SymbolState]:
     """Execute one decision tick. Returns (decision, new_state).
 
@@ -780,6 +782,22 @@ def run_tick(
         state.fhealth_history = state.fhealth_history[-history_max:]
     if len(state.integration_history) > history_max:
         state.integration_history = state.integration_history[-history_max:]
+
+    # Persistence completion — write-through SymbolState histories
+    # to qig-cache so they survive Railway redeploys. Without this,
+    # every redeploy starts cold and Tier 9 stud regime classification
+    # reads near-zero h_trade for the warmup window.
+    if persistence is not None and persistence.is_available:
+        symbol = inputs.symbol
+        persistence.push_phi(symbol, phi)
+        persistence.push_basin(symbol, basin)
+        persistence.push_drift(symbol, drift_now)
+        persistence.push_fhealth(symbol, f_health)
+        # integration_history was appended earlier in the upper-stack block
+        # with (phi, i_q); persist that latest tuple.
+        if state.integration_history:
+            last_phi, last_iq = state.integration_history[-1]
+            persistence.push_integration(symbol, last_phi, last_iq)
 
     # ── Lane selection ────────────────────────────────────────────
     lane_d = choose_lane(

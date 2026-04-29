@@ -1645,15 +1645,37 @@ async def monkey_tick_run(request: Request):
     # newborn seeded from uniform basin.
     key = (instance_id, tick_inputs.symbol)
     prev_state_payload = payload.get("prev_state")
+    persistence = _get_persistence(instance_id)
+    state_loaded_from_persistence = False
     if prev_state_payload is not None:
         state = _symbol_state_from_dict(prev_state_payload)
     elif key in _symbol_states:
         state = _symbol_states[key]
     else:
-        # Seed with uniform basin — caller should provide identity for
-        # existing symbols, but we don't require it.
+        # Cold start — seed identity from uniform basin, then attempt
+        # to restore the SymbolState histories from Redis. Restored
+        # histories give Tier 9 stud regime classification a warmed
+        # window on the first post-redeploy tick (phi_history has
+        # variance, basin_history has trajectory points, etc.).
         from monkey_kernel.basin import uniform_basin
         state = fresh_symbol_state(tick_inputs.symbol, uniform_basin(64))
+        if persistence.is_available:
+            sym = tick_inputs.symbol
+            phi_hist = persistence.load_phi_history(sym)
+            basin_hist = persistence.load_basin_history(sym)
+            drift_hist = persistence.load_drift_history(sym)
+            fhealth_hist = persistence.load_fhealth_history(sym)
+            integration_hist = persistence.load_integration_history(sym)
+            if phi_hist or basin_hist:
+                state.phi_history = phi_hist
+                state.basin_history = basin_hist
+                state.drift_history = drift_hist
+                state.fhealth_history = fhealth_hist
+                state.integration_history = integration_hist
+                # Restore last_basin from the most recent basin in history
+                if basin_hist:
+                    state.last_basin = basin_hist[-1]
+                state_loaded_from_persistence = True
 
     autonomic = _get_autonomic(instance_id)
     ocean = _get_ocean(instance_id, tick_inputs.symbol)
@@ -1662,8 +1684,18 @@ async def monkey_tick_run(request: Request):
     decision, new_state = run_tick(
         tick_inputs, state, autonomic,
         ocean=ocean, foresight=foresight, heart=heart,
+        persistence=persistence,
     )
     _symbol_states[key] = new_state
+
+    # Persistence telemetry — what restored vs cold-started this tick.
+    # Surfaced so post-deploy validation can confirm every key family
+    # actually rehydrates on the first tick after a Railway redeploy.
+    decision.derivation["persistence"] = {
+        "enabled": persistence.is_available,
+        "load_warmup": state_loaded_from_persistence,
+        "instance_id": instance_id,
+    }
 
     return {
         "decision": _decision_to_dict(decision),
