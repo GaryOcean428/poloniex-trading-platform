@@ -181,9 +181,61 @@ poloniex-trading-platform/
 **Technology Stack:**
 - Node.js: 20.x LTS (managed by Railpack)
 - Yarn: 4.9.2 (managed by Corepack)
-- Python: 3.13.2 (exact version)
+- Python: 3.12 (stable ABI for C-extension ML dependencies)
 - React: 19.x
 - TypeScript: 5.9+
+
+#### Railpack Configuration Examples
+
+**Backend (`apps/api/railpack.json`):**
+```json
+{
+  "$schema": "https://schema.railpack.com",
+  "provider": "node",
+  "packages": { "node": "20", "yarn": "4.9.2" },
+  "steps": {
+    "install": { "commands": ["npm i -g corepack@latest", "corepack enable", "corepack prepare yarn@4.9.2 --activate", "yarn install"] },
+    "build": { "commands": ["yarn run build"], "inputs": [{"step": "install"}] }
+  },
+  "deploy": { "startCommand": "yarn run start", "inputs": [{"step": "build"}] }
+}
+```
+
+**Frontend (`apps/web/railpack.json`):**
+```json
+{
+  "$schema": "https://schema.railpack.com",
+  "provider": "node",
+  "packages": { "node": "20", "yarn": "4.9.2", "caddy": null },
+  "steps": {
+    "install": { "commands": ["npm i -g corepack@latest", "corepack enable", "corepack prepare yarn@4.9.2 --activate", "yarn install --immutable --immutable-cache"] },
+    "build": { "commands": ["yarn run build"], "inputs": [{"step": "install"}] }
+  },
+  "deploy": { "startCommand": "node apps/web/serve.js", "inputs": [{"step": "build"}] }
+}
+```
+
+**ML Worker (`ml-worker/railpack.json`):**
+```json
+{
+  "$schema": "https://schema.railpack.com",
+  "version": "1",
+  "build": {
+    "provider": "python",
+    "packages": { "python": "3.12" },
+    "steps": {
+      "install": { "commands": ["python -m venv /app/.venv", "/app/.venv/bin/pip install --upgrade pip", "/app/.venv/bin/pip install -r requirements.txt"] }
+    }
+  },
+  "deploy": {
+    "startCommand": "/app/.venv/bin/uvicorn main:app --host 0.0.0.0 --port $PORT",
+    "healthCheckPath": "/health",
+    "healthCheckTimeout": 120
+  }
+}
+```
+
+> **Note:** The root `railway.json` simply specifies `"builder": "RAILPACK"` — all build logic lives in service-level `railpack.json` files (config-as-code). A `.env.example` is provided at the repository root listing all required environment variables.
 
 #### Environment Variables
 
