@@ -73,6 +73,7 @@ from .phi_gate import (
     phi_gate_routing_live,
     select_phi_gate,
 )
+from .stud import compute_stud_reading, stud_reading_to_dict, stud_topology_live
 from .physical_emotions import compute_physical_emotions
 from .sensations import compute_sensations
 from .state import BasinState as KernelBasinState
@@ -374,6 +375,19 @@ def run_tick(
     # never wins until P9 lands.
     gate = select_phi_gate(phi, fs, lightning=0.0)
 
+    # Tier 9 Stage 1 — stud topology telemetry (#604).
+    # Computes h_trade + regime + kappa_trade per tick using frozen
+    # qig-verification π-structure constants. Stage 1 is observation-
+    # only — values surface in derivation["topology"]["stud"] for
+    # π-structure validation. Stage 2 replaces _override_threshold,
+    # current_leverage flat_mult, detect_mode, and choose_lane with
+    # stud-derived versions behind STUD_TOPOLOGY_LIVE=true (default).
+    stud_reading = compute_stud_reading(
+        basin_velocity=bv,
+        phi=phi,
+        regime_weights=regime_weights,
+    )
+
     # Telemetry surface — append (Φ, I_Q) for the next tick's
     # Integration motivator CV calculation. Trim to history_max
     # below in the basin_history block (same cap).
@@ -618,6 +632,10 @@ def run_tick(
         },
         "ocean_handler": intervention_applied,
         "upper_stack_executive": upper_stack_telemetry,
+        "topology": {
+            "stud": stud_reading_to_dict(stud_reading),
+            "stud_live_flag": stud_topology_live(),
+        },
     }
 
     own_pos = _has_own_position(inputs.account)
