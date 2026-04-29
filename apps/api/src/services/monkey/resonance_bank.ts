@@ -28,6 +28,8 @@ import type { LaneType } from './executive.js';
 import type { Bubble } from './working_memory.js';
 import { logger } from '../../utils/logger.js';
 
+export type LoopType = 'long_loop' | 'short_loop' | 'crossing';
+
 export interface BankEntry {
   id: string;
   symbol: string;
@@ -43,6 +45,11 @@ export interface BankEntry {
    * 'forged' = nucleated lesson from a shadow trade (Tier 8 #608). */
   source: 'lived' | 'harvested' | 'forged';
   lane: LaneType;
+  /** Tier 10 figure-8 loop assignment. long_loop = long-position
+   * dynamics (one half of the figure-8); short_loop = opposing half;
+   * crossing = flat-state anchor. Set at writeBubble time from
+   * bubble.payload.side. */
+  loop: LoopType;
 }
 
 export interface NearestNeighbor {
@@ -66,6 +73,7 @@ function rowToEntry(row: Record<string, unknown>): BankEntry {
     phiAtCreation: row.phi_at_creation != null ? Number(row.phi_at_creation) : null,
     source: (row.source as 'lived' | 'harvested') ?? 'lived',
     lane: (row.lane as BankEntry['lane']) ?? 'swing',
+    loop: (row.loop as LoopType) ?? 'crossing',
   };
 }
 
@@ -180,6 +188,18 @@ export class ResonanceBank {
       pnl > 0 ? 'win' : pnl < 0 ? 'loss' : 'breakeven';
     const lane = bubble.payload.lane ?? 'swing';
 
+    // Tier 10 — assign figure-8 loop from bubble side. Long-side
+    // bubbles trace LONG_LOOP; short-side trace SHORT_LOOP; bubbles
+    // without a side default to crossing (anchor).
+    const sideRaw = (bubble.payload as { side?: string }).side
+      ?? bubble.payload.signal;
+    const sideLower = (sideRaw ?? '').toString().toLowerCase();
+    const loopValue: LoopType = (sideLower === 'long' || sideLower === 'buy')
+      ? 'long_loop'
+      : (sideLower === 'short' || sideLower === 'sell')
+        ? 'short_loop'
+        : 'crossing';
+
     // Basin depth initialized from Φ and modulated by outcome magnitude.
     // Hebbian: win → deepen, loss → shallow.
     const outcomeMagnitude = Math.min(1, Math.abs(pnl) / 1.0);
@@ -190,8 +210,8 @@ export class ResonanceBank {
       const result = await pool.query(
         `INSERT INTO monkey_resonance_bank
            (entry_basin, symbol, realized_pnl, trade_outcome, order_id,
-            basin_depth, phi_at_creation, source, engine_version, lane)
-         VALUES ($1::jsonb, $2, $3, $4, $5, $6, $7, 'lived', $8, $9)
+            basin_depth, phi_at_creation, source, engine_version, lane, loop)
+         VALUES ($1::jsonb, $2, $3, $4, $5, $6, $7, 'lived', $8, $9, $10)
          RETURNING *`,
         [
           JSON.stringify(entryBasin),
@@ -203,6 +223,7 @@ export class ResonanceBank {
           bubble.phi,
           engineVersion,
           lane,
+          loopValue,
         ],
       );
       logger.info('[Monkey.bank] promoted to resonance bank', {
@@ -375,8 +396,8 @@ export class ResonanceBank {
       const result = await pool.query(
         `INSERT INTO monkey_resonance_bank
            (entry_basin, symbol, realized_pnl, trade_outcome, order_id,
-            basin_depth, phi_at_creation, source, engine_version, lane)
-         VALUES ($1::jsonb, $2, $3, 'breakeven', $4, $5, $6, 'forged', $7, $8)
+            basin_depth, phi_at_creation, source, engine_version, lane, loop)
+         VALUES ($1::jsonb, $2, $3, 'breakeven', $4, $5, $6, 'forged', $7, $8, 'crossing')
          RETURNING *`,
         [
           JSON.stringify(arr),

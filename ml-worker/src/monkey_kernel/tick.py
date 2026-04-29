@@ -74,6 +74,12 @@ from .phi_gate import (
     select_phi_gate,
 )
 from .stud import compute_stud_reading, stud_reading_to_dict, stud_topology_live
+from .figure8 import (
+    Loop, assign_loop, figure8_retrieval_live,
+)
+from .topology_constants import (
+    PI_STRUCT_BOUNDARY_R_SQUARED, PI_STRUCT_GRAVITATING_FRACTION,
+)
 from .physical_emotions import compute_physical_emotions
 from .sensations import compute_sensations
 from .state import BasinState as KernelBasinState
@@ -662,7 +668,13 @@ def run_tick(
         "upper_stack_executive": upper_stack_telemetry,
         "topology": {
             "stud": stud_reading_to_dict(stud_reading),
-            "stud_live_flag": stud_topology_live(),
+            "stud_live_flag": stud_live,
+            "figure8": {
+                "current_loop_assignment": assign_loop(side_candidate).value,
+                "predicted_gravitating_fraction": PI_STRUCT_GRAVITATING_FRACTION,
+                "predicted_boundary_r_squared": PI_STRUCT_BOUNDARY_R_SQUARED,
+                "figure8_live_flag": figure8_retrieval_live(),
+            },
         },
     }
 
