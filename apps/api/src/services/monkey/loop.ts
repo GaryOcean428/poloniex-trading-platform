@@ -648,7 +648,7 @@ export class MonkeyKernel extends EventEmitter {
     const direction: Direction = kernelDirection({
       basinDir, tapeTrend, emotions: NEUTRAL_EMOTIONS,
     });
-    let sideCandidate: 'long' | 'short' = direction === 'flat' ? 'long' : direction;
+    const sideCandidate: 'long' | 'short' = direction === 'flat' ? 'long' : direction;
     const sideOverride = false;
     // Note: REVERSION mode flip lives only in the Python kernel (Tier 9
     // Stage 2 stud topology). TS does not implement REVERSION yet.
