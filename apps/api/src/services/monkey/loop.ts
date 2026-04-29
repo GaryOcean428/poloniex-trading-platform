@@ -75,17 +75,19 @@ import {
 import { resonanceBank } from './resonance_bank.js';
 import { computeSelfObservation, type SelfObservation } from './self_observation.js';
 import { WorkingMemory, type Bubble } from './working_memory.js';
-import { evaluateTurningSignal, shortsLive } from './turning_signal.js';
 import {
   currentEntryThreshold,
   currentLeverage,
   currentPositionSize,
+  kernelDirection,
+  kernelShouldEnter,
   shouldAutoFlatten,
   shouldDCAAdd,
   shouldExit,
   shouldProfitHarvest,
   shouldScalpExit,
   type BasinState,
+  type Direction,
 } from './executive.js';
 
 /** Default Monkey watchlist — matches liveSignalEngine for side-by-side. */
@@ -611,66 +613,44 @@ export class MonkeyKernel extends EventEmitter {
       this.selfObs = await computeSelfObservation(24, this.instanceId);
       this.selfObsLastUpdate = now;
     }
-    // Side candidate: start from ML signal, then allow Monkey's own
-    // direction-reading to override if it strongly disagrees (v0.5.2).
-    // ml-worker has been observed 100 % BUY-biased — so her own basin +
-    // recent tape have to be able to say "no, short instead" when the
-    // evidence is clear. Override fires ONLY when both her basin view
-    // AND the tape trend agree against ml-worker (two-signal quorum).
+    // Side candidate (post #ml-separation):
+    //   Direction comes from basin geometry + tape consensus. The
+    //   previous OVERRIDE_REVERSE quorum + TURNING_SIGNAL paths are
+    //   gone — kernelDirection is the primary read.
+    //
+    // TS-side does not yet compute Layer 2B emotions (motivators /
+    // sensations / foresight ports pending). Until v0.8.8 Python
+    // cut-over, TS uses neutral emotions so direction reduces to
+    // pure geometry. Entry conviction continues to gate via the
+    // existing ml-strength threshold below — a geometry-only TS
+    // entry would require the full emotion stack ported. This is
+    // the documented "TS counterpart for parity" path.
     const basinDir = computeBasinDirection(basin);
     const tapeTrend = computeTrendProxy(ohlcv);
-    // v0.8.7e: expose latest basin/tape snapshot for LiveSignal's
-    // inter-engine agreement gate (Option C). Written before the
-    // override decision so LiveSignal sees raw directional state.
     state.latestBasinSnapshot = {
       basinDir,
       tapeTrend,
       computedAtMs: Date.now(),
     };
-    const mlSide: 'long' | 'short' = mlSignal === 'SELL' ? 'short' : 'long';
-    let sideCandidate: 'long' | 'short' = mlSide;
-    let sideOverride = false;
-    let turningSignalFired = false;
-    // Agreement: if both basin and tape are strongly negative, short;
-    // if both strongly positive, long; else defer to ml.
-    const OVERRIDE_THRESHOLD = 0.35;
-    if (basinDir < -OVERRIDE_THRESHOLD && tapeTrend < -OVERRIDE_THRESHOLD && mlSide === 'long') {
-      sideCandidate = 'short';
-      sideOverride = true;
-    } else if (basinDir > OVERRIDE_THRESHOLD && tapeTrend > OVERRIDE_THRESHOLD && mlSide === 'short') {
-      sideCandidate = 'long';
-      sideOverride = true;
-    }
+    const NEUTRAL_EMOTIONS = {
+      wonder: 0, frustration: 0, satisfaction: 0, confusion: 0,
+      clarity: 0, anxiety: 0, confidence: 0, boredom: 0, flow: 0,
+    };
+    const direction: Direction = kernelDirection({
+      basinDir, tapeTrend, emotions: NEUTRAL_EMOTIONS,
+    });
+    let sideCandidate: 'long' | 'short' = direction === 'flat' ? 'long' : direction;
+    const sideOverride = false;
+    // Note: REVERSION mode flip lives only in the Python kernel (Tier 9
+    // Stage 2 stud topology). TS does not implement REVERSION yet.
 
-    // #575 — shorts as turning-signal. See ./turning_signal.ts for the
-    // condition logic + thresholds. Captures the turning-point earlier
-    // than OVERRIDE_REVERSE without retraining ml-worker.
-    if (evaluateTurningSignal({
-      sideCandidate, sideOverride, mlSignal, mlStrength, basinDir, tapeTrend,
-    })) {
-      sideCandidate = 'short';
-      sideOverride = true;
-      turningSignalFired = true;
-    }
-
-    // #575 gate — sequencing protection. Until #574 (resonance bank dedup)
-    // is merged AND #579 (pre-fix bubble quarantine) is verified clean in
-    // production, refuse to short. Default off via MONKEY_SHORTS_LIVE=false;
-    // flip to true after the dependent merges soak. The gate applies to
-    // BOTH OVERRIDE_REVERSE and turning-signal paths — we want a clean
-    // controlled re-activation of shorts, not partial enablement.
-    const SHORTS_LIVE = shortsLive();
+    // MONKEY_SHORTS_LIVE — sequencing protection retained from #575.
+    // Orthogonal to agent-separation; flipped via env independently.
+    const SHORTS_LIVE = process.env.MONKEY_SHORTS_LIVE === 'true';
     const sideShortRefused = sideCandidate === 'short' && !SHORTS_LIVE;
     if (sideShortRefused) {
       logger.info('[Monkey] short refused — MONKEY_SHORTS_LIVE=false', {
-        symbol,
-        mlSide,
-        mlStrength,
-        basinDir,
-        tapeTrend,
-        wantedShort: true,
-        viaOverride: sideOverride && !turningSignalFired,
-        viaTurningSignal: turningSignalFired,
+        symbol, basinDir, tapeTrend, direction, wantedShort: true,
       });
     }
     const selfObsBias = this.selfObs?.entryBias[mode]?.[sideCandidate] ?? 1.0;
@@ -729,8 +709,9 @@ export class MonkeyKernel extends EventEmitter {
       sideCandidate,
       basinDir,
       tapeTrend,
-      mlSide,
+      direction,
       sideOverride,
+      agent: 'K',
     };
 
     // v0.6.3: Monkey's "held side" is scoped to HER OWN open rows only.
@@ -888,13 +869,12 @@ export class MonkeyKernel extends EventEmitter {
       size.value > 0 &&
       !sideShortRefused
     ) {
-      // sideCandidate already reflects any basin+tape override of the ML signal.
+      // sideCandidate from kernelDirection (geometric, post #ml-separation).
       action = sideCandidate === 'long' ? 'enter_long' : 'enter_short';
-      const overrideTag = sideOverride
-        ? ` OVERRIDE(basin${basinDir.toFixed(2)}/tape${tapeTrend.toFixed(2)})`
+      const reversionTag = sideOverride
+        ? ` REVERSION-flip(basin${basinDir.toFixed(2)}/tape${tapeTrend.toFixed(2)})`
         : '';
-      const turningTag = turningSignalFired ? ' TURNING_SIGNAL' : '';
-      reason = `[${mode}] ml ${mlSignal}@${mlStrength.toFixed(3)} >= thr ${entryThr.value.toFixed(3)}; side=${sideCandidate}${overrideTag}${turningTag}; margin=${size.value.toFixed(2)} lev=${leverage.value}x notional=${(size.value * leverage.value).toFixed(2)}`;
+      reason = `[${mode}] ml ${mlSignal}@${mlStrength.toFixed(3)} >= thr ${entryThr.value.toFixed(3)}; side=${sideCandidate}${reversionTag}; margin=${size.value.toFixed(2)} lev=${leverage.value}x notional=${(size.value * leverage.value).toFixed(2)}`;
       derivation.entryThreshold = entryThr.derivation;
       derivation.size = size.derivation;
       derivation.leverage = leverage.derivation;
