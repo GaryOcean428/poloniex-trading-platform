@@ -65,6 +65,9 @@ import {
 } from './kernel_client.js';
 import { detectMode, MODE_PROFILES, MonkeyMode } from './modes.js';
 import { computeNeurochemicals, summarizeNC, type NeurochemicalState } from './neurochemistry.js';
+import { mlAgentDecide } from '../ml_agent/decide.js';
+import type { MLAgentInputs } from '../ml_agent/types.js';
+import { Arbiter } from '../arbiter/arbiter.js';
 import {
   basinDirection as computeBasinDirection,
   perceive,
@@ -239,6 +242,12 @@ export class MonkeyKernel extends EventEmitter {
    * "freeze" to the user (2026-04-22 incident during Stage 2 cut-over).
    */
   private mlOutageStreak = 0;
+  /**
+   * Arbiter — capital allocator between Agent K (kernel) and Agent M (ml).
+   * Single instance per kernel. Settled trades flow back via
+   * recordSettled from closeHeldPosition.
+   */
+  private readonly arbiter: Arbiter = new Arbiter();
 
   constructor(config?: Partial<MonkeyKernelConfig>) {
     super();
@@ -950,15 +959,41 @@ export class MonkeyKernel extends EventEmitter {
     }
 
     // 6b. EXECUTE — gated by MONKEY_EXECUTE=true. Observe-only otherwise.
+    //
+    // Post agent-separation: arbiter allocates available equity between
+    // K and M. K's existing decision path runs against allocation.k;
+    // Agent M's threshold-based decision runs against allocation.m.
+    // Both can place independently in a single tick (slot allocator
+    // and risk kernel still bound combined exposure).
+    const arbiterAllocation = this.arbiter.allocate(availableEquity);
+    const arbiterSnapshot = this.arbiter.snapshot(availableEquity);
+    derivation.arbiter = {
+      kShare: arbiterSnapshot.kShare,
+      mShare: arbiterSnapshot.mShare,
+      kPnlWindowTotal: arbiterSnapshot.kPnlWindowTotal,
+      mPnlWindowTotal: arbiterSnapshot.mPnlWindowTotal,
+      kTradesInWindow: arbiterSnapshot.kTradesInWindow,
+      mTradesInWindow: arbiterSnapshot.mTradesInWindow,
+      kAllocatedUsdt: arbiterAllocation.k,
+      mAllocatedUsdt: arbiterAllocation.m,
+    };
+
     let executed = false;
     let monkeyOrderId: string | null = null;
     if (process.env.MONKEY_EXECUTE === 'true') {
       if ((action === 'enter_long' || action === 'enter_short') && size.value > 0) {
         const isDCA = Boolean(derivation.isDCAAdd);
-        const execResult = await this.executeEntry({
+        // Cap K's margin to its arbiter share. Without this, the existing
+        // size formula could exceed K's allocation when M has been
+        // accumulating and K's share has shrunk.
+        const cappedMargin = Math.min(size.value, arbiterAllocation.k);
+        if (cappedMargin <= 0) {
+          reason += ` | k_capped_to_zero (kShare=${arbiterSnapshot.kShare.toFixed(2)})`;
+        }
+        const execResult = cappedMargin > 0 ? await this.executeEntry({
           symbol,
           side: action === 'enter_long' ? 'long' : 'short',
-          marginUsdt: size.value,
+          marginUsdt: cappedMargin,
           leverage: leverage.value,
           entryPrice: lastPrice,
           minNotional,
@@ -968,7 +1003,8 @@ export class MonkeyKernel extends EventEmitter {
           trajectoryId: null,
           isDCAAdd: isDCA,
           dcaAddIndex: isDCA ? state.dcaAddCount + 1 : 0,
-        });
+          agent: 'K',
+        }) : { executed: false, orderId: null, reason: 'k_arbiter_zero' };
         executed = execResult.executed;
         monkeyOrderId = execResult.orderId;
         if (!executed) {
@@ -1077,6 +1113,96 @@ export class MonkeyKernel extends EventEmitter {
           }
         }
       }
+    }
+
+    // 6c. AGENT M EXECUTE — independent ML-only path. Runs against
+    // arbiter.allocation.m. Threshold-based: enters when mlSignal !=
+    // HOLD AND mlStrength >= 0.55 AND M has > 0 capital. Same risk
+    // kernel + position-write pipeline as K (executeEntry handles
+    // veto, exchange order, DB INSERT with agent='M').
+    if (process.env.MONKEY_EXECUTE === 'true' && arbiterAllocation.m > 0) {
+      const mInputs: MLAgentInputs = {
+        symbol,
+        ohlcv: ohlcv.map((c) => ({
+          timestamp: Number(c.timestamp ?? 0),
+          open: Number(c.open),
+          high: Number(c.high),
+          low: Number(c.low),
+          close: Number(c.close),
+          volume: Number(c.volume),
+        })),
+        mlSignal: (mlSignal === 'BUY' || mlSignal === 'SELL' || mlSignal === 'HOLD')
+          ? mlSignal : 'HOLD',
+        mlStrength,
+        account: {
+          equityFraction,
+          marginFraction,
+          openPositions,
+          availableEquity,
+        },
+        allocatedCapitalUsdt: arbiterAllocation.m,
+      };
+      const mDecision = mlAgentDecide(mInputs);
+      derivation.agentM = {
+        action: mDecision.action,
+        sizeUsdt: mDecision.sizeUsdt,
+        leverage: mDecision.leverage,
+        reason: mDecision.reason,
+        mlSignal: mInputs.mlSignal,
+        mlStrength: mInputs.mlStrength,
+      };
+      if (
+        (mDecision.action === 'enter_long' || mDecision.action === 'enter_short')
+        && mDecision.sizeUsdt > 0
+      ) {
+        const mResult = await this.executeEntry({
+          symbol,
+          side: mDecision.action === 'enter_long' ? 'long' : 'short',
+          marginUsdt: mDecision.sizeUsdt,
+          leverage: mDecision.leverage,
+          entryPrice: lastPrice,
+          minNotional,
+          phi,
+          kappa: state.kappa,
+          sovereignty,
+          trajectoryId: null,
+          isDCAAdd: false,
+          dcaAddIndex: 0,
+          agent: 'M',
+        });
+        derivation.agentMExecuted = mResult.executed;
+        if (!mResult.executed) {
+          logger.info('[AgentM] entry rejected', {
+            symbol, side: mDecision.action, reason: mResult.reason,
+          });
+        } else {
+          logger.info('[AgentM] entry placed', {
+            symbol, side: mDecision.action, orderId: mResult.orderId,
+            margin: mDecision.sizeUsdt.toFixed(2), leverage: mDecision.leverage,
+          });
+        }
+      }
+    }
+
+    // 6d. Persist arbiter snapshot to telemetry table.
+    try {
+      await pool.query(
+        `INSERT INTO arbiter_allocation
+           (symbol, total_capital_usdt, k_share, m_share,
+            k_pnl_window_total, m_pnl_window_total,
+            k_trades_in_window, m_trades_in_window)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          symbol, availableEquity,
+          arbiterSnapshot.kShare, arbiterSnapshot.mShare,
+          arbiterSnapshot.kPnlWindowTotal, arbiterSnapshot.mPnlWindowTotal,
+          arbiterSnapshot.kTradesInWindow, arbiterSnapshot.mTradesInWindow,
+        ],
+      );
+    } catch (err) {
+      logger.debug('[Monkey] arbiter_allocation insert failed (fail-soft)', {
+        err: err instanceof Error ? err.message : String(err),
+      });
     }
 
     // Info-level log — the user asked for end-to-end observability.
@@ -1353,14 +1479,18 @@ export class MonkeyKernel extends EventEmitter {
     // adds created multiple rows for one logical position; the exchange
     // flattened them all in one market close above (size = total exchange
     // qty). Each row shares the realized pnl proportionally by quantity.
+    //
+    // Arbiter feedback: each row carries an agent tag (K|M); the PnL
+    // share for that row goes back to the arbiter under that agent so
+    // the rolling allocation reflects per-agent performance.
     try {
       const openRows = await pool.query(
-        `SELECT id, quantity FROM autonomous_trades
+        `SELECT id, quantity, agent FROM autonomous_trades
           WHERE reason LIKE $1 AND status = 'open' AND symbol = $2
           ORDER BY entry_time ASC`,
         [`monkey|kernel=${this.instanceId}|%`, symbol],
       );
-      const rows = openRows.rows as Array<{ id: string; quantity: string }>;
+      const rows = openRows.rows as Array<{ id: string; quantity: string; agent: string | null }>;
       const totalQty = rows.reduce((s, r) => s + Math.abs(Number(r.quantity) || 0), 0);
       if (rows.length === 0 || totalQty === 0) {
         // Fallback — single-row close (covers edge case of race)
@@ -1371,6 +1501,8 @@ export class MonkeyKernel extends EventEmitter {
             WHERE id = $5`,
           [markPrice, exitReason, orderId, pnlAtDecision, tradeId],
         );
+        // Single-row fallback: assume Agent K (the established default).
+        this.arbiter.recordSettled('K', pnlAtDecision);
       } else {
         for (const row of rows) {
           const qtyShare = Math.abs(Number(row.quantity) || 0) / totalQty;
@@ -1382,6 +1514,11 @@ export class MonkeyKernel extends EventEmitter {
               WHERE id = $5`,
             [markPrice, exitReason, orderId, rowPnl, row.id],
           );
+          // Tag-aware arbiter feedback. Pre-separation rows have
+          // agent=NULL or 'K' (default from migration 039); both
+          // attribute to K.
+          const agentLabel: 'K' | 'M' = row.agent === 'M' ? 'M' : 'K';
+          this.arbiter.recordSettled(agentLabel, rowPnl);
         }
       }
     } catch (err) {
@@ -1449,6 +1586,10 @@ export class MonkeyKernel extends EventEmitter {
     isDCAAdd?: boolean;
     /** 0 = initial entry; 1, 2, … for nth DCA add. */
     dcaAddIndex?: number;
+    /** Which agent placed this entry. K = kernel (geometry-only),
+     *  M = ml-only. Default 'K' for back-compat with the existing
+     *  call sites. */
+    agent?: 'K' | 'M';
   }): Promise<{ executed: boolean; orderId: string | null; reason: string }> {
     const { symbol, side, marginUsdt, leverage, entryPrice, minNotional } = req;
     const notionalUsdt = marginUsdt * leverage;
@@ -1563,22 +1704,23 @@ export class MonkeyKernel extends EventEmitter {
       };
     }
 
-    // Persist. Encode kernel + Monkey's state into reason so the
-    // close-hook + reconciler can recover attribution cheaply (no
-    // schema change).
-    // Format: monkey|kernel=<id>|phi=...|kappa=...|sov=...|dca=<N>|src=<ver>
+    // Persist. Encode kernel + agent + Monkey's state into reason so
+    // the close-hook + reconciler + arbiter can recover attribution
+    // cheaply.
+    // Format: monkey|kernel=<id>|agent=<K|M>|phi=...|kappa=...|sov=...|dca=<N>|src=<ver>
+    const agentTag = req.agent ?? 'K';
     try {
       const dcaTag = req.isDCAAdd ? `|dca=${req.dcaAddIndex ?? 1}` : '';
       const reasonEncoded =
-        `monkey|kernel=${this.instanceId}|phi=${req.phi.toFixed(3)}|kappa=${req.kappa.toFixed(2)}|sov=${req.sovereignty.toFixed(3)}${dcaTag}|src=v0.6.2`;
+        `monkey|kernel=${this.instanceId}|agent=${agentTag}|phi=${req.phi.toFixed(3)}|kappa=${req.kappa.toFixed(2)}|sov=${req.sovereignty.toFixed(3)}${dcaTag}|src=v0.6.2`;
       await pool.query(
         `INSERT INTO autonomous_trades
            (user_id, symbol, side, entry_price, quantity, leverage,
-            confidence, reason, order_id, paper_trade, engine_version)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+            confidence, reason, order_id, paper_trade, engine_version, agent)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
         [
           userId, symbol, exchangeSide, entryPrice, formattedSize, leverage,
-          req.phi, reasonEncoded, orderId, false, getEngineVersion(),
+          req.phi, reasonEncoded, orderId, false, getEngineVersion(), agentTag,
         ],
       );
     } catch (err) {
