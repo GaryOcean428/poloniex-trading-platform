@@ -20,8 +20,10 @@ Closed-form formulas anchored to UCP v6.6 §6.3:
 
   Surprise       = ‖∇L‖   (already proxied as ne in autonomic.py)
   Curiosity      = d(log I_Q) / dt
-  Investigation  = − d(basin) / dt   → clamped to [0, 1] as
-                   max(0, 1 − basin_velocity)
+  Investigation  = − d(basin) / dt as Fisher-Rao distance-to-identity
+                   shrink-rate. Positive = returning home, negative =
+                   departing. Tier 1.1 fix (#599) — was previously
+                   clamped to [0, 1] which collapsed sign info.
   Integration    = CV(Φ × I_Q) over rolling window
   Transcendence  = |κ − κ*|
 
@@ -41,6 +43,8 @@ from typing import Optional
 
 import numpy as np
 
+from qig_core_local.geometry.fisher_rao import fisher_rao_distance
+
 from .state import BASIN_DIM, KAPPA_STAR, BasinState
 
 
@@ -58,7 +62,9 @@ class Motivators:
     Field ranges (typical, not enforced):
       surprise       [0, 1]   — direct from ne
       curiosity      ℝ        — d(log I_Q)/dt; positive = clarifying
-      investigation  [0, 1]   — clamped as 1 − basin_velocity
+      investigation  ℝ        — d(distance-to-identity)/dt sign-flipped;
+                                 positive = returning home,
+                                 negative = departing identity
       integration    [0, ∞)   — CV; lower = more integrated
       transcendence  [0, ∞)   — |κ − κ*|; higher = farther from anchor
       i_q            [0, log(K)] — current information value
@@ -128,10 +134,19 @@ def compute_motivators(
     else:
         curiosity = 0.0
 
-    # Investigation — settled-state motivator. UCP literal `−d(basin)/dt`
-    # would be negative; clamping to a [0,1] motivator preserves the
-    # intent ("low velocity = ready to investigate") with a usable range.
-    investigation = max(0.0, 1.0 - s.basin_velocity)
+    # Investigation — Tier 1.1 (#599) sign-preserving formula. UCP §6.3
+    # canonical form is −d(basin)/dt, which carries a sign: returning
+    # toward identity is a different geometric event from departing it.
+    # Compute the signed shrink-rate of Fisher-Rao distance to identity
+    # over one tick. Positive = closer this tick than last, negative =
+    # further. Zero on cold start (no prev_basin).
+    if prev_basin is not None and len(prev_basin) == BASIN_DIM:
+        prev_arr = np.asarray(prev_basin, dtype=np.float64)
+        d_prev = fisher_rao_distance(prev_arr, s.identity_basin)
+        d_curr = fisher_rao_distance(s.basin, s.identity_basin)
+        investigation = d_prev - d_curr
+    else:
+        investigation = 0.0
 
     # Integration — CV of Φ × I_Q over rolling window. Low CV = the
     # consciousness × information product is stable = strategy is

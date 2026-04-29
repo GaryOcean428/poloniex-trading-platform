@@ -140,21 +140,34 @@ class TestCuriosity:
 
 
 # ─────────────────────────────────────────────────────────────────
-# Investigation = clamped(1 − basin_velocity)
+# Investigation — Tier 1.1 (#599): signed FR-distance-to-identity shrink rate
+# Positive = returning home, negative = departing identity, 0 cold start.
 # ─────────────────────────────────────────────────────────────────
 
 class TestInvestigation:
-    def test_investigation_peaks_at_zero_velocity(self) -> None:
-        m = compute_motivators(_make_state(basin_velocity=0.0))
-        assert m.investigation == pytest.approx(1.0)
+    def test_investigation_zero_on_cold_start(self) -> None:
+        # Without prev_basin we can't measure the directional shrink rate.
+        m = compute_motivators(_make_state(), prev_basin=None)
+        assert m.investigation == 0.0
 
-    def test_investigation_zero_at_high_velocity(self) -> None:
-        m = compute_motivators(_make_state(basin_velocity=1.0))
-        assert m.investigation == pytest.approx(0.0)
+    def test_investigation_zero_when_basin_unchanged(self) -> None:
+        # prev == current → no Fisher-Rao distance change.
+        b = _uniform_basin()
+        m = compute_motivators(_make_state(basin=b), prev_basin=b)
+        assert m.investigation == pytest.approx(0.0, abs=1e-12)
 
-    def test_investigation_clamped_above_unity_velocity(self) -> None:
-        m = compute_motivators(_make_state(basin_velocity=1.5))
-        assert m.investigation == pytest.approx(0.0)  # not negative
+    def test_investigation_positive_when_returning_to_identity(self) -> None:
+        # Identity is uniform; previous basin concentrated, current closer to uniform.
+        # FR(prev, identity) > FR(curr, identity) → investigation positive.
+        s = _make_state(basin=_concentrated_basin(peak_mass=0.5))
+        m = compute_motivators(s, prev_basin=_concentrated_basin(peak_mass=0.95))
+        assert m.investigation > 0
+
+    def test_investigation_negative_when_departing_from_identity(self) -> None:
+        # Previous basin near uniform (close to identity), current more concentrated.
+        s = _make_state(basin=_concentrated_basin(peak_mass=0.95))
+        m = compute_motivators(s, prev_basin=_concentrated_basin(peak_mass=0.5))
+        assert m.investigation < 0
 
 
 # ─────────────────────────────────────────────────────────────────

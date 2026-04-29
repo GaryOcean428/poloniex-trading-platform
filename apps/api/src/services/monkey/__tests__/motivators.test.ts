@@ -112,20 +112,33 @@ describe('Curiosity = d(log I_Q)/dt', () => {
 
 // ─── Investigation ─────────────────────────────────────────────────
 
-describe('Investigation = max(0, 1 − basinVelocity)', () => {
-  it('peaks at zero velocity', () => {
-    const m = computeMotivators(makeState({ basinVelocity: 0.0 }));
-    expect(m.investigation).toBeCloseTo(1.0, 9);
+describe('Investigation — Tier 1.1 signed FR-distance-to-identity shrink rate', () => {
+  it('zero on cold start (no prevBasin)', () => {
+    const m = computeMotivators(makeState(), { prevBasin: null });
+    expect(m.investigation).toBe(0);
   });
 
-  it('zero at unit velocity', () => {
-    const m = computeMotivators(makeState({ basinVelocity: 1.0 }));
-    expect(m.investigation).toBeCloseTo(0.0, 9);
+  it('zero when basin unchanged', () => {
+    const b = uniformBasin();
+    const m = computeMotivators(makeState({ basin: b }), { prevBasin: b });
+    expect(Math.abs(m.investigation)).toBeLessThan(1e-12);
   });
 
-  it('clamped to 0 when velocity > 1', () => {
-    const m = computeMotivators(makeState({ basinVelocity: 1.5 }));
-    expect(m.investigation).toBeCloseTo(0.0, 9);
+  it('positive when returning to identity', () => {
+    // Identity = uniform. prev concentrated, current closer to uniform.
+    const m = computeMotivators(
+      makeState({ basin: concentratedBasin(0, 0.5) }),
+      { prevBasin: concentratedBasin(0, 0.95) },
+    );
+    expect(m.investigation).toBeGreaterThan(0);
+  });
+
+  it('negative when departing from identity', () => {
+    const m = computeMotivators(
+      makeState({ basin: concentratedBasin(0, 0.95) }),
+      { prevBasin: concentratedBasin(0, 0.5) },
+    );
+    expect(m.investigation).toBeLessThan(0);
   });
 });
 

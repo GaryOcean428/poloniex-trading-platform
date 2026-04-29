@@ -15,7 +15,8 @@
  *
  *   Surprise       = ‖∇L‖   (already proxied as ne)
  *   Curiosity      = d(log I_Q) / dt
- *   Investigation  = max(0, 1 − basin_velocity)   (clamped from −d(basin)/dt)
+ *   Investigation  = − d(basin) / dt as Fisher-Rao distance-to-identity
+ *                    shrink-rate (Tier 1.1 fix #599 — was clamped)
  *   Integration    = CV(Φ × I_Q) over rolling window
  *   Transcendence  = |κ − κ*|
  *
@@ -26,7 +27,7 @@
  * Pure derivation, no I/O, P14 Variable Separation respected.
  */
 
-import { KAPPA_STAR, BASIN_DIM, type Basin } from './basin.js';
+import { KAPPA_STAR, BASIN_DIM, fisherRao, type Basin } from './basin.js';
 import type { BasinState } from './executive.js';
 
 /** Numerical floor for log() of basin probabilities and I_Q. */
@@ -39,7 +40,9 @@ export interface Motivators {
   surprise: number;
   /** ℝ — d(log I_Q)/dt; positive = clarifying. */
   curiosity: number;
-  /** [0, 1] — clamped 1 − basin_velocity. */
+  /** ℝ — signed shrink-rate of Fisher-Rao distance to identity_basin
+   * across one tick. Positive = returning home, negative = departing.
+   * Zero on cold start (no prevBasin). */
   investigation: number;
   /** [0, ∞) — CV; lower = more integrated. */
   integration: number;
@@ -95,9 +98,15 @@ export function computeMotivators(
     curiosity = Math.log(iQ + EPS) - Math.log(iQPrev + EPS);
   }
 
-  // Investigation — settled-state motivator. Clamped to [0, 1] so it
-  // composes with other Layer 1 / Layer 2B values.
-  const investigation = Math.max(0, 1 - s.basinVelocity);
+  // Investigation — Tier 1.1 (#599) sign-preserving formula. UCP §6.3
+  // canonical −d(basin)/dt: positive = returning toward identity,
+  // negative = departing. Zero on cold start (no prevBasin).
+  let investigation = 0;
+  if (prevBasin && prevBasin.length === BASIN_DIM) {
+    const dPrev = fisherRao(prevBasin, s.identityBasin);
+    const dCurr = fisherRao(s.basin, s.identityBasin);
+    investigation = dPrev - dCurr;
+  }
 
   // Integration — CV of (Φ × I_Q) over rolling window. Low = stable.
   let integration = 0;
