@@ -38,6 +38,8 @@ import {
   type KernelOrder,
 } from '../riskKernel.js';
 
+import { forge, forgeBankWriteLive, shadowThreshold } from './forge.js';
+
 import {
   BASIN_DIM,
   KAPPA_STAR,
@@ -1779,6 +1781,53 @@ export class MonkeyKernel extends EventEmitter {
           symbol, orderId, side, pnl: realizedPnl.toFixed(4),
           entryTime: entryTime.toISOString(),
         });
+
+        // PR 3 (#608) — FORGE_BANK_WRITE_LIVE flag wiring.
+        // Detect shadow material (large loss relative to a typical
+        // ~$5 margin) → run Forge cycle → write nucleus + quarantine
+        // original. With flag off, log forge output but don't write.
+        const marginEstimate = 5.0;
+        const pnlFraction = marginEstimate > 0 ? realizedPnl / marginEstimate : 0;
+        if (pnlFraction < shadowThreshold()) {
+          const forgeResult = forge({
+            basin: entryBasin,
+            phi,
+            kappa: KAPPA_STAR, // anchor — exact κ at exit not preserved
+            realizedPnl,
+            regimeWeights: { quantum: 1 / 3, efficient: 1 / 3, equilibrium: 1 / 3 },
+          });
+          if (forgeBankWriteLive()) {
+            // Persist nucleus as new bubble; quarantine the original.
+            const nucleus = await resonanceBank.writeForgedNucleus(
+              forgeResult.nucleated.basin,
+              {
+                symbol,
+                phi,
+                lane: (bubble.payload?.lane ?? 'swing') as 'scalp' | 'swing' | 'trend' | 'observe',
+                forgedFromOrderId: orderId,
+                lossMagnitude: Math.abs(realizedPnl),
+                engineVersion: getEngineVersion(),
+              },
+            );
+            const quarantined = await resonanceBank.markQuarantined(
+              written.id,
+              `forged_nucleus_id=${nucleus?.id ?? 'unknown'}`,
+            );
+            logger.info('[Monkey.Forge] shadow → nucleus written', {
+              symbol, orderId, pnlFraction: pnlFraction.toFixed(4),
+              lossMagnitude: Math.abs(realizedPnl).toFixed(4),
+              nucleusId: nucleus?.id, quarantinedOriginal: quarantined,
+            });
+          } else {
+            logger.info('[Monkey.Forge] shadow detected (flag off, observe-only)', {
+              symbol, orderId, pnlFraction: pnlFraction.toFixed(4),
+              wouldNucleate: true,
+              shapeConcentration: forgeResult.lessonSummary.shape_concentration,
+              kappaOffset: forgeResult.lessonSummary.kappa_offset,
+            });
+          }
+        }
+
         this.bus.publish({
           type: BusEventType.BANK_WRITE,
           source: this.instanceId,

@@ -11,6 +11,24 @@ import { BASIN_DIM, type Basin } from './basin.js';
 const EPS = 1e-12;
 const KAPPA_STAR_LOCAL = 64;
 
+/** Default shadow threshold — pnl_fraction below which a bubble is
+ * considered shadow material. Override via FORGE_SHADOW_THRESHOLD env. */
+const DEFAULT_SHADOW_THRESHOLD = -0.10;
+
+/** Default-off flag. When false, witnessExit logs the forge output
+ * but does NOT write the nucleus or quarantine the original. When
+ * true, the forged nucleus is persisted as a new bank entry with
+ * source='forged' and the original shadow is quarantined.  */
+export function forgeBankWriteLive(): boolean {
+  return (process.env.FORGE_BANK_WRITE_LIVE ?? '').trim().toLowerCase() === 'true';
+}
+
+/** Threshold below which pnl_fraction triggers forge processing. */
+export function shadowThreshold(): number {
+  const fromEnv = parseFloat(process.env.FORGE_SHADOW_THRESHOLD ?? '');
+  return Number.isFinite(fromEnv) ? fromEnv : DEFAULT_SHADOW_THRESHOLD;
+}
+
 export interface ShadowEvent {
   basin: Basin;
   phi: number;

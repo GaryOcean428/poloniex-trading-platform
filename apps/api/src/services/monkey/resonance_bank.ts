@@ -39,7 +39,9 @@ export interface BankEntry {
   basinDepth: number;
   accessCount: number;
   phiAtCreation: number | null;
-  source: 'lived' | 'harvested';
+  /** 'lived' = closed trade outcome; 'harvested' = bootstrap material;
+   * 'forged' = nucleated lesson from a shadow trade (Tier 8 #608). */
+  source: 'lived' | 'harvested' | 'forged';
   lane: LaneType;
 }
 
@@ -314,6 +316,90 @@ export class ResonanceBank {
       return Number((result.rows[0] as { n: number }).n);
     } catch {
       return 0;
+    }
+  }
+
+  /**
+   * Mark a bank entry as quarantined. Used by the Tier 8 Forge
+   * pipeline (#608) — when a shadow bubble is forged into a
+   * nucleated lesson, the original shadow stays in the table for
+   * forensic value but is excluded from retrieval.
+   *
+   * Reuses the quarantine column added in migration 036 (#579 work).
+   * No new schema.
+   */
+  async markQuarantined(id: string, reason: string): Promise<boolean> {
+    try {
+      const result = await pool.query(
+        `UPDATE monkey_resonance_bank
+            SET quarantined = true,
+                quarantine_reason = $2,
+                quarantined_at = NOW()
+          WHERE id = $1`,
+        [id, reason],
+      );
+      return (result.rowCount ?? 0) > 0;
+    } catch (err) {
+      logger.warn('[Monkey.bank] markQuarantined failed', {
+        id, reason,
+        err: err instanceof Error ? err.message : String(err),
+      });
+      return false;
+    }
+  }
+
+  /**
+   * Write a forged-nucleus bubble to the bank. Mirrors writeBubble's
+   * INSERT but pins source='forged' and skips the orderId-dedup guard
+   * (forged bubbles use a synthetic id, not the original orderId).
+   */
+  async writeForgedNucleus(
+    nucleus: Basin,
+    args: {
+      symbol: string;
+      phi: number;
+      lane: LaneType;
+      forgedFromOrderId: string | null;
+      lossMagnitude: number;
+      engineVersion: string;
+    },
+  ): Promise<BankEntry | null> {
+    try {
+      const arr = Array.from(nucleus);
+      // Forged depth derives from loss magnitude — lessons from
+      // bigger losses get deeper basins (more learning weight).
+      const depth = Math.max(0.05, Math.min(0.95, 0.4 + 0.3 * Math.tanh(args.lossMagnitude)));
+      // Forged nuclei don't have an orderId — use a synthetic id so
+      // the dedup cache treats them as unique.
+      const syntheticOrderId = `forge-${args.forgedFromOrderId ?? Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const result = await pool.query(
+        `INSERT INTO monkey_resonance_bank
+           (entry_basin, symbol, realized_pnl, trade_outcome, order_id,
+            basin_depth, phi_at_creation, source, engine_version, lane)
+         VALUES ($1::jsonb, $2, $3, 'breakeven', $4, $5, $6, 'forged', $7, $8)
+         RETURNING *`,
+        [
+          JSON.stringify(arr),
+          args.symbol,
+          0.0,                    // forged nuclei carry no realized P&L
+          syntheticOrderId,
+          depth,
+          args.phi,
+          `${args.engineVersion}|forged-from=${args.forgedFromOrderId ?? 'unknown'}`,
+          args.lane,
+        ],
+      );
+      logger.info('[Monkey.bank] forged nucleus written', {
+        symbol: args.symbol,
+        forgedFrom: args.forgedFromOrderId,
+        depth: depth.toFixed(3),
+      });
+      return rowToEntry(result.rows[0]);
+    } catch (err) {
+      logger.warn('[Monkey.bank] writeForgedNucleus failed', {
+        err: err instanceof Error ? err.message : String(err),
+      });
+      return null;
     }
   }
 
