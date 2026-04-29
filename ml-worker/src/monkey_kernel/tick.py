@@ -41,9 +41,11 @@ from qig_core_local.geometry.fisher_rao import (
     frechet_mean,
 )
 
+from dataclasses import asdict
+
 from .autonomic import AutonomicKernel, AutonomicTickInputs
-from .ocean import Ocean
 from .basin import normalized_entropy, velocity
+from .emotions import compute_emotions
 from .executive import (
     ExecBasinState,
     choose_lane,
@@ -56,10 +58,18 @@ from .executive import (
     should_profit_harvest,
     should_scalp_exit,
 )
+from .foresight import ForesightPredictor
+from .heart import HeartMonitor
 from .modes import MODE_PROFILES, MonkeyMode, detect_mode
+from .motivators import compute_motivators
+from .ocean import Ocean
 from .parameters import get_registry
 from .perception import OHLCVCandle, PerceptionInputs, perceive, refract
 from .perception_scalars import basin_direction, trend_proxy
+from .phi_gate import select_phi_gate
+from .physical_emotions import compute_physical_emotions
+from .sensations import compute_sensations
+from .state import BasinState as KernelBasinState
 from .state import LaneType, NeurochemicalState
 
 logger = logging.getLogger("monkey.tick")
@@ -131,6 +141,9 @@ class SymbolState:
     phi_history: list[float] = field(default_factory=list)
     fhealth_history: list[float] = field(default_factory=list)
     drift_history: list[float] = field(default_factory=list)
+    # Tier 1 motivators integration history — (phi, i_q) tuples per tick.
+    # Used by compute_motivators for the CV(Φ × I_Q) integration motivator.
+    integration_history: list[tuple[float, float]] = field(default_factory=list)
     dca_add_count: int = 0
     last_entry_at_ms: Optional[float] = None
     peak_pnl_usdt: Optional[float] = None
@@ -190,6 +203,8 @@ def run_tick(
     state: SymbolState,
     autonomic: AutonomicKernel,
     ocean: Optional[Ocean] = None,
+    foresight: Optional[ForesightPredictor] = None,
+    heart: Optional[HeartMonitor] = None,
 ) -> tuple[TickDecision, SymbolState]:
     """Execute one decision tick. Returns (decision, new_state).
 
@@ -197,11 +212,14 @@ def run_tick(
     `autonomic` carries NC reward state across ticks (per-instance, not
     per-symbol; shared across symbols within one kernel).
     `ocean` is the autonomic-intervention authority (#599 refactor).
-    Optional for backward-compat callers; a default Ocean is created
-    if none is supplied. The intervention is exposed in the decision's
-    `derivation` block but is not yet routed to executive (observation-
-    only at this stage; Tier 7's full implementation hooks the
-    intervention handlers).
+    `foresight` is the per-(instance, symbol) trajectory predictor
+    (Tier 3); accumulates basin history for next-step prediction.
+    `heart` is the per-(instance, symbol) κ HRV monitor (Tier 7).
+    All four are observation-only at this stage — their outputs land in
+    `decision.derivation` for telemetry, but the executive's decision
+    path is unchanged. Caller should keep them as singletons for sleep
+    state / trajectory / HRV to accumulate; if None, ephemeral
+    instances are created (state-loss on next call).
     """
     ohlcv = inputs.ohlcv
     if len(ohlcv) < 50:
@@ -281,6 +299,71 @@ def run_tick(
         now_ms=now_ms,
     ))
     nc = ac_result.nc
+
+    # ── Upper-stack observation primitives (Tier 1-8 wiring) ───
+    # Compute motivators / sensations / emotions / physical_emotions /
+    # foresight prediction / heart state / phi-gate selection. All
+    # outputs surface in decision.derivation for telemetry. None of
+    # them feed back into the executive decision path yet — that's
+    # the next downstream step. Keeping observation-only here means
+    # the giveback fix soak window remains undisturbed.
+    kernel_state = KernelBasinState(
+        basin=basin,
+        identity_basin=state.identity_basin,
+        phi=phi,
+        kappa=state.kappa,
+        basin_velocity=bv,
+        regime_weights=regime_weights,
+        sovereignty=inputs.sovereignty,
+        neurochemistry=nc,
+    )
+    # Tier 1 motivators (Surprise / Curiosity / Investigation /
+    # Integration / Transcendence + I_Q).
+    mot = compute_motivators(
+        kernel_state,
+        prev_basin=state.last_basin,
+        integration_history=state.integration_history,
+    )
+    # Tier 4 sensations + drives (compressed/expanded/pressure/
+    # stillness/drift/resonance + approach/avoidance/conservation).
+    sen = compute_sensations(kernel_state, prev_basin=state.last_basin)
+    # Tier 2 cognitive emotions (Layer 2B). basin_distance is the
+    # Fisher-Rao distance from current basin to identity — same scalar
+    # already computed by sensations.drift; reuse to avoid recompute.
+    emo = compute_emotions(
+        motivators=mot,
+        basin_distance=sen.drift,
+        phi=phi,
+        basin_velocity=bv,
+    )
+    # Tier 5 physical emotions (Layer 2A). grad(Φ) = phi − last_phi
+    # already computed above for autonomic tick; reuse via last_phi.
+    phys = compute_physical_emotions(
+        motivators=mot,
+        sensations=sen,
+        phi_now=phi,
+        phi_prev=last_phi,
+    )
+    # Tier 3 foresight — append + predict. Persistent across ticks
+    # via the caller-supplied predictor; ephemeral fallback if None.
+    if foresight is None:
+        foresight = ForesightPredictor()
+    foresight.append(basin, phi, now_ms)
+    fs = foresight.predict(regime_weights)
+    # Tier 7 Heart — κ HRV monitor. Persistent; ephemeral fallback.
+    if heart is None:
+        heart = HeartMonitor()
+    heart.append(state.kappa, now_ms)
+    heart_state = heart.read()
+    # Tier 6 Φ-gate selection — pure argmax over geometric activations.
+    # P9 LIGHTNING channel pinned at 0 (unimplemented); the placeholder
+    # never wins until P9 lands.
+    gate = select_phi_gate(phi, fs, lightning=0.0)
+
+    # Telemetry surface — append (Φ, I_Q) for the next tick's
+    # Integration motivator CV calculation. Trim to history_max
+    # below in the basin_history block (same cap).
+    state.integration_history.append((phi, mot.i_q))
 
     # ── Mode detect ────────────────────────────────────────────
     drift_now = fisher_rao_distance(basin, state.identity_basin)
@@ -402,6 +485,38 @@ def run_tick(
         "side_override": side_override,
         "override_threshold": override_thr,
         "mode_changed": mode_changed,
+        # Tier 1-8 telemetry surfaces (#604 wiring). Observation-only;
+        # executive does not consume these fields.
+        "motivators": asdict(mot),
+        "sensations": asdict(sen),
+        "emotions": asdict(emo),
+        "physical_emotions": asdict(phys),
+        # Foresight: keep telemetry compact — predicted_basin is 64-d
+        # and isn't useful in a JSON log. Scalars only.
+        "foresight": {
+            "weight": fs.weight,
+            "confidence": fs.confidence,
+            "horizon_ms": fs.horizon_ms,
+            "trajectory_length": foresight.trajectory_length,
+        },
+        "heart": {
+            "kappa": heart_state.kappa,
+            "kappa_offset": heart_state.kappa_offset,
+            "mode": heart_state.mode,
+            "hrv": heart_state.hrv,
+            "sample_count": heart_state.sample_count,
+        },
+        "phi_gate": {
+            "chosen": gate.chosen,
+            "activations": gate.activations,
+        },
+        "ocean": {
+            "intervention": ocean_state.intervention,
+            "sleep_phase": ocean_state.sleep_phase,
+            "coherence": ocean_state.coherence,
+            "spread": ocean_state.spread,
+            "diagnostics": ocean_state.diagnostics,
+        },
     }
 
     own_pos = _has_own_position(inputs.account)
@@ -485,6 +600,8 @@ def run_tick(
     state.fhealth_history.append(f_health)
     if len(state.fhealth_history) > history_max:
         state.fhealth_history = state.fhealth_history[-history_max:]
+    if len(state.integration_history) > history_max:
+        state.integration_history = state.integration_history[-history_max:]
 
     # ── Lane selection ────────────────────────────────────────────
     lane_d = choose_lane(basin_state, tape_trend=tape_trend)

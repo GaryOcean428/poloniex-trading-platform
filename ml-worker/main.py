@@ -1123,11 +1123,47 @@ _autonomic_instances: dict[str, AutonomicKernel] = {}
 # trusts the worker. v0.8.7 makes this canonical state.
 _symbol_states: dict[tuple[str, str], SymbolState] = {}
 
+# Tier 7 + Tier 3 + Tier 7 Heart persistent components. Without these
+# living across ticks, sleep state never advances and trajectory/HRV
+# windows reset every call.
+#   Ocean — per-instance (sleep machine is global to a kernel, but
+#           drift_streak/phi_history accumulate per-symbol context)
+#   Foresight — per-(instance, symbol) — basin trajectory is symbol-specific
+#   Heart — per-(instance, symbol) — κ is symbol-specific in this kernel
+from monkey_kernel.ocean import Ocean  # noqa: E402
+from monkey_kernel.foresight import ForesightPredictor  # noqa: E402
+from monkey_kernel.heart import HeartMonitor  # noqa: E402
+
+_ocean_instances: dict[tuple[str, str], Ocean] = {}
+_foresight_instances: dict[tuple[str, str], ForesightPredictor] = {}
+_heart_instances: dict[tuple[str, str], HeartMonitor] = {}
+
 
 def _get_autonomic(instance_id: str) -> AutonomicKernel:
     if instance_id not in _autonomic_instances:
         _autonomic_instances[instance_id] = AutonomicKernel(label=instance_id)
     return _autonomic_instances[instance_id]
+
+
+def _get_ocean(instance_id: str, symbol: str) -> Ocean:
+    key = (instance_id, symbol)
+    if key not in _ocean_instances:
+        _ocean_instances[key] = Ocean(label=f"{instance_id}:{symbol}")
+    return _ocean_instances[key]
+
+
+def _get_foresight(instance_id: str, symbol: str) -> ForesightPredictor:
+    key = (instance_id, symbol)
+    if key not in _foresight_instances:
+        _foresight_instances[key] = ForesightPredictor()
+    return _foresight_instances[key]
+
+
+def _get_heart(instance_id: str, symbol: str) -> HeartMonitor:
+    key = (instance_id, symbol)
+    if key not in _heart_instances:
+        _heart_instances[key] = HeartMonitor()
+    return _heart_instances[key]
 
 
 @app.post("/monkey/autonomic/tick")
@@ -1593,7 +1629,13 @@ async def monkey_tick_run(request: Request):
         state = fresh_symbol_state(tick_inputs.symbol, uniform_basin(64))
 
     autonomic = _get_autonomic(instance_id)
-    decision, new_state = run_tick(tick_inputs, state, autonomic)
+    ocean = _get_ocean(instance_id, tick_inputs.symbol)
+    foresight = _get_foresight(instance_id, tick_inputs.symbol)
+    heart = _get_heart(instance_id, tick_inputs.symbol)
+    decision, new_state = run_tick(
+        tick_inputs, state, autonomic,
+        ocean=ocean, foresight=foresight, heart=heart,
+    )
     _symbol_states[key] = new_state
 
     return {
