@@ -181,12 +181,15 @@ export interface TickRunAccount {
   own_position_trade_id?: string | null;
 }
 
-/** Inputs for one tick, matching Python TickInputs. */
+/** Inputs for one tick, matching Python TickInputs.
+ *
+ * Post #ml-separation: ml_signal / ml_strength are silently ignored
+ * if supplied. Kept as optional fields for back-compat during the
+ * deploy window only — callers should stop sending them.
+ */
 export interface TickRunInputs {
   symbol: string;
   ohlcv: TickRunOHLCV[];
-  ml_signal: string;
-  ml_strength: number;
   account: TickRunAccount;
   bank_size: number;
   sovereignty: number;
@@ -194,6 +197,10 @@ export interface TickRunInputs {
   min_notional: number;
   size_fraction: number;
   self_obs_bias?: Record<string, Record<string, number>> | null;
+  /** @deprecated post #ml-separation — silently ignored by Agent K. */
+  ml_signal?: string;
+  /** @deprecated post #ml-separation — silently ignored by Agent K. */
+  ml_strength?: number;
 }
 
 /** Serialized Python SymbolState — carried across ticks. */

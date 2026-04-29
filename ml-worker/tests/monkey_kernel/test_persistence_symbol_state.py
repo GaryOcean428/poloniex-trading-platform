@@ -236,7 +236,7 @@ class TestRunTickWriteThrough:
             p = np_
 
         inputs = TickInputs(
-            symbol="BTC", ohlcv=ohlcv, ml_signal="BUY", ml_strength=0.5,
+            symbol="BTC", ohlcv=ohlcv,
             account=AccountContext(
                 equity_fraction=0.05, margin_fraction=0.03, open_positions=0,
                 available_equity=100.0, exchange_held_side=None,

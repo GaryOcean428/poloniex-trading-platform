@@ -19,6 +19,9 @@
 import { KAPPA_STAR, BASIN_DIM, type Basin, normalizedEntropy, maxMass, fisherRao } from './basin.js';
 import { MODE_PROFILES, MonkeyMode } from './modes.js';
 import type { NeurochemicalState } from './neurochemistry.js';
+import type { EmotionState } from './emotions.js';
+
+export type Direction = 'long' | 'short' | 'flat';
 
 /**
  * The complete basin state Monkey reads from every cycle.
@@ -607,4 +610,50 @@ export function chooseLane(
       tapeTrend,
     },
   };
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+//  Agent K kernel direction + entry gate (post #ml-separation)
+// ═══════════════════════════════════════════════════════════════
+//
+// Mirrors monkey_kernel/executive.py kernel_direction +
+// kernel_should_enter. Used by loop.ts in place of the old
+// ml_side / OVERRIDE_REVERSE / TURNING_SIGNAL path. ML now lives
+// in a separate Agent M module (services/ml_agent/) with its own
+// capital share allocated by the arbiter.
+
+/**
+ * Geometric direction read with emotion conviction gate.
+ *
+ * geometric_signal = basinDir + 0.5 * tapeTrend.
+ * Returns 'long' when positive, 'short' when negative, 'flat' when
+ * zero or when emotions.confidence < emotions.anxiety (low conviction
+ * overrides any geometric lean).
+ *
+ * Basin dominates; tape consensus tilts when basin is ambiguous.
+ */
+export function kernelDirection(args: {
+  basinDir: number;
+  tapeTrend: number;
+  emotions: EmotionState;
+}): Direction {
+  if (args.emotions.confidence < args.emotions.anxiety) return 'flat';
+  const geometricSignal = args.basinDir + 0.5 * args.tapeTrend;
+  if (geometricSignal > 0) return 'long';
+  if (geometricSignal < 0) return 'short';
+  return 'flat';
+}
+
+/**
+ * Conviction gate. The emotion stack is the threshold — no external
+ * strength comparison. Wonder amplifies confidence; anxiety + confusion
+ * comprise hesitation.
+ *
+ * Enter when: confidence × (1 + wonder) > anxiety + confusion.
+ */
+export function kernelShouldEnter(args: { emotions: EmotionState }): boolean {
+  const conviction = args.emotions.confidence * (1.0 + args.emotions.wonder);
+  const hesitation = args.emotions.anxiety + args.emotions.confusion;
+  return conviction > hesitation;
 }

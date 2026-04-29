@@ -52,14 +52,25 @@ class OHLCVCandle:
 
 @dataclass
 class PerceptionInputs:
+    """Sensory inputs for the 64-D basin computation.
+
+    Post #ml-separation (#agent-k-m): ml_signal / ml_strength /
+    ml_effective_strength are OPTIONAL with neutral defaults. The
+    kernel calls perception without ml fields; Agent M operates
+    independently and does not flow through perception. When the
+    fields default, basin dims 3..5 are constant ('HOLD' posture,
+    strength 0). Other dims (regime, momentum, volatility, volume,
+    price-structure, noise floor, account/coupling) are unaffected.
+    BASIN_DIM stays 64.
+    """
     ohlcv: Sequence[OHLCVCandle]
-    ml_signal: str              # 'BUY' | 'SELL' | 'HOLD'
-    ml_strength: float          # 0..1 raw ensemble strength
-    ml_effective_strength: float  # 0..1 post-bandit multiplier
     equity_fraction: float      # equity / initial — Monkey's relative health
     margin_fraction: float      # committed / equity
     open_positions: int
     session_age_ticks: int
+    ml_signal: str = "HOLD"     # 'BUY' | 'SELL' | 'HOLD' — neutral default
+    ml_strength: float = 0.0    # 0..1 raw ensemble strength — neutral default
+    ml_effective_strength: float = 0.0  # 0..1 post-bandit multiplier — neutral default
 
 
 # ═══════════════════════════════════════════════════════════════

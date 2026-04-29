@@ -41,11 +41,13 @@ def upper_stack_executive_live() -> bool:
 from qig_core_local.geometry.fisher_rao import fisher_rao_distance
 
 from .basin import max_mass, normalized_entropy
+from .emotions import EmotionState
 from .modes import MODE_PROFILES, MonkeyMode, effective_profile
 from .parameters import get_registry
 from .state import KAPPA_STAR, LaneType, NeurochemicalState
 
 Side = Literal["long", "short"]
+Direction = Literal["long", "short", "flat"]
 
 
 # Module-level registry handle. Per-call .get() hits the in-process cache
@@ -93,10 +95,68 @@ class ExecBasinState:
     sovereignty: float
     basin_velocity: float
     neurochemistry: NeurochemicalState
+    # Layer 2B emotions — required by kernel_should_enter (post #ml-separation
+    # entry gate). Optional for back-compat with callers that build
+    # ExecBasinState before computing emotions; defaults to a neutral
+    # near-zero stack which makes kernel_should_enter return False
+    # (zero conviction + zero hesitation, 0 > 0 is False).
+    emotions: Optional[EmotionState] = None
 
 
 def _clamp(v: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, v))
+
+
+# ═══════════════════════════════════════════════════════════════
+#  Agent K kernel direction + entry gate (post #ml-separation)
+# ═══════════════════════════════════════════════════════════════
+#
+# These two functions replace the ML-driven side / entry path that
+# previously gated kernel decisions on inputs.ml_signal and
+# inputs.ml_strength. Direction now comes from basin geometry and
+# tape consensus alone; entry conviction comes from the emotion
+# stack. ML lives in a separate Agent M module (apps/api/src/services
+# /ml_agent/) with its own capital share allocated by the arbiter.
+
+
+def kernel_direction(
+    *,
+    basin_dir: float,
+    tape_trend: float,
+    emotions: EmotionState,
+) -> Direction:
+    """Geometric direction read with emotional conviction gate.
+
+    geometric_signal = basin_dir + 0.5 * tape_trend.
+    Returns 'long' when positive, 'short' when negative, 'flat' when
+    zero or when emotions.confidence < emotions.anxiety (low conviction
+    overrides any geometric lean).
+
+    The 0.5 weight on tape_trend reflects that basin_direction is the
+    kernel's geometric read (post-Fisher-Rao refraction) while
+    tape_trend is a raw price-action proxy. Basin dominates; tape
+    consensus tilts when basin is ambiguous.
+    """
+    if emotions.confidence < emotions.anxiety:
+        return "flat"
+    geometric_signal = basin_dir + 0.5 * tape_trend
+    if geometric_signal > 0:
+        return "long"
+    if geometric_signal < 0:
+        return "short"
+    return "flat"
+
+
+def kernel_should_enter(*, emotions: EmotionState) -> bool:
+    """Conviction gate. The emotion stack is the threshold — no
+    external strength comparison. Wonder amplifies confidence;
+    anxiety + confusion comprise hesitation.
+
+    Enter when: confidence × (1 + wonder) > anxiety + confusion.
+    """
+    conviction = emotions.confidence * (1.0 + emotions.wonder)
+    hesitation = emotions.anxiety + emotions.confusion
+    return conviction > hesitation
 
 
 # ═══════════════════════════════════════════════════════════════

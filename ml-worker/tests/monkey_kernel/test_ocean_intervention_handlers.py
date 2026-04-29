@@ -49,7 +49,7 @@ def _ohlcv(n: int = 60, base: float = 75000.0) -> list[OHLCVCandle]:
 
 def _inputs(symbol: str = "BTC_USDT_PERP") -> TickInputs:
     return TickInputs(
-        symbol=symbol, ohlcv=_ohlcv(), ml_signal="BUY", ml_strength=0.5,
+        symbol=symbol, ohlcv=_ohlcv(),
         account=AccountContext(
             equity_fraction=0.05, margin_fraction=0.03, open_positions=0,
             available_equity=100.0, exchange_held_side=None,

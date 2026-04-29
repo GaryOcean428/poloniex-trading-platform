@@ -65,6 +65,9 @@ import {
 } from './kernel_client.js';
 import { detectMode, MODE_PROFILES, MonkeyMode } from './modes.js';
 import { computeNeurochemicals, summarizeNC, type NeurochemicalState } from './neurochemistry.js';
+import { mlAgentDecide } from '../ml_agent/decide.js';
+import type { MLAgentInputs } from '../ml_agent/types.js';
+import { Arbiter } from '../arbiter/arbiter.js';
 import {
   basinDirection as computeBasinDirection,
   perceive,
@@ -75,17 +78,19 @@ import {
 import { resonanceBank } from './resonance_bank.js';
 import { computeSelfObservation, type SelfObservation } from './self_observation.js';
 import { WorkingMemory, type Bubble } from './working_memory.js';
-import { evaluateTurningSignal, shortsLive } from './turning_signal.js';
 import {
   currentEntryThreshold,
   currentLeverage,
   currentPositionSize,
+  kernelDirection,
+  kernelShouldEnter,
   shouldAutoFlatten,
   shouldDCAAdd,
   shouldExit,
   shouldProfitHarvest,
   shouldScalpExit,
   type BasinState,
+  type Direction,
 } from './executive.js';
 
 /** Default Monkey watchlist — matches liveSignalEngine for side-by-side. */
@@ -237,6 +242,12 @@ export class MonkeyKernel extends EventEmitter {
    * "freeze" to the user (2026-04-22 incident during Stage 2 cut-over).
    */
   private mlOutageStreak = 0;
+  /**
+   * Arbiter — capital allocator between Agent K (kernel) and Agent M (ml).
+   * Single instance per kernel. Settled trades flow back via
+   * recordSettled from closeHeldPosition.
+   */
+  private readonly arbiter: Arbiter = new Arbiter();
 
   constructor(config?: Partial<MonkeyKernelConfig>) {
     super();
@@ -611,66 +622,44 @@ export class MonkeyKernel extends EventEmitter {
       this.selfObs = await computeSelfObservation(24, this.instanceId);
       this.selfObsLastUpdate = now;
     }
-    // Side candidate: start from ML signal, then allow Monkey's own
-    // direction-reading to override if it strongly disagrees (v0.5.2).
-    // ml-worker has been observed 100 % BUY-biased — so her own basin +
-    // recent tape have to be able to say "no, short instead" when the
-    // evidence is clear. Override fires ONLY when both her basin view
-    // AND the tape trend agree against ml-worker (two-signal quorum).
+    // Side candidate (post #ml-separation):
+    //   Direction comes from basin geometry + tape consensus. The
+    //   previous OVERRIDE_REVERSE quorum + TURNING_SIGNAL paths are
+    //   gone — kernelDirection is the primary read.
+    //
+    // TS-side does not yet compute Layer 2B emotions (motivators /
+    // sensations / foresight ports pending). Until v0.8.8 Python
+    // cut-over, TS uses neutral emotions so direction reduces to
+    // pure geometry. Entry conviction continues to gate via the
+    // existing ml-strength threshold below — a geometry-only TS
+    // entry would require the full emotion stack ported. This is
+    // the documented "TS counterpart for parity" path.
     const basinDir = computeBasinDirection(basin);
     const tapeTrend = computeTrendProxy(ohlcv);
-    // v0.8.7e: expose latest basin/tape snapshot for LiveSignal's
-    // inter-engine agreement gate (Option C). Written before the
-    // override decision so LiveSignal sees raw directional state.
     state.latestBasinSnapshot = {
       basinDir,
       tapeTrend,
       computedAtMs: Date.now(),
     };
-    const mlSide: 'long' | 'short' = mlSignal === 'SELL' ? 'short' : 'long';
-    let sideCandidate: 'long' | 'short' = mlSide;
-    let sideOverride = false;
-    let turningSignalFired = false;
-    // Agreement: if both basin and tape are strongly negative, short;
-    // if both strongly positive, long; else defer to ml.
-    const OVERRIDE_THRESHOLD = 0.35;
-    if (basinDir < -OVERRIDE_THRESHOLD && tapeTrend < -OVERRIDE_THRESHOLD && mlSide === 'long') {
-      sideCandidate = 'short';
-      sideOverride = true;
-    } else if (basinDir > OVERRIDE_THRESHOLD && tapeTrend > OVERRIDE_THRESHOLD && mlSide === 'short') {
-      sideCandidate = 'long';
-      sideOverride = true;
-    }
+    const NEUTRAL_EMOTIONS = {
+      wonder: 0, frustration: 0, satisfaction: 0, confusion: 0,
+      clarity: 0, anxiety: 0, confidence: 0, boredom: 0, flow: 0,
+    };
+    const direction: Direction = kernelDirection({
+      basinDir, tapeTrend, emotions: NEUTRAL_EMOTIONS,
+    });
+    const sideCandidate: 'long' | 'short' = direction === 'flat' ? 'long' : direction;
+    const sideOverride = false;
+    // Note: REVERSION mode flip lives only in the Python kernel (Tier 9
+    // Stage 2 stud topology). TS does not implement REVERSION yet.
 
-    // #575 — shorts as turning-signal. See ./turning_signal.ts for the
-    // condition logic + thresholds. Captures the turning-point earlier
-    // than OVERRIDE_REVERSE without retraining ml-worker.
-    if (evaluateTurningSignal({
-      sideCandidate, sideOverride, mlSignal, mlStrength, basinDir, tapeTrend,
-    })) {
-      sideCandidate = 'short';
-      sideOverride = true;
-      turningSignalFired = true;
-    }
-
-    // #575 gate — sequencing protection. Until #574 (resonance bank dedup)
-    // is merged AND #579 (pre-fix bubble quarantine) is verified clean in
-    // production, refuse to short. Default off via MONKEY_SHORTS_LIVE=false;
-    // flip to true after the dependent merges soak. The gate applies to
-    // BOTH OVERRIDE_REVERSE and turning-signal paths — we want a clean
-    // controlled re-activation of shorts, not partial enablement.
-    const SHORTS_LIVE = shortsLive();
+    // MONKEY_SHORTS_LIVE — sequencing protection retained from #575.
+    // Orthogonal to agent-separation; flipped via env independently.
+    const SHORTS_LIVE = process.env.MONKEY_SHORTS_LIVE === 'true';
     const sideShortRefused = sideCandidate === 'short' && !SHORTS_LIVE;
     if (sideShortRefused) {
       logger.info('[Monkey] short refused — MONKEY_SHORTS_LIVE=false', {
-        symbol,
-        mlSide,
-        mlStrength,
-        basinDir,
-        tapeTrend,
-        wantedShort: true,
-        viaOverride: sideOverride && !turningSignalFired,
-        viaTurningSignal: turningSignalFired,
+        symbol, basinDir, tapeTrend, direction, wantedShort: true,
       });
     }
     const selfObsBias = this.selfObs?.entryBias[mode]?.[sideCandidate] ?? 1.0;
@@ -729,8 +718,9 @@ export class MonkeyKernel extends EventEmitter {
       sideCandidate,
       basinDir,
       tapeTrend,
-      mlSide,
+      direction,
       sideOverride,
+      agent: 'K',
     };
 
     // v0.6.3: Monkey's "held side" is scoped to HER OWN open rows only.
@@ -888,13 +878,12 @@ export class MonkeyKernel extends EventEmitter {
       size.value > 0 &&
       !sideShortRefused
     ) {
-      // sideCandidate already reflects any basin+tape override of the ML signal.
+      // sideCandidate from kernelDirection (geometric, post #ml-separation).
       action = sideCandidate === 'long' ? 'enter_long' : 'enter_short';
-      const overrideTag = sideOverride
-        ? ` OVERRIDE(basin${basinDir.toFixed(2)}/tape${tapeTrend.toFixed(2)})`
+      const reversionTag = sideOverride
+        ? ` REVERSION-flip(basin${basinDir.toFixed(2)}/tape${tapeTrend.toFixed(2)})`
         : '';
-      const turningTag = turningSignalFired ? ' TURNING_SIGNAL' : '';
-      reason = `[${mode}] ml ${mlSignal}@${mlStrength.toFixed(3)} >= thr ${entryThr.value.toFixed(3)}; side=${sideCandidate}${overrideTag}${turningTag}; margin=${size.value.toFixed(2)} lev=${leverage.value}x notional=${(size.value * leverage.value).toFixed(2)}`;
+      reason = `[${mode}] ml ${mlSignal}@${mlStrength.toFixed(3)} >= thr ${entryThr.value.toFixed(3)}; side=${sideCandidate}${reversionTag}; margin=${size.value.toFixed(2)} lev=${leverage.value}x notional=${(size.value * leverage.value).toFixed(2)}`;
       derivation.entryThreshold = entryThr.derivation;
       derivation.size = size.derivation;
       derivation.leverage = leverage.derivation;
@@ -970,15 +959,41 @@ export class MonkeyKernel extends EventEmitter {
     }
 
     // 6b. EXECUTE — gated by MONKEY_EXECUTE=true. Observe-only otherwise.
+    //
+    // Post agent-separation: arbiter allocates available equity between
+    // K and M. K's existing decision path runs against allocation.k;
+    // Agent M's threshold-based decision runs against allocation.m.
+    // Both can place independently in a single tick (slot allocator
+    // and risk kernel still bound combined exposure).
+    const arbiterAllocation = this.arbiter.allocate(availableEquity);
+    const arbiterSnapshot = this.arbiter.snapshot(availableEquity);
+    derivation.arbiter = {
+      kShare: arbiterSnapshot.kShare,
+      mShare: arbiterSnapshot.mShare,
+      kPnlWindowTotal: arbiterSnapshot.kPnlWindowTotal,
+      mPnlWindowTotal: arbiterSnapshot.mPnlWindowTotal,
+      kTradesInWindow: arbiterSnapshot.kTradesInWindow,
+      mTradesInWindow: arbiterSnapshot.mTradesInWindow,
+      kAllocatedUsdt: arbiterAllocation.k,
+      mAllocatedUsdt: arbiterAllocation.m,
+    };
+
     let executed = false;
     let monkeyOrderId: string | null = null;
     if (process.env.MONKEY_EXECUTE === 'true') {
       if ((action === 'enter_long' || action === 'enter_short') && size.value > 0) {
         const isDCA = Boolean(derivation.isDCAAdd);
-        const execResult = await this.executeEntry({
+        // Cap K's margin to its arbiter share. Without this, the existing
+        // size formula could exceed K's allocation when M has been
+        // accumulating and K's share has shrunk.
+        const cappedMargin = Math.min(size.value, arbiterAllocation.k);
+        if (cappedMargin <= 0) {
+          reason += ` | k_capped_to_zero (kShare=${arbiterSnapshot.kShare.toFixed(2)})`;
+        }
+        const execResult = cappedMargin > 0 ? await this.executeEntry({
           symbol,
           side: action === 'enter_long' ? 'long' : 'short',
-          marginUsdt: size.value,
+          marginUsdt: cappedMargin,
           leverage: leverage.value,
           entryPrice: lastPrice,
           minNotional,
@@ -988,7 +1003,8 @@ export class MonkeyKernel extends EventEmitter {
           trajectoryId: null,
           isDCAAdd: isDCA,
           dcaAddIndex: isDCA ? state.dcaAddCount + 1 : 0,
-        });
+          agent: 'K',
+        }) : { executed: false, orderId: null, reason: 'k_arbiter_zero' };
         executed = execResult.executed;
         monkeyOrderId = execResult.orderId;
         if (!executed) {
@@ -1097,6 +1113,96 @@ export class MonkeyKernel extends EventEmitter {
           }
         }
       }
+    }
+
+    // 6c. AGENT M EXECUTE — independent ML-only path. Runs against
+    // arbiter.allocation.m. Threshold-based: enters when mlSignal !=
+    // HOLD AND mlStrength >= 0.55 AND M has > 0 capital. Same risk
+    // kernel + position-write pipeline as K (executeEntry handles
+    // veto, exchange order, DB INSERT with agent='M').
+    if (process.env.MONKEY_EXECUTE === 'true' && arbiterAllocation.m > 0) {
+      const mInputs: MLAgentInputs = {
+        symbol,
+        ohlcv: ohlcv.map((c) => ({
+          timestamp: Number(c.timestamp ?? 0),
+          open: Number(c.open),
+          high: Number(c.high),
+          low: Number(c.low),
+          close: Number(c.close),
+          volume: Number(c.volume),
+        })),
+        mlSignal: (mlSignal === 'BUY' || mlSignal === 'SELL' || mlSignal === 'HOLD')
+          ? mlSignal : 'HOLD',
+        mlStrength,
+        account: {
+          equityFraction,
+          marginFraction,
+          openPositions,
+          availableEquity,
+        },
+        allocatedCapitalUsdt: arbiterAllocation.m,
+      };
+      const mDecision = mlAgentDecide(mInputs);
+      derivation.agentM = {
+        action: mDecision.action,
+        sizeUsdt: mDecision.sizeUsdt,
+        leverage: mDecision.leverage,
+        reason: mDecision.reason,
+        mlSignal: mInputs.mlSignal,
+        mlStrength: mInputs.mlStrength,
+      };
+      if (
+        (mDecision.action === 'enter_long' || mDecision.action === 'enter_short')
+        && mDecision.sizeUsdt > 0
+      ) {
+        const mResult = await this.executeEntry({
+          symbol,
+          side: mDecision.action === 'enter_long' ? 'long' : 'short',
+          marginUsdt: mDecision.sizeUsdt,
+          leverage: mDecision.leverage,
+          entryPrice: lastPrice,
+          minNotional,
+          phi,
+          kappa: state.kappa,
+          sovereignty,
+          trajectoryId: null,
+          isDCAAdd: false,
+          dcaAddIndex: 0,
+          agent: 'M',
+        });
+        derivation.agentMExecuted = mResult.executed;
+        if (!mResult.executed) {
+          logger.info('[AgentM] entry rejected', {
+            symbol, side: mDecision.action, reason: mResult.reason,
+          });
+        } else {
+          logger.info('[AgentM] entry placed', {
+            symbol, side: mDecision.action, orderId: mResult.orderId,
+            margin: mDecision.sizeUsdt.toFixed(2), leverage: mDecision.leverage,
+          });
+        }
+      }
+    }
+
+    // 6d. Persist arbiter snapshot to telemetry table.
+    try {
+      await pool.query(
+        `INSERT INTO arbiter_allocation
+           (symbol, total_capital_usdt, k_share, m_share,
+            k_pnl_window_total, m_pnl_window_total,
+            k_trades_in_window, m_trades_in_window)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          symbol, availableEquity,
+          arbiterSnapshot.kShare, arbiterSnapshot.mShare,
+          arbiterSnapshot.kPnlWindowTotal, arbiterSnapshot.mPnlWindowTotal,
+          arbiterSnapshot.kTradesInWindow, arbiterSnapshot.mTradesInWindow,
+        ],
+      );
+    } catch (err) {
+      logger.debug('[Monkey] arbiter_allocation insert failed (fail-soft)', {
+        err: err instanceof Error ? err.message : String(err),
+      });
     }
 
     // Info-level log — the user asked for end-to-end observability.
@@ -1373,14 +1479,18 @@ export class MonkeyKernel extends EventEmitter {
     // adds created multiple rows for one logical position; the exchange
     // flattened them all in one market close above (size = total exchange
     // qty). Each row shares the realized pnl proportionally by quantity.
+    //
+    // Arbiter feedback: each row carries an agent tag (K|M); the PnL
+    // share for that row goes back to the arbiter under that agent so
+    // the rolling allocation reflects per-agent performance.
     try {
       const openRows = await pool.query(
-        `SELECT id, quantity FROM autonomous_trades
+        `SELECT id, quantity, agent FROM autonomous_trades
           WHERE reason LIKE $1 AND status = 'open' AND symbol = $2
           ORDER BY entry_time ASC`,
         [`monkey|kernel=${this.instanceId}|%`, symbol],
       );
-      const rows = openRows.rows as Array<{ id: string; quantity: string }>;
+      const rows = openRows.rows as Array<{ id: string; quantity: string; agent: string | null }>;
       const totalQty = rows.reduce((s, r) => s + Math.abs(Number(r.quantity) || 0), 0);
       if (rows.length === 0 || totalQty === 0) {
         // Fallback — single-row close (covers edge case of race)
@@ -1391,6 +1501,8 @@ export class MonkeyKernel extends EventEmitter {
             WHERE id = $5`,
           [markPrice, exitReason, orderId, pnlAtDecision, tradeId],
         );
+        // Single-row fallback: assume Agent K (the established default).
+        this.arbiter.recordSettled('K', pnlAtDecision);
       } else {
         for (const row of rows) {
           const qtyShare = Math.abs(Number(row.quantity) || 0) / totalQty;
@@ -1402,6 +1514,11 @@ export class MonkeyKernel extends EventEmitter {
               WHERE id = $5`,
             [markPrice, exitReason, orderId, rowPnl, row.id],
           );
+          // Tag-aware arbiter feedback. Pre-separation rows have
+          // agent=NULL or 'K' (default from migration 039); both
+          // attribute to K.
+          const agentLabel: 'K' | 'M' = row.agent === 'M' ? 'M' : 'K';
+          this.arbiter.recordSettled(agentLabel, rowPnl);
         }
       }
     } catch (err) {
@@ -1469,6 +1586,10 @@ export class MonkeyKernel extends EventEmitter {
     isDCAAdd?: boolean;
     /** 0 = initial entry; 1, 2, … for nth DCA add. */
     dcaAddIndex?: number;
+    /** Which agent placed this entry. K = kernel (geometry-only),
+     *  M = ml-only. Default 'K' for back-compat with the existing
+     *  call sites. */
+    agent?: 'K' | 'M';
   }): Promise<{ executed: boolean; orderId: string | null; reason: string }> {
     const { symbol, side, marginUsdt, leverage, entryPrice, minNotional } = req;
     const notionalUsdt = marginUsdt * leverage;
@@ -1583,22 +1704,23 @@ export class MonkeyKernel extends EventEmitter {
       };
     }
 
-    // Persist. Encode kernel + Monkey's state into reason so the
-    // close-hook + reconciler can recover attribution cheaply (no
-    // schema change).
-    // Format: monkey|kernel=<id>|phi=...|kappa=...|sov=...|dca=<N>|src=<ver>
+    // Persist. Encode kernel + agent + Monkey's state into reason so
+    // the close-hook + reconciler + arbiter can recover attribution
+    // cheaply.
+    // Format: monkey|kernel=<id>|agent=<K|M>|phi=...|kappa=...|sov=...|dca=<N>|src=<ver>
+    const agentTag = req.agent ?? 'K';
     try {
       const dcaTag = req.isDCAAdd ? `|dca=${req.dcaAddIndex ?? 1}` : '';
       const reasonEncoded =
-        `monkey|kernel=${this.instanceId}|phi=${req.phi.toFixed(3)}|kappa=${req.kappa.toFixed(2)}|sov=${req.sovereignty.toFixed(3)}${dcaTag}|src=v0.6.2`;
+        `monkey|kernel=${this.instanceId}|agent=${agentTag}|phi=${req.phi.toFixed(3)}|kappa=${req.kappa.toFixed(2)}|sov=${req.sovereignty.toFixed(3)}${dcaTag}|src=v0.6.2`;
       await pool.query(
         `INSERT INTO autonomous_trades
            (user_id, symbol, side, entry_price, quantity, leverage,
-            confidence, reason, order_id, paper_trade, engine_version)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+            confidence, reason, order_id, paper_trade, engine_version, agent)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
         [
           userId, symbol, exchangeSide, entryPrice, formattedSize, leverage,
-          req.phi, reasonEncoded, orderId, false, getEngineVersion(),
+          req.phi, reasonEncoded, orderId, false, getEngineVersion(), agentTag,
         ],
       );
     } catch (err) {

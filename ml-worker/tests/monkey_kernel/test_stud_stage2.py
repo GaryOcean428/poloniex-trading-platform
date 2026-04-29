@@ -1,15 +1,19 @@
 """test_stud_stage2.py — Tier 9 Stage 2 wiring tests.
 
-Stage 2 routes the executive's four key formulas through stud-derived
-versions when STUD_TOPOLOGY_LIVE=true (default). Tests cover:
+Stage 2 routes the executive's two remaining stud-conditional formulas
+through stud-derived versions when STUD_TOPOLOGY_LIVE=true (default).
+Tests cover:
 
   - detect_mode_stud: regime → mode mapping incl. REVERSION at back loop
   - choose_lane_stud: regime → lane mapping
-  - _override_threshold_stud: boundary-distance → threshold mapping
   - current_leverage flat_mult: stud-derived bell shape
   - REVERSION mode profile present in MODE_PROFILES
-  - REVERSION inverts ml_side in tick.py
+  - REVERSION inverts kernel direction in tick.py (post #ml-separation)
   - Legacy path bit-identical when stud_live=False
+
+Note: _override_threshold / _override_threshold_stud were deleted in
+the agent K/M separation — direction is now geometric from the start
+(no ml_side to override). Their unit tests were removed.
 """
 from __future__ import annotations
 
@@ -39,8 +43,7 @@ from monkey_kernel.stud import (  # noqa: E402
     StudRegime, compute_stud_reading,
 )
 from monkey_kernel.tick import (  # noqa: E402
-    AccountContext, TickInputs, _override_threshold,
-    _override_threshold_stud, fresh_symbol_state, run_tick,
+    AccountContext, TickInputs, fresh_symbol_state, run_tick,
 )
 from monkey_kernel.topology_constants import (  # noqa: E402
     PI_STRUCT_DEAD_ZONE_BOUNDARY, PI_STRUCT_FRONT_PEAK_NORM,
@@ -128,40 +131,6 @@ class TestChooseLaneStud:
     def test_front_loop_centre_yields_swing(self) -> None:
         r = choose_lane_stud(_stud_at(1.0, StudRegime.FRONT_LOOP))
         assert r["value"] == "swing"
-
-
-# ─────────────────────────────────────────────────────────────────
-# _override_threshold_stud — boundary distance scaling
-# ─────────────────────────────────────────────────────────────────
-
-
-class TestOverrideThresholdStud:
-    def _stud_with_distance(self, dist: float):
-        from monkey_kernel.stud import StudReading
-        return StudReading(
-            h_trade=1.0, regime=StudRegime.FRONT_LOOP, kappa_trade=10.0,
-            boundary_distance=dist,
-            predicted_dead_zone_boundary=PI_STRUCT_DEAD_ZONE_BOUNDARY,
-            predicted_second_transition=PI_STRUCT_SECOND_TRANSITION,
-            predicted_front_peak=PI_STRUCT_FRONT_PEAK_NORM,
-        )
-
-    def test_at_boundary_returns_low_threshold(self) -> None:
-        # boundary_distance = 0 → threshold floor 0.15
-        thr = _override_threshold_stud(self._stud_with_distance(0.0))
-        assert thr == pytest.approx(0.15, abs=1e-9)
-
-    def test_far_from_boundary_returns_high_threshold(self) -> None:
-        # boundary_distance = front-loop half-width ≈ 0.95 → threshold ≈ 0.60
-        width = (PI_STRUCT_SECOND_TRANSITION - PI_STRUCT_DEAD_ZONE_BOUNDARY) / 2.0
-        thr = _override_threshold_stud(self._stud_with_distance(width))
-        assert thr == pytest.approx(0.60, abs=1e-9)
-
-    def test_threshold_clamped_to_safety_bounds(self) -> None:
-        thr_low = _override_threshold_stud(self._stud_with_distance(-1.0))
-        assert thr_low >= 0.15
-        thr_high = _override_threshold_stud(self._stud_with_distance(10.0))
-        assert thr_high <= 0.60
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -276,7 +245,7 @@ def _ohlcv(n: int = 60, base: float = 75000.0) -> list[OHLCVCandle]:
 
 def _inputs() -> TickInputs:
     return TickInputs(
-        symbol="BTC_USDT_PERP", ohlcv=_ohlcv(), ml_signal="BUY", ml_strength=0.5,
+        symbol="BTC_USDT_PERP", ohlcv=_ohlcv(),
         account=AccountContext(
             equity_fraction=0.05, margin_fraction=0.03, open_positions=0,
             available_equity=100.0, exchange_held_side=None,

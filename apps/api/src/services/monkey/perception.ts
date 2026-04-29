@@ -63,12 +63,6 @@ export interface OHLCVCandle {
 
 export interface PerceptionInputs {
   ohlcv: OHLCVCandle[];
-  /** ml-worker signal: 'BUY' | 'SELL' | 'HOLD'. */
-  mlSignal: string;
-  /** 0..1 raw ensemble strength. */
-  mlStrength: number;
-  /** 0..1 post-bandit-multiplier strength. */
-  mlEffectiveStrength: number;
   /** Equity / initial equity — Monkey's relative health. */
   equityFraction: number;
   /** Committed margin / equity — how much skin is currently in. */
@@ -77,6 +71,13 @@ export interface PerceptionInputs {
   openPositions: number;
   /** Ticks since Monkey last "slept" (process boot). */
   sessionAgeTicks: number;
+  /** ml-worker signal: 'BUY' | 'SELL' | 'HOLD'. Optional post #ml-separation
+   * — kernel callers omit. Defaults to 'HOLD' (neutral). */
+  mlSignal?: string;
+  /** 0..1 raw ensemble strength. Optional, defaults to 0. */
+  mlStrength?: number;
+  /** 0..1 post-bandit-multiplier strength. Optional, defaults to 0. */
+  mlEffectiveStrength?: number;
 }
 
 /**
@@ -199,20 +200,25 @@ export function perceive(inputs: PerceptionInputs): Basin {
   const ohlcv = inputs.ohlcv;
   const lastClose = ohlcv.length > 0 ? ohlcv[ohlcv.length - 1].close : 1;
 
+  // ml inputs default to neutral when absent (post #ml-separation
+  // — Agent K's perception runs without ml fields).
+  const mlSignal = (inputs.mlSignal ?? 'HOLD').toUpperCase();
+  const mlStrength = inputs.mlStrength ?? 0;
+  const mlEffectiveStrength = inputs.mlEffectiveStrength ?? 0;
+
   // dims 0..2 — Three regimes (§4.1)
   const atr = rollingVol(ohlcv, 14);
   const vol_frac = lastClose > 0 ? atr / lastClose : 0;
   const trend = Math.abs(logReturn(ohlcv, 20));
   v[0] = norm01(vol_frac, 0.01);                                       // quantum
-  v[1] = clip01(trend * 10) * inputs.mlEffectiveStrength;              // efficient
+  v[1] = clip01(trend * 10) * mlEffectiveStrength;                     // efficient
   v[2] = Math.max(0.01, 1 - v[0] - v[1]);                              // equilibrium residual
 
-  // dims 3..6 — ML posture
-  const sig = (inputs.mlSignal || '').toUpperCase();
-  v[3] = sig === 'BUY' ? inputs.mlStrength : 0.01;
-  v[4] = sig === 'SELL' ? inputs.mlStrength : 0.01;
-  v[5] = sig === 'HOLD' ? 0.5 : Math.max(0.01, 1 - inputs.mlStrength);
-  v[6] = inputs.mlEffectiveStrength;
+  // dims 3..6 — ML posture (constant when ml inputs absent).
+  v[3] = mlSignal === 'BUY' ? mlStrength : 0.01;
+  v[4] = mlSignal === 'SELL' ? mlStrength : 0.01;
+  v[5] = mlSignal === 'HOLD' ? 0.5 : Math.max(0.01, 1 - mlStrength);
+  v[6] = mlEffectiveStrength;
 
   // dims 7..14 — Momentum spectrum
   const moms = [1, 2, 3, 5, 8, 13, 21, 34];
