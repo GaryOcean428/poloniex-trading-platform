@@ -369,7 +369,12 @@ export function shouldProfitHarvest(
   const activation = Math.max(0.002, 0.004 - 0.002 * s.neurochemistry.dopamine);
   // Giveback fraction — how much of peak to surrender before exiting.
   // Low serotonin (unstable) → tighter (0.30); high serotonin → looser (0.50).
-  const giveback = 0.30 + 0.20 * (1 - s.neurochemistry.serotonin);
+  // 2026-04-29: formula was inverted vs the doctrine — high serotonin
+  // gave 0.30 (tightest), so calm-market profits were harvested early.
+  // Realized-PnL audit (28 closes, 11.5h) showed avg-win/avg-loss ratio
+  // of 1.06 — barely above fees. Letting winners run further in stable
+  // regimes is the lever that moves EV/close from marginal to comfortable.
+  const giveback = 0.30 + 0.20 * s.neurochemistry.serotonin;
   const trailingFloor = peakFrac * (1 - giveback);
 
   if (peakFrac >= activation && currentFrac < trailingFloor && currentFrac > 0) {

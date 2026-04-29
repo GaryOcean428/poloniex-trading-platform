@@ -357,9 +357,15 @@ def should_profit_harvest(
     #   sooner), amplified by Φ (high integration → let winners run).
     #   Anchored at 0.003 when dopamine=0.5 AND Φ=0.5 (pre-derivation live).
     #   0.002 floor stays as SAFETY_BOUND — must always clear 2×fee.
-    # GIVEBACK: emerges from serotonin (stability). High serotonin → keep
-    #   a tighter trailing stop. Low serotonin → let more of peak slip
-    #   before locking in.
+    # GIVEBACK: emerges from serotonin (stability). High serotonin (calm,
+    #   coherent) → looser trailing stop, let winners run further. Low
+    #   serotonin (unstable) → tighter trailing stop, lock the gain before
+    #   chop eats it. Aligns with modes.py:184 sl_ratio doctrine — high
+    #   stability minimises losses AND lets profits compound.
+    # 2026-04-29: formula was inverted (high serotonin → 0.30 = tightest)
+    #   so calm-market profits were harvested too early. Realized-PnL
+    #   audit (28 closes, 11.5h) showed avg-win/avg-loss ratio of 1.06,
+    #   barely above fees. Fix lifts EV/close from marginal to comfortable.
     # TREND_FLIP: derives from norepinephrine — surprise makes her more
     #   sensitive to trend reversal. Anchored at -0.25 when NE=0.5.
     nc = s.neurochemistry
@@ -368,7 +374,7 @@ def should_profit_harvest(
         0.002,
         0.004 - 0.002 * nc.dopamine + 0.002 * (phi_clipped - 0.5),
     )
-    giveback = 0.30 + 0.20 * (1 - nc.serotonin)
+    giveback = 0.30 + 0.20 * nc.serotonin
     trailing_floor = peak_frac * (1.0 - giveback)
 
     alignment_now = tape_trend if held_side == "long" else -tape_trend
