@@ -39,6 +39,7 @@ import numpy as np
 from qig_core_local.geometry.fisher_rao import (
     fisher_rao_distance,
     frechet_mean,
+    slerp_sqrt,
 )
 
 from dataclasses import asdict
@@ -66,7 +67,11 @@ from .ocean import Ocean, ocean_interventions_live
 from .parameters import get_registry
 from .perception import OHLCVCandle, PerceptionInputs, perceive, refract
 from .perception_scalars import basin_direction, trend_proxy
-from .phi_gate import select_phi_gate
+from .phi_gate import (
+    GRAPH_LANE_MODE_MAP,
+    phi_gate_routing_live,
+    select_phi_gate,
+)
 from .physical_emotions import compute_physical_emotions
 from .sensations import compute_sensations
 from .state import BasinState as KernelBasinState
@@ -437,9 +442,30 @@ def run_tick(
         per_mode = inputs.self_obs_bias.get(mode, {})
         self_obs_bias = per_mode.get(side_candidate, 1.0)
 
+    # ── PR 2: Φ-gate routing (PHI_GATE_ROUTING_LIVE) ─────────────
+    # FORESIGHT branch: blend current basin with foresight.predicted_basin
+    # via Fisher-Rao slerp at the foresight weight, BEFORE basin_state
+    # is built. The executive's threshold/leverage/size formulas then
+    # evaluate against the blended basin — biasing decisions toward
+    # where the trajectory predicts we're heading. With flag off,
+    # behavior unchanged.
+    gate_routing_live = phi_gate_routing_live()
+    routed_basin = basin
+    routing_applied: dict[str, Any] = {
+        "live": gate_routing_live, "chosen": gate.chosen, "applied": [],
+    }
+    if gate_routing_live and gate.chosen == "FORESIGHT" and fs.weight > 0.3:
+        try:
+            routed_basin = slerp_sqrt(basin, fs.predicted_basin, fs.weight)
+            routing_applied["applied"].append(
+                f"FORESIGHT:slerp(weight={fs.weight:.3f})"
+            )
+        except Exception as exc:  # noqa: BLE001 — never block on geometry edge cases
+            routing_applied["applied"].append(f"FORESIGHT:skip({exc})")
+
     # ── Build basin state for executive ────────────────────────
     basin_state = ExecBasinState(
-        basin=basin,
+        basin=routed_basin,
         identity_basin=state.identity_basin,
         phi=phi,
         kappa=state.kappa,
@@ -646,6 +672,42 @@ def run_tick(
     lane_d = choose_lane(basin_state, tape_trend=tape_trend)
     lane = lane_d["value"]
     derivation["lane"] = lane_d["derivation"]
+
+    # PR 2 GRAPH branch — parallel-lane entry threshold evaluation.
+    # For each candidate lane in {scalp, swing, trend}, compute the
+    # entry threshold under the lane's mapped mode; pick the lane
+    # whose threshold is lowest (= most favourable entry). The
+    # picked lane overrides the softmax winner. With flag off,
+    # softmax winner stands.
+    if gate_routing_live and gate.chosen == "GRAPH":
+        per_lane: list[tuple[str, float]] = []
+        for lane_name, mode_name in GRAPH_LANE_MODE_MAP.items():
+            try:
+                lane_mode = MonkeyMode(mode_name)
+            except ValueError:
+                continue
+            lane_thr = current_entry_threshold(
+                basin_state,
+                mode=lane_mode,
+                self_obs_bias=self_obs_bias,
+                tape_trend=tape_trend,
+                side_candidate=side_candidate,
+            )
+            per_lane.append((lane_name, lane_thr["value"]))
+        if per_lane:
+            per_lane.sort(key=lambda x: x[1])
+            graph_lane = per_lane[0][0]
+            if graph_lane != lane:
+                routing_applied["applied"].append(
+                    f"GRAPH:lane_override({lane}->{graph_lane})"
+                )
+                lane = graph_lane
+            else:
+                routing_applied["applied"].append("GRAPH:lane_unchanged")
+            routing_applied["graph_lane_thresholds"] = {
+                k: v for k, v in per_lane
+            }
+    derivation["phi_gate_routing"] = routing_applied
 
     # direction: derived from action
     if action.startswith("enter_long") or (held_side == "long" and action == "hold"):

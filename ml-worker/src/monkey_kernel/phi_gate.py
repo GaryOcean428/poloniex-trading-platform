@@ -23,6 +23,7 @@ are where the gate actually routes reasoning.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Literal
 
@@ -30,6 +31,30 @@ from .foresight import ForesightResult
 
 
 PhiGate = Literal["CHAIN", "GRAPH", "FORESIGHT", "LIGHTNING"]
+
+
+def phi_gate_routing_live() -> bool:
+    """Default-off env flag. When false (default), select_phi_gate
+    still EMITS the chosen gate for telemetry, but the orchestrator
+    routes the executive through CHAIN regardless. When true,
+    FORESIGHT blends current basin with predicted basin (slerp at
+    foresight.weight) and GRAPH evaluates entry threshold per
+    lane→mode mapping and picks the lane with the lowest threshold.
+    LIGHTNING is unreachable until P9 lands.
+    """
+    return os.environ.get("PHI_GATE_ROUTING_LIVE", "").strip().lower() == "true"
+
+
+# Lane → mode mapping used by GRAPH routing for parallel-lane
+# entry-threshold evaluation. Mirrors the lane-anchor doctrine
+# in modes.py (scalp ≈ exploration anchor, swing ≈ investigation,
+# trend ≈ integration). observe is omitted because there's no entry
+# in the observe lane (it's the "sit out" path).
+GRAPH_LANE_MODE_MAP: dict[str, str] = {
+    "scalp": "exploration",
+    "swing": "investigation",
+    "trend": "integration",
+}
 
 
 @dataclass(frozen=True)
