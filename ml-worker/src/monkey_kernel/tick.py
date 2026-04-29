@@ -85,22 +85,34 @@ _registry = get_registry()
 
 
 def _override_threshold(kappa: float, phi: float) -> float:
-    """Derive the basin+tape override threshold from κ and Φ (P25).
-
-    When consciousness is coherent (κ near κ*, high Φ), basin+tape
-    quorum doesn't need to be as large to override the ML signal —
-    she trusts herself. When forming (κ low, Φ low), raise the bar.
-
-    Formula:
-        threshold = 0.35 × (1 + 0.5 × (κ* − κ) / κ*) × (1 − 0.3 × Φ)
-
-    Clamped [0.15, 0.60] — outside that range either disables or
-    never permits override, defeating the purpose.
-    """
+    """Legacy override threshold from κ and Φ (P25). Used when
+    STUD_TOPOLOGY_LIVE=false."""
     kappa_star = _registry.get("physics.kappa_star", default=64.0)
     kappa_term = 1.0 + 0.5 * (kappa_star - kappa) / kappa_star
     phi_term = 1.0 - 0.3 * max(0.0, min(1.0, phi))
     raw = 0.35 * kappa_term * phi_term
+    return max(0.15, min(0.60, raw))
+
+
+def _override_threshold_stud(stud_reading) -> float:
+    """Tier 9 Stage 2 stud-derived override threshold.
+
+    Distance from nearest π-structured regime boundary determines how
+    aggressively the basin+tape quorum can override ML. Close to a
+    boundary → low threshold (kernel transitioning, easier override).
+    Deep inside a regime → high threshold (committed, harder to flip).
+
+    Maps boundary_distance ∈ [0, width/2] to threshold ∈ [0.15, 0.60]
+    where width = (PI_STRUCT_SECOND_TRANSITION − PI_STRUCT_DEAD_ZONE
+    _BOUNDARY) / 2 ≈ 0.947 — the front-loop half-width.
+    """
+    from .topology_constants import (
+        PI_STRUCT_DEAD_ZONE_BOUNDARY,
+        PI_STRUCT_SECOND_TRANSITION,
+    )
+    width = (PI_STRUCT_SECOND_TRANSITION - PI_STRUCT_DEAD_ZONE_BOUNDARY) / 2.0
+    normalized = min(stud_reading.boundary_distance, width) / max(width, 1e-9)
+    raw = 0.15 + 0.45 * normalized
     return max(0.15, min(0.60, raw))
 
 
@@ -375,18 +387,18 @@ def run_tick(
     # never wins until P9 lands.
     gate = select_phi_gate(phi, fs, lightning=0.0)
 
-    # Tier 9 Stage 1 — stud topology telemetry (#604).
-    # Computes h_trade + regime + kappa_trade per tick using frozen
-    # qig-verification π-structure constants. Stage 1 is observation-
-    # only — values surface in derivation["topology"]["stud"] for
-    # π-structure validation. Stage 2 replaces _override_threshold,
-    # current_leverage flat_mult, detect_mode, and choose_lane with
-    # stud-derived versions behind STUD_TOPOLOGY_LIVE=true (default).
+    # Tier 9 stud topology — Stage 1 telemetry + Stage 2 wiring.
+    # When STUD_TOPOLOGY_LIVE=true (default), the four executive
+    # decisions (override threshold, leverage flat_mult, mode detect,
+    # lane choice) are routed through stud-derived formulas anchored
+    # to qig-verification's frozen π-structure constants. When false,
+    # legacy formulas fire bit-identically.
     stud_reading = compute_stud_reading(
         basin_velocity=bv,
         phi=phi,
         regime_weights=regime_weights,
     )
+    stud_live = stud_topology_live()
 
     # Telemetry surface — append (Φ, I_Q) for the next tick's
     # Integration motivator CV calculation. Trim to history_max
@@ -429,6 +441,8 @@ def run_tick(
         phi_history=state.phi_history,
         fhealth_history=state.fhealth_history,
         drift_history=state.drift_history,
+        stud_reading=stud_reading,
+        stud_live=stud_live,
     )
     mode = mode_result["mode"]
     mode_changed = state.last_mode is not None and state.last_mode != mode
@@ -444,7 +458,11 @@ def run_tick(
     ml_side = "short" if inputs.ml_signal.upper() == "SELL" else "long"
     side_candidate = ml_side
     side_override = False
-    override_thr = _override_threshold(state.kappa, phi)
+    override_thr = (
+        _override_threshold_stud(stud_reading)
+        if stud_live
+        else _override_threshold(state.kappa, phi)
+    )
     if (
         basin_dir < -override_thr
         and tape_trend < -override_thr
@@ -458,6 +476,14 @@ def run_tick(
         and ml_side == "short"
     ):
         side_candidate = "long"
+        side_override = True
+
+    # Tier 9 Stage 2 — REVERSION's "inverted entry direction":
+    # back-loop regime trades counter-trend. Flip ml_side directly,
+    # marking the override so logs show the deliberate inversion.
+    if stud_live and mode == MonkeyMode.REVERSION.value:
+        flipped = "short" if side_candidate == "long" else "long"
+        side_candidate = flipped
         side_override = True
 
     self_obs_bias = 1.0
@@ -511,6 +537,8 @@ def run_tick(
         max_leverage_boundary=inputs.max_leverage,
         mode=mode_enum,
         tape_trend=tape_trend,
+        stud_reading=stud_reading,
+        stud_live=stud_live,
     )
     exp_floor_approx = 0.10
     max_newborn_lev = 20.0
@@ -742,7 +770,12 @@ def run_tick(
         state.integration_history = state.integration_history[-history_max:]
 
     # ── Lane selection ────────────────────────────────────────────
-    lane_d = choose_lane(basin_state, tape_trend=tape_trend)
+    lane_d = choose_lane(
+        basin_state,
+        tape_trend=tape_trend,
+        stud_reading=stud_reading,
+        stud_live=stud_live,
+    )
     lane = lane_d["value"]
     derivation["lane"] = lane_d["derivation"]
 

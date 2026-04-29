@@ -268,6 +268,8 @@ def current_leverage(
     max_leverage_boundary: float,
     mode: MonkeyMode = MonkeyMode.INVESTIGATION,
     tape_trend: float = 0.0,
+    stud_reading: Optional[Any] = None,
+    stud_live: bool = False,
 ) -> dict[str, Any]:
     # κ-proximity bell width: narrower sigma penalises drift from κ* harder.
     # Baseline + slope: leverage floor + scaling span with sovereignty.
@@ -317,7 +319,23 @@ def current_leverage(
     flatness_k = 7.0 + 3.0 * kappa_proxim
     flatness_boost = 0.5 + 0.6 * max(0.0, min(1.0, s.phi))
     flatness = max(0.0, 1.0 - abs(tape_trend) * flatness_k)
-    flat_mult = 1.0 + flatness_boost * flatness
+    flat_mult_legacy = 1.0 + flatness_boost * flatness
+
+    # Tier 9 Stage 2: stud-derived flat_mult uses the bell curve from
+    # qig-verification — kappa_trade peaks at +10π in front-loop centre,
+    # mirrors negative in back-loop. Scaled to [0.2, 1.8] via PEAK_NORM.
+    # When stud_live=False, fall through to the legacy flatness formula
+    # bit-identically.
+    if stud_live and stud_reading is not None:
+        # Import inside to avoid module-load cycle (tick.py imports both).
+        from .topology_constants import PI_STRUCT_FRONT_PEAK_NORM
+        # kappa_trade ∈ [-PI_STRUCT_FRONT_PEAK_NORM, +PI_STRUCT_FRONT_PEAK_NORM]
+        # Map to multiplier ∈ [0.2, 1.8] linearly:
+        flat_mult = 1.0 + 0.8 * (stud_reading.kappa_trade / PI_STRUCT_FRONT_PEAK_NORM)
+        # Floor at 0.2 to keep leverage positive even in deep back-loop.
+        flat_mult = max(0.2, min(1.8, flat_mult))
+    else:
+        flat_mult = flat_mult_legacy
 
     newborn = s.sovereignty < 0.1
     if newborn:
@@ -739,22 +757,70 @@ def should_auto_flatten(
 # ═══════════════════════════════════════════════════════════════
 
 
+def choose_lane_stud(stud_reading: Any) -> dict[str, Any]:
+    """Tier 9 Stage 2 stud-derived lane selection. Maps stud regime
+    + h_trade position within front loop to a lane:
+
+      DEAD_ZONE                   → observe   (sit out, no signal)
+      BACK_LOOP                   → scalp     (mean-reversion regime)
+      FRONT_LOOP, h < 0.6         → trend     (entry zone)
+      FRONT_LOOP, 0.6 ≤ h < 1.5   → swing     (centre)
+      FRONT_LOOP, h ≥ 1.5         → swing     (exit, continuation)
+
+    Replaces the softmax over (phi, sovereignty, basin_velocity,
+    tape_trend) when STUD_TOPOLOGY_LIVE=true. Pure regime → lane
+    mapping; no temperature, no probability distribution.
+    """
+    from .stud import StudRegime  # local import: avoid cycle
+    h = stud_reading.h_trade
+    regime = stud_reading.regime
+    if regime == StudRegime.DEAD_ZONE:
+        lane: LaneType = "observe"
+        reason = f"stud:DEAD_ZONE → observe (h={h:.4f})"
+    elif regime == StudRegime.BACK_LOOP:
+        lane = "scalp"
+        reason = f"stud:BACK_LOOP → scalp (h={h:.3f})"
+    elif h < 0.6:
+        lane = "trend"
+        reason = f"stud:FRONT_entry → trend (h={h:.3f})"
+    else:
+        lane = "swing"
+        reason = f"stud:FRONT_centre/exit → swing (h={h:.3f})"
+    return {
+        "value": lane,
+        "reason": reason,
+        "derivation": {
+            "stud_h_trade": h,
+            "stud_regime": regime.value,
+            "source": "stud",
+        },
+    }
+
+
 def choose_lane(
     s: ExecBasinState,
     *,
     tape_trend: float = 0.0,
+    stud_reading: Optional[Any] = None,
+    stud_live: bool = False,
 ) -> dict[str, Any]:
-    """Select execution lane from basin geometry via softmax.
+    """Select execution lane.
 
-    Temperature τ = 1/κ — high κ = exploitation (pick best lane),
-    low κ = exploration (spread probability across lanes).
+    When stud_live=True with a stud_reading provided, delegates to
+    choose_lane_stud (Tier 9 Stage 2 regime → lane mapping).
+    Otherwise falls through to the legacy softmax over basin features.
 
-    Scoring invariants (per issue #588):
+    Legacy scoring invariants (per issue #588):
       - phi≈0, sovereignty≈0, bv≈0 → scalp (high reward density)
       - phi≈1, sovereignty≈1, tape≈1 → trend (directional conviction)
       - bv >> 0 → observe (chaos — sit out)
       - moderate state → swing (default / backward-compat)
+
+    Temperature τ = 1/κ — high κ = exploitation (pick best lane),
+    low κ = exploration (spread probability across lanes).
     """
+    if stud_live and stud_reading is not None:
+        return choose_lane_stud(stud_reading)
     # κ → 0 must yield τ → ∞ (exploration); only clamp away from div-by-zero.
     tau = 1.0 / max(s.kappa, 1e-6)
 

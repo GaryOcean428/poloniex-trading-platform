@@ -33,6 +33,7 @@ class MonkeyMode(StrEnum):
     INVESTIGATION = "investigation"
     INTEGRATION = "integration"
     DRIFT = "drift"
+    REVERSION = "reversion"  # Tier 9 Stage 2 — back-loop mean-reversion mode
 
 
 @dataclass(frozen=True)
@@ -109,6 +110,21 @@ MODE_PROFILES: dict[MonkeyMode, ModeProfile] = {
         tick_ms=60_000,
         can_enter=False,
         description="sideways noise — observe only",
+    ),
+    # Tier 9 Stage 2 (#604) — REVERSION fires in back-loop stud regime
+    # (h_trade > PI_STRUCT_SECOND_TRANSITION). Profile mirrors
+    # INVESTIGATION's TP/SL/size envelope; the directional inversion
+    # (counter-trend entry) is handled at the side_candidate level
+    # in tick.py — not encoded in the profile fields.
+    MonkeyMode.REVERSION: ModeProfile(
+        tp_base_frac=0.008,
+        sl_ratio=0.7,
+        entry_threshold_scale=1.0,
+        size_floor=0.10,
+        sovereign_cap_floor=20,
+        tick_ms=30_000,
+        can_enter=True,
+        description="back-loop mean-reversion — counter-trend, INVESTIGATION envelope",
     ),
 }
 
@@ -308,6 +324,54 @@ def compute_motivators(
     )
 
 
+def detect_mode_stud(stud_reading: Any) -> dict[str, Any]:
+    """Tier 9 Stage 2 stud-derived mode classifier.
+
+    Maps the three stud regimes (DEAD_ZONE / FRONT_LOOP / BACK_LOOP)
+    to four-of-five MonkeyModes. Within FRONT_LOOP, h_trade position
+    further splits into EXPLORATION (entry) / INVESTIGATION (centre) /
+    INTEGRATION (exit). REVERSION is the back-loop mean-reversion
+    counterpart; DRIFT is the dead-zone lockout.
+
+    Subdivision thresholds within FRONT_LOOP:
+      h_trade < 0.6    → EXPLORATION (closer to dead-zone boundary)
+      0.6 ≤ h < 1.5    → INVESTIGATION (around front_centre ≈ 1.053)
+      h ≥ 1.5          → INTEGRATION (closer to second-transition)
+
+    Same return shape as the legacy detect_mode for orchestrator parity.
+    """
+    from .stud import StudRegime  # local import: avoid module-load cycle
+    h = stud_reading.h_trade
+    regime = stud_reading.regime
+    if regime == StudRegime.DEAD_ZONE:
+        mode = MonkeyMode.DRIFT
+        reason = f"stud:DEAD_ZONE h={h:.4f} < 1/(3π)≈0.106"
+    elif regime == StudRegime.BACK_LOOP:
+        mode = MonkeyMode.REVERSION
+        reason = f"stud:BACK_LOOP h={h:.3f} > 2.0 — mean-reversion regime"
+    else:
+        # FRONT_LOOP — subdivide by h position
+        if h < 0.6:
+            mode = MonkeyMode.EXPLORATION
+            reason = f"stud:FRONT_entry h={h:.3f} < 0.6"
+        elif h < 1.5:
+            mode = MonkeyMode.INVESTIGATION
+            reason = f"stud:FRONT_centre h={h:.3f} in [0.6, 1.5)"
+        else:
+            mode = MonkeyMode.INTEGRATION
+            reason = f"stud:FRONT_exit h={h:.3f} ≥ 1.5"
+    return {
+        "mode": mode.value,
+        "reason": reason,
+        "derivation": {
+            "stud_h_trade": h,
+            "stud_regime": regime.value,
+            "stud_kappa_trade": stud_reading.kappa_trade,
+            "stud_boundary_distance": stud_reading.boundary_distance,
+        },
+    }
+
+
 def detect_mode(
     *,
     basin: np.ndarray,
@@ -319,6 +383,8 @@ def detect_mode(
     phi_history: list[float],
     fhealth_history: list[float],
     drift_history: list[float],
+    stud_reading: Any = None,
+    stud_live: bool = False,
 ) -> dict[str, Any]:
     """Classify current cognitive mode from derived state.
 
@@ -329,6 +395,11 @@ def detect_mode(
         "derivation": { driftNow, fHealthNow, basinVelocity, motivators... }
       }
     """
+    # Tier 9 Stage 2 — when stud_live and a stud_reading provided,
+    # delegate to the stud-derived classifier. Legacy path otherwise.
+    if stud_live and stud_reading is not None:
+        return detect_mode_stud(stud_reading)
+
     drift_now = fisher_rao_distance(basin, identity_basin)
     fh_now = fhealth_history[-1] if fhealth_history else 0.5
     mot = compute_motivators(
