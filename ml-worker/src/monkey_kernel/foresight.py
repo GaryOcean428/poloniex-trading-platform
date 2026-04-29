@@ -34,6 +34,7 @@ import numpy as np
 
 from qig_core_local.geometry.fisher_rao import fisher_rao_distance, slerp_sqrt
 
+from .persistence import PersistentMemory
 from .state import BASIN_DIM
 
 
@@ -90,16 +91,33 @@ class ForesightPredictor:
     Append is O(1); predict is O(N) where N = trajectory length.
     """
 
-    def __init__(self, max_trajectory: int = 32) -> None:
+    def __init__(
+        self,
+        max_trajectory: int = 32,
+        *,
+        persistence: Optional[PersistentMemory] = None,
+        symbol: Optional[str] = None,
+    ) -> None:
+        self._persistence = persistence
+        self._symbol = symbol
         self._traj: Deque[Tuple[np.ndarray, float, float]] = deque(
             maxlen=max_trajectory,
         )
+        # Restore prior trajectory from Redis if available.
+        if persistence is not None and persistence.is_available and symbol:
+            for basin, phi, t_ms in persistence.load_foresight_trajectory(symbol):
+                self._traj.append((basin, phi, t_ms))
 
     def append(self, basin: np.ndarray, phi: float, t_ms: float) -> None:
         """Record a tick. Caller passes the basin AFTER tick update,
         the live phi, and a wall-clock timestamp in ms."""
         b = np.asarray(basin, dtype=np.float64)
         self._traj.append((b, float(phi), float(t_ms)))
+        # Write-through.
+        if self._persistence is not None and self._symbol:
+            self._persistence.push_foresight_step(
+                self._symbol, b, float(phi), float(t_ms),
+            )
 
     def predict(self, regime_weights: dict[str, float]) -> ForesightResult:
         """Geodesic extrapolation one tick ahead.

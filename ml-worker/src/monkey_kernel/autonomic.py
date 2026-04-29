@@ -41,6 +41,7 @@ import numpy as np
 # imported SleepPhase / SleepCycleManager / SleepCycleState from
 # autonomic continue to work.
 from .ocean import SleepCycleState, SleepPhase  # noqa: F401
+from .persistence import PersistentMemory
 from .state import NeurochemicalState
 
 logger = logging.getLogger("monkey_kernel.autonomic")
@@ -133,9 +134,35 @@ class AutonomicKernel:
     orchestrator's inputs.
     """
 
-    def __init__(self, label: str = "monkey-primary") -> None:
+    def __init__(
+        self,
+        label: str = "monkey-primary",
+        *,
+        persistence: Optional[PersistentMemory] = None,
+    ) -> None:
         self.label = label
+        self._persistence = persistence
         self._pending_rewards: deque[ActivityReward] = deque(maxlen=REWARD_QUEUE_MAX)
+        # Restore decay-aware reward queue from Redis if available.
+        # The persistence layer drops entries whose decay < 0.01 so
+        # we don't restore zero-contribution rewards.
+        if persistence is not None and persistence.is_available:
+            for raw in persistence.load_reward_queue(REWARD_HALF_LIFE_MS):
+                try:
+                    self._pending_rewards.append(ActivityReward(
+                        source=str(raw.get("source", "unknown")),
+                        symbol=raw.get("symbol"),
+                        dopamine_delta=float(raw.get("dopamine_delta", 0.0)),
+                        serotonin_delta=float(raw.get("serotonin_delta", 0.0)),
+                        endorphin_delta=float(raw.get("endorphin_delta", 0.0)),
+                        realized_pnl_usdt=float(raw.get("realized_pnl_usdt", 0.0)),
+                        pnl_fraction=float(raw.get("pnl_fraction", 0.0)),
+                        at_ms=float(raw.get("at_ms", time.time() * 1000.0)),
+                    ))
+                except (TypeError, ValueError) as err:
+                    logger.debug(
+                        "[%s.autonomic] skipping malformed reward: %s", label, err,
+                    )
 
     # ────────── reward ingress (pantheon ActivityReward pattern) ──────────
 
@@ -185,6 +212,18 @@ class AutonomicKernel:
             at_ms=time.time() * 1000.0,
         )
         self._pending_rewards.append(reward)
+        # Write-through to Redis. Failures fall through silently.
+        if self._persistence is not None and self._persistence.is_available:
+            self._persistence.push_reward({
+                "source": reward.source,
+                "symbol": reward.symbol,
+                "dopamine_delta": reward.dopamine_delta,
+                "serotonin_delta": reward.serotonin_delta,
+                "endorphin_delta": reward.endorphin_delta,
+                "realized_pnl_usdt": reward.realized_pnl_usdt,
+                "pnl_fraction": reward.pnl_fraction,
+                "at_ms": reward.at_ms,
+            })
         logger.info(
             "[%s.autonomic] reward source=%s symbol=%s pnl=%.4f pnlFrac=%.2f%% dop=%.3f ser=%.3f endo=%.3f",
             self.label,

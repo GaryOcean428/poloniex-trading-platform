@@ -23,8 +23,9 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass
 from statistics import stdev
-from typing import Deque, Literal, Tuple
+from typing import Deque, Literal, Optional, Tuple
 
+from .persistence import PersistentMemory
 from .state import KAPPA_STAR
 
 
@@ -56,12 +57,27 @@ class HeartMonitor:
     append is O(1); read is O(N) where N is the window length.
     """
 
-    def __init__(self, max_window: int = 60) -> None:
-        # Last N (kappa, t_ms) samples
+    def __init__(
+        self,
+        max_window: int = 60,
+        *,
+        persistence: Optional[PersistentMemory] = None,
+        symbol: Optional[str] = None,
+    ) -> None:
+        self._max_window = max_window
+        self._persistence = persistence
+        self._symbol = symbol
         self._samples: Deque[Tuple[float, float]] = deque(maxlen=max_window)
+        # Restore prior κ window from Redis if available.
+        if persistence is not None and persistence.is_available and symbol:
+            for kappa, t_ms in persistence.load_kappa_history(symbol):
+                self._samples.append((kappa, t_ms))
 
     def append(self, kappa: float, t_ms: float) -> None:
         self._samples.append((float(kappa), float(t_ms)))
+        # Write-through. Failures are silent (logged at debug in persistence).
+        if self._persistence is not None and self._symbol:
+            self._persistence.push_kappa(self._symbol, float(kappa), float(t_ms))
 
     def read(self) -> HeartState:
         n = len(self._samples)

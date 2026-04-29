@@ -1133,36 +1133,63 @@ _symbol_states: dict[tuple[str, str], SymbolState] = {}
 from monkey_kernel.ocean import Ocean  # noqa: E402
 from monkey_kernel.foresight import ForesightPredictor  # noqa: E402
 from monkey_kernel.heart import HeartMonitor  # noqa: E402
+from monkey_kernel.persistence import PersistentMemory  # noqa: E402
 
 _ocean_instances: dict[tuple[str, str], Ocean] = {}
 _foresight_instances: dict[tuple[str, str], ForesightPredictor] = {}
 _heart_instances: dict[tuple[str, str], HeartMonitor] = {}
 
+# qig-cache substrate — one PersistentMemory per (instance) so the
+# Redis namespace stays isolated between Position / Swing kernels.
+# Falls through to in-memory-only if REDIS_URL unset (warning logged
+# once at PersistentMemory construction time).
+_persistence_instances: dict[str, PersistentMemory] = {}
+
+
+def _get_persistence(instance_id: str) -> PersistentMemory:
+    if instance_id not in _persistence_instances:
+        _persistence_instances[instance_id] = PersistentMemory(instance_id=instance_id)
+    return _persistence_instances[instance_id]
+
 
 def _get_autonomic(instance_id: str) -> AutonomicKernel:
     if instance_id not in _autonomic_instances:
-        _autonomic_instances[instance_id] = AutonomicKernel(label=instance_id)
+        _autonomic_instances[instance_id] = AutonomicKernel(
+            label=instance_id,
+            persistence=_get_persistence(instance_id),
+        )
     return _autonomic_instances[instance_id]
 
 
 def _get_ocean(instance_id: str, symbol: str) -> Ocean:
     key = (instance_id, symbol)
     if key not in _ocean_instances:
-        _ocean_instances[key] = Ocean(label=f"{instance_id}:{symbol}")
+        # Ocean's persistence is per-instance (sleep state global to
+        # the kernel), not per-symbol; pass the same handle.
+        _ocean_instances[key] = Ocean(
+            label=f"{instance_id}:{symbol}",
+            persistence=_get_persistence(instance_id),
+        )
     return _ocean_instances[key]
 
 
 def _get_foresight(instance_id: str, symbol: str) -> ForesightPredictor:
     key = (instance_id, symbol)
     if key not in _foresight_instances:
-        _foresight_instances[key] = ForesightPredictor()
+        _foresight_instances[key] = ForesightPredictor(
+            persistence=_get_persistence(instance_id),
+            symbol=symbol,
+        )
     return _foresight_instances[key]
 
 
 def _get_heart(instance_id: str, symbol: str) -> HeartMonitor:
     key = (instance_id, symbol)
     if key not in _heart_instances:
-        _heart_instances[key] = HeartMonitor()
+        _heart_instances[key] = HeartMonitor(
+            persistence=_get_persistence(instance_id),
+            symbol=symbol,
+        )
     return _heart_instances[key]
 
 

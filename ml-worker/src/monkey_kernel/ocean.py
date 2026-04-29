@@ -38,6 +38,8 @@ import numpy as np
 
 from qig_core_local.geometry.fisher_rao import fisher_rao_distance
 
+from .persistence import PersistentMemory
+
 
 logger = logging.getLogger("monkey_kernel.ocean")
 
@@ -160,10 +162,49 @@ class Ocean:
     SLEEP_DURATION_MS: float = 15 * 60 * 1000.0    # 15 min
     DRIFT_TRIGGER_TICKS: int = 10                  # ~5 min at 30s tick
 
-    def __init__(self, label: str = "monkey-primary") -> None:
+    def __init__(
+        self,
+        label: str = "monkey-primary",
+        *,
+        persistence: Optional["PersistentMemory"] = None,
+    ) -> None:
         self.label = label
-        self.sleep_state = SleepCycleState()
+        self._persistence = persistence
+        # Load prior sleep state from Redis if available; the load
+        # applies timestamp-correction so a kernel that "slept"
+        # through downtime wakes at the right moment.
+        self.sleep_state = self._load_sleep_state_or_fresh()
         self._phi_history: Deque[float] = deque(maxlen=_PHI_HISTORY_MAX)
+
+    def _load_sleep_state_or_fresh(self) -> SleepCycleState:
+        if self._persistence is None or not self._persistence.is_available:
+            return SleepCycleState()
+        loaded = self._persistence.load_sleep_state(
+            sleep_duration_ms=self.SLEEP_DURATION_MS,
+        )
+        if loaded is None:
+            return SleepCycleState()
+        try:
+            phase = (
+                SleepPhase.SLEEP
+                if str(loaded.get("phase", "awake")).lower() == "sleep"
+                else SleepPhase.AWAKE
+            )
+            return SleepCycleState(
+                phase=phase,
+                phase_started_at_ms=float(loaded.get(
+                    "phase_started_at_ms", time.time() * 1000.0,
+                )),
+                last_sleep_ended_at_ms=float(loaded.get("last_sleep_ended_at_ms", 0.0)),
+                sleep_count=int(loaded.get("sleep_count", 0)),
+                drift_streak=int(loaded.get("drift_streak", 0)),
+            )
+        except Exception as err:  # noqa: BLE001 — never block construction
+            logger.warning(
+                "[%s.ocean] persistence load failed: %s; starting fresh",
+                self.label, err,
+            )
+            return SleepCycleState()
 
     # ────────────────── sleep state machine ──────────────────
 
@@ -301,6 +342,19 @@ class Ocean:
             and len(self._phi_history) >= 2
         ):
             intervention = "MUSHROOM_MICRO"
+
+        # Write-through to qig-cache. Every tick, sleep snapshot;
+        # interventions only when something fires (forensic ring).
+        if self._persistence is not None and self._persistence.is_available:
+            self._persistence.save_sleep_state(self.snapshot())
+            if intervention is not None:
+                self._persistence.push_intervention({
+                    "intervention": intervention,
+                    "phi": float(phi),
+                    "spread": float(spread),
+                    "coherence": float(coherence),
+                    "at_ms": float(now_ms),
+                })
 
         return OceanState(
             intervention=intervention,
