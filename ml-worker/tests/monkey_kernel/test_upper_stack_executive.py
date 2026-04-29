@@ -25,7 +25,7 @@ from monkey_kernel.heart import HeartMonitor  # noqa: E402
 from monkey_kernel.ocean import Ocean  # noqa: E402
 from monkey_kernel.perception import OHLCVCandle  # noqa: E402
 from monkey_kernel.tick import (  # noqa: E402
-    AccountContext, TickInputs, fresh_symbol_state, run_tick,
+    AccountContext, TickInputs, build_tick_inputs, fresh_symbol_state, run_tick,
 )
 
 
@@ -45,7 +45,7 @@ def _ohlcv(n: int = 60, base: float = 75000.0) -> list[OHLCVCandle]:
 
 
 def _inputs() -> TickInputs:
-    return TickInputs(
+    return build_tick_inputs(
         symbol="BTC_USDT_PERP", ohlcv=_ohlcv(), ml_signal="BUY", ml_strength=0.5,
         account=AccountContext(
             equity_fraction=0.05, margin_fraction=0.03, open_positions=0,

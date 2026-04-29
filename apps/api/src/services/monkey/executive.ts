@@ -19,6 +19,53 @@
 import { KAPPA_STAR, BASIN_DIM, type Basin, normalizedEntropy, maxMass, fisherRao } from './basin.js';
 import { MODE_PROFILES, MonkeyMode } from './modes.js';
 import type { NeurochemicalState } from './neurochemistry.js';
+import { basinDirection } from './perception.js';
+
+/**
+ * Agent-K direction reader — geometry only, no ml input.
+ *
+ * Pre-separation, the kernel's side_candidate was seeded from
+ * mlSignal (BUY/SELL) and could be flipped by an OVERRIDE_REVERSE
+ * basin+tape quorum. Post-separation, the kernel reads its own
+ * direction from basin geometry plus the tape-trend scalar; the
+ * emotion stack's confidence-vs-anxiety produces the same kind of
+ * "I'm too uncertain to act" veto the override quorum used to
+ * produce externally.
+ */
+export interface EmotionLite {
+  confidence: number;
+  anxiety: number;
+  wonder: number;
+  confusion: number;
+}
+
+export type KernelDir = 'long' | 'short' | 'flat';
+
+export function kernelDirection(
+  basin: Basin,
+  tapeTrend: number,
+  emotions: EmotionLite,
+): KernelDir {
+  const basinDir = basinDirection(basin);
+  const geometric = basinDir + 0.5 * tapeTrend;
+  if (emotions.confidence < emotions.anxiety) return 'flat';
+  if (geometric > 0) return 'long';
+  if (geometric < 0) return 'short';
+  return 'flat';
+}
+
+/**
+ * Agent-K entry conviction gate — no scalar threshold, no ml input.
+ *
+ * Conviction = confidence × (1 + wonder)
+ * Hesitation = anxiety + confusion
+ * Enter when conviction strictly exceeds hesitation.
+ */
+export function kernelShouldEnter(emotions: EmotionLite): boolean {
+  const conviction = emotions.confidence * (1.0 + emotions.wonder);
+  const hesitation = emotions.anxiety + emotions.confusion;
+  return conviction > hesitation;
+}
 
 /**
  * The complete basin state Monkey reads from every cycle.

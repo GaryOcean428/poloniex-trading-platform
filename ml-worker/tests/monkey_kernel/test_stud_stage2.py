@@ -39,7 +39,7 @@ from monkey_kernel.stud import (  # noqa: E402
     StudRegime, compute_stud_reading,
 )
 from monkey_kernel.tick import (  # noqa: E402
-    AccountContext, TickInputs, _override_threshold,
+    AccountContext, TickInputs, _override_threshold, build_tick_inputs,
     _override_threshold_stud, fresh_symbol_state, run_tick,
 )
 from monkey_kernel.topology_constants import (  # noqa: E402
@@ -275,7 +275,7 @@ def _ohlcv(n: int = 60, base: float = 75000.0) -> list[OHLCVCandle]:
 
 
 def _inputs() -> TickInputs:
-    return TickInputs(
+    return build_tick_inputs(
         symbol="BTC_USDT_PERP", ohlcv=_ohlcv(), ml_signal="BUY", ml_strength=0.5,
         account=AccountContext(
             equity_fraction=0.05, margin_fraction=0.03, open_positions=0,

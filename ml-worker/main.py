@@ -1727,7 +1727,16 @@ async def monkey_tick_run(request: Request):
         ),
         own_position_trade_id=acct_d.get("own_position_trade_id"),
     )
-    tick_inputs = TickInputs(
+    # Agent-separation: ml_signal/ml_strength feed perception only via
+    # build_tick_inputs — the kernel's TickInputs no longer carries
+    # those fields. Caller still passes them in the request body so
+    # perception can populate market-state observation dims 3..6.
+    from monkey_kernel.tick import build_tick_inputs as _build_tick_inputs
+    # Estimate session_age_ticks from prev_state if present (else 0).
+    prev_session_ticks = 0
+    if isinstance(payload.get("prev_state"), dict):
+        prev_session_ticks = int(payload["prev_state"].get("session_ticks", 0))
+    tick_inputs = _build_tick_inputs(
         symbol=str(inp["symbol"]),
         ohlcv=candles,
         ml_signal=str(inp.get("ml_signal", "HOLD")),
@@ -1739,6 +1748,7 @@ async def monkey_tick_run(request: Request):
         min_notional=float(inp.get("min_notional", 5.0)),
         size_fraction=float(inp.get("size_fraction", 1.0)),
         self_obs_bias=inp.get("self_obs_bias"),
+        session_age_ticks=prev_session_ticks,
     )
 
     # State resolution: caller-provided wins, else in-process cache, else

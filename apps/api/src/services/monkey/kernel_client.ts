@@ -181,7 +181,16 @@ export interface TickRunAccount {
   own_position_trade_id?: string | null;
 }
 
-/** Inputs for one tick, matching Python TickInputs. */
+/**
+ * Inputs for one tick on the /monkey/tick/run endpoint.
+ *
+ * Post agent-separation: `ml_signal` and `ml_strength` are passed
+ * here so the Python side's `build_tick_inputs` helper can feed
+ * them to perception (basin dims 3..6 — market state observation,
+ * not a kernel decision input). The Python TickInputs dataclass
+ * itself no longer carries them — see ml-worker/src/monkey_kernel/
+ * tick.py.
+ */
 export interface TickRunInputs {
   symbol: string;
   ohlcv: TickRunOHLCV[];

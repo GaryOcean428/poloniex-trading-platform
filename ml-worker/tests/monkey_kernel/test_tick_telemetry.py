@@ -27,6 +27,7 @@ from monkey_kernel.tick import (  # noqa: E402
     AccountContext,
     SymbolState,
     TickInputs,
+    build_tick_inputs,
     fresh_symbol_state,
     run_tick,
 )
@@ -50,7 +51,9 @@ def _synthetic_ohlcv(n: int = 60, base_price: float = 75000.0) -> list[OHLCVCand
 
 
 def _make_inputs(symbol: str = "BTC_USDT_PERP") -> TickInputs:
-    return TickInputs(
+    # Post agent-separation, ml_signal/ml_strength feed perception only
+    # via build_tick_inputs; the kernel's TickInputs sees only raw_basin.
+    return build_tick_inputs(
         symbol=symbol,
         ohlcv=_synthetic_ohlcv(),
         ml_signal="BUY",

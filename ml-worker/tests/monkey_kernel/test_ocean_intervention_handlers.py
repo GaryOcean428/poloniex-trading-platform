@@ -27,6 +27,7 @@ from monkey_kernel.tick import (  # noqa: E402
     AccountContext,
     SymbolState,
     TickInputs,
+    build_tick_inputs,
     fresh_symbol_state,
     run_tick,
 )
@@ -48,7 +49,7 @@ def _ohlcv(n: int = 60, base: float = 75000.0) -> list[OHLCVCandle]:
 
 
 def _inputs(symbol: str = "BTC_USDT_PERP") -> TickInputs:
-    return TickInputs(
+    return build_tick_inputs(
         symbol=symbol, ohlcv=_ohlcv(), ml_signal="BUY", ml_strength=0.5,
         account=AccountContext(
             equity_fraction=0.05, margin_fraction=0.03, open_positions=0,

@@ -43,9 +43,11 @@ from qig_core_local.geometry.fisher_rao import fisher_rao_distance
 from .basin import max_mass, normalized_entropy
 from .modes import MODE_PROFILES, MonkeyMode, effective_profile
 from .parameters import get_registry
+from .perception_scalars import basin_direction
 from .state import KAPPA_STAR, LaneType, NeurochemicalState
 
 Side = Literal["long", "short"]
+Direction = Literal["long", "short", "flat"]
 
 
 # Module-level registry handle. Per-call .get() hits the in-process cache
@@ -97,6 +99,85 @@ class ExecBasinState:
 
 def _clamp(v: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, v))
+
+
+# ═══════════════════════════════════════════════════════════════
+#  Agent K — geometry-only direction + entry conviction
+# ═══════════════════════════════════════════════════════════════
+#
+# Agent-separation cut: the kernel's *decisions* no longer gate on
+# ml-worker's BUY/SELL label or strength scalar. Direction is read
+# from basin geometry plus the tape-trend scalar; entry conviction
+# emerges from the kernel's own emotion stack. ml is now a sibling
+# agent (Agent M) running its own decision loop in TS — see
+# apps/api/src/services/ml_agent. Allocation between K and M flows
+# through the Arbiter (apps/api/src/services/arbiter).
+#
+# Why no fallback to ml: under the previous design ml's label seeded
+# `side_candidate` and ml's strength gated `current_entry_threshold`.
+# That coupling made it impossible to read the kernel's standalone
+# performance — every K trade was either confirming or overriding
+# ml. To learn whether K survives on its own, we must let it choose
+# entirely from its own state.
+
+
+def kernel_direction(
+    basin_state: ExecBasinState,
+    tape_trend: float,
+    emotions: Any,
+) -> Direction:
+    """Direction from basin geometry + tape + emotional conviction.
+
+    Pure geometric read:
+      basin_dir   ∈ [−1, +1] from momentum-spectrum simplex mass
+      tape_trend  ∈ [−1, +1] from log-return + tanh squash
+      geometric   = basin_dir + 0.5 * tape_trend
+
+    The emotion stack vetoes weak signals: when the kernel's anxiety
+    exceeds confidence, the geometric reading is too uncertain to act
+    on regardless of sign — return "flat".
+
+    `emotions` is duck-typed: any object exposing `.confidence` and
+    `.anxiety` floats works. EmotionState from emotions.py is the
+    canonical caller; tests pass simple namespaces.
+
+    Returns one of: "long", "short", "flat".
+    """
+    basin_dir = basin_direction(basin_state.basin)
+    geometric_signal = basin_dir + 0.5 * tape_trend
+    if emotions.confidence < emotions.anxiety:
+        return "flat"
+    if geometric_signal > 0:
+        return "long"
+    if geometric_signal < 0:
+        return "short"
+    return "flat"
+
+
+def kernel_should_enter(
+    emotions: Any,
+    motivators: Any = None,  # noqa: ARG001 — kept for API symmetry
+) -> bool:
+    """Entry conviction gate. Pure emotional read.
+
+    Conviction widens with confidence and is amplified by wonder
+    (curiosity-coupled). Hesitation is the union of anxiety
+    (transcendence × instability) and confusion (surprise-coupled
+    distance from identity).
+
+    Enter when conviction strictly exceeds hesitation. The gate is
+    intentionally aggressive — the kernel is one of two competing
+    agents and should not under-trade. Risk kernel + arbiter floor
+    bound the downside; the executive does not need to second-guess
+    its own conviction with a hard scalar threshold.
+
+    `motivators` parameter is preserved in the signature for
+    symmetry with future signed-motivator gating; current formula
+    operates on emotions only.
+    """
+    conviction = emotions.confidence * (1.0 + emotions.wonder)
+    hesitation = emotions.anxiety + emotions.confusion
+    return conviction > hesitation
 
 
 # ═══════════════════════════════════════════════════════════════

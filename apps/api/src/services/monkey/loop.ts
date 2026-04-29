@@ -75,18 +75,23 @@ import {
 import { resonanceBank } from './resonance_bank.js';
 import { computeSelfObservation, type SelfObservation } from './self_observation.js';
 import { WorkingMemory, type Bubble } from './working_memory.js';
-import { evaluateTurningSignal, shortsLive } from './turning_signal.js';
 import {
   currentEntryThreshold,
   currentLeverage,
   currentPositionSize,
+  kernelDirection,
+  kernelShouldEnter,
   shouldAutoFlatten,
   shouldDCAAdd,
   shouldExit,
   shouldProfitHarvest,
   shouldScalpExit,
   type BasinState,
+  type EmotionLite,
+  type KernelDir,
 } from './executive.js';
+import { getArbiter } from '../arbiter/index.js';
+import { mlAgentDecide, type MLAgentDecision } from '../ml_agent/index.js';
 
 /** Default Monkey watchlist — matches liveSignalEngine for side-by-side. */
 const DEFAULT_SYMBOLS = ['BTC_USDT_PERP', 'ETH_USDT_PERP'];
@@ -495,12 +500,7 @@ export class MonkeyKernel extends EventEmitter {
     // integration is high; when diffuse (high entropy), Φ is low (exploration).
     const phi = Math.max(0, Math.min(1, 1 - fHealth * 0.8));
 
-    // κ adapts from basin velocity × signal coupling. Stable near κ* when
-    // ml signal is coherent and basin is settled.
     const bv = state.lastBasin ? velocity(state.lastBasin, basin) : 0;
-    const couplingHealth = mlStrength;  // proxy until cross-symbol coupling lands
-    const kappaDelta = (couplingHealth - 0.5) * 5 - (bv - 0.2) * 10;
-    state.kappa = Math.max(20, Math.min(120, state.kappa * 0.8 + (KAPPA_STAR + kappaDelta) * 0.2));
 
     // Three regime weights — read directly from the first 3 basin coords
     const wQ = basin[0];
@@ -510,6 +510,18 @@ export class MonkeyKernel extends EventEmitter {
     const regimeWeights = regTotal > 0
       ? { quantum: wQ / regTotal, efficient: wE / regTotal, equilibrium: wEq / regTotal }
       : { quantum: 1 / 3, efficient: 1 / 3, equilibrium: 1 / 3 };
+
+    // κ adapts from basin velocity × internal coupling proxy. Pre-
+    // separation this used mlStrength directly; post-separation we
+    // derive coupling from the kernel's own state — equilibrium-weight
+    // dominance pulls coupling up, basin velocity pulls it down. No
+    // ml input on the κ-update path.
+    const bvTerm = Math.max(0, Math.min(1, bv * 5));
+    const couplingHealth = Math.max(
+      0, Math.min(1, 0.5 + (regimeWeights.equilibrium - 0.33) * 1.5 - bvTerm * 0.3),
+    );
+    const kappaDelta = (couplingHealth - 0.5) * 5 - (bv - 0.2) * 10;
+    state.kappa = Math.max(20, Math.min(120, state.kappa * 0.8 + (KAPPA_STAR + kappaDelta) * 0.2));
 
     // Φ delta for dopamine
     const lastPhi = state.phiHistory[state.phiHistory.length - 1] ?? phi;
@@ -611,68 +623,41 @@ export class MonkeyKernel extends EventEmitter {
       this.selfObs = await computeSelfObservation(24, this.instanceId);
       this.selfObsLastUpdate = now;
     }
-    // Side candidate: start from ML signal, then allow Monkey's own
-    // direction-reading to override if it strongly disagrees (v0.5.2).
-    // ml-worker has been observed 100 % BUY-biased — so her own basin +
-    // recent tape have to be able to say "no, short instead" when the
-    // evidence is clear. Override fires ONLY when both her basin view
-    // AND the tape trend agree against ml-worker (two-signal quorum).
+    // Side candidate from kernel geometry alone. Pre-separation: ml_side
+    // seeded the candidate, then OVERRIDE_REVERSE / TURNING_SIGNAL could
+    // flip it based on basin+tape quorums. Post-separation: the kernel
+    // reads its own direction from basin geometry + tape via
+    // kernelDirection(); the emotion-proxy's confidence-vs-anxiety
+    // produces the same uncertainty veto. No ml_side, no OVERRIDE_REVERSE,
+    // no TURNING_SIGNAL — there's no ml to override.
     const basinDir = computeBasinDirection(basin);
     const tapeTrend = computeTrendProxy(ohlcv);
-    // v0.8.7e: expose latest basin/tape snapshot for LiveSignal's
-    // inter-engine agreement gate (Option C). Written before the
-    // override decision so LiveSignal sees raw directional state.
     state.latestBasinSnapshot = {
       basinDir,
       tapeTrend,
       computedAtMs: Date.now(),
     };
-    const mlSide: 'long' | 'short' = mlSignal === 'SELL' ? 'short' : 'long';
-    let sideCandidate: 'long' | 'short' = mlSide;
-    let sideOverride = false;
-    let turningSignalFired = false;
-    // Agreement: if both basin and tape are strongly negative, short;
-    // if both strongly positive, long; else defer to ml.
-    const OVERRIDE_THRESHOLD = 0.35;
-    if (basinDir < -OVERRIDE_THRESHOLD && tapeTrend < -OVERRIDE_THRESHOLD && mlSide === 'long') {
-      sideCandidate = 'short';
-      sideOverride = true;
-    } else if (basinDir > OVERRIDE_THRESHOLD && tapeTrend > OVERRIDE_THRESHOLD && mlSide === 'short') {
-      sideCandidate = 'long';
-      sideOverride = true;
-    }
-
-    // #575 — shorts as turning-signal. See ./turning_signal.ts for the
-    // condition logic + thresholds. Captures the turning-point earlier
-    // than OVERRIDE_REVERSE without retraining ml-worker.
-    if (evaluateTurningSignal({
-      sideCandidate, sideOverride, mlSignal, mlStrength, basinDir, tapeTrend,
-    })) {
-      sideCandidate = 'short';
-      sideOverride = true;
-      turningSignalFired = true;
-    }
-
-    // #575 gate — sequencing protection. Until #574 (resonance bank dedup)
-    // is merged AND #579 (pre-fix bubble quarantine) is verified clean in
-    // production, refuse to short. Default off via MONKEY_SHORTS_LIVE=false;
-    // flip to true after the dependent merges soak. The gate applies to
-    // BOTH OVERRIDE_REVERSE and turning-signal paths — we want a clean
-    // controlled re-activation of shorts, not partial enablement.
-    const SHORTS_LIVE = shortsLive();
-    const sideShortRefused = sideCandidate === 'short' && !SHORTS_LIVE;
-    if (sideShortRefused) {
-      logger.info('[Monkey] short refused — MONKEY_SHORTS_LIVE=false', {
-        symbol,
-        mlSide,
-        mlStrength,
-        basinDir,
-        tapeTrend,
-        wantedShort: true,
-        viaOverride: sideOverride && !turningSignalFired,
-        viaTurningSignal: turningSignalFired,
-      });
-    }
+    // Emotion proxy: TS loop does not run the full Layer 2B emotion
+    // stack (the Python kernel is canonical for that). Here we derive a
+    // four-component proxy from neurochemistry — confidence ≈ serotonin
+    // (stability), anxiety ≈ norepinephrine (surprise), wonder ≈
+    // dopamine (reward sensitivity), confusion ≈ |phiDelta| (recent
+    // disturbance). Same algebraic shape as the Python emotion stack
+    // for the kernel-direction / kernel-should-enter purpose; full
+    // parity arrives at the v0.8.8 cut-over to Python-canonical loop.
+    const emotions: EmotionLite = {
+      confidence: nc.serotonin,
+      anxiety: nc.norepinephrine,
+      wonder: Math.max(0, nc.dopamine - 0.5) * 2,
+      confusion: Math.min(1, Math.abs(phiDelta) * 2),
+    };
+    const kernelDir: KernelDir = kernelDirection(basin, tapeTrend, emotions);
+    // For self-obs lookup we still need a long/short — flat resolves to
+    // long for the bias index; the entry gate vetoes flat below.
+    const sideCandidate: 'long' | 'short' = kernelDir === 'short' ? 'short' : 'long';
+    // sideOverride remains in derivation telemetry for log compatibility,
+    // always false post-separation (no quorum to override).
+    const sideOverride = false;
     const selfObsBias = this.selfObs?.entryBias[mode]?.[sideCandidate] ?? 1.0;
 
     // v0.5: Basin sync — publish own state; pull observer-effect influence.
@@ -713,24 +698,31 @@ export class MonkeyKernel extends EventEmitter {
     const effectiveSizeFraction = availableEquity * this.sizeFraction < minNeededForMinNotional
       ? 1.0
       : this.sizeFraction;
-    const cappedEquity = availableEquity * effectiveSizeFraction;
+    // Agent-separation: Arbiter splits the kernel's allotted equity
+    // between K (this kernel) and M (mlAgentDecide below). K's share
+    // is what currentPositionSize sees; M operates on M's share later
+    // in the tick. Default 50/50 until each side has 5+ closed trades.
+    const arbiter = getArbiter();
+    const allocation = arbiter.allocate(availableEquity * effectiveSizeFraction);
+    const cappedEquity = allocation.k;
     const size = currentPositionSize(basinState, cappedEquity, minNotional, leverage.value, bankSize, mode);
     const autoFlatten = shouldAutoFlatten(basinState, state.fHealthHistory);
 
-    // 6. DECIDE — propose action
+    // 6. DECIDE — propose action (Agent K — kernel-only)
     let action: string;
     let reason: string;
     const derivation: Record<string, unknown> = {
       phi, kappa: state.kappa, sovereignty, basinVelocity: bv,
       regimeWeights, nc,
-      fHealth, mlSignal, mlStrength,
+      fHealth, couplingHealth,
       mode: { value: mode, reason: modeDecision.reason, ...modeDecision.derivation },
       selfObsBias,
       sideCandidate,
+      kernelDirection: kernelDir,
       basinDir,
       tapeTrend,
-      mlSide,
       sideOverride,
+      emotions,
     };
 
     // v0.6.3: Monkey's "held side" is scoped to HER OWN open rows only.
@@ -819,34 +811,11 @@ export class MonkeyKernel extends EventEmitter {
           action = 'exit';
           reason = exit.reason;
           derivation.exit = exit.derivation;
-        } else if (
-          // 3b. v0.7.1 — OVERRIDE REVERSAL. When basin + tape quorum
-          // flipped sideCandidate AGAINST the currently-held side, she
-          // wants to reverse, not add. Poloniex v3 one-way position
-          // mode NETS a reverse-direction order against the existing
-          // position — so naive "submit SHORT while LONG" just cancels
-          // the long and leaves the exchange flat. Fix: flatten-first,
-          // then submit new direction. Observed 2026-04-21 09:29 UTC
-          // when she attempted a basin-override short while ETH long
-          // was open; short vanished via netting.
-          sideOverride &&
-          sideCandidate !== heldSide &&
-          MODE_PROFILES[mode].canEnter &&
-          mlStrength >= entryThr.value &&
-          size.value > 0 &&
-          !sideShortRefused
-        ) {
-          action = sideCandidate === 'long' ? 'reverse_long' : 'reverse_short';
-          reason = `OVERRIDE_REVERSE[${heldSide}→${sideCandidate}] basin=${basinDir.toFixed(2)} tape=${tapeTrend.toFixed(2)}; flatten-then-open margin=${size.value.toFixed(2)} lev=${leverage.value}x`;
-          derivation.entryThreshold = entryThr.derivation;
-          derivation.size = size.derivation;
-          derivation.leverage = leverage.derivation;
-          derivation.isReverse = true;
         } else {
-          // 4. v0.6.2 — DCA add eligibility. Can she add to the position
-          //    at a better price while the ML signal still supports the
-          //    side? Five guard rails in shouldDCAAdd; plus ML-gate +
-          //    mode-entry-allowed + size>0 + matching side here.
+          // 4. DCA add eligibility — kernel-conviction gated post-
+          // separation. OVERRIDE_REVERSE has been deleted (no ml_side
+          // to flip against); the kernel will exit naturally via Loop 2
+          // if its direction reads against held_side persistently.
           const initialEntryPrice = openRow ? Number(openRow.entry_price) : lastPrice;
           const dca = shouldDCAAdd({
             heldSide,
@@ -862,10 +831,9 @@ export class MonkeyKernel extends EventEmitter {
           if (
             dca.value &&
             MODE_PROFILES[mode].canEnter &&
-            mlStrength >= entryThr.value &&
-            mlSignal !== 'HOLD' &&
-            size.value > 0 &&
-            !sideShortRefused
+            kernelDir !== 'flat' &&
+            kernelShouldEnter(emotions) &&
+            size.value > 0
           ) {
             // DCA add — treated as enter_long/short by execute block but
             // tagged via derivation.dca so the persisted row reflects it.
@@ -883,30 +851,31 @@ export class MonkeyKernel extends EventEmitter {
       }
     } else if (
       MODE_PROFILES[mode].canEnter &&
-      mlStrength >= entryThr.value &&
-      mlSignal !== 'HOLD' &&
-      size.value > 0 &&
-      !sideShortRefused
+      kernelDir !== 'flat' &&
+      kernelShouldEnter(emotions) &&
+      size.value > 0
     ) {
-      // sideCandidate already reflects any basin+tape override of the ML signal.
       action = sideCandidate === 'long' ? 'enter_long' : 'enter_short';
-      const overrideTag = sideOverride
-        ? ` OVERRIDE(basin${basinDir.toFixed(2)}/tape${tapeTrend.toFixed(2)})`
-        : '';
-      const turningTag = turningSignalFired ? ' TURNING_SIGNAL' : '';
-      reason = `[${mode}] ml ${mlSignal}@${mlStrength.toFixed(3)} >= thr ${entryThr.value.toFixed(3)}; side=${sideCandidate}${overrideTag}${turningTag}; margin=${size.value.toFixed(2)} lev=${leverage.value}x notional=${(size.value * leverage.value).toFixed(2)}`;
+      const conviction = emotions.confidence * (1 + emotions.wonder);
+      const hesitation = emotions.anxiety + emotions.confusion;
+      reason = `[${mode}] kernel conv=${conviction.toFixed(3)} > hes=${hesitation.toFixed(3)}; side=${sideCandidate}; margin=${size.value.toFixed(2)} lev=${leverage.value}x notional=${(size.value * leverage.value).toFixed(2)}`;
       derivation.entryThreshold = entryThr.derivation;
       derivation.size = size.derivation;
       derivation.leverage = leverage.derivation;
+      derivation.kernelEntry = { conviction, hesitation };
     } else {
       action = 'hold';
+      const conv = emotions.confidence * (1 + emotions.wonder);
+      const hes = emotions.anxiety + emotions.confusion;
       const why = !MODE_PROFILES[mode].canEnter
         ? `mode=${mode} blocks entry (${MODE_PROFILES[mode].description})`
-        : mlStrength < entryThr.value
-          ? `[${mode}] ml ${mlStrength.toFixed(3)} < thr ${entryThr.value.toFixed(3)}`
-          : size.value <= 0
-          ? `[${mode}] size ${size.value.toFixed(2)} below min notional ${minNotional.toFixed(2)}`
-          : 'no qualifying signal';
+        : kernelDir === 'flat'
+          ? `[${mode}] kernel flat — conf=${emotions.confidence.toFixed(3)} <= anx=${emotions.anxiety.toFixed(3)} or geometry zero`
+          : !kernelShouldEnter(emotions)
+            ? `[${mode}] kernel conviction ${conv.toFixed(3)} <= hesitation ${hes.toFixed(3)}`
+            : size.value <= 0
+              ? `[${mode}] size ${size.value.toFixed(2)} below min notional ${minNotional.toFixed(2)}`
+              : 'no qualifying signal';
       reason = why;
       derivation.entryThreshold = entryThr.derivation;
     }
@@ -988,6 +957,7 @@ export class MonkeyKernel extends EventEmitter {
           trajectoryId: null,
           isDCAAdd: isDCA,
           dcaAddIndex: isDCA ? state.dcaAddCount + 1 : 0,
+          agent: 'K',
         });
         executed = execResult.executed;
         monkeyOrderId = execResult.orderId;
@@ -1096,6 +1066,75 @@ export class MonkeyKernel extends EventEmitter {
             reason += ` | flatten failed: ${closeResult.reason}; reverse aborted`;
           }
         }
+      }
+    }
+
+    // ── Agent M (ml control arm) ─────────────────────────────────
+    // Run M after K. K's allocation came from arbiter.k, M's from
+    // arbiter.m. Both decisions persist with their `agent` tag in
+    // autonomous_trades; outcome events feed arbiter.recordSettled
+    // when each closes. Per the agent-separation directive, both
+    // agents ship live under MONKEY_EXECUTE — no separate flag.
+    let mResult: MLAgentDecision | null = null;
+    try {
+      mResult = mlAgentDecide({
+        symbol,
+        ohlcv,
+        mlSignal: mlSignal as 'BUY' | 'SELL' | 'HOLD',
+        mlStrength,
+        account: {
+          availableEquityUsdt: allocation.m,
+          heldSide: exchangeHeldSide,
+          lastPrice,
+          minNotional,
+        },
+      });
+      derivation.mAgent = {
+        action: mResult.action,
+        size_usdt: mResult.size_usdt,
+        leverage: mResult.leverage,
+        reason: mResult.reason,
+      };
+    } catch (err) {
+      logger.debug('[Monkey] mlAgentDecide failed (fail-soft)', {
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+    derivation.arbiter = arbiter.snapshot(availableEquity * effectiveSizeFraction);
+
+    // M execution — gated by the same MONKEY_EXECUTE flag as K.
+    // Only fires fresh entries; M-side exits and DCA management
+    // are not yet wired (initial agent-separation cut handles
+    // entries; subsequent PR adds M's exit-by-signal-flip flow).
+    if (
+      process.env.MONKEY_EXECUTE === 'true' &&
+      mResult !== null &&
+      (mResult.action === 'enter_long' || mResult.action === 'enter_short') &&
+      mResult.size_usdt > 0
+    ) {
+      try {
+        const mExec = await this.executeEntry({
+          symbol,
+          side: mResult.action === 'enter_long' ? 'long' : 'short',
+          marginUsdt: mResult.size_usdt,
+          leverage: mResult.leverage,
+          entryPrice: lastPrice,
+          minNotional,
+          phi,
+          kappa: state.kappa,
+          sovereignty,
+          trajectoryId: null,
+          isDCAAdd: false,
+          dcaAddIndex: 0,
+          agent: 'M',
+        });
+        derivation.mAgentExecuted = mExec.executed;
+        derivation.mAgentOrderId = mExec.orderId;
+        derivation.mAgentExecReason = mExec.reason;
+      } catch (err) {
+        logger.debug('[Monkey] M execute failed (fail-soft)', {
+          err: err instanceof Error ? err.message : String(err),
+        });
       }
     }
 
@@ -1469,6 +1508,8 @@ export class MonkeyKernel extends EventEmitter {
     isDCAAdd?: boolean;
     /** 0 = initial entry; 1, 2, … for nth DCA add. */
     dcaAddIndex?: number;
+    /** Agent-separation tag — 'K' (kernel) or 'M' (ml). Default 'K'. */
+    agent?: 'K' | 'M';
   }): Promise<{ executed: boolean; orderId: string | null; reason: string }> {
     const { symbol, side, marginUsdt, leverage, entryPrice, minNotional } = req;
     const notionalUsdt = marginUsdt * leverage;
@@ -1589,16 +1630,17 @@ export class MonkeyKernel extends EventEmitter {
     // Format: monkey|kernel=<id>|phi=...|kappa=...|sov=...|dca=<N>|src=<ver>
     try {
       const dcaTag = req.isDCAAdd ? `|dca=${req.dcaAddIndex ?? 1}` : '';
+      const agent = req.agent ?? 'K';
       const reasonEncoded =
-        `monkey|kernel=${this.instanceId}|phi=${req.phi.toFixed(3)}|kappa=${req.kappa.toFixed(2)}|sov=${req.sovereignty.toFixed(3)}${dcaTag}|src=v0.6.2`;
+        `monkey|kernel=${this.instanceId}|agent=${agent}|phi=${req.phi.toFixed(3)}|kappa=${req.kappa.toFixed(2)}|sov=${req.sovereignty.toFixed(3)}${dcaTag}|src=v0.8.8-agent-sep`;
       await pool.query(
         `INSERT INTO autonomous_trades
            (user_id, symbol, side, entry_price, quantity, leverage,
-            confidence, reason, order_id, paper_trade, engine_version)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+            confidence, reason, order_id, paper_trade, engine_version, agent)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
         [
           userId, symbol, exchangeSide, entryPrice, formattedSize, leverage,
-          req.phi, reasonEncoded, orderId, false, getEngineVersion(),
+          req.phi, reasonEncoded, orderId, false, getEngineVersion(), agent,
         ],
       );
     } catch (err) {

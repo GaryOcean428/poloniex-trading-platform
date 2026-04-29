@@ -214,7 +214,8 @@ class TestRunTickWriteThrough:
         from monkey_kernel.ocean import Ocean
         from monkey_kernel.perception import OHLCVCandle
         from monkey_kernel.tick import (
-            AccountContext, TickInputs, fresh_symbol_state, run_tick,
+            AccountContext, TickInputs, build_tick_inputs,
+            fresh_symbol_state, run_tick,
         )
         pm = PersistentMemory(instance_id="test")
         ocean = Ocean(label="test", persistence=pm)
@@ -235,7 +236,7 @@ class TestRunTickWriteThrough:
             ))
             p = np_
 
-        inputs = TickInputs(
+        inputs = build_tick_inputs(
             symbol="BTC", ohlcv=ohlcv, ml_signal="BUY", ml_strength=0.5,
             account=AccountContext(
                 equity_fraction=0.05, margin_fraction=0.03, open_positions=0,
