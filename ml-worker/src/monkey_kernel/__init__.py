@@ -30,7 +30,6 @@ from .autonomic import (
     AutonomicKernel,
     AutonomicTickInputs,
     AutonomicTickResult,
-    SleepCycleManager,
     SleepPhase,
 )
 from .executive import (
@@ -123,7 +122,6 @@ __all__ = [
     "NeurochemicalState",
     "ParamValue",
     "ParameterRegistry",
-    "SleepCycleManager",
     "SleepPhase",
     "SymbolState",
     "TickDecision",

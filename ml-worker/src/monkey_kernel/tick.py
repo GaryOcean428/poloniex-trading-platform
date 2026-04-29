@@ -42,6 +42,7 @@ from qig_core_local.geometry.fisher_rao import (
 )
 
 from .autonomic import AutonomicKernel, AutonomicTickInputs
+from .ocean import Ocean
 from .basin import normalized_entropy, velocity
 from .executive import (
     ExecBasinState,
@@ -188,12 +189,19 @@ def run_tick(
     inputs: TickInputs,
     state: SymbolState,
     autonomic: AutonomicKernel,
+    ocean: Optional[Ocean] = None,
 ) -> tuple[TickDecision, SymbolState]:
     """Execute one decision tick. Returns (decision, new_state).
 
     `state` is mutated in place — the return is a convenience.
     `autonomic` carries NC reward state across ticks (per-instance, not
     per-symbol; shared across symbols within one kernel).
+    `ocean` is the autonomic-intervention authority (#599 refactor).
+    Optional for backward-compat callers; a default Ocean is created
+    if none is supplied. The intervention is exposed in the decision's
+    `derivation` block but is not yet routed to executive (observation-
+    only at this stage; Tier 7's full implementation hooks the
+    intervention handlers).
     """
     ohlcv = inputs.ohlcv
     if len(ohlcv) < 50:
@@ -245,6 +253,22 @@ def run_tick(
 
     is_flat = inputs.account.exchange_held_side is None
     now_ms = time.time() * 1000.0
+
+    # Ocean is the single autonomic-intervention authority (#599 refactor).
+    # Sleep state, DREAM/MUSHROOM_MICRO/ESCAPE triggers — all computed
+    # here. Caller chemistry (autonomic) downstream consumes is_awake.
+    if ocean is None:
+        ocean = Ocean(label="monkey-primary")
+    ocean_state = ocean.observe(
+        phi=phi,
+        basin=basin,
+        current_mode=state.last_mode or "investigation",
+        is_flat=is_flat,
+        now_ms=now_ms,
+    )
+    is_awake = ocean_state.sleep_phase == "AWAKE"
+    woke_this_tick = ocean_state.intervention == "WAKE"
+
     ac_result = autonomic.tick(AutonomicTickInputs(
         phi_delta=phi_delta,
         basin_velocity=bv,
@@ -252,8 +276,8 @@ def run_tick(
         quantum_weight=regime_weights["quantum"],
         kappa=state.kappa,
         external_coupling=coupling_health,
-        current_mode=state.last_mode or "investigation",
-        is_flat=is_flat,
+        is_awake=is_awake,
+        woke=woke_this_tick,
         now_ms=now_ms,
     ))
     nc = ac_result.nc
