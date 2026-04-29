@@ -181,7 +181,7 @@ poloniex-trading-platform/
 **Technology Stack:**
 - Node.js: 20.x LTS (managed by Railpack)
 - Yarn: 4.9.2 (managed by Corepack)
-- Python: 3.12 (stable ABI for C-extension ML dependencies)
+- Python: 3.12.x (stable ABI for C-extension ML dependencies)
 - React: 19.x
 - TypeScript: 5.9+
 
