@@ -8,7 +8,7 @@
   "build": {
     "provider": "python",
     "packages": {
-      "python": "3.11"
+      "python": "3.12"
     },
     "steps": {
       "install": {
