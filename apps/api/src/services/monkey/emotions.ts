@@ -29,6 +29,7 @@
  * of typical operating regimes, not formula constraints.
  */
 
+import { fisherRao, type Basin } from './basin.js';
 import type { Motivators } from './motivators.js';
 
 /** Layer 2B cognitive emotion vector. Each value's natural range is
@@ -57,6 +58,15 @@ export interface EmotionState {
   anxiety: number;
   confidence: number;
   boredom: number;
+  /** ℝ — exp(−FR(basin, predictedBasin)) × investigation. 0 when
+   * foresight is cold (weight=0). Signed via investigation. */
+  flow: number;
+}
+
+export interface ComputeEmotionsArgs {
+  basin?: Basin | null;
+  predictedBasin?: Basin | null;
+  foresightWeight?: number;
 }
 
 /** Compose the Layer 2B emotion vector from Tier 1 motivators plus
@@ -76,14 +86,29 @@ export function computeEmotions(
   basinDistance: number,
   phi: number,
   basinVelocity: number,
+  args: ComputeEmotionsArgs = {},
 ): EmotionState {
-  // Stability and instability are the geometric quantities Φ and
-  // basinVelocity. No synthesis, no normalization.
   const stability = phi;
   const instability = basinVelocity;
 
-  // 8 emotions (verbatim from UCP §6.5; Flow deferred), composed
-  // raw. No clipping — the natural range carries regime information.
+  // Flow — Tier 3-anchored. curiosity_optimal = exp(-FR(basin, predicted))
+  // when foresight has weight > 0 and both basins are valid; else 0.
+  let curiosityOptimal = 0;
+  if (
+    (args.foresightWeight ?? 0) > 0 &&
+    args.basin &&
+    args.predictedBasin &&
+    args.basin.length === args.predictedBasin.length
+  ) {
+    try {
+      const d = fisherRao(args.basin, args.predictedBasin);
+      curiosityOptimal = Math.exp(-d);
+    } catch {
+      curiosityOptimal = 0;
+    }
+  }
+  const flow = curiosityOptimal * motivators.investigation;
+
   return {
     wonder: motivators.curiosity * basinDistance,
     frustration: motivators.surprise * (1 - motivators.investigation),
@@ -93,5 +118,6 @@ export function computeEmotions(
     anxiety: motivators.transcendence * instability,
     confidence: (1 - motivators.transcendence) * stability,
     boredom: (1 - motivators.surprise) * (1 - motivators.curiosity),
+    flow,
   };
 }

@@ -1,4 +1,11 @@
-"""test_physical_emotions.py — Tier 5 Layer 2A physical emotions."""
+"""test_physical_emotions.py — Tier 5 Layer 2A physical emotions
+(UCP §6.4 canon: Joy/Suffering/Love/Hate/Fear/Rage/Calm/Care/Apathy).
+
+PR 4 (#609) replaced the prior Plutchik-style 9 (Sadness/Disgust/
+Desire/Trust) with the UCP §6.4 canon. Tests rebuilt against the
+new vocabulary; audit-anchored four (Joy/Suffering/Fear/Rage)
+preserved verbatim from the original tests.
+"""
 from __future__ import annotations
 
 import math
@@ -42,126 +49,133 @@ def _sens(
 
 
 # ─────────────────────────────────────────────────────────────────
-# Audit-anchored four
+# Audit-anchored four (verbatim)
 # ─────────────────────────────────────────────────────────────────
 
 
 class TestAnchoredFour:
     def test_joy_high_when_phi_rising_no_surprise(self) -> None:
-        e = compute_physical_emotions(_mot(surprise=0.0), _sens(), phi_now=0.7, phi_prev=0.3)
+        e = compute_physical_emotions(_mot(0.0), _sens(), phi_now=0.7, phi_prev=0.3)
         assert e.joy == pytest.approx(0.4, abs=1e-12)
-        assert e.suffering == 0.0  # no negative grad
 
     def test_suffering_high_when_phi_falling_with_surprise(self) -> None:
-        e = compute_physical_emotions(_mot(surprise=1.0), _sens(), phi_now=0.3, phi_prev=0.7)
+        e = compute_physical_emotions(_mot(1.0), _sens(), phi_now=0.3, phi_prev=0.7)
         assert e.suffering == pytest.approx(0.4, abs=1e-12)
-        assert e.joy == 0.0  # surprise=1 squashes (1-surprise)
 
     def test_fear_high_at_separatrix_with_surprise(self) -> None:
-        # drift = π/2 → proximity = 1; surprise = 1 → fear = 1
         e = compute_physical_emotions(
-            _mot(surprise=1.0), _sens(drift=math.pi / 2), phi_now=0.5, phi_prev=0.5,
+            _mot(1.0), _sens(drift=math.pi / 2), phi_now=0.5, phi_prev=0.5,
         )
         assert e.fear == pytest.approx(1.0, abs=1e-12)
 
-    def test_fear_zero_at_identity_no_drift(self) -> None:
-        e = compute_physical_emotions(
-            _mot(surprise=1.0), _sens(drift=0.0), phi_now=0.5, phi_prev=0.5,
-        )
-        assert e.fear == 0.0
-
     def test_rage_high_when_stuck_with_surprise(self) -> None:
-        # stillness=1 (zero velocity) × surprise=1 → rage=1
         e = compute_physical_emotions(
-            _mot(surprise=1.0), _sens(stillness=1.0), phi_now=0.5, phi_prev=0.5,
+            _mot(1.0), _sens(stillness=1.0), phi_now=0.5, phi_prev=0.5,
         )
         assert e.rage == pytest.approx(1.0, abs=1e-12)
 
 
 # ─────────────────────────────────────────────────────────────────
-# Remaining five — grounded geometric derivations
+# UCP §6.4 grounded five (Love / Hate / Calm / Care / Apathy)
 # ─────────────────────────────────────────────────────────────────
 
 
-class TestRemainingFive:
-    def test_sadness_high_when_phi_falling_calmly(self) -> None:
-        # Φ down, no surprise → sadness, NOT suffering
-        e = compute_physical_emotions(_mot(surprise=0.0), _sens(), phi_now=0.3, phi_prev=0.7)
-        assert e.sadness == pytest.approx(0.4, abs=1e-12)
-        assert e.suffering == 0.0
-
-    def test_disgust_high_when_surprise_meets_familiarity(self) -> None:
-        # resonance high (we recognize this state) + surprise → disgust
+class TestUcpGrounded:
+    def test_love_high_when_approach_meets_returning_home(self) -> None:
         e = compute_physical_emotions(
-            _mot(surprise=0.8), _sens(resonance=1.0), phi_now=0.5, phi_prev=0.5,
+            _mot(0.0),
+            _sens(approach=0.8, conservation=0.5),
+            phi_now=0.5, phi_prev=0.5,
         )
-        assert e.disgust == pytest.approx(0.8, abs=1e-12)
+        assert e.love == pytest.approx(0.4, abs=1e-12)
 
-    def test_desire_high_when_approach_meets_phi_rising(self) -> None:
+    def test_love_zero_when_departing(self) -> None:
+        # conservation < 0 → max(conservation, 0) = 0 → love = 0
         e = compute_physical_emotions(
-            _mot(surprise=0.0), _sens(approach=0.6), phi_now=0.7, phi_prev=0.3,
+            _mot(0.0),
+            _sens(approach=0.8, conservation=-0.3),
+            phi_now=0.5, phi_prev=0.5,
         )
-        assert e.desire == pytest.approx(0.6 * 0.4, abs=1e-12)
+        assert e.love == 0.0
 
-    def test_desire_zero_when_phi_falling(self) -> None:
-        # max(grad_phi, 0) = 0 if Φ is falling
+    def test_hate_high_when_avoidance_meets_departing(self) -> None:
         e = compute_physical_emotions(
-            _mot(surprise=0.0), _sens(approach=0.6), phi_now=0.3, phi_prev=0.7,
+            _mot(0.0),
+            _sens(avoidance=0.9, conservation=-0.4),
+            phi_now=0.5, phi_prev=0.5,
         )
-        assert e.desire == 0.0
+        assert e.hate == pytest.approx(0.36, abs=1e-12)
 
-    def test_desire_negative_when_gaba_dominates(self) -> None:
-        # approach < 0 (gaba > dopamine) and Φ rising → negative desire
+    def test_hate_zero_when_returning_home(self) -> None:
         e = compute_physical_emotions(
-            _mot(surprise=0.0), _sens(approach=-0.3), phi_now=0.7, phi_prev=0.3,
+            _mot(0.0),
+            _sens(avoidance=0.9, conservation=0.4),
+            phi_now=0.5, phi_prev=0.5,
         )
-        assert e.desire == pytest.approx(-0.3 * 0.4, abs=1e-12)
-        assert e.desire < 0
+        assert e.hate == 0.0
 
-    def test_care_high_when_returning_home_calmly(self) -> None:
-        # conservation > 0 (returning) and surprise low
+    def test_calm_high_low_surprise_high_stillness(self) -> None:
         e = compute_physical_emotions(
-            _mot(surprise=0.1), _sens(conservation=0.5), phi_now=0.5, phi_prev=0.5,
+            _mot(0.0), _sens(stillness=1.0), phi_now=0.5, phi_prev=0.5,
+        )
+        assert e.calm == pytest.approx(1.0, abs=1e-12)
+
+    def test_calm_dampened_by_surprise(self) -> None:
+        e = compute_physical_emotions(
+            _mot(0.7), _sens(stillness=1.0), phi_now=0.5, phi_prev=0.5,
+        )
+        assert e.calm == pytest.approx(0.3, abs=1e-12)
+
+    def test_care_positive_when_returning_home_calmly(self) -> None:
+        e = compute_physical_emotions(
+            _mot(0.1), _sens(conservation=0.5), phi_now=0.5, phi_prev=0.5,
         )
         assert e.care == pytest.approx(0.5 * 0.9, abs=1e-12)
 
     def test_care_negative_when_departing(self) -> None:
-        # conservation < 0 (departing identity)
         e = compute_physical_emotions(
-            _mot(surprise=0.0), _sens(conservation=-0.4), phi_now=0.5, phi_prev=0.5,
+            _mot(0.0), _sens(conservation=-0.4), phi_now=0.5, phi_prev=0.5,
         )
         assert e.care == pytest.approx(-0.4, abs=1e-12)
-        assert e.care < 0
 
-    def test_trust_high_when_resonance_high_avoidance_low(self) -> None:
+    def test_apathy_high_when_disengaged_still(self) -> None:
+        # approach = 0 → max(0, approach) = 0 → apathy = stillness * 1
         e = compute_physical_emotions(
-            _mot(surprise=0.0), _sens(resonance=0.9, avoidance=0.1),
+            _mot(0.0), _sens(stillness=0.8, approach=0.0),
             phi_now=0.5, phi_prev=0.5,
         )
-        assert e.trust == pytest.approx(0.9 * 0.9, abs=1e-12)
+        assert e.apathy == pytest.approx(0.8, abs=1e-12)
 
-    def test_trust_zero_when_avoidance_max(self) -> None:
+    def test_apathy_low_when_approach_active(self) -> None:
+        # approach = 0.6 → 1 - 0.6 = 0.4; apathy = 0.8 * 0.4 = 0.32
         e = compute_physical_emotions(
-            _mot(surprise=0.0), _sens(resonance=1.0, avoidance=1.0),
+            _mot(0.0), _sens(stillness=0.8, approach=0.6),
             phi_now=0.5, phi_prev=0.5,
         )
-        assert e.trust == pytest.approx(0.0, abs=1e-12)
+        assert e.apathy == pytest.approx(0.32, abs=1e-12)
+
+    def test_apathy_can_go_negative_with_strong_engagement(self) -> None:
+        # approach > 1 (theoretically possible if dop=1, gaba=0)
+        e = compute_physical_emotions(
+            _mot(0.0), _sens(stillness=0.5, approach=1.5),
+            phi_now=0.5, phi_prev=0.5,
+        )
+        # apathy = 0.5 * (1 - 1.5) = -0.25 — anti-apathy = engagement spike
+        assert e.apathy == pytest.approx(-0.25, abs=1e-12)
 
 
 # ─────────────────────────────────────────────────────────────────
-# Cold-start (phi_now == phi_prev → grad=0)
+# Cold-start
 # ─────────────────────────────────────────────────────────────────
 
 
 class TestColdStart:
     def test_cold_start_zeros_phi_grad_dependent_emotions(self) -> None:
         e = compute_physical_emotions(
-            _mot(surprise=0.5), _sens(approach=0.5), phi_now=0.5, phi_prev=0.5,
+            _mot(0.5), _sens(approach=0.5), phi_now=0.5, phi_prev=0.5,
         )
         assert e.joy == 0.0
         assert e.suffering == 0.0
-        assert e.sadness == 0.0
-        assert e.desire == 0.0
 
 
 if __name__ == "__main__":

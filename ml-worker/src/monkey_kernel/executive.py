@@ -17,10 +17,26 @@ scalar derivation — numpy-free where it can be.
 from __future__ import annotations
 
 import math
+import os
 from dataclasses import dataclass
 from typing import Any, Literal, Optional
 
 import numpy as np
+
+
+def upper_stack_executive_live() -> bool:
+    """Default-off env flag (PR 4 #609). When true, upper-stack
+    emotion signals modulate three executive formulas:
+
+      current_entry_threshold *= (1 − 0.2*wonder + 0.2*anxiety)
+      current_leverage        *= (1 − 0.3*anxiety + 0.2*confidence)
+      current_position_size   *= (1 + 0.15*flow)
+
+    Multipliers are applied AFTER the existing formula's clamp, then
+    re-clipped to the same SAFETY_BOUNDS the formula uses. The bounds
+    are NOT bypassed — only the value within them is modulated.
+    """
+    return os.environ.get("UPPER_STACK_EXECUTIVE_LIVE", "").strip().lower() == "true"
 
 from qig_core_local.geometry.fisher_rao import fisher_rao_distance
 

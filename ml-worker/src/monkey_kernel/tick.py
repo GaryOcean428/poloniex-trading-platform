@@ -58,6 +58,7 @@ from .executive import (
     should_exit,
     should_profit_harvest,
     should_scalp_exit,
+    upper_stack_executive_live,
 )
 from .foresight import ForesightPredictor
 from .heart import HeartMonitor
@@ -335,12 +336,9 @@ def run_tick(
     # Tier 2 cognitive emotions (Layer 2B). basin_distance is the
     # Fisher-Rao distance from current basin to identity — same scalar
     # already computed by sensations.drift; reuse to avoid recompute.
-    emo = compute_emotions(
-        motivators=mot,
-        basin_distance=sen.drift,
-        phi=phi,
-        basin_velocity=bv,
-    )
+    # Flow needs the foresight predicted basin reference; computed
+    # below after the foresight predict call. We forward-reference
+    # here to keep the call-site flat.
     # Tier 5 physical emotions (Layer 2A). grad(Φ) = phi − last_phi
     # already computed above for autonomic tick; reuse via last_phi.
     phys = compute_physical_emotions(
@@ -355,6 +353,17 @@ def run_tick(
         foresight = ForesightPredictor()
     foresight.append(basin, phi, now_ms)
     fs = foresight.predict(regime_weights)
+    # Tier 2 cognitive emotions — composed AFTER foresight so Flow has
+    # access to predicted_basin reference.
+    emo = compute_emotions(
+        motivators=mot,
+        basin_distance=sen.drift,
+        phi=phi,
+        basin_velocity=bv,
+        basin=basin,
+        predicted_basin=fs.predicted_basin,
+        foresight_weight=fs.weight,
+    )
     # Tier 7 Heart — κ HRV monitor. Persistent; ephemeral fallback.
     if heart is None:
         heart = HeartMonitor()
@@ -509,6 +518,51 @@ def run_tick(
         s=basin_state, recent_fhealths=state.fhealth_history,
     )
 
+    # ── PR 4: UPPER_STACK_EXECUTIVE_LIVE flag ────────────────────
+    # Modulate entry_threshold / leverage / position_size by the
+    # Tier 2 emotion stack. Multipliers applied AFTER the formula
+    # computed its clamped value, then re-clipped to the same bounds.
+    # With flag off, multipliers are computed for telemetry but not
+    # applied — provides synthetic-counterfactual signal log.
+    upper_stack_live = upper_stack_executive_live()
+    entry_thr_mult = 1.0 - 0.2 * emo.wonder + 0.2 * emo.anxiety
+    leverage_mult = 1.0 - 0.3 * emo.anxiety + 0.2 * emo.confidence
+    size_mult = 1.0 + 0.15 * emo.flow
+    upper_stack_telemetry: dict[str, Any] = {
+        "live": upper_stack_live,
+        "entry_threshold_mult": entry_thr_mult,
+        "leverage_mult": leverage_mult,
+        "size_mult": size_mult,
+        "applied": [],
+    }
+    if upper_stack_live:
+        # Re-clip to existing SAFETY_BOUNDS — the bounds are not bypassed.
+        entry_thr_clamp_low = float(_registry.get(
+            "executive.entry_threshold.clamp_low", default=0.1,
+        ))
+        entry_thr_clamp_high = float(_registry.get(
+            "executive.entry_threshold.clamp_high", default=0.9,
+        ))
+        new_thr = max(entry_thr_clamp_low, min(
+            entry_thr_clamp_high, entry_thr_d["value"] * entry_thr_mult,
+        ))
+        new_lev = max(1, min(
+            int(inputs.max_leverage),
+            int(round(leverage_d["value"] * leverage_mult)),
+        ))
+        new_size = max(0.0, min(
+            inputs.account.available_equity, size_d["value"] * size_mult,
+        ))
+        # Mutate the dicts in place — downstream readers see modulated values.
+        entry_thr_d["value"] = new_thr
+        leverage_d["value"] = new_lev
+        size_d["value"] = new_size
+        upper_stack_telemetry["applied"] = [
+            f"entry_thr({entry_thr_mult:.3f})",
+            f"leverage({leverage_mult:.3f})",
+            f"size({size_mult:.3f})",
+        ]
+
     # ── Decide action ──────────────────────────────────────────
     action = "hold"
     reason = ""
@@ -563,6 +617,7 @@ def run_tick(
             "diagnostics": ocean_state.diagnostics,
         },
         "ocean_handler": intervention_applied,
+        "upper_stack_executive": upper_stack_telemetry,
     }
 
     own_pos = _has_own_position(inputs.account)

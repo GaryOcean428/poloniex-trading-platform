@@ -96,15 +96,15 @@ class TestDerivationSurface:
                   "drift", "resonance", "approach", "avoidance",
                   "conservation"):
             assert k in d["sensations"], f"sensations missing {k}"
-        # Tier 2
+        # Tier 2 — Layer 2B (Flow added in PR 4 #609)
         assert "emotions" in d
         for k in ("wonder", "frustration", "satisfaction", "confusion",
-                  "clarity", "anxiety", "confidence", "boredom"):
+                  "clarity", "anxiety", "confidence", "boredom", "flow"):
             assert k in d["emotions"], f"emotions missing {k}"
-        # Tier 5
+        # Tier 5 — Layer 2A (UCP §6.4 canon, PR 4 #609 fixed)
         assert "physical_emotions" in d
-        for k in ("joy", "suffering", "fear", "rage", "sadness",
-                  "disgust", "desire", "care", "trust"):
+        for k in ("joy", "suffering", "love", "hate", "fear", "rage",
+                  "calm", "care", "apathy"):
             assert k in d["physical_emotions"], f"physical_emotions missing {k}"
         # Tier 3
         assert "foresight" in d

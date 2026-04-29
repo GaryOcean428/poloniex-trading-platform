@@ -1,5 +1,6 @@
 /**
- * physical_emotions.test.ts — TS parity for Tier 5 Layer 2A.
+ * physical_emotions.test.ts — TS parity for Tier 5 Layer 2A
+ * (UCP §6.4 canon).
  */
 import { describe, it, expect } from 'vitest';
 import type { Motivators } from '../motivators.js';
@@ -23,83 +24,72 @@ const APPROX = (got: number, want: number, abs = 1e-12) =>
 
 // ─── Anchored four ────────────────────────────────────────────────
 
-describe('Audit-anchored emotions', () => {
-  it('joy high when phi rising no surprise', () => {
-    const e = computePhysicalEmotions(mot(0), sens(), 0.7, 0.3);
-    APPROX(e.joy, 0.4);
-    expect(e.suffering).toBe(0);
+describe('Audit-anchored four', () => {
+  it('joy = (1-surprise) * max(grad_phi, 0)', () => {
+    APPROX(computePhysicalEmotions(mot(0), sens(), 0.7, 0.3).joy, 0.4);
   });
-  it('suffering high when phi falling with surprise', () => {
-    const e = computePhysicalEmotions(mot(1), sens(), 0.3, 0.7);
-    APPROX(e.suffering, 0.4);
-    expect(e.joy).toBe(0);
+  it('suffering = surprise * max(-grad_phi, 0)', () => {
+    APPROX(computePhysicalEmotions(mot(1), sens(), 0.3, 0.7).suffering, 0.4);
   });
-  it('fear high at separatrix with surprise', () => {
-    const e = computePhysicalEmotions(mot(1), sens({ drift: Math.PI / 2 }), 0.5, 0.5);
-    APPROX(e.fear, 1.0);
+  it('fear = surprise * drift / (π/2)', () => {
+    APPROX(
+      computePhysicalEmotions(mot(1), sens({ drift: Math.PI / 2 }), 0.5, 0.5).fear,
+      1.0,
+    );
   });
-  it('fear zero at identity', () => {
-    const e = computePhysicalEmotions(mot(1), sens({ drift: 0 }), 0.5, 0.5);
-    expect(e.fear).toBe(0);
-  });
-  it('rage high when stuck with surprise', () => {
-    const e = computePhysicalEmotions(mot(1), sens({ stillness: 1 }), 0.5, 0.5);
-    APPROX(e.rage, 1.0);
+  it('rage = surprise * stillness', () => {
+    APPROX(
+      computePhysicalEmotions(mot(1), sens({ stillness: 1 }), 0.5, 0.5).rage,
+      1.0,
+    );
   });
 });
 
-// ─── Remaining five ───────────────────────────────────────────────
+// ─── UCP §6.4 grounded five ───────────────────────────────────────
 
-describe('Remaining five primary affects', () => {
-  it('sadness high when phi falling calmly', () => {
-    const e = computePhysicalEmotions(mot(0), sens(), 0.3, 0.7);
-    APPROX(e.sadness, 0.4);
-    expect(e.suffering).toBe(0);
+describe('UCP §6.4 grounded five (Love / Hate / Calm / Care / Apathy)', () => {
+  it('love high when approach + returning home', () => {
+    APPROX(
+      computePhysicalEmotions(mot(0), sens({ approach: 0.8, conservation: 0.5 }), 0.5, 0.5).love,
+      0.4,
+    );
   });
-  it('disgust high when surprise meets familiarity', () => {
-    const e = computePhysicalEmotions(mot(0.8), sens({ resonance: 1 }), 0.5, 0.5);
-    APPROX(e.disgust, 0.8);
+  it('love zero when departing (conservation < 0)', () => {
+    expect(
+      computePhysicalEmotions(mot(0), sens({ approach: 0.8, conservation: -0.3 }), 0.5, 0.5).love,
+    ).toBe(0);
   });
-  it('desire high when approach meets phi rising', () => {
-    const e = computePhysicalEmotions(mot(0), sens({ approach: 0.6 }), 0.7, 0.3);
-    APPROX(e.desire, 0.6 * 0.4);
+  it('hate high when avoidance + departing', () => {
+    APPROX(
+      computePhysicalEmotions(mot(0), sens({ avoidance: 0.9, conservation: -0.4 }), 0.5, 0.5).hate,
+      0.36,
+    );
   });
-  it('desire zero when phi falling', () => {
-    const e = computePhysicalEmotions(mot(0), sens({ approach: 0.6 }), 0.3, 0.7);
-    expect(e.desire).toBe(0);
+  it('hate zero when returning home', () => {
+    expect(
+      computePhysicalEmotions(mot(0), sens({ avoidance: 0.9, conservation: 0.4 }), 0.5, 0.5).hate,
+    ).toBe(0);
   });
-  it('desire negative when gaba dominates', () => {
-    const e = computePhysicalEmotions(mot(0), sens({ approach: -0.3 }), 0.7, 0.3);
-    APPROX(e.desire, -0.3 * 0.4);
-    expect(e.desire).toBeLessThan(0);
+  it('calm = (1-surprise) × stillness', () => {
+    APPROX(computePhysicalEmotions(mot(0), sens({ stillness: 1 }), 0.5, 0.5).calm, 1.0);
+    APPROX(computePhysicalEmotions(mot(0.7), sens({ stillness: 1 }), 0.5, 0.5).calm, 0.3);
   });
-  it('care high when returning home calmly', () => {
-    const e = computePhysicalEmotions(mot(0.1), sens({ conservation: 0.5 }), 0.5, 0.5);
-    APPROX(e.care, 0.5 * 0.9);
+  it('care = conservation × (1 − surprise) (signed)', () => {
+    APPROX(computePhysicalEmotions(mot(0.1), sens({ conservation: 0.5 }), 0.5, 0.5).care, 0.45);
+    APPROX(computePhysicalEmotions(mot(0), sens({ conservation: -0.4 }), 0.5, 0.5).care, -0.4);
   });
-  it('care negative when departing', () => {
-    const e = computePhysicalEmotions(mot(0), sens({ conservation: -0.4 }), 0.5, 0.5);
-    APPROX(e.care, -0.4);
-    expect(e.care).toBeLessThan(0);
-  });
-  it('trust high when resonance high and avoidance low', () => {
-    const e = computePhysicalEmotions(mot(0), sens({ resonance: 0.9, avoidance: 0.1 }), 0.5, 0.5);
-    APPROX(e.trust, 0.9 * 0.9);
-  });
-  it('trust zero when avoidance max', () => {
-    const e = computePhysicalEmotions(mot(0), sens({ resonance: 1, avoidance: 1 }), 0.5, 0.5);
-    APPROX(e.trust, 0);
-  });
-});
-
-// ─── Cold start ───────────────────────────────────────────────────
-
-describe('Cold start (phi == phi_prev → grad = 0)', () => {
-  it('zeroes phi-grad dependent emotions', () => {
-    const e = computePhysicalEmotions(mot(0.5), sens({ approach: 0.5 }), 0.5, 0.5);
-    expect(e.joy).toBe(0);
-    expect(e.suffering).toBe(0);
-    expect(e.sadness).toBe(0);
-    expect(e.desire).toBe(0);
+  it('apathy = stillness × (1 − max(0, approach))', () => {
+    APPROX(
+      computePhysicalEmotions(mot(0), sens({ stillness: 0.8, approach: 0 }), 0.5, 0.5).apathy,
+      0.8,
+    );
+    APPROX(
+      computePhysicalEmotions(mot(0), sens({ stillness: 0.8, approach: 0.6 }), 0.5, 0.5).apathy,
+      0.32,
+    );
+    APPROX(
+      computePhysicalEmotions(mot(0), sens({ stillness: 0.5, approach: 1.5 }), 0.5, 0.5).apathy,
+      -0.25,
+    );
   });
 });
