@@ -53,8 +53,6 @@ def _make_inputs(symbol: str = "BTC_USDT_PERP") -> TickInputs:
     return TickInputs(
         symbol=symbol,
         ohlcv=_synthetic_ohlcv(),
-        ml_signal="BUY",
-        ml_strength=0.5,
         account=AccountContext(
             equity_fraction=0.05,
             margin_fraction=0.03,
