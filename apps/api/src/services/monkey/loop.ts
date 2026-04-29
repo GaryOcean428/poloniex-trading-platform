@@ -423,19 +423,14 @@ export class MonkeyKernel extends EventEmitter {
     const mlSignal = String(raw?.signal ?? 'HOLD').toUpperCase();
     const mlStrength = Number(raw?.strength) || 0;
 
-    // ML-unreachable observability (v0.8.3.5d). mlPredictionService already
-    // fail-opens to {signal:'HOLD', strength:0, error:true} on transport
-    // failure; the Monkey tick correctly holds new entries in that case
-    // (entry gate requires mlStrength >= threshold, 0 never clears any
-    // positive threshold), and exits keep firing from basin geometry. But
-    // the silent HOLD mode previously looked like a freeze from the user's
-    // POV (2026-04-22 incident). Fire a WARN + bus ANOMALY on the
-    // transition to/from ML-unreachable — edge-triggered, not per-tick,
-    // so logs don't flood during a long outage.
+    // ML-unreachable observability. Post #ml-separation: ML failure
+    // means only Agent M holds (it has nothing to read). Agent K runs
+    // geometry-only and is unaffected. Edge-triggered WARN so logs
+    // don't flood during a long outage.
     if (raw?.error === true) {
       this.mlOutageStreak += 1;
       if (this.mlOutageStreak === 1) {
-        logger.warn('[Monkey] ML unreachable — holding new entries, exits continue', {
+        logger.warn('[Monkey] ML unreachable — Agent M holds; Agent K continues on geometry', {
           symbol,
           reason: raw?.reason,
         });
@@ -446,7 +441,8 @@ export class MonkeyKernel extends EventEmitter {
           payload: {
             kind: 'ml_unreachable',
             reason: raw?.reason ?? 'ml prediction errored',
-            entriesHeld: true,
+            agentMHeld: true,
+            agentKActive: true,
             exitsActive: true,
           },
         });
@@ -484,11 +480,10 @@ export class MonkeyKernel extends EventEmitter {
     } = await this.fetchAccountContext(symbol);
 
     // 2. PERCEIVE — raw basin then refract through identity.
+    // Post #ml-separation: ml fields omitted; perception defaults dims
+    // 3..5 to neutral. Agent K's basin is built without ml inputs.
     const rawBasin = perceive({
       ohlcv,
-      mlSignal,
-      mlStrength,
-      mlEffectiveStrength: mlStrength,  // until bandit wired
       equityFraction,
       marginFraction,
       openPositions,
@@ -506,10 +501,12 @@ export class MonkeyKernel extends EventEmitter {
     // integration is high; when diffuse (high entropy), Φ is low (exploration).
     const phi = Math.max(0, Math.min(1, 1 - fHealth * 0.8));
 
-    // κ adapts from basin velocity × signal coupling. Stable near κ* when
-    // ml signal is coherent and basin is settled.
+    // κ adapts from basin velocity × internal coupling. Stable near κ*
+    // when integration is high and basin velocity is low.
+    // Post #ml-separation: couplingHealth was mlStrength; replaced with
+    // a geometric self-read (Φ × (1 − basin velocity), [0,1]).
     const bv = state.lastBasin ? velocity(state.lastBasin, basin) : 0;
-    const couplingHealth = mlStrength;  // proxy until cross-symbol coupling lands
+    const couplingHealth = phi * (1 - Math.min(bv, 1));
     const kappaDelta = (couplingHealth - 0.5) * 5 - (bv - 0.2) * 10;
     state.kappa = Math.max(20, Math.min(120, state.kappa * 0.8 + (KAPPA_STAR + kappaDelta) * 0.2));
 
@@ -822,12 +819,12 @@ export class MonkeyKernel extends EventEmitter {
           sideOverride &&
           sideCandidate !== heldSide &&
           MODE_PROFILES[mode].canEnter &&
-          mlStrength >= entryThr.value &&
+          direction !== 'flat' &&
           size.value > 0 &&
           !sideShortRefused
         ) {
           action = sideCandidate === 'long' ? 'reverse_long' : 'reverse_short';
-          reason = `OVERRIDE_REVERSE[${heldSide}→${sideCandidate}] basin=${basinDir.toFixed(2)} tape=${tapeTrend.toFixed(2)}; flatten-then-open margin=${size.value.toFixed(2)} lev=${leverage.value}x`;
+          reason = `REVERSION_FLIP[${heldSide}→${sideCandidate}] basin=${basinDir.toFixed(2)} tape=${tapeTrend.toFixed(2)}; flatten-then-open margin=${size.value.toFixed(2)} lev=${leverage.value}x`;
           derivation.entryThreshold = entryThr.derivation;
           derivation.size = size.derivation;
           derivation.leverage = leverage.derivation;
@@ -852,8 +849,7 @@ export class MonkeyKernel extends EventEmitter {
           if (
             dca.value &&
             MODE_PROFILES[mode].canEnter &&
-            mlStrength >= entryThr.value &&
-            mlSignal !== 'HOLD' &&
+            direction !== 'flat' &&
             size.value > 0 &&
             !sideShortRefused
           ) {
@@ -873,17 +869,17 @@ export class MonkeyKernel extends EventEmitter {
       }
     } else if (
       MODE_PROFILES[mode].canEnter &&
-      mlStrength >= entryThr.value &&
-      mlSignal !== 'HOLD' &&
+      direction !== 'flat' &&
       size.value > 0 &&
       !sideShortRefused
     ) {
       // sideCandidate from kernelDirection (geometric, post #ml-separation).
+      // Entry gate is geometric: direction != flat (basinDir + 0.5*tapeTrend
+      // != 0). Conviction gating via Layer 2B emotions is Python-only until
+      // emotions are ported to TS — TS uses neutral emotions which collapse
+      // kernelShouldEnter to false, so we gate on direction here instead.
       action = sideCandidate === 'long' ? 'enter_long' : 'enter_short';
-      const reversionTag = sideOverride
-        ? ` REVERSION-flip(basin${basinDir.toFixed(2)}/tape${tapeTrend.toFixed(2)})`
-        : '';
-      reason = `[${mode}] ml ${mlSignal}@${mlStrength.toFixed(3)} >= thr ${entryThr.value.toFixed(3)}; side=${sideCandidate}${reversionTag}; margin=${size.value.toFixed(2)} lev=${leverage.value}x notional=${(size.value * leverage.value).toFixed(2)}`;
+      reason = `[${mode}] kernel-K geometric: basinDir=${basinDir.toFixed(3)} tape=${tapeTrend.toFixed(3)} → ${sideCandidate}; margin=${size.value.toFixed(2)} lev=${leverage.value}x notional=${(size.value * leverage.value).toFixed(2)}`;
       derivation.entryThreshold = entryThr.derivation;
       derivation.size = size.derivation;
       derivation.leverage = leverage.derivation;
@@ -891,10 +887,12 @@ export class MonkeyKernel extends EventEmitter {
       action = 'hold';
       const why = !MODE_PROFILES[mode].canEnter
         ? `mode=${mode} blocks entry (${MODE_PROFILES[mode].description})`
-        : mlStrength < entryThr.value
-          ? `[${mode}] ml ${mlStrength.toFixed(3)} < thr ${entryThr.value.toFixed(3)}`
+        : direction === 'flat'
+          ? `[${mode}] direction=flat (basinDir=${basinDir.toFixed(3)} tape=${tapeTrend.toFixed(3)})`
           : size.value <= 0
           ? `[${mode}] size ${size.value.toFixed(2)} below min notional ${minNotional.toFixed(2)}`
+          : sideShortRefused
+          ? `[${mode}] short refused — MONKEY_SHORTS_LIVE=false`
           : 'no qualifying signal';
       reason = why;
       derivation.entryThreshold = entryThr.derivation;
