@@ -95,6 +95,12 @@ class ExecBasinState:
     sovereignty: float
     basin_velocity: float
     neurochemistry: NeurochemicalState
+    # Layer 2B emotions — required by kernel_should_enter (post #ml-separation
+    # entry gate). Optional for back-compat with callers that build
+    # ExecBasinState before computing emotions; defaults to a neutral
+    # near-zero stack which makes kernel_should_enter return False
+    # (zero conviction + zero hesitation, 0 > 0 is False).
+    emotions: Optional[EmotionState] = None
 
 
 def _clamp(v: float, lo: float, hi: float) -> float:

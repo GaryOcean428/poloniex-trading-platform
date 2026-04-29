@@ -19,9 +19,10 @@ new_state out keeps TS as the canonical state owner during transition.
 v0.8.7 removes the TS path and this becomes the source.
 
 Literal disposition (per the v0.8 plan, P25):
-  OVERRIDE_THRESHOLD = 0.35    → DERIVED here (see _override_threshold)
-  OHLCV_LOOKBACK, HISTORY_MAX  → registry-backed via parameters.py
-  KAPPA_STAR, kappa clamps     → registry-backed (physics.kappa_star)
+  OVERRIDE_THRESHOLD            → DELETED (post #ml-separation: kernel
+    direction is geometric from the start; no ml_side to override)
+  OHLCV_LOOKBACK, HISTORY_MAX   → registry-backed via parameters.py
+  KAPPA_STAR, kappa clamps      → registry-backed (physics.kappa_star)
   Identity basin refresh (50 samples / every 10 ticks) → kept as TS-
     compat constants for v0.8.3 parity. v0.8.6 replaces with adaptive
     derivation when working_memory / self_observation disciplining lands.
@@ -53,6 +54,8 @@ from .executive import (
     current_entry_threshold,
     current_leverage,
     current_position_size,
+    kernel_direction,
+    kernel_should_enter,
     should_auto_flatten,
     should_dca_add,
     should_exit,
@@ -91,38 +94,6 @@ logger = logging.getLogger("monkey.tick")
 _registry = get_registry()
 
 
-def _override_threshold(kappa: float, phi: float) -> float:
-    """Legacy override threshold from κ and Φ (P25). Used when
-    STUD_TOPOLOGY_LIVE=false."""
-    kappa_star = _registry.get("physics.kappa_star", default=64.0)
-    kappa_term = 1.0 + 0.5 * (kappa_star - kappa) / kappa_star
-    phi_term = 1.0 - 0.3 * max(0.0, min(1.0, phi))
-    raw = 0.35 * kappa_term * phi_term
-    return max(0.15, min(0.60, raw))
-
-
-def _override_threshold_stud(stud_reading) -> float:
-    """Tier 9 Stage 2 stud-derived override threshold.
-
-    Distance from nearest π-structured regime boundary determines how
-    aggressively the basin+tape quorum can override ML. Close to a
-    boundary → low threshold (kernel transitioning, easier override).
-    Deep inside a regime → high threshold (committed, harder to flip).
-
-    Maps boundary_distance ∈ [0, width/2] to threshold ∈ [0.15, 0.60]
-    where width = (PI_STRUCT_SECOND_TRANSITION − PI_STRUCT_DEAD_ZONE
-    _BOUNDARY) / 2 ≈ 0.947 — the front-loop half-width.
-    """
-    from .topology_constants import (
-        PI_STRUCT_DEAD_ZONE_BOUNDARY,
-        PI_STRUCT_SECOND_TRANSITION,
-    )
-    width = (PI_STRUCT_SECOND_TRANSITION - PI_STRUCT_DEAD_ZONE_BOUNDARY) / 2.0
-    normalized = min(stud_reading.boundary_distance, width) / max(width, 1e-9)
-    raw = 0.15 + 0.45 * normalized
-    return max(0.15, min(0.60, raw))
-
-
 # ── Input / output dataclasses ───────────────────────────────────
 
 @dataclass
@@ -140,11 +111,15 @@ class AccountContext:
 
 @dataclass
 class TickInputs:
-    """Everything one tick needs, modulo prior state."""
+    """Everything one tick needs, modulo prior state.
+
+    Post #ml-separation: ml_signal / ml_strength are no longer kernel
+    inputs. Direction comes from basin geometry; entry conviction from
+    the emotion stack. ML lives in a separate Agent M module and
+    receives the same OHLCV window via its own decision path.
+    """
     symbol: str
     ohlcv: list[OHLCVCandle]
-    ml_signal: str
-    ml_strength: float
     account: AccountContext
     bank_size: int
     sovereignty: float
@@ -258,11 +233,11 @@ def run_tick(
     state.session_ticks += 1
 
     # ── Perceive → refract ─────────────────────────────────────
+    # Post #ml-separation: PerceptionInputs ml_* fields default to
+    # neutral. Basin dims 3..5 become ~constant; momentum spectrum
+    # (dims 7..14) and other geometric dims unchanged.
     raw_basin = perceive(PerceptionInputs(
         ohlcv=ohlcv,
-        ml_signal=inputs.ml_signal,
-        ml_strength=inputs.ml_strength,
-        ml_effective_strength=inputs.ml_strength,
         equity_fraction=inputs.account.equity_fraction,
         margin_fraction=inputs.account.margin_fraction,
         open_positions=inputs.account.open_positions,
@@ -275,7 +250,12 @@ def run_tick(
     phi = max(0.0, min(1.0, 1.0 - f_health * 0.8))
     bv = velocity(state.last_basin, basin) if state.last_basin is not None else 0.0
 
-    coupling_health = inputs.ml_strength
+    # Post #ml-separation: coupling_health was inputs.ml_strength.
+    # Replacement is a geometric self-read — Φ (integration measure,
+    # naturally [0,1]) modulated by basin velocity. High integration +
+    # low velocity = strong internal coupling = high coupling_health.
+    # Stays in [0, 1]; preserves the kappa_delta contract downstream.
+    coupling_health = phi * (1.0 - min(bv, 1.0))
     kappa_star = _registry.get("physics.kappa_star", default=64.0)
     kappa_delta = (coupling_health - 0.5) * 5.0 - (bv - 0.2) * 10.0
     state.kappa = max(20.0, min(
@@ -460,38 +440,33 @@ def run_tick(
     except ValueError:
         mode_enum = MonkeyMode.INVESTIGATION
 
-    # ── Side candidate + override ──────────────────────────────
+    # ── Side candidate ─────────────────────────────────────────
+    # Post #ml-separation: direction comes from basin geometry +
+    # tape consensus, gated by emotional conviction. The previous
+    # OVERRIDE_REVERSE quorum (basin × tape ≤ -threshold flips
+    # ml_side) is gone — there is no ml_side to override. Geometric
+    # direction is now the *primary* read.
+    #
+    # `direction` is the gate signal (long/short/flat); entry refuses
+    # when flat. `side_candidate` carries the binary long/short for
+    # downstream code that expects it. When direction is flat,
+    # side_candidate defaults to 'long' but the entry gate's
+    # `direction != "flat"` check prevents any entry from firing.
     basin_dir = basin_direction(basin)
     tape_trend = trend_proxy([float(c.close) for c in ohlcv])
-    ml_side = "short" if inputs.ml_signal.upper() == "SELL" else "long"
-    side_candidate = ml_side
-    side_override = False
-    override_thr = (
-        _override_threshold_stud(stud_reading)
-        if stud_live
-        else _override_threshold(state.kappa, phi)
+    direction: str = kernel_direction(
+        basin_dir=basin_dir, tape_trend=tape_trend, emotions=emo,
     )
-    if (
-        basin_dir < -override_thr
-        and tape_trend < -override_thr
-        and ml_side == "long"
-    ):
-        side_candidate = "short"
-        side_override = True
-    elif (
-        basin_dir > override_thr
-        and tape_trend > override_thr
-        and ml_side == "short"
-    ):
-        side_candidate = "long"
-        side_override = True
+    side_candidate: str = direction if direction != "flat" else "long"
+    side_override = False
 
     # Tier 9 Stage 2 — REVERSION's "inverted entry direction":
-    # back-loop regime trades counter-trend. Flip ml_side directly,
-    # marking the override so logs show the deliberate inversion.
-    if stud_live and mode == MonkeyMode.REVERSION.value:
-        flipped = "short" if side_candidate == "long" else "long"
-        side_candidate = flipped
+    # back-loop regime trades counter-trend. Stud-topology mode
+    # signal, not ML — preserved post-separation. Flips direction
+    # only when the kernel has a directional read; flat stays flat.
+    if stud_live and mode == MonkeyMode.REVERSION.value and direction != "flat":
+        side_candidate = "short" if side_candidate == "long" else "long"
+        direction = "short" if direction == "long" else "long"
         side_override = True
 
     self_obs_bias = 1.0
@@ -530,6 +505,7 @@ def run_tick(
         sovereignty=inputs.sovereignty,
         basin_velocity=bv,
         neurochemistry=nc,
+        emotions=emo,
     )
 
     # ── Derive decisions ───────────────────────────────────────
@@ -623,16 +599,17 @@ def run_tick(
         "basin_velocity": bv, "regime_weights": regime_weights,
         "nc": nc.as_dict(),
         "f_health": f_health,
-        "ml_signal": inputs.ml_signal, "ml_strength": inputs.ml_strength,
+        # Post #ml-separation: kernel direction is geometric. ML lives
+        # in Agent M's separate decision module.
+        "agent": "K",
+        "kernel_direction": direction,
         "mode": {"value": mode, "reason": mode_result["reason"],
                  **mode_result["derivation"]},
         "self_obs_bias": self_obs_bias,
         "side_candidate": side_candidate,
         "basin_direction": basin_dir,
         "tape_trend": tape_trend,
-        "ml_side": ml_side,
         "side_override": side_override,
-        "override_threshold": override_thr,
         "mode_changed": mode_changed,
         # Tier 1-8 telemetry surfaces (#604 wiring). Observation-only;
         # executive does not consume these fields.
@@ -729,20 +706,20 @@ def run_tick(
         )
     elif (
         MODE_PROFILES[mode_enum].can_enter
-        and inputs.ml_strength >= entry_thr_d["value"]
-        and inputs.ml_signal.upper() != "HOLD"
+        and direction != "flat"
+        and kernel_should_enter(emotions=emo)
         and size_d["value"] > 0
     ):
         action = "enter_long" if side_candidate == "long" else "enter_short"
-        override_tag = (
-            f" OVERRIDE(basin{basin_dir:.2f}/tape{tape_trend:.2f})"
+        reversion_tag = (
+            f" REVERSION-flip(basin{basin_dir:.2f}/tape{tape_trend:.2f})"
             if side_override else ""
         )
         notional = size_d["value"] * leverage_d["value"]
         reason = (
-            f"[{mode}] ml {inputs.ml_signal}@{inputs.ml_strength:.3f} "
-            f">= thr {entry_thr_d['value']:.3f}; "
-            f"side={side_candidate}{override_tag}; "
+            f"[{mode}] kernel-entry conv={emo.confidence * (1 + emo.wonder):.3f}"
+            f" > hes={emo.anxiety + emo.confusion:.3f}; "
+            f"side={side_candidate}{reversion_tag}; "
             f"margin={size_d['value']:.2f} lev={leverage_d['value']}x "
             f"notional={notional:.2f}"
         )
@@ -753,10 +730,16 @@ def run_tick(
         action = "hold"
         if not MODE_PROFILES[mode_enum].can_enter:
             reason = f"mode={mode} blocks entry"
-        elif inputs.ml_strength < entry_thr_d["value"]:
+        elif direction == "flat":
             reason = (
-                f"[{mode}] ml {inputs.ml_strength:.3f} "
-                f"< thr {entry_thr_d['value']:.3f}"
+                f"[{mode}] direction=flat (basin {basin_dir:+.2f}, "
+                f"tape {tape_trend:+.2f}, conf {emo.confidence:.2f}, "
+                f"anx {emo.anxiety:.2f})"
+            )
+        elif not kernel_should_enter(emotions=emo):
+            reason = (
+                f"[{mode}] conviction {emo.confidence * (1 + emo.wonder):.3f} "
+                f"<= hesitation {emo.anxiety + emo.confusion:.3f}"
             )
         elif size_d["value"] <= 0:
             reason = (
@@ -966,17 +949,23 @@ def _decide_with_position(
         derivation["exit"] = exit_d["derivation"]
         return "exit", exit_d["reason"], False, False
 
-    # v0.7.1 override-reverse
+    # Reversal: when REVERSION mode flipped direction *and* the new
+    # direction disagrees with the held side, close-and-reopen.
+    # Post #ml-separation: 'side_override' here means REVERSION-mode
+    # flip (the only remaining producer). Conviction check via
+    # kernel_should_enter — same gate first-entries pass.
+    emo = basin_state.emotions
     if (
         side_override
         and side_candidate != held_side
         and MODE_PROFILES[mode_enum].can_enter
-        and inputs.ml_strength >= entry_thr_val
+        and emo is not None
+        and kernel_should_enter(emotions=emo)
         and size_val > 0
     ):
         action = "reverse_long" if side_candidate == "long" else "reverse_short"
         reason = (
-            f"OVERRIDE_REVERSE[{held_side}→{side_candidate}] "
+            f"REVERSION_FLIP[{held_side}→{side_candidate}] "
             f"basin={derivation['basin_direction']:.2f} "
             f"tape={derivation['tape_trend']:.2f}; "
             f"flatten-then-open margin={size_val:.2f} lev={leverage_val}x"
@@ -1000,8 +989,8 @@ def _decide_with_position(
     if (
         dca["value"]
         and MODE_PROFILES[mode_enum].can_enter
-        and inputs.ml_strength >= entry_thr_val
-        and inputs.ml_signal.upper() != "HOLD"
+        and emo is not None
+        and kernel_should_enter(emotions=emo)
         and size_val > 0
     ):
         action = "enter_long" if side_candidate == "long" else "enter_short"

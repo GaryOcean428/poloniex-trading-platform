@@ -1681,8 +1681,6 @@ async def monkey_tick_run(request: Request):
         "inputs": {
           "symbol": "BTC_USDT_PERP",
           "ohlcv": [{"timestamp", "open", "high", "low", "close", "volume"}],
-          "ml_signal": "BUY"|"SELL"|"HOLD",
-          "ml_strength": 0..1,
           "account": { equity_fraction, margin_fraction, open_positions,
                        available_equity, exchange_held_side?, own_position_* },
           "bank_size": int, "sovereignty": 0..1,
@@ -1691,6 +1689,11 @@ async def monkey_tick_run(request: Request):
         },
         "prev_state": {... SymbolState JSON ...}  // or null for newborn
       }
+
+    Note: post #ml-separation, ml_signal / ml_strength are NOT kernel
+    inputs. If supplied in the payload they are silently ignored.
+    Agent M (ml-only) has its own decision module; Agent K (this
+    endpoint) operates on basin geometry alone.
 
     Response:
       { "decision": {...TickDecision...}, "new_state": {...SymbolState...} }
@@ -1730,8 +1733,6 @@ async def monkey_tick_run(request: Request):
     tick_inputs = TickInputs(
         symbol=str(inp["symbol"]),
         ohlcv=candles,
-        ml_signal=str(inp.get("ml_signal", "HOLD")),
-        ml_strength=float(inp.get("ml_strength", 0.0)),
         account=account,
         bank_size=int(inp.get("bank_size", 0)),
         sovereignty=float(inp.get("sovereignty", 0.0)),
@@ -1740,6 +1741,8 @@ async def monkey_tick_run(request: Request):
         size_fraction=float(inp.get("size_fraction", 1.0)),
         self_obs_bias=inp.get("self_obs_bias"),
     )
+    # ml_signal / ml_strength: silently ignored if present (post
+    # #ml-separation). Kernel runs on basin geometry alone.
 
     # State resolution: caller-provided wins, else in-process cache, else
     # newborn seeded from uniform basin.
