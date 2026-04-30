@@ -18,3 +18,14 @@ export const PI_STRUCT_SECOND_TRANSITION = 2.0;
 export const PI_STRUCT_BOUNDARY_R_SQUARED = 1 / ((1 + Math.sqrt(5)) / 2);
 export const PI_STRUCT_L4_STUD_ARC = (3 * Math.PI) / 2;
 export const GOLDEN_RATIO = (1 + Math.sqrt(5)) / 2;
+
+/**
+ * Golden ratio reciprocal — boundary R² applied to integration coherence
+ * floor. A held position's Φ falling below phi_at_open / φ (i.e.
+ * phi_at_open × 0.618) means integration has decayed past the golden-ratio
+ * coherence floor — the kernel's perception is no longer consonant with
+ * what justified entry. Used by held-position re-justification (PHI CHECK).
+ * Value matches PI_STRUCT_BOUNDARY_R_SQUARED's underlying φ but kept as a
+ * named constant at the rejustification site for semantic clarity.
+ */
+export const PHI_GOLDEN_FLOOR_RATIO = (1 + Math.sqrt(5)) / 2;  // ≈ 1.618033988

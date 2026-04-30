@@ -43,3 +43,13 @@ PI_STRUCT_L4_STUD_ARC: float = 3.0 * math.pi / 2.0
 
 # φ (golden ratio) — used by boundary R² and figure-8 crossing weight.
 GOLDEN_RATIO: float = (1.0 + math.sqrt(5.0)) / 2.0
+
+
+# Golden ratio reciprocal — boundary R² applied to integration coherence
+# floor. A held position's Φ falling below phi_at_open / φ (i.e. phi_at_open
+# × 0.618) means integration has decayed past the golden-ratio coherence
+# floor — the kernel's perception is no longer consonant with what
+# justified entry. Used by held-position re-justification (PHI CHECK).
+# Value matches PI_STRUCT_BOUNDARY_R_SQUARED's underlying φ but kept as a
+# named constant at the rejustification site for semantic clarity.
+PHI_GOLDEN_FLOOR_RATIO: float = (1.0 + math.sqrt(5.0)) / 2.0  # ≈ 1.618033988

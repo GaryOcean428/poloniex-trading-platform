@@ -82,6 +82,7 @@ from .figure8 import (
     Loop, assign_loop, figure8_retrieval_live,
 )
 from .topology_constants import (
+    PHI_GOLDEN_FLOOR_RATIO,
     PI_STRUCT_BOUNDARY_R_SQUARED, PI_STRUCT_GRAVITATING_FRACTION,
 )
 from .candle_patterns import (
@@ -209,6 +210,14 @@ class SymbolState:
     dca_add_count_by_lane: dict[str, int] = field(default_factory=dict)
     last_entry_at_ms_by_lane: dict[str, Optional[float]] = field(default_factory=dict)
     tape_flip_streak_by_lane: dict[str, int] = field(default_factory=dict)
+    # Held-position re-justification anchors — per-lane (regime, Φ)
+    # snapshots taken at the moment a position opens. The kernel uses
+    # these as the geometric anchor for "is current state still
+    # consonant with entry?". Cleared on position close in that lane.
+    # Same per-lane shape as peak_pnl_usdt_by_lane above so future
+    # multi-lane positions keep independent rejustification anchors.
+    regime_at_open_by_lane: dict[str, str] = field(default_factory=dict)
+    phi_at_open_by_lane: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass
@@ -811,6 +820,13 @@ def run_tick(
             "flatten and skip entries"
         )
         intervention_applied["applied"].append("ESCAPE:flatten")
+        # ESCAPE flattens — clear rejustification anchors for all lanes
+        # currently holding (and for the soft-fallback `pre_lane`).
+        for held_lane in list(held_lanes.keys()):
+            state.regime_at_open_by_lane.pop(held_lane, None)
+            state.phi_at_open_by_lane.pop(held_lane, None)
+        state.regime_at_open_by_lane.pop(pre_lane, None)
+        state.phi_at_open_by_lane.pop(pre_lane, None)
     elif flag_live and ocean_state.intervention == "DREAM":
         action = "hold"
         reason = (
@@ -822,6 +838,12 @@ def run_tick(
         action = "flatten"
         reason = auto_flatten_d["reason"]
         derivation["auto_flatten"] = auto_flatten_d["derivation"]
+        # Auto-flatten closes the position — clear rejustification anchors
+        # so a fresh entry rebuilds them cleanly. Clear all currently
+        # held lanes (full flatten across the symbol).
+        for held_lane in list(held_lanes.keys()):
+            state.regime_at_open_by_lane.pop(held_lane, None)
+            state.phi_at_open_by_lane.pop(held_lane, None)
     elif (
         # Proposal #10 — lane-aware entry path takes precedence when
         # the target lane is flat even if another lane is currently
@@ -849,6 +871,12 @@ def run_tick(
         derivation["entry_threshold"] = entry_thr_d["derivation"]
         derivation["size"] = size_d["derivation"]
         derivation["leverage"] = leverage_d["derivation"]
+        # Held-position re-justification — snapshot the (regime, Φ)
+        # state at the moment of entry on this lane. Subsequent ticks
+        # compare against these anchors via the three internal exit
+        # checks (regime change / Φ collapse / conviction failure).
+        state.regime_at_open_by_lane[pre_lane] = mode
+        state.phi_at_open_by_lane[pre_lane] = phi
     elif held_side:
         # Proposal #10: resolve the lane this single-position decision
         # belongs to. With ``lane_positions`` populated the lane is read
@@ -877,7 +905,24 @@ def run_tick(
             leverage_val=leverage_d["value"],
             derivation=derivation,
             position_lane=position_lane,
+            phi=phi,
+            emotions=emo,
+            mode_value=mode,
         )
+        # Held-position re-justification anchor lifecycle on close /
+        # reverse. scalp_exit / exit clear the lane's anchors so a
+        # fresh entry rebuilds them. reverse_long / reverse_short
+        # flatten AND reopen on the opposite side at this tick's
+        # regime + Φ — re-snapshot in place. DCA adds (action ==
+        # "enter_long"/"enter_short" with is_dca=True) leave the
+        # original anchors intact (the first-open justification is
+        # the canonical one).
+        if action in ("scalp_exit", "exit"):
+            state.regime_at_open_by_lane.pop(position_lane, None)
+            state.phi_at_open_by_lane.pop(position_lane, None)
+        elif action in ("reverse_long", "reverse_short"):
+            state.regime_at_open_by_lane[position_lane] = mode
+            state.phi_at_open_by_lane[position_lane] = phi
     elif (
         MODE_PROFILES[mode_enum].can_enter
         and direction != "flat"
@@ -900,6 +945,12 @@ def run_tick(
         derivation["entry_threshold"] = entry_thr_d["derivation"]
         derivation["size"] = size_d["derivation"]
         derivation["leverage"] = leverage_d["derivation"]
+        # Held-position re-justification — snapshot the (regime, Φ)
+        # state at the moment of entry on this lane. Subsequent ticks
+        # compare against these anchors via the three internal exit
+        # checks (regime change / Φ collapse / conviction failure).
+        state.regime_at_open_by_lane[pre_lane] = mode
+        state.phi_at_open_by_lane[pre_lane] = phi
     else:
         action = "hold"
         if not MODE_PROFILES[mode_enum].can_enter:
@@ -1057,10 +1108,21 @@ def _decide_with_position(
     leverage_val: int,
     derivation: dict[str, Any],
     position_lane: str = "swing",
+    phi: float = 0.0,
+    emotions: Any = None,
+    mode_value: str = "investigation",
 ) -> tuple[str, str, bool, bool]:
     """v0.6.1 exit gate order: profit harvest → scalp TP/SL → Loop 2 exit.
     v0.7.1 override-reverse. v0.6.2 DCA. Proposal #10: per-lane peak +
     streak + DCA bookkeeping so each lane carries its own state.
+
+    Held-position re-justification (this PR): three internal exit checks
+    fire when the kernel's own state contradicts what justified entry —
+    regime change, Φ collapse below the golden-ratio coherence floor,
+    or conviction failure (confidence < anxiety + confusion). Run AFTER
+    safety bounds (hard SL) and BEFORE trailing-harvest: a contradicted
+    self-read should close the position before harvest has a chance to
+    trail it forward.
     """
     entry_price = inputs.account.own_position_entry_price or last_price
     quantity = inputs.account.own_position_quantity or 0.0
@@ -1104,6 +1166,93 @@ def _decide_with_position(
         state.tape_flip_streak_by_lane[position_lane] = 0
     state.tape_flip_streak = state.tape_flip_streak_by_lane[position_lane]
 
+    # ── Hard SL pre-check (SAFETY_BOUND) ──────────────────────────
+    # Stop-loss is safety: it must precede the rejustification block so
+    # a position bleeding hard against the kernel always closes on price
+    # before the kernel re-reads its own state. Take-profit comes BELOW
+    # the rejustification block — letting an internal-coherence exit
+    # fire before TP if both would trigger on the same tick (the user
+    # explicitly chose continuous re-justification over harvest as the
+    # primary exit channel).
+    scalp = should_scalp_exit(
+        unrealized_pnl_usdt=unrealized_pnl,
+        notional_usdt=position_notional,
+        s=basin_state,
+        mode=mode_enum,
+        lane=position_lane,
+    )
+    derivation["scalp"] = {
+        **scalp["derivation"],
+        "unrealized_pnl": unrealized_pnl,
+        "mark_price": last_price,
+        "trade_id": trade_id,
+    }
+    if scalp["value"] and scalp["derivation"].get("exit_type_bit") == -1:
+        return "scalp_exit", scalp["reason"], False, False
+
+    # ── Held-position re-justification (this PR) ──────────────────
+    # Three internal exit checks. Each fires immediately when the
+    # kernel's current state contradicts the state that justified
+    # entry. No streak counting, no hysteresis, no time-based stops.
+    # All three are geometric: regime classifier output, Φ integration
+    # measure, Layer 2B emotion stack.
+    rejust: dict[str, Any] = {"checked": False}
+    has_regime_anchor = position_lane in state.regime_at_open_by_lane
+    has_phi_anchor = position_lane in state.phi_at_open_by_lane
+    if has_regime_anchor and has_phi_anchor:
+        rejust["checked"] = True
+        regime_at_open = state.regime_at_open_by_lane[position_lane]
+        phi_at_open = state.phi_at_open_by_lane[position_lane]
+        phi_floor = phi_at_open / PHI_GOLDEN_FLOOR_RATIO
+        rejust.update({
+            "lane": position_lane,
+            "regime_at_open": regime_at_open,
+            "regime_now": mode_value,
+            "phi_at_open": phi_at_open,
+            "phi_now": phi,
+            "phi_floor": phi_floor,
+            "confidence": getattr(emotions, "confidence", 0.0),
+            "anxiety": getattr(emotions, "anxiety", 0.0),
+            "confusion": getattr(emotions, "confusion", 0.0),
+        })
+        # 1. REGIME CHECK — regime changed since open.
+        if mode_value != regime_at_open:
+            rejust["fired"] = "regime_change"
+            derivation["rejustification"] = rejust
+            reason = (
+                f"regime_change: opened in {regime_at_open}, now {mode_value}"
+            )
+            return "scalp_exit", reason, False, False
+        # 2. PHI CHECK — integration coherence collapsed below the
+        # golden-ratio floor (phi_at_open × 0.618). Threshold is
+        # phi_at_open / PHI_GOLDEN_FLOOR_RATIO to stay symbolically
+        # close to the topology constant — boundary R² applied to
+        # integration coherence floor.
+        if phi < phi_floor:
+            rejust["fired"] = "phi_collapse"
+            derivation["rejustification"] = rejust
+            reason = (
+                f"phi_collapse: open Φ={phi_at_open:.3f} → now {phi:.3f} "
+                f"< floor {phi_floor:.3f}"
+            )
+            return "scalp_exit", reason, False, False
+        # 3. CONVICTION CHECK — Layer 2B emotion stack no longer
+        # supports the position. The moment current conviction fails
+        # against hesitation, exit. No half-life, no streak.
+        confidence = getattr(emotions, "confidence", 0.0)
+        anxiety = getattr(emotions, "anxiety", 0.0)
+        confusion = getattr(emotions, "confusion", 0.0)
+        if confidence < anxiety + confusion:
+            rejust["fired"] = "conviction_failed"
+            derivation["rejustification"] = rejust
+            reason = (
+                f"conviction_failed: conf={confidence:.3f} < "
+                f"anxiety+confusion={anxiety + confusion:.3f}"
+            )
+            return "scalp_exit", reason, False, False
+    derivation["rejustification"] = rejust
+
+    # ── Trailing-harvest (existing) ───────────────────────────────
     harvest = should_profit_harvest(
         unrealized_pnl_usdt=unrealized_pnl,
         peak_pnl_usdt=state.peak_pnl_usdt_by_lane.get(position_lane, 0.0),
@@ -1129,19 +1278,8 @@ def _decide_with_position(
         }
         return "scalp_exit", harvest["reason"], False, False
 
-    scalp = should_scalp_exit(
-        unrealized_pnl_usdt=unrealized_pnl,
-        notional_usdt=position_notional,
-        s=basin_state,
-        mode=mode_enum,
-        lane=position_lane,
-    )
-    derivation["scalp"] = {
-        **scalp["derivation"],
-        "unrealized_pnl": unrealized_pnl,
-        "mark_price": last_price,
-        "trade_id": trade_id,
-    }
+    # Take-profit — only TP can reach here (SL was returned above;
+    # rejustification and harvest also returned if they fired).
     if scalp["value"]:
         return "scalp_exit", scalp["reason"], False, False
 
