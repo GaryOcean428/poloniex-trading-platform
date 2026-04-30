@@ -642,6 +642,19 @@ def run_tick(
         mode=mode_enum,
         lane=pre_lane if pre_lane in ("scalp", "swing", "trend") else "swing",
     )
+    # Surgical diagnostic for live size=0 regression (post PR #611). Fires
+    # only when sizing collapses to zero AND the account is flat — surfaces
+    # the exact numeric inputs feeding current_position_size so we can grep
+    # `[size-zero-diag]` from Railway and trace which guard tripped.
+    if size_d["value"] == 0 and inputs.account.exchange_held_side is None:
+        logger.info(
+            "[size-zero-diag] symbol=%s avail=%.4f effFrac=%.4f cap=%.4f "
+            "minNot=%.4f lev=%s bank=%s mode=%s lane=%s size=%.4f deriv=%s",
+            inputs.symbol, inputs.account.available_equity,
+            effective_size_fraction, capped_equity, inputs.min_notional,
+            leverage_d["value"], inputs.bank_size, mode, pre_lane,
+            size_d["value"], size_d.get("derivation"),
+        )
     auto_flatten_d = should_auto_flatten(
         s=basin_state, recent_fhealths=state.fhealth_history,
     )
