@@ -24,6 +24,11 @@ KAPPA_STAR: float = 64.0
 # conditioned reward. Default "swing" preserves backward-compat.
 LaneType = Literal["scalp", "swing", "trend", "observe"]
 
+# Position-bearing lanes — those that can carry a real autonomous_trades
+# row in the (agent, symbol, lane) position-lifecycle key. "observe" is a
+# decision label only; it never holds a position.
+POSITION_LANES: tuple[str, ...] = ("scalp", "swing", "trend")
+
 
 @dataclass
 class NeurochemicalState:

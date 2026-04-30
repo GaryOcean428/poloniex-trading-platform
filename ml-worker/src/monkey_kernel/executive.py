@@ -73,6 +73,74 @@ _DEFAULT_SCALP_TP_MIN_FLOOR = 0.003
 _DEFAULT_EXIT_ENTROPY_COLLAPSE = 0.4  # (referenced by should_auto_flatten semantic)
 _DEFAULT_DCA_MAX_ADDS = 1
 
+# ─── Proposal #10 — lane-isolated position lifecycle defaults ────
+#
+# Two-lane initial split (scalp + swing). Trend is left as a parameter
+# slot but defaults to budget=0 — opt-in via the parameter registry.
+# Each lane has its own SL/TP envelope and capital budget. SL/TP are
+# stored as positive *fractions of notional* (e.g. 0.004 = 0.4%); the
+# trade-side sign is applied at the call site. Budget fractions sum to
+# 1.0 across position-bearing lanes when fully active; values below sum
+# to 1.0 only because trend defaults to 0 in this batch.
+_DEFAULT_LANE_SCALP_SL_PCT = 0.004
+_DEFAULT_LANE_SCALP_TP_PCT = 0.005
+_DEFAULT_LANE_SCALP_BUDGET_FRAC = 0.50
+
+_DEFAULT_LANE_SWING_SL_PCT = 0.015
+_DEFAULT_LANE_SWING_TP_PCT = 0.015
+_DEFAULT_LANE_SWING_BUDGET_FRAC = 0.50
+
+_DEFAULT_LANE_TREND_SL_PCT = 0.040
+_DEFAULT_LANE_TREND_TP_PCT = 0.040
+_DEFAULT_LANE_TREND_BUDGET_FRAC = 0.0  # opt-in; bumped via parameter registry
+
+_LANE_PARAMETER_DEFAULTS: dict[str, dict[str, float]] = {
+    "scalp": {
+        "sl_pct": _DEFAULT_LANE_SCALP_SL_PCT,
+        "tp_pct": _DEFAULT_LANE_SCALP_TP_PCT,
+        "budget_frac": _DEFAULT_LANE_SCALP_BUDGET_FRAC,
+    },
+    "swing": {
+        "sl_pct": _DEFAULT_LANE_SWING_SL_PCT,
+        "tp_pct": _DEFAULT_LANE_SWING_TP_PCT,
+        "budget_frac": _DEFAULT_LANE_SWING_BUDGET_FRAC,
+    },
+    "trend": {
+        "sl_pct": _DEFAULT_LANE_TREND_SL_PCT,
+        "tp_pct": _DEFAULT_LANE_TREND_TP_PCT,
+        "budget_frac": _DEFAULT_LANE_TREND_BUDGET_FRAC,
+    },
+}
+
+
+def lane_param(lane: str, key: str) -> float:
+    """Read a lane parameter from the registry, falling back to the
+    code-level default. Names follow ``executive.lane.<lane>.<key>``.
+
+    Used by every lane-aware decision function so live tunes ride the
+    parameter registry without redeploys (P14 + P25 discipline).
+    """
+    if lane not in _LANE_PARAMETER_DEFAULTS:
+        # Unknown lane (e.g. 'observe'): no per-lane envelope — caller
+        # should never invoke a lane-aware decision for such lanes.
+        # Return a neutral pass-through so we don't blow up in tests.
+        return float(_LANE_PARAMETER_DEFAULTS["swing"].get(key, 0.0))
+    fallback = _LANE_PARAMETER_DEFAULTS[lane][key]
+    return float(_registry.get(f"executive.lane.{lane}.{key}", default=fallback))
+
+
+def lane_budget_fraction(lane: str) -> float:
+    """Risk-allocation share for a lane (per proposal #10 path (a)).
+
+    Path (a) — static per-lane budget. The arbiter route (b) is the
+    natural follow-up once each lane has 5+ closed trades. Returns 0
+    for non-position lanes ("observe") so the caller can short-circuit
+    sizing.
+    """
+    if lane not in _LANE_PARAMETER_DEFAULTS:
+        return 0.0
+    return lane_param(lane, "budget_frac")
+
 
 # ═══════════════════════════════════════════════════════════════
 #  BasinState — shape all executive functions consume
@@ -244,7 +312,16 @@ def current_position_size(
     leverage: float,
     bank_size: int,
     mode: MonkeyMode = MonkeyMode.INVESTIGATION,
+    lane: str = "swing",
 ) -> dict[str, Any]:
+    # Proposal #10: per-lane capital budget. Each lane sees only its
+    # share of available equity for sizing, so a held swing-long can no
+    # longer paralyze a scalp-short on the same symbol. The lane budget
+    # is a live-governed risk parameter (executive.lane.<lane>.budget_frac).
+    # A zero-budget lane (default for "trend" until governance bumps it)
+    # is sized to zero — capital is not allocated to it this tick.
+    lane_frac = lane_budget_fraction(lane)
+    available_equity_usdt = available_equity_usdt * lane_frac
     nc = s.neurochemistry
     maturity = min(1.0, bank_size / 20.0)
     base_frac = s.phi * s.sovereignty * maturity
@@ -292,7 +369,7 @@ def current_position_size(
     return {
         "value": sized,
         "reason": (
-            f"size = {'lifted-to-min ' if lifted else ''}"
+            f"size[{lane}] = {'lifted-to-min ' if lifted else ''}"
             f"floor({exploration_floor:.3f}) or PhixSxM({base_frac:.3f}) "
             f"x reward({reward_mult:.2f}) x stab({stability_mult:.2f}) "
             f"x equity({available_equity_usdt:.2f}) @ {leverage:.0f}x "
@@ -313,6 +390,8 @@ def current_position_size(
             "min_notional": min_notional_usdt,
             "sized": sized,
             "lifted_to_min": 1 if lifted else 0,
+            "lane": lane,
+            "lane_budget_frac": lane_frac,
         },
     }
 
@@ -667,6 +746,7 @@ def should_scalp_exit(
     notional_usdt: float,
     s: ExecBasinState,
     mode: MonkeyMode = MonkeyMode.INVESTIGATION,
+    lane: str = "swing",
 ) -> dict[str, Any]:
     if notional_usdt <= 0:
         return {"value": False, "reason": "no position notional", "derivation": {}}
@@ -688,34 +768,54 @@ def should_scalp_exit(
     tp_min_floor = _registry.get(
         "executive.scalp.tp_min_floor", default=_DEFAULT_SCALP_TP_MIN_FLOOR,
     )
-    tp_thr = max(tp_min_floor, profile.tp_base_frac - 0.003 * nc.dopamine + 0.005 * s.phi)
-    sl_thr = tp_thr * profile.sl_ratio
+    geometric_tp = max(
+        tp_min_floor,
+        profile.tp_base_frac - 0.003 * nc.dopamine + 0.005 * s.phi,
+    )
+    geometric_sl = geometric_tp * profile.sl_ratio
+    # Proposal #10: per-lane envelope. Scalp/swing/trend each carry
+    # their own SL/TP "retreat tolerance":
+    #   scalp ~0.4% adverse, fast tape harvesting
+    #   swing ~1.5% adverse, absorbs retraces
+    #   trend ~3-5% adverse, rides the macro trend
+    # We take the *wider* of (geometric, lane) so the geometric floor
+    # (e.g. fee-clear) is never breached but the lane envelope can
+    # broaden tolerance when configured to do so.
+    lane_tp = lane_param(lane, "tp_pct")
+    lane_sl = lane_param(lane, "sl_pct")
+    tp_thr = max(geometric_tp, lane_tp)
+    sl_thr = max(geometric_sl, lane_sl)
 
     if pnl_frac >= tp_thr:
         return {
             "value": True,
-            "reason": f"take_profit: {pnl_frac*100:.3f}% >= {tp_thr*100:.3f}%",
+            "reason": f"take_profit[{lane}]: {pnl_frac*100:.3f}% >= {tp_thr*100:.3f}%",
             "derivation": {
                 "pnl_frac": pnl_frac, "tp_thr": tp_thr, "sl_thr": sl_thr,
+                "lane": lane, "lane_tp_pct": lane_tp, "lane_sl_pct": lane_sl,
                 "exit_type_bit": 1,
             },
         }
     if pnl_frac <= -sl_thr:
         return {
             "value": True,
-            "reason": f"stop_loss: {pnl_frac*100:.3f}% <= -{sl_thr*100:.3f}%",
+            "reason": f"stop_loss[{lane}]: {pnl_frac*100:.3f}% <= -{sl_thr*100:.3f}%",
             "derivation": {
                 "pnl_frac": pnl_frac, "tp_thr": tp_thr, "sl_thr": sl_thr,
+                "lane": lane, "lane_tp_pct": lane_tp, "lane_sl_pct": lane_sl,
                 "exit_type_bit": -1,
             },
         }
     return {
         "value": False,
         "reason": (
-            f"scalp hold: pnl {pnl_frac*100:.3f}% in "
+            f"scalp hold[{lane}]: pnl {pnl_frac*100:.3f}% in "
             f"[-{sl_thr*100:.3f}%, {tp_thr*100:.3f}%]"
         ),
-        "derivation": {"pnl_frac": pnl_frac, "tp_thr": tp_thr, "sl_thr": sl_thr},
+        "derivation": {
+            "pnl_frac": pnl_frac, "tp_thr": tp_thr, "sl_thr": sl_thr,
+            "lane": lane, "lane_tp_pct": lane_tp, "lane_sl_pct": lane_sl,
+        },
     }
 
 
@@ -749,7 +849,18 @@ def should_dca_add(
     now_ms: float,
     sovereignty: float,
     s: Optional[ExecBasinState] = None,
+    lane: str = "swing",
 ) -> dict[str, Any]:
+    """Five-rail DCA-add gate, evaluated per (agent, symbol, lane).
+
+    Proposal #10: lane discipline. ``held_side`` is the side held *by
+    this lane* (not the symbol-wide held side). The legacy "side
+    mismatch (short vs held long)" rejection happens only inside the
+    same lane — a swing-long can hold while a scalp-short on the same
+    symbol DCA-adds, because they live in different lanes with their
+    own retreat tolerance.
+    """
+    _ = lane  # surfaced into derivation for telemetry; not gating logic
     # v0.8.4b — when ExecBasinState is provided, DCA cooldown / better-price
     # / min-sovereignty DERIVE from geometric state per P25. When not
     # provided, fall back to the hardcoded pre-derivation values so older
@@ -777,8 +888,11 @@ def should_dca_add(
     if held_side != side_candidate:
         return {
             "value": False,
-            "reason": f"side mismatch ({side_candidate} vs held {held_side})",
-            "derivation": {"rule": 1},
+            "reason": (
+                f"side mismatch in lane {lane} "
+                f"({side_candidate} vs held {held_side})"
+            ),
+            "derivation": {"rule": 1, "lane": lane},
         }
     # Live-governed SAFETY_BOUND — caps total risk exposure across
     # martingale-style averaging attempts on a single position.
@@ -828,7 +942,7 @@ def should_dca_add(
     return {
         "value": True,
         "reason": (
-            f"DCA_OK: {price_delta*100:.2f}% from entry, "
+            f"DCA_OK[{lane}]: {price_delta*100:.2f}% from entry, "
             f"addCount={add_count}, sov={sovereignty:.2f}"
         ),
         "derivation": {
@@ -836,6 +950,7 @@ def should_dca_add(
             "price_delta": price_delta,
             "add_count": add_count,
             "sovereignty": sovereignty,
+            "lane": lane,
         },
     }
 
