@@ -1894,14 +1894,23 @@ export class MonkeyKernel extends EventEmitter {
       // Proposal #10 — in HEDGE mode the close must specify which side
       // of the hedge book it's reducing, otherwise the exchange may
       // route against the wrong leg.
+      //
+      // HEDGE close: posSide=LONG|SHORT, NO reduceOnly — Poloniex v3
+      // rejects reduceOnly in HEDGE with "Param error reduceOnly cannot
+      // be set to true in hedge" (prod incident 2026-04-30). The
+      // poloniexFuturesService strips reduceOnly for HEDGE mode, but we
+      // also pass `positionMode` explicitly so the contract is obvious
+      // at the call site.
+      const isHedge = this.positionDirectionMode === 'HEDGE';
       const closePosSide: 'LONG' | 'SHORT' | undefined =
-        this.positionDirectionMode === 'HEDGE'
-          ? (heldSide === 'long' ? 'LONG' : 'SHORT')
-          : undefined;
+        isHedge ? (heldSide === 'long' ? 'LONG' : 'SHORT') : undefined;
       const exchangeOrder = await poloniexFuturesService.placeOrder(credentials, {
         symbol, side: closeSide, type: 'market', size: formattedSize, lotSize: symbolLotSize,
         reduceOnly: true,
-      }, closePosSide ? { posSide: closePosSide } : {});
+      }, {
+        positionMode: isHedge ? 'HEDGE' : 'ONE_WAY',
+        ...(closePosSide ? { posSide: closePosSide } : {}),
+      });
       orderId =
         exchangeOrder?.ordId ?? exchangeOrder?.orderId ??
         exchangeOrder?.id ?? exchangeOrder?.clientOid ?? null;
