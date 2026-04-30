@@ -1515,8 +1515,17 @@ class FullyAutonomousTrader extends EventEmitter {
       const entryPrice = parseFloat(position.openAvgPx || position.entryPrice || '0');
       const pnl = parseFloat(position.unrealPnl || position.unrealisedPnl || '0');
 
-      // Use Poloniex close position endpoint for cleaner execution
-      const closeType = qty > 0 ? 'close_long' : 'close_short';
+      // Use Poloniex close position endpoint for cleaner execution.
+      // posSide-first / qty-sign-fallback — same canonical pattern as
+      // the FAT label and trend-reversal exits (PR #616). v3 HEDGE
+      // returns positive qty + posSide; ONE_WAY returns signed qty.
+      const posSideRaw = String(
+        (position as { posSide?: string }).posSide ?? '',
+      ).toUpperCase();
+      const isLong = posSideRaw === 'LONG' || posSideRaw === 'SHORT'
+        ? posSideRaw === 'LONG'
+        : qty > 0;
+      const closeType = isLong ? 'close_long' : 'close_short';
       await poloniexFuturesService.closePosition(credentials, symbol, closeType);
 
       // ─── Python short-circuit: delegate DB write to ml-worker ───
