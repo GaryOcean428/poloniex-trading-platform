@@ -429,6 +429,16 @@ def current_position_size(
 # ═══════════════════════════════════════════════════════════════
 
 
+# Kelly cap tradable floor — SAFETY_BOUND (preserves tradability on
+# small accounts). When Kelly is informative but yields a tiny
+# positive fraction (e.g. f*=0.05 × max_lev=20 → cap=1), this floor
+# prevents the cap from suppressing leverage below the level where
+# margin × leverage can clear the exchange minimum notional. The
+# floor is bounded by max_lev so it never raises leverage above the
+# exchange boundary.
+KELLY_CAP_TRADABLE_FLOOR: float = 8.0
+
+
 def kelly_leverage_cap(
     p_win: float,
     avg_win: float,
@@ -451,6 +461,22 @@ def kelly_leverage_cap(
     saturated at max_lev when the model has near-positive expectancy
     and going to 0 when expectancy turns negative.
 
+    SEMANTIC: this is a CAP, not a replacement. It exists to PREVENT
+    over-sizing when Kelly is confident about a positive edge. When
+    Kelly is UNINFORMATIVE (no wins, no losses, near-break-even, or
+    negative edge — i.e. the rolling stats give us no reason to
+    tighten), the cap defers to the geometric formula by returning
+    max_lev.
+
+    Why not return 1 for negative/zero edge?  Because the geometric
+    formula already encodes risk through κ-proximity, regime
+    stability and surprise discount. A weak Kelly statistic is a
+    signal that Kelly is uninformative, not a signal to crush
+    leverage to 1 — doing so would (a) make every position
+    untradeable on small accounts (margin × 1 < exchange min
+    notional) and (b) silently override the Fisher-Rao formula,
+    defeating the "cap-only" promise.
+
     QIG note: Kelly is a Euclidean / scalar concept. It is allowed
     here ONLY as a CAP layer applied AFTER the geometric leverage
     formula computes its value. The geometric raw_lev formula
@@ -462,14 +488,19 @@ def kelly_leverage_cap(
     Edge cases:
       * No losses recorded (avg_loss ≈ 0) — return max_lev (Kelly
         formula degenerate, defer to geometric formula).
-      * No wins recorded (avg_win ≈ 0) — return 1 (cap at min lev).
-      * p_win <= 0 or avg_loss <= 0 — return 1 (defensive).
+      * No wins recorded (avg_win ≈ 0) — return max_lev (uninformative).
+      * p_win <= 0 — return max_lev (uninformative).
+      * b <= 0 — return max_lev (uninformative).
+      * f* <= 0 (negative expectancy) — return max_lev (uninformative).
       * f* > 1 — clamp to 1.0 (full-Kelly is the theoretical max).
-      * f* < 0 (negative expectancy) — return 1 (the minimum the
-        clamp at the call site enforces).
+      * 0 < f* ≤ 1 — cap = max(KELLY_CAP_TRADABLE_FLOOR, round(f* × max_lev)),
+        bounded above by max_lev.
     """
+    # Uninformative Kelly inputs → defer to geometric formula. Returning
+    # max_lev makes the cap a no-op (the final clamp picks min(geometric,
+    # kelly, max) so kelly=max_lev never binds).
     if p_win <= 0 or avg_win <= 0:
-        return 1.0
+        return float(max_lev)
     abs_loss = abs(avg_loss)
     if abs_loss <= 1e-12:
         # No losing trades observed — Kelly is unbounded; defer to
@@ -477,11 +508,21 @@ def kelly_leverage_cap(
         return float(max_lev)
     b = avg_win / abs_loss
     if b <= 0:
-        return 1.0
+        return float(max_lev)
     q = 1.0 - p_win
     f_star = (p_win * b - q) / b
-    f_star = max(0.0, min(1.0, f_star))  # clamp to [0, 1]
-    cap = max(1.0, round(f_star * float(max_lev)))
+    # Negative or zero edge: Kelly says don't bet, but the geometric
+    # formula already discounts via regime/κ/surprise — the cap should
+    # not be the path that crushes leverage.
+    if f_star <= 0:
+        return float(max_lev)
+    f_star_clamped = min(1.0, f_star)
+    raw_cap = round(f_star_clamped * float(max_lev))
+    # Floor at KELLY_CAP_TRADABLE_FLOOR so a small positive Kelly
+    # fraction can't crush leverage below the tradable minimum on
+    # small accounts. Bound by max_lev so floor never raises above
+    # exchange boundary.
+    cap = max(1.0, min(float(max_lev), max(KELLY_CAP_TRADABLE_FLOOR, float(raw_cap))))
     return float(cap)
 
 
@@ -573,8 +614,12 @@ def current_leverage(
     # Fisher-Rao; the Kelly cap is a Euclidean risk-management
     # ceiling applied AFTER the geometric formula. ``lev`` is then
     # min(geometric, kelly, max_boundary). When rolling stats are
-    # absent (cold start), kelly_cap = max_leverage_boundary so the
-    # clamp is a no-op until enough trades have accumulated.
+    # absent (cold start) OR uninformative (break-even, negative
+    # edge), kelly_cap = max_leverage_boundary so the clamp is a
+    # no-op. The 2026-04-30 live-trading bug: pre-fix Kelly returned
+    # 1 for weak/negative edge, the min() then forced lev=1 even
+    # though the geometric formula said ~16. Fixed by treating
+    # uninformative inputs as deference to the geometric formula.
     if (
         rolling_win_rate is not None
         and rolling_avg_win is not None
