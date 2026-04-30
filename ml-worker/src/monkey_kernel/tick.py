@@ -103,8 +103,29 @@ _registry = get_registry()
 # ── Input / output dataclasses ───────────────────────────────────
 
 @dataclass
+class LanePosition:
+    """Single-lane position snapshot used by the lane-aware tick path
+    (proposal #10). One ``LanePosition`` per (agent, symbol, lane) row
+    that is currently ``status='open'`` in autonomous_trades.
+    """
+    lane: str  # "scalp" | "swing" | "trend"
+    side: str  # "long" | "short"
+    entry_price: float
+    quantity: float
+    trade_id: str
+
+
+@dataclass
 class AccountContext:
-    """Snapshot of account / position state as seen by the caller."""
+    """Snapshot of account / position state as seen by the caller.
+
+    Pre-#10 shape kept for back-compat: ``exchange_held_side`` plus the
+    triplet of ``own_position_*`` fields describes a single, symbol-wide
+    K position. Proposal #10 adds ``lane_positions`` — a list of open
+    per-lane positions on this symbol. When non-empty, the caller is on
+    the lane-aware path and ``own_position_*`` should mirror the lane
+    aggregate (kept around for legacy single-position tests).
+    """
     equity_fraction: float
     margin_fraction: float
     open_positions: int
@@ -113,6 +134,10 @@ class AccountContext:
     own_position_entry_price: Optional[float] = None
     own_position_quantity: Optional[float] = None
     own_position_trade_id: Optional[str] = None
+    # Proposal #10 — per-lane open positions on this (agent, symbol).
+    # Empty when flat across all lanes; populated by the caller from
+    # the lane-keyed autonomous_trades query.
+    lane_positions: list[LanePosition] = field(default_factory=list)
 
 
 @dataclass
@@ -142,7 +167,13 @@ class TickInputs:
 
 @dataclass
 class SymbolState:
-    """Per-symbol state carried across ticks."""
+    """Per-symbol state carried across ticks.
+
+    Proposal #10: peak-tracking + DCA-bookkeeping + tape-flip streak
+    are now per-lane dicts keyed by lane name. Pre-#10 scalar attrs
+    are retained for back-compat (callers without a lane just read
+    the legacy field; the lane-aware path goes through the dicts).
+    """
     symbol: str
     identity_basin: np.ndarray
     last_basin: Optional[np.ndarray] = None
@@ -156,6 +187,8 @@ class SymbolState:
     # Tier 1 motivators integration history — (phi, i_q) tuples per tick.
     # Used by compute_motivators for the CV(Φ × I_Q) integration motivator.
     integration_history: list[tuple[float, float]] = field(default_factory=list)
+    # Pre-#10 scalar bookkeeping — preserved as the "default lane"
+    # (swing) view so existing tests + back-compat callers keep working.
     dca_add_count: int = 0
     last_entry_at_ms: Optional[float] = None
     peak_pnl_usdt: Optional[float] = None
@@ -167,6 +200,15 @@ class SymbolState:
     # single noise tick doesn't trigger an exit. Reset on every new
     # trade (peak_tracked_trade_id changes).
     tape_flip_streak: int = 0
+    # Proposal #10 — per-lane substates. Each lane independently tracks
+    # peak unrealized PnL, DCA add count, last-entry timestamp, and
+    # tape-flip streak so a swing-long's bookkeeping never bleeds into
+    # a scalp-short on the same symbol.
+    peak_pnl_usdt_by_lane: dict[str, float] = field(default_factory=dict)
+    peak_tracked_trade_id_by_lane: dict[str, Optional[str]] = field(default_factory=dict)
+    dca_add_count_by_lane: dict[str, int] = field(default_factory=dict)
+    last_entry_at_ms_by_lane: dict[str, Optional[float]] = field(default_factory=dict)
+    tape_flip_streak_by_lane: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -578,6 +620,19 @@ def run_tick(
         else inputs.size_fraction
     )
     capped_equity = inputs.account.available_equity * effective_size_fraction
+    # Lane is chosen further down (after entry/exit branches need a
+    # tentative answer); for sizing we read the lane choice up-front so
+    # the per-lane budget fraction can shape the proposed margin. The
+    # final lane stored on TickDecision may differ when phi-gate GRAPH
+    # mode overrides; size is recomputed only inside the *entry* path
+    # if the override changes lane (rare; deferred).
+    pre_lane_d = choose_lane(
+        basin_state,
+        tape_trend=tape_trend,
+        stud_reading=stud_reading,
+        stud_live=stud_live,
+    )
+    pre_lane = pre_lane_d["value"]
     size_d = current_position_size(
         basin_state,
         available_equity_usdt=capped_equity,
@@ -585,6 +640,7 @@ def run_tick(
         leverage=leverage_d["value"],
         bank_size=inputs.bank_size,
         mode=mode_enum,
+        lane=pre_lane if pre_lane in ("scalp", "swing", "trend") else "swing",
     )
     auto_flatten_d = should_auto_flatten(
         s=basin_state, recent_fhealths=state.fhealth_history,
@@ -721,6 +777,14 @@ def run_tick(
     )
     derivation["exchange_held_side"] = inputs.account.exchange_held_side
     derivation["monkey_held_side"] = held_side
+    # Proposal #10 — per-lane held-side map. When the caller populated
+    # ``lane_positions``, this is the authoritative view of which lanes
+    # currently hold a position. Empty dict (no lanes held) means the
+    # entry path is wide open across all lanes.
+    held_lanes: dict[str, str] = {
+        lp.lane: lp.side for lp in inputs.account.lane_positions
+    }
+    derivation["held_lanes"] = dict(held_lanes)
 
     # PR 1 — Ocean DREAM / ESCAPE handlers. ESCAPE forces flatten,
     # DREAM forces hold (skip executive). MUSHROOM_MICRO already
@@ -745,7 +809,45 @@ def run_tick(
         action = "flatten"
         reason = auto_flatten_d["reason"]
         derivation["auto_flatten"] = auto_flatten_d["derivation"]
+    elif (
+        # Proposal #10 — lane-aware entry path takes precedence when
+        # the target lane is flat even if another lane is currently
+        # holding a position on this symbol. A K_SWING_LONG and a
+        # K_SCALP_SHORT can coexist as two distinct positions, each
+        # with its own retreat tolerance and capital share.
+        inputs.account.lane_positions
+        and pre_lane in ("scalp", "swing", "trend")
+        and pre_lane not in held_lanes
+        and MODE_PROFILES[mode_enum].can_enter
+        and direction != "flat"
+        and kernel_should_enter(emotions=emo)
+        and size_d["value"] > 0
+    ):
+        action = "enter_long" if side_candidate == "long" else "enter_short"
+        notional = size_d["value"] * leverage_d["value"]
+        reason = (
+            f"[{mode}] kernel-entry-lane[{pre_lane}] "
+            f"conv={emo.confidence * (1 + emo.wonder):.3f}"
+            f" > hes={emo.anxiety + emo.confusion:.3f}; "
+            f"side={side_candidate}; "
+            f"margin={size_d['value']:.2f} lev={leverage_d['value']}x "
+            f"notional={notional:.2f}"
+        )
+        derivation["entry_threshold"] = entry_thr_d["derivation"]
+        derivation["size"] = size_d["derivation"]
+        derivation["leverage"] = leverage_d["derivation"]
     elif held_side:
+        # Proposal #10: resolve the lane this single-position decision
+        # belongs to. With ``lane_positions`` populated the lane is read
+        # from the (held side, lane) row matching held_side; otherwise
+        # we fall back to "swing" (pre-#10 behavior — every legacy
+        # position migrated to lane='swing' in migration 042).
+        position_lane = "swing"
+        if inputs.account.lane_positions:
+            for lp in inputs.account.lane_positions:
+                if lp.side == held_side:
+                    position_lane = lp.lane
+                    break
         action, reason, is_dca, is_reverse = _decide_with_position(
             inputs=inputs,
             state=state,
@@ -761,6 +863,7 @@ def run_tick(
             size_val=size_d["value"],
             leverage_val=leverage_d["value"],
             derivation=derivation,
+            position_lane=position_lane,
         )
     elif (
         MODE_PROFILES[mode_enum].can_enter
@@ -841,12 +944,10 @@ def run_tick(
             persistence.push_integration(symbol, last_phi, last_iq)
 
     # ── Lane selection ────────────────────────────────────────────
-    lane_d = choose_lane(
-        basin_state,
-        tape_trend=tape_trend,
-        stud_reading=stud_reading,
-        stud_live=stud_live,
-    )
+    # Reuse the pre-sizing lane choice (computed above so the per-lane
+    # budget fraction could shape the proposed margin). The phi-gate
+    # GRAPH branch below may override it when the routing flag is live.
+    lane_d = pre_lane_d
     lane = lane_d["value"]
     derivation["lane"] = lane_d["derivation"]
 
@@ -942,52 +1043,69 @@ def _decide_with_position(
     size_val: float,
     leverage_val: int,
     derivation: dict[str, Any],
+    position_lane: str = "swing",
 ) -> tuple[str, str, bool, bool]:
     """v0.6.1 exit gate order: profit harvest → scalp TP/SL → Loop 2 exit.
-    v0.7.1 override-reverse. v0.6.2 DCA.
+    v0.7.1 override-reverse. v0.6.2 DCA. Proposal #10: per-lane peak +
+    streak + DCA bookkeeping so each lane carries its own state.
     """
     entry_price = inputs.account.own_position_entry_price or last_price
     quantity = inputs.account.own_position_quantity or 0.0
     trade_id = inputs.account.own_position_trade_id or ""
+    # Proposal #10: when the caller populated lane_positions, override
+    # entry/qty/trade_id with the matching lane's row so the executive
+    # reasons over the right position even when multiple lanes hold.
+    if inputs.account.lane_positions:
+        for lp in inputs.account.lane_positions:
+            if lp.lane == position_lane and lp.side == held_side:
+                entry_price = lp.entry_price
+                quantity = lp.quantity
+                trade_id = lp.trade_id
+                break
     position_notional = entry_price * quantity
     side_sign = 1 if held_side == "long" else -1
     unrealized_pnl = (last_price - entry_price) * quantity * side_sign
 
-    if state.peak_tracked_trade_id != trade_id:
-        state.peak_pnl_usdt = unrealized_pnl
-        state.peak_tracked_trade_id = trade_id
-        # Proposal #4 — reset streak counter on a fresh trade.
-        state.tape_flip_streak = 0
+    # Per-lane peak tracking (proposal #10). The legacy scalar
+    # ``state.peak_pnl_usdt`` mirrors the active lane so older callers
+    # (and tick telemetry) keep reading sensible values.
+    prev_tracked = state.peak_tracked_trade_id_by_lane.get(position_lane)
+    if prev_tracked != trade_id:
+        state.peak_pnl_usdt_by_lane[position_lane] = unrealized_pnl
+        state.peak_tracked_trade_id_by_lane[position_lane] = trade_id
+        state.tape_flip_streak_by_lane[position_lane] = 0
     else:
-        state.peak_pnl_usdt = max(state.peak_pnl_usdt or 0.0, unrealized_pnl)
+        prev_peak = state.peak_pnl_usdt_by_lane.get(position_lane, 0.0)
+        state.peak_pnl_usdt_by_lane[position_lane] = max(prev_peak, unrealized_pnl)
 
-    # Proposal #4 — maintain the sustained tape-flip streak counter.
-    # Increment when the tape alignment is bearish vs the held side
-    # (i.e., alignment <= the trend-flip threshold). Reset otherwise.
-    # The trend-flip threshold inside should_profit_harvest is
-    # NE-modulated (-0.20..-0.30); use a fixed -0.25 here to avoid
-    # importing NE state — the streak is monotonic in tape direction
-    # so a slightly off threshold doesn't break the gate semantics.
+    # Mirror to legacy scalars so non-lane-aware readers keep working.
+    state.peak_pnl_usdt = state.peak_pnl_usdt_by_lane[position_lane]
+    state.peak_tracked_trade_id = trade_id
+
+    # Proposal #4 — sustained tape-flip streak counter, per-lane.
     alignment_now = tape_trend if held_side == "long" else -tape_trend
+    cur_streak = state.tape_flip_streak_by_lane.get(position_lane, 0)
     if alignment_now <= -0.25:
-        state.tape_flip_streak += 1
+        state.tape_flip_streak_by_lane[position_lane] = cur_streak + 1
     else:
-        state.tape_flip_streak = 0
+        state.tape_flip_streak_by_lane[position_lane] = 0
+    state.tape_flip_streak = state.tape_flip_streak_by_lane[position_lane]
 
     harvest = should_profit_harvest(
         unrealized_pnl_usdt=unrealized_pnl,
-        peak_pnl_usdt=state.peak_pnl_usdt or 0.0,
+        peak_pnl_usdt=state.peak_pnl_usdt_by_lane.get(position_lane, 0.0),
         notional_usdt=position_notional,
         tape_trend=tape_trend,
         held_side=held_side,
         s=basin_state,
-        tape_flip_streak=state.tape_flip_streak,
+        tape_flip_streak=state.tape_flip_streak_by_lane.get(position_lane, 0),
     )
     derivation["harvest"] = {
         **harvest["derivation"],
         "unrealized_pnl": unrealized_pnl,
-        "peak_pnl": state.peak_pnl_usdt,
+        "peak_pnl": state.peak_pnl_usdt_by_lane.get(position_lane, 0.0),
         "trade_id": trade_id,
+        "lane": position_lane,
     }
     if harvest["value"]:
         derivation["scalp"] = {
@@ -1003,6 +1121,7 @@ def _decide_with_position(
         notional_usdt=position_notional,
         s=basin_state,
         mode=mode_enum,
+        lane=position_lane,
     )
     derivation["scalp"] = {
         **scalp["derivation"],
@@ -1046,18 +1165,28 @@ def _decide_with_position(
         )
         return action, reason, False, True
 
-    # DCA add
+    # DCA add — lane-scoped (proposal #10). The DCA gate's "side mismatch"
+    # rejection now means a lane-internal mismatch only; another lane on
+    # the same symbol can hold the opposite side without blocking this
+    # lane's DCA decision.
     now_ms = time.time() * 1000.0
+    lane_add_count = state.dca_add_count_by_lane.get(
+        position_lane, state.dca_add_count,
+    )
+    lane_last_entry_ms = state.last_entry_at_ms_by_lane.get(
+        position_lane, state.last_entry_at_ms,
+    )
     dca = should_dca_add(
         held_side=held_side,
         side_candidate=side_candidate,
         current_price=last_price,
         initial_entry_price=entry_price,
-        add_count=state.dca_add_count,
-        last_add_at_ms=state.last_entry_at_ms or 0,
+        add_count=lane_add_count,
+        last_add_at_ms=lane_last_entry_ms or 0,
         now_ms=now_ms,
         sovereignty=inputs.sovereignty,
         s=basin_state,  # v0.8.4b — enables cooldown / better-price derivation from NC + bv
+        lane=position_lane,
     )
     derivation["dca"] = dca["derivation"]
     if (
@@ -1069,7 +1198,8 @@ def _decide_with_position(
     ):
         action = "enter_long" if side_candidate == "long" else "enter_short"
         reason = (
-            f"DCA_ADD[{state.dca_add_count + 1}/1] {dca['reason']} | "
+            f"DCA_ADD[{position_lane}|{lane_add_count + 1}/1] "
+            f"{dca['reason']} | "
             f"side={side_candidate} margin={size_val:.2f} lev={leverage_val}x"
         )
         return action, reason, True, False

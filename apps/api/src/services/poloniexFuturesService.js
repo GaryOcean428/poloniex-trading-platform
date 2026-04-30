@@ -407,6 +407,45 @@ class PoloniexFuturesService {
   }
 
   /**
+   * Get position direction mode (HEDGE | ONE_WAY).
+   * Endpoint: GET /v3/position/mode
+   *
+   * NOTE — distinct from `getPositionMode` above which historically returned
+   * the (mis-named) margin mode. Per the v3 reference (apps/api/docs/
+   * poloniex-v3-reference.md §Position) the canonical body field is
+   * `posMode`, returning `HEDGE` (LONG/SHORT two-way positions) or
+   * `ONE_WAY` (BOTH net position).
+   *
+   * Used by the lane-isolated position lifecycle (proposal #10) — hedge
+   * mode is required so a swing-long and a scalp-short can coexist on
+   * the same symbol as two independent positions.
+   */
+  async getPositionDirectionMode(credentials) {
+    return this.makeRequest(credentials, 'GET', '/position/mode', null, {});
+  }
+
+  /**
+   * Set position direction mode (HEDGE | ONE_WAY).
+   * Endpoint: POST /v3/position/mode  body { posMode }
+   *
+   * Idempotent — Poloniex returns the current mode if already set; we
+   * pass through the response. Throws on Poloniex 4xx errors (e.g. an
+   * attempted switch with open positions on the account is rejected
+   * exchange-side; the caller should defer until positions close).
+   *
+   * @param {Object} credentials
+   * @param {'HEDGE'|'ONE_WAY'} posMode
+   */
+  async setPositionDirectionMode(credentials, posMode) {
+    const upper = String(posMode).toUpperCase();
+    if (upper !== 'HEDGE' && upper !== 'ONE_WAY') {
+      throw new Error(`setPositionDirectionMode: invalid posMode ${posMode}`);
+    }
+    const body = { posMode: upper };
+    return this.makeRequest(credentials, 'POST', '/position/mode', body);
+  }
+
+  /**
    * Adjust margin for isolated margin trading positions
    * Endpoint: POST /v3/trade/position/margin
    */

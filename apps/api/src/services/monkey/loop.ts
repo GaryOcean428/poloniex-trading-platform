@@ -95,8 +95,10 @@ import {
   shouldExit,
   shouldProfitHarvest,
   shouldScalpExit,
+  chooseLane,
   type BasinState,
   type Direction,
+  type LaneType,
 } from './executive.js';
 
 /** Default Monkey watchlist — matches liveSignalEngine for side-by-side. */
@@ -209,6 +211,15 @@ interface SymbolState {
    *  consumes this — trend-flip harvest fires only when streak >= 3
    *  so a single noise tick can't trigger an exit. */
   tapeFlipStreak: number;
+  /** Proposal #10 — per-lane bookkeeping. Each lane independently
+   *  tracks its peak unrealized PnL, the trade id it's peak-tracking,
+   *  and its tape-flip streak so a swing-long's history never bleeds
+   *  into a scalp-short on the same symbol. Lanes that never held
+   *  state stay absent from these maps; reads default to the legacy
+   *  scalar values for back-compat. */
+  peakPnlUsdtByLane: Record<string, number | null>;
+  peakTrackedTradeIdByLane: Record<string, string | null>;
+  tapeFlipStreakByLane: Record<string, number>;
   /** v0.8.7e: latest computed basinDir + tapeTrend from processSymbol, with
    *  timestamp. Exposed via getLatestBasinSnapshot() for LiveSignal's
    *  inter-engine agreement gate. Null until the first tick completes. */
@@ -262,6 +273,16 @@ export class MonkeyKernel extends EventEmitter {
    */
   private mlOutageStreak = 0;
   /**
+   * Proposal #10 — cached account-level position direction mode.
+   * Read once at kernel start via assertHedgeModeIfPossible. When
+   * 'HEDGE' the executor passes ``posSide: LONG | SHORT`` on entries
+   * so a swing-long and a scalp-short can coexist. When 'ONE_WAY' the
+   * executor omits posSide (Poloniex defaults to BOTH); lane discipline
+   * still works at the DB layer but two opposite-side lanes will net
+   * exchange-side. Defaults to 'ONE_WAY' (the historic configuration).
+   */
+  private positionDirectionMode: 'HEDGE' | 'ONE_WAY' = 'ONE_WAY';
+  /**
    * Arbiter — capital allocator between Agent K (kernel) and Agent M (ml).
    * Single instance per kernel. Settled trades flow back via
    * recordSettled from closeHeldPosition.
@@ -298,6 +319,14 @@ export class MonkeyKernel extends EventEmitter {
     for (const sym of this.symbols) {
       this.symbolStates.set(sym, this.newSymbolState());
     }
+    // Proposal #10 — detect (don't auto-flip) account position direction
+    // mode. Lane-isolated positions in HEDGE mode let a swing-long and a
+    // scalp-short coexist on the exchange; ONE_WAY mode nets opposite
+    // sides. We log the current mode here and ship the executor with
+    // posSide-aware order placement; the actual HEDGE flip is deferred
+    // to a manual op once current K positions close (see TODO in
+    // assertHedgeModeIfPossible).
+    await this.detectPositionDirectionMode();
     logger.info(`[${this.label}] kernel waking`, {
       instanceId: this.instanceId,
       timeframe: this.timeframe,
@@ -364,6 +393,9 @@ export class MonkeyKernel extends EventEmitter {
       dcaAddCount: 0,
       slDeferRemainingTicks: 0,
       tapeFlipStreak: 0,
+      peakPnlUsdtByLane: {},
+      peakTrackedTradeIdByLane: {},
+      tapeFlipStreakByLane: {},
       latestBasinSnapshot: null,
     };
   }
@@ -746,7 +778,19 @@ export class MonkeyKernel extends EventEmitter {
       ? 1.0
       : this.sizeFraction;
     const cappedEquity = availableEquity * effectiveSizeFraction;
-    const size = currentPositionSize(basinState, cappedEquity, minNotional, leverage.value, bankSize, mode);
+    // Proposal #10 — lane selection. Each tick picks the locally-optimal
+    // execution lane via softmax over basin features (parity with the
+    // Python kernel's choose_lane). The chosen lane gates size (per-lane
+    // budget fraction) AND, when a position is open, scopes the exit
+    // gate's TP/SL envelope.
+    const laneDecision = chooseLane(basinState, tapeTrend);
+    const chosenLane: LaneType = laneDecision.value;
+    const positionLane: 'scalp' | 'swing' | 'trend' =
+      chosenLane === 'observe' ? 'swing' : chosenLane;
+    const size = currentPositionSize(
+      basinState, cappedEquity, minNotional, leverage.value, bankSize, mode,
+      positionLane,
+    );
     const autoFlatten = shouldAutoFlatten(basinState, state.fHealthHistory);
 
     // 6. DECIDE — propose action
@@ -815,45 +859,58 @@ export class MonkeyKernel extends EventEmitter {
       //   3. Loop 2 regime-shift (shouldExit)
       let exitFired = false;
       const openRow = ownOpenRow;  // reuse the lookup from above
+      // Proposal #10 — the position lane comes from the open row's
+      // ``lane`` column (migration 042; existing rows defaulted to
+      // 'swing'). All exit gating below evaluates against this lane's
+      // envelope.
+      const heldLane: 'scalp' | 'swing' | 'trend' = openRow?.lane ?? 'swing';
+      derivation.heldLane = heldLane;
       if (openRow) {
         const positionNotional = Number(openRow.entry_price) * Number(openRow.quantity);
         const sidesign = heldSide === 'long' ? 1 : -1;
         const unrealizedPnl = (lastPrice - Number(openRow.entry_price)) * Number(openRow.quantity) * sidesign;
         const tradeId = String(openRow.id);
 
-        // Reset peak tracking when we detect a NEW trade vs what we
-        // were peak-tracking. (Covers reconciler-replaced rows.)
-        if (state.peakTrackedTradeId !== tradeId) {
-          state.peakPnlUsdt = unrealizedPnl;
-          state.peakTrackedTradeId = tradeId;
-          // Proposal #4 — reset streak on a fresh trade.
-          state.tapeFlipStreak = 0;
+        // Reset per-lane peak tracking when we detect a NEW trade vs
+        // what we were peak-tracking IN THIS LANE. (Covers reconciler-
+        // replaced rows.) Each lane's peak is independent.
+        const prevTracked = state.peakTrackedTradeIdByLane[heldLane] ?? null;
+        if (prevTracked !== tradeId) {
+          state.peakPnlUsdtByLane[heldLane] = unrealizedPnl;
+          state.peakTrackedTradeIdByLane[heldLane] = tradeId;
+          state.tapeFlipStreakByLane[heldLane] = 0;
         } else {
-          state.peakPnlUsdt = Math.max(state.peakPnlUsdt ?? 0, unrealizedPnl);
+          const prevPeak = state.peakPnlUsdtByLane[heldLane] ?? 0;
+          state.peakPnlUsdtByLane[heldLane] = Math.max(prevPeak, unrealizedPnl);
         }
+        // Mirror to legacy scalars so non-lane-aware readers keep working.
+        state.peakPnlUsdt = state.peakPnlUsdtByLane[heldLane];
+        state.peakTrackedTradeId = tradeId;
 
-        // Proposal #4 — maintain the sustained tape-flip streak. Use
-        // a fixed -0.25 threshold (matching the trend-flip threshold
-        // inside shouldProfitHarvest) for the streak gate.
+        // Proposal #4 — sustained tape-flip streak counter, per-lane.
         const alignmentNowForStreak = heldSide === 'long' ? tapeTrend : -tapeTrend;
+        const curStreak = state.tapeFlipStreakByLane[heldLane] ?? 0;
         if (alignmentNowForStreak <= -0.25) {
-          state.tapeFlipStreak += 1;
+          state.tapeFlipStreakByLane[heldLane] = curStreak + 1;
         } else {
-          state.tapeFlipStreak = 0;
+          state.tapeFlipStreakByLane[heldLane] = 0;
         }
+        state.tapeFlipStreak = state.tapeFlipStreakByLane[heldLane];
 
         // 1. Profit harvest — trailing stop + trend-flip, only while green.
         // Streak counter passed; harvest internally enforces #2 + #4.
+        const lanePeak = state.peakPnlUsdtByLane[heldLane] ?? 0;
+        const laneStreak = state.tapeFlipStreakByLane[heldLane] ?? 0;
         const harvest = shouldProfitHarvest(
           unrealizedPnl,
-          state.peakPnlUsdt ?? 0,
+          lanePeak,
           positionNotional,
           tapeTrend,
           heldSide,
           basinState,
-          state.tapeFlipStreak,
+          laneStreak,
         );
-        derivation.harvest = { ...harvest.derivation, unrealizedPnl, peakPnl: state.peakPnlUsdt, tradeId };
+        derivation.harvest = { ...harvest.derivation, unrealizedPnl, peakPnl: lanePeak, tradeId, lane: heldLane };
         if (harvest.value) {
           action = 'scalp_exit';  // executes via same close path
           reason = harvest.reason;
@@ -864,12 +921,13 @@ export class MonkeyKernel extends EventEmitter {
             unrealizedPnl,
             markPrice: lastPrice,
             tradeId,
+            lane: heldLane,
           };
         }
 
         // 2. Scalp TP/SL (only if harvest didn't fire)
         if (!exitFired) {
-          const scalp = shouldScalpExit(unrealizedPnl, positionNotional, basinState, mode);
+          const scalp = shouldScalpExit(unrealizedPnl, positionNotional, basinState, mode, heldLane);
           derivation.scalp = { ...scalp.derivation, unrealizedPnl, markPrice: lastPrice, tradeId };
           // Proposal #9 path 2: SL defer. If the latest tick prints a
           // strong hammer/inverted-hammer AGAINST a long-position SL
@@ -1113,6 +1171,13 @@ export class MonkeyKernel extends EventEmitter {
           isDCAAdd: isDCA,
           dcaAddIndex: isDCA ? state.dcaAddCount + 1 : 0,
           agent: 'K',
+          // Proposal #10 — when adding to an existing held position,
+          // route the entry into THAT lane so DCA stacks under one
+          // (agent, symbol, lane) row group. Otherwise use the lane
+          // chosen by chooseLane this tick.
+          lane: isDCA && heldSide
+            ? (ownOpenRow?.lane ?? positionLane)
+            : positionLane,
         }) : { executed: false, orderId: null, reason: 'k_arbiter_zero' };
         executed = execResult.executed;
         monkeyOrderId = execResult.orderId;
@@ -1140,6 +1205,11 @@ export class MonkeyKernel extends EventEmitter {
           exitTypeBit === 3 ? 'trend_flip_harvest' :
           'scalp_exit';
         const pnlAtDecision = Number(scalpDeriv?.unrealizedPnl ?? 0);
+        const scalpLane = (
+          scalpDeriv?.lane === 'scalp' || scalpDeriv?.lane === 'trend'
+            ? scalpDeriv.lane
+            : 'swing'
+        ) as 'scalp' | 'swing' | 'trend';
         if (tradeId) {
           const closeResult = await this.closeHeldPosition({
             symbol,
@@ -1148,11 +1218,17 @@ export class MonkeyKernel extends EventEmitter {
             markPrice: lastPrice,
             exitReason: exitType,
             pnlAtDecision,
+            lane: scalpLane,
           });
           executed = closeResult.executed;
           monkeyOrderId = closeResult.orderId;
           if (executed) {
-            // Clear trade-level state now the position is closed.
+            // Clear lane-scoped trade-level state now the lane closed.
+            // Other lanes' bookkeeping is preserved (proposal #10).
+            state.peakPnlUsdtByLane[scalpLane] = null;
+            state.peakTrackedTradeIdByLane[scalpLane] = null;
+            state.tapeFlipStreakByLane[scalpLane] = 0;
+            // Mirror legacy scalars for any non-lane-aware reader.
             state.peakPnlUsdt = null;
             state.peakTrackedTradeId = null;
             state.dcaAddCount = 0;
@@ -1189,6 +1265,7 @@ export class MonkeyKernel extends EventEmitter {
             markPrice: lastPrice,
             exitReason: 'override_reverse',
             pnlAtDecision,
+            lane: ownOpenRow?.lane ?? 'swing',
           });
           if (closeResult.executed) {
             state.peakPnlUsdt = null;
@@ -1210,6 +1287,9 @@ export class MonkeyKernel extends EventEmitter {
               trajectoryId: null,
               isDCAAdd: false,
               dcaAddIndex: 0,
+              // Reversal lands in the same lane the previous position
+              // occupied — REVERSION mode flips side, not lane.
+              lane: ownOpenRow?.lane ?? 'swing',
             });
             executed = execResult.executed;
             monkeyOrderId = execResult.orderId;
@@ -1444,6 +1524,72 @@ export class MonkeyKernel extends EventEmitter {
   }
 
   /**
+   * Proposal #10 — detect (don't flip) the live account's position
+   * direction mode. Caches the answer on the kernel so the executor's
+   * placeOrder path knows whether to send ``posSide: LONG | SHORT``
+   * (HEDGE) or omit it (ONE_WAY → BOTH). Fail-soft: any read failure
+   * leaves the cache at the historic 'ONE_WAY' default so the system
+   * keeps trading the way it used to.
+   *
+   * The actual HEDGE switch is deferred — current K positions are open
+   * and Poloniex rejects mode changes with live positions. Operator
+   * runbook: once all K rows close, an admin calls
+   *   poloniexFuturesService.setPositionDirectionMode(creds, 'HEDGE')
+   * via the futures route or a one-shot script. Restart the kernel and
+   * this method picks up the new mode.
+   *
+   * TODO: enable HEDGE mode in production after current K positions
+   *       close — call setPositionDirectionMode('HEDGE') at next AWAKE
+   *       startup.
+   */
+  private async detectPositionDirectionMode(): Promise<void> {
+    try {
+      const userRow = await pool.query(
+        `SELECT user_id FROM user_api_credentials WHERE exchange = 'poloniex' LIMIT 1`,
+      );
+      const userId = String((userRow.rows[0] as { user_id?: string } | undefined)?.user_id ?? '');
+      if (!userId) {
+        logger.info('[Monkey] position-mode detect: no creds, defaulting to ONE_WAY');
+        return;
+      }
+      const creds = await apiCredentialsService.getCredentials(userId, 'poloniex');
+      if (!creds) {
+        logger.info('[Monkey] position-mode detect: creds missing, defaulting to ONE_WAY');
+        return;
+      }
+      const resp = await poloniexFuturesService.getPositionDirectionMode(creds);
+      const detected = String(
+        (resp as Record<string, unknown>)?.posMode
+        ?? (resp as Record<string, unknown>)?.data
+        ?? '',
+      ).toUpperCase();
+      if (detected === 'HEDGE' || detected === 'ONE_WAY') {
+        this.positionDirectionMode = detected;
+        logger.info('[Monkey] position-mode detected', { mode: detected });
+      } else {
+        // Some response shapes nest under .data — try once more.
+        const data = (resp as Record<string, unknown>)?.data;
+        const nested = String(
+          (data && typeof data === 'object' ? (data as Record<string, unknown>).posMode : '')
+          ?? '',
+        ).toUpperCase();
+        if (nested === 'HEDGE' || nested === 'ONE_WAY') {
+          this.positionDirectionMode = nested;
+          logger.info('[Monkey] position-mode detected (nested)', { mode: nested });
+        } else {
+          logger.info('[Monkey] position-mode detect: unrecognized response, default ONE_WAY', {
+            raw: detected,
+          });
+        }
+      }
+    } catch (err) {
+      logger.debug('[Monkey] position-mode detect failed (fail-soft to ONE_WAY)', {
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /**
    * Look up Monkey's most recent open trade row for a symbol. Used by
    * the scalp-exit gate (v0.4) to compute unrealized P&L.
    */
@@ -1496,31 +1642,38 @@ export class MonkeyKernel extends EventEmitter {
   }
 
   private async findOpenMonkeyTrade(symbol: string): Promise<
-    | { id: string; entry_price: string; quantity: string; leverage: number; order_id: string | null; side: 'long' | 'short' }
+    | { id: string; entry_price: string; quantity: string; leverage: number; order_id: string | null; side: 'long' | 'short'; lane: 'scalp' | 'swing' | 'trend' }
     | null
   > {
+    // Aggregate over ALL open lanes (back-compat: callers that don't
+    // know about lanes still need a single open-row view). Returns the
+    // OLDEST lane's pseudo-row when multiple lanes hold positions; the
+    // proper lane-aware path uses ``findOpenMonkeyTradesByLane`` below.
     try {
       const reasonPattern = `monkey|kernel=${this.instanceId}|%`;
       const result = await pool.query(
-        `SELECT id, entry_price, quantity, leverage, order_id, side
+        `SELECT id, entry_price, quantity, leverage, order_id, side, lane
            FROM autonomous_trades
           WHERE reason LIKE $2 AND status = 'open' AND symbol = $1
           ORDER BY entry_time ASC`,
         [symbol, reasonPattern],
       );
       const rows = result.rows as Array<{
-        id: string; entry_price: string; quantity: string; leverage: number; order_id: string | null; side: string;
+        id: string; entry_price: string; quantity: string; leverage: number;
+        order_id: string | null; side: string; lane: string;
       }>;
       const normSide = (s: string): 'long' | 'short' =>
         s === 'buy' || s === 'long' ? 'long' : 'short';
+      const normLane = (l: string | null | undefined): 'scalp' | 'swing' | 'trend' =>
+        (l === 'scalp' || l === 'trend') ? l : 'swing';
       if (rows.length === 0) return null;
-      if (rows.length === 1) return { ...rows[0], side: normSide(rows[0].side) };
-      // v0.6.2: multi-row position (DCA). Return an AGGREGATE pseudo-row:
-      //   quantity = sum; entry_price = weighted average by quantity.
-      //   id/order_id carry the oldest row so harvest/scalp reference a
-      //   stable anchor across ticks. leverage = first row's leverage
-      //   (they should match; risk kernel enforces). side = oldest row's
-      //   side (DCA rows should share side; entry kernel enforces).
+      if (rows.length === 1) {
+        return { ...rows[0], side: normSide(rows[0].side), lane: normLane(rows[0].lane) };
+      }
+      // Multi-row: aggregate by quantity-weighted entry price across
+      // ALL rows for legacy callers. The lane-aware path operates per
+      // (lane) inside findOpenMonkeyTradesByLane and is the source of
+      // truth post-#10.
       const totalQty = rows.reduce((s, r) => s + Math.abs(Number(r.quantity) || 0), 0);
       const weightedPrice = rows.reduce(
         (s, r) => s + Number(r.entry_price) * Math.abs(Number(r.quantity) || 0),
@@ -1533,12 +1686,97 @@ export class MonkeyKernel extends EventEmitter {
         leverage: rows[0].leverage,
         order_id: rows[0].order_id,
         side: normSide(rows[0].side),
+        lane: normLane(rows[0].lane),
       };
     } catch (err) {
       logger.debug('[Monkey] findOpenMonkeyTrade failed', {
         err: err instanceof Error ? err.message : String(err),
       });
       return null;
+    }
+  }
+
+  /**
+   * Proposal #10 — per-lane open-position lookup. Returns one entry per
+   * lane that currently has an open Monkey row on this symbol; rows
+   * within a lane are aggregated (DCA adds collapse into a single
+   * pseudo-row per lane the same way the symbol-wide aggregation worked
+   * pre-#10).
+   *
+   * Used by processSymbol to thread lane-positions into TickInputs and
+   * by the entry path to gate "is THIS lane flat?" rather than the
+   * symbol-wide held-side question.
+   */
+  private async findOpenMonkeyTradesByLane(symbol: string): Promise<
+    Array<{
+      lane: 'scalp' | 'swing' | 'trend';
+      side: 'long' | 'short';
+      entry_price: number;
+      quantity: number;
+      trade_id: string;
+      order_id: string | null;
+      leverage: number;
+    }>
+  > {
+    try {
+      const reasonPattern = `monkey|kernel=${this.instanceId}|%`;
+      const result = await pool.query(
+        `SELECT id, entry_price, quantity, leverage, order_id, side, lane
+           FROM autonomous_trades
+          WHERE reason LIKE $2 AND status = 'open' AND symbol = $1
+          ORDER BY entry_time ASC`,
+        [symbol, reasonPattern],
+      );
+      const rows = result.rows as Array<{
+        id: string; entry_price: string; quantity: string; leverage: number;
+        order_id: string | null; side: string; lane: string;
+      }>;
+      const normSide = (s: string): 'long' | 'short' =>
+        s === 'buy' || s === 'long' ? 'long' : 'short';
+      const normLane = (l: string | null | undefined): 'scalp' | 'swing' | 'trend' =>
+        (l === 'scalp' || l === 'trend') ? l : 'swing';
+      // Group by lane, weighted-average within each lane (DCA roll-up).
+      const byLane: Map<string, typeof rows> = new Map();
+      for (const r of rows) {
+        const lane = normLane(r.lane);
+        if (!byLane.has(lane)) byLane.set(lane, []);
+        byLane.get(lane)!.push(r);
+      }
+      const out: Array<{
+        lane: 'scalp' | 'swing' | 'trend';
+        side: 'long' | 'short';
+        entry_price: number;
+        quantity: number;
+        trade_id: string;
+        order_id: string | null;
+        leverage: number;
+      }> = [];
+      for (const [laneStr, laneRows] of byLane) {
+        const lane = laneStr as 'scalp' | 'swing' | 'trend';
+        if (laneRows.length === 0) continue;
+        const totalQty = laneRows.reduce(
+          (s, r) => s + Math.abs(Number(r.quantity) || 0), 0);
+        if (totalQty === 0) continue;
+        const weightedPrice = laneRows.reduce(
+          (s, r) => s + Number(r.entry_price) * Math.abs(Number(r.quantity) || 0),
+          0,
+        ) / totalQty;
+        out.push({
+          lane,
+          side: normSide(laneRows[0].side),
+          entry_price: weightedPrice,
+          quantity: totalQty,
+          trade_id: laneRows[0].id,
+          order_id: laneRows[0].order_id,
+          leverage: laneRows[0].leverage,
+        });
+      }
+      return out;
+    } catch (err) {
+      logger.debug('[Monkey] findOpenMonkeyTradesByLane failed', {
+        err: err instanceof Error ? err.message : String(err),
+      });
+      return [];
     }
   }
 
@@ -1555,8 +1793,14 @@ export class MonkeyKernel extends EventEmitter {
     markPrice: number;
     exitReason: string;
     pnlAtDecision: number;
+    /** Proposal #10: when provided, close only autonomous_trades rows
+     *  matching this lane (and send ``posSide`` on the exchange close
+     *  in HEDGE mode so the other lane stays untouched). When omitted,
+     *  legacy behavior — close all open rows under (kernel, symbol). */
+    lane?: 'scalp' | 'swing' | 'trend';
   }): Promise<{ executed: boolean; orderId: string | null; reason: string }> {
     const { symbol, tradeId, heldSide, markPrice, exitReason, pnlAtDecision } = req;
+    const closeLane = req.lane;
 
     // Load credentials + position to know size to close.
     let credentials: { apiKey: string; apiSecret: string; passphrase?: string };
@@ -1578,13 +1822,28 @@ export class MonkeyKernel extends EventEmitter {
 
     // Read exchange position size (tradeId's quantity may diverge from
     // actual exchange state if partial fills or reconciler updates).
+    // Proposal #10 — in HEDGE mode + lane scoped close, the exchange
+    // qty for *this side* must be used (the symbol may have an opposite
+    // side too); in ONE_WAY mode there's only one net position so the
+    // whole-symbol qty applies.
     let exchangeQty = 0;
     try {
       const positions = await poloniexFuturesService.getPositions(credentials);
-      const forSymbol = (Array.isArray(positions) ? positions : []).find(
+      const forSymbol = (Array.isArray(positions) ? positions : []).filter(
         (p: Record<string, unknown>) => String(p.symbol ?? '') === symbol,
       );
-      exchangeQty = Math.abs(Number(forSymbol?.qty ?? forSymbol?.size ?? 0));
+      if (this.positionDirectionMode === 'HEDGE' && closeLane) {
+        // Match by side — under HEDGE Poloniex returns one position per side.
+        const target = forSymbol.find((p: Record<string, unknown>) => {
+          const s = String(p.side ?? p.posSide ?? '').toUpperCase();
+          const want = heldSide === 'long' ? 'LONG' : 'SHORT';
+          return s === want;
+        }) ?? forSymbol[0];
+        exchangeQty = Math.abs(Number(target?.qty ?? target?.size ?? 0));
+      } else {
+        const target = forSymbol[0];
+        exchangeQty = Math.abs(Number(target?.qty ?? target?.size ?? 0));
+      }
     } catch (err) {
       return {
         executed: false, orderId: null,
@@ -1620,10 +1879,17 @@ export class MonkeyKernel extends EventEmitter {
 
     let orderId: string | null = null;
     try {
+      // Proposal #10 — in HEDGE mode the close must specify which side
+      // of the hedge book it's reducing, otherwise the exchange may
+      // route against the wrong leg.
+      const closePosSide: 'LONG' | 'SHORT' | undefined =
+        this.positionDirectionMode === 'HEDGE'
+          ? (heldSide === 'long' ? 'LONG' : 'SHORT')
+          : undefined;
       const exchangeOrder = await poloniexFuturesService.placeOrder(credentials, {
         symbol, side: closeSide, type: 'market', size: formattedSize, lotSize: symbolLotSize,
         reduceOnly: true,
-      });
+      }, closePosSide ? { posSide: closePosSide } : {});
       orderId =
         exchangeOrder?.ordId ?? exchangeOrder?.orderId ??
         exchangeOrder?.id ?? exchangeOrder?.clientOid ?? null;
@@ -1643,12 +1909,23 @@ export class MonkeyKernel extends EventEmitter {
     // share for that row goes back to the arbiter under that agent so
     // the rolling allocation reflects per-agent performance.
     try {
-      const openRows = await pool.query(
-        `SELECT id, quantity, agent FROM autonomous_trades
-          WHERE reason LIKE $1 AND status = 'open' AND symbol = $2
-          ORDER BY entry_time ASC`,
-        [`monkey|kernel=${this.instanceId}|%`, symbol],
-      );
+      // Proposal #10 — when a lane is scoped, only close that lane's
+      // open rows. Other lanes (e.g. swing-long while we're closing a
+      // scalp-short) keep their bookkeeping intact.
+      const openRows = closeLane
+        ? await pool.query(
+            `SELECT id, quantity, agent FROM autonomous_trades
+              WHERE reason LIKE $1 AND status = 'open' AND symbol = $2
+                AND lane = $3
+              ORDER BY entry_time ASC`,
+            [`monkey|kernel=${this.instanceId}|%`, symbol, closeLane],
+          )
+        : await pool.query(
+            `SELECT id, quantity, agent FROM autonomous_trades
+              WHERE reason LIKE $1 AND status = 'open' AND symbol = $2
+              ORDER BY entry_time ASC`,
+            [`monkey|kernel=${this.instanceId}|%`, symbol],
+          );
       const rows = openRows.rows as Array<{ id: string; quantity: string; agent: string | null }>;
       const totalQty = rows.reduce((s, r) => s + Math.abs(Number(r.quantity) || 0), 0);
       if (rows.length === 0 || totalQty === 0) {
@@ -1749,6 +2026,9 @@ export class MonkeyKernel extends EventEmitter {
      *  M = ml-only. Default 'K' for back-compat with the existing
      *  call sites. */
     agent?: 'K' | 'M';
+    /** Proposal #10: execution lane key. Default 'swing' = pre-#10 implicit
+     *  lane so existing call sites remain bit-identical. */
+    lane?: 'scalp' | 'swing' | 'trend';
   }): Promise<{ executed: boolean; orderId: string | null; reason: string }> {
     const { symbol, side, marginUsdt, leverage, entryPrice, minNotional } = req;
     const notionalUsdt = marginUsdt * leverage;
@@ -1840,11 +2120,21 @@ export class MonkeyKernel extends EventEmitter {
       });
     }
 
+    // Proposal #10 — when the live account is in HEDGE position-direction
+    // mode, we MUST send `posSide: LONG | SHORT` so the exchange opens
+    // the order on the correct side of the hedge book. In ONE_WAY mode,
+    // omit posSide (the service defaults to BOTH). The mode is detected
+    // once at startup (assertHedgeModeIfPossible) and cached on the
+    // kernel; we read that cache here.
+    const posSide: 'LONG' | 'SHORT' | undefined =
+      this.positionDirectionMode === 'HEDGE'
+        ? (req.side === 'long' ? 'LONG' : 'SHORT')
+        : undefined;
     let orderId: string | null = null;
     try {
       const exchangeOrder = await poloniexFuturesService.placeOrder(credentials, {
         symbol, side: exchangeSide, type: 'market', size: formattedSize, lotSize: symbolLotSize,
-      });
+      }, posSide ? { posSide } : {});
       orderId =
         exchangeOrder?.ordId ?? exchangeOrder?.orderId ??
         exchangeOrder?.id ?? exchangeOrder?.clientOid ?? null;
@@ -1863,23 +2153,24 @@ export class MonkeyKernel extends EventEmitter {
       };
     }
 
-    // Persist. Encode kernel + agent + Monkey's state into reason so
-    // the close-hook + reconciler + arbiter can recover attribution
+    // Persist. Encode kernel + agent + lane + Monkey's state into reason
+    // so the close-hook + reconciler + arbiter can recover attribution
     // cheaply.
-    // Format: monkey|kernel=<id>|agent=<K|M>|phi=...|kappa=...|sov=...|dca=<N>|src=<ver>
+    // Format: monkey|kernel=<id>|agent=<K|M>|lane=<scalp|swing|trend>|phi=...|kappa=...|sov=...|dca=<N>|src=<ver>
     const agentTag = req.agent ?? 'K';
+    const laneTag = req.lane ?? 'swing';
     try {
       const dcaTag = req.isDCAAdd ? `|dca=${req.dcaAddIndex ?? 1}` : '';
       const reasonEncoded =
-        `monkey|kernel=${this.instanceId}|agent=${agentTag}|phi=${req.phi.toFixed(3)}|kappa=${req.kappa.toFixed(2)}|sov=${req.sovereignty.toFixed(3)}${dcaTag}|src=v0.6.2`;
+        `monkey|kernel=${this.instanceId}|agent=${agentTag}|lane=${laneTag}|phi=${req.phi.toFixed(3)}|kappa=${req.kappa.toFixed(2)}|sov=${req.sovereignty.toFixed(3)}${dcaTag}|src=v0.10`;
       await pool.query(
         `INSERT INTO autonomous_trades
            (user_id, symbol, side, entry_price, quantity, leverage,
-            confidence, reason, order_id, paper_trade, engine_version, agent)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+            confidence, reason, order_id, paper_trade, engine_version, agent, lane)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
         [
           userId, symbol, exchangeSide, entryPrice, formattedSize, leverage,
-          req.phi, reasonEncoded, orderId, false, getEngineVersion(), agentTag,
+          req.phi, reasonEncoded, orderId, false, getEngineVersion(), agentTag, laneTag,
         ],
       );
     } catch (err) {

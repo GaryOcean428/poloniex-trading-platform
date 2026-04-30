@@ -121,6 +121,44 @@ export function currentEntryThreshold(
  * in and respected — Monkey cannot place what the exchange won't
  * accept.
  */
+// ─── Proposal #10 — lane parameter envelope (TS parity) ────────────
+//
+// Two-lane initial split with trend as opt-in. SL/TP percentages give
+// each lane its own retreat tolerance:
+//   scalp ~0.4% adverse / 0.5% reward — fast tape harvesting
+//   swing ~1.5% adverse / 1.5% reward — absorbs retraces
+//   trend ~4% adverse / 4% reward — rides macro trend (opt-in)
+// Budget fractions sum to <= 1 across position-bearing lanes; trend
+// defaults to 0 in this batch and is governance-bumped via the param
+// registry once the arbiter has 5+ closed trades per lane.
+export const LANE_PARAMETER_DEFAULTS: Record<
+  'scalp' | 'swing' | 'trend',
+  { slPct: number; tpPct: number; budgetFrac: number }
+> = {
+  scalp: { slPct: 0.004, tpPct: 0.005, budgetFrac: 0.50 },
+  swing: { slPct: 0.015, tpPct: 0.015, budgetFrac: 0.50 },
+  trend: { slPct: 0.040, tpPct: 0.040, budgetFrac: 0.0 },
+};
+
+export function laneParam(
+  lane: 'scalp' | 'swing' | 'trend',
+  key: 'slPct' | 'tpPct' | 'budgetFrac',
+): number {
+  // Mirror to ml-worker/src/monkey_kernel/executive.py::lane_param.
+  // TS has no parameter registry yet — defaults stand until the registry
+  // ports across (one of the items behind the persistence-completion
+  // tracking issue). The Python kernel reads from monkey_parameters; TS
+  // reads from these in-code defaults. Both are kept in lockstep.
+  return LANE_PARAMETER_DEFAULTS[lane][key];
+}
+
+export function laneBudgetFraction(
+  lane: 'scalp' | 'swing' | 'trend' | 'observe',
+): number {
+  if (lane === 'observe') return 0;
+  return laneParam(lane, 'budgetFrac');
+}
+
 export function currentPositionSize(
   s: BasinState,
   availableEquityUsdt: number,
@@ -128,7 +166,15 @@ export function currentPositionSize(
   leverage: number = 1,
   bankSize: number = 0,
   mode: MonkeyMode = MonkeyMode.INVESTIGATION,
+  lane: 'scalp' | 'swing' | 'trend' = 'swing',
 ): ExecutiveDecision<number> {
+  // Proposal #10 — per-lane capital budget. Each lane sees only its
+  // share of available equity for sizing, so a held swing-long no
+  // longer paralyzes a scalp-short on the same symbol. A zero-budget
+  // lane (default for "trend" until governance bumps it) is sized to
+  // zero — capital is not allocated to it this tick.
+  const laneFrac = laneBudgetFraction(lane);
+  availableEquityUsdt = availableEquityUsdt * laneFrac;
   const nc = s.neurochemistry;
   // Lived-experience scaling. 0 at birth, 1 after ~20 witnessed trades.
   const maturity = Math.min(1, bankSize / 20);
@@ -172,12 +218,13 @@ export function currentPositionSize(
 
   return {
     value: sized,
-    reason: `size = ${liftedToMin ? 'lifted-to-min ' : ''}floor(${explorationFloor.toFixed(3)}) or Φ×S×M(${(s.phi * s.sovereignty * maturity).toFixed(3)}) × reward(${rewardMult.toFixed(2)}) × stab(${stabilityMult.toFixed(2)}) × equity(${availableEquityUsdt.toFixed(2)}) @ ${leverage}x → margin ${margin.toFixed(2)}, notional ${notional.toFixed(2)} vs min ${minNotionalUsdt.toFixed(2)} = ${sized.toFixed(2)}`,
+    reason: `size[${lane}] = ${liftedToMin ? 'lifted-to-min ' : ''}floor(${explorationFloor.toFixed(3)}) or Φ×S×M(${(s.phi * s.sovereignty * maturity).toFixed(3)}) × reward(${rewardMult.toFixed(2)}) × stab(${stabilityMult.toFixed(2)}) × equity(${availableEquityUsdt.toFixed(2)}) @ ${leverage}x → margin ${margin.toFixed(2)}, notional ${notional.toFixed(2)} vs min ${minNotionalUsdt.toFixed(2)} = ${sized.toFixed(2)}`,
     derivation: {
       phi: s.phi, sovereignty: s.sovereignty, maturity, bankSize,
       dopamine: nc.dopamine, serotonin: nc.serotonin, gaba: nc.gaba,
       explorationFloor, rawFrac, frac, margin, leverage, notional,
       minNotional: minNotionalUsdt, sized, liftedToMin: liftedToMin ? 1 : 0,
+      laneBudgetFrac: laneFrac,
     },
   };
 }
@@ -344,14 +391,23 @@ export function shouldDCAAdd(req: {
   lastAddAtMs: number;
   nowMs: number;
   sovereignty: number;
+  /** Proposal #10: lane scope. The "side mismatch" rejection is now
+   *  internal to one lane — another lane on the same symbol can hold
+   *  the opposite side without blocking this lane's DCA decision. */
+  lane?: 'scalp' | 'swing' | 'trend';
 }): ExecutiveDecision<boolean> {
   const {
     heldSide, sideCandidate, currentPrice, initialEntryPrice,
     addCount, lastAddAtMs, nowMs, sovereignty,
   } = req;
+  const lane = req.lane ?? 'swing';
 
   if (heldSide !== sideCandidate) {
-    return { value: false, reason: `side mismatch (${sideCandidate} vs held ${heldSide})`, derivation: { rule: 1 } };
+    return {
+      value: false,
+      reason: `side mismatch in lane ${lane} (${sideCandidate} vs held ${heldSide})`,
+      derivation: { rule: 1, lane: lane === 'scalp' ? 0 : lane === 'swing' ? 1 : 2 },
+    };
   }
   if (addCount >= DCA_MAX_ADDS_PER_POSITION) {
     return { value: false, reason: `add cap reached (${addCount}/${DCA_MAX_ADDS_PER_POSITION})`, derivation: { rule: 4, addCount } };
@@ -376,7 +432,7 @@ export function shouldDCAAdd(req: {
   }
   return {
     value: true,
-    reason: `DCA_OK: ${(priceDelta * 100).toFixed(2)}% from entry, addCount=${addCount}, sov=${sovereignty.toFixed(2)}`,
+    reason: `DCA_OK[${lane}]: ${(priceDelta * 100).toFixed(2)}% from entry, addCount=${addCount}, sov=${sovereignty.toFixed(2)}`,
     derivation: { rule: 0, priceDelta, addCount, sovereignty },
   };
 }
@@ -512,6 +568,7 @@ export function shouldScalpExit(
   notionalUsdt: number,
   s: BasinState,
   mode: MonkeyMode = MonkeyMode.INVESTIGATION,
+  lane: 'scalp' | 'swing' | 'trend' = 'swing',
 ): ExecutiveDecision<boolean> {
   if (notionalUsdt <= 0) {
     return { value: false, reason: 'no position notional', derivation: {} };
@@ -520,31 +577,50 @@ export function shouldScalpExit(
   const nc = s.neurochemistry;
   // Mode picks the baseline; Φ + dopamine modulate within that mode.
   const profile = MODE_PROFILES[mode];
-  const tpThr = Math.max(
+  const geometricTp = Math.max(
     0.003,
     profile.tpBaseFrac - 0.003 * nc.dopamine + 0.005 * s.phi,
   );
-  const slThr = tpThr * profile.slRatio;
+  const geometricSl = geometricTp * profile.slRatio;
+  // Proposal #10 — per-lane envelope. Take the wider of (geometric,
+  // lane) so the geometric fee-clear floor is never breached but the
+  // lane envelope can broaden tolerance when a swing/trend position
+  // needs room to absorb retraces.
+  const laneTp = laneParam(lane, 'tpPct');
+  const laneSl = laneParam(lane, 'slPct');
+  const tpThr = Math.max(geometricTp, laneTp);
+  const slThr = Math.max(geometricSl, laneSl);
 
   // Encode type as a bit (1=TP, -1=SL, 0=hold) to keep derivation map numeric.
   if (pnlFrac >= tpThr) {
     return {
       value: true,
-      reason: `take_profit: ${(pnlFrac * 100).toFixed(3)}% ≥ ${(tpThr * 100).toFixed(3)}%`,
-      derivation: { pnlFrac, tpThr, slThr, exitTypeBit: 1 },
+      reason: `take_profit[${lane}]: ${(pnlFrac * 100).toFixed(3)}% ≥ ${(tpThr * 100).toFixed(3)}%`,
+      derivation: {
+        pnlFrac, tpThr, slThr,
+        laneTpPct: laneTp, laneSlPct: laneSl,
+        exitTypeBit: 1,
+      },
     };
   }
   if (pnlFrac <= -slThr) {
     return {
       value: true,
-      reason: `stop_loss: ${(pnlFrac * 100).toFixed(3)}% ≤ -${(slThr * 100).toFixed(3)}%`,
-      derivation: { pnlFrac, tpThr, slThr, exitTypeBit: -1 },
+      reason: `stop_loss[${lane}]: ${(pnlFrac * 100).toFixed(3)}% ≤ -${(slThr * 100).toFixed(3)}%`,
+      derivation: {
+        pnlFrac, tpThr, slThr,
+        laneTpPct: laneTp, laneSlPct: laneSl,
+        exitTypeBit: -1,
+      },
     };
   }
   return {
     value: false,
-    reason: `scalp hold: pnl ${(pnlFrac * 100).toFixed(3)}% in [-${(slThr * 100).toFixed(3)}%, ${(tpThr * 100).toFixed(3)}%]`,
-    derivation: { pnlFrac, tpThr, slThr },
+    reason: `scalp hold[${lane}]: pnl ${(pnlFrac * 100).toFixed(3)}% in [-${(slThr * 100).toFixed(3)}%, ${(tpThr * 100).toFixed(3)}%]`,
+    derivation: {
+      pnlFrac, tpThr, slThr,
+      laneTpPct: laneTp, laneSlPct: laneSl,
+    },
   };
 }
 
