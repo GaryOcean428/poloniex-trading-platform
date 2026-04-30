@@ -280,28 +280,65 @@ export function currentPositionSize(
  * here because it does not replace the geometric formula, only
  * lowers it. The geometric raw_lev formula stays Fisher-Rao pure.
  *
+ * SEMANTIC: this is a CAP, not a replacement. It exists to PREVENT
+ * over-sizing when Kelly is confident about a positive edge. When
+ * Kelly is UNINFORMATIVE (no wins, no losses, near-break-even, or
+ * negative edge — i.e. the rolling stats give us no reason to tighten),
+ * the cap defers to the geometric formula by returning ``maxLev``.
+ *
+ * Why not return 1 for negative/zero edge?  Because the geometric
+ * formula already encodes risk through κ-proximity, regime stability
+ * and surprise discount. A weak Kelly statistic is a signal that
+ * Kelly is uninformative, not a signal to crush leverage to 1 —
+ * doing so would (a) make every position untradeable on small
+ * accounts (margin × 1 < exchange min notional) and (b) silently
+ * override the Fisher-Rao formula, defeating the "cap-only" promise.
+ *
+ * The cap activates ONLY when f* > 0, in which case it scales
+ * leverage to a Kelly-justified ceiling but is floored at
+ * ``KELLY_CAP_TRADABLE_FLOOR`` so a tiny positive edge can't
+ * collapse leverage to 1 either. The floor is a SAFETY_BOUND
+ * (preserves tradability), not a parameter.
+ *
  * Edge cases:
  *   * No losses (avgLoss=0)    → return maxLev (defer to geometric).
- *   * No wins (avgWin=0)       → return 1.
- *   * pWin <= 0 / avgWin <= 0  → return 1.
+ *   * No wins (avgWin=0)       → return maxLev (uninformative).
+ *   * pWin <= 0                → return maxLev (uninformative).
+ *   * b <= 0                   → return maxLev (uninformative).
+ *   * f* <= 0 (negative edge)  → return maxLev (uninformative).
  *   * f* > 1                   → clamp to 1 (full-Kelly maximum).
- *   * f* < 0 (negative edge)   → return 1.
+ *   * 0 < f* ≤ 1               → cap = max(floor, round(f* × maxLev)).
  */
+export const KELLY_CAP_TRADABLE_FLOOR = 8;
+
 export function kellyLeverageCap(
   pWin: number,
   avgWin: number,
   avgLoss: number,
   maxLev: number,
 ): number {
-  if (pWin <= 0 || avgWin <= 0) return 1;
+  // Uninformative Kelly inputs → defer to geometric formula. Returning
+  // maxLev makes the cap a no-op (the final clamp picks min(geometric,
+  // kelly, max) so kelly=maxLev never binds).
+  if (pWin <= 0 || avgWin <= 0) return maxLev;
   const absLoss = Math.abs(avgLoss);
   if (absLoss <= 1e-12) return maxLev;
   const b = avgWin / absLoss;
-  if (b <= 0) return 1;
+  if (b <= 0) return maxLev;
   const q = 1 - pWin;
-  let fStar = (pWin * b - q) / b;
-  fStar = Math.max(0, Math.min(1, fStar));
-  return Math.max(1, Math.round(fStar * maxLev));
+  const fStar = (pWin * b - q) / b;
+  // Negative or zero edge: Kelly says don't bet, but the geometric
+  // formula already discounts via regime/κ/surprise — the cap should
+  // not be the path that crushes leverage.
+  if (fStar <= 0) return maxLev;
+  const fStarClamped = Math.min(1, fStar);
+  const rawCap = Math.round(fStarClamped * maxLev);
+  // Floor at KELLY_CAP_TRADABLE_FLOOR so a small positive Kelly
+  // fraction (e.g. f*=0.05 × maxLev=20 → 1) doesn't crush leverage
+  // below the tradable minimum on small accounts. The floor is
+  // bounded by maxLev so it never raises leverage above the exchange
+  // boundary.
+  return Math.max(1, Math.min(maxLev, Math.max(KELLY_CAP_TRADABLE_FLOOR, rawCap)));
 }
 
 export function currentLeverage(
@@ -365,8 +402,13 @@ export function currentLeverage(
     ? sovereignCap * 0.8
     : sovereignCap * kappaProxim * regimeStability * surpriseDiscount * flatMult;
   // Proposal #3: Kelly cap layer. Applied AFTER the geometric formula.
-  // ``kellyCap = maxLev`` (no-op) when rolling stats are absent, so
-  // cold-start behaviour is unchanged.
+  // ``kellyCap = maxLev`` (no-op) when rolling stats are absent
+  // (cold start) OR when stats are uninformative (break-even,
+  // negative edge, no wins/losses) — see kellyLeverageCap docstring.
+  // The 2026-04-30 live-trading bug: pre-fix kellyLeverageCap returned
+  // 1 for negative/zero edge, the min() then forced lev=1 regardless
+  // of the geometric formula. Fixed by treating uninformative stats
+  // as "Kelly defers to geometric" via maxLev.
   const kellyCap = rollingStats
     ? kellyLeverageCap(rollingStats.winRate, rollingStats.avgWin, rollingStats.avgLoss, maxLeverageBoundary)
     : maxLeverageBoundary;
