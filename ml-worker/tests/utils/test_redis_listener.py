@@ -30,6 +30,7 @@ if _SRC not in sys.path:
 from utils.redis_listener import (  # noqa: E402
     ListenerConfig,
     _candidate_keepalive_options,
+    _is_idle_read_timeout,
     _probe_redis_connection,
     run_resilient_listener,
 )
@@ -386,6 +387,274 @@ def test_probe_returns_diag_on_einval():
     )
     assert ok is False
     assert "errno=22" in diag
+
+
+# =====================================================================
+# Idle-timeout log-level tests (2026-04-30 fix).
+#
+# PR #604 hardened the listener to retry forever, but every idle pubsub
+# read timeout still logged at ERROR ("redis-listener-crashed attempt=N
+# errno=None err=Timeout reading from socket"). On a quiet channel that
+# meant 60+ ERROR lines per minute on `ml-predict-request` and
+# `trade-outcome` — fake-alarm telemetry that drowned out genuine
+# connection failures. The fix classifies idle timeouts as DEBUG, leaves
+# real connection errors at ERROR, and emits one INFO line after
+# `idle_escalate_after` consecutive timeouts to surface a stuck producer.
+# =====================================================================
+
+
+class _IdleTimeoutScript:
+    """Test harness: connect once, raise a timeout on `pubsub.listen`,
+    optionally repeat for N attempts before yielding a real message.
+
+    This simulates Redis being healthy but the channel being quiet — the
+    exact scenario that produced the prod log spam.
+    """
+
+    def __init__(
+        self,
+        *,
+        timeouts_before_message: int,
+        message: Optional[Dict[str, Any]] = None,
+        timeout_exc_factory=None,
+    ):
+        self._remaining_timeouts = timeouts_before_message
+        self._message = message
+        self._timeout_exc_factory = timeout_exc_factory or (
+            lambda: __import__("socket").timeout("Timeout reading from socket")
+        )
+        self.attempts = 0
+        self.exceptions = type("Exc", (), {"TimeoutError": __import__("socket").timeout})
+
+        outer = self
+
+        class _PS:
+            def __init__(self):
+                self.subscribed = []
+                self.closed = False
+
+            def subscribe(self, ch):
+                self.subscribed.append(ch)
+
+            def listen(self):
+                if outer._remaining_timeouts > 0:
+                    outer._remaining_timeouts -= 1
+                    raise outer._timeout_exc_factory()
+                if outer._message is not None:
+                    yield {"type": "message", "data": json.dumps(outer._message)}
+
+            def close(self):
+                self.closed = True
+
+        class _Client:
+            def __init__(self):
+                self.closed = False
+                self.set_calls: List[tuple] = []
+
+            def pubsub(self, ignore_subscribe_messages=False):
+                return _PS()
+
+            def set(self, key, value, ex=0):
+                self.set_calls.append((key, value, ex))
+
+            def ping(self):
+                return True
+
+            def close(self):
+                self.closed = True
+
+        class _Redis:
+            @staticmethod
+            def from_url(url, **kwargs):  # noqa: ARG004
+                outer.attempts += 1
+                return _Client()
+
+        self.Redis = _Redis
+
+
+def test_is_idle_read_timeout_classifies_socket_timeout():
+    """``socket.timeout`` is the canonical idle signal — must be DEBUG."""
+    import socket as _sock
+
+    fake = _FakeRedisModule(failures_before_success=0, message_batches=[[]])
+    assert _is_idle_read_timeout(_sock.timeout("Timeout reading from socket"), fake) is True
+
+
+def test_is_idle_read_timeout_classifies_real_connection_error():
+    """``OSError(ECONNRESET)`` is a real failure — must NOT match idle."""
+    fake = _FakeRedisModule(failures_before_success=0, message_batches=[[]])
+    err = OSError(104, "Connection reset by peer")
+    assert _is_idle_read_timeout(err, fake) is False
+
+
+def test_is_idle_read_timeout_classifies_einval():
+    """EINVAL from setsockopt is a real failure — keep at ERROR."""
+    fake = _FakeRedisModule(failures_before_success=0, message_batches=[[]])
+    err = OSError(22, "Invalid argument")
+    assert _is_idle_read_timeout(err, fake) is False
+
+
+def test_is_idle_read_timeout_classifies_message_substring_fallback():
+    """Some redis-py builds wrap timeouts in a non-TimeoutError class.
+    The substring match catches that legacy shape without downgrading
+    generic connection errors."""
+    fake = _FakeRedisModule(failures_before_success=0, message_batches=[[]])
+    weird = RuntimeError("Timeout reading from socket")
+    assert _is_idle_read_timeout(weird, fake) is True
+    not_idle = RuntimeError("Connection refused")
+    assert _is_idle_read_timeout(not_idle, fake) is False
+
+
+def test_idle_timeout_logs_debug_not_error(caplog):
+    """A single idle timeout must log at DEBUG, NOT ERROR. This is the
+    primary regression: prior to the fix every timeout produced an
+    ERROR-level line, which generated 60+ false alarms per minute on
+    quiet channels."""
+    import logging as _logging
+
+    msg = {"i": 1}
+    fake = _IdleTimeoutScript(
+        timeouts_before_message=1,
+        message=msg,
+    )
+    cfg = ListenerConfig(
+        name="idle-test", channel="ch",
+        initial_backoff=0.0001, max_backoff=0.001, backoff_factor=1.0,
+    )
+    received: List[Dict[str, Any]] = []
+
+    with caplog.at_level(_logging.DEBUG, logger="utils.redis_listener"):
+        _run_listener(fake=fake, cfg=cfg, received=received, expected_messages=1)
+
+    assert received == [msg]
+    # Filter to records emitted by the listener module under test.
+    listener_records = [r for r in caplog.records if r.name == "utils.redis_listener"]
+    error_records = [r for r in listener_records if r.levelno >= _logging.ERROR]
+    crashed_records = [
+        r for r in listener_records if "redis-listener-crashed" in r.getMessage()
+    ]
+    debug_idle_records = [
+        r for r in listener_records
+        if r.levelno == _logging.DEBUG
+        and "redis-listener-idle-timeout" in r.getMessage()
+    ]
+    # Must have at least one DEBUG idle entry.
+    assert debug_idle_records, "expected at least one DEBUG idle-timeout record"
+    # Must NOT have logged the idle as a crash at ERROR.
+    assert not crashed_records, (
+        f"idle timeouts should NOT log redis-listener-crashed; got {[r.getMessage() for r in error_records]}"
+    )
+
+
+def test_real_connection_error_logs_error(caplog):
+    """An actual ``OSError`` (errno=22, EINVAL, or any non-timeout
+    OSError raised on connect) must continue to log at ERROR."""
+    import logging as _logging
+
+    msg = {"x": 1}
+    # Reuse the existing _FakeRedisModule which raises OSError(errno=22)
+    # on `from_url` — that goes through the listener's `try` block as a
+    # real connect failure, NOT an idle pubsub timeout.
+    fake = _FakeRedisModule(
+        failures_before_success=2,  # probe + 1 listener attempt fail
+        message_batches=[[{"type": "message", "data": json.dumps(msg)}]],
+        errno=22,
+    )
+    cfg = ListenerConfig(
+        name="conn-err-test", channel="ch",
+        initial_backoff=0.0001, max_backoff=0.001, backoff_factor=1.0,
+    )
+    received: List[Dict[str, Any]] = []
+
+    with caplog.at_level(_logging.DEBUG, logger="utils.redis_listener"):
+        _run_listener(fake=fake, cfg=cfg, received=received, expected_messages=1)
+
+    assert received == [msg]
+    listener_records = [r for r in caplog.records if r.name == "utils.redis_listener"]
+    crashed_records = [
+        r for r in listener_records
+        if r.levelno == _logging.ERROR
+        and "redis-listener-crashed" in r.getMessage()
+        and "errno=22" in r.getMessage()
+    ]
+    assert crashed_records, (
+        "expected EINVAL OSError to log at ERROR with errno=22; "
+        f"got {[(r.levelno, r.getMessage()) for r in listener_records]}"
+    )
+
+
+def test_idle_timeout_escalates_to_info_after_threshold(caplog):
+    """After ``idle_escalate_after`` (default 100) consecutive idle
+    timeouts, the listener must emit ONE INFO-level ``redis-listener-idle``
+    line so a stuck producer surfaces — without spamming ERROR or
+    repeating the INFO every tick."""
+    import logging as _logging
+
+    # 100 idle timeouts exactly hits the escalation threshold; the 100th
+    # timeout fires the INFO line. Then a real message lets the listener
+    # loop terminate via the test's `expected_messages` stop hook.
+    fake = _IdleTimeoutScript(
+        timeouts_before_message=100,
+        message={"after": "idle"},
+    )
+    cfg = ListenerConfig(
+        name="escalate-test", channel="ch",
+        initial_backoff=0.00001, max_backoff=0.0001, backoff_factor=1.0,
+    )
+    received: List[Dict[str, Any]] = []
+
+    sleeps: List[float] = []
+    stop = threading.Event()
+
+    def _sleep(s: float) -> None:
+        sleeps.append(s)
+        time.sleep(0.0001)
+        # Hard cap so a regression in the escalation logic can't hang
+        # the test runner: 200 sleeps is well past the 100 threshold.
+        if len(sleeps) > 200:
+            stop.set()
+
+    def _on_message(_c: Any, payload: Dict[str, Any]) -> None:
+        received.append(payload)
+        stop.set()
+
+    with caplog.at_level(_logging.DEBUG, logger="utils.redis_listener"):
+        t = threading.Thread(
+            target=run_resilient_listener,
+            kwargs=dict(
+                redis_url="redis://fake/0",
+                config=cfg,
+                on_message=_on_message,
+                redis_module=fake,
+                sleep_fn=_sleep,
+                stop_event=stop,
+            ),
+            daemon=True,
+        )
+        t.start()
+        t.join(timeout=10.0)
+        if t.is_alive():
+            stop.set()
+            t.join(1.0)
+
+    listener_records = [r for r in caplog.records if r.name == "utils.redis_listener"]
+    info_idle_records = [
+        r for r in listener_records
+        if r.levelno == _logging.INFO and "redis-listener-idle " in r.getMessage()
+    ]
+    assert info_idle_records, (
+        "expected one INFO-level redis-listener-idle escalation line after "
+        "100 consecutive timeouts"
+    )
+    # And critically — even with 100 timeouts, no ERROR-level crash lines.
+    error_crashed = [
+        r for r in listener_records
+        if r.levelno == _logging.ERROR
+        and "redis-listener-crashed" in r.getMessage()
+    ]
+    assert not error_crashed, (
+        "100 idle timeouts must NOT produce ERROR-level crash lines"
+    )
 
 
 def test_keepalive_options_match_kernel_constants():

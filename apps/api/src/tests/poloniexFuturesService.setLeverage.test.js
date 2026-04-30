@@ -99,4 +99,114 @@ describe('PoloniexFuturesService.setLeverage body shape', () => {
     const body = spy.mock.calls[0][3];
     expect(body.posSide).toBe('LONG');
   });
+
+  // -------------------------------------------------------------------
+  // HEDGE-mode posSide tests (Poloniex code=11011 fix, 2026-04-30).
+  //
+  // After the HEDGE flip in PR #611 the exchange started returning
+  //   /v3/position/leverage code=11011: Position mode and posSide do not match
+  // because we were calling setLeverage without posSide while the account
+  // was HEDGE. The fix makes the kernel pass posSide derived from the
+  // entry side. These tests lock the wire shape per mode.
+  // -------------------------------------------------------------------
+
+  it('HEDGE+long: forwards posSide=LONG verbatim', async () => {
+    const spy = vi
+      .spyOn(poloniexFuturesService, 'makeRequest')
+      .mockResolvedValue({});
+
+    await poloniexFuturesService.setLeverage(
+      { apiKey: 'k', apiSecret: 's' },
+      'BTC_USDT_PERP',
+      20,
+      { posSide: 'LONG' },
+    );
+
+    const body = spy.mock.calls[0][3];
+    expect(body).toEqual({
+      symbol: 'BTC_USDT_PERP',
+      lever: '20',
+      mgnMode: 'CROSS',
+      posSide: 'LONG',
+    });
+  });
+
+  it('HEDGE+short: forwards posSide=SHORT verbatim', async () => {
+    const spy = vi
+      .spyOn(poloniexFuturesService, 'makeRequest')
+      .mockResolvedValue({});
+
+    await poloniexFuturesService.setLeverage(
+      { apiKey: 'k', apiSecret: 's' },
+      'ETH_USDT_PERP',
+      15,
+      { posSide: 'SHORT' },
+    );
+
+    const body = spy.mock.calls[0][3];
+    expect(body).toEqual({
+      symbol: 'ETH_USDT_PERP',
+      lever: '15',
+      mgnMode: 'CROSS',
+      posSide: 'SHORT',
+    });
+  });
+
+  it('ONE_WAY: omits posSide when caller passes empty opts', async () => {
+    // The kernel passes `{}` (no posSide) when its cached
+    // ``positionDirectionMode`` is 'ONE_WAY' so the body matches the
+    // historic ONE_WAY-on-prod shape `{ symbol, lever, mgnMode }`.
+    const spy = vi
+      .spyOn(poloniexFuturesService, 'makeRequest')
+      .mockResolvedValue({});
+
+    await poloniexFuturesService.setLeverage(
+      { apiKey: 'k', apiSecret: 's' },
+      'BTC_USDT_PERP',
+      10,
+      {},
+    );
+
+    const body = spy.mock.calls[0][3];
+    expect(body).not.toHaveProperty('posSide');
+    expect(body).toEqual({
+      symbol: 'BTC_USDT_PERP',
+      lever: '10',
+      mgnMode: 'CROSS',
+    });
+  });
+
+  it('error pass-through: Poloniex 11011 propagates to caller', async () => {
+    const exchangeErr = Object.assign(
+      new Error('Poloniex /v3/position/leverage returned code=11011: Position mode and posSide do not match'),
+      { code: 11011 },
+    );
+    vi.spyOn(poloniexFuturesService, 'makeRequest').mockRejectedValue(exchangeErr);
+
+    await expect(
+      poloniexFuturesService.setLeverage(
+        { apiKey: 'k', apiSecret: 's' },
+        'BTC_USDT_PERP',
+        20,
+        { posSide: 'LONG' },
+      ),
+    ).rejects.toMatchObject({
+      message: expect.stringContaining('11011'),
+    });
+  });
+
+  it('lower-case posSide is normalised to upper case', async () => {
+    const spy = vi
+      .spyOn(poloniexFuturesService, 'makeRequest')
+      .mockResolvedValue({});
+
+    await poloniexFuturesService.setLeverage(
+      { apiKey: 'k', apiSecret: 's' },
+      'BTC_USDT_PERP',
+      5,
+      { posSide: 'long' },
+    );
+
+    expect(spy.mock.calls[0][3].posSide).toBe('LONG');
+  });
 });

@@ -356,15 +356,26 @@ class PoloniexFuturesService {
    * Endpoint: POST /v3/position/leverage
    *
    * Poloniex V3 expects `lever` (stringified) NOT `leverage`, plus `mgnMode`
-   * (CROSS|ISOLATED). In one-way/`BOTH` position mode, `posSide` is optional
-   * but if supplied must be `BOTH`. Sending `{ symbol, leverage }` as we did
-   * previously produced `{ code: 400, msg: "Param error lever" }` on the
-   * live API (Railway prod, 2026-04-19), which caused every live tick to
-   * log a (non-fatal) leverage-set failure right before order placement.
+   * (CROSS|ISOLATED). Sending `{ symbol, leverage }` as we did previously
+   * produced `{ code: 400, msg: "Param error lever" }` on the live API
+   * (Railway prod, 2026-04-19), which caused every live tick to log a
+   * (non-fatal) leverage-set failure right before order placement.
+   *
+   * Position-mode semantics (verified on prod 2026-04-30 after the HEDGE
+   * flip in PR #611):
+   *   - HEDGE  account → body MUST carry `posSide: 'LONG' | 'SHORT'` matching
+   *     the side of the position about to be opened. Omitting it (or sending
+   *     `BOTH`) returns code=11011 "Position mode and posSide do not match"
+   *     and leverage stays at the exchange default — which in turn caused
+   *     the warn-log spam at every Monkey entry.
+   *   - ONE_WAY account → `posSide` is either omitted or `BOTH`. We default
+   *     to omitting it so the same call site works regardless of mode and
+   *     the caller (kernel/loop.ts) decides via its cached
+   *     ``positionDirectionMode`` whether to pass posSide.
    *
    * The web UI already used the correct shape — see
    * apps/web/src/context/FuturesContext.tsx::setLeverage which posts
-   * `{ symbol, lever, mgnMode }`. This brings the server-side call in line.
+   * `{ symbol, lever, mgnMode }`.
    *
    * @param {Object} credentials
    * @param {string} symbol             e.g. 'BTC_USDT_PERP'
@@ -373,8 +384,10 @@ class PoloniexFuturesService {
    * @param {'CROSS'|'ISOLATED'} [opts.mgnMode='CROSS']  margin mode;
    *   defaults to CROSS per shared/constants.ts::FUTURES_DEFAULTS
    *   and the agent dashboard default.
-   * @param {'LONG'|'SHORT'|'BOTH'} [opts.posSide]  position side; omitted
-   *   by default since the account runs in one-way (BOTH) mode.
+   * @param {'LONG'|'SHORT'|'BOTH'} [opts.posSide]  position side. Pass
+   *   `LONG` or `SHORT` when the account is in HEDGE mode — the
+   *   exchange rejects the call with code=11011 if this is missing on a
+   *   HEDGE account. Omit (or pass `BOTH`) on a ONE_WAY account.
    */
   async setLeverage(credentials, symbol, leverage, opts = {}) {
     const body = {
@@ -383,7 +396,8 @@ class PoloniexFuturesService {
       mgnMode: opts.mgnMode || 'CROSS',
     };
     if (opts.posSide) {
-      body.posSide = opts.posSide;
+      // Normalise to upper case so callers can pass 'long'/'short' too.
+      body.posSide = String(opts.posSide).toUpperCase();
     }
     return this.makeRequest(credentials, 'POST', '/position/leverage', body);
   }

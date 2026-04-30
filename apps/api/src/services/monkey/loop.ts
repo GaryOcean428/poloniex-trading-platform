@@ -2123,15 +2123,6 @@ export class MonkeyKernel extends EventEmitter {
       };
     }
 
-    // Set leverage (non-fatal), then place market order.
-    try {
-      await poloniexFuturesService.setLeverage(credentials, symbol, leverage);
-    } catch (levErr) {
-      logger.warn('[Monkey] setLeverage failed (non-fatal)', {
-        symbol, leverage, err: levErr instanceof Error ? levErr.message : String(levErr),
-      });
-    }
-
     // Proposal #10 — when the live account is in HEDGE position-direction
     // mode, we MUST send `posSide: LONG | SHORT` so the exchange opens
     // the order on the correct side of the hedge book. In ONE_WAY mode,
@@ -2142,6 +2133,26 @@ export class MonkeyKernel extends EventEmitter {
       this.positionDirectionMode === 'HEDGE'
         ? (req.side === 'long' ? 'LONG' : 'SHORT')
         : undefined;
+
+    // Set leverage (non-fatal), then place market order.
+    //
+    // After the HEDGE-mode flip Poloniex returns code=11011
+    // ("Position mode and posSide do not match") on /v3/position/leverage
+    // when the body omits posSide (the default landed as BOTH, which is
+    // an ONE_WAY-only value). Mirror the posSide derivation used for
+    // placeOrder so the exchange sees a consistent side on both calls.
+    try {
+      await poloniexFuturesService.setLeverage(
+        credentials, symbol, leverage,
+        posSide ? { posSide } : {},
+      );
+    } catch (levErr) {
+      logger.warn('[Monkey] setLeverage failed (non-fatal)', {
+        symbol, leverage, posSide,
+        err: levErr instanceof Error ? levErr.message : String(levErr),
+      });
+    }
+
     let orderId: string | null = null;
     try {
       const exchangeOrder = await poloniexFuturesService.placeOrder(credentials, {
