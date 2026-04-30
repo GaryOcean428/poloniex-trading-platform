@@ -219,6 +219,13 @@ export interface TickRunSymbolState {
   last_entry_at_ms: number | null;
   peak_pnl_usdt: number | null;
   peak_tracked_trade_id: string | null;
+  /**
+   * Held-position re-justification anchors — per-lane (regime, Φ)
+   * snapshots taken at the moment a position opens. Optional for
+   * backward compat with shadow callers that haven't been redeployed.
+   */
+  regime_at_open_by_lane?: Record<string, string>;
+  phi_at_open_by_lane?: Record<string, number>;
 }
 
 export interface TickRunRequest {

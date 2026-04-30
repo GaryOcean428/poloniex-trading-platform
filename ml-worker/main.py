@@ -1518,6 +1518,10 @@ def _symbol_state_to_dict(st: SymbolState) -> dict:
         "last_entry_at_ms": st.last_entry_at_ms,
         "peak_pnl_usdt": st.peak_pnl_usdt,
         "peak_tracked_trade_id": st.peak_tracked_trade_id,
+        # Held-position re-justification anchors. Per-lane dicts kept
+        # serializable (lane keys are short literal strings).
+        "regime_at_open_by_lane": dict(st.regime_at_open_by_lane),
+        "phi_at_open_by_lane": dict(st.phi_at_open_by_lane),
     }
 
 
@@ -1541,6 +1545,12 @@ def _symbol_state_from_dict(d: dict) -> SymbolState:
         last_entry_at_ms=d.get("last_entry_at_ms"),
         peak_pnl_usdt=d.get("peak_pnl_usdt"),
         peak_tracked_trade_id=d.get("peak_tracked_trade_id"),
+        # New fields default to {} when absent (older clients / shadow
+        # ticks pre-rollout). Lane keys round-trip as str literals.
+        regime_at_open_by_lane=dict(d.get("regime_at_open_by_lane", {})),
+        phi_at_open_by_lane={
+            k: float(v) for k, v in d.get("phi_at_open_by_lane", {}).items()
+        },
     )
 
 

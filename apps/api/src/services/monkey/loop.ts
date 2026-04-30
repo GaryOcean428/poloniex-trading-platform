@@ -100,6 +100,7 @@ import {
   type Direction,
   type LaneType,
 } from './executive.js';
+import { evaluateRejustification } from './held_position_rejustification.js';
 
 /** Default Monkey watchlist — matches liveSignalEngine for side-by-side. */
 const DEFAULT_SYMBOLS = ['BTC_USDT_PERP', 'ETH_USDT_PERP'];
@@ -220,6 +221,14 @@ interface SymbolState {
   peakPnlUsdtByLane: Record<string, number | null>;
   peakTrackedTradeIdByLane: Record<string, string | null>;
   tapeFlipStreakByLane: Record<string, number>;
+  /** Held-position re-justification anchors — per-lane (regime, Φ)
+   *  snapshots taken at the moment a position opens. The kernel uses
+   *  these as the geometric anchor for "is current state still
+   *  consonant with entry?". Cleared on position close in that lane.
+   *  Same per-lane shape as peakPnlUsdtByLane above so future multi-lane
+   *  positions keep independent rejustification anchors. */
+  regimeAtOpenByLane: Record<string, string>;
+  phiAtOpenByLane: Record<string, number>;
   /** v0.8.7e: latest computed basinDir + tapeTrend from processSymbol, with
    *  timestamp. Exposed via getLatestBasinSnapshot() for LiveSignal's
    *  inter-engine agreement gate. Null until the first tick completes. */
@@ -396,6 +405,8 @@ export class MonkeyKernel extends EventEmitter {
       peakPnlUsdtByLane: {},
       peakTrackedTradeIdByLane: {},
       tapeFlipStreakByLane: {},
+      regimeAtOpenByLane: {},
+      phiAtOpenByLane: {},
       latestBasinSnapshot: null,
     };
   }
@@ -909,72 +920,132 @@ export class MonkeyKernel extends EventEmitter {
         }
         state.tapeFlipStreak = state.tapeFlipStreakByLane[heldLane];
 
-        // 1. Profit harvest — trailing stop + trend-flip, only while green.
-        // Streak counter passed; harvest internally enforces #2 + #4.
         const lanePeak = state.peakPnlUsdtByLane[heldLane] ?? 0;
         const laneStreak = state.tapeFlipStreakByLane[heldLane] ?? 0;
-        const harvest = shouldProfitHarvest(
-          unrealizedPnl,
-          lanePeak,
-          positionNotional,
-          tapeTrend,
-          heldSide,
-          basinState,
-          laneStreak,
-        );
-        derivation.harvest = { ...harvest.derivation, unrealizedPnl, peakPnl: lanePeak, tradeId, lane: heldLane };
-        if (harvest.value) {
-          action = 'scalp_exit';  // executes via same close path
-          reason = harvest.reason;
-          exitFired = true;
-          // Tag the exit type so closeHeldPosition stores the right exit_reason
-          derivation.scalp = {
-            exitTypeBit: harvest.derivation.exitTypeBit,
-            unrealizedPnl,
-            markPrice: lastPrice,
-            tradeId,
-            lane: heldLane,
-          };
-        }
 
-        // 2. Scalp TP/SL (only if harvest didn't fire)
-        if (!exitFired) {
-          const scalp = shouldScalpExit(unrealizedPnl, positionNotional, basinState, mode, heldLane);
-          derivation.scalp = { ...scalp.derivation, unrealizedPnl, markPrice: lastPrice, tradeId };
+        // 1. Hard SL pre-check (SAFETY_BOUND) — must precede the
+        // rejustification block so a position bleeding hard against
+        // the kernel always closes on price before the kernel re-reads
+        // its own state. TP comes BELOW rejustification + harvest.
+        const scalp = shouldScalpExit(unrealizedPnl, positionNotional, basinState, mode, heldLane);
+        derivation.scalp = { ...scalp.derivation, unrealizedPnl, markPrice: lastPrice, tradeId };
+        const SL_DEFER_TICKS = 2;
+        const isStopLoss = Number((scalp as any).derivation?.exitTypeBit) === -1;
+        const longSlWithHammer = (
+          isStopLoss
+          && heldSide === 'long'
+          && candleHammerDefer
+        );
+        if (scalp.value && isStopLoss) {
           // Proposal #9 path 2: SL defer. If the latest tick prints a
           // strong hammer/inverted-hammer AGAINST a long-position SL
           // about to fire, defer the SL by SL_DEFER_TICKS to let the
           // wick recover. Heuristic gate; documented impurity scoped
-          // to this branch only. We do NOT defer take-profit, trailing
-          // harvest, or trend-flip — only the explicit stop-loss bit.
-          const SL_DEFER_TICKS = 2;
-          const isStopLoss = Number((scalp as any).derivation?.exitTypeBit) === -1;
-          const longSlWithHammer = (
-            isStopLoss
-            && heldSide === 'long'
-            && candleHammerDefer
-          );
-          if (scalp.value && longSlWithHammer && state.slDeferRemainingTicks <= 0) {
-            // Open the defer window; suppress the SL this tick.
+          // to this branch only.
+          if (longSlWithHammer && state.slDeferRemainingTicks <= 0) {
             state.slDeferRemainingTicks = SL_DEFER_TICKS;
             (derivation as any).slDefer = {
               opened: true,
               ticksRemaining: state.slDeferRemainingTicks,
               reason: 'hammer_against_long_sl',
             };
-          } else if (state.slDeferRemainingTicks > 0 && isStopLoss && heldSide === 'long') {
-            // Inside the defer window — keep suppressing SL until the
-            // window closes. Decrement at end-of-tick (below).
+          } else if (state.slDeferRemainingTicks > 0 && heldSide === 'long') {
             (derivation as any).slDefer = {
               active: true,
               ticksRemaining: state.slDeferRemainingTicks,
             };
-          } else if (scalp.value) {
+          } else {
             action = 'scalp_exit';
             reason = scalp.reason;
             exitFired = true;
           }
         }
+
+        // 2. Held-position re-justification — three internal exit
+        // checks. Each fires immediately when the kernel's current
+        // state contradicts the state that justified entry. No streak
+        // counting, no hysteresis, no time-based stops. All three are
+        // geometric (regime classifier output, Φ integration measure,
+        // Layer 2B emotion stack — TS path uses NEUTRAL_EMOTIONS until
+        // emotion stack is ported, so the conviction check is dormant
+        // in TS but live in Python).
+        const regimeAtOpen = state.regimeAtOpenByLane[heldLane] as MonkeyMode | undefined;
+        const phiAtOpen = state.phiAtOpenByLane[heldLane];
+        const rejustResult = !exitFired
+          ? evaluateRejustification({
+              regimeAtOpen,
+              phiAtOpen,
+              regimeNow: mode,
+              phiNow: phi,
+              emotions: NEUTRAL_EMOTIONS,
+            })
+          : { checked: false, fired: null, reason: '', phiFloor: null };
+        const rejust: Record<string, unknown> = {
+          checked: rejustResult.checked,
+        };
+        if (rejustResult.checked) {
+          rejust.lane = heldLane;
+          rejust.regimeAtOpen = regimeAtOpen;
+          rejust.regimeNow = mode;
+          rejust.phiAtOpen = phiAtOpen;
+          rejust.phiNow = phi;
+          rejust.phiFloor = rejustResult.phiFloor;
+          rejust.confidence = NEUTRAL_EMOTIONS.confidence;
+          rejust.anxiety = NEUTRAL_EMOTIONS.anxiety;
+          rejust.confusion = NEUTRAL_EMOTIONS.confusion;
+          if (rejustResult.fired) {
+            rejust.fired = rejustResult.fired;
+            action = 'scalp_exit';
+            reason = rejustResult.reason;
+            exitFired = true;
+            // Tag the exit type bit explicitly for the closer — anchor
+            // 5 (rejustification) is a new bit; keep tradeId/lane/pnl
+            // surfaces consistent with the existing scalp_exit shape.
+            derivation.scalp = {
+              exitTypeBit: 5,  // rejustification
+              unrealizedPnl,
+              markPrice: lastPrice,
+              tradeId,
+              lane: heldLane,
+            };
+          }
+        }
+        derivation.rejustification = rejust;
+
+        // 3. Profit harvest — trailing stop + trend-flip, only while green.
+        if (!exitFired) {
+          const harvest = shouldProfitHarvest(
+            unrealizedPnl,
+            lanePeak,
+            positionNotional,
+            tapeTrend,
+            heldSide,
+            basinState,
+            laneStreak,
+          );
+          derivation.harvest = { ...harvest.derivation, unrealizedPnl, peakPnl: lanePeak, tradeId, lane: heldLane };
+          if (harvest.value) {
+            action = 'scalp_exit';
+            reason = harvest.reason;
+            exitFired = true;
+            derivation.scalp = {
+              exitTypeBit: harvest.derivation.exitTypeBit,
+              unrealizedPnl,
+              markPrice: lastPrice,
+              tradeId,
+              lane: heldLane,
+            };
+          }
+        }
+
+        // 4. Scalp TP — only TP can reach here (SL was returned above
+        // unless deferred; rejustification and harvest also returned).
+        if (!exitFired && scalp.value && !isStopLoss) {
+          action = 'scalp_exit';
+          reason = scalp.reason;
+          exitFired = true;
+        }
+
         // Decrement defer window each tick we did not exit.
         if (state.slDeferRemainingTicks > 0) {
           state.slDeferRemainingTicks = Math.max(0, state.slDeferRemainingTicks - 1);
@@ -1205,6 +1276,18 @@ export class MonkeyKernel extends EventEmitter {
             state.peakPnlUsdt = null;
             state.peakTrackedTradeId = null;
           }
+          // Held-position re-justification — snapshot (regime, Φ) at the
+          // moment of entry on this lane. Subsequent ticks compare against
+          // these anchors via the three internal exit checks (regime
+          // change / Φ collapse / conviction failure). DCA adds keep the
+          // original anchors (first-open justification is canonical).
+          if (!isDCA) {
+            const entryLane = (isDCA && heldSide
+              ? (ownOpenRow?.lane ?? positionLane)
+              : positionLane) as 'scalp' | 'swing' | 'trend';
+            state.regimeAtOpenByLane[entryLane] = mode;
+            state.phiAtOpenByLane[entryLane] = phi;
+          }
         }
       } else if (action === 'scalp_exit' && heldSide) {
         const scalpDeriv = derivation.scalp as Record<string, unknown> | undefined;
@@ -1240,6 +1323,9 @@ export class MonkeyKernel extends EventEmitter {
             state.peakPnlUsdtByLane[scalpLane] = null;
             state.peakTrackedTradeIdByLane[scalpLane] = null;
             state.tapeFlipStreakByLane[scalpLane] = 0;
+            // Clear rejustification anchors for the lane that closed.
+            delete state.regimeAtOpenByLane[scalpLane];
+            delete state.phiAtOpenByLane[scalpLane];
             // Mirror legacy scalars for any non-lane-aware reader.
             state.peakPnlUsdt = null;
             state.peakTrackedTradeId = null;
@@ -1284,6 +1370,10 @@ export class MonkeyKernel extends EventEmitter {
             state.peakTrackedTradeId = null;
             state.dcaAddCount = 0;
             state.lastEntryAtMs = null;
+            // Clear rejustification anchors for the lane that flipped.
+            const reversalLane = (ownOpenRow?.lane ?? 'swing') as 'scalp' | 'swing' | 'trend';
+            delete state.regimeAtOpenByLane[reversalLane];
+            delete state.phiAtOpenByLane[reversalLane];
             // Settle delay — give the exchange ~500ms to flatten net.
             await new Promise((resolve) => setTimeout(resolve, 500));
             const execResult = await this.executeEntry({
@@ -1301,12 +1391,15 @@ export class MonkeyKernel extends EventEmitter {
               dcaAddIndex: 0,
               // Reversal lands in the same lane the previous position
               // occupied — REVERSION mode flips side, not lane.
-              lane: ownOpenRow?.lane ?? 'swing',
+              lane: reversalLane,
             });
             executed = execResult.executed;
             monkeyOrderId = execResult.orderId;
             if (executed) {
               state.lastEntryAtMs = Date.now();
+              // Re-snapshot rejustification anchors for the new direction.
+              state.regimeAtOpenByLane[reversalLane] = mode;
+              state.phiAtOpenByLane[reversalLane] = phi;
               reason += ` | closed@${lastPrice.toFixed(2)} pnl=${pnlAtDecision.toFixed(4)} | new ${newSide} orderId=${monkeyOrderId}`;
             } else {
               reason += ` | flattened ok, new-entry failed: ${execResult.reason}`;
