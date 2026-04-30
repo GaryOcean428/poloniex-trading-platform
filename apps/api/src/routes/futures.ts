@@ -398,6 +398,26 @@ router.get('/leverage/:symbol', authenticateToken, async (req: Request, res: Res
 
 /**
  * POST /api/futures/leverage - Set leverage for symbol
+ *
+ * HEDGE-mode posSide handling:
+ *   When the account is in HEDGE position-direction mode, Poloniex v3
+ *   rejects /v3/position/leverage with code=11011 ("Position mode and
+ *   posSide do not match") if the body omits posSide. The dashboard
+ *   leverage slider hits this every time after PR #611 flipped prod
+ *   accounts to HEDGE.
+ *
+ *   Resolution order for posSide:
+ *     1. If the caller passes ``posSide`` (or ``side`` ∈ {'long','short'})
+ *        in the body, honour it verbatim.
+ *     2. Otherwise detect the account mode via getPositionDirectionMode.
+ *        If HEDGE, derive posSide from the existing position's qty sign
+ *        (Math.sign(qty) — same authoritative pattern as
+ *        stateReconciliationService.ts:152). If no position is open the
+ *        caller must pass posSide explicitly because the exchange has
+ *        no way to know which side of the hedge book to apply leverage
+ *        to (we surface a 400 with a helpful message).
+ *     3. ONE_WAY accounts: posSide stays undefined and the service omits
+ *        it from the body (exchange defaults to BOTH).
  */
 router.post('/leverage', authenticateToken, async (req: Request, res: Response) => {
   try {
@@ -410,7 +430,7 @@ router.post('/leverage', authenticateToken, async (req: Request, res: Response) 
       });
     }
 
-    const { symbol, leverage } = req.body;
+    const { symbol, leverage, posSide: posSideIn, side: sideIn, mgnMode } = req.body;
 
     if (!symbol || !leverage) {
       return res.status(400).json({
@@ -418,7 +438,76 @@ router.post('/leverage', authenticateToken, async (req: Request, res: Response) 
       });
     }
 
-    const result = await poloniexFuturesService.setLeverage(credentials, symbol, leverage);
+    // 1. Caller-supplied posSide takes precedence.
+    let posSide: 'LONG' | 'SHORT' | undefined;
+    if (posSideIn) {
+      const upper = String(posSideIn).toUpperCase();
+      if (upper === 'LONG' || upper === 'SHORT') posSide = upper;
+    } else if (sideIn) {
+      const lower = String(sideIn).toLowerCase();
+      if (lower === 'long') posSide = 'LONG';
+      else if (lower === 'short') posSide = 'SHORT';
+    }
+
+    // 2. If still unset, probe account mode + derive from existing position.
+    if (!posSide) {
+      let mode: 'HEDGE' | 'ONE_WAY' | undefined;
+      try {
+        const modeResp = await poloniexFuturesService.getPositionDirectionMode(credentials);
+        const detected = String(
+          (modeResp as { posMode?: unknown })?.posMode
+          ?? (modeResp as { data?: { posMode?: unknown } })?.data?.posMode
+          ?? '',
+        ).toUpperCase();
+        if (detected === 'HEDGE' || detected === 'ONE_WAY') {
+          mode = detected;
+        }
+      } catch (modeErr) {
+        // Fail-soft — fall through to omit posSide. ONE_WAY accounts
+        // never needed it; HEDGE accounts will get the explicit 400
+        // below if mode probe also fails AND no position exists.
+        logger.debug('Leverage route: position-mode probe failed', {
+          err: modeErr instanceof Error ? modeErr.message : String(modeErr),
+        });
+      }
+
+      if (mode === 'HEDGE') {
+        try {
+          const positions = await poloniexFuturesService.getPositions(credentials, symbol);
+          const list = Array.isArray(positions) ? positions : [];
+          const open = list.find(
+            (p: Record<string, unknown>) =>
+              String(p.symbol ?? '') === symbol
+              && Number(p.qty ?? p.size ?? 0) !== 0,
+          ) as Record<string, unknown> | undefined;
+          if (open) {
+            const qtyNum = Number(open.qty ?? open.size ?? 0);
+            posSide = qtyNum < 0 ? 'SHORT' : 'LONG';
+          } else {
+            // HEDGE account, no open position, no caller-supplied side.
+            // Rather than guess, ask the client to pass posSide so the
+            // exchange knows which lane to apply leverage to.
+            return res.status(400).json({
+              error:
+                'Account is in HEDGE mode and no open position exists for this symbol. '
+                + 'Pass `posSide` ("LONG"|"SHORT") or `side` ("long"|"short") in the request body.',
+              hedgeMode: true,
+            });
+          }
+        } catch (posErr) {
+          logger.warn('Leverage route: HEDGE-mode posSide derivation failed', {
+            symbol,
+            err: posErr instanceof Error ? posErr.message : String(posErr),
+          });
+        }
+      }
+    }
+
+    const opts: { posSide?: 'LONG' | 'SHORT'; mgnMode?: 'CROSS' | 'ISOLATED' } = {};
+    if (posSide) opts.posSide = posSide;
+    if (mgnMode === 'CROSS' || mgnMode === 'ISOLATED') opts.mgnMode = mgnMode;
+
+    const result = await poloniexFuturesService.setLeverage(credentials, symbol, leverage, opts);
     res.json(result);
   } catch (error: unknown) {
     logger.error('Error setting leverage:', error);

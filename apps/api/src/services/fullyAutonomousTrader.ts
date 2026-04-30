@@ -1349,8 +1349,8 @@ class FullyAutonomousTrader extends EventEmitter {
       const activePositions = Array.isArray(positions) ? positions : [];
 
       for (const position of activePositions) {
-        const qty = parseFloat(position.qty || position.positionAmt || '0');
-        if (qty === 0) continue;
+        const qtyNum = Number(position.qty ?? position.size ?? position.positionAmt ?? 0);
+        if (qtyNum === 0) continue;
 
         const symbol = position.symbol;
         const markPx = parseFloat(position.markPx || position.markPrice || '0');
@@ -1360,7 +1360,38 @@ class FullyAutonomousTrader extends EventEmitter {
         // margin), sign carries direction. Prefer it when present; falls
         // back to price-move computation (markPx vs entryPrice) when not.
         const uplRatioRaw = parseFloat(position.uplRatio || '0');
-        const isLong = qty > 0;
+        // HEDGE-mode side derivation. Background:
+        //   In v3 HEDGE mode `position.side` is the next-action label
+        //   (BUY/SELL — i.e. the order side that would close the
+        //   position), NOT the position direction. Prior code computed
+        //   `isLong = qty > 0` which silently mislabeled SHORT positions
+        //   as LONG when Poloniex returned a HEDGE position with positive
+        //   `qty` magnitude + a separate `posSide=SHORT` field.
+        //
+        //   Canonical resolution order (per
+        //   apps/api/docs/poloniex-v3-reference.md §Position):
+        //     1. `posSide` field — LONG/SHORT in HEDGE responses, BOTH in
+        //        ONE_WAY responses. When LONG/SHORT, this is authoritative.
+        //     2. `Math.sign(qty)` — used by stateReconciliationService
+        //        ts:152 and loop.ts::fetchAccountContext for ONE_WAY
+        //        accounts (qty is signed there: +X long, -X short).
+        //
+        //   Production log evidence (2026-04-30):
+        //     [FAT] ETH_USDT_PERP LONG priceMove=0.305% roi=-5.63% lev=20x
+        //   The +0.305% priceMove + -5.63% roi at 20x is unambiguously a
+        //   SHORT losing as price rises. The accompanying "pnl formula
+        //   divergence" WARN was the parity invariant catching the
+        //   mislabel; with this fix that WARN no longer fires after the
+        //   side is resolved correctly.
+        const posSideRaw = String(
+          (position as Record<string, unknown>).posSide ?? ''
+        ).toUpperCase();
+        const isLong = posSideRaw === 'LONG' || posSideRaw === 'SHORT'
+          ? posSideRaw === 'LONG'
+          : qtyNum >= 0;
+        // Keep `qty` for downstream sizing math (formerly parseFloat(qty));
+        // the sign is now authoritative via qtyNum + posSide above.
+        const qty = qtyNum;
 
         // Compute price-move % directly from mark/entry. Avoids the
         // `entry * qty` notional trap: Poloniex qty is in CONTRACTS (e.g.
@@ -1429,7 +1460,10 @@ class FullyAutonomousTrader extends EventEmitter {
             if (pnlPercent < -slPercent) return { shouldClose: true, reason: 'stop_loss' };
             if (pnlPercent > tpPercent) return { shouldClose: true, reason: 'take_profit' };
             if (pnlPercent > trailingTrigger && analysis) {
-              const isLong = qty > 0;
+              // Use the outer-scope `isLong` (HEDGE-aware via posSide +
+              // qty-sign); the prior `const isLong = qty > 0` shadowing
+              // bypassed that and produced the same mislabel as the
+              // [FAT] log line on HEDGE accounts.
               if ((isLong && analysis.trend === 'bearish') ||
                   (!isLong && analysis.trend === 'bullish')) {
                 return { shouldClose: true, reason: 'trend_reversal' };
@@ -1479,8 +1513,10 @@ class FullyAutonomousTrader extends EventEmitter {
         if (pnlPercent > trailingTrigger) {
           const analysis = analyses.get(symbol);
           if (analysis) {
-            // If trend reverses, close position
-            const isLong = qty > 0;
+            // If trend reverses, close position. Use outer-scope `isLong`
+            // (HEDGE-aware via posSide + qty-sign) — the previous
+            // `const isLong = qty > 0` shadow had the same mislabel bug as
+            // the [FAT] logger above.
             if ((isLong && analysis.trend === 'bearish') || (!isLong && analysis.trend === 'bullish')) {
               logger.info(`Trend reversal detected for ${symbol}, closing position`);
               await this.closePosition(userId, symbol, 'trend_reversal');

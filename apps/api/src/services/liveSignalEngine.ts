@@ -184,6 +184,23 @@ export class LiveSignalEngine extends EventEmitter {
   private processedBanditIdsOrder: string[] = [];
   private static readonly PROCESSED_BANDIT_IDS_MAX = 500;
 
+  /**
+   * Cached Poloniex v3 position-direction mode (HEDGE | ONE_WAY).
+   *
+   * Detected lazily on first submitOrder via getPositionDirectionMode and
+   * cached for the lifetime of the engine. Mirror of the loop.ts pattern at
+   * ``Monkey.positionDirectionMode``. We need this so setLeverage/placeOrder
+   * knows whether to send ``posSide: LONG | SHORT`` (HEDGE) or omit it
+   * (ONE_WAY → BOTH default). After PR #611 flipped prod accounts to HEDGE
+   * the exchange started returning code=11011
+   *   "Position mode and posSide do not match"
+   * on every /v3/position/leverage call from this engine because the body
+   * lacked posSide. ``undefined`` until detected; fail-soft to undefined
+   * on error so we keep trading the historic ONE_WAY shape if detection
+   * fails.
+   */
+  private positionDirectionMode: 'HEDGE' | 'ONE_WAY' | undefined = undefined;
+
   async start(options: StartOptions = {}): Promise<void> {
     this.symbols = options.symbols ?? [...DEFAULT_WATCH_SYMBOLS];
     this.dryRun = options.dryRun ?? false;
@@ -980,6 +997,54 @@ export class LiveSignalEngine extends EventEmitter {
   }
 
   /**
+   * Detect (once) and cache the Poloniex v3 position-direction mode
+   * (HEDGE | ONE_WAY). Idempotent: re-entry is a no-op once the mode is
+   * cached. Fail-soft: detection errors leave the cache as ``undefined``
+   * so subsequent setLeverage / placeOrder calls fall back to the
+   * historic ONE_WAY-omits-posSide wire shape.
+   *
+   * Mirror of Monkey.detectPositionDirectionMode (loop.ts:1557). Kept
+   * here on the engine instance rather than as a shared helper so each
+   * engine's mode cache is independent — they may run on different
+   * accounts in future.
+   */
+  private async ensurePositionDirectionMode(
+    credentials: { apiKey: string; apiSecret: string; passphrase?: string },
+  ): Promise<void> {
+    if (this.positionDirectionMode !== undefined) return;
+    try {
+      const resp = await poloniexFuturesService.getPositionDirectionMode(credentials);
+      const detected = String(
+        (resp as Record<string, unknown>)?.posMode
+        ?? '',
+      ).toUpperCase();
+      if (detected === 'HEDGE' || detected === 'ONE_WAY') {
+        this.positionDirectionMode = detected;
+        logger.info('[LiveSignal] position-mode detected', { mode: detected });
+        return;
+      }
+      // Some response shapes nest under .data — try once more.
+      const data = (resp as Record<string, unknown>)?.data;
+      const nested = String(
+        (data && typeof data === 'object' ? (data as Record<string, unknown>).posMode : '')
+        ?? '',
+      ).toUpperCase();
+      if (nested === 'HEDGE' || nested === 'ONE_WAY') {
+        this.positionDirectionMode = nested;
+        logger.info('[LiveSignal] position-mode detected (nested)', { mode: nested });
+      } else {
+        logger.info('[LiveSignal] position-mode detect: unrecognized response', {
+          raw: detected,
+        });
+      }
+    } catch (err) {
+      logger.debug('[LiveSignal] position-mode detect failed (fail-soft)', {
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /**
    * Place the order on the exchange, persist it to the DB, and
    * publish an outcome event for ml-worker training. Sequence:
    *
@@ -1130,13 +1195,35 @@ export class LiveSignalEngine extends EventEmitter {
       signal,
     });
 
+    // Lazily detect Poloniex position-direction mode (HEDGE | ONE_WAY) and
+    // cache it on the engine. Same pattern as Monkey.detectPositionDirectionMode
+    // — see loop.ts:1557. Needed so the setLeverage body below carries
+    // ``posSide`` on HEDGE accounts (Poloniex returns code=11011
+    // "Position mode and posSide do not match" otherwise).
+    await this.ensurePositionDirectionMode(credentials);
+
+    // Derive posSide from the intended order direction. In HEDGE mode this
+    // MUST be sent on /v3/position/leverage; in ONE_WAY mode we omit so
+    // the exchange defaults to BOTH (sending LONG/SHORT on a one-way
+    // account triggers the same 11011 error in reverse).
+    const posSide: 'LONG' | 'SHORT' | undefined =
+      this.positionDirectionMode === 'HEDGE'
+        ? (order.side === 'long' ? 'LONG' : 'SHORT')
+        : undefined;
+
     // 1. Leverage — non-fatal if exchange rejects; order still proceeds.
     try {
-      await poloniexFuturesService.setLeverage(credentials, order.symbol, order.leverage);
+      await poloniexFuturesService.setLeverage(
+        credentials,
+        order.symbol,
+        order.leverage,
+        posSide ? { posSide } : {},
+      );
     } catch (levErr) {
       logger.warn('[LiveSignal] setLeverage failed (non-fatal)', {
         symbol: order.symbol,
         leverage: order.leverage,
+        posSide,
         err: levErr instanceof Error ? levErr.message : String(levErr),
       });
     }
