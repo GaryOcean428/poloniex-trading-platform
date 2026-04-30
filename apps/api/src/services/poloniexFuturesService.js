@@ -585,6 +585,24 @@ class PoloniexFuturesService {
    * `type: 'market'`, `size: <base asset>`); this method normalises
    * to v3 wire form. `lotSize` in the optional 4th arg (or the
    * catalog lookup) tells us how to convert size → sz.
+   *
+   * Position-mode semantics (verified on prod 2026-04-30 after the
+   * trailing_harvest close-rejection incident):
+   *   - HEDGE  account → close orders MUST carry `posSide: 'LONG' | 'SHORT'`
+   *     matching the side of the position being reduced, and MUST NOT
+   *     carry `reduceOnly`. Sending reduceOnly returns
+   *     code=400 "Param error  reduceOnly cannot be set to true in hedge"
+   *     and the position stays open.
+   *   - ONE_WAY account → close orders use `reduceOnly: true` and either
+   *     omit `posSide` or send `BOTH`.
+   *
+   * The caller signals which mode it's in either via the explicit
+   * `opts.positionMode` ('HEDGE' | 'ONE_WAY'), or implicitly by the
+   * presence/absence of `opts.posSide`. If the caller asked for
+   * `reduceOnly: true` while also being in HEDGE mode, this method
+   * silently drops `reduceOnly` (the posSide+side pair already tells
+   * the exchange "reduce that leg") rather than letting the request
+   * be rejected.
    */
   async placeOrder(credentials, orderData, opts = {}) {
     // Normalise side + type to UPPER per v3 spec.
@@ -615,12 +633,19 @@ class PoloniexFuturesService {
       szContracts = Math.round(Number(orderData.size));
     }
 
+    // Resolve effective position-direction mode. Explicit opt wins; otherwise
+    // infer from posSide (LONG/SHORT means HEDGE; absent or BOTH means ONE_WAY).
+    const posSideRaw = String(opts.posSide ?? orderData.posSide ?? '').toUpperCase();
+    const explicitMode = String(opts.positionMode ?? '').toUpperCase();
+    const isHedge = explicitMode === 'HEDGE'
+      || (explicitMode === '' && (posSideRaw === 'LONG' || posSideRaw === 'SHORT'));
+
     const body = {
       clOrdId: orderData.clientOid || orderData.clOrdId || this.generateClientOrderId(),
       symbol: orderData.symbol,
       side,                                                      // 'BUY' | 'SELL'
       mgnMode: (opts.mgnMode ?? orderData.mgnMode ?? 'CROSS').toUpperCase(),
-      posSide: (opts.posSide ?? orderData.posSide ?? 'BOTH').toUpperCase(),
+      posSide: posSideRaw || 'BOTH',
       type: typeUpper,                                           // 'MARKET' | 'LIMIT' | 'LIMIT_MAKER'
       sz: String(szContracts),                                   // STRING, in contracts
     };
@@ -630,7 +655,13 @@ class PoloniexFuturesService {
       if (orderData.price !== undefined) body.px = String(orderData.price);
       if (orderData.timeInForce) body.timeInForce = orderData.timeInForce;
     }
-    if (orderData.reduceOnly) body.reduceOnly = true;
+    // reduceOnly is HEDGE-incompatible. Poloniex v3 rejects it with
+    // "Param error  reduceOnly cannot be set to true in hedge" — silently
+    // drop it on HEDGE accounts. The posSide+side combination already
+    // tells the exchange to reduce the matching leg.
+    if (orderData.reduceOnly && !isHedge) {
+      body.reduceOnly = true;
+    }
 
     // Remove undefined values defensively.
     Object.keys(body).forEach(key => {
