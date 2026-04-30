@@ -109,10 +109,23 @@ class TestChooseLane:
         assert result["value"] == "scalp"
 
     def test_high_phi_sovereignty_trend_favors_trend(self) -> None:
-        """phi≈1, sovereignty≈1, strong tape_trend → trend."""
+        """phi≈1, sovereignty≈1, strong tape_trend → trend score wins
+        the softmax. Per fix/lane-budget-size-zero-regression, when the
+        trend lane has budget_frac=0 (default opt-in), the chooser
+        falls through to the next-highest position-bearing lane so the
+        sizer doesn't collapse every entry to 0. The raw softmax probs
+        still show trend dominating; the surfaced .value is the
+        fallback selection."""
         s = _make_state(phi=0.95, sovereignty=0.95, basin_velocity=0.05, kappa=KAPPA_STAR)
         result = choose_lane(s, tape_trend=0.9)
-        assert result["value"] == "trend"
+        # Raw softmax: trend score = 0.95 × 0.95 × 0.9 ≈ 0.81 dominates.
+        probs = result["derivation"]["softmax_probs"]
+        assert probs["trend"] >= max(probs["scalp"], probs["swing"], probs["observe"])
+        # But the surfaced lane is a positive-budget fallback (swing or
+        # scalp), never the structurally-zero trend.
+        assert result["value"] != "trend"
+        assert result["value"] in ("scalp", "swing")
+        assert result["derivation"]["fallback_from_zero_budget"] == 1
 
     def test_high_basin_velocity_favors_observe(self) -> None:
         """bv >> 0 → observe (chaos)."""

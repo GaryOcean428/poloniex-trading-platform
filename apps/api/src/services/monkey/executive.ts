@@ -168,13 +168,33 @@ export function currentPositionSize(
   mode: MonkeyMode = MonkeyMode.INVESTIGATION,
   lane: 'scalp' | 'swing' | 'trend' = 'swing',
 ): ExecutiveDecision<number> {
-  // Proposal #10 — per-lane capital budget. Each lane sees only its
-  // share of available equity for sizing, so a held swing-long no
-  // longer paralyzes a scalp-short on the same symbol. A zero-budget
-  // lane (default for "trend" until governance bumps it) is sized to
-  // zero — capital is not allocated to it this tick.
+  // ─── Proposal #10 lane-budget — applied as a MARGIN CAP, not an
+  // equity haircut (fix/lane-budget-size-zero-regression).
+  //
+  // Original PR #610 implementation multiplied availableEquityUsdt by
+  // laneFrac BEFORE the size formula. That double-dipped against the
+  // already-cap'd availableEquity (loop.ts already shrinks it via
+  // sizeFraction × kernel-share) and broke the v0.6.6 lift-to-min
+  // path on small accounts: with $90 equity → halved to $45 the
+  // requiredFrac for a $75.78 BTC min at 14x was 0.126 (fine), but
+  // the loop's per-symbol cap further reduces availableEquity below
+  // the size-fraction-relief floor, so the effective pool seen here
+  // routinely fell to ~$5 on production. Halving that to $2.50
+  // pushed requiredFrac past the 0.5 safety clamp → no lift fired
+  // and every entry returned size=0. Trend lane (budget=0) also
+  // collapsed every tick where chooseLane picked it — there is no
+  // "softmax fall-through" to a positive-budget lane.
+  //
+  // The correct semantic: budgetFrac caps the MARGIN a single
+  // position can claim against full equity. Sizing math sees the
+  // full available pool; the final margin is min(formula, cap).
+  // This preserves the "trend is opt-in" promise (budget=0 → cap=0
+  // → margin=0) AND lets lift-to-min reach the exchange minimum on
+  // small accounts AND preserves the cross-lane partition invariant
+  // (scalp's margin ≤ 50% of equity even when scalp+swing both
+  // active).
   const laneFrac = laneBudgetFraction(lane);
-  availableEquityUsdt = availableEquityUsdt * laneFrac;
+  const laneMarginCap = laneFrac * availableEquityUsdt;
   const nc = s.neurochemistry;
   // Lived-experience scaling. 0 at birth, 1 after ~20 witnessed trades.
   const maturity = Math.min(1, bankSize / 20);
@@ -214,17 +234,31 @@ export function currentPositionSize(
     }
   }
 
+  // Apply lane margin cap AFTER lift-to-min. Trend lane (cap=0) still
+  // collapses to 0 — it remains opt-in. For scalp/swing on a flat
+  // account, cap = 0.5 × equity which is identical to the existing
+  // safety clamp, so the binding constraint is unchanged in the common
+  // case. The cap matters when both lanes hold positions: the second
+  // lane's budget enforces the partition.
+  let cappedByLane = false;
+  if (margin > laneMarginCap) {
+    margin = laneMarginCap;
+    notional = margin * Math.max(1, leverage);
+    cappedByLane = true;
+  }
+
   const sized = notional >= minNotionalUsdt ? margin : 0;
 
   return {
     value: sized,
-    reason: `size[${lane}] = ${liftedToMin ? 'lifted-to-min ' : ''}floor(${explorationFloor.toFixed(3)}) or Φ×S×M(${(s.phi * s.sovereignty * maturity).toFixed(3)}) × reward(${rewardMult.toFixed(2)}) × stab(${stabilityMult.toFixed(2)}) × equity(${availableEquityUsdt.toFixed(2)}) @ ${leverage}x → margin ${margin.toFixed(2)}, notional ${notional.toFixed(2)} vs min ${minNotionalUsdt.toFixed(2)} = ${sized.toFixed(2)}`,
+    reason: `size[${lane}] = ${liftedToMin ? 'lifted-to-min ' : ''}${cappedByLane ? 'lane-capped ' : ''}floor(${explorationFloor.toFixed(3)}) or Φ×S×M(${(s.phi * s.sovereignty * maturity).toFixed(3)}) × reward(${rewardMult.toFixed(2)}) × stab(${stabilityMult.toFixed(2)}) × equity(${availableEquityUsdt.toFixed(2)}) @ ${leverage}x → margin ${margin.toFixed(2)} (lane-cap ${laneMarginCap.toFixed(2)}), notional ${notional.toFixed(2)} vs min ${minNotionalUsdt.toFixed(2)} = ${sized.toFixed(2)}`,
     derivation: {
       phi: s.phi, sovereignty: s.sovereignty, maturity, bankSize,
       dopamine: nc.dopamine, serotonin: nc.serotonin, gaba: nc.gaba,
       explorationFloor, rawFrac, frac, margin, leverage, notional,
       minNotional: minNotionalUsdt, sized, liftedToMin: liftedToMin ? 1 : 0,
       laneBudgetFrac: laneFrac,
+      laneMarginCap, cappedByLane: cappedByLane ? 1 : 0,
     },
   };
 }
@@ -757,15 +791,44 @@ export function chooseLane(
     }
   }
 
+  // ─── fix/lane-budget-size-zero-regression: structural-zero fallback ───
+  //
+  // If the chosen position-bearing lane has budgetFrac=0 (e.g. trend is
+  // opt-in via the parameter registry and defaults to 0), the upstream
+  // sizer collapses every entry to 0. Fall through to the next-highest
+  // lane that is *capable* of holding capital. 'observe' is decision-
+  // only and stays as-is (the loop maps it to swing for sizing).
+  const isZeroBudgetPosLane = (l: LaneType): boolean =>
+    (l === 'scalp' || l === 'swing' || l === 'trend') && laneBudgetFraction(l) === 0;
+  let fallbackFrom: LaneType | null = null;
+  if (isZeroBudgetPosLane(lane)) {
+    fallbackFrom = lane;
+    let nextProb = -1;
+    let next: LaneType = lane;
+    for (const [k, v] of Object.entries(probs) as [LaneType, number][]) {
+      if (k === lane) continue;
+      if (k === 'observe') continue;
+      if (isZeroBudgetPosLane(k)) continue;
+      if (v > nextProb) {
+        nextProb = v;
+        next = k;
+      }
+    }
+    if (next !== lane) {
+      lane = next;
+    }
+  }
+
   return {
     value: lane,
-    reason: `lane=${lane} (tau=${tau.toFixed(4)}, scalp=${probs.scalp.toFixed(3)} swing=${probs.swing.toFixed(3)} trend=${probs.trend.toFixed(3)} observe=${probs.observe.toFixed(3)})`,
+    reason: `lane=${lane}${fallbackFrom && fallbackFrom !== lane ? ` (fallback from ${fallbackFrom}, budget=0)` : ''} (tau=${tau.toFixed(4)}, scalp=${probs.scalp.toFixed(3)} swing=${probs.swing.toFixed(3)} trend=${probs.trend.toFixed(3)} observe=${probs.observe.toFixed(3)})`,
     derivation: {
       tau,
       phi: s.phi,
       sovereignty: s.sovereignty,
       basinVelocity: s.basinVelocity,
       tapeTrend,
+      fallbackFromZeroBudget: fallbackFrom && fallbackFrom !== lane ? 1 : 0,
     },
   };
 }
