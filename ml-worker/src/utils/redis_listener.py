@@ -152,6 +152,15 @@ def run_resilient_listener(
 
     backoff = config.initial_backoff
     attempt = 0
+    # Track consecutive idle timeouts (socket.timeout / TimeoutError on
+    # an empty pubsub channel). These are NORMAL and should not log at
+    # ERROR — that produced 60+ ERROR-level lines per minute on idle
+    # listeners (`ml-predict-request`, `trade-outcome`) and drowned out
+    # real connection failures. We only escalate after `idle_escalate_after`
+    # consecutive timeouts to surface the case where the channel is
+    # silent for unexpectedly long (could mean the producer is dead).
+    idle_timeout_streak = 0
+    idle_escalate_after = 100
     while stop_event is None or not stop_event.is_set():
         attempt += 1
         pubsub = None
@@ -168,6 +177,13 @@ def run_resilient_listener(
             )
             pubsub = client.pubsub(ignore_subscribe_messages=True)
             pubsub.subscribe(config.channel)
+            # NOTE: do NOT reset ``idle_timeout_streak`` here. A pubsub
+            # read timeout drops us out of ``listen()``, the finally
+            # block tears down the client, and the next loop iteration
+            # creates a fresh client + subscribes again — that path is
+            # how an idle channel looks to this code. Resetting the
+            # streak on subscribe would mask the silent-producer case
+            # the escalation logic exists to detect.
             logger.info(
                 "redis-listener-connected listener=%s channel=%s attempt=%d",
                 config.name,
@@ -197,6 +213,8 @@ def run_resilient_listener(
                     break
                 if message is None or message.get("type") != "message":
                     continue
+                # Got a real message — reset the idle streak.
+                idle_timeout_streak = 0
                 try:
                     raw = message["data"]
                     payload = json.loads(raw) if isinstance(raw, (bytes, str)) else raw
@@ -227,26 +245,62 @@ def run_resilient_listener(
                     except Exception:  # noqa: BLE001
                         pass
         except Exception as exc:  # noqa: BLE001
-            # ``OSError(EINVAL)`` ends up here. Log structurally; do
-            # NOT decrement attempt or short-circuit — we retry forever.
+            # Two distinct failure shapes land here:
+            #
+            # 1) Idle pubsub read timeout (socket_read_timeout elapsed
+            #    with no message). On an idle channel this is the NORMAL
+            #    steady-state path — Redis is healthy, the producer is
+            #    just quiet. Log at DEBUG and do not bump the
+            #    reconnecting status. After idle_escalate_after
+            #    consecutive timeouts we emit a single INFO-level line so
+            #    a stuck producer surfaces without spamming ERROR.
+            #
+            # 2) Real connection failure (OSError, ConnectionError, EINVAL,
+            #    ECONNRESET, …). These were the original PR #604 target.
+            #    Log at ERROR with errno so the diagnostic stays useful.
             errno = getattr(exc, "errno", None)
-            logger.error(
-                "redis-listener-crashed listener=%s attempt=%d errno=%s err=%s",
-                config.name,
-                attempt,
-                errno,
-                exc,
-                exc_info=False,
-            )
-            if config.health_key is not None and client is not None:
-                try:
-                    client.set(
-                        config.health_key,
-                        json.dumps({"status": "reconnecting"}),
-                        ex=config.health_ttl,
+            is_idle_timeout = _is_idle_read_timeout(exc, redis_module)
+            if is_idle_timeout:
+                idle_timeout_streak += 1
+                if idle_timeout_streak == idle_escalate_after:
+                    logger.info(
+                        "redis-listener-idle listener=%s channel=%s "
+                        "consecutive_timeouts=%d (channel quiet — "
+                        "verify producer is alive)",
+                        config.name,
+                        config.channel,
+                        idle_timeout_streak,
                     )
-                except Exception:  # noqa: BLE001
-                    pass
+                else:
+                    logger.debug(
+                        "redis-listener-idle-timeout listener=%s "
+                        "attempt=%d streak=%d err=%s",
+                        config.name,
+                        attempt,
+                        idle_timeout_streak,
+                        exc,
+                    )
+            else:
+                # A genuine connection failure resets the idle counter —
+                # the next subscribe starts a fresh idle window.
+                idle_timeout_streak = 0
+                logger.error(
+                    "redis-listener-crashed listener=%s attempt=%d errno=%s err=%s",
+                    config.name,
+                    attempt,
+                    errno,
+                    exc,
+                    exc_info=False,
+                )
+                if config.health_key is not None and client is not None:
+                    try:
+                        client.set(
+                            config.health_key,
+                            json.dumps({"status": "reconnecting"}),
+                            ex=config.health_ttl,
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass
         finally:
             # Always tear down the client + pubsub before the next
             # attempt. Reusing a poisoned connection is the second
@@ -275,6 +329,54 @@ def run_resilient_listener(
         )
         sleep_fn(backoff)
         backoff = min(backoff * config.backoff_factor, config.max_backoff)
+
+
+def _is_idle_read_timeout(exc: BaseException, redis_module: Any) -> bool:
+    """Classify ``exc`` as an idle pubsub-read timeout vs a real failure.
+
+    On an idle channel ``pubsub.listen()`` blocks until either a message
+    arrives or ``socket_timeout`` elapses; the latter raises one of:
+
+    * ``socket.timeout`` — Python stdlib bare timeout
+    * ``redis.exceptions.TimeoutError`` — redis-py wraps the above when
+      the read hits ``socket_timeout``
+    * ``TimeoutError`` (builtin, Python 3.10+) — same kernel signal,
+      different alias
+
+    A real connection failure is ``redis.exceptions.ConnectionError``,
+    ``OSError``/``ConnectionError`` from the kernel, or EINVAL from
+    ``setsockopt``. Those continue to log at ERROR.
+
+    Distinguishing them by **type** rather than message keeps the check
+    robust across redis-py versions; the message-string fallback only
+    catches exotic ``RedisError`` subclasses that wrap the timeout
+    without inheriting from ``TimeoutError``.
+    """
+    # Builtin / stdlib timeouts.
+    if isinstance(exc, socket.timeout):
+        return True
+    if isinstance(exc, TimeoutError):
+        # Python 3.10+ unified ``TimeoutError`` covers ``socket.timeout``
+        # too, but on older runtimes the two are distinct.
+        return True
+    # redis-py timeout. Guard against missing module / attribute so the
+    # function never raises when redis is faked-out in tests.
+    redis_exc = getattr(redis_module, "exceptions", None) if redis_module else None
+    redis_timeout = getattr(redis_exc, "TimeoutError", None) if redis_exc else None
+    if redis_timeout is not None and isinstance(exc, redis_timeout):
+        # IMPORTANT: redis.exceptions.ConnectionError inherits from
+        # TimeoutError? No — it inherits from RedisError. So a positive
+        # match here is genuinely a timeout, not a closed socket.
+        return True
+    # Last-ditch: substring sniff. Only hit if the redis-py shipped a
+    # non-TimeoutError subclass that still says "Timeout reading from
+    # socket" — historic versions did. Keep it conservative: require
+    # both keywords so a generic "Timeout" connection error doesn't
+    # downgrade to DEBUG.
+    msg = str(exc)
+    if "Timeout reading from socket" in msg:
+        return True
+    return False
 
 
 def _probe_redis_connection(
