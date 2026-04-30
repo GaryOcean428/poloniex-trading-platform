@@ -791,6 +791,18 @@ export class MonkeyKernel extends EventEmitter {
       basinState, cappedEquity, minNotional, leverage.value, bankSize, mode,
       positionLane,
     );
+    // Surgical diagnostic for live size=0 regression (post PR #611). Fires
+    // only when sizing collapses to zero AND the account is flat — surfaces
+    // the exact numeric inputs feeding currentPositionSize so we can
+    // grep `[size-zero-diag]` from Railway and trace which guard tripped.
+    if (size.value === 0 && exchangeHeldSide === null) {
+      logger.info('[size-zero-diag]', {
+        symbol, availableEquity, effectiveSizeFraction, cappedEquity,
+        minNotional, leverage: leverage.value, bankSize, mode,
+        sizeValue: size.value, lane: positionLane,
+        sizeDerivation: size.derivation,
+      });
+    }
     const autoFlatten = shouldAutoFlatten(basinState, state.fHealthHistory);
 
     // 6. DECIDE — propose action
