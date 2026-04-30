@@ -115,45 +115,89 @@ function rollingVol(ohlcv: OHLCVCandle[], n: number): number {
 }
 
 /**
- * Basin direction (v0.5.2): signed scalar in [-1, 1] read DIRECTLY from
- * Monkey's own perception basin's momentum-spectrum dims (7..14).
+ * Basin direction: signed scalar in [-1, 1] read DIRECTLY from Monkey's
+ * own perception basin's momentum-spectrum dims (7..14).
  *
- * The basin's momentum dims hold sigmoid-normalised log-returns where
- * 0.5 = flat, >0.5 = recent up-move, <0.5 = down. Centering at 0.5
- * and averaging gives a clean directional signal that's the KERNEL'S
- * OWN reading of direction — independent of ml-worker.
+ * Proposal #7 (2026-04-30) — Fisher-Rao reprojection. Replaces the
+ * 2026-04-24 ``tanh((mom_mass - MOM_NEUTRAL) * 16)`` formulation,
+ * which saturated at ~0.92 in mild bull regimes (verified on prod
+ * tape, 2026-04-26) and structurally suppressed short conviction.
  *
- * Used as a short-side veto / tiebreaker when ml-worker is 100 % BUY
- * biased (observed 2026-04-21: 2664/2664 BUY over 20h). When ml-worker
- * disagrees with basin direction strongly, Monkey should be the one to
- * decide (UCP §28 autonomic governance — she derives her own signals,
- * doesn't take them externally without cross-validation).
+ * The new formulation:
+ *   1. Build a "no-momentum antipode" basin: rescale dims 7..14 to
+ *      total mass = MOM_NEUTRAL (= 8/64), redistribute the surplus
+ *      / deficit uniformly across the 56 non-momentum dims.
+ *   2. Compute the Fisher-Rao geodesic distance between basin and
+ *      antipode: ``d = arccos(Σ √(p·q))`` on Δ⁶³.
+ *   3. Sign by ``mom_mass - MOM_NEUTRAL``.
+ *   4. Normalise by π/2 (the simplex diameter) so output ∈ [-1, +1]
+ *      WITHOUT clipping. Saturation is geometric, not artificial.
+ *
+ * QIG purity: Fisher-Rao native. No cosine similarity, no Euclidean
+ * distance. Mirrors ``ml-worker/src/monkey_kernel/perception_scalars.py
+ * :basin_direction`` byte-for-byte (modulo TS/Python idiom).
+ *
+ * Quarantine note: bubbles persisted in ``working_memory`` BEFORE
+ * this commit had basinDir computed under the saturating formula.
+ * Migration 041 flags those rows so the kernel can avoid re-using
+ * stale-coordinate-system bubbles (UCP §11.8).
  */
 export function basinDirection(basin: Basin): number {
-  // Dims 7..14 are the momentum spectrum (sigmoid-normalized log-returns
-  // at lookbacks [1, 2, 3, 5, 8, 13, 21, 34]) BEFORE toSimplex; after
-  // toSimplex they hold the simplex-normalised mass on those lookbacks.
-  //
-  // BUG FIX (2026-04-24): the original code subtracted 0.5 per dim,
-  // assuming raw-sigmoid values. After perceive()'s toSimplex(v) call,
-  // each dim is rescaled by 1/Σ(v) — a flat-momentum reading of 0.5 maps
-  // to ≈ 0.5/21.6 ≈ 0.023, not 0.5. The old centring constant produced
-  // basinDir ≈ −1.0 on every tick (verified across 21,458 consecutive
-  // monkey_decisions, 2026-04-21 → 2026-04-24), structurally killing
-  // DRIFT mode and forcing OVERRIDE_REVERSE into permanent SHORT bias.
-  //
-  // Correct formulation: compare the simplex mass in the momentum band
-  // to its uniform-distribution expectation (8/BASIN_DIM = 0.125). When
-  // raw momentum dims read above 0.5 (recent uptrend), they capture more
-  // mass than uniform → positive direction; when below 0.5 (downtrend),
-  // less mass → negative direction. Symmetric around the uniform baseline.
-  const MOM_NEUTRAL = 8 / BASIN_DIM;  // = 0.125, post-simplex uniform mass
-  const DIRECTION_GAIN = 16;          // tanh saturates at deviation ≈ ±0.16
-  let momMass = 0;
-  for (let i = 7; i <= 14; i++) {
-    momMass += basin[i] ?? MOM_NEUTRAL / 8;
+  const MOM_NEUTRAL = 8 / BASIN_DIM;  // 0.125
+  const FR_DIAMETER = Math.PI / 2;
+  const EPS = 1e-12;
+
+  // Step 0: defensive simplex normalization (caller may pass raw basin).
+  let total = 0;
+  for (let i = 0; i < BASIN_DIM; i++) total += Math.max(0, basin[i] ?? 0);
+  if (total <= EPS) return 0;
+  const p: number[] = new Array(BASIN_DIM);
+  for (let i = 0; i < BASIN_DIM; i++) {
+    p[i] = Math.max(0, basin[i] ?? 0) / total;
   }
-  return Math.tanh((momMass - MOM_NEUTRAL) * DIRECTION_GAIN);
+
+  // Step 1: momentum-band mass and sign.
+  let momMass = 0;
+  for (let i = 7; i <= 14; i++) momMass += p[i]!;
+  const sign = momMass >= MOM_NEUTRAL ? 1 : -1;
+
+  // Step 2: build the no-momentum antipode.
+  const antipode: number[] = p.slice();
+  const bandN = 8;
+  const nonbandN = BASIN_DIM - bandN; // 56
+  const excess = momMass - MOM_NEUTRAL;
+  if (momMass > EPS) {
+    const scale = MOM_NEUTRAL / momMass;
+    for (let i = 7; i <= 14; i++) antipode[i] = p[i]! * scale;
+  } else {
+    for (let i = 7; i <= 14; i++) antipode[i] = MOM_NEUTRAL / bandN;
+  }
+  if (nonbandN > 0) {
+    const add = excess / nonbandN;
+    for (let i = 0; i < BASIN_DIM; i++) {
+      if (i < 7 || i > 14) antipode[i] = (p[i]! + add);
+    }
+  }
+  // Re-normalize the antipode to guard float drift.
+  let antiSum = 0;
+  for (let i = 0; i < BASIN_DIM; i++) {
+    antipode[i] = Math.max(0, antipode[i]!);
+    antiSum += antipode[i]!;
+  }
+  if (antiSum > EPS) {
+    for (let i = 0; i < BASIN_DIM; i++) antipode[i] = antipode[i]! / antiSum;
+  }
+
+  // Step 3: Fisher-Rao geodesic distance. d = arccos(Σ √(p_i q_i)).
+  let bc = 0;
+  for (let i = 0; i < BASIN_DIM; i++) {
+    bc += Math.sqrt(p[i]! * antipode[i]!);
+  }
+  bc = Math.min(1, Math.max(-1, bc));
+  const dFr = Math.acos(bc);
+
+  // Step 4: signed + normalised.
+  return (sign * dFr) / FR_DIAMETER;
 }
 
 /**
