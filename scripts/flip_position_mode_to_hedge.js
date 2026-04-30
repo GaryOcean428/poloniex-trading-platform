@@ -37,6 +37,7 @@
  *   3 = set-mode call failed (e.g. Poloniex rejected with positions
  *       still open, or 4xx auth)
  *   4 = post-flip verification disagreed with what we just set
+ *   5 = unexpected error in main() (unhandled exception)
  *
  * Run
  * ───
