@@ -42,6 +42,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 from ensemble_predictor import EnsemblePredictor
 from proprietary_core.regime import RegimeDetector  # noqa: F401  (re-exported via StrategyLoop)
 from proprietary_core.strategy_loop import MarketRegime, StrategyLoop  # noqa: F401  (MarketRegime re-exported for ops)
+from utils.redis_listener import (
+    ListenerConfig,
+    env_redis_url,
+    run_resilient_listener,
+    spawn_listener_thread,
+)
 
 logger = logging.getLogger("ml-worker")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -57,106 +63,56 @@ REDIS_URL = os.environ.get("REDIS_URL", "")
 # ---------------------------------------------------------------------------
 
 def _start_redis_listener():
-    """Subscribe to ml:predict:request and publish responses."""
-    if not REDIS_URL:
+    """Subscribe to ml:predict:request and publish responses.
+
+    Proposal #1 — refactored to use ``utils.redis_listener``. The
+    helper provides:
+      * EINVAL-safe socket option probing (was the silent root cause
+        of the 10/10-retry permanent silencing previously seen post
+        Python 3.13 -> 3.12 downgrade in PR #604)
+      * Exponential backoff with NO failure cap (transient outages
+        no longer permanently disable pub/sub)
+      * Per-attempt connection construction (no shared pool poisoning)
+      * Structured ``listener=<name>`` log lines for easy grep
+    """
+    redis_url = env_redis_url() or REDIS_URL
+    if not redis_url:
         logger.info("REDIS_URL not set — Redis pub/sub listener disabled")
         return
 
-    try:
-        import redis
-    except ImportError:
-        logger.warning("redis package not installed — Redis pub/sub listener disabled")
-        return
+    cfg = ListenerConfig(
+        name="ml-predict-request",
+        channel="ml:predict:request",
+        health_key="ml:health",
+        health_ttl=90,
+    )
 
-    def _listener():
-        REQUEST_CHANNEL = "ml:predict:request"
-        HEALTH_KEY = "ml:health"
-        MAX_RETRIES = 10
-        consecutive_failures = 0
-        backoff = 1.0
-
-        while consecutive_failures < MAX_RETRIES:
-            r = None
-            pubsub = None
-            try:
-                pool = redis.ConnectionPool.from_url(
-                    REDIS_URL,
-                    decode_responses=True,
-                    max_connections=2,
-                    socket_keepalive=True,
-                    socket_keepalive_options={
-                        # TCP_KEEPIDLE: start keepalives after 60s idle
-                        # TCP_KEEPINTVL: interval between keepalives
-                        # TCP_KEEPCNT: drop after 3 missed keepalives
-                        1: 60,
-                        2: 10,
-                        3: 3,
-                    },
+    def _on_message(client: Any, payload: dict) -> None:
+        request_id = payload.pop("requestId", None) if isinstance(payload, dict) else None
+        try:
+            result = _handle_predict(payload)
+        except Exception as exc:
+            logger.error(f"ml-predict handler error: {exc}", exc_info=True)
+            if request_id:
+                client.publish(
+                    f"ml:predict:response:{request_id}",
+                    json.dumps({"status": "error", "error": str(exc)}),
                 )
-                r = redis.Redis(connection_pool=pool, decode_responses=True)
-                pubsub = r.pubsub()
-                pubsub.subscribe(REQUEST_CHANNEL)
-                logger.info(f"Redis pub/sub listener subscribed to {REQUEST_CHANNEL}")
+            return
+        if request_id:
+            client.publish(
+                f"ml:predict:response:{request_id}",
+                json.dumps(result, default=str),
+            )
 
-                # Write initial health heartbeat
-                r.set(HEALTH_KEY, json.dumps({"status": "ok"}), ex=90)
-
-                # Reset backoff on successful connection
-                consecutive_failures = 0
-                backoff = 1.0
-
-                for message in pubsub.listen():
-                    request_id = None
-                    if message["type"] != "message":
-                        continue
-                    try:
-                        payload = json.loads(message["data"])
-                        request_id = payload.pop("requestId", None)
-                        result = _handle_predict(payload)
-                        if request_id:
-                            r.publish(f"ml:predict:response:{request_id}", json.dumps(result, default=str))
-                        # Refresh heartbeat
-                        r.set(HEALTH_KEY, json.dumps({"status": "ok"}), ex=90)
-                    except Exception as exc:
-                        logger.error(f"Redis handler error: {exc}", exc_info=True)
-                        if request_id:
-                            r.publish(
-                                f"ml:predict:response:{request_id}",
-                                json.dumps({"status": "error", "error": str(exc)}),
-                            )
-
-            except Exception as exc:
-                consecutive_failures += 1
-                logger.error(
-                    f"Redis pub/sub listener crashed (attempt {consecutive_failures}/{MAX_RETRIES}): {exc}",
-                    exc_info=True,
-                )
-                # Write a degraded heartbeat so health checks can detect the issue
-                try:
-                    if r is not None:
-                        r.set(HEALTH_KEY, json.dumps({"status": "reconnecting"}), ex=90)
-                except Exception:
-                    pass
-            finally:
-                try:
-                    if pubsub is not None:
-                        pubsub.close()
-                except Exception:
-                    pass
-
-            if consecutive_failures >= MAX_RETRIES:
-                logger.critical(
-                    f"Redis pub/sub listener exceeded {MAX_RETRIES} consecutive failures — "
-                    "giving up. Service will continue without pub/sub."
-                )
-                return
-
-            logger.info(f"Redis pub/sub listener reconnecting in {backoff:.0f}s…")
-            time.sleep(backoff)
-            backoff = min(backoff * 2, 30.0)
-
-    t = threading.Thread(target=_listener, daemon=True, name="redis-pubsub")
-    t.start()
+    spawn_listener_thread(
+        name="redis-pubsub",
+        target=lambda: run_resilient_listener(
+            redis_url=redis_url,
+            config=cfg,
+            on_message=_on_message,
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -195,96 +151,42 @@ def _start_trade_outcome_listener():
     (submitted / filled / closed); this thread ingests them, writes to
     the bounded buffer, and exposes them via get_recent_trade_outcomes().
 
-    The ensemble predictor (or a future online-training job) can consume
-    these to re-weight models toward what actually worked in live trades.
+    Proposal #1 — refactored to use ``utils.redis_listener``. Same
+    EINVAL-safe behavior + infinite-retry semantics as the predict
+    listener. The arbiter depends on this listener staying alive — the
+    previous 10-retry cap is retired.
     """
-    if not REDIS_URL:
+    redis_url = env_redis_url() or REDIS_URL
+    if not redis_url:
         logger.info("REDIS_URL not set — trade-outcome listener disabled")
         return
 
-    try:
-        import redis
-    except ImportError:
-        logger.warning("redis package not installed — trade-outcome listener disabled")
-        return
+    cfg = ListenerConfig(
+        name="trade-outcome",
+        channel="ml:trade:outcome",
+    )
 
-    def _listener():
-        CHANNEL = "ml:trade:outcome"
-        MAX_RETRIES = 10
-        consecutive_failures = 0
-        backoff = 1.0
+    def _on_message(_client: Any, payload: dict) -> None:
+        _record_trade_outcome(payload)
+        logger.info(
+            "trade_outcome",
+            extra={
+                "symbol": payload.get("symbol") if isinstance(payload, dict) else None,
+                "phase": payload.get("phase") if isinstance(payload, dict) else None,
+                "signal": payload.get("signal") if isinstance(payload, dict) else None,
+                "strength": payload.get("strength") if isinstance(payload, dict) else None,
+                "realized_pnl": payload.get("realizedPnl") if isinstance(payload, dict) else None,
+            },
+        )
 
-        while consecutive_failures < MAX_RETRIES:
-            pubsub = None
-            try:
-                pool = redis.ConnectionPool.from_url(
-                    REDIS_URL,
-                    decode_responses=True,
-                    max_connections=2,
-                    socket_keepalive=True,
-                    socket_keepalive_options={
-                        # TCP_KEEPIDLE: start keepalives after 60s idle
-                        # TCP_KEEPINTVL: interval between keepalives
-                        # TCP_KEEPCNT: drop after 3 missed keepalives
-                        1: 60,
-                        2: 10,
-                        3: 3,
-                    },
-                )
-                r = redis.Redis(connection_pool=pool, decode_responses=True)
-                pubsub = r.pubsub()
-                pubsub.subscribe(CHANNEL)
-                logger.info(f"Trade-outcome listener subscribed to {CHANNEL}")
-
-                # Reset backoff on successful connection
-                consecutive_failures = 0
-                backoff = 1.0
-
-                for message in pubsub.listen():
-                    if message["type"] != "message":
-                        continue
-                    try:
-                        payload = json.loads(message["data"])
-                        _record_trade_outcome(payload)
-                        logger.info(
-                            "trade_outcome",
-                            extra={
-                                "symbol": payload.get("symbol"),
-                                "phase": payload.get("phase"),
-                                "signal": payload.get("signal"),
-                                "strength": payload.get("strength"),
-                                "realized_pnl": payload.get("realizedPnl"),
-                            },
-                        )
-                    except Exception as exc:
-                        logger.error(f"Trade-outcome handler error: {exc}", exc_info=True)
-
-            except Exception as exc:
-                consecutive_failures += 1
-                logger.error(
-                    f"Trade-outcome listener crashed (attempt {consecutive_failures}/{MAX_RETRIES}): {exc}",
-                    exc_info=True,
-                )
-            finally:
-                try:
-                    if pubsub is not None:
-                        pubsub.close()
-                except Exception:
-                    pass
-
-            if consecutive_failures >= MAX_RETRIES:
-                logger.critical(
-                    f"Trade-outcome listener exceeded {MAX_RETRIES} consecutive failures — "
-                    "giving up. Outcome buffer will not receive further updates."
-                )
-                return
-
-            logger.info(f"Trade-outcome listener reconnecting in {backoff:.0f}s…")
-            time.sleep(backoff)
-            backoff = min(backoff * 2, 30.0)
-
-    t = threading.Thread(target=_listener, daemon=True, name="trade-outcome-listener")
-    t.start()
+    spawn_listener_thread(
+        name="trade-outcome-listener",
+        target=lambda: run_resilient_listener(
+            redis_url=redis_url,
+            config=cfg,
+            on_message=_on_message,
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------

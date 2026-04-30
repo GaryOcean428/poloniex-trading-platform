@@ -322,6 +322,62 @@ def current_position_size(
 # ═══════════════════════════════════════════════════════════════
 
 
+def kelly_leverage_cap(
+    p_win: float,
+    avg_win: float,
+    avg_loss: float,
+    max_lev: float,
+) -> float:
+    """Kelly criterion leverage cap (proposal #3).
+
+    Returns the leverage at which the Kelly-optimal capital fraction
+    equals the position's notional / margin ratio. Applied as a CAP
+    on top of K's geometric leverage formula, NOT as a replacement.
+
+    The Kelly fraction f* = (p*b - q) / b where b = avg_win/|avg_loss|.
+    f* is the optimal fraction of capital to risk per trade given
+    win-rate p and odds b.
+
+    Mapping f* to leverage: if Kelly says risk f* of capital, and the
+    geometric formula already commits a notional of (margin * lev) per
+    trade, then the equivalent leverage cap is `max_lev * f*` —
+    saturated at max_lev when the model has near-positive expectancy
+    and going to 0 when expectancy turns negative.
+
+    QIG note: Kelly is a Euclidean / scalar concept. It is allowed
+    here ONLY as a CAP layer applied AFTER the geometric leverage
+    formula computes its value. The geometric raw_lev formula
+    (sovereign_cap × kappa_proxim × regime_stability × surprise_discount
+    × flat_mult) remains pure Fisher-Rao discipline. The Kelly cap
+    adds a risk-management ceiling — it cannot raise leverage, only
+    lower it.
+
+    Edge cases:
+      * No losses recorded (avg_loss ≈ 0) — return max_lev (Kelly
+        formula degenerate, defer to geometric formula).
+      * No wins recorded (avg_win ≈ 0) — return 1 (cap at min lev).
+      * p_win <= 0 or avg_loss <= 0 — return 1 (defensive).
+      * f* > 1 — clamp to 1.0 (full-Kelly is the theoretical max).
+      * f* < 0 (negative expectancy) — return 1 (the minimum the
+        clamp at the call site enforces).
+    """
+    if p_win <= 0 or avg_win <= 0:
+        return 1.0
+    abs_loss = abs(avg_loss)
+    if abs_loss <= 1e-12:
+        # No losing trades observed — Kelly is unbounded; defer to
+        # the geometric formula by returning max_lev.
+        return float(max_lev)
+    b = avg_win / abs_loss
+    if b <= 0:
+        return 1.0
+    q = 1.0 - p_win
+    f_star = (p_win * b - q) / b
+    f_star = max(0.0, min(1.0, f_star))  # clamp to [0, 1]
+    cap = max(1.0, round(f_star * float(max_lev)))
+    return float(cap)
+
+
 def current_leverage(
     s: ExecBasinState,
     *,
@@ -330,6 +386,9 @@ def current_leverage(
     tape_trend: float = 0.0,
     stud_reading: Optional[Any] = None,
     stud_live: bool = False,
+    rolling_win_rate: Optional[float] = None,
+    rolling_avg_win: Optional[float] = None,
+    rolling_avg_loss: Optional[float] = None,
 ) -> dict[str, Any]:
     # κ-proximity bell width: narrower sigma penalises drift from κ* harder.
     # Baseline + slope: leverage floor + scaling span with sovereignty.
@@ -403,14 +462,39 @@ def current_leverage(
     else:
         raw_lev = sovereign_cap * kappa_proxim * regime_stability * surprise_discount * flat_mult
 
-    lev = max(1, min(int(max_leverage_boundary), round(raw_lev)))
+    # Proposal #3: Kelly cap layer. The geometric ``raw_lev`` is pure
+    # Fisher-Rao; the Kelly cap is a Euclidean risk-management
+    # ceiling applied AFTER the geometric formula. ``lev`` is then
+    # min(geometric, kelly, max_boundary). When rolling stats are
+    # absent (cold start), kelly_cap = max_leverage_boundary so the
+    # clamp is a no-op until enough trades have accumulated.
+    if (
+        rolling_win_rate is not None
+        and rolling_avg_win is not None
+        and rolling_avg_loss is not None
+    ):
+        kelly_cap = kelly_leverage_cap(
+            rolling_win_rate, rolling_avg_win, rolling_avg_loss,
+            max_leverage_boundary,
+        )
+    else:
+        kelly_cap = float(max_leverage_boundary)
+
+    lev = max(
+        1,
+        min(
+            int(kelly_cap),
+            int(max_leverage_boundary),
+            round(raw_lev),
+        ),
+    )
 
     return {
         "value": lev,
         "reason": (
             f"lev = sovcap({sovereign_cap:.1f}) x k-prox({kappa_proxim:.3f}) "
             f"x regstab({regime_stability:.2f}) x surp({surprise_discount:.2f}) "
-            f"x flat({flat_mult:.2f}) -> {lev}x"
+            f"x flat({flat_mult:.2f}) kelly_cap={kelly_cap:.0f} -> {lev}x"
         ),
         "derivation": {
             "kappa": s.kappa,
@@ -421,6 +505,7 @@ def current_leverage(
             "sovereign_cap": sovereign_cap,
             "flat_mult": flat_mult,
             "raw_lev": raw_lev,
+            "kelly_cap": kelly_cap,
             "lev": lev,
         },
     }
@@ -439,7 +524,30 @@ def should_profit_harvest(
     tape_trend: float,
     held_side: Side,
     s: ExecBasinState,
+    tape_flip_streak: int = 0,
+    peak_giveback_min_pct: float = 0.01,
+    peak_giveback_threshold: float = 0.30,
+    tape_flip_streak_required: int = 3,
 ) -> dict[str, Any]:
+    """Decide whether to harvest an in-the-money position.
+
+    Proposal #2 — peak-tracking trailing stop applied alongside the
+    existing tape-flip harvest (NOT replacing it). The trend_flip
+    branch now requires:
+      * peak_frac >= peak_giveback_min_pct (default 1%)  AND
+      * current_frac < peak_frac * (1 - peak_giveback_threshold)
+        (default 30% give-back from peak).
+    The trailing_harvest branch keeps its own give-back dynamics
+    derived from serotonin (UCP §29).
+
+    Proposal #4 — sustained tape-flip streak. Trend-flip harvest now
+    requires ``tape_flip_streak >= tape_flip_streak_required``
+    (default 3) consecutive bearish-alignment ticks before firing,
+    so a single noise tick can't trigger the exit. ``tape_flip_streak``
+    is maintained on the SymbolState in tick.py and incremented per
+    tick when alignment <= the trend-flip threshold; reset when
+    alignment recovers.
+    """
     if notional_usdt <= 0:
         return {"value": False, "reason": "no position", "derivation": {}}
 
@@ -494,17 +602,38 @@ def should_profit_harvest(
     # live); NE=0 (calm) → -0.30; NE=1 (surprised) → -0.20. More surprised
     # = earlier flip detection.
     trend_flip_threshold = -(0.30 - 0.10 * nc.norepinephrine)
-    if current_frac > 0 and alignment_now <= trend_flip_threshold and peak_frac >= activation:
+    # Proposal #2 — peak-tracking guard on trend_flip. Only fire when
+    # we've already captured ``peak_giveback_min_pct`` AND given back
+    # at least ``peak_giveback_threshold`` from the peak ROI.
+    peak_giveback_floor = peak_frac * (1.0 - peak_giveback_threshold)
+    peak_guard_pass = (
+        peak_frac >= peak_giveback_min_pct
+        and current_frac < peak_giveback_floor
+    )
+    # Proposal #4 — sustained tape-flip. Require N consecutive
+    # bearish-alignment ticks; the streak counter is maintained on
+    # SymbolState in tick.py.
+    streak_pass = tape_flip_streak >= tape_flip_streak_required
+    if (
+        current_frac > 0
+        and alignment_now <= trend_flip_threshold
+        and peak_frac >= activation
+        and peak_guard_pass  # proposal #2 — peak-tracking trailing stop
+        and streak_pass  # proposal #4 — sustained tape flip
+    ):
         return {
             "value": True,
             "reason": (
                 f"trend_flip_harvest: pnl +{current_frac*100:.3f}%, "
-                f"tape flipped (align={alignment_now:.2f})"
+                f"tape flipped (align={alignment_now:.2f}, streak={tape_flip_streak}), "
+                f"peak +{peak_frac*100:.3f}% gave back to {current_frac*100:.3f}%"
             ),
             "derivation": {
                 "current_frac": current_frac,
                 "peak_frac": peak_frac,
                 "alignment": alignment_now,
+                "tape_flip_streak": tape_flip_streak,
+                "peak_giveback_floor": peak_giveback_floor,
                 "exit_type_bit": 3,
             },
         }
@@ -522,6 +651,7 @@ def should_profit_harvest(
             "activation": activation,
             "giveback": giveback,
             "alignment": alignment_now,
+            "tape_flip_streak": tape_flip_streak,
         },
     }
 
