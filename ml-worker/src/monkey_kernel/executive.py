@@ -314,14 +314,27 @@ def current_position_size(
     mode: MonkeyMode = MonkeyMode.INVESTIGATION,
     lane: str = "swing",
 ) -> dict[str, Any]:
-    # Proposal #10: per-lane capital budget. Each lane sees only its
-    # share of available equity for sizing, so a held swing-long can no
-    # longer paralyze a scalp-short on the same symbol. The lane budget
-    # is a live-governed risk parameter (executive.lane.<lane>.budget_frac).
-    # A zero-budget lane (default for "trend" until governance bumps it)
-    # is sized to zero — capital is not allocated to it this tick.
+    # ─── Proposal #10 lane-budget — applied as a MARGIN CAP, not an
+    # equity haircut (fix/lane-budget-size-zero-regression).
+    #
+    # Original PR #610 implementation multiplied available_equity_usdt
+    # by lane_frac BEFORE the size formula. That double-dipped against
+    # the already-cap'd available_equity (the caller already shrinks it
+    # via size_fraction × kernel-share) and broke the v0.6.6 lift-to-
+    # min path on small accounts: when the per-symbol exposure cap left
+    # ~$5 in the pool, halving to $2.50 pushed required_frac past the
+    # 0.5 max_fraction clamp → no lift fired and every entry returned
+    # size=0. Trend lane (budget=0) also collapsed every tick where
+    # choose_lane picked it.
+    #
+    # The correct semantic: budget_frac caps the MARGIN a single
+    # position can claim against full equity. Sizing math sees the
+    # full available pool; the final margin is min(formula, cap). This
+    # preserves "trend is opt-in" (cap=0 → margin=0), preserves
+    # cross-lane partition (scalp's margin ≤ 50% of equity), and
+    # restores lift-to-min behaviour on small accounts.
     lane_frac = lane_budget_fraction(lane)
-    available_equity_usdt = available_equity_usdt * lane_frac
+    lane_margin_cap = lane_frac * available_equity_usdt
     nc = s.neurochemistry
     maturity = min(1.0, bank_size / 20.0)
     base_frac = s.phi * s.sovereignty * maturity
@@ -364,16 +377,29 @@ def current_position_size(
             notional = margin * leverage
             lifted = True
 
+    # Apply lane margin cap AFTER lift-to-min. Trend lane (cap=0) still
+    # collapses to 0 — it remains opt-in. For scalp/swing on a flat
+    # account, cap = 0.5 × equity which is identical to the existing
+    # safety clamp, so the binding constraint is unchanged in the
+    # common case.
+    capped_by_lane = False
+    if margin > lane_margin_cap:
+        margin = lane_margin_cap
+        notional = margin * max(1.0, leverage)
+        capped_by_lane = True
+
     sized = margin if notional >= min_notional_usdt else 0.0
 
     return {
         "value": sized,
         "reason": (
             f"size[{lane}] = {'lifted-to-min ' if lifted else ''}"
+            f"{'lane-capped ' if capped_by_lane else ''}"
             f"floor({exploration_floor:.3f}) or PhixSxM({base_frac:.3f}) "
             f"x reward({reward_mult:.2f}) x stab({stability_mult:.2f}) "
             f"x equity({available_equity_usdt:.2f}) @ {leverage:.0f}x "
-            f"-> margin {margin:.2f}, notional {notional:.2f} vs min {min_notional_usdt:.2f} "
+            f"-> margin {margin:.2f} (lane-cap {lane_margin_cap:.2f}), "
+            f"notional {notional:.2f} vs min {min_notional_usdt:.2f} "
             f"= {sized:.2f}"
         ),
         "derivation": {
@@ -392,6 +418,8 @@ def current_position_size(
             "lifted_to_min": 1 if lifted else 0,
             "lane": lane,
             "lane_budget_frac": lane_frac,
+            "lane_margin_cap": lane_margin_cap,
+            "capped_by_lane": 1 if capped_by_lane else 0,
         },
     }
 
@@ -1151,10 +1179,44 @@ def choose_lane(
     # Pick lane with highest probability
     lane: LaneType = max(probs, key=lambda k: probs[k])  # type: ignore[arg-type]
 
+    # ─── fix/lane-budget-size-zero-regression: structural-zero fallback ───
+    #
+    # If the chosen position-bearing lane has budget_frac=0 (e.g. trend
+    # is opt-in via the parameter registry and defaults to 0), the
+    # upstream sizer collapses every entry to 0. Fall through to the
+    # next-highest position-bearing lane that is *capable* of holding
+    # capital. 'observe' is decision-only and stays as-is.
+    fallback_from: Optional[LaneType] = None
+
+    def _is_zero_budget_pos_lane(l: LaneType) -> bool:
+        return l in ("scalp", "swing", "trend") and lane_budget_fraction(l) == 0.0
+
+    if _is_zero_budget_pos_lane(lane):
+        fallback_from = lane
+        next_prob = -1.0
+        next_lane: LaneType = lane
+        for k, v in probs.items():
+            if k == lane:
+                continue
+            if k == "observe":
+                continue
+            if _is_zero_budget_pos_lane(k):  # type: ignore[arg-type]
+                continue
+            if v > next_prob:
+                next_prob = v
+                next_lane = k  # type: ignore[assignment]
+        if next_lane != lane:
+            lane = next_lane
+
+    fallback_note = (
+        f" (fallback from {fallback_from}, budget=0)"
+        if fallback_from and fallback_from != lane else ""
+    )
+
     return {
         "value": lane,
         "reason": (
-            f"lane={lane} (tau={tau:.4f}, "
+            f"lane={lane}{fallback_note} (tau={tau:.4f}, "
             f"scalp={probs.get('scalp', 0):.3f} swing={probs.get('swing', 0):.3f} "
             f"trend={probs.get('trend', 0):.3f} observe={probs.get('observe', 0):.3f})"
         ),
@@ -1166,5 +1228,8 @@ def choose_lane(
             "sovereignty": s.sovereignty,
             "basin_velocity": s.basin_velocity,
             "tape_trend": tape_trend,
+            "fallback_from_zero_budget": (
+                1 if fallback_from and fallback_from != lane else 0
+            ),
         },
     }

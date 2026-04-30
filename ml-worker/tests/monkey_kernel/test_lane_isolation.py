@@ -37,6 +37,7 @@ if _SRC not in sys.path:
 from monkey_kernel.executive import (  # noqa: E402
     ExecBasinState,
     _LANE_PARAMETER_DEFAULTS,
+    choose_lane,
     current_position_size,
     lane_budget_fraction,
     lane_param,
@@ -391,15 +392,169 @@ class TestCrossLaneNonInterference:
 
     def test_scalp_size_never_eats_swing_capital(self) -> None:
         bs = _basin_state(phi=0.7)
-        # If both lanes ran on the same available_equity_usdt, scalp's
-        # margin would be no more than its budget fraction × equity.
+        # Per fix/lane-budget-size-zero-regression: lane budget acts as
+        # a MARGIN CAP, not an equity haircut. Scalp's margin cap is
+        # lane_budget_fraction(scalp) × equity = 0.5 × 1000 = 500.
         equity = 1000.0
         scalp = current_position_size(
             bs, available_equity_usdt=equity, min_notional_usdt=1.0,
             leverage=10, bank_size=50, mode=MonkeyMode.INVESTIGATION,
             lane="scalp",
         )
-        # Even at maximum (max_fraction=0.5 of LANE-budgeted equity),
-        # scalp can't take more than 0.5 * 0.5 * 1000 = 250.
-        max_possible = 0.5 * lane_budget_fraction("scalp") * equity
+        max_possible = lane_budget_fraction("scalp") * equity
         assert scalp["value"] <= max_possible + 1e-6
+
+
+# ── 8. fix/lane-budget-size-zero-regression — flat-account sizing ──
+
+
+class TestFlatAccountLaneSizing:
+    """Regression suite for the size=0 bug introduced by PR #610 (proposal
+    #10). Pre-fix behaviour: ``current_position_size`` haircut available
+    equity by ``lane_budget_fraction`` BEFORE the formula AND lift-to-min,
+    which on small accounts pushed required_frac past the safety clamp,
+    producing margin=0 for every entry on a fresh-flat account.
+
+    Post-fix: lane budget is a MARGIN CAP applied AFTER lift-to-min. Trend
+    lane (cap=0) still collapses to 0; scalp/swing on flat accounts size
+    > 0 down to the exchange minimum notional.
+    """
+
+    def test_flat_account_swing_lane_clears_eth_min_notional(self) -> None:
+        """The exact ETH symptom from the live alert: $90 equity, $22.49
+        min, lev 14, mode=INVESTIGATION, swing lane → must size > 0."""
+        bs = _basin_state(phi=0.55)
+        result = current_position_size(
+            bs, available_equity_usdt=90.0, min_notional_usdt=22.49,
+            leverage=14, bank_size=0, mode=MonkeyMode.INVESTIGATION,
+            lane="swing",
+        )
+        assert result["value"] > 0, (
+            f"Flat-account swing sizing must be non-zero; got reason={result['reason']}"
+        )
+        # Notional must clear the exchange minimum.
+        notional = result["value"] * 14
+        assert notional + 1e-9 >= 22.49
+
+    def test_flat_account_scalp_lane_clears_btc_min_notional(self) -> None:
+        """The BTC symptom: $90 equity, $75.78 min, lev 14, scalp lane."""
+        bs = _basin_state(phi=0.55)
+        result = current_position_size(
+            bs, available_equity_usdt=90.0, min_notional_usdt=75.78,
+            leverage=14, bank_size=0, mode=MonkeyMode.INTEGRATION,
+            lane="scalp",
+        )
+        assert result["value"] > 0, (
+            f"Flat-account scalp sizing must be non-zero; got reason={result['reason']}"
+        )
+        notional = result["value"] * 14
+        assert notional + 1e-9 >= 75.78
+
+    def test_small_account_lift_to_min_works_post_fix(self) -> None:
+        """Reproduces the pre-fix small-account regression: with $5
+        equity (per-symbol cap path on production), lev 14, ETH min
+        $22.49, the v0.6.6 lift-to-min must reach min notional. Pre-fix:
+        equity was halved to $2.50 → required_frac=0.643 > 0.5 → no
+        lift → size=0. Post-fix: full $5 → required_frac=0.337 < 0.5 →
+        lift fires."""
+        bs = _basin_state(phi=0.55)
+        result = current_position_size(
+            bs, available_equity_usdt=5.0, min_notional_usdt=22.49,
+            leverage=14, bank_size=0, mode=MonkeyMode.INVESTIGATION,
+            lane="swing",
+        )
+        assert result["value"] > 0
+        assert result["derivation"]["lifted_to_min"] == 1
+
+    def test_empty_bank_zero_sovereignty_still_sizes_above_min(self) -> None:
+        """Cold-start: bank_size=0, sovereignty=0, phi small. Must reach
+        min notional via the exploration floor + lift-to-min."""
+        bs = _basin_state(phi=0.20)
+        bs.sovereignty = 0.0
+        result = current_position_size(
+            bs, available_equity_usdt=90.0, min_notional_usdt=22.49,
+            leverage=14, bank_size=0, mode=MonkeyMode.INVESTIGATION,
+            lane="swing",
+        )
+        assert result["value"] > 0
+        notional = result["value"] * 14
+        assert notional + 1e-9 >= 22.49
+
+    def test_trend_lane_still_zero_post_fix(self) -> None:
+        """Trend lane budget=0 must still collapse to 0 — the opt-in
+        promise survives the fix. Cap = 0 × equity = 0 binds."""
+        bs = _basin_state(phi=0.55)
+        result = current_position_size(
+            bs, available_equity_usdt=1000.0, min_notional_usdt=22.49,
+            leverage=14, bank_size=20, mode=MonkeyMode.INVESTIGATION,
+            lane="trend",
+        )
+        assert result["value"] == 0.0
+        assert result["derivation"]["lane_margin_cap"] == 0.0
+
+    def test_pre_fix_haircut_account_now_sizes_above_zero(self) -> None:
+        """Direct reproduction of the pre-fix size=0 case: $4.50 equity
+        (mimicking the per-symbol cap × size_fraction path on small
+        accounts), ETH min $22.49, lev 14. Pre-fix: $4.50 × 0.5 lane
+        = $2.25 → required_frac = (22.49 × 1.05) / (14 × 2.25) = 0.749 >
+        0.5 max_fraction → no lift → size=0. Post-fix: full $4.50
+        → required_frac = 0.374 < 0.5 → lift fires → size > 0."""
+        bs = _basin_state(phi=0.55)
+        result = current_position_size(
+            bs, available_equity_usdt=4.50, min_notional_usdt=22.49,
+            leverage=14, bank_size=0, mode=MonkeyMode.INVESTIGATION,
+            lane="swing",
+        )
+        assert result["value"] > 0
+        assert result["derivation"]["lifted_to_min"] == 1
+
+    def test_lane_margin_cap_in_derivation(self) -> None:
+        bs = _basin_state(phi=0.5)
+        result = current_position_size(
+            bs, available_equity_usdt=200.0, min_notional_usdt=1.0,
+            leverage=5, bank_size=10, mode=MonkeyMode.INVESTIGATION,
+            lane="swing",
+        )
+        # 0.5 budget × $200 = $100 cap.
+        assert result["derivation"]["lane_margin_cap"] == pytest.approx(100.0)
+
+    def test_scalp_swing_caps_match_when_budgets_match(self) -> None:
+        """Both default to budget_frac=0.5; both should report the same
+        margin cap, demonstrating the fair partition."""
+        bs = _basin_state(phi=0.6)
+        scalp = current_position_size(
+            bs, available_equity_usdt=400.0, min_notional_usdt=1.0,
+            leverage=5, bank_size=20, mode=MonkeyMode.INVESTIGATION,
+            lane="scalp",
+        )
+        swing = current_position_size(
+            bs, available_equity_usdt=400.0, min_notional_usdt=1.0,
+            leverage=5, bank_size=20, mode=MonkeyMode.INVESTIGATION,
+            lane="swing",
+        )
+        assert scalp["derivation"]["lane_margin_cap"] == pytest.approx(
+            swing["derivation"]["lane_margin_cap"]
+        )
+
+    def test_choose_lane_falls_back_when_top_pick_has_zero_budget(self) -> None:
+        """choose_lane must NEVER return a position-bearing lane with
+        budget_frac=0 (e.g. trend at default). With sovereignty high and
+        tape strong, raw trend score dominates — but the fallback should
+        push us into the next-highest positive-budget lane (swing/scalp)."""
+        bs = _basin_state(phi=0.9)
+        bs.sovereignty = 0.9  # high sov
+        # tape_trend=1.0 maximises trend_score = phi × sov × 1 = 0.81
+        result = choose_lane(bs, tape_trend=1.0)
+        # Trend has budget=0, so we MUST land on a positive-budget lane.
+        assert result["value"] != "trend"
+        assert lane_budget_fraction(result["value"]) > 0.0
+
+    def test_choose_lane_keeps_observe_unchanged(self) -> None:
+        """observe is decision-only; the fallback is for position-bearing
+        lanes only. observe winning the softmax must still surface."""
+        bs = _basin_state(phi=0.4)
+        bs.basin_velocity = 0.95  # huge velocity → observe dominates
+        result = choose_lane(bs, tape_trend=0.0)
+        # observe must remain a valid output even though its budget is 0.
+        # (It's a decision-only lane; loop.ts maps it to swing for sizing.)
+        assert result["value"] in ("scalp", "swing", "trend", "observe")

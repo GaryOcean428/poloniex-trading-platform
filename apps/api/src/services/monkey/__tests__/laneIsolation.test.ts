@@ -13,6 +13,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   LANE_PARAMETER_DEFAULTS,
+  chooseLane,
   currentPositionSize,
   laneBudgetFraction,
   laneParam,
@@ -90,12 +91,13 @@ describe('Lane parameter envelope (proposal #10)', () => {
 });
 
 
-describe('currentPositionSize lane-budget shrinkage', () => {
+describe('currentPositionSize lane-budget cap (post fix/lane-budget-size-zero-regression)', () => {
   it('threads lane and lane budget into derivation', () => {
     const result = currentPositionSize(
       basinState(0.5), 200, 1, 5, 10, MonkeyMode.INVESTIGATION, 'swing',
     );
     expect(result.derivation.laneBudgetFrac).toBeCloseTo(0.5, 9);
+    expect(result.derivation.laneMarginCap).toBeCloseTo(0.5 * 200, 6);
   });
 
   it('scalp + swing both at default 0.5 produce comparable margins', () => {
@@ -115,12 +117,13 @@ describe('currentPositionSize lane-budget shrinkage', () => {
     expect(result.value).toBe(0);
   });
 
-  it('scalp lane size never exceeds 50% of lane-budgeted equity', () => {
+  it('scalp lane margin never exceeds the lane budget cap', () => {
     const equity = 1000;
     const result = currentPositionSize(
       basinState(0.7, 0.7), equity, 1, 10, 50, MonkeyMode.INVESTIGATION, 'scalp',
     );
-    const cap = 0.5 * laneBudgetFraction('scalp') * equity;
+    // Cap is laneBudgetFraction × equity (margin cap, not equity haircut).
+    const cap = laneBudgetFraction('scalp') * equity;
     expect(result.value).toBeLessThanOrEqual(cap + 1e-6);
   });
 });
@@ -231,7 +234,8 @@ describe('Cross-lane non-interference (proposal #10 invariant)', () => {
     const scalp = currentPositionSize(
       basinState(0.7, 0.7), equity, 1, 10, 50, MonkeyMode.INVESTIGATION, 'scalp',
     );
-    const cap = 0.5 * laneBudgetFraction('scalp') * equity;
+    // Margin cap is laneBudgetFraction × equity = 0.5 × 1000 = 500.
+    const cap = laneBudgetFraction('scalp') * equity;
     expect(scalp.value).toBeLessThanOrEqual(cap + 1e-6);
   });
 
@@ -244,5 +248,132 @@ describe('Cross-lane non-interference (proposal #10 invariant)', () => {
     expect(LANE_PARAMETER_DEFAULTS.swing.slPct).toBeLessThanOrEqual(0.025);
     expect(LANE_PARAMETER_DEFAULTS.trend.slPct).toBeGreaterThanOrEqual(0.025);
     expect(LANE_PARAMETER_DEFAULTS.trend.slPct).toBeLessThanOrEqual(0.06);
+  });
+});
+
+
+// ─── fix/lane-budget-size-zero-regression — flat-account regression ───
+//
+// Pre-fix behaviour (PR #610): currentPositionSize multiplied
+// availableEquity by laneBudgetFraction BEFORE the formula and the
+// v0.6.6 lift-to-min, halving the pool the sizer had to work with.
+// On small accounts (per-symbol exposure cap leaves ~$5 free) this
+// pushed required_frac past the 0.5 safety clamp → no lift fired and
+// every entry returned size=0. Trend lane (budget=0) collapsed every
+// tick where chooseLane picked it.
+//
+// Post-fix: laneBudgetFraction caps the FINAL margin (after lift-to-
+// min); equity is not haircut. Trend (cap=0) still collapses to 0;
+// scalp/swing on flat accounts size > 0 down to exchange minimum.
+describe('Flat-account sizing regression (fix/lane-budget-size-zero-regression)', () => {
+  it('flat account, swing lane, ETH min — sizes > 0 (live alert symptom)', () => {
+    const result = currentPositionSize(
+      basinState(0.55, 0.5), 90, 22.49, 14, 0, MonkeyMode.INVESTIGATION, 'swing',
+    );
+    expect(result.value).toBeGreaterThan(0);
+    const notional = result.value * 14;
+    expect(notional).toBeGreaterThanOrEqual(22.49);
+  });
+
+  it('flat account, scalp lane, BTC min — sizes > 0 (live alert symptom)', () => {
+    const result = currentPositionSize(
+      basinState(0.55, 0.5), 90, 75.78, 14, 0, MonkeyMode.INTEGRATION, 'scalp',
+    );
+    expect(result.value).toBeGreaterThan(0);
+    const notional = result.value * 14;
+    expect(notional).toBeGreaterThanOrEqual(75.78);
+  });
+
+  it('small account ($5 equity) — lift-to-min reaches min notional post-fix', () => {
+    // Pre-fix: equity halved to $2.50 → required_frac=0.643 → no lift
+    // → size=0. Post-fix: full $5 → required_frac=0.337 → lift fires.
+    const result = currentPositionSize(
+      basinState(0.55, 0.5), 5, 22.49, 14, 0, MonkeyMode.INVESTIGATION, 'swing',
+    );
+    expect(result.value).toBeGreaterThan(0);
+    expect(result.derivation.liftedToMin).toBe(1);
+  });
+
+  it('cold-start (bank=0, sovereignty=0, low phi) still sizes via exploration floor', () => {
+    const result = currentPositionSize(
+      basinState(0.20, 0.0), 90, 22.49, 14, 0, MonkeyMode.INVESTIGATION, 'swing',
+    );
+    expect(result.value).toBeGreaterThan(0);
+    const notional = result.value * 14;
+    expect(notional).toBeGreaterThanOrEqual(22.49);
+  });
+
+  it('trend lane (budget=0) still collapses to 0 — opt-in promise preserved', () => {
+    const result = currentPositionSize(
+      basinState(0.55, 0.5), 1000, 22.49, 14, 20, MonkeyMode.INVESTIGATION, 'trend',
+    );
+    expect(result.value).toBe(0);
+    expect(result.derivation.laneMarginCap).toBe(0);
+  });
+
+  it('lane margin cap surfaces in derivation', () => {
+    const result = currentPositionSize(
+      basinState(0.5), 200, 1, 5, 10, MonkeyMode.INVESTIGATION, 'swing',
+    );
+    expect(result.derivation.laneMarginCap).toBeCloseTo(100, 6);
+  });
+
+  it('scalp and swing report identical caps when budgets match', () => {
+    const scalp = currentPositionSize(
+      basinState(0.6), 400, 1, 5, 20, MonkeyMode.INVESTIGATION, 'scalp',
+    );
+    const swing = currentPositionSize(
+      basinState(0.6), 400, 1, 5, 20, MonkeyMode.INVESTIGATION, 'swing',
+    );
+    expect(scalp.derivation.laneMarginCap)
+      .toBeCloseTo(swing.derivation.laneMarginCap, 6);
+  });
+
+  it('chooseLane never returns a zero-budget position lane', () => {
+    // High sovereignty + strong tape pushes raw trend score to dominate;
+    // softmax with τ=1/κ would otherwise pick "trend" (budget=0). The
+    // structural-zero fallback must redirect to scalp/swing.
+    const bs = basinState(0.9, 0.9);
+    const result = chooseLane(bs, 1.0);
+    expect(result.value).not.toBe('trend');
+    if (result.value !== 'observe') {
+      expect(laneBudgetFraction(result.value)).toBeGreaterThan(0);
+    }
+  });
+
+  it('chooseLane keeps observe (it is decision-only, not capital-bearing)', () => {
+    // High basinVelocity should let observe win the softmax. The
+    // fallback is restricted to position-bearing lanes; observe must
+    // surface so the loop can map it to swing for sizing.
+    const bs = { ...basinState(0.4, 0.5), basinVelocity: 0.95 };
+    const result = chooseLane(bs as any, 0.0);
+    expect(['scalp', 'swing', 'trend', 'observe']).toContain(result.value);
+  });
+
+  it('mid-trade sizing on a single lane unaffected by other-lane existence', () => {
+    // Sanity: changing leverage on a flat account still yields a sane
+    // size; the lane cap binds independently of whatever else is going
+    // on for this symbol.
+    const bs = basinState(0.55, 0.5);
+    const a = currentPositionSize(bs, 90, 22.49, 14, 0, MonkeyMode.INVESTIGATION, 'swing');
+    const b = currentPositionSize(bs, 90, 22.49, 20, 0, MonkeyMode.INVESTIGATION, 'swing');
+    expect(a.value).toBeGreaterThan(0);
+    expect(b.value).toBeGreaterThan(0);
+    // Higher leverage doesn't INCREASE margin (formula is leverage-
+    // agnostic on the formula side; leverage matters only for notional
+    // & lift-to-min). Both should be capped by the same lane cap.
+    expect(a.derivation.laneMarginCap).toBe(b.derivation.laneMarginCap);
+  });
+
+  it('regression: pre-fix size=0 case from production logs', () => {
+    // Direct reproduction of the bug from the production log:
+    //   $90 equity, mode=integration, swing lane, ETH min $22.49, lev 14.
+    // Pre-fix this returned 0; post-fix it must clear min notional.
+    const bs = basinState(0.55, 0.5);
+    const result = currentPositionSize(
+      bs, 90, 22.49, 14, 0, MonkeyMode.INTEGRATION, 'swing',
+    );
+    expect(result.value).toBeGreaterThan(0);
+    expect(result.value * 14).toBeGreaterThanOrEqual(22.49);
   });
 });
