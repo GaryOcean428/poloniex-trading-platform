@@ -75,6 +75,12 @@ import {
   trendProxy as computeTrendProxy,
   type OHLCVCandle,
 } from './perception.js';
+import { classifyRegime, type RegimeReading } from './regime.js';
+import {
+  detectStrongest as detectStrongestCandlePattern,
+  hammerAgainstLongSl,
+  patternSignalScalar,
+} from './candlePatterns.js';
 import { resonanceBank } from './resonance_bank.js';
 import { computeSelfObservation, type SelfObservation } from './self_observation.js';
 import { WorkingMemory, type Bubble } from './working_memory.js';
@@ -190,6 +196,19 @@ interface SymbolState {
   lastEntryAtMs: number | null;
   /** v0.6.2: count of DCA adds on current position (0 = only initial entry). */
   dcaAddCount: number;
+  /** Proposal #9: SL defer counter. When a hammer/inverted-hammer is
+   *  detected against a long position about to SL, set this to N
+   *  (default 2). Each tick decrements it. While > 0, scalp_exit
+   *  with exitTypeBit === -1 (stop loss) is suppressed.
+   *
+   *  Heuristic gate; impurity scoped to the SL-defer path only. */
+  slDeferRemainingTicks: number;
+  /** Proposal #4: sustained tape-flip streak counter. Increments
+   *  each tick where ``alignmentNow <= -0.25`` (bearish vs the held
+   *  side); resets when alignment recovers. ``shouldProfitHarvest``
+   *  consumes this — trend-flip harvest fires only when streak >= 3
+   *  so a single noise tick can't trigger an exit. */
+  tapeFlipStreak: number;
   /** v0.8.7e: latest computed basinDir + tapeTrend from processSymbol, with
    *  timestamp. Exposed via getLatestBasinSnapshot() for LiveSignal's
    *  inter-engine agreement gate. Null until the first tick completes. */
@@ -343,6 +362,8 @@ export class MonkeyKernel extends EventEmitter {
       peakTrackedTradeId: null,
       lastEntryAtMs: null,
       dcaAddCount: 0,
+      slDeferRemainingTicks: 0,
+      tapeFlipStreak: 0,
       latestBasinSnapshot: null,
     };
   }
@@ -638,6 +659,23 @@ export class MonkeyKernel extends EventEmitter {
       tapeTrend,
       computedAtMs: Date.now(),
     };
+
+    // Proposal #5: regime classification on basin trajectory + this
+    // tick's basin. Surfaced via derivation.regime for telemetry; the
+    // executive's threshold + harvest tightness will eventually consume
+    // it. Splice the current basin onto the history so the classifier
+    // sees the most-recent observation alongside prior ticks.
+    const regimeReading: RegimeReading = classifyRegime([
+      ...state.basinHistory,
+      basin,
+    ]);
+
+    // Proposal #9: candlestick pattern detection at the perception
+    // input boundary. ``patternSignal`` is signed in [-1, +1];
+    // ``hammerDefer`` triggers the SL-defer path on long positions.
+    const candlePatternReading = detectStrongestCandlePattern(ohlcv as any[]);
+    const candlePatternSignal = patternSignalScalar(candlePatternReading);
+    const candleHammerDefer = hammerAgainstLongSl(ohlcv as any[]);
     const NEUTRAL_EMOTIONS = {
       wonder: 0, frustration: 0, satisfaction: 0, confusion: 0,
       clarity: 0, anxiety: 0, confidence: 0, boredom: 0, flow: 0,
@@ -679,7 +717,15 @@ export class MonkeyKernel extends EventEmitter {
     // tapeTrend already computed above for side-override check.
     const entryThr = currentEntryThreshold(basinState, mode, selfObsBias, tapeTrend, sideCandidate);
     const maxLevBoundary = (await getMaxLeverage(symbol)) ?? 10;
-    const leverage = currentLeverage(basinState, maxLevBoundary, mode, tapeTrend);
+    // Proposal #3: Kelly leverage cap. Pull last 50 closed K-agent
+    // trades from autonomous_trades to compute win-rate + avg-win +
+    // avg-loss; pass to currentLeverage as the rolling-stats arg.
+    // Cold-start (no closed trades): rollingStats is null, kelly cap
+    // becomes a no-op (geometric leverage unchanged).
+    const rollingStats = await this.getKellyRollingStats('K');
+    const leverage = currentLeverage(
+      basinState, maxLevBoundary, mode, tapeTrend, rollingStats,
+    );
     const precisions = await getPrecisions(symbol).catch(() => null);
     const lotSize = precisions?.lotSize ?? 0;
     const minNotional = lastPrice * Math.max(lotSize, 1e-9);
@@ -718,6 +764,25 @@ export class MonkeyKernel extends EventEmitter {
       direction,
       sideOverride,
       agent: 'K',
+      // Proposal #5: regime telemetry. Discrete state + confidence
+      // surfaces alongside the kernel direction read. Read via
+      // derivation.regime in monkey_decisions analysis.
+      regime: {
+        regime: regimeReading.regime,
+        confidence: regimeReading.confidence,
+        trend_strength: regimeReading.trendStrength,
+        chop_score: regimeReading.chopScore,
+      },
+      // Proposal #9: candle-pattern telemetry. Signed scalar feeds
+      // into perception inputs; hammer-defer hint feeds the SL-fire
+      // path further down.
+      candle_pattern: {
+        pattern_name: candlePatternReading.patternName,
+        strength: candlePatternReading.strength,
+        direction: candlePatternReading.direction,
+        signed_scalar: candlePatternSignal,
+        hammer_defer_long_sl: candleHammerDefer,
+      },
     };
 
     // v0.6.3: Monkey's "held side" is scoped to HER OWN open rows only.
@@ -761,11 +826,24 @@ export class MonkeyKernel extends EventEmitter {
         if (state.peakTrackedTradeId !== tradeId) {
           state.peakPnlUsdt = unrealizedPnl;
           state.peakTrackedTradeId = tradeId;
+          // Proposal #4 — reset streak on a fresh trade.
+          state.tapeFlipStreak = 0;
         } else {
           state.peakPnlUsdt = Math.max(state.peakPnlUsdt ?? 0, unrealizedPnl);
         }
 
-        // 1. Profit harvest — trailing stop + trend-flip, only while green
+        // Proposal #4 — maintain the sustained tape-flip streak. Use
+        // a fixed -0.25 threshold (matching the trend-flip threshold
+        // inside shouldProfitHarvest) for the streak gate.
+        const alignmentNowForStreak = heldSide === 'long' ? tapeTrend : -tapeTrend;
+        if (alignmentNowForStreak <= -0.25) {
+          state.tapeFlipStreak += 1;
+        } else {
+          state.tapeFlipStreak = 0;
+        }
+
+        // 1. Profit harvest — trailing stop + trend-flip, only while green.
+        // Streak counter passed; harvest internally enforces #2 + #4.
         const harvest = shouldProfitHarvest(
           unrealizedPnl,
           state.peakPnlUsdt ?? 0,
@@ -773,6 +851,7 @@ export class MonkeyKernel extends EventEmitter {
           tapeTrend,
           heldSide,
           basinState,
+          state.tapeFlipStreak,
         );
         derivation.harvest = { ...harvest.derivation, unrealizedPnl, peakPnl: state.peakPnlUsdt, tradeId };
         if (harvest.value) {
@@ -792,11 +871,43 @@ export class MonkeyKernel extends EventEmitter {
         if (!exitFired) {
           const scalp = shouldScalpExit(unrealizedPnl, positionNotional, basinState, mode);
           derivation.scalp = { ...scalp.derivation, unrealizedPnl, markPrice: lastPrice, tradeId };
-          if (scalp.value) {
+          // Proposal #9 path 2: SL defer. If the latest tick prints a
+          // strong hammer/inverted-hammer AGAINST a long-position SL
+          // about to fire, defer the SL by SL_DEFER_TICKS to let the
+          // wick recover. Heuristic gate; documented impurity scoped
+          // to this branch only. We do NOT defer take-profit, trailing
+          // harvest, or trend-flip — only the explicit stop-loss bit.
+          const SL_DEFER_TICKS = 2;
+          const isStopLoss = Number((scalp as any).derivation?.exitTypeBit) === -1;
+          const longSlWithHammer = (
+            isStopLoss
+            && heldSide === 'long'
+            && candleHammerDefer
+          );
+          if (scalp.value && longSlWithHammer && state.slDeferRemainingTicks <= 0) {
+            // Open the defer window; suppress the SL this tick.
+            state.slDeferRemainingTicks = SL_DEFER_TICKS;
+            (derivation as any).slDefer = {
+              opened: true,
+              ticksRemaining: state.slDeferRemainingTicks,
+              reason: 'hammer_against_long_sl',
+            };
+          } else if (state.slDeferRemainingTicks > 0 && isStopLoss && heldSide === 'long') {
+            // Inside the defer window — keep suppressing SL until the
+            // window closes. Decrement at end-of-tick (below).
+            (derivation as any).slDefer = {
+              active: true,
+              ticksRemaining: state.slDeferRemainingTicks,
+            };
+          } else if (scalp.value) {
             action = 'scalp_exit';
             reason = scalp.reason;
             exitFired = true;
           }
+        }
+        // Decrement defer window each tick we did not exit.
+        if (state.slDeferRemainingTicks > 0) {
+          state.slDeferRemainingTicks = Math.max(0, state.slDeferRemainingTicks - 1);
         }
       }
       if (!exitFired) {
@@ -1046,6 +1157,8 @@ export class MonkeyKernel extends EventEmitter {
             state.peakTrackedTradeId = null;
             state.dcaAddCount = 0;
             state.lastEntryAtMs = null;
+            state.slDeferRemainingTicks = 0;
+            state.tapeFlipStreak = 0;
           }
           if (!executed) {
             reason += ` | close: ${closeResult.reason}`;
@@ -1334,6 +1447,54 @@ export class MonkeyKernel extends EventEmitter {
    * Look up Monkey's most recent open trade row for a symbol. Used by
    * the scalp-exit gate (v0.4) to compute unrealized P&L.
    */
+  /**
+   * Proposal #3 — Kelly rolling stats reader.
+   *
+   * Fetches the last 50 closed Monkey trades for ``agent`` from
+   * ``autonomous_trades`` (filtered by both ``agent`` column and the
+   * monkey reason prefix; see Polytrade engine prefix-filter lesson)
+   * and returns ``{ winRate, avgWin, avgLoss }`` summary stats.
+   *
+   * Returns null when fewer than 5 closed trades have accumulated —
+   * the Kelly cap is a no-op until enough samples to estimate the
+   * edge meaningfully.
+   */
+  private async getKellyRollingStats(
+    agent: string,
+  ): Promise<{ winRate: number; avgWin: number; avgLoss: number } | null> {
+    try {
+      const result = await pool.query(
+        `SELECT pnl FROM autonomous_trades
+          WHERE status = 'closed'
+            AND agent = $1
+            AND reason LIKE 'monkey|%'
+          ORDER BY exit_time DESC
+          LIMIT 50`,
+        [agent],
+      );
+      const pnls = (result.rows as Array<{ pnl: string | number }>)
+        .map((r) => Number(r.pnl) || 0)
+        .filter((p) => Number.isFinite(p));
+      if (pnls.length < 5) return null;
+      const wins = pnls.filter((p) => p > 0);
+      const losses = pnls.filter((p) => p < 0);
+      const winRate = wins.length / pnls.length;
+      const avgWin = wins.length > 0
+        ? wins.reduce((s, v) => s + v, 0) / wins.length
+        : 0;
+      const avgLoss = losses.length > 0
+        ? losses.reduce((s, v) => s + v, 0) / losses.length
+        : 0;
+      return { winRate, avgWin, avgLoss };
+    } catch (err) {
+      logger.debug('[Monkey] getKellyRollingStats failed; defer to geometric formula', {
+        agent,
+        err: err instanceof Error ? err.message : String(err),
+      });
+      return null;
+    }
+  }
+
   private async findOpenMonkeyTrade(symbol: string): Promise<
     | { id: string; entry_price: string; quantity: string; leverage: number; order_id: string | null; side: 'long' | 'short' }
     | null

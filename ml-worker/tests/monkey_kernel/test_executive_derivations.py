@@ -178,14 +178,22 @@ class TestTrendFlipDerivation:
     def test_anchored_at_nominal_ne(self):
         """NE=0.5 → threshold = -(0.30 - 0.05) = -0.25 (matches pre-derivation).
         Test by driving the exact tape_trend that would trigger flip.
+
+        Updated for proposals #2/#4 — peak/giveback/streak gates
+        satisfied; serotonin high so the trailing branch's floor stays
+        below current_frac (otherwise trailing fires first and we
+        never see the trend_flip path).
         """
-        s = _nominal_state()
-        # peak_pnl meets activation; current_frac > 0; tape_trend goes against
-        # held_side by exactly -0.25 → trend_flip should fire at NE=0.5.
+        nc_high_seroton = NeurochemicalState(
+            acetylcholine=0.5, dopamine=0.5, serotonin=1.0,
+            norepinephrine=0.5, gaba=0.5, endorphins=0.5,
+        )
+        s = _nominal_state(nc=nc_high_seroton)
         r = should_profit_harvest(
-            unrealized_pnl_usdt=0.5, peak_pnl_usdt=0.5,
-            notional_usdt=100.0, tape_trend=-0.25,  # against long
+            unrealized_pnl_usdt=0.65, peak_pnl_usdt=1.0,
+            notional_usdt=100.0, tape_trend=-0.25,
             held_side="long", s=s,
+            tape_flip_streak=3,
         )
         assert r["value"] is True
         assert r["derivation"].get("exit_type_bit") == 3  # trend_flip_harvest
@@ -193,26 +201,31 @@ class TestTrendFlipDerivation:
     def test_high_ne_triggers_earlier(self):
         """NE=1.0 → threshold = -(0.30 - 0.10) = -0.20 (earlier flip).
         At tape_trend=-0.22, NE=1.0 should trigger but NE=0.0 should not.
+
+        Updated for proposals #2/#4 — peak/giveback/streak gates are
+        satisfied so only the NE-derived threshold differentiates.
         """
         nc_high = NeurochemicalState(
-            acetylcholine=0.5, dopamine=0.5, serotonin=0.5,
+            acetylcholine=0.5, dopamine=0.5, serotonin=1.0,
             norepinephrine=1.0, gaba=0.5, endorphins=0.5,
         )
         nc_low = NeurochemicalState(
-            acetylcholine=0.5, dopamine=0.5, serotonin=0.5,
+            acetylcholine=0.5, dopamine=0.5, serotonin=1.0,
             norepinephrine=0.0, gaba=0.5, endorphins=0.5,
         )
         s_hi = _nominal_state(nc=nc_high)
         s_lo = _nominal_state(nc=nc_low)
         r_hi = should_profit_harvest(
-            unrealized_pnl_usdt=0.5, peak_pnl_usdt=0.5,
+            unrealized_pnl_usdt=1.0, peak_pnl_usdt=2.0,
             notional_usdt=100.0, tape_trend=-0.22,
             held_side="long", s=s_hi,
+            tape_flip_streak=3,
         )
         r_lo = should_profit_harvest(
-            unrealized_pnl_usdt=0.5, peak_pnl_usdt=0.5,
+            unrealized_pnl_usdt=1.0, peak_pnl_usdt=2.0,
             notional_usdt=100.0, tape_trend=-0.22,
             held_side="long", s=s_lo,
+            tape_flip_streak=3,
         )
         assert r_hi["value"] is True, "high NE should trigger trend_flip at -0.22"
         assert r_lo["value"] is False, "low NE should NOT trigger at -0.22"

@@ -84,7 +84,13 @@ from .figure8 import (
 from .topology_constants import (
     PI_STRUCT_BOUNDARY_R_SQUARED, PI_STRUCT_GRAVITATING_FRACTION,
 )
+from .candle_patterns import (
+    detect_strongest as detect_strongest_candle_pattern,
+    hammer_against_long_sl,
+    pattern_signal_scalar,
+)
 from .physical_emotions import compute_physical_emotions
+from .regime import RegimeReading, classify_regime
 from .sensations import compute_sensations
 from .state import BasinState as KernelBasinState
 from .state import LaneType, NeurochemicalState
@@ -127,6 +133,11 @@ class TickInputs:
     min_notional: float
     size_fraction: float = 1.0
     self_obs_bias: Optional[dict[str, dict[str, float]]] = None
+    # Proposal #3: rolling Kelly stats for the Kelly leverage cap.
+    # Passed in by the caller (TS loop.ts queries autonomous_trades and
+    # forwards). When None, the Kelly cap is a no-op (defers to the
+    # geometric leverage formula). Tuple is (win_rate, avg_win, avg_loss).
+    rolling_kelly_stats: Optional[tuple[float, float, float]] = None
 
 
 @dataclass
@@ -149,6 +160,13 @@ class SymbolState:
     last_entry_at_ms: Optional[float] = None
     peak_pnl_usdt: Optional[float] = None
     peak_tracked_trade_id: Optional[str] = None
+    # Proposal #4: sustained tape-flip streak counter. Increments
+    # each consecutive tick where alignment <= TREND_FLIP_THRESHOLD
+    # (typically -0.65); resets when alignment recovers above
+    # threshold. Trend-flip harvest fires only when streak >= 3 so a
+    # single noise tick doesn't trigger an exit. Reset on every new
+    # trade (peak_tracked_trade_id changes).
+    tape_flip_streak: int = 0
 
 
 @dataclass
@@ -454,6 +472,26 @@ def run_tick(
     # `direction != "flat"` check prevents any entry from firing.
     basin_dir = basin_direction(basin)
     tape_trend = trend_proxy([float(c.close) for c in ohlcv])
+
+    # Proposal #9: candlestick pattern recognition. Path 1 — feed
+    # the strongest pattern's signed scalar into the perception
+    # input boundary as a telemetry surface; the executive can fold
+    # it in alongside ml-signal/ml-strength. Path 2 — SL-defer signal
+    # is consumed in the SL-fire path further down.
+    candle_pattern_reading = detect_strongest_candle_pattern(ohlcv)
+    candle_pattern_signal = pattern_signal_scalar(candle_pattern_reading)
+    candle_hammer_defer = hammer_against_long_sl(ohlcv)
+
+    # Regime classification (proposal #5). Reads basin trajectory to
+    # emit TREND_UP / CHOP / TREND_DOWN with confidence. The classifier
+    # uses the current basin alongside ``state.basin_history`` (the
+    # latest tick's basin is appended after this point in the function,
+    # so we splice it onto the read here).
+    regime_history = list(state.basin_history) + [
+        np.asarray(basin, dtype=np.float64),
+    ]
+    regime_reading: RegimeReading = classify_regime(regime_history)
+
     direction: str = kernel_direction(
         basin_dir=basin_dir, tape_trend=tape_trend, emotions=emo,
     )
@@ -516,6 +554,11 @@ def run_tick(
         tape_trend=tape_trend,
         side_candidate=side_candidate,
     )
+    rolling_win_rate: Optional[float] = None
+    rolling_avg_win: Optional[float] = None
+    rolling_avg_loss: Optional[float] = None
+    if inputs.rolling_kelly_stats is not None:
+        rolling_win_rate, rolling_avg_win, rolling_avg_loss = inputs.rolling_kelly_stats
     leverage_d = current_leverage(
         basin_state,
         max_leverage_boundary=inputs.max_leverage,
@@ -523,6 +566,9 @@ def run_tick(
         tape_trend=tape_trend,
         stud_reading=stud_reading,
         stud_live=stud_live,
+        rolling_win_rate=rolling_win_rate,
+        rolling_avg_win=rolling_avg_win,
+        rolling_avg_loss=rolling_avg_loss,
     )
     exp_floor_approx = 0.10
     max_newborn_lev = 20.0
@@ -611,6 +657,18 @@ def run_tick(
         "tape_trend": tape_trend,
         "side_override": side_override,
         "mode_changed": mode_changed,
+        # Proposal #5: regime classifier reading. Discrete state
+        # (TREND_UP/CHOP/TREND_DOWN) with confidence. Surfaced for
+        # telemetry; downstream (entry_threshold modifier, harvest
+        # tightness) reads from regime_reading directly.
+        "regime": regime_reading.as_dict(),
+        # Proposal #9: candlestick pattern reading. Strongest fire
+        # at the latest tick + signed scalar + SL-defer hint.
+        "candle_pattern": {
+            **candle_pattern_reading.as_dict(),
+            "signed_scalar": candle_pattern_signal,
+            "hammer_defer_long_sl": bool(candle_hammer_defer),
+        },
         # Tier 1-8 telemetry surfaces (#604 wiring). Observation-only;
         # executive does not consume these fields.
         "motivators": asdict(mot),
@@ -898,8 +956,23 @@ def _decide_with_position(
     if state.peak_tracked_trade_id != trade_id:
         state.peak_pnl_usdt = unrealized_pnl
         state.peak_tracked_trade_id = trade_id
+        # Proposal #4 — reset streak counter on a fresh trade.
+        state.tape_flip_streak = 0
     else:
         state.peak_pnl_usdt = max(state.peak_pnl_usdt or 0.0, unrealized_pnl)
+
+    # Proposal #4 — maintain the sustained tape-flip streak counter.
+    # Increment when the tape alignment is bearish vs the held side
+    # (i.e., alignment <= the trend-flip threshold). Reset otherwise.
+    # The trend-flip threshold inside should_profit_harvest is
+    # NE-modulated (-0.20..-0.30); use a fixed -0.25 here to avoid
+    # importing NE state — the streak is monotonic in tape direction
+    # so a slightly off threshold doesn't break the gate semantics.
+    alignment_now = tape_trend if held_side == "long" else -tape_trend
+    if alignment_now <= -0.25:
+        state.tape_flip_streak += 1
+    else:
+        state.tape_flip_streak = 0
 
     harvest = should_profit_harvest(
         unrealized_pnl_usdt=unrealized_pnl,
@@ -908,6 +981,7 @@ def _decide_with_position(
         tape_trend=tape_trend,
         held_side=held_side,
         s=basin_state,
+        tape_flip_streak=state.tape_flip_streak,
     )
     derivation["harvest"] = {
         **harvest["derivation"],

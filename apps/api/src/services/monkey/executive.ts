@@ -190,11 +190,45 @@ export function currentPositionSize(
  * High NE (surprise) → conservative (we're in novel territory).
  * maxLeverage BOUNDARY is respected (exchange rule).
  */
+/**
+ * Kelly leverage cap (proposal #3). TS parity to
+ * ``ml-worker/src/monkey_kernel/executive.py:kelly_leverage_cap``.
+ *
+ * Returns the Kelly-criterion leverage cap applied AS A CAP on top of
+ * the geometric leverage formula. Pure scalar / Euclidean — allowed
+ * here because it does not replace the geometric formula, only
+ * lowers it. The geometric raw_lev formula stays Fisher-Rao pure.
+ *
+ * Edge cases:
+ *   * No losses (avgLoss=0)    → return maxLev (defer to geometric).
+ *   * No wins (avgWin=0)       → return 1.
+ *   * pWin <= 0 / avgWin <= 0  → return 1.
+ *   * f* > 1                   → clamp to 1 (full-Kelly maximum).
+ *   * f* < 0 (negative edge)   → return 1.
+ */
+export function kellyLeverageCap(
+  pWin: number,
+  avgWin: number,
+  avgLoss: number,
+  maxLev: number,
+): number {
+  if (pWin <= 0 || avgWin <= 0) return 1;
+  const absLoss = Math.abs(avgLoss);
+  if (absLoss <= 1e-12) return maxLev;
+  const b = avgWin / absLoss;
+  if (b <= 0) return 1;
+  const q = 1 - pWin;
+  let fStar = (pWin * b - q) / b;
+  fStar = Math.max(0, Math.min(1, fStar));
+  return Math.max(1, Math.round(fStar * maxLev));
+}
+
 export function currentLeverage(
   s: BasinState,
   maxLeverageBoundary: number,
   mode: MonkeyMode = MonkeyMode.INVESTIGATION,
   tapeTrend: number = 0,
+  rollingStats?: { winRate: number; avgWin: number; avgLoss: number } | null,
 ): ExecutiveDecision<number> {
   const kappaDist = Math.abs(s.kappa - KAPPA_STAR);
   const kappaProxim = Math.exp(-kappaDist / 20);  // bell: 1 at κ*, decays with distance
@@ -249,14 +283,29 @@ export function currentLeverage(
   const rawLev = newborn
     ? sovereignCap * 0.8
     : sovereignCap * kappaProxim * regimeStability * surpriseDiscount * flatMult;
-  const lev = Math.max(1, Math.min(maxLeverageBoundary, Math.round(rawLev)));
+  // Proposal #3: Kelly cap layer. Applied AFTER the geometric formula.
+  // ``kellyCap = maxLev`` (no-op) when rolling stats are absent, so
+  // cold-start behaviour is unchanged.
+  const kellyCap = rollingStats
+    ? kellyLeverageCap(rollingStats.winRate, rollingStats.avgWin, rollingStats.avgLoss, maxLeverageBoundary)
+    : maxLeverageBoundary;
+  const lev = Math.max(
+    1,
+    Math.min(
+      Math.floor(kellyCap),
+      maxLeverageBoundary,
+      Math.round(rawLev),
+    ),
+  );
 
   return {
     value: lev,
-    reason: `lev = sovcap(${sovereignCap.toFixed(1)}) × κ-prox(${kappaProxim.toFixed(3)}) × regstab(${regimeStability.toFixed(2)}) × surp(${surpriseDiscount.toFixed(2)}) → ${lev}x`,
+    reason: `lev = sovcap(${sovereignCap.toFixed(1)}) × κ-prox(${kappaProxim.toFixed(3)}) × regstab(${regimeStability.toFixed(2)}) × surp(${surpriseDiscount.toFixed(2)}) kelly_cap=${kellyCap} → ${lev}x`,
     derivation: {
       kappa: s.kappa, kappaDist, kappaProxim, regimeStability,
-      surprise: s.neurochemistry.norepinephrine, surpriseDiscount, sovereignCap, rawLev, lev,
+      surprise: s.neurochemistry.norepinephrine, surpriseDiscount, sovereignCap, rawLev,
+      kellyCap,
+      lev,
     },
   };
 }
@@ -360,6 +409,22 @@ export function shouldProfitHarvest(
   tapeTrend: number,
   heldSide: 'long' | 'short',
   s: BasinState,
+  /**
+   * Proposal #4 — sustained tape-flip streak. Number of consecutive
+   * recent ticks where alignment <= -0.25. Trend-flip harvest fires
+   * only when streak >= ``tapeFlipStreakRequired`` (default 3) so a
+   * single noise tick can't trigger an exit.
+   *
+   * Proposal #2 — peak-tracking trailing stop. Trend-flip harvest now
+   * also requires peak_frac >= ``peakGivebackMinPct`` (default 1%)
+   * AND current_frac < peak_frac * (1 - peakGivebackThreshold)
+   * (default 30% giveback) — only fire when we've already captured
+   * meaningful profit AND given back a meaningful chunk.
+   */
+  tapeFlipStreak: number = 0,
+  peakGivebackMinPct: number = 0.01,
+  peakGivebackThreshold: number = 0.30,
+  tapeFlipStreakRequired: number = 3,
 ): ExecutiveDecision<boolean> {
   if (notionalUsdt <= 0) {
     return { value: false, reason: 'no position', derivation: {} };
@@ -390,21 +455,38 @@ export function shouldProfitHarvest(
 
   // TREND-FLIP trigger. Aligned entry means tapeTrend had the same sign
   // as heldSide when she entered; if tape reverses against her while
-  // she's green, harvest now — the trend that justified entry is gone.
+  // she's green, harvest now — but only if the tape flip is SUSTAINED
+  // (proposal #4) AND the peak-tracking guard fires (proposal #2).
   const alignmentNow = heldSide === 'long' ? tapeTrend : -tapeTrend;
   const TREND_FLIP_THRESHOLD = -0.25;  // strongly against the position
-  if (currentFrac > 0 && alignmentNow <= TREND_FLIP_THRESHOLD && peakFrac >= activation) {
+  const peakGivebackFloor = peakFrac * (1 - peakGivebackThreshold);
+  const peakGuardPass = peakFrac >= peakGivebackMinPct && currentFrac < peakGivebackFloor;
+  const streakPass = tapeFlipStreak >= tapeFlipStreakRequired;
+  if (
+    currentFrac > 0
+    && alignmentNow <= TREND_FLIP_THRESHOLD
+    && peakFrac >= activation
+    && peakGuardPass     // proposal #2
+    && streakPass        // proposal #4
+  ) {
     return {
       value: true,
-      reason: `trend_flip_harvest: pnl +${(currentFrac * 100).toFixed(3)}%, tape flipped (align=${alignmentNow.toFixed(2)})`,
-      derivation: { currentFrac, peakFrac, alignment: alignmentNow, exitTypeBit: 3 },
+      reason: `trend_flip_harvest: pnl +${(currentFrac * 100).toFixed(3)}%, tape flipped (align=${alignmentNow.toFixed(2)}, streak=${tapeFlipStreak}), peak +${(peakFrac * 100).toFixed(3)}% gave back to ${(currentFrac * 100).toFixed(3)}%`,
+      derivation: {
+        currentFrac, peakFrac, alignment: alignmentNow,
+        tapeFlipStreak, peakGivebackFloor,
+        exitTypeBit: 3,
+      },
     };
   }
 
   return {
     value: false,
     reason: `profit_hold: current ${(currentFrac * 100).toFixed(3)}%, peak ${(peakFrac * 100).toFixed(3)}%, trail-floor ${(trailingFloor * 100).toFixed(3)}%`,
-    derivation: { currentFrac, peakFrac, trailingFloor, activation, giveback, alignment: alignmentNow },
+    derivation: {
+      currentFrac, peakFrac, trailingFloor, activation, giveback,
+      alignment: alignmentNow, tapeFlipStreak,
+    },
   };
 }
 
