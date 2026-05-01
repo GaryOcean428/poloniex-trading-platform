@@ -63,7 +63,9 @@ import {
   type TickRunOHLCV,
   type TickRunSymbolState,
 } from './kernel_client.js';
+import { computeEmotions, type EmotionState } from './emotions.js';
 import { detectMode, MODE_PROFILES, MonkeyMode } from './modes.js';
+import { computeMotivators } from './motivators.js';
 import { computeNeurochemicals, summarizeNC, type NeurochemicalState } from './neurochemistry.js';
 import { mlAgentDecide } from '../ml_agent/decide.js';
 import type { MLAgentInputs } from '../ml_agent/types.js';
@@ -257,6 +259,11 @@ interface SymbolState {
    *  gate: positions held longer than STALE_BLEED_MIN_DURATION_S at
    *  worse than STALE_BLEED_ROI_THRESHOLD ROI exit. Cleared on close. */
   entryTimeMsByLane: Record<string, number>;
+  /** Rolling (Φ, I_Q) history for the Integration motivator's CV
+   *  computation. Capped to 20 entries by computeMotivators's default
+   *  integrationWindow; we keep a wider buffer here for forward
+   *  extensibility. < 2 entries → integration motivator = 0. */
+  integrationHistory: Array<[number, number]>;
   /** v0.8.7e: latest computed basinDir + tapeTrend from processSymbol, with
    *  timestamp. Exposed via getLatestBasinSnapshot() for LiveSignal's
    *  inter-engine agreement gate. Null until the first tick completes. */
@@ -462,6 +469,7 @@ export class MonkeyKernel extends EventEmitter {
       basinAtOpenByLane: {},
       regimeChangeStreakByLane: {},
       entryTimeMsByLane: {},
+      integrationHistory: [],
       latestBasinSnapshot: null,
     };
   }
@@ -774,12 +782,28 @@ export class MonkeyKernel extends EventEmitter {
     const candlePatternReading = detectStrongestCandlePattern(ohlcv as any[]);
     const candlePatternSignal = patternSignalScalar(candlePatternReading);
     const candleHammerDefer = hammerAgainstLongSl(ohlcv as any[]);
-    const NEUTRAL_EMOTIONS = {
-      wonder: 0, frustration: 0, satisfaction: 0, confusion: 0,
-      clarity: 0, anxiety: 0, confidence: 0, boredom: 0, flow: 0,
-    };
+    // Layer 1 + Layer 2B port (2026-05-01): replaces NEUTRAL_EMOTIONS
+    // placeholder. The conviction gate in held_position_rejustification
+    // is now alive on TS — confidence < anxiety + confusion can fire
+    // exits when the kernel's own state contradicts the position.
+    // Funding drag wiring TODO: fold lane_positions cumulative funding
+    // into ComputeEmotionsArgs.fundingDrag once the lane funding query
+    // surfaces in this scope. Defaults to 0 → no drag effect.
+    const motivators = computeMotivators(basinState, {
+      prevBasin: state.lastBasin,
+      integrationHistory: state.integrationHistory,
+    });
+    const basinDistance = driftNow;  // already fisherRao(basin, identity)
+    const emotions: EmotionState = computeEmotions(
+      motivators, basinDistance, phi, bv,
+    );
+    // Append (Φ, I_Q) for the next tick's Integration motivator CV.
+    state.integrationHistory.push([phi, motivators.iQ]);
+    if (state.integrationHistory.length > HISTORY_MAX) {
+      state.integrationHistory.shift();
+    }
     const direction: Direction = kernelDirection({
-      basinDir, tapeTrend, emotions: NEUTRAL_EMOTIONS,
+      basinDir, tapeTrend, emotions,
     });
     const sideCandidate: 'long' | 'short' = direction === 'flat' ? 'long' : direction;
     const sideOverride = false;
@@ -1027,9 +1051,11 @@ export class MonkeyKernel extends EventEmitter {
         // 2. Held-position re-justification — four internal exit
         // checks. Regime carries hysteresis (streak ≥ 3 + basin FR
         // > 1/π — mirrors Python PR #631); phi/conviction fire on
-        // first match; stale_bleed is interim guard for the dormant
-        // conviction gate (NEUTRAL_EMOTIONS hardcoded pending Layer
-        // 2B port — so 0 < 0 = false, conviction never fires here).
+        // first match; stale_bleed is a belt-and-braces guard
+        // alongside the now-live conviction gate. Layer 2B emotions
+        // computed above via computeEmotions — conviction can fire
+        // when the kernel's own geometric self-read says hesitation
+        // > conviction.
         const regimeAtOpen = state.regimeAtOpenByLane[heldLane] as MonkeyMode | undefined;
         const phiAtOpen = state.phiAtOpenByLane[heldLane];
         const basinAtOpen = state.basinAtOpenByLane[heldLane];
@@ -1058,7 +1084,7 @@ export class MonkeyKernel extends EventEmitter {
               phiAtOpen,
               regimeNow: mode,
               phiNow: phi,
-              emotions: NEUTRAL_EMOTIONS,
+              emotions,
               basinAtOpen,
               basinNow: basin,
               regimeChangeStreak: state.regimeChangeStreakByLane[heldLane] ?? 0,
@@ -1076,9 +1102,9 @@ export class MonkeyKernel extends EventEmitter {
           rejust.phiAtOpen = phiAtOpen;
           rejust.phiNow = phi;
           rejust.phiFloor = rejustResult.phiFloor;
-          rejust.confidence = NEUTRAL_EMOTIONS.confidence;
-          rejust.anxiety = NEUTRAL_EMOTIONS.anxiety;
-          rejust.confusion = NEUTRAL_EMOTIONS.confusion;
+          rejust.confidence = emotions.confidence;
+          rejust.anxiety = emotions.anxiety;
+          rejust.confusion = emotions.confusion;
           rejust.regimeChangeStreak = rejustResult.regimeChangeStreak;
           rejust.basinFrMove = rejustResult.basinFrMove;
           rejust.heldDurationS = heldDurationS;

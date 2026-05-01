@@ -1,24 +1,36 @@
 /**
  * heldPositionRejustification.test.ts — TS parity for held-position
  * re-justification (mirrors ml-worker/tests/monkey_kernel/
- * test_held_position_rejustification.py).
+ * test_held_position_rejustification.py + test_regime_hysteresis.py).
  *
- * Three internal exit checks fire when the kernel's own state
+ * Four internal exit checks fire when the kernel's own state
  * contradicts what justified entry:
  *
- *   1. REGIME CHECK   — current mode != mode at open → exit
- *   2. PHI CHECK      — current Φ < phi_at_open / PHI_GOLDEN_FLOOR_RATIO
- *   3. CONVICTION    — confidence < anxiety + confusion → exit
+ *   1. REGIME CHECK   — mode != mode_at_open AND streak ≥ N
+ *                       AND basin moved by FR > 1/π → exit
+ *   2. PHI CHECK      — Φ < phi_at_open / PHI_GOLDEN_FLOOR_RATIO
+ *   3. CONVICTION     — confidence < anxiety + confusion → exit
+ *                       (LIVE on TS post Layer 2B port 2026-05-01)
+ *   4. STALE_BLEED    — duration ≥ 30min AND ROI ≤ -1% → exit
  *
  * The test exercises `evaluateRejustification` directly. The inline
  * call in loop.ts::processSymbol is wired identically.
+ *
+ * Regime hysteresis tests use a `regimeChangeStreak` of 3 + far-apart
+ * basins so the triple-AND gate clears; tests for the hysteresis
+ * itself live further down.
  */
 import { describe, it, expect } from 'vitest';
+import { BASIN_DIM, type Basin } from '../basin.js';
 import { MonkeyMode } from '../modes.js';
-import { PHI_GOLDEN_FLOOR_RATIO } from '../topology_constants.js';
+import {
+  PHI_GOLDEN_FLOOR_RATIO, PI_STRUCT_GRAVITATING_FRACTION,
+} from '../topology_constants.js';
 import {
   evaluateRejustification,
   type RejustificationEmotions,
+  STALE_BLEED_MIN_DURATION_S,
+  STALE_BLEED_ROI_THRESHOLD,
 } from '../held_position_rejustification.js';
 
 const NEUTRAL_EMO: RejustificationEmotions = {
@@ -39,16 +51,33 @@ const WEAK_EMO: RejustificationEmotions = {
   confusion: 0.2,
 };
 
+function peakBasin(idx: number, peak = 0.5): Basin {
+  const b = new Float64Array(BASIN_DIM);
+  for (let i = 0; i < BASIN_DIM; i += 1) b[i] = (1 - peak) / (BASIN_DIM - 1);
+  b[idx] = peak;
+  return b as Basin;
+}
+
+const FAR_BASIN_AT_OPEN = peakBasin(0, 0.95);
+const FAR_BASIN_NOW = peakBasin(63, 0.95);
+const HYSTERESIS_PASS = {
+  regimeChangeStreak: 3,
+  regimeStreakRequired: 3,
+  basinAtOpen: FAR_BASIN_AT_OPEN,
+  basinNow: FAR_BASIN_NOW,
+};
+
 // ─── Positive — each check fires ────────────────────────────────────
 
 describe('held-position rejustification — regime check fires', () => {
-  it('regime change exits with correct reason', () => {
+  it('regime change exits when streak ≥ N AND basin moved > 1/π', () => {
     const out = evaluateRejustification({
       regimeAtOpen: MonkeyMode.INVESTIGATION,
       phiAtOpen: 0.27,
       regimeNow: MonkeyMode.DRIFT,
       phiNow: 0.25,
       emotions: STRONG_EMO,
+      ...HYSTERESIS_PASS,
     });
     expect(out.checked).toBe(true);
     expect(out.fired).toBe('regime_change');
@@ -141,9 +170,10 @@ describe('held-position rejustification — conviction holds', () => {
     expect(out.fired).toBeNull();
   });
 
-  it('NEUTRAL_EMOTIONS does not fire conviction (0 < 0+0 is false)', () => {
-    // TS path uses NEUTRAL_EMOTIONS until the emotion stack is ported.
-    // Verify that the conviction check is dormant under that input.
+  it('all-zero emotions do not fire (boundary: 0 < 0 is false)', () => {
+    // The Layer 2B port (2026-05-01) wires real computeEmotions
+    // output into production; this test now documents the boundary
+    // semantics rather than the prior "dormant gate" behaviour.
     const out = evaluateRejustification({
       regimeAtOpen: MonkeyMode.INVESTIGATION,
       phiAtOpen: 0.27,
@@ -193,13 +223,15 @@ describe('held-position rejustification — per-lane isolation', () => {
     // lane only. Mirror that here by calling twice with different
     // anchors and verifying each call uses its own values.
 
-    // Lane A: opened in INVESTIGATION at Φ=0.27. Now mode=DRIFT → fires.
+    // Lane A: opened in INVESTIGATION at Φ=0.27. Now mode=DRIFT → fires
+    // when hysteresis (streak ≥ 3 + basin moved > 1/π) clears.
     const laneA = evaluateRejustification({
       regimeAtOpen: MonkeyMode.INVESTIGATION,
       phiAtOpen: 0.27,
       regimeNow: MonkeyMode.DRIFT,
       phiNow: 0.25,
       emotions: STRONG_EMO,
+      ...HYSTERESIS_PASS,
     });
     expect(laneA.fired).toBe('regime_change');
     expect(laneA.reason).toContain('investigation');
@@ -222,13 +254,15 @@ describe('held-position rejustification — per-lane isolation', () => {
 
 describe('held-position rejustification — check ordering', () => {
   it('regime fires before phi when both would fire', () => {
-    // If regime AND phi both broken, regime check (first in order) wins.
+    // If regime AND phi both broken, regime check (first in order)
+    // wins — provided hysteresis gates clear.
     const out = evaluateRejustification({
       regimeAtOpen: MonkeyMode.INVESTIGATION,
       phiAtOpen: 0.27,
       regimeNow: MonkeyMode.DRIFT,
       phiNow: 0.05,  // also below floor
       emotions: WEAK_EMO,  // also below conviction
+      ...HYSTERESIS_PASS,
     });
     expect(out.fired).toBe('regime_change');
   });
@@ -242,5 +276,141 @@ describe('held-position rejustification — check ordering', () => {
       emotions: WEAK_EMO,
     });
     expect(out.fired).toBe('phi_collapse');
+  });
+});
+
+// ─── Hysteresis (added 2026-05-01 — mirrors Python PR #631) ───────
+
+describe('held-position rejustification — regime hysteresis', () => {
+  it('does not fire on streak below required (single flicker)', () => {
+    const out = evaluateRejustification({
+      regimeAtOpen: MonkeyMode.INVESTIGATION,
+      phiAtOpen: 0.27,
+      regimeNow: MonkeyMode.DRIFT,
+      phiNow: 0.25,
+      emotions: STRONG_EMO,
+      basinAtOpen: FAR_BASIN_AT_OPEN,
+      basinNow: FAR_BASIN_NOW,
+      regimeChangeStreak: 1,
+      regimeStreakRequired: 3,
+    });
+    expect(out.fired).toBeNull();
+  });
+
+  it('does not fire when basin barely moved (under 1/π)', () => {
+    const b = peakBasin(0, 0.5);
+    const out = evaluateRejustification({
+      regimeAtOpen: MonkeyMode.INVESTIGATION,
+      phiAtOpen: 0.27,
+      regimeNow: MonkeyMode.DRIFT,
+      phiNow: 0.25,
+      emotions: STRONG_EMO,
+      basinAtOpen: b,
+      basinNow: b,                     // identical → FR ≈ 0
+      regimeChangeStreak: 5,
+      regimeStreakRequired: 3,
+    });
+    expect(out.fired).toBeNull();
+    expect(out.basinFrMove ?? 0).toBeLessThan(PI_STRUCT_GRAVITATING_FRACTION);
+  });
+
+  it('falls back to streak-only when basin anchor missing (legacy)', () => {
+    const out = evaluateRejustification({
+      regimeAtOpen: MonkeyMode.INVESTIGATION,
+      phiAtOpen: 0.27,
+      regimeNow: MonkeyMode.DRIFT,
+      phiNow: 0.25,
+      emotions: STRONG_EMO,
+      regimeChangeStreak: 3,
+      regimeStreakRequired: 3,
+      // no basinAtOpen / basinNow
+    });
+    expect(out.fired).toBe('regime_change');
+    expect(out.basinFrMove).toBeNull();
+    expect(out.reason).toContain('no basin anchor');
+  });
+
+  it('does not fire when regime returned to anchor', () => {
+    const out = evaluateRejustification({
+      regimeAtOpen: MonkeyMode.INVESTIGATION,
+      phiAtOpen: 0.27,
+      regimeNow: MonkeyMode.INVESTIGATION,  // matches anchor
+      phiNow: 0.25,
+      emotions: STRONG_EMO,
+      ...HYSTERESIS_PASS,
+    });
+    expect(out.fired).toBeNull();
+  });
+});
+
+// ─── Stale-bleed gate (added 2026-05-01) ─────────────────────────
+
+describe('held-position rejustification — stale_bleed', () => {
+  const baseInput = {
+    regimeAtOpen: MonkeyMode.INVESTIGATION,
+    phiAtOpen: 0.27,
+    regimeNow: MonkeyMode.INVESTIGATION,
+    phiNow: 0.25,
+    emotions: STRONG_EMO,
+  };
+
+  it('fires when held > 30min AND ROI ≤ -1%', () => {
+    const out = evaluateRejustification({
+      ...baseInput,
+      heldDurationS: STALE_BLEED_MIN_DURATION_S + 60,
+      currentRoi: STALE_BLEED_ROI_THRESHOLD - 0.005,
+    });
+    expect(out.fired).toBe('stale_bleed');
+    expect(out.reason).toMatch(/^stale_bleed/);
+  });
+
+  it('does not fire under duration threshold', () => {
+    const out = evaluateRejustification({
+      ...baseInput,
+      heldDurationS: STALE_BLEED_MIN_DURATION_S - 60,
+      currentRoi: -0.05,
+    });
+    expect(out.fired).toBeNull();
+  });
+
+  it('does not fire when ROI above threshold', () => {
+    const out = evaluateRejustification({
+      ...baseInput,
+      heldDurationS: STALE_BLEED_MIN_DURATION_S + 600,
+      currentRoi: -0.005,  // -0.5% > -1%
+    });
+    expect(out.fired).toBeNull();
+  });
+
+  it('does not fire when inputs missing (legacy callsites)', () => {
+    const out = evaluateRejustification(baseInput);
+    expect(out.fired).toBeNull();
+  });
+
+  it('positive ROI never triggers stale_bleed', () => {
+    const out = evaluateRejustification({
+      ...baseInput,
+      heldDurationS: STALE_BLEED_MIN_DURATION_S + 600,
+      currentRoi: 0.05,
+    });
+    expect(out.fired).toBeNull();
+  });
+});
+
+// ─── Layer 2B port verification (added 2026-05-01) ────────────────
+
+describe('held-position rejustification — conviction post-Layer-2B-port', () => {
+  it('catches stale-bleed pattern via low confidence + small anxiety', () => {
+    // The path that was structurally dead pre-2026-05-01. With real
+    // computeEmotions output, conviction now catches positions where
+    // the kernel's own self-read no longer supports the trade.
+    const out = evaluateRejustification({
+      regimeAtOpen: MonkeyMode.INVESTIGATION,
+      phiAtOpen: 0.27,
+      regimeNow: MonkeyMode.INVESTIGATION,
+      phiNow: 0.25,
+      emotions: { confidence: 0.05, anxiety: 0.15, confusion: 0.10 },
+    });
+    expect(out.fired).toBe('conviction_failed');
   });
 });

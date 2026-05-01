@@ -9,14 +9,17 @@
  *                        single-tick mode flicker churn)
  *   2. PHI CHECK       — current Φ < phi_at_open / PHI_GOLDEN_FLOOR_RATIO → exit
  *   3. CONVICTION      — confidence < anxiety + confusion → exit
- *                        (DORMANT on TS path: NEUTRAL_EMOTIONS hardcoded
- *                        in loop.ts pending Layer 2B emotion port — so
- *                        0 < 0 = false, never fires here)
+ *                        (LIVE on TS path as of 2026-05-01: Layer 2B
+ *                        computeEmotions wired into loop.ts; when the
+ *                        kernel's geometric self-read says hesitation
+ *                        > conviction, the position closes)
  *   4. STALE_BLEED     — duration ≥ N seconds AND ROI ≤ -X% → exit
- *                        (interim guard added 2026-05-01 to compensate
- *                        for the dormant conviction gate; catches
- *                        positions that bleed slowly without ever
- *                        triggering a regime/phi/SL exit)
+ *                        (belt-and-braces guard alongside conviction.
+ *                        Catches the edge case where conviction stays
+ *                        marginally positive but price has been
+ *                        adverse for an extended window. Likely
+ *                        retired once we observe how often conviction
+ *                        catches the same cases in production)
  *
  * Order: regime → phi → conviction → stale_bleed. First to fire wins.
  *
@@ -46,7 +49,10 @@ export interface RejustificationInput {
   regimeNow: MonkeyMode;
   /** Φ this tick. */
   phiNow: number;
-  /** Layer 2B emotion stack — TS uses NEUTRAL_EMOTIONS until ported. */
+  /** Layer 2B emotion stack — Python: compute_emotions; TS:
+   *  computeEmotions (both wired into their respective tick paths
+   *  as of 2026-05-01). The conviction gate uses confidence,
+   *  anxiety, confusion to decide whether to exit. */
   emotions: RejustificationEmotions;
   /**
    * Basin coordinate at entry. Undefined for legacy positions opened
