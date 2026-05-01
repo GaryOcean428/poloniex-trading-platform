@@ -69,6 +69,15 @@ import { mlAgentDecide } from '../ml_agent/decide.js';
 import type { MLAgentInputs } from '../ml_agent/types.js';
 import { Arbiter } from '../arbiter/arbiter.js';
 import {
+  appendUnit as turtleAppendUnit,
+  clearUnitsAfterExit as turtleClearUnits,
+  newTurtleState,
+  turtleAgentDecide,
+  turtleMinEquityUsdt,
+  type TurtleAgentInputs,
+  type TurtleState,
+} from '../turtle_agent/index.js';
+import {
   basinDirection as computeBasinDirection,
   perceive,
   refract,
@@ -292,11 +301,20 @@ export class MonkeyKernel extends EventEmitter {
    */
   private positionDirectionMode: 'HEDGE' | 'ONE_WAY' = 'ONE_WAY';
   /**
-   * Arbiter — capital allocator between Agent K (kernel) and Agent M (ml).
-   * Single instance per kernel. Settled trades flow back via
-   * recordSettled from closeHeldPosition.
+   * Arbiter — capital allocator across N agents (K kernel, M ml, T turtle
+   * classical TA). Single instance per kernel. Settled trades flow back via
+   * recordSettled from closeHeldPosition. T is included in the allocation
+   * only when account equity ≥ ``turtleMinEquityUsdt()``; below threshold
+   * the arbiter sees a 2-agent (K, M) race exactly as before T was added.
    */
   private readonly arbiter: Arbiter = new Arbiter();
+  /**
+   * Per-symbol Turtle (Agent T) state — held units, last exit metadata.
+   * Independent of the per-symbol kernel state map; T does not read
+   * from K or M (the wall is here in the type graph too: TurtleState
+   * has no reference to BasinState or any ML field).
+   */
+  private readonly turtleStates: Map<string, TurtleState> = new Map();
 
   constructor(config?: Partial<MonkeyKernelConfig>) {
     super();
@@ -327,6 +345,7 @@ export class MonkeyKernel extends EventEmitter {
   async start(): Promise<void> {
     for (const sym of this.symbols) {
       this.symbolStates.set(sym, this.newSymbolState());
+      this.turtleStates.set(sym, newTurtleState());
     }
     // Proposal #10 — detect (don't auto-flip) account position direction
     // mode. Lane-isolated positions in HEDGE mode let a swing-long and a
@@ -1210,12 +1229,31 @@ export class MonkeyKernel extends EventEmitter {
 
     // 6b. EXECUTE — gated by MONKEY_EXECUTE=true. Observe-only otherwise.
     //
-    // Post agent-separation: arbiter allocates available equity between
-    // K and M. K's existing decision path runs against allocation.k;
-    // Agent M's threshold-based decision runs against allocation.m.
-    // Both can place independently in a single tick (slot allocator
-    // and risk kernel still bound combined exposure).
-    const arbiterAllocation = this.arbiter.allocate(availableEquity);
+    // Post agent-separation (K vs M) + Turtle control arm (T): the arbiter
+    // is N-agent. T is conditionally included only when account equity is
+    // ≥ ``turtleMinEquityUsdt()`` (default $150). Below threshold the
+    // allocator sees a 2-agent (K, M) race exactly as before, and T's
+    // 1/N share isn't stranded on a sub-min-notional account. The
+    // activation gate is a runtime constraint, NOT a flag — change the
+    // env var and redeploy, and T comes online when equity allows.
+    const minEquityForT = turtleMinEquityUsdt();
+    const tEligible = availableEquity >= minEquityForT;
+    const arbiterAgentLabels: string[] = tEligible ? ['K', 'M', 'T'] : ['K', 'M'];
+    const arbiterAllocationMany = this.arbiter.allocateMany(
+      availableEquity,
+      arbiterAgentLabels,
+    );
+    const arbiterSnapshotMany = this.arbiter.snapshotMany(
+      availableEquity,
+      arbiterAgentLabels,
+    );
+    // Back-compat 2-agent shape — the K/M execute paths below + the
+    // arbiter_allocation telemetry table both consume {k, m}. T's
+    // share lives alongside in arbiterAllocationMany.T.
+    const arbiterAllocation = {
+      k: arbiterAllocationMany.K ?? 0,
+      m: arbiterAllocationMany.M ?? 0,
+    };
     const arbiterSnapshot = this.arbiter.snapshot(availableEquity);
     derivation.arbiter = {
       kShare: arbiterSnapshot.kShare,
@@ -1226,6 +1264,15 @@ export class MonkeyKernel extends EventEmitter {
       mTradesInWindow: arbiterSnapshot.mTradesInWindow,
       kAllocatedUsdt: arbiterAllocation.k,
       mAllocatedUsdt: arbiterAllocation.m,
+      // T-specific telemetry. ``tEligible`` records WHY T was/wasn't in
+      // the race this tick (equity gate). When eligible, ``tShare`` and
+      // ``tAllocatedUsdt`` mirror the K/M shape.
+      tEligible,
+      minEquityForT,
+      tShare: arbiterSnapshotMany.T?.share ?? 0,
+      tPnlWindowTotal: arbiterSnapshotMany.T?.pnlWindowTotal ?? 0,
+      tTradesInWindow: arbiterSnapshotMany.T?.tradesInWindow ?? 0,
+      tAllocatedUsdt: arbiterAllocationMany.T ?? 0,
     };
 
     let executed = false;
@@ -1475,6 +1522,192 @@ export class MonkeyKernel extends EventEmitter {
           logger.info('[AgentM] entry placed', {
             symbol, side: mDecision.action, orderId: mResult.orderId,
             margin: mDecision.sizeUsdt.toFixed(2), leverage: mDecision.leverage,
+          });
+        }
+      }
+    }
+
+    // 6c-T. AGENT T EXECUTE — Turtle System 1 (classical TA control arm).
+    // Independent of K's basin and M's ml signal. Inputs: ohlcv only.
+    // Equity-gated: when ``tEligible`` is false the arbiter excluded T
+    // from the race already (allocation = 0 → decide() returns hold even
+    // if a Donchian breakout printed). This block runs every tick so T
+    // can ALSO close held positions cleanly when it falls below threshold
+    // mid-trade — the equity gate blocks new entries / pyramids, not
+    // exits.
+    const tAlloc = arbiterAllocationMany.T ?? 0;
+    if (process.env.MONKEY_EXECUTE === 'true') {
+      const tState = this.turtleStates.get(symbol) ?? newTurtleState();
+      const tInputs: TurtleAgentInputs = {
+        symbol,
+        ohlcv: ohlcv.map((c) => ({
+          timestamp: Number(c.timestamp ?? 0),
+          open: Number(c.open),
+          high: Number(c.high),
+          low: Number(c.low),
+          close: Number(c.close),
+          volume: Number(c.volume),
+        })),
+        account: {
+          equityUsdt: availableEquity,
+          availableEquityUsdt: availableEquity,
+        },
+        allocatedCapitalUsdt: tAlloc,
+        state: tState,
+      };
+      const tDecision = turtleAgentDecide(tInputs);
+      derivation.agentT = {
+        action: tDecision.action,
+        sizeUsdt: tDecision.sizeUsdt,
+        leverage: tDecision.leverage,
+        stopPrice: tDecision.stopPrice,
+        reason: tDecision.reason,
+        unitsHeld: tDecision.derivation.unitsHeld,
+        equityGated: tDecision.derivation.equityGated,
+        atr: tDecision.derivation.atr,
+        donchianHigh: tDecision.derivation.donchianHigh,
+        donchianLow: tDecision.derivation.donchianLow,
+      };
+
+      // T entries / pyramids — same executeEntry path as K and M; the
+      // 'T' agent tag plus lane='trend' attributes the row to the
+      // turtle agent. Pyramids are MORE units in the same trend-lane;
+      // from autonomous_trades' perspective each unit is its own row,
+      // grouped by (agent='T', symbol, lane='trend').
+      if (
+        (tDecision.action === 'enter_long'
+          || tDecision.action === 'enter_short'
+          || tDecision.action === 'pyramid_long'
+          || tDecision.action === 'pyramid_short')
+        && tDecision.sizeUsdt > 0
+      ) {
+        const tSide: 'long' | 'short' =
+          tDecision.action === 'enter_long' || tDecision.action === 'pyramid_long'
+            ? 'long'
+            : 'short';
+        const tResult = await this.executeEntry({
+          symbol,
+          side: tSide,
+          marginUsdt: tDecision.sizeUsdt,
+          leverage: tDecision.leverage,
+          entryPrice: lastPrice,
+          minNotional,
+          // T does not consume kernel state. Pass zeros for the
+          // K-only fields the executor uses for its reason-encoding;
+          // these are diagnostic, not used by the executor's risk
+          // logic. The agent='T' tag is what matters downstream.
+          phi: 0,
+          kappa: 0,
+          sovereignty: 0,
+          trajectoryId: null,
+          isDCAAdd: false,
+          dcaAddIndex: 0,
+          agent: 'T',
+          lane: 'trend',
+        });
+        derivation.agentTExecuted = tResult.executed;
+        if (tResult.executed) {
+          // Mirror the new unit into TurtleState. Stop, ATR, leverage,
+          // margin all derive from the decision; entryPrice is the
+          // exchange fill estimate (executeEntry doesn't currently
+          // return the executed fill — we use lastPrice, identical to
+          // what K and M assume). Future improvement: thread the actual
+          // avgFillPrice back from the exchange.
+          this.turtleStates.set(symbol, turtleAppendUnit(tState, {
+            side: tSide,
+            entryPrice: lastPrice,
+            atrAtEntry: tDecision.derivation.atr,
+            stopPrice: tDecision.stopPrice,
+            marginUsdt: tDecision.sizeUsdt,
+            leverage: tDecision.leverage,
+            openedAtMs: Date.now(),
+          }));
+          logger.info('[AgentT] entry placed', {
+            symbol, side: tSide, action: tDecision.action,
+            orderId: tResult.orderId,
+            margin: tDecision.sizeUsdt.toFixed(2),
+            leverage: tDecision.leverage,
+            stop: tDecision.stopPrice.toFixed(4),
+            unitsHeld: tDecision.derivation.unitsHeld + 1,
+          });
+        } else {
+          logger.info('[AgentT] entry rejected', {
+            symbol, side: tSide, reason: tResult.reason,
+          });
+        }
+      } else if (
+        (tDecision.action === 'exit_stop' || tDecision.action === 'exit_donchian')
+        && tState.units.length > 0
+      ) {
+        // T exit — query its open trend-lane rows under agent='T' and
+        // close them via the existing closeHeldPosition path. The 2×
+        // ATR stop and 10-bar opposite Donchian are the only two exit
+        // triggers in System 1; both close ALL pyramid units at once.
+        try {
+          const tHeldSide = tState.units[0]!.side;
+          const openTRows = await pool.query(
+            `SELECT id, quantity FROM autonomous_trades
+              WHERE reason LIKE $1 AND status = 'open' AND symbol = $2
+                AND agent = 'T' AND lane = 'trend'
+              ORDER BY entry_time ASC`,
+            [`monkey|kernel=${this.instanceId}|%`, symbol],
+          );
+          const tRows = openTRows.rows as Array<{ id: string; quantity: string }>;
+          if (tRows.length > 0) {
+            const totalQty = tRows.reduce(
+              (s, r) => s + Math.abs(Number(r.quantity) || 0),
+              0,
+            );
+            // Estimate realized PnL across the pyramid: weighted mean
+            // entry from open rows, vs lastPrice mark, times totalQty.
+            // Same approximation closeHeldPosition uses for K/M.
+            const sumWeighted = tState.units.reduce(
+              (s, u) => s + u.entryPrice * u.marginUsdt * u.leverage,
+              0,
+            );
+            const sumNotional = tState.units.reduce(
+              (s, u) => s + u.marginUsdt * u.leverage,
+              0,
+            );
+            const avgEntry = sumNotional > 0
+              ? sumWeighted / sumNotional
+              : tState.units[0]!.entryPrice;
+            const sideSign = tHeldSide === 'long' ? 1 : -1;
+            const pnlAtDecision = (lastPrice - avgEntry) * totalQty * sideSign;
+            const closeResult = await this.closeHeldPosition({
+              symbol,
+              tradeId: tRows[0]!.id,
+              heldSide: tHeldSide,
+              markPrice: lastPrice,
+              exitReason: tDecision.action === 'exit_stop'
+                ? 'turtle_stop'
+                : 'turtle_donchian_exit',
+              pnlAtDecision,
+              lane: 'trend',
+            });
+            if (closeResult.executed) {
+              this.turtleStates.set(
+                symbol,
+                turtleClearUnits(tState, tDecision.action, Date.now()),
+              );
+              logger.info('[AgentT] exit executed', {
+                symbol, exitReason: tDecision.action,
+                pnl: pnlAtDecision.toFixed(4),
+                unitsClosed: tState.units.length,
+              });
+            }
+          } else {
+            // No DB rows but state has units — drift / orphan. Reset
+            // state so T can re-enter on the next breakout. Reconciler
+            // will catch any stranded exchange position.
+            this.turtleStates.set(
+              symbol,
+              turtleClearUnits(tState, 'state_drift_reset', Date.now()),
+            );
+          }
+        } catch (err) {
+          logger.warn('[AgentT] exit query/close failed', {
+            symbol, err: err instanceof Error ? err.message : String(err),
           });
         }
       }
@@ -2065,9 +2298,12 @@ export class MonkeyKernel extends EventEmitter {
             [markPrice, exitReason, orderId, rowPnl, row.id],
           );
           // Tag-aware arbiter feedback. Pre-separation rows have
-          // agent=NULL or 'K' (default from migration 039); both
-          // attribute to K.
-          const agentLabel: 'K' | 'M' = row.agent === 'M' ? 'M' : 'K';
+          // agent=NULL or 'K' (default from migration 039); those
+          // attribute to K. T (Turtle classical TA) was added in the
+          // three-agent decomposition; ``recordSettled`` accepts any
+          // uppercase label so T's PnL share goes back to T's window.
+          const agentLabel: 'K' | 'M' | 'T' =
+            row.agent === 'M' ? 'M' : row.agent === 'T' ? 'T' : 'K';
           this.arbiter.recordSettled(agentLabel, rowPnl);
         }
       }
@@ -2137,9 +2373,9 @@ export class MonkeyKernel extends EventEmitter {
     /** 0 = initial entry; 1, 2, … for nth DCA add. */
     dcaAddIndex?: number;
     /** Which agent placed this entry. K = kernel (geometry-only),
-     *  M = ml-only. Default 'K' for back-compat with the existing
-     *  call sites. */
-    agent?: 'K' | 'M';
+     *  M = ml-only, T = Turtle System 1 classical TA (control arm).
+     *  Default 'K' for back-compat with the existing call sites. */
+    agent?: 'K' | 'M' | 'T';
     /** Proposal #10: execution lane key. Default 'swing' = pre-#10 implicit
      *  lane so existing call sites remain bit-identical. */
     lane?: 'scalp' | 'swing' | 'trend';
