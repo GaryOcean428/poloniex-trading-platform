@@ -1936,6 +1936,7 @@ export class MonkeyKernel extends EventEmitter {
    * Look up Monkey's most recent open trade row for a symbol. Used by
    * the scalp-exit gate (v0.4) to compute unrealized P&L.
    */
+  /** Delegates to the module-level exported getKellyRollingStats. */
   private async getKellyRollingStats(
     agent: string,
     lane?: LaneType,

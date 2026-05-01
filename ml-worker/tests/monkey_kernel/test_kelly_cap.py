@@ -426,8 +426,6 @@ class TestGetKellyRollingStats:
         import asyncio
         from unittest.mock import AsyncMock, MagicMock
 
-        rows = [{"pnl": p} for p in pnls]
-
         class _Row(dict):
             """Minimal asyncpg-like Row."""
             def __getitem__(self, key):
