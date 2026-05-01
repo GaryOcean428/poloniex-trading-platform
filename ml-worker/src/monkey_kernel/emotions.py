@@ -100,6 +100,7 @@ def compute_emotions(
     basin: Optional[np.ndarray] = None,
     predicted_basin: Optional[np.ndarray] = None,
     foresight_weight: float = 0.0,
+    funding_drag: float = 0.0,
 ) -> EmotionState:
     """Compose the Layer 2B emotion vector from Tier 1 motivators
     plus raw geometric quantities (+ Tier 3 foresight reference for Flow).
@@ -120,6 +121,14 @@ def compute_emotions(
         Pass None on cold start.
     foresight_weight : float
         Foresight predictor weight; Flow returns 0 when ≤ 0 (cold start).
+    funding_drag : float
+        Accumulated funding cost as a fraction of position margin since
+        open (cost-on-margin ratio, range [0, ∞)). Held positions accrue
+        funding while open; the kernel reads the drag as a dimensionless
+        ratio and pulls confidence down geometrically while pushing
+        anxiety up symmetrically. Default 0 (no held position / no drag
+        yet) is a no-op. Caller computes ``funding_paid_usdt /
+        position_margin_usdt`` from the lane position state.
     """
     stability = phi
     instability = basin_velocity
@@ -144,14 +153,29 @@ def compute_emotions(
         curiosity_optimal = 0.0
     flow = curiosity_optimal * motivators.investigation
 
+    confidence = (1.0 - motivators.transcendence) * stability
+    anxiety = motivators.transcendence * instability
+
+    # Funding drag — dimensionless cost-on-margin ratio. Map [0, ∞) →
+    # [0, 1) via drag / (1 + drag) (Möbius-style saturation, no
+    # hardcoded threshold). Confidence multiplies down by (1 - drag_factor);
+    # anxiety adds drag_factor symmetrically. At drag=0 the kernel reads
+    # the same as before; at drag=1 (margin entirely consumed by funding)
+    # confidence collapses by 50% and anxiety lifts by 0.5; as drag → ∞
+    # confidence → 0 and anxiety → +1.
+    if funding_drag > 0.0:
+        drag_factor = funding_drag / (1.0 + funding_drag)
+        confidence = confidence * (1.0 - drag_factor)
+        anxiety = anxiety + drag_factor
+
     return EmotionState(
         wonder=motivators.curiosity * basin_distance,
         frustration=motivators.surprise * (1.0 - motivators.investigation),
         satisfaction=motivators.integration * (1.0 - basin_distance),
         confusion=motivators.surprise * basin_distance,
         clarity=(1.0 - motivators.surprise) * motivators.investigation,
-        anxiety=motivators.transcendence * instability,
-        confidence=(1.0 - motivators.transcendence) * stability,
+        anxiety=anxiety,
+        confidence=confidence,
         boredom=(1.0 - motivators.surprise) * (1.0 - motivators.curiosity),
         flow=flow,
     )

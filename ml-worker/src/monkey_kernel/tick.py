@@ -101,6 +101,26 @@ logger = logging.getLogger("monkey.tick")
 _registry = get_registry()
 
 
+# CHOP-regime entry suppression — when the regime classifier reads
+# sustained chop with confidence above this threshold, NEW entries are
+# blocked for the tick. Held positions still flow through the normal
+# re-justification + harvest path. The threshold lives on the
+# classifier's own [0, 1] confidence scale (see ``classify_regime`` —
+# the read is its own self-belief about the regime, not a synthesized
+# gate).
+CHOP_SUPPRESSION_CONFIDENCE = 0.70
+
+
+def _chop_suppress_entry(reading: RegimeReading) -> bool:
+    """True when the regime classifier reads sustained chop above the
+    suppression confidence threshold. Held positions are unaffected;
+    only NEW entries are blocked."""
+    return (
+        reading.regime == "CHOP"
+        and reading.confidence > CHOP_SUPPRESSION_CONFIDENCE
+    )
+
+
 # ── Input / output dataclasses ───────────────────────────────────
 
 @dataclass
@@ -108,12 +128,20 @@ class LanePosition:
     """Single-lane position snapshot used by the lane-aware tick path
     (proposal #10). One ``LanePosition`` per (agent, symbol, lane) row
     that is currently ``status='open'`` in autonomous_trades.
+
+    Funding bookkeeping (additive — defaults keep older callers no-op):
+      * ``margin_usdt`` — initial position margin (notional / leverage).
+      * ``funding_paid_usdt`` — cumulative funding cost paid since open.
+    The ratio ``funding_paid_usdt / margin_usdt`` feeds Layer 2B
+    emotion drag (cost-on-margin).
     """
     lane: str  # "scalp" | "swing" | "trend"
     side: str  # "long" | "short"
     entry_price: float
     quantity: float
     trade_id: str
+    margin_usdt: float = 0.0
+    funding_paid_usdt: float = 0.0
 
 
 @dataclass
@@ -159,10 +187,13 @@ class TickInputs:
     min_notional: float
     size_fraction: float = 1.0
     self_obs_bias: Optional[dict[str, dict[str, float]]] = None
-    # Proposal #3: rolling Kelly stats for the Kelly leverage cap.
-    # Passed in by the caller (TS loop.ts queries autonomous_trades and
-    # forwards). When None, the Kelly cap is a no-op (defers to the
-    # geometric leverage formula). Tuple is (win_rate, avg_win, avg_loss).
+    # Proposal #3 + per-lane refinement: rolling Kelly stats for the
+    # Kelly leverage cap. Lane-conditioned at the caller — TS loop.ts
+    # queries autonomous_trades filtered by the active lane (scalp /
+    # swing / trend) so each lane's Kelly cap is built from its own
+    # closed-trade history. Cross-lane pollution gone. When None, the
+    # Kelly cap defers to the geometric leverage formula (no-op).
+    # Tuple is (win_rate, avg_win, avg_loss) over the lane window.
     rolling_kelly_stats: Optional[tuple[float, float, float]] = None
 
 
@@ -425,6 +456,19 @@ def run_tick(
     fs = foresight.predict(regime_weights)
     # Tier 2 cognitive emotions — composed AFTER foresight so Flow has
     # access to predicted_basin reference.
+    #
+    # Funding drag — dimensionless cost-on-margin ratio aggregated across
+    # all currently-held lane positions on this symbol. The kernel reads
+    # the worst (largest) drag so a single funding-bleeding leg pulls
+    # the whole symbol's conviction down.  Held positions accumulate
+    # funding; untracked legacy callers without ``margin_usdt`` populated
+    # supply 0, leaving the drag at 0 (no-op).
+    funding_drag = 0.0
+    for lp in inputs.account.lane_positions:
+        if lp.margin_usdt > 0.0:
+            d = lp.funding_paid_usdt / lp.margin_usdt
+            if d > funding_drag:
+                funding_drag = d
     emo = compute_emotions(
         motivators=mot,
         basin_distance=sen.drift,
@@ -433,6 +477,7 @@ def run_tick(
         basin=basin,
         predicted_basin=fs.predicted_basin,
         foresight_weight=fs.weight,
+        funding_drag=funding_drag,
     )
     # Tier 7 Heart — κ HRV monitor. Persistent; ephemeral fallback.
     if heart is None:
@@ -807,6 +852,28 @@ def run_tick(
         lp.lane: lp.side for lp in inputs.account.lane_positions
     }
     derivation["held_lanes"] = dict(held_lanes)
+    # Funding-drag telemetry — surface the dimensionless cost-on-margin
+    # ratio per lane plus the worst-of value fed into compute_emotions.
+    # Empty / all-zero when no held position has populated funding.
+    derivation["funding_drag"] = {
+        "by_lane": {
+            lp.lane: (
+                lp.funding_paid_usdt / lp.margin_usdt
+                if lp.margin_usdt > 0.0 else 0.0
+            )
+            for lp in inputs.account.lane_positions
+        },
+        "max": float(funding_drag),
+    }
+    # CHOP suppression telemetry — surfaces whether the gate was active
+    # this tick. Held positions continue normal flow regardless; only
+    # new entries are blocked when ``active`` is True.
+    derivation["chop_suppression"] = {
+        "active": _chop_suppress_entry(regime_reading),
+        "regime": regime_reading.regime,
+        "confidence": float(regime_reading.confidence),
+        "threshold": CHOP_SUPPRESSION_CONFIDENCE,
+    }
 
     # PR 1 — Ocean DREAM / ESCAPE handlers. ESCAPE forces flatten,
     # DREAM forces hold (skip executive). MUSHROOM_MICRO already
@@ -857,6 +924,7 @@ def run_tick(
         and direction != "flat"
         and kernel_should_enter(emotions=emo)
         and size_d["value"] > 0
+        and not _chop_suppress_entry(regime_reading)
     ):
         action = "enter_long" if side_candidate == "long" else "enter_short"
         notional = size_d["value"] * leverage_d["value"]
@@ -928,6 +996,7 @@ def run_tick(
         and direction != "flat"
         and kernel_should_enter(emotions=emo)
         and size_d["value"] > 0
+        and not _chop_suppress_entry(regime_reading)
     ):
         action = "enter_long" if side_candidate == "long" else "enter_short"
         reversion_tag = (
@@ -960,6 +1029,12 @@ def run_tick(
                 f"[{mode}] direction=flat (basin {basin_dir:+.2f}, "
                 f"tape {tape_trend:+.2f}, conf {emo.confidence:.2f}, "
                 f"anx {emo.anxiety:.2f})"
+            )
+        elif _chop_suppress_entry(regime_reading):
+            reason = (
+                f"[{mode}] chop regime confidence="
+                f"{regime_reading.confidence:.2f} > "
+                f"{CHOP_SUPPRESSION_CONFIDENCE:.2f} — suspend new entries"
             )
         elif not kernel_should_enter(emotions=emo):
             reason = (
