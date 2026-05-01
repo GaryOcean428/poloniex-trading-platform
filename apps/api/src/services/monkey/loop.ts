@@ -38,6 +38,7 @@ import {
   type KernelOrder,
 } from '../riskKernel.js';
 
+import { getKellyRollingStats } from './kelly_rolling_stats.js';
 import { forge, forgeBankWriteLive, shadowThreshold } from './forge.js';
 
 import {
@@ -779,15 +780,6 @@ export class MonkeyKernel extends EventEmitter {
     // tapeTrend already computed above for side-override check.
     const entryThr = currentEntryThreshold(basinState, mode, selfObsBias, tapeTrend, sideCandidate);
     const maxLevBoundary = (await getMaxLeverage(symbol)) ?? 10;
-    // Proposal #3: Kelly leverage cap. Pull last 50 closed K-agent
-    // trades from autonomous_trades to compute win-rate + avg-win +
-    // avg-loss; pass to currentLeverage as the rolling-stats arg.
-    // Cold-start (no closed trades): rollingStats is null, kelly cap
-    // becomes a no-op (geometric leverage unchanged).
-    const rollingStats = await this.getKellyRollingStats('K');
-    const leverage = currentLeverage(
-      basinState, maxLevBoundary, mode, tapeTrend, rollingStats,
-    );
     const precisions = await getPrecisions(symbol).catch(() => null);
     const lotSize = precisions?.lotSize ?? 0;
     const minNotional = lastPrice * Math.max(lotSize, 1e-9);
@@ -817,6 +809,16 @@ export class MonkeyKernel extends EventEmitter {
     const chosenLane: LaneType = laneDecision.value;
     const positionLane: 'scalp' | 'swing' | 'trend' =
       chosenLane === 'observe' ? 'swing' : chosenLane;
+    // Proposal #3: Kelly leverage cap. Pull last 50 closed K-agent
+    // trades from autonomous_trades — lane-filtered so each lane learns
+    // from its own closed trades (scalp from scalps, etc.).
+    // Cold-start (< 5 closed trades in this lane): rollingStats is null,
+    // kelly cap becomes a no-op (geometric leverage unchanged). Each lane
+    // warms independently; scalp warms fastest (closes most often).
+    const rollingStats = await this.getKellyRollingStats('K', positionLane);
+    const leverage = currentLeverage(
+      basinState, maxLevBoundary, mode, tapeTrend, rollingStats,
+    );
     const size = currentPositionSize(
       basinState, cappedEquity, minNotional, leverage.value, bankSize, mode,
       positionLane,
@@ -1205,6 +1207,9 @@ export class MonkeyKernel extends EventEmitter {
           min_notional: minNotional,
           size_fraction: this.sizeFraction,
           self_obs_bias: this.selfObs?.entryBias ?? null,
+          rolling_kelly_stats: rollingStats
+            ? [rollingStats.winRate, rollingStats.avgWin, rollingStats.avgLoss]
+            : null,
         },
         prev_state: shadowPrevState,
       }).then((pyResult) => {
@@ -1931,52 +1936,11 @@ export class MonkeyKernel extends EventEmitter {
    * Look up Monkey's most recent open trade row for a symbol. Used by
    * the scalp-exit gate (v0.4) to compute unrealized P&L.
    */
-  /**
-   * Proposal #3 — Kelly rolling stats reader.
-   *
-   * Fetches the last 50 closed Monkey trades for ``agent`` from
-   * ``autonomous_trades`` (filtered by both ``agent`` column and the
-   * monkey reason prefix; see Polytrade engine prefix-filter lesson)
-   * and returns ``{ winRate, avgWin, avgLoss }`` summary stats.
-   *
-   * Returns null when fewer than 5 closed trades have accumulated —
-   * the Kelly cap is a no-op until enough samples to estimate the
-   * edge meaningfully.
-   */
   private async getKellyRollingStats(
     agent: string,
+    lane?: LaneType,
   ): Promise<{ winRate: number; avgWin: number; avgLoss: number } | null> {
-    try {
-      const result = await pool.query(
-        `SELECT pnl FROM autonomous_trades
-          WHERE status = 'closed'
-            AND agent = $1
-            AND reason LIKE 'monkey|%'
-          ORDER BY exit_time DESC
-          LIMIT 50`,
-        [agent],
-      );
-      const pnls = (result.rows as Array<{ pnl: string | number }>)
-        .map((r) => Number(r.pnl) || 0)
-        .filter((p) => Number.isFinite(p));
-      if (pnls.length < 5) return null;
-      const wins = pnls.filter((p) => p > 0);
-      const losses = pnls.filter((p) => p < 0);
-      const winRate = wins.length / pnls.length;
-      const avgWin = wins.length > 0
-        ? wins.reduce((s, v) => s + v, 0) / wins.length
-        : 0;
-      const avgLoss = losses.length > 0
-        ? losses.reduce((s, v) => s + v, 0) / losses.length
-        : 0;
-      return { winRate, avgWin, avgLoss };
-    } catch (err) {
-      logger.debug('[Monkey] getKellyRollingStats failed; defer to geometric formula', {
-        agent,
-        err: err instanceof Error ? err.message : String(err),
-      });
-      return null;
-    }
+    return getKellyRollingStats(agent, lane);
   }
 
   private async findOpenMonkeyTrade(symbol: string): Promise<
