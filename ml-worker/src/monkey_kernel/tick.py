@@ -47,7 +47,7 @@ from dataclasses import asdict
 
 from .autonomic import AutonomicKernel, AutonomicTickInputs
 from .basin import normalized_entropy, velocity
-from .emotions import compute_emotions
+from .emotions import compute_emotions, compute_funding_drag
 from .executive import (
     ExecBasinState,
     choose_lane,
@@ -164,6 +164,12 @@ class TickInputs:
     # forwards). When None, the Kelly cap is a no-op (defers to the
     # geometric leverage formula). Tuple is (win_rate, avg_win, avg_loss).
     rolling_kelly_stats: Optional[tuple[float, float, float]] = None
+    # Funding rate for the symbol's perpetual contract (8-hour rate from
+    # exchange feed). Used to compute funding_drag per held position and
+    # feed it into the emotion stack so the conviction gate fires earlier
+    # on funding-bleeding positions. Default 0.0 = no held position or
+    # rate not yet fetched (safe: drag = 0 → no anxiety perturbation).
+    funding_rate_8h: float = 0.0
 
 
 @dataclass
@@ -425,6 +431,31 @@ def run_tick(
     fs = foresight.predict(regime_weights)
     # Tier 2 cognitive emotions — composed AFTER foresight so Flow has
     # access to predicted_basin reference.
+    # Funding drag: real carry cost against the held position(s). Computed
+    # here (P14: BOUNDARY → STATE at perception time) and fed into anxiety
+    # so the conviction gate fires earlier on funding-bleeding positions.
+    # Multi-lane: sum drag across all concurrently held lanes.
+    funding_drag = 0.0
+    if inputs.funding_rate_8h != 0.0:
+        if inputs.account.lane_positions:
+            for lp in inputs.account.lane_positions:
+                entry_ms = state.last_entry_at_ms_by_lane.get(
+                    lp.lane, state.last_entry_at_ms
+                )
+                if entry_ms is not None:
+                    hours_held = (now_ms - entry_ms) / 3_600_000.0
+                    funding_drag += compute_funding_drag(
+                        lp.side, inputs.funding_rate_8h, hours_held
+                    )
+        elif inputs.account.exchange_held_side is not None:
+            entry_ms = state.last_entry_at_ms
+            if entry_ms is not None:
+                hours_held = (now_ms - entry_ms) / 3_600_000.0
+                funding_drag += compute_funding_drag(
+                    inputs.account.exchange_held_side,
+                    inputs.funding_rate_8h,
+                    hours_held,
+                )
     emo = compute_emotions(
         motivators=mot,
         basin_distance=sen.drift,
@@ -433,6 +464,7 @@ def run_tick(
         basin=basin,
         predicted_basin=fs.predicted_basin,
         foresight_weight=fs.weight,
+        funding_drag=funding_drag,
     )
     # Tier 7 Heart — κ HRV monitor. Persistent; ephemeral fallback.
     if heart is None:

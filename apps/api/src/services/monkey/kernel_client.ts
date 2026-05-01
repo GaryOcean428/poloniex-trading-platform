@@ -201,6 +201,11 @@ export interface TickRunInputs {
   ml_signal?: string;
   /** @deprecated post #ml-separation — silently ignored by Agent K. */
   ml_strength?: number;
+  /** 8-hour funding rate for the symbol's perpetual contract (from exchange
+   *  feed). Passed through to compute_funding_drag in tick.py so the
+   *  conviction gate fires earlier on funding-bleeding positions.
+   *  Optional — defaults to 0.0 on the Python side (no drag perturbation). */
+  funding_rate_8h?: number;
 }
 
 /** Serialized Python SymbolState — carried across ticks. */

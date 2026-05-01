@@ -3,10 +3,11 @@
  *
  * Mirrors test_emotions.py 1:1. Same 10-row parity snapshot — if
  * either side disagrees with the hardcoded expectations, parity
- * is broken.
+ * is broken. Also covers computeFundingDrag and computeEmotions
+ * with fundingDrag (identical rows to the Python funding parity table).
  */
 import { describe, it, expect } from 'vitest';
-import { computeEmotions } from '../emotions.js';
+import { computeEmotions, computeFundingDrag } from '../emotions.js';
 import type { Motivators } from '../motivators.js';
 
 const m = (overrides: Partial<Motivators> = {}): Motivators => ({
@@ -169,5 +170,85 @@ describe('Parity snapshot — 10 rows match Python suite identically', () => {
         APPROX(e[k as keyof typeof e], row.expected[k]);
       });
     });
+  });
+});
+
+// ─── computeFundingDrag — mirrors Python test_emotions.py ─────────
+
+describe('computeFundingDrag', () => {
+  it('returns 0 when no position (null)', () => {
+    APPROX(computeFundingDrag(null, 0.0001, 8), 0);
+  });
+  it('returns 0 when hours_held is 0', () => {
+    APPROX(computeFundingDrag('long', 0.0001, 0), 0);
+  });
+  it('returns 0 when hours_held is negative', () => {
+    APPROX(computeFundingDrag('long', 0.0001, -1), 0);
+  });
+  it('long bleeds when rate positive', () => {
+    APPROX(computeFundingDrag('long', 0.0001, 8), 0.0001);
+  });
+  it('long has no drag when rate negative (funding favours long)', () => {
+    APPROX(computeFundingDrag('long', -0.0001, 8), 0);
+  });
+  it('short bleeds when rate negative', () => {
+    APPROX(computeFundingDrag('short', -0.0001, 8), 0.0001);
+  });
+  it('short has no drag when rate positive (funding favours short)', () => {
+    APPROX(computeFundingDrag('short', 0.0001, 8), 0);
+  });
+  it('drag grows linearly with hoursHeld', () => {
+    const drag8 = computeFundingDrag('long', 0.0001, 8);
+    const drag24 = computeFundingDrag('long', 0.0001, 24);
+    APPROX(drag24, 3 * drag8);
+  });
+});
+
+// ─── Funding drag parity table — IDENTICAL rows to Python suite ───
+
+interface FundingParityRow {
+  positionSide: 'long' | 'short' | null;
+  rate8h: number;
+  hoursHeld: number;
+  expectedDrag: number;
+}
+
+const FUNDING_PARITY_ROWS: FundingParityRow[] = [
+  { positionSide: null,    rate8h:  0.0001, hoursHeld:  8, expectedDrag: 0.0 },
+  { positionSide: 'long',  rate8h:  0.0,    hoursHeld:  8, expectedDrag: 0.0 },
+  { positionSide: 'long',  rate8h:  0.0001, hoursHeld:  8, expectedDrag: 0.0001 },
+  { positionSide: 'long',  rate8h:  0.0001, hoursHeld: 24, expectedDrag: 0.0003 },
+  { positionSide: 'short', rate8h:  0.0001, hoursHeld:  8, expectedDrag: 0.0 },
+  { positionSide: 'short', rate8h: -0.0002, hoursHeld: 16, expectedDrag: 0.0004 },
+];
+
+describe('Funding drag parity snapshot — matches Python suite identically', () => {
+  FUNDING_PARITY_ROWS.forEach((row, idx) => {
+    it(`funding parity row ${idx}`, () => {
+      const drag = computeFundingDrag(row.positionSide, row.rate8h, row.hoursHeld);
+      APPROX(drag, row.expectedDrag);
+    });
+  });
+});
+
+// ─── computeEmotions with fundingDrag ────────────────────────────
+
+describe('computeEmotions with fundingDrag', () => {
+  it('default (omitted) preserves bit-identical behavior vs explicit 0', () => {
+    const base = computeEmotions(m({ transcendence: 0.5 }), 0.3, 0.5, 0.2);
+    const explicitZero = computeEmotions(m({ transcendence: 0.5 }), 0.3, 0.5, 0.2, { fundingDrag: 0 });
+    APPROX(base.anxiety, explicitZero.anxiety);
+  });
+  it('non-zero fundingDrag increases anxiety by exactly that amount', () => {
+    const base = computeEmotions(m({ transcendence: 0.5 }), 0.3, 0.5, 0.2, { fundingDrag: 0 });
+    const dragged = computeEmotions(m({ transcendence: 0.5 }), 0.3, 0.5, 0.2, { fundingDrag: 0.003 });
+    APPROX(dragged.anxiety, base.anxiety + 0.003);
+  });
+  it('fundingDrag does not affect other emotions', () => {
+    const base = computeEmotions(m({ surprise: 0.4, curiosity: 0.6, transcendence: 0.5 }), 0.3, 0.5, 0.2, { fundingDrag: 0 });
+    const dragged = computeEmotions(m({ surprise: 0.4, curiosity: 0.6, transcendence: 0.5 }), 0.3, 0.5, 0.2, { fundingDrag: 0.005 });
+    for (const attr of ['wonder', 'frustration', 'satisfaction', 'confusion', 'clarity', 'confidence', 'boredom'] as const) {
+      APPROX(base[attr], dragged[attr]);
+    }
   });
 });
