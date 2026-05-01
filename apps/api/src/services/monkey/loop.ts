@@ -95,6 +95,7 @@ import {
   hammerAgainstLongSl,
   patternSignalScalar,
 } from './candlePatterns.js';
+import { evaluateBankWrite } from './learning_gate_client.js';
 import { resonanceBank } from './resonance_bank.js';
 import { computeSelfObservation, type SelfObservation } from './self_observation.js';
 import { WorkingMemory, type Bubble } from './working_memory.js';
@@ -2719,6 +2720,55 @@ export class MonkeyKernel extends EventEmitter {
       const basinArr = typeof rec.basin === 'string' ? JSON.parse(rec.basin) : rec.basin;
       const entryBasin: Basin = Float64Array.from(basinArr);
       const phi = Number(rec.phi) || 0.5;
+
+      // Loop 3 (UCP §43.4) — gate the bank write. Pulls the Loop 1
+      // sovereignty + Loop 2 convergence_type recorded on the trade
+      // row at open time. Pre-refactor rows have NULL columns; the
+      // gate then defaults to permissive (sovereignty=0.5, consensus)
+      // so legacy rows still write.
+      const triple = await pool
+        .query(
+          `SELECT sovereignty_score, convergence_type, created_at, exit_time
+             FROM autonomous_trades
+            WHERE order_id = $1
+            ORDER BY created_at DESC LIMIT 1`,
+          [orderId ?? ''],
+        )
+        .catch(() => ({ rows: [] as Array<Record<string, unknown>> }));
+      const tripleRow = triple.rows[0] as
+        | {
+            sovereignty_score?: number | null;
+            convergence_type?: string | null;
+            created_at?: Date | null;
+            exit_time?: Date | null;
+          }
+        | undefined;
+      const sovereigntyScore =
+        tripleRow?.sovereignty_score == null ? 0.5 : Number(tripleRow.sovereignty_score);
+      const convergenceType =
+        (tripleRow?.convergence_type as
+          | 'consensus' | 'groupthink' | 'genuine_multi' | 'non_convergent'
+          | undefined) ?? 'consensus';
+      const tradeOpenMs =
+        tripleRow?.created_at != null ? new Date(tripleRow.created_at).getTime() : entryTime.getTime();
+      const tradeCloseMs =
+        tripleRow?.exit_time != null ? new Date(tripleRow.exit_time).getTime() : Date.now();
+      const tradeDurationS = Math.max(0, (tradeCloseMs - tradeOpenMs) / 1000);
+      const gateDecision = await evaluateBankWrite({
+        symbol,
+        decisionId: orderId ?? `witness-${Date.now()}`,
+        sovereigntyScore,
+        convergenceType,
+        tradePnlUsdt: realizedPnl,
+        tradeDurationS,
+      });
+      if (!gateDecision.approved) {
+        logger.info('[Monkey] learning_gate rejected witnessExit bank write', {
+          symbol, orderId, side, pnl: realizedPnl.toFixed(4),
+          reasons: gateDecision.reasons,
+        });
+        return;
+      }
 
       // Synthesize a bubble that looks like it was promoted from WM
       // with the outcome attached. Bypass working memory — the bubble

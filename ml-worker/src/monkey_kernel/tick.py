@@ -47,6 +47,8 @@ from dataclasses import asdict
 
 from .autonomic import AutonomicKernel, AutonomicTickInputs
 from .basin import normalized_entropy, velocity
+from .bus_events import KernelEvent
+from .coordinator import GaryCoordinator, GaryReading
 from .emotions import compute_emotions
 from .executive import (
     ExecBasinState,
@@ -65,6 +67,7 @@ from .executive import (
 )
 from .foresight import ForesightPredictor
 from .heart import HeartMonitor
+from .kernel_bus import KernelBus
 from .modes import MODE_PROFILES, MonkeyMode, detect_mode
 from .motivators import compute_motivators
 from .ocean import Ocean, ocean_interventions_live
@@ -92,6 +95,7 @@ from .candle_patterns import (
 )
 from .physical_emotions import compute_physical_emotions
 from .regime import RegimeReading, classify_regime
+from .self_observation import compute_per_decision_triple
 from .sensations import compute_sensations
 from .state import BasinState as KernelBasinState
 from .state import LaneType, NeurochemicalState
@@ -307,6 +311,8 @@ def run_tick(
     foresight: Optional[ForesightPredictor] = None,
     heart: Optional[HeartMonitor] = None,
     persistence: Optional["PersistentMemory"] = None,
+    bus: Optional["KernelBus"] = None,
+    coordinator: Optional["GaryCoordinator"] = None,
 ) -> tuple[TickDecision, SymbolState]:
     """Execute one decision tick. Returns (decision, new_state).
 
@@ -628,6 +634,24 @@ def run_tick(
             )
         except Exception as exc:  # noqa: BLE001 — never block on geometry edge cases
             routing_applied["applied"].append(f"FORESIGHT:skip({exc})")
+
+    # ── Gary coordinator synthesis ────────────────────────────────
+    # The constellation collapses Heart, Ocean, Foresight contributions
+    # plus the executive's consensus basin into one synthesized basin
+    # via ThoughtBus debate. When `coordinator` is None, the basin
+    # passes through unchanged (legacy path; observation-only).
+    gary_reading: Optional[GaryReading] = None
+    if coordinator is not None:
+        try:
+            gary_reading = coordinator.synthesize(
+                routed_basin,
+                inputs.symbol,
+                executive_confidence=float(emo.confidence),
+                executive_sovereignty=float(inputs.sovereignty),
+            )
+            routed_basin = gary_reading.synthesized_basin
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("[gary] synthesize failed: %s", exc)
 
     # ── Build basin state for executive ────────────────────────
     basin_state = ExecBasinState(
@@ -1049,6 +1073,77 @@ def run_tick(
         else:
             reason = "no qualifying signal"
         derivation["entry_threshold"] = entry_thr_d["derivation"]
+
+    # ── Loop 1 canonical triple ───────────────────────────────────
+    # Per UCP §43.2: every executive decision produces (repetition,
+    # sovereignty, confidence) in [0,1] attached to the decision id.
+    # Surfaced in derivation; published on the bus when wired; will
+    # be persisted to the trade row at open time by the executor.
+    decision_id = f"K-{inputs.symbol}-{int(now_ms)}"
+    decision_overrides: list[str] = []
+    if side_override:
+        decision_overrides.append("REVERSION_FLIP")
+    if upper_stack_live:
+        decision_overrides.append("UPPER_STACK")
+    if gate_routing_live and "FORESIGHT" in (gate.chosen or ""):
+        decision_overrides.append("PHI_GATE_FORESIGHT")
+    nearest_fr = float(drift_now)
+    triple = compute_per_decision_triple(
+        decision_id=decision_id,
+        current_basin=basin,
+        recent_basins=list(state.basin_history[-20:]),
+        bank_resonance_count=0,
+        bank_total_queried=max(1, inputs.bank_size),
+        nearest_fr_distance=nearest_fr,
+        emotion_confidence=float(emo.confidence),
+        emotion_anxiety=float(emo.anxiety),
+        decision_path_overrides=decision_overrides,
+        at_ms=now_ms,
+    )
+    derivation["loop1_triple"] = {
+        "decision_id": triple.decision_id,
+        "repetition_score": triple.repetition_score,
+        "sovereignty_score": triple.sovereignty_score,
+        "confidence_score": triple.confidence_score,
+        "decision_overrides": decision_overrides,
+    }
+    if gary_reading is not None:
+        derivation["gary"] = {
+            "foresight_weight": gary_reading.foresight_weight,
+            "foresight_confidence": gary_reading.foresight_confidence,
+            "heart_modulation": gary_reading.heart_modulation,
+            "convergence_type": gary_reading.convergence_type,
+            "rounds": gary_reading.rounds,
+            "contributing_kernels": gary_reading.contributing_kernels,
+            "debate_id": gary_reading.debate_id,
+        }
+
+    # Publish on bus when wired.
+    if bus is not None:
+        bus.publish(
+            KernelEvent.SELF_OBS_TRIPLE,
+            source="self_observation",
+            payload={
+                "decision_id": triple.decision_id,
+                "repetition_score": triple.repetition_score,
+                "sovereignty_score": triple.sovereignty_score,
+                "confidence_score": triple.confidence_score,
+            },
+            symbol=inputs.symbol,
+        )
+        bus.publish(
+            KernelEvent.EXECUTIVE_DECISION,
+            source="executive",
+            payload={
+                "decision_id": decision_id,
+                "action": action,
+                "side": side_candidate if action.startswith("enter_") else None,
+                "mode": mode,
+                "reason": reason,
+                "lane": pre_lane,
+            },
+            symbol=inputs.symbol,
+        )
 
     # ── Update history state ───────────────────────────────────
     state.basin_history.append(np.asarray(basin, dtype=np.float64).copy())

@@ -73,6 +73,7 @@ TTL_FORESIGHT_TRAJECTORY: int = 86400          # 24h
 TTL_PHI_HISTORY: int = 86400
 TTL_BASIN_HISTORY: int = 86400
 TTL_WORKING_MEMORY_BUBBLES: int = 15 * 60       # 15min default lifetime
+TTL_BUS_EVENTS: int = 7 * 86400                 # 7d forensic tail
 
 # List caps per directive
 MAX_INTERVENTION_HISTORY: int = 1000
@@ -81,6 +82,7 @@ MAX_PHI_HISTORY: int = 100
 MAX_BASIN_HISTORY: int = 100
 MAX_KAPPA_HISTORY: int = 60
 MAX_FORESIGHT_TRAJECTORY: int = 32
+MAX_BUS_EVENTS: int = 10000                     # ring buffer; ~6h at 30s ticks
 
 
 def _basin_to_jsonable(b: Any) -> Any:
@@ -429,6 +431,69 @@ class PersistentMemory:
             )
             for r in reversed(raw)
         ]
+
+    # ── Bus events (constellation forensic tail) ─────────────────
+
+    def _bus_events_key(self) -> str:
+        return f"monkey:bus:{self.instance_id}:events"
+
+    def append_bus_event(self, envelope: Any) -> bool:
+        """Append a KernelEventEnvelope to the per-instance bus tail.
+
+        Accepts a KernelEventEnvelope (dataclass) — serialized to JSON
+        with the same shape as bus subscribers receive. Ring buffer
+        capped at MAX_BUS_EVENTS, TTL 7d. Never raises; returns False
+        on Redis failure.
+        """
+        try:
+            event_dict = {
+                "type": getattr(envelope.type, "value", str(envelope.type)),
+                "source": envelope.source,
+                "symbol": envelope.symbol,
+                "instance_id": envelope.instance_id,
+                "payload": envelope.payload,
+                "at_ms": envelope.at_ms,
+            }
+        except AttributeError:
+            return False
+        return self._lpush_json(
+            self._bus_events_key(),
+            event_dict,
+            MAX_BUS_EVENTS,
+            TTL_BUS_EVENTS,
+        )
+
+    def query_recent_bus_events(
+        self,
+        types: Optional[Iterable[str]] = None,
+        symbol: Optional[str] = None,
+        since_ms: Optional[float] = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Forensic query over the bus events tail. Newest first.
+
+        Filters are applied client-side (Redis list scan) since the
+        list is bounded at 10k. Sufficient for an audit query; not a
+        production hot path.
+        """
+        raw = self._lrange_json(self._bus_events_key(), MAX_BUS_EVENTS)
+        type_set: Optional[set[str]] = (
+            {str(t) for t in types} if types else None
+        )
+        out: list[dict[str, Any]] = []
+        for r in raw:
+            if not isinstance(r, dict):
+                continue
+            if type_set is not None and r.get("type") not in type_set:
+                continue
+            if symbol is not None and r.get("symbol") != symbol:
+                continue
+            if since_ms is not None and float(r.get("at_ms", 0.0)) < since_ms:
+                continue
+            out.append(r)
+            if len(out) >= limit:
+                break
+        return out
 
     # ── Test/diagnostic helpers ─────────────────────────────────
 
