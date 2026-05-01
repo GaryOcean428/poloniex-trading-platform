@@ -72,6 +72,15 @@ _DEFAULT_LEVERAGE_KAPPA_SIGMA = 20.0
 _DEFAULT_SCALP_TP_MIN_FLOOR = 0.003
 _DEFAULT_EXIT_ENTROPY_COLLAPSE = 0.4  # (referenced by should_auto_flatten semantic)
 _DEFAULT_DCA_MAX_ADDS = 1
+# v0.8.7 — notional ceiling fallback. The Kelly cap is the primary
+# brake on aggregate exposure but is non-binding at cold start (no
+# closed trades) and decays to no-op when stats are uninformative.
+# Live tape 2026-05-01 evidence: $77 → $386 escalating notionals on
+# a $97 account (4× balance). This caps a single position's notional
+# at NOTIONAL_CEILING_RATIO × account balance regardless of geometric
+# leverage * margin. Default 4.0 keeps the geometric formula's
+# 10-20× leverage intent while bounding worst-case escalation.
+_DEFAULT_NOTIONAL_CEILING_RATIO = 4.0
 
 # ─── Proposal #10 — lane-isolated position lifecycle defaults ────
 #
@@ -97,8 +106,15 @@ _DEFAULT_DCA_MAX_ADDS = 1
 #   trend: 4.0% raw → 40%  ROI
 # These rows are also updated in the parameter registry via the
 # scripts/recalibrate_lane_sl_tp_to_roi.sql migration.
-_DEFAULT_LANE_SCALP_SL_PCT = 0.05
-_DEFAULT_LANE_SCALP_TP_PCT = 0.05
+# v0.8.7 (2026-05-01) — scalp TP/SL set to symmetric 1:1 R:R per user
+# directive (option a: 3% TP / 3% SL). v0.8.6 had bumped tp_pct from
+# the PR #627 value (0.03) to 0.05; the user explicitly chose the
+# original 3% floor, with SL also dropped from 0.05 → 0.03 to keep the
+# pair symmetric. The SQL migration script
+# scripts/recalibrate_lane_sl_tp_to_roi.sql writes the same values to
+# the parameter registry.
+_DEFAULT_LANE_SCALP_SL_PCT = 0.03
+_DEFAULT_LANE_SCALP_TP_PCT = 0.03
 _DEFAULT_LANE_SCALP_BUDGET_FRAC = 0.50
 
 _DEFAULT_LANE_SWING_SL_PCT = 0.15
@@ -403,6 +419,28 @@ def current_position_size(
         notional = margin * max(1.0, leverage)
         capped_by_lane = True
 
+    # v0.8.7 — notional ceiling fallback. The Kelly cap is intended to
+    # bound aggregate exposure but is non-binding at cold start (no
+    # closed trades yet) and decays to no-op when stats are
+    # uninformative. Live tape 2026-05-01 showed $77 → $386 escalating
+    # notionals on a $97 account (4× balance) with every position
+    # closing via regime_change at 22% win rate. Hard ceiling:
+    # notional = margin × leverage <= NOTIONAL_CEILING_RATIO × equity.
+    # Default ratio 4.0 — preserves enough headroom for the kernel's
+    # geometric leverage formula at typical 10-20x while preventing
+    # unbounded escalation on small accounts.
+    notional_ceiling_ratio = float(_registry.get(
+        "executive.notional_ceiling_ratio",
+        default=_DEFAULT_NOTIONAL_CEILING_RATIO,
+    ))
+    notional_ceiling = notional_ceiling_ratio * available_equity_usdt
+    capped_by_notional = False
+    if notional > notional_ceiling and leverage > 0 and available_equity_usdt > 0:
+        # Reduce margin so margin × leverage == notional_ceiling.
+        margin = notional_ceiling / max(1.0, leverage)
+        notional = margin * max(1.0, leverage)
+        capped_by_notional = True
+
     sized = margin if notional >= min_notional_usdt else 0.0
 
     return {
@@ -410,12 +448,13 @@ def current_position_size(
         "reason": (
             f"size[{lane}] = {'lifted-to-min ' if lifted else ''}"
             f"{'lane-capped ' if capped_by_lane else ''}"
+            f"{'notional-capped ' if capped_by_notional else ''}"
             f"floor({exploration_floor:.3f}) or PhixSxM({base_frac:.3f}) "
             f"x reward({reward_mult:.2f}) x stab({stability_mult:.2f}) "
             f"x equity({available_equity_usdt:.2f}) @ {leverage:.0f}x "
             f"-> margin {margin:.2f} (lane-cap {lane_margin_cap:.2f}), "
-            f"notional {notional:.2f} vs min {min_notional_usdt:.2f} "
-            f"= {sized:.2f}"
+            f"notional {notional:.2f} vs ceiling {notional_ceiling:.2f} "
+            f"vs min {min_notional_usdt:.2f} = {sized:.2f}"
         ),
         "derivation": {
             "phi": s.phi,
@@ -435,6 +474,9 @@ def current_position_size(
             "lane_budget_frac": lane_frac,
             "lane_margin_cap": lane_margin_cap,
             "capped_by_lane": 1 if capped_by_lane else 0,
+            "notional_ceiling_ratio": notional_ceiling_ratio,
+            "notional_ceiling": notional_ceiling,
+            "capped_by_notional": 1 if capped_by_notional else 0,
         },
     }
 

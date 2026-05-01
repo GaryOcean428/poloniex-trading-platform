@@ -7,7 +7,8 @@ Pins the live failure mode and the corrected behaviour:
     (-0.30%) against the lane SL (1.5% raw under old semantics).
   * Fix: ``should_scalp_exit`` now computes ``roi_frac = pnl / notional
     × leverage`` and compares against ROI-scale lane defaults
-    (0.05/0.15/0.40 for scalp/swing/trend).
+    (0.03/0.15/0.40 for scalp/swing/trend after v0.8.7 user-directive
+    revision; scalp is now symmetric 1:1 R:R).
 
 Test matrix:
 

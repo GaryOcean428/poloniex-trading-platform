@@ -145,10 +145,25 @@ export const LANE_PARAMETER_DEFAULTS: Record<
   'scalp' | 'swing' | 'trend',
   { slPct: number; tpPct: number; budgetFrac: number }
 > = {
-  scalp: { slPct: 0.05, tpPct: 0.05, budgetFrac: 0.50 },
+  // v0.8.7 — scalp 1:1 R:R per user directive (option a, 3% TP / 3% SL).
+  scalp: { slPct: 0.03, tpPct: 0.03, budgetFrac: 0.50 },
   swing: { slPct: 0.15, tpPct: 0.15, budgetFrac: 0.50 },
   trend: { slPct: 0.40, tpPct: 0.40, budgetFrac: 0.0 },
 };
+
+/**
+ * v0.8.7 notional-ceiling fallback. The Kelly cap is the primary brake
+ * on aggregate exposure but is non-binding at cold start (no closed
+ * trades) and decays to no-op when stats are uninformative. Live tape
+ * 2026-05-01: $77 → $386 escalating notionals on a $97 account (4×
+ * balance) with every position closing via single-tick regime_change
+ * at 22% win rate. Hard ceiling: notional = margin × leverage <=
+ * NOTIONAL_CEILING_RATIO × equity. Default 4.0 keeps headroom for the
+ * 10-20× geometric leverage intent while bounding worst-case
+ * escalation. Mirrors ml-worker's _DEFAULT_NOTIONAL_CEILING_RATIO.
+ */
+export const NOTIONAL_CEILING_RATIO =
+  Number(process.env.MONKEY_NOTIONAL_CEILING_RATIO) || 4.0;
 
 export function laneParam(
   lane: 'scalp' | 'swing' | 'trend',
@@ -257,11 +272,21 @@ export function currentPositionSize(
     cappedByLane = true;
   }
 
+  // v0.8.7 — notional ceiling fallback. See NOTIONAL_CEILING_RATIO docstring.
+  const notionalCeilingRatio = NOTIONAL_CEILING_RATIO;
+  const notionalCeiling = notionalCeilingRatio * availableEquityUsdt;
+  let cappedByNotional = false;
+  if (notional > notionalCeiling && leverage > 0 && availableEquityUsdt > 0) {
+    margin = notionalCeiling / Math.max(1, leverage);
+    notional = margin * Math.max(1, leverage);
+    cappedByNotional = true;
+  }
+
   const sized = notional >= minNotionalUsdt ? margin : 0;
 
   return {
     value: sized,
-    reason: `size[${lane}] = ${liftedToMin ? 'lifted-to-min ' : ''}${cappedByLane ? 'lane-capped ' : ''}floor(${explorationFloor.toFixed(3)}) or Φ×S×M(${(s.phi * s.sovereignty * maturity).toFixed(3)}) × reward(${rewardMult.toFixed(2)}) × stab(${stabilityMult.toFixed(2)}) × equity(${availableEquityUsdt.toFixed(2)}) @ ${leverage}x → margin ${margin.toFixed(2)} (lane-cap ${laneMarginCap.toFixed(2)}), notional ${notional.toFixed(2)} vs min ${minNotionalUsdt.toFixed(2)} = ${sized.toFixed(2)}`,
+    reason: `size[${lane}] = ${liftedToMin ? 'lifted-to-min ' : ''}${cappedByLane ? 'lane-capped ' : ''}${cappedByNotional ? 'notional-capped ' : ''}floor(${explorationFloor.toFixed(3)}) or Φ×S×M(${(s.phi * s.sovereignty * maturity).toFixed(3)}) × reward(${rewardMult.toFixed(2)}) × stab(${stabilityMult.toFixed(2)}) × equity(${availableEquityUsdt.toFixed(2)}) @ ${leverage}x → margin ${margin.toFixed(2)} (lane-cap ${laneMarginCap.toFixed(2)}), notional ${notional.toFixed(2)} vs ceiling ${notionalCeiling.toFixed(2)} vs min ${minNotionalUsdt.toFixed(2)} = ${sized.toFixed(2)}`,
     derivation: {
       phi: s.phi, sovereignty: s.sovereignty, maturity, bankSize,
       dopamine: nc.dopamine, serotonin: nc.serotonin, gaba: nc.gaba,
@@ -269,6 +294,8 @@ export function currentPositionSize(
       minNotional: minNotionalUsdt, sized, liftedToMin: liftedToMin ? 1 : 0,
       laneBudgetFrac: laneFrac,
       laneMarginCap, cappedByLane: cappedByLane ? 1 : 0,
+      notionalCeilingRatio, notionalCeiling,
+      cappedByNotional: cappedByNotional ? 1 : 0,
     },
   };
 }

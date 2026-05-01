@@ -469,14 +469,25 @@ class TestFlatAccountLaneSizing:
         $22.49, the v0.6.6 lift-to-min must reach min notional. Pre-fix:
         equity was halved to $2.50 → required_frac=0.643 > 0.5 → no
         lift → size=0. Post-fix: full $5 → required_frac=0.337 < 0.5 →
-        lift fires."""
+        lift fires.
+
+        v0.8.7 follow-up: the new notional-ceiling fallback (4× equity)
+        binds at $20 here, BELOW the $22.49 exchange min. The kernel
+        correctly refuses to enter — preserving the lift-to-min path's
+        intent (no entries below exchange min) while bounding worst-case
+        escalation. The previous behaviour leveraged 4.5× balance just
+        to clear exchange min on a $5 pool; that's not safe sizing."""
         bs = _basin_state(phi=0.55)
         result = current_position_size(
             bs, available_equity_usdt=5.0, min_notional_usdt=22.49,
             leverage=14, bank_size=0, mode=MonkeyMode.INVESTIGATION,
             lane="swing",
         )
-        assert result["value"] > 0
+        # Notional ceiling = 4 × $5 = $20 < $22.49 min → size collapses.
+        assert result["value"] == 0
+        assert result["derivation"]["capped_by_notional"] == 1
+        # The lift-to-min still tried to fire — that path remains intact;
+        # the new constraint is the ceiling on top.
         assert result["derivation"]["lifted_to_min"] == 1
 
     def test_empty_bank_zero_sovereignty_still_sizes_above_min(self) -> None:
@@ -508,17 +519,29 @@ class TestFlatAccountLaneSizing:
     def test_pre_fix_haircut_account_now_sizes_above_zero(self) -> None:
         """Direct reproduction of the pre-fix size=0 case: $4.50 equity
         (mimicking the per-symbol cap × size_fraction path on small
-        accounts), ETH min $22.49, lev 14. Pre-fix: $4.50 × 0.5 lane
-        = $2.25 → required_frac = (22.49 × 1.05) / (14 × 2.25) = 0.749 >
-        0.5 max_fraction → no lift → size=0. Post-fix: full $4.50
-        → required_frac = 0.374 < 0.5 → lift fires → size > 0."""
+        accounts), ETH min $22.49, lev 14. Pre-fix (PR #614): $4.50 ×
+        0.5 lane = $2.25 → required_frac = 0.749 > 0.5 max_fraction →
+        no lift → size=0. PR #614 fix: full $4.50 → required_frac = 0.374
+        < 0.5 → lift fires → size > 0.
+
+        v0.8.7 follow-up: with notional ceiling = 4 × $4.50 = $18 < $22.49
+        ETH min, the ceiling now blocks entry on this scenario. The
+        kernel correctly refuses to size above 4× balance just to clear
+        exchange min on a haircut account; the lift-to-min path tries to
+        fire but the ceiling clamps it back. Live tape evidence ($97
+        account, $386 escalating notionals) confirmed unbounded
+        lift-to-min was the wrong default."""
         bs = _basin_state(phi=0.55)
         result = current_position_size(
             bs, available_equity_usdt=4.50, min_notional_usdt=22.49,
             leverage=14, bank_size=0, mode=MonkeyMode.INVESTIGATION,
             lane="swing",
         )
-        assert result["value"] > 0
+        # Notional ceiling = 4 × $4.50 = $18 < $22.49 min → size=0.
+        assert result["value"] == 0
+        assert result["derivation"]["capped_by_notional"] == 1
+        # The lift-to-min path still attempted to lift; the ceiling is
+        # the new binding constraint on top.
         assert result["derivation"]["lifted_to_min"] == 1
 
     def test_lane_margin_cap_in_derivation(self) -> None:

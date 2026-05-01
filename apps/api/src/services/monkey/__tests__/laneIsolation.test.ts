@@ -290,14 +290,21 @@ describe('Flat-account sizing regression (fix/lane-budget-size-zero-regression)'
     expect(notional).toBeGreaterThanOrEqual(75.78);
   });
 
-  it('small account ($5 equity) — lift-to-min reaches min notional post-fix', () => {
-    // Pre-fix: equity halved to $2.50 → required_frac=0.643 → no lift
-    // → size=0. Post-fix: full $5 → required_frac=0.337 → lift fires.
+  it('small account ($5 equity) — notional ceiling now blocks below-ceiling-min entry', () => {
+    // Pre-fix (PR #614): equity halved to $2.50 → no lift → size=0.
+    // PR #614 fix: full $5 → required_frac=0.337 → lift fires → size > 0.
+    // v0.8.7: notional ceiling = 4 × $5 = $20 < $22.49 min → size=0
+    // again, but for the right reason. The kernel correctly refuses to
+    // size above 4× balance just to clear exchange min on a haircut
+    // account — live tape ($97 → $386 escalation) confirmed unbounded
+    // lift-to-min was unsafe.
     const result = currentPositionSize(
       basinState(0.55, 0.5), 5, 22.49, 14, 0, MonkeyMode.INVESTIGATION, 'swing',
     );
-    expect(result.value).toBeGreaterThan(0);
-    expect(result.derivation.liftedToMin).toBe(1);
+    expect(result.value).toBe(0);
+    expect((result.derivation as Record<string, unknown>).cappedByNotional).toBe(1);
+    // Lift-to-min still tried; ceiling clamps it back.
+    expect((result.derivation as Record<string, unknown>).liftedToMin).toBe(1);
   });
 
   it('cold-start (bank=0, sovereignty=0, low phi) still sizes via exploration floor', () => {
