@@ -1352,6 +1352,10 @@ def _decide_with_position(
         s=basin_state,
         mode=mode_enum,
         lane=position_lane,
+        # v0.8.6 — SL gate now reads ROI on margin, not raw price %.
+        # leverage_val is the live lev that justified entry; threading
+        # it lets the gate scale raw move into ROI correctly.
+        leverage=float(leverage_val),
     )
     derivation["scalp"] = {
         **scalp["derivation"],

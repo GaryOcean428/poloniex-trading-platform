@@ -1431,6 +1431,9 @@ async def monkey_executive_decide(request: Request):
             notional_usdt=position_notional,
             s=state,
             mode=mode,
+            # v0.8.6 — SL gate reads ROI on margin; thread the live lev
+            # decision so raw move scales correctly into ROI.
+            leverage=float(leverage["value"]),
         )
         loop2 = should_exit(
             perception=state.basin,

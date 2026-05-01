@@ -961,7 +961,22 @@ export class MonkeyKernel extends EventEmitter {
         // rejustification block so a position bleeding hard against
         // the kernel always closes on price before the kernel re-reads
         // its own state. TP comes BELOW rejustification + harvest.
-        const scalp = shouldScalpExit(unrealizedPnl, positionNotional, basinState, mode, heldLane);
+        // v0.8.6 — SL gate now reads ROI on margin, not raw price %.
+        // Use the position's recorded leverage (Number(openRow.leverage))
+        // so the gate scales raw movement into ROI correctly. Defaults to
+        // the just-derived leverage.value when openRow lacks the column
+        // (cold/legacy rows).
+        const positionLeverage = openRow && Number.isFinite(Number(openRow.leverage)) && Number(openRow.leverage) > 0
+          ? Number(openRow.leverage)
+          : leverage.value;
+        const scalp = shouldScalpExit(
+          unrealizedPnl,
+          positionNotional,
+          basinState,
+          mode,
+          heldLane,
+          positionLeverage,
+        );
         derivation.scalp = { ...scalp.derivation, unrealizedPnl, markPrice: lastPrice, tradeId };
         const SL_DEFER_TICKS = 2;
         const isStopLoss = Number((scalp as any).derivation?.exitTypeBit) === -1;
