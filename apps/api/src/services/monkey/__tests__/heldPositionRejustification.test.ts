@@ -20,15 +20,13 @@
  * itself live further down.
  */
 import { describe, it, expect } from 'vitest';
-import { type Basin } from '../basin.js';
+import { BASIN_DIM, uniformBasin, type Basin } from '../basin.js';
 import { MonkeyMode } from '../modes.js';
-import {
 import {
   PHI_GOLDEN_FLOOR_RATIO,
   PI_STRUCT_BOUNDARY_R_SQUARED,
   PI_STRUCT_GRAVITATING_FRACTION,
 } from '../topology_constants.js';
-import { uniformBasin } from '../basin.js';
 import {
   evaluateRejustification,
   type RejustificationEmotions,
@@ -74,7 +72,6 @@ const SATISFIED_HYSTERESIS = {
   regimeStabilityTicksRequired: 3,
   basinNow: UNIFORM,
   basinAtOpen: FAR_BASIN,
-};
 };
 
 // ─── Positive — each check fires ────────────────────────────────────
@@ -334,7 +331,9 @@ describe('held-position rejustification — per-lane isolation', () => {
       regimeNow: MonkeyMode.DRIFT,
       phiNow: 0.25,
       emotions: STRONG_EMO,
-      ...SATISFIED_HYSTERESIS,;
+      ...SATISFIED_HYSTERESIS,
+    });
+    expect(laneA.fired).toBe('regime_change');
     expect(laneA.reason).toContain('investigation');
 
     // Lane B: opened in INTEGRATION at Φ=0.40. Now mode=INTEGRATION → no fire.
@@ -365,6 +364,8 @@ describe('held-position rejustification — check ordering', () => {
       phiNow: 0.05,  // also below floor
       emotions: WEAK_EMO,  // also below conviction
       ...SATISFIED_HYSTERESIS,
+    });
+    expect(out.fired).toBe('regime_change');
   });
 
   it('phi fires before conviction when regime is unchanged', () => {
