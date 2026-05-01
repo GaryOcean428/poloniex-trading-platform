@@ -92,6 +92,13 @@ class ListenerConfig:
 
     Defaults are chosen for live trading: never give up, but cap the
     backoff so a recovered Redis re-attaches within a minute.
+
+    ``heartbeat_interval_s`` controls the get_message poll cycle —
+    every N seconds with no incoming message, the listener issues a
+    ``client.ping()`` to keep the connection actively alive at the
+    application layer. This eliminates the previous 30s reconnect
+    cadence on idle channels (which was caused by socket_read_timeout
+    elapsing on the blocking ``pubsub.listen()`` iterator).
     """
     name: str
     channel: str
@@ -100,6 +107,7 @@ class ListenerConfig:
     backoff_factor: float = 2.0
     socket_connect_timeout: float = 5.0
     socket_read_timeout: float = 30.0
+    heartbeat_interval_s: float = 10.0
     health_key: Optional[str] = None
     health_ttl: int = 90
     # Heartbeat ping cadence (seconds). When >0 the listener sends a

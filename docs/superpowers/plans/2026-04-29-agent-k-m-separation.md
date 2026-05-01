@@ -47,7 +47,7 @@
 - `apps/api/src/services/monkey/loop.ts` — strip turning signal + override; restructure for K + M independent paths
 - `apps/api/src/services/monkey/perception.ts` — TS parity for neutral-default ml dims
 - `apps/api/src/services/monkey/kernel_client.ts` — drop ml fields from request schema
-- 8 Python test files (see Task 11)
+- 8 Python test files (see Task 5)
 - `apps/api/src/services/monkey/__tests__/turning_signal.test.ts` — delete
 
 ### Files to delete

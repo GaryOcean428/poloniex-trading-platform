@@ -47,6 +47,8 @@ from dataclasses import asdict
 
 from .autonomic import AutonomicKernel, AutonomicTickInputs
 from .basin import normalized_entropy, velocity
+from .bus_events import KernelEvent
+from .coordinator import GaryCoordinator, GaryReading
 from .emotions import compute_emotions, compute_funding_drag
 from .executive import (
     ExecBasinState,
@@ -93,6 +95,7 @@ from .candle_patterns import (
 )
 from .physical_emotions import compute_physical_emotions
 from .regime import ChopSuppressionResult, RegimeReading, chop_suppress_entry, classify_regime
+from .self_observation import compute_per_decision_triple
 from .sensations import compute_sensations
 from .state import BasinState as KernelBasinState
 from .state import LaneType, NeurochemicalState
@@ -273,19 +276,20 @@ class SymbolState:
     # multi-lane positions keep independent rejustification anchors.
     regime_at_open_by_lane: dict[str, str] = field(default_factory=dict)
     phi_at_open_by_lane: dict[str, float] = field(default_factory=dict)
-    # v0.8.7 regime-hysteresis state. The regime-change exit (PR #619 +
-    # confidence gate from PR #629) was firing on single-tick mode
-    # flickers — live tape 2026-05-01 showed 22% win rate with every
-    # close via regime_change. The triple-AND gate now requires a
-    # sustained streak (>= N ticks where regimeNow != regimeAtOpen) AND
-    # FR distance from basin_at_open > 1/π in addition to the existing
-    # label divergence + confidence checks. Per-lane streak so a swing
-    # position's flicker doesn't cross-contaminate a scalp position's
-    # gate. Basin_at_open is the basin snapshot captured at entry time;
-    # FR-distance from that anchor is the geometric "has the kernel's
-    # perception actually moved?" signal.
-    regime_change_streak_by_lane: dict[str, int] = field(default_factory=dict)
+    # Basin coordinate snapshot at open — used by the regime-change
+    # hysteresis check. Single-tick mode flicker ("investigation→drift"
+    # on noise) used to fire the regime exit immediately; with this
+    # snapshot, the exit also requires the basin to have moved
+    # by FR distance > 1/π (gravitating-fraction threshold) from the
+    # entry coordinate. Pure geometric guard — small mode wobbles
+    # don't overcome it.
     basin_at_open_by_lane: dict[str, np.ndarray] = field(default_factory=dict)
+    # Consecutive ticks where the held position's regime read differs
+    # from the regime-at-open. Drives the hysteresis: regime exit only
+    # fires when streak ≥ N (registry-controlled, default 3). Resets
+    # to 0 the first tick the regime returns to regime_at_open or the
+    # position closes/reopens.
+    regime_change_streak_by_lane: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -1040,6 +1044,10 @@ def run_tick(
             # checks (regime change / Φ collapse / conviction failure).
             state.regime_at_open_by_lane[pre_lane] = mode
             state.phi_at_open_by_lane[pre_lane] = phi
+            state.basin_at_open_by_lane[pre_lane] = (
+                np.asarray(basin, dtype=np.float64).copy()
+            )
+            state.regime_change_streak_by_lane[pre_lane] = 0
     elif held_side:
         # Proposal #10: resolve the lane this single-position decision
         # belongs to. With ``lane_positions`` populated the lane is read
@@ -1089,7 +1097,9 @@ def run_tick(
         elif action in ("reverse_long", "reverse_short"):
             state.regime_at_open_by_lane[position_lane] = mode
             state.phi_at_open_by_lane[position_lane] = phi
-            state.basin_at_open_by_lane[position_lane] = basin.copy()
+            state.basin_at_open_by_lane[position_lane] = (
+                np.asarray(basin, dtype=np.float64).copy()
+            )
             state.regime_change_streak_by_lane[position_lane] = 0
     elif (
         MODE_PROFILES[mode_enum].can_enter
@@ -1140,6 +1150,10 @@ def run_tick(
             # checks (regime change / Φ collapse / conviction failure).
             state.regime_at_open_by_lane[pre_lane] = mode
             state.phi_at_open_by_lane[pre_lane] = phi
+            state.basin_at_open_by_lane[pre_lane] = (
+                np.asarray(basin, dtype=np.float64).copy()
+            )
+            state.regime_change_streak_by_lane[pre_lane] = 0
     else:
         action = "hold"
         if not MODE_PROFILES[mode_enum].can_enter:
@@ -1462,11 +1476,11 @@ def _decide_with_position(
         return "scalp_exit", scalp["reason"], False, False
 
     # ── Held-position re-justification (this PR) ──────────────────
-    # Three internal exit checks. Each fires immediately when the
-    # kernel's current state contradicts the state that justified
-    # entry. No streak counting, no hysteresis, no time-based stops.
-    # All three are geometric: regime classifier output, Φ integration
-    # measure, Layer 2B emotion stack.
+    # Three internal exit checks. The regime check carries hysteresis
+    # (added 2026-05-01 per live churn diagnostics) — single-tick mode
+    # flicker would otherwise close every held position on noise. Φ
+    # collapse and conviction-fail still fire immediately; both are
+    # already conservative gates. All three are geometric.
     rejust: dict[str, Any] = {"checked": False}
     has_regime_anchor = position_lane in state.regime_at_open_by_lane
     has_phi_anchor = position_lane in state.phi_at_open_by_lane
