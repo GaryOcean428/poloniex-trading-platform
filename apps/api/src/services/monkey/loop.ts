@@ -275,6 +275,20 @@ export class MonkeyKernel extends EventEmitter {
   private selfObs: SelfObservation | null = null;
   private selfObsLastUpdate = 0;
   private static readonly SELF_OBS_REFRESH_MS = 5 * 60_000;  // 5 min
+  /**
+   * orderId → submitted_at_ms cache for witnessExit dedup. Prevents
+   * duplicate learning_gate calls from the close path racing the
+   * reconciler (close fires witnessExit; reconciler runs ~30ms later,
+   * sees DB still showing open, marks closed, second witnessExit fires).
+   * Currently benign because both calls usually rejected by gate, but
+   * if the gate ever approved on race, the bank would write the same
+   * exchange twice. Dedup at this layer also halves the gate-call
+   * volume for noisy reconcile cycles.
+   *
+   * Window: 60 seconds. Entries pruned lazily on next call.
+   */
+  private witnessExitDedup: Map<string, number> = new Map();
+  private static readonly WITNESS_DEDUP_WINDOW_MS = 60_000;
   /** Basin-sync instance — per-kernel, so sub-kernels appear as peers. */
   private readonly basinSync: BasinSync;
   /** Kernel bus — pub/sub for inter-kernel comms (v0.6a). */
@@ -2702,6 +2716,29 @@ export class MonkeyKernel extends EventEmitter {
     orderId: string | null,
     side: 'long' | 'short',
   ): Promise<void> {
+    // Dedup guard — close path races reconciler. Skip if we've already
+    // run witnessExit for this orderId within the window. Same orderId-
+    // dedup pattern as resonance_bank.writeBubble (#575); this layer
+    // catches the race before the gate / bank are touched at all.
+    if (orderId) {
+      const now = Date.now();
+      const submittedAt = this.witnessExitDedup.get(orderId);
+      if (submittedAt != null && now - submittedAt < MonkeyKernel.WITNESS_DEDUP_WINDOW_MS) {
+        logger.info('[Monkey] witnessExit deduplicated', {
+          orderId,
+          age_ms: now - submittedAt,
+        });
+        return;
+      }
+      this.witnessExitDedup.set(orderId, now);
+      // Lazy prune of expired entries (cap unbounded growth).
+      if (this.witnessExitDedup.size > 256) {
+        const cutoff = now - MonkeyKernel.WITNESS_DEDUP_WINDOW_MS;
+        for (const [oid, ts] of this.witnessExitDedup) {
+          if (ts < cutoff) this.witnessExitDedup.delete(oid);
+        }
+      }
+    }
     try {
       const row = await pool.query(
         `SELECT basin, phi

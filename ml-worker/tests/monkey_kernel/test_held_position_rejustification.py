@@ -86,13 +86,33 @@ def _state_with_anchor(
     lane: str = "swing",
     regime_at_open: str = MonkeyMode.INVESTIGATION.value,
     phi_at_open: float = 0.27,
+    seed_regime_streak: int = 3,
+    far_basin_anchor: bool = True,
 ) -> SymbolState:
+    """Build a state with re-justification anchors populated.
+
+    Hysteresis added 2026-05-01: the regime-change exit now requires
+    streak ≥ 3 ticks AND basin moved > 1/π FR. ``seed_regime_streak``
+    pre-populates the streak counter so tests can exercise the
+    "regime exit fires" path without simulating 3 prior ticks.
+    ``far_basin_anchor`` sets basin_at_open to a peak that is far
+    (in FR distance) from the uniform basin used by the test so the
+    1/π condition clears.
+    """
     state = SymbolState(
         symbol="BTC_USDT_PERP",
         identity_basin=uniform_basin(64),
     )
     state.regime_at_open_by_lane[lane] = regime_at_open
     state.phi_at_open_by_lane[lane] = phi_at_open
+    state.regime_change_streak_by_lane[lane] = seed_regime_streak
+    if far_basin_anchor:
+        # Concentrated basin at peak 0 — uniform basin is FR distance
+        # ~ arccos(√(1/64)) ≈ 1.45 rad away, well above 1/π ≈ 0.318.
+        far = np.full(64, 0.001 / 63, dtype=np.float64)
+        far[0] = 0.999
+        far = far / far.sum()
+        state.basin_at_open_by_lane[lane] = far
     return state
 
 
@@ -334,9 +354,15 @@ class TestPerLaneIsolation:
             symbol="BTC_USDT_PERP",
             identity_basin=uniform_basin(64),
         )
-        # Two lanes, two different anchor sets.
+        # Two lanes, two different anchor sets. Seed scalp's hysteresis
+        # state (streak ≥ 3 + far basin anchor) so the regime check
+        # actually fires on a single test call.
         state.regime_at_open_by_lane["scalp"] = MonkeyMode.INVESTIGATION.value
         state.phi_at_open_by_lane["scalp"] = 0.27
+        state.regime_change_streak_by_lane["scalp"] = 3
+        far = np.full(64, 0.001 / 63, dtype=np.float64)
+        far[0] = 0.999
+        state.basin_at_open_by_lane["scalp"] = far / far.sum()
         state.regime_at_open_by_lane["swing"] = MonkeyMode.INTEGRATION.value
         state.phi_at_open_by_lane["swing"] = 0.40
 

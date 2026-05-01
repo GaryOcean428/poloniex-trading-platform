@@ -70,6 +70,13 @@ class ListenerConfig:
 
     Defaults are chosen for live trading: never give up, but cap the
     backoff so a recovered Redis re-attaches within a minute.
+
+    ``heartbeat_interval_s`` controls the get_message poll cycle —
+    every N seconds with no incoming message, the listener issues a
+    ``client.ping()`` to keep the connection actively alive at the
+    application layer. This eliminates the previous 30s reconnect
+    cadence on idle channels (which was caused by socket_read_timeout
+    elapsing on the blocking ``pubsub.listen()`` iterator).
     """
     name: str
     channel: str
@@ -78,6 +85,7 @@ class ListenerConfig:
     backoff_factor: float = 2.0
     socket_connect_timeout: float = 5.0
     socket_read_timeout: float = 30.0
+    heartbeat_interval_s: float = 10.0
     health_key: Optional[str] = None
     health_ttl: int = 90
 
@@ -208,10 +216,36 @@ def run_resilient_listener(
             # Connected — reset backoff for the next disconnect.
             backoff = config.initial_backoff
 
-            for message in pubsub.listen():
-                if stop_event is not None and stop_event.is_set():
-                    break
-                if message is None or message.get("type") != "message":
+            # Poll-and-ping loop. ``get_message(timeout=heartbeat_s)``
+            # blocks for at most heartbeat_s waiting for a message;
+            # returns None on timeout. On timeout we issue a ping to
+            # keep the TCP connection actively alive at the
+            # application layer — Railway's Redis idle timeout was
+            # closing connections on the prior blocking listen() path
+            # every 30s. ping failure raises and falls into the
+            # connection-error branch below for reconnect.
+            heartbeat_s = float(config.heartbeat_interval_s)
+            while stop_event is None or not stop_event.is_set():
+                message = pubsub.get_message(
+                    ignore_subscribe_messages=True,
+                    timeout=heartbeat_s,
+                )
+                if message is None:
+                    # Idle tick — heartbeat ping. Failure here raises
+                    # and reconnects via the outer except.
+                    client.ping()
+                    idle_timeout_streak += 1
+                    if idle_timeout_streak == idle_escalate_after:
+                        logger.info(
+                            "redis-listener-idle listener=%s channel=%s "
+                            "consecutive_heartbeats=%d (channel quiet — "
+                            "verify producer is alive)",
+                            config.name,
+                            config.channel,
+                            idle_timeout_streak,
+                        )
+                    continue
+                if message.get("type") != "message":
                     continue
                 # Got a real message — reset the idle streak.
                 idle_timeout_streak = 0

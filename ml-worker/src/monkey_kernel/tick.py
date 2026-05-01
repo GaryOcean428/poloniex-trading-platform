@@ -253,6 +253,20 @@ class SymbolState:
     # multi-lane positions keep independent rejustification anchors.
     regime_at_open_by_lane: dict[str, str] = field(default_factory=dict)
     phi_at_open_by_lane: dict[str, float] = field(default_factory=dict)
+    # Basin coordinate snapshot at open — used by the regime-change
+    # hysteresis check. Single-tick mode flicker ("investigation→drift"
+    # on noise) used to fire the regime exit immediately; with this
+    # snapshot, the exit also requires the basin to have moved
+    # by FR distance > 1/π (gravitating-fraction threshold) from the
+    # entry coordinate. Pure geometric guard — small mode wobbles
+    # don't overcome it.
+    basin_at_open_by_lane: dict[str, np.ndarray] = field(default_factory=dict)
+    # Consecutive ticks where the held position's regime read differs
+    # from the regime-at-open. Drives the hysteresis: regime exit only
+    # fires when streak ≥ N (registry-controlled, default 3). Resets
+    # to 0 the first tick the regime returns to regime_at_open or the
+    # position closes/reopens.
+    regime_change_streak_by_lane: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -916,8 +930,12 @@ def run_tick(
         for held_lane in list(held_lanes.keys()):
             state.regime_at_open_by_lane.pop(held_lane, None)
             state.phi_at_open_by_lane.pop(held_lane, None)
+            state.basin_at_open_by_lane.pop(held_lane, None)
+            state.regime_change_streak_by_lane.pop(held_lane, None)
         state.regime_at_open_by_lane.pop(pre_lane, None)
         state.phi_at_open_by_lane.pop(pre_lane, None)
+        state.basin_at_open_by_lane.pop(pre_lane, None)
+        state.regime_change_streak_by_lane.pop(pre_lane, None)
     elif flag_live and ocean_state.intervention == "DREAM":
         action = "hold"
         reason = (
@@ -935,6 +953,8 @@ def run_tick(
         for held_lane in list(held_lanes.keys()):
             state.regime_at_open_by_lane.pop(held_lane, None)
             state.phi_at_open_by_lane.pop(held_lane, None)
+            state.basin_at_open_by_lane.pop(held_lane, None)
+            state.regime_change_streak_by_lane.pop(held_lane, None)
     elif (
         # Proposal #10 — lane-aware entry path takes precedence when
         # the target lane is flat even if another lane is currently
@@ -969,6 +989,10 @@ def run_tick(
         # checks (regime change / Φ collapse / conviction failure).
         state.regime_at_open_by_lane[pre_lane] = mode
         state.phi_at_open_by_lane[pre_lane] = phi
+        state.basin_at_open_by_lane[pre_lane] = (
+            np.asarray(basin, dtype=np.float64).copy()
+        )
+        state.regime_change_streak_by_lane[pre_lane] = 0
     elif held_side:
         # Proposal #10: resolve the lane this single-position decision
         # belongs to. With ``lane_positions`` populated the lane is read
@@ -1012,9 +1036,15 @@ def run_tick(
         if action in ("scalp_exit", "exit"):
             state.regime_at_open_by_lane.pop(position_lane, None)
             state.phi_at_open_by_lane.pop(position_lane, None)
+            state.basin_at_open_by_lane.pop(position_lane, None)
+            state.regime_change_streak_by_lane.pop(position_lane, None)
         elif action in ("reverse_long", "reverse_short"):
             state.regime_at_open_by_lane[position_lane] = mode
             state.phi_at_open_by_lane[position_lane] = phi
+            state.basin_at_open_by_lane[position_lane] = (
+                np.asarray(basin, dtype=np.float64).copy()
+            )
+            state.regime_change_streak_by_lane[position_lane] = 0
     elif (
         MODE_PROFILES[mode_enum].can_enter
         and direction != "flat"
@@ -1044,6 +1074,10 @@ def run_tick(
         # checks (regime change / Φ collapse / conviction failure).
         state.regime_at_open_by_lane[pre_lane] = mode
         state.phi_at_open_by_lane[pre_lane] = phi
+        state.basin_at_open_by_lane[pre_lane] = (
+            np.asarray(basin, dtype=np.float64).copy()
+        )
+        state.regime_change_streak_by_lane[pre_lane] = 0
     else:
         action = "hold"
         if not MODE_PROFILES[mode_enum].can_enter:
@@ -1361,11 +1395,11 @@ def _decide_with_position(
         return "scalp_exit", scalp["reason"], False, False
 
     # ── Held-position re-justification (this PR) ──────────────────
-    # Three internal exit checks. Each fires immediately when the
-    # kernel's current state contradicts the state that justified
-    # entry. No streak counting, no hysteresis, no time-based stops.
-    # All three are geometric: regime classifier output, Φ integration
-    # measure, Layer 2B emotion stack.
+    # Three internal exit checks. The regime check carries hysteresis
+    # (added 2026-05-01 per live churn diagnostics) — single-tick mode
+    # flicker would otherwise close every held position on noise. Φ
+    # collapse and conviction-fail still fire immediately; both are
+    # already conservative gates. All three are geometric.
     rejust: dict[str, Any] = {"checked": False}
     has_regime_anchor = position_lane in state.regime_at_open_by_lane
     has_phi_anchor = position_lane in state.phi_at_open_by_lane
@@ -1385,12 +1419,54 @@ def _decide_with_position(
             "anxiety": getattr(emotions, "anxiety", 0.0),
             "confusion": getattr(emotions, "confusion", 0.0),
         })
-        # 1. REGIME CHECK — regime changed since open.
-        if mode_value != regime_at_open:
+        # 1. REGIME CHECK — regime changed since open. Hysteresis:
+        #   (a) regime != regime_at_open
+        #   (b) new regime stable for ≥ N consecutive ticks
+        #       (registry: executive.regime_stability_ticks_for_exit,
+        #        default 3)
+        #   (c) basin moved by FR distance > 1/π from basin_at_open
+        #       (the gravitating-fraction threshold; matches the same
+        #        canonical π-structure constant used by foresight
+        #        divergence and the ThoughtBus debate threshold)
+        # All three required. A single-tick mode flicker doesn't
+        # overcome (b); a small basin wobble doesn't overcome (c).
+        # Resets streak when the regime returns to regime_at_open.
+        regime_diverged = mode_value != regime_at_open
+        if regime_diverged:
+            state.regime_change_streak_by_lane[position_lane] = (
+                state.regime_change_streak_by_lane.get(position_lane, 0) + 1
+            )
+        else:
+            state.regime_change_streak_by_lane[position_lane] = 0
+        streak = state.regime_change_streak_by_lane.get(position_lane, 0)
+        ticks_required = int(_registry.get(
+            "executive.regime_stability_ticks_for_exit",
+            default=3,
+        ))
+        basin_at_open = state.basin_at_open_by_lane.get(position_lane)
+        if basin_at_open is not None:
+            basin_fr_move = float(fisher_rao_distance(basin, basin_at_open))
+        else:
+            # No basin anchor (legacy entries or post-restart) — skip
+            # the geometric gate; rely on streak alone. Old behavior
+            # remains a safety floor.
+            basin_fr_move = float("inf")
+        rejust["regime_streak"] = streak
+        rejust["regime_streak_required"] = ticks_required
+        rejust["basin_fr_move"] = basin_fr_move
+        rejust["basin_fr_threshold"] = float(PI_STRUCT_GRAVITATING_FRACTION)
+        if (
+            regime_diverged
+            and streak >= ticks_required
+            and basin_fr_move > PI_STRUCT_GRAVITATING_FRACTION
+        ):
             rejust["fired"] = "regime_change"
             derivation["rejustification"] = rejust
             reason = (
-                f"regime_change: opened in {regime_at_open}, now {mode_value}"
+                f"regime_change: opened in {regime_at_open}, "
+                f"now {mode_value} (stable {streak} ticks, "
+                f"basin moved FR={basin_fr_move:.3f} "
+                f"> {PI_STRUCT_GRAVITATING_FRACTION:.3f})"
             )
             return "scalp_exit", reason, False, False
         # 2. PHI CHECK — integration coherence collapsed below the
