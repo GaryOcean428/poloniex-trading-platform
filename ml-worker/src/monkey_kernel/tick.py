@@ -115,6 +115,23 @@ _registry = get_registry()
 CHOP_SUPPRESSION_CONFIDENCE = 0.70
 
 
+# v0.8.7 regime-hysteresis — minimum number of consecutive ticks where
+# regimeNow != regimeAtOpen before the regime_change exit can fire.
+# Registry-controlled via ``executive.regime_stability_ticks_for_exit``.
+# Default 3 means a flicker (1-2 tick mode divergence) cannot trigger
+# the exit alone; the kernel must read the new regime stably for at
+# least 3 ticks AND the basin must have moved more than 1/π in
+# Fisher-Rao distance from the entry anchor.
+_DEFAULT_REGIME_STABILITY_TICKS_FOR_EXIT = 3
+
+
+def _regime_stability_ticks_for_exit() -> int:
+    return int(_registry.get(
+        "executive.regime_stability_ticks_for_exit",
+        default=_DEFAULT_REGIME_STABILITY_TICKS_FOR_EXIT,
+    ))
+
+
 def _chop_suppress_entry(reading: RegimeReading) -> bool:
     """True when the regime classifier reads sustained chop above the
     suppression confidence threshold. Held positions are unaffected;
@@ -253,6 +270,19 @@ class SymbolState:
     # multi-lane positions keep independent rejustification anchors.
     regime_at_open_by_lane: dict[str, str] = field(default_factory=dict)
     phi_at_open_by_lane: dict[str, float] = field(default_factory=dict)
+    # v0.8.7 regime-hysteresis state. The regime-change exit (PR #619 +
+    # confidence gate from PR #629) was firing on single-tick mode
+    # flickers — live tape 2026-05-01 showed 22% win rate with every
+    # close via regime_change. The triple-AND gate now requires a
+    # sustained streak (>= N ticks where regimeNow != regimeAtOpen) AND
+    # FR distance from basin_at_open > 1/π in addition to the existing
+    # label divergence + confidence checks. Per-lane streak so a swing
+    # position's flicker doesn't cross-contaminate a scalp position's
+    # gate. Basin_at_open is the basin snapshot captured at entry time;
+    # FR-distance from that anchor is the geometric "has the kernel's
+    # perception actually moved?" signal.
+    regime_change_streak_by_lane: dict[str, int] = field(default_factory=dict)
+    basin_at_open_by_lane: dict[str, np.ndarray] = field(default_factory=dict)
 
 
 @dataclass
@@ -916,8 +946,12 @@ def run_tick(
         for held_lane in list(held_lanes.keys()):
             state.regime_at_open_by_lane.pop(held_lane, None)
             state.phi_at_open_by_lane.pop(held_lane, None)
+            state.basin_at_open_by_lane.pop(held_lane, None)
+            state.regime_change_streak_by_lane.pop(held_lane, None)
         state.regime_at_open_by_lane.pop(pre_lane, None)
         state.phi_at_open_by_lane.pop(pre_lane, None)
+        state.basin_at_open_by_lane.pop(pre_lane, None)
+        state.regime_change_streak_by_lane.pop(pre_lane, None)
     elif flag_live and ocean_state.intervention == "DREAM":
         action = "hold"
         reason = (
@@ -935,6 +969,8 @@ def run_tick(
         for held_lane in list(held_lanes.keys()):
             state.regime_at_open_by_lane.pop(held_lane, None)
             state.phi_at_open_by_lane.pop(held_lane, None)
+            state.basin_at_open_by_lane.pop(held_lane, None)
+            state.regime_change_streak_by_lane.pop(held_lane, None)
     elif (
         # Proposal #10 — lane-aware entry path takes precedence when
         # the target lane is flat even if another lane is currently
@@ -963,12 +999,16 @@ def run_tick(
         derivation["entry_threshold"] = entry_thr_d["derivation"]
         derivation["size"] = size_d["derivation"]
         derivation["leverage"] = leverage_d["derivation"]
-        # Held-position re-justification — snapshot the (regime, Φ)
+        # Held-position re-justification — snapshot the (regime, Φ, basin)
         # state at the moment of entry on this lane. Subsequent ticks
         # compare against these anchors via the three internal exit
         # checks (regime change / Φ collapse / conviction failure).
+        # v0.8.7 also stores basin_at_open for the FR-distance hysteresis
+        # gate and resets the regime-change streak.
         state.regime_at_open_by_lane[pre_lane] = mode
         state.phi_at_open_by_lane[pre_lane] = phi
+        state.basin_at_open_by_lane[pre_lane] = basin.copy()
+        state.regime_change_streak_by_lane[pre_lane] = 0
     elif held_side:
         # Proposal #10: resolve the lane this single-position decision
         # belongs to. With ``lane_positions`` populated the lane is read
@@ -1013,9 +1053,13 @@ def run_tick(
         if action in ("scalp_exit", "exit"):
             state.regime_at_open_by_lane.pop(position_lane, None)
             state.phi_at_open_by_lane.pop(position_lane, None)
+            state.basin_at_open_by_lane.pop(position_lane, None)
+            state.regime_change_streak_by_lane.pop(position_lane, None)
         elif action in ("reverse_long", "reverse_short"):
             state.regime_at_open_by_lane[position_lane] = mode
             state.phi_at_open_by_lane[position_lane] = phi
+            state.basin_at_open_by_lane[position_lane] = basin.copy()
+            state.regime_change_streak_by_lane[position_lane] = 0
     elif (
         MODE_PROFILES[mode_enum].can_enter
         and direction != "flat"
@@ -1039,12 +1083,16 @@ def run_tick(
         derivation["entry_threshold"] = entry_thr_d["derivation"]
         derivation["size"] = size_d["derivation"]
         derivation["leverage"] = leverage_d["derivation"]
-        # Held-position re-justification — snapshot the (regime, Φ)
+        # Held-position re-justification — snapshot the (regime, Φ, basin)
         # state at the moment of entry on this lane. Subsequent ticks
         # compare against these anchors via the three internal exit
         # checks (regime change / Φ collapse / conviction failure).
+        # v0.8.7 also stores basin_at_open for the FR-distance hysteresis
+        # gate and resets the regime-change streak.
         state.regime_at_open_by_lane[pre_lane] = mode
         state.phi_at_open_by_lane[pre_lane] = phi
+        state.basin_at_open_by_lane[pre_lane] = basin.copy()
+        state.regime_change_streak_by_lane[pre_lane] = 0
     else:
         action = "hold"
         if not MODE_PROFILES[mode_enum].can_enter:
@@ -1352,6 +1400,10 @@ def _decide_with_position(
         s=basin_state,
         mode=mode_enum,
         lane=position_lane,
+        # v0.8.6 — SL gate now reads ROI on margin, not raw price %.
+        # leverage_val is the live lev that justified entry; threading
+        # it lets the gate scale raw move into ROI correctly.
+        leverage=float(leverage_val),
     )
     derivation["scalp"] = {
         **scalp["derivation"],
@@ -1371,16 +1423,44 @@ def _decide_with_position(
     rejust: dict[str, Any] = {"checked": False}
     has_regime_anchor = position_lane in state.regime_at_open_by_lane
     has_phi_anchor = position_lane in state.phi_at_open_by_lane
+    # v0.8.7 — maintain the per-lane regime-change streak counter
+    # regardless of whether the rejust block runs (anchors present).
+    # Increment when regimeNow != regimeAtOpen; reset when it returns.
+    # Streak lives on state across ticks — the gate consumes the
+    # accumulated count below.
+    if has_regime_anchor:
+        if mode_value != state.regime_at_open_by_lane[position_lane]:
+            state.regime_change_streak_by_lane[position_lane] = (
+                state.regime_change_streak_by_lane.get(position_lane, 0) + 1
+            )
+        else:
+            state.regime_change_streak_by_lane[position_lane] = 0
     if has_regime_anchor and has_phi_anchor:
         rejust["checked"] = True
         regime_at_open = state.regime_at_open_by_lane[position_lane]
         phi_at_open = state.phi_at_open_by_lane[position_lane]
         phi_floor = phi_at_open / PHI_GOLDEN_FLOOR_RATIO
+        regime_change_streak = state.regime_change_streak_by_lane.get(
+            position_lane, 0,
+        )
+        regime_stability_ticks_required = _regime_stability_ticks_for_exit()
+        # Compute FR distance from the basin anchor (if present). When
+        # missing, the gate falls back strict-fail so the regime exit
+        # cannot fire on label flicker alone — the geometric component
+        # must be measurable.
+        basin_at_open = state.basin_at_open_by_lane.get(position_lane)
+        fr_distance: Optional[float] = None
+        if basin_at_open is not None:
+            fr_distance = float(fisher_rao_distance(basin_at_open, basin))
         rejust.update({
             "lane": position_lane,
             "regime_at_open": regime_at_open,
             "regime_now": mode_value,
             "regime_confidence": regime_confidence,
+            "regime_change_streak": regime_change_streak,
+            "regime_stability_ticks_required": regime_stability_ticks_required,
+            "fr_distance": fr_distance,
+            "fr_threshold": PI_STRUCT_GRAVITATING_FRACTION,
             "phi_at_open": phi_at_open,
             "phi_now": phi,
             "phi_floor": phi_floor,
@@ -1388,28 +1468,42 @@ def _decide_with_position(
             "anxiety": getattr(emotions, "anxiety", 0.0),
             "confusion": getattr(emotions, "confusion", 0.0),
         })
-        # 1. REGIME CHECK — regime changed since open.
-        # The regime classifier emits a confidence ∈ [0, 1] alongside
-        # the discrete regime label (see regime.py::RegimeReading).
-        # Gating exit on the classifier's own self-belief — rather than
-        # a synthesized streak counter — preserves the "single-tick exit,
-        # current state IS the truth" framing while skipping flicker
-        # events where the classifier itself isn't sure. The threshold
-        # is PI_STRUCT_BOUNDARY_R_SQUARED (1/φ ≈ 0.618), the canonical
-        # "boundary R²" from EXP-004b: when the classifier's confidence
-        # has crossed that coherence floor, treat the regime divergence
-        # as load-bearing. PR #627's chop-entry suppression uses 0.70
-        # (slightly stricter); 0.618 here is the canonical-constant
-        # alignment with the topology family. Strict >: a confidence
-        # exactly at the floor is not yet load-bearing.
+        # 1. REGIME CHECK — v0.8.7 triple-AND hysteresis. ALL of:
+        #   (a) regimeNow != regimeAtOpen   (label divergence)
+        #   (b) regimeChangeStreak >= regimeStabilityTicksRequired
+        #   (c) fr_distance > 1/π            (basin geometry has moved)
+        # PLUS the PR #629 confidence gate (regime_confidence > 1/φ).
+        #
+        # Live tape 2026-05-01 16:11-16:17 evidence: 9 closes, 22% win
+        # rate, every close via regime_change on a $97 account. Without
+        # the streak filter a single-tick mode flicker exits the
+        # position; without the FR filter, label changes where the
+        # basin has barely moved still close out. The triple-AND
+        # demands sustained, geometrically-substantiated regime change.
+        #
+        # FR threshold is PI_STRUCT_GRAVITATING_FRACTION (1/π ≈ 0.318)
+        # from EXP-004b — the canonical "basin has moved into a
+        # different gravitating cluster" distance.
+        label_diverged = mode_value != regime_at_open
+        confidence_load_bearing = regime_confidence > PI_STRUCT_BOUNDARY_R_SQUARED
+        streak_satisfied = regime_change_streak >= regime_stability_ticks_required
+        # Strict-fail when basin anchor is absent (e.g. positions opened
+        # before this PR shipped): the regime exit cannot fire purely on
+        # label flicker — the geometric component must be measurable.
+        fr_fires = fr_distance is not None and fr_distance > PI_STRUCT_GRAVITATING_FRACTION
         if (
-            mode_value != regime_at_open
-            and regime_confidence > PI_STRUCT_BOUNDARY_R_SQUARED
+            label_diverged
+            and confidence_load_bearing
+            and streak_satisfied
+            and fr_fires
         ):
             rejust["fired"] = "regime_change"
             derivation["rejustification"] = rejust
+            fr_str = f"{fr_distance:.3f}" if fr_distance is not None else "N/A"
             reason = (
-                f"regime_change: opened in {regime_at_open}, now {mode_value} "
+                f"regime_change: opened in {regime_at_open} "
+                f"(FR_dist {fr_str} > 1/π), now {mode_value} stable for "
+                f"{regime_change_streak} ticks "
                 f"(confidence {regime_confidence:.3f} > 1/φ)"
             )
             return "scalp_exit", reason, False, False

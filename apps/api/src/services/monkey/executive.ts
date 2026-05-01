@@ -124,21 +124,46 @@ export function currentEntryThreshold(
 // ─── Proposal #10 — lane parameter envelope (TS parity) ────────────
 //
 // Two-lane initial split with trend as opt-in. SL/TP percentages give
-// each lane its own retreat tolerance:
-//   scalp ~0.4% adverse / 0.5% reward — fast tape harvesting
-//   swing ~1.5% adverse / 1.5% reward — absorbs retraces
-//   trend ~4% adverse / 4% reward — rides macro trend (opt-in)
+// each lane its own retreat tolerance, expressed as ROI on margin
+// (post-v0.8.6 rescale — see below):
+//   scalp ~5%   ROI adverse / 5%  reward — fast tape harvesting
+//   swing ~15%  ROI adverse / 15% reward — absorbs retraces
+//   trend ~40%  ROI adverse / 40% reward — rides macro trend (opt-in)
 // Budget fractions sum to <= 1 across position-bearing lanes; trend
 // defaults to 0 in this batch and is governance-bumped via the param
 // registry once the arbiter has 5+ closed trades per lane.
+//
+// v0.8.6 RESCALE (2026-05-01) — slPct / tpPct semantics changed
+// from "raw price movement %" to "ROI on margin %". The previous
+// scale (sl=0.4%/1.5%/4% raw) almost never tripped at typical 15-20x
+// leverage because raw price moves stay tiny while ROI on margin
+// scales with leverage. Live failure: ETH long sat at -4.4% ROI for
+// 4+ hours without the 1.5% raw SL firing because raw price only
+// moved -0.30%. Rescale preserves order-of-magnitude intent at
+// ~15-20x leverage. Mirror in ml-worker/scripts/recalibrate_lane_sl_tp_to_roi.sql.
 export const LANE_PARAMETER_DEFAULTS: Record<
   'scalp' | 'swing' | 'trend',
   { slPct: number; tpPct: number; budgetFrac: number }
 > = {
-  scalp: { slPct: 0.004, tpPct: 0.005, budgetFrac: 0.50 },
-  swing: { slPct: 0.015, tpPct: 0.015, budgetFrac: 0.50 },
-  trend: { slPct: 0.040, tpPct: 0.040, budgetFrac: 0.0 },
+  // v0.8.7 — scalp 1:1 R:R per user directive (option a, 3% TP / 3% SL).
+  scalp: { slPct: 0.03, tpPct: 0.03, budgetFrac: 0.50 },
+  swing: { slPct: 0.15, tpPct: 0.15, budgetFrac: 0.50 },
+  trend: { slPct: 0.40, tpPct: 0.40, budgetFrac: 0.0 },
 };
+
+/**
+ * v0.8.7 notional-ceiling fallback. The Kelly cap is the primary brake
+ * on aggregate exposure but is non-binding at cold start (no closed
+ * trades) and decays to no-op when stats are uninformative. Live tape
+ * 2026-05-01: $77 → $386 escalating notionals on a $97 account (4×
+ * balance) with every position closing via single-tick regime_change
+ * at 22% win rate. Hard ceiling: notional = margin × leverage <=
+ * NOTIONAL_CEILING_RATIO × equity. Default 4.0 keeps headroom for the
+ * 10-20× geometric leverage intent while bounding worst-case
+ * escalation. Mirrors ml-worker's _DEFAULT_NOTIONAL_CEILING_RATIO.
+ */
+export const NOTIONAL_CEILING_RATIO =
+  Number(process.env.MONKEY_NOTIONAL_CEILING_RATIO) || 4.0;
 
 export function laneParam(
   lane: 'scalp' | 'swing' | 'trend',
@@ -247,11 +272,21 @@ export function currentPositionSize(
     cappedByLane = true;
   }
 
+  // v0.8.7 — notional ceiling fallback. See NOTIONAL_CEILING_RATIO docstring.
+  const notionalCeilingRatio = NOTIONAL_CEILING_RATIO;
+  const notionalCeiling = notionalCeilingRatio * availableEquityUsdt;
+  let cappedByNotional = false;
+  if (notional > notionalCeiling && leverage > 0 && availableEquityUsdt > 0) {
+    margin = notionalCeiling / Math.max(1, leverage);
+    notional = margin * Math.max(1, leverage);
+    cappedByNotional = true;
+  }
+
   const sized = notional >= minNotionalUsdt ? margin : 0;
 
   return {
     value: sized,
-    reason: `size[${lane}] = ${liftedToMin ? 'lifted-to-min ' : ''}${cappedByLane ? 'lane-capped ' : ''}floor(${explorationFloor.toFixed(3)}) or Φ×S×M(${(s.phi * s.sovereignty * maturity).toFixed(3)}) × reward(${rewardMult.toFixed(2)}) × stab(${stabilityMult.toFixed(2)}) × equity(${availableEquityUsdt.toFixed(2)}) @ ${leverage}x → margin ${margin.toFixed(2)} (lane-cap ${laneMarginCap.toFixed(2)}), notional ${notional.toFixed(2)} vs min ${minNotionalUsdt.toFixed(2)} = ${sized.toFixed(2)}`,
+    reason: `size[${lane}] = ${liftedToMin ? 'lifted-to-min ' : ''}${cappedByLane ? 'lane-capped ' : ''}${cappedByNotional ? 'notional-capped ' : ''}floor(${explorationFloor.toFixed(3)}) or Φ×S×M(${(s.phi * s.sovereignty * maturity).toFixed(3)}) × reward(${rewardMult.toFixed(2)}) × stab(${stabilityMult.toFixed(2)}) × equity(${availableEquityUsdt.toFixed(2)}) @ ${leverage}x → margin ${margin.toFixed(2)} (lane-cap ${laneMarginCap.toFixed(2)}), notional ${notional.toFixed(2)} vs ceiling ${notionalCeiling.toFixed(2)} vs min ${minNotionalUsdt.toFixed(2)} = ${sized.toFixed(2)}`,
     derivation: {
       phi: s.phi, sovereignty: s.sovereignty, maturity, bankSize,
       dopamine: nc.dopamine, serotonin: nc.serotonin, gaba: nc.gaba,
@@ -259,6 +294,8 @@ export function currentPositionSize(
       minNotional: minNotionalUsdt, sized, liftedToMin: liftedToMin ? 1 : 0,
       laneBudgetFrac: laneFrac,
       laneMarginCap, cappedByLane: cappedByLane ? 1 : 0,
+      notionalCeilingRatio, notionalCeiling,
+      cappedByNotional: cappedByNotional ? 1 : 0,
     },
   };
 }
@@ -645,46 +682,74 @@ export function shouldScalpExit(
   s: BasinState,
   mode: MonkeyMode = MonkeyMode.INVESTIGATION,
   lane: 'scalp' | 'swing' | 'trend' = 'swing',
+  leverage: number = 1,
 ): ExecutiveDecision<boolean> {
+  // v0.8.6 (2026-05-01) — pnlFrac semantics CHANGED from
+  // "PnL / notional" (raw price movement %) to "PnL / margin"
+  // ("ROI on margin %"). Leverage is now threaded in so we can
+  // derive margin from notional / leverage. This fixes the live
+  // failure where an ETH long sat at -4.4% ROI for 4+ hours without
+  // the 1.5% raw-price SL firing because raw price only moved -0.30%
+  // (the SL gate was reading raw movement, not ROI on margin). Lane
+  // SL/TP defaults are rescaled to the ROI scale in the same rev —
+  // see LANE_PARAMETER_DEFAULTS.
+  //
+  // For back-compat with cold callers, leverage defaults to 1, in
+  // which case ROI == raw move and the gate behaves as before. All
+  // production callers (loop.ts) pass the live position leverage.
   if (notionalUsdt <= 0) {
     return { value: false, reason: 'no position notional', derivation: {} };
   }
-  const pnlFrac = unrealizedPnlUsdt / notionalUsdt;
+  // ROI on margin = (PnL / notional) × leverage. lev=1 collapses to the
+  // legacy raw-move semantic; at typical 15-20x live leverage it scales
+  // the gate up to its intended sensitivity range.
+  const lev = leverage > 0 ? leverage : 1;
+  const rawFrac = unrealizedPnlUsdt / notionalUsdt;
+  const roiFrac = rawFrac * lev;
   const nc = s.neurochemistry;
   // Mode picks the baseline; Φ + dopamine modulate within that mode.
   const profile = MODE_PROFILES[mode];
-  const geometricTp = Math.max(
+  // Geometric thresholds are on the raw-price-move scale (TP floor
+  // exists to clear fees, which is a raw-move quantity). Promote them
+  // onto the ROI scale by × leverage so they compose with the ROI-scale
+  // lane envelope under max().
+  const geometricTpRaw = Math.max(
     0.003,
     profile.tpBaseFrac - 0.003 * nc.dopamine + 0.005 * s.phi,
   );
-  const geometricSl = geometricTp * profile.slRatio;
-  // Proposal #10 — per-lane envelope. Take the wider of (geometric,
-  // lane) so the geometric fee-clear floor is never breached but the
-  // lane envelope can broaden tolerance when a swing/trend position
-  // needs room to absorb retraces.
+  const geometricSlRaw = geometricTpRaw * profile.slRatio;
+  const geometricTp = geometricTpRaw * lev;
+  const geometricSl = geometricSlRaw * lev;
+  // Proposal #10 — per-lane envelope. Lane SL/TP are stored on the ROI
+  // scale (post-v0.8.6 rescale). Take the wider of (geometric, lane) so
+  // the fee-clear floor is never breached but the lane envelope can
+  // broaden tolerance when a swing/trend position needs room to absorb
+  // retraces.
   const laneTp = laneParam(lane, 'tpPct');
   const laneSl = laneParam(lane, 'slPct');
   const tpThr = Math.max(geometricTp, laneTp);
   const slThr = Math.max(geometricSl, laneSl);
 
   // Encode type as a bit (1=TP, -1=SL, 0=hold) to keep derivation map numeric.
-  if (pnlFrac >= tpThr) {
+  if (roiFrac >= tpThr) {
     return {
       value: true,
-      reason: `take_profit[${lane}]: ${(pnlFrac * 100).toFixed(3)}% ≥ ${(tpThr * 100).toFixed(3)}%`,
+      reason: `take_profit[${lane}]: roi ${(roiFrac * 100).toFixed(3)}% ≥ ${(tpThr * 100).toFixed(3)}% (lev=${lev.toFixed(0)}x)`,
       derivation: {
-        pnlFrac, tpThr, slThr,
+        roiFrac, rawFrac, leverage: lev,
+        tpThr, slThr,
         laneTpPct: laneTp, laneSlPct: laneSl,
         exitTypeBit: 1,
       },
     };
   }
-  if (pnlFrac <= -slThr) {
+  if (roiFrac <= -slThr) {
     return {
       value: true,
-      reason: `stop_loss[${lane}]: ${(pnlFrac * 100).toFixed(3)}% ≤ -${(slThr * 100).toFixed(3)}%`,
+      reason: `stop_loss[${lane}]: roi ${(roiFrac * 100).toFixed(3)}% ≤ -${(slThr * 100).toFixed(3)}% (lev=${lev.toFixed(0)}x)`,
       derivation: {
-        pnlFrac, tpThr, slThr,
+        roiFrac, rawFrac, leverage: lev,
+        tpThr, slThr,
         laneTpPct: laneTp, laneSlPct: laneSl,
         exitTypeBit: -1,
       },
@@ -692,9 +757,10 @@ export function shouldScalpExit(
   }
   return {
     value: false,
-    reason: `scalp hold[${lane}]: pnl ${(pnlFrac * 100).toFixed(3)}% in [-${(slThr * 100).toFixed(3)}%, ${(tpThr * 100).toFixed(3)}%]`,
+    reason: `scalp hold[${lane}]: roi ${(roiFrac * 100).toFixed(3)}% in [-${(slThr * 100).toFixed(3)}%, ${(tpThr * 100).toFixed(3)}%] (lev=${lev.toFixed(0)}x)`,
     derivation: {
-      pnlFrac, tpThr, slThr,
+      roiFrac, rawFrac, leverage: lev,
+      tpThr, slThr,
       laneTpPct: laneTp, laneSlPct: laneSl,
     },
   };
