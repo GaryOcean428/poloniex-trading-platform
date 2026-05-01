@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Literal, Optional
+from typing import TYPE_CHECKING, Any, Literal, Optional
 
 import numpy as np
 
@@ -34,7 +34,11 @@ from qig_core_local.geometry.fisher_rao import (
     frechet_mean,
 )
 
+from .bus_events import KernelEvent
 from .parameters import get_registry
+
+if TYPE_CHECKING:
+    from .kernel_bus import KernelBus
 
 _registry = get_registry()
 
@@ -104,12 +108,16 @@ class WorkingMemory:
         *,
         default_lifetime_ms: Optional[float] = None,
         max_bubbles: Optional[int] = None,
+        bus: Optional["KernelBus"] = None,
+        symbol: Optional[str] = None,
     ) -> None:
         # All three knobs honour caller override first, then registry,
         # then the hardcoded default. Caller override is only used by
         # tests that need a deterministic fixture; production paths
         # leave them None to let the registry govern.
         self.bubbles: list[Bubble] = []
+        self._bus = bus
+        self._symbol = symbol
         self.default_lifetime_ms = (
             float(default_lifetime_ms) if default_lifetime_ms is not None
             else float(_registry.get(
@@ -193,6 +201,17 @@ class WorkingMemory:
         self._phi_history.append(phi)
         if len(self._phi_history) > self.PHI_HISTORY_MAX:
             self._phi_history.pop(0)
+        if self._bus is not None:
+            self._bus.publish(
+                KernelEvent.WORKING_MEMORY_BUBBLE_ADD,
+                source="working_memory",
+                payload={
+                    "bubble_id": b.id,
+                    "phi": float(phi),
+                    "lifetime_ms": float(b.lifetime_ms),
+                },
+                symbol=self._symbol,
+            )
         return b
 
     def reinforce(self, bubble_id: str, delta: float) -> None:
@@ -219,6 +238,17 @@ class WorkingMemory:
             if now_ms - b.created_at_ms > b.lifetime_ms or b.phi < th["pop"]:
                 b.status = "popped"
                 popped += 1
+                if self._bus is not None:
+                    self._bus.publish(
+                        KernelEvent.WORKING_MEMORY_EXPIRY,
+                        source="working_memory",
+                        payload={
+                            "bubble_id": b.id,
+                            "phi": float(b.phi),
+                            "age_ms": float(now_ms - b.created_at_ms),
+                        },
+                        symbol=self._symbol,
+                    )
 
         # 2. Merge similar (greedy pairwise)
         alive = [b for b in self.bubbles if b.status == "alive"]
@@ -263,6 +293,17 @@ class WorkingMemory:
             if b.phi >= th["promote"]:
                 b.status = "promoted"
                 promoted += 1
+                if self._bus is not None:
+                    self._bus.publish(
+                        KernelEvent.WORKING_MEMORY_PROMOTION,
+                        source="working_memory",
+                        payload={
+                            "bubble_id": b.id,
+                            "phi": float(b.phi),
+                            "promote_threshold": float(th["promote"]),
+                        },
+                        symbol=self._symbol,
+                    )
 
         # 4. Compact (FIFO-evict non-alive beyond max)
         if len(self.bubbles) > self.max_bubbles:

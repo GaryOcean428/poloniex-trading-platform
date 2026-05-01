@@ -23,8 +23,17 @@ Easier to unit-test.
 
 from __future__ import annotations
 
+import math
+import time
 from dataclasses import dataclass, field
-from typing import Iterable
+from typing import Iterable, Optional
+
+import numpy as np
+
+from qig_core_local.geometry.fisher_rao import (
+    fisher_rao_distance,
+    frechet_mean,
+)
 
 from .modes import MonkeyMode
 
@@ -210,6 +219,129 @@ def aggregate_and_bias(
         lookback_hours=lookback_hours,
         by_mode_side=by_ms,
         entry_bias=bias,
+    )
+
+
+# ─── Loop 1 canonical per-decision triple (UCP §43.2) ───
+#
+# Every executive decision produces three scalars in [0, 1]:
+#   repetition  — am I producing lived geometry or scaffolding?
+#   sovereignty — knowing vs guessing?
+#   confidence  — bank resonance vs override expansion?
+# Triple is published on the bus and persisted to autonomous_trades
+# at trade open time. Closed-trade analysis correlates triples with
+# outcomes — the learning signal Loop 1 was built to produce.
+
+# Sovereignty bands. 1/φ is the golden-ratio coherence floor; π/2 is
+# the maximum FR distance on the simplex.
+_PHI_GOLDEN = (1.0 + math.sqrt(5.0)) / 2.0
+_INV_PHI = 1.0 / _PHI_GOLDEN          # ≈ 0.618
+_HALF_PI = math.pi / 2.0               # ≈ 1.5708
+
+
+@dataclass(frozen=True)
+class DecisionTriple:
+    """Canonical Loop 1 triple per UCP §43.2."""
+
+    repetition_score: float    # [0, 1] lived geometry vs scaffolding
+    sovereignty_score: float   # [0, 1] knowing vs guessing
+    confidence_score: float    # [0, 1] bank resonance vs override expansion
+    decision_id: str
+    at_ms: float
+
+
+def _clamp01(x: float) -> float:
+    if x < 0.0:
+        return 0.0
+    if x > 1.0:
+        return 1.0
+    return float(x)
+
+
+def compute_per_decision_triple(
+    *,
+    decision_id: str,
+    current_basin: np.ndarray,
+    recent_basins: list[np.ndarray],
+    bank_resonance_count: int,
+    bank_total_queried: int,
+    nearest_fr_distance: float,
+    emotion_confidence: float,
+    emotion_anxiety: float,
+    decision_path_overrides: list[str],
+    at_ms: Optional[float] = None,
+) -> DecisionTriple:
+    """Compute the canonical triple for one decision.
+
+    REPETITION SCORE — lived geometry vs scaffolding.
+        repetition = 1 - exp(-FR(current_basin, frechet_mean(recent_basins)))
+    High when the current basin is far from the recent Fréchet mean —
+    the kernel is moving, producing new geometry. Low when the current
+    basin sits on top of recent history — repeating itself. Bounded
+    [0, 1]; FR is bounded [0, π/2] so the exp form maps to [0, 1).
+    Uses Fisher-Rao distance and the Fréchet mean — no Euclidean.
+
+    SOVEREIGNTY SCORE — knowing vs guessing.
+        nearby_match_factor =
+            1.0 if nearest_fr_distance < 1/φ
+            else max(0, 1 - (nearest_fr_distance - 1/φ) / (π/2 - 1/φ))
+        confidence_dominance = max(0, emotion_confidence - emotion_anxiety)
+        sovereignty = nearby_match_factor × confidence_dominance
+    High = bank-grounded AND emotionally clear. Multiplicative — both
+    halves must be present to be sovereign.
+
+    CONFIDENCE SCORE — bank resonance vs override expansion.
+        resonance_strength = bank_resonance_count / max(1, bank_total_queried)
+        override_penalty = len(decision_path_overrides) × 0.2
+        confidence = max(0, resonance_strength - override_penalty)
+    High = bank carried the decision (multiple matches within FR
+    threshold). Low = override paths fired (REVERSION_FLIP, etc.)
+    so the decision came from rule-based logic, not from geometric
+    memory.
+    """
+    if at_ms is None:
+        at_ms = time.time() * 1000.0
+
+    # Repetition — Fisher-Rao distance from current basin to the
+    # Fréchet mean of recent history. Empty history yields 0.0
+    # (cold start: nothing to compare against, treat as scaffolding).
+    if len(recent_basins) == 0:
+        repetition = 0.0
+    else:
+        history_mean = frechet_mean(list(recent_basins))
+        d_fr = fisher_rao_distance(current_basin, history_mean)
+        repetition = 1.0 - math.exp(-float(d_fr))
+    repetition = _clamp01(repetition)
+
+    # Sovereignty — nearby_match × confidence_dominance
+    if nearest_fr_distance < _INV_PHI:
+        nearby_match = 1.0
+    else:
+        denom = _HALF_PI - _INV_PHI
+        if denom <= 0.0:
+            nearby_match = 0.0
+        else:
+            nearby_match = _clamp01(
+                1.0 - (nearest_fr_distance - _INV_PHI) / denom
+            )
+    confidence_dominance = _clamp01(
+        max(0.0, emotion_confidence - emotion_anxiety)
+    )
+    sovereignty = _clamp01(nearby_match * confidence_dominance)
+
+    # Confidence — resonance vs overrides
+    resonance_strength = (
+        bank_resonance_count / max(1, bank_total_queried)
+    )
+    override_penalty = len(decision_path_overrides) * 0.2
+    confidence_score = _clamp01(max(0.0, resonance_strength - override_penalty))
+
+    return DecisionTriple(
+        repetition_score=float(repetition),
+        sovereignty_score=float(sovereignty),
+        confidence_score=float(confidence_score),
+        decision_id=decision_id,
+        at_ms=float(at_ms),
     )
 
 

@@ -72,26 +72,57 @@ _DEFAULT_LEVERAGE_KAPPA_SIGMA = 20.0
 _DEFAULT_SCALP_TP_MIN_FLOOR = 0.003
 _DEFAULT_EXIT_ENTROPY_COLLAPSE = 0.4  # (referenced by should_auto_flatten semantic)
 _DEFAULT_DCA_MAX_ADDS = 1
+# v0.8.7 — notional ceiling fallback. The Kelly cap is the primary
+# brake on aggregate exposure but is non-binding at cold start (no
+# closed trades) and decays to no-op when stats are uninformative.
+# Live tape 2026-05-01 evidence: $77 → $386 escalating notionals on
+# a $97 account (4× balance). This caps a single position's notional
+# at NOTIONAL_CEILING_RATIO × account balance regardless of geometric
+# leverage * margin. Default 4.0 keeps the geometric formula's
+# 10-20× leverage intent while bounding worst-case escalation.
+_DEFAULT_NOTIONAL_CEILING_RATIO = 4.0
 
 # ─── Proposal #10 — lane-isolated position lifecycle defaults ────
 #
 # Two-lane initial split (scalp + swing). Trend is left as a parameter
 # slot but defaults to budget=0 — opt-in via the parameter registry.
 # Each lane has its own SL/TP envelope and capital budget. SL/TP are
-# stored as positive *fractions of notional* (e.g. 0.004 = 0.4%); the
-# trade-side sign is applied at the call site. Budget fractions sum to
-# 1.0 across position-bearing lanes when fully active; values below sum
-# to 1.0 only because trend defaults to 0 in this batch.
-_DEFAULT_LANE_SCALP_SL_PCT = 0.004
-_DEFAULT_LANE_SCALP_TP_PCT = 0.005
+# stored as positive *fractions of margin* — i.e. ROI on margin (e.g.
+# 0.05 = 5% ROI on the position's posted margin). The trade-side sign
+# is applied at the call site. Budget fractions sum to 1.0 across
+# position-bearing lanes when fully active; values below sum to 1.0
+# only because trend defaults to 0 in this batch.
+#
+# v0.8.6 RESCALE (2026-05-01) — sl_pct / tp_pct semantics changed
+# from "raw price movement %" to "ROI on margin %". The previous
+# scale (sl=0.4%/1.5%/4% raw) almost never tripped at typical 15-20x
+# leverage because raw price moves stay tiny while ROI on margin
+# scales with leverage. Live failure: ETH long sat at -4.4% ROI for
+# 4+ hours without the 1.5% raw SL firing because raw price only
+# moved -0.30%. Rescale preserves order-of-magnitude intent at ~15-20x
+# leverage:
+#   scalp: 0.4% raw → 5%   ROI (was tripping ~6-7% ROI at 15-20x)
+#   swing: 1.5% raw → 15%  ROI
+#   trend: 4.0% raw → 40%  ROI
+# These rows are also updated in the parameter registry via the
+# scripts/recalibrate_lane_sl_tp_to_roi.sql migration.
+# v0.8.7 (2026-05-01) — scalp TP/SL set to symmetric 1:1 R:R per user
+# directive (option a: 3% TP / 3% SL). v0.8.6 had bumped tp_pct from
+# the PR #627 value (0.03) to 0.05; the user explicitly chose the
+# original 3% floor, with SL also dropped from 0.05 → 0.03 to keep the
+# pair symmetric. The SQL migration script
+# scripts/recalibrate_lane_sl_tp_to_roi.sql writes the same values to
+# the parameter registry.
+_DEFAULT_LANE_SCALP_SL_PCT = 0.03
+_DEFAULT_LANE_SCALP_TP_PCT = 0.03
 _DEFAULT_LANE_SCALP_BUDGET_FRAC = 0.50
 
-_DEFAULT_LANE_SWING_SL_PCT = 0.015
-_DEFAULT_LANE_SWING_TP_PCT = 0.015
+_DEFAULT_LANE_SWING_SL_PCT = 0.15
+_DEFAULT_LANE_SWING_TP_PCT = 0.15
 _DEFAULT_LANE_SWING_BUDGET_FRAC = 0.50
 
-_DEFAULT_LANE_TREND_SL_PCT = 0.040
-_DEFAULT_LANE_TREND_TP_PCT = 0.040
+_DEFAULT_LANE_TREND_SL_PCT = 0.40
+_DEFAULT_LANE_TREND_TP_PCT = 0.40
 _DEFAULT_LANE_TREND_BUDGET_FRAC = 0.0  # opt-in; bumped via parameter registry
 
 _LANE_PARAMETER_DEFAULTS: dict[str, dict[str, float]] = {
@@ -388,6 +419,28 @@ def current_position_size(
         notional = margin * max(1.0, leverage)
         capped_by_lane = True
 
+    # v0.8.7 — notional ceiling fallback. The Kelly cap is intended to
+    # bound aggregate exposure but is non-binding at cold start (no
+    # closed trades yet) and decays to no-op when stats are
+    # uninformative. Live tape 2026-05-01 showed $77 → $386 escalating
+    # notionals on a $97 account (4× balance) with every position
+    # closing via regime_change at 22% win rate. Hard ceiling:
+    # notional = margin × leverage <= NOTIONAL_CEILING_RATIO × equity.
+    # Default ratio 4.0 — preserves enough headroom for the kernel's
+    # geometric leverage formula at typical 10-20x while preventing
+    # unbounded escalation on small accounts.
+    notional_ceiling_ratio = float(_registry.get(
+        "executive.notional_ceiling_ratio",
+        default=_DEFAULT_NOTIONAL_CEILING_RATIO,
+    ))
+    notional_ceiling = notional_ceiling_ratio * available_equity_usdt
+    capped_by_notional = False
+    if notional > notional_ceiling and leverage > 0 and available_equity_usdt > 0:
+        # Reduce margin so margin × leverage == notional_ceiling.
+        margin = notional_ceiling / max(1.0, leverage)
+        notional = margin * max(1.0, leverage)
+        capped_by_notional = True
+
     sized = margin if notional >= min_notional_usdt else 0.0
 
     return {
@@ -395,12 +448,13 @@ def current_position_size(
         "reason": (
             f"size[{lane}] = {'lifted-to-min ' if lifted else ''}"
             f"{'lane-capped ' if capped_by_lane else ''}"
+            f"{'notional-capped ' if capped_by_notional else ''}"
             f"floor({exploration_floor:.3f}) or PhixSxM({base_frac:.3f}) "
             f"x reward({reward_mult:.2f}) x stab({stability_mult:.2f}) "
             f"x equity({available_equity_usdt:.2f}) @ {leverage:.0f}x "
             f"-> margin {margin:.2f} (lane-cap {lane_margin_cap:.2f}), "
-            f"notional {notional:.2f} vs min {min_notional_usdt:.2f} "
-            f"= {sized:.2f}"
+            f"notional {notional:.2f} vs ceiling {notional_ceiling:.2f} "
+            f"vs min {min_notional_usdt:.2f} = {sized:.2f}"
         ),
         "derivation": {
             "phi": s.phi,
@@ -420,6 +474,9 @@ def current_position_size(
             "lane_budget_frac": lane_frac,
             "lane_margin_cap": lane_margin_cap,
             "capped_by_lane": 1 if capped_by_lane else 0,
+            "notional_ceiling_ratio": notional_ceiling_ratio,
+            "notional_ceiling": notional_ceiling,
+            "capped_by_notional": 1 if capped_by_notional else 0,
         },
     }
 
@@ -881,11 +938,33 @@ def should_scalp_exit(
     s: ExecBasinState,
     mode: MonkeyMode = MonkeyMode.INVESTIGATION,
     lane: str = "swing",
+    leverage: float = 1.0,
 ) -> dict[str, Any]:
+    """ROI-on-margin take-profit / stop-loss gate.
+
+    v0.8.6 (2026-05-01) — ``pnl_frac`` semantics CHANGED from
+    "PnL / notional" (raw price movement %) to "PnL / margin"
+    ("ROI on margin %"). Leverage is now threaded in so we can
+    derive margin from notional / leverage. This fixes the live
+    failure where an ETH long sat at -4.4% ROI for 4+ hours without
+    the 1.5% raw-price SL firing because raw price only moved -0.30%
+    (the SL gate was reading raw movement, not ROI on margin).
+    Lane SL/TP defaults are rescaled to the ROI scale in the same
+    rev — see ``_DEFAULT_LANE_*_{SL,TP}_PCT``.
+
+    For back-compat with cold callers, ``leverage`` defaults to 1.0,
+    in which case ROI == raw move and the gate behaves as before.
+    All production callers now pass the live position leverage.
+    """
     if notional_usdt <= 0:
         return {"value": False, "reason": "no position notional", "derivation": {}}
 
-    pnl_frac = unrealized_pnl_usdt / notional_usdt
+    # ROI on margin = (PnL / notional) × leverage. When leverage=1 this
+    # collapses to the legacy raw-move semantic; at typical 15-20x live
+    # leverage it scales the gate up to its intended sensitivity range.
+    lev = float(leverage) if leverage and leverage > 0 else 1.0
+    raw_frac = unrealized_pnl_usdt / notional_usdt
+    roi_frac = raw_frac * lev
     nc = s.neurochemistry
     # v0.8.5 — tp_base_frac and sl_ratio derive from regime + serotonin.
     # Quantum regime (low eq) widens TP; high serotonin (stable) tightens SL.
@@ -897,45 +976,60 @@ def should_scalp_exit(
         equilibrium_weight=s.regime_weights.get("equilibrium", 0.5),
     )
     # Scalp TP floor: must clear exchange fees round-trip (2× taker
-    # ~=0.0015 on Poloniex VIP0). 0.003 gives a ~15bp margin. SAFETY_BOUND;
-    # the tp_base_frac + dopamine/Φ modulation sits on top of it.
+    # ~=0.0015 on Poloniex VIP0). 0.003 gives a ~15bp margin. SAFETY_BOUND
+    # on the RAW-price scale (fees scale with notional, not margin). The
+    # geometric formula sits on raw scale and we promote it to ROI by
+    # multiplying by leverage so it composes with the ROI-scale lane
+    # envelope under max().
     tp_min_floor = _registry.get(
         "executive.scalp.tp_min_floor", default=_DEFAULT_SCALP_TP_MIN_FLOOR,
     )
-    geometric_tp = max(
+    geometric_tp_raw = max(
         tp_min_floor,
         profile.tp_base_frac - 0.003 * nc.dopamine + 0.005 * s.phi,
     )
-    geometric_sl = geometric_tp * profile.sl_ratio
-    # Proposal #10: per-lane envelope. Scalp/swing/trend each carry
-    # their own SL/TP "retreat tolerance":
-    #   scalp ~0.4% adverse, fast tape harvesting
-    #   swing ~1.5% adverse, absorbs retraces
-    #   trend ~3-5% adverse, rides the macro trend
-    # We take the *wider* of (geometric, lane) so the geometric floor
-    # (e.g. fee-clear) is never breached but the lane envelope can
-    # broaden tolerance when configured to do so.
+    geometric_sl_raw = geometric_tp_raw * profile.sl_ratio
+    # Promote the geometric thresholds (raw) onto the ROI scale.
+    geometric_tp = geometric_tp_raw * lev
+    geometric_sl = geometric_sl_raw * lev
+    # Proposal #10: per-lane envelope. Lane SL/TP are stored on the ROI
+    # scale (post-v0.8.6 rescale). Take the *wider* of (geometric, lane)
+    # so the geometric Φ-derived floor is never breached but the lane
+    # envelope can broaden tolerance when configured to do so. At
+    # typical 15-20x live leverage the geometric (~10%) is wider than
+    # scalp (5%), making the geometric the binding constraint there;
+    # for swing/trend the lane envelope dominates.
     lane_tp = lane_param(lane, "tp_pct")
     lane_sl = lane_param(lane, "sl_pct")
     tp_thr = max(geometric_tp, lane_tp)
     sl_thr = max(geometric_sl, lane_sl)
 
-    if pnl_frac >= tp_thr:
+    if roi_frac >= tp_thr:
         return {
             "value": True,
-            "reason": f"take_profit[{lane}]: {pnl_frac*100:.3f}% >= {tp_thr*100:.3f}%",
+            "reason": (
+                f"take_profit[{lane}]: roi {roi_frac*100:.3f}% "
+                f">= {tp_thr*100:.3f}% (lev={lev:.0f}x)"
+            ),
             "derivation": {
-                "pnl_frac": pnl_frac, "tp_thr": tp_thr, "sl_thr": sl_thr,
+                "roi_frac": roi_frac, "raw_frac": raw_frac,
+                "leverage": lev,
+                "tp_thr": tp_thr, "sl_thr": sl_thr,
                 "lane": lane, "lane_tp_pct": lane_tp, "lane_sl_pct": lane_sl,
                 "exit_type_bit": 1,
             },
         }
-    if pnl_frac <= -sl_thr:
+    if roi_frac <= -sl_thr:
         return {
             "value": True,
-            "reason": f"stop_loss[{lane}]: {pnl_frac*100:.3f}% <= -{sl_thr*100:.3f}%",
+            "reason": (
+                f"stop_loss[{lane}]: roi {roi_frac*100:.3f}% "
+                f"<= -{sl_thr*100:.3f}% (lev={lev:.0f}x)"
+            ),
             "derivation": {
-                "pnl_frac": pnl_frac, "tp_thr": tp_thr, "sl_thr": sl_thr,
+                "roi_frac": roi_frac, "raw_frac": raw_frac,
+                "leverage": lev,
+                "tp_thr": tp_thr, "sl_thr": sl_thr,
                 "lane": lane, "lane_tp_pct": lane_tp, "lane_sl_pct": lane_sl,
                 "exit_type_bit": -1,
             },
@@ -943,11 +1037,13 @@ def should_scalp_exit(
     return {
         "value": False,
         "reason": (
-            f"scalp hold[{lane}]: pnl {pnl_frac*100:.3f}% in "
-            f"[-{sl_thr*100:.3f}%, {tp_thr*100:.3f}%]"
+            f"scalp hold[{lane}]: roi {roi_frac*100:.3f}% in "
+            f"[-{sl_thr*100:.3f}%, {tp_thr*100:.3f}%] (lev={lev:.0f}x)"
         ),
         "derivation": {
-            "pnl_frac": pnl_frac, "tp_thr": tp_thr, "sl_thr": sl_thr,
+            "roi_frac": roi_frac, "raw_frac": raw_frac,
+            "leverage": lev,
+            "tp_thr": tp_thr, "sl_thr": sl_thr,
             "lane": lane, "lane_tp_pct": lane_tp, "lane_sl_pct": lane_sl,
         },
     }

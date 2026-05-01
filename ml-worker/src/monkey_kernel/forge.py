@@ -43,11 +43,15 @@ pain coordinates into retrieval.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
 
+from .bus_events import KernelEvent
 from .state import BASIN_DIM
+
+if TYPE_CHECKING:
+    from .kernel_bus import KernelBus
 
 
 # Numerical floor for log() and norms.
@@ -228,12 +232,20 @@ def dissipate(
 # ─────────────────────────────────────────────────────────────────
 
 
-def forge(event: ShadowEvent) -> ForgeResult:
+def forge(
+    event: ShadowEvent,
+    *,
+    bus: Optional["KernelBus"] = None,
+    symbol: Optional[str] = None,
+) -> ForgeResult:
     """Run all four Forge stages in order.
 
     Caller passes a ShadowEvent (typically a closed losing trade's
     geometric snapshot); receives ForgeResult with the full audit
     trail plus a compact `lesson_summary` for telemetry.
+
+    When `bus` is provided, publishes FORGE_PHASE_SHIFT for each
+    stage transition and FORGE_NUCLEUS on the nucleate stage.
     """
     if event.realized_pnl >= 0:
         # Forge is for shadow material specifically; positive outcomes
@@ -263,9 +275,46 @@ def forge(event: ShadowEvent) -> ForgeResult:
         )
 
     decompressed = decompress(event)
+    if bus is not None:
+        bus.publish(
+            KernelEvent.FORGE_PHASE_SHIFT,
+            source="forge",
+            payload={"phase": "DECOMPRESS", "loss_magnitude": float(abs(event.realized_pnl))},
+            symbol=symbol,
+        )
     fractured = fracture(decompressed)
+    if bus is not None:
+        bus.publish(
+            KernelEvent.FORGE_PHASE_SHIFT,
+            source="forge",
+            payload={"phase": "FRACTURE", "invariants": fractured.invariants},
+            symbol=symbol,
+        )
     nucleated = nucleate(fractured)
+    if bus is not None:
+        bus.publish(
+            KernelEvent.FORGE_PHASE_SHIFT,
+            source="forge",
+            payload={"phase": "NUCLEATE"},
+            symbol=symbol,
+        )
+        bus.publish(
+            KernelEvent.FORGE_NUCLEUS,
+            source="forge",
+            payload={
+                "nucleus_basin": [float(x) for x in nucleated.basin],
+                "invariants": nucleated.invariants,
+            },
+            symbol=symbol,
+        )
     dissipated = dissipate(decompressed, nucleated)
+    if bus is not None:
+        bus.publish(
+            KernelEvent.FORGE_PHASE_SHIFT,
+            source="forge",
+            payload={"phase": "DISSIPATE"},
+            symbol=symbol,
+        )
 
     lesson_summary = {
         "loss_magnitude": float(abs(event.realized_pnl)),
