@@ -14,6 +14,9 @@ Coverage:
     are large; confidence can go negative when transcendence > 1
   - Parity snapshot: 10 input rows with hand-computed expected
     outputs. The TS suite uses the IDENTICAL rows.
+  - compute_funding_drag: correctness, sign-awareness, edge cases
+  - compute_emotions with funding_drag: anxiety modulation, parity
+    with funding_drag=0 preserving bit-identical behavior
 
 Flow is DEFERRED — it requires a Fisher-Rao curiosity reference
 basin (Tier 3 territory). Tested when that lands.
@@ -28,7 +31,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
-from monkey_kernel.emotions import EmotionState, compute_emotions  # noqa: E402
+from monkey_kernel.emotions import EmotionState, compute_emotions, compute_funding_drag  # noqa: E402
 from monkey_kernel.motivators import Motivators  # noqa: E402
 
 
@@ -309,6 +312,150 @@ class TestParitySnapshot:
             assert got == pytest.approx(val, abs=1e-12), (
                 f"row {row_idx} {name}: got {got} expected {val}"
             )
+
+
+# ─────────────────────────────────────────────────────────────────
+# compute_funding_drag — correctness, sign-awareness, edge cases
+# ─────────────────────────────────────────────────────────────────
+
+
+class TestComputeFundingDrag:
+    def test_returns_zero_when_no_position(self) -> None:
+        assert compute_funding_drag(None, 0.0001, 8.0) == 0.0
+
+    def test_returns_zero_when_hours_held_zero(self) -> None:
+        assert compute_funding_drag("long", 0.0001, 0.0) == 0.0
+
+    def test_returns_zero_when_hours_held_negative(self) -> None:
+        assert compute_funding_drag("long", 0.0001, -1.0) == 0.0
+
+    def test_long_bleeds_when_rate_positive(self) -> None:
+        # +0.0001 rate × 8h / 8 = 0.0001 drag
+        drag = compute_funding_drag("long", 0.0001, 8.0)
+        assert drag == pytest.approx(0.0001, abs=1e-12)
+
+    def test_long_no_drag_when_rate_negative(self) -> None:
+        # Negative rate favours longs (shorts pay) — no drag
+        assert compute_funding_drag("long", -0.0001, 8.0) == 0.0
+
+    def test_short_bleeds_when_rate_negative(self) -> None:
+        # -0.0001 rate × 8h / 8 = 0.0001 drag for short
+        drag = compute_funding_drag("short", -0.0001, 8.0)
+        assert drag == pytest.approx(0.0001, abs=1e-12)
+
+    def test_short_no_drag_when_rate_positive(self) -> None:
+        # Positive rate favours shorts (longs pay) — no drag for short
+        assert compute_funding_drag("short", 0.0001, 8.0) == 0.0
+
+    def test_drag_grows_linearly_with_hours_held(self) -> None:
+        # 24 hours = 3 × 8h periods; drag = 3 × single-period drag
+        drag_8h = compute_funding_drag("long", 0.0001, 8.0)
+        drag_24h = compute_funding_drag("long", 0.0001, 24.0)
+        assert drag_24h == pytest.approx(3.0 * drag_8h, abs=1e-12)
+
+    def test_drag_zero_when_rate_zero(self) -> None:
+        assert compute_funding_drag("long", 0.0, 24.0) == 0.0
+        assert compute_funding_drag("short", 0.0, 24.0) == 0.0
+
+
+# ─────────────────────────────────────────────────────────────────
+# compute_emotions with funding_drag — anxiety modulation
+# ─────────────────────────────────────────────────────────────────
+
+
+class TestFundingDragInEmotions:
+    def test_default_zero_preserves_bit_identical_behavior(self) -> None:
+        # funding_drag=0.0 (default) must be identical to omitting the kwarg.
+        e_default = compute_emotions(
+            _m(transcendence=0.5), basin_distance=0.3, phi=0.5, basin_velocity=0.2,
+        )
+        e_explicit_zero = compute_emotions(
+            _m(transcendence=0.5), basin_distance=0.3, phi=0.5, basin_velocity=0.2,
+            funding_drag=0.0,
+        )
+        assert e_default.anxiety == e_explicit_zero.anxiety
+
+    def test_nonzero_funding_drag_increases_anxiety(self) -> None:
+        base = compute_emotions(
+            _m(transcendence=0.5), basin_distance=0.3, phi=0.5, basin_velocity=0.2,
+            funding_drag=0.0,
+        )
+        dragged = compute_emotions(
+            _m(transcendence=0.5), basin_distance=0.3, phi=0.5, basin_velocity=0.2,
+            funding_drag=0.003,
+        )
+        assert dragged.anxiety == pytest.approx(base.anxiety + 0.003, abs=1e-12)
+
+    def test_funding_drag_does_not_affect_other_emotions(self) -> None:
+        base = compute_emotions(
+            _m(surprise=0.4, curiosity=0.6, transcendence=0.5),
+            basin_distance=0.3, phi=0.5, basin_velocity=0.2,
+            funding_drag=0.0,
+        )
+        dragged = compute_emotions(
+            _m(surprise=0.4, curiosity=0.6, transcendence=0.5),
+            basin_distance=0.3, phi=0.5, basin_velocity=0.2,
+            funding_drag=0.005,
+        )
+        for attr in ("wonder", "frustration", "satisfaction", "confusion",
+                     "clarity", "confidence", "boredom", "flow"):
+            assert getattr(base, attr) == pytest.approx(getattr(dragged, attr), abs=1e-12), (
+                f"{attr} changed unexpectedly"
+            )
+
+    def test_conviction_gate_fires_earlier_with_funding_drag(self) -> None:
+        # Simulate a position that's marginal: confidence just above hesitation
+        # without drag, but drag tips it over.
+        # conviction = confidence * (1 + wonder); hesitation = anxiety + confusion
+        # Set up: confidence=0.4, wonder=0, confusion=0.1 → conviction=0.4, hesitation=0.1+anxiety
+        # Without drag (anxiety=0.2): 0.4 > 0.3 → would enter
+        # With drag=0.15 (anxiety=0.35): 0.4 < 0.45 → hesitation wins → won't enter
+        from monkey_kernel.executive import kernel_should_enter
+        e_no_drag = compute_emotions(
+            _m(transcendence=0.25, surprise=0.1),
+            basin_distance=0.0, phi=0.4, basin_velocity=0.8,
+            funding_drag=0.0,
+        )
+        e_with_drag = compute_emotions(
+            _m(transcendence=0.25, surprise=0.1),
+            basin_distance=0.0, phi=0.4, basin_velocity=0.8,
+            funding_drag=0.15,
+        )
+        # Verify anxiety increased by exactly the drag
+        assert e_with_drag.anxiety == pytest.approx(e_no_drag.anxiety + 0.15, abs=1e-12)
+        # Verify the gate fires differently (one enters, one doesn't)
+        enters_no_drag = kernel_should_enter(emotions=e_no_drag)
+        enters_with_drag = kernel_should_enter(emotions=e_with_drag)
+        assert enters_no_drag != enters_with_drag, (
+            "Expected drag to flip conviction gate; "
+            f"no_drag={enters_no_drag} with_drag={enters_with_drag}"
+        )
+
+
+# ─────────────────────────────────────────────────────────────────
+# Parity table for funding_drag — 5 rows, identical to TS suite
+# ─────────────────────────────────────────────────────────────────
+
+
+_FUNDING_PARITY_ROWS = [
+    # (position_side, rate_8h, hours_held, expected_drag)
+    (None,    0.0001,  8.0,  0.0),          # no position
+    ("long",  0.0,     8.0,  0.0),          # zero rate
+    ("long",  0.0001,  8.0,  0.0001),       # +0.01% × 1 period
+    ("long",  0.0001, 24.0,  0.0003),       # +0.01% × 3 periods
+    ("short", 0.0001,  8.0,  0.0),          # positive rate favours short
+    ("short",-0.0002, 16.0,  0.0004),       # -0.02% × 2 periods
+]
+
+
+class TestFundingParitySnapshot:
+    @pytest.mark.parametrize("row", _FUNDING_PARITY_ROWS)
+    def test_row_matches_expected(self, row: tuple) -> None:
+        side, rate, hours, expected = row
+        drag = compute_funding_drag(side, rate, hours)
+        assert drag == pytest.approx(expected, abs=1e-12), (
+            f"side={side} rate={rate} hours={hours}: got {drag} expected {expected}"
+        )
 
 
 if __name__ == "__main__":

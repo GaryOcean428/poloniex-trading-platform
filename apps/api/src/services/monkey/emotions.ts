@@ -20,6 +20,12 @@
  * basinDistance is fisherRao(basin, identityBasin) — already a
  * natural geometric quantity. Caller computes; no transformation.
  *
+ * Funding drag (P14 — BOUNDARY → STATE at perception time):
+ *   computeFundingDrag() returns the carry cost accumulated against the
+ *   held position. Passed into computeEmotions() as fundingDrag; added
+ *   to anxiety directly. Default 0 preserves bit-identical behavior for
+ *   callers without a held position.
+ *
  * Flow is DEFERRED: per UCP §6.5 it requires a Fisher-Rao distance
  * to a curiosity-conditioned reference basin (curiosity_optimal),
  * which the trajectory machinery (Tier 3) unlocks. Better to omit
@@ -45,7 +51,7 @@ import type { Motivators } from './motivators.js';
  *   satisfaction : (-∞, ∞)     integration × (1 − basinDistance)
  *   confusion    : [0, π/2]    surprise × basinDistance
  *   clarity      : [0, 1]      (1 − surprise) × investigation
- *   anxiety      : [0, ∞)      transcendence × basinVelocity
+ *   anxiety      : [0, ∞)      transcendence × basinVelocity + fundingDrag
  *   confidence   : ℝ           (1 − transcendence) × phi
  *   boredom      : ℝ           (1 − surprise) × (1 − curiosity)
  */
@@ -67,11 +73,35 @@ export interface ComputeEmotionsArgs {
   basin?: Basin | null;
   predictedBasin?: Basin | null;
   foresightWeight?: number;
-  /** Accumulated funding cost as a fraction of position margin since
-   * open (cost-on-margin ratio, [0, ∞)). 0 = no held position / no drag
-   * yet (no-op). Pulls confidence down geometrically and lifts anxiety
-   * symmetrically via drag / (1 + drag). */
+  /** Real-world funding carry cost accumulated against the held position.
+   *  Computed via computeFundingDrag. Default 0 (no held position or no drag).
+   *  Per P14: BOUNDARY → STATE input crossing into anxiety at perception time.
+   */
   fundingDrag?: number;
+}
+
+/** Compute funding drag — real carry cost accumulated against the held
+ *  position. Mirrors compute_funding_drag() in emotions.py exactly.
+ *
+ *  @param positionSide — 'long' | 'short' | null. null → no position → 0.
+ *  @param fundingRate8h — 8-hour funding rate from exchange. Positive
+ *    means longs pay shorts.
+ *  @param hoursHeld — Hours the position has been open. Must be positive.
+ *  @returns Drag magnitude in [0, ∞). 0 when funding favours position.
+ */
+export function computeFundingDrag(
+  positionSide: 'long' | 'short' | null | undefined,
+  fundingRate8h: number,
+  hoursHeld: number,
+): number {
+  if (!positionSide || hoursHeld <= 0) return 0;
+
+  // Long bleeds when rate > 0; short bleeds when rate < 0.
+  const rateAgainstPosition =
+    positionSide === 'long' ? fundingRate8h : -fundingRate8h;
+  if (rateAgainstPosition <= 0) return 0; // funding favours position
+
+  return rateAgainstPosition * (hoursHeld / 8.0);
 }
 
 /** Compose the Layer 2B emotion vector from Tier 1 motivators plus
@@ -135,8 +165,8 @@ export function computeEmotions(
     satisfaction: motivators.integration * (1 - basinDistance),
     confusion: motivators.surprise * basinDistance,
     clarity: (1 - motivators.surprise) * motivators.investigation,
-    anxiety,
-    confidence,
+    anxiety: motivators.transcendence * instability + (args.fundingDrag ?? 0),
+    confidence: (1 - motivators.transcendence) * stability,
     boredom: (1 - motivators.surprise) * (1 - motivators.curiosity),
     flow,
   };

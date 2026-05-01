@@ -31,6 +31,14 @@ kernel is moving away from where it expected to go (anti-flow).
 Caller passes None for predicted_basin when foresight has weight=0
 (cold start); flow is 0 in that case.
 
+Funding drag (P14 — BOUNDARY → STATE at perception time):
+  compute_funding_drag() returns the carry cost accumulated against
+  the held position as a real-world scalar. Passed into
+  compute_emotions() as funding_drag kwarg; added to anxiety directly.
+  Funding cost is working against the position — that is anxiety.
+  Default 0.0 preserves bit-identical behavior for callers without a
+  held position.
+
 Reference values from UCP §6.5 validation (Wonder ≈ 0.702 ± 0.045,
 Satisfaction ≈ 0.849 ± 0.021, etc.) are facts about *typical
 operating regimes*, not constraints on the formula. Tests reproduce
@@ -44,7 +52,7 @@ flag in tick.py gates whether emotions modulate decision formulas.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Literal, Optional
 
 import numpy as np
 
@@ -71,6 +79,7 @@ class EmotionState:
       clarity      : ℝ                  (1 − surprise) × investigation
                                         — signed via investigation
       anxiety      : [0, ∞)             transcendence × basin_velocity
+                                        + funding_drag (real carry cost)
       confidence   : ℝ                  (1 − transcendence) × Φ
                                         — negative when transcendence > 1
       boredom      : ℝ                  (1 − surprise) × (1 − curiosity)
@@ -89,6 +98,42 @@ class EmotionState:
     confidence: float
     boredom: float
     flow: float
+
+
+def compute_funding_drag(
+    position_side: Literal["long", "short", None],
+    funding_rate_8h: float,
+    hours_held: float,
+) -> float:
+    """Return funding drag magnitude in [0, ∞).
+
+    Funding rate is sign-aware: positive rate means longs pay shorts
+    (long position bleeds); negative rate means shorts pay longs
+    (short position bleeds). Returns 0.0 when funding favours the
+    position direction or when no position is open.
+
+    Parameters
+    ----------
+    position_side : "long" | "short" | None
+        Direction of the held position. None → no position → 0.0.
+    funding_rate_8h : float
+        Current 8-hour funding rate from the exchange (e.g.
+        +0.0001 = +0.01% per 8 h). Positive means longs pay shorts.
+    hours_held : float
+        Hours the position has been open. Must be positive.
+    """
+    if position_side is None or hours_held <= 0:
+        return 0.0
+
+    # Positive rate_against_position means funding costs the holder.
+    # Long bleeds when rate > 0; short bleeds when rate < 0.
+    rate_against_position = (
+        funding_rate_8h if position_side == "long" else -funding_rate_8h
+    )
+    if rate_against_position <= 0:
+        return 0.0  # funding favours position — no drag
+
+    return rate_against_position * (hours_held / 8.0)
 
 
 def compute_emotions(
@@ -122,13 +167,14 @@ def compute_emotions(
     foresight_weight : float
         Foresight predictor weight; Flow returns 0 when ≤ 0 (cold start).
     funding_drag : float
-        Accumulated funding cost as a fraction of position margin since
-        open (cost-on-margin ratio, range [0, ∞)). Held positions accrue
-        funding while open; the kernel reads the drag as a dimensionless
-        ratio and pulls confidence down geometrically while pushing
-        anxiety up symmetrically. Default 0 (no held position / no drag
-        yet) is a no-op. Caller computes ``funding_paid_usdt /
-        position_margin_usdt`` from the lane position state.
+        Real-world funding carry cost accumulated against the held
+        position (computed via compute_funding_drag). Default 0.0
+        preserves bit-identical behavior for callers without a held
+        position. Per P14: this is a BOUNDARY → STATE input crossing
+        into anxiety at perception time. Funding paid against the
+        position direction is working against the position — that is
+        anxiety. The conviction gate (confidence < anxiety + confusion)
+        fires earlier on funding-bleeding positions as a result.
     """
     stability = phi
     instability = basin_velocity
@@ -174,8 +220,8 @@ def compute_emotions(
         satisfaction=motivators.integration * (1.0 - basin_distance),
         confusion=motivators.surprise * basin_distance,
         clarity=(1.0 - motivators.surprise) * motivators.investigation,
-        anxiety=anxiety,
-        confidence=confidence,
+        anxiety=motivators.transcendence * instability + funding_drag,
+        confidence=(1.0 - motivators.transcendence) * stability,
         boredom=(1.0 - motivators.surprise) * (1.0 - motivators.curiosity),
         flow=flow,
     )

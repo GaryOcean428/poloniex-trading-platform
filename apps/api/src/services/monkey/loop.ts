@@ -551,6 +551,13 @@ export class MonkeyKernel extends EventEmitter {
     const lastPrice = Number(ohlcv[ohlcv.length - 1].close);
     if (!Number.isFinite(lastPrice) || lastPrice <= 0) return;
 
+    // Funding rate for the symbol's perpetual contract (8h rate from exchange).
+    // Non-blocking: fetch failure → rate=0 → no drag perturbation this tick.
+    // The rate is forwarded to the Python kernel so compute_funding_drag can
+    // modulate anxiety for held positions (P14: real-world boundary → STATE).
+    const fundingRateResp = await poloniexFuturesService.getFundingRate(symbol).catch(() => null) as { fundingRate?: string | number } | null;
+    const fundingRate8h = Number(fundingRateResp?.fundingRate) || 0;
+
     const raw = await mlPredictionService.getTradingSignal(symbol, ohlcv, lastPrice);
     const mlSignal = String(raw?.signal ?? 'HOLD').toUpperCase();
     const mlStrength = Number(raw?.strength) || 0;
@@ -1327,6 +1334,7 @@ export class MonkeyKernel extends EventEmitter {
           min_notional: minNotional,
           size_fraction: this.sizeFraction,
           self_obs_bias: this.selfObs?.entryBias ?? null,
+          funding_rate_8h: fundingRate8h,
         },
         prev_state: shadowPrevState,
       }).then((pyResult) => {
