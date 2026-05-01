@@ -495,6 +495,67 @@ def current_position_size(
 # exchange boundary.
 KELLY_CAP_TRADABLE_FLOOR: float = 8.0
 
+# Window size for Kelly rolling-stats query — matches the TS constant.
+_KELLY_WINDOW = 50
+# Minimum closed trades required before Kelly cap is active per lane.
+_KELLY_MIN_TRADES = 5
+
+
+async def get_kelly_rolling_stats(
+    conn: Any,
+    agent: str,
+    lane: Optional[LaneType] = None,
+) -> Optional[tuple[float, float, float]]:
+    """Fetch last N closed Monkey trades and return Kelly rolling stats.
+
+    Mirrors ``getKellyRollingStats`` in loop.ts (TS parity).
+
+    When ``lane`` is provided the query is restricted to
+    ``AND lane = $lane`` so each execution lane learns from its own
+    closed trades independently. When ``lane`` is None the pooled
+    query runs unchanged — backward compatible for callers not yet
+    lane-aware.
+
+    Returns ``(win_rate, avg_win, avg_loss)`` or ``None`` when fewer
+    than ``_KELLY_MIN_TRADES`` closed trades have accumulated for the
+    given scope (per-lane cold-start is independent).
+
+    ``conn`` is an asyncpg Connection or Pool (must support
+    ``conn.fetch(sql, *args)``).
+    """
+    params: list[Any] = [agent]
+    lane_clause = ""
+    if lane is not None:
+        params.append(lane)
+        lane_clause = f" AND lane = ${len(params)}"
+    sql = (
+        "SELECT pnl FROM autonomous_trades"
+        " WHERE status = 'closed'"
+        f"  AND agent = $1"
+        "  AND reason LIKE 'monkey|%'"
+        f"{lane_clause}"
+        f" ORDER BY exit_time DESC"
+        f" LIMIT {_KELLY_WINDOW}"
+    )
+    rows = await conn.fetch(sql, *params)
+    pnls = []
+    for row in rows:
+        v = row["pnl"]
+        try:
+            f = float(v)
+            if math.isfinite(f):
+                pnls.append(f)
+        except (TypeError, ValueError):
+            pass
+    if len(pnls) < _KELLY_MIN_TRADES:
+        return None
+    wins = [p for p in pnls if p > 0]
+    losses = [p for p in pnls if p < 0]
+    win_rate = len(wins) / len(pnls)
+    avg_win = sum(wins) / len(wins) if wins else 0.0
+    avg_loss = sum(losses) / len(losses) if losses else 0.0
+    return (win_rate, avg_win, avg_loss)
+
 
 def kelly_leverage_cap(
     p_win: float,
