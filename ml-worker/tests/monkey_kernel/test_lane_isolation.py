@@ -75,14 +75,18 @@ class TestLaneParameterEnvelope:
         assert lane_param("swing", "sl_pct") < lane_param("trend", "sl_pct")
         assert lane_param("swing", "tp_pct") < lane_param("trend", "tp_pct")
 
-    def test_scalp_sl_about_quarter_percent(self) -> None:
-        assert 0.002 <= lane_param("scalp", "sl_pct") <= 0.008
+    def test_scalp_sl_in_roi_band(self) -> None:
+        # v0.8.6 — sl_pct semantics are ROI-on-margin (was raw price).
+        # Scalp band: ~5% ROI.
+        assert 0.02 <= lane_param("scalp", "sl_pct") <= 0.10
 
-    def test_swing_sl_around_one_and_a_half_percent(self) -> None:
-        assert 0.010 <= lane_param("swing", "sl_pct") <= 0.025
+    def test_swing_sl_in_roi_band(self) -> None:
+        # v0.8.6 — swing band: ~15% ROI on margin.
+        assert 0.08 <= lane_param("swing", "sl_pct") <= 0.25
 
-    def test_trend_sl_three_to_five_percent(self) -> None:
-        assert 0.025 <= lane_param("trend", "sl_pct") <= 0.06
+    def test_trend_sl_in_roi_band(self) -> None:
+        # v0.8.6 — trend band: ~40% ROI on margin.
+        assert 0.25 <= lane_param("trend", "sl_pct") <= 0.60
 
     def test_scalp_swing_budget_sums_to_one(self) -> None:
         assert (
@@ -151,37 +155,43 @@ class TestPositionSizeLaneBudget:
 
 
 # ── 3. should_scalp_exit lane envelope widening ─────────────────────
+#
+# v0.8.6 — the SL/TP gate now compares ROI-on-margin (pnl/notional × lev)
+# against the lane envelope (also ROI). At leverage=15x (typical live
+# value), a 0.4% raw-price loss = 6% ROI, well into the scalp band; a
+# 1% raw-price loss = 15% ROI, well past the scalp band.
 
 
 class TestScalpExitLaneEnvelope:
-    def test_scalp_lane_matches_geometric_when_lane_tighter(self) -> None:
+    def test_scalp_sl_fires_when_roi_clears_envelope(self) -> None:
         bs = _basin_state()
-        # The scalp lane's params (sl=0.4%, tp=0.5%) are TIGHTER than
-        # the geometric formula's INVESTIGATION-mode envelope (sl ~=
-        # 0.67% with default NCs). max(geometric, lane) keeps geometric,
-        # so scalp = "current behavior" — the user's design intent.
+        # Lev=15x, raw -1.0% → ROI -15%. Past scalp's binding SL
+        # (max(geometric_sl×lev≈9.45%, lane 5%) = 9.45%).
         result = should_scalp_exit(
-            unrealized_pnl_usdt=-1.0,  # 1.0% loss, exceeds geometric ~0.67%
+            unrealized_pnl_usdt=-1.0,
             notional_usdt=100.0,
             s=bs, mode=MonkeyMode.INVESTIGATION, lane="scalp",
+            leverage=15.0,
         )
         assert result["value"] is True
         assert "stop_loss[scalp]" in result["reason"]
 
     def test_swing_lane_absorbs_loss_scalp_would_exit(self) -> None:
         bs = _basin_state()
-        # 1.0% loss exits scalp (geometric wins, sl ~0.67%) but the
-        # swing lane envelope (sl=1.5%) overrides via max() — swing
-        # holds where scalp would close.
+        # Lev=15x, raw -1.0% → ROI -15%. Past scalp's binding SL (~9.45%
+        # from geometric × lev) but exactly at swing's 15% lane SL.
+        # Use raw=-0.85 so ROI=-12.75% — past scalp 9.45%, inside swing 15%.
         scalp = should_scalp_exit(
-            unrealized_pnl_usdt=-1.0,
+            unrealized_pnl_usdt=-0.85,
             notional_usdt=100.0,
             s=bs, mode=MonkeyMode.INVESTIGATION, lane="scalp",
+            leverage=15.0,
         )
         swing = should_scalp_exit(
-            unrealized_pnl_usdt=-1.0,
+            unrealized_pnl_usdt=-0.85,
             notional_usdt=100.0,
             s=bs, mode=MonkeyMode.INVESTIGATION, lane="swing",
+            leverage=15.0,
         )
         assert scalp["value"] is True
         assert swing["value"] is False
@@ -189,34 +199,33 @@ class TestScalpExitLaneEnvelope:
 
     def test_trend_lane_absorbs_loss_swing_would_exit(self) -> None:
         bs = _basin_state()
-        # 2.5% loss exceeds swing SL but is below trend's 4% → trend
-        # holds, swing exits.
+        # Lev=15x, raw -2.0% → ROI -30%. Past swing's 15% lane SL but
+        # inside trend's 40% lane SL.
         swing = should_scalp_exit(
-            unrealized_pnl_usdt=-2.5,
+            unrealized_pnl_usdt=-2.0,
             notional_usdt=100.0,
             s=bs, mode=MonkeyMode.INVESTIGATION, lane="swing",
+            leverage=15.0,
         )
         trend = should_scalp_exit(
-            unrealized_pnl_usdt=-2.5,
+            unrealized_pnl_usdt=-2.0,
             notional_usdt=100.0,
             s=bs, mode=MonkeyMode.INVESTIGATION, lane="trend",
+            leverage=15.0,
         )
         assert swing["value"] is True
         assert trend["value"] is False
 
     def test_geometric_floor_never_breached(self) -> None:
         bs = _basin_state()
-        # Even if a (hypothetical) lane param said tp=0.0001%, the
-        # geometric fee-clear floor (~0.3%+) wins — verified via the
-        # max() composition. Use a real lane to test default behavior:
+        # 50% raw gain at lev=1 = 50% ROI — trivially clears any lane/geom TP.
         result = should_scalp_exit(
-            unrealized_pnl_usdt=10.0,  # huge gain
+            unrealized_pnl_usdt=50.0,
             notional_usdt=100.0,
             s=bs, mode=MonkeyMode.INVESTIGATION, lane="swing",
+            leverage=1.0,
         )
-        # 10% gain trivially clears any lane's TP.
         assert result["value"] is True
-        # And the stored tp_thr exceeds the lane param (geometric won):
         derivation = result["derivation"]
         assert derivation["tp_thr"] >= derivation["lane_tp_pct"]
 
@@ -226,10 +235,12 @@ class TestScalpExitLaneEnvelope:
             unrealized_pnl_usdt=0.05,
             notional_usdt=100.0,
             s=bs, mode=MonkeyMode.INVESTIGATION, lane="scalp",
+            leverage=10.0,
         )
         assert result["derivation"]["lane"] == "scalp"
         assert result["derivation"]["lane_tp_pct"] == lane_param("scalp", "tp_pct")
         assert result["derivation"]["lane_sl_pct"] == lane_param("scalp", "sl_pct")
+        assert result["derivation"]["leverage"] == pytest.approx(10.0)
 
 
 # ── 4. should_dca_add same-lane mismatch only ───────────────────────
@@ -366,19 +377,21 @@ class TestCrossLaneNonInterference:
 
     def test_swing_long_envelope_independent_of_scalp_short_envelope(self) -> None:
         bs = _basin_state()
-        # 1.0% loss — between geometric SL (~0.67%) and swing lane
-        # envelope (1.5%). Swing holds; scalp exits. Demonstrates the
-        # core proposal-#10 invariant: per-lane retreat tolerance.
+        # v0.8.6: at lev=15x, raw -0.85% → ROI -12.75%. Past scalp's
+        # binding SL (max(geom×lev≈9.45%, lane 5%) = 9.45%), inside
+        # swing's 15% lane SL. Same input, different lane decisions.
         swing_long = should_scalp_exit(
-            unrealized_pnl_usdt=-1.0, notional_usdt=100.0,
+            unrealized_pnl_usdt=-0.85, notional_usdt=100.0,
             s=bs, mode=MonkeyMode.INVESTIGATION, lane="swing",
+            leverage=15.0,
         )
         scalp_short = should_scalp_exit(
-            unrealized_pnl_usdt=-1.0, notional_usdt=100.0,
+            unrealized_pnl_usdt=-0.85, notional_usdt=100.0,
             s=bs, mode=MonkeyMode.INVESTIGATION, lane="scalp",
+            leverage=15.0,
         )
-        assert swing_long["value"] is False, "swing should hold its 1% drawdown"
-        assert scalp_short["value"] is True, "scalp should fire SL on 1% loss"
+        assert swing_long["value"] is False, "swing should hold its 12.75% ROI drawdown"
+        assert scalp_short["value"] is True, "scalp should fire SL on 12.75% ROI loss"
 
     def test_lane_budgets_partition_capital(self) -> None:
         # Two lanes' budgets should sum to <= 1.0 across position-bearing
@@ -456,14 +469,25 @@ class TestFlatAccountLaneSizing:
         $22.49, the v0.6.6 lift-to-min must reach min notional. Pre-fix:
         equity was halved to $2.50 → required_frac=0.643 > 0.5 → no
         lift → size=0. Post-fix: full $5 → required_frac=0.337 < 0.5 →
-        lift fires."""
+        lift fires.
+
+        v0.8.7 follow-up: the new notional-ceiling fallback (4× equity)
+        binds at $20 here, BELOW the $22.49 exchange min. The kernel
+        correctly refuses to enter — preserving the lift-to-min path's
+        intent (no entries below exchange min) while bounding worst-case
+        escalation. The previous behaviour leveraged 4.5× balance just
+        to clear exchange min on a $5 pool; that's not safe sizing."""
         bs = _basin_state(phi=0.55)
         result = current_position_size(
             bs, available_equity_usdt=5.0, min_notional_usdt=22.49,
             leverage=14, bank_size=0, mode=MonkeyMode.INVESTIGATION,
             lane="swing",
         )
-        assert result["value"] > 0
+        # Notional ceiling = 4 × $5 = $20 < $22.49 min → size collapses.
+        assert result["value"] == 0
+        assert result["derivation"]["capped_by_notional"] == 1
+        # The lift-to-min still tried to fire — that path remains intact;
+        # the new constraint is the ceiling on top.
         assert result["derivation"]["lifted_to_min"] == 1
 
     def test_empty_bank_zero_sovereignty_still_sizes_above_min(self) -> None:
@@ -495,17 +519,29 @@ class TestFlatAccountLaneSizing:
     def test_pre_fix_haircut_account_now_sizes_above_zero(self) -> None:
         """Direct reproduction of the pre-fix size=0 case: $4.50 equity
         (mimicking the per-symbol cap × size_fraction path on small
-        accounts), ETH min $22.49, lev 14. Pre-fix: $4.50 × 0.5 lane
-        = $2.25 → required_frac = (22.49 × 1.05) / (14 × 2.25) = 0.749 >
-        0.5 max_fraction → no lift → size=0. Post-fix: full $4.50
-        → required_frac = 0.374 < 0.5 → lift fires → size > 0."""
+        accounts), ETH min $22.49, lev 14. Pre-fix (PR #614): $4.50 ×
+        0.5 lane = $2.25 → required_frac = 0.749 > 0.5 max_fraction →
+        no lift → size=0. PR #614 fix: full $4.50 → required_frac = 0.374
+        < 0.5 → lift fires → size > 0.
+
+        v0.8.7 follow-up: with notional ceiling = 4 × $4.50 = $18 < $22.49
+        ETH min, the ceiling now blocks entry on this scenario. The
+        kernel correctly refuses to size above 4× balance just to clear
+        exchange min on a haircut account; the lift-to-min path tries to
+        fire but the ceiling clamps it back. Live tape evidence ($97
+        account, $386 escalating notionals) confirmed unbounded
+        lift-to-min was the wrong default."""
         bs = _basin_state(phi=0.55)
         result = current_position_size(
             bs, available_equity_usdt=4.50, min_notional_usdt=22.49,
             leverage=14, bank_size=0, mode=MonkeyMode.INVESTIGATION,
             lane="swing",
         )
-        assert result["value"] > 0
+        # Notional ceiling = 4 × $4.50 = $18 < $22.49 min → size=0.
+        assert result["value"] == 0
+        assert result["derivation"]["capped_by_notional"] == 1
+        # The lift-to-min path still attempted to lift; the ceiling is
+        # the new binding constraint on top.
         assert result["derivation"]["lifted_to_min"] == 1
 
     def test_lane_margin_cap_in_derivation(self) -> None:

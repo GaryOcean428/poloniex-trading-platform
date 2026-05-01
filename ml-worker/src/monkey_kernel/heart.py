@@ -23,10 +23,14 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass
 from statistics import stdev
-from typing import Deque, Literal, Optional, Tuple
+from typing import TYPE_CHECKING, Deque, Literal, Optional, Tuple
 
+from .bus_events import HeartTickPayload, KernelEvent
 from .persistence import PersistentMemory
 from .state import KAPPA_STAR
+
+if TYPE_CHECKING:
+    from .kernel_bus import KernelBus
 
 
 KappaMode = Literal["FEELING", "LOGIC", "ANCHOR"]
@@ -63,10 +67,14 @@ class HeartMonitor:
         *,
         persistence: Optional[PersistentMemory] = None,
         symbol: Optional[str] = None,
+        bus: Optional["KernelBus"] = None,
     ) -> None:
         self._max_window = max_window
         self._persistence = persistence
         self._symbol = symbol
+        self._bus = bus
+        self._last_mode: Optional[KappaMode] = None
+        self._last_kappa_offset_sign: int = 0  # -1, 0, +1
         self._samples: Deque[Tuple[float, float]] = deque(maxlen=max_window)
         # Restore prior κ window from Redis if available.
         if persistence is not None and persistence.is_available and symbol:
@@ -78,6 +86,70 @@ class HeartMonitor:
         # Write-through. Failures are silent (logged at debug in persistence).
         if self._persistence is not None and self._symbol:
             self._persistence.push_kappa(self._symbol, float(kappa), float(t_ms))
+
+        if self._bus is not None:
+            state = self.read()
+            self._publish_tick(state)
+            self._publish_mode_shift(state)
+            self._publish_tacking(state)
+
+    def _publish_tick(self, state: "HeartState") -> None:
+        if self._bus is None:
+            return
+        self._bus.publish(
+            KernelEvent.HEART_TICK,
+            source="heart",
+            payload=HeartTickPayload(
+                kappa=float(state.kappa),
+                kappa_star=float(KAPPA_STAR),
+                hrv=float(state.hrv),
+                mode=str(state.mode),
+            ),
+            symbol=self._symbol,
+        )
+
+    def _publish_mode_shift(self, state: "HeartState") -> None:
+        if self._bus is None:
+            return
+        if self._last_mode is not None and self._last_mode != state.mode:
+            self._bus.publish(
+                KernelEvent.HEART_MODE_SHIFT,
+                source="heart",
+                payload={
+                    "from": self._last_mode,
+                    "to": str(state.mode),
+                    "kappa": float(state.kappa),
+                    "kappa_offset": float(state.kappa_offset),
+                },
+                symbol=self._symbol,
+            )
+        self._last_mode = state.mode
+
+    def _publish_tacking(self, state: "HeartState") -> None:
+        """κ tacking: sign of (κ − κ*) crosses zero. Publishes
+        HEART_TACKING at the crossing tick."""
+        if self._bus is None:
+            return
+        offset = state.kappa_offset
+        new_sign = 0 if offset == 0.0 else (-1 if offset < 0.0 else 1)
+        if (
+            self._last_kappa_offset_sign != 0
+            and new_sign != 0
+            and new_sign != self._last_kappa_offset_sign
+        ):
+            self._bus.publish(
+                KernelEvent.HEART_TACKING,
+                source="heart",
+                payload={
+                    "kappa": float(state.kappa),
+                    "kappa_star": float(KAPPA_STAR),
+                    "kappa_offset": float(state.kappa_offset),
+                    "from_sign": self._last_kappa_offset_sign,
+                    "to_sign": new_sign,
+                },
+                symbol=self._symbol,
+            )
+        self._last_kappa_offset_sign = new_sign
 
     def read(self) -> HeartState:
         n = len(self._samples)

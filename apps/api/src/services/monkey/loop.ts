@@ -38,6 +38,7 @@ import {
   type KernelOrder,
 } from '../riskKernel.js';
 
+import { getKellyRollingStats } from './kelly_rolling_stats.js';
 import { forge, forgeBankWriteLive, shadowThreshold } from './forge.js';
 
 import {
@@ -90,6 +91,7 @@ import {
   hammerAgainstLongSl,
   patternSignalScalar,
 } from './candlePatterns.js';
+import { evaluateBankWrite } from './learning_gate_client.js';
 import { resonanceBank } from './resonance_bank.js';
 import { computeSelfObservation, type SelfObservation } from './self_observation.js';
 import { WorkingMemory, type Bubble } from './working_memory.js';
@@ -151,6 +153,34 @@ const REWARD_HALF_LIFE_MS = 20 * 60_000;  // 20 min
 
 /** Max rewards retained; FIFO eviction. */
 const REWARD_QUEUE_MAX = 50;
+
+/**
+ * v0.8.7 regime-hysteresis — minimum number of consecutive ticks where
+ * regimeNow != regimeAtOpen before the regime_change exit can fire. The
+ * Python kernel reads this from the parameter registry as
+ * ``executive.regime_stability_ticks_for_exit``; TS has no parameter
+ * registry yet, so the constant is the default. Default 3: a flicker
+ * (1-2 tick mode divergence) cannot trigger the exit alone — the
+ * kernel must read the new regime stably for at least 3 ticks AND the
+ * basin must have moved more than 1/π in Fisher-Rao distance from the
+ * entry anchor.
+ */
+const REGIME_STABILITY_TICKS_FOR_EXIT =
+  Number(process.env.MONKEY_REGIME_STABILITY_TICKS_FOR_EXIT) || 3;
+
+/**
+ * v0.8.7 kill switch — when MONKEY_TRADING_PAUSED=true, gate
+ * entry-order placement only. Exit orders (scalp_exit, auto_flatten,
+ * hard SL, rejust exits) are NOT gated; existing positions must close
+ * cleanly during deploy/incident response. Default false (no pause).
+ *
+ * Reads at order-placement time (live, not cached at startup) so the
+ * operator can flip the env var on Railway without redeploying.
+ */
+function isTradingPaused(): boolean {
+  return process.env.MONKEY_TRADING_PAUSED === 'true';
+}
+
 
 /**
  * Per-kernel configuration (v0.6b). Different sub-Monkeys differ in
@@ -238,6 +268,19 @@ interface SymbolState {
    *  positions keep independent rejustification anchors. */
   regimeAtOpenByLane: Record<string, string>;
   phiAtOpenByLane: Record<string, number>;
+  /** v0.8.7 regime-hysteresis state. The regime-change exit (PR #619 +
+   *  confidence gate from PR #629) was firing on single-tick mode
+   *  flickers — live tape 2026-05-01 showed 22% win rate with every
+   *  close via regime_change. The triple-AND gate now requires a
+   *  sustained streak (>= N ticks where regimeNow != regimeAtOpen)
+   *  AND FR distance from basin_at_open > 1/π in addition to the
+   *  existing label divergence + confidence checks. Per-lane streak
+   *  so a swing position's flicker doesn't cross-contaminate a scalp
+   *  position's gate. basinAtOpenByLane is the basin snapshot
+   *  captured at entry time; FR-distance from that anchor is the
+   *  geometric "has the kernel's perception actually moved?" signal. */
+  regimeChangeStreakByLane: Record<string, number>;
+  basinAtOpenByLane: Record<string, Basin>;
   /** v0.8.7e: latest computed basinDir + tapeTrend from processSymbol, with
    *  timestamp. Exposed via getLatestBasinSnapshot() for LiveSignal's
    *  inter-engine agreement gate. Null until the first tick completes. */
@@ -426,6 +469,8 @@ export class MonkeyKernel extends EventEmitter {
       tapeFlipStreakByLane: {},
       regimeAtOpenByLane: {},
       phiAtOpenByLane: {},
+      regimeChangeStreakByLane: {},
+      basinAtOpenByLane: {},
       latestBasinSnapshot: null,
     };
   }
@@ -501,6 +546,13 @@ export class MonkeyKernel extends EventEmitter {
     }
     const lastPrice = Number(ohlcv[ohlcv.length - 1].close);
     if (!Number.isFinite(lastPrice) || lastPrice <= 0) return;
+
+    // Funding rate for the symbol's perpetual contract (8h rate from exchange).
+    // Non-blocking: fetch failure → rate=0 → no drag perturbation this tick.
+    // The rate is forwarded to the Python kernel so compute_funding_drag can
+    // modulate anxiety for held positions (P14: real-world boundary → STATE).
+    const fundingRateResp = await poloniexFuturesService.getFundingRate(symbol).catch(() => null) as { fundingRate?: string | number } | null;
+    const fundingRate8h = Number(fundingRateResp?.fundingRate) || 0;
 
     const raw = await mlPredictionService.getTradingSignal(symbol, ohlcv, lastPrice);
     const mlSignal = String(raw?.signal ?? 'HOLD').toUpperCase();
@@ -779,15 +831,6 @@ export class MonkeyKernel extends EventEmitter {
     // tapeTrend already computed above for side-override check.
     const entryThr = currentEntryThreshold(basinState, mode, selfObsBias, tapeTrend, sideCandidate);
     const maxLevBoundary = (await getMaxLeverage(symbol)) ?? 10;
-    // Proposal #3: Kelly leverage cap. Pull last 50 closed K-agent
-    // trades from autonomous_trades to compute win-rate + avg-win +
-    // avg-loss; pass to currentLeverage as the rolling-stats arg.
-    // Cold-start (no closed trades): rollingStats is null, kelly cap
-    // becomes a no-op (geometric leverage unchanged).
-    const rollingStats = await this.getKellyRollingStats('K');
-    const leverage = currentLeverage(
-      basinState, maxLevBoundary, mode, tapeTrend, rollingStats,
-    );
     const precisions = await getPrecisions(symbol).catch(() => null);
     const lotSize = precisions?.lotSize ?? 0;
     const minNotional = lastPrice * Math.max(lotSize, 1e-9);
@@ -817,6 +860,16 @@ export class MonkeyKernel extends EventEmitter {
     const chosenLane: LaneType = laneDecision.value;
     const positionLane: 'scalp' | 'swing' | 'trend' =
       chosenLane === 'observe' ? 'swing' : chosenLane;
+    // Proposal #3: Kelly leverage cap. Pull last 50 closed K-agent
+    // trades from autonomous_trades — lane-filtered so each lane learns
+    // from its own closed trades (scalp from scalps, etc.).
+    // Cold-start (< 5 closed trades in this lane): rollingStats is null,
+    // kelly cap becomes a no-op (geometric leverage unchanged). Each lane
+    // warms independently; scalp warms fastest (closes most often).
+    const rollingStats = await this.getKellyRollingStats('K', positionLane);
+    const leverage = currentLeverage(
+      basinState, maxLevBoundary, mode, tapeTrend, rollingStats,
+    );
     const size = currentPositionSize(
       basinState, cappedEquity, minNotional, leverage.value, bankSize, mode,
       positionLane,
@@ -946,7 +999,22 @@ export class MonkeyKernel extends EventEmitter {
         // rejustification block so a position bleeding hard against
         // the kernel always closes on price before the kernel re-reads
         // its own state. TP comes BELOW rejustification + harvest.
-        const scalp = shouldScalpExit(unrealizedPnl, positionNotional, basinState, mode, heldLane);
+        // v0.8.6 — SL gate now reads ROI on margin, not raw price %.
+        // Use the position's recorded leverage (Number(openRow.leverage))
+        // so the gate scales raw movement into ROI correctly. Defaults to
+        // the just-derived leverage.value when openRow lacks the column
+        // (cold/legacy rows).
+        const positionLeverage = openRow && Number.isFinite(Number(openRow.leverage)) && Number(openRow.leverage) > 0
+          ? Number(openRow.leverage)
+          : leverage.value;
+        const scalp = shouldScalpExit(
+          unrealizedPnl,
+          positionNotional,
+          basinState,
+          mode,
+          heldLane,
+          positionLeverage,
+        );
         derivation.scalp = { ...scalp.derivation, unrealizedPnl, markPrice: lastPrice, tradeId };
         const SL_DEFER_TICKS = 2;
         const isStopLoss = Number((scalp as any).derivation?.exitTypeBit) === -1;
@@ -982,14 +1050,34 @@ export class MonkeyKernel extends EventEmitter {
 
         // 2. Held-position re-justification — three internal exit
         // checks. Each fires immediately when the kernel's current
-        // state contradicts the state that justified entry. No streak
-        // counting, no hysteresis, no time-based stops. All three are
-        // geometric (regime classifier output, Φ integration measure,
-        // Layer 2B emotion stack — TS path uses NEUTRAL_EMOTIONS until
-        // emotion stack is ported, so the conviction check is dormant
-        // in TS but live in Python).
+        // state contradicts the state that justified entry. v0.8.7 the
+        // regime gate gained hysteresis: triple-AND of label divergence
+        // + sustained streak + FR-distance > 1/π (live tape 2026-05-01
+        // 16:11-16:17 evidence: every close was regime_change at 22%
+        // win rate). Φ collapse and conviction failure remain
+        // single-tick (geometric: regime classifier output, Φ
+        // integration measure, Layer 2B emotion stack — TS path uses
+        // NEUTRAL_EMOTIONS until emotion stack is ported, so conviction
+        // is dormant in TS but live in Python).
         const regimeAtOpen = state.regimeAtOpenByLane[heldLane] as MonkeyMode | undefined;
         const phiAtOpen = state.phiAtOpenByLane[heldLane];
+        const basinAtOpen = state.basinAtOpenByLane[heldLane];
+        // Maintain per-lane regime-change streak across ticks. Increment
+        // when regimeNow != regimeAtOpen; reset when it returns. The
+        // gate consumes the accumulated count below.
+        if (regimeAtOpen !== undefined) {
+          if (mode !== regimeAtOpen) {
+            state.regimeChangeStreakByLane[heldLane] =
+              (state.regimeChangeStreakByLane[heldLane] ?? 0) + 1;
+          } else {
+            state.regimeChangeStreakByLane[heldLane] = 0;
+          }
+        }
+        const regimeChangeStreak = state.regimeChangeStreakByLane[heldLane] ?? 0;
+        // Registry-controlled stability requirement; default 3 ticks.
+        // TS has no parameter registry yet — the constant lives in
+        // executive.ts mirroring ml-worker's _DEFAULT_REGIME_STABILITY_TICKS_FOR_EXIT.
+        const regimeStabilityTicksRequired = REGIME_STABILITY_TICKS_FOR_EXIT;
         const rejustResult = !exitFired
           ? evaluateRejustification({
               regimeAtOpen,
@@ -997,8 +1085,19 @@ export class MonkeyKernel extends EventEmitter {
               regimeNow: mode,
               phiNow: phi,
               emotions: NEUTRAL_EMOTIONS,
+              regimeConfidence: regimeReading.confidence,
+              regimeChangeStreak,
+              regimeStabilityTicksRequired,
+              basinNow: basin,
+              basinAtOpen,
             })
-          : { checked: false, fired: null, reason: '', phiFloor: null };
+          : {
+              checked: false, fired: null, reason: '', phiFloor: null,
+              frDistance: null,
+              frThreshold: 1 / Math.PI,
+              regimeChangeStreak,
+              regimeStabilityTicksRequired,
+            };
         const rejust: Record<string, unknown> = {
           checked: rejustResult.checked,
         };
@@ -1006,6 +1105,11 @@ export class MonkeyKernel extends EventEmitter {
           rejust.lane = heldLane;
           rejust.regimeAtOpen = regimeAtOpen;
           rejust.regimeNow = mode;
+          rejust.regimeConfidence = regimeReading.confidence;
+          rejust.regimeChangeStreak = regimeChangeStreak;
+          rejust.regimeStabilityTicksRequired = regimeStabilityTicksRequired;
+          rejust.frDistance = rejustResult.frDistance;
+          rejust.frThreshold = rejustResult.frThreshold;
           rejust.phiAtOpen = phiAtOpen;
           rejust.phiNow = phi;
           rejust.phiFloor = rejustResult.phiFloor;
@@ -1142,7 +1246,8 @@ export class MonkeyKernel extends EventEmitter {
       MODE_PROFILES[mode].canEnter &&
       direction !== 'flat' &&
       size.value > 0 &&
-      !sideShortRefused
+      !sideShortRefused &&
+      !isChopSuppressed(regimeReading)
     ) {
       // Regime suppression check (issue #623): before opening a new entry,
       // consult the regime classifier reading. Held positions are unaffected —
@@ -1173,18 +1278,31 @@ export class MonkeyKernel extends EventEmitter {
       }
     } else {
       action = 'hold';
+      const chopSuppressed = isChopSuppressed(regimeReading);
       const why = !MODE_PROFILES[mode].canEnter
         ? `mode=${mode} blocks entry (${MODE_PROFILES[mode].description})`
         : direction === 'flat'
           ? `[${mode}] direction=flat (basinDir=${basinDir.toFixed(3)} tape=${tapeTrend.toFixed(3)})`
-          : size.value <= 0
-          ? `[${mode}] size ${size.value.toFixed(2)} below min notional ${minNotional.toFixed(2)}`
-          : sideShortRefused
-          ? `[${mode}] short refused — MONKEY_SHORTS_LIVE=false`
-          : 'no qualifying signal';
+          : chopSuppressed
+            ? `[${mode}] chop regime confidence=${regimeReading.confidence.toFixed(2)} > ${CHOP_SUPPRESSION_CONFIDENCE.toFixed(2)} — suspend new entries`
+            : size.value <= 0
+              ? `[${mode}] size ${size.value.toFixed(2)} below min notional ${minNotional.toFixed(2)}`
+              : sideShortRefused
+                ? `[${mode}] short refused — MONKEY_SHORTS_LIVE=false`
+                : 'no qualifying signal';
       reason = why;
       derivation.entryThreshold = entryThr.derivation;
     }
+    // CHOP suppression telemetry — surfaces whether the gate was active
+    // this tick AND whether it actually blocked entry. ``active`` reads
+    // the regime classifier output; ``blocked`` is true only when the
+    // suspension would have flipped a would-be entry into a hold.
+    derivation.chopSuppression = {
+      active: isChopSuppressed(regimeReading),
+      regime: regimeReading.regime,
+      confidence: regimeReading.confidence,
+      threshold: CHOP_SUPPRESSION_CONFIDENCE,
+    };
 
     // v0.8.3b — shadow the full Python tick pipeline. Fire-and-forget:
     // Python's decision is NOT authoritative; we only log parity diffs.
@@ -1222,6 +1340,9 @@ export class MonkeyKernel extends EventEmitter {
           min_notional: minNotional,
           size_fraction: this.sizeFraction,
           self_obs_bias: this.selfObs?.entryBias ?? null,
+          rolling_kelly_stats: rollingStats
+            ? [rollingStats.winRate, rollingStats.avgWin, rollingStats.avgLoss]
+            : null,
         },
         prev_state: shadowPrevState,
       }).then((pyResult) => {
@@ -1296,6 +1417,17 @@ export class MonkeyKernel extends EventEmitter {
     let monkeyOrderId: string | null = null;
     if (process.env.MONKEY_EXECUTE === 'true') {
       if ((action === 'enter_long' || action === 'enter_short') && size.value > 0) {
+        // v0.8.7 kill switch — pause new entries (including DCA pyramids)
+        // when MONKEY_TRADING_PAUSED=true on Railway. Exits remain
+        // active so open positions can close cleanly.
+        if (isTradingPaused()) {
+          reason += ' | trading_paused: MONKEY_TRADING_PAUSED=true (entry suppressed; exits unaffected)';
+          (derivation as Record<string, unknown>).tradingPausedSkipped = {
+            agent: 'K',
+            action,
+            reason: 'MONKEY_TRADING_PAUSED env',
+          };
+        } else {
         const isDCA = Boolean(derivation.isDCAAdd);
         // Cap K's margin to its arbiter share. Without this, the existing
         // size formula could exceed K's allocation when M has been
@@ -1351,8 +1483,13 @@ export class MonkeyKernel extends EventEmitter {
               : positionLane) as 'scalp' | 'swing' | 'trend';
             state.regimeAtOpenByLane[entryLane] = mode;
             state.phiAtOpenByLane[entryLane] = phi;
+            // v0.8.7 — also snapshot basin and reset streak for the
+            // FR-distance hysteresis gate.
+            state.basinAtOpenByLane[entryLane] = basin.slice() as Basin;
+            state.regimeChangeStreakByLane[entryLane] = 0;
           }
         }
+        }  // close v0.8.7 trading-paused else branch
       } else if (action === 'scalp_exit' && heldSide) {
         const scalpDeriv = derivation.scalp as Record<string, unknown> | undefined;
         const tradeId = scalpDeriv?.tradeId ? String(scalpDeriv.tradeId) : null;
@@ -1390,6 +1527,8 @@ export class MonkeyKernel extends EventEmitter {
             // Clear rejustification anchors for the lane that closed.
             delete state.regimeAtOpenByLane[scalpLane];
             delete state.phiAtOpenByLane[scalpLane];
+            delete state.basinAtOpenByLane[scalpLane];
+            delete state.regimeChangeStreakByLane[scalpLane];
             // Mirror legacy scalars for any non-lane-aware reader.
             state.peakPnlUsdt = null;
             state.peakTrackedTradeId = null;
@@ -1438,6 +1577,18 @@ export class MonkeyKernel extends EventEmitter {
             const reversalLane = (ownOpenRow?.lane ?? 'swing') as 'scalp' | 'swing' | 'trend';
             delete state.regimeAtOpenByLane[reversalLane];
             delete state.phiAtOpenByLane[reversalLane];
+            delete state.basinAtOpenByLane[reversalLane];
+            delete state.regimeChangeStreakByLane[reversalLane];
+            // v0.8.7 kill switch — close on the reverse path proceeded
+            // (exits unaffected); skip the new-entry leg when paused.
+            if (isTradingPaused()) {
+              reason += ` | closed@${lastPrice.toFixed(2)} pnl=${pnlAtDecision.toFixed(4)} | trading_paused: new ${newSide} entry suppressed`;
+              (derivation as Record<string, unknown>).tradingPausedSkipped = {
+                agent: 'K',
+                action,
+                reason: 'MONKEY_TRADING_PAUSED env (reverse-reopen leg)',
+              };
+            } else {
             // Settle delay — give the exchange ~500ms to flatten net.
             await new Promise((resolve) => setTimeout(resolve, 500));
             const execResult = await this.executeEntry({
@@ -1464,10 +1615,13 @@ export class MonkeyKernel extends EventEmitter {
               // Re-snapshot rejustification anchors for the new direction.
               state.regimeAtOpenByLane[reversalLane] = mode;
               state.phiAtOpenByLane[reversalLane] = phi;
+              state.basinAtOpenByLane[reversalLane] = basin.slice() as Basin;
+              state.regimeChangeStreakByLane[reversalLane] = 0;
               reason += ` | closed@${lastPrice.toFixed(2)} pnl=${pnlAtDecision.toFixed(4)} | new ${newSide} orderId=${monkeyOrderId}`;
             } else {
               reason += ` | flattened ok, new-entry failed: ${execResult.reason}`;
             }
+            }  // close v0.8.7 trading-paused else branch
           } else {
             reason += ` | flatten failed: ${closeResult.reason}; reverse aborted`;
           }
@@ -1515,6 +1669,13 @@ export class MonkeyKernel extends EventEmitter {
         (mDecision.action === 'enter_long' || mDecision.action === 'enter_short')
         && mDecision.sizeUsdt > 0
       ) {
+        // v0.8.7 kill switch — pause new entries from Agent M.
+        if (isTradingPaused()) {
+          logger.info('[AgentM] entry suppressed by MONKEY_TRADING_PAUSED', {
+            symbol, side: mDecision.action,
+          });
+          (derivation as Record<string, unknown>).agentMTradingPausedSkipped = true;
+        } else {
         const mResult = await this.executeEntry({
           symbol,
           side: mDecision.action === 'enter_long' ? 'long' : 'short',
@@ -1541,6 +1702,7 @@ export class MonkeyKernel extends EventEmitter {
             margin: mDecision.sizeUsdt.toFixed(2), leverage: mDecision.leverage,
           });
         }
+        }  // close v0.8.7 trading-paused else branch
       }
     }
 
@@ -1591,12 +1753,30 @@ export class MonkeyKernel extends EventEmitter {
       // turtle agent. Pyramids are MORE units in the same trend-lane;
       // from autonomous_trades' perspective each unit is its own row,
       // grouped by (agent='T', symbol, lane='trend').
+      // v0.8.7 telemetry: surface the pause state when Agent T would
+      // have entered but the kill switch suppressed it.
       if (
         (tDecision.action === 'enter_long'
           || tDecision.action === 'enter_short'
           || tDecision.action === 'pyramid_long'
           || tDecision.action === 'pyramid_short')
         && tDecision.sizeUsdt > 0
+        && isTradingPaused()
+      ) {
+        (derivation as Record<string, unknown>).agentTTradingPausedSkipped = true;
+        logger.info('[AgentT] entry suppressed by MONKEY_TRADING_PAUSED', {
+          symbol, action: tDecision.action,
+        });
+      }
+      if (
+        (tDecision.action === 'enter_long'
+          || tDecision.action === 'enter_short'
+          || tDecision.action === 'pyramid_long'
+          || tDecision.action === 'pyramid_short')
+        && tDecision.sizeUsdt > 0
+        // v0.8.7 kill switch — pause Agent T entries (including pyramids)
+        // when MONKEY_TRADING_PAUSED=true. Exits below are unaffected.
+        && !isTradingPaused()
       ) {
         const tSide: 'long' | 'short' =
           tDecision.action === 'enter_long' || tDecision.action === 'pyramid_long'
@@ -1948,52 +2128,12 @@ export class MonkeyKernel extends EventEmitter {
    * Look up Monkey's most recent open trade row for a symbol. Used by
    * the scalp-exit gate (v0.4) to compute unrealized P&L.
    */
-  /**
-   * Proposal #3 — Kelly rolling stats reader.
-   *
-   * Fetches the last 50 closed Monkey trades for ``agent`` from
-   * ``autonomous_trades`` (filtered by both ``agent`` column and the
-   * monkey reason prefix; see Polytrade engine prefix-filter lesson)
-   * and returns ``{ winRate, avgWin, avgLoss }`` summary stats.
-   *
-   * Returns null when fewer than 5 closed trades have accumulated —
-   * the Kelly cap is a no-op until enough samples to estimate the
-   * edge meaningfully.
-   */
+  /** Delegates to the module-level exported getKellyRollingStats. */
   private async getKellyRollingStats(
     agent: string,
+    lane?: LaneType,
   ): Promise<{ winRate: number; avgWin: number; avgLoss: number } | null> {
-    try {
-      const result = await pool.query(
-        `SELECT pnl FROM autonomous_trades
-          WHERE status = 'closed'
-            AND agent = $1
-            AND reason LIKE 'monkey|%'
-          ORDER BY exit_time DESC
-          LIMIT 50`,
-        [agent],
-      );
-      const pnls = (result.rows as Array<{ pnl: string | number }>)
-        .map((r) => Number(r.pnl) || 0)
-        .filter((p) => Number.isFinite(p));
-      if (pnls.length < 5) return null;
-      const wins = pnls.filter((p) => p > 0);
-      const losses = pnls.filter((p) => p < 0);
-      const winRate = wins.length / pnls.length;
-      const avgWin = wins.length > 0
-        ? wins.reduce((s, v) => s + v, 0) / wins.length
-        : 0;
-      const avgLoss = losses.length > 0
-        ? losses.reduce((s, v) => s + v, 0) / losses.length
-        : 0;
-      return { winRate, avgWin, avgLoss };
-    } catch (err) {
-      logger.debug('[Monkey] getKellyRollingStats failed; defer to geometric formula', {
-        agent,
-        err: err instanceof Error ? err.message : String(err),
-      });
-      return null;
-    }
+    return getKellyRollingStats(agent, lane);
   }
 
   private async findOpenMonkeyTrade(symbol: string): Promise<
@@ -2705,6 +2845,55 @@ export class MonkeyKernel extends EventEmitter {
       const basinArr = typeof rec.basin === 'string' ? JSON.parse(rec.basin) : rec.basin;
       const entryBasin: Basin = Float64Array.from(basinArr);
       const phi = Number(rec.phi) || 0.5;
+
+      // Loop 3 (UCP §43.4) — gate the bank write. Pulls the Loop 1
+      // sovereignty + Loop 2 convergence_type recorded on the trade
+      // row at open time. Pre-refactor rows have NULL columns; the
+      // gate then defaults to permissive (sovereignty=0.5, consensus)
+      // so legacy rows still write.
+      const triple = await pool
+        .query(
+          `SELECT sovereignty_score, convergence_type, created_at, exit_time
+             FROM autonomous_trades
+            WHERE order_id = $1
+            ORDER BY created_at DESC LIMIT 1`,
+          [orderId ?? ''],
+        )
+        .catch(() => ({ rows: [] as Array<Record<string, unknown>> }));
+      const tripleRow = triple.rows[0] as
+        | {
+            sovereignty_score?: number | null;
+            convergence_type?: string | null;
+            created_at?: Date | null;
+            exit_time?: Date | null;
+          }
+        | undefined;
+      const sovereigntyScore =
+        tripleRow?.sovereignty_score == null ? 0.5 : Number(tripleRow.sovereignty_score);
+      const convergenceType =
+        (tripleRow?.convergence_type as
+          | 'consensus' | 'groupthink' | 'genuine_multi' | 'non_convergent'
+          | undefined) ?? 'consensus';
+      const tradeOpenMs =
+        tripleRow?.created_at != null ? new Date(tripleRow.created_at).getTime() : entryTime.getTime();
+      const tradeCloseMs =
+        tripleRow?.exit_time != null ? new Date(tripleRow.exit_time).getTime() : Date.now();
+      const tradeDurationS = Math.max(0, (tradeCloseMs - tradeOpenMs) / 1000);
+      const gateDecision = await evaluateBankWrite({
+        symbol,
+        decisionId: orderId ?? `witness-${Date.now()}`,
+        sovereigntyScore,
+        convergenceType,
+        tradePnlUsdt: realizedPnl,
+        tradeDurationS,
+      });
+      if (!gateDecision.approved) {
+        logger.info('[Monkey] learning_gate rejected witnessExit bank write', {
+          symbol, orderId, side, pnl: realizedPnl.toFixed(4),
+          reasons: gateDecision.reasons,
+        });
+        return;
+      }
 
       // Synthesize a bubble that looks like it was promoted from WM
       // with the outcome attached. Bypass working memory — the bubble
