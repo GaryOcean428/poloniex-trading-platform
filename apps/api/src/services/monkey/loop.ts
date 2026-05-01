@@ -1012,6 +1012,7 @@ export class MonkeyKernel extends EventEmitter {
               regimeNow: mode,
               phiNow: phi,
               emotions: NEUTRAL_EMOTIONS,
+              regimeConfidence: regimeReading.confidence,
             })
           : { checked: false, fired: null, reason: '', phiFloor: null };
         const rejust: Record<string, unknown> = {
@@ -1021,6 +1022,7 @@ export class MonkeyKernel extends EventEmitter {
           rejust.lane = heldLane;
           rejust.regimeAtOpen = regimeAtOpen;
           rejust.regimeNow = mode;
+          rejust.regimeConfidence = regimeReading.confidence;
           rejust.phiAtOpen = phiAtOpen;
           rejust.phiNow = phi;
           rejust.phiFloor = rejustResult.phiFloor;

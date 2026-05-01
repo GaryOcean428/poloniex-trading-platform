@@ -18,7 +18,10 @@
  */
 
 import type { MonkeyMode } from './modes.js';
-import { PHI_GOLDEN_FLOOR_RATIO } from './topology_constants.js';
+import {
+  PHI_GOLDEN_FLOOR_RATIO,
+  PI_STRUCT_BOUNDARY_R_SQUARED,
+} from './topology_constants.js';
 
 export interface RejustificationEmotions {
   confidence: number;
@@ -37,6 +40,15 @@ export interface RejustificationInput {
   phiNow: number;
   /** Layer 2B emotion stack — TS uses NEUTRAL_EMOTIONS until ported. */
   emotions: RejustificationEmotions;
+  /**
+   * Regime classifier's confidence ∈ [0, 1] for ``regimeNow`` (see
+   * regime.ts::RegimeReading). Used by the regime check below to gate
+   * exit on the classifier's own self-belief rather than a synthesized
+   * streak counter. Defaults to 1.0 so callers that do not (yet) plumb
+   * the classifier output behave as in PR #619 (always-fire on label
+   * divergence).
+   */
+  regimeConfidence?: number;
 }
 
 export type RejustificationFire =
@@ -66,16 +78,30 @@ export function evaluateRejustification(
   input: RejustificationInput,
 ): RejustificationResult {
   const { regimeAtOpen, phiAtOpen, regimeNow, phiNow, emotions } = input;
+  const regimeConfidence = input.regimeConfidence ?? 1.0;
   if (regimeAtOpen === undefined || phiAtOpen === undefined) {
     return { checked: false, fired: null, reason: '', phiFloor: null };
   }
   const phiFloor = phiAtOpen / PHI_GOLDEN_FLOOR_RATIO;
 
-  if (regimeNow !== regimeAtOpen) {
+  // 1. REGIME CHECK — regime label diverged from open AND classifier's
+  // own confidence is past the canonical coherence floor. Gating on the
+  // classifier's self-belief (rather than a synthesized streak counter)
+  // preserves PR #619's "single-tick exit, current state IS the truth"
+  // framing while skipping flicker events where the classifier itself
+  // isn't sure. Threshold is PI_STRUCT_BOUNDARY_R_SQUARED (1/φ ≈ 0.618),
+  // the canonical "boundary R²" from EXP-004b. Strict >: a confidence
+  // exactly at the floor is not yet load-bearing.
+  if (
+    regimeNow !== regimeAtOpen &&
+    regimeConfidence > PI_STRUCT_BOUNDARY_R_SQUARED
+  ) {
     return {
       checked: true,
       fired: 'regime_change',
-      reason: `regime_change: opened in ${regimeAtOpen}, now ${regimeNow}`,
+      reason:
+        `regime_change: opened in ${regimeAtOpen}, now ${regimeNow} ` +
+        `(confidence ${regimeConfidence.toFixed(3)} > 1/φ)`,
       phiFloor,
     };
   }

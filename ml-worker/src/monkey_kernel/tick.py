@@ -1000,6 +1000,7 @@ def run_tick(
             phi=phi,
             emotions=emo,
             mode_value=mode,
+            regime_confidence=float(regime_reading.confidence),
         )
         # Held-position re-justification anchor lifecycle on close /
         # reverse. scalp_exit / exit clear the lane's anchors so a
@@ -1281,6 +1282,7 @@ def _decide_with_position(
     phi: float = 0.0,
     emotions: Any = None,
     mode_value: str = "investigation",
+    regime_confidence: float = 1.0,
 ) -> tuple[str, str, bool, bool]:
     """v0.6.1 exit gate order: profit harvest → scalp TP/SL → Loop 2 exit.
     v0.7.1 override-reverse. v0.6.2 DCA. Proposal #10: per-lane peak +
@@ -1378,6 +1380,7 @@ def _decide_with_position(
             "lane": position_lane,
             "regime_at_open": regime_at_open,
             "regime_now": mode_value,
+            "regime_confidence": regime_confidence,
             "phi_at_open": phi_at_open,
             "phi_now": phi,
             "phi_floor": phi_floor,
@@ -1386,11 +1389,28 @@ def _decide_with_position(
             "confusion": getattr(emotions, "confusion", 0.0),
         })
         # 1. REGIME CHECK — regime changed since open.
-        if mode_value != regime_at_open:
+        # The regime classifier emits a confidence ∈ [0, 1] alongside
+        # the discrete regime label (see regime.py::RegimeReading).
+        # Gating exit on the classifier's own self-belief — rather than
+        # a synthesized streak counter — preserves the "single-tick exit,
+        # current state IS the truth" framing while skipping flicker
+        # events where the classifier itself isn't sure. The threshold
+        # is PI_STRUCT_BOUNDARY_R_SQUARED (1/φ ≈ 0.618), the canonical
+        # "boundary R²" from EXP-004b: when the classifier's confidence
+        # has crossed that coherence floor, treat the regime divergence
+        # as load-bearing. PR #627's chop-entry suppression uses 0.70
+        # (slightly stricter); 0.618 here is the canonical-constant
+        # alignment with the topology family. Strict >: a confidence
+        # exactly at the floor is not yet load-bearing.
+        if (
+            mode_value != regime_at_open
+            and regime_confidence > PI_STRUCT_BOUNDARY_R_SQUARED
+        ):
             rejust["fired"] = "regime_change"
             derivation["rejustification"] = rejust
             reason = (
-                f"regime_change: opened in {regime_at_open}, now {mode_value}"
+                f"regime_change: opened in {regime_at_open}, now {mode_value} "
+                f"(confidence {regime_confidence:.3f} > 1/φ)"
             )
             return "scalp_exit", reason, False, False
         # 2. PHI CHECK — integration coherence collapsed below the
