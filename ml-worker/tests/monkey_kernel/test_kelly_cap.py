@@ -406,3 +406,240 @@ class TestPositionSizeRegressionLiveScenario:
         margin = out["derivation"]["margin"]
         notional = margin * 16
         assert notional >= 76.06
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Per-lane Kelly cap tests (issue #622)
+# ═══════════════════════════════════════════════════════════════════
+
+
+class TestGetKellyRollingStats:
+    """Tests for ``get_kelly_rolling_stats`` — lane-filtered DB query.
+
+    Uses an asyncpg-compatible mock (records as dicts with __getitem__).
+    The function accepts any connection-like object that supports
+    ``await conn.fetch(sql, *args)``.
+    """
+
+    def _make_conn(self, pnls: list):
+        """Return an async mock connection that yields ``pnls`` as rows."""
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock
+
+        class _Row(dict):
+            """Minimal asyncpg-like Row."""
+            def __getitem__(self, key):
+                return super().__getitem__(key)
+
+        rows = [_Row({"pnl": p}) for p in pnls]
+        conn = MagicMock()
+        conn.fetch = AsyncMock(return_value=rows)
+        return conn
+
+    def _run(self, coro):
+        import asyncio
+        return asyncio.get_event_loop().run_until_complete(coro)
+
+    # ── SQL query shape ──────────────────────────────────────────
+
+    def test_no_lane_pooled_query(self):
+        from monkey_kernel.executive import get_kelly_rolling_stats
+
+        conn = self._make_conn([1.0, 2.0, -1.0, -0.5, 0.5])
+        self._run(get_kelly_rolling_stats(conn, "K"))
+        sql, *args = conn.fetch.call_args[0]
+        assert "lane" not in sql
+        assert args == ["K"]
+
+    def test_scalp_lane_adds_lane_filter(self):
+        from monkey_kernel.executive import get_kelly_rolling_stats
+
+        conn = self._make_conn([1.0, 2.0, -1.0, -0.5, 0.5])
+        self._run(get_kelly_rolling_stats(conn, "K", lane="scalp"))
+        sql, *args = conn.fetch.call_args[0]
+        assert "lane" in sql
+        assert "scalp" in args
+
+    def test_swing_lane_filter(self):
+        from monkey_kernel.executive import get_kelly_rolling_stats
+
+        conn = self._make_conn([1.0, 2.0, -1.0, -0.5, 0.5])
+        self._run(get_kelly_rolling_stats(conn, "K", lane="swing"))
+        _, *args = conn.fetch.call_args[0]
+        assert "swing" in args
+
+    def test_trend_lane_filter(self):
+        from monkey_kernel.executive import get_kelly_rolling_stats
+
+        conn = self._make_conn([1.0, 2.0, -1.0, -0.5, 0.5])
+        self._run(get_kelly_rolling_stats(conn, "K", lane="trend"))
+        _, *args = conn.fetch.call_args[0]
+        assert "trend" in args
+
+    # ── Return value ─────────────────────────────────────────────
+
+    def test_returns_stats_when_5_or_more_trades(self):
+        from monkey_kernel.executive import get_kelly_rolling_stats
+
+        conn = self._make_conn([1.0, 2.0, 3.0, -1.0, -0.5])
+        result = self._run(get_kelly_rolling_stats(conn, "K", lane="scalp"))
+        assert result is not None
+        win_rate, avg_win, avg_loss = result
+        assert abs(win_rate - 0.6) < 1e-9
+        assert abs(avg_win - 2.0) < 1e-9
+        assert abs(avg_loss - (-0.75)) < 1e-9
+
+    def test_returns_none_when_fewer_than_5_trades(self):
+        from monkey_kernel.executive import get_kelly_rolling_stats
+
+        conn = self._make_conn([1.0, -0.5])
+        result = self._run(get_kelly_rolling_stats(conn, "K", lane="swing"))
+        assert result is None
+
+    def test_pooled_returns_none_when_cold(self):
+        from monkey_kernel.executive import get_kelly_rolling_stats
+
+        conn = self._make_conn([])
+        result = self._run(get_kelly_rolling_stats(conn, "K"))
+        assert result is None
+
+    def test_return_type_is_tuple_of_floats(self):
+        from monkey_kernel.executive import get_kelly_rolling_stats
+
+        conn = self._make_conn([1.0, 2.0, 3.0, -1.0, -0.5])
+        result = self._run(get_kelly_rolling_stats(conn, "K"))
+        assert result is not None
+        assert isinstance(result, tuple)
+        assert len(result) == 3
+        assert all(isinstance(v, float) for v in result)
+
+
+class TestPerLaneColdStart:
+    """Per-lane cold-start: each lane warms independently."""
+
+    def _make_s(self, sovereignty: float = 0.7):
+        from monkey_kernel.state import NeurochemicalState
+        from monkey_kernel.executive import ExecBasinState
+        import numpy as np
+
+        nc = NeurochemicalState(
+            acetylcholine=0.5, dopamine=0.5, serotonin=0.5,
+            norepinephrine=0.0, gaba=0.5, endorphins=0.5,
+        )
+        b = np.full(64, 1 / 64)
+        return ExecBasinState(
+            basin=b, identity_basin=b,
+            kappa=64.0, basin_velocity=0.0, sovereignty=sovereignty,
+            phi=0.5,
+            regime_weights={"equilibrium": 1.0, "efficient": 0.0, "quantum": 0.0},
+            neurochemistry=nc,
+        )
+
+    def test_scalp_warm_swing_cold(self):
+        """Scalp has 5+ closes → Kelly cap binds.
+        Swing has <5 closes → Kelly cap is no-op (cold-start).
+        The two lanes are independent.
+        """
+        from monkey_kernel.executive import current_leverage
+        from monkey_kernel.modes import MonkeyMode
+
+        s = self._make_s()
+
+        # Scalp warm: 70% win rate, b=2 → f* = 0.55 → cap ~= 22 at max_lev=40
+        scalp_out = current_leverage(
+            s, max_leverage_boundary=40,
+            mode=MonkeyMode.INVESTIGATION,
+            rolling_win_rate=0.7, rolling_avg_win=2.0, rolling_avg_loss=-1.0,
+        )
+        scalp_cap = scalp_out["derivation"]["kelly_cap"]
+
+        # Swing cold: no stats → cap defers to max_lev
+        swing_out = current_leverage(
+            s, max_leverage_boundary=40,
+            mode=MonkeyMode.INVESTIGATION,
+            rolling_win_rate=None, rolling_avg_win=None, rolling_avg_loss=None,
+        )
+        swing_cap = swing_out["derivation"]["kelly_cap"]
+
+        assert scalp_cap < 40, f"Warm scalp Kelly cap should bind, got {scalp_cap}"
+        assert swing_cap == 40.0, f"Cold swing should defer to max_lev, got {swing_cap}"
+
+    def test_trend_cold_defers_to_max_lev(self):
+        from monkey_kernel.executive import current_leverage
+        from monkey_kernel.modes import MonkeyMode
+
+        s = self._make_s()
+        out = current_leverage(
+            s, max_leverage_boundary=45,
+            mode=MonkeyMode.INVESTIGATION,
+            rolling_win_rate=None, rolling_avg_win=None, rolling_avg_loss=None,
+        )
+        assert out["derivation"]["kelly_cap"] == 45.0
+
+    def test_scalp_only_winning_history_caps_tighter_than_break_even_pooled(self):
+        """Scalp-only winning history (informative edge) → cap binds below max_lev.
+        Pooled break-even history → cap is no-op (= max_lev).
+        """
+        from monkey_kernel.executive import current_leverage
+        from monkey_kernel.modes import MonkeyMode
+
+        s = self._make_s()
+
+        scalp_out = current_leverage(
+            s, max_leverage_boundary=40,
+            mode=MonkeyMode.INVESTIGATION,
+            rolling_win_rate=0.80, rolling_avg_win=1.5, rolling_avg_loss=-0.3,
+        )
+        scalp_cap = scalp_out["derivation"]["kelly_cap"]
+
+        pooled_out = current_leverage(
+            s, max_leverage_boundary=40,
+            mode=MonkeyMode.INVESTIGATION,
+            rolling_win_rate=0.50, rolling_avg_win=2.0, rolling_avg_loss=-2.0,
+        )
+        pooled_cap = pooled_out["derivation"]["kelly_cap"]
+
+        assert pooled_cap == 40.0, "Break-even pooled stats should be no-op (max_lev)"
+        assert scalp_cap < 40, "Informative scalp stats should yield a real cap"
+        assert scalp_cap >= 8, "Cap must be above tradable floor"
+
+
+class TestTSPythonParityTable:
+    """Verify TS/Python produce the same kelly_leverage_cap values.
+
+    Reference values come from the TS kellyCap.test.ts expected values.
+    Both implementations use the same formula: f* = (p*b - q) / b,
+    cap = max(FLOOR, round(f* * max_lev)), bounded by max_lev.
+    """
+
+    def test_parity_70pct_b2_max40(self):
+        # TS: kellyLeverageCap(0.7, 2, -1, 40) ≈ 22
+        from monkey_kernel.executive import kelly_leverage_cap
+        import pytest
+        cap = kelly_leverage_cap(p_win=0.7, avg_win=2.0, avg_loss=-1.0, max_lev=40)
+        assert cap == pytest.approx(22.0, abs=1)
+
+    def test_parity_break_even_defers(self):
+        # TS: kellyLeverageCap(0.5, 1, -1, 40) == 40
+        from monkey_kernel.executive import kelly_leverage_cap
+        cap = kelly_leverage_cap(p_win=0.5, avg_win=1.0, avg_loss=-1.0, max_lev=40)
+        assert cap == 40.0
+
+    def test_parity_negative_edge_defers(self):
+        # TS: kellyLeverageCap(0.30, 1, -1, 40) == 40
+        from monkey_kernel.executive import kelly_leverage_cap
+        cap = kelly_leverage_cap(p_win=0.30, avg_win=1.0, avg_loss=-1.0, max_lev=40)
+        assert cap == 40.0
+
+    def test_parity_user_session_71pct(self):
+        # TS: kellyLeverageCap(0.71, 0.24, -0.05, 40) ≈ 26
+        from monkey_kernel.executive import kelly_leverage_cap
+        import pytest
+        cap = kelly_leverage_cap(p_win=0.71, avg_win=0.24, avg_loss=-0.05, max_lev=40)
+        assert cap == pytest.approx(26.0, abs=1)
+
+    def test_parity_strong_edge_clamps_at_max(self):
+        # TS: kellyLeverageCap(0.99, 10, -0.1, 40) == 40
+        from monkey_kernel.executive import kelly_leverage_cap
+        cap = kelly_leverage_cap(p_win=0.99, avg_win=10.0, avg_loss=-0.1, max_lev=40)
+        assert cap == 40.0

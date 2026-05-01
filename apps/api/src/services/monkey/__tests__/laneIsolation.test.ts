@@ -53,22 +53,23 @@ describe('Lane parameter envelope (proposal #10)', () => {
     expect(laneParam('swing', 'tpPct')).toBeLessThan(laneParam('trend', 'tpPct'));
   });
 
-  it('scalp SL is roughly 0.4%', () => {
+  // v0.8.6 — lane SL/TP rescaled from raw-price to ROI-on-margin.
+  it('scalp SL in ROI band (~5%)', () => {
     const sl = laneParam('scalp', 'slPct');
-    expect(sl).toBeGreaterThanOrEqual(0.002);
-    expect(sl).toBeLessThanOrEqual(0.008);
+    expect(sl).toBeGreaterThanOrEqual(0.02);
+    expect(sl).toBeLessThanOrEqual(0.10);
   });
 
-  it('swing SL is roughly 1.5%', () => {
+  it('swing SL in ROI band (~15%)', () => {
     const sl = laneParam('swing', 'slPct');
-    expect(sl).toBeGreaterThanOrEqual(0.010);
-    expect(sl).toBeLessThanOrEqual(0.025);
+    expect(sl).toBeGreaterThanOrEqual(0.08);
+    expect(sl).toBeLessThanOrEqual(0.25);
   });
 
-  it('trend SL is 3-5%', () => {
+  it('trend SL in ROI band (~40%)', () => {
     const sl = laneParam('trend', 'slPct');
-    expect(sl).toBeGreaterThanOrEqual(0.025);
-    expect(sl).toBeLessThanOrEqual(0.06);
+    expect(sl).toBeGreaterThanOrEqual(0.25);
+    expect(sl).toBeLessThanOrEqual(0.60);
   });
 
   it('scalp + swing budgets sum to 1', () => {
@@ -130,19 +131,21 @@ describe('currentPositionSize lane-budget cap (post fix/lane-budget-size-zero-re
 
 
 describe('shouldScalpExit lane envelope (proposal #10)', () => {
-  it('scalp lane = current geometric behavior (max keeps geometric)', () => {
+  // v0.8.6 — gate compares ROI-on-margin (raw × leverage) against
+  // ROI-scale lane envelopes. At lev=15x, raw -1% → ROI -15%.
+  it('scalp lane fires SL when ROI exceeds the 5% band', () => {
     const bs = basinState(0.5);
-    // 1% loss exceeds geometric SL for INVESTIGATION mode.
-    const result = shouldScalpExit(-1.0, 100, bs, MonkeyMode.INVESTIGATION, 'scalp');
+    // raw -1% × lev 15 = ROI -15% — past scalp's 5% SL.
+    const result = shouldScalpExit(-1.0, 100, bs, MonkeyMode.INVESTIGATION, 'scalp', 15);
     expect(result.value).toBe(true);
     expect(String(result.reason)).toContain('stop_loss[scalp]');
   });
 
   it('swing lane absorbs a loss the scalp lane would exit on', () => {
     const bs = basinState(0.5);
-    // 1% loss: scalp exits, swing holds (lane envelope 1.5% > geometric).
-    const scalp = shouldScalpExit(-1.0, 100, bs, MonkeyMode.INVESTIGATION, 'scalp');
-    const swing = shouldScalpExit(-1.0, 100, bs, MonkeyMode.INVESTIGATION, 'swing');
+    // raw -0.5% × lev 15 = ROI -7.5%. Past scalp's 5% SL, inside swing's 15%.
+    const scalp = shouldScalpExit(-0.5, 100, bs, MonkeyMode.INVESTIGATION, 'scalp', 15);
+    const swing = shouldScalpExit(-0.5, 100, bs, MonkeyMode.INVESTIGATION, 'swing', 15);
     expect(scalp.value).toBe(true);
     expect(swing.value).toBe(false);
     expect(String(swing.reason)).toContain('scalp hold[swing]');
@@ -150,24 +153,26 @@ describe('shouldScalpExit lane envelope (proposal #10)', () => {
 
   it('trend lane absorbs a loss the swing lane would exit on', () => {
     const bs = basinState(0.5);
-    // 2.5% loss exceeds swing SL but fits inside trend envelope.
-    const swing = shouldScalpExit(-2.5, 100, bs, MonkeyMode.INVESTIGATION, 'swing');
-    const trend = shouldScalpExit(-2.5, 100, bs, MonkeyMode.INVESTIGATION, 'trend');
+    // raw -1.5% × lev 15 = ROI -22.5%. Past swing's 15% SL, inside trend's 40%.
+    const swing = shouldScalpExit(-1.5, 100, bs, MonkeyMode.INVESTIGATION, 'swing', 15);
+    const trend = shouldScalpExit(-1.5, 100, bs, MonkeyMode.INVESTIGATION, 'trend', 15);
     expect(swing.value).toBe(true);
     expect(trend.value).toBe(false);
   });
 
   it('lane name surfaces into derivation', () => {
     const bs = basinState(0.5);
-    const result = shouldScalpExit(0.05, 100, bs, MonkeyMode.INVESTIGATION, 'scalp');
+    const result = shouldScalpExit(0.05, 100, bs, MonkeyMode.INVESTIGATION, 'scalp', 10);
     expect(result.derivation.laneTpPct).toBe(laneParam('scalp', 'tpPct'));
     expect(result.derivation.laneSlPct).toBe(laneParam('scalp', 'slPct'));
+    expect(result.derivation.leverage).toBeCloseTo(10, 9);
   });
 
   it('default lane is swing (back-compat with pre-#10 callers)', () => {
     const bs = basinState(0.5);
+    // No leverage → defaults to 1, ROI == raw. raw -1% at lev=1 = -1% ROI,
+    // well inside swing's 15% SL → holds.
     const result = shouldScalpExit(-1.0, 100, bs, MonkeyMode.INVESTIGATION);
-    // Same as explicit swing — 1% loss holds in swing's wider envelope.
     expect(result.value).toBe(false);
   });
 });
@@ -214,9 +219,10 @@ describe('shouldDCAAdd lane scope (proposal #10)', () => {
 describe('Cross-lane non-interference (proposal #10 invariant)', () => {
   it('swing-long envelope does not exit on a loss scalp would close on', () => {
     const bs = basinState(0.5);
-    // 1% loss — between geometric SL (~0.67%) and swing's 1.5%
-    const swingLong = shouldScalpExit(-1.0, 100, bs, MonkeyMode.INVESTIGATION, 'swing');
-    const scalpShort = shouldScalpExit(-1.0, 100, bs, MonkeyMode.INVESTIGATION, 'scalp');
+    // v0.8.6: at lev=15x, raw -0.5% → ROI -7.5%. Past scalp's 5% SL,
+    // inside swing's 15% SL. Same input, different lane decisions.
+    const swingLong = shouldScalpExit(-0.5, 100, bs, MonkeyMode.INVESTIGATION, 'swing', 15);
+    const scalpShort = shouldScalpExit(-0.5, 100, bs, MonkeyMode.INVESTIGATION, 'scalp', 15);
     expect(swingLong.value).toBe(false);
     expect(scalpShort.value).toBe(true);
   });
@@ -239,15 +245,15 @@ describe('Cross-lane non-interference (proposal #10 invariant)', () => {
     expect(scalp.value).toBeLessThanOrEqual(cap + 1e-6);
   });
 
-  it('lane parameter constants match the user-spec ranges', () => {
-    // Sanity: this catches accidental edits to LANE_PARAMETER_DEFAULTS
-    // that would drift away from the proposal #10 spec.
-    expect(LANE_PARAMETER_DEFAULTS.scalp.slPct).toBeGreaterThanOrEqual(0.002);
-    expect(LANE_PARAMETER_DEFAULTS.scalp.slPct).toBeLessThanOrEqual(0.008);
-    expect(LANE_PARAMETER_DEFAULTS.swing.slPct).toBeGreaterThanOrEqual(0.010);
-    expect(LANE_PARAMETER_DEFAULTS.swing.slPct).toBeLessThanOrEqual(0.025);
-    expect(LANE_PARAMETER_DEFAULTS.trend.slPct).toBeGreaterThanOrEqual(0.025);
-    expect(LANE_PARAMETER_DEFAULTS.trend.slPct).toBeLessThanOrEqual(0.06);
+  it('lane parameter constants match the user-spec ROI ranges', () => {
+    // v0.8.6: lane SL/TP rescaled to ROI-on-margin. Sanity that
+    // LANE_PARAMETER_DEFAULTS hasn't drifted from spec.
+    expect(LANE_PARAMETER_DEFAULTS.scalp.slPct).toBeGreaterThanOrEqual(0.02);
+    expect(LANE_PARAMETER_DEFAULTS.scalp.slPct).toBeLessThanOrEqual(0.10);
+    expect(LANE_PARAMETER_DEFAULTS.swing.slPct).toBeGreaterThanOrEqual(0.08);
+    expect(LANE_PARAMETER_DEFAULTS.swing.slPct).toBeLessThanOrEqual(0.25);
+    expect(LANE_PARAMETER_DEFAULTS.trend.slPct).toBeGreaterThanOrEqual(0.25);
+    expect(LANE_PARAMETER_DEFAULTS.trend.slPct).toBeLessThanOrEqual(0.60);
   });
 });
 
@@ -284,14 +290,21 @@ describe('Flat-account sizing regression (fix/lane-budget-size-zero-regression)'
     expect(notional).toBeGreaterThanOrEqual(75.78);
   });
 
-  it('small account ($5 equity) — lift-to-min reaches min notional post-fix', () => {
-    // Pre-fix: equity halved to $2.50 → required_frac=0.643 → no lift
-    // → size=0. Post-fix: full $5 → required_frac=0.337 → lift fires.
+  it('small account ($5 equity) — notional ceiling now blocks below-ceiling-min entry', () => {
+    // Pre-fix (PR #614): equity halved to $2.50 → no lift → size=0.
+    // PR #614 fix: full $5 → required_frac=0.337 → lift fires → size > 0.
+    // v0.8.7: notional ceiling = 4 × $5 = $20 < $22.49 min → size=0
+    // again, but for the right reason. The kernel correctly refuses to
+    // size above 4× balance just to clear exchange min on a haircut
+    // account — live tape ($97 → $386 escalation) confirmed unbounded
+    // lift-to-min was unsafe.
     const result = currentPositionSize(
       basinState(0.55, 0.5), 5, 22.49, 14, 0, MonkeyMode.INVESTIGATION, 'swing',
     );
-    expect(result.value).toBeGreaterThan(0);
-    expect(result.derivation.liftedToMin).toBe(1);
+    expect(result.value).toBe(0);
+    expect((result.derivation as Record<string, unknown>).cappedByNotional).toBe(1);
+    // Lift-to-min still tried; ceiling clamps it back.
+    expect((result.derivation as Record<string, unknown>).liftedToMin).toBe(1);
   });
 
   it('cold-start (bank=0, sovereignty=0, low phi) still sizes via exploration floor', () => {

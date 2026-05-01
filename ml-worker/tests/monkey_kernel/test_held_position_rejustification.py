@@ -3,13 +3,15 @@
 Three internal exit checks fire when the kernel's own state contradicts
 what justified entry:
 
-  1. REGIME CHECK   — state.regime != state.regime_at_open → exit
+  1. REGIME CHECK   — triple-AND of label divergence + sustained streak
+                      + FR-distance > 1/π (v0.8.7 hysteresis)
   2. PHI CHECK      — phi_now < phi_at_open / PHI_GOLDEN_FLOOR_RATIO → exit
   3. CONVICTION    — emotions.confidence < anxiety + confusion → exit
 
 All three return action='scalp_exit' with reason starting with the check
-name. SymbolState gets regime_at_open_by_lane and phi_at_open_by_lane
-populated when a position opens; cleared when it closes.
+name. SymbolState gets regime_at_open_by_lane, phi_at_open_by_lane,
+basin_at_open_by_lane, and regime_change_streak_by_lane populated when
+a position opens; cleared when it closes.
 
 These tests exercise `_decide_with_position` directly. The full run_tick
 path is exercised at the integration level by the existing tick tests;
@@ -37,7 +39,25 @@ from monkey_kernel.tick import (  # noqa: E402
     TickInputs,
     _decide_with_position,
 )
-from monkey_kernel.topology_constants import PHI_GOLDEN_FLOOR_RATIO  # noqa: E402
+from monkey_kernel.topology_constants import (  # noqa: E402
+    PHI_GOLDEN_FLOOR_RATIO,
+    PI_STRUCT_BOUNDARY_R_SQUARED,
+    PI_STRUCT_GRAVITATING_FRACTION,
+)
+
+
+def _far_basin(dim: int = 64) -> np.ndarray:
+    """Return a basin far enough from uniform_basin(dim) that
+    fisher_rao_distance > 1/π (the hysteresis FR threshold).
+
+    uniform_basin gives p_i = 1/n for all i. Concentrating mass on a
+    single component gives fisher_rao_distance ≈ arccos(√(1/n)) which
+    for n=64 is ≈ 1.446 — comfortably > 1/π ≈ 0.318.
+    """
+    arr = np.full(dim, 1e-6, dtype=np.float64)
+    arr[0] = 1.0
+    arr = arr / arr.sum()
+    return arr
 
 
 # ── Fixtures ──────────────────────────────────────────────────────
@@ -86,18 +106,20 @@ def _state_with_anchor(
     lane: str = "swing",
     regime_at_open: str = MonkeyMode.INVESTIGATION.value,
     phi_at_open: float = 0.27,
-    seed_regime_streak: int = 3,
-    far_basin_anchor: bool = True,
+    streak: int = 5,
+    basin_at_open: np.ndarray | None = None,
 ) -> SymbolState:
-    """Build a state with re-justification anchors populated.
+    """Construct a SymbolState pre-loaded with rejustification anchors.
 
-    Hysteresis added 2026-05-01: the regime-change exit now requires
-    streak ≥ 3 ticks AND basin moved > 1/π FR. ``seed_regime_streak``
-    pre-populates the streak counter so tests can exercise the
-    "regime exit fires" path without simulating 3 prior ticks.
-    ``far_basin_anchor`` sets basin_at_open to a peak that is far
-    (in FR distance) from the uniform basin used by the test so the
-    1/π condition clears.
+    Defaults pre-load the streak to 5 (>= default 3-tick stability
+    requirement) and basin_at_open to a far-from-uniform basin so the
+    FR-distance from the tick basin (uniform_basin(64) by default) is
+    well above 1/π. This means existing tests that check "regime
+    fires" still fire under the new triple-AND hysteresis gate without
+    needing to construct streak / basin state in every test.
+
+    Tests that exercise the hysteresis (streak below threshold or FR
+    distance below threshold) override these defaults explicitly.
     """
     state = SymbolState(
         symbol="BTC_USDT_PERP",
@@ -105,14 +127,14 @@ def _state_with_anchor(
     )
     state.regime_at_open_by_lane[lane] = regime_at_open
     state.phi_at_open_by_lane[lane] = phi_at_open
-    state.regime_change_streak_by_lane[lane] = seed_regime_streak
-    if far_basin_anchor:
-        # Concentrated basin at peak 0 — uniform basin is FR distance
-        # ~ arccos(√(1/64)) ≈ 1.45 rad away, well above 1/π ≈ 0.318.
-        far = np.full(64, 0.001 / 63, dtype=np.float64)
-        far[0] = 0.999
-        far = far / far.sum()
-        state.basin_at_open_by_lane[lane] = far
+    # v0.8.7 — preload streak and basin_at_open so the hysteresis gate
+    # is satisfied by default. The streak counter is incremented inside
+    # _decide_with_position when regimeNow != regimeAtOpen, so a
+    # test passing regime_change implicitly bumps it from N → N+1.
+    state.regime_change_streak_by_lane[lane] = streak
+    state.basin_at_open_by_lane[lane] = (
+        basin_at_open if basin_at_open is not None else _far_basin()
+    )
     return state
 
 
@@ -147,15 +169,31 @@ def _call_decide(
     position_lane: str = "swing",
     last_price: float = 100.0,
     held_side: str = "long",
+    regime_confidence: float = 1.0,
+    basin: np.ndarray | None = None,
 ) -> tuple[str, str, bool, bool, dict[str, Any]]:
-    """Call _decide_with_position and return its tuple plus derivation."""
+    """Call _decide_with_position and return its tuple plus derivation.
+
+    ``regime_confidence`` defaults to 1.0 — the QIG-pure debounce gate
+    (regime confidence > 1/φ) is fully open, so existing tests that
+    don't care about the gate behave as in PR #619.
+
+    ``basin`` is the basin snapshot the kernel sees this tick. Defaults
+    to ``uniform_basin(64)``. Combined with ``_state_with_anchor``'s
+    far-from-uniform basin_at_open default, the FR-distance is well
+    above 1/π, so existing "regime fires" tests pass unchanged. Tests
+    that exercise the FR-hysteresis pass a basin matching basin_at_open
+    (FR-distance ≈ 0) to verify the gate suppresses on geometric
+    consonance even with sustained label divergence.
+    """
     derivation: dict[str, Any] = {}
     bs = _basin_state(phi=phi)
     bs.emotions = emotions or _Emotions()  # type: ignore[assignment]
+    tick_basin = basin if basin is not None else uniform_basin(64)
     action, reason, is_dca, is_reverse = _decide_with_position(
         inputs=_inputs(),
         state=state,
-        basin=uniform_basin(64),
+        basin=tick_basin,
         basin_state=bs,
         mode_enum=mode,
         last_price=last_price,
@@ -171,6 +209,7 @@ def _call_decide(
         phi=phi,
         emotions=bs.emotions,
         mode_value=mode_value or mode.value,
+        regime_confidence=regime_confidence,
     )
     return action, reason, is_dca, is_reverse, derivation
 
@@ -188,17 +227,123 @@ class TestRegimeCheckFires:
             state=state,
             phi=0.25,  # safely above the floor (0.27/φ ≈ 0.167)
             mode_value=MonkeyMode.DRIFT.value,
+            regime_confidence=0.9,  # past the 1/φ boundary
         )
         assert action == "scalp_exit"
         assert reason.startswith("regime_change")
         assert "investigation" in reason
         assert "drift" in reason
+        assert "confidence 0.900" in reason
+        # v0.8.7 reason includes streak count and FR distance.
+        assert "stable for" in reason
+        assert "FR_dist" in reason
         assert is_dca is False
         assert is_reverse is False
         rej = derivation["rejustification"]
         assert rej["fired"] == "regime_change"
         assert rej["regime_at_open"] == "investigation"
         assert rej["regime_now"] == "drift"
+        assert rej["regime_confidence"] == 0.9
+        # v0.8.7 surfaces — streak >= required, FR > 1/π.
+        assert rej["regime_change_streak"] >= rej["regime_stability_ticks_required"]
+        assert rej["fr_distance"] is not None
+        assert rej["fr_distance"] > rej["fr_threshold"]
+
+
+class TestRegimeConfidenceGate:
+    """QIG-pure debounce on the regime check: regime label divergence
+    only fires the exit when the classifier's own confidence is past
+    the canonical coherence floor PI_STRUCT_BOUNDARY_R_SQUARED (1/φ ≈
+    0.618). Below the floor the classifier itself isn't sure, so a
+    flicker of the discrete label should not trigger exit.
+
+    Single-tick gate (no streak), single canonical constant (no new
+    parameter): reads the classifier's existing self-belief.
+    """
+
+    def test_regime_change_low_confidence_does_not_fire(self) -> None:
+        state = _state_with_anchor(
+            regime_at_open=MonkeyMode.INVESTIGATION.value,
+            phi_at_open=0.27,
+        )
+        # Regime flipped, but classifier confidence is well below 1/φ.
+        # Pre-debounce this would have fired; post-debounce it must not.
+        _, reason, _, _, derivation = _call_decide(
+            state=state,
+            phi=0.25,
+            mode_value=MonkeyMode.DRIFT.value,
+            regime_confidence=0.4,  # below 1/φ ≈ 0.618
+        )
+        rej = derivation["rejustification"]
+        assert rej.get("fired") != "regime_change"
+        assert not reason.startswith("regime_change")
+        # Anchor data still recorded so the divergence is observable
+        # in telemetry even when the gate suppresses the exit.
+        assert rej["regime_at_open"] == "investigation"
+        assert rej["regime_now"] == "drift"
+        assert rej["regime_confidence"] == 0.4
+
+    def test_regime_change_high_confidence_fires(self) -> None:
+        state = _state_with_anchor(
+            regime_at_open=MonkeyMode.INVESTIGATION.value,
+            phi_at_open=0.27,
+        )
+        action, reason, _, _, derivation = _call_decide(
+            state=state,
+            phi=0.25,
+            mode_value=MonkeyMode.DRIFT.value,
+            regime_confidence=0.8,  # comfortably past 1/φ
+        )
+        assert action == "scalp_exit"
+        assert reason.startswith("regime_change")
+        assert "0.800" in reason
+        assert "1/φ" in reason
+        rej = derivation["rejustification"]
+        assert rej["fired"] == "regime_change"
+        assert rej["regime_confidence"] == 0.8
+
+    def test_regime_change_at_exact_floor_does_not_fire(self) -> None:
+        """Strict >: a confidence exactly at 1/φ is not yet load-bearing."""
+        state = _state_with_anchor(
+            regime_at_open=MonkeyMode.INVESTIGATION.value,
+            phi_at_open=0.27,
+        )
+        _, reason, _, _, derivation = _call_decide(
+            state=state,
+            phi=0.25,
+            mode_value=MonkeyMode.DRIFT.value,
+            regime_confidence=PI_STRUCT_BOUNDARY_R_SQUARED,  # exactly 1/φ
+        )
+        rej = derivation["rejustification"]
+        assert rej.get("fired") != "regime_change"
+        assert not reason.startswith("regime_change")
+
+    def test_regime_change_just_above_floor_fires(self) -> None:
+        """A nudge above 1/φ crosses the gate."""
+        state = _state_with_anchor(
+            regime_at_open=MonkeyMode.INVESTIGATION.value,
+            phi_at_open=0.27,
+        )
+        action, reason, _, _, derivation = _call_decide(
+            state=state,
+            phi=0.25,
+            mode_value=MonkeyMode.DRIFT.value,
+            regime_confidence=PI_STRUCT_BOUNDARY_R_SQUARED + 1e-6,
+        )
+        assert action == "scalp_exit"
+        assert reason.startswith("regime_change")
+        rej = derivation["rejustification"]
+        assert rej["fired"] == "regime_change"
+
+    def test_floor_constant_equals_one_over_phi(self) -> None:
+        """Sanity: PI_STRUCT_BOUNDARY_R_SQUARED is 1/φ ≈ 0.618."""
+        expected = 1.0 / ((1.0 + math.sqrt(5.0)) / 2.0)
+        assert math.isclose(
+            PI_STRUCT_BOUNDARY_R_SQUARED, expected, rel_tol=1e-12,
+        )
+        assert math.isclose(
+            PI_STRUCT_BOUNDARY_R_SQUARED, 0.6180339887, rel_tol=1e-9,
+        )
 
 
 class TestPhiCheckFires:
@@ -339,13 +484,18 @@ class TestStateClearing:
 
         # The clear is in the outer tick.py path — replicate the logic
         # the test contract expects: "when the position closes, the
-        # anchors for that lane are cleared".
+        # anchors for that lane are cleared". v0.8.7 also clears
+        # basin_at_open and the regime-change streak.
         if action in ("scalp_exit", "exit"):
             state.regime_at_open_by_lane.pop("swing", None)
             state.phi_at_open_by_lane.pop("swing", None)
+            state.basin_at_open_by_lane.pop("swing", None)
+            state.regime_change_streak_by_lane.pop("swing", None)
 
         assert "swing" not in state.regime_at_open_by_lane
         assert "swing" not in state.phi_at_open_by_lane
+        assert "swing" not in state.basin_at_open_by_lane
+        assert "swing" not in state.regime_change_streak_by_lane
 
 
 class TestPerLaneIsolation:
@@ -354,17 +504,17 @@ class TestPerLaneIsolation:
             symbol="BTC_USDT_PERP",
             identity_basin=uniform_basin(64),
         )
-        # Two lanes, two different anchor sets. Seed scalp's hysteresis
-        # state (streak ≥ 3 + far basin anchor) so the regime check
-        # actually fires on a single test call.
+        # Two lanes, two different anchor sets. v0.8.7 also seeds the
+        # streak counter and basin_at_open per lane so the hysteresis
+        # gate has independent state.
         state.regime_at_open_by_lane["scalp"] = MonkeyMode.INVESTIGATION.value
         state.phi_at_open_by_lane["scalp"] = 0.27
-        state.regime_change_streak_by_lane["scalp"] = 3
-        far = np.full(64, 0.001 / 63, dtype=np.float64)
-        far[0] = 0.999
-        state.basin_at_open_by_lane["scalp"] = far / far.sum()
+        state.regime_change_streak_by_lane["scalp"] = 5
+        state.basin_at_open_by_lane["scalp"] = _far_basin()
         state.regime_at_open_by_lane["swing"] = MonkeyMode.INTEGRATION.value
         state.phi_at_open_by_lane["swing"] = 0.40
+        state.regime_change_streak_by_lane["swing"] = 0
+        state.basin_at_open_by_lane["swing"] = _far_basin()
 
         # Test 1: scalp lane fires regime_change when current mode != investigation
         # but swing lane's anchor is unaffected.
@@ -384,9 +534,16 @@ class TestPerLaneIsolation:
         assert "swing" in state.regime_at_open_by_lane
         assert state.phi_at_open_by_lane["scalp"] == 0.27
         assert state.phi_at_open_by_lane["swing"] == 0.40
+        # v0.8.7 — streaks are independent per lane.
+        assert "scalp" in state.regime_change_streak_by_lane
+        assert "swing" in state.regime_change_streak_by_lane
+        # The scalp lane's streak was bumped by the regime_change tick;
+        # the swing lane's streak is untouched (no tick run for it).
+        assert state.regime_change_streak_by_lane["scalp"] >= 5
 
         # Test 2: swing lane checks against ITS anchor — same regime
-        # (integration), no fire.
+        # (integration), no fire. Swing's streak resets to 0 because
+        # mode == regime_at_open.
         _, _, _, _, derivation_w = _call_decide(
             state=state,
             phi=0.30,  # above floor 0.40/φ ≈ 0.247
@@ -398,6 +555,7 @@ class TestPerLaneIsolation:
         assert rej_w.get("fired") is None
         assert rej_w["regime_at_open"] == "integration"
         assert rej_w["phi_at_open"] == 0.40
+        assert state.regime_change_streak_by_lane["swing"] == 0
 
 
 # ── Precedence / ordering tests ────────────────────────────────────
@@ -502,3 +660,213 @@ class TestNoAnchorPath:
         assert not reason.startswith("regime_change")
         assert not reason.startswith("phi_collapse")
         assert not reason.startswith("conviction_failed")
+
+
+# ── v0.8.7 regime-hysteresis tests ────────────────────────────────
+
+
+class TestRegimeHysteresisStreakGate:
+    """The regime-change exit now requires regime_change_streak >=
+    REGIME_STABILITY_TICKS_FOR_EXIT (default 3) consecutive ticks of
+    label divergence. Single-tick mode flicker no longer exits the
+    position.
+
+    Live tape 2026-05-01 16:11-16:17 motivation: every close was
+    regime_change, 22% win rate, $97 account torn through positions
+    because a single-tick mode flicker was enough to flip the gate.
+    """
+
+    def test_single_tick_flicker_does_not_fire(self) -> None:
+        # streak=0 preload — _decide_with_position will bump to 1, well
+        # below the default 3-tick stability requirement.
+        state = _state_with_anchor(
+            regime_at_open=MonkeyMode.INVESTIGATION.value,
+            phi_at_open=0.27,
+            streak=0,
+        )
+        action, reason, _, _, derivation = _call_decide(
+            state=state,
+            phi=0.25,
+            mode_value=MonkeyMode.DRIFT.value,
+            regime_confidence=0.9,  # confidence gate is open
+        )
+        rej = derivation["rejustification"]
+        assert rej.get("fired") != "regime_change"
+        assert not reason.startswith("regime_change")
+        # Streak was bumped from 0 → 1 (still below 3).
+        assert rej["regime_change_streak"] == 1
+        assert rej["regime_stability_ticks_required"] == 3
+
+    def test_streak_below_threshold_does_not_fire(self) -> None:
+        # streak=1 preload → bumped to 2 inside the gate, still < 3.
+        state = _state_with_anchor(
+            regime_at_open=MonkeyMode.INVESTIGATION.value,
+            phi_at_open=0.27,
+            streak=1,
+        )
+        _, reason, _, _, derivation = _call_decide(
+            state=state,
+            phi=0.25,
+            mode_value=MonkeyMode.DRIFT.value,
+            regime_confidence=0.9,
+        )
+        rej = derivation["rejustification"]
+        assert rej.get("fired") != "regime_change"
+        assert not reason.startswith("regime_change")
+        assert rej["regime_change_streak"] == 2
+
+    def test_streak_at_threshold_fires(self) -> None:
+        # streak=2 preload → bumped to 3 inside the gate, exactly at
+        # threshold. >= 3 → fires.
+        state = _state_with_anchor(
+            regime_at_open=MonkeyMode.INVESTIGATION.value,
+            phi_at_open=0.27,
+            streak=2,
+        )
+        action, reason, _, _, derivation = _call_decide(
+            state=state,
+            phi=0.25,
+            mode_value=MonkeyMode.DRIFT.value,
+            regime_confidence=0.9,
+        )
+        assert action == "scalp_exit"
+        assert reason.startswith("regime_change")
+        rej = derivation["rejustification"]
+        assert rej["fired"] == "regime_change"
+        assert rej["regime_change_streak"] == 3
+
+    def test_streak_resets_on_regime_restoration(self) -> None:
+        """If regime returns to regime_at_open mid-window, the streak
+        resets — proving the gate cannot fire from an old streak after
+        the kernel re-aligns with entry conditions."""
+        state = _state_with_anchor(
+            regime_at_open=MonkeyMode.INVESTIGATION.value,
+            phi_at_open=0.27,
+            streak=10,  # huge accumulated streak from earlier divergence
+        )
+        # Mode == regime_at_open → streak resets to 0.
+        _, _, _, _, derivation = _call_decide(
+            state=state,
+            phi=0.25,
+            mode_value=MonkeyMode.INVESTIGATION.value,
+            regime_confidence=0.9,
+            emotions=_Emotions(confidence=0.7, anxiety=0.1, confusion=0.1),
+        )
+        rej = derivation["rejustification"]
+        assert rej.get("fired") is None
+        assert state.regime_change_streak_by_lane["swing"] == 0
+
+
+class TestRegimeHysteresisFRDistanceGate:
+    """The regime-change exit now requires fr_distance > 1/π (≈ 0.318)
+    in addition to label divergence + sustained streak + confidence.
+    The basin must have geometrically moved into a different
+    gravitating cluster — label divergence alone isn't enough.
+    """
+
+    def test_fr_distance_below_threshold_does_not_fire(self) -> None:
+        # basin_at_open == tick basin → fr_distance = 0, well below 1/π.
+        # Even with full streak + confidence, regime exit cannot fire.
+        same_basin = uniform_basin(64)
+        state = _state_with_anchor(
+            regime_at_open=MonkeyMode.INVESTIGATION.value,
+            phi_at_open=0.27,
+            streak=10,  # comfortably past 3-tick requirement
+            basin_at_open=same_basin,
+        )
+        _, reason, _, _, derivation = _call_decide(
+            state=state,
+            phi=0.25,
+            mode_value=MonkeyMode.DRIFT.value,
+            regime_confidence=0.9,
+            basin=same_basin,  # FR(same, same) = 0
+        )
+        rej = derivation["rejustification"]
+        assert rej.get("fired") != "regime_change"
+        assert not reason.startswith("regime_change")
+        assert rej["fr_distance"] == 0.0
+        assert rej["fr_threshold"] > 0.31  # ≈ 0.318
+
+    def test_fr_distance_above_threshold_fires(self) -> None:
+        # basin_at_open far from tick basin → fr_distance well above 1/π.
+        # All three gate conditions satisfied → fires.
+        state = _state_with_anchor(
+            regime_at_open=MonkeyMode.INVESTIGATION.value,
+            phi_at_open=0.27,
+            streak=10,
+            basin_at_open=_far_basin(),
+        )
+        action, reason, _, _, derivation = _call_decide(
+            state=state,
+            phi=0.25,
+            mode_value=MonkeyMode.DRIFT.value,
+            regime_confidence=0.9,
+            basin=uniform_basin(64),  # far from the basin_at_open spike
+        )
+        assert action == "scalp_exit"
+        assert reason.startswith("regime_change")
+        rej = derivation["rejustification"]
+        assert rej["fired"] == "regime_change"
+        assert rej["fr_distance"] > rej["fr_threshold"]
+
+    def test_fr_threshold_equals_one_over_pi(self) -> None:
+        """Sanity: the FR threshold is 1/π (PI_STRUCT_GRAVITATING_FRACTION)."""
+        assert math.isclose(
+            PI_STRUCT_GRAVITATING_FRACTION, 1.0 / math.pi, rel_tol=1e-12,
+        )
+        # Surface check — a fresh state with anchors records the threshold
+        # in the rejustification block.
+        state = _state_with_anchor()
+        _, _, _, _, derivation = _call_decide(
+            state=state,
+            phi=0.25,
+            mode_value=MonkeyMode.INVESTIGATION.value,  # no fire
+            emotions=_Emotions(confidence=0.7, anxiety=0.1, confusion=0.1),
+        )
+        rej = derivation["rejustification"]
+        assert math.isclose(
+            rej["fr_threshold"], 1.0 / math.pi, rel_tol=1e-12,
+        )
+
+
+class TestRegimeHysteresisMissingBasinAnchor:
+    """If basin_at_open is not present (e.g. position opened pre-v0.8.7),
+    the regime exit cannot fire — the geometric component is required.
+    Phi/conviction checks remain available because they don't need basin.
+    """
+
+    def test_no_basin_anchor_blocks_regime_exit(self) -> None:
+        state = _state_with_anchor(
+            regime_at_open=MonkeyMode.INVESTIGATION.value,
+            phi_at_open=0.27,
+            streak=10,
+        )
+        # Drop basin_at_open to simulate a pre-v0.8.7 position.
+        state.basin_at_open_by_lane.pop("swing", None)
+        _, reason, _, _, derivation = _call_decide(
+            state=state,
+            phi=0.25,  # above floor — phi gate doesn't fire
+            mode_value=MonkeyMode.DRIFT.value,
+            regime_confidence=0.9,
+            emotions=_Emotions(confidence=0.7, anxiety=0.1, confusion=0.1),
+        )
+        rej = derivation["rejustification"]
+        assert rej.get("fired") != "regime_change"
+        assert not reason.startswith("regime_change")
+        assert rej["fr_distance"] is None
+
+    def test_no_basin_anchor_phi_gate_still_fires(self) -> None:
+        state = _state_with_anchor(
+            regime_at_open=MonkeyMode.INVESTIGATION.value,
+            phi_at_open=0.27,
+        )
+        state.basin_at_open_by_lane.pop("swing", None)
+        # phi=0.05 well below floor 0.27/φ ≈ 0.167 → phi_collapse fires.
+        action, reason, _, _, derivation = _call_decide(
+            state=state,
+            phi=0.05,
+            mode_value=MonkeyMode.INVESTIGATION.value,  # same regime
+            emotions=_Emotions(confidence=0.7, anxiety=0.1, confusion=0.1),
+        )
+        assert action == "scalp_exit"
+        assert reason.startswith("phi_collapse")

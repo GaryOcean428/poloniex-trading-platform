@@ -201,6 +201,12 @@ export interface TickRunInputs {
   ml_signal?: string;
   /** @deprecated post #ml-separation — silently ignored by Agent K. */
   ml_strength?: number;
+  /**
+   * Per-lane Kelly rolling stats (proposal #3 + lane-conditioned split).
+   * Tuple: [winRate, avgWin, avgLoss]. When null, Kelly cap is a no-op.
+   * Supplied by loop.ts after a lane-filtered getKellyRollingStats query.
+   */
+  rolling_kelly_stats?: [number, number, number] | null;
 }
 
 /** Serialized Python SymbolState — carried across ticks. */

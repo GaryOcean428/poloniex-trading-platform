@@ -49,7 +49,7 @@ from .autonomic import AutonomicKernel, AutonomicTickInputs
 from .basin import normalized_entropy, velocity
 from .bus_events import KernelEvent
 from .coordinator import GaryCoordinator, GaryReading
-from .emotions import compute_emotions
+from .emotions import compute_emotions, compute_funding_drag
 from .executive import (
     ExecBasinState,
     choose_lane,
@@ -94,7 +94,7 @@ from .candle_patterns import (
     pattern_signal_scalar,
 )
 from .physical_emotions import compute_physical_emotions
-from .regime import RegimeReading, classify_regime
+from .regime import ChopSuppressionResult, RegimeReading, chop_suppress_entry, classify_regime
 from .self_observation import compute_per_decision_triple
 from .sensations import compute_sensations
 from .state import BasinState as KernelBasinState
@@ -113,6 +113,23 @@ _registry = get_registry()
 # the read is its own self-belief about the regime, not a synthesized
 # gate).
 CHOP_SUPPRESSION_CONFIDENCE = 0.70
+
+
+# v0.8.7 regime-hysteresis — minimum number of consecutive ticks where
+# regimeNow != regimeAtOpen before the regime_change exit can fire.
+# Registry-controlled via ``executive.regime_stability_ticks_for_exit``.
+# Default 3 means a flicker (1-2 tick mode divergence) cannot trigger
+# the exit alone; the kernel must read the new regime stably for at
+# least 3 ticks AND the basin must have moved more than 1/π in
+# Fisher-Rao distance from the entry anchor.
+_DEFAULT_REGIME_STABILITY_TICKS_FOR_EXIT = 3
+
+
+def _regime_stability_ticks_for_exit() -> int:
+    return int(_registry.get(
+        "executive.regime_stability_ticks_for_exit",
+        default=_DEFAULT_REGIME_STABILITY_TICKS_FOR_EXIT,
+    ))
 
 
 def _chop_suppress_entry(reading: RegimeReading) -> bool:
@@ -199,6 +216,12 @@ class TickInputs:
     # Kelly cap defers to the geometric leverage formula (no-op).
     # Tuple is (win_rate, avg_win, avg_loss) over the lane window.
     rolling_kelly_stats: Optional[tuple[float, float, float]] = None
+    # Funding rate for the symbol's perpetual contract (8-hour rate from
+    # exchange feed). Used to compute funding_drag per held position and
+    # feed it into the emotion stack so the conviction gate fires earlier
+    # on funding-bleeding positions. Default 0.0 = no held position or
+    # rate not yet fetched (safe: drag = 0 → no anxiety perturbation).
+    funding_rate_8h: float = 0.0
 
 
 @dataclass
@@ -476,19 +499,31 @@ def run_tick(
     fs = foresight.predict(regime_weights)
     # Tier 2 cognitive emotions — composed AFTER foresight so Flow has
     # access to predicted_basin reference.
-    #
-    # Funding drag — dimensionless cost-on-margin ratio aggregated across
-    # all currently-held lane positions on this symbol. The kernel reads
-    # the worst (largest) drag so a single funding-bleeding leg pulls
-    # the whole symbol's conviction down.  Held positions accumulate
-    # funding; untracked legacy callers without ``margin_usdt`` populated
-    # supply 0, leaving the drag at 0 (no-op).
+    # Funding drag: real carry cost against the held position(s). Computed
+    # here (P14: BOUNDARY → STATE at perception time) and fed into anxiety
+    # so the conviction gate fires earlier on funding-bleeding positions.
+    # Multi-lane: sum drag across all concurrently held lanes.
     funding_drag = 0.0
-    for lp in inputs.account.lane_positions:
-        if lp.margin_usdt > 0.0:
-            d = lp.funding_paid_usdt / lp.margin_usdt
-            if d > funding_drag:
-                funding_drag = d
+    if inputs.funding_rate_8h != 0.0:
+        if inputs.account.lane_positions:
+            for lp in inputs.account.lane_positions:
+                entry_ms = state.last_entry_at_ms_by_lane.get(
+                    lp.lane, state.last_entry_at_ms
+                )
+                if entry_ms is not None:
+                    hours_held = (now_ms - entry_ms) / 3_600_000.0
+                    funding_drag += compute_funding_drag(
+                        lp.side, inputs.funding_rate_8h, hours_held
+                    )
+        elif inputs.account.exchange_held_side is not None:
+            entry_ms = state.last_entry_at_ms
+            if entry_ms is not None:
+                hours_held = (now_ms - entry_ms) / 3_600_000.0
+                funding_drag += compute_funding_drag(
+                    inputs.account.exchange_held_side,
+                    inputs.funding_rate_8h,
+                    hours_held,
+                )
     emo = compute_emotions(
         motivators=mot,
         basin_distance=sen.drift,
@@ -970,29 +1005,49 @@ def run_tick(
         and size_d["value"] > 0
         and not _chop_suppress_entry(regime_reading)
     ):
-        action = "enter_long" if side_candidate == "long" else "enter_short"
-        notional = size_d["value"] * leverage_d["value"]
-        reason = (
-            f"[{mode}] kernel-entry-lane[{pre_lane}] "
-            f"conv={emo.confidence * (1 + emo.wonder):.3f}"
-            f" > hes={emo.anxiety + emo.confusion:.3f}; "
-            f"side={side_candidate}; "
-            f"margin={size_d['value']:.2f} lev={leverage_d['value']}x "
-            f"notional={notional:.2f}"
+        # Regime suppression check (issue #623): before opening a new
+        # entry, consult the regime classifier reading. Held positions
+        # are unaffected — re-justification (#619) owns those exits.
+        chop_suppress_thr_trend = float(_registry.get(
+            "regime.chop_suppress.trend_confidence", default=0.70,
+        ))
+        chop_suppress_thr_swing = float(_registry.get(
+            "regime.chop_suppress.swing_confidence", default=0.85,
+        ))
+        supp = chop_suppress_entry(
+            regime_reading, pre_lane,
+            trend_confidence_threshold=chop_suppress_thr_trend,
+            swing_confidence_threshold=chop_suppress_thr_swing,
         )
-        derivation["entry_threshold"] = entry_thr_d["derivation"]
-        derivation["size"] = size_d["derivation"]
-        derivation["leverage"] = leverage_d["derivation"]
-        # Held-position re-justification — snapshot the (regime, Φ)
-        # state at the moment of entry on this lane. Subsequent ticks
-        # compare against these anchors via the three internal exit
-        # checks (regime change / Φ collapse / conviction failure).
-        state.regime_at_open_by_lane[pre_lane] = mode
-        state.phi_at_open_by_lane[pre_lane] = phi
-        state.basin_at_open_by_lane[pre_lane] = (
-            np.asarray(basin, dtype=np.float64).copy()
-        )
-        state.regime_change_streak_by_lane[pre_lane] = 0
+        derivation["regime_suppression"] = supp.as_dict()
+        if supp.suppressed:
+            action = "hold"
+            reason = supp.suppress_reason or "regime_suppress"
+            derivation["entry_threshold"] = entry_thr_d["derivation"]
+        else:
+            action = "enter_long" if side_candidate == "long" else "enter_short"
+            notional = size_d["value"] * leverage_d["value"]
+            reason = (
+                f"[{mode}] kernel-entry-lane[{pre_lane}] "
+                f"conv={emo.confidence * (1 + emo.wonder):.3f}"
+                f" > hes={emo.anxiety + emo.confusion:.3f}; "
+                f"side={side_candidate}; "
+                f"margin={size_d['value']:.2f} lev={leverage_d['value']}x "
+                f"notional={notional:.2f}"
+            )
+            derivation["entry_threshold"] = entry_thr_d["derivation"]
+            derivation["size"] = size_d["derivation"]
+            derivation["leverage"] = leverage_d["derivation"]
+            # Held-position re-justification — snapshot the (regime, Φ)
+            # state at the moment of entry on this lane. Subsequent ticks
+            # compare against these anchors via the three internal exit
+            # checks (regime change / Φ collapse / conviction failure).
+            state.regime_at_open_by_lane[pre_lane] = mode
+            state.phi_at_open_by_lane[pre_lane] = phi
+            state.basin_at_open_by_lane[pre_lane] = (
+                np.asarray(basin, dtype=np.float64).copy()
+            )
+            state.regime_change_streak_by_lane[pre_lane] = 0
     elif held_side:
         # Proposal #10: resolve the lane this single-position decision
         # belongs to. With ``lane_positions`` populated the lane is read
@@ -1024,6 +1079,7 @@ def run_tick(
             phi=phi,
             emotions=emo,
             mode_value=mode,
+            regime_confidence=float(regime_reading.confidence),
         )
         # Held-position re-justification anchor lifecycle on close /
         # reverse. scalp_exit / exit clear the lane's anchors so a
@@ -1052,32 +1108,52 @@ def run_tick(
         and size_d["value"] > 0
         and not _chop_suppress_entry(regime_reading)
     ):
-        action = "enter_long" if side_candidate == "long" else "enter_short"
-        reversion_tag = (
-            f" REVERSION-flip(basin{basin_dir:.2f}/tape{tape_trend:.2f})"
-            if side_override else ""
+        # Regime suppression check (issue #623): before opening a new
+        # entry, consult the regime classifier reading. Held positions
+        # are unaffected — re-justification (#619) owns those exits.
+        chop_suppress_thr_trend = float(_registry.get(
+            "regime.chop_suppress.trend_confidence", default=0.70,
+        ))
+        chop_suppress_thr_swing = float(_registry.get(
+            "regime.chop_suppress.swing_confidence", default=0.85,
+        ))
+        supp = chop_suppress_entry(
+            regime_reading, pre_lane,
+            trend_confidence_threshold=chop_suppress_thr_trend,
+            swing_confidence_threshold=chop_suppress_thr_swing,
         )
-        notional = size_d["value"] * leverage_d["value"]
-        reason = (
-            f"[{mode}] kernel-entry conv={emo.confidence * (1 + emo.wonder):.3f}"
-            f" > hes={emo.anxiety + emo.confusion:.3f}; "
-            f"side={side_candidate}{reversion_tag}; "
-            f"margin={size_d['value']:.2f} lev={leverage_d['value']}x "
-            f"notional={notional:.2f}"
-        )
-        derivation["entry_threshold"] = entry_thr_d["derivation"]
-        derivation["size"] = size_d["derivation"]
-        derivation["leverage"] = leverage_d["derivation"]
-        # Held-position re-justification — snapshot the (regime, Φ)
-        # state at the moment of entry on this lane. Subsequent ticks
-        # compare against these anchors via the three internal exit
-        # checks (regime change / Φ collapse / conviction failure).
-        state.regime_at_open_by_lane[pre_lane] = mode
-        state.phi_at_open_by_lane[pre_lane] = phi
-        state.basin_at_open_by_lane[pre_lane] = (
-            np.asarray(basin, dtype=np.float64).copy()
-        )
-        state.regime_change_streak_by_lane[pre_lane] = 0
+        derivation["regime_suppression"] = supp.as_dict()
+        if supp.suppressed:
+            action = "hold"
+            reason = supp.suppress_reason or "regime_suppress"
+            derivation["entry_threshold"] = entry_thr_d["derivation"]
+        else:
+            action = "enter_long" if side_candidate == "long" else "enter_short"
+            reversion_tag = (
+                f" REVERSION-flip(basin{basin_dir:.2f}/tape{tape_trend:.2f})"
+                if side_override else ""
+            )
+            notional = size_d["value"] * leverage_d["value"]
+            reason = (
+                f"[{mode}] kernel-entry conv={emo.confidence * (1 + emo.wonder):.3f}"
+                f" > hes={emo.anxiety + emo.confusion:.3f}; "
+                f"side={side_candidate}{reversion_tag}; "
+                f"margin={size_d['value']:.2f} lev={leverage_d['value']}x "
+                f"notional={notional:.2f}"
+            )
+            derivation["entry_threshold"] = entry_thr_d["derivation"]
+            derivation["size"] = size_d["derivation"]
+            derivation["leverage"] = leverage_d["derivation"]
+            # Held-position re-justification — snapshot the (regime, Φ)
+            # state at the moment of entry on this lane. Subsequent ticks
+            # compare against these anchors via the three internal exit
+            # checks (regime change / Φ collapse / conviction failure).
+            state.regime_at_open_by_lane[pre_lane] = mode
+            state.phi_at_open_by_lane[pre_lane] = phi
+            state.basin_at_open_by_lane[pre_lane] = (
+                np.asarray(basin, dtype=np.float64).copy()
+            )
+            state.regime_change_streak_by_lane[pre_lane] = 0
     else:
         action = "hold"
         if not MODE_PROFILES[mode_enum].can_enter:
@@ -1315,6 +1391,7 @@ def _decide_with_position(
     phi: float = 0.0,
     emotions: Any = None,
     mode_value: str = "investigation",
+    regime_confidence: float = 1.0,
 ) -> tuple[str, str, bool, bool]:
     """v0.6.1 exit gate order: profit harvest → scalp TP/SL → Loop 2 exit.
     v0.7.1 override-reverse. v0.6.2 DCA. Proposal #10: per-lane peak +
@@ -1384,6 +1461,10 @@ def _decide_with_position(
         s=basin_state,
         mode=mode_enum,
         lane=position_lane,
+        # v0.8.6 — SL gate now reads ROI on margin, not raw price %.
+        # leverage_val is the live lev that justified entry; threading
+        # it lets the gate scale raw move into ROI correctly.
+        leverage=float(leverage_val),
     )
     derivation["scalp"] = {
         **scalp["derivation"],
@@ -1403,15 +1484,44 @@ def _decide_with_position(
     rejust: dict[str, Any] = {"checked": False}
     has_regime_anchor = position_lane in state.regime_at_open_by_lane
     has_phi_anchor = position_lane in state.phi_at_open_by_lane
+    # v0.8.7 — maintain the per-lane regime-change streak counter
+    # regardless of whether the rejust block runs (anchors present).
+    # Increment when regimeNow != regimeAtOpen; reset when it returns.
+    # Streak lives on state across ticks — the gate consumes the
+    # accumulated count below.
+    if has_regime_anchor:
+        if mode_value != state.regime_at_open_by_lane[position_lane]:
+            state.regime_change_streak_by_lane[position_lane] = (
+                state.regime_change_streak_by_lane.get(position_lane, 0) + 1
+            )
+        else:
+            state.regime_change_streak_by_lane[position_lane] = 0
     if has_regime_anchor and has_phi_anchor:
         rejust["checked"] = True
         regime_at_open = state.regime_at_open_by_lane[position_lane]
         phi_at_open = state.phi_at_open_by_lane[position_lane]
         phi_floor = phi_at_open / PHI_GOLDEN_FLOOR_RATIO
+        regime_change_streak = state.regime_change_streak_by_lane.get(
+            position_lane, 0,
+        )
+        regime_stability_ticks_required = _regime_stability_ticks_for_exit()
+        # Compute FR distance from the basin anchor (if present). When
+        # missing, the gate falls back strict-fail so the regime exit
+        # cannot fire on label flicker alone — the geometric component
+        # must be measurable.
+        basin_at_open = state.basin_at_open_by_lane.get(position_lane)
+        fr_distance: Optional[float] = None
+        if basin_at_open is not None:
+            fr_distance = float(fisher_rao_distance(basin_at_open, basin))
         rejust.update({
             "lane": position_lane,
             "regime_at_open": regime_at_open,
             "regime_now": mode_value,
+            "regime_confidence": regime_confidence,
+            "regime_change_streak": regime_change_streak,
+            "regime_stability_ticks_required": regime_stability_ticks_required,
+            "fr_distance": fr_distance,
+            "fr_threshold": PI_STRUCT_GRAVITATING_FRACTION,
             "phi_at_open": phi_at_open,
             "phi_now": phi,
             "phi_floor": phi_floor,
@@ -1419,54 +1529,43 @@ def _decide_with_position(
             "anxiety": getattr(emotions, "anxiety", 0.0),
             "confusion": getattr(emotions, "confusion", 0.0),
         })
-        # 1. REGIME CHECK — regime changed since open. Hysteresis:
-        #   (a) regime != regime_at_open
-        #   (b) new regime stable for ≥ N consecutive ticks
-        #       (registry: executive.regime_stability_ticks_for_exit,
-        #        default 3)
-        #   (c) basin moved by FR distance > 1/π from basin_at_open
-        #       (the gravitating-fraction threshold; matches the same
-        #        canonical π-structure constant used by foresight
-        #        divergence and the ThoughtBus debate threshold)
-        # All three required. A single-tick mode flicker doesn't
-        # overcome (b); a small basin wobble doesn't overcome (c).
-        # Resets streak when the regime returns to regime_at_open.
-        regime_diverged = mode_value != regime_at_open
-        if regime_diverged:
-            state.regime_change_streak_by_lane[position_lane] = (
-                state.regime_change_streak_by_lane.get(position_lane, 0) + 1
-            )
-        else:
-            state.regime_change_streak_by_lane[position_lane] = 0
-        streak = state.regime_change_streak_by_lane.get(position_lane, 0)
-        ticks_required = int(_registry.get(
-            "executive.regime_stability_ticks_for_exit",
-            default=3,
-        ))
-        basin_at_open = state.basin_at_open_by_lane.get(position_lane)
-        if basin_at_open is not None:
-            basin_fr_move = float(fisher_rao_distance(basin, basin_at_open))
-        else:
-            # No basin anchor (legacy entries or post-restart) — skip
-            # the geometric gate; rely on streak alone. Old behavior
-            # remains a safety floor.
-            basin_fr_move = float("inf")
-        rejust["regime_streak"] = streak
-        rejust["regime_streak_required"] = ticks_required
-        rejust["basin_fr_move"] = basin_fr_move
-        rejust["basin_fr_threshold"] = float(PI_STRUCT_GRAVITATING_FRACTION)
+        # 1. REGIME CHECK — v0.8.7 triple-AND hysteresis. ALL of:
+        #   (a) regimeNow != regimeAtOpen   (label divergence)
+        #   (b) regimeChangeStreak >= regimeStabilityTicksRequired
+        #   (c) fr_distance > 1/π            (basin geometry has moved)
+        # PLUS the PR #629 confidence gate (regime_confidence > 1/φ).
+        #
+        # Live tape 2026-05-01 16:11-16:17 evidence: 9 closes, 22% win
+        # rate, every close via regime_change on a $97 account. Without
+        # the streak filter a single-tick mode flicker exits the
+        # position; without the FR filter, label changes where the
+        # basin has barely moved still close out. The triple-AND
+        # demands sustained, geometrically-substantiated regime change.
+        #
+        # FR threshold is PI_STRUCT_GRAVITATING_FRACTION (1/π ≈ 0.318)
+        # from EXP-004b — the canonical "basin has moved into a
+        # different gravitating cluster" distance.
+        label_diverged = mode_value != regime_at_open
+        confidence_load_bearing = regime_confidence > PI_STRUCT_BOUNDARY_R_SQUARED
+        streak_satisfied = regime_change_streak >= regime_stability_ticks_required
+        # Strict-fail when basin anchor is absent (e.g. positions opened
+        # before this PR shipped): the regime exit cannot fire purely on
+        # label flicker — the geometric component must be measurable.
+        fr_fires = fr_distance is not None and fr_distance > PI_STRUCT_GRAVITATING_FRACTION
         if (
-            regime_diverged
-            and streak >= ticks_required
-            and basin_fr_move > PI_STRUCT_GRAVITATING_FRACTION
+            label_diverged
+            and confidence_load_bearing
+            and streak_satisfied
+            and fr_fires
         ):
             rejust["fired"] = "regime_change"
             derivation["rejustification"] = rejust
+            fr_str = f"{fr_distance:.3f}" if fr_distance is not None else "N/A"
             reason = (
-                f"regime_change: opened in {regime_at_open}, "
-                f"now {mode_value} (stable {streak} ticks, "
-                f"basin moved FR={basin_fr_move:.3f} "
-                f"> {PI_STRUCT_GRAVITATING_FRACTION:.3f})"
+                f"regime_change: opened in {regime_at_open} "
+                f"(FR_dist {fr_str} > 1/π), now {mode_value} stable for "
+                f"{regime_change_streak} ticks "
+                f"(confidence {regime_confidence:.3f} > 1/φ)"
             )
             return "scalp_exit", reason, False, False
         # 2. PHI CHECK — integration coherence collapsed below the

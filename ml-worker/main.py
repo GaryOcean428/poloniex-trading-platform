@@ -1431,6 +1431,9 @@ async def monkey_executive_decide(request: Request):
             notional_usdt=position_notional,
             s=state,
             mode=mode,
+            # v0.8.6 — SL gate reads ROI on margin; thread the live lev
+            # decision so raw move scales correctly into ROI.
+            leverage=float(leverage["value"]),
         )
         loop2 = should_exit(
             perception=state.basin,
@@ -1687,6 +1690,18 @@ async def monkey_tick_run(request: Request):
         ),
         own_position_trade_id=acct_d.get("own_position_trade_id"),
     )
+    # rolling_kelly_stats: lane-filtered rolling Kelly stats from TS
+    # loop.ts (proposal #3 + lane-conditioned split). When present,
+    # tuple of (win_rate, avg_win, avg_loss) for the chosen lane.
+    # When absent / null, Kelly cap is a no-op (cold-start or unaware caller).
+    raw_kelly = inp.get("rolling_kelly_stats")
+    rolling_kelly_stats: Optional[tuple[float, float, float]] = None
+    if (
+        isinstance(raw_kelly, (list, tuple))
+        and len(raw_kelly) == 3
+        and all(isinstance(v, (int, float)) for v in raw_kelly)
+    ):
+        rolling_kelly_stats = (float(raw_kelly[0]), float(raw_kelly[1]), float(raw_kelly[2]))
     tick_inputs = TickInputs(
         symbol=str(inp["symbol"]),
         ohlcv=candles,
@@ -1697,9 +1712,8 @@ async def monkey_tick_run(request: Request):
         min_notional=float(inp.get("min_notional", 5.0)),
         size_fraction=float(inp.get("size_fraction", 1.0)),
         self_obs_bias=inp.get("self_obs_bias"),
+        rolling_kelly_stats=rolling_kelly_stats,
     )
-    # ml_signal / ml_strength: silently ignored if present (post
-    # #ml-separation). Kernel runs on basin geometry alone.
 
     # State resolution: caller-provided wins, else in-process cache, else
     # newborn seeded from uniform basin.

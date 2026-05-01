@@ -32,7 +32,11 @@
 
 import { fisherRao, type Basin } from './basin.js';
 import type { MonkeyMode } from './modes.js';
-import { PHI_GOLDEN_FLOOR_RATIO, PI_STRUCT_GRAVITATING_FRACTION } from './topology_constants.js';
+import {
+  PHI_GOLDEN_FLOOR_RATIO,
+  PI_STRUCT_BOUNDARY_R_SQUARED,
+  PI_STRUCT_GRAVITATING_FRACTION,
+} from './topology_constants.js';
 
 export interface RejustificationEmotions {
   confidence: number;
@@ -55,25 +59,33 @@ export interface RejustificationInput {
    *  anxiety, confusion to decide whether to exit. */
   emotions: RejustificationEmotions;
   /**
-   * Basin coordinate at entry. Undefined for legacy positions opened
-   * before the basin-anchor snapshot was added; in that case the
-   * regime hysteresis falls back to streak-only (basin gate skipped).
+   * Regime classifier's confidence ∈ [0, 1] for ``regimeNow`` (see
+   * regime.ts::RegimeReading). Used by the regime check below to gate
+   * exit on the classifier's own self-belief rather than a synthesized
+   * streak counter. Defaults to 1.0 so callers that do not (yet) plumb
+   * the classifier output behave as in PR #619 (always-fire on label
+   * divergence).
    */
-  basinAtOpen?: Basin;
-  /** Current basin this tick. Required when basinAtOpen is provided. */
-  basinNow?: Basin;
+  regimeConfidence?: number;
   /**
-   * Consecutive ticks where regimeNow has differed from regimeAtOpen.
-   * Caller maintains this counter — increments when divergent, resets
-   * to 0 when regimeNow returns to regimeAtOpen. Defaults to 0.
+   * v0.8.7 regime-hysteresis triple-AND gate. The regime exit fires only
+   * when ALL of:
+   *   (a) regimeNow != regimeAtOpen   (single-tick label divergence)
+   *   (b) regimeChangeStreak >= regimeStabilityTicksRequired
+   *   (c) fisherRao(basinNow, basinAtOpen) > 1/π
+   * AND the classifier's confidence still > 1/φ from PR #629.
+   *
+   * Why all three? Live tape 2026-05-01 16:11-16:17: every close was
+   * regime_change, 22% win rate, $97 account chewing through positions
+   * because a single-tick mode flicker was enough to flip the gate when
+   * the kernel's own basin had barely moved. The streak filter rejects
+   * single-tick flicker; the FR-distance filter rejects label changes
+   * where the basin geometry is still consonant with entry.
    */
   regimeChangeStreak?: number;
-  /**
-   * Minimum consecutive divergent ticks before regime exit fires.
-   * Defaults to 3 to match the Python kernel's
-   * executive.regime_stability_ticks_for_exit registry default.
-   */
-  regimeStreakRequired?: number;
+  regimeStabilityTicksRequired?: number;
+  basinNow?: Basin;
+  basinAtOpen?: Basin;
   /**
    * Held duration in seconds for the stale-bleed gate. Undefined
    * disables the stale-bleed check (legacy callers / no entry timestamp).
@@ -101,10 +113,14 @@ export interface RejustificationResult {
   reason: string;
   /** Φ floor under the golden-ratio coherence test. */
   phiFloor: number | null;
-  /** Streak observed (for telemetry). */
-  regimeChangeStreak?: number;
-  /** Basin FR move from open (for telemetry; null when no anchor). */
-  basinFrMove?: number | null;
+  /** FR distance from basinAtOpen → basinNow when both anchors present. */
+  frDistance: number | null;
+  /** FR-distance threshold (1/π) the regime gate compares against. */
+  frThreshold: number;
+  /** Streak of consecutive ticks where regimeNow != regimeAtOpen. */
+  regimeChangeStreak: number;
+  /** Required streak length before the regime exit fires. */
+  regimeStabilityTicksRequired: number;
 }
 
 /**
@@ -126,53 +142,58 @@ export const STALE_BLEED_ROI_THRESHOLD = -0.01;         // -1% on margin
 export function evaluateRejustification(
   input: RejustificationInput,
 ): RejustificationResult {
-  const {
-    regimeAtOpen, phiAtOpen, regimeNow, phiNow, emotions,
-    basinAtOpen, basinNow,
-    regimeChangeStreak = 0,
-    regimeStreakRequired = 3,
-    heldDurationS,
-    currentRoi,
-  } = input;
+  const { regimeAtOpen, phiAtOpen, regimeNow, phiNow, emotions } = input;
+  const regimeConfidence = input.regimeConfidence ?? 1.0;
+  const regimeChangeStreak = input.regimeChangeStreak ?? 0;
+  const regimeStabilityTicksRequired = input.regimeStabilityTicksRequired ?? 3;
+  const frThreshold = PI_STRUCT_GRAVITATING_FRACTION;  // 1/π ≈ 0.318
+  let frDistance: number | null = null;
+  if (input.basinNow !== undefined && input.basinAtOpen !== undefined) {
+    frDistance = fisherRao(input.basinAtOpen, input.basinNow);
+  }
   if (regimeAtOpen === undefined || phiAtOpen === undefined) {
-    return { checked: false, fired: null, reason: '', phiFloor: null };
+    return {
+      checked: false, fired: null, reason: '', phiFloor: null,
+      frDistance, frThreshold,
+      regimeChangeStreak, regimeStabilityTicksRequired,
+    };
   }
   const phiFloor = phiAtOpen / PHI_GOLDEN_FLOOR_RATIO;
 
-  // 1. REGIME CHECK with hysteresis — match Python PR #631.
-  //    Requires (a) regime != regime_at_open AND (b) streak ≥ required
-  //    AND (c) basin moved by FR > 1/π from basin_at_open.
-  //    Without basin anchor, fall back to streak-only (legacy positions
-  //    opened before this PR).
-  const regimeDiverged = regimeNow !== regimeAtOpen;
-  let basinFrMove: number | null = null;
-  if (basinAtOpen !== undefined && basinNow !== undefined) {
-    try {
-      basinFrMove = fisherRao(basinAtOpen, basinNow);
-    } catch {
-      basinFrMove = null;
+  // 1. REGIME CHECK — triple-AND gate. All of:
+  //   (a) regimeNow != regimeAtOpen   (label divergence)
+  //   (b) regimeChangeStreak >= regimeStabilityTicksRequired (stable >= N ticks)
+  //   (c) frDistance > 1/π            (basin geometry has actually moved)
+  // PLUS the PR #629 confidence gate (regimeConfidence > 1/φ).
+  //
+  // Live tape 2026-05-01 16:11-16:17: every close was regime_change,
+  // 22% win rate, $97 account torn through positions because a single
+  // tick of mode flicker was enough to flip the gate. The streak filter
+  // rejects single-tick noise; the FR filter rejects label changes
+  // where the basin's geometry has barely moved (the kernel's
+  // perception is still consonant with what justified entry).
+  if (regimeNow !== regimeAtOpen) {
+    const confidenceLoadBearing = regimeConfidence > PI_STRUCT_BOUNDARY_R_SQUARED;
+    const streakSatisfied = regimeChangeStreak >= regimeStabilityTicksRequired;
+    // FR-distance gate. When anchors are missing (basin not plumbed),
+    // fall back to a strict-fail so the regime exit cannot fire purely
+    // on label flicker — the geometric component must be measurable.
+    const frFires = frDistance !== null && frDistance > frThreshold;
+    if (confidenceLoadBearing && streakSatisfied && frFires) {
+      const frStr = frDistance !== null ? frDistance.toFixed(3) : 'N/A';
+      return {
+        checked: true,
+        fired: 'regime_change',
+        reason:
+          `regime_change: opened in ${regimeAtOpen} `
+          + `(FR_dist ${frStr} > 1/π), now ${regimeNow} stable for `
+          + `${regimeChangeStreak} ticks `
+          + `(confidence ${regimeConfidence.toFixed(3)} > 1/φ)`,
+        phiFloor,
+        frDistance, frThreshold,
+        regimeChangeStreak, regimeStabilityTicksRequired,
+      };
     }
-  }
-  const basinGateClear =
-    basinFrMove === null || basinFrMove > PI_STRUCT_GRAVITATING_FRACTION;
-  if (
-    regimeDiverged
-    && regimeChangeStreak >= regimeStreakRequired
-    && basinGateClear
-  ) {
-    const moveStr = basinFrMove === null
-      ? '(no basin anchor)'
-      : `basin moved FR=${basinFrMove.toFixed(3)} > ${PI_STRUCT_GRAVITATING_FRACTION.toFixed(3)}`;
-    return {
-      checked: true,
-      fired: 'regime_change',
-      reason:
-        `regime_change: opened in ${regimeAtOpen}, now ${regimeNow} `
-        + `(stable ${regimeChangeStreak} ticks, ${moveStr})`,
-      phiFloor,
-      regimeChangeStreak,
-      basinFrMove,
-    };
   }
   if (phiNow < phiFloor) {
     return {
@@ -180,8 +201,8 @@ export function evaluateRejustification(
       fired: 'phi_collapse',
       reason: `phi_collapse: open Φ=${phiAtOpen.toFixed(3)} → now ${phiNow.toFixed(3)} < floor ${phiFloor.toFixed(3)}`,
       phiFloor,
-      regimeChangeStreak,
-      basinFrMove,
+      frDistance, frThreshold,
+      regimeChangeStreak, regimeStabilityTicksRequired,
     };
   }
   if (emotions.confidence < emotions.anxiety + emotions.confusion) {
@@ -190,36 +211,32 @@ export function evaluateRejustification(
       fired: 'conviction_failed',
       reason: `conviction_failed: conf=${emotions.confidence.toFixed(3)} < anxiety+confusion=${(emotions.anxiety + emotions.confusion).toFixed(3)}`,
       phiFloor,
-      regimeChangeStreak,
-      basinFrMove,
+      frDistance, frThreshold,
+      regimeChangeStreak, regimeStabilityTicksRequired,
     };
   }
-  // 4. STALE_BLEED — interim guard for dormant conviction gate.
-  //    Fires only when both duration and ROI inputs are provided.
+  // 4. STALE_BLEED — belt-and-braces guard.
   if (
-    heldDurationS !== undefined
-    && currentRoi !== undefined
-    && heldDurationS >= STALE_BLEED_MIN_DURATION_S
-    && currentRoi <= STALE_BLEED_ROI_THRESHOLD
+    input.heldDurationS !== undefined
+    && input.currentRoi !== undefined
+    && input.heldDurationS >= STALE_BLEED_MIN_DURATION_S
+    && input.currentRoi <= STALE_BLEED_ROI_THRESHOLD
   ) {
     return {
       checked: true,
       fired: 'stale_bleed',
       reason:
-        `stale_bleed: held ${Math.round(heldDurationS)}s `
-        + `≥ ${STALE_BLEED_MIN_DURATION_S}s at ROI ${(currentRoi * 100).toFixed(2)}% `
+        `stale_bleed: held ${Math.round(input.heldDurationS)}s `
+        + `≥ ${STALE_BLEED_MIN_DURATION_S}s at ROI ${(input.currentRoi * 100).toFixed(2)}% `
         + `≤ ${(STALE_BLEED_ROI_THRESHOLD * 100).toFixed(2)}%`,
       phiFloor,
-      regimeChangeStreak,
-      basinFrMove,
+      frDistance, frThreshold,
+      regimeChangeStreak, regimeStabilityTicksRequired,
     };
   }
   return {
-    checked: true,
-    fired: null,
-    reason: '',
-    phiFloor,
-    regimeChangeStreak,
-    basinFrMove,
+    checked: true, fired: null, reason: '', phiFloor,
+    frDistance, frThreshold,
+    regimeChangeStreak, regimeStabilityTicksRequired,
   };
 }

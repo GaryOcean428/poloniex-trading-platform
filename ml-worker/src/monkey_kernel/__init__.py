@@ -107,6 +107,14 @@ from .working_memory import (
     WorkingMemoryStats,
 )
 from .state import BasinState, NeurochemicalState
+from .regime import (
+    ChopSuppressionResult,
+    RegimeReading,
+    chop_suppress_entry,
+    classify_regime,
+    regime_entry_threshold_modifier,
+    regime_harvest_tightness,
+)
 
 __all__ = [
     "ActivityReward",
@@ -114,6 +122,7 @@ __all__ = [
     "AutonomicTickInputs",
     "AutonomicTickResult",
     "BasinState",
+    "ChopSuppressionResult",
     "ExecBasinState",
     "MODE_PROFILES",
     "ModeProfile",
@@ -122,18 +131,23 @@ __all__ = [
     "NeurochemicalState",
     "ParamValue",
     "ParameterRegistry",
+    "RegimeReading",
     "SleepPhase",
     "SymbolState",
     "TickDecision",
     "TickInputs",
     "VariableCategory",
     "basin_direction",
+    "chop_suppress_entry",
+    "classify_regime",
     "current_entry_threshold",
     "current_leverage",
     "current_position_size",
     "detect_mode",
     "fresh_symbol_state",
     "get_registry",
+    "regime_entry_threshold_modifier",
+    "regime_harvest_tightness",
     "run_tick",
     "should_dca_add",
     "should_exit",

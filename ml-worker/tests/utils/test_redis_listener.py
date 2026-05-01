@@ -38,6 +38,9 @@ from utils.redis_listener import (  # noqa: E402
 
 class _FakePubSub:
     def __init__(self, messages: List[Dict[str, Any]]):
+        # FIFO of pending messages. ``get_message`` pops the front; once
+        # exhausted it returns ``None`` (which the new poll-loop listener
+        # treats as an idle wakeup and uses to inject heartbeat pings).
         self._messages = list(messages)
         self.subscribed: List[str] = []
         self.closed = False
@@ -50,29 +53,17 @@ class _FakePubSub:
     def subscribe(self, channel: str) -> None:
         self.subscribed.append(channel)
 
-    def listen(self):
-        # Legacy iterator; kept for any test paths that still drive
-        # listen() directly. Not used by the new get_message-based
-        # listener loop.
-        for m in self._messages:
-            yield m
-
-    def get_message(
-        self, ignore_subscribe_messages: bool = False, timeout: float = 0,
-    ) -> Optional[Dict[str, Any]]:
+    def get_message(self, *, ignore_subscribe_messages: bool = False, timeout: float = 1.0):
+        # noqa: ARG002 — kwargs match real redis-py signature.
         if self._messages:
-            msg = self._messages.pop(0)
-            # Subscribe-control frames are filtered when caller asks
-            if ignore_subscribe_messages and msg.get("type") in (
-                "subscribe", "unsubscribe", "psubscribe", "punsubscribe",
-            ):
-                return None
-            return msg
-        # Empty queue → simulate idle-timeout/connection-drop so the
-        # outer while-loop reconnects and the next batch is consumed.
-        # The listener's idle-timeout detection treats this as the
-        # nominal "channel quiet" path.
-        raise TimeoutError("fake idle timeout — queue exhausted")
+            head = self._messages.pop(0)
+            # Synthetic disconnect sentinel — used by tests to drive a
+            # reconnect cycle without standing up a full proxy. Any other
+            # dict (including {"type": "message", ...}) flows through.
+            if isinstance(head, dict) and head.get("_drop_after"):
+                raise ConnectionError("simulated channel drop")
+            return head
+        return None
 
     def close(self) -> None:
         self.closed = True
@@ -253,11 +244,19 @@ def test_listener_uses_exponential_backoff():
 def test_listener_resets_backoff_after_successful_connect():
     """After a successful connect (even if no messages), backoff should
     reset to ``initial_backoff`` for the next disconnect.
+
+    v0.8.6 — listener now uses a poll-loop with heartbeat pings instead
+    of the blocking ``listen()`` generator, so an "empty" pubsub no
+    longer naturally falls through to reconnect. Drive the reconnect
+    via a connection-drop sentinel injected after the empty batch.
     """
     fake = _FakeRedisModule(
         failures_before_success=2,  # probe fails + 1 listener fails
         message_batches=[
-            [],  # 1st success: empty pubsub, then reconnect path
+            # 1st success: drop into a synthetic connection error after
+            # zero messages so the listener falls through to backoff +
+            # reconnect (matches the natural pubsub-disconnect path).
+            [{"_drop_after": True}],
             [{"type": "message", "data": json.dumps({"x": 1})}],  # 2nd: deliver
         ],
         errno=22,
@@ -265,6 +264,9 @@ def test_listener_resets_backoff_after_successful_connect():
     cfg = ListenerConfig(
         name="test", channel="ch",
         initial_backoff=1.0, max_backoff=16.0, backoff_factor=2.0,
+        # Make ping-interval long enough not to fire during the test; the
+        # listener's ping is verified in dedicated heartbeat tests below.
+        ping_interval_sec=60.0,
     )
     received: List[Dict[str, Any]] = []
     sleeps = _run_listener(
@@ -273,7 +275,7 @@ def test_listener_resets_backoff_after_successful_connect():
     assert received == [{"x": 1}]
     # Sleep timeline:
     #   sleeps[0] after listener attempt 1 fails -> 1.0
-    #   sleeps[1] after listener attempt 2 succeeds + drains empty batch -> 1.0 (RESET)
+    #   sleeps[1] after listener attempt 2 drops via _drop_after -> 1.0 (RESET)
     assert sleeps[0] == 1.0
     assert sleeps[1] == 1.0
 
@@ -429,8 +431,11 @@ def test_probe_returns_diag_on_einval():
 
 
 class _IdleTimeoutScript:
-    """Test harness: connect once, raise a timeout on `pubsub.listen`,
+    """Test harness: connect once, raise a timeout on ``pubsub.get_message``,
     optionally repeat for N attempts before yielding a real message.
+
+    v0.8.6 — switched from ``listen()`` (generator) to ``get_message()``
+    (poll) to match the new heartbeat-aware listener loop.
 
     This simulates Redis being healthy but the channel being quiet — the
     exact scenario that produced the prod log spam.
@@ -450,6 +455,7 @@ class _IdleTimeoutScript:
         )
         self.attempts = 0
         self.exceptions = type("Exc", (), {"TimeoutError": __import__("socket").timeout})
+        self.ping_calls: List[float] = []
 
         outer = self
 
@@ -462,30 +468,14 @@ class _IdleTimeoutScript:
             def subscribe(self, ch):
                 self.subscribed.append(ch)
 
-            def listen(self):
-                # Legacy iterator path; not used by the new
-                # get_message-based listener loop. Kept so tests that
-                # construct _PS directly still find the method.
+            def get_message(self, *, ignore_subscribe_messages=False, timeout=1.0):  # noqa: ARG002
                 if outer._remaining_timeouts > 0:
                     outer._remaining_timeouts -= 1
                     raise outer._timeout_exc_factory()
                 if outer._message is not None:
-                    yield {"type": "message", "data": json.dumps(outer._message)}
-
-            def get_message(
-                self, ignore_subscribe_messages: bool = False, timeout: float = 0,
-            ):
-                # First N calls raise idle-timeout — drives the
-                # idle_timeout_streak counter on the listener side.
-                if outer._remaining_timeouts > 0:
-                    outer._remaining_timeouts -= 1
-                    raise outer._timeout_exc_factory()
-                # Then deliver the staged message once.
-                if outer._message is not None and not self._delivered_message:
-                    self._delivered_message = True
-                    return {"type": "message", "data": json.dumps(outer._message)}
-                # Subsequently None on each poll → heartbeat ping path.
-                # Tests stop the listener via stop_event after receiving.
+                    msg = {"type": "message", "data": json.dumps(outer._message)}
+                    outer._message = None
+                    return msg
                 return None
 
             def close(self):
@@ -503,6 +493,7 @@ class _IdleTimeoutScript:
                 self.set_calls.append((key, value, ex))
 
             def ping(self):
+                outer.ping_calls.append(time.monotonic())
                 return True
 
             def close(self):
@@ -702,185 +693,311 @@ def test_idle_timeout_escalates_to_info_after_threshold(caplog):
     )
 
 
-# ─── Heartbeat tests (2026-05-01) ─────────────────────────────────
+# =====================================================================
+# Heartbeat ping tests (v0.8.6 fix — Redis idle-timeout reconnect storm).
 #
-# The previous blocking ``pubsub.listen()`` path reconnected on
-# every socket_read_timeout (~30s on idle channels), producing the
-# attempt=N reconnect cadence the user flagged. The fix uses
-# ``pubsub.get_message(timeout=heartbeat_s)`` polling and issues a
-# ``client.ping()`` between polls — keeping the connection alive at
-# the application layer.
+# Production observed ~1 reconnect per 30s sustained for 4+ hours on
+# `ml-predict-request` and `trade-outcome`. Root cause: managed Redis
+# idle-timeout was killing pubsub connections that had no cross-traffic.
+# Fix: send a PING on a 10s cadence inside the listener loop so the
+# connection never crosses the idle-timeout threshold.
+# =====================================================================
 
 
-def test_heartbeat_pings_client_on_idle():
-    """When get_message returns None (idle), the listener must call
-    client.ping() to keep the connection actively alive."""
-    pings: List[bool] = []
+def test_heartbeat_pings_during_quiet_channel():
+    """When no message arrives for longer than ping_interval_sec, the
+    listener must call client.ping() at least once during that window."""
+    # 5 idle wakeups before the first message — at ping_interval=0.001s
+    # poll_timeout=0.001s, the listener should fire ~5 pings before the
+    # message arrives and the test stops.
+    fake = _IdleTimeoutScript(
+        timeouts_before_message=0,  # use return-None path, not exception path
+        message={"after": "idle"},
+    )
+    # Override get_message to return None for a few wakeups so we drive
+    # the heartbeat path (rather than the exception path).
+    fake._idle_returns = 5
 
-    class _PingClient:
-        closed = False
+    # Patch the pubsub get_message to count idle wakeups instead of raising.
+    outer = fake
+    outer._pubsub_idles = 0
+
+    class _PSReturnNone:
+        def __init__(self):
+            self.subscribed = []
+            self.closed = False
+
+        def subscribe(self, ch):
+            self.subscribed.append(ch)
+
+        def get_message(self, *, ignore_subscribe_messages=False, timeout=1.0):  # noqa: ARG002
+            if outer._pubsub_idles < outer._idle_returns:
+                outer._pubsub_idles += 1
+                return None
+            if outer._message is not None:
+                msg = {"type": "message", "data": json.dumps(outer._message)}
+                outer._message = None
+                return msg
+            return None
+
+    class _ClientPingCounting:
+        def __init__(self):
+            self.closed = False
+            self.set_calls: List[tuple] = []
 
         def pubsub(self, ignore_subscribe_messages=False):
-            return _IdlePubSub()
+            return _PSReturnNone()
 
-        def set(self, *_a, **_kw):
-            pass
+        def set(self, key, value, ex=0):
+            self.set_calls.append((key, value, ex))
 
         def ping(self):
-            pings.append(True)
-            # After 3 pings, simulate a connection drop so the test
-            # can finish (otherwise we'd loop forever on idle).
-            if len(pings) >= 3:
-                raise OSError(104, "fake conn drop after 3 pings")
+            outer.ping_calls.append(time.monotonic())
             return True
 
         def close(self):
             self.closed = True
 
-    class _IdlePubSub:
-        def __init__(self):
-            self.subscribed = []
-            self.closed = False
+    class _RedisCounting:
+        @staticmethod
+        def from_url(url, **kwargs):  # noqa: ARG004
+            outer.attempts += 1
+            return _ClientPingCounting()
 
-        def subscribe(self, ch):
-            self.subscribed.append(ch)
-
-        def listen(self):
-            return iter([])
-
-        def get_message(self, ignore_subscribe_messages=False, timeout=0):
-            return None  # always idle
-
-        def close(self):
-            self.closed = True
-
-    class _RedisModule:
-        attempts = 0
-        exceptions = type("Exc", (), {"TimeoutError": __import__("socket").timeout})
-
-        class Redis:
-            @staticmethod
-            def from_url(url, **kwargs):  # noqa: ARG004
-                _RedisModule.attempts += 1
-                return _PingClient()
+    fake.Redis = _RedisCounting
 
     cfg = ListenerConfig(
-        name="hb",
-        channel="ch",
-        initial_backoff=0.0001,
-        max_backoff=0.0002,
-        backoff_factor=1.0,
-        heartbeat_interval_s=0.001,  # tight loop for test
+        name="heartbeat-test", channel="ch",
+        initial_backoff=0.0001, max_backoff=0.001, backoff_factor=1.0,
+        ping_interval_sec=0.001,
+        socket_read_timeout=0.001,
     )
-    stop = threading.Event()
+    received: List[Dict[str, Any]] = []
+    _run_listener(fake=fake, cfg=cfg, received=received, expected_messages=1, timeout=3.0)
 
-    def _sleep(s):
-        time.sleep(0.001)
-        if _RedisModule.attempts > 5:
-            stop.set()
-
-    t = threading.Thread(
-        target=run_resilient_listener,
-        kwargs=dict(
-            redis_url="redis://fake:6379/0",
-            config=cfg,
-            on_message=lambda *_a: None,
-            redis_module=_RedisModule,
-            sleep_fn=_sleep,
-            stop_event=stop,
-        ),
-        daemon=True,
+    assert received == [{"after": "idle"}]
+    # Heartbeat must have fired AT LEAST ONCE during the idle window.
+    # We can't bound it tightly because real time + GIL scheduling jitter
+    # means the exact count varies. The contract is "at least one ping
+    # during sustained idle".
+    assert len(fake.ping_calls) >= 1, (
+        f"expected >=1 heartbeat ping during idle wakeups; got {len(fake.ping_calls)}"
     )
-    t.start()
-    t.join(timeout=3.0)
-    stop.set()
-    t.join(timeout=1.0)
-
-    # We expect at least 3 ping calls before the test forces the
-    # connection drop. Real heartbeat behavior verified.
-    assert len(pings) >= 3, f"expected ≥3 heartbeat pings, got {len(pings)}"
 
 
-def test_heartbeat_interval_configurable():
-    """ListenerConfig.heartbeat_interval_s defaults to 10s and is
-    respected as the get_message timeout argument."""
-    seen_timeouts: List[float] = []
+def test_heartbeat_disabled_when_interval_zero():
+    """ping_interval_sec=0 disables the heartbeat (escape hatch).
 
-    class _RecordingPubSub:
+    Note: the startup probe calls ping() once before the listener loop
+    begins; that's a one-shot connection check, not the heartbeat
+    we're asserting against. Track only listener-loop pings here.
+    """
+    outer = type("S", (), {})()
+    outer.ping_calls: List[float] = []  # all pings (probe + loop)
+    outer.loop_started = False
+    outer.attempts = 0
+    outer._message = {"x": 1}
+
+    class _PS:
         def __init__(self):
             self.subscribed = []
             self.closed = False
 
         def subscribe(self, ch):
             self.subscribed.append(ch)
+            outer.loop_started = True  # SUBSCRIBE only runs in the listener loop
 
-        def listen(self):
-            return iter([])
-
-        def get_message(self, ignore_subscribe_messages=False, timeout=0):
-            seen_timeouts.append(float(timeout))
-            # Force a connection drop after the first call so we can
-            # observe the timeout argument and exit.
-            raise OSError(104, "stop after recording timeout")
-
-        def close(self):
-            self.closed = True
+        def get_message(self, *, ignore_subscribe_messages=False, timeout=1.0):  # noqa: ARG002
+            if outer._message is not None:
+                msg = {"type": "message", "data": json.dumps(outer._message)}
+                outer._message = None
+                return msg
+            return None
 
     class _Client:
-        def pubsub(self, ignore_subscribe_messages=False):
-            return _RecordingPubSub()
+        def __init__(self):
+            self.closed = False
+            self.set_calls: List[tuple] = []
 
-        def set(self, *_a, **_kw):
-            pass
+        def pubsub(self, ignore_subscribe_messages=False):
+            return _PS()
+
+        def set(self, key, value, ex=0):
+            self.set_calls.append((key, value, ex))
 
         def ping(self):
+            # Tag whether this ping happened pre- or post-loop-start so
+            # the test can filter probe pings out.
+            outer.ping_calls.append(("loop" if outer.loop_started else "probe", time.monotonic()))
             return True
 
         def close(self):
-            pass
+            self.closed = True
 
-    class _RedisModule:
-        attempts = 0
-        exceptions = type("Exc", (), {"TimeoutError": __import__("socket").timeout})
+    class _Redis:
+        @staticmethod
+        def from_url(url, **kwargs):  # noqa: ARG004
+            outer.attempts += 1
+            return _Client()
 
-        class Redis:
-            @staticmethod
-            def from_url(url, **kwargs):  # noqa: ARG004
-                _RedisModule.attempts += 1
-                return _Client()
-
-    stop = threading.Event()
-
-    def _sleep(s):
-        time.sleep(0.001)
-        if _RedisModule.attempts > 2:
-            stop.set()
+    outer.Redis = _Redis
 
     cfg = ListenerConfig(
-        name="hb-conf",
-        channel="ch",
-        initial_backoff=0.0001,
-        heartbeat_interval_s=7.5,  # custom value to verify pass-through
+        name="heartbeat-disabled", channel="ch",
+        initial_backoff=0.0001, max_backoff=0.001, backoff_factor=1.0,
+        ping_interval_sec=0.0,
     )
-    t = threading.Thread(
-        target=run_resilient_listener,
-        kwargs=dict(
-            redis_url="redis://fake:6379/0",
-            config=cfg,
-            on_message=lambda *_a: None,
-            redis_module=_RedisModule,
-            sleep_fn=_sleep,
-            stop_event=stop,
-        ),
-        daemon=True,
+    received: List[Dict[str, Any]] = []
+    _run_listener(fake=outer, cfg=cfg, received=received, expected_messages=1)
+    assert received == [{"x": 1}]
+    # The probe ping is allowed; the listener-loop heartbeat is not.
+    loop_pings = [p for p in outer.ping_calls if p[0] == "loop"]
+    assert loop_pings == [], (
+        f"interval=0 should disable in-loop heartbeat; got {loop_pings}"
     )
-    t.start()
-    t.join(timeout=3.0)
-    stop.set()
-    t.join(timeout=1.0)
 
-    assert seen_timeouts, "expected at least one get_message call"
-    assert seen_timeouts[0] == pytest.approx(7.5)
+
+def test_heartbeat_fires_even_when_messages_flow():
+    """Pings fire on cadence regardless of whether messages are arriving.
+    Mock messages every 'tick' AND heartbeat ping cadence; assert pings
+    still fire."""
+    outer = type("S", (), {})()
+    outer.ping_calls: List[float] = []
+    outer.attempts = 0
+    # Stream of messages, each pop returns one. After enough are consumed,
+    # the listener stops.
+    outer._messages = [
+        {"type": "message", "data": json.dumps({"i": i})} for i in range(20)
+    ]
+
+    class _PS:
+        def __init__(self):
+            self.subscribed = []
+            self.closed = False
+
+        def subscribe(self, ch):
+            self.subscribed.append(ch)
+
+        def get_message(self, *, ignore_subscribe_messages=False, timeout=1.0):  # noqa: ARG002
+            # Sleep a tiny bit so the heartbeat clock can advance between
+            # message returns. Without this, the message stream is so
+            # tight that ping_interval might never elapse mid-stream.
+            time.sleep(0.002)
+            if outer._messages:
+                return outer._messages.pop(0)
+            return None
+
+    class _Client:
+        def __init__(self):
+            self.closed = False
+            self.set_calls: List[tuple] = []
+
+        def pubsub(self, ignore_subscribe_messages=False):
+            return _PS()
+
+        def set(self, key, value, ex=0):
+            self.set_calls.append((key, value, ex))
+
+        def ping(self):
+            outer.ping_calls.append(time.monotonic())
+            return True
+
+        def close(self):
+            self.closed = True
+
+    class _Redis:
+        @staticmethod
+        def from_url(url, **kwargs):  # noqa: ARG004
+            outer.attempts += 1
+            return _Client()
+
+    outer.Redis = _Redis
+
+    cfg = ListenerConfig(
+        name="heartbeat-with-flow", channel="ch",
+        initial_backoff=0.0001, max_backoff=0.001, backoff_factor=1.0,
+        # Ping cadence shorter than the per-message sleep so it must fire.
+        ping_interval_sec=0.001,
+        socket_read_timeout=0.01,
+    )
+    received: List[Dict[str, Any]] = []
+    _run_listener(fake=outer, cfg=cfg, received=received, expected_messages=20, timeout=5.0)
+
+    assert len(received) == 20
+    # With 20 messages × 2ms sleep = ~40ms, ping cadence 1ms → many pings.
+    # Concretely: at least 5 pings, since the heartbeat fires every 1ms.
+    assert len(outer.ping_calls) >= 5, (
+        f"expected >=5 heartbeat pings during message flow; got {len(outer.ping_calls)}"
+    )
+
+
+def test_heartbeat_failure_triggers_reconnect():
+    """When client.ping() raises, the listener must drop into reconnect
+    instead of swallowing the failure (since a dead ping = dead conn)."""
+    outer = type("S", (), {})()
+    outer.ping_calls: List[float] = []
+    outer.attempts = 0
+    outer._messages = [{"type": "message", "data": json.dumps({"x": 1})}]
+    outer._ping_should_fail = [True, False]  # first ping fails, then survives
+
+    class _PS:
+        def __init__(self):
+            self.subscribed = []
+            self.closed = False
+
+        def subscribe(self, ch):
+            self.subscribed.append(ch)
+
+        def get_message(self, *, ignore_subscribe_messages=False, timeout=1.0):  # noqa: ARG002
+            time.sleep(0.002)
+            if outer._messages:
+                return outer._messages.pop(0)
+            return None
+
+    class _Client:
+        def __init__(self):
+            self.closed = False
+            self.set_calls: List[tuple] = []
+
+        def pubsub(self, ignore_subscribe_messages=False):
+            return _PS()
+
+        def set(self, key, value, ex=0):
+            self.set_calls.append((key, value, ex))
+
+        def ping(self):
+            outer.ping_calls.append(time.monotonic())
+            if outer._ping_should_fail and outer._ping_should_fail[0]:
+                outer._ping_should_fail.pop(0)
+                raise ConnectionError("simulated dead conn on ping")
+            return True
+
+        def close(self):
+            self.closed = True
+
+    class _Redis:
+        @staticmethod
+        def from_url(url, **kwargs):  # noqa: ARG004
+            outer.attempts += 1
+            # On the SECOND attempt, restore the message so the listener
+            # can complete and the test stops.
+            if outer.attempts == 2:
+                outer._messages = [{"type": "message", "data": json.dumps({"x": 1})}]
+            return _Client()
+
+    outer.Redis = _Redis
+
+    cfg = ListenerConfig(
+        name="heartbeat-failure", channel="ch",
+        initial_backoff=0.0001, max_backoff=0.001, backoff_factor=1.0,
+        ping_interval_sec=0.001,
+        socket_read_timeout=0.01,
+    )
+    received: List[Dict[str, Any]] = []
+    _run_listener(fake=outer, cfg=cfg, received=received, expected_messages=1, timeout=5.0)
+    assert received == [{"x": 1}]
+    # First attempt's ping failed → listener reconnected (attempt counter > 1).
+    assert outer.attempts >= 2
 
 
 def test_keepalive_options_match_kernel_constants():
