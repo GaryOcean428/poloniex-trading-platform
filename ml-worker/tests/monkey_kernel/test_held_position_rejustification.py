@@ -37,7 +37,10 @@ from monkey_kernel.tick import (  # noqa: E402
     TickInputs,
     _decide_with_position,
 )
-from monkey_kernel.topology_constants import PHI_GOLDEN_FLOOR_RATIO  # noqa: E402
+from monkey_kernel.topology_constants import (  # noqa: E402
+    PHI_GOLDEN_FLOOR_RATIO,
+    PI_STRUCT_BOUNDARY_R_SQUARED,
+)
 
 
 # ── Fixtures ──────────────────────────────────────────────────────
@@ -127,8 +130,14 @@ def _call_decide(
     position_lane: str = "swing",
     last_price: float = 100.0,
     held_side: str = "long",
+    regime_confidence: float = 1.0,
 ) -> tuple[str, str, bool, bool, dict[str, Any]]:
-    """Call _decide_with_position and return its tuple plus derivation."""
+    """Call _decide_with_position and return its tuple plus derivation.
+
+    ``regime_confidence`` defaults to 1.0 — the QIG-pure debounce gate
+    (regime confidence > 1/φ) is fully open, so existing tests that
+    don't care about the gate behave as in PR #619.
+    """
     derivation: dict[str, Any] = {}
     bs = _basin_state(phi=phi)
     bs.emotions = emotions or _Emotions()  # type: ignore[assignment]
@@ -151,6 +160,7 @@ def _call_decide(
         phi=phi,
         emotions=bs.emotions,
         mode_value=mode_value or mode.value,
+        regime_confidence=regime_confidence,
     )
     return action, reason, is_dca, is_reverse, derivation
 
@@ -168,17 +178,116 @@ class TestRegimeCheckFires:
             state=state,
             phi=0.25,  # safely above the floor (0.27/φ ≈ 0.167)
             mode_value=MonkeyMode.DRIFT.value,
+            regime_confidence=0.9,  # past the 1/φ boundary
         )
         assert action == "scalp_exit"
         assert reason.startswith("regime_change")
         assert "investigation" in reason
         assert "drift" in reason
+        assert "confidence 0.900" in reason
         assert is_dca is False
         assert is_reverse is False
         rej = derivation["rejustification"]
         assert rej["fired"] == "regime_change"
         assert rej["regime_at_open"] == "investigation"
         assert rej["regime_now"] == "drift"
+        assert rej["regime_confidence"] == 0.9
+
+
+class TestRegimeConfidenceGate:
+    """QIG-pure debounce on the regime check: regime label divergence
+    only fires the exit when the classifier's own confidence is past
+    the canonical coherence floor PI_STRUCT_BOUNDARY_R_SQUARED (1/φ ≈
+    0.618). Below the floor the classifier itself isn't sure, so a
+    flicker of the discrete label should not trigger exit.
+
+    Single-tick gate (no streak), single canonical constant (no new
+    parameter): reads the classifier's existing self-belief.
+    """
+
+    def test_regime_change_low_confidence_does_not_fire(self) -> None:
+        state = _state_with_anchor(
+            regime_at_open=MonkeyMode.INVESTIGATION.value,
+            phi_at_open=0.27,
+        )
+        # Regime flipped, but classifier confidence is well below 1/φ.
+        # Pre-debounce this would have fired; post-debounce it must not.
+        _, reason, _, _, derivation = _call_decide(
+            state=state,
+            phi=0.25,
+            mode_value=MonkeyMode.DRIFT.value,
+            regime_confidence=0.4,  # below 1/φ ≈ 0.618
+        )
+        rej = derivation["rejustification"]
+        assert rej.get("fired") != "regime_change"
+        assert not reason.startswith("regime_change")
+        # Anchor data still recorded so the divergence is observable
+        # in telemetry even when the gate suppresses the exit.
+        assert rej["regime_at_open"] == "investigation"
+        assert rej["regime_now"] == "drift"
+        assert rej["regime_confidence"] == 0.4
+
+    def test_regime_change_high_confidence_fires(self) -> None:
+        state = _state_with_anchor(
+            regime_at_open=MonkeyMode.INVESTIGATION.value,
+            phi_at_open=0.27,
+        )
+        action, reason, _, _, derivation = _call_decide(
+            state=state,
+            phi=0.25,
+            mode_value=MonkeyMode.DRIFT.value,
+            regime_confidence=0.8,  # comfortably past 1/φ
+        )
+        assert action == "scalp_exit"
+        assert reason.startswith("regime_change")
+        assert "0.800" in reason
+        assert "1/φ" in reason
+        rej = derivation["rejustification"]
+        assert rej["fired"] == "regime_change"
+        assert rej["regime_confidence"] == 0.8
+
+    def test_regime_change_at_exact_floor_does_not_fire(self) -> None:
+        """Strict >: a confidence exactly at 1/φ is not yet load-bearing."""
+        state = _state_with_anchor(
+            regime_at_open=MonkeyMode.INVESTIGATION.value,
+            phi_at_open=0.27,
+        )
+        _, reason, _, _, derivation = _call_decide(
+            state=state,
+            phi=0.25,
+            mode_value=MonkeyMode.DRIFT.value,
+            regime_confidence=PI_STRUCT_BOUNDARY_R_SQUARED,  # exactly 1/φ
+        )
+        rej = derivation["rejustification"]
+        assert rej.get("fired") != "regime_change"
+        assert not reason.startswith("regime_change")
+
+    def test_regime_change_just_above_floor_fires(self) -> None:
+        """A nudge above 1/φ crosses the gate."""
+        state = _state_with_anchor(
+            regime_at_open=MonkeyMode.INVESTIGATION.value,
+            phi_at_open=0.27,
+        )
+        action, reason, _, _, derivation = _call_decide(
+            state=state,
+            phi=0.25,
+            mode_value=MonkeyMode.DRIFT.value,
+            regime_confidence=PI_STRUCT_BOUNDARY_R_SQUARED + 1e-6,
+        )
+        assert action == "scalp_exit"
+        assert reason.startswith("regime_change")
+        rej = derivation["rejustification"]
+        assert rej["fired"] == "regime_change"
+
+    def test_floor_constant_equals_one_over_phi(self) -> None:
+        """Sanity: PI_STRUCT_BOUNDARY_R_SQUARED is 1/φ ≈ 0.618."""
+        expected = 1.0 / ((1.0 + math.sqrt(5.0)) / 2.0)
+        assert math.isclose(
+            PI_STRUCT_BOUNDARY_R_SQUARED, expected, rel_tol=1e-12,
+        )
+        assert math.isclose(
+            PI_STRUCT_BOUNDARY_R_SQUARED, 0.6180339887, rel_tol=1e-9,
+        )
 
 
 class TestPhiCheckFires:

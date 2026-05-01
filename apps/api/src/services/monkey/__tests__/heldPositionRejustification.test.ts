@@ -15,7 +15,10 @@
  */
 import { describe, it, expect } from 'vitest';
 import { MonkeyMode } from '../modes.js';
-import { PHI_GOLDEN_FLOOR_RATIO } from '../topology_constants.js';
+import {
+  PHI_GOLDEN_FLOOR_RATIO,
+  PI_STRUCT_BOUNDARY_R_SQUARED,
+} from '../topology_constants.js';
 import {
   evaluateRejustification,
   type RejustificationEmotions,
@@ -49,12 +52,93 @@ describe('held-position rejustification — regime check fires', () => {
       regimeNow: MonkeyMode.DRIFT,
       phiNow: 0.25,
       emotions: STRONG_EMO,
+      regimeConfidence: 0.9,  // past the 1/φ debounce floor
     });
     expect(out.checked).toBe(true);
     expect(out.fired).toBe('regime_change');
     expect(out.reason).toMatch(/^regime_change/);
     expect(out.reason).toContain('investigation');
     expect(out.reason).toContain('drift');
+    expect(out.reason).toContain('0.900');
+  });
+});
+
+// ─── QIG-pure debounce gate on the regime check ────────────────────
+
+describe('held-position rejustification — regime confidence gate', () => {
+  it('low classifier confidence suppresses regime_change exit', () => {
+    // Regime label flipped, but classifier confidence is below 1/φ.
+    // Pre-debounce this would have fired; post-debounce it must not.
+    const out = evaluateRejustification({
+      regimeAtOpen: MonkeyMode.INVESTIGATION,
+      phiAtOpen: 0.27,
+      regimeNow: MonkeyMode.DRIFT,
+      phiNow: 0.25,
+      emotions: STRONG_EMO,
+      regimeConfidence: 0.4,  // below 1/φ ≈ 0.618
+    });
+    expect(out.checked).toBe(true);
+    expect(out.fired).toBeNull();
+    expect(out.reason).not.toMatch(/^regime_change/);
+  });
+
+  it('high classifier confidence allows regime_change exit', () => {
+    const out = evaluateRejustification({
+      regimeAtOpen: MonkeyMode.INVESTIGATION,
+      phiAtOpen: 0.27,
+      regimeNow: MonkeyMode.DRIFT,
+      phiNow: 0.25,
+      emotions: STRONG_EMO,
+      regimeConfidence: 0.8,  // comfortably past 1/φ
+    });
+    expect(out.fired).toBe('regime_change');
+    expect(out.reason).toContain('0.800');
+    expect(out.reason).toContain('1/φ');
+  });
+
+  it('confidence exactly at 1/φ does not fire (strict >)', () => {
+    const out = evaluateRejustification({
+      regimeAtOpen: MonkeyMode.INVESTIGATION,
+      phiAtOpen: 0.27,
+      regimeNow: MonkeyMode.DRIFT,
+      phiNow: 0.25,
+      emotions: STRONG_EMO,
+      regimeConfidence: PI_STRUCT_BOUNDARY_R_SQUARED,
+    });
+    expect(out.fired).toBeNull();
+  });
+
+  it('confidence just above 1/φ fires', () => {
+    const out = evaluateRejustification({
+      regimeAtOpen: MonkeyMode.INVESTIGATION,
+      phiAtOpen: 0.27,
+      regimeNow: MonkeyMode.DRIFT,
+      phiNow: 0.25,
+      emotions: STRONG_EMO,
+      regimeConfidence: PI_STRUCT_BOUNDARY_R_SQUARED + 1e-6,
+    });
+    expect(out.fired).toBe('regime_change');
+  });
+
+  it('PI_STRUCT_BOUNDARY_R_SQUARED equals 1/φ ≈ 0.618', () => {
+    const expected = 1 / ((1 + Math.sqrt(5)) / 2);
+    expect(PI_STRUCT_BOUNDARY_R_SQUARED).toBeCloseTo(expected, 12);
+    expect(PI_STRUCT_BOUNDARY_R_SQUARED).toBeCloseTo(0.6180339887, 9);
+  });
+
+  it('omitted regimeConfidence defaults to 1.0 (gate fully open)', () => {
+    // Backward compat: callers that haven't been updated to pass the
+    // classifier output should behave as in PR #619 — always fire on
+    // label divergence.
+    const out = evaluateRejustification({
+      regimeAtOpen: MonkeyMode.INVESTIGATION,
+      phiAtOpen: 0.27,
+      regimeNow: MonkeyMode.DRIFT,
+      phiNow: 0.25,
+      emotions: STRONG_EMO,
+    });
+    expect(out.fired).toBe('regime_change');
+    expect(out.reason).toContain('1.000');
   });
 });
 
