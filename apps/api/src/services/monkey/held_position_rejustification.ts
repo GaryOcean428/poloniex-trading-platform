@@ -18,9 +18,11 @@
  */
 
 import type { MonkeyMode } from './modes.js';
+import { fisherRao, type Basin } from './basin.js';
 import {
   PHI_GOLDEN_FLOOR_RATIO,
   PI_STRUCT_BOUNDARY_R_SQUARED,
+  PI_STRUCT_GRAVITATING_FRACTION,
 } from './topology_constants.js';
 
 export interface RejustificationEmotions {
@@ -49,6 +51,25 @@ export interface RejustificationInput {
    * divergence).
    */
   regimeConfidence?: number;
+  /**
+   * v0.8.7 regime-hysteresis triple-AND gate. The regime exit fires only
+   * when ALL of:
+   *   (a) regimeNow != regimeAtOpen   (single-tick label divergence)
+   *   (b) regimeChangeStreak >= regimeStabilityTicksRequired
+   *   (c) fisherRao(basinNow, basinAtOpen) > 1/π
+   * AND the classifier's confidence still > 1/φ from PR #629.
+   *
+   * Why all three? Live tape 2026-05-01 16:11-16:17: every close was
+   * regime_change, 22% win rate, $97 account chewing through positions
+   * because a single-tick mode flicker was enough to flip the gate when
+   * the kernel's own basin had barely moved. The streak filter rejects
+   * single-tick flicker; the FR-distance filter rejects label changes
+   * where the basin geometry is still consonant with entry.
+   */
+  regimeChangeStreak?: number;
+  regimeStabilityTicksRequired?: number;
+  basinNow?: Basin;
+  basinAtOpen?: Basin;
 }
 
 export type RejustificationFire =
@@ -65,6 +86,14 @@ export interface RejustificationResult {
   reason: string;
   /** Φ floor under the golden-ratio coherence test. */
   phiFloor: number | null;
+  /** FR distance from basinAtOpen → basinNow when both anchors present. */
+  frDistance: number | null;
+  /** FR-distance threshold (1/π) the regime gate compares against. */
+  frThreshold: number;
+  /** Streak of consecutive ticks where regimeNow != regimeAtOpen. */
+  regimeChangeStreak: number;
+  /** Required streak length before the regime exit fires. */
+  regimeStabilityTicksRequired: number;
 }
 
 /**
@@ -79,31 +108,56 @@ export function evaluateRejustification(
 ): RejustificationResult {
   const { regimeAtOpen, phiAtOpen, regimeNow, phiNow, emotions } = input;
   const regimeConfidence = input.regimeConfidence ?? 1.0;
+  const regimeChangeStreak = input.regimeChangeStreak ?? 0;
+  const regimeStabilityTicksRequired = input.regimeStabilityTicksRequired ?? 3;
+  const frThreshold = PI_STRUCT_GRAVITATING_FRACTION;  // 1/π ≈ 0.318
+  let frDistance: number | null = null;
+  if (input.basinNow !== undefined && input.basinAtOpen !== undefined) {
+    frDistance = fisherRao(input.basinAtOpen, input.basinNow);
+  }
   if (regimeAtOpen === undefined || phiAtOpen === undefined) {
-    return { checked: false, fired: null, reason: '', phiFloor: null };
+    return {
+      checked: false, fired: null, reason: '', phiFloor: null,
+      frDistance, frThreshold,
+      regimeChangeStreak, regimeStabilityTicksRequired,
+    };
   }
   const phiFloor = phiAtOpen / PHI_GOLDEN_FLOOR_RATIO;
 
-  // 1. REGIME CHECK — regime label diverged from open AND classifier's
-  // own confidence is past the canonical coherence floor. Gating on the
-  // classifier's self-belief (rather than a synthesized streak counter)
-  // preserves PR #619's "single-tick exit, current state IS the truth"
-  // framing while skipping flicker events where the classifier itself
-  // isn't sure. Threshold is PI_STRUCT_BOUNDARY_R_SQUARED (1/φ ≈ 0.618),
-  // the canonical "boundary R²" from EXP-004b. Strict >: a confidence
-  // exactly at the floor is not yet load-bearing.
-  if (
-    regimeNow !== regimeAtOpen &&
-    regimeConfidence > PI_STRUCT_BOUNDARY_R_SQUARED
-  ) {
-    return {
-      checked: true,
-      fired: 'regime_change',
-      reason:
-        `regime_change: opened in ${regimeAtOpen}, now ${regimeNow} ` +
-        `(confidence ${regimeConfidence.toFixed(3)} > 1/φ)`,
-      phiFloor,
-    };
+  // 1. REGIME CHECK — triple-AND gate. All of:
+  //   (a) regimeNow != regimeAtOpen   (label divergence)
+  //   (b) regimeChangeStreak >= regimeStabilityTicksRequired (stable >= N ticks)
+  //   (c) frDistance > 1/π            (basin geometry has actually moved)
+  // PLUS the PR #629 confidence gate (regimeConfidence > 1/φ).
+  //
+  // Live tape 2026-05-01 16:11-16:17: every close was regime_change,
+  // 22% win rate, $97 account torn through positions because a single
+  // tick of mode flicker was enough to flip the gate. The streak filter
+  // rejects single-tick noise; the FR filter rejects label changes
+  // where the basin's geometry has barely moved (the kernel's
+  // perception is still consonant with what justified entry).
+  if (regimeNow !== regimeAtOpen) {
+    const labelDiverged = true;
+    const confidenceLoadBearing = regimeConfidence > PI_STRUCT_BOUNDARY_R_SQUARED;
+    const streakSatisfied = regimeChangeStreak >= regimeStabilityTicksRequired;
+    // FR-distance gate. When anchors are missing (basin not plumbed),
+    // fall back to a strict-fail so the regime exit cannot fire purely
+    // on label flicker — the geometric component must be measurable.
+    const frFires = frDistance !== null && frDistance > frThreshold;
+    if (labelDiverged && confidenceLoadBearing && streakSatisfied && frFires) {
+      const frStr = frDistance !== null ? frDistance.toFixed(3) : 'N/A';
+      return {
+        checked: true,
+        fired: 'regime_change',
+        reason:
+          `regime_change: opened in ${regimeAtOpen} (FR_dist ${frStr} > 1/π), ` +
+          `now ${regimeNow} stable for ${regimeChangeStreak} ticks ` +
+          `(confidence ${regimeConfidence.toFixed(3)} > 1/φ)`,
+        phiFloor,
+        frDistance, frThreshold,
+        regimeChangeStreak, regimeStabilityTicksRequired,
+      };
+    }
   }
   if (phiNow < phiFloor) {
     return {
@@ -111,6 +165,8 @@ export function evaluateRejustification(
       fired: 'phi_collapse',
       reason: `phi_collapse: open Φ=${phiAtOpen.toFixed(3)} → now ${phiNow.toFixed(3)} < floor ${phiFloor.toFixed(3)}`,
       phiFloor,
+      frDistance, frThreshold,
+      regimeChangeStreak, regimeStabilityTicksRequired,
     };
   }
   if (emotions.confidence < emotions.anxiety + emotions.confusion) {
@@ -119,7 +175,13 @@ export function evaluateRejustification(
       fired: 'conviction_failed',
       reason: `conviction_failed: conf=${emotions.confidence.toFixed(3)} < anxiety+confusion=${(emotions.anxiety + emotions.confusion).toFixed(3)}`,
       phiFloor,
+      frDistance, frThreshold,
+      regimeChangeStreak, regimeStabilityTicksRequired,
     };
   }
-  return { checked: true, fired: null, reason: '', phiFloor };
+  return {
+    checked: true, fired: null, reason: '', phiFloor,
+    frDistance, frThreshold,
+    regimeChangeStreak, regimeStabilityTicksRequired,
+  };
 }
