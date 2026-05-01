@@ -245,6 +245,18 @@ interface SymbolState {
    *  positions keep independent rejustification anchors. */
   regimeAtOpenByLane: Record<string, string>;
   phiAtOpenByLane: Record<string, number>;
+  /** Basin coordinate at entry — per-lane snapshot for the regime
+   *  hysteresis basin-distance gate (mirrors Python PR #631). Without
+   *  this anchor the regime gate falls back to streak-only. */
+  basinAtOpenByLane: Record<string, Basin>;
+  /** Consecutive ticks where regimeNow has differed from regimeAtOpen
+   *  for the lane. Driven by the rejustification call site — increments
+   *  on divergent tick, resets to 0 when regime returns to anchor. */
+  regimeChangeStreakByLane: Record<string, number>;
+  /** Wall-clock entry timestamp (ms) per lane. Used by the stale-bleed
+   *  gate: positions held longer than STALE_BLEED_MIN_DURATION_S at
+   *  worse than STALE_BLEED_ROI_THRESHOLD ROI exit. Cleared on close. */
+  entryTimeMsByLane: Record<string, number>;
   /** v0.8.7e: latest computed basinDir + tapeTrend from processSymbol, with
    *  timestamp. Exposed via getLatestBasinSnapshot() for LiveSignal's
    *  inter-engine agreement gate. Null until the first tick completes. */
@@ -447,6 +459,9 @@ export class MonkeyKernel extends EventEmitter {
       tapeFlipStreakByLane: {},
       regimeAtOpenByLane: {},
       phiAtOpenByLane: {},
+      basinAtOpenByLane: {},
+      regimeChangeStreakByLane: {},
+      entryTimeMsByLane: {},
       latestBasinSnapshot: null,
     };
   }
@@ -1009,16 +1024,34 @@ export class MonkeyKernel extends EventEmitter {
           }
         }
 
-        // 2. Held-position re-justification — three internal exit
-        // checks. Each fires immediately when the kernel's current
-        // state contradicts the state that justified entry. No streak
-        // counting, no hysteresis, no time-based stops. All three are
-        // geometric (regime classifier output, Φ integration measure,
-        // Layer 2B emotion stack — TS path uses NEUTRAL_EMOTIONS until
-        // emotion stack is ported, so the conviction check is dormant
-        // in TS but live in Python).
+        // 2. Held-position re-justification — four internal exit
+        // checks. Regime carries hysteresis (streak ≥ 3 + basin FR
+        // > 1/π — mirrors Python PR #631); phi/conviction fire on
+        // first match; stale_bleed is interim guard for the dormant
+        // conviction gate (NEUTRAL_EMOTIONS hardcoded pending Layer
+        // 2B port — so 0 < 0 = false, conviction never fires here).
         const regimeAtOpen = state.regimeAtOpenByLane[heldLane] as MonkeyMode | undefined;
         const phiAtOpen = state.phiAtOpenByLane[heldLane];
+        const basinAtOpen = state.basinAtOpenByLane[heldLane];
+        const entryTimeMs = state.entryTimeMsByLane[heldLane];
+        // Maintain the per-lane streak counter — increment on
+        // divergent tick, reset to 0 when regime returns to anchor.
+        // Persists across exitFired so subsequent ticks see the right
+        // count even when this tick's check is skipped.
+        if (regimeAtOpen !== undefined) {
+          if (mode !== regimeAtOpen) {
+            state.regimeChangeStreakByLane[heldLane] =
+              (state.regimeChangeStreakByLane[heldLane] ?? 0) + 1;
+          } else {
+            state.regimeChangeStreakByLane[heldLane] = 0;
+          }
+        }
+        const heldDurationS = entryTimeMs !== undefined
+          ? (Date.now() - entryTimeMs) / 1000
+          : undefined;
+        const currentRoi = positionNotional > 0
+          ? unrealizedPnl / (positionNotional / Math.max(1, leverage.value))
+          : undefined;
         const rejustResult = !exitFired
           ? evaluateRejustification({
               regimeAtOpen,
@@ -1026,6 +1059,11 @@ export class MonkeyKernel extends EventEmitter {
               regimeNow: mode,
               phiNow: phi,
               emotions: NEUTRAL_EMOTIONS,
+              basinAtOpen,
+              basinNow: basin,
+              regimeChangeStreak: state.regimeChangeStreakByLane[heldLane] ?? 0,
+              heldDurationS,
+              currentRoi,
             })
           : { checked: false, fired: null, reason: '', phiFloor: null };
         const rejust: Record<string, unknown> = {
@@ -1041,6 +1079,10 @@ export class MonkeyKernel extends EventEmitter {
           rejust.confidence = NEUTRAL_EMOTIONS.confidence;
           rejust.anxiety = NEUTRAL_EMOTIONS.anxiety;
           rejust.confusion = NEUTRAL_EMOTIONS.confusion;
+          rejust.regimeChangeStreak = rejustResult.regimeChangeStreak;
+          rejust.basinFrMove = rejustResult.basinFrMove;
+          rejust.heldDurationS = heldDurationS;
+          rejust.currentRoi = currentRoi;
           if (rejustResult.fired) {
             rejust.fired = rejustResult.fired;
             action = 'scalp_exit';
@@ -1377,6 +1419,9 @@ export class MonkeyKernel extends EventEmitter {
               : positionLane) as 'scalp' | 'swing' | 'trend';
             state.regimeAtOpenByLane[entryLane] = mode;
             state.phiAtOpenByLane[entryLane] = phi;
+            state.basinAtOpenByLane[entryLane] = Float64Array.from(basin) as Basin;
+            state.regimeChangeStreakByLane[entryLane] = 0;
+            state.entryTimeMsByLane[entryLane] = Date.now();
           }
         }
       } else if (action === 'scalp_exit' && heldSide) {
@@ -1416,6 +1461,9 @@ export class MonkeyKernel extends EventEmitter {
             // Clear rejustification anchors for the lane that closed.
             delete state.regimeAtOpenByLane[scalpLane];
             delete state.phiAtOpenByLane[scalpLane];
+            delete state.basinAtOpenByLane[scalpLane];
+            delete state.regimeChangeStreakByLane[scalpLane];
+            delete state.entryTimeMsByLane[scalpLane];
             // Mirror legacy scalars for any non-lane-aware reader.
             state.peakPnlUsdt = null;
             state.peakTrackedTradeId = null;
@@ -1464,6 +1512,9 @@ export class MonkeyKernel extends EventEmitter {
             const reversalLane = (ownOpenRow?.lane ?? 'swing') as 'scalp' | 'swing' | 'trend';
             delete state.regimeAtOpenByLane[reversalLane];
             delete state.phiAtOpenByLane[reversalLane];
+            delete state.basinAtOpenByLane[reversalLane];
+            delete state.regimeChangeStreakByLane[reversalLane];
+            delete state.entryTimeMsByLane[reversalLane];
             // Settle delay — give the exchange ~500ms to flatten net.
             await new Promise((resolve) => setTimeout(resolve, 500));
             const execResult = await this.executeEntry({
@@ -1490,6 +1541,9 @@ export class MonkeyKernel extends EventEmitter {
               // Re-snapshot rejustification anchors for the new direction.
               state.regimeAtOpenByLane[reversalLane] = mode;
               state.phiAtOpenByLane[reversalLane] = phi;
+              state.basinAtOpenByLane[reversalLane] = Float64Array.from(basin) as Basin;
+              state.regimeChangeStreakByLane[reversalLane] = 0;
+              state.entryTimeMsByLane[reversalLane] = Date.now();
               reason += ` | closed@${lastPrice.toFixed(2)} pnl=${pnlAtDecision.toFixed(4)} | new ${newSide} orderId=${monkeyOrderId}`;
             } else {
               reason += ` | flattened ok, new-entry failed: ${execResult.reason}`;
