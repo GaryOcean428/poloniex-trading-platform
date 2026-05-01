@@ -172,6 +172,19 @@ const REWARD_QUEUE_MAX = 50;
 const REGIME_STABILITY_TICKS_FOR_EXIT =
   Number(process.env.MONKEY_REGIME_STABILITY_TICKS_FOR_EXIT) || 3;
 
+/**
+ * v0.8.7 kill switch — when MONKEY_TRADING_PAUSED=true, gate
+ * entry-order placement only. Exit orders (scalp_exit, auto_flatten,
+ * hard SL, rejust exits) are NOT gated; existing positions must close
+ * cleanly during deploy/incident response. Default false (no pause).
+ *
+ * Reads at order-placement time (live, not cached at startup) so the
+ * operator can flip the env var on Railway without redeploying.
+ */
+function isTradingPaused(): boolean {
+  return process.env.MONKEY_TRADING_PAUSED === 'true';
+}
+
 
 /**
  * Per-kernel configuration (v0.6b). Different sub-Monkeys differ in
@@ -1388,6 +1401,17 @@ export class MonkeyKernel extends EventEmitter {
     let monkeyOrderId: string | null = null;
     if (process.env.MONKEY_EXECUTE === 'true') {
       if ((action === 'enter_long' || action === 'enter_short') && size.value > 0) {
+        // v0.8.7 kill switch — pause new entries (including DCA pyramids)
+        // when MONKEY_TRADING_PAUSED=true on Railway. Exits remain
+        // active so open positions can close cleanly.
+        if (isTradingPaused()) {
+          reason += ' | trading_paused: MONKEY_TRADING_PAUSED=true (entry suppressed; exits unaffected)';
+          (derivation as Record<string, unknown>).tradingPausedSkipped = {
+            agent: 'K',
+            action,
+            reason: 'MONKEY_TRADING_PAUSED env',
+          };
+        } else {
         const isDCA = Boolean(derivation.isDCAAdd);
         // Cap K's margin to its arbiter share. Without this, the existing
         // size formula could exceed K's allocation when M has been
@@ -1449,6 +1473,7 @@ export class MonkeyKernel extends EventEmitter {
             state.regimeChangeStreakByLane[entryLane] = 0;
           }
         }
+        }  // close v0.8.7 trading-paused else branch
       } else if (action === 'scalp_exit' && heldSide) {
         const scalpDeriv = derivation.scalp as Record<string, unknown> | undefined;
         const tradeId = scalpDeriv?.tradeId ? String(scalpDeriv.tradeId) : null;
@@ -1538,6 +1563,16 @@ export class MonkeyKernel extends EventEmitter {
             delete state.phiAtOpenByLane[reversalLane];
             delete state.basinAtOpenByLane[reversalLane];
             delete state.regimeChangeStreakByLane[reversalLane];
+            // v0.8.7 kill switch — close on the reverse path proceeded
+            // (exits unaffected); skip the new-entry leg when paused.
+            if (isTradingPaused()) {
+              reason += ` | closed@${lastPrice.toFixed(2)} pnl=${pnlAtDecision.toFixed(4)} | trading_paused: new ${newSide} entry suppressed`;
+              (derivation as Record<string, unknown>).tradingPausedSkipped = {
+                agent: 'K',
+                action,
+                reason: 'MONKEY_TRADING_PAUSED env (reverse-reopen leg)',
+              };
+            } else {
             // Settle delay — give the exchange ~500ms to flatten net.
             await new Promise((resolve) => setTimeout(resolve, 500));
             const execResult = await this.executeEntry({
@@ -1570,6 +1605,7 @@ export class MonkeyKernel extends EventEmitter {
             } else {
               reason += ` | flattened ok, new-entry failed: ${execResult.reason}`;
             }
+            }  // close v0.8.7 trading-paused else branch
           } else {
             reason += ` | flatten failed: ${closeResult.reason}; reverse aborted`;
           }
@@ -1617,6 +1653,13 @@ export class MonkeyKernel extends EventEmitter {
         (mDecision.action === 'enter_long' || mDecision.action === 'enter_short')
         && mDecision.sizeUsdt > 0
       ) {
+        // v0.8.7 kill switch — pause new entries from Agent M.
+        if (isTradingPaused()) {
+          logger.info('[AgentM] entry suppressed by MONKEY_TRADING_PAUSED', {
+            symbol, side: mDecision.action,
+          });
+          (derivation as Record<string, unknown>).agentMTradingPausedSkipped = true;
+        } else {
         const mResult = await this.executeEntry({
           symbol,
           side: mDecision.action === 'enter_long' ? 'long' : 'short',
@@ -1643,6 +1686,7 @@ export class MonkeyKernel extends EventEmitter {
             margin: mDecision.sizeUsdt.toFixed(2), leverage: mDecision.leverage,
           });
         }
+        }  // close v0.8.7 trading-paused else branch
       }
     }
 
@@ -1693,12 +1737,30 @@ export class MonkeyKernel extends EventEmitter {
       // turtle agent. Pyramids are MORE units in the same trend-lane;
       // from autonomous_trades' perspective each unit is its own row,
       // grouped by (agent='T', symbol, lane='trend').
+      // v0.8.7 telemetry: surface the pause state when Agent T would
+      // have entered but the kill switch suppressed it.
       if (
         (tDecision.action === 'enter_long'
           || tDecision.action === 'enter_short'
           || tDecision.action === 'pyramid_long'
           || tDecision.action === 'pyramid_short')
         && tDecision.sizeUsdt > 0
+        && isTradingPaused()
+      ) {
+        (derivation as Record<string, unknown>).agentTTradingPausedSkipped = true;
+        logger.info('[AgentT] entry suppressed by MONKEY_TRADING_PAUSED', {
+          symbol, action: tDecision.action,
+        });
+      }
+      if (
+        (tDecision.action === 'enter_long'
+          || tDecision.action === 'enter_short'
+          || tDecision.action === 'pyramid_long'
+          || tDecision.action === 'pyramid_short')
+        && tDecision.sizeUsdt > 0
+        // v0.8.7 kill switch — pause Agent T entries (including pyramids)
+        // when MONKEY_TRADING_PAUSED=true. Exits below are unaffected.
+        && !isTradingPaused()
       ) {
         const tSide: 'long' | 'short' =
           tDecision.action === 'enter_long' || tDecision.action === 'pyramid_long'
