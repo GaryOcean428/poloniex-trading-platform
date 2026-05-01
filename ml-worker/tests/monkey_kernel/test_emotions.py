@@ -174,6 +174,48 @@ class TestReferenceValidation:
 
 
 # ─────────────────────────────────────────────────────────────────
+# Funding drag — dimensionless cost-on-margin pulls confidence down
+# ─────────────────────────────────────────────────────────────────
+
+
+class TestFundingDrag:
+    def test_drag_zero_no_op(self) -> None:
+        base = compute_emotions(
+            _m(transcendence=0.3), basin_distance=0.0, phi=0.7, basin_velocity=0.1,
+        )
+        eq = compute_emotions(
+            _m(transcendence=0.3), basin_distance=0.0, phi=0.7, basin_velocity=0.1,
+            funding_drag=0.0,
+        )
+        assert eq.confidence == pytest.approx(base.confidence, abs=1e-12)
+        assert eq.anxiety == pytest.approx(base.anxiety, abs=1e-12)
+
+    def test_drag_half_reduces_confidence_by_one_third(self) -> None:
+        base = compute_emotions(
+            _m(transcendence=0.3), basin_distance=0.0, phi=0.7, basin_velocity=0.1,
+        )
+        dragged = compute_emotions(
+            _m(transcendence=0.3), basin_distance=0.0, phi=0.7, basin_velocity=0.1,
+            funding_drag=0.5,
+        )
+        # drag_factor = 0.5 / 1.5 = 1/3
+        assert dragged.confidence == pytest.approx(
+            base.confidence * (1 - 1.0 / 3.0), abs=1e-9,
+        )
+        assert dragged.anxiety == pytest.approx(base.anxiety + 1.0 / 3.0, abs=1e-9)
+        assert dragged.confidence < base.confidence
+        assert dragged.anxiety > base.anxiety
+
+    def test_drag_large_collapses_confidence_to_zero(self) -> None:
+        dragged = compute_emotions(
+            _m(transcendence=0.3), basin_distance=0.0, phi=0.7, basin_velocity=0.1,
+            funding_drag=1e6,
+        )
+        assert dragged.confidence < 1e-3
+        assert dragged.anxiety > 0.99
+
+
+# ─────────────────────────────────────────────────────────────────
 # Parity snapshot — 10 input rows. TS suite uses the SAME rows.
 # Direct hand-computation; no helpers.
 # ─────────────────────────────────────────────────────────────────

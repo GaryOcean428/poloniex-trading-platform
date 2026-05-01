@@ -93,3 +93,21 @@ export function regimeHarvestTightness(reading: RegimeReading): number {
   if (reading.regime === 'CHOP') return 1.0 - 0.30 * reading.confidence;
   return 1.0 + 0.30 * reading.confidence;
 }
+
+/**
+ * CHOP-regime entry suppression — when the regime classifier reads
+ * sustained chop with confidence above this threshold, NEW entries are
+ * blocked for the tick. Held positions still flow through the normal
+ * re-justification + harvest path. The threshold lives on the
+ * classifier's own [0, 1] confidence scale (the read is its own
+ * self-belief about the regime, not a synthesized magic number).
+ */
+export const CHOP_SUPPRESSION_CONFIDENCE = 0.70;
+
+/** True when the regime classifier reads sustained chop above the
+ * suppression confidence threshold. Held positions are unaffected;
+ * only NEW entries are blocked. Strict > so a classifier reading
+ * exactly 0.70 keeps the gate open. */
+export function isChopSuppressed(reading: RegimeReading): boolean {
+  return reading.regime === 'CHOP' && reading.confidence > CHOP_SUPPRESSION_CONFIDENCE;
+}

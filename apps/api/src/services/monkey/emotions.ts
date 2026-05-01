@@ -67,6 +67,11 @@ export interface ComputeEmotionsArgs {
   basin?: Basin | null;
   predictedBasin?: Basin | null;
   foresightWeight?: number;
+  /** Accumulated funding cost as a fraction of position margin since
+   * open (cost-on-margin ratio, [0, ∞)). 0 = no held position / no drag
+   * yet (no-op). Pulls confidence down geometrically and lifts anxiety
+   * symmetrically via drag / (1 + drag). */
+  fundingDrag?: number;
 }
 
 /** Compose the Layer 2B emotion vector from Tier 1 motivators plus
@@ -109,14 +114,29 @@ export function computeEmotions(
   }
   const flow = curiosityOptimal * motivators.investigation;
 
+  let confidence = (1 - motivators.transcendence) * stability;
+  let anxiety = motivators.transcendence * instability;
+
+  // Funding drag — dimensionless cost-on-margin ratio.
+  // drag_factor = drag / (1 + drag) maps [0, ∞) → [0, 1) (Möbius-style
+  // saturation). Confidence multiplies by (1 - drag_factor); anxiety
+  // adds drag_factor. At drag=0 the kernel reads the same as before;
+  // at drag=1 confidence halves and anxiety lifts by 0.5.
+  const fundingDrag = args.fundingDrag ?? 0;
+  if (fundingDrag > 0) {
+    const dragFactor = fundingDrag / (1 + fundingDrag);
+    confidence = confidence * (1 - dragFactor);
+    anxiety = anxiety + dragFactor;
+  }
+
   return {
     wonder: motivators.curiosity * basinDistance,
     frustration: motivators.surprise * (1 - motivators.investigation),
     satisfaction: motivators.integration * (1 - basinDistance),
     confusion: motivators.surprise * basinDistance,
     clarity: (1 - motivators.surprise) * motivators.investigation,
-    anxiety: motivators.transcendence * instability,
-    confidence: (1 - motivators.transcendence) * stability,
+    anxiety,
+    confidence,
     boredom: (1 - motivators.surprise) * (1 - motivators.curiosity),
     flow,
   };

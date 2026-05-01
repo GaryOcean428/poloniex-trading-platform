@@ -84,7 +84,12 @@ import {
   trendProxy as computeTrendProxy,
   type OHLCVCandle,
 } from './perception.js';
-import { classifyRegime, type RegimeReading } from './regime.js';
+import {
+  CHOP_SUPPRESSION_CONFIDENCE,
+  classifyRegime,
+  isChopSuppressed,
+  type RegimeReading,
+} from './regime.js';
 import {
   detectStrongest as detectStrongestCandlePattern,
   hammerAgainstLongSl,
@@ -151,6 +156,7 @@ const REWARD_HALF_LIFE_MS = 20 * 60_000;  // 20 min
 
 /** Max rewards retained; FIFO eviction. */
 const REWARD_QUEUE_MAX = 50;
+
 
 /**
  * Per-kernel configuration (v0.6b). Different sub-Monkeys differ in
@@ -779,12 +785,22 @@ export class MonkeyKernel extends EventEmitter {
     // tapeTrend already computed above for side-override check.
     const entryThr = currentEntryThreshold(basinState, mode, selfObsBias, tapeTrend, sideCandidate);
     const maxLevBoundary = (await getMaxLeverage(symbol)) ?? 10;
-    // Proposal #3: Kelly leverage cap. Pull last 50 closed K-agent
-    // trades from autonomous_trades to compute win-rate + avg-win +
-    // avg-loss; pass to currentLeverage as the rolling-stats arg.
-    // Cold-start (no closed trades): rollingStats is null, kelly cap
-    // becomes a no-op (geometric leverage unchanged).
-    const rollingStats = await this.getKellyRollingStats('K');
+    // Proposal #10 — lane selection runs FIRST so the per-lane Kelly
+    // stats query can scope to the active lane. ``chooseLane`` is a
+    // pure read of basin features; leverage downstream is shaped by
+    // the lane the kernel just picked.
+    const laneDecisionEarly = chooseLane(basinState, tapeTrend);
+    const earlyChosenLane: LaneType = laneDecisionEarly.value;
+    const earlyPositionLane: 'scalp' | 'swing' | 'trend' =
+      earlyChosenLane === 'observe' ? 'swing' : earlyChosenLane;
+    // Proposal #3 + per-lane refinement: Kelly leverage cap is computed
+    // from the LAST 50 CLOSED TRADES IN THIS LANE (not the agent-wide
+    // pool). Lane-isolation philosophy (#610) — scalp wins build the
+    // scalp lane's Kelly cap; trend wins build trend's. No more
+    // cross-lane pollution dragging down a lane that's actually working.
+    // Cold-start (no closed trades in this lane): rollingStats is null,
+    // kelly cap becomes a no-op (geometric leverage unchanged).
+    const rollingStats = await this.getKellyRollingStats('K', earlyPositionLane);
     const leverage = currentLeverage(
       basinState, maxLevBoundary, mode, tapeTrend, rollingStats,
     );
@@ -812,11 +828,9 @@ export class MonkeyKernel extends EventEmitter {
     // execution lane via softmax over basin features (parity with the
     // Python kernel's choose_lane). The chosen lane gates size (per-lane
     // budget fraction) AND, when a position is open, scopes the exit
-    // gate's TP/SL envelope.
-    const laneDecision = chooseLane(basinState, tapeTrend);
-    const chosenLane: LaneType = laneDecision.value;
-    const positionLane: 'scalp' | 'swing' | 'trend' =
-      chosenLane === 'observe' ? 'swing' : chosenLane;
+    // gate's TP/SL envelope. ``earlyPositionLane`` is the early read
+    // above; size + leverage already used it.
+    const positionLane: 'scalp' | 'swing' | 'trend' = earlyPositionLane;
     const size = currentPositionSize(
       basinState, cappedEquity, minNotional, leverage.value, bankSize, mode,
       positionLane,
@@ -1142,7 +1156,8 @@ export class MonkeyKernel extends EventEmitter {
       MODE_PROFILES[mode].canEnter &&
       direction !== 'flat' &&
       size.value > 0 &&
-      !sideShortRefused
+      !sideShortRefused &&
+      !isChopSuppressed(regimeReading)
     ) {
       // sideCandidate from kernelDirection (geometric, post #ml-separation).
       // Entry gate is geometric: direction != flat (basinDir + 0.5*tapeTrend
@@ -1156,18 +1171,31 @@ export class MonkeyKernel extends EventEmitter {
       derivation.leverage = leverage.derivation;
     } else {
       action = 'hold';
+      const chopSuppressed = isChopSuppressed(regimeReading);
       const why = !MODE_PROFILES[mode].canEnter
         ? `mode=${mode} blocks entry (${MODE_PROFILES[mode].description})`
         : direction === 'flat'
           ? `[${mode}] direction=flat (basinDir=${basinDir.toFixed(3)} tape=${tapeTrend.toFixed(3)})`
-          : size.value <= 0
-          ? `[${mode}] size ${size.value.toFixed(2)} below min notional ${minNotional.toFixed(2)}`
-          : sideShortRefused
-          ? `[${mode}] short refused — MONKEY_SHORTS_LIVE=false`
-          : 'no qualifying signal';
+          : chopSuppressed
+            ? `[${mode}] chop regime confidence=${regimeReading.confidence.toFixed(2)} > ${CHOP_SUPPRESSION_CONFIDENCE.toFixed(2)} — suspend new entries`
+            : size.value <= 0
+              ? `[${mode}] size ${size.value.toFixed(2)} below min notional ${minNotional.toFixed(2)}`
+              : sideShortRefused
+                ? `[${mode}] short refused — MONKEY_SHORTS_LIVE=false`
+                : 'no qualifying signal';
       reason = why;
       derivation.entryThreshold = entryThr.derivation;
     }
+    // CHOP suppression telemetry — surfaces whether the gate was active
+    // this tick AND whether it actually blocked entry. ``active`` reads
+    // the regime classifier output; ``blocked`` is true only when the
+    // suspension would have flipped a would-be entry into a hold.
+    derivation.chopSuppression = {
+      active: isChopSuppressed(regimeReading),
+      regime: regimeReading.regime,
+      confidence: regimeReading.confidence,
+      threshold: CHOP_SUPPRESSION_CONFIDENCE,
+    };
 
     // v0.8.3b — shadow the full Python tick pipeline. Fire-and-forget:
     // Python's decision is NOT authoritative; we only log parity diffs.
@@ -1945,16 +1973,18 @@ export class MonkeyKernel extends EventEmitter {
    */
   private async getKellyRollingStats(
     agent: string,
+    lane: 'scalp' | 'swing' | 'trend',
   ): Promise<{ winRate: number; avgWin: number; avgLoss: number } | null> {
     try {
       const result = await pool.query(
         `SELECT pnl FROM autonomous_trades
           WHERE status = 'closed'
             AND agent = $1
+            AND lane = $2
             AND reason LIKE 'monkey|%'
           ORDER BY exit_time DESC
           LIMIT 50`,
-        [agent],
+        [agent, lane],
       );
       const pnls = (result.rows as Array<{ pnl: string | number }>)
         .map((r) => Number(r.pnl) || 0)
@@ -1973,6 +2003,7 @@ export class MonkeyKernel extends EventEmitter {
     } catch (err) {
       logger.debug('[Monkey] getKellyRollingStats failed; defer to geometric formula', {
         agent,
+        lane,
         err: err instanceof Error ? err.message : String(err),
       });
       return null;
