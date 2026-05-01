@@ -40,7 +40,7 @@ import os
 import socket
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Optional
 
 logger = logging.getLogger(__name__)
@@ -64,6 +64,28 @@ def _candidate_keepalive_options() -> Dict[int, int]:
     return opts
 
 
+def _env_ping_interval_sec() -> float:
+    """Tunable heartbeat cadence for ``run_resilient_listener``.
+
+    Default: 10 seconds — well below any sane Redis idle-timeout
+    (typical defaults are 60-300s; managed Redis providers commonly
+    enforce 60s). Override via ``REDIS_LISTENER_PING_INTERVAL_SEC``.
+    Set to <= 0 to disable the heartbeat.
+
+    Bug context (2026-04-30 → 2026-05-01): production listener
+    reconnect rate was ~1 cycle / 30s sustained for 4+ hours. This is
+    not auth failure — it's Redis killing the idle pubsub connection.
+    The fix: send a client-level PING on a 10s cadence inside the
+    listener loop so the connection never crosses the idle threshold.
+    """
+    raw = os.environ.get("REDIS_LISTENER_PING_INTERVAL_SEC", "")
+    try:
+        v = float(raw) if raw else 10.0
+    except ValueError:
+        v = 10.0
+    return v
+
+
 @dataclass
 class ListenerConfig:
     """Tunables for ``run_resilient_listener``.
@@ -80,6 +102,12 @@ class ListenerConfig:
     socket_read_timeout: float = 30.0
     health_key: Optional[str] = None
     health_ttl: int = 90
+    # Heartbeat ping cadence (seconds). When >0 the listener sends a
+    # client.ping() at this cadence even on an idle channel, so a
+    # silent producer can't trip the upstream Redis idle timeout. The
+    # 30s reconnect-storm observed 2026-04-30 was idle-timeout induced;
+    # 10s defers well below typical 60s+ idle-timeout windows.
+    ping_interval_sec: float = field(default_factory=_env_ping_interval_sec)
 
 
 # Pluggable redis module / sleep / time hooks for test injection. Keep
@@ -208,10 +236,53 @@ def run_resilient_listener(
             # Connected — reset backoff for the next disconnect.
             backoff = config.initial_backoff
 
-            for message in pubsub.listen():
-                if stop_event is not None and stop_event.is_set():
-                    break
-                if message is None or message.get("type") != "message":
+            # Heartbeat schedule. ``last_ping`` is set to "now" so the
+            # first ping fires ~ping_interval_sec after subscribe; that
+            # avoids a redundant ping right after the freshly-completed
+            # SUBSCRIBE round-trip already proved liveness.
+            ping_interval = max(0.0, float(config.ping_interval_sec))
+            last_ping = time.monotonic()
+            # Bound the per-poll timeout so we wake often enough to
+            # service the heartbeat. When pinging is disabled (interval
+            # <= 0) fall back to the connection-level read timeout.
+            poll_timeout = (
+                min(ping_interval, float(config.socket_read_timeout))
+                if ping_interval > 0
+                else float(config.socket_read_timeout)
+            )
+
+            # Poll-loop heartbeat: ``get_message(timeout=...)`` returns
+            # ``None`` on idle wakeup — perfect injection point for the
+            # liveness ping. ``listen()`` was a blocking generator that
+            # gave us no clean place to send a ping while the channel
+            # was quiet, which is why production listeners were getting
+            # killed at the upstream Redis idle-timeout (~30s reconnect
+            # storms observed 2026-04-30 → 2026-05-01).
+            while stop_event is None or not stop_event.is_set():
+                message = pubsub.get_message(
+                    ignore_subscribe_messages=True,
+                    timeout=poll_timeout,
+                )
+                # Heartbeat — send PING when the cadence elapses, regardless
+                # of whether get_message returned a payload or idle-woke us.
+                if ping_interval > 0:
+                    now = time.monotonic()
+                    if now - last_ping >= ping_interval:
+                        try:
+                            client.ping()
+                        except Exception as exc:  # noqa: BLE001
+                            # Ping failure means the connection is dead;
+                            # raise to the outer except so the reconnect
+                            # path runs. Use a marked exception so the
+                            # outer logger knows it was the heartbeat.
+                            raise RuntimeError(
+                                f"redis-listener-heartbeat-failed: {exc}",
+                            ) from exc
+                        last_ping = now
+                if message is None:
+                    # Idle wakeup — heartbeat handled above; loop again.
+                    continue
+                if message.get("type") != "message":
                     continue
                 # Got a real message — reset the idle streak.
                 idle_timeout_streak = 0

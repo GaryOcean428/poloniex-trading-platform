@@ -32,13 +32,17 @@ from collections import deque
 from dataclasses import dataclass, field
 from enum import StrEnum
 from statistics import variance
-from typing import Any, Deque, Literal, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Deque, Literal, Optional, Sequence
 
 import numpy as np
 
 from qig_core_local.geometry.fisher_rao import fisher_rao_distance
 
+from .bus_events import KernelEvent, OceanObservationPayload
 from .persistence import PersistentMemory
+
+if TYPE_CHECKING:
+    from .kernel_bus import KernelBus
 
 
 logger = logging.getLogger("monkey_kernel.ocean")
@@ -167,9 +171,13 @@ class Ocean:
         label: str = "monkey-primary",
         *,
         persistence: Optional["PersistentMemory"] = None,
+        bus: Optional["KernelBus"] = None,
+        symbol: Optional[str] = None,
     ) -> None:
         self.label = label
         self._persistence = persistence
+        self._bus = bus
+        self._symbol = symbol
         # Load prior sleep state from Redis if available; the load
         # applies timestamp-correction so a kernel that "slept"
         # through downtime wakes at the right moment.
@@ -355,6 +363,47 @@ class Ocean:
                     "coherence": float(coherence),
                     "at_ms": float(now_ms),
                 })
+
+        # Publish to bus when wired. OBSERVATION every tick;
+        # INTERVENTION only when one fires; REGIME on sleep transition.
+        if self._bus is not None:
+            self._bus.publish(
+                KernelEvent.OCEAN_OBSERVATION,
+                source="ocean",
+                payload=OceanObservationPayload(
+                    phi=float(phi),
+                    spread=float(spread),
+                    coherence=float(coherence),
+                    intervention=intervention,
+                    sleep_phase=sleep_phase,
+                ),
+                symbol=self._symbol,
+            )
+            if intervention is not None:
+                self._bus.publish(
+                    KernelEvent.OCEAN_INTERVENTION,
+                    source="ocean",
+                    payload={
+                        "intervention": intervention,
+                        "phi": float(phi),
+                        "spread": float(spread),
+                        "coherence": float(coherence),
+                        "at_ms": float(now_ms),
+                    },
+                    symbol=self._symbol,
+                )
+            if sleep_step["entered_sleep"] or sleep_step["woke"]:
+                self._bus.publish(
+                    KernelEvent.OCEAN_REGIME,
+                    source="ocean",
+                    payload={
+                        "sleep_phase": sleep_phase,
+                        "entered_sleep": bool(sleep_step["entered_sleep"]),
+                        "woke": bool(sleep_step["woke"]),
+                        "sleep_count": int(self.sleep_state.sleep_count),
+                    },
+                    symbol=self._symbol,
+                )
 
         return OceanState(
             intervention=intervention,

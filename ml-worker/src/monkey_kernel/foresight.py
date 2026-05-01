@@ -25,17 +25,28 @@ basin update); `predict()` is read-only and side-effect free. Tier 6
 
 from __future__ import annotations
 
+import math
 from collections import deque
 from dataclasses import dataclass, field
 from statistics import stdev
-from typing import Deque, Optional, Tuple
+from typing import TYPE_CHECKING, Deque, Optional, Tuple
 
 import numpy as np
 
 from qig_core_local.geometry.fisher_rao import fisher_rao_distance, slerp_sqrt
 
+from .bus_events import ForesightPredictionPayload, KernelEvent
 from .persistence import PersistentMemory
 from .state import BASIN_DIM
+
+if TYPE_CHECKING:
+    from .kernel_bus import KernelBus
+
+
+# Foresight divergence threshold: when |predicted - actual| FR distance
+# exceeds 1/π, the prediction has missed by more than the gravitating-
+# fraction boundary. Publishes FORESIGHT_DIVERGENCE at that crossing.
+_DIVERGENCE_THRESHOLD_FR: float = 1.0 / math.pi
 
 
 @dataclass(frozen=True)
@@ -97,9 +108,12 @@ class ForesightPredictor:
         *,
         persistence: Optional[PersistentMemory] = None,
         symbol: Optional[str] = None,
+        bus: Optional["KernelBus"] = None,
     ) -> None:
         self._persistence = persistence
         self._symbol = symbol
+        self._bus = bus
+        self._last_predicted_basin: Optional[np.ndarray] = None
         self._traj: Deque[Tuple[np.ndarray, float, float]] = deque(
             maxlen=max_trajectory,
         )
@@ -112,6 +126,29 @@ class ForesightPredictor:
         """Record a tick. Caller passes the basin AFTER tick update,
         the live phi, and a wall-clock timestamp in ms."""
         b = np.asarray(basin, dtype=np.float64)
+        # Compare against the prior tick's prediction BEFORE we mutate
+        # the trajectory; FORESIGHT_DIVERGENCE fires when actual basin
+        # diverges from prediction by > 1/π FR.
+        if self._bus is not None and self._last_predicted_basin is not None:
+            try:
+                d_fr = fisher_rao_distance(b, self._last_predicted_basin)
+                if d_fr > _DIVERGENCE_THRESHOLD_FR:
+                    self._bus.publish(
+                        KernelEvent.FORESIGHT_DIVERGENCE,
+                        source="foresight",
+                        payload={
+                            "fr_distance": float(d_fr),
+                            "threshold": float(_DIVERGENCE_THRESHOLD_FR),
+                            "predicted_basin": [
+                                float(x) for x in self._last_predicted_basin
+                            ],
+                            "actual_basin": [float(x) for x in b],
+                        },
+                        symbol=self._symbol,
+                    )
+            except Exception:  # noqa: BLE001 — never block append on geometry edge cases
+                pass
+
         self._traj.append((b, float(phi), float(t_ms)))
         # Write-through.
         if self._persistence is not None and self._symbol:
@@ -161,12 +198,30 @@ class ForesightPredictor:
         # Regime-adaptive weight from current phi + regime
         weight = _regime_weight(phis[-1], confidence, regime_weights)
 
-        return ForesightResult(
+        result = ForesightResult(
             predicted_basin=predicted,
             confidence=confidence,
             weight=weight,
             horizon_ms=horizon_ms,
         )
+
+        # Cache predicted basin for divergence detection on next append.
+        self._last_predicted_basin = predicted
+
+        if self._bus is not None:
+            self._bus.publish(
+                KernelEvent.FORESIGHT_PREDICTION,
+                source="foresight",
+                payload=ForesightPredictionPayload(
+                    predicted_basin=[float(x) for x in predicted],
+                    confidence=float(confidence),
+                    weight=float(weight),
+                    horizon_ms=float(horizon_ms),
+                ),
+                symbol=self._symbol,
+            )
+
+        return result
 
     def reset(self) -> None:
         """Clear the trajectory. Used on regime breaks or test fixtures."""

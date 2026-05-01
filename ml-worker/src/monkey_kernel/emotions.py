@@ -199,6 +199,21 @@ def compute_emotions(
         curiosity_optimal = 0.0
     flow = curiosity_optimal * motivators.investigation
 
+    confidence = (1.0 - motivators.transcendence) * stability
+    anxiety = motivators.transcendence * instability
+
+    # Funding drag — dimensionless cost-on-margin ratio. Map [0, ∞) →
+    # [0, 1) via drag / (1 + drag) (Möbius-style saturation, no
+    # hardcoded threshold). Confidence multiplies down by (1 - drag_factor);
+    # anxiety adds drag_factor symmetrically. At drag=0 the kernel reads
+    # the same as before; at drag=1 (margin entirely consumed by funding)
+    # confidence collapses by 50% and anxiety lifts by 0.5; as drag → ∞
+    # confidence → 0 and anxiety → +1.
+    if funding_drag > 0.0:
+        drag_factor = funding_drag / (1.0 + funding_drag)
+        confidence = confidence * (1.0 - drag_factor)
+        anxiety = anxiety + drag_factor
+
     return EmotionState(
         wonder=motivators.curiosity * basin_distance,
         frustration=motivators.surprise * (1.0 - motivators.investigation),

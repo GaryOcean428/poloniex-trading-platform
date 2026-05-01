@@ -158,6 +158,31 @@ const PARITY_ROWS: ParityRow[] = [
       confusion: 0.0, clarity: 0.5, anxiety: 0.0, confidence: 0.5, boredom: 1.0 } },
 ];
 
+// ─── Funding drag (cost-on-margin) ─────────────────────────────────
+
+describe('Funding drag pulls confidence down geometrically', () => {
+  it('drag=0 leaves confidence/anxiety unchanged', () => {
+    const base = computeEmotions(m({ transcendence: 0.3 }), 0, 0.7, 0.1);
+    const eq = computeEmotions(m({ transcendence: 0.3 }), 0, 0.7, 0.1, { fundingDrag: 0 });
+    APPROX(eq.confidence, base.confidence);
+    APPROX(eq.anxiety, base.anxiety);
+  });
+  it('drag=0.5 reduces confidence by ~33% and adds ~0.333 to anxiety', () => {
+    const base = computeEmotions(m({ transcendence: 0.3 }), 0, 0.7, 0.1);
+    const dragged = computeEmotions(m({ transcendence: 0.3 }), 0, 0.7, 0.1, { fundingDrag: 0.5 });
+    // drag_factor = 0.5 / 1.5 = 1/3
+    APPROX(dragged.confidence, base.confidence * (1 - 1 / 3), 1e-9);
+    APPROX(dragged.anxiety, base.anxiety + 1 / 3, 1e-9);
+    expect(dragged.confidence).toBeLessThan(base.confidence);
+    expect(dragged.anxiety).toBeGreaterThan(base.anxiety);
+  });
+  it('drag→∞ collapses confidence to ~0 and lifts anxiety toward +1', () => {
+    const dragged = computeEmotions(m({ transcendence: 0.3 }), 0, 0.7, 0.1, { fundingDrag: 1e6 });
+    expect(dragged.confidence).toBeLessThan(1e-3);
+    expect(dragged.anxiety).toBeGreaterThan(0.99);
+  });
+});
+
 describe('Parity snapshot — 10 rows match Python suite identically', () => {
   PARITY_ROWS.forEach((row, idx) => {
     it(`row ${idx} matches expected`, () => {

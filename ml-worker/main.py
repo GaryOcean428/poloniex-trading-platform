@@ -1147,11 +1147,52 @@ _heart_instances: dict[tuple[str, str], HeartMonitor] = {}
 # once at PersistentMemory construction time).
 _persistence_instances: dict[str, PersistentMemory] = {}
 
+# Constellation infrastructure — one bus + coordinator + thought_bus +
+# learning_gate per Agent K instance. The wall to Agents M and T stays;
+# these are internal to Agent K only.
+from monkey_kernel.kernel_bus import KernelBus, get_kernel_bus  # noqa: E402
+from monkey_kernel.coordinator import GaryCoordinator  # noqa: E402
+from monkey_kernel.thought_bus import ThoughtBus  # noqa: E402
+from monkey_kernel.learning_gate import LearningGate, WriteDecision  # noqa: E402
+
+_coordinator_instances: dict[str, GaryCoordinator] = {}
+_thought_bus_instances: dict[str, ThoughtBus] = {}
+_learning_gate_instances: dict[str, LearningGate] = {}
+
 
 def _get_persistence(instance_id: str) -> PersistentMemory:
     if instance_id not in _persistence_instances:
         _persistence_instances[instance_id] = PersistentMemory(instance_id=instance_id)
     return _persistence_instances[instance_id]
+
+
+def _get_bus(instance_id: str) -> KernelBus:
+    """Per-instance internal Agent K bus singleton."""
+    return get_kernel_bus(
+        instance_id=instance_id,
+        persistence=_get_persistence(instance_id),
+    )
+
+
+def _get_thought_bus(instance_id: str) -> ThoughtBus:
+    if instance_id not in _thought_bus_instances:
+        _thought_bus_instances[instance_id] = ThoughtBus(_get_bus(instance_id))
+    return _thought_bus_instances[instance_id]
+
+
+def _get_coordinator(instance_id: str) -> GaryCoordinator:
+    if instance_id not in _coordinator_instances:
+        _coordinator_instances[instance_id] = GaryCoordinator(
+            _get_bus(instance_id),
+            thought_bus=_get_thought_bus(instance_id),
+        )
+    return _coordinator_instances[instance_id]
+
+
+def _get_learning_gate(instance_id: str) -> LearningGate:
+    if instance_id not in _learning_gate_instances:
+        _learning_gate_instances[instance_id] = LearningGate(_get_bus(instance_id))
+    return _learning_gate_instances[instance_id]
 
 
 def _get_autonomic(instance_id: str) -> AutonomicKernel:
@@ -1171,6 +1212,8 @@ def _get_ocean(instance_id: str, symbol: str) -> Ocean:
         _ocean_instances[key] = Ocean(
             label=f"{instance_id}:{symbol}",
             persistence=_get_persistence(instance_id),
+            bus=_get_bus(instance_id),
+            symbol=symbol,
         )
     return _ocean_instances[key]
 
@@ -1181,6 +1224,7 @@ def _get_foresight(instance_id: str, symbol: str) -> ForesightPredictor:
         _foresight_instances[key] = ForesightPredictor(
             persistence=_get_persistence(instance_id),
             symbol=symbol,
+            bus=_get_bus(instance_id),
         )
     return _foresight_instances[key]
 
@@ -1191,6 +1235,7 @@ def _get_heart(instance_id: str, symbol: str) -> HeartMonitor:
         _heart_instances[key] = HeartMonitor(
             persistence=_get_persistence(instance_id),
             symbol=symbol,
+            bus=_get_bus(instance_id),
         )
     return _heart_instances[key]
 
@@ -1386,6 +1431,9 @@ async def monkey_executive_decide(request: Request):
             notional_usdt=position_notional,
             s=state,
             mode=mode,
+            # v0.8.6 — SL gate reads ROI on margin; thread the live lev
+            # decision so raw move scales correctly into ROI.
+            leverage=float(leverage["value"]),
         )
         loop2 = should_exit(
             perception=state.basin,
@@ -1696,10 +1744,13 @@ async def monkey_tick_run(request: Request):
     ocean = _get_ocean(instance_id, tick_inputs.symbol)
     foresight = _get_foresight(instance_id, tick_inputs.symbol)
     heart = _get_heart(instance_id, tick_inputs.symbol)
+    bus = _get_bus(instance_id)
+    coordinator = _get_coordinator(instance_id)
     decision, new_state = run_tick(
         tick_inputs, state, autonomic,
         ocean=ocean, foresight=foresight, heart=heart,
         persistence=persistence,
+        bus=bus, coordinator=coordinator,
     )
     _symbol_states[key] = new_state
 
@@ -1885,6 +1936,46 @@ async def trading_insert_entry(request: Request):
     pool = await get_async_pool()
     new_id = await insert_entry(pool, record)
     return {"id": new_id}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Loop 3 — learning autonomy gate
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+@app.post("/learning_gate/evaluate")
+async def learning_gate_evaluate(request: Request):
+    """Loop 3 (UCP §43.4) gate over bank-write quality.
+
+    The kernel decides which closed exchanges become bank training data.
+    Default behaviour writes everything; this gate selectively rejects
+    low-quality writes so the bank doesn't accumulate scaffolding.
+
+    Request body:
+      {
+        "instance_id": "monkey-primary",
+        "symbol": "BTC_USDT_PERP",
+        "decision_id": "K-...-...",
+        "sovereignty_score": 0.0..1.0,
+        "convergence_type": "consensus|groupthink|genuine_multi|non_convergent",
+        "trade_pnl_usdt": float,
+        "trade_duration_s": float
+      }
+
+    Response: { "approved": bool, "reasons": [str, ...] }
+    """
+    body = await request.json()
+    instance_id = str(body.get("instance_id", "monkey-primary"))
+    gate = _get_learning_gate(instance_id)
+    decision: WriteDecision = gate.evaluate_write(
+        symbol=str(body.get("symbol", "")),
+        decision_id=str(body.get("decision_id", "")),
+        sovereignty_score=float(body.get("sovereignty_score", 0.0)),
+        convergence_type=str(body.get("convergence_type", "consensus")),
+        trade_pnl_usdt=float(body.get("trade_pnl_usdt", 0.0)),
+        trade_duration_s=float(body.get("trade_duration_s", 0.0)),
+    )
+    return {"approved": bool(decision.approved), "reasons": list(decision.reasons)}
 
 
 # ---------------------------------------------------------------------------
