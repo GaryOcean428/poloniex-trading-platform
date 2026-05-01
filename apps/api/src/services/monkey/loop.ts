@@ -85,7 +85,13 @@ import {
   trendProxy as computeTrendProxy,
   type OHLCVCandle,
 } from './perception.js';
-import { classifyRegime, chopSuppressEntry, type RegimeReading } from './regime.js';
+import {
+  CHOP_SUPPRESS_SWING_CONFIDENCE_DEFAULT,
+  CHOP_SUPPRESS_TREND_CONFIDENCE_DEFAULT,
+  chopSuppressEntry,
+  classifyRegime,
+  type RegimeReading,
+} from './regime.js';
 import {
   detectStrongest as detectStrongestCandlePattern,
   hammerAgainstLongSl,
@@ -1247,7 +1253,7 @@ export class MonkeyKernel extends EventEmitter {
       direction !== 'flat' &&
       size.value > 0 &&
       !sideShortRefused &&
-      !isChopSuppressed(regimeReading)
+      !chopSuppressEntry(regimeReading, positionLane).suppressed
     ) {
       // Regime suppression check (issue #623): before opening a new entry,
       // consult the regime classifier reading. Held positions are unaffected —
@@ -1278,13 +1284,17 @@ export class MonkeyKernel extends EventEmitter {
       }
     } else {
       action = 'hold';
-      const chopSuppressed = isChopSuppressed(regimeReading);
+      const chopSuppressionForLane = chopSuppressEntry(regimeReading, positionLane);
+      const chopSuppressed = chopSuppressionForLane.suppressed;
+      const chopThresholdForLane = positionLane === 'trend'
+        ? CHOP_SUPPRESS_TREND_CONFIDENCE_DEFAULT
+        : CHOP_SUPPRESS_SWING_CONFIDENCE_DEFAULT;
       const why = !MODE_PROFILES[mode].canEnter
         ? `mode=${mode} blocks entry (${MODE_PROFILES[mode].description})`
         : direction === 'flat'
           ? `[${mode}] direction=flat (basinDir=${basinDir.toFixed(3)} tape=${tapeTrend.toFixed(3)})`
           : chopSuppressed
-            ? `[${mode}] chop regime confidence=${regimeReading.confidence.toFixed(2)} > ${CHOP_SUPPRESSION_CONFIDENCE.toFixed(2)} — suspend new entries`
+            ? `[${mode}] chop regime confidence=${regimeReading.confidence.toFixed(2)} > ${chopThresholdForLane.toFixed(2)} — suspend new entries (lane=${positionLane})`
             : size.value <= 0
               ? `[${mode}] size ${size.value.toFixed(2)} below min notional ${minNotional.toFixed(2)}`
               : sideShortRefused
@@ -1297,11 +1307,15 @@ export class MonkeyKernel extends EventEmitter {
     // this tick AND whether it actually blocked entry. ``active`` reads
     // the regime classifier output; ``blocked`` is true only when the
     // suspension would have flipped a would-be entry into a hold.
+    const chopTelemetry = chopSuppressEntry(regimeReading, positionLane);
     derivation.chopSuppression = {
-      active: isChopSuppressed(regimeReading),
+      active: chopTelemetry.suppressed,
       regime: regimeReading.regime,
       confidence: regimeReading.confidence,
-      threshold: CHOP_SUPPRESSION_CONFIDENCE,
+      lane: positionLane,
+      threshold: positionLane === 'trend'
+        ? CHOP_SUPPRESS_TREND_CONFIDENCE_DEFAULT
+        : CHOP_SUPPRESS_SWING_CONFIDENCE_DEFAULT,
     };
 
     // v0.8.3b — shadow the full Python tick pipeline. Fire-and-forget:
