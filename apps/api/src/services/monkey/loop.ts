@@ -1168,7 +1168,6 @@ export class MonkeyKernel extends EventEmitter {
           rejust.anxiety = emotions.anxiety;
           rejust.confusion = emotions.confusion;
           rejust.regimeChangeStreak = rejustResult.regimeChangeStreak;
-          rejust.basinFrMove = rejustResult.basinFrMove;
           rejust.heldDurationS = heldDurationS;
           rejust.currentRoi = currentRoi;
           if (rejustResult.fired) {
