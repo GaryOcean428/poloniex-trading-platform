@@ -91,7 +91,7 @@ from .candle_patterns import (
     pattern_signal_scalar,
 )
 from .physical_emotions import compute_physical_emotions
-from .regime import RegimeReading, classify_regime
+from .regime import ChopSuppressionResult, RegimeReading, chop_suppress_entry, classify_regime
 from .sensations import compute_sensations
 from .state import BasinState as KernelBasinState
 from .state import LaneType, NeurochemicalState
@@ -858,25 +858,45 @@ def run_tick(
         and kernel_should_enter(emotions=emo)
         and size_d["value"] > 0
     ):
-        action = "enter_long" if side_candidate == "long" else "enter_short"
-        notional = size_d["value"] * leverage_d["value"]
-        reason = (
-            f"[{mode}] kernel-entry-lane[{pre_lane}] "
-            f"conv={emo.confidence * (1 + emo.wonder):.3f}"
-            f" > hes={emo.anxiety + emo.confusion:.3f}; "
-            f"side={side_candidate}; "
-            f"margin={size_d['value']:.2f} lev={leverage_d['value']}x "
-            f"notional={notional:.2f}"
+        # Regime suppression check (issue #623): before opening a new
+        # entry, consult the regime classifier reading. Held positions
+        # are unaffected — re-justification (#619) owns those exits.
+        chop_suppress_thr_trend = float(_registry.get(
+            "regime.chop_suppress.trend_confidence", default=0.70,
+        ))
+        chop_suppress_thr_swing = float(_registry.get(
+            "regime.chop_suppress.swing_confidence", default=0.85,
+        ))
+        supp = chop_suppress_entry(
+            regime_reading, pre_lane,
+            trend_confidence_threshold=chop_suppress_thr_trend,
+            swing_confidence_threshold=chop_suppress_thr_swing,
         )
-        derivation["entry_threshold"] = entry_thr_d["derivation"]
-        derivation["size"] = size_d["derivation"]
-        derivation["leverage"] = leverage_d["derivation"]
-        # Held-position re-justification — snapshot the (regime, Φ)
-        # state at the moment of entry on this lane. Subsequent ticks
-        # compare against these anchors via the three internal exit
-        # checks (regime change / Φ collapse / conviction failure).
-        state.regime_at_open_by_lane[pre_lane] = mode
-        state.phi_at_open_by_lane[pre_lane] = phi
+        derivation["regime_suppression"] = supp.as_dict()
+        if supp.suppressed:
+            action = "hold"
+            reason = supp.suppress_reason or "regime_suppress"
+            derivation["entry_threshold"] = entry_thr_d["derivation"]
+        else:
+            action = "enter_long" if side_candidate == "long" else "enter_short"
+            notional = size_d["value"] * leverage_d["value"]
+            reason = (
+                f"[{mode}] kernel-entry-lane[{pre_lane}] "
+                f"conv={emo.confidence * (1 + emo.wonder):.3f}"
+                f" > hes={emo.anxiety + emo.confusion:.3f}; "
+                f"side={side_candidate}; "
+                f"margin={size_d['value']:.2f} lev={leverage_d['value']}x "
+                f"notional={notional:.2f}"
+            )
+            derivation["entry_threshold"] = entry_thr_d["derivation"]
+            derivation["size"] = size_d["derivation"]
+            derivation["leverage"] = leverage_d["derivation"]
+            # Held-position re-justification — snapshot the (regime, Φ)
+            # state at the moment of entry on this lane. Subsequent ticks
+            # compare against these anchors via the three internal exit
+            # checks (regime change / Φ collapse / conviction failure).
+            state.regime_at_open_by_lane[pre_lane] = mode
+            state.phi_at_open_by_lane[pre_lane] = phi
     elif held_side:
         # Proposal #10: resolve the lane this single-position decision
         # belongs to. With ``lane_positions`` populated the lane is read
@@ -929,28 +949,48 @@ def run_tick(
         and kernel_should_enter(emotions=emo)
         and size_d["value"] > 0
     ):
-        action = "enter_long" if side_candidate == "long" else "enter_short"
-        reversion_tag = (
-            f" REVERSION-flip(basin{basin_dir:.2f}/tape{tape_trend:.2f})"
-            if side_override else ""
+        # Regime suppression check (issue #623): before opening a new
+        # entry, consult the regime classifier reading. Held positions
+        # are unaffected — re-justification (#619) owns those exits.
+        chop_suppress_thr_trend = float(_registry.get(
+            "regime.chop_suppress.trend_confidence", default=0.70,
+        ))
+        chop_suppress_thr_swing = float(_registry.get(
+            "regime.chop_suppress.swing_confidence", default=0.85,
+        ))
+        supp = chop_suppress_entry(
+            regime_reading, pre_lane,
+            trend_confidence_threshold=chop_suppress_thr_trend,
+            swing_confidence_threshold=chop_suppress_thr_swing,
         )
-        notional = size_d["value"] * leverage_d["value"]
-        reason = (
-            f"[{mode}] kernel-entry conv={emo.confidence * (1 + emo.wonder):.3f}"
-            f" > hes={emo.anxiety + emo.confusion:.3f}; "
-            f"side={side_candidate}{reversion_tag}; "
-            f"margin={size_d['value']:.2f} lev={leverage_d['value']}x "
-            f"notional={notional:.2f}"
-        )
-        derivation["entry_threshold"] = entry_thr_d["derivation"]
-        derivation["size"] = size_d["derivation"]
-        derivation["leverage"] = leverage_d["derivation"]
-        # Held-position re-justification — snapshot the (regime, Φ)
-        # state at the moment of entry on this lane. Subsequent ticks
-        # compare against these anchors via the three internal exit
-        # checks (regime change / Φ collapse / conviction failure).
-        state.regime_at_open_by_lane[pre_lane] = mode
-        state.phi_at_open_by_lane[pre_lane] = phi
+        derivation["regime_suppression"] = supp.as_dict()
+        if supp.suppressed:
+            action = "hold"
+            reason = supp.suppress_reason or "regime_suppress"
+            derivation["entry_threshold"] = entry_thr_d["derivation"]
+        else:
+            action = "enter_long" if side_candidate == "long" else "enter_short"
+            reversion_tag = (
+                f" REVERSION-flip(basin{basin_dir:.2f}/tape{tape_trend:.2f})"
+                if side_override else ""
+            )
+            notional = size_d["value"] * leverage_d["value"]
+            reason = (
+                f"[{mode}] kernel-entry conv={emo.confidence * (1 + emo.wonder):.3f}"
+                f" > hes={emo.anxiety + emo.confusion:.3f}; "
+                f"side={side_candidate}{reversion_tag}; "
+                f"margin={size_d['value']:.2f} lev={leverage_d['value']}x "
+                f"notional={notional:.2f}"
+            )
+            derivation["entry_threshold"] = entry_thr_d["derivation"]
+            derivation["size"] = size_d["derivation"]
+            derivation["leverage"] = leverage_d["derivation"]
+            # Held-position re-justification — snapshot the (regime, Φ)
+            # state at the moment of entry on this lane. Subsequent ticks
+            # compare against these anchors via the three internal exit
+            # checks (regime change / Φ collapse / conviction failure).
+            state.regime_at_open_by_lane[pre_lane] = mode
+            state.phi_at_open_by_lane[pre_lane] = phi
     else:
         action = "hold"
         if not MODE_PROFILES[mode_enum].can_enter:

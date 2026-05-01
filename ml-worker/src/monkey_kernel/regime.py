@@ -190,3 +190,107 @@ def regime_harvest_tightness(reading: RegimeReading) -> float:
     if reading.regime == "CHOP":
         return 1.0 - 0.30 * reading.confidence  # tighter
     return 1.0 + 0.30 * reading.confidence  # looser
+
+
+# ── CHOP regime entry suppression (issue #623) ───────────────────
+#
+# Conservative defaults; registry-overridable via propose_change().
+# Thresholds live in monkey_parameters as:
+#   regime.chop_suppress.trend_confidence  (default 0.70)
+#   regime.chop_suppress.swing_confidence  (default 0.85)
+#
+# Scalp is the chop strategy by definition — never suppressed.
+# Only new entries are affected; held-position re-justification
+# (#619) owns those exits independently.
+
+CHOP_SUPPRESS_TREND_CONFIDENCE_DEFAULT: float = 0.70
+CHOP_SUPPRESS_SWING_CONFIDENCE_DEFAULT: float = 0.85
+
+
+@dataclass
+class ChopSuppressionResult:
+    """Output of ``chop_suppress_entry`` per new-entry evaluation."""
+    regime: str
+    confidence: float
+    lane: str
+    suppressed: bool
+    suppress_reason: Optional[str]
+
+    def as_dict(self) -> dict:
+        return {
+            "regime": self.regime,
+            "confidence": self.confidence,
+            "lane": self.lane,
+            "suppressed": self.suppressed,
+            "suppress_reason": self.suppress_reason,
+        }
+
+
+def chop_suppress_entry(
+    reading: RegimeReading,
+    lane: str,
+    *,
+    trend_confidence_threshold: float = CHOP_SUPPRESS_TREND_CONFIDENCE_DEFAULT,
+    swing_confidence_threshold: float = CHOP_SUPPRESS_SWING_CONFIDENCE_DEFAULT,
+) -> ChopSuppressionResult:
+    """Evaluate whether a new entry should be suppressed based on the
+    current regime reading and the chosen execution lane.
+
+    Rules:
+      - scalp lane: never suppress (chop is the scalp environment)
+      - trend lane: suppress when regime==CHOP and confidence >= trend_thr
+      - swing lane: suppress when regime==CHOP and confidence >= swing_thr
+      - TREND_UP / TREND_DOWN regimes: never suppress any lane
+
+    Thresholds default to the module constants above and may be
+    overridden by the caller (read from the parameter registry).
+    """
+    # Only CHOP regime triggers suppression.
+    if reading.regime != "CHOP":
+        return ChopSuppressionResult(
+            regime=reading.regime,
+            confidence=reading.confidence,
+            lane=lane,
+            suppressed=False,
+            suppress_reason=None,
+        )
+
+    # Scalp: chop is its home regime — never suspend.
+    if lane == "scalp":
+        return ChopSuppressionResult(
+            regime=reading.regime,
+            confidence=reading.confidence,
+            lane=lane,
+            suppressed=False,
+            suppress_reason=None,
+        )
+
+    if lane == "trend" and reading.confidence >= trend_confidence_threshold:
+        return ChopSuppressionResult(
+            regime=reading.regime,
+            confidence=reading.confidence,
+            lane=lane,
+            suppressed=True,
+            suppress_reason=(
+                f"regime_suppress: chop confidence {reading.confidence:.3f}, lane trend"
+            ),
+        )
+
+    if lane == "swing" and reading.confidence >= swing_confidence_threshold:
+        return ChopSuppressionResult(
+            regime=reading.regime,
+            confidence=reading.confidence,
+            lane=lane,
+            suppressed=True,
+            suppress_reason=(
+                f"regime_suppress: chop confidence {reading.confidence:.3f}, lane swing"
+            ),
+        )
+
+    return ChopSuppressionResult(
+        regime=reading.regime,
+        confidence=reading.confidence,
+        lane=lane,
+        suppressed=False,
+        suppress_reason=None,
+    )

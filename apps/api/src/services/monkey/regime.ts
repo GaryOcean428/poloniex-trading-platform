@@ -93,3 +93,84 @@ export function regimeHarvestTightness(reading: RegimeReading): number {
   if (reading.regime === 'CHOP') return 1.0 - 0.30 * reading.confidence;
   return 1.0 + 0.30 * reading.confidence;
 }
+
+// ── CHOP regime entry suppression (issue #623) ───────────────────
+//
+// Conservative defaults; registry-overridable via propose_change().
+// Thresholds live in monkey_parameters as:
+//   regime.chop_suppress.trend_confidence  (default 0.70)
+//   regime.chop_suppress.swing_confidence  (default 0.85)
+//
+// Scalp is the chop strategy by definition — never suppressed.
+// Only new entries are affected; held-position re-justification
+// (#619) owns those exits independently.
+
+export const CHOP_SUPPRESS_TREND_CONFIDENCE_DEFAULT = 0.70;
+export const CHOP_SUPPRESS_SWING_CONFIDENCE_DEFAULT = 0.85;
+
+export interface ChopSuppressionResult {
+  regime: string;
+  confidence: number;
+  lane: string;
+  suppressed: boolean;
+  suppressReason: string | null;
+}
+
+/**
+ * Evaluate whether a new entry should be suppressed based on the
+ * current regime reading and the chosen execution lane.
+ *
+ * Rules:
+ *   - scalp lane: never suppress (chop is the scalp environment)
+ *   - trend lane: suppress when regime==CHOP and confidence >= trendThr
+ *   - swing lane: suppress when regime==CHOP and confidence >= swingThr
+ *   - TREND_UP / TREND_DOWN regimes: never suppress any lane
+ *
+ * Thresholds default to the constants above and may be overridden
+ * by the caller (read from the parameter registry).
+ */
+export function chopSuppressEntry(
+  reading: RegimeReading,
+  lane: string,
+  opts: {
+    trendConfidenceThreshold?: number;
+    swingConfidenceThreshold?: number;
+  } = {},
+): ChopSuppressionResult {
+  const trendThr = opts.trendConfidenceThreshold ?? CHOP_SUPPRESS_TREND_CONFIDENCE_DEFAULT;
+  const swingThr = opts.swingConfidenceThreshold ?? CHOP_SUPPRESS_SWING_CONFIDENCE_DEFAULT;
+
+  const base: Omit<ChopSuppressionResult, 'suppressed' | 'suppressReason'> = {
+    regime: reading.regime,
+    confidence: reading.confidence,
+    lane,
+  };
+
+  // Only CHOP regime triggers suppression.
+  if (reading.regime !== 'CHOP') {
+    return { ...base, suppressed: false, suppressReason: null };
+  }
+
+  // Scalp: chop is its home regime — never suspend.
+  if (lane === 'scalp') {
+    return { ...base, suppressed: false, suppressReason: null };
+  }
+
+  if (lane === 'trend' && reading.confidence >= trendThr) {
+    return {
+      ...base,
+      suppressed: true,
+      suppressReason: `regime_suppress: chop confidence ${reading.confidence.toFixed(3)}, lane trend`,
+    };
+  }
+
+  if (lane === 'swing' && reading.confidence >= swingThr) {
+    return {
+      ...base,
+      suppressed: true,
+      suppressReason: `regime_suppress: chop confidence ${reading.confidence.toFixed(3)}, lane swing`,
+    };
+  }
+
+  return { ...base, suppressed: false, suppressReason: null };
+}
