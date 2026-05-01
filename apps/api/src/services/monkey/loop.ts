@@ -85,12 +85,7 @@ import {
   trendProxy as computeTrendProxy,
   type OHLCVCandle,
 } from './perception.js';
-import {
-  CHOP_SUPPRESSION_CONFIDENCE,
-  classifyRegime,
-  isChopSuppressed,
-  type RegimeReading,
-} from './regime.js';
+import { classifyRegime, chopSuppressEntry, type RegimeReading } from './regime.js';
 import {
   detectStrongest as detectStrongestCandlePattern,
   hammerAgainstLongSl,
@@ -1254,16 +1249,33 @@ export class MonkeyKernel extends EventEmitter {
       !sideShortRefused &&
       !isChopSuppressed(regimeReading)
     ) {
-      // sideCandidate from kernelDirection (geometric, post #ml-separation).
-      // Entry gate is geometric: direction != flat (basinDir + 0.5*tapeTrend
-      // != 0). Conviction gating via Layer 2B emotions is Python-only until
-      // emotions are ported to TS — TS uses neutral emotions which collapse
-      // kernelShouldEnter to false, so we gate on direction here instead.
-      action = sideCandidate === 'long' ? 'enter_long' : 'enter_short';
-      reason = `[${mode}] kernel-K geometric: basinDir=${basinDir.toFixed(3)} tape=${tapeTrend.toFixed(3)} → ${sideCandidate}; margin=${size.value.toFixed(2)} lev=${leverage.value}x notional=${(size.value * leverage.value).toFixed(2)}`;
-      derivation.entryThreshold = entryThr.derivation;
-      derivation.size = size.derivation;
-      derivation.leverage = leverage.derivation;
+      // Regime suppression check (issue #623): before opening a new entry,
+      // consult the regime classifier reading. Held positions are unaffected —
+      // re-justification (#619) owns those exits independently.
+      const suppressionResult = chopSuppressEntry(regimeReading, positionLane);
+      derivation.regime_suppression = {
+        regime: suppressionResult.regime,
+        confidence: suppressionResult.confidence,
+        lane: suppressionResult.lane,
+        suppressed: suppressionResult.suppressed,
+        suppress_reason: suppressionResult.suppressReason,
+      };
+      if (suppressionResult.suppressed) {
+        action = 'hold';
+        reason = suppressionResult.suppressReason!;
+        derivation.entryThreshold = entryThr.derivation;
+      } else {
+        // sideCandidate from kernelDirection (geometric, post #ml-separation).
+        // Entry gate is geometric: direction != flat (basinDir + 0.5*tapeTrend
+        // != 0). Conviction gating via Layer 2B emotions is Python-only until
+        // emotions are ported to TS — TS uses neutral emotions which collapse
+        // kernelShouldEnter to false, so we gate on direction here instead.
+        action = sideCandidate === 'long' ? 'enter_long' : 'enter_short';
+        reason = `[${mode}] kernel-K geometric: basinDir=${basinDir.toFixed(3)} tape=${tapeTrend.toFixed(3)} → ${sideCandidate}; margin=${size.value.toFixed(2)} lev=${leverage.value}x notional=${(size.value * leverage.value).toFixed(2)}`;
+        derivation.entryThreshold = entryThr.derivation;
+        derivation.size = size.derivation;
+        derivation.leverage = leverage.derivation;
+      }
     } else {
       action = 'hold';
       const chopSuppressed = isChopSuppressed(regimeReading);
