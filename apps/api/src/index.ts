@@ -407,15 +407,30 @@ server.listen(PORT, '::', async () => {
   };
   scheduleReconciliation();
 
-  // Start persistent trading engine
-  persistentTradingEngine.start().catch(error => {
-    logger.error('Failed to start persistent trading engine:', error);
-  });
+  // Persistent trading engine — pre-2026 batch-SLE engine. Disabled by
+  // default after 2026-05-02 architectural decision: monkey-swing is the
+  // sole profitable engine over 24h (+$4.57 over 170 closes). Re-enable
+  // with PERSISTENT_TRADING_ENABLE=true.
+  if (process.env.PERSISTENT_TRADING_ENABLE === 'true') {
+    persistentTradingEngine.start().catch(error => {
+      logger.error('Failed to start persistent trading engine:', error);
+    });
+  } else {
+    logger.info('[startup] persistent trading engine disabled — set PERSISTENT_TRADING_ENABLE=true to enable');
+  }
 
-  // Start agent scheduler (restores sessions from DB, starts always-run agents)
-  agentScheduler.start().catch(error => {
-    logger.error('Failed to start agent scheduler:', error);
-  });
+  // Agent scheduler — restores per-user FAT sessions from DB. Disabled by
+  // default after 2026-05-02 stale-orphan incident: FAT opened shorts that
+  // couldn't be reconciled to a DB trade_id, so Monkey couldn't close them
+  // and FAT itself had no exit logic for the orphan state. Re-enable with
+  // AGENT_SCHEDULER_ENABLE=true once FAT has a deterministic exit path.
+  if (process.env.AGENT_SCHEDULER_ENABLE === 'true') {
+    agentScheduler.start().catch(error => {
+      logger.error('Failed to start agent scheduler:', error);
+    });
+  } else {
+    logger.info('[startup] agent scheduler disabled — set AGENT_SCHEDULER_ENABLE=true to enable');
+  }
 
   // Initialize paper trading service (loads active sessions, subscribes to market data)
   paperTradingService.initialize().catch(error => {
@@ -439,22 +454,26 @@ server.listen(PORT, '::', async () => {
     );
   }
 
-  // Live Signal Engine — the ML-signal-primary fast loop. This is the
-  // inversion from the old batch-SLE system: ml-worker's ensemble
-  // (LSTM + Transformer + GBM + ARIMA + Prophet + QIG regime classifier)
-  // drives trades directly, with the risk kernel as the sole veto.
-  // Defaults to dry-run until LIVE_SIGNAL_EXECUTE=true is set so the
-  // first deploy just observes and logs.
+  // Live Signal Engine — ML-signal-primary fast loop. Disabled by default
+  // after 2026-05-02 architectural decision (its exit gate `ml_signal_flip`
+  // can't fire on a SHORT held against a BUY-leaning ML signal, leaving
+  // positions stranded). Two-flag control: LIVE_SIGNAL_ENABLE gates the
+  // engine entirely; LIVE_SIGNAL_EXECUTE flips dry-run vs live execution.
   if (process.env.NODE_ENV !== 'test') {
-    liveSignalEngine.start({
-      dryRun: process.env.LIVE_SIGNAL_EXECUTE !== 'true',
-    }).catch((err) => {
-      logger.error('Failed to start live signal engine:', err);
-    });
+    if (process.env.LIVE_SIGNAL_ENABLE === 'true') {
+      liveSignalEngine.start({
+        dryRun: process.env.LIVE_SIGNAL_EXECUTE !== 'true',
+      }).catch((err) => {
+        logger.error('Failed to start live signal engine:', err);
+      });
+    } else {
+      logger.info('[startup] live signal engine disabled — set LIVE_SIGNAL_ENABLE=true to enable');
+    }
 
     // Monkey v0.6b — two parallel sub-kernels sharing the bank + bus:
     //   Position (15 m, slow, patient) and Swing (5 m, tactical).
     // They share the 5× exposure cap via sizeFraction=0.5 each.
+    // Sole always-on trading engine post-2026-05-02; the others gate above.
     monkeyKernel.start().catch((err) => {
       logger.error('Failed to start Monkey.Position kernel:', err);
     });
