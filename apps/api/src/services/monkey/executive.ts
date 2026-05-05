@@ -148,7 +148,17 @@ export const LANE_PARAMETER_DEFAULTS: Record<
   // v0.8.7 — scalp 1:1 R:R per user directive (option a, 3% TP / 3% SL).
   scalp: { slPct: 0.03, tpPct: 0.03, budgetFrac: 0.50 },
   swing: { slPct: 0.15, tpPct: 0.15, budgetFrac: 0.50 },
-  trend: { slPct: 0.40, tpPct: 0.40, budgetFrac: 0.0 },
+  // v0.10.1 (2026-05-05) — trend lane FLIPPED ON per user directive.
+  // Was budgetFrac: 0.0 (opt-in disabled). Now 0.10 (10% of equity).
+  // chooseLane's trend score is phi × sovereignty × |tapeTrend|, so
+  // trend only wins when the kernel sees coherent macro flow + mature
+  // sovereignty + strong tape. Conservative starting allocation; the
+  // Arbiter will adjust capital across K/M/T agents based on PnL track
+  // record. Mirrors live monkey_parameters override:
+  //   executive.lane.trend.budget_frac = 0.10 (set 2026-05-05).
+  // Sum across lanes is now 1.10 — the notional ceiling (4× equity)
+  // remains the hard cap on simultaneous multi-lane exposure.
+  trend: { slPct: 0.40, tpPct: 0.40, budgetFrac: 0.10 },
 };
 
 /**
