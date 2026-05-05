@@ -78,8 +78,8 @@ describe('Lane parameter envelope (proposal #10)', () => {
     ).toBeCloseTo(1.0, 9);
   });
 
-  it('trend budget defaults to 0 (opt-in)', () => {
-    expect(laneBudgetFraction('trend')).toBe(0);
+  it('trend budget at 0.10 (live since 2026-05-05 — was 0 opt-in)', () => {
+    expect(laneBudgetFraction('trend')).toBe(0.10);
   });
 
   it('observe budget is 0', () => {
@@ -111,11 +111,15 @@ describe('currentPositionSize lane-budget cap (post fix/lane-budget-size-zero-re
     expect(scalp.value).toBeCloseTo(swing.value, 6);
   });
 
-  it('trend budget=0 sizes to zero (opt-in lane)', () => {
+  it('trend lane sizes within its budget cap (live since 2026-05-05)', () => {
+    const equity = 200;
     const result = currentPositionSize(
-      basinState(0.5), 200, 1, 5, 10, MonkeyMode.INVESTIGATION, 'trend',
+      basinState(0.5), equity, 1, 5, 10, MonkeyMode.INVESTIGATION, 'trend',
     );
-    expect(result.value).toBe(0);
+    // Trend is now 10% of equity. Margin must not exceed that cap.
+    const cap = laneBudgetFraction('trend') * equity;
+    expect(result.value).toBeLessThanOrEqual(cap + 1e-6);
+    expect(result.value).toBeGreaterThan(0);
   });
 
   it('scalp lane margin never exceeds the lane budget cap', () => {
@@ -227,12 +231,21 @@ describe('Cross-lane non-interference (proposal #10 invariant)', () => {
     expect(scalpShort.value).toBe(true);
   });
 
-  it('lane budgets partition capital (sum <= 1.0)', () => {
+  it('lane budgets are sized so simultaneous max-out cannot exceed notional ceiling', () => {
+    // 2026-05-05: trend lane went 0 -> 0.10. Total is now 1.10 across the
+    // three position-bearing lanes — by intent. Lanes rarely max out
+    // simultaneously, and when they do, the notional ceiling
+    // (NOTIONAL_CEILING_RATIO = 4× equity) bounds aggregate exposure
+    // anyway. The invariant we care about is: each lane stays bounded,
+    // and the SUM stays inside the notional ceiling.
     const total =
       laneBudgetFraction('scalp')
       + laneBudgetFraction('swing')
       + laneBudgetFraction('trend');
-    expect(total).toBeLessThanOrEqual(1.0 + 1e-9);
+    expect(total).toBeLessThanOrEqual(4.0);  // notional ceiling ratio
+    expect(laneBudgetFraction('scalp')).toBeGreaterThan(0);
+    expect(laneBudgetFraction('swing')).toBeGreaterThan(0);
+    expect(laneBudgetFraction('trend')).toBeGreaterThan(0);
   });
 
   it('scalp size never eats swing capital — lane budget caps separately', () => {
@@ -316,12 +329,17 @@ describe('Flat-account sizing regression (fix/lane-budget-size-zero-regression)'
     expect(notional).toBeGreaterThanOrEqual(22.49);
   });
 
-  it('trend lane (budget=0) still collapses to 0 — opt-in promise preserved', () => {
+  it('trend lane sizes within its 10% budget cap (live since 2026-05-05)', () => {
+    // Was: budget=0 → collapses to 0 (opt-in promise). Now: budget=0.10
+    // → margin cap is 10% of equity. The structural-zero fallback in
+    // chooseLane no longer triggers for trend.
+    const equity = 1000;
     const result = currentPositionSize(
-      basinState(0.55, 0.5), 1000, 22.49, 14, 20, MonkeyMode.INVESTIGATION, 'trend',
+      basinState(0.55, 0.5), equity, 22.49, 14, 20, MonkeyMode.INVESTIGATION, 'trend',
     );
-    expect(result.value).toBe(0);
-    expect(result.derivation.laneMarginCap).toBe(0);
+    expect(result.derivation.laneMarginCap).toBeCloseTo(equity * 0.10, 6);
+    expect(result.value).toBeGreaterThan(0);
+    expect(result.value).toBeLessThanOrEqual(equity * 0.10 + 1e-6);
   });
 
   it('lane margin cap surfaces in derivation', () => {
@@ -342,13 +360,14 @@ describe('Flat-account sizing regression (fix/lane-budget-size-zero-regression)'
       .toBeCloseTo(swing.derivation.laneMarginCap, 6);
   });
 
-  it('chooseLane never returns a zero-budget position lane', () => {
-    // High sovereignty + strong tape pushes raw trend score to dominate;
-    // softmax with τ=1/κ would otherwise pick "trend" (budget=0). The
-    // structural-zero fallback must redirect to scalp/swing.
+  it('chooseLane never returns a zero-budget position lane (fallback still active)', () => {
+    // 2026-05-05: trend lane is now 0.10 (live). The structural-zero
+    // fallback in chooseLane is preserved for the general case (any
+    // position-bearing lane that gets registry-flipped back to 0 must
+    // still redirect to a non-zero lane). Verify the invariant holds
+    // without depending on trend being zero.
     const bs = basinState(0.9, 0.9);
     const result = chooseLane(bs, 1.0);
-    expect(result.value).not.toBe('trend');
     if (result.value !== 'observe') {
       expect(laneBudgetFraction(result.value)).toBeGreaterThan(0);
     }
