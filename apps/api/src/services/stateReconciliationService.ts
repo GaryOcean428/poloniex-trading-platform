@@ -239,7 +239,26 @@ class StateReconciliationService {
         }
       }
 
-      // ── 7. Balance drift check ───────────────────────────────────────────────
+      // ── 7. Balance drift check + auto-sync ───────────────────────────────────
+      //
+      // The exchange is the source of truth for equity. Drift between
+      // DB-recorded equity (latest autonomous_performance row) and
+      // exchange-reported equity has two sources:
+      //   (a) manual cash flows — user deposits/withdrawals on Poloniex UI
+      //   (b) trade closes the DB writer missed (FAT disabled, FAT crash,
+      //       or close-time race)
+      //
+      // Both should be papered over by an authoritative sync from the
+      // exchange. The drift WARN log is preserved as the audit trail —
+      // operator sees the magnitude/direction and can correlate it to
+      // their own deposit/withdrawal activity. The auto-INSERT below
+      // ensures downstream consumers (Arbiter sizing, dashboards,
+      // notional ceilings) see correct equity within one reconciler tick.
+      //
+      // 2026-05-05 incident: FAT was disabled but was the sole writer of
+      // autonomous_performance. DB equity stayed frozen at $113.27 for
+      // hours while exchange balance grew to $369.10 from manual
+      // deposits — Arbiter was sizing against the stale $113.
       if (exchangeBalance !== null && dbBalance !== null && exchangeBalance > 0) {
         const drift = Math.abs(exchangeBalance - dbBalance) / exchangeBalance;
         result.balanceDrift = drift;
@@ -250,6 +269,43 @@ class StateReconciliationService {
             dbBalance,
             driftPercent: (drift * 100).toFixed(2)
           });
+
+          // Auto-sync: write a fresh autonomous_performance row with the
+          // exchange balance. Recompute total_return/drawdown when we have
+          // initial_capital from the config; else NULL them out (operator
+          // sees drift in logs and historical rows preserve old values).
+          try {
+            const cfgRow = await pool.query(
+              `SELECT initial_capital FROM autonomous_trading_configs WHERE user_id = $1 LIMIT 1`,
+              [userId]
+            );
+            const initialCapital =
+              cfgRow.rows[0]?.initial_capital != null
+                ? parseFloat(cfgRow.rows[0].initial_capital)
+                : null;
+            const totalReturn =
+              initialCapital && initialCapital > 0
+                ? ((exchangeBalance - initialCapital) / initialCapital) * 100
+                : null;
+            const drawdown =
+              initialCapital && initialCapital > 0
+                ? Math.max(0, (initialCapital - exchangeBalance) / initialCapital) * 100
+                : null;
+            await pool.query(
+              `INSERT INTO autonomous_performance
+                 (user_id, current_equity, total_return, drawdown, timestamp)
+               VALUES ($1, $2, $3, $4, NOW())`,
+              [userId, exchangeBalance, totalReturn, drawdown]
+            );
+            logger.info(
+              `[RECONCILE] Synced DB equity to exchange for user ${userId}: ${dbBalance.toFixed(2)} -> ${exchangeBalance.toFixed(2)}`
+            );
+          } catch (syncErr) {
+            logger.error(
+              `[RECONCILE] Failed to sync DB equity for user ${userId}:`,
+              syncErr
+            );
+          }
         }
       }
 
