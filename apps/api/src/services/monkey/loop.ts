@@ -120,6 +120,7 @@ import {
   type LaneType,
 } from './executive.js';
 import { evaluateRejustification } from './held_position_rejustification.js';
+import { computeAgentHeadroom, clampSizeToHeadroom } from './agentEquityBound.js';
 
 /** Default Monkey watchlist — matches liveSignalEngine for side-by-side. */
 const DEFAULT_SYMBOLS = ['BTC_USDT_PERP', 'ETH_USDT_PERP'];
@@ -1698,7 +1699,23 @@ export class MonkeyKernel extends EventEmitter {
     // HOLD AND mlStrength >= 0.55 AND M has > 0 capital. Same risk
     // kernel + position-write pipeline as K (executeEntry handles
     // veto, exchange order, DB INSERT with agent='M').
+    //
+    // Per-agent equity bound (2026-05-05 #10): M's cumulative open
+    // margin is held within the Arbiter's per-tick allocation. K and T
+    // are unaffected — each agent operates on its own discipline. Bound
+    // is self-regulating: profitable streaks loosen the cap (Arbiter
+    // grants more), drawdowns tighten it. See agentEquityBound.ts.
     if (process.env.MONKEY_EXECUTE === 'true' && arbiterAllocation.m > 0) {
+      const mOpenMargin = await this.sumOpenAgentMargin(symbol, 'M');
+      const mHeadroom = computeAgentHeadroom(arbiterAllocation.m, mOpenMargin);
+      if (mHeadroom <= 0) {
+        derivation.agentM = {
+          skipped: true,
+          reason: 'at_alloc_cap',
+          openMargin: Number(mOpenMargin.toFixed(2)),
+          allocation: Number(arbiterAllocation.m.toFixed(2)),
+        };
+      } else {
       const mInputs: MLAgentInputs = {
         symbol,
         ohlcv: ohlcv.map((c) => ({
@@ -1721,9 +1738,14 @@ export class MonkeyKernel extends EventEmitter {
         allocatedCapitalUsdt: arbiterAllocation.m,
       };
       const mDecision = mlAgentDecide(mInputs);
+      const clampedSize = clampSizeToHeadroom(mDecision.sizeUsdt, mHeadroom);
       derivation.agentM = {
         action: mDecision.action,
-        sizeUsdt: mDecision.sizeUsdt,
+        sizeUsdt: clampedSize,
+        requestedSize: mDecision.sizeUsdt,
+        headroom: Number(mHeadroom.toFixed(2)),
+        openMargin: Number(mOpenMargin.toFixed(2)),
+        allocation: Number(arbiterAllocation.m.toFixed(2)),
         leverage: mDecision.leverage,
         reason: mDecision.reason,
         mlSignal: mInputs.mlSignal,
@@ -1731,7 +1753,7 @@ export class MonkeyKernel extends EventEmitter {
       };
       if (
         (mDecision.action === 'enter_long' || mDecision.action === 'enter_short')
-        && mDecision.sizeUsdt > 0
+        && clampedSize > 0
       ) {
         // v0.8.7 kill switch — pause new entries from Agent M.
         if (isTradingPaused()) {
@@ -1743,7 +1765,7 @@ export class MonkeyKernel extends EventEmitter {
         const mResult = await this.executeEntry({
           symbol,
           side: mDecision.action === 'enter_long' ? 'long' : 'short',
-          marginUsdt: mDecision.sizeUsdt,
+          marginUsdt: clampedSize,
           leverage: mDecision.leverage,
           entryPrice: lastPrice,
           minNotional,
@@ -1763,11 +1785,13 @@ export class MonkeyKernel extends EventEmitter {
         } else {
           logger.info('[AgentM] entry placed', {
             symbol, side: mDecision.action, orderId: mResult.orderId,
-            margin: mDecision.sizeUsdt.toFixed(2), leverage: mDecision.leverage,
+            margin: clampedSize.toFixed(2), leverage: mDecision.leverage,
+            headroom: mHeadroom.toFixed(2),
           });
         }
         }  // close v0.8.7 trading-paused else branch
       }
+      }  // close mHeadroom > 0 else branch
     }
 
     // 6c-T. AGENT T EXECUTE — Turtle System 1 (classical TA control arm).
@@ -2336,6 +2360,47 @@ export class MonkeyKernel extends EventEmitter {
         err: err instanceof Error ? err.message : String(err),
       });
       return [];
+    }
+  }
+
+  /**
+   * Sum of currently-open margin (USDT) for a given agent on a symbol.
+   * Margin = quantity × entry_price ÷ leverage (legacy rows without
+   * leverage fall back to notional).
+   *
+   * Used by the per-agent equity bound (#10): the kernel checks this
+   * against the Arbiter's per-tick allocation before letting an agent
+   * stack a fresh entry. Fail-soft returns 0 — the exchange-side
+   * margin enforcement (Poloniex 21005) is the hard ceiling, this
+   * guard is the soft preventative.
+   */
+  private async sumOpenAgentMargin(
+    symbol: string,
+    agent: 'K' | 'M' | 'T',
+  ): Promise<number> {
+    try {
+      const reasonPattern = `monkey|kernel=${this.instanceId}|%`;
+      const result = await pool.query(
+        `SELECT COALESCE(SUM(
+            CASE
+              WHEN leverage > 0 THEN (quantity * entry_price / leverage)
+              ELSE quantity * entry_price
+            END
+          ), 0) AS sum_margin
+           FROM autonomous_trades
+          WHERE status = 'open'
+            AND symbol = $1
+            AND agent = $2
+            AND reason LIKE $3`,
+        [symbol, agent, reasonPattern],
+      );
+      const row = result.rows[0] as { sum_margin: string | number } | undefined;
+      return Number(row?.sum_margin ?? 0);
+    } catch (err) {
+      logger.debug('[Monkey] sumOpenAgentMargin failed', {
+        err: err instanceof Error ? err.message : String(err),
+      });
+      return 0;
     }
   }
 
