@@ -121,6 +121,7 @@ import {
 } from './executive.js';
 import { evaluateRejustification } from './held_position_rejustification.js';
 import { computeAgentHeadroom, clampSizeToHeadroom } from './agentEquityBound.js';
+import { planCloseChunks } from './closeChunker.js';
 
 /** Default Monkey watchlist — matches liveSignalEngine for side-by-side. */
 const DEFAULT_SYMBOLS = ['BTC_USDT_PERP', 'ETH_USDT_PERP'];
@@ -2501,6 +2502,22 @@ export class MonkeyKernel extends EventEmitter {
 
     const closeSide: 'buy' | 'sell' = heldSide === 'long' ? 'sell' : 'buy';
 
+    // Poloniex v3 rejects single orders > 10,000 contracts with code 21010.
+    // Live tape 2026-05-05 02:08: BTC stale_bleed retried every tick because
+    // the position had grown beyond the cap and the close was permanently
+    // rejected. planCloseChunks splits an oversized close into ≤ 9,999-contract
+    // chunks (lot-rounded). No-op when the close fits in a single order.
+    const plan = planCloseChunks(formattedSize, symbolLotSize);
+    const chunkSizes = plan.chunks;
+    if (plan.residual > 0) {
+      logger.warn('[Monkey] close chunk residual stranded (smaller than lot)', {
+        symbol, formattedSize, residual: plan.residual, lot: symbolLotSize,
+      });
+    }
+    if (chunkSizes.length === 0) {
+      return { executed: false, orderId: null, reason: 'chunk_planning_zero' };
+    }
+
     let orderId: string | null = null;
     try {
       // Proposal #10 — in HEDGE mode the close must specify which side
@@ -2516,16 +2533,32 @@ export class MonkeyKernel extends EventEmitter {
       const isHedge = this.positionDirectionMode === 'HEDGE';
       const closePosSide: 'LONG' | 'SHORT' | undefined =
         isHedge ? (heldSide === 'long' ? 'LONG' : 'SHORT') : undefined;
-      const exchangeOrder = await poloniexFuturesService.placeOrder(credentials, {
-        symbol, side: closeSide, type: 'market', size: formattedSize, lotSize: symbolLotSize,
-        reduceOnly: true,
-      }, {
-        positionMode: isHedge ? 'HEDGE' : 'ONE_WAY',
-        ...(closePosSide ? { posSide: closePosSide } : {}),
-      });
-      orderId =
-        exchangeOrder?.ordId ?? exchangeOrder?.orderId ??
-        exchangeOrder?.id ?? exchangeOrder?.clientOid ?? null;
+      const orderIds: string[] = [];
+      for (let i = 0; i < chunkSizes.length; i++) {
+        const chunkSize = chunkSizes[i]!;
+        const exchangeOrder = await poloniexFuturesService.placeOrder(credentials, {
+          symbol, side: closeSide, type: 'market', size: chunkSize, lotSize: symbolLotSize,
+          reduceOnly: true,
+        }, {
+          positionMode: isHedge ? 'HEDGE' : 'ONE_WAY',
+          ...(closePosSide ? { posSide: closePosSide } : {}),
+        });
+        const id =
+          exchangeOrder?.ordId ?? exchangeOrder?.orderId ??
+          exchangeOrder?.id ?? exchangeOrder?.clientOid ?? null;
+        if (id) orderIds.push(String(id));
+        if (chunkSizes.length > 1) {
+          logger.info('[Monkey] close chunk placed', {
+            symbol, chunk: i + 1, total: chunkSizes.length, size: chunkSize, orderId: id,
+          });
+        }
+      }
+      if (orderIds.length === 0) {
+        return { executed: false, orderId: null, reason: 'no_chunk_returned_orderId' };
+      }
+      // Audit: when chunks > 1, expose the full chain so the close row's
+      // exit_order_id reflects every leg. Single-order legacy keeps a single id.
+      orderId = orderIds.length === 1 ? orderIds[0]! : orderIds.join(',');
     } catch (err) {
       return {
         executed: false, orderId: null,
