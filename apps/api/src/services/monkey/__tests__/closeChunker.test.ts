@@ -119,3 +119,47 @@ describe('planCloseChunks — live-tape scenario', () => {
     expect(out.totalCovered).toBe(stuckSize);
   });
 });
+
+describe('planCloseChunks — contracts-not-base-asset (2026-05-06 regression)', () => {
+  // 2026-05-06 incident: PR #639 chunker still hit code 21010. Root cause:
+  // Poloniex's cap is in CONTRACTS, but the kernel was passing BASE ASSET
+  // (BTC, ETH) into the chunker. Caller must convert size→contracts BEFORE
+  // calling planCloseChunks, then convert chunks back to base asset for
+  // placeOrder. These tests document the contract.
+
+  it('lot=1 means input is already in contracts (correct call site)', () => {
+    // Caller computes sizeInContracts = formattedSize / lotSize and passes
+    // lot=1 to chunker. 1.5 BTC at lotSize=0.0001 = 15000 contracts.
+    const out = planCloseChunks(15000, 1);
+    expect(out.chunks).toEqual([9999, 5001]);
+    expect(out.chunks.every((c) => c <= MAX_CONTRACTS_PER_ORDER)).toBe(true);
+  });
+
+  it('the previous miscall (lot=lotSize, size=base asset) does NOT chunk', () => {
+    // What the broken caller was doing: passing 1.5 BTC with lotSize=0.0001.
+    // The chunker sees desired=1.5 < maxPerOrder=9999, returns single chunk.
+    // After placeOrder converts: 1.5 / 0.0001 = 15000 contracts → 21010.
+    // This test documents the bug we just fixed; do NOT call the chunker
+    // this way.
+    const broken = planCloseChunks(1.5, 0.0001);
+    expect(broken.chunks).toEqual([1.5]);
+    // 1.5 base asset / 0.0001 lotSize = 15000 contracts — exceeds Poloniex cap.
+    const inContracts = broken.chunks[0]! / 0.0001;
+    expect(inContracts).toBeGreaterThan(10000);  // documents the failure mode
+  });
+
+  it('correct call site for the same 1.5 BTC position', () => {
+    // The right way: convert to contracts first, chunk, convert back.
+    const baseSize = 1.5;
+    const lotSize = 0.0001;
+    const contracts = Math.round(baseSize / lotSize);  // 15000
+    const out = planCloseChunks(contracts, 1);
+    expect(out.chunks).toEqual([9999, 5001]);
+    const baseAssetChunks = out.chunks.map((c) => c * lotSize);
+    // Each base-asset chunk converts back to ≤ 9999 contracts.
+    expect(baseAssetChunks.every((b) => b / lotSize <= MAX_CONTRACTS_PER_ORDER + 1e-9)).toBe(true);
+    // Sum equals original (within float precision).
+    const sumBase = baseAssetChunks.reduce((s, v) => s + v, 0);
+    expect(sumBase).toBeCloseTo(baseSize, 9);
+  });
+});

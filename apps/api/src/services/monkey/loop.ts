@@ -2503,20 +2503,54 @@ export class MonkeyKernel extends EventEmitter {
     const closeSide: 'buy' | 'sell' = heldSide === 'long' ? 'sell' : 'buy';
 
     // Poloniex v3 rejects single orders > 10,000 contracts with code 21010.
-    // Live tape 2026-05-05 02:08: BTC stale_bleed retried every tick because
-    // the position had grown beyond the cap and the close was permanently
-    // rejected. planCloseChunks splits an oversized close into ≤ 9,999-contract
-    // chunks (lot-rounded). No-op when the close fits in a single order.
-    const plan = planCloseChunks(formattedSize, symbolLotSize);
-    const chunkSizes = plan.chunks;
+    // Live tape 2026-05-05 02:08 — and again 2026-05-06 00:20: BTC stale_bleed
+    // retried every tick because the position had grown beyond the cap and
+    // the close was permanently rejected.
+    //
+    // CRITICAL: Poloniex's 10,000 cap is in CONTRACTS, while ``formattedSize``
+    // and ``symbolLotSize`` are in BASE ASSET (BTC, ETH) units. The
+    // poloniexFuturesService.placeOrder converts ``size / lotSize → contracts``
+    // internally before sending. So the chunker must reason in CONTRACTS, not
+    // base asset — passing 1.5 BTC unchunked converts to 15,000 contracts and
+    // hits 21010 even though "1.5" is far below the 9,999 base-asset threshold.
+    //
+    // Chunk in contracts space (lot=1), then convert each chunk back to base
+    // asset for placeOrder by multiplying by symbolLotSize.
+    //
+    // Math.floor (not Math.round) for the conversion: if float precision
+    // noise pushes formattedSize/symbolLotSize slightly above the true
+    // integer (e.g., 15000.0000000001), rounding up would claim 15001
+    // contracts the exchange doesn't actually have on the position, and
+    // the reconciler's "exchange has positions not tracked in DB" branch
+    // would have to clean up. Flooring under-closes by ≤ 1 contract worst
+    // case — that residual is picked up by the reconciler's standard
+    // ghost-close path on the next tick.
+    const sizeInContracts = symbolLotSize > 0
+      ? Math.floor(formattedSize / symbolLotSize)
+      : Math.floor(formattedSize);
+    const plan = planCloseChunks(sizeInContracts, 1);  // contracts, no lot rounding
+    const chunkContracts = plan.chunks;
     if (plan.residual > 0) {
-      logger.warn('[Monkey] close chunk residual stranded (smaller than lot)', {
-        symbol, formattedSize, residual: plan.residual, lot: symbolLotSize,
+      const residualBaseAsset = symbolLotSize > 0
+        ? plan.residual * symbolLotSize
+        : plan.residual;
+      logger.warn('[Monkey] close chunk residual stranded', {
+        symbol,
+        formattedSize,                  // base-asset (input from lot-rounding)
+        symbolLotSize,
+        sizeInContracts,                // contracts (post-conversion)
+        residualContracts: plan.residual,
+        residualBaseAsset,              // ditto, in base-asset for quick eyeballing
       });
     }
-    if (chunkSizes.length === 0) {
+    if (chunkContracts.length === 0) {
       return { executed: false, orderId: null, reason: 'chunk_planning_zero' };
     }
+    // Convert chunks back to base asset for placeOrder. lotSize=0 (legacy
+    // path) keeps base-asset == contracts, preserving prior behavior.
+    const chunkSizes = symbolLotSize > 0
+      ? chunkContracts.map((c) => c * symbolLotSize)
+      : chunkContracts;
 
     let orderId: string | null = null;
     try {
