@@ -1353,6 +1353,29 @@ class FullyAutonomousTrader extends EventEmitter {
         if (qtyNum === 0) continue;
 
         const symbol = position.symbol;
+
+        // 2026-05-06 incident: FAT closed a user-opened ETH LONG via
+        // stop_loss_roi because it iterates ALL exchange positions and
+        // applies its SL/TP rules without checking ownership. Add a
+        // user-position guard: if the reconciler has tracked this symbol
+        // as a user-opened position (agent='USER', lane='manual'), skip
+        // it — FAT must not manage what the user opened on Poloniex UI.
+        try {
+          const userOwned = await pool.query(
+            `SELECT 1 FROM autonomous_trades
+              WHERE user_id = $1 AND symbol = $2 AND status = 'open'
+                AND agent = 'USER' LIMIT 1`,
+            [userId, symbol],
+          );
+          if (userOwned.rows.length > 0) {
+            logger.info(`[FAT] skipping ${symbol} — user-owned position (agent='USER'), not FAT's to manage`);
+            continue;
+          }
+        } catch (ownerErr) {
+          logger.debug('[FAT] user-owned check failed (continuing — fail-open)', {
+            symbol, err: ownerErr instanceof Error ? ownerErr.message : String(ownerErr),
+          });
+        }
         const markPx = parseFloat(position.markPx || position.markPrice || '0');
         const entryPrice = parseFloat(position.openAvgPx || position.entryPrice || '0');
         const unrealizedPnL = parseFloat(position.upl || position.unrealizedPnl || '0');
