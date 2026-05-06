@@ -295,6 +295,37 @@ export class LiveSignalEngine extends EventEmitter {
       if (!Number.isFinite(equity) || equity <= 0) return;
       const ddRatio = upl / equity;
 
+      // Auto re-arm: if execution mode was paused by the kill switch and
+      // drawdown has recovered above KILL_SWITCH_RECOVERY_THRESHOLD, flip
+      // mode back to 'auto'. Hysteresis (-15% trip / -5% recovery) prevents
+      // oscillation. Without this, every kill-switch event leaves the
+      // account permanently paused until manual reset — observed
+      // 2026-05-06: kill switch tripped at 08:34, account recovered to
+      // +DD by 09:04 but mode stayed pause; Monkey detected breakouts
+      // every tick but every entry was vetoed by execution_mode_paused.
+      const KILL_SWITCH_RECOVERY_THRESHOLD = -0.05;
+      if (ddRatio > KILL_SWITCH_RECOVERY_THRESHOLD) {
+        try {
+          const cur = await pool.query(
+            `SELECT mode, updated_by FROM agent_execution_mode WHERE id = 1`,
+          );
+          const row = cur.rows[0] as { mode?: string; updated_by?: string } | undefined;
+          if (row?.mode === 'pause' && row?.updated_by === 'kill_switch') {
+            await pool.query(
+              `UPDATE agent_execution_mode
+                  SET mode = 'auto', updated_by = 'kill_switch_auto_rearm',
+                      updated_at = NOW(), reason = $1
+                WHERE id = 1`,
+              [`Auto-rearm at DD=${(ddRatio * 100).toFixed(2)}% > ${(KILL_SWITCH_RECOVERY_THRESHOLD * 100).toFixed(0)}% recovery threshold`],
+            );
+            logger.info('[LiveSignal] kill-switch auto-rearmed', {
+              ddRatio,
+              recoveryThreshold: KILL_SWITCH_RECOVERY_THRESHOLD,
+            });
+          }
+        } catch { /* fail-soft; manual reset still works */ }
+      }
+
       if (ddRatio <= KILL_SWITCH_DD_THRESHOLD) {
         logger.error('[LiveSignal] kill-switch auto-flatten TRIGGERED', {
           equity,
