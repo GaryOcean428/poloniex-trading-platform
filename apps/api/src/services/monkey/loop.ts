@@ -2516,14 +2516,31 @@ export class MonkeyKernel extends EventEmitter {
     //
     // Chunk in contracts space (lot=1), then convert each chunk back to base
     // asset for placeOrder by multiplying by symbolLotSize.
+    //
+    // Math.floor (not Math.round) for the conversion: if float precision
+    // noise pushes formattedSize/symbolLotSize slightly above the true
+    // integer (e.g., 15000.0000000001), rounding up would claim 15001
+    // contracts the exchange doesn't actually have on the position, and
+    // the reconciler's "exchange has positions not tracked in DB" branch
+    // would have to clean up. Flooring under-closes by ≤ 1 contract worst
+    // case — that residual is picked up by the reconciler's standard
+    // ghost-close path on the next tick.
     const sizeInContracts = symbolLotSize > 0
-      ? Math.round(formattedSize / symbolLotSize)
-      : Math.round(formattedSize);
+      ? Math.floor(formattedSize / symbolLotSize)
+      : Math.floor(formattedSize);
     const plan = planCloseChunks(sizeInContracts, 1);  // contracts, no lot rounding
     const chunkContracts = plan.chunks;
     if (plan.residual > 0) {
+      const residualBaseAsset = symbolLotSize > 0
+        ? plan.residual * symbolLotSize
+        : plan.residual;
       logger.warn('[Monkey] close chunk residual stranded', {
-        symbol, sizeInContracts, residual: plan.residual,
+        symbol,
+        formattedSize,                  // base-asset (input from lot-rounding)
+        symbolLotSize,
+        sizeInContracts,                // contracts (post-conversion)
+        residualContracts: plan.residual,
+        residualBaseAsset,              // ditto, in base-asset for quick eyeballing
       });
     }
     if (chunkContracts.length === 0) {
