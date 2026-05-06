@@ -260,19 +260,33 @@ class StateReconciliationService {
           let ghostReason = 'reconciled_not_on_exchange';
           try {
             const ctxRow = await pool.query(
-              `SELECT exit_order_id, reason FROM autonomous_trades WHERE id = $1`,
+              `SELECT exit_order_id, reason, agent FROM autonomous_trades WHERE id = $1`,
               [dbTrade.id]
             );
             const ctx = ctxRow.rows[0] as
-              | { exit_order_id: string | null; reason: string | null }
+              | { exit_order_id: string | null; reason: string | null; agent: string | null }
               | undefined;
             if (ctx?.exit_order_id) {
               ghostReason = 'reconciled_post_close_race';
             } else if (
-              ctx?.reason && (
-                ctx.reason.startsWith('monkey|') ||
-                ctx.reason.startsWith('live_signal|') ||
-                ctx.reason.startsWith('autoTrader|')
+              // Any of these signal a kernel/user-tracked row whose
+              // disappearance from the exchange means the user closed
+              // it manually (or some out-of-band actor did):
+              //   - kernel/livesignal/autotrader-issued rows (reason
+              //     prefixes monkey|, live_signal|, autoTrader|)
+              //   - reconciler-inserted user-tracking rows (reason
+              //     'reconciled' from pre-PR #641 code, or
+              //     'manual_open_user|...' from post-#641 code, or
+              //     agent='USER' for any reason format)
+              (
+                ctx?.agent === 'USER' ||
+                (ctx?.reason && (
+                  ctx.reason.startsWith('monkey|') ||
+                  ctx.reason.startsWith('live_signal|') ||
+                  ctx.reason.startsWith('autoTrader|') ||
+                  ctx.reason.startsWith('manual_open_user') ||
+                  ctx.reason === 'reconciled'
+                ))
               )
             ) {
               ghostReason = 'manual_close_user';
