@@ -170,25 +170,53 @@ class StateReconciliationService {
           };
           result.orphans.push(orphan);
 
-          // Insert reconciled record into autonomous_trades
+          // Insert reconciled record into autonomous_trades, tagged as
+          // user-originated (agent='USER', lane='manual'). This lets the
+          // kernel's own queries — which filter by reason LIKE 'monkey|%' —
+          // continue to ignore manual positions, while dashboards and PnL
+          // accounting can identify them as user-placed. The reason field
+          // also embeds the source so historic queries can distinguish
+          // user opens from system retries.
           try {
+            const userReason = `manual_open_user|exchange_pid=${
+              exPos.positionId ?? exPos.id ?? 'na'
+            }|src=reconciler`;
             await pool.query(
               `INSERT INTO autonomous_trades
-               (user_id, symbol, side, entry_price, quantity, reason, status, engine_version)
-               VALUES ($1, $2, $3, $4, $5, $6, 'open', $7)`,
+               (user_id, symbol, side, entry_price, quantity, reason, status,
+                engine_version, agent, lane)
+               VALUES ($1, $2, $3, $4, $5, $6, 'open', $7, 'USER', 'manual')`,
               [
                 userId,
                 symbol,
                 side,
                 entryPrice,
                 size,
-                'reconciled',
+                userReason,
                 getEngineVersion(),
               ]
             );
             logger.info(
-              `[RECONCILE] Inserted orphaned position for user ${userId}: ${symbol} ${side}`
+              `[RECONCILE] Tracked user-opened position for user ${userId}: ${symbol} ${side} qty=${size} @${entryPrice}`
             );
+            // Emit an agent_events row so the audit trail captures the
+            // user action explicitly. metadata column was added in
+            // migration 044 (2026-05-02 incident).
+            await pool.query(
+              `INSERT INTO agent_events
+                 (user_id, event_type, execution_mode, description, market, metadata, created_at)
+               VALUES ($1, 'manual_position_detected', 'auto', $2, $3, $4, NOW())`,
+              [
+                userId,
+                `User-opened ${symbol} ${side} qty=${size} @${entryPrice} detected and tracked by reconciler`,
+                symbol,
+                JSON.stringify({
+                  source: 'reconciler',
+                  side, size, entryPrice,
+                  exchange_position_id: exPos.positionId ?? exPos.id ?? null,
+                }),
+              ]
+            ).catch(() => { /* fail-soft; main insert above is the source of truth */ });
           } catch (insertErr) {
             logger.error(
               `[RECONCILE] Failed to insert orphaned position for user ${userId}:`,
@@ -217,18 +245,52 @@ class StateReconciliationService {
           };
           result.ghosts.push(ghost);
 
-          // Close the ghost record
+          // Close the ghost record. Classification heuristic:
+          //   - If exit_order_id is set, our system tried to close (close
+          //     went through after the row was queried but before this
+          //     reconcile, OR a partial close came through). Tag as
+          //     'reconciled_post_close_race' for audit clarity.
+          //   - If exit_order_id is NULL and the DB row was kernel-issued
+          //     (reason LIKE 'monkey|%' or 'live_signal|%'): the user
+          //     likely closed the position manually on Poloniex UI. Tag
+          //     as 'manual_close_user' so audit trails distinguish user
+          //     interventions from infra issues.
+          //   - Otherwise (orphan/legacy/unknown): keep the original
+          //     'reconciled_not_on_exchange' tag for back-compat.
+          let ghostReason = 'reconciled_not_on_exchange';
+          try {
+            const ctxRow = await pool.query(
+              `SELECT exit_order_id, reason FROM autonomous_trades WHERE id = $1`,
+              [dbTrade.id]
+            );
+            const ctx = ctxRow.rows[0] as
+              | { exit_order_id: string | null; reason: string | null }
+              | undefined;
+            if (ctx?.exit_order_id) {
+              ghostReason = 'reconciled_post_close_race';
+            } else if (
+              ctx?.reason && (
+                ctx.reason.startsWith('monkey|') ||
+                ctx.reason.startsWith('live_signal|') ||
+                ctx.reason.startsWith('autoTrader|')
+              )
+            ) {
+              ghostReason = 'manual_close_user';
+            }
+          } catch {
+            /* fail-soft: keep generic reason */
+          }
           try {
             await pool.query(
               `UPDATE autonomous_trades
                SET status = 'closed',
-                   exit_reason = 'reconciled_not_on_exchange',
+                   exit_reason = $1,
                    exit_time = NOW()
-               WHERE id = $1`,
-              [dbTrade.id]
+               WHERE id = $2`,
+              [ghostReason, dbTrade.id]
             );
             logger.info(
-              `[RECONCILE] Closed ghost DB record ${dbTrade.id} for user ${userId}: ${dbTrade.symbol} ${dbTrade.side}`
+              `[RECONCILE] Closed ghost DB record ${dbTrade.id} for user ${userId}: ${dbTrade.symbol} ${dbTrade.side} (reason=${ghostReason})`
             );
           } catch (updateErr) {
             logger.error(
