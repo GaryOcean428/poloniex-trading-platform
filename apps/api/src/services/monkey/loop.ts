@@ -122,6 +122,10 @@ import {
 import { evaluateRejustification } from './held_position_rejustification.js';
 import { computeAgentHeadroom, clampSizeToHeadroom } from './agentEquityBound.js';
 import { planCloseChunks } from './closeChunker.js';
+import {
+  clampNewContractsToCap,
+  getMaxContractsPerPosition,
+} from './positionContractsBound.js';
 
 /** Default Monkey watchlist — matches liveSignalEngine for side-by-side. */
 const DEFAULT_SYMBOLS = ['BTC_USDT_PERP', 'ETH_USDT_PERP'];
@@ -2365,6 +2369,57 @@ export class MonkeyKernel extends EventEmitter {
   }
 
   /**
+   * Sum of currently-open contracts for a given (agent, symbol, side, lane).
+   * Quantities in autonomous_trades are stored in BASE ASSET units; this
+   * helper converts to contracts by dividing by lotSize before summing,
+   * matching the exchange's per-order cap units.
+   *
+   * Used by the per-position contracts cap (#11): the kernel checks
+   * cumulative open contracts against MAX_CONTRACTS_PER_POSITION before
+   * letting any agent stack a fresh entry that would push the cumulative
+   * position past the exchange's 10,000-contract per-order limit.
+   *
+   * Fail-soft returns 0 — the closeChunker remains as the downstream
+   * safety net if this query fails.
+   */
+  private async sumOpenContractsForPosition(
+    symbol: string,
+    agent: 'K' | 'M' | 'T',
+    side: 'long' | 'short',
+    lane: 'scalp' | 'swing' | 'trend',
+    lotSize: number,
+  ): Promise<number> {
+    if (!Number.isFinite(lotSize) || lotSize <= 0) return 0;
+    try {
+      const reasonPattern = `monkey|kernel=${this.instanceId}|%`;
+      // DB stores 'buy'|'sell' historically AND 'long'|'short' on newer
+      // rows — match either to be safe.
+      const sideAlternates =
+        side === 'long' ? ['buy', 'long'] : ['sell', 'short'];
+      const result = await pool.query(
+        `SELECT COALESCE(SUM(ABS(quantity)), 0) AS sum_qty
+           FROM autonomous_trades
+          WHERE status = 'open'
+            AND symbol = $1
+            AND agent = $2
+            AND lane = $3
+            AND side = ANY($4)
+            AND reason LIKE $5`,
+        [symbol, agent, lane, sideAlternates, reasonPattern],
+      );
+      const row = result.rows[0] as { sum_qty: string | number } | undefined;
+      const sumBaseAsset = Number(row?.sum_qty ?? 0);
+      // Convert base-asset quantity to contracts.
+      return Math.floor(sumBaseAsset / lotSize);
+    } catch (err) {
+      logger.debug('[Monkey] sumOpenContractsForPosition failed', {
+        err: err instanceof Error ? err.message : String(err),
+      });
+      return 0;
+    }
+  }
+
+  /**
    * Sum of currently-open margin (USDT) for a given agent on a symbol.
    * Margin = quantity × entry_price ÷ leverage (legacy rows without
    * leverage fall back to notional).
@@ -2812,6 +2867,52 @@ export class MonkeyKernel extends EventEmitter {
         executed: false, orderId: null,
         reason: `post_round_below_min_notional: ${(formattedSize * entryPrice).toFixed(2)} < ${minNotional.toFixed(2)}`,
       };
+    }
+
+    // Per-position contracts cap (#11) — keep cumulative open contracts
+    // for (agent, symbol, side, lane) below MAX_CONTRACTS_PER_POSITION
+    // (default 8000, with 2000-contract buffer below Poloniex's 10000
+    // per-order rejection threshold). When already-open contracts plus
+    // this new entry's contracts would exceed the cap, clamp the new
+    // entry; if no headroom, suppress the entry entirely. Independent
+    // per-agent — K, M, T each get their own envelope.
+    if (symbolLotSize > 0) {
+      const effectiveAgent = (req.agent ?? 'K') as 'K' | 'M' | 'T';
+      const effectiveLane = (req.lane ?? 'swing') as 'scalp' | 'swing' | 'trend';
+      const newContracts = Math.floor(formattedSize / symbolLotSize);
+      const currentContracts = await this.sumOpenContractsForPosition(
+        symbol, effectiveAgent, side, effectiveLane, symbolLotSize,
+      );
+      const cap = getMaxContractsPerPosition();
+      const clampedNewContracts = clampNewContractsToCap(
+        newContracts, currentContracts, cap,
+      );
+      if (clampedNewContracts === 0) {
+        logger.info('[Monkey] entry suppressed by contracts cap', {
+          symbol, agent: effectiveAgent, side, lane: effectiveLane,
+          currentContracts, attemptedNew: newContracts, cap,
+        });
+        return {
+          executed: false, orderId: null,
+          reason: `at_position_contracts_cap: open=${currentContracts} desired=${newContracts} cap=${cap}`,
+        };
+      }
+      if (clampedNewContracts < newContracts) {
+        logger.info('[Monkey] entry clamped by contracts cap', {
+          symbol, agent: effectiveAgent, side, lane: effectiveLane,
+          currentContracts, requested: newContracts,
+          granted: clampedNewContracts, cap,
+        });
+        formattedSize = clampedNewContracts * symbolLotSize;
+        // Re-check min notional with the clamped size; the cap may push
+        // a small entry below the exchange minimum.
+        if (formattedSize * entryPrice < minNotional) {
+          return {
+            executed: false, orderId: null,
+            reason: `cap_clamp_below_min_notional: ${(formattedSize * entryPrice).toFixed(2)} < ${minNotional.toFixed(2)} (cap headroom too small)`,
+          };
+        }
+      }
     }
 
     // Proposal #10 — when the live account is in HEDGE position-direction
