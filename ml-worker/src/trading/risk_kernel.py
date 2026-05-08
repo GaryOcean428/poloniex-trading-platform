@@ -27,6 +27,7 @@ proprietary_core/.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from typing import Literal, Optional
 
@@ -46,6 +47,7 @@ KernelVetoCode = Literal[
     "symbol_max_leverage",
     "execution_mode_paused",
     "execution_mode_paper_only_blocks_live",
+    "margin_headroom",
 ]
 
 
@@ -79,6 +81,11 @@ class KernelAccountState:
     unrealized_pnl_usdt: float
     open_positions: list[KernelOpenPosition] = field(default_factory=list)
     resting_orders: list[KernelRestingOrder] = field(default_factory=list)
+    # v0.8.8: cumulative margin currently committed across all open
+    # positions (cross-margin sum). Caller computes from balance feed —
+    # kernel stays pure sync. Default 0.0 keeps back-compat with the
+    # parity corpus and pre-v0.8.8 callers.
+    used_margin_usdt: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -267,6 +274,63 @@ def check_symbol_max_leverage(
 
 
 # ────────────────────────────────────────────────────────────────
+# Check 6 — margin headroom reserve (v0.8.8)
+# ────────────────────────────────────────────────────────────────
+
+def _min_margin_headroom_pct() -> float:
+    raw = os.getenv("MONKEY_MIN_MARGIN_HEADROOM_PCT", "0.0")
+    try:
+        v = float(raw)
+    except (TypeError, ValueError):
+        return 0.0
+    if not (0.0 <= v < 1.0):
+        return 0.0  # operator typo → fail OPEN, don't freeze trading
+    return v
+
+
+def check_margin_headroom(
+    order: KernelOrder,
+    state: KernelAccountState,
+    min_headroom_pct: Optional[float] = None,
+) -> KernelDecision:
+    """Reserve N% of equity as uncommitted margin so closes / reverses /
+    counter-positions always have room. Without this, Monkey can keep
+    entering tick-after-tick when basin direction stays strong, until
+    available margin → 0 and Poloniex rejects new orders incl. the
+    fresh-open leg of reverses.
+
+    min_headroom_pct=None reads MONKEY_MIN_MARGIN_HEADROOM_PCT env var
+    (default 0.0 = no-op, parity with TS reference).
+
+    Out-of-range pct (negative or ≥ 1) fails OPEN — operator typo
+    shouldn't silently freeze the kernel.
+    """
+    pct = _min_margin_headroom_pct() if min_headroom_pct is None else min_headroom_pct
+    if pct is None or pct <= 0.0 or pct >= 1.0:
+        return KernelDecision(allowed=True)
+    if state.equity_usdt <= 0:
+        return KernelDecision(allowed=True)
+
+    new_margin = abs(order.notional) / max(order.leverage, 1.0)
+    projected_used = state.used_margin_usdt + new_margin
+    free_after = state.equity_usdt - projected_used
+    free_pct = free_after / state.equity_usdt
+    if free_pct < pct:
+        return KernelDecision(
+            allowed=False,
+            code="margin_headroom",
+            reason=(
+                f"Margin headroom {free_pct * 100:.1f}% below "
+                f"{pct * 100:.0f}% reserve "
+                f"(equity={state.equity_usdt:.2f} "
+                f"used_after={projected_used:.2f} "
+                f"new_margin={new_margin:.2f})"
+            ),
+        )
+    return KernelDecision(allowed=True)
+
+
+# ────────────────────────────────────────────────────────────────
 # Composer — priority-ordered chain
 # ────────────────────────────────────────────────────────────────
 
@@ -283,13 +347,15 @@ def evaluate_pre_trade_vetoes(
       2. Execution-mode global override (operator kill-switch)
       3. Self-match (legal compliance)
       4. Per-symbol exposure (correlated-stack blast door)
-      5. Symbol max leverage (exchange ceiling)
+      5. Margin headroom reserve (v0.8.8 — uncommitted-margin floor)
+      6. Symbol max leverage (exchange ceiling)
     """
     for check in (
         check_unrealized_drawdown(state),
         check_execution_mode(context.is_live, context.mode),
         check_self_match(order, state),
         check_per_symbol_exposure(order, state),
+        check_margin_headroom(order, state),
         check_symbol_max_leverage(order, context.symbol_max_leverage),
     ):
         if not check.allowed:
