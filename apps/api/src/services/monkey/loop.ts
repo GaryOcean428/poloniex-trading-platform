@@ -124,6 +124,23 @@ import { computeAgentHeadroom, clampSizeToHeadroom } from './agentEquityBound.js
 import { planCloseChunks } from './closeChunker.js';
 import { agentLDecide } from './agent_L_classifier.js';
 import {
+  applyOutcomeToState,
+  decayPerAgentState,
+  newPerAgentState,
+  recordDecision,
+  riskModulator,
+  type PerAgentState,
+  type AgentOutcomeEvent,
+  type AgentDecisionRecord,
+} from './per_agent_state.js';
+import {
+  buildCrossAgentContext,
+  convictionDampenerFromBus,
+  type CrossAgentContext,
+  type AgentLabel,
+} from './per_agent_bus.js';
+import { foresightVeto } from './per_agent_foresight.js';
+import {
   clampNewContractsToCap,
   getMaxContractsPerPosition,
 } from './positionContractsBound.js';
@@ -308,7 +325,27 @@ interface SymbolState {
     tapeTrend: number;
     computedAtMs: number;
   } | null;
+  /** v0.8.8 per-agent reactive cognition state. Each of K/M/T/L gets
+   *  its own emotion stack, neurochemistry, decision/outcome rings, and
+   *  bus event cursor. Outcome-driven (not basin-geometry-driven) —
+   *  each agent learns from its OWN PnL track record on this symbol.
+   *
+   *  Used to:
+   *    - Modulate per-agent sizing/conviction via riskModulator (dopamine
+   *      on wins boosts size; frustration on losses dampens)
+   *    - Power foresight + cross-agent observation hooks
+   *    - Surface per-agent self-observation (winRate, alignmentRate)
+   *
+   *  See per_agent_state.ts for the canonical update transforms. */
+  agentStates: Record<AgentLabel, PerAgentState>;
+  /** Recent bus events for cross-agent observation context. Bounded
+   *  ring; older events drop. Each agent reads from this on its tick. */
+  recentBusEvents: import('./kernel_bus.js').BusEvent[];
 }
+
+/** Cap the recent-bus-event ring at this size — anything older than
+ *  the bus window doesn't influence current decisions. */
+const BUS_RING_CAP = 32;
 
 /**
  * MonkeyKernel — the top-level kernel that ticks Monkey.
@@ -423,6 +460,24 @@ export class MonkeyKernel extends EventEmitter {
       this.symbolStates.set(sym, this.newSymbolState());
       this.turtleStates.set(sym, newTurtleState());
     }
+
+    // v0.8.8 cross-agent observation — subscribe to the bus and append
+    // symbol-scoped events into each symbol's recentBusEvents ring.
+    // Each agent's tick reads this ring to build its CrossAgentContext
+    // (who else just entered, was anyone vetoed, are anomalies firing).
+    this.bus.subscribe({
+      id: `${this.instanceId}-cross-agent-observer`,
+      symbols: this.symbols,
+      handler: (event) => {
+        if (!event.symbol) return;
+        const state = this.symbolStates.get(event.symbol);
+        if (!state) return;
+        state.recentBusEvents.push(event);
+        if (state.recentBusEvents.length > BUS_RING_CAP) {
+          state.recentBusEvents.shift();
+        }
+      },
+    });
     // Proposal #10 — detect (don't auto-flip) account position direction
     // mode. Lane-isolated positions in HEDGE mode let a swing-long and a
     // scalp-short coexist on the exchange; ONE_WAY mode nets opposite
@@ -507,6 +562,13 @@ export class MonkeyKernel extends EventEmitter {
       entryTimeMsByLane: {},
       integrationHistory: [],
       latestBasinSnapshot: null,
+      agentStates: {
+        K: newPerAgentState(),
+        M: newPerAgentState(),
+        T: newPerAgentState(),
+        L: newPerAgentState(),
+      },
+      recentBusEvents: [],
     };
   }
 
@@ -1717,6 +1779,20 @@ export class MonkeyKernel extends EventEmitter {
     // are unaffected — each agent operates on its own discipline. Bound
     // is self-regulating: profitable streaks loosen the cap (Arbiter
     // grants more), drawdowns tighten it. See agentEquityBound.ts.
+    //
+    // v0.8.8 — cross-agent observation + foresight + risk modulator.
+    // M now reads the recent bus events ring + its own emotion state
+    // and modulates entry sizing/conviction:
+    //   - if K/T/L just entered the OPPOSITE side, dampen via
+    //     convictionDampenerFromBus
+    //   - high dopamine on M → boost via riskModulator
+    //   - high frustration on M → dampen
+    //   - foresight check: if basin trajectory predicts reversal,
+    //     veto entirely
+    const mCrossAgentCtx: CrossAgentContext = buildCrossAgentContext(
+      state.recentBusEvents, 'M', state.sessionTicks,
+    );
+    const mRiskMod = riskModulator(state.agentStates.M);
     if (process.env.MONKEY_EXECUTE === 'true' && arbiterAllocation.m > 0) {
       const mOpenMargin = await this.sumOpenAgentMargin(symbol, 'M');
       const mHeadroom = computeAgentHeadroom(arbiterAllocation.m, mOpenMargin);
@@ -1750,11 +1826,28 @@ export class MonkeyKernel extends EventEmitter {
         allocatedCapitalUsdt: arbiterAllocation.m,
       };
       const mDecision = mlAgentDecide(mInputs);
-      const clampedSize = clampSizeToHeadroom(mDecision.sizeUsdt, mHeadroom);
+      // v0.8.8 — apply cross-agent dampener + risk modulator + foresight.
+      const mProposedSide: 'long' | 'short' | null =
+        mDecision.action === 'enter_long' ? 'long'
+          : mDecision.action === 'enter_short' ? 'short' : null;
+      const mDampener = mProposedSide
+        ? convictionDampenerFromBus(mCrossAgentCtx, mProposedSide)
+        : 1.0;
+      const mForesight = mProposedSide
+        ? foresightVeto(state.basinHistory, mProposedSide)
+        : { veto: false, reason: 'hold', predictedDirection: 0, confidence: 0 };
+      const mModulatedSize = mDecision.sizeUsdt * mDampener * mRiskMod;
+      const clampedSize = mForesight.veto ? 0 : clampSizeToHeadroom(mModulatedSize, mHeadroom);
       derivation.agentM = {
         action: mDecision.action,
         sizeUsdt: clampedSize,
         requestedSize: mDecision.sizeUsdt,
+        modulatedSize: mModulatedSize,
+        crossAgentDampener: mDampener,
+        riskModulator: mRiskMod,
+        foresightVeto: mForesight.veto,
+        foresightReason: mForesight.reason,
+        emotions: state.agentStates.M.emotions,
         headroom: Number(mHeadroom.toFixed(2)),
         openMargin: Number(mOpenMargin.toFixed(2)),
         allocation: Number(arbiterAllocation.m.toFixed(2)),
@@ -1807,6 +1900,14 @@ export class MonkeyKernel extends EventEmitter {
     }
 
     // 6c-T. AGENT T EXECUTE — Turtle System 1 (classical TA control arm).
+    // v0.8.8 — T also reads cross-agent context + applies risk modulator
+    // from its own emotion stack. Foresight veto applied after Donchian
+    // breakout decision: a breakout LONG against a basin reversal gets
+    // suppressed, mirroring K's held-position rejustification gate.
+    const tCrossAgentCtx: CrossAgentContext = buildCrossAgentContext(
+      state.recentBusEvents, 'T', state.sessionTicks,
+    );
+    const tRiskMod = riskModulator(state.agentStates.T);
     // Independent of K's basin and M's ml signal. Inputs: ohlcv only.
     // Equity-gated: when ``tEligible`` is false the arbiter excluded T
     // from the race already (allocation = 0 → decide() returns hold even
@@ -1835,9 +1936,28 @@ export class MonkeyKernel extends EventEmitter {
         state: tState,
       };
       const tDecision = turtleAgentDecide(tInputs);
+      // v0.8.8 — modulate T's size by its emotion state + cross-agent context.
+      const tProposedSide: 'long' | 'short' | null =
+        tDecision.action === 'enter_long' || tDecision.action === 'pyramid_long' ? 'long'
+          : tDecision.action === 'enter_short' || tDecision.action === 'pyramid_short' ? 'short'
+            : null;
+      const tDampener = tProposedSide
+        ? convictionDampenerFromBus(tCrossAgentCtx, tProposedSide)
+        : 1.0;
+      const tForesight = tProposedSide
+        ? foresightVeto(state.basinHistory, tProposedSide)
+        : { veto: false, reason: 'hold', predictedDirection: 0, confidence: 0 };
+      // Apply modulators to T's sizeUsdt.
+      const tModulatedSize = tDecision.sizeUsdt * tDampener * tRiskMod;
       derivation.agentT = {
         action: tDecision.action,
-        sizeUsdt: tDecision.sizeUsdt,
+        sizeUsdt: tForesight.veto ? 0 : tModulatedSize,
+        requestedSize: tDecision.sizeUsdt,
+        crossAgentDampener: tDampener,
+        riskModulator: tRiskMod,
+        foresightVeto: tForesight.veto,
+        foresightReason: tForesight.reason,
+        emotions: state.agentStates.T.emotions,
         leverage: tDecision.leverage,
         stopPrice: tDecision.stopPrice,
         reason: tDecision.reason,
@@ -2011,14 +2131,12 @@ export class MonkeyKernel extends EventEmitter {
     }
 
     // 6c-L. AGENT L EXECUTE — multi-scale Fisher-Rao KNN classifier.
-    // QIG-pure replacement for the Lorentzian KNN pattern (Pine Script
-    // jdehorty/Lorentzian-Classification): basin-tuple history search
-    // with the canonical Fisher-Rao metric instead of Lorentzian.
-    //
-    // Eligibility: needs >= 60 ticks of basin history to build a tuple
-    // (current + medium-window Fréchet mean + long-window Fréchet mean).
-    // The Arbiter's bootstrap-uniform path covers warmup; this code
-    // skips when arbiterAllocation.L is 0.
+    // v0.8.8 — full QIG cognition: per-agent state, cross-agent
+    // observation, foresight veto, risk modulator (same as M and T).
+    const lCrossAgentCtx: CrossAgentContext = buildCrossAgentContext(
+      state.recentBusEvents, 'L', state.sessionTicks,
+    );
+    const lRiskMod = riskModulator(state.agentStates.L);
     const lAlloc = arbiterAllocationMany.L ?? 0;
     if (
       process.env.MONKEY_EXECUTE === 'true'
@@ -2044,11 +2162,19 @@ export class MonkeyKernel extends EventEmitter {
           });
           (derivation as Record<string, unknown>).agentLTradingPausedSkipped = true;
         } else {
-          // Size as a fraction of L's allocation, scaled by conviction.
-          // High conviction → fuller deployment, low conviction → smaller bet.
-          // Keep it conservative (max 0.5 of allocation) so a single bad
-          // call doesn't drain L's capital.
-          const lMargin = lAlloc * 0.5 * lDecision.conviction;
+          // Size: conviction-weighted with cross-agent dampener +
+          // emotion risk-modulator + foresight veto.
+          const lProposedSide: 'long' | 'short' =
+            lDecision.action === 'enter_long' ? 'long' : 'short';
+          const lDampener = convictionDampenerFromBus(lCrossAgentCtx, lProposedSide);
+          const lForesight = foresightVeto(state.basinHistory, lProposedSide);
+          const lBaseMargin = lAlloc * 0.5 * lDecision.conviction;
+          const lMargin = lForesight.veto ? 0 : lBaseMargin * lDampener * lRiskMod;
+          (derivation.agentL as Record<string, unknown>).crossAgentDampener = lDampener;
+          (derivation.agentL as Record<string, unknown>).riskModulator = lRiskMod;
+          (derivation.agentL as Record<string, unknown>).foresightVeto = lForesight.veto;
+          (derivation.agentL as Record<string, unknown>).foresightReason = lForesight.reason;
+          (derivation.agentL as Record<string, unknown>).emotions = state.agentStates.L.emotions;
           if (lMargin > 0) {
             const lLeverage = leverage.value;
             const lResult = await this.executeEntry({
@@ -2216,6 +2342,17 @@ export class MonkeyKernel extends EventEmitter {
     state.lastBasin = basin;
     state.phiHistory.push(phi);
     if (state.phiHistory.length > HISTORY_MAX) state.phiHistory.shift();
+
+    // v0.8.8 per-agent state idle decay — emotions and neurochemistry
+    // nudge toward their neutral targets each tick. Counters:
+    //   - dopamine fading from a single big win
+    //   - frustration fading after a recent loss
+    //   - keeps the state from getting stuck at extremes when the
+    //     agent isn't actively trading
+    state.agentStates.K = decayPerAgentState(state.agentStates.K);
+    state.agentStates.M = decayPerAgentState(state.agentStates.M);
+    state.agentStates.T = decayPerAgentState(state.agentStates.T);
+    state.agentStates.L = decayPerAgentState(state.agentStates.L);
     state.fHealthHistory.push(fHealth);
     if (state.fHealthHistory.length > HISTORY_MAX) state.fHealthHistory.shift();
 
@@ -2462,6 +2599,31 @@ export class MonkeyKernel extends EventEmitter {
       });
       return [];
     }
+  }
+
+  /** v0.8.8 per-agent reactive cognition: distill a realized outcome
+   *  into an emotion + neurochemistry update for the owning agent.
+   *  Called from closeHeldPosition after each settled close. */
+  private applyOutcomeToAgent(
+    symbol: string,
+    agent: AgentLabel,
+    heldSide: 'long' | 'short',
+    realizedPnl: number,
+  ): void {
+    const state = this.symbolStates.get(symbol);
+    if (!state) return;
+    // Realized direction: positive PnL on a long held = long realized;
+    // positive PnL on a short held = short realized; flat if pnl=0.
+    const realizedDirection: 'long' | 'short' | 'flat' =
+      realizedPnl > 0 ? heldSide
+        : realizedPnl < 0 ? (heldSide === 'long' ? 'short' : 'long')
+          : 'flat';
+    const outcome: AgentOutcomeEvent = {
+      agent, symbol, realizedPnl,
+      expectedDirection: heldSide,
+      realizedDirection,
+    };
+    state.agentStates[agent] = applyOutcomeToState(state.agentStates[agent], outcome);
   }
 
   /**
@@ -2790,6 +2952,10 @@ export class MonkeyKernel extends EventEmitter {
         );
         // Single-row fallback: assume Agent K (the established default).
         this.arbiter.recordSettled('K', pnlAtDecision);
+        // v0.8.8 per-agent reactive cognition: feed outcome to K's
+        // emotion + neurochemistry stack (dopamine on win, frustration
+        // on loss). See per_agent_state.ts.
+        this.applyOutcomeToAgent(symbol, 'K', heldSide, pnlAtDecision);
       } else {
         for (const row of rows) {
           const qtyShare = Math.abs(Number(row.quantity) || 0) / totalQty;
@@ -2806,9 +2972,14 @@ export class MonkeyKernel extends EventEmitter {
           // attribute to K. T (Turtle classical TA) was added in the
           // three-agent decomposition; ``recordSettled`` accepts any
           // uppercase label so T's PnL share goes back to T's window.
-          const agentLabel: 'K' | 'M' | 'T' =
-            row.agent === 'M' ? 'M' : row.agent === 'T' ? 'T' : 'K';
+          // v0.8.8 — Agent L (FR-KNN classifier) joins the race.
+          const agentLabel: AgentLabel =
+            row.agent === 'M' ? 'M'
+              : row.agent === 'T' ? 'T'
+                : row.agent === 'L' ? 'L'
+                  : 'K';
           this.arbiter.recordSettled(agentLabel, rowPnl);
+          this.applyOutcomeToAgent(symbol, agentLabel, heldSide, rowPnl);
         }
       }
     } catch (err) {
