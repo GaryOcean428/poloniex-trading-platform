@@ -122,6 +122,7 @@ import {
 import { evaluateRejustification } from './held_position_rejustification.js';
 import { computeAgentHeadroom, clampSizeToHeadroom } from './agentEquityBound.js';
 import { planCloseChunks } from './closeChunker.js';
+import { agentLDecide } from './agent_L_classifier.js';
 import {
   clampNewContractsToCap,
   getMaxContractsPerPosition,
@@ -1444,7 +1445,13 @@ export class MonkeyKernel extends EventEmitter {
     // env var and redeploy, and T comes online when equity allows.
     const minEquityForT = turtleMinEquityUsdt();
     const tEligible = availableEquity >= minEquityForT;
-    const arbiterAgentLabels: string[] = tEligible ? ['K', 'M', 'T'] : ['K', 'M'];
+    // Agent L (Fisher-Rao KNN classifier) eligibility: needs basin history
+    // to build a multi-scale tuple. < 60 ticks = warmup, no L allocation.
+    const lEligible = state.basinHistory.length >= 60;
+    const baseLabels = ['K', 'M'];
+    if (tEligible) baseLabels.push('T');
+    if (lEligible) baseLabels.push('L');
+    const arbiterAgentLabels: string[] = baseLabels;
     const arbiterAllocationMany = this.arbiter.allocateMany(
       availableEquity,
       arbiterAgentLabels,
@@ -1999,6 +2006,95 @@ export class MonkeyKernel extends EventEmitter {
           logger.warn('[AgentT] exit query/close failed', {
             symbol, err: err instanceof Error ? err.message : String(err),
           });
+        }
+      }
+    }
+
+    // 6c-L. AGENT L EXECUTE — multi-scale Fisher-Rao KNN classifier.
+    // QIG-pure replacement for the Lorentzian KNN pattern (Pine Script
+    // jdehorty/Lorentzian-Classification): basin-tuple history search
+    // with the canonical Fisher-Rao metric instead of Lorentzian.
+    //
+    // Eligibility: needs >= 60 ticks of basin history to build a tuple
+    // (current + medium-window Fréchet mean + long-window Fréchet mean).
+    // The Arbiter's bootstrap-uniform path covers warmup; this code
+    // skips when arbiterAllocation.L is 0.
+    const lAlloc = arbiterAllocationMany.L ?? 0;
+    if (
+      process.env.MONKEY_EXECUTE === 'true'
+      && lAlloc > 0
+      && state.basinHistory.length >= 60
+    ) {
+      const lDecision = agentLDecide(state.basinHistory);
+      derivation.agentL = {
+        action: lDecision.action,
+        signedScore: lDecision.signedScore,
+        conviction: lDecision.conviction,
+        neighbors: lDecision.neighbors.length,
+        reason: lDecision.reason,
+      };
+      if (
+        (lDecision.action === 'enter_long' || lDecision.action === 'enter_short')
+        && lAlloc > 0
+      ) {
+        // v0.8.7 kill switch — pause Agent L entries.
+        if (isTradingPaused()) {
+          logger.info('[AgentL] entry suppressed by MONKEY_TRADING_PAUSED', {
+            symbol, action: lDecision.action,
+          });
+          (derivation as Record<string, unknown>).agentLTradingPausedSkipped = true;
+        } else {
+          // Size as a fraction of L's allocation, scaled by conviction.
+          // High conviction → fuller deployment, low conviction → smaller bet.
+          // Keep it conservative (max 0.5 of allocation) so a single bad
+          // call doesn't drain L's capital.
+          const lMargin = lAlloc * 0.5 * lDecision.conviction;
+          if (lMargin > 0) {
+            const lLeverage = leverage.value;
+            const lResult = await this.executeEntry({
+              symbol,
+              side: lDecision.action === 'enter_long' ? 'long' : 'short',
+              marginUsdt: lMargin,
+              leverage: lLeverage,
+              entryPrice: lastPrice,
+              minNotional,
+              phi,
+              kappa: state.kappa,
+              sovereignty,
+              trajectoryId: null,
+              isDCAAdd: false,
+              dcaAddIndex: 0,
+              agent: 'L',
+              lane: 'trend',  // L is a long-horizon classifier; co-locate with trend lane
+            });
+            (derivation as Record<string, unknown>).agentLExecuted = lResult.executed;
+            if (lResult.executed) {
+              logger.info('[AgentL] entry placed', {
+                symbol, side: lDecision.action, orderId: lResult.orderId,
+                margin: lMargin.toFixed(2), leverage: lLeverage,
+                signedScore: lDecision.signedScore.toFixed(3),
+                conviction: lDecision.conviction.toFixed(2),
+              });
+              // Publish to bus so other agents see L's action.
+              this.bus.publish({
+                type: BusEventType.ENTRY_EXECUTED,
+                source: this.instanceId,
+                symbol,
+                payload: {
+                  agent: 'L',
+                  side: lDecision.action,
+                  orderId: lResult.orderId,
+                  margin: lMargin,
+                  signedScore: lDecision.signedScore,
+                  conviction: lDecision.conviction,
+                },
+              });
+            } else {
+              logger.info('[AgentL] entry rejected', {
+                symbol, side: lDecision.action, reason: lResult.reason,
+              });
+            }
+          }
         }
       }
     }
@@ -2783,7 +2879,7 @@ export class MonkeyKernel extends EventEmitter {
     /** Which agent placed this entry. K = kernel (geometry-only),
      *  M = ml-only, T = Turtle System 1 classical TA (control arm).
      *  Default 'K' for back-compat with the existing call sites. */
-    agent?: 'K' | 'M' | 'T';
+    agent?: 'K' | 'M' | 'T' | 'L';
     /** Proposal #10: execution lane key. Default 'swing' = pre-#10 implicit
      *  lane so existing call sites remain bit-identical. */
     lane?: 'scalp' | 'swing' | 'trend';
