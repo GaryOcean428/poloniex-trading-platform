@@ -12,6 +12,7 @@ import { apiCredentialsService } from './apiCredentialsService.js';
 import { monitoringService } from './monitoringService.js';
 import { getEngineVersion } from '../utils/engineVersion.js';
 import { logger } from '../utils/logger.js';
+import { BusEventType, getKernelBus } from './monkey/kernel_bus.js';
 
 export interface OrphanedPosition {
   symbol: string;
@@ -99,7 +100,7 @@ class StateReconciliationService {
 
       // ── 4. Fetch DB-recorded open trades ────────────────────────────────────
       const dbResult = await pool.query(
-        `SELECT id, symbol, side, entry_price, quantity, order_id
+        `SELECT id, symbol, side, entry_price, quantity, order_id, entry_time
          FROM autonomous_trades
          WHERE user_id = $1 AND status = 'open'`,
         [userId]
@@ -111,6 +112,7 @@ class StateReconciliationService {
         entry_price: string;
         quantity: string;
         order_id: string | null;
+        entry_time: Date | string;
       }[] = dbResult.rows;
 
       // Use the last recorded equity from autonomous_performance as DB balance.
@@ -294,18 +296,116 @@ class StateReconciliationService {
           } catch {
             /* fail-soft: keep generic reason */
           }
+          // 2026-05-08 #11 — PnL recovery for manual-close ghosts.
+          // When the user closes a kernel-issued position on the
+          // Poloniex UI, the close fires through Poloniex's order
+          // pipeline but never reaches our closeHeldPosition (which is
+          // the only path that records realized PnL + fires the
+          // per-agent emotion update via applyOutcomeToAgent). This
+          // path closes that loop: query Poloniex's position-history
+          // endpoint, find the closed position matching this DB row by
+          // (symbol, side, entry_time), extract realized PnL, and
+          // publish a kernel-bus OUTCOME event. The kernel's bus
+          // subscriber consumes that and updates the owning agent's
+          // emotion stack.
+          //
+          // Only fires for kernel-issued rows (agent IN K/M/T/L) when
+          // ghostReason='manual_close_user'. Other ghost-close reasons
+          // either already had PnL recorded (post_close_race) or are
+          // not kernel-issued (orphan/legacy).
+          let recoveredPnl: number | null = null;
+          let recoveredAgent: 'K' | 'M' | 'T' | 'L' | null = null;
+          if (
+            ghostReason === 'manual_close_user' &&
+            credentials &&
+            dbTrade.entry_time
+          ) {
+            try {
+              const ctxRow = await pool.query(
+                `SELECT agent FROM autonomous_trades WHERE id = $1`,
+                [dbTrade.id]
+              );
+              const a = ctxRow.rows[0]?.agent as string | undefined;
+              if (a === 'K' || a === 'M' || a === 'T' || a === 'L') {
+                recoveredAgent = a;
+                const polHistory = await poloniexFuturesService.getPositionHistory(
+                  credentials,
+                  { symbol: dbTrade.symbol, limit: 20 }
+                );
+                const histRows: any[] = Array.isArray(polHistory)
+                  ? polHistory
+                  : (polHistory?.data ?? []);
+                const dbEntryMs = new Date(dbTrade.entry_time).getTime();
+                // Match by symbol + side + entry-time within ±90s window.
+                const match = histRows.find((p: any) => {
+                  const polEntryMs = Number(
+                    p.openTime ?? p.cTime ?? p.openTimestamp ?? 0
+                  );
+                  const polSide = String(p.posSide ?? p.side ?? '').toUpperCase();
+                  const wantSide = normalizeDbSide(dbTrade.side) === 'long' ? 'LONG' : 'SHORT';
+                  return (
+                    polEntryMs > 0 &&
+                    Math.abs(polEntryMs - dbEntryMs) < 90_000 &&
+                    polSide === wantSide
+                  );
+                });
+                if (match) {
+                  const rawPnl = parseFloat(
+                    match.realisedPnl ?? match.realizedPnl ?? match.pnl ?? '0'
+                  );
+                  if (Number.isFinite(rawPnl)) recoveredPnl = rawPnl;
+                }
+              }
+            } catch (recErr) {
+              logger.debug('[RECONCILE] PnL recovery query failed (non-fatal)', {
+                tradeId: dbTrade.id,
+                err: recErr instanceof Error ? recErr.message : String(recErr),
+              });
+            }
+          }
+
           try {
             await pool.query(
               `UPDATE autonomous_trades
                SET status = 'closed',
                    exit_reason = $1,
-                   exit_time = NOW()
+                   exit_time = NOW(),
+                   pnl = COALESCE($3, pnl)
                WHERE id = $2`,
-              [ghostReason, dbTrade.id]
+              [ghostReason, dbTrade.id, recoveredPnl]
             );
             logger.info(
-              `[RECONCILE] Closed ghost DB record ${dbTrade.id} for user ${userId}: ${dbTrade.symbol} ${dbTrade.side} (reason=${ghostReason})`
+              `[RECONCILE] Closed ghost DB record ${dbTrade.id} for user ${userId}: ${dbTrade.symbol} ${dbTrade.side} (reason=${ghostReason}${
+                recoveredPnl !== null ? `, recovered_pnl=${recoveredPnl.toFixed(4)}` : ''
+              })`
             );
+            // Publish OUTCOME event so the kernel's bus subscriber
+            // updates the per-agent emotion stack. Only fires when we
+            // recovered PnL for a kernel-issued row.
+            if (recoveredPnl !== null && recoveredAgent !== null) {
+              try {
+                const bus = getKernelBus();
+                bus.publish({
+                  type: BusEventType.OUTCOME,
+                  source: 'reconciler',
+                  symbol: dbTrade.symbol,
+                  payload: {
+                    agent: recoveredAgent,
+                    side: normalizeDbSide(dbTrade.side),
+                    pnl: recoveredPnl,
+                    source: 'manual_close_recovered',
+                    tradeId: dbTrade.id,
+                  },
+                });
+                logger.info(
+                  `[RECONCILE] Published OUTCOME for manual close: agent=${recoveredAgent} symbol=${dbTrade.symbol} pnl=${recoveredPnl.toFixed(4)}`
+                );
+              } catch (busErr) {
+                logger.debug('[RECONCILE] OUTCOME publish failed', {
+                  err: busErr instanceof Error ? busErr.message : String(busErr),
+                });
+              }
+            }
           } catch (updateErr) {
             logger.error(
               `[RECONCILE] Failed to close ghost record ${dbTrade.id} for user ${userId}:`,

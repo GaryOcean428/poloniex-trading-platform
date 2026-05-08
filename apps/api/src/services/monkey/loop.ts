@@ -478,6 +478,40 @@ export class MonkeyKernel extends EventEmitter {
         }
       },
     });
+
+    // 2026-05-08 #11 — OUTCOME subscriber for the reconciler PnL
+    // recovery path. When the user manually closes a kernel-issued
+    // position on Poloniex UI, the reconciler ghosts the DB row with
+    // exit_reason='manual_close_user' AND publishes an OUTCOME event
+    // with the recovered PnL. This subscriber consumes those events
+    // and updates the owning agent's emotion + neurochemistry stack
+    // — closing the learning-feedback loop that was previously broken
+    // for user-closed system trades.
+    this.bus.subscribe({
+      id: `${this.instanceId}-outcome-feedback`,
+      types: [BusEventType.OUTCOME],
+      symbols: this.symbols,
+      handler: (event) => {
+        if (!event.symbol) return;
+        const payload = event.payload as Record<string, unknown> | undefined;
+        if (!payload) return;
+        const agent = String(payload.agent ?? '');
+        if (agent !== 'K' && agent !== 'M' && agent !== 'T' && agent !== 'L') return;
+        const side = String(payload.side ?? '').toLowerCase();
+        if (side !== 'long' && side !== 'short') return;
+        const pnl = Number(payload.pnl ?? 0);
+        if (!Number.isFinite(pnl)) return;
+        // Don't double-fire: closeHeldPosition already calls
+        // applyOutcomeToAgent on its own path. Reconciler-recovered
+        // PnL events have source='manual_close_recovered' to identify
+        // them. Only those reach the agent state via this subscriber.
+        if (payload.source !== 'manual_close_recovered') return;
+        this.applyOutcomeToAgent(event.symbol, agent, side as 'long' | 'short', pnl);
+        logger.info(
+          `[Monkey] Agent ${agent} emotion stack updated from recovered manual close: pnl=${pnl.toFixed(4)} side=${side}`,
+        );
+      },
+    });
     // Proposal #10 — detect (don't auto-flip) account position direction
     // mode. Lane-isolated positions in HEDGE mode let a swing-long and a
     // scalp-short coexist on the exchange; ONE_WAY mode nets opposite
