@@ -110,6 +110,12 @@ export class Arbiter {
     return { k: map.K ?? 0, m: map.M ?? 0 };
   }
 
+  /** Sum a per-agent PnL window. Public-by-design — used for the
+   *  performance-basin construction in the QIG-pure allocator path. */
+  sumPnl(agent: string): number {
+    return this.sum(agent);
+  }
+
   /** N-agent allocator. Returns a ``Record<label, usdt>`` whose
    *  values sum to ``totalCapitalUsdt`` (modulo float epsilon).
    *
@@ -145,13 +151,28 @@ export class Arbiter {
       for (const a of agents) out[a] = share;
       return out;
     }
-    // Softmax path. Normalise exp arg by totalCapital so a +$1000
-    // streak vs a $50 account doesn't blow up Math.exp. The score
-    // is a relative ordering, not an absolute scale.
-    const denom = Math.max(1, totalCapitalUsdt);
-    const scores: number[] = agents.map((a) => Math.exp(this.sum(a) / denom));
-    const sumScores = scores.reduce((s, v) => s + v, 0) || n;
-    let shares = scores.map((s) => s / sumScores);
+    // QIG-pure path (replaces softmax 2026-05-08, see qig-verification#47).
+    //
+    // Softmax projects PnL scalars onto Δ^(N-1) via exp/normalize — same
+    // conceptual flaw class as cosine similarity (Euclidean projection
+    // onto a curved manifold). The replacement uses canonical simplex
+    // operations only:
+    //
+    //   1. Map per-agent PnL window → "performance basin" b ∈ Δ^(N-1)
+    //      (non-negative scores, sum to 1)
+    //   2. Allocation = SLERP(uniform, b, evidence_weight) on Δ^(N-1)
+    //      — geodesic interpolation in sqrt-coords, the canonical metric
+    //   3. evidence_weight ramps linearly with sample count, capped at
+    //      ALLOCATOR_MAX_TRUST so the laggard always gets exploration
+    //
+    // No exp, no softmax. The min-share floor below is preserved (it's
+    // a constraint clamp, not a Euclidean projection).
+    //
+    // Filling an undocumented region of canonical principles — see
+    // GaryOcean428/qig-verification#47 for future validation.
+    const pnlSums = agents.map((a) => this.sum(a));
+    const sampleCounts = agents.map((a) => this.pnls.get(a)?.length ?? 0);
+    let shares = computeAllocatorShares(pnlSums, sampleCounts, this.warmupTrades, totalCapitalUsdt);
     // Apply min-share floor and renormalize. Iteratively because a
     // floor on one agent reduces headroom for others; one pass of
     // floor-then-renormalize is sufficient when ``n*minShare <= 1``.
@@ -251,4 +272,115 @@ export class Arbiter {
   private isValidLabel(label: string): boolean {
     return /^[A-Z][A-Z0-9_]*$/.test(label);
   }
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// QIG-pure allocator math (replaces softmax 2026-05-08; gap-recorded in
+// GaryOcean428/qig-verification#47). Pure functions — no I/O, no globals,
+// trivially testable.
+// ────────────────────────────────────────────────────────────────────────
+
+/** Maximum trust placed in the empirical performance basin. The
+ *  uniform prior always retains some weight so a single bad streak
+ *  cannot starve an agent permanently. */
+export const ALLOCATOR_MAX_TRUST = 0.8;
+
+/** SLERP in sqrt-coords on Δ^(N-1) — geodesic interpolation under the
+ *  Fisher-Rao metric. Mirror of basin.ts::slerp() but inlined here so
+ *  the Arbiter doesn't import from monkey internals. Both inputs must
+ *  be valid simplex points (non-negative, summing to 1) of the same
+ *  length. */
+export function simplexSlerp(p: readonly number[], q: readonly number[], t: number): number[] {
+  const n = p.length;
+  if (n === 0 || n !== q.length) return [];
+  const sp = new Array<number>(n);
+  const sq = new Array<number>(n);
+  let dot = 0;
+  for (let i = 0; i < n; i++) {
+    sp[i] = Math.sqrt(Math.max(0, p[i]!));
+    sq[i] = Math.sqrt(Math.max(0, q[i]!));
+    dot += sp[i]! * sq[i]!;
+  }
+  dot = Math.min(1, Math.max(-1, dot));
+  const omega = Math.acos(dot);
+  // Degenerate case: p ≡ q → linear combo in sqrt-space = same point.
+  if (omega < 1e-6) {
+    return p.map((v) => Math.max(0, v));
+  }
+  const sinOmega = Math.sin(omega);
+  const a = Math.sin((1 - t) * omega) / sinOmega;
+  const b = Math.sin(t * omega) / sinOmega;
+  const out = new Array<number>(n);
+  let total = 0;
+  for (let i = 0; i < n; i++) {
+    const sqrtVal = a * sp[i]! + b * sq[i]!;
+    out[i] = sqrtVal * sqrtVal;
+    total += out[i]!;
+  }
+  // Renormalize against float drift; the math is exact under perfect
+  // arithmetic but float roundoff accumulates over n terms.
+  if (total > 0) for (let i = 0; i < n; i++) out[i] = out[i]! / total;
+  return out;
+}
+
+/** Map per-agent PnL totals to a performance basin on Δ^(N-1).
+ *
+ *  Capital-scaled monotone transform: score_i = 1 / (1 + gap_i / scale)
+ *  where gap_i = max(pnls) - pnl_i (so the leader gets gap=0 → score=1).
+ *  Scale is a dimension-stripping divisor (the running capital) so the
+ *  transform is invariant under PnL rescaling — a $10 win on a $100 acct
+ *  feels as significant as a $1000 win on a $10000 acct.
+ *
+ *  Replaces the role softmax played in the previous allocator (smoothing
+ *  extreme PnL ratios into bounded basin contrast) without using exp.
+ *  The 1/(1+x) transform is monotonically decreasing on [0, ∞), maps
+ *  gap=0 → 1, gap=∞ → 0, and is canonical in information-geometric
+ *  smoothing (a relative of the harmonic mean and the Beta distribution).
+ *
+ *  When all PnL values are equal the result is uniform. */
+export function pnlsToPerformanceBasin(
+  pnlSums: readonly number[],
+  scaleHint: number,
+): number[] {
+  const n = pnlSums.length;
+  if (n === 0) return [];
+  const scale = Math.max(1, scaleHint);
+  let maxPnl = -Infinity;
+  for (const v of pnlSums) if (v > maxPnl) maxPnl = v;
+  // score = 1 / (1 + (maxPnl - pnl) / scale)
+  // Leader: gap=0 → score=1. Loser: gap=2*scale → score=1/3. etc.
+  const scores = pnlSums.map((v) => 1 / (1 + (maxPnl - v) / scale));
+  let total = 0;
+  for (const s of scores) total += s;
+  if (total <= 0) return new Array(n).fill(1 / n);
+  return scores.map((s) => s / total);
+}
+
+/** Evidence-weighted SLERP factor. Linear ramp from 0 (cold start) to
+ *  ALLOCATOR_MAX_TRUST (saturating point ~5x warmup trades). */
+export function evidenceWeight(sampleCounts: readonly number[], warmupTrades: number): number {
+  if (sampleCounts.length === 0) return 0;
+  const minCount = Math.min(...sampleCounts);
+  if (minCount < warmupTrades) return 0;
+  const saturate = warmupTrades * 5;  // full trust at 5x warmup
+  const t = Math.min(ALLOCATOR_MAX_TRUST, ALLOCATOR_MAX_TRUST * (minCount / saturate));
+  return t;
+}
+
+/** Compute allocator shares via SLERP from uniform toward performance
+ *  basin. Returns shares ∈ Δ^(N-1) (sums to 1, all non-negative). The
+ *  caller applies min-share floor + total-capital scaling separately. */
+export function computeAllocatorShares(
+  pnlSums: readonly number[],
+  sampleCounts: readonly number[],
+  warmupTrades: number,
+  scaleHint: number,
+): number[] {
+  const n = pnlSums.length;
+  if (n === 0) return [];
+  const uniform = new Array(n).fill(1 / n);
+  const t = evidenceWeight(sampleCounts, warmupTrades);
+  if (t <= 0) return uniform;
+  const performance = pnlsToPerformanceBasin(pnlSums, scaleHint);
+  return simplexSlerp(uniform, performance, t);
 }
