@@ -2817,7 +2817,15 @@ export class MonkeyKernel extends EventEmitter {
         side: (String(p.side ?? 'long').toLowerCase() === 'short' ? 'short' : 'long') as 'long' | 'short',
         notional: Math.abs(Number(p.notional ?? p.size ?? 0)),
       })).filter((p) => p.symbol.length > 0);
-      kernelState = { equityUsdt, unrealizedPnlUsdt, openPositions, restingOrders: [] };
+      // v0.8.8: thread used-margin telemetry to the kernel for the
+      // headroom veto. Cross-margin: usedMargin = equity - availableBalance.
+      // Falls back to 0 (kernel-side veto stays no-op) when the balance
+      // feed doesn't expose availableBalance.
+      const availableBalance = Number(
+        balance?.availableBalance ?? balance?.availMgn ?? balance?.am ?? equityUsdt,
+      );
+      const usedMarginUsdt = Math.max(0, equityUsdt - availableBalance);
+      kernelState = { equityUsdt, unrealizedPnlUsdt, openPositions, restingOrders: [], usedMarginUsdt };
     } catch (err) {
       return {
         executed: false, orderId: null,

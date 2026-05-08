@@ -54,6 +54,11 @@ export interface KernelAccountState {
   unrealizedPnlUsdt: number;
   openPositions: KernelOpenPosition[];
   restingOrders: KernelRestingOrder[];
+  /** v0.8.8: cumulative margin currently committed across all open
+   *  positions (cross-margin sum). Caller computes from balance feed
+   *  — kernel stays pure sync. Optional with default 0 to keep
+   *  back-compat for callers not yet threaded with margin telemetry. */
+  usedMarginUsdt?: number;
 }
 
 /**
@@ -76,7 +81,8 @@ export type KernelVetoCode =
   | 'unrealized_drawdown_kill_switch'
   | 'symbol_max_leverage'
   | 'execution_mode_paused'
-  | 'execution_mode_paper_only_blocks_live';
+  | 'execution_mode_paper_only_blocks_live'
+  | 'margin_headroom';
 
 export type ExecutionMode = 'auto' | 'paper_only' | 'pause';
 
@@ -218,6 +224,58 @@ export function checkSymbolMaxLeverage(
   return { allowed: true };
 }
 
+// ───────── Check 6: Margin headroom reserve (v0.8.8) ─────────
+
+/**
+ * Reserve N% of equity as uncommitted margin so closes / reverses /
+ * counter-positions always have room. Without this, Monkey can keep
+ * entering tick-after-tick when basin direction stays strong, until
+ * available margin → 0. At that point Poloniex rejects new orders
+ * (incl. reverses' fresh-open leg) and the kernel hangs in a loop.
+ *
+ * 2026-05-08 incident: 6 short entries in 2min, margin shrinking
+ * 17→13→8 USDT per entry, eventually couldn't open counter-positions.
+ *
+ * Reads ``MONKEY_MIN_MARGIN_HEADROOM_PCT`` env var (0.0-1.0). Default
+ * 0.0 = no-op (back-compat). Operators opt in via env (e.g. 0.25 for
+ * a 25% reserve). Out-of-range values fail OPEN (allow trading) so an
+ * env typo doesn't silently freeze the kernel.
+ */
+export const DEFAULT_MIN_MARGIN_HEADROOM_PCT = 0.0;
+
+function getMinMarginHeadroomPct(): number {
+  const raw = Number(process.env.MONKEY_MIN_MARGIN_HEADROOM_PCT ?? '');
+  if (!Number.isFinite(raw) || raw < 0 || raw >= 1) return DEFAULT_MIN_MARGIN_HEADROOM_PCT;
+  return raw;
+}
+
+export function checkMarginHeadroom(
+  order: KernelOrder,
+  state: KernelAccountState,
+  minHeadroomPct?: number,
+): KernelDecision {
+  const pct = minHeadroomPct ?? getMinMarginHeadroomPct();
+  // Fail OPEN on degenerate inputs: out-of-range pct (negative or ≥ 1)
+  // means an operator typo or programmer error — we don't want to
+  // silently freeze the kernel. Pct == 0 is the "disabled" case.
+  if (!Number.isFinite(pct) || pct <= 0 || pct >= 1) return { allowed: true };
+  if (state.equityUsdt <= 0) return { allowed: true };
+
+  const used = state.usedMarginUsdt ?? 0;
+  const newMargin = Math.abs(order.notional) / Math.max(order.leverage, 1);
+  const projectedUsed = used + newMargin;
+  const freePct = (state.equityUsdt - projectedUsed) / state.equityUsdt;
+
+  if (freePct < pct) {
+    return {
+      allowed: false,
+      code: 'margin_headroom',
+      reason: `Margin headroom ${(freePct * 100).toFixed(1)}% below ${(pct * 100).toFixed(0)}% reserve (equity=${state.equityUsdt.toFixed(2)} used_after=${projectedUsed.toFixed(2)} new_margin=${newMargin.toFixed(2)})`,
+    };
+  }
+  return { allowed: true };
+}
+
 // ───────── Composer ─────────
 
 export interface KernelContext {
@@ -250,6 +308,7 @@ export function evaluatePreTradeVetoes(
     checkExecutionMode(context.isLive, context.mode),
     checkSelfMatch(order, state),
     checkPerSymbolExposure(order, state),
+    checkMarginHeadroom(order, state),
     checkSymbolMaxLeverage(order, context.symbolMaxLeverage),
   ];
   for (const d of checks) {
