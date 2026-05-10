@@ -120,7 +120,12 @@ import {
   type LaneType,
 } from './executive.js';
 import { evaluateRejustification } from './held_position_rejustification.js';
-import { computeAgentHeadroom, clampSizeToHeadroom } from './agentEquityBound.js';
+import {
+  computeAgentHeadroom,
+  clampSizeToHeadroom,
+  computeAgentNotionalHeadroom,
+  clampMarginToNotionalHeadroom,
+} from './agentEquityBound.js';
 import { planCloseChunks } from './closeChunker.js';
 import { agentLDecide } from './agent_L_classifier.js';
 import {
@@ -480,13 +485,15 @@ export class MonkeyKernel extends EventEmitter {
     });
 
     // 2026-05-08 #11 — OUTCOME subscriber for the reconciler PnL
-    // recovery path. When the user manually closes a kernel-issued
-    // position on Poloniex UI, the reconciler ghosts the DB row with
-    // exit_reason='manual_close_user' AND publishes an OUTCOME event
-    // with the recovered PnL. This subscriber consumes those events
-    // and updates the owning agent's emotion + neurochemistry stack
-    // — closing the learning-feedback loop that was previously broken
-    // for user-closed system trades.
+    // recovery path.
+    // 2026-05-10 #12 — broadened to ALL ghost-close reasons. When ANY
+    // out-of-band actor closes a kernel-issued position (user UI close,
+    // exchange-side liquidation/stop, partial-fill cleanup), the
+    // reconciler ghosts the DB row AND publishes an OUTCOME event with
+    // the recovered PnL. This subscriber consumes those events and
+    // updates the owning agent's emotion + neurochemistry stack —
+    // closing the learning-feedback loop that was previously broken
+    // for ALL exchange-side closes, not just user-initiated ones.
     this.bus.subscribe({
       id: `${this.instanceId}-outcome-feedback`,
       types: [BusEventType.OUTCOME],
@@ -503,12 +510,19 @@ export class MonkeyKernel extends EventEmitter {
         if (!Number.isFinite(pnl)) return;
         // Don't double-fire: closeHeldPosition already calls
         // applyOutcomeToAgent on its own path. Reconciler-recovered
-        // PnL events have source='manual_close_recovered' to identify
-        // them. Only those reach the agent state via this subscriber.
-        if (payload.source !== 'manual_close_recovered') return;
+        // PnL events have source starting with 'reconciler_recovered'
+        // (followed by ':<ghostReason>'). The legacy
+        // 'manual_close_recovered' tag is kept for backward compat
+        // with any in-flight events from older deploys.
+        const src = String(payload.source ?? '');
+        const isRecovered =
+          src === 'manual_close_recovered' ||
+          src.startsWith('reconciler_recovered');
+        if (!isRecovered) return;
         this.applyOutcomeToAgent(event.symbol, agent, side as 'long' | 'short', pnl);
+        const ghostReason = String(payload.ghostReason ?? 'unknown');
         logger.info(
-          `[Monkey] Agent ${agent} emotion stack updated from recovered manual close: pnl=${pnl.toFixed(4)} side=${side}`,
+          `[Monkey] Agent ${agent} emotion stack updated from recovered ghost close: pnl=${pnl.toFixed(4)} side=${side} reason=${ghostReason}`,
         );
       },
     });
@@ -2203,12 +2217,50 @@ export class MonkeyKernel extends EventEmitter {
           const lDampener = convictionDampenerFromBus(lCrossAgentCtx, lProposedSide);
           const lForesight = foresightVeto(state.basinHistory, lProposedSide);
           const lBaseMargin = lAlloc * 0.5 * lDecision.conviction;
-          const lMargin = lForesight.veto ? 0 : lBaseMargin * lDampener * lRiskMod;
+          let lMargin = lForesight.veto ? 0 : lBaseMargin * lDampener * lRiskMod;
           (derivation.agentL as Record<string, unknown>).crossAgentDampener = lDampener;
           (derivation.agentL as Record<string, unknown>).riskModulator = lRiskMod;
           (derivation.agentL as Record<string, unknown>).foresightVeto = lForesight.veto;
           (derivation.agentL as Record<string, unknown>).foresightReason = lForesight.reason;
           (derivation.agentL as Record<string, unknown>).emotions = state.agentStates.L.emotions;
+          // 2026-05-10 — per-agent CUMULATIVE NOTIONAL cap. L was
+          // stacking 39 BTC LONGs (17.7× equity) without any
+          // bound: per-row margin was tiny but cumulative leveraged
+          // exposure was the problem. Cap = lAlloc × ratio (default
+          // 4×). Below: query open notional for L on this symbol;
+          // clamp lMargin so that lMargin × leverage stays within
+          // the remaining headroom.
+          const lOpenNotional = await this.sumOpenAgentNotional(symbol, 'L');
+          const lNotionalRatio =
+            Number(process.env.MONKEY_PER_AGENT_NOTIONAL_RATIO) || 4.0;
+          const lNotionalHeadroom = computeAgentNotionalHeadroom(
+            lAlloc, lOpenNotional, lNotionalRatio,
+          );
+          (derivation.agentL as Record<string, unknown>).openNotional =
+            Number(lOpenNotional.toFixed(2));
+          (derivation.agentL as Record<string, unknown>).notionalCap =
+            Number((lAlloc * lNotionalRatio).toFixed(2));
+          (derivation.agentL as Record<string, unknown>).notionalHeadroom =
+            Number(lNotionalHeadroom.toFixed(2));
+          if (lMargin > 0) {
+            const lLeverage = leverage.value;
+            const lClamped = clampMarginToNotionalHeadroom(
+              lMargin, lLeverage, lNotionalHeadroom,
+            );
+            if (lClamped < lMargin) {
+              logger.info('[AgentL] entry margin clamped by notional cap', {
+                symbol,
+                requested: lMargin.toFixed(2),
+                clamped: lClamped.toFixed(2),
+                openNotional: lOpenNotional.toFixed(2),
+                notionalCap: (lAlloc * lNotionalRatio).toFixed(2),
+                leverage: lLeverage,
+              });
+            }
+            lMargin = lClamped;
+            (derivation.agentL as Record<string, unknown>).clampedMargin =
+              Number(lMargin.toFixed(2));
+          }
           if (lMargin > 0) {
             const lLeverage = leverage.value;
             const lResult = await this.executeEntry({
@@ -2256,6 +2308,37 @@ export class MonkeyKernel extends EventEmitter {
             }
           }
         }
+      }
+    }
+
+    // 6c-L'. AGENT L FORCE-HARVEST — per-tick sweep for stacked winners.
+    //
+    // Observed 2026-05-10: 39 BTC LONG rows held 14-16h on Agent L
+    // (73% win rate per the live tape). The shared-lane harvest path
+    // (shouldProfitHarvest) reads aggregate position across ALL
+    // agents in the held lane, so L's small winners get washed out
+    // by K's break-even rows. Result: L's stack sits frozen, margin
+    // committed, no exit firing.
+    //
+    // This sweep is L-only: query L's open rows for the symbol,
+    // compute aggregate unrealized PnL at lastPrice, and if it
+    // exceeds MONKEY_AGENT_L_HARVEST_PCT × aggregate notional,
+    // close ONLY L's contribution (reduce-only market sized to
+    // L's qty, DB updates only L's row IDs). Other agents' rows
+    // — even in the same lane — are untouched.
+    //
+    // Threshold default 0.003 (0.3% on aggregate notional ≈ 4-5%
+    // ROI at 14× margin). Env-tunable.
+    if (
+      process.env.MONKEY_EXECUTE === 'true'
+      && !isTradingPaused()
+    ) {
+      try {
+        await this.forceHarvestAgentLStack(symbol, lastPrice);
+      } catch (err) {
+        logger.debug('[AgentL] force-harvest sweep failed (fail-soft)', {
+          symbol, err: err instanceof Error ? err.message : String(err),
+        });
       }
     }
 
@@ -2724,7 +2807,7 @@ export class MonkeyKernel extends EventEmitter {
    */
   private async sumOpenAgentMargin(
     symbol: string,
-    agent: 'K' | 'M' | 'T',
+    agent: 'K' | 'M' | 'T' | 'L',
   ): Promise<number> {
     try {
       const reasonPattern = `monkey|kernel=${this.instanceId}|%`;
@@ -2749,6 +2832,249 @@ export class MonkeyKernel extends EventEmitter {
         err: err instanceof Error ? err.message : String(err),
       });
       return 0;
+    }
+  }
+
+  /**
+   * 2026-05-10 — sum cumulative open notional (quantity × entry_price)
+   * for an agent on a symbol. Distinct from sumOpenAgentMargin which
+   * divides by leverage. Used by the per-agent cumulative notional cap
+   * to bound stacked-row exposure (L stacked 39 rows on a $200 account
+   * → 17.7× equity in cumulative notional, each row individually
+   * within margin limits).
+   */
+  private async sumOpenAgentNotional(
+    symbol: string,
+    agent: 'K' | 'M' | 'T' | 'L',
+  ): Promise<number> {
+    try {
+      const reasonPattern = `monkey|kernel=${this.instanceId}|%`;
+      const result = await pool.query(
+        `SELECT COALESCE(SUM(quantity * entry_price), 0) AS sum_notional
+           FROM autonomous_trades
+          WHERE status = 'open'
+            AND symbol = $1
+            AND agent = $2
+            AND reason LIKE $3`,
+        [symbol, agent, reasonPattern],
+      );
+      const row = result.rows[0] as { sum_notional: string | number } | undefined;
+      return Number(row?.sum_notional ?? 0);
+    } catch (err) {
+      logger.debug('[Monkey] sumOpenAgentNotional failed', {
+        err: err instanceof Error ? err.message : String(err),
+      });
+      return 0;
+    }
+  }
+
+  /**
+   * 2026-05-10 — Agent-L-only force harvest. Closes L's contribution
+   * to the exchange position (a reduce-only market for L's qty) and
+   * updates only L's DB rows. Other agents on the same lane are
+   * untouched.
+   *
+   * Trigger: aggregate L unrealized PnL on the symbol exceeds
+   * MONKEY_AGENT_L_HARVEST_PCT (default 0.003 = 0.3% on aggregate
+   * notional). Returns silently when no L rows are open or the
+   * threshold is not met.
+   *
+   * Per-row PnL allocation, arbiter feedback, and applyOutcomeToAgent
+   * fire for each L row, mirroring closeHeldPosition's accounting.
+   */
+  private async forceHarvestAgentLStack(
+    symbol: string,
+    lastPrice: number,
+  ): Promise<void> {
+    if (!Number.isFinite(lastPrice) || lastPrice <= 0) return;
+    const harvestPct =
+      Number(process.env.MONKEY_AGENT_L_HARVEST_PCT) || 0.003;
+    if (!Number.isFinite(harvestPct) || harvestPct <= 0) return;
+
+    const reasonPattern = `monkey|kernel=${this.instanceId}|%`;
+    let lRows: Array<{
+      id: string;
+      side: string;
+      entry_price: string;
+      quantity: string;
+      lane: string;
+    }>;
+    try {
+      const result = await pool.query(
+        `SELECT id, side, entry_price, quantity, lane
+           FROM autonomous_trades
+          WHERE status = 'open'
+            AND symbol = $1
+            AND agent = 'L'
+            AND reason LIKE $2`,
+        [symbol, reasonPattern],
+      );
+      lRows = result.rows as typeof lRows;
+    } catch (err) {
+      logger.debug('[AgentL] forceHarvest query failed', {
+        symbol, err: err instanceof Error ? err.message : String(err),
+      });
+      return;
+    }
+    if (lRows.length === 0) return;
+
+    // Bucket by side — L can hold opposite directions across rows
+    // only if entries spanned a regime flip. Each side harvests
+    // independently against its own aggregate notional.
+    const bySide: Record<'long' | 'short', typeof lRows> = { long: [], short: [] };
+    const normSide = (s: string): 'long' | 'short' =>
+      s === 'buy' || s === 'long' ? 'long' : 'short';
+    for (const r of lRows) bySide[normSide(r.side)].push(r);
+
+    for (const sideKey of ['long', 'short'] as const) {
+      const rows = bySide[sideKey];
+      if (rows.length === 0) continue;
+      const aggQty = rows.reduce(
+        (s, r) => s + Math.abs(Number(r.quantity) || 0),
+        0,
+      );
+      if (aggQty <= 0) continue;
+      const sumWeightedEntry = rows.reduce(
+        (s, r) => s + Number(r.entry_price) * Math.abs(Number(r.quantity) || 0),
+        0,
+      );
+      const aggEntry = sumWeightedEntry / aggQty;
+      const aggNotional = aggEntry * aggQty;
+      const sideSign = sideKey === 'long' ? 1 : -1;
+      const aggPnl = (lastPrice - aggEntry) * aggQty * sideSign;
+      const pnlPct = aggNotional > 0 ? aggPnl / aggNotional : 0;
+      if (pnlPct < harvestPct) continue;
+
+      logger.info('[AgentL] force-harvest threshold met', {
+        symbol,
+        side: sideKey,
+        rows: rows.length,
+        aggQty: aggQty.toFixed(6),
+        aggEntry: aggEntry.toFixed(2),
+        aggNotional: aggNotional.toFixed(2),
+        aggPnl: aggPnl.toFixed(4),
+        pnlPct: (pnlPct * 100).toFixed(3),
+        threshold: (harvestPct * 100).toFixed(3),
+      });
+
+      // Reduce-only market for L's aggregate qty. In HEDGE mode pass
+      // posSide; in ONE_WAY rely on opposite-side semantics.
+      let credentials: { apiKey: string; apiSecret: string; passphrase?: string };
+      try {
+        const userRow = await pool.query(
+          `SELECT user_id FROM user_api_credentials WHERE exchange = 'poloniex' LIMIT 1`,
+        );
+        const userId = String(
+          (userRow.rows[0] as { user_id?: string } | undefined)?.user_id ?? '',
+        );
+        if (!userId) return;
+        const c = await apiCredentialsService.getCredentials(userId, 'poloniex');
+        if (!c) return;
+        credentials = c;
+      } catch (err) {
+        logger.warn('[AgentL] force-harvest credentials fetch failed', {
+          symbol, err: err instanceof Error ? err.message : String(err),
+        });
+        return;
+      }
+
+      // Lot-size round.
+      let formattedSize = aggQty;
+      let symbolLotSize = 0;
+      try {
+        const precisions = await getPrecisions(symbol);
+        if (precisions.lotSize && precisions.lotSize > 0) {
+          symbolLotSize = precisions.lotSize;
+          formattedSize = Math.floor(aggQty / precisions.lotSize) * precisions.lotSize;
+        }
+      } catch { /* use raw */ }
+      if (formattedSize <= 0) {
+        logger.debug('[AgentL] force-harvest lot rounding zero', {
+          symbol, aggQty, symbolLotSize,
+        });
+        continue;
+      }
+
+      const closeSide: 'buy' | 'sell' = sideKey === 'long' ? 'sell' : 'buy';
+      const isHedge = this.positionDirectionMode === 'HEDGE';
+      const closePosSide: 'LONG' | 'SHORT' | undefined =
+        isHedge ? (sideKey === 'long' ? 'LONG' : 'SHORT') : undefined;
+
+      let orderId: string | null = null;
+      try {
+        const exchangeOrder = await poloniexFuturesService.placeOrder(
+          credentials,
+          {
+            symbol,
+            side: closeSide,
+            type: 'market',
+            size: formattedSize,
+            lotSize: symbolLotSize,
+            reduceOnly: !isHedge,  // HEDGE rejects reduceOnly per #10
+          },
+          {
+            positionMode: isHedge ? 'HEDGE' : 'ONE_WAY',
+            ...(closePosSide ? { posSide: closePosSide } : {}),
+          },
+        );
+        orderId =
+          exchangeOrder?.ordId ?? exchangeOrder?.orderId ??
+          exchangeOrder?.id ?? exchangeOrder?.clientOid ?? null;
+      } catch (err) {
+        logger.warn('[AgentL] force-harvest exchange order rejected', {
+          symbol, side: sideKey, qty: formattedSize,
+          err: err instanceof Error ? err.message : String(err),
+        });
+        continue;
+      }
+      if (!orderId) {
+        logger.warn('[AgentL] force-harvest no orderId returned', {
+          symbol, side: sideKey,
+        });
+        continue;
+      }
+
+      // Update only L's rows (close them with proportional PnL).
+      try {
+        for (const row of rows) {
+          const rowQty = Math.abs(Number(row.quantity) || 0);
+          const qtyShare = aggQty > 0 ? rowQty / aggQty : 0;
+          const rowPnl = aggPnl * qtyShare;
+          await pool.query(
+            `UPDATE autonomous_trades
+                SET status = 'closed', exit_price = $1, exit_time = NOW(),
+                    exit_reason = $2, exit_order_id = $3, pnl = $4
+              WHERE id = $5`,
+            [lastPrice, 'agent_l_force_harvest', orderId, rowPnl, row.id],
+          );
+          this.arbiter.recordSettled('L', rowPnl);
+          this.applyOutcomeToAgent(symbol, 'L', sideKey, rowPnl);
+        }
+      } catch (err) {
+        logger.error('[AgentL] force-harvest DB update failed — ORPHAN RISK', {
+          symbol, err: err instanceof Error ? err.message : String(err),
+        });
+      }
+
+      logger.info('[AgentL] force-harvest CLOSED', {
+        symbol, side: sideKey, orderId,
+        rowsClosed: rows.length,
+        aggPnl: aggPnl.toFixed(4),
+      });
+
+      this.bus.publish({
+        type: BusEventType.EXIT_TRIGGERED,
+        source: this.instanceId,
+        symbol,
+        payload: {
+          agent: 'L',
+          heldSide: sideKey,
+          markPrice: lastPrice,
+          orderId,
+          pnl: aggPnl,
+          exitReason: 'agent_l_force_harvest',
+        },
+      });
     }
   }
 

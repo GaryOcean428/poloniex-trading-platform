@@ -296,30 +296,25 @@ class StateReconciliationService {
           } catch {
             /* fail-soft: keep generic reason */
           }
-          // 2026-05-08 #11 — PnL recovery for manual-close ghosts.
-          // When the user closes a kernel-issued position on the
-          // Poloniex UI, the close fires through Poloniex's order
-          // pipeline but never reaches our closeHeldPosition (which is
-          // the only path that records realized PnL + fires the
-          // per-agent emotion update via applyOutcomeToAgent). This
-          // path closes that loop: query Poloniex's position-history
-          // endpoint, find the closed position matching this DB row by
-          // (symbol, side, entry_time), extract realized PnL, and
-          // publish a kernel-bus OUTCOME event. The kernel's bus
-          // subscriber consumes that and updates the owning agent's
-          // emotion stack.
+          // 2026-05-08 #11 — PnL recovery for ghost-closed positions.
+          // 2026-05-10 #12 — extended to ALL ghost-close reasons for
+          // kernel-issued rows (not just manual_close_user).
           //
-          // Only fires for kernel-issued rows (agent IN K/M/T/L) when
-          // ghostReason='manual_close_user'. Other ghost-close reasons
-          // either already had PnL recorded (post_close_race) or are
-          // not kernel-issued (orphan/legacy).
+          // When ANY out-of-band actor closes a kernel-issued position
+          // — user UI close, Poloniex liquidation, exchange-side stop,
+          // partial fill cleanup — Poloniex records the realized PnL
+          // but the close never reaches our closeHeldPosition (which
+          // is the only path that calls applyOutcomeToAgent with the
+          // realized PnL). Without this recovery branch, sideways
+          // equity hides realized losses: agents win on the books but
+          // exchange-side closes silently bleed off the realized gains.
+          //
+          // Fires for any kernel-issued row (agent IN K/M/T/L) on
+          // ghost-close, regardless of ghostReason. Other reasons
+          // (orphan/USER) skip recovery — they're not kernel positions.
           let recoveredPnl: number | null = null;
           let recoveredAgent: 'K' | 'M' | 'T' | 'L' | null = null;
-          if (
-            ghostReason === 'manual_close_user' &&
-            credentials &&
-            dbTrade.entry_time
-          ) {
+          if (credentials && dbTrade.entry_time) {
             try {
               const ctxRow = await pool.query(
                 `SELECT agent FROM autonomous_trades WHERE id = $1`,
@@ -381,7 +376,11 @@ class StateReconciliationService {
             );
             // Publish OUTCOME event so the kernel's bus subscriber
             // updates the per-agent emotion stack. Only fires when we
-            // recovered PnL for a kernel-issued row.
+            // recovered PnL for a kernel-issued row. The payload's
+            // ``source`` field tags the ghost reason so the kernel can
+            // distinguish user-initiated closes from exchange-side
+            // closes (liquidation/stop) when shaping the emotion
+            // delta — exchange-side losses should hit harder.
             if (recoveredPnl !== null && recoveredAgent !== null) {
               try {
                 const bus = getKernelBus();
@@ -393,12 +392,13 @@ class StateReconciliationService {
                     agent: recoveredAgent,
                     side: normalizeDbSide(dbTrade.side),
                     pnl: recoveredPnl,
-                    source: 'manual_close_recovered',
+                    source: `reconciler_recovered:${ghostReason}`,
+                    ghostReason,
                     tradeId: dbTrade.id,
                   },
                 });
                 logger.info(
-                  `[RECONCILE] Published OUTCOME for manual close: agent=${recoveredAgent} symbol=${dbTrade.symbol} pnl=${recoveredPnl.toFixed(4)}`
+                  `[RECONCILE] Published OUTCOME for ghost close: agent=${recoveredAgent} symbol=${dbTrade.symbol} pnl=${recoveredPnl.toFixed(4)} reason=${ghostReason}`
                 );
               } catch (busErr) {
                 logger.debug('[RECONCILE] OUTCOME publish failed', {

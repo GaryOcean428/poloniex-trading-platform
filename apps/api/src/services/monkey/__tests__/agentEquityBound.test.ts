@@ -6,6 +6,8 @@ import { describe, it, expect } from 'vitest';
 import {
   computeAgentHeadroom,
   clampSizeToHeadroom,
+  computeAgentNotionalHeadroom,
+  clampMarginToNotionalHeadroom,
 } from '../agentEquityBound.js';
 
 describe('computeAgentHeadroom', () => {
@@ -75,5 +77,79 @@ describe('clampSizeToHeadroom', () => {
     expect(headroom).toBe(10);
     const desired = 25;
     expect(clampSizeToHeadroom(desired, headroom)).toBe(10);
+  });
+});
+
+describe('computeAgentNotionalHeadroom', () => {
+  it('returns full cap (allocation × ratio) when no notional is open', () => {
+    expect(computeAgentNotionalHeadroom(50, 0, 4.0)).toBe(200);
+  });
+
+  it('default ratio is 4.0', () => {
+    expect(computeAgentNotionalHeadroom(50, 0)).toBe(200);
+  });
+
+  it('subtracts open notional from the cap', () => {
+    expect(computeAgentNotionalHeadroom(50, 50, 4.0)).toBe(150);
+  });
+
+  it('returns zero when fully committed', () => {
+    expect(computeAgentNotionalHeadroom(50, 200, 4.0)).toBe(0);
+  });
+
+  it('floors at zero when over-committed', () => {
+    expect(computeAgentNotionalHeadroom(50, 300, 4.0)).toBe(0);
+  });
+
+  it('returns zero on bad inputs', () => {
+    expect(computeAgentNotionalHeadroom(0, 0, 4.0)).toBe(0);
+    expect(computeAgentNotionalHeadroom(NaN, 0, 4.0)).toBe(0);
+    expect(computeAgentNotionalHeadroom(50, -10, 4.0)).toBe(0);
+    expect(computeAgentNotionalHeadroom(50, 0, 0)).toBe(0);
+    expect(computeAgentNotionalHeadroom(50, 0, NaN)).toBe(0);
+  });
+
+  it('models the L stacking scenario: $20 alloc, $80 cap, 39 rows already at $3500 notional', () => {
+    // L was stacking 39 BTC LONGs at 17.7× equity ($3500 cumulative
+    // notional on a $200 account). Even with a 4× cap on its $20
+    // arbiter allocation, headroom is $0 — the cap blocks new stacking.
+    const allocation = 20;
+    const openNotional = 3500;
+    expect(computeAgentNotionalHeadroom(allocation, openNotional, 4.0)).toBe(0);
+  });
+});
+
+describe('clampMarginToNotionalHeadroom', () => {
+  it('returns desired margin when notional fits in headroom', () => {
+    // 5 × 14 = 70 notional, well under 200 headroom
+    expect(clampMarginToNotionalHeadroom(5, 14, 200)).toBe(5);
+  });
+
+  it('clamps margin so notional == headroom when proposed exceeds', () => {
+    // 10 × 14 = 140 notional vs 70 headroom → margin scales to 70/14 = 5
+    expect(clampMarginToNotionalHeadroom(10, 14, 70)).toBe(5);
+  });
+
+  it('returns zero when headroom is zero', () => {
+    expect(clampMarginToNotionalHeadroom(5, 14, 0)).toBe(0);
+  });
+
+  it('returns zero when headroom is negative', () => {
+    expect(clampMarginToNotionalHeadroom(5, 14, -10)).toBe(0);
+  });
+
+  it('returns zero when leverage is zero or negative', () => {
+    expect(clampMarginToNotionalHeadroom(5, 0, 200)).toBe(0);
+    expect(clampMarginToNotionalHeadroom(5, -1, 200)).toBe(0);
+  });
+
+  it('returns zero when desired margin is zero or negative', () => {
+    expect(clampMarginToNotionalHeadroom(0, 14, 200)).toBe(0);
+    expect(clampMarginToNotionalHeadroom(-5, 14, 200)).toBe(0);
+  });
+
+  it('exact-fit preserves desired margin', () => {
+    // 10 × 14 = 140 == headroom 140 → no clamp
+    expect(clampMarginToNotionalHeadroom(10, 14, 140)).toBe(10);
   });
 });
