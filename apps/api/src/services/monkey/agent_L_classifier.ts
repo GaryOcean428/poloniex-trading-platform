@@ -129,6 +129,25 @@ export interface AgentLDecision {
   conviction: number;
   /** The K nearest neighbors used. Surfaced for telemetry. */
   neighbors: KNNNeighbor[];
+  /** 2026-05-11 — diagnostic: distribution of realized labels across the
+   *  K neighbors, plus the raw IDW weight totals per direction. Lets the
+   *  caller distinguish "all neighbors agreed long" (legitimate strong
+   *  signal) from "score pinned by normalizer" (degenerate). */
+  labelDistribution: {
+    long: number;
+    short: number;
+    neutral: number;
+    /** Sum of IDW weights backing the LONG label. */
+    longWeight: number;
+    /** Sum of IDW weights backing the SHORT label. */
+    shortWeight: number;
+    /** Minimum FR distance in the top-K — proxy for "how close is the
+     *  nearest historical analog". */
+    nearestDistance: number;
+    /** Maximum FR distance in the top-K — proxy for "how loose is the
+     *  K-th neighbor". Wide spread + clean vote = robust signal. */
+    farthestDistance: number;
+  };
   reason: string;
 }
 
@@ -172,10 +191,16 @@ export function agentLDecide(
   basinHistory: readonly Basin[],
   config: AgentLConfig = DEFAULT_AGENT_L_CONFIG,
 ): AgentLDecision {
+  const emptyDist: AgentLDecision['labelDistribution'] = {
+    long: 0, short: 0, neutral: 0,
+    longWeight: 0, shortWeight: 0,
+    nearestDistance: 0, farthestDistance: 0,
+  };
   const cur = buildBasinTuple(basinHistory);
   if (cur === null) {
     return {
       action: 'hold', signedScore: 0, conviction: 0, neighbors: [],
+      labelDistribution: emptyDist,
       reason: 'history empty',
     };
   }
@@ -197,6 +222,7 @@ export function agentLDecide(
   if (candidates.length < Math.ceil(config.k / 2)) {
     return {
       action: 'hold', signedScore: 0, conviction: 0, neighbors: [],
+      labelDistribution: emptyDist,
       reason: `insufficient candidates (${candidates.length} < ${Math.ceil(config.k / 2)})`,
     };
   }
@@ -205,15 +231,23 @@ export function agentLDecide(
   candidates.sort((a, b) => a.distance - b.distance);
   const topK = candidates.slice(0, config.k);
 
-  // Inverse-distance-weighted signed vote.
+  // Inverse-distance-weighted signed vote + per-direction weight bookkeeping.
   const eps = 1e-9;
   let weightSum = 0;
   let signedSum = 0;
   let alignCount = 0;
+  let longCount = 0;
+  let shortCount = 0;
+  let neutralCount = 0;
+  let longWeight = 0;
+  let shortWeight = 0;
   for (const n of topK) {
     const w = 1 / (n.distance + eps);
     weightSum += w;
     signedSum += w * n.label;
+    if (n.label === 1) { longCount++; longWeight += w; }
+    else if (n.label === -1) { shortCount++; shortWeight += w; }
+    else neutralCount++;
   }
   const signedScore = weightSum > 0 ? signedSum / weightSum : 0;
   const direction = signedScore > 0 ? 1 : signedScore < 0 ? -1 : 0;
@@ -222,9 +256,20 @@ export function agentLDecide(
   }
   const conviction = topK.length > 0 ? alignCount / topK.length : 0;
 
+  const labelDistribution: AgentLDecision['labelDistribution'] = {
+    long: longCount,
+    short: shortCount,
+    neutral: neutralCount,
+    longWeight,
+    shortWeight,
+    nearestDistance: topK[0]?.distance ?? 0,
+    farthestDistance: topK[topK.length - 1]?.distance ?? 0,
+  };
+
   if (Math.abs(signedScore) < config.actionThreshold) {
     return {
       action: 'hold', signedScore, conviction, neighbors: topK,
+      labelDistribution,
       reason: `signed score ${signedScore.toFixed(3)} below action threshold ${config.actionThreshold}`,
     };
   }
@@ -234,6 +279,7 @@ export function agentLDecide(
     signedScore,
     conviction,
     neighbors: topK,
+    labelDistribution,
     reason: `FR-KNN k=${config.k} score=${signedScore.toFixed(3)} conviction=${conviction.toFixed(2)}`,
   };
 }
