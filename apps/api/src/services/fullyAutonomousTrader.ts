@@ -1356,33 +1356,46 @@ class FullyAutonomousTrader extends EventEmitter {
 
         // 2026-05-06 incident: FAT closed a user-opened ETH LONG via
         // stop_loss_roi because it iterates ALL exchange positions and
-        // applies its SL/TP rules without checking ownership. The
-        // user-position guard skips agent='USER' rows so FAT doesn't
-        // manage manually-opened positions.
+        // applies its SL/TP rules without checking ownership.
         //
         // 2026-05-08: opt-in override. When the user wants FAT to
         // manage their manual positions (e.g. add to / hand off
         // ongoing supervision), set FAT_MANAGES_USER_POSITIONS=true.
-        // Default false preserves the safer guard.
-        const fatManagesUserPositions =
-          process.env.FAT_MANAGES_USER_POSITIONS === 'true';
-        if (!fatManagesUserPositions) {
-          try {
-            const userOwned = await pool.query(
-              `SELECT 1 FROM autonomous_trades
-                WHERE user_id = $1 AND symbol = $2 AND status = 'open'
-                  AND agent = 'USER' LIMIT 1`,
-              [userId, symbol],
-            );
-            if (userOwned.rows.length > 0) {
-              logger.info(`[FAT] skipping ${symbol} — user-owned position (agent='USER'), not FAT's to manage`);
-              continue;
-            }
-          } catch (ownerErr) {
-            logger.debug('[FAT] user-owned check failed (continuing — fail-open)', {
-              symbol, err: ownerErr instanceof Error ? ownerErr.message : String(ownerErr),
-            });
+        //
+        // 2026-05-11 incident: FAT closed a Monkey kernel-issued
+        // BTC LONG via stop_loss_roi at -$54 even though Monkey's
+        // exit cascade (rejustification + harvest + regime-stability
+        // streaks) wanted to hold. Market reverted favorably right
+        // after, locking in an unnecessary loss. The earlier guard
+        // only skipped agent='USER' — kernel-issued rows (K/M/T/L)
+        // were not skipped and FAT's blunt -15% ROI gate ran before
+        // Monkey's geometric gates could re-justify.
+        //
+        // Fixed: FAT now skips ANY position owned by a kernel agent
+        // OR USER (when FAT_MANAGES_USER_POSITIONS is off). Monkey
+        // owns its lifecycle end-to-end; FAT only acts on orphan or
+        // unknown-origin positions.
+        try {
+          const fatManagesUserPositions =
+            process.env.FAT_MANAGES_USER_POSITIONS === 'true';
+          const ownerAgentsToSkip = fatManagesUserPositions
+            ? ['K', 'M', 'T', 'L']
+            : ['K', 'M', 'T', 'L', 'USER'];
+          const owned = await pool.query(
+            `SELECT agent FROM autonomous_trades
+              WHERE user_id = $1 AND symbol = $2 AND status = 'open'
+                AND agent = ANY($3::text[]) LIMIT 1`,
+            [userId, symbol, ownerAgentsToSkip],
+          );
+          if (owned.rows.length > 0) {
+            const ownerAgent = String(owned.rows[0]?.agent ?? '?');
+            logger.info(`[FAT] skipping ${symbol} — owned by ${ownerAgent}, not FAT's to manage`);
+            continue;
           }
+        } catch (ownerErr) {
+          logger.debug('[FAT] ownership check failed (continuing — fail-open)', {
+            symbol, err: ownerErr instanceof Error ? ownerErr.message : String(ownerErr),
+          });
         }
         const markPx = parseFloat(position.markPx || position.markPrice || '0');
         const entryPrice = parseFloat(position.openAvgPx || position.entryPrice || '0');
@@ -1778,6 +1791,16 @@ class FullyAutonomousTrader extends EventEmitter {
   /**
    * Record a trade result and update circuit breaker state.
    * Called after every position close.
+   *
+   * 2026-05-11 — capitalBase now reflects CURRENT EQUITY, not the
+   * static config.initialCapital. Previous behavior: a $54 loss
+   * against config.initialCapital=$12.40 reported as "435.8% of
+   * capital" and tripped the daily-loss CB on a single trade. The
+   * CB should be governing real risk against live exposure, not
+   * historical baseline. Resolution order:
+   *   1. Latest autonomous_performance.current_equity row
+   *   2. The passed capitalBase arg (legacy callers)
+   *   3. 10000 fallback
    */
   private async recordTradeResult(userId: string, pnl: number, capitalBase: number): Promise<void> {
     if (process.env.TRADING_ENGINE_PY === 'true') {
@@ -1794,6 +1817,27 @@ class FullyAutonomousTrader extends EventEmitter {
           `${pyErr instanceof Error ? pyErr.message : String(pyErr)}`
         );
       }
+    }
+
+    // Prefer the most recent recorded equity over the static
+    // initialCapital baseline that callers pass in.
+    let effectiveCapitalBase = capitalBase;
+    try {
+      const eqRow = await pool.query(
+        `SELECT current_equity FROM autonomous_performance
+          WHERE user_id = $1
+          ORDER BY timestamp DESC
+          LIMIT 1`,
+        [userId],
+      );
+      const liveEquity = Number(eqRow.rows[0]?.current_equity ?? 0);
+      if (Number.isFinite(liveEquity) && liveEquity > 0) {
+        effectiveCapitalBase = liveEquity;
+      }
+    } catch (eqErr) {
+      logger.debug('[CB] live-equity lookup failed; using passed capitalBase', {
+        userId, err: eqErr instanceof Error ? eqErr.message : String(eqErr),
+      });
     }
 
     const cb = this.getCircuitBreaker(userId);
@@ -1814,13 +1858,19 @@ class FullyAutonomousTrader extends EventEmitter {
       this.emit('circuit_breaker_tripped', { userId, reason: cb.trippedReason, consecutiveLosses: cb.consecutiveLosses });
     }
 
-    // Check daily loss limit
-    const dailyLossPercent = capitalBase > 0 ? (cb.dailyLoss / capitalBase) * 100 : 0;
+    // Check daily loss limit against current equity.
+    const dailyLossPercent = effectiveCapitalBase > 0
+      ? (cb.dailyLoss / effectiveCapitalBase) * 100
+      : 0;
     if (dailyLossPercent >= FullyAutonomousTrader.MAX_DAILY_LOSS_PERCENT) {
       cb.isTripped = true;
       cb.trippedAt = new Date();
       cb.trippedReason = `Daily loss limit reached (${safeFixed(dailyLossPercent, 1, '?')}% of capital) — halting until next day`;
-      logger.warn(`[CB] TRIPPED for user ${userId}: ${cb.trippedReason}`);
+      logger.warn(`[CB] TRIPPED for user ${userId}: ${cb.trippedReason}`, {
+        dailyLoss: cb.dailyLoss,
+        effectiveCapitalBase,
+        passedCapitalBase: capitalBase,
+      });
       this.emit('circuit_breaker_tripped', { userId, reason: cb.trippedReason, dailyLossPercent });
     }
   }
