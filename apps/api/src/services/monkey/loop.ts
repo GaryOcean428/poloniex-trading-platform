@@ -347,10 +347,12 @@ interface SymbolState {
    *  ring; older events drop. Each agent reads from this on its tick. */
   recentBusEvents: import('./kernel_bus.js').BusEvent[];
   /** 2026-05-11 — wall-clock ms of the last force-harvest by side. Used
-   *  to enforce a per-symbol L entry cooldown so L doesn't immediately
-   *  re-stack the position it just dissolved (was observed as fee-churn
-   *  in the 24h post-PR-#652 tape). Window is governed by
-   *  MONKEY_AGENT_L_HARVEST_COOLDOWN_MS (default 5 min). */
+   *  to give L one tick of "wiggle room" after a sweep so the next
+   *  entry sees a market that has actually moved, rather than re-entering
+   *  at a price within fractions of the close. Window is governed by
+   *  MONKEY_AGENT_L_HARVEST_COOLDOWN_MS (default 60 s — one tick).
+   *  Fees are not a concern (user has fee-free subscription); this is
+   *  about market-microstructure breathing room. */
   lForceHarvestAtMsBySide: { long: number | null; short: number | null };
   /** 2026-05-11 — ring of last N=5 L force-harvest PnLs on this symbol.
    *  Consumed by the adaptive harvest threshold: when L is on a hot
@@ -2217,11 +2219,15 @@ export class MonkeyKernel extends EventEmitter {
         labelDistribution: lDecision.labelDistribution,
         reason: lDecision.reason,
       };
-      // 2026-05-11 — per-symbol L harvest cooldown. After a force-
-      // harvest fires on a side, suppress new L entries on that side
-      // for MONKEY_AGENT_L_HARVEST_COOLDOWN_MS (default 5 min). The
-      // notional cap eventually limits re-stacking too, but the
-      // cooldown is the cleaner fee-churn brake.
+      // 2026-05-11 — minimal L harvest "wiggle room" after a sweep.
+      //
+      // Not a fee brake (user has fee-free Poloniex subscription); this
+      // is about market microstructure. Re-entering on the same tick a
+      // close lands risks fills at prices within fractions of the close
+      // price, before the book has visibly moved. One tick (60 s) of
+      // space is plenty — the kernel runs at 30s ticks, so this gives
+      // 1-2 ticks of breathing room. Configurable via
+      // MONKEY_AGENT_L_HARVEST_COOLDOWN_MS; set to 0 to disable.
       let lCooldownActive = false;
       const lProposedSideForCooldown: 'long' | 'short' | null =
         lDecision.action === 'enter_long' ? 'long'
@@ -2229,7 +2235,9 @@ export class MonkeyKernel extends EventEmitter {
             : null;
       if (lProposedSideForCooldown) {
         const cooldownMs =
-          Number(process.env.MONKEY_AGENT_L_HARVEST_COOLDOWN_MS) || 5 * 60_000;
+          process.env.MONKEY_AGENT_L_HARVEST_COOLDOWN_MS !== undefined
+            ? Number(process.env.MONKEY_AGENT_L_HARVEST_COOLDOWN_MS)
+            : 60_000;
         const lastHarvestAt = state.lForceHarvestAtMsBySide[lProposedSideForCooldown];
         if (
           lastHarvestAt !== null
