@@ -346,6 +346,17 @@ interface SymbolState {
   /** Recent bus events for cross-agent observation context. Bounded
    *  ring; older events drop. Each agent reads from this on its tick. */
   recentBusEvents: import('./kernel_bus.js').BusEvent[];
+  /** 2026-05-11 — wall-clock ms of the last force-harvest by side. Used
+   *  to enforce a per-symbol L entry cooldown so L doesn't immediately
+   *  re-stack the position it just dissolved (was observed as fee-churn
+   *  in the 24h post-PR-#652 tape). Window is governed by
+   *  MONKEY_AGENT_L_HARVEST_COOLDOWN_MS (default 5 min). */
+  lForceHarvestAtMsBySide: { long: number | null; short: number | null };
+  /** 2026-05-11 — ring of last N=5 L force-harvest PnLs on this symbol.
+   *  Consumed by the adaptive harvest threshold: when L is on a hot
+   *  streak (all 5 positive AND dopamine high), threshold widens from
+   *  0.3% to 0.6% to let winners run. Oldest entry drops on push. */
+  recentLHarvestPnls: number[];
 }
 
 /** Cap the recent-bus-event ring at this size — anything older than
@@ -617,6 +628,8 @@ export class MonkeyKernel extends EventEmitter {
         L: newPerAgentState(),
       },
       recentBusEvents: [],
+      lForceHarvestAtMsBySide: { long: null, short: null },
+      recentLHarvestPnls: [],
     };
   }
 
@@ -2197,10 +2210,45 @@ export class MonkeyKernel extends EventEmitter {
         signedScore: lDecision.signedScore,
         conviction: lDecision.conviction,
         neighbors: lDecision.neighbors.length,
+        // 2026-05-11 — neighbor label distribution + IDW weights surface
+        // whether a saturated score (e.g. signedScore=1.000) reflects a
+        // clean unanimous vote (all neighbors long-labeled) or a
+        // degenerate normalizer pin. Logged in the entry path below.
+        labelDistribution: lDecision.labelDistribution,
         reason: lDecision.reason,
       };
+      // 2026-05-11 — per-symbol L harvest cooldown. After a force-
+      // harvest fires on a side, suppress new L entries on that side
+      // for MONKEY_AGENT_L_HARVEST_COOLDOWN_MS (default 5 min). The
+      // notional cap eventually limits re-stacking too, but the
+      // cooldown is the cleaner fee-churn brake.
+      let lCooldownActive = false;
+      const lProposedSideForCooldown: 'long' | 'short' | null =
+        lDecision.action === 'enter_long' ? 'long'
+          : lDecision.action === 'enter_short' ? 'short'
+            : null;
+      if (lProposedSideForCooldown) {
+        const cooldownMs =
+          Number(process.env.MONKEY_AGENT_L_HARVEST_COOLDOWN_MS) || 5 * 60_000;
+        const lastHarvestAt = state.lForceHarvestAtMsBySide[lProposedSideForCooldown];
+        if (
+          lastHarvestAt !== null
+          && Number.isFinite(cooldownMs)
+          && cooldownMs > 0
+          && Date.now() - lastHarvestAt < cooldownMs
+        ) {
+          const remainingS = ((cooldownMs - (Date.now() - lastHarvestAt)) / 1000).toFixed(0);
+          (derivation.agentL as Record<string, unknown>).cooldownActive = true;
+          (derivation.agentL as Record<string, unknown>).cooldownRemainingS = remainingS;
+          logger.info('[AgentL] entry suppressed by harvest cooldown', {
+            symbol, side: lProposedSideForCooldown, remainingS,
+          });
+          lCooldownActive = true;
+        }
+      }
       if (
-        (lDecision.action === 'enter_long' || lDecision.action === 'enter_short')
+        !lCooldownActive
+        && (lDecision.action === 'enter_long' || lDecision.action === 'enter_short')
         && lAlloc > 0
       ) {
         // v0.8.7 kill switch — pause Agent L entries.
@@ -2281,11 +2329,21 @@ export class MonkeyKernel extends EventEmitter {
             });
             (derivation as Record<string, unknown>).agentLExecuted = lResult.executed;
             if (lResult.executed) {
+              const ld = lDecision.labelDistribution;
               logger.info('[AgentL] entry placed', {
                 symbol, side: lDecision.action, orderId: lResult.orderId,
                 margin: lMargin.toFixed(2), leverage: lLeverage,
                 signedScore: lDecision.signedScore.toFixed(3),
                 conviction: lDecision.conviction.toFixed(2),
+                // 2026-05-11 — raw KNN diagnostic so the saturated
+                // signedScore=1.000 case is interpretable. `labels`
+                // shows the raw vote counts (long/short/neutral) and
+                // `weight` the IDW-weighted vote totals; `nearD`
+                // and `farD` bound the FR distance spread on top-K.
+                labels: `${ld.long}L/${ld.short}S/${ld.neutral}N`,
+                weight: `${ld.longWeight.toFixed(2)}L/${ld.shortWeight.toFixed(2)}S`,
+                nearD: ld.nearestDistance.toFixed(4),
+                farD: ld.farthestDistance.toFixed(4),
               });
               // Publish to bus so other agents see L's action.
               this.bus.publish({
@@ -2887,9 +2945,38 @@ export class MonkeyKernel extends EventEmitter {
     lastPrice: number,
   ): Promise<void> {
     if (!Number.isFinite(lastPrice) || lastPrice <= 0) return;
-    const harvestPct =
+    const baseHarvestPct =
       Number(process.env.MONKEY_AGENT_L_HARVEST_PCT) || 0.003;
-    if (!Number.isFinite(harvestPct) || harvestPct <= 0) return;
+    if (!Number.isFinite(baseHarvestPct) || baseHarvestPct <= 0) return;
+
+    // 2026-05-11 — adaptive harvest threshold.
+    //
+    // The 0.3% base threshold is calibrated for sideways chop: capture
+    // anything modestly green and free the margin. In trending regimes
+    // this leaves money on the table — L's stack would have continued
+    // running with a wider tolerance. Lift to MONKEY_AGENT_L_HARVEST_PCT_HOT
+    // (default 0.6%) when BOTH conditions hold:
+    //   1. Last N=5 force-harvests on this symbol were ALL positive
+    //      (recentLHarvestPnls in SymbolState — pushed by the harvest
+    //      success branch below).
+    //   2. L's dopamine emotion stack is high (> 0.7) — proxy for
+    //      "recent outcomes are stacked positive and the agent is in a
+    //      flow regime, not a frustration regime".
+    //
+    // When the threshold widens, the lower 0.3% floor still applies if
+    // pnlPct crosses it but doesn't hit 0.6% — see the per-side block.
+    const hotHarvestPct =
+      Number(process.env.MONKEY_AGENT_L_HARVEST_PCT_HOT) || 0.006;
+    const hotHarvestDopamineFloor =
+      Number(process.env.MONKEY_AGENT_L_HARVEST_HOT_DOPAMINE_FLOOR) || 0.7;
+    const symState = this.symbolStates.get(symbol);
+    const recentPnls = symState?.recentLHarvestPnls ?? [];
+    const lDopamine =
+      symState?.agentStates?.L?.neurochemistry?.dopamine ?? 0;
+    const allRecentPositive =
+      recentPnls.length >= 5 && recentPnls.every((p) => p > 0);
+    const hotRegime = allRecentPositive && lDopamine > hotHarvestDopamineFloor;
+    const harvestPct = hotRegime ? hotHarvestPct : baseHarvestPct;
 
     const reasonPattern = `monkey|kernel=${this.instanceId}|%`;
     let lRows: Array<{
@@ -2955,6 +3042,9 @@ export class MonkeyKernel extends EventEmitter {
         aggPnl: aggPnl.toFixed(4),
         pnlPct: (pnlPct * 100).toFixed(3),
         threshold: (harvestPct * 100).toFixed(3),
+        regime: hotRegime ? 'hot' : 'base',
+        dopamine: lDopamine.toFixed(2),
+        recentHarvests: recentPnls.length,
       });
 
       // Reduce-only market for L's aggregate qty. In HEDGE mode pass
@@ -3060,7 +3150,19 @@ export class MonkeyKernel extends EventEmitter {
         symbol, side: sideKey, orderId,
         rowsClosed: rows.length,
         aggPnl: aggPnl.toFixed(4),
+        regime: hotRegime ? 'hot' : 'base',
       });
+
+      // 2026-05-11 — record cooldown timestamp + push pnl into the
+      // recent-harvests ring so subsequent entries see the cooldown
+      // gate, and the adaptive threshold can lift on a hot streak.
+      if (symState) {
+        symState.lForceHarvestAtMsBySide[sideKey] = Date.now();
+        symState.recentLHarvestPnls.push(aggPnl);
+        if (symState.recentLHarvestPnls.length > 5) {
+          symState.recentLHarvestPnls.shift();
+        }
+      }
 
       this.bus.publish({
         type: BusEventType.EXIT_TRIGGERED,
