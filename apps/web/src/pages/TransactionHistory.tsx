@@ -78,21 +78,42 @@ const TransactionHistory: React.FC = () => {
         const headers: Record<string, string> = { 'Content-Type': 'application/json' };
         if (token) headers['Authorization'] = `Bearer ${token}`;
 
-        const response = await fetch(`${backendUrl}/api/futures/account-bills`, { headers });
+        // 2026-05-11 — Transaction History was calling /api/futures/account-bills
+        // which doesn't exist (404 → page rendered empty). Real endpoint is
+        // /api/dashboard/bills which proxies Poloniex's getAccountBills.
+        // Response shape: { success, data: [...] } where each item carries
+        // Poloniex's bill fields (createTime, opTypeName, currency, amount, etc).
+        const response = await fetch(`${backendUrl}/api/dashboard/bills?limit=200`, { headers });
         if (response.ok) {
-          const data = await response.json();
-          if (data.success && Array.isArray(data.bills)) {
-            setTransactions(data.bills.map((b: ApiBill, idx: number) => ({
-              id: b.id || `tx-${idx}`,
-              timestamp: new Date(b.timestamp || b.createdAt || Date.now()),
-              type: (b.type || 'trade') as Transaction['type'],
-              currency: b.currency || 'USDT',
-              amount: parseFloat(b.amount || '0'),
-              status: 'completed' as const,
-              txHash: b.txHash || undefined,
-              description: b.description || getTransactionDescription((b.type || 'trade') as Transaction['type'], b.currency || 'USDT', parseFloat(b.amount || '0')),
-              balance: parseFloat(b.balance || '0')
-            })));
+          const json = await response.json();
+          const billsArray = Array.isArray(json?.data) ? json.data
+            : Array.isArray(json?.data?.bills) ? json.data.bills
+              : Array.isArray(json?.bills) ? json.bills
+                : [];
+          if (json.success) {
+            setTransactions(billsArray.map((b: ApiBill & Record<string, unknown>, idx: number) => {
+              const rawType = String(b.type ?? b.opType ?? b.opTypeName ?? 'trade').toLowerCase();
+              const type = (
+                rawType.includes('deposit') ? 'deposit'
+                : rawType.includes('withdraw') ? 'withdrawal'
+                : rawType.includes('fee') ? 'fee'
+                : rawType.includes('funding') ? 'funding'
+                : 'trade'
+              ) as Transaction['type'];
+              const tsRaw = (b.createTime ?? b.timestamp ?? b.createdAt ?? Date.now()) as string | number;
+              const tsMs = typeof tsRaw === 'string' ? Number(tsRaw) || Date.parse(tsRaw) : Number(tsRaw);
+              return {
+                id: String(b.id ?? b.bizId ?? `tx-${idx}`),
+                timestamp: new Date(tsMs),
+                type,
+                currency: String(b.currency ?? b.coin ?? 'USDT'),
+                amount: parseFloat(String(b.amount ?? b.amt ?? '0')),
+                status: 'completed' as const,
+                txHash: (b.txHash as string | undefined) || undefined,
+                description: (b.description as string | undefined) || (b.opTypeName as string | undefined) || getTransactionDescription(type, String(b.currency ?? 'USDT'), parseFloat(String(b.amount ?? '0'))),
+                balance: parseFloat(String(b.balance ?? b.bal ?? '0')),
+              };
+            }));
             return;
           }
         }
