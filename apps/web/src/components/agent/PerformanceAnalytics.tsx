@@ -8,23 +8,22 @@ import { safeNum } from '@/utils/safeNum';
 const API_BASE_URL = getBackendUrl();
 
 interface PerformanceData {
-  total_pnl: number;
-  total_pnl_percent: number;
-  total_trades: number;
-  winning_trades: number;
-  losing_trades: number;
-  win_rate: number;
-  profit_factor: number;
-  sharpe_ratio: number;
-  max_drawdown: number;
-  avg_win: number;
-  avg_loss: number;
-  best_trade: number;
-  worst_trade: number;
-  daily_pnl: { date: string; pnl: number; cumulative_pnl: number }[];
-  strategy_performance: { strategy_name: string; pnl: number; trades: number; win_rate: number }[];
-  symbol_performance: { symbol: string; pnl: number; trades: number; win_rate: number }[];
-  hourly_distribution: { hour: number; trades: number; avg_pnl: number }[];
+  totalPnl: number;
+  totalPnlPercent: number;
+  totalTrades: number;
+  winningTrades: number;
+  losingTrades: number;
+  winRate: number;
+  profitFactor: number;
+  sharpeRatio: number;
+  maxDrawdown: number;
+  averageWin: number;
+  averageLoss: number;
+  bestTrade: number;
+  worstTrade: number;
+  dailyPerformance: { date: string; pnl: number; cumulativePnL: number; trades: number }[];
+  strategyPerformance: { strategyName: string; pnl: number; trades: number; winRate: number }[];
+  symbolPerformance: { symbol: string; pnl: number; trades: number; winRate: number }[];
 }
 
 interface PerformanceAnalyticsProps {
@@ -92,9 +91,9 @@ const PerformanceAnalytics: React.FC<PerformanceAnalyticsProps> = ({
   };
 
   const renderDailyPnLChart = () => {
-    if (!data || !data.daily_pnl || data.daily_pnl.length === 0) return null;
+    if (!data || !data.dailyPerformance || data.dailyPerformance.length === 0) return null;
 
-    const maxPnl = Math.max(...data.daily_pnl.map(d => Math.abs(d.pnl)));
+    const maxPnl = Math.max(...data.dailyPerformance.map(d => Math.abs(d.pnl)));
     const chartHeight = 200;
 
     return (
@@ -104,12 +103,12 @@ const PerformanceAnalytics: React.FC<PerformanceAnalyticsProps> = ({
           Daily P&L
         </h4>
         <div className="relative" style={{ height: `${chartHeight}px` }}>
-          <svg className="w-full h-full" viewBox={`0 0 ${data.daily_pnl.length * 40} ${chartHeight}`} preserveAspectRatio="xMidYMid meet">
+          <svg className="w-full h-full" viewBox={`0 0 ${data.dailyPerformance.length * 40} ${chartHeight}`} preserveAspectRatio="xMidYMid meet">
             {/* Zero line */}
             <line
               x1="0"
               y1={chartHeight / 2}
-              x2={data.daily_pnl.length * 40}
+              x2={data.dailyPerformance.length * 40}
               y2={chartHeight / 2}
               stroke="#9ca3af"
               strokeWidth="1"
@@ -117,7 +116,7 @@ const PerformanceAnalytics: React.FC<PerformanceAnalyticsProps> = ({
             />
 
             {/* Bars */}
-            {data.daily_pnl.map((day, idx) => {
+            {data.dailyPerformance.map((day, idx) => {
               const barHeight = (Math.abs(day.pnl) / maxPnl) * (chartHeight / 2 - 10);
               const x = idx * 40 + 10;
               const y = day.pnl >= 0 ? chartHeight / 2 - barHeight : chartHeight / 2;
@@ -153,10 +152,10 @@ const PerformanceAnalytics: React.FC<PerformanceAnalyticsProps> = ({
   };
 
   const renderCumulativePnLChart = () => {
-    if (!data || !data.daily_pnl || data.daily_pnl.length === 0) return null;
+    if (!data || !data.dailyPerformance || data.dailyPerformance.length === 0) return null;
 
-    const maxCumPnl = Math.max(...data.daily_pnl.map(d => d.cumulative_pnl));
-    const minCumPnl = Math.min(...data.daily_pnl.map(d => d.cumulative_pnl));
+    const maxCumPnl = Math.max(...data.dailyPerformance.map(d => d.cumulativePnL));
+    const minCumPnl = Math.min(...data.dailyPerformance.map(d => d.cumulativePnL));
     const range = maxCumPnl - minCumPnl;
     const padding = range * 0.1;
 
@@ -183,13 +182,13 @@ const PerformanceAnalytics: React.FC<PerformanceAnalyticsProps> = ({
 
             {/* Cumulative P&L line */}
             <polyline
-              points={data.daily_pnl.map((day, idx) => {
-                const x = (idx / (data.daily_pnl.length - 1)) * 800;
-                const y = 150 - ((day.cumulative_pnl - minCumPnl + padding) / (range + 2 * padding)) * 150;
+              points={data.dailyPerformance.map((day, idx) => {
+                const x = (idx / (data.dailyPerformance.length - 1)) * 800;
+                const y = 150 - ((day.cumulativePnL - minCumPnl + padding) / (range + 2 * padding)) * 150;
                 return `${x},${y}`;
               }).join(' ')}
               fill="none"
-              stroke={data.total_pnl >= 0 ? '#10b981' : '#ef4444'}
+              stroke={data.totalPnl >= 0 ? '#10b981' : '#ef4444'}
               strokeWidth="3"
             />
 
@@ -197,14 +196,14 @@ const PerformanceAnalytics: React.FC<PerformanceAnalyticsProps> = ({
             <polygon
               points={`
                 0,150
-                ${data.daily_pnl.map((day, idx) => {
-                  const x = (idx / (data.daily_pnl.length - 1)) * 800;
-                  const y = 150 - ((day.cumulative_pnl - minCumPnl + padding) / (range + 2 * padding)) * 150;
+                ${data.dailyPerformance.map((day, idx) => {
+                  const x = (idx / (data.dailyPerformance.length - 1)) * 800;
+                  const y = 150 - ((day.cumulativePnL - minCumPnl + padding) / (range + 2 * padding)) * 150;
                   return `${x},${y}`;
                 }).join(' ')}
                 800,150
               `}
-              fill={data.total_pnl >= 0 ? '#10b981' : '#ef4444'}
+              fill={data.totalPnl >= 0 ? '#10b981' : '#ef4444'}
               opacity="0.2"
             />
           </svg>
@@ -214,7 +213,7 @@ const PerformanceAnalytics: React.FC<PerformanceAnalyticsProps> = ({
   };
 
   const renderStrategyPerformance = () => {
-    if (!data || !data.strategy_performance || data.strategy_performance.length === 0) return null;
+    if (!data || !data.strategyPerformance || data.strategyPerformance.length === 0) return null;
 
     return (
       <div className="bg-white rounded-lg border border-gray-200 p-4">
@@ -223,12 +222,12 @@ const PerformanceAnalytics: React.FC<PerformanceAnalyticsProps> = ({
           Strategy Performance
         </h4>
         <div className="space-y-3">
-          {data.strategy_performance.map((strategy, idx) => (
+          {data.strategyPerformance.map((strategy, idx) => (
             <div key={idx} className="flex items-center gap-3">
               <div className="flex-1">
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-sm font-medium text-gray-900">
-                    {strategy.strategy_name}
+                    {strategy.strategyName}
                   </span>
                   <span className={`text-sm font-bold ${getPnLColor(strategy.pnl)}`}>
                     ${safeNum(strategy.pnl).toFixed(2)}
@@ -236,13 +235,13 @@ const PerformanceAnalytics: React.FC<PerformanceAnalyticsProps> = ({
                 </div>
                 <div className="flex items-center gap-4 text-xs text-gray-600">
                   <span>{strategy.trades} trades</span>
-                  <span>Win rate: {safeNum(strategy.win_rate).toFixed(1)}%</span>
+                  <span>Win rate: {safeNum(strategy.winRate).toFixed(1)}%</span>
                 </div>
                 {/* Progress bar */}
                 <div className="mt-2 h-2 bg-gray-200 rounded-full overflow-hidden">
                   <div
                     className={`h-full ${strategy.pnl >= 0 ? 'bg-green-500' : 'bg-red-500'}`}
-                    style={{ width: `${Math.min(100, (strategy.win_rate / 100) * 100)}%` }}
+                    style={{ width: `${Math.min(100, (strategy.winRate / 100) * 100)}%` }}
                   />
                 </div>
               </div>
@@ -254,9 +253,9 @@ const PerformanceAnalytics: React.FC<PerformanceAnalyticsProps> = ({
   };
 
   const renderSymbolPerformance = () => {
-    if (!data || !data.symbol_performance || data.symbol_performance.length === 0) return null;
+    if (!data || !data.symbolPerformance || data.symbolPerformance.length === 0) return null;
 
-    const maxPnl = Math.max(...data.symbol_performance.map(s => Math.abs(s.pnl)));
+    const maxPnl = Math.max(...data.symbolPerformance.map(s => Math.abs(s.pnl)));
 
     return (
       <div className="bg-white rounded-lg border border-gray-200 p-4">
@@ -265,7 +264,7 @@ const PerformanceAnalytics: React.FC<PerformanceAnalyticsProps> = ({
           Symbol Performance
         </h4>
         <div className="space-y-3">
-          {data.symbol_performance.map((symbol, idx) => (
+          {data.symbolPerformance.map((symbol, idx) => (
             <div key={idx}>
               <div className="flex items-center justify-between mb-1">
                 <span className="text-sm font-medium text-gray-900">{symbol.symbol}</span>
@@ -275,7 +274,7 @@ const PerformanceAnalytics: React.FC<PerformanceAnalyticsProps> = ({
               </div>
               <div className="flex items-center gap-4 text-xs text-gray-600 mb-2">
                 <span>{symbol.trades} trades</span>
-                <span>Win rate: {safeNum(symbol.win_rate).toFixed(1)}%</span>
+                <span>Win rate: {safeNum(symbol.winRate).toFixed(1)}%</span>
               </div>
               {/* Horizontal bar */}
               <div className="h-6 bg-gray-100 rounded-lg overflow-hidden relative">
@@ -371,39 +370,39 @@ const PerformanceAnalytics: React.FC<PerformanceAnalyticsProps> = ({
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
           <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-lg p-4 border border-green-200">
             <p className="text-xs text-green-700 font-semibold mb-1">Total P&L</p>
-            <p className={`text-2xl font-bold ${getPnLColor(data.total_pnl || 0)}`}>
-              ${(data.total_pnl || 0).toFixed(2)}
+            <p className={`text-2xl font-bold ${getPnLColor(data.totalPnl || 0)}`}>
+              ${(data.totalPnl || 0).toFixed(2)}
             </p>
-            <p className={`text-xs ${getPnLColor(data.total_pnl || 0)} mt-1`}>
-              {(data.total_pnl_percent || 0) >= 0 ? '+' : ''}{(data.total_pnl_percent || 0).toFixed(2)}%
+            <p className={`text-xs ${getPnLColor(data.totalPnl || 0)} mt-1`}>
+              {(data.totalPnlPercent || 0) >= 0 ? '+' : ''}{(data.totalPnlPercent || 0).toFixed(2)}%
             </p>
           </div>
           <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
             <p className="text-xs text-gray-600 font-semibold mb-1">Total Trades</p>
-            <p className="text-2xl font-bold text-gray-900">{data.total_trades || 0}</p>
+            <p className="text-2xl font-bold text-gray-900">{data.totalTrades || 0}</p>
           </div>
           <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
             <p className="text-xs text-gray-600 font-semibold mb-1">Win Rate</p>
-            <p className={`text-2xl font-bold ${(data.win_rate || 0) >= 50 ? 'text-green-600' : 'text-red-600'}`}>
-              {(data.win_rate || 0).toFixed(1)}%
+            <p className={`text-2xl font-bold ${(data.winRate || 0) >= 50 ? 'text-green-600' : 'text-red-600'}`}>
+              {(data.winRate || 0).toFixed(1)}%
             </p>
           </div>
           <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
             <p className="text-xs text-gray-600 font-semibold mb-1">Profit Factor</p>
-            <p className={`text-2xl font-bold ${(data.profit_factor || 0) >= 1.5 ? 'text-green-600' : 'text-orange-600'}`}>
-              {(data.profit_factor || 0).toFixed(2)}
+            <p className={`text-2xl font-bold ${(data.profitFactor || 0) >= 1.5 ? 'text-green-600' : 'text-orange-600'}`}>
+              {(data.profitFactor || 0).toFixed(2)}
             </p>
           </div>
           <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
             <p className="text-xs text-gray-600 font-semibold mb-1">Sharpe Ratio</p>
-            <p className={`text-2xl font-bold ${(data.sharpe_ratio || 0) >= 1 ? 'text-green-600' : 'text-orange-600'}`}>
-              {(data.sharpe_ratio || 0).toFixed(2)}
+            <p className={`text-2xl font-bold ${(data.sharpeRatio || 0) >= 1 ? 'text-green-600' : 'text-orange-600'}`}>
+              {(data.sharpeRatio || 0).toFixed(2)}
             </p>
           </div>
           <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
             <p className="text-xs text-gray-600 font-semibold mb-1">Max Drawdown</p>
             <p className="text-2xl font-bold text-red-600">
-              {(data.max_drawdown || 0).toFixed(1)}%
+              {(data.maxDrawdown || 0).toFixed(1)}%
             </p>
           </div>
         </div>
@@ -423,21 +422,21 @@ const PerformanceAnalytics: React.FC<PerformanceAnalyticsProps> = ({
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div className="bg-green-50 border border-green-200 rounded-lg p-4">
             <p className="text-xs text-green-700 font-semibold mb-1">Winning Trades</p>
-            <p className="text-2xl font-bold text-green-600">{data.winning_trades || 0}</p>
-            <p className="text-xs text-green-600 mt-1">Avg: ${(data.avg_win || 0).toFixed(2)}</p>
+            <p className="text-2xl font-bold text-green-600">{data.winningTrades || 0}</p>
+            <p className="text-xs text-green-600 mt-1">Avg: ${(data.averageWin || 0).toFixed(2)}</p>
           </div>
           <div className="bg-red-50 border border-red-200 rounded-lg p-4">
             <p className="text-xs text-red-700 font-semibold mb-1">Losing Trades</p>
-            <p className="text-2xl font-bold text-red-600">{data.losing_trades || 0}</p>
-            <p className="text-xs text-red-600 mt-1">Avg: ${safeNum(Math.abs(data.avg_loss || 0)).toFixed(2)}</p>
+            <p className="text-2xl font-bold text-red-600">{data.losingTrades || 0}</p>
+            <p className="text-xs text-red-600 mt-1">Avg: ${safeNum(Math.abs(data.averageLoss || 0)).toFixed(2)}</p>
           </div>
           <div className="bg-green-50 border border-green-200 rounded-lg p-4">
             <p className="text-xs text-green-700 font-semibold mb-1">Best Trade</p>
-            <p className="text-2xl font-bold text-green-600">${(data.best_trade || 0).toFixed(2)}</p>
+            <p className="text-2xl font-bold text-green-600">${(data.bestTrade || 0).toFixed(2)}</p>
           </div>
           <div className="bg-red-50 border border-red-200 rounded-lg p-4">
             <p className="text-xs text-red-700 font-semibold mb-1">Worst Trade</p>
-            <p className="text-2xl font-bold text-red-600">${safeNum(Math.abs(data.worst_trade || 0)).toFixed(2)}</p>
+            <p className="text-2xl font-bold text-red-600">${safeNum(Math.abs(data.worstTrade || 0)).toFixed(2)}</p>
           </div>
         </div>
       </div>

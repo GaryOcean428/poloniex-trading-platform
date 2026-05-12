@@ -182,16 +182,42 @@ router.get('/status', authenticateToken, async (req: Request, res: Response) => 
     if (execMode?.mode === 'pause') status = 'paused';
     else if (running) status = 'running';
     else status = 'stopped';
+    // 2026-05-11 — flatten the most-asked stats onto status so the
+    // frontend AgentStatus interface in AutonomousAgentDashboard
+    // reads them at the top level. Previously nested under
+    // status.trader, so the Dashboard Total P&L card rendered $0.00.
+    // totalPnl is computed live from autonomous_trades because
+    // traderStatus.metrics only tracks equity/drawdown, not P&L.
+    let totalPnl = 0;
+    let liveTradesExecuted = 0;
+    try {
+      const pnlRow = await pool.query(
+        `SELECT COALESCE(SUM(pnl), 0) AS total_pnl,
+                COUNT(*) FILTER (WHERE order_id IS NULL OR order_id NOT LIKE 'paper_%') AS live_trades
+           FROM autonomous_trades
+          WHERE user_id = $1 AND pnl IS NOT NULL`,
+        [userId],
+      );
+      totalPnl = parseFloat(pnlRow.rows[0]?.total_pnl ?? '0') || 0;
+      liveTradesExecuted = parseInt(pnlRow.rows[0]?.live_trades ?? '0', 10) || 0;
+    } catch { /* fail-soft: leave at 0 */ }
     res.json({
       success: true,
       status: {
         id: userId,
+        userId,
         status,
         executionMode: execMode?.mode ?? null,
         startedAt: null,
+        totalPnl,
+        strategiesGenerated: Number((sleStatus as { activeStrategies?: number }).activeStrategies ?? 0),
+        backtestsCompleted: Number((sleStatus as { backtestsCompleted?: number }).backtestsCompleted ?? 0),
+        paperTradesExecuted: 0,
+        liveTradesExecuted,
+        openPositions: Number(traderStatus.openPositions ?? 0),
         sle: sleStatus,
-        trader: traderStatus
-      }
+        trader: traderStatus,
+      },
     });
   } catch (error: unknown) {
     logger.error('Error getting agent status:', error);
@@ -281,13 +307,44 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
   try {
     const userId = (req.user?.id || req.user?.userId)?.toString();
     if (!userId) return res.status(401).json({ success: false, error: 'User ID not found in token' });
-    const defaultPerformance = { totalPnl: 0, winRate: 0, totalTrades: 0, winningTrades: 0, losingTrades: 0, averageWin: 0, averageLoss: 0, sharpeRatio: 0, maxDrawdown: 0 };
+    // 2026-05-11 — full camelCase payload mirroring the frontend
+    // PerformanceData interface. Adds profitFactor / bestTrade /
+    // worstTrade / totalPnlPercent (previously missing — UI cards
+    // rendered 0) and nests dailyPerformance + strategyPerformance
+    // + symbolPerformance inside `performance` so the frontend reads
+    // from a single object.
+    const defaultPerformance = {
+      totalPnl: 0, totalPnlPercent: 0,
+      winRate: 0, totalTrades: 0,
+      winningTrades: 0, losingTrades: 0,
+      averageWin: 0, averageLoss: 0,
+      bestTrade: 0, worstTrade: 0,
+      profitFactor: 0,
+      sharpeRatio: 0, maxDrawdown: 0,
+      dailyPerformance: [] as Array<{ date: string; pnl: number; cumulativePnL: number; trades: number }>,
+      strategyPerformance: [] as Array<{ strategyName: string; pnl: number; trades: number; winRate: number }>,
+      symbolPerformance: [] as Array<{ symbol: string; pnl: number; trades: number; winRate: number }>,
+    };
     const traderStatus = await fullyAutonomousTrader.getStatus(userId);
-    if (!traderStatus.enabled && !traderStatus.metrics) return res.json({ success: true, performance: defaultPerformance, dailyPerformance: [] });
+    if (!traderStatus.enabled && !traderStatus.metrics) return res.json({ success: true, performance: defaultPerformance });
     try {
       const mode = req.query.mode as string | undefined;
       const modeFilter = mode === 'paper' ? " AND order_id LIKE 'paper_%'" : mode === 'live' ? " AND (order_id IS NULL OR order_id NOT LIKE 'paper_%')" : '';
-      const tradesResult = await pool.query(`SELECT COUNT(*) as total_trades, SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as winning_trades, SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END) as losing_trades, SUM(pnl) as total_pnl, AVG(CASE WHEN pnl > 0 THEN pnl END) as avg_win, AVG(CASE WHEN pnl < 0 THEN pnl END) as avg_loss FROM autonomous_trades WHERE user_id = $1${modeFilter}`, [userId]);
+      const tradesResult = await pool.query(
+        `SELECT
+            COUNT(*) AS total_trades,
+            SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) AS winning_trades,
+            SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END) AS losing_trades,
+            SUM(pnl) AS total_pnl,
+            AVG(CASE WHEN pnl > 0 THEN pnl END) AS avg_win,
+            AVG(CASE WHEN pnl < 0 THEN pnl END) AS avg_loss,
+            MAX(pnl) AS best_trade,
+            MIN(pnl) AS worst_trade,
+            SUM(CASE WHEN pnl > 0 THEN pnl ELSE 0 END) AS gross_wins,
+            SUM(CASE WHEN pnl < 0 THEN ABS(pnl) ELSE 0 END) AS gross_losses
+         FROM autonomous_trades WHERE user_id = $1 AND pnl IS NOT NULL${modeFilter}`,
+        [userId],
+      );
       const metrics = tradesResult.rows[0];
       let sharpeRatio = 0; let maxDrawdown = 0;
       try {
@@ -304,14 +361,104 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
       } catch { /* keep defaults */ }
       let dailyPerformance: Array<{ date: string; pnl: number; cumulativePnL: number; trades: number }> = [];
       try {
-        const dailyResult = await pool.query(`SELECT DATE(created_at) as trade_date, SUM(pnl) as daily_pnl, COUNT(*) as daily_trades FROM autonomous_trades WHERE user_id = $1 AND pnl IS NOT NULL${modeFilter} GROUP BY DATE(created_at) ORDER BY trade_date ASC`, [userId]);
+        const dailyResult = await pool.query(`SELECT DATE(created_at) AS trade_date, SUM(pnl) AS daily_pnl, COUNT(*) AS daily_trades FROM autonomous_trades WHERE user_id = $1 AND pnl IS NOT NULL${modeFilter} GROUP BY DATE(created_at) ORDER BY trade_date ASC`, [userId]);
         let cumPnl = 0;
-        dailyPerformance = dailyResult.rows.map((r: { trade_date: string; daily_pnl: string; daily_trades: string }) => { const dayPnl = parseFloat(r.daily_pnl) || 0; cumPnl += dayPnl; return { date: new Date(r.trade_date).toISOString().slice(0, 10), pnl: parseFloat(dayPnl.toFixed(2)), cumulativePnL: parseFloat(cumPnl.toFixed(2)), trades: parseInt(r.daily_trades, 10) || 0 }; });
+        dailyPerformance = dailyResult.rows.map((r: { trade_date: string; daily_pnl: string; daily_trades: string }) => {
+          const dayPnl = parseFloat(r.daily_pnl) || 0;
+          cumPnl += dayPnl;
+          return {
+            date: new Date(r.trade_date).toISOString().slice(0, 10),
+            pnl: parseFloat(dayPnl.toFixed(2)),
+            cumulativePnL: parseFloat(cumPnl.toFixed(2)),
+            trades: parseInt(r.daily_trades, 10) || 0,
+          };
+        });
       } catch { /* daily unavailable */ }
-      res.json({ success: true, mode: mode || 'all', performance: { totalPnl: parseFloat(metrics.total_pnl || 0), winRate: metrics.total_trades > 0 ? (parseFloat(metrics.winning_trades || 0) / parseFloat(metrics.total_trades)) * 100 : 0, totalTrades: parseInt(metrics.total_trades || 0, 10), winningTrades: parseInt(metrics.winning_trades || 0, 10), losingTrades: parseInt(metrics.losing_trades || 0, 10), averageWin: parseFloat(metrics.avg_win || 0), averageLoss: parseFloat(metrics.avg_loss || 0), sharpeRatio: parseFloat(sharpeRatio.toFixed(2)), maxDrawdown: parseFloat((maxDrawdown * 100).toFixed(2)) }, dailyPerformance });
+      // Per-agent breakdown — the strategy IS the agent (K/M/T/L)
+      // in this kernel. Surfaces in the Strategy Performance UI panel.
+      let strategyPerformance: Array<{ strategyName: string; pnl: number; trades: number; winRate: number }> = [];
+      try {
+        const agentResult = await pool.query(
+          `SELECT COALESCE(agent, 'K') AS agent,
+                  SUM(pnl) AS pnl,
+                  COUNT(*) AS trades,
+                  CASE WHEN COUNT(*) > 0
+                    THEN (SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END)::float * 100.0 / COUNT(*))
+                    ELSE 0 END AS win_rate
+             FROM autonomous_trades
+            WHERE user_id = $1 AND pnl IS NOT NULL${modeFilter}
+            GROUP BY agent
+            ORDER BY pnl DESC NULLS LAST`,
+          [userId],
+        );
+        strategyPerformance = agentResult.rows.map((r: { agent: string; pnl: string; trades: string; win_rate: string }) => ({
+          strategyName: `Agent ${r.agent}`,
+          pnl: parseFloat(r.pnl) || 0,
+          trades: parseInt(r.trades, 10) || 0,
+          winRate: parseFloat(r.win_rate) || 0,
+        }));
+      } catch { /* unavailable */ }
+      // Per-symbol breakdown.
+      let symbolPerformance: Array<{ symbol: string; pnl: number; trades: number; winRate: number }> = [];
+      try {
+        const symResult = await pool.query(
+          `SELECT symbol,
+                  SUM(pnl) AS pnl,
+                  COUNT(*) AS trades,
+                  CASE WHEN COUNT(*) > 0
+                    THEN (SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END)::float * 100.0 / COUNT(*))
+                    ELSE 0 END AS win_rate
+             FROM autonomous_trades
+            WHERE user_id = $1 AND pnl IS NOT NULL${modeFilter}
+            GROUP BY symbol
+            ORDER BY pnl DESC NULLS LAST`,
+          [userId],
+        );
+        symbolPerformance = symResult.rows.map((r: { symbol: string; pnl: string; trades: string; win_rate: string }) => ({
+          symbol: r.symbol,
+          pnl: parseFloat(r.pnl) || 0,
+          trades: parseInt(r.trades, 10) || 0,
+          winRate: parseFloat(r.win_rate) || 0,
+        }));
+      } catch { /* unavailable */ }
+      const totalPnl = parseFloat(metrics.total_pnl || 0) || 0;
+      const grossWins = parseFloat(metrics.gross_wins || 0) || 0;
+      const grossLosses = parseFloat(metrics.gross_losses || 0) || 0;
+      const profitFactor = grossLosses > 0 ? grossWins / grossLosses : (grossWins > 0 ? 999 : 0);
+      let totalPnlPercent = 0;
+      try {
+        const eqRow = await pool.query(
+          `SELECT current_equity FROM autonomous_performance WHERE user_id = $1 ORDER BY timestamp DESC LIMIT 1`,
+          [userId],
+        );
+        const equity = parseFloat(eqRow.rows[0]?.current_equity || 0) || 0;
+        if (equity > 0) totalPnlPercent = (totalPnl / equity) * 100;
+      } catch { /* equity unavailable; leave at 0 */ }
+      res.json({
+        success: true,
+        mode: mode || 'all',
+        performance: {
+          totalPnl: parseFloat(totalPnl.toFixed(2)),
+          totalPnlPercent: parseFloat(totalPnlPercent.toFixed(2)),
+          winRate: metrics.total_trades > 0 ? (parseFloat(metrics.winning_trades || 0) / parseFloat(metrics.total_trades)) * 100 : 0,
+          totalTrades: parseInt(metrics.total_trades || 0, 10),
+          winningTrades: parseInt(metrics.winning_trades || 0, 10),
+          losingTrades: parseInt(metrics.losing_trades || 0, 10),
+          averageWin: parseFloat(metrics.avg_win || 0) || 0,
+          averageLoss: parseFloat(metrics.avg_loss || 0) || 0,
+          bestTrade: parseFloat(metrics.best_trade || 0) || 0,
+          worstTrade: parseFloat(metrics.worst_trade || 0) || 0,
+          profitFactor: parseFloat(profitFactor.toFixed(2)),
+          sharpeRatio: parseFloat(sharpeRatio.toFixed(2)),
+          maxDrawdown: parseFloat((maxDrawdown * 100).toFixed(2)),
+          dailyPerformance,
+          strategyPerformance,
+          symbolPerformance,
+        },
+      });
     } catch (dbError: unknown) {
       logger.warn('Autonomous trades table query failed: ' + (dbError instanceof Error ? dbError.message : String(dbError)));
-      res.json({ success: true, performance: defaultPerformance, dailyPerformance: [] });
+      res.json({ success: true, performance: defaultPerformance });
     }
   } catch (error: unknown) {
     logger.error('Error getting performance:', error);

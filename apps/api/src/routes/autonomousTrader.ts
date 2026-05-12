@@ -249,8 +249,16 @@ router.get('/trades', authenticateToken, async (req: Request, res: Response) => 
         entryTime: trade.entry_time ?? trade.created_at,
         exitTime: trade.exit_time,
         confidence: trade.confidence ? parseFloat(trade.confidence) : null,
-        reason: trade.reason
-      }))
+        reason: trade.reason,
+        agent: trade.agent ?? null,
+        // 2026-05-11 — surface exchange order IDs so the TradeHistory
+        // UI can dedup against /api/dashboard/trades fills.
+        // Previously the UI summed bot rows + exchange fills naively
+        // → double-counted realized PnL on every closed trade.
+        // orderId = OPEN fill, exitOrderId = CLOSE fill.
+        orderId: trade.order_id ?? null,
+        exitOrderId: trade.exit_order_id ?? null,
+      })),
     });
   } catch (error: unknown) {
     logger.error('Error getting trades:', error);

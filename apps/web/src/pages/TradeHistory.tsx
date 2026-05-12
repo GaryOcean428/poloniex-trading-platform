@@ -48,14 +48,39 @@ const TradeHistory: React.FC = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage] = useState(20);
 
+  // 2026-05-11 — dedup against double-counting.
+  // Bot rows are truth for system-managed trades; exchange fills
+  // get filtered out when their exchange order IDs already appear
+  // in a bot row (orderId or exitOrderId). Without this, the "all"
+  // tab summed both lists and double-counted every realized PnL
+  // (Trade History page showed -$2.97 across 200 trades on a day
+  // when Agent L harvested +$153 alone).
+  const botKnownOrderIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const t of botTrades) {
+      if (t.orderId) set.add(String(t.orderId));
+      // bot trade structure also surfaces exitOrderId via t.id or an
+      // attached field; we conservatively add all string IDs that
+      // could match an exchange fill.
+      const extra = (t as TradeHistoryItem & { exitOrderId?: string | null }).exitOrderId;
+      if (extra) set.add(String(extra));
+    }
+    return set;
+  }, [botTrades]);
+
+  const dedupedExchangeTrades = useMemo(() => {
+    if (botKnownOrderIds.size === 0) return exchangeTrades;
+    return exchangeTrades.filter(t => !botKnownOrderIds.has(String(t.orderId)));
+  }, [exchangeTrades, botKnownOrderIds]);
+
   // Combine trades based on active tab
   const trades = useMemo(() => {
     switch (activeTab) {
-      case 'exchange': return exchangeTrades;
+      case 'exchange': return exchangeTrades;  // raw exchange view shows everything
       case 'bot': return botTrades;
-      default: return [...exchangeTrades, ...botTrades];
+      default: return [...dedupedExchangeTrades, ...botTrades];
     }
-  }, [activeTab, exchangeTrades, botTrades]);
+  }, [activeTab, exchangeTrades, dedupedExchangeTrades, botTrades]);
 
   // Fetch bot trades from internal DB
   useEffect(() => {
@@ -69,6 +94,9 @@ const TradeHistory: React.FC = () => {
       pnl: number | null;
       reason: string | null;
       status: string;
+      agent: string | null;
+      orderId: string | null;
+      exitOrderId: string | null;
     }
 
     const fetchBotTrades = async () => {
@@ -95,10 +123,14 @@ const TradeHistory: React.FC = () => {
               fee: 0,
               feeCurrency: 'USDT',
               pnl: t.pnl ?? undefined,
-              strategy: t.reason || undefined,
-              orderId: t.id,
+              strategy: t.agent ? `Agent ${t.agent}` : (t.reason || undefined),
+              // Prefer the exchange OPEN order id for dedup; fall back to row id.
+              orderId: t.orderId || t.id,
+              // Carry the exchange CLOSE order id so the dedup pass
+              // can also filter out the matching close fill.
+              exitOrderId: t.exitOrderId || null,
               status: t.status === 'open' ? 'filled' as const : t.status === 'closed' ? 'filled' as const : 'cancelled' as const,
-              source: 'bot' as const
+              source: 'bot' as const,
             })));
             return;
           }
