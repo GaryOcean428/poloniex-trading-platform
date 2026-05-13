@@ -373,6 +373,17 @@ interface SymbolState {
    *  so the next entry starts a fresh horizon clock.
    */
   lLastConfirmedAtMsBySide: { long: number | null; short: number | null };
+  /** 2026-05-13 — trailing regime stop anchor.
+   *
+   *  Mode at L's most recent confirmation per side. A high-leverage
+   *  scalp opened in EXPLORATION should exit if the kernel transitions
+   *  to INTEGRATION (slow trend regime) because the 50× leverage was
+   *  justified by the flat-tape thesis that no longer holds. Mirror
+   *  applies for a slow trend position entering EXPLORATION (less
+   *  catastrophic but the sizing/horizon assumptions are now wrong).
+   *
+   *  Cleared on harvest. */
+  lModeAtConfirmedBySide: { long: string | null; short: string | null };
 }
 
 /** Cap the recent-bus-event ring at this size — anything older than
@@ -647,6 +658,7 @@ export class MonkeyKernel extends EventEmitter {
       lForceHarvestAtMsBySide: { long: null, short: null },
       recentLHarvestPnls: [],
       lLastConfirmedAtMsBySide: { long: null, short: null },
+      lModeAtConfirmedBySide: { long: null, short: null },
     };
   }
 
@@ -2264,13 +2276,18 @@ export class MonkeyKernel extends EventEmitter {
     ) {
       const lDecision = agentLDecide(state.basinHistory);
       // 2026-05-13 Change B — record per-side L confirmation timestamp
-      // so the horizon-bounded exit knows when L most recently "voted"
-      // for a side. Update even when the resulting entry is vetoed:
-      // the L conviction is the signal, the gate is the policy.
+      // + cognitive mode at confirmation. Updated even when the entry
+      // is vetoed: the L conviction is the signal, the gate is the
+      // policy. The mode snapshot powers the trailing regime stop —
+      // a position opened in EXPLORATION but now in INTEGRATION has
+      // outlived its strategic justification and must exit.
+      const lCurrentModeStr = String(state.lastMode ?? '');
       if (lDecision.action === 'enter_long') {
         state.lLastConfirmedAtMsBySide.long = Date.now();
+        state.lModeAtConfirmedBySide.long = lCurrentModeStr || null;
       } else if (lDecision.action === 'enter_short') {
         state.lLastConfirmedAtMsBySide.short = Date.now();
+        state.lModeAtConfirmedBySide.short = lCurrentModeStr || null;
       }
       derivation.agentL = {
         action: lDecision.action,
@@ -3155,11 +3172,26 @@ export class MonkeyKernel extends EventEmitter {
         lastConfirmedAt !== null && (Date.now() - lastConfirmedAt) > horizonMs;
       const isStopLossHarvest = pnlPct <= -stopLossPct;
       const isWinHarvest = pnlPct >= harvestPct;
-      if (!isStopLossHarvest && !isWinHarvest && !isHorizonExpired) continue;
-      const harvestKind: 'win' | 'stop_loss' | 'horizon_expired' =
+      // 2026-05-13 — trailing regime stop. Position opened under one
+      // cognitive mode must exit if the kernel transitions to a
+      // categorically different mode (EXPLORATION ↔ INTEGRATION).
+      // The leverage / size / horizon thesis that justified the
+      // entry no longer holds. INVESTIGATION is the transition zone
+      // and doesn't trigger by itself; only crossings of the gap
+      // count.
+      const modeAtEntry = symState?.lModeAtConfirmedBySide?.[sideKey] ?? null;
+      const modeNow = String(symState?.lastMode ?? '');
+      const isAdverseModeTransition =
+        modeAtEntry !== null && modeAtEntry !== modeNow && (
+          (modeAtEntry === 'exploration' && modeNow === 'integration') ||
+          (modeAtEntry === 'integration' && modeNow === 'exploration')
+        );
+      if (!isStopLossHarvest && !isWinHarvest && !isHorizonExpired && !isAdverseModeTransition) continue;
+      const harvestKind: 'win' | 'stop_loss' | 'horizon_expired' | 'regime_transition' =
         isStopLossHarvest ? 'stop_loss'
           : isWinHarvest ? 'win'
-            : 'horizon_expired';
+            : isHorizonExpired ? 'horizon_expired'
+              : 'regime_transition';
 
       logger.info('[AgentL] force-harvest threshold met', {
         symbol,
@@ -3175,7 +3207,9 @@ export class MonkeyKernel extends EventEmitter {
           ? `-${(stopLossPct * 100).toFixed(3)} (stop-loss)`
           : isHorizonExpired
             ? `horizon ${horizonTicks}t (${(horizonMs / 60000).toFixed(0)}min)`
-            : (harvestPct * 100).toFixed(3),
+            : isAdverseModeTransition
+              ? `regime ${modeAtEntry}→${modeNow}`
+              : (harvestPct * 100).toFixed(3),
         ...(isHorizonExpired && lastConfirmedAt
           ? { ageMin: ((Date.now() - lastConfirmedAt) / 60000).toFixed(1) }
           : {}),
@@ -3329,6 +3363,7 @@ export class MonkeyKernel extends EventEmitter {
       if (symState) {
         symState.lForceHarvestAtMsBySide[sideKey] = Date.now();
         symState.lLastConfirmedAtMsBySide[sideKey] = null;
+        symState.lModeAtConfirmedBySide[sideKey] = null;
         symState.recentLHarvestPnls.push(aggPnl);
         if (symState.recentLHarvestPnls.length > 5) {
           symState.recentLHarvestPnls.shift();
@@ -3785,7 +3820,13 @@ export class MonkeyKernel extends EventEmitter {
     const order: KernelOrder = { symbol, side, notional: notionalUsdt, leverage, price: entryPrice };
     const mode = await getCurrentExecutionMode();
     const symbolMaxLeverage = (await getMaxLeverage(symbol)) ?? leverage;
-    const kernelContext: KernelContext = { isLive: mode === 'auto', mode, symbolMaxLeverage };
+    // 2026-05-13 — pass monkeyMode through so risk kernel's headroom
+    // check is regime-conditional (35% reserve EXPLORATION, 15% INTEGRATION).
+    const monkeyMode = symState?.lastMode ?? undefined;
+    const kernelContext: KernelContext = {
+      isLive: mode === 'auto', mode, symbolMaxLeverage,
+      monkeyMode: monkeyMode ?? undefined,
+    };
     const decision = evaluatePreTradeVetoes(order, kernelState, kernelContext);
     if (!decision.allowed) {
       logger.info('[Monkey] kernel veto', {
