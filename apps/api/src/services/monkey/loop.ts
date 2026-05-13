@@ -129,6 +129,12 @@ import {
 import { planCloseChunks } from './closeChunker.js';
 import { agentLDecide } from './agent_L_classifier.js';
 import {
+  newMTFState,
+  onTickAppend as mtfOnTickAppend,
+  mtfDecide,
+  recordAgreementTimestamps as mtfRecordAgreement,
+} from './mtfLClassifier.js';
+import {
   applyOutcomeToState,
   decayPerAgentState,
   newPerAgentState,
@@ -384,6 +390,16 @@ interface SymbolState {
    *
    *  Cleared on harvest. */
   lModeAtConfirmedBySide: { long: string | null; short: string | null };
+  /** 2026-05-13 — Multi-timeframe L state (Phase 1).
+   *
+   *  Per-timeframe down-sampled basin histories + agreement clocks.
+   *  Sampled on every tick (cheap conditional appends); mtfDecide
+   *  runs per tick once warm. Phase 1 ships in OBSERVATION MODE —
+   *  decisions are logged but don't yet gate entries; Phase 2 will
+   *  promote MTF agreement to a sizing multiplier on L entries.
+   *
+   *  See mtfLClassifier.ts. */
+  mtfState: import('./mtfLClassifier.js').MTFState;
 }
 
 /** Cap the recent-bus-event ring at this size — anything older than
@@ -659,6 +675,7 @@ export class MonkeyKernel extends EventEmitter {
       recentLHarvestPnls: [],
       lLastConfirmedAtMsBySide: { long: null, short: null },
       lModeAtConfirmedBySide: { long: null, short: null },
+      mtfState: newMTFState(),
     };
   }
 
@@ -2599,6 +2616,30 @@ export class MonkeyKernel extends EventEmitter {
     if (state.basinHistory.length > HISTORY_MAX) state.basinHistory.shift();
     if (state.basinHistory.length >= 50 && state.sessionTicks % 10 === 0) {
       state.identityBasin = frechetMean(state.basinHistory.slice(-50));
+    }
+
+    // 2026-05-13 — MTF Phase 1: down-sample basin into per-timeframe
+    // stores (15m / 1h / 4h) and run agreement-count decision in
+    // observation mode. Logged but NOT yet gating entries; Phase 2
+    // will promote MTF agreement to a size multiplier on L entries.
+    mtfOnTickAppend(state.mtfState, basin, state.sessionTicks);
+    const mtfDec = mtfDecide(state.mtfState);
+    if (mtfDec.action !== 'hold') {
+      mtfRecordAgreement(state.mtfState, mtfDec, Date.now());
+    }
+    // Log every 10 ticks (5 min on 30s) to avoid noise; or always when
+    // action != hold so non-hold MTF signals are visible.
+    if (mtfDec.action !== 'hold' || state.sessionTicks % 10 === 0) {
+      logger.info('[MTF-L] decision', {
+        symbol,
+        action: mtfDec.action,
+        agreement: `${mtfDec.agreementCount}/${mtfDec.totalTfs}`,
+        sizeMult: mtfDec.sizeMultiplier.toFixed(2),
+        longest: mtfDec.longestAgreeingLabel ?? '—',
+        perTf: mtfDec.perTimeframe.map(t =>
+          `${t.label}:${t.warm ? (t.decision?.action ?? 'hold') : 'cold'}`,
+        ).join(','),
+      });
     }
 
     state.lastBasin = basin;
