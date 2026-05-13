@@ -229,14 +229,64 @@ class StateReconciliationService {
       }
 
       // ── 6. Ghost detection: in DB but not on exchange ────────────────────────
-      for (const dbTrade of dbTrades) {
+      //
+      // 2026-05-13 — aggregate-qty check.
+      //
+      // Original (symbol, side) match handled the simple case (1 DB row
+      // per position). With Agent K/M/T/L stacking, a single exchange
+      // position can correspond to many DB rows. When the exchange has
+      // a partial close (force-harvest of half the stack, or user
+      // closes some manually), the simple match marked ALL stacked
+      // rows as still-valid because the (symbol, side) tuple still
+      // matches one exchange position — even when DB qty sum vastly
+      // exceeds exchange qty.
+      //
+      // Result observed 2026-05-13: dashboard reported DB=12 vs
+      // exchange=2 ("phantom state likely") because 10 of 12 rows were
+      // dead but unghosted.
+      //
+      // Per-key exchange qty map: aggregate exchange position qty by
+      // (symbol, side). We treat DB rows as ghosts in FIFO order
+      // (oldest first) until aggregate matches exchange qty on that
+      // key. Floor-only — never expand exchange qty by adding "phantom
+      // longs" of our own.
+      const exchangeQtyByKey = new Map<string, number>();
+      for (const exPos of exchangePositions) {
+        const exSymbol: string = exPos.symbol ?? exPos.instId ?? '';
+        if (!exSymbol) continue;
+        const exQty = Math.abs(parseFloat(exPos.qty ?? exPos.availQty ?? '0')) || 0;
+        if (exQty === 0) continue;
+        const exSide = parseFloat(exPos.qty ?? '0') > 0 ? 'long' : 'short';
+        const key = `${exSymbol}|${exSide}`;
+        exchangeQtyByKey.set(key, (exchangeQtyByKey.get(key) ?? 0) + exQty);
+      }
+      // Track running DB-attributed qty per key. Once we've "consumed"
+      // the exchange qty on a key, additional DB rows on that key are
+      // phantoms even though the (symbol, side) match succeeds.
+      const consumedQtyByKey = new Map<string, number>();
+      const sortedDbTrades = [...dbTrades].sort((a, b) => {
+        // Oldest-first — keep the freshest rows aligned to the
+        // current exchange position; older rows are the phantoms.
+        const ta = new Date(a.entry_time).getTime() || 0;
+        const tb = new Date(b.entry_time).getTime() || 0;
+        return ta - tb;
+      });
+
+      for (const dbTrade of sortedDbTrades) {
         const dbSide = normalizeDbSide(dbTrade.side);
-        const matched = exchangePositions.some(exPos => {
-          const exSymbol: string = exPos.symbol ?? exPos.instId ?? '';
-          const exQty = parseFloat(exPos.qty ?? exPos.availQty ?? '0');
-          const exSide = exQty > 0 ? 'long' : 'short';
-          return exSymbol === dbTrade.symbol && exSide === dbSide;
-        });
+        const key = `${dbTrade.symbol}|${dbSide}`;
+        const exchangeQty = exchangeQtyByKey.get(key) ?? 0;
+        const consumedQty = consumedQtyByKey.get(key) ?? 0;
+        const remainingExchangeQty = exchangeQty - consumedQty;
+        const rowQty = Math.abs(parseFloat(dbTrade.quantity)) || 0;
+        // A row is valid when the exchange still has untaken qty on
+        // this key. Use a small tolerance because exchange and DB
+        // qty may differ by lot-rounding rounding noise.
+        const QTY_TOLERANCE = 1e-9;
+        const matched = remainingExchangeQty > QTY_TOLERANCE;
+        if (matched) {
+          consumedQtyByKey.set(key, consumedQty + rowQty);
+        }
 
         if (!matched) {
           const ghost: GhostRecord = {
