@@ -42,6 +42,7 @@ import paperTradingService from './services/paperTradingService.js';
 import { persistentTradingEngine } from './services/persistentTradingEngine.js';
 import { startPipelineHealthProbe } from './services/pipelineHealthProbe.js';
 import { stateReconciliationService } from './services/stateReconciliationService.js';
+import { maybeRunStartupBackfill } from './services/backfillStackedGhostPnl.js';
 import { shouldExpectPaperTrades } from './services/tradingStateProbe.js';
 import { logger } from './utils/logger.js';
 
@@ -386,6 +387,12 @@ server.listen(PORT, '::', async () => {
     logger.error('\u274c Database migration failed:', error);
     process.exit(1);
   }
+
+  // 2026-05-13 \u2014 one-off PnL backfill gated by POLYTRADE_RUN_PNL_BACKFILL.
+  // Repairs the stacked-ghost over-attribution bug from the
+  // PR-#658-to-#660 window. Idempotent; logs and never throws. Set the
+  // env flag once to trigger; unset after one successful run.
+  await maybeRunStartupBackfill();
 
   // Run state reconciliation for all active users before trading loops start
   try {
