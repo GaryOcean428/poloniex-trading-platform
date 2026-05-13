@@ -193,6 +193,171 @@ router.get('/db-status', async (req, res) => {
   }
 });
 
+/**
+ * POST /api/admin/backfill-stacked-ghost-pnl
+ *
+ * One-off backfill for the reconciler PnL over-attribution bug
+ * (live 2026-05-13 01:32Z–05:40Z, between PR #658 and PR #660).
+ *
+ * Detects groups of ghost-closed rows in the corruption window that
+ * share the same (symbol, side, exit_time-truncated-to-second) and
+ * the same pnl value. The bug applied the aggregate position PnL to
+ * each stacked row instead of distributing pro-rata. This endpoint
+ * rewrites each row's pnl as its qty share of the aggregate.
+ *
+ * Body:
+ *   { apply?: boolean = false, startTs?: ISO string, endTs?: ISO string }
+ *
+ * Default is dry-run (apply=false). Returns the groups + proposed
+ * changes so an operator can verify before re-running with apply=true.
+ *
+ * Idempotent against itself: re-running with the same window on
+ * already-corrected data is a no-op (rows no longer share the same
+ * pnl value, so the detection skips them).
+ */
+router.post('/backfill-stacked-ghost-pnl', async (req, res) => {
+  try {
+    const apply = req.body?.apply === true;
+    const startTs = String(req.body?.startTs || '2026-05-13T01:32:00Z');
+    const endTs = String(req.body?.endTs || '2026-05-13T05:50:00Z');
+    if (!Number.isFinite(Date.parse(startTs)) || !Number.isFinite(Date.parse(endTs))) {
+      return res.status(400).json({ success: false, error: 'invalid startTs/endTs' });
+    }
+
+    // Find candidate groups: ghost-closed rows in the window, grouped
+    // by (symbol, side, second-truncated exit_time), where two or more
+    // rows share an identical non-null pnl. That signature is the bug
+    // — pre-PR-#660 reconciler attributed the aggregate to every row.
+    const groups = await pool.query(
+      `SELECT symbol,
+              side,
+              date_trunc('second', exit_time) AS ts_sec,
+              COUNT(*) AS n_rows,
+              COUNT(DISTINCT pnl) FILTER (WHERE pnl IS NOT NULL) AS n_distinct_pnl,
+              MAX(pnl) FILTER (WHERE pnl IS NOT NULL) AS aggregate_pnl,
+              array_agg(id ORDER BY entry_time) AS row_ids,
+              array_agg(quantity ORDER BY entry_time) AS quantities,
+              array_agg(pnl ORDER BY entry_time) AS pnls,
+              array_agg(agent ORDER BY entry_time) AS agents,
+              array_agg(exit_reason ORDER BY entry_time) AS exit_reasons
+         FROM autonomous_trades
+        WHERE status = 'closed'
+          AND exit_time BETWEEN $1::timestamptz AND $2::timestamptz
+          AND exit_reason IN ('manual_close_user', 'reconciled_post_close_race', 'reconciled_not_on_exchange')
+        GROUP BY symbol, side, date_trunc('second', exit_time)
+        HAVING COUNT(*) > 1
+           AND COUNT(DISTINCT pnl) FILTER (WHERE pnl IS NOT NULL) = 1
+        ORDER BY date_trunc('second', exit_time) ASC`,
+      [startTs, endTs],
+    );
+
+    type GroupRow = {
+      symbol: string;
+      side: string;
+      ts_sec: string;
+      n_rows: string;
+      n_distinct_pnl: string;
+      aggregate_pnl: string;
+      row_ids: string[];
+      quantities: string[];
+      pnls: (string | null)[];
+      agents: (string | null)[];
+      exit_reasons: (string | null)[];
+    };
+
+    const summary: Array<{
+      symbol: string;
+      side: string;
+      ts: string;
+      nRows: number;
+      aggregatePnl: number;
+      totalQty: number;
+      updates: Array<{ id: string; agent: string | null; qty: number; oldPnl: number | null; newPnl: number; share: number }>;
+    }> = [];
+
+    let totalRowsUpdated = 0;
+    let totalCorrectionUsdt = 0;
+
+    for (const g of groups.rows as GroupRow[]) {
+      const aggregatePnl = parseFloat(g.aggregate_pnl) || 0;
+      const qtys = g.quantities.map((q) => Math.abs(parseFloat(q)) || 0);
+      const totalQty = qtys.reduce((s, q) => s + q, 0);
+      if (totalQty <= 0) continue;
+
+      const updates = g.row_ids.map((id, i) => {
+        const rowQty = qtys[i] ?? 0;
+        const share = rowQty / totalQty;
+        const oldPnl = g.pnls[i] !== null ? parseFloat(g.pnls[i] as string) : null;
+        const newPnl = aggregatePnl * share;
+        return {
+          id,
+          agent: g.agents[i] ?? null,
+          qty: rowQty,
+          oldPnl,
+          newPnl,
+          share,
+        };
+      });
+
+      summary.push({
+        symbol: g.symbol,
+        side: g.side,
+        ts: g.ts_sec,
+        nRows: updates.length,
+        aggregatePnl,
+        totalQty,
+        updates,
+      });
+
+      // Correction magnitude: each over-attributed row currently
+      // contributes (oldPnl - newPnl) of fake P&L to the ledger.
+      for (const u of updates) {
+        if (u.oldPnl !== null) totalCorrectionUsdt += u.oldPnl - u.newPnl;
+      }
+
+      if (apply) {
+        for (const u of updates) {
+          try {
+            await pool.query(
+              `UPDATE autonomous_trades SET pnl = $1 WHERE id = $2`,
+              [u.newPnl, u.id],
+            );
+            totalRowsUpdated++;
+          } catch (updErr) {
+            logger.error('[BACKFILL] row update failed', {
+              id: u.id, err: updErr instanceof Error ? updErr.message : String(updErr),
+            });
+          }
+        }
+      }
+    }
+
+    logger.info(
+      `[BACKFILL] stacked-ghost PnL ${apply ? 'APPLIED' : 'DRY-RUN'}: ` +
+      `${summary.length} groups, ` +
+      `${apply ? totalRowsUpdated : summary.reduce((s, g) => s + g.nRows, 0)} rows, ` +
+      `net ledger correction ${totalCorrectionUsdt.toFixed(4)} USDT`,
+    );
+
+    res.json({
+      success: true,
+      apply,
+      window: { startTs, endTs },
+      groupsFound: summary.length,
+      rowsAffected: summary.reduce((s, g) => s + g.nRows, 0),
+      rowsUpdated: apply ? totalRowsUpdated : 0,
+      netLedgerCorrectionUsdt: parseFloat(totalCorrectionUsdt.toFixed(4)),
+      summary,
+    });
+  } catch (err) {
+    logger.error('[BACKFILL] stacked-ghost PnL failed', err);
+    res.status(500).json({
+      success: false,
+      error: err instanceof Error ? err.message : 'Backfill failed',
+    });
+  }
+});
+
 export default router;
 
 // Endpoint to reset demo user password
