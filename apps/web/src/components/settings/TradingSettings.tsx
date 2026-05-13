@@ -57,9 +57,9 @@ const TradingSettings: React.FC = () => {
         <div className="space-y-4">
           <div>
             <Label htmlFor="leverage">Leverage</Label>
-            <Select 
-              id="leverage" 
-              value={leverage.toString()} 
+            <Select
+              id="leverage"
+              value={leverage.toString()}
               onChange={handleLeverageChange}
               className="w-full"
             >
@@ -69,9 +69,14 @@ const TradingSettings: React.FC = () => {
               <option value="5">5x</option>
               <option value="10">10x</option>
               <option value="20">20x</option>
+              <option value="30">30x</option>
+              <option value="50">50x</option>
+              <option value="75">75x (BTC/ETH max)</option>
             </Select>
             <p className="text-xs text-neutral-500 mt-1">
               Higher leverage increases both potential profits and risks.
+              Per-symbol exchange maximums may be lower; the kernel clamps to
+              each symbol&apos;s actual cap at order placement.
             </p>
           </div>
 

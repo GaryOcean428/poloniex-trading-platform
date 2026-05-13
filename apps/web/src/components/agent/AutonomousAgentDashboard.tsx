@@ -832,14 +832,21 @@ const AutonomousAgentDashboard: React.FC = () => {
                 <input
                   type="range"
                   min={1}
-                  max={20}
+                  max={75}
                   step={1}
                   value={config.defaultLeverage}
                   onChange={e => setConfig(c => ({ ...c, defaultLeverage: parseInt(e.target.value) }))}
                   disabled={agentStatus?.status === 'running'}
                   className="w-full accent-cyan-600"
                 />
-                <div className="flex justify-between text-xs text-gray-400"><span>1x (no leverage)</span><span>20x</span></div>
+                <div className="flex justify-between text-xs text-gray-400">
+                  <span>1x (no leverage)</span>
+                  <span>75x (BTC/ETH max)</span>
+                </div>
+                <p className="text-xs text-gray-500 mt-1">
+                  Per-symbol exchange maximums may be lower than 75x. The kernel
+                  clamps to each symbol&apos;s actual cap at order placement.
+                </p>
               </div>
               {/* Margin Mode */}
               <div>
