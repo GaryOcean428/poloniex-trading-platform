@@ -47,7 +47,7 @@ const BOOTSTRAP_CANDLE_COUNT = 700;
  *  encodes the perceptual scale via perceive(). */
 const POLONIEX_INTERVAL_FOR_TF: Record<TimeframeLabel, string> = {
   '15m': '15m',
-  '1h': '60m',
+  '1h': '1h',
   '4h': '4h',
 };
 
