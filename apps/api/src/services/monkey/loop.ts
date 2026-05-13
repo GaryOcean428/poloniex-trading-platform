@@ -136,6 +136,12 @@ import {
   isLongestHorizonExpired as mtfIsLongestHorizonExpired,
 } from './mtfLClassifier.js';
 import {
+  regimeScore as computeRegimeScore,
+  regimeSizing as computeRegimeSizing,
+  trailingRegimeStop as continuousTrailingRegimeStop,
+  basinAlignmentToWindow,
+} from './regimeSizing.js';
+import {
   applyOutcomeToState,
   decayPerAgentState,
   newPerAgentState,
@@ -409,6 +415,19 @@ interface SymbolState {
     long: import('./mtfLClassifier.js').TimeframeLabel | null;
     short: import('./mtfLClassifier.js').TimeframeLabel | null;
   };
+  /** 2026-05-13 — continuous regime score r ∈ [0,1] from
+   *  regimeSizing.regimeScore(). 1=flat, 0=trending. Recomputed each
+   *  tick. Consumed by:
+   *    - trailing regime DRIFT stop (per-side rAtEntry snapshot;
+   *      fires when |rNow - rAtEntry| exceeds threshold even within
+   *      the same discrete mode)
+   *    - sanity bounds on mode-derived leverage and headroom
+   *  Null until first compute (insufficient history).  */
+  rScoreCurrent: number | null;
+  /** Per-side snapshot of r at the most recent L entry confirmation.
+   *  Trailing regime drift fires via regimeSizing.trailingRegimeStop().
+   *  Cleared on harvest. */
+  rScoreAtEntryBySide: { long: number | null; short: number | null };
 }
 
 /** Cap the recent-bus-event ring at this size — anything older than
@@ -712,6 +731,8 @@ export class MonkeyKernel extends EventEmitter {
       lModeAtConfirmedBySide: { long: null, short: null },
       mtfState: newMTFState(),
       mtfLongestAgreeingBySide: { long: null, short: null },
+      rScoreCurrent: null,
+      rScoreAtEntryBySide: { long: null, short: null },
     };
   }
 
@@ -1033,6 +1054,40 @@ export class MonkeyKernel extends EventEmitter {
         perTf: mtfDec.perTimeframe.map(t =>
           `${t.label}:${t.warm ? (t.decision?.action ?? 'hold') : 'cold'}`,
         ).join(','),
+      });
+    }
+
+    // 2026-05-13 — continuous regime score r ∈ [0,1] (flat=1, trend=0)
+    // computed from basin velocity + directional chop + κ criticality.
+    // Used by L's trailing regime drift stop and entry sizing sanity.
+    // Falls back to null when basinHistory < 2 (cold start).
+    const rReading = computeRegimeScore(state.basinHistory, state.kappa ?? null);
+    state.rScoreCurrent = rReading?.r ?? null;
+    // Continuous-interpolated sizing rails from r (leverage / size /
+    // hold / stop / headroom). Used as sanity bound on the discrete
+    // mode-derived values: catches transition lag (mode still says
+    // EXPLORATION but r has shifted toward trending).
+    const continuousSizing = rReading ? computeRegimeSizing(rReading.r) : null;
+    if (rReading && state.sessionTicks % 10 === 0) {
+      // Basin alignment to recent window — Fisher-Rao distance from
+      // current basin to the Fréchet mean of the last 60 basins.
+      // Low = consonant with recent trajectory; high = outlier
+      // (surprise — fresh regime onset, news shock, breakout, etc).
+      const recentWindow = state.basinHistory.slice(-60);
+      const basinAlign = recentWindow.length > 1
+        ? basinAlignmentToWindow(basin, recentWindow)
+        : 0;
+      logger.info('[regime-r] continuous', {
+        symbol,
+        r: rReading.r.toFixed(3),
+        label: rReading.label,
+        velFlat: rReading.components.velocityFlatness.toFixed(2),
+        dirChop: rReading.components.directionalChop.toFixed(2),
+        kappaCrit: rReading.components.kappaCriticality.toFixed(2),
+        cLev: continuousSizing?.leverage ?? '—',
+        cStopBps: continuousSizing?.stopBps.toFixed(0) ?? '—',
+        cHeadroom: continuousSizing?.marginHeadroomFloor.toFixed(2) ?? '—',
+        basinAlign: basinAlign.toFixed(3),
       });
     }
 
@@ -2365,11 +2420,19 @@ export class MonkeyKernel extends EventEmitter {
         if (mtfDec.action === 'enter_long' && mtfDec.longestAgreeingLabel) {
           state.mtfLongestAgreeingBySide.long = mtfDec.longestAgreeingLabel;
         }
+        // 2026-05-13 — snapshot continuous regime score at entry for
+        // the trailing regime drift stop.
+        if (state.rScoreCurrent !== null) {
+          state.rScoreAtEntryBySide.long = state.rScoreCurrent;
+        }
       } else if (lDecision.action === 'enter_short') {
         state.lLastConfirmedAtMsBySide.short = Date.now();
         state.lModeAtConfirmedBySide.short = lCurrentModeStr || null;
         if (mtfDec.action === 'enter_short' && mtfDec.longestAgreeingLabel) {
           state.mtfLongestAgreeingBySide.short = mtfDec.longestAgreeingLabel;
+        }
+        if (state.rScoreCurrent !== null) {
+          state.rScoreAtEntryBySide.short = state.rScoreCurrent;
         }
       }
       derivation.agentL = {
@@ -3326,13 +3389,27 @@ export class MonkeyKernel extends EventEmitter {
       const isMtfHorizonExpired = longestAtEntry !== null && symState
         ? mtfIsLongestHorizonExpired(symState.mtfState, sideKey, longestAtEntry, Date.now(), this.tickMs)
         : false;
-      if (!isStopLossHarvest && !isWinHarvest && !isHorizonExpired && !isAdverseModeTransition && !isMtfHorizonExpired) continue;
-      const harvestKind: 'win' | 'stop_loss' | 'horizon_expired' | 'regime_transition' | 'mtf_horizon_expired' =
+      // 2026-05-13 — continuous regime DRIFT stop. Even within the
+      // same discrete mode, if r has drifted past the threshold
+      // since position open, the entry thesis no longer holds.
+      // Catches transitions inside (e.g.) EXPLORATION between
+      // r=0.9 → r=0.5 that don't cross to INTEGRATION but invalidate
+      // the high-leverage scalp assumption.
+      const rAtEntry = symState?.rScoreAtEntryBySide?.[sideKey] ?? null;
+      const rNow = symState?.rScoreCurrent ?? null;
+      const continuousDriftDelta =
+        Number(process.env.MONKEY_AGENT_L_REGIME_DRIFT_DELTA) || 0.30;
+      const isContinuousRegimeDrift =
+        rAtEntry !== null && rNow !== null &&
+        continuousTrailingRegimeStop(rAtEntry, rNow, continuousDriftDelta);
+      if (!isStopLossHarvest && !isWinHarvest && !isHorizonExpired && !isAdverseModeTransition && !isMtfHorizonExpired && !isContinuousRegimeDrift) continue;
+      const harvestKind: 'win' | 'stop_loss' | 'horizon_expired' | 'regime_transition' | 'mtf_horizon_expired' | 'continuous_regime_drift' =
         isStopLossHarvest ? 'stop_loss'
           : isWinHarvest ? 'win'
             : isHorizonExpired ? 'horizon_expired'
               : isAdverseModeTransition ? 'regime_transition'
-                : 'mtf_horizon_expired';
+                : isMtfHorizonExpired ? 'mtf_horizon_expired'
+                  : 'continuous_regime_drift';
 
       logger.info('[AgentL] force-harvest threshold met', {
         symbol,
@@ -3352,7 +3429,9 @@ export class MonkeyKernel extends EventEmitter {
               ? `regime ${modeAtEntry}→${modeNow}`
               : isMtfHorizonExpired
                 ? `mtf-horizon ${longestAtEntry}`
-                : (harvestPct * 100).toFixed(3),
+                : isContinuousRegimeDrift
+                  ? `r-drift ${rAtEntry?.toFixed(2) ?? '?'}→${rNow?.toFixed(2) ?? '?'} (Δ${Math.abs((rAtEntry ?? 0) - (rNow ?? 0)).toFixed(2)})`
+                  : (harvestPct * 100).toFixed(3),
         ...(isHorizonExpired && lastConfirmedAt
           ? { ageMin: ((Date.now() - lastConfirmedAt) / 60000).toFixed(1) }
           : {}),
@@ -3508,6 +3587,7 @@ export class MonkeyKernel extends EventEmitter {
         symState.lLastConfirmedAtMsBySide[sideKey] = null;
         symState.lModeAtConfirmedBySide[sideKey] = null;
         symState.mtfLongestAgreeingBySide[sideKey] = null;
+        symState.rScoreAtEntryBySide[sideKey] = null;
         symState.recentLHarvestPnls.push(aggPnl);
         if (symState.recentLHarvestPnls.length > 5) {
           symState.recentLHarvestPnls.shift();
@@ -3867,7 +3947,32 @@ export class MonkeyKernel extends EventEmitter {
      *  lane so existing call sites remain bit-identical. */
     lane?: 'scalp' | 'swing' | 'trend';
   }): Promise<{ executed: boolean; orderId: string | null; reason: string }> {
-    const { symbol, side, marginUsdt, leverage, entryPrice, minNotional } = req;
+    const { symbol, side, marginUsdt, entryPrice, minNotional } = req;
+    // 2026-05-13 — continuous-regime leverage sanity bound.
+    //
+    // Discrete mode leverage (50× EXPLORATION / 5× INTEGRATION) can
+    // lag the actual market shape during regime transitions. The
+    // continuous r ∈ [0,1] computed from velocity + chop + κ-criticality
+    // produces a regimeSizing(r).leverage that responds tick-by-tick.
+    // Use it as an UPPER BOUND on req.leverage so a mode-derived 50×
+    // cannot fire when r says we're actually trending.
+    const symStateForLev = this.symbolStates.get(symbol);
+    const rNow = symStateForLev?.rScoreCurrent ?? null;
+    let effectiveLeverage = req.leverage;
+    let levBoundedReason = '';
+    if (rNow !== null) {
+      const continuous = computeRegimeSizing(rNow);
+      if (continuous.leverage < effectiveLeverage) {
+        levBoundedReason = `continuous_r=${rNow.toFixed(2)} caps ${effectiveLeverage}→${continuous.leverage}`;
+        effectiveLeverage = continuous.leverage;
+      }
+    }
+    if (levBoundedReason) {
+      logger.info('[Monkey] continuous-regime leverage cap', {
+        symbol, side, agent: req.agent ?? 'K', reason: levBoundedReason,
+      });
+    }
+    const leverage = effectiveLeverage;
     const notionalUsdt = marginUsdt * leverage;
     const quantity = notionalUsdt / entryPrice;
     const exchangeSide: 'buy' | 'sell' = side === 'long' ? 'buy' : 'sell';
