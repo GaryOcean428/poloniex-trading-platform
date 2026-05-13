@@ -133,6 +133,7 @@ import {
   onTickAppend as mtfOnTickAppend,
   mtfDecide,
   recordAgreementTimestamps as mtfRecordAgreement,
+  isLongestHorizonExpired as mtfIsLongestHorizonExpired,
 } from './mtfLClassifier.js';
 import {
   applyOutcomeToState,
@@ -390,16 +391,24 @@ interface SymbolState {
    *
    *  Cleared on harvest. */
   lModeAtConfirmedBySide: { long: string | null; short: string | null };
-  /** 2026-05-13 — Multi-timeframe L state (Phase 1).
+  /** 2026-05-13 — Multi-timeframe L state.
    *
    *  Per-timeframe down-sampled basin histories + agreement clocks.
    *  Sampled on every tick (cheap conditional appends); mtfDecide
-   *  runs per tick once warm. Phase 1 ships in OBSERVATION MODE —
-   *  decisions are logged but don't yet gate entries; Phase 2 will
-   *  promote MTF agreement to a sizing multiplier on L entries.
+   *  runs per tick once warm. Phase 1 shipped observation-only;
+   *  Phase 2 wires entry gating + size multiplier + longest-agreeing
+   *  horizon exit.
    *
    *  See mtfLClassifier.ts. */
   mtfState: import('./mtfLClassifier.js').MTFState;
+  /** 2026-05-13 MTF Phase 2 — longest-agreeing timeframe label at
+   *  position open, per side. Used by the longest-horizon exit
+   *  policy: position must exit when this timeframe's horizon
+   *  expires without re-confirmation. */
+  mtfLongestAgreeingBySide: {
+    long: import('./mtfLClassifier.js').TimeframeLabel | null;
+    short: import('./mtfLClassifier.js').TimeframeLabel | null;
+  };
 }
 
 /** Cap the recent-bus-event ring at this size — anything older than
@@ -518,6 +527,32 @@ export class MonkeyKernel extends EventEmitter {
     for (const sym of this.symbols) {
       this.symbolStates.set(sym, this.newSymbolState());
       this.turtleStates.set(sym, newTurtleState());
+    }
+
+    // 2026-05-13 MTF Phase 2 — bootstrap per-timeframe basin
+    // histories from historical OHLCV so the 4h classifier doesn't
+    // need 80 days of live ticks to warm up. Async + fail-soft;
+    // failures (network, parse) leave the bootstrap empty and the
+    // MTF state warms up gradually from live ticks instead.
+    if (process.env.MONKEY_MTF_BOOTSTRAP !== 'false') {
+      try {
+        const { bootstrapMTFForSymbol } = await import('./mtfBootstrap.js');
+        for (const sym of this.symbols) {
+          const state = this.symbolStates.get(sym);
+          if (state) {
+            // Fire-and-forget — each symbol's bootstrap is independent.
+            void bootstrapMTFForSymbol(sym, state.mtfState).catch((err) => {
+              logger.warn('[MTF-bootstrap] failed for symbol', {
+                symbol: sym, err: err instanceof Error ? err.message : String(err),
+              });
+            });
+          }
+        }
+      } catch (importErr) {
+        logger.warn('[MTF-bootstrap] import failed (non-fatal)', {
+          err: importErr instanceof Error ? importErr.message : String(importErr),
+        });
+      }
     }
 
     // v0.8.8 cross-agent observation — subscribe to the bus and append
@@ -676,6 +711,7 @@ export class MonkeyKernel extends EventEmitter {
       lLastConfirmedAtMsBySide: { long: null, short: null },
       lModeAtConfirmedBySide: { long: null, short: null },
       mtfState: newMTFState(),
+      mtfLongestAgreeingBySide: { long: null, short: null },
     };
   }
 
@@ -977,6 +1013,28 @@ export class MonkeyKernel extends EventEmitter {
       tapeTrend,
       computedAtMs: Date.now(),
     };
+
+    // 2026-05-13 — MTF: down-sample basin into per-timeframe stores
+    // (15m / 1h / 4h) and compute agreement-count decision. Phase 2
+    // wires the result into L's entry sizing + harvest exit policy
+    // below; the per-tick log keeps observability.
+    mtfOnTickAppend(state.mtfState, basin, state.sessionTicks);
+    const mtfDec = mtfDecide(state.mtfState);
+    if (mtfDec.action !== 'hold') {
+      mtfRecordAgreement(state.mtfState, mtfDec, Date.now());
+    }
+    if (mtfDec.action !== 'hold' || state.sessionTicks % 10 === 0) {
+      logger.info('[MTF-L] decision', {
+        symbol,
+        action: mtfDec.action,
+        agreement: `${mtfDec.agreementCount}/${mtfDec.totalTfs}`,
+        sizeMult: mtfDec.sizeMultiplier.toFixed(2),
+        longest: mtfDec.longestAgreeingLabel ?? '—',
+        perTf: mtfDec.perTimeframe.map(t =>
+          `${t.label}:${t.warm ? (t.decision?.action ?? 'hold') : 'cold'}`,
+        ).join(','),
+      });
+    }
 
     // Proposal #5: regime classification on basin trajectory + this
     // tick's basin. Surfaced via derivation.regime for telemetry; the
@@ -2302,9 +2360,17 @@ export class MonkeyKernel extends EventEmitter {
       if (lDecision.action === 'enter_long') {
         state.lLastConfirmedAtMsBySide.long = Date.now();
         state.lModeAtConfirmedBySide.long = lCurrentModeStr || null;
+        // 2026-05-13 MTF Phase 2 — snapshot longest agreeing TF at
+        // entry so the exit policy knows which clock to watch.
+        if (mtfDec.action === 'enter_long' && mtfDec.longestAgreeingLabel) {
+          state.mtfLongestAgreeingBySide.long = mtfDec.longestAgreeingLabel;
+        }
       } else if (lDecision.action === 'enter_short') {
         state.lLastConfirmedAtMsBySide.short = Date.now();
         state.lModeAtConfirmedBySide.short = lCurrentModeStr || null;
+        if (mtfDec.action === 'enter_short' && mtfDec.longestAgreeingLabel) {
+          state.mtfLongestAgreeingBySide.short = mtfDec.longestAgreeingLabel;
+        }
       }
       derivation.agentL = {
         action: lDecision.action,
@@ -2364,12 +2430,59 @@ export class MonkeyKernel extends EventEmitter {
         } else {
           // Size: conviction-weighted with cross-agent dampener +
           // emotion risk-modulator + foresight veto.
+          //
+          // 2026-05-13 MTF Phase 2 — also multiply by MTF agreement
+          // size multiplier. When 3-of-3 timeframes agree, sizeMult=1.0
+          // (full size). 2-of-3 agreement → sizeMult=0.5 (half size).
+          // Below 2 → mtfDec.action is 'hold' / sizeMultiplier=0 and
+          // single-TF L proceeds at normal size during MTF warmup.
+          //
+          // Gating: when at least 2 TFs warm, REQUIRE MTF action to
+          // match L's proposed side (or be hold). MTF disagreement
+          // = veto. When MTF is fully cold (no warm TFs), fall back
+          // to single-TF L behavior.
           const lProposedSide: 'long' | 'short' =
             lDecision.action === 'enter_long' ? 'long' : 'short';
           const lDampener = convictionDampenerFromBus(lCrossAgentCtx, lProposedSide);
           const lForesight = foresightVeto(state.basinHistory, lProposedSide);
           const lBaseMargin = lAlloc * 0.5 * lDecision.conviction;
-          let lMargin = lForesight.veto ? 0 : lBaseMargin * lDampener * lRiskMod;
+          // MTF agreement gate + size multiplier.
+          const warmTfCount = mtfDec.perTimeframe.filter(t => t.warm).length;
+          let mtfMult = 1.0;
+          let mtfVeto = false;
+          let mtfReason = 'cold (single-TF L)';
+          if (warmTfCount >= 1) {
+            const mtfAction = lProposedSide === 'long' ? 'enter_long' : 'enter_short';
+            if (mtfDec.action === mtfAction) {
+              // MTF agrees with single-TF L. Apply the agreement
+              // size multiplier (0.5 for 2-of-3, 1.0 for 3-of-3).
+              mtfMult = Math.max(mtfDec.sizeMultiplier, 0.5);
+              mtfReason = `agree ${mtfDec.agreementCount}/${mtfDec.totalTfs} sizeMult=${mtfMult.toFixed(2)}`;
+            } else if (mtfDec.action !== 'hold') {
+              // MTF wants the opposite side — strong veto.
+              mtfVeto = true;
+              mtfReason = `veto: mtf=${mtfDec.action} vs single=${lDecision.action}`;
+            } else {
+              // MTF holds while single-TF L wants to enter.
+              // Allow with reduced size — single-TF didn't have full
+              // multi-TF confirmation but MTF isn't actively against.
+              mtfMult = 0.5;
+              mtfReason = `mtf hold + single-TF entry → half size`;
+            }
+          }
+          (derivation.agentL as Record<string, unknown>).mtfMult = mtfMult;
+          (derivation.agentL as Record<string, unknown>).mtfVeto = mtfVeto;
+          (derivation.agentL as Record<string, unknown>).mtfReason = mtfReason;
+          if (mtfVeto) {
+            logger.info('[AgentL] entry vetoed by MTF disagreement', {
+              symbol, side: lProposedSide,
+              mtfAction: mtfDec.action,
+              agreement: `${mtfDec.agreementCount}/${mtfDec.totalTfs}`,
+            });
+          }
+          let lMargin = (lForesight.veto || mtfVeto)
+            ? 0
+            : lBaseMargin * lDampener * lRiskMod * mtfMult;
           (derivation.agentL as Record<string, unknown>).crossAgentDampener = lDampener;
           (derivation.agentL as Record<string, unknown>).riskModulator = lRiskMod;
           (derivation.agentL as Record<string, unknown>).foresightVeto = lForesight.veto;
@@ -2616,30 +2729,6 @@ export class MonkeyKernel extends EventEmitter {
     if (state.basinHistory.length > HISTORY_MAX) state.basinHistory.shift();
     if (state.basinHistory.length >= 50 && state.sessionTicks % 10 === 0) {
       state.identityBasin = frechetMean(state.basinHistory.slice(-50));
-    }
-
-    // 2026-05-13 — MTF Phase 1: down-sample basin into per-timeframe
-    // stores (15m / 1h / 4h) and run agreement-count decision in
-    // observation mode. Logged but NOT yet gating entries; Phase 2
-    // will promote MTF agreement to a size multiplier on L entries.
-    mtfOnTickAppend(state.mtfState, basin, state.sessionTicks);
-    const mtfDec = mtfDecide(state.mtfState);
-    if (mtfDec.action !== 'hold') {
-      mtfRecordAgreement(state.mtfState, mtfDec, Date.now());
-    }
-    // Log every 10 ticks (5 min on 30s) to avoid noise; or always when
-    // action != hold so non-hold MTF signals are visible.
-    if (mtfDec.action !== 'hold' || state.sessionTicks % 10 === 0) {
-      logger.info('[MTF-L] decision', {
-        symbol,
-        action: mtfDec.action,
-        agreement: `${mtfDec.agreementCount}/${mtfDec.totalTfs}`,
-        sizeMult: mtfDec.sizeMultiplier.toFixed(2),
-        longest: mtfDec.longestAgreeingLabel ?? '—',
-        perTf: mtfDec.perTimeframe.map(t =>
-          `${t.label}:${t.warm ? (t.decision?.action ?? 'hold') : 'cold'}`,
-        ).join(','),
-      });
     }
 
     state.lastBasin = basin;
@@ -3227,12 +3316,23 @@ export class MonkeyKernel extends EventEmitter {
           (modeAtEntry === 'exploration' && modeNow === 'integration') ||
           (modeAtEntry === 'integration' && modeNow === 'exploration')
         );
-      if (!isStopLossHarvest && !isWinHarvest && !isHorizonExpired && !isAdverseModeTransition) continue;
-      const harvestKind: 'win' | 'stop_loss' | 'horizon_expired' | 'regime_transition' =
+      // 2026-05-13 MTF Phase 2 — longest-agreeing-horizon exit.
+      // When the longest timeframe that agreed at entry stops
+      // re-confirming for its forecast window, exit. The agreement
+      // clocks (state.mtfState.lastAgreementByTfSide) are updated
+      // every tick by mtfRecordAgreement; here we just check whether
+      // the longest-at-entry timeframe's clock has elapsed.
+      const longestAtEntry = symState?.mtfLongestAgreeingBySide?.[sideKey] ?? null;
+      const isMtfHorizonExpired = longestAtEntry !== null && symState
+        ? mtfIsLongestHorizonExpired(symState.mtfState, sideKey, longestAtEntry, Date.now(), this.tickMs)
+        : false;
+      if (!isStopLossHarvest && !isWinHarvest && !isHorizonExpired && !isAdverseModeTransition && !isMtfHorizonExpired) continue;
+      const harvestKind: 'win' | 'stop_loss' | 'horizon_expired' | 'regime_transition' | 'mtf_horizon_expired' =
         isStopLossHarvest ? 'stop_loss'
           : isWinHarvest ? 'win'
             : isHorizonExpired ? 'horizon_expired'
-              : 'regime_transition';
+              : isAdverseModeTransition ? 'regime_transition'
+                : 'mtf_horizon_expired';
 
       logger.info('[AgentL] force-harvest threshold met', {
         symbol,
@@ -3250,7 +3350,9 @@ export class MonkeyKernel extends EventEmitter {
             ? `horizon ${horizonTicks}t (${(horizonMs / 60000).toFixed(0)}min)`
             : isAdverseModeTransition
               ? `regime ${modeAtEntry}→${modeNow}`
-              : (harvestPct * 100).toFixed(3),
+              : isMtfHorizonExpired
+                ? `mtf-horizon ${longestAtEntry}`
+                : (harvestPct * 100).toFixed(3),
         ...(isHorizonExpired && lastConfirmedAt
           ? { ageMin: ((Date.now() - lastConfirmedAt) / 60000).toFixed(1) }
           : {}),
@@ -3405,6 +3507,7 @@ export class MonkeyKernel extends EventEmitter {
         symState.lForceHarvestAtMsBySide[sideKey] = Date.now();
         symState.lLastConfirmedAtMsBySide[sideKey] = null;
         symState.lModeAtConfirmedBySide[sideKey] = null;
+        symState.mtfLongestAgreeingBySide[sideKey] = null;
         symState.recentLHarvestPnls.push(aggPnl);
         if (symState.recentLHarvestPnls.length > 5) {
           symState.recentLHarvestPnls.shift();
