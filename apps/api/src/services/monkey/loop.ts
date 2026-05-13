@@ -3197,10 +3197,40 @@ export class MonkeyKernel extends EventEmitter {
           exchangeOrder?.ordId ?? exchangeOrder?.orderId ??
           exchangeOrder?.id ?? exchangeOrder?.clientOid ?? null;
       } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
         logger.warn('[AgentL] force-harvest exchange order rejected', {
-          symbol, side: sideKey, qty: formattedSize,
-          err: err instanceof Error ? err.message : String(err),
+          symbol, side: sideKey, qty: formattedSize, err: errMsg,
         });
+        // 2026-05-13 — Poloniex 21002 "Position not enough" means the
+        // exchange doesn't have the qty the DB thinks it has. These
+        // rows are PHANTOMS — keeping them open spins this branch
+        // every tick (observed: 11:37→11:47Z BTC stop-loss tried 13×
+        // with same -$6 PnL, never closed, position bled). Ghost the
+        // rows immediately with reason 'position_mismatch_phantom'
+        // so subsequent ticks skip them. PnL = null because we never
+        // had a real close.
+        if (errMsg.includes('code=21002') || errMsg.includes('Position not enough')) {
+          try {
+            for (const row of rows) {
+              await pool.query(
+                `UPDATE autonomous_trades
+                    SET status = 'closed',
+                        exit_reason = 'position_mismatch_phantom',
+                        exit_time = NOW(),
+                        pnl = COALESCE(pnl, 0)
+                  WHERE id = $1`,
+                [row.id],
+              );
+            }
+            logger.warn('[AgentL] phantom rows ghost-closed (Poloniex 21002)', {
+              symbol, side: sideKey, ghostedRows: rows.length,
+            });
+          } catch (updErr) {
+            logger.error('[AgentL] phantom ghost-close DB update failed', {
+              symbol, err: updErr instanceof Error ? updErr.message : String(updErr),
+            });
+          }
+        }
         continue;
       }
       if (!orderId) {
