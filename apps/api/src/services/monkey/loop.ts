@@ -3102,18 +3102,32 @@ export class MonkeyKernel extends EventEmitter {
       const sideSign = sideKey === 'long' ? 1 : -1;
       const aggPnl = (lastPrice - aggEntry) * aggQty * sideSign;
       const pnlPct = aggNotional > 0 ? aggPnl / aggNotional : 0;
-      if (pnlPct < harvestPct) continue;
+      // 2026-05-13 — STOP-LOSS HARVEST. Fire on aggregate loss
+      // beyond -MONKEY_AGENT_L_STOP_LOSS_PCT (default 0.005 = 0.5%
+      // adverse on notional). Without this, L's stacking strategy
+      // had no exit on losing positions — observed 5/13 18:42 ETH
+      // -$21 and 18:43 BTC -$18 closes that bled past 0.5% adverse
+      // before any other gate caught them. Win-harvest threshold
+      // ladder (chop/base/trend/hot) still applies on the upside.
+      const stopLossPct =
+        Number(process.env.MONKEY_AGENT_L_STOP_LOSS_PCT) || 0.005;
+      const isStopLossHarvest = pnlPct <= -stopLossPct;
+      if (pnlPct < harvestPct && !isStopLossHarvest) continue;
+      const harvestKind: 'win' | 'stop_loss' = isStopLossHarvest ? 'stop_loss' : 'win';
 
       logger.info('[AgentL] force-harvest threshold met', {
         symbol,
         side: sideKey,
+        kind: harvestKind,
         rows: rows.length,
         aggQty: aggQty.toFixed(6),
         aggEntry: aggEntry.toFixed(2),
         aggNotional: aggNotional.toFixed(2),
         aggPnl: aggPnl.toFixed(4),
         pnlPct: (pnlPct * 100).toFixed(3),
-        threshold: (harvestPct * 100).toFixed(3),
+        threshold: isStopLossHarvest
+          ? `-${(stopLossPct * 100).toFixed(3)} (stop-loss)`
+          : (harvestPct * 100).toFixed(3),
         regime: regimeLabel,
         dopamine: lDopamine.toFixed(2),
         recentHarvests: recentPnls.length,
@@ -3593,6 +3607,54 @@ export class MonkeyKernel extends EventEmitter {
     const notionalUsdt = marginUsdt * leverage;
     const quantity = notionalUsdt / entryPrice;
     const exchangeSide: 'buy' | 'sell' = side === 'long' ? 'buy' : 'sell';
+
+    // 2026-05-13 — CROSS-AGENT tape-disagreement veto.
+    //
+    // Observed 5/13 ~18:00-19:15Z: bot took -$68 in 3h by repeatedly
+    // re-entering LONG ETH/BTC as both fell. Pattern: agent opens long
+    // → tape drops → stack closes at -$18 → agent re-enters long 1s
+    // later → tape still falling → another -$18 close.
+    //
+    // PR #663 added a tape+basin agreement gate to M only. K (geometric),
+    // T (turtle), L (FR-KNN) all bypassed it. They're each individually
+    // disciplined but none alone protect against "entering against the
+    // tape." This gate is the cross-agent veto: regardless of which
+    // agent proposes the entry, if tape is strongly against the side,
+    // block it.
+    //
+    // Thresholds (env-tunable):
+    //   long  vetoed when tape < -MONKEY_CROSS_AGENT_TAPE_VETO (default 0.20)
+    //   short vetoed when tape > +MONKEY_CROSS_AGENT_TAPE_VETO
+    //
+    // Catches "actively going wrong way" only; weak disagreement
+    // (|tape| < 0.20) still permits the entry. Each agent's own
+    // discipline applies on top.
+    const symState = this.symbolStates.get(symbol);
+    const snap = symState?.latestBasinSnapshot;
+    const SNAP_MAX_AGE_MS = 120_000;
+    const snapAgeMs = snap ? Date.now() - snap.computedAtMs : Infinity;
+    if (snap && snapAgeMs < SNAP_MAX_AGE_MS) {
+      const tapeVetoThreshold =
+        Number(process.env.MONKEY_CROSS_AGENT_TAPE_VETO) || 0.20;
+      const tape = snap.tapeTrend;
+      const blocked =
+        (side === 'long' && tape < -tapeVetoThreshold) ||
+        (side === 'short' && tape > tapeVetoThreshold);
+      if (blocked) {
+        logger.info('[Monkey] cross-agent tape veto', {
+          symbol,
+          side,
+          agent: req.agent ?? 'K',
+          tape: tape.toFixed(3),
+          threshold: tapeVetoThreshold,
+        });
+        return {
+          executed: false,
+          orderId: null,
+          reason: `cross_agent_tape_veto: tape=${tape.toFixed(3)} vs side=${side} (threshold ${tapeVetoThreshold})`,
+        };
+      }
+    }
 
     // Load account + credentials like liveSignalEngine.loadAccountContext.
     let userId: string;
