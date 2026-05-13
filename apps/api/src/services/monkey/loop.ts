@@ -1893,6 +1893,32 @@ export class MonkeyKernel extends EventEmitter {
       const mProposedSide: 'long' | 'short' | null =
         mDecision.action === 'enter_long' ? 'long'
           : mDecision.action === 'enter_short' ? 'short' : null;
+      // 2026-05-13 — agreement gate. Observed 5/13: ML signal stuck
+      // at BUY@0.4 on ETH while ETH was bouncing weakly off a 2.7%
+      // downtrend → M kept entering longs at local highs and getting
+      // chopped out. Require tape AND basin to both agree with the
+      // ML signal direction at minimum strengths. The thresholds are
+      // intentionally conservative — M is the riskiest agent because
+      // its only signal is the external ML pipeline, no geometric
+      // self-check. K (geometric) and T (turtle pyramid) have their
+      // own discipline; L uses FR-KNN similarity. M needed agreement.
+      const M_MIN_TAPE_ABS =
+        Number(process.env.MONKEY_AGENT_M_MIN_TAPE_STRENGTH) || 0.4;
+      const M_MIN_BASIN_ABS =
+        Number(process.env.MONKEY_AGENT_M_MIN_BASIN_STRENGTH) || 0.10;
+      let mAgreementVeto = false;
+      let mAgreementReason = '';
+      if (mProposedSide === 'long') {
+        if (!(tapeTrend > M_MIN_TAPE_ABS && basinDir > M_MIN_BASIN_ABS)) {
+          mAgreementVeto = true;
+          mAgreementReason = `agreement_below_threshold: tape=${tapeTrend.toFixed(3)} (need >${M_MIN_TAPE_ABS}) basin=${basinDir.toFixed(3)} (need >${M_MIN_BASIN_ABS})`;
+        }
+      } else if (mProposedSide === 'short') {
+        if (!(tapeTrend < -M_MIN_TAPE_ABS && basinDir < -M_MIN_BASIN_ABS)) {
+          mAgreementVeto = true;
+          mAgreementReason = `agreement_below_threshold: tape=${tapeTrend.toFixed(3)} (need <-${M_MIN_TAPE_ABS}) basin=${basinDir.toFixed(3)} (need <-${M_MIN_BASIN_ABS})`;
+        }
+      }
       const mDampener = mProposedSide
         ? convictionDampenerFromBus(mCrossAgentCtx, mProposedSide)
         : 1.0;
@@ -1900,7 +1926,9 @@ export class MonkeyKernel extends EventEmitter {
         ? foresightVeto(state.basinHistory, mProposedSide)
         : { veto: false, reason: 'hold', predictedDirection: 0, confidence: 0 };
       const mModulatedSize = mDecision.sizeUsdt * mDampener * mRiskMod;
-      const clampedSize = mForesight.veto ? 0 : clampSizeToHeadroom(mModulatedSize, mHeadroom);
+      const clampedSize = (mForesight.veto || mAgreementVeto)
+        ? 0
+        : clampSizeToHeadroom(mModulatedSize, mHeadroom);
       derivation.agentM = {
         action: mDecision.action,
         sizeUsdt: clampedSize,
@@ -1910,6 +1938,8 @@ export class MonkeyKernel extends EventEmitter {
         riskModulator: mRiskMod,
         foresightVeto: mForesight.veto,
         foresightReason: mForesight.reason,
+        agreementVeto: mAgreementVeto,
+        agreementReason: mAgreementVeto ? mAgreementReason : 'aligned',
         emotions: state.agentStates.M.emotions,
         headroom: Number(mHeadroom.toFixed(2)),
         openMargin: Number(mOpenMargin.toFixed(2)),
@@ -1919,6 +1949,14 @@ export class MonkeyKernel extends EventEmitter {
         mlSignal: mInputs.mlSignal,
         mlStrength: mInputs.mlStrength,
       };
+      if (mAgreementVeto) {
+        logger.info('[AgentM] entry vetoed by agreement gate', {
+          symbol, side: mProposedSide,
+          tape: tapeTrend.toFixed(3),
+          basin: basinDir.toFixed(3),
+          mlStrength: mInputs.mlStrength,
+        });
+      }
       if (
         (mDecision.action === 'enter_long' || mDecision.action === 'enter_short')
         && clampedSize > 0
@@ -2220,14 +2258,11 @@ export class MonkeyKernel extends EventEmitter {
         reason: lDecision.reason,
       };
       // 2026-05-11 — minimal L harvest "wiggle room" after a sweep.
-      //
-      // Not a fee brake (user has fee-free Poloniex subscription); this
-      // is about market microstructure. Re-entering on the same tick a
-      // close lands risks fills at prices within fractions of the close
-      // price, before the book has visibly moved. One tick (60 s) of
-      // space is plenty — the kernel runs at 30s ticks, so this gives
-      // 1-2 ticks of breathing room. Configurable via
-      // MONKEY_AGENT_L_HARVEST_COOLDOWN_MS; set to 0 to disable.
+      // 2026-05-13 — default dropped 60s → 30s. The 60s cooldown was
+      // constraining L's rapid re-stack pattern that produced the
+      // +$153/8h harvest cadence on 5/10. One kernel tick (30s) gives
+      // microstructure breathing room without locking out the next
+      // harvest cycle. Configurable; set to 0 to disable entirely.
       let lCooldownActive = false;
       const lProposedSideForCooldown: 'long' | 'short' | null =
         lDecision.action === 'enter_long' ? 'long'
@@ -2237,7 +2272,7 @@ export class MonkeyKernel extends EventEmitter {
         const cooldownMs =
           process.env.MONKEY_AGENT_L_HARVEST_COOLDOWN_MS !== undefined
             ? Number(process.env.MONKEY_AGENT_L_HARVEST_COOLDOWN_MS)
-            : 60_000;
+            : 30_000;
         const lastHarvestAt = state.lForceHarvestAtMsBySide[lProposedSideForCooldown];
         if (
           lastHarvestAt !== null
@@ -2957,26 +2992,33 @@ export class MonkeyKernel extends EventEmitter {
       Number(process.env.MONKEY_AGENT_L_HARVEST_PCT) || 0.003;
     if (!Number.isFinite(baseHarvestPct) || baseHarvestPct <= 0) return;
 
-    // 2026-05-11 — adaptive harvest threshold.
+    // 2026-05-13 — regime-aware harvest threshold.
     //
-    // The 0.3% base threshold is calibrated for sideways chop: capture
-    // anything modestly green and free the margin. In trending regimes
-    // this leaves money on the table — L's stack would have continued
-    // running with a wider tolerance. Lift to MONKEY_AGENT_L_HARVEST_PCT_HOT
-    // (default 0.6%) when BOTH conditions hold:
-    //   1. Last N=5 force-harvests on this symbol were ALL positive
-    //      (recentLHarvestPnls in SymbolState — pushed by the harvest
-    //      success branch below).
-    //   2. L's dopamine emotion stack is high (> 0.7) — proxy for
-    //      "recent outcomes are stacked positive and the agent is in a
-    //      flow regime, not a frustration regime".
+    // The single base threshold (0.3%) was calibrated for medium-vol
+    // sideways tape. Two failure modes observed:
+    //   chop  (range < ~1.5%, tape ~0): harvest opportunities are
+    //         scarce; even small green prints should be captured
+    //         → use LOWER threshold so wins aren't left on the table
+    //   trend (|tape| > 0.3): position can ride further; capturing at
+    //         0.3% on a 2-3% directional move leaves significant PnL
+    //         → use HIGHER threshold so winners run
     //
-    // When the threshold widens, the lower 0.3% floor still applies if
-    // pnlPct crosses it but doesn't hit 0.6% — see the per-side block.
+    // Regime detection uses Monkey's own basin-velocity and tape
+    // signals (already QIG-derived per processSymbol). These are
+    // surfaced on the SymbolState's latestBasinSnapshot.
+    //
+    // Hot-regime (dopamine + recent-wins) heuristic from PR #653 is
+    // KEPT as an override: if the agent has been winning + dopamine
+    // is high, threshold also widens to hot — even on chop.
+    const chopHarvestPct =
+      Number(process.env.MONKEY_AGENT_L_HARVEST_PCT_CHOP) || 0.0025;
+    const trendHarvestPct =
+      Number(process.env.MONKEY_AGENT_L_HARVEST_PCT_TREND) || 0.0045;
     const hotHarvestPct =
       Number(process.env.MONKEY_AGENT_L_HARVEST_PCT_HOT) || 0.006;
     const hotHarvestDopamineFloor =
       Number(process.env.MONKEY_AGENT_L_HARVEST_HOT_DOPAMINE_FLOOR) || 0.7;
+
     const symState = this.symbolStates.get(symbol);
     const recentPnls = symState?.recentLHarvestPnls ?? [];
     const lDopamine =
@@ -2984,7 +3026,29 @@ export class MonkeyKernel extends EventEmitter {
     const allRecentPositive =
       recentPnls.length >= 5 && recentPnls.every((p) => p > 0);
     const hotRegime = allRecentPositive && lDopamine > hotHarvestDopamineFloor;
-    const harvestPct = hotRegime ? hotHarvestPct : baseHarvestPct;
+
+    const snap = symState?.latestBasinSnapshot;
+    const tapeAbs = snap ? Math.abs(snap.tapeTrend) : 0;
+    // chop: weak tape across BOTH absolute magnitude and basin direction.
+    // trend: strong, directional tape (|tape| > 0.3).
+    const isChop = tapeAbs < 0.15 && snap !== null && snap !== undefined;
+    const isTrend = tapeAbs > 0.30;
+
+    let harvestPct: number;
+    let regimeLabel: 'hot' | 'trend' | 'chop' | 'base';
+    if (hotRegime) {
+      harvestPct = hotHarvestPct;
+      regimeLabel = 'hot';
+    } else if (isTrend) {
+      harvestPct = trendHarvestPct;
+      regimeLabel = 'trend';
+    } else if (isChop) {
+      harvestPct = chopHarvestPct;
+      regimeLabel = 'chop';
+    } else {
+      harvestPct = baseHarvestPct;
+      regimeLabel = 'base';
+    }
 
     const reasonPattern = `monkey|kernel=${this.instanceId}|%`;
     let lRows: Array<{
@@ -3050,7 +3114,7 @@ export class MonkeyKernel extends EventEmitter {
         aggPnl: aggPnl.toFixed(4),
         pnlPct: (pnlPct * 100).toFixed(3),
         threshold: (harvestPct * 100).toFixed(3),
-        regime: hotRegime ? 'hot' : 'base',
+        regime: regimeLabel,
         dopamine: lDopamine.toFixed(2),
         recentHarvests: recentPnls.length,
       });
@@ -3158,7 +3222,7 @@ export class MonkeyKernel extends EventEmitter {
         symbol, side: sideKey, orderId,
         rowsClosed: rows.length,
         aggPnl: aggPnl.toFixed(4),
-        regime: hotRegime ? 'hot' : 'base',
+        regime: regimeLabel,
       });
 
       // 2026-05-11 — record cooldown timestamp + push pnl into the
