@@ -36,7 +36,11 @@ interface StateOfBot {
   tradesPerHour: number;
   winRateLast20: number;
   exchangeOpenPositions: number;
+  /** Distinct (symbol, side) positions in DB. Stacked rows aggregate. */
   dbOpenPositions: number;
+  /** Raw open-row count — diverges from dbOpenPositions under stacking.
+   *  rows >> positions signals phantom-row accumulation. */
+  dbOpenRows?: number;
   positionStateInSync: boolean;
   balance: { equity: number; currency: string };
   currentLeverage: number;
@@ -212,7 +216,11 @@ const StateOfTheBotCard: React.FC = () => {
           <AlertTriangle className="w-4 h-4" />
         )}
         <span>
-          Exchange: {state.exchangeOpenPositions} open · DB: {state.dbOpenPositions} open
+          Exchange: {state.exchangeOpenPositions} open · DB: {state.dbOpenPositions} position
+          {state.dbOpenPositions === 1 ? '' : 's'}
+          {state.dbOpenRows !== undefined && state.dbOpenRows !== state.dbOpenPositions
+            ? ` (${state.dbOpenRows} rows stacked)`
+            : ''}
           {state.positionStateInSync ? ' · in sync' : ' · DIVERGENCE — phantom state likely'}
         </span>
       </div>
