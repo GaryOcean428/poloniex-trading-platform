@@ -144,8 +144,11 @@ describe('agentLDecide', () => {
     // Build a long history where every "high-biased" basin is followed
     // by a high-biased basin 4 ticks later (i.e., long realization).
     // Then ask: given a high-biased current, what does Agent L predict?
+    //
+    // 2026-05-13 — bumped to 1000 ticks to satisfy minTupleStart=480
+    // plus spacing=30 needing ~17+ candidate slots for k=8 nearest.
     const hist: Basin[] = [];
-    for (let i = 0; i < 200; i++) {
+    for (let i = 0; i < 1000; i++) {
       // Alternating phases: high → high (long realization) for even-indexed cycles,
       // low → low (short realization) for odd-indexed.
       const cycle = Math.floor(i / 8);
@@ -162,7 +165,7 @@ describe('agentLDecide', () => {
   it('respects action threshold — small score returns hold', () => {
     // Mixed history with no clear signal — expect hold or low conviction.
     const hist: Basin[] = [];
-    for (let i = 0; i < 200; i++) {
+    for (let i = 0; i < 1000; i++) {
       hist.push(i % 2 === 0 ? biased('high', 0.55) : biased('low', 0.55));
     }
     const r = agentLDecide(hist, { ...DEFAULT_AGENT_L_CONFIG, actionThreshold: 0.5 });

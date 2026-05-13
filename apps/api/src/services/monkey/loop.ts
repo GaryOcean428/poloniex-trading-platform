@@ -359,6 +359,20 @@ interface SymbolState {
    *  streak (all 5 positive AND dopamine high), threshold widens from
    *  0.3% to 0.6% to let winners run. Oldest entry drops on push. */
   recentLHarvestPnls: number[];
+  /** 2026-05-13 — horizon-bounded exit per Change B.
+   *
+   *  Tracks the wall-clock ms of the most recent L decision that
+   *  confirmed (or proposed) the side. The L classifier's prediction
+   *  has a forward horizon (default 120 ticks = 60 min on 30s); once
+   *  that horizon elapses without L re-confirming, the position is
+   *  past its forecast window and must exit unless extended.
+   *
+   *  Updated whenever L decides enter_long/enter_short on this side
+   *  (regardless of whether the entry executes — gate/veto outcomes
+   *  don't affect the underlying L conviction). Cleared on harvest
+   *  so the next entry starts a fresh horizon clock.
+   */
+  lLastConfirmedAtMsBySide: { long: number | null; short: number | null };
 }
 
 /** Cap the recent-bus-event ring at this size — anything older than
@@ -632,6 +646,7 @@ export class MonkeyKernel extends EventEmitter {
       recentBusEvents: [],
       lForceHarvestAtMsBySide: { long: null, short: null },
       recentLHarvestPnls: [],
+      lLastConfirmedAtMsBySide: { long: null, short: null },
     };
   }
 
@@ -2242,9 +2257,21 @@ export class MonkeyKernel extends EventEmitter {
     if (
       process.env.MONKEY_EXECUTE === 'true'
       && lAlloc > 0
-      && state.basinHistory.length >= 60
+      // 2026-05-13 — warmup gate bumped to match recalibrated
+      // longWindow (480). 480 ticks × 30s ≈ 4h. K/M/T continue
+      // trading during L's warmup.
+      && state.basinHistory.length >= 480
     ) {
       const lDecision = agentLDecide(state.basinHistory);
+      // 2026-05-13 Change B — record per-side L confirmation timestamp
+      // so the horizon-bounded exit knows when L most recently "voted"
+      // for a side. Update even when the resulting entry is vetoed:
+      // the L conviction is the signal, the gate is the policy.
+      if (lDecision.action === 'enter_long') {
+        state.lLastConfirmedAtMsBySide.long = Date.now();
+      } else if (lDecision.action === 'enter_short') {
+        state.lLastConfirmedAtMsBySide.short = Date.now();
+      }
       derivation.agentL = {
         action: lDecision.action,
         signedScore: lDecision.signedScore,
@@ -3104,16 +3131,35 @@ export class MonkeyKernel extends EventEmitter {
       const pnlPct = aggNotional > 0 ? aggPnl / aggNotional : 0;
       // 2026-05-13 — STOP-LOSS HARVEST. Fire on aggregate loss
       // beyond -MONKEY_AGENT_L_STOP_LOSS_PCT (default 0.005 = 0.5%
-      // adverse on notional). Without this, L's stacking strategy
-      // had no exit on losing positions — observed 5/13 18:42 ETH
-      // -$21 and 18:43 BTC -$18 closes that bled past 0.5% adverse
-      // before any other gate caught them. Win-harvest threshold
-      // ladder (chop/base/trend/hot) still applies on the upside.
+      // adverse on notional). Win-harvest threshold ladder
+      // (chop/base/trend/hot) still applies on the upside.
+      //
+      // 2026-05-13 Change B — HORIZON-BOUNDED EXIT.
+      //
+      // Trades must not run past L's predicted forward horizon
+      // unless fresh L signal extends the ride. Once the horizon
+      // elapses without L re-confirming the side, force-exit
+      // regardless of PnL. Implements the canonical Lorentzian's
+      // bar-count exit (4 bars = forecast window) on our cadence.
+      //
+      // Horizon: config.horizon × tickMs = 120 × 30s = 60 min.
+      // Re-confirmation: each tick where L's decision proposes the
+      // same side updates `lLastConfirmedAtMsBySide[side]`.
       const stopLossPct =
         Number(process.env.MONKEY_AGENT_L_STOP_LOSS_PCT) || 0.005;
+      const horizonTicks =
+        Number(process.env.MONKEY_AGENT_L_HORIZON_TICKS) || 120;
+      const horizonMs = horizonTicks * this.tickMs;
+      const lastConfirmedAt = symState?.lLastConfirmedAtMsBySide?.[sideKey] ?? null;
+      const isHorizonExpired =
+        lastConfirmedAt !== null && (Date.now() - lastConfirmedAt) > horizonMs;
       const isStopLossHarvest = pnlPct <= -stopLossPct;
-      if (pnlPct < harvestPct && !isStopLossHarvest) continue;
-      const harvestKind: 'win' | 'stop_loss' = isStopLossHarvest ? 'stop_loss' : 'win';
+      const isWinHarvest = pnlPct >= harvestPct;
+      if (!isStopLossHarvest && !isWinHarvest && !isHorizonExpired) continue;
+      const harvestKind: 'win' | 'stop_loss' | 'horizon_expired' =
+        isStopLossHarvest ? 'stop_loss'
+          : isWinHarvest ? 'win'
+            : 'horizon_expired';
 
       logger.info('[AgentL] force-harvest threshold met', {
         symbol,
@@ -3127,7 +3173,12 @@ export class MonkeyKernel extends EventEmitter {
         pnlPct: (pnlPct * 100).toFixed(3),
         threshold: isStopLossHarvest
           ? `-${(stopLossPct * 100).toFixed(3)} (stop-loss)`
-          : (harvestPct * 100).toFixed(3),
+          : isHorizonExpired
+            ? `horizon ${horizonTicks}t (${(horizonMs / 60000).toFixed(0)}min)`
+            : (harvestPct * 100).toFixed(3),
+        ...(isHorizonExpired && lastConfirmedAt
+          ? { ageMin: ((Date.now() - lastConfirmedAt) / 60000).toFixed(1) }
+          : {}),
         regime: regimeLabel,
         dopamine: lDopamine.toFixed(2),
         recentHarvests: recentPnls.length,
@@ -3272,8 +3323,12 @@ export class MonkeyKernel extends EventEmitter {
       // 2026-05-11 — record cooldown timestamp + push pnl into the
       // recent-harvests ring so subsequent entries see the cooldown
       // gate, and the adaptive threshold can lift on a hot streak.
+      // 2026-05-13 — clear lLastConfirmedAtMsBySide so the next entry
+      // starts a fresh horizon clock (no inherited expiry from prior
+      // stack).
       if (symState) {
         symState.lForceHarvestAtMsBySide[sideKey] = Date.now();
+        symState.lLastConfirmedAtMsBySide[sideKey] = null;
         symState.recentLHarvestPnls.push(aggPnl);
         if (symState.recentLHarvestPnls.length > 5) {
           symState.recentLHarvestPnls.shift();
