@@ -39,6 +39,7 @@ import numpy as np
 from qig_core_local.geometry.fisher_rao import fisher_rao_distance
 
 from .bus_events import KernelEvent, OceanObservationPayload
+from .parameters import get_registry
 from .persistence import PersistentMemory
 
 if TYPE_CHECKING:
@@ -83,7 +84,11 @@ class SleepCycleState:
 # ═══════════════════════════════════════════════════════════════
 
 
-# SAFETY_BOUND constants (P14-permitted; autonomic-health bounds)
+# SAFETY_BOUND defaults (P14-permitted; autonomic-health bounds).
+# Live values are read from the parameter registry per tick (migration
+# 047 seeds the rows). These literals serve as fail-soft fallbacks
+# when the registry is unreachable, and as the canonical reference for
+# downstream tests that need to assert on the bound semantics.
 _SPREAD_BOUND: float = 0.30          # SLEEP if max-pairwise basin FR > this
 _PHI_DREAM_BOUND: float = 0.5        # DREAM if Φ below this
 _PHI_ESCAPE_BOUND: float = 0.15      # ESCAPE if Φ below this (overrides DREAM)
@@ -182,7 +187,13 @@ class Ocean:
         # applies timestamp-correction so a kernel that "slept"
         # through downtime wakes at the right moment.
         self.sleep_state = self._load_sleep_state_or_fresh()
-        self._phi_history: Deque[float] = deque(maxlen=_PHI_HISTORY_MAX)
+        # phi_history window is registry-backed (migration 047). Read once
+        # at construction — deque maxlen is immutable, so propose_change()
+        # on this row requires a kernel restart to take effect.
+        history_max = int(
+            get_registry().get("ocean.phi_history_max", default=float(_PHI_HISTORY_MAX))
+        )
+        self._phi_history: Deque[float] = deque(maxlen=history_max)
 
     def _load_sleep_state_or_fresh(self) -> SleepCycleState:
         if self._persistence is None or not self._persistence.is_available:
@@ -329,7 +340,25 @@ class Ocean:
             "lane_count": float(len(lanes)),
         }
 
-        # Intervention selection (priority order; first match wins)
+        # Intervention selection (priority order; first match wins).
+        # Thresholds are read from the parameter registry per tick so
+        # propose_change() takes effect without a kernel restart.
+        # Module constants are fail-soft fallbacks when the registry is
+        # unreachable.
+        registry = get_registry()
+        phi_escape_bound = registry.get(
+            "ocean.phi_escape_bound", default=_PHI_ESCAPE_BOUND,
+        )
+        spread_bound = registry.get(
+            "ocean.spread_bound", default=_SPREAD_BOUND,
+        )
+        phi_dream_bound = registry.get(
+            "ocean.phi_dream_bound", default=_PHI_DREAM_BOUND,
+        )
+        phi_variance_bound = registry.get(
+            "ocean.phi_variance_bound", default=_PHI_VARIANCE_BOUND,
+        )
+
         intervention: Optional[Intervention] = None
 
         # WAKE / SLEEP from the sleep state machine — surfaces as
@@ -339,14 +368,14 @@ class Ocean:
             intervention = "SLEEP"
         elif sleep_step["woke"]:
             intervention = "WAKE"
-        elif phi < _PHI_ESCAPE_BOUND:
+        elif phi < phi_escape_bound:
             intervention = "ESCAPE"
-        elif spread > _SPREAD_BOUND:
+        elif spread > spread_bound:
             intervention = "SLEEP"
-        elif phi < _PHI_DREAM_BOUND:
+        elif phi < phi_dream_bound:
             intervention = "DREAM"
         elif (
-            0.0 < phi_var < _PHI_VARIANCE_BOUND
+            0.0 < phi_var < phi_variance_bound
             and len(self._phi_history) >= 2
         ):
             intervention = "MUSHROOM_MICRO"
