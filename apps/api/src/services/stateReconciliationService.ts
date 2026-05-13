@@ -272,6 +272,26 @@ class StateReconciliationService {
         return ta - tb;
       });
 
+      // 2026-05-13 — two-phase ghost handling to fix PnL over-attribution.
+      //
+      // Phase 1 IDENTIFY: walk DB rows FIFO, mark anything past the
+      // exchange-qty boundary as a ghost. Collect into an array; do
+      // not write yet.
+      //
+      // Phase 2 RECOVER + WRITE: group ghosts by (symbol, side). For
+      // each group, fetch Poloniex position-history ONCE and find the
+      // single close record. The aggregate realizedPnl on that record
+      // is the position's total PnL; distribute pro-rata across rows
+      // by qty share. Prior single-pass logic applied the aggregate
+      // PnL to EACH stacked row, multiplying realized PnL by N (5×
+      // observed in production 2026-05-13 03:51 / 04:38 / 05:17).
+      type PendingGhost = {
+        dbTrade: typeof sortedDbTrades[0];
+        ghostReason: string;
+        agent: 'K' | 'M' | 'T' | 'L' | null;
+      };
+      const pendingGhosts: PendingGhost[] = [];
+
       for (const dbTrade of sortedDbTrades) {
         const dbSide = normalizeDbSide(dbTrade.side);
         const key = `${dbTrade.symbol}|${dbSide}`;
@@ -279,135 +299,137 @@ class StateReconciliationService {
         const consumedQty = consumedQtyByKey.get(key) ?? 0;
         const remainingExchangeQty = exchangeQty - consumedQty;
         const rowQty = Math.abs(parseFloat(dbTrade.quantity)) || 0;
-        // A row is valid when the exchange still has untaken qty on
-        // this key. Use a small tolerance because exchange and DB
-        // qty may differ by lot-rounding rounding noise.
         const QTY_TOLERANCE = 1e-9;
         const matched = remainingExchangeQty > QTY_TOLERANCE;
         if (matched) {
           consumedQtyByKey.set(key, consumedQty + rowQty);
+          continue;
         }
 
-        if (!matched) {
-          const ghost: GhostRecord = {
-            id: dbTrade.id,
-            symbol: dbTrade.symbol,
-            side: dbTrade.side,
-            entryPrice: parseFloat(dbTrade.entry_price)
-          };
-          result.ghosts.push(ghost);
+        // Ghost — classify reason + agent (no DB write yet).
+        const ghost: GhostRecord = {
+          id: dbTrade.id,
+          symbol: dbTrade.symbol,
+          side: dbTrade.side,
+          entryPrice: parseFloat(dbTrade.entry_price),
+        };
+        result.ghosts.push(ghost);
 
-          // Close the ghost record. Classification heuristic:
-          //   - If exit_order_id is set, our system tried to close (close
-          //     went through after the row was queried but before this
-          //     reconcile, OR a partial close came through). Tag as
-          //     'reconciled_post_close_race' for audit clarity.
-          //   - If exit_order_id is NULL and the DB row was kernel-issued
-          //     (reason LIKE 'monkey|%' or 'live_signal|%'): the user
-          //     likely closed the position manually on Poloniex UI. Tag
-          //     as 'manual_close_user' so audit trails distinguish user
-          //     interventions from infra issues.
-          //   - Otherwise (orphan/legacy/unknown): keep the original
-          //     'reconciled_not_on_exchange' tag for back-compat.
-          let ghostReason = 'reconciled_not_on_exchange';
+        let ghostReason = 'reconciled_not_on_exchange';
+        let agent: 'K' | 'M' | 'T' | 'L' | null = null;
+        try {
+          const ctxRow = await pool.query(
+            `SELECT exit_order_id, reason, agent FROM autonomous_trades WHERE id = $1`,
+            [dbTrade.id],
+          );
+          const ctx = ctxRow.rows[0] as
+            | { exit_order_id: string | null; reason: string | null; agent: string | null }
+            | undefined;
+          if (ctx?.exit_order_id) {
+            ghostReason = 'reconciled_post_close_race';
+          } else if (
+            ctx?.agent === 'USER' ||
+            (ctx?.reason && (
+              ctx.reason.startsWith('monkey|') ||
+              ctx.reason.startsWith('live_signal|') ||
+              ctx.reason.startsWith('autoTrader|') ||
+              ctx.reason.startsWith('manual_open_user') ||
+              ctx.reason === 'reconciled'
+            ))
+          ) {
+            ghostReason = 'manual_close_user';
+          }
+          const a = ctx?.agent;
+          if (a === 'K' || a === 'M' || a === 'T' || a === 'L') agent = a;
+        } catch {
+          /* fail-soft: keep generic reason */
+        }
+        pendingGhosts.push({ dbTrade, ghostReason, agent });
+      }
+
+      // Phase 2: group + recover + write.
+      const ghostsByKey = new Map<string, PendingGhost[]>();
+      for (const g of pendingGhosts) {
+        const k = `${g.dbTrade.symbol}|${normalizeDbSide(g.dbTrade.side)}`;
+        const list = ghostsByKey.get(k) ?? [];
+        list.push(g);
+        ghostsByKey.set(k, list);
+      }
+
+      for (const [groupKey, groupGhosts] of ghostsByKey) {
+        const [symbol, sideStr] = groupKey.split('|');
+        const groupSide: 'long' | 'short' = sideStr === 'long' ? 'long' : 'short';
+
+        // Aggregate qty across the group's ghost rows.
+        const groupQty = groupGhosts.reduce(
+          (s, g) => s + (Math.abs(parseFloat(g.dbTrade.quantity)) || 0),
+          0,
+        );
+
+        // Fetch Poloniex position history ONCE for this group. We look
+        // for a single close record whose openTime is within ±90s of
+        // the OLDEST ghost's entry_time and whose side matches.
+        let aggregateRealizedPnl: number | null = null;
+        const groupHasKernelAgent = groupGhosts.some((g) => g.agent !== null);
+        if (groupHasKernelAgent && credentials && symbol) {
           try {
-            const ctxRow = await pool.query(
-              `SELECT exit_order_id, reason, agent FROM autonomous_trades WHERE id = $1`,
-              [dbTrade.id]
+            const polHistory = await poloniexFuturesService.getPositionHistory(
+              credentials,
+              { symbol, limit: 20 },
             );
-            const ctx = ctxRow.rows[0] as
-              | { exit_order_id: string | null; reason: string | null; agent: string | null }
-              | undefined;
-            if (ctx?.exit_order_id) {
-              ghostReason = 'reconciled_post_close_race';
-            } else if (
-              // Any of these signal a kernel/user-tracked row whose
-              // disappearance from the exchange means the user closed
-              // it manually (or some out-of-band actor did):
-              //   - kernel/livesignal/autotrader-issued rows (reason
-              //     prefixes monkey|, live_signal|, autoTrader|)
-              //   - reconciler-inserted user-tracking rows (reason
-              //     'reconciled' from pre-PR #641 code, or
-              //     'manual_open_user|...' from post-#641 code, or
-              //     agent='USER' for any reason format)
-              (
-                ctx?.agent === 'USER' ||
-                (ctx?.reason && (
-                  ctx.reason.startsWith('monkey|') ||
-                  ctx.reason.startsWith('live_signal|') ||
-                  ctx.reason.startsWith('autoTrader|') ||
-                  ctx.reason.startsWith('manual_open_user') ||
-                  ctx.reason === 'reconciled'
-                ))
-              )
-            ) {
-              ghostReason = 'manual_close_user';
-            }
-          } catch {
-            /* fail-soft: keep generic reason */
-          }
-          // 2026-05-08 #11 — PnL recovery for ghost-closed positions.
-          // 2026-05-10 #12 — extended to ALL ghost-close reasons for
-          // kernel-issued rows (not just manual_close_user).
-          //
-          // When ANY out-of-band actor closes a kernel-issued position
-          // — user UI close, Poloniex liquidation, exchange-side stop,
-          // partial fill cleanup — Poloniex records the realized PnL
-          // but the close never reaches our closeHeldPosition (which
-          // is the only path that calls applyOutcomeToAgent with the
-          // realized PnL). Without this recovery branch, sideways
-          // equity hides realized losses: agents win on the books but
-          // exchange-side closes silently bleed off the realized gains.
-          //
-          // Fires for any kernel-issued row (agent IN K/M/T/L) on
-          // ghost-close, regardless of ghostReason. Other reasons
-          // (orphan/USER) skip recovery — they're not kernel positions.
-          let recoveredPnl: number | null = null;
-          let recoveredAgent: 'K' | 'M' | 'T' | 'L' | null = null;
-          if (credentials && dbTrade.entry_time) {
-            try {
-              const ctxRow = await pool.query(
-                `SELECT agent FROM autonomous_trades WHERE id = $1`,
-                [dbTrade.id]
-              );
-              const a = ctxRow.rows[0]?.agent as string | undefined;
-              if (a === 'K' || a === 'M' || a === 'T' || a === 'L') {
-                recoveredAgent = a;
-                const polHistory = await poloniexFuturesService.getPositionHistory(
-                  credentials,
-                  { symbol: dbTrade.symbol, limit: 20 }
-                );
-                const histRows: any[] = Array.isArray(polHistory)
-                  ? polHistory
-                  : (polHistory?.data ?? []);
-                const dbEntryMs = new Date(dbTrade.entry_time).getTime();
-                // Match by symbol + side + entry-time within ±90s window.
-                const match = histRows.find((p: any) => {
-                  const polEntryMs = Number(
-                    p.openTime ?? p.cTime ?? p.openTimestamp ?? 0
-                  );
-                  const polSide = String(p.posSide ?? p.side ?? '').toUpperCase();
-                  const wantSide = normalizeDbSide(dbTrade.side) === 'long' ? 'LONG' : 'SHORT';
-                  return (
-                    polEntryMs > 0 &&
-                    Math.abs(polEntryMs - dbEntryMs) < 90_000 &&
-                    polSide === wantSide
-                  );
-                });
-                if (match) {
-                  const rawPnl = parseFloat(
-                    match.realisedPnl ?? match.realizedPnl ?? match.pnl ?? '0'
-                  );
-                  if (Number.isFinite(rawPnl)) recoveredPnl = rawPnl;
-                }
+            const histRows: any[] = Array.isArray(polHistory)
+              ? polHistory
+              : (polHistory?.data ?? []);
+            const oldestEntryMs = Math.min(
+              ...groupGhosts.map((g) => new Date(g.dbTrade.entry_time).getTime() || Infinity),
+            );
+            const wantSide = groupSide === 'long' ? 'LONG' : 'SHORT';
+            // Pick the closest-by-openTime match to the oldest ghost's
+            // entry; ±90s tolerance. Avoids picking a much-older stale
+            // record when the position was re-opened recently.
+            let bestMatch: any = null;
+            let bestDelta = Infinity;
+            for (const p of histRows) {
+              const polEntryMs = Number(p.openTime ?? p.cTime ?? p.openTimestamp ?? 0);
+              const polSide = String(p.posSide ?? p.side ?? '').toUpperCase();
+              if (polEntryMs <= 0 || polSide !== wantSide) continue;
+              const delta = Math.abs(polEntryMs - oldestEntryMs);
+              if (delta < 90_000 && delta < bestDelta) {
+                bestDelta = delta;
+                bestMatch = p;
               }
-            } catch (recErr) {
-              logger.debug('[RECONCILE] PnL recovery query failed (non-fatal)', {
-                tradeId: dbTrade.id,
-                err: recErr instanceof Error ? recErr.message : String(recErr),
-              });
             }
+            if (bestMatch) {
+              const rawPnl = parseFloat(
+                bestMatch.realisedPnl ?? bestMatch.realizedPnl ?? bestMatch.pnl ?? '0',
+              );
+              if (Number.isFinite(rawPnl)) aggregateRealizedPnl = rawPnl;
+            }
+          } catch (recErr) {
+            logger.debug('[RECONCILE] PnL recovery query failed (non-fatal)', {
+              symbol,
+              err: recErr instanceof Error ? recErr.message : String(recErr),
+            });
           }
+        }
+
+        if (aggregateRealizedPnl !== null && groupGhosts.length > 1) {
+          logger.info(
+            `[RECONCILE] PnL recovery split across ${groupGhosts.length} stacked rows for ${symbol} ${groupSide}: aggregate=${aggregateRealizedPnl.toFixed(4)} groupQty=${groupQty.toFixed(6)}`,
+          );
+        }
+
+        // Write each ghost row with pro-rata PnL share.
+        for (const g of groupGhosts) {
+          const rowQty = Math.abs(parseFloat(g.dbTrade.quantity)) || 0;
+          const rowShare = groupQty > 0 ? rowQty / groupQty : 0;
+          // Only attribute PnL to kernel-agent rows. Orphan/USER rows
+          // ghost-close without PnL because they're not part of the
+          // kernel's learning ledger.
+          const recoveredPnl: number | null =
+            aggregateRealizedPnl !== null && g.agent !== null
+              ? aggregateRealizedPnl * rowShare
+              : null;
 
           try {
             await pool.query(
@@ -417,39 +439,29 @@ class StateReconciliationService {
                    exit_time = NOW(),
                    pnl = COALESCE($3, pnl)
                WHERE id = $2`,
-              [ghostReason, dbTrade.id, recoveredPnl]
+              [g.ghostReason, g.dbTrade.id, recoveredPnl],
             );
             logger.info(
-              `[RECONCILE] Closed ghost DB record ${dbTrade.id} for user ${userId}: ${dbTrade.symbol} ${dbTrade.side} (reason=${ghostReason}${
-                recoveredPnl !== null ? `, recovered_pnl=${recoveredPnl.toFixed(4)}` : ''
-              })`
+              `[RECONCILE] Closed ghost DB record ${g.dbTrade.id} for user ${userId}: ${g.dbTrade.symbol} ${g.dbTrade.side} (reason=${g.ghostReason}${
+                recoveredPnl !== null ? `, share=${(rowShare * 100).toFixed(1)}%, recovered_pnl=${recoveredPnl.toFixed(4)}` : ''
+              })`,
             );
-            // Publish OUTCOME event so the kernel's bus subscriber
-            // updates the per-agent emotion stack. Only fires when we
-            // recovered PnL for a kernel-issued row. The payload's
-            // ``source`` field tags the ghost reason so the kernel can
-            // distinguish user-initiated closes from exchange-side
-            // closes (liquidation/stop) when shaping the emotion
-            // delta — exchange-side losses should hit harder.
-            if (recoveredPnl !== null && recoveredAgent !== null) {
+            if (recoveredPnl !== null && g.agent !== null) {
               try {
                 const bus = getKernelBus();
                 bus.publish({
                   type: BusEventType.OUTCOME,
                   source: 'reconciler',
-                  symbol: dbTrade.symbol,
+                  symbol: g.dbTrade.symbol,
                   payload: {
-                    agent: recoveredAgent,
-                    side: normalizeDbSide(dbTrade.side),
+                    agent: g.agent,
+                    side: normalizeDbSide(g.dbTrade.side),
                     pnl: recoveredPnl,
-                    source: `reconciler_recovered:${ghostReason}`,
-                    ghostReason,
-                    tradeId: dbTrade.id,
+                    source: `reconciler_recovered:${g.ghostReason}`,
+                    ghostReason: g.ghostReason,
+                    tradeId: g.dbTrade.id,
                   },
                 });
-                logger.info(
-                  `[RECONCILE] Published OUTCOME for ghost close: agent=${recoveredAgent} symbol=${dbTrade.symbol} pnl=${recoveredPnl.toFixed(4)} reason=${ghostReason}`
-                );
               } catch (busErr) {
                 logger.debug('[RECONCILE] OUTCOME publish failed', {
                   err: busErr instanceof Error ? busErr.message : String(busErr),
@@ -458,8 +470,8 @@ class StateReconciliationService {
             }
           } catch (updateErr) {
             logger.error(
-              `[RECONCILE] Failed to close ghost record ${dbTrade.id} for user ${userId}:`,
-              updateErr
+              `[RECONCILE] Failed to close ghost record ${g.dbTrade.id} for user ${userId}:`,
+              updateErr,
             );
           }
         }
