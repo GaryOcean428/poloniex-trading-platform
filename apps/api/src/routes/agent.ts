@@ -740,14 +740,18 @@ router.get('/state-of-bot', authenticateToken, async (req: Request, res: Respons
         ? 0
         : lastTrades.filter((r) => Number(r.pnl) > 0).length / lastTrades.length;
 
-    // Open-trade counts: exchange-authoritative vs DB-authoritative.
+    // Open-position counts: exchange-authoritative vs DB-authoritative.
     // Divergence = phantom state — should alarm.
-    // Count BOTH live_signal AND monkey trades — otherwise the divergence
-    // alert false-triggers as soon as Monkey opens a position (2026-04-20
-    // 10:31 UTC was the first, and state-of-bot immediately flagged as
-    // out-of-sync because Monkey's row wasn't in the count).
+    //
+    // 2026-05-13 — count UNIQUE (symbol, side) positions, NOT raw rows.
+    // Agent K/M/T/L stack multiple entries per logical position, so the
+    // raw row count overstates the position count by a factor of ~5-10.
+    // The dashboard banner used to read "12 open positions" when the
+    // bot held 2 actual positions with stacked rows — falsely flagging
+    // DIVERGENCE on every healthy stack.
     const dbOpenResult = await pool.query(
-      `SELECT COUNT(*) AS n FROM autonomous_trades
+      `SELECT COUNT(DISTINCT (symbol, side)) AS n
+         FROM autonomous_trades
         WHERE status = 'open'
           AND (reason LIKE 'live_signal|%' OR reason LIKE 'monkey|%')
           AND user_id = $1
@@ -755,6 +759,18 @@ router.get('/state-of-bot', authenticateToken, async (req: Request, res: Respons
       [userId],
     );
     const dbOpenPositions = parseInt((dbOpenResult.rows[0] as { n: string }).n, 10) || 0;
+    // Also expose the raw row count for debugging — phantom-row
+    // accumulation (rows-per-position > ~10) signals a reconciler lag.
+    const dbOpenRowsResult = await pool.query(
+      `SELECT COUNT(*) AS n
+         FROM autonomous_trades
+        WHERE status = 'open'
+          AND (reason LIKE 'live_signal|%' OR reason LIKE 'monkey|%')
+          AND user_id = $1
+          AND deleted_at IS NULL`,
+      [userId],
+    );
+    const dbOpenRows = parseInt((dbOpenRowsResult.rows[0] as { n: string }).n, 10) || 0;
 
     let exchangeOpenPositions = 0;
     let balance = { equity: 0, currency: 'USDT' as const };
@@ -828,7 +844,12 @@ router.get('/state-of-bot', authenticateToken, async (req: Request, res: Respons
       phaseReason = `${recentlyOpened} order${recentlyOpened === 1 ? '' : 's'} placed in last 90s`;
     } else if (dbOpenPositions > 0) {
       phase = 'skipping';
-      phaseReason = `${dbOpenPositions} open position${dbOpenPositions === 1 ? '' : 's'} (live-signal + monkey) — stacking guard blocks new entries until they close`;
+      // 2026-05-13 — re-worded. "Stacking guard blocks new entries" was
+      // misleading: the kernel's actual entry gates read exchange state,
+      // not DB row count. The bot is HOLDING through its exit cascade
+      // (rejustification + harvest + scalp), not blocked by a stacking
+      // guard. New entries on other symbols are still permitted.
+      phaseReason = `${dbOpenPositions} position${dbOpenPositions === 1 ? '' : 's'} held — agents managing exits via rejustification + harvest`;
     } else {
       phase = 'evaluating';
       phaseReason = 'No qualifying signal this tick — watching';
@@ -853,6 +874,11 @@ router.get('/state-of-bot', authenticateToken, async (req: Request, res: Respons
       winRateLast20,
       exchangeOpenPositions,
       dbOpenPositions,
+      // 2026-05-13 — raw row count exposed for debugging. UI ignores
+      // this in normal mode; a large gap between dbOpenRows and
+      // dbOpenPositions (rows/positions > 8) indicates phantom-row
+      // accumulation that should fire reconciler attention.
+      dbOpenRows,
       positionStateInSync: exchangeOpenPositions === dbOpenPositions,
       balance,
       currentLeverage,

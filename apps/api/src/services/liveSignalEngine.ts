@@ -1130,9 +1130,20 @@ export class LiveSignalEngine extends EventEmitter {
       return;
     }
 
-    // Flip matching DB rows to closed. The reconciler would catch
-    // them on its next cycle anyway, but being prompt keeps the
-    // dashboard honest.
+    // Flip matching DB rows to closed.
+    //
+    // 2026-05-13 — broaden the filter to ALSO close Monkey rows on
+    // the same (symbol, side). poloniexFuturesService.closePosition
+    // flattens the EXCHANGE net position; if Monkey has stacked
+    // entries on the same side, those rows are now phantoms (DB
+    // open, exchange flat) and the reconciler's (symbol, side)
+    // ghost check can't distinguish them from valid rows when ANY
+    // exchange position remains on that key.
+    //
+    // Side normalization: LiveSignal writes side='buy'/'sell',
+    // Monkey writes side='long'/'short'. heldSide is long|short;
+    // we match both shapes.
+    const dbSideForMatch = heldSide === 'long' ? ['long', 'buy'] : ['short', 'sell'];
     try {
       await pool.query(
         `UPDATE autonomous_trades
@@ -1141,8 +1152,9 @@ export class LiveSignalEngine extends EventEmitter {
                 pnl = COALESCE(pnl, 0)
           WHERE symbol = $1
             AND status = 'open'
-            AND reason LIKE 'live_signal|%'`,
-        [symbol, closeReason],
+            AND side = ANY($3::text[])
+            AND (reason LIKE 'live_signal|%' OR reason LIKE 'monkey|%')`,
+        [symbol, closeReason, dbSideForMatch],
       );
     } catch (err) {
       logger.warn('[LiveSignal] DB close-row update failed (reconciler will catch up)', {
