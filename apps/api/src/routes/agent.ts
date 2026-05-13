@@ -773,8 +773,15 @@ router.get('/state-of-bot', authenticateToken, async (req: Request, res: Respons
           return qty > 0;
         }).length;
         // Derive leverage from the largest open position; 0 when flat.
+        // 2026-05-12 — Poloniex v3 position responses use abbreviated
+        // `lever` (stringified) NOT `leverage`. Reading the wrong key
+        // returned 0 for every position → UI rendered "Leverage in use: —"
+        // even with 12 open positions. Read both shapes.
         currentLeverage = positionsList.reduce(
-          (max: number, p: Record<string, unknown>) => Math.max(max, Number(p.leverage ?? 0)),
+          (max: number, p: Record<string, unknown>) => {
+            const lev = Number(p.lever ?? p.leverage ?? 0);
+            return Number.isFinite(lev) && lev > max ? lev : max;
+          },
           0,
         );
         balance = {
