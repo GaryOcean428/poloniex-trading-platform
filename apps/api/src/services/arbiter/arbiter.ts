@@ -70,6 +70,33 @@ export interface ArbiterOptions {
   /** Trades required per agent before non-uniform allocation
    *  (default 5). */
   warmupTrades?: number;
+  /**
+   * Per-trade PnL winsorization clamp (absolute USDT, default 10).
+   * Every settled trade's PnL is clamped to ±maxAbsPnlPerTrade before
+   * it enters the rolling window — in BOTH ``recordSettled`` (live) and
+   * ``rehydrate`` (startup).
+   *
+   * Why: the window measures whether an agent's strategy is
+   * *consistently* good or bad. One catastrophic trade — a position
+   * entered during a pre-fix bug era that couldn't be exited cleanly,
+   * or a single black swan — must not be allowed to define an agent's
+   * allocation. Concretely: on 2026-05-13 Agent K took a 3-trade
+   * whipsaw cascade in 31 seconds (−$15.20, −$24.49, −$19.19 = −$58.88)
+   * — more than its entire 50-trade window deficit. Rehydrating that
+   * raw would have penalised K almost entirely for a bug that is now
+   * fixed. Clamping bounds any single trade's influence while leaving
+   * the *consistency* signal fully intact: an agent that loses small
+   * repeatedly is still fully down-weighted (failure is not rewarded);
+   * only a lone extreme observation is tamed. Symmetric — also clamps
+   * windfalls so an agent can't be over-rewarded for one lucky trade.
+   *
+   * Account-scale dependent: typical per-trade PnL on the current
+   * ~$1.5k account is sub-$2; 10 USDT sits in the gap above routine
+   * bad trades (~$8-9) and below the bug-era catastrophes ($15-24).
+   * Revisit if account size changes materially. Set to ``Infinity`` to
+   * disable (used by floor-mechanism tests that need extreme contrast).
+   */
+  maxAbsPnlPerTrade?: number;
 }
 
 export class Arbiter {
@@ -79,18 +106,32 @@ export class Arbiter {
   private readonly window: number;
   private readonly minShareOverride: number | undefined;
   private readonly warmupTrades: number;
+  private readonly maxAbsPnlPerTrade: number;
 
   constructor(opts: ArbiterOptions = {}) {
     this.window = opts.window ?? 50;
     this.minShareOverride = opts.minShare;
     this.warmupTrades = opts.warmupTrades ?? 5;
+    this.maxAbsPnlPerTrade = opts.maxAbsPnlPerTrade ?? 10;
     // Pre-create K and M buffers so legacy snapshots still report
     // 0 trades / 0 PnL for them even when no events have arrived.
     this.pnls.set('K', []);
     this.pnls.set('M', []);
   }
 
-  /** Record a settled trade outcome for ``agent`` (string label). */
+  /** Winsorize a single trade's PnL to ±maxAbsPnlPerTrade. Bounds the
+   *  influence of one catastrophic (or windfall) trade on the rolling
+   *  window without erasing the broad consistency signal. See
+   *  ``ArbiterOptions.maxAbsPnlPerTrade``. */
+  private clampPnl(pnl: number): number {
+    const cap = this.maxAbsPnlPerTrade;
+    if (pnl > cap) return cap;
+    if (pnl < -cap) return -cap;
+    return pnl;
+  }
+
+  /** Record a settled trade outcome for ``agent`` (string label). The
+   *  PnL is winsorized via ``clampPnl`` before it enters the window. */
   recordSettled(agent: string, pnl: number): void {
     if (!this.isValidLabel(agent)) {
       throw new Error(
@@ -99,7 +140,7 @@ export class Arbiter {
       );
     }
     const buf = this.getOrCreate(agent);
-    buf.push(pnl);
+    buf.push(this.clampPnl(pnl));
     if (buf.length > this.window) buf.shift();
   }
 
@@ -137,7 +178,7 @@ export class Arbiter {
       if (!this.isValidLabel(agent)) continue;
       if (!Number.isFinite(pnl)) continue;
       const buf = this.getOrCreate(agent);
-      buf.push(pnl);
+      buf.push(this.clampPnl(pnl));
       if (buf.length > this.window) buf.shift();
     }
   }

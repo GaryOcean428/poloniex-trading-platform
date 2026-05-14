@@ -21,7 +21,10 @@ describe('Arbiter', () => {
   });
 
   it('floors at 10% even when one agent dominates', () => {
-    const a = new Arbiter();
+    // maxAbsPnlPerTrade: Infinity — this test exercises the floor
+    // mechanism under extreme PnL contrast; the per-trade winsorization
+    // clamp would otherwise tame the 100/-100 contrast it relies on.
+    const a = new Arbiter({ maxAbsPnlPerTrade: Infinity });
     for (let i = 0; i < 50; i++) {
       a.recordSettled('K', 100);
       a.recordSettled('M', -100);
@@ -86,7 +89,8 @@ describe('Arbiter', () => {
   });
 
   it('configurable minShare', () => {
-    const a = new Arbiter({ minShare: 0.20 });
+    // Infinity clamp — extreme-contrast floor test (see note above).
+    const a = new Arbiter({ minShare: 0.20, maxAbsPnlPerTrade: Infinity });
     for (let i = 0; i < 50; i++) {
       a.recordSettled('K', 100);
       a.recordSettled('M', -100);
@@ -151,7 +155,8 @@ describe('Arbiter N-agent (proposal #6)', () => {
   });
 
   it('respects min-share floor with N=5', () => {
-    const a = new Arbiter();
+    // Infinity clamp — extreme-contrast floor test (see note above).
+    const a = new Arbiter({ maxAbsPnlPerTrade: Infinity });
     const labels = ['K', 'M', 'K2', 'K3', 'K4'];
     // Saturate K with wins; everyone else loses.
     for (let i = 0; i < 50; i++) {
@@ -239,7 +244,8 @@ describe('Arbiter N-agent (proposal #6)', () => {
   });
 
   it('configurable explicit minShare is honored', () => {
-    const a = new Arbiter({ minShare: 0.05 });
+    // Infinity clamp — extreme-contrast floor test (see note above).
+    const a = new Arbiter({ minShare: 0.05, maxAbsPnlPerTrade: Infinity });
     const labels = ['K', 'M', 'K2', 'K3'];
     for (let i = 0; i < 50; i++) {
       a.recordSettled('K', 100);
@@ -336,5 +342,81 @@ describe('Arbiter.rehydrate', () => {
     expect(snap.K!.tradesInWindow).toBe(50);
     expect(snap.M!.tradesInWindow).toBe(50);
     expect(snap.K!.share).toBeGreaterThan(0.5);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────
+// maxAbsPnlPerTrade — per-trade winsorization. One catastrophic trade (e.g.
+// a pre-fix-era position that couldn't be exited) must not define an agent;
+// the broad consistency signal must survive intact (failure not rewarded).
+// ────────────────────────────────────────────────────────────────────────
+
+describe('Arbiter — per-trade PnL winsorization (maxAbsPnlPerTrade)', () => {
+  it('clamps a catastrophic loss in recordSettled (default cap 10)', () => {
+    const a = new Arbiter();
+    a.recordSettled('K', -24.49); // the 2026-05-13 whipsaw-cascade trade
+    const snap = a.snapshotMany(100, ['K']);
+    expect(snap.K!.pnlWindowTotal).toBe(-10); // clamped from -24.49
+  });
+
+  it('clamps a windfall symmetrically — no over-reward for one lucky trade', () => {
+    const a = new Arbiter();
+    a.recordSettled('L', 99);
+    const snap = a.snapshotMany(100, ['L']);
+    expect(snap.L!.pnlWindowTotal).toBe(10);
+  });
+
+  it('clamps in rehydrate too — startup is treated identically to live', () => {
+    const a = new Arbiter();
+    a.rehydrate([
+      { agent: 'K', pnl: -24.49 },
+      { agent: 'K', pnl: -19.19 },
+      { agent: 'K', pnl: -15.20 },
+      { agent: 'K', pnl: -0.5 }, // a routine small loss — untouched
+    ]);
+    const snap = a.snapshotMany(100, ['K']);
+    // -10 -10 -10 -0.5 = -30.5, NOT the raw -59.38
+    expect(snap.K!.pnlWindowTotal).toBeCloseTo(-30.5, 6);
+    expect(snap.K!.tradesInWindow).toBe(4);
+  });
+
+  it('leaves routine trades untouched — only extremes are tamed', () => {
+    const a = new Arbiter();
+    for (const pnl of [-0.99, 2.1, -3.4, 0.5, -8.65, 9.9]) {
+      a.recordSettled('K', pnl);
+    }
+    const snap = a.snapshotMany(100, ['K']);
+    // none exceed ±10 — sum is exact
+    expect(snap.K!.pnlWindowTotal).toBeCloseTo(-0.99 + 2.1 - 3.4 + 0.5 - 8.65 + 9.9, 6);
+  });
+
+  it('preserves the consistency signal — a steady small loser is still down-weighted', () => {
+    // 50 small -1 losses for K, 50 small +1 wins for L. None hit the clamp,
+    // so the broad "K is a drag" signal flows through fully.
+    const a = new Arbiter();
+    for (let i = 0; i < 50; i++) {
+      a.recordSettled('K', -1);
+      a.recordSettled('L', 1);
+    }
+    const m = a.allocateMany(100, ['K', 'L']);
+    expect(m.L).toBeGreaterThan(m.K!); // failure still penalised
+  });
+
+  it('one catastrophe does not flip an otherwise-fine agent (clamp vs no clamp)', () => {
+    // K: 49 small wins + 1 catastrophic -24.49. With the clamp the
+    // catastrophe is bounded to -10, so K's window stays net-positive
+    // and K is NOT down-weighted below an all-flat peer.
+    const clamped = new Arbiter();
+    const raw = new Arbiter({ maxAbsPnlPerTrade: Infinity });
+    for (const a of [clamped, raw]) {
+      for (let i = 0; i < 49; i++) { a.recordSettled('K', 1); a.recordSettled('M', 0); }
+      a.recordSettled('K', -24.49);
+      a.recordSettled('M', 0);
+    }
+    // clamped: K window = 49 - 10 = +39 → K still beats flat M
+    expect(clamped.allocateMany(100, ['K', 'M']).K!).toBeGreaterThan(50);
+    // raw: K window = 49 - 24.49 = +24.5 → still positive here, but the
+    // catastrophe ate half of K's edge. The clamp preserves more of it.
+    expect(clamped.sumPnl('K')).toBeGreaterThan(raw.sumPnl('K'));
   });
 });
