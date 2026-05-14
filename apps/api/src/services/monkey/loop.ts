@@ -1938,30 +1938,30 @@ export class MonkeyKernel extends EventEmitter {
         || tDecision.action === 'enter_short'
         || tDecision.action === 'pyramid_long'
         || tDecision.action === 'pyramid_short';
-      // 2026-05-14 — drift-mode gate for Agent T.
-      // Agent T (Turtle) is a regime-blind classical-TA control arm: by
-      // design it reads only OHLCV, not the kernel's regime. In a `drift`
-      // regime (sideways noise) the kernel itself stands down — "mode=drift
-      // blocks entry (observe only)". T did not, so in choppy tape it
-      // opened breakout units, got stopped, re-opened, and whipsawed —
-      // 2026-05-14: 6 trend-lane shorts opened in ~50 min, repeated
-      // turtle_stop losses. T now respects the same observe-only gate the
-      // kernel applies to itself. Exits (exit_stop / exit_donchian below)
-      // are NOT gated — held units must still close cleanly.
-      if (tWantsToOpen && tDecision.sizeUsdt > 0 && mode === 'drift') {
-        (derivation as Record<string, unknown>).agentTDriftGated = true;
-        logger.info('[AgentT] entry suppressed — kernel in drift mode (observe only)', {
-          symbol, action: tDecision.action,
-        });
-      }
+      // Agent T is deliberately NOT gated on the K kernel's drift mode.
+      // A prior fix (e2408d7) suppressed T's opens whenever the K kernel
+      // read `drift` — but T is the Turtle System-1 breakout arm, where
+      // an `enter_long` IS a Donchian breakout by definition. Gating a
+      // breakout strategy on a regime filter strips its trend wins along
+      // with its whipsaws (you can't tell them apart at entry), and it
+      // subordinates this deliberately regime-blind control arm to the K
+      // kernel's geometric view — which has been observed calling `drift`
+      // straight through real sustained moves (e.g. a +1.4% BTC run on
+      // 2026-05-14 15:00Z that T correctly broke out on and was blocked).
+      // The whipsaw episode e2408d7 cited (2026-05-14 11:26–12:19 UTC)
+      // fell inside the HEDGE-posSide bug window — bug-contaminated, not
+      // evidence T's strategy is unsound. T's churn is governed where it
+      // belongs: the arbiter, which down-weights an agent's capital on
+      // realised performance (rehydrated + winsorised — see arbiter.ts).
+      // T keeps its real entry gates in executeEntry: continuous-regime
+      // leverage cap, cross-agent tape veto, risk-kernel blast-door, and
+      // the global kill switch below.
       if (
         tWantsToOpen
         && tDecision.sizeUsdt > 0
         // v0.8.7 kill switch — pause Agent T entries (including pyramids)
         // when MONKEY_TRADING_PAUSED=true. Exits below are unaffected.
         && !isTradingPaused()
-        // 2026-05-14 drift-mode gate — see comment above.
-        && mode !== 'drift'
       ) {
         const tSide: 'long' | 'short' =
           tDecision.action === 'enter_long' || tDecision.action === 'pyramid_long'
