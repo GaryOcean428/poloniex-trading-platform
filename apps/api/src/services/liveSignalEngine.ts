@@ -1288,7 +1288,10 @@ export class LiveSignalEngine extends EventEmitter {
     // SL/TP exchange-side placement for now; managePositions in the
     // trader loop catches SL/TP on the backend side. Leaving the block
     // for future re-enablement once the trigger endpoint is plumbed.
-    if (false && stopLoss > 0 && Number.isFinite(stopLoss)) {
+    // A named flag instead of `if (false && ...)` keeps the disabled
+    // block readable and lint-clean (no-constant-condition).
+    const EXCHANGE_SL_TP_TRIGGER_ENABLED = false;
+    if (EXCHANGE_SL_TP_TRIGGER_ENABLED && stopLoss > 0 && Number.isFinite(stopLoss)) {
       try {
         await poloniexFuturesService.placeOrder(credentials, {
           symbol: order.symbol,
@@ -1304,7 +1307,7 @@ export class LiveSignalEngine extends EventEmitter {
         });
       }
     }
-    if (false && takeProfit > 0 && Number.isFinite(takeProfit)) {
+    if (EXCHANGE_SL_TP_TRIGGER_ENABLED && takeProfit > 0 && Number.isFinite(takeProfit)) {
       try {
         await poloniexFuturesService.placeOrder(credentials, {
           symbol: order.symbol,
