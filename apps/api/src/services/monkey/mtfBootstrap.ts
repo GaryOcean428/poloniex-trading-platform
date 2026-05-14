@@ -20,8 +20,21 @@
 import { setBootstrapHistory, type MTFState, type TimeframeLabel } from './mtfLClassifier.js';
 import { perceive } from './perception.js';
 import poloniexFuturesService from '../poloniexFuturesService.js';
-import type { OHLCVCandle } from '../poloniexFuturesService.js';
 import { logger } from '../../utils/logger.js';
+
+/** Local OHLCV shape — `poloniexFuturesService.ts` is plain JS with a
+ *  default export only, so a named type import (`import type { OHLCVCandle }`)
+ *  fails the build. Same shape as the candles returned by
+ *  `getHistoricalData()`; locally defined to keep this module
+ *  decoupled from upstream type plumbing. */
+interface OHLCVCandle {
+  timestamp?: number | string;
+  open: number | string;
+  high: number | string;
+  low: number | string;
+  close: number | string;
+  volume: number | string;
+}
 
 /** How many candles to request per timeframe. Slightly more than
  *  the warmup minimum (480 + 120 horizon = 600) so the classifier
@@ -34,7 +47,7 @@ const BOOTSTRAP_CANDLE_COUNT = 700;
  *  encodes the perceptual scale via perceive(). */
 const POLONIEX_INTERVAL_FOR_TF: Record<TimeframeLabel, string> = {
   '15m': '15m',
-  '1h': '60m',
+  '1h': '1h',
   '4h': '4h',
 };
 

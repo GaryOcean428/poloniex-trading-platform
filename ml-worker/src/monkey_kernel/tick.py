@@ -409,7 +409,12 @@ def run_tick(
         open_positions=inputs.account.open_positions,
         session_age_ticks=state.session_ticks,
     ))
-    basin = refract(raw_basin, state.identity_basin, external_weight=0.30)
+    # refract external_weight is registry-backed (migration 047). Default
+    # 0.30 = 70% identity-weighted refraction toward §3.4 Pillar 3.
+    refract_external_weight = _registry.get(
+        "refract.external_weight", default=0.30,
+    )
+    basin = refract(raw_basin, state.identity_basin, external_weight=refract_external_weight)
 
     # ── Measure ────────────────────────────────────────────────
     f_health = normalized_entropy(basin)
