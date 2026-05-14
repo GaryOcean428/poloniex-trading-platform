@@ -123,7 +123,20 @@ _DEFAULT_LANE_SWING_BUDGET_FRAC = 0.50
 
 _DEFAULT_LANE_TREND_SL_PCT = 0.40
 _DEFAULT_LANE_TREND_TP_PCT = 0.40
-_DEFAULT_LANE_TREND_BUDGET_FRAC = 0.0  # opt-in; bumped via parameter registry
+# v0.10.1 (2026-05-05) — trend lane FLIPPED ON per user directive. Was
+# 0.0 (opt-in, disabled); 0.10 = 10% of equity. choose_lane's trend
+# score is phi × sovereignty × |tape_trend|, so trend only wins on
+# coherent macro flow + mature sovereignty + strong tape; the arbiter
+# adjusts capital across K/M/T agents on PnL track record. Sum across
+# lanes is now 1.10 — the notional ceiling (4× equity) is the hard cap
+# on simultaneous multi-lane exposure. This value has lived in TS
+# (executive.ts:161) since 2026-05-05, but the 2026-05-14 TS→Py cutover
+# kept the stale 0.0; with the Python registry DB-load gated off
+# (57a93cb, segfault guard) this code default is what runs live — so
+# the stale 0.0 silently collapsed every stud FRONT_LOOP entry to size
+# 0 (choose_lane_stud routes the entry zone to `trend`, and a 0-budget
+# lane caps margin to 0 in current_position_size).
+_DEFAULT_LANE_TREND_BUDGET_FRAC = 0.10
 
 _LANE_PARAMETER_DEFAULTS: dict[str, dict[str, float]] = {
     "scalp": {
@@ -1321,6 +1334,30 @@ def choose_lane_stud(stud_reading: Any) -> dict[str, Any]:
     else:
         lane = "swing"
         reason = f"stud:FRONT_centre/exit → swing (h={h:.3f})"
+
+    # Zero-budget fallback — mirrors choose_lane's legacy-path guard
+    # (fix/lane-budget-size-zero-regression). The stud mapping routes the
+    # FRONT_LOOP entry zone to `trend`; if `trend` (or any mapped
+    # position lane) is configured with budget_frac=0 it can hold no
+    # capital, and current_position_size caps margin to 0 — collapsing
+    # every entry there to size 0. The legacy choose_lane path has this
+    # guard; the stud path was missing it, so from the 2026-05-14 cutover
+    # (which left trend budget at a stale 0.0) until that was fixed,
+    # every front-loop entry silently produced no trade. Fall back to the
+    # highest-budget fundable position lane. `observe` is decision-only
+    # and is left untouched.
+    fallback_from: Optional[LaneType] = None
+    if lane in ("scalp", "swing", "trend") and lane_budget_fraction(lane) == 0.0:
+        fallback_from = lane
+        fundable = [
+            (cand, lane_budget_fraction(cand))
+            for cand in ("swing", "scalp", "trend")
+            if lane_budget_fraction(cand) > 0.0
+        ]
+        if fundable:
+            lane = max(fundable, key=lambda x: x[1])[0]  # type: ignore[assignment]
+            reason += f" → fallback to {lane} ({fallback_from} budget=0)"
+
     return {
         "value": lane,
         "reason": reason,
@@ -1328,6 +1365,9 @@ def choose_lane_stud(stud_reading: Any) -> dict[str, Any]:
             "stud_h_trade": h,
             "stud_regime": regime.value,
             "source": "stud",
+            "fallback_from_zero_budget": (
+                1 if fallback_from and fallback_from != lane else 0
+            ),
         },
     }
 

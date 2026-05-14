@@ -110,22 +110,19 @@ class TestChooseLane:
 
     def test_high_phi_sovereignty_trend_favors_trend(self) -> None:
         """phi≈1, sovereignty≈1, strong tape_trend → trend score wins
-        the softmax. Per fix/lane-budget-size-zero-regression, when the
-        trend lane has budget_frac=0 (default opt-in), the chooser
-        falls through to the next-highest position-bearing lane so the
-        sizer doesn't collapse every entry to 0. The raw softmax probs
-        still show trend dominating; the surfaced .value is the
-        fallback selection."""
+        the softmax AND is surfaced. v0.10.1 (2026-05-05) flipped the
+        trend lane on (budget_frac 0.0 → 0.10), so the zero-budget
+        fallback no longer fires here — trend is fundable and chosen
+        directly. The fallback path is still covered (forced) by
+        test_choose_lane_falls_back_when_top_pick_has_zero_budget."""
         s = _make_state(phi=0.95, sovereignty=0.95, basin_velocity=0.05, kappa=KAPPA_STAR)
         result = choose_lane(s, tape_trend=0.9)
         # Raw softmax: trend score = 0.95 × 0.95 × 0.9 ≈ 0.81 dominates.
         probs = result["derivation"]["softmax_probs"]
         assert probs["trend"] >= max(probs["scalp"], probs["swing"], probs["observe"])
-        # But the surfaced lane is a positive-budget fallback (swing or
-        # scalp), never the structurally-zero trend.
-        assert result["value"] != "trend"
-        assert result["value"] in ("scalp", "swing")
-        assert result["derivation"]["fallback_from_zero_budget"] == 1
+        # trend is funded → surfaced directly, no fallback.
+        assert result["value"] == "trend"
+        assert result["derivation"]["fallback_from_zero_budget"] == 0
 
     def test_high_basin_velocity_favors_observe(self) -> None:
         """bv >> 0 → observe (chaos)."""
