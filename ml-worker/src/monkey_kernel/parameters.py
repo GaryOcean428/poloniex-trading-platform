@@ -122,6 +122,14 @@ class ParameterRegistry:
         self._tick_count = 0
         self._refresh_every = refresh_every_ticks
         self._loaded = False
+        # True once _load() resolves to the intentional defaults-only
+        # mode (no DSN, or MONKEY_PARAM_REGISTRY_DB off). In that mode an
+        # empty cache is expected — every get() falls back to its default
+        # by design, so per-parameter "missing" warnings are pure noise
+        # (the mode is logged once at startup). Kept False in real DB
+        # mode, where a genuinely missing parameter IS worth one warning.
+        self._defaults_only = False
+        self._warned_missing: set[str] = set()
 
     # ── Read path ────────────────────────────────────────────────
 
@@ -143,10 +151,16 @@ class ParameterRegistry:
             if entry is None:
                 if default is None:
                     raise KeyError(f"parameter '{name}' not in registry")
-                logger.warning(
-                    "parameter '%s' missing from registry; using default=%s",
-                    name, default,
-                )
+                # Defaults-only mode: empty cache is by design — stay
+                # silent (startup already logged the mode). Real DB
+                # mode: a missing parameter is a genuine signal, but
+                # warn only once per name to avoid per-tick spam.
+                if not self._defaults_only and name not in self._warned_missing:
+                    self._warned_missing.add(name)
+                    logger.warning(
+                        "parameter '%s' missing from registry; using default=%s",
+                        name, default,
+                    )
                 return float(default)
             return entry.value
 
@@ -338,6 +352,7 @@ class ParameterRegistry:
                 logger.warning(
                     "DATABASE_URL not set; registry will use defaults only"
                 )
+                self._defaults_only = True
                 self._loaded = True
             return
 
@@ -358,6 +373,7 @@ class ParameterRegistry:
                     "(MONKEY_PARAM_REGISTRY_DB != 'true') — using hardcoded "
                     "defaults; this is the documented fail-soft mode",
                 )
+                self._defaults_only = True
                 self._loaded = True
             return
 
