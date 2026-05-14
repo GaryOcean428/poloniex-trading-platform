@@ -251,3 +251,60 @@ def test_successful_load_populates_cache(db_gate_on: None) -> None:
     assert reg._loaded is True
     # loaded value wins over the passed default
     assert reg.get("physics.kappa_star", default=64.0) == 63.83
+
+
+def test_defaults_only_mode_does_not_warn_per_parameter(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """2026-05-14 production: every kernel tick logged ~15 WARNINGs
+    ('parameter X missing from registry; using default=...') because
+    the gated-OFF registry serves an empty cache and every get() fell
+    back to its default. Defaults-only mode is intentional — the empty
+    cache is by design — so get() must stay SILENT there (the mode is
+    logged once at startup by _load). This pins that no per-parameter
+    warning is emitted in defaults-only mode."""
+    monkeypatch.delenv("MONKEY_PARAM_REGISTRY_DB", raising=False)
+    reg = ParameterRegistry(dsn="postgresql://stub/notused")
+    reg._load()
+    assert reg._defaults_only is True
+
+    with caplog.at_level("WARNING", logger=params_mod.logger.name):
+        for _ in range(3):
+            reg.get("physics.kappa_star", default=64.0)
+            reg.get("loop.history_max", default=100.0)
+            reg.get("ocean.phi_escape_bound", default=0.15)
+
+    missing_warns = [
+        r for r in caplog.records if "missing from registry" in r.getMessage()
+    ]
+    assert missing_warns == [], (
+        f"defaults-only mode emitted {len(missing_warns)} per-parameter "
+        "warnings — the per-tick log flood has regressed"
+    )
+
+
+def test_db_mode_warns_once_per_missing_parameter(
+    db_gate_on: None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """In real DB mode a genuinely missing parameter IS a signal worth
+    one warning — but only ONE, not one per get() call. _warned_missing
+    dedupes per name so a hot-path lookup can't flood the logs."""
+    reg = ParameterRegistry(dsn="postgresql://stub/notused")
+    reg._query_parameters_table = lambda: {}  # type: ignore[method-assign]
+    reg._load()
+    assert reg._defaults_only is False
+
+    with caplog.at_level("WARNING", logger=params_mod.logger.name):
+        for _ in range(5):
+            reg.get("physics.kappa_star", default=64.0)
+            reg.get("loop.history_max", default=100.0)
+
+    missing_warns = [
+        r for r in caplog.records if "missing from registry" in r.getMessage()
+    ]
+    assert len(missing_warns) == 2, (
+        f"expected exactly 2 warnings (one per unique missing param), "
+        f"got {len(missing_warns)} — dedupe regressed"
+    )
