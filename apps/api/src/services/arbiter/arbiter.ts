@@ -103,6 +103,45 @@ export class Arbiter {
     if (buf.length > this.window) buf.shift();
   }
 
+  /** Rolling-window size — exposed so the rehydration caller can fetch
+   *  exactly ``windowSize`` settled trades per agent. */
+  get windowSize(): number {
+    return this.window;
+  }
+
+  /**
+   * Seed the per-agent rolling PnL windows from persisted history.
+   *
+   * The Arbiter is documented as "single instance per kernel" and its
+   * entire performance-weighting design depends on a rolling window of
+   * settled trades — but a bare ``new Arbiter()`` starts empty, so
+   * every process restart (every Railway redeploy) wiped the window
+   * and dropped the allocator back into uniform-split bootstrap
+   * (``allWarm`` false until every agent re-accumulates ``warmupTrades``
+   * trades). Redeploys happen several times a day, so in practice the
+   * allocator never escaped bootstrap and never actually weighted by
+   * realised performance — a losing agent kept its full uniform share.
+   *
+   * ``rehydrate`` replays persisted settled-trade outcomes so a fresh
+   * instance immediately reflects realised performance. The Arbiter
+   * stays I/O-free: the caller loads the rows (from autonomous_trades)
+   * and passes them here. Rows MUST be oldest-first; only the last
+   * ``window`` per agent are retained, exactly as a live sequence of
+   * ``recordSettled`` calls would have left them. Unlike
+   * ``recordSettled``, invalid/non-agent labels (e.g. 'USER') and
+   * non-finite PnLs are skipped rather than thrown — rehydration runs
+   * over whatever history the table happens to hold.
+   */
+  rehydrate(history: ReadonlyArray<{ agent: string; pnl: number }>): void {
+    for (const { agent, pnl } of history) {
+      if (!this.isValidLabel(agent)) continue;
+      if (!Number.isFinite(pnl)) continue;
+      const buf = this.getOrCreate(agent);
+      buf.push(pnl);
+      if (buf.length > this.window) buf.shift();
+    }
+  }
+
   /** Legacy 2-agent allocator. Equivalent to ``allocateMany(total,
    *  ['K', 'M'])`` projected onto the ``{k, m}`` shape. */
   allocate(totalCapitalUsdt: number): ArbiterAllocation {

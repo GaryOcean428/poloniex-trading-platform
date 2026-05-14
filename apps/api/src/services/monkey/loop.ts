@@ -295,6 +295,51 @@ export class MonkeyKernel extends EventEmitter {
       this.turtleStates.set(sym, newTurtleState());
     }
 
+    // 2026-05-14 — rehydrate the Arbiter's per-agent PnL windows from
+    // persisted settled trades. A bare ``new Arbiter()`` starts empty,
+    // so the allocator sat in uniform-split bootstrap until every agent
+    // re-accumulated warmupTrades — which, given multiple Railway
+    // redeploys a day, was effectively never. Net effect: the
+    // performance-weighting machinery never engaged and a losing agent
+    // kept its full uniform capital share across every restart. The
+    // 50-trade window the allocator is designed around lives in
+    // autonomous_trades; we just never read it back. Fail-soft — a
+    // query failure leaves the arbiter empty (the prior behaviour).
+    try {
+      const windowSize = this.arbiter.windowSize;
+      const { rows } = await pool.query<{ agent: string; pnl: string }>(
+        `SELECT agent, pnl FROM (
+           SELECT agent, pnl, exit_time,
+                  row_number() OVER (PARTITION BY agent ORDER BY exit_time DESC) AS rn
+           FROM autonomous_trades
+           WHERE paper_trade = false
+             AND deleted_at IS NULL
+             AND pnl IS NOT NULL
+             AND exit_time IS NOT NULL
+             AND agent IN ('K', 'M', 'T', 'L')
+         ) t
+         WHERE rn <= $1
+         ORDER BY exit_time ASC`,
+        [windowSize],
+      );
+      const history = rows.map((r) => ({ agent: r.agent, pnl: Number(r.pnl) }));
+      this.arbiter.rehydrate(history);
+      const snap = this.arbiter.snapshotMany(1, ['K', 'M', 'T', 'L']);
+      logger.info('[Arbiter] rehydrated from autonomous_trades', {
+        rows: history.length,
+        windowSize,
+        windows: Object.fromEntries(
+          Object.entries(snap).map(([a, s]) => [
+            a, { n: s.tradesInWindow, pnl: Number(s.pnlWindowTotal.toFixed(2)) },
+          ]),
+        ),
+      });
+    } catch (rehydrateErr) {
+      logger.warn('[Arbiter] rehydrate failed (non-fatal — starting cold)', {
+        err: rehydrateErr instanceof Error ? rehydrateErr.message : String(rehydrateErr),
+      });
+    }
+
     // 2026-05-13 MTF Phase 2 — bootstrap per-timeframe basin
     // histories from historical OHLCV so the 4h classifier doesn't
     // need 80 days of live ticks to warm up. Async + fail-soft;

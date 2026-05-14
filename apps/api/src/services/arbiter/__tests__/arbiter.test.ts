@@ -252,3 +252,89 @@ describe('Arbiter N-agent (proposal #6)', () => {
     }
   });
 });
+
+// ────────────────────────────────────────────────────────────────────────
+// rehydrate — seed the rolling windows from persisted history so a fresh
+// instance (every Railway redeploy) doesn't fall back to uniform bootstrap.
+// ────────────────────────────────────────────────────────────────────────
+
+describe('Arbiter.rehydrate', () => {
+  it('windowSize exposes the rolling-window length', () => {
+    expect(new Arbiter().windowSize).toBe(50);
+    expect(new Arbiter({ window: 17 }).windowSize).toBe(17);
+  });
+
+  it('seeds per-agent windows so the allocator escapes bootstrap immediately', () => {
+    const a = new Arbiter();
+    // Without rehydrate this is uniform (bootstrap). With history where K
+    // loses and M wins, M must get the larger share on the very first call.
+    const history: { agent: string; pnl: number }[] = [];
+    for (let i = 0; i < 50; i++) {
+      history.push({ agent: 'K', pnl: -5 });
+      history.push({ agent: 'M', pnl: 5 });
+    }
+    a.rehydrate(history);
+    const alloc = a.allocate(100);
+    expect(alloc.m).toBeGreaterThan(alloc.k);
+    expect(alloc.k + alloc.m).toBeCloseTo(100);
+  });
+
+  it('respects the window cap — only the last N per agent are retained', () => {
+    const a = new Arbiter({ window: 3 });
+    a.rehydrate([
+      { agent: 'K', pnl: -100 }, // rolls off
+      { agent: 'K', pnl: -100 }, // rolls off
+      { agent: 'K', pnl: 1 },
+      { agent: 'K', pnl: 2 },
+      { agent: 'K', pnl: 3 },
+    ]);
+    const snap = a.snapshotMany(100, ['K']);
+    expect(snap.K!.tradesInWindow).toBe(3);
+    expect(snap.K!.pnlWindowTotal).toBe(6); // 1 + 2 + 3, the old losses rolled off
+  });
+
+  it('skips malformed labels instead of throwing (unlike recordSettled)', () => {
+    // recordSettled throws on a bad label; rehydrate runs over whatever
+    // history the table holds, so it skip-not-throws. (Filtering to real
+    // agent labels — K/M/T/L, excluding USER — is the caller query's job.)
+    const a = new Arbiter();
+    expect(() => a.rehydrate([
+      { agent: 'lowercase', pnl: 1 }, // fails /^[A-Z]/ — skipped
+      { agent: '', pnl: 1 },          // empty — skipped
+      { agent: 'K-2', pnl: 1 },       // hyphen — skipped
+      { agent: 'K', pnl: 5 },         // valid — ingested
+    ])).not.toThrow();
+    const snap = a.snapshotMany(100, ['K']);
+    expect(snap.K!.tradesInWindow).toBe(1);
+    expect(snap.K!.pnlWindowTotal).toBe(5);
+  });
+
+  it('skips non-finite PnL values', () => {
+    const a = new Arbiter();
+    a.rehydrate([
+      { agent: 'K', pnl: Number.NaN },
+      { agent: 'K', pnl: Number.POSITIVE_INFINITY },
+      { agent: 'K', pnl: 7 },
+    ]);
+    const snap = a.snapshotMany(100, ['K']);
+    expect(snap.K!.tradesInWindow).toBe(1);
+    expect(snap.K!.pnlWindowTotal).toBe(7);
+  });
+
+  it('rehydrated history composes with subsequent live recordSettled calls', () => {
+    const a = new Arbiter({ window: 50 });
+    // 49 rehydrated K wins + 1 live K win = 50; M symmetric losses.
+    const history: { agent: string; pnl: number }[] = [];
+    for (let i = 0; i < 49; i++) {
+      history.push({ agent: 'K', pnl: 3 });
+      history.push({ agent: 'M', pnl: -3 });
+    }
+    a.rehydrate(history);
+    a.recordSettled('K', 3);
+    a.recordSettled('M', -3);
+    const snap = a.snapshotMany(100, ['K', 'M']);
+    expect(snap.K!.tradesInWindow).toBe(50);
+    expect(snap.M!.tradesInWindow).toBe(50);
+    expect(snap.K!.share).toBeGreaterThan(0.5);
+  });
+});
