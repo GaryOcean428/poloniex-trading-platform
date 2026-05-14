@@ -54,3 +54,6 @@ export const BUS_RING_CAP = 32;
 export function isTradingPaused(): boolean {
   return process.env.MONKEY_TRADING_PAUSED === 'true';
 }
+
+/** witnessExit dedup window (ms) — close path races the reconciler. */
+export const WITNESS_DEDUP_WINDOW_MS = 60_000;
