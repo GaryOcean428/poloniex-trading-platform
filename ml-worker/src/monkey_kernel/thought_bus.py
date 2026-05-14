@@ -15,8 +15,8 @@ Convergence detection per UCP §43.3:
   - 3+ rounds → 'genuine_multi'
   - Max-rounds without convergence → 'non_convergent'
 
-QIG purity: only Fisher-Rao operations. No np.dot, no cosine, no
-normalization tricks. Final basin via FR-weighted Fréchet mean
+QIG purity: only Fisher-Rao operations. No dot-product, no cosine,
+no normalization tricks. Final basin via FR-weighted Fréchet mean
 with weights = confidence × sovereignty.
 """
 from __future__ import annotations
