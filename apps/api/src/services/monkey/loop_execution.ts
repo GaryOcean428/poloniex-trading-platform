@@ -21,6 +21,7 @@ import { getCurrentExecutionMode } from '../executionModeService.js';
 import { getMaxLeverage, getPrecisions } from '../marketCatalog.js';
 import mlPredictionService from '../mlPredictionService.js';
 import poloniexFuturesService from '../poloniexFuturesService.js';
+import { resolveExchangePositionSide } from '../exchangePositionSide.js';
 import { fetchAccountContext } from './loop_account.js';
 import {
   findOpenMonkeyTrade as dbFindOpenMonkeyTrade,
@@ -612,11 +613,13 @@ export async function closeHeldPosition(
       );
       if (this.positionDirectionMode === 'HEDGE' && closeLane) {
         // Match by side — under HEDGE Poloniex returns one position per side.
-        const target = forSymbol.find((p: Record<string, unknown>) => {
-          const s = String(p.side ?? p.posSide ?? '').toUpperCase();
-          const want = heldSide === 'long' ? 'LONG' : 'SHORT';
-          return s === want;
-        }) ?? forSymbol[0];
+        // Side MUST come from resolveExchangePositionSide (posSide-first):
+        // v3 HEDGE positions carry the side in `posSide`, not `side`, and
+        // `qty` is a positive magnitude — the old `p.side ?? p.posSide`
+        // string-match silently fell through to forSymbol[0] (wrong leg).
+        const target = forSymbol.find((p: Record<string, unknown>) =>
+          resolveExchangePositionSide(p) === heldSide,
+        ) ?? forSymbol[0];
         exchangeQty = Math.abs(Number(target?.qty ?? target?.size ?? 0));
       } else {
         const target = forSymbol[0];
@@ -981,7 +984,11 @@ export async function executeEntry(
       const unrealizedPnlUsdt = Number(balance?.unrealizedPnL ?? balance?.upl ?? 0);
       const openPositions = (Array.isArray(positions) ? positions : []).map((p: Record<string, unknown>) => ({
         symbol: String(p.symbol ?? ''),
-        side: (String(p.side ?? 'long').toLowerCase() === 'short' ? 'short' : 'long') as 'long' | 'short',
+        // posSide-first side resolution. v3 HEDGE positions carry the
+        // side in `posSide` (LONG/SHORT) with a positive `qty`; the old
+        // `String(p.side ?? 'long')` read EVERY HEDGE position as long,
+        // blinding the kernel's exposure / stacking vetoes on this path.
+        side: resolveExchangePositionSide(p),
         notional: Math.abs(Number(p.notional ?? p.size ?? 0)),
       })).filter((p) => p.symbol.length > 0);
       // v0.8.8: thread used-margin telemetry to the kernel for the

@@ -769,11 +769,51 @@ class PoloniexFuturesService {
   }
 
   /**
-   * Close position at market price
+   * Close a position at market price.
    * Endpoint: POST /v3/trade/position
+   *
+   * Canonical v3 body: `{ symbol, mgnMode }` required; `{ posSide, clOrdId }`
+   * optional. On a HEDGE account `posSide` is REQUIRED to pick the leg
+   * (LONG | SHORT); on ONE_WAY pass BOTH.
+   *
+   * NOTE: v3 has NO `type` / `close_long` / `close_short` field. The
+   * previous `{ symbol, type: 'close_long' }` body was malformed — the
+   * exchange rejected it, but callers (LiveSignal, FAT) flipped the
+   * autonomous_trades row to `closed` regardless → phantom positions
+   * (DB says closed, exchange still open) → the reconciler "side
+   * mismatch" churn and ~94% NULL-pnl closes.
+   *
+   * Accepts the legacy `'close_long'` / `'close_short'` strings the
+   * callers already pass — they resolve side correctly — and translates
+   * them to canonical `posSide`. Also accepts `{ posSide, mgnMode }`.
+   *
+   * @param {object} credentials
+   * @param {string} symbol
+   * @param {string|{posSide?:string, mgnMode?:string}} sideOrOpts
    */
-  async closePosition(credentials, symbol, type = 'close_long') {
-    const body = { symbol, type }; // type: 'close_long' or 'close_short'
+  async closePosition(credentials, symbol, sideOrOpts = 'close_long') {
+    let posSide;
+    let mgnMode = 'CROSS';
+    if (sideOrOpts && typeof sideOrOpts === 'object') {
+      if (sideOrOpts.posSide) posSide = String(sideOrOpts.posSide).toUpperCase();
+      if (sideOrOpts.mgnMode) mgnMode = String(sideOrOpts.mgnMode).toUpperCase();
+    } else {
+      const s = String(sideOrOpts ?? '').toUpperCase();
+      posSide = s.includes('SHORT') ? 'SHORT'
+        : s.includes('LONG') ? 'LONG'
+        : s === 'BOTH' ? 'BOTH'
+        : undefined;
+    }
+    const body = { symbol, mgnMode };
+    if (posSide) {
+      body.posSide = posSide;
+    } else {
+      logger.warn(
+        '[poloniexFuturesService] closePosition: could not resolve posSide — '
+        + 'HEDGE accounts require it to target the leg',
+        { symbol, sideOrOpts },
+      );
+    }
     const result = await this.makeRequest(credentials, 'POST', '/trade/position', body);
     apiCache.invalidatePrefix('GET:/account/balance');
     apiCache.invalidatePrefix('GET:/trade/position');

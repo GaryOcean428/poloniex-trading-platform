@@ -410,7 +410,10 @@ class FullyAutonomousTrader extends EventEmitter {
       // Update heartbeat to signal the trading loop is active
       this.updateHeartbeat(userId);
 
-      // Step 0: Reconcile DB positions with exchange (live mode only)
+      // Step 0: Reconcile DB positions with exchange (live mode only).
+      // reconcilePositions is now a no-op — stateReconciliationService
+      // is the sole reconciler (see its JSDoc). Call retained so the
+      // method isn't orphaned; remove both in a later cleanup.
       if (!config.paperTrading) {
         await this.reconcilePositions(userId);
       }
@@ -1021,10 +1024,16 @@ class FullyAutonomousTrader extends EventEmitter {
           // Non-fatal: proceed with whatever leverage the exchange currently has
         }
 
-        // Place real order - use 'size' field (not 'quantity') per Poloniex API
+        // Place real order — use 'size' field (not 'quantity') per Poloniex API.
+        // posSide is REQUIRED on the HEDGE account: omitting it makes
+        // placeOrder default posSide='BOTH', which Poloniex rejects with
+        // code=11011 "Position mode and posSide do not match" — i.e. FAT
+        // entries silently never filled. FAT only opens (never reverses)
+        // here, so side=buy → LONG leg, side=sell → SHORT leg.
         const order = await poloniexFuturesService.placeOrder(credentials, {
           symbol: normalizedSymbol,
           side: signal.side === 'long' ? 'buy' : 'sell',
+          posSide: signal.side === 'long' ? 'LONG' : 'SHORT',
           type: 'market',
           size: formattedOrderSize
         });
@@ -1044,13 +1053,23 @@ class FullyAutonomousTrader extends EventEmitter {
 
         logger.info(`[LIVE] Order placed: ${orderId} for ${signal.symbol}`);
 
-        // Place exchange-side stop-loss order for crash protection
-        if (signal.stopLoss) {
+        // Exchange-side SL/TP trigger orders are DISABLED — same decision
+        // as liveSignalEngine's EXCHANGE_SL_TP_TRIGGER_ENABLED flag.
+        // poloniexFuturesService.placeOrder maps `stop_market` → a plain
+        // `MARKET` order (Poloniex v3's /v3/trade/order has no trigger
+        // type), so these "SL"/"TP" orders were NOT resting triggers —
+        // they filled IMMEDIATELY as market reduceOnly orders, closing
+        // the position the instant FAT opened it. Until a real v3
+        // trigger-order endpoint is wired, exits are owned by FAT's
+        // in-loop managePositions (ROI-based scalp/SL/TP/trend exits).
+        const EXCHANGE_SL_TP_TRIGGER_ENABLED = false;
+        if (EXCHANGE_SL_TP_TRIGGER_ENABLED && signal.stopLoss) {
           try {
             const slSide = signal.side === 'long' ? 'sell' : 'buy';
             await poloniexFuturesService.placeOrder(credentials, {
               symbol: normalizedSymbol,
               side: slSide,
+              posSide: signal.side === 'long' ? 'LONG' : 'SHORT',
               type: 'stop_market',
               size: formattedOrderSize,
               stopPrice: signal.stopLoss,
@@ -1064,13 +1083,13 @@ class FullyAutonomousTrader extends EventEmitter {
           }
         }
 
-        // Place exchange-side take-profit order
-        if (signal.takeProfit) {
+        if (EXCHANGE_SL_TP_TRIGGER_ENABLED && signal.takeProfit) {
           try {
             const tpSide = signal.side === 'long' ? 'sell' : 'buy';
             await poloniexFuturesService.placeOrder(credentials, {
               symbol: normalizedSymbol,
               side: tpSide,
+              posSide: signal.side === 'long' ? 'LONG' : 'SHORT',
               type: 'stop_market',
               size: formattedOrderSize,
               stopPrice: signal.takeProfit,
@@ -1234,121 +1253,30 @@ class FullyAutonomousTrader extends EventEmitter {
   /**
    * Reconcile DB position state with actual exchange positions.
    *
-   * 2026-05-14 fix: now side-aware. The legacy implementation only
-   * checked symbol-level presence (``new Set(exchangePositions.map(symbol))``)
-   * which silently skipped the case where the DB had a LONG row but the
-   * exchange had a same-symbol SHORT — both "contain BTC" so the
-   * symbol-only set diff yielded an empty mismatch list. Net effect on
-   * 2026-05-14: 3 BTC LONG rows in DB sat as phantoms for 50+ minutes
-   * after Poloniex netted them against a SHORT, and Monkey's
-   * stale_bleed gate spun every 30 s firing close orders that returned
-   * code=21002 "Position not enough". This implementation builds a
-   * per-symbol set of OPEN exchange sides (HEDGE-aware via ``posSide``,
-   * ONE_WAY fallback via ``Math.sign(qty)``) and closes any DB row
-   * whose ``(symbol, side)`` pair is not represented on the exchange.
+   * DISABLED 2026-05-15 — kept as a no-op. This was a SECOND reconciler
+   * racing `stateReconciliationService` over the same `autonomous_trades`
+   * rows, and it was a churn AMPLIFIER, not a safety net:
+   *   1. Side-PRESENCE only, not quantity-aware — it closed any DB row
+   *      whose (symbol, side) pair wasn't on the exchange, with no
+   *      FIFO/aggregate-qty matching. On the HEDGE account, two kernels
+   *      (monkey-position + monkey-swing) legitimately hold opposite
+   *      legs, and any transient DB/exchange skew flagged good rows as
+   *      "side mismatch".
+   *   2. It closed those rows with NULL `pnl` (no Poloniex
+   *      position-history recovery) → ~94% of closes became NULL-pnl
+   *      ledger holes that hid real losses.
+   * `stateReconciliationService` is now the SOLE reconciler: it is
+   * quantity-aware (FIFO aggregate matching — handles "N DB rows = 1
+   * netted exchange position") and DOES recover realized pnl from
+   * Poloniex position-history. FAT must not race it.
+   *
+   * Left as a no-op (not deleted) so the Step-0 call site stays valid;
+   * remove both in a later cleanup once confirmed stable.
    */
-  private async reconcilePositions(userId: string): Promise<void> {
-    try {
-      const credentials = await apiCredentialsService.getCredentials(userId);
-      if (!credentials) return;
-
-      // Get actual positions from Poloniex
-      const exchangePositions = await poloniexFuturesService.getPositions(credentials);
-
-      // Build per-symbol set of OPEN exchange sides ('long' | 'short').
-      // HEDGE-aware: posSide=LONG → 'long', posSide=SHORT → 'short';
-      // ONE_WAY fallback: Math.sign(qty) decides side. Same resolution
-      // order used by managePositions's [FAT] side-label fix.
-      const exchangeSidesBySymbol = new Map<string, Set<'long' | 'short'>>();
-      for (const raw of (exchangePositions || []) as unknown[]) {
-        const p = raw as Record<string, unknown>;
-        const qty = Number(p.qty ?? p.currentQty ?? 0);
-        if (qty === 0) continue;
-        const symbol = String(p.symbol ?? '');
-        if (!symbol) continue;
-        const posSide = String(p.posSide ?? '').toUpperCase();
-        const side: 'long' | 'short' =
-          posSide === 'SHORT' || (posSide !== 'LONG' && qty < 0) ? 'short' : 'long';
-        if (!exchangeSidesBySymbol.has(symbol)) {
-          exchangeSidesBySymbol.set(symbol, new Set());
-        }
-        exchangeSidesBySymbol.get(symbol)!.add(side);
-      }
-      const openSymbols = new Set(exchangeSidesBySymbol.keys());
-
-      // Get DB open trades (non-paper). Fetches the row id + side so the
-      // side-aware mismatch check below can target specific rows.
-      const dbResult = await pool.query(
-        `SELECT id, symbol, side, order_id FROM autonomous_trades
-         WHERE user_id = $1 AND status = 'open' AND paper_trade = false`,
-        [userId]
-      );
-      const dbRows = dbResult.rows as Array<{
-        id: string;
-        symbol: string;
-        side: string;
-        order_id?: string;
-      }>;
-      const dbSymbols = new Set(dbRows.map(r => r.symbol));
-
-      // Side-aware phantom detection: a row is phantom when the exchange
-      // either has NO position on that symbol, OR has a position but on
-      // the OPPOSITE side. The latter is the 2026-05-14 trigger case.
-      const sideMismatchedRows = dbRows.filter(r => {
-        const sideRaw = String(r.side).toLowerCase();
-        const sideNorm: 'long' | 'short' =
-          sideRaw === 'sell' || sideRaw === 'short' ? 'short' : 'long';
-        const exchSides = exchangeSidesBySymbol.get(r.symbol);
-        return !exchSides || !exchSides.has(sideNorm);
-      });
-      const inDbNotExchange = [...new Set(sideMismatchedRows.map(r => r.symbol))];
-      const inExchangeNotDb = ([...openSymbols] as string[]).filter(s => !dbSymbols.has(s));
-
-      // Note: the AUTONOMOUS_TRADER_PY_SHADOW /live/reconcile parity
-      // block was removed in the TS→Py kernel cutover (PR #674) — the
-      // shadow infrastructure no longer exists. The side-aware
-      // reconciler below (PR #677) is the sole authority.
-      if (sideMismatchedRows.length > 0) {
-        logger.warn(
-          `[RECONCILE] DB rows open but exchange has no matching side: ` +
-          `${sideMismatchedRows.length} row(s) on symbols ${inDbNotExchange.join(', ')} — ` +
-          `marking as closed`,
-          {
-            rows: sideMismatchedRows.map(r => ({
-              id: r.id, symbol: r.symbol, side: r.side,
-            })),
-            exchangeSidesBySymbol: Object.fromEntries(
-              [...exchangeSidesBySymbol.entries()].map(([k, v]) => [k, [...v]]),
-            ),
-          },
-        );
-        // Close the specific phantom rows by id. Using ANY($1::uuid[])
-        // targets only the mismatched rows, NOT all open rows for the
-        // symbol — important because a same-symbol opposite-side row
-        // CAN legitimately coexist (e.g., HEDGE-mode lane-isolated
-        // positions), and bulk-closing by symbol would over-reach.
-        await pool.query(
-          `UPDATE autonomous_trades SET status = 'closed', exit_time = NOW(),
-           exit_reason = 'reconciliation: side mismatch with exchange'
-           WHERE id = ANY($1::uuid[])`,
-          [sideMismatchedRows.map(r => r.id)],
-        );
-      }
-
-      if (inExchangeNotDb.length > 0) {
-        logger.warn(
-          `[RECONCILE] Exchange has positions not tracked in DB: ${inExchangeNotDb.join(', ')} — ` +
-          `these may have been opened manually or by another system`
-        );
-        await this.logAgentEvent(userId, {
-          eventType: 'reconciliation_drift',
-          executionMode: 'live',
-          description: `Untracked exchange positions: ${inExchangeNotDb.join(', ')}`,
-        });
-      }
-    } catch (error) {
-      logger.warn('[RECONCILE] Position reconciliation failed:', error);
-    }
+  private async reconcilePositions(_userId: string): Promise<void> {
+    // Intentionally a no-op — see JSDoc. stateReconciliationService is
+    // the sole position reconciler; FAT no longer reconciles.
+    return;
   }
 
   /**

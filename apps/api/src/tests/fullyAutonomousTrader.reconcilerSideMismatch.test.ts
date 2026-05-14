@@ -1,33 +1,26 @@
 /**
- * Tests for the FAT reconciler side-aware-mismatch fix (2026-05-14).
+ * Tests for FAT reconcilePositions — DISABLED 2026-05-15 (now a no-op).
  *
- * Background:
- *   Production incident 2026-05-14T03:24Z onward: 3 BTC LONG DB rows
- *   sat as phantoms for 50+ minutes after Poloniex netted them against
- *   an external SHORT. The legacy reconciler did a symbol-level diff —
- *   ``Set<string>`` of DB symbols vs ``Set<string>`` of exchange
- *   symbols — which evaluated "BTC in DB" ∧ "BTC on exchange" =
- *   match, NOT mismatched. So no UPDATE ran. Monkey's stale_bleed gate
- *   then spun every 30 s, firing close orders that came back with
- *   ``code=21002 Position not enough`` because the exchange's BTC was
- *   actually a SHORT, not the LONG the DB row was trying to close.
+ * Background: FAT used to run its OWN position reconciler. It was a
+ * SECOND reconciler racing `stateReconciliationService` over the same
+ * `autonomous_trades` rows, and it was a churn AMPLIFIER, not a safety
+ * net:
+ *   - side-PRESENCE only, not quantity-aware — no FIFO/aggregate-qty
+ *     matching, so on the HEDGE account (two kernels legitimately
+ *     holding opposite legs) any transient DB/exchange skew flagged
+ *     good rows as "side mismatch".
+ *   - it closed those rows with NULL `pnl` (no Poloniex
+ *     position-history recovery) → ~94% of closes became NULL-pnl
+ *     ledger holes that hid real losses.
+ * `stateReconciliationService` is now the SOLE reconciler: quantity-
+ * aware (FIFO aggregate matching) and it recovers realized pnl from
+ * Poloniex position-history. FAT's `reconcilePositions` is kept as a
+ * no-op so the Step-0 call site stays valid.
  *
- *   Root cause: symbol-only set difference. Fix: build a per-symbol
- *   ``Set<'long' | 'short'>`` from exchangePositions and require each
- *   DB row's ``(symbol, side)`` to be in that set; close the rows
- *   that aren't, by id (NOT by symbol — same-symbol opposite-side
- *   rows can coexist in HEDGE-mode lane isolation).
- *
- * Coverage:
- *   1. DB long, exchange long (ONE_WAY shape) — no UPDATE.
- *   2. DB long, exchange short (the 2026-05-14 failure shape) — UPDATE
- *      fires and closes the specific id with reason='reconciliation:
- *      side mismatch with exchange'.
- *   3. DB short, exchange long (mirror of #2) — same behavior.
- *   4. DB short, exchange long+short HEDGE-mode (both sides open) —
- *      no UPDATE: the short DB row matches the exchange's short side.
- *   5. DB row, exchange has no position on the symbol at all — UPDATE
- *      fires (legacy "symbol entirely missing" case still handled).
+ * These tests pin the no-op contract: reconcilePositions must NOT read
+ * exchange positions and must NOT touch `autonomous_trades` (no SELECT
+ * of open rows, no UPDATE). If FAT's reconciler is ever re-enabled,
+ * these fail loudly.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -37,7 +30,7 @@ vi.mock('../db/connection.js', () => ({
 }));
 vi.mock('../services/poloniexFuturesService.js', () => ({
   default: {
-    getPositions: vi.fn(),
+    getPositions: vi.fn().mockResolvedValue([]),
     closePosition: vi.fn().mockResolvedValue({}),
     normalizeSymbol: vi.fn((s: string) => s),
     getAccountBalance: vi.fn().mockResolvedValue({ eq: '10000' }),
@@ -81,33 +74,10 @@ function priv(t: FullyAutonomousTrader) {
 
 const USER = 'test-user-reconcile';
 
-/**
- * Stub pool.query with SQL-pattern matching. The FAT constructor's
- * loadConfigs() also calls pool.query, so a naive ``mockResolvedValueOnce``
- * gets consumed before reconcilePositions runs. Discriminating on the
- * SQL text lets us return the test's DB rows ONLY for the reconciler's
- * SELECT and ``{ rows: [] }`` for everything else (loadConfigs, the
- * logAgentEvent INSERT into agent_events, etc.).
- */
-function stubReconcilerQueries(rows: Array<{ id: string; symbol: string; side: string }>) {
-  vi.mocked(pool.query).mockReset();
-  vi.mocked(pool.query).mockImplementation((async (sql: unknown) => {
-    const sqlStr = typeof sql === 'string' ? sql : '';
-    if (sqlStr.includes('SELECT id, symbol, side, order_id')) {
-      return { rows } as never;
-    }
-    return { rows: [] } as never;
-  }) as never);
-}
-
-/** Find the FIRST pool.query call whose SQL contains the given substring. */
-function findCallContaining(substr: string): { args: unknown[] } | null {
+/** True if any pool.query call's SQL contains the substring. */
+function anyQueryContains(substr: string): boolean {
   const calls = (pool.query as ReturnType<typeof vi.fn>).mock.calls;
-  for (const c of calls) {
-    const sql = typeof c[0] === 'string' ? c[0] : '';
-    if (sql.includes(substr)) return { args: c as unknown[] };
-  }
-  return null;
+  return calls.some((c) => typeof c[0] === 'string' && (c[0] as string).includes(substr));
 }
 
 beforeEach(() => {
@@ -120,133 +90,31 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('FAT reconcilePositions — side-aware mismatch (#11011/phantom-row fix)', () => {
-  // ────────────────────────────────────────────────────────────────────────
-  // 1. ONE_WAY long match — no UPDATE fires.
-  // ────────────────────────────────────────────────────────────────────────
-  it('ONE_WAY long DB + long exchange (positive qty) → no UPDATE', async () => {
-    vi.mocked(poloniexFuturesService.getPositions).mockResolvedValue([
-      { symbol: 'BTC_USDT_PERP', qty: '0.027' },  // long: positive qty, no posSide
-    ] as never);
-    stubReconcilerQueries([
-      { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', symbol: 'BTC_USDT_PERP', side: 'buy' },
-    ]);
+describe('FAT reconcilePositions — disabled (no-op; stateReconciliationService is the sole reconciler)', () => {
+  it('does NOT read exchange positions', async () => {
     const trader = new FullyAutonomousTrader();
+    vi.mocked(poloniexFuturesService.getPositions).mockClear();
 
     await priv(trader).reconcilePositions(USER);
 
-    // The reconciler's SELECT fires; no UPDATE-autonomous-trades call.
-    expect(findCallContaining('SELECT id, symbol, side, order_id')).not.toBeNull();
-    expect(findCallContaining('UPDATE autonomous_trades')).toBeNull();
+    expect(poloniexFuturesService.getPositions).not.toHaveBeenCalled();
   });
 
-  // ────────────────────────────────────────────────────────────────────────
-  // 2. The 2026-05-14 failure shape: DB long, exchange short — UPDATE fires.
-  // ────────────────────────────────────────────────────────────────────────
-  it('DB long + exchange SHORT (HEDGE posSide) → UPDATE closes the DB row by id', async () => {
-    vi.mocked(poloniexFuturesService.getPositions).mockResolvedValue([
-      { symbol: 'BTC_USDT_PERP', qty: '0.137', posSide: 'SHORT' },  // exchange has SHORT
-    ] as never);
-    stubReconcilerQueries([
-      { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', symbol: 'BTC_USDT_PERP', side: 'buy' },
-    ]);
+  it('does NOT SELECT open rows and does NOT UPDATE autonomous_trades', async () => {
     const trader = new FullyAutonomousTrader();
+    vi.mocked(pool.query).mockClear();
 
     await priv(trader).reconcilePositions(USER);
 
-    const upd = findCallContaining('UPDATE autonomous_trades');
-    expect(upd).not.toBeNull();
-    const [updateSql, updateParams] = upd!.args as [string, unknown[]];
-    expect(updateSql).toContain("status = 'closed'");
-    expect(updateSql).toContain("exit_reason = 'reconciliation: side mismatch with exchange'");
-    expect(updateSql).toContain('id = ANY($1::uuid[])');
-    expect(updateParams[0]).toEqual(['aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa']);
+    // The legacy reconciler ran `SELECT id, symbol, side, order_id ...`
+    // then `UPDATE autonomous_trades ... 'reconciliation: side mismatch'`.
+    // The no-op must do neither.
+    expect(anyQueryContains('SELECT id, symbol, side, order_id')).toBe(false);
+    expect(anyQueryContains('UPDATE autonomous_trades')).toBe(false);
   });
 
-  // ────────────────────────────────────────────────────────────────────────
-  // 3. Mirror: DB short + exchange long.
-  // ────────────────────────────────────────────────────────────────────────
-  it('DB short + exchange LONG (positive qty, no posSide) → UPDATE fires', async () => {
-    vi.mocked(poloniexFuturesService.getPositions).mockResolvedValue([
-      { symbol: 'ETH_USDT_PERP', qty: '0.1' },  // ONE_WAY long
-    ] as never);
-    stubReconcilerQueries([
-      { id: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', symbol: 'ETH_USDT_PERP', side: 'sell' },
-    ]);
+  it('resolves cleanly (no throw) — it is an unconditional no-op', async () => {
     const trader = new FullyAutonomousTrader();
-
-    await priv(trader).reconcilePositions(USER);
-
-    const upd = findCallContaining('UPDATE autonomous_trades');
-    expect(upd).not.toBeNull();
-    const [, updateParams] = upd!.args as [string, unknown[]];
-    expect(updateParams[0]).toEqual(['bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb']);
-  });
-
-  // ────────────────────────────────────────────────────────────────────────
-  // 4. HEDGE both-sides open — same-symbol opposite-side rows coexist.
-  // ────────────────────────────────────────────────────────────────────────
-  it('HEDGE mode: DB short + exchange has both long AND short → no UPDATE for short row', async () => {
-    vi.mocked(poloniexFuturesService.getPositions).mockResolvedValue([
-      { symbol: 'BTC_USDT_PERP', qty: '0.01', posSide: 'LONG' },
-      { symbol: 'BTC_USDT_PERP', qty: '0.02', posSide: 'SHORT' },
-    ] as never);
-    stubReconcilerQueries([
-      { id: 'cccccccc-cccc-cccc-cccc-cccccccccccc', symbol: 'BTC_USDT_PERP', side: 'sell' },
-    ]);
-    const trader = new FullyAutonomousTrader();
-
-    await priv(trader).reconcilePositions(USER);
-
-    // DB short matches exchange short — no UPDATE.
-    expect(findCallContaining('UPDATE autonomous_trades')).toBeNull();
-  });
-
-  // ────────────────────────────────────────────────────────────────────────
-  // 5. Symbol entirely missing on exchange — legacy case still covered.
-  // ────────────────────────────────────────────────────────────────────────
-  it('symbol entirely absent from exchange → UPDATE closes the orphan row', async () => {
-    vi.mocked(poloniexFuturesService.getPositions).mockResolvedValue([] as never);
-    stubReconcilerQueries([
-      { id: 'dddddddd-dddd-dddd-dddd-dddddddddddd', symbol: 'ETH_USDT_PERP', side: 'buy' },
-    ]);
-    const trader = new FullyAutonomousTrader();
-
-    await priv(trader).reconcilePositions(USER);
-
-    const upd = findCallContaining('UPDATE autonomous_trades');
-    expect(upd).not.toBeNull();
-    const [, updateParams] = upd!.args as [string, unknown[]];
-    expect(updateParams[0]).toEqual(['dddddddd-dddd-dddd-dddd-dddddddddddd']);
-  });
-
-  // ────────────────────────────────────────────────────────────────────────
-  // 6. Multi-row mismatch — only the side-mismatched ones get closed.
-  // ────────────────────────────────────────────────────────────────────────
-  it('multi-row: closes only the side-mismatched ids, leaves matching rows alone', async () => {
-    vi.mocked(poloniexFuturesService.getPositions).mockResolvedValue([
-      { symbol: 'BTC_USDT_PERP', qty: '0.137', posSide: 'SHORT' },  // exchange BTC short
-      { symbol: 'ETH_USDT_PERP', qty: '0.1', posSide: 'LONG' },     // exchange ETH long
-    ] as never);
-    stubReconcilerQueries([
-      // Phantom: DB BTC long but exchange BTC is short.
-      { id: '11111111-1111-1111-1111-111111111111', symbol: 'BTC_USDT_PERP', side: 'buy' },
-      // Real: DB ETH long matches exchange ETH long.
-      { id: '22222222-2222-2222-2222-222222222222', symbol: 'ETH_USDT_PERP', side: 'buy' },
-      // Phantom: DB BTC long #2 (same side as #1, both miss the short).
-      { id: '33333333-3333-3333-3333-333333333333', symbol: 'BTC_USDT_PERP', side: 'buy' },
-    ]);
-    const trader = new FullyAutonomousTrader();
-
-    await priv(trader).reconcilePositions(USER);
-
-    const upd = findCallContaining('UPDATE autonomous_trades');
-    expect(upd).not.toBeNull();
-    const [, updateParams] = upd!.args as [string, unknown[]];
-    // The two phantom BTC longs get closed; the real ETH long is left alone.
-    expect(updateParams[0]).toEqual([
-      '11111111-1111-1111-1111-111111111111',
-      '33333333-3333-3333-3333-333333333333',
-    ]);
+    await expect(priv(trader).reconcilePositions(USER)).resolves.toBeUndefined();
   });
 });
