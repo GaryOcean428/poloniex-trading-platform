@@ -31,7 +31,7 @@ import { getCurrentExecutionMode } from '../executionModeService.js';
 import { getMaxLeverage, getPrecisions } from '../marketCatalog.js';
 import mlPredictionService from '../mlPredictionService.js';
 import poloniexFuturesService from '../poloniexFuturesService.js';
-import { resolveExchangePositionSide } from '../exchangePositionSide.js';
+import { resolveExchangePositionSide, resolveExchangePositionNotional } from '../exchangePositionSide.js';
 import {
   evaluatePreTradeVetoes,
   type KernelAccountState,
@@ -4055,8 +4055,16 @@ export class MonkeyKernel extends EventEmitter {
       const unrealizedPnlUsdt = Number(balance?.unrealizedPnL ?? balance?.upl ?? 0);
       const openPositions = (Array.isArray(positions) ? positions : []).map((p: Record<string, unknown>) => ({
         symbol: String(p.symbol ?? ''),
-        side: (String(p.side ?? 'long').toLowerCase() === 'short' ? 'short' : 'long') as 'long' | 'short',
-        notional: Math.abs(Number(p.notional ?? p.size ?? 0)),
+        // v3 HEDGE positions carry side in `posSide` (not the Binance-style
+        // `p.side`) and have no `notional`/`size` field — derive both via
+        // the shared resolvers (posSide-first; notional = im x lever).
+        // The old `p.side`/`p.notional ?? p.size` reads blinded the kernel's
+        // exposure/stacking vetoes on the HEDGE account. Re-applies the
+        // loop_execution.ts intent of fa301f9 + c822499 at this call site
+        // (loop_execution.ts is a post-cutover modularization file, not on
+        // this branch).
+        side: resolveExchangePositionSide(p),
+        notional: resolveExchangePositionNotional(p),
       })).filter((p) => p.symbol.length > 0);
       // v0.8.8: thread used-margin telemetry to the kernel for the
       // headroom veto. Cross-margin: usedMargin = equity - availableBalance.

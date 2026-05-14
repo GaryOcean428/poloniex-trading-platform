@@ -49,6 +49,11 @@ describe('RateLimiter', () => {
       expect(limit).toBe(200); // All VIP levels
     });
 
+    it('should return the tight candles rate limit (20/s real cap → 15/s safe)', () => {
+      const limit = rateLimiter.getRateLimit('candles');
+      expect(limit).toBe(15); // All VIP levels — IP-limited, not VIP-scaled
+    });
+
     it('should increase rate limit with higher VIP level', () => {
       rateLimiter.setVIPLevel(5);
       const limit = rateLimiter.getRateLimit('orders');
@@ -90,6 +95,14 @@ describe('RateLimiter', () => {
     it('should detect futures market endpoints', () => {
       const type = rateLimiter.getEndpointType('/market/orderBook');
       expect(type).toBe('market');
+    });
+
+    it('should route /market/candles to the dedicated candles bucket, not market', () => {
+      // This is the 429 fix: candles must NOT share the 200/s market
+      // bucket — its real per-IP cap is 20/s.
+      expect(rateLimiter.getEndpointType('/market/candles')).toBe('candles');
+      expect(rateLimiter.getEndpointType('/market/get-kline')).toBe('candles');
+      expect(rateLimiter.getEndpointType('/market/markPriceCandlesticks')).toBe('candles');
     });
 
     it('should default to market for unknown endpoints', () => {
@@ -148,18 +161,39 @@ describe('RateLimiter', () => {
     it('should wait when no tokens available', async () => {
       const bucket = rateLimiter.getBucket('orders');
       bucket.tokens = 0;
-      
+
       const startTime = Date.now();
-      
+
       await rateLimiter.execute('/orders', async () => {
         // Function body
       });
-      
+
       const endTime = Date.now();
       const elapsed = endTime - startTime;
-      
+
       // Should have waited at least a few milliseconds
       expect(elapsed).toBeGreaterThan(0);
+    });
+
+    it('throttles a concurrent burst instead of letting waiters over-consume', async () => {
+      // The MTF-bootstrap pattern: many candle calls fired at once. The
+      // old single-wait waitForToken let all concurrent waiters wake and
+      // each consume the one refilled token, driving the bucket deep
+      // negative and defeating the throttle. The loop version must keep
+      // the bucket bounded — tokens never strays far below 0.
+      const bucket = rateLimiter.getBucket('candles');
+      bucket.tokens = 0;
+
+      const burst = 10;
+      await Promise.all(
+        Array.from({ length: burst }, () =>
+          rateLimiter.execute('/market/candles', async () => {}),
+        ),
+      );
+
+      // After a fully-drained burst the bucket must not be wildly
+      // negative (old bug: ≈ -(burst-1)). One-token slack is fine.
+      expect(bucket.tokens).toBeGreaterThan(-1.001);
     });
   });
 

@@ -44,7 +44,7 @@ import { getMaxLeverage, getPrecisions } from './marketCatalog.js';
 import mlPredictionService from './mlPredictionService.js';
 import { monitoringService } from './monitoringService.js';
 import poloniexFuturesService from './poloniexFuturesService.js';
-import { resolveExchangePositionSide } from './exchangePositionSide.js';
+import { resolveExchangePositionSide, resolveExchangePositionNotional } from './exchangePositionSide.js';
 import {
   bucketOfLeverage,
   sampleBeta,
@@ -1004,7 +1004,10 @@ export class LiveSignalEngine extends EventEmitter {
         return {
           symbol: String(p.symbol ?? ''),
           side: resolveExchangePositionSide(p),
-          notional: Math.abs(Number(p.notional ?? p.size ?? 0)),
+          // v3 positions carry no `notional`/`size` — derive from
+          // im × lever (shared resolver). Old read → 0 left
+          // checkPerSymbolExposure blind to the existing stack.
+          notional: resolveExchangePositionNotional(p),
         };
       }).filter((p) => p.symbol.length > 0);
 
