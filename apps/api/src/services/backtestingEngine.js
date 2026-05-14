@@ -829,7 +829,11 @@ class BacktestingEngine extends EventEmitter {
       this.currentBacktest.isCensored = isCensored;
       this.currentBacktest.censoringReason = censoringReason;
       if (isCensored) {
-        logger.warn(`Backtest ${backtestId} flagged as censored: ${censoringReason}`);
+        // Censoring is a designed, routine outcome of the SLE's
+        // censoring-aware fitness — dozens of candidate strategies are
+        // censored every evolution cycle. debug-level, not warn: it is
+        // not actionable and at warn it floods production logs.
+        logger.debug(`Backtest ${backtestId} flagged as censored: ${censoringReason}`);
       }
     } catch (error) { logger.error('Error storing backtest results:', error); }
   }
