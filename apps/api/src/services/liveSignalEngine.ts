@@ -594,6 +594,31 @@ export class LiveSignalEngine extends EventEmitter {
     //     stacked longs on 2026-04-19 sat bleeding for 14 hours
     //     while ML kept saying BUY and price dropped ~3%.
     if (existingPos) {
+      // Ownership guard: LiveSignal only manages positions IT opened.
+      // The exchange position list (ground truth for existence) also
+      // contains positions opened by the Monkey kernel (reason
+      // monkey|...) and by manual user action (agent=USER / reason
+      // manual_open_user). Acting on those is wrong. 2026-05-14: once
+      // the heldSide fix corrected LiveSignal's side-reading, its
+      // ML-flip exit began closing the user's manually-reversed shorts
+      // (and would close Monkey's positions) on the bull-biased ML BUY
+      // signal. LiveSignal owns a symbol only while it has an open
+      // autonomous_trades row tagged `live_signal|`.
+      const ownRow = await pool.query(
+        `SELECT 1 FROM autonomous_trades
+          WHERE symbol = $1 AND status = 'open'
+            AND reason LIKE 'live_signal|%'
+          LIMIT 1`,
+        [symbol],
+      );
+      if (ownRow.rowCount === 0) {
+        logger.info('[LiveSignal] position exists but not LiveSignal-owned — leaving it alone', {
+          symbol,
+          held: existingPos.side,
+          signalNow: signal.signal,
+        });
+        return;
+      }
       const isLongHeld = existingPos.side === 'long';
       const isShortHeld = existingPos.side === 'short';
       const signalsFlip = (isLongHeld && signal.signal === 'SELL') ||
