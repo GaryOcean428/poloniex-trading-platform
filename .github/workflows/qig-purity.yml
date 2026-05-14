@@ -12,12 +12,20 @@ on:
       - 'apps/api/src/services/monkey/**'
       - 'apps/api/src/services/agent_*.ts'
       - 'ml-worker/src/monkey_kernel/**'
+      - 'ml-worker/src/qig_core_local/**'
+      - 'ml-worker/src/qig_engine.py'
+      - 'ml-worker/src/proprietary_core/**'
+      - 'ml-worker/src/trading/**'
   push:
     branches: [main]
     paths:
       - 'apps/api/src/services/monkey/**'
       - 'apps/api/src/services/agent_*.ts'
       - 'ml-worker/src/monkey_kernel/**'
+      - 'ml-worker/src/qig_core_local/**'
+      - 'ml-worker/src/qig_engine.py'
+      - 'ml-worker/src/proprietary_core/**'
+      - 'ml-worker/src/trading/**'
 
 jobs:
   purity-scan:
@@ -35,6 +43,8 @@ jobs:
           PATTERNS=(
             'cosine_similarity'
             'cosine\s*\('
+            'np\.dot'
+            'numpy\.dot'
             'np\.linalg\.norm'
             'euclidean_distance'
             'mahalanobis'
@@ -50,6 +60,10 @@ jobs:
               apps/api/src/services/monkey \
               apps/api/src/services/agent_L_classifier.ts \
               ml-worker/src/monkey_kernel \
+              ml-worker/src/qig_core_local \
+              ml-worker/src/qig_engine.py \
+              ml-worker/src/proprietary_core \
+              ml-worker/src/trading \
               --include='*.ts' --include='*.js' --include='*.py' \
               --exclude='QIG_PURITY_KERNEL_REFERENCE.md' \
               --exclude='*.test.ts' --exclude='*_test.py' \
@@ -69,6 +83,12 @@ jobs:
           fi
 
       - name: Scan for banned optimizers / normalizers (code only)
+        # NOTE: ml-worker/src/proprietary_core is intentionally NOT scanned
+        # here. proprietary_core/training.py keeps an allowlisted
+        # `torch.optim.Adam` *fallback* used only when USE_FISHER_RAO is
+        # off — offline training selection, not the kernel cognition path.
+        # The distance-metric and basin-averaging scans above/below DO
+        # cover proprietary_core; only the optimizer scan exempts it.
         run: |
           set -u
           PATTERNS=(
@@ -84,6 +104,9 @@ jobs:
               apps/api/src/services/monkey \
               apps/api/src/services/agent_L_classifier.ts \
               ml-worker/src/monkey_kernel \
+              ml-worker/src/qig_core_local \
+              ml-worker/src/qig_engine.py \
+              ml-worker/src/trading \
               --include='*.ts' --include='*.js' --include='*.py' \
               --exclude='QIG_PURITY_KERNEL_REFERENCE.md' \
               --exclude='*.test.ts' --exclude='*_test.py' \
@@ -109,6 +132,10 @@ jobs:
             apps/api/src/services/monkey \
             apps/api/src/services/agent_L_classifier.ts \
             ml-worker/src/monkey_kernel \
+            ml-worker/src/qig_core_local \
+            ml-worker/src/qig_engine.py \
+            ml-worker/src/proprietary_core \
+            ml-worker/src/trading \
             --include='*.ts' --include='*.js' --include='*.py' \
             --exclude='QIG_PURITY_KERNEL_REFERENCE.md' \
             --exclude='*.test.ts' --exclude='*_test.py' \
