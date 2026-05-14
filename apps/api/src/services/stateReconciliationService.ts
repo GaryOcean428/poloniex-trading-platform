@@ -387,9 +387,17 @@ class StateReconciliationService {
         // Fetch Poloniex position history ONCE for this group. We look
         // for a single close record whose openTime is within ±90s of
         // the OLDEST ghost's entry_time and whose side matches.
+        //
+        // 2026-05-14: recover PnL for EVERY ghost group — kernel-agent
+        // AND orphan/USER alike. The prior `groupHasKernelAgent` gate
+        // left orphan/USER rows ghost-closed with pnl=NULL, so the bot's
+        // own ledger was blind to real realized losses on them (the
+        // 2026-05-14 bleed was largely invisible in autonomous_trades
+        // for exactly this reason). Recording a row's realized pnl is
+        // bookkeeping — it does NOT feed the kernel's learning ledger
+        // (that is witnessExit → resonanceBank, gated independently).
         let aggregateRealizedPnl: number | null = null;
-        const groupHasKernelAgent = groupGhosts.some((g) => g.agent !== null);
-        if (groupHasKernelAgent && credentials && symbol) {
+        if (credentials && symbol) {
           try {
             const polHistory = await poloniexFuturesService.getPositionHistory(
               credentials,
@@ -441,11 +449,13 @@ class StateReconciliationService {
         for (const g of groupGhosts) {
           const rowQty = Math.abs(parseFloat(g.dbTrade.quantity)) || 0;
           const rowShare = groupQty > 0 ? rowQty / groupQty : 0;
-          // Only attribute PnL to kernel-agent rows. Orphan/USER rows
-          // ghost-close without PnL because they're not part of the
-          // kernel's learning ledger.
+          // Record the recovered realized PnL on every ghost-closed row
+          // (see the comment on the history fetch above) — kernel-agent
+          // and orphan/USER alike — so autonomous_trades.pnl is an
+          // accurate ledger. This is bookkeeping, separate from what
+          // feeds the kernel's learning (witnessExit → resonanceBank).
           const recoveredPnl: number | null =
-            aggregateRealizedPnl !== null && g.agent !== null
+            aggregateRealizedPnl !== null
               ? aggregateRealizedPnl * rowShare
               : null;
 
