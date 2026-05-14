@@ -264,16 +264,21 @@ describe('computeEmotions with fundingDrag', () => {
     const explicitZero = computeEmotions(m({ transcendence: 0.5 }), 0.3, 0.5, 0.2, { fundingDrag: 0 });
     APPROX(base.anxiety, explicitZero.anxiety);
   });
-  it('non-zero fundingDrag increases anxiety by exactly that amount', () => {
+  it('non-zero fundingDrag increases anxiety by drag_factor (Möbius)', () => {
     const base = computeEmotions(m({ transcendence: 0.5 }), 0.3, 0.5, 0.2, { fundingDrag: 0 });
     const dragged = computeEmotions(m({ transcendence: 0.5 }), 0.3, 0.5, 0.2, { fundingDrag: 0.003 });
-    APPROX(dragged.anxiety, base.anxiety + 0.003);
+    // drag_factor = 0.003 / (1 + 0.003) — Möbius saturation, not raw drag
+    const dragFactor = 0.003 / (1 + 0.003);
+    APPROX(dragged.anxiety, base.anxiety + dragFactor, 1e-12);
   });
-  it('fundingDrag does not affect other emotions', () => {
+  it('fundingDrag does not affect non-anxiety/confidence emotions', () => {
     const base = computeEmotions(m({ surprise: 0.4, curiosity: 0.6, transcendence: 0.5 }), 0.3, 0.5, 0.2, { fundingDrag: 0 });
     const dragged = computeEmotions(m({ surprise: 0.4, curiosity: 0.6, transcendence: 0.5 }), 0.3, 0.5, 0.2, { fundingDrag: 0.005 });
-    for (const attr of ['wonder', 'frustration', 'satisfaction', 'confusion', 'clarity', 'confidence', 'boredom'] as const) {
+    for (const attr of ['wonder', 'frustration', 'satisfaction', 'confusion', 'clarity', 'boredom'] as const) {
       APPROX(base[attr], dragged[attr]);
     }
+    // confidence IS reduced by drag_factor; anxiety IS increased by drag_factor
+    expect(dragged.confidence).toBeLessThan(base.confidence);
+    expect(dragged.anxiety).toBeGreaterThan(base.anxiety);
   });
 });

@@ -52,10 +52,6 @@ import {
 } from './thompsonBandit.js';
 import { allMonkeyKernels, getFreshestMonkeyBasinSnapshot } from './monkey/loop.js';
 import {
-  callLiveDecide,
-  isLiveSignalShadowEnabled,
-} from './monkey/kernel_client.js';
-import {
   evaluatePreTradeVetoes,
   type KernelAccountState,
   type KernelContext,
@@ -294,6 +290,37 @@ export class LiveSignalEngine extends EventEmitter {
       const upl = Number(balance?.unrealizedPnL ?? balance?.upl ?? 0);
       if (!Number.isFinite(equity) || equity <= 0) return;
       const ddRatio = upl / equity;
+
+      // Auto re-arm: if execution mode was paused by the kill switch and
+      // drawdown has recovered above KILL_SWITCH_RECOVERY_THRESHOLD, flip
+      // mode back to 'auto'. Hysteresis (-15% trip / -5% recovery) prevents
+      // oscillation. Without this, every kill-switch event leaves the
+      // account permanently paused until manual reset — observed
+      // 2026-05-06: kill switch tripped at 08:34, account recovered to
+      // +DD by 09:04 but mode stayed pause; Monkey detected breakouts
+      // every tick but every entry was vetoed by execution_mode_paused.
+      const KILL_SWITCH_RECOVERY_THRESHOLD = -0.05;
+      if (ddRatio > KILL_SWITCH_RECOVERY_THRESHOLD) {
+        try {
+          const cur = await pool.query(
+            `SELECT mode, updated_by FROM agent_execution_mode WHERE id = 1`,
+          );
+          const row = cur.rows[0] as { mode?: string; updated_by?: string } | undefined;
+          if (row?.mode === 'pause' && row?.updated_by === 'kill_switch') {
+            await pool.query(
+              `UPDATE agent_execution_mode
+                  SET mode = 'auto', updated_by = 'kill_switch_auto_rearm',
+                      updated_at = NOW(), reason = $1
+                WHERE id = 1`,
+              [`Auto-rearm at DD=${(ddRatio * 100).toFixed(2)}% > ${(KILL_SWITCH_RECOVERY_THRESHOLD * 100).toFixed(0)}% recovery threshold`],
+            );
+            logger.info('[LiveSignal] kill-switch auto-rearmed', {
+              ddRatio,
+              recoveryThreshold: KILL_SWITCH_RECOVERY_THRESHOLD,
+            });
+          }
+        } catch { /* fail-soft; manual reset still works */ }
+      }
 
       if (ddRatio <= KILL_SWITCH_DD_THRESHOLD) {
         logger.error('[LiveSignal] kill-switch auto-flatten TRIGGERED', {
@@ -671,69 +698,6 @@ export class LiveSignalEngine extends EventEmitter {
     const atr = this.computeATR(ohlcv, ATR_PERIOD);
     const order = this.buildOrder(symbol, signal, currentPrice, atr);
 
-    // v0.8.7d-3: fire-and-forget shadow call to the Python live_signal
-    // pipeline. TS decision stays authoritative. The Python side runs
-    // the same normalise → regime → ATR → buildOrder chain; we log
-    // any observable divergence on the fields that matter for trading
-    // (signal direction, regime key, ATR value, order presence).
-    //
-    // Default OFF via LIVE_SIGNAL_PY_SHADOW env flag. Shadow errors
-    // (timeout, 500) swallowed at debug level — never block the tick.
-    if (isLiveSignalShadowEnabled()) {
-      const shadowPayload = {
-        ohlcv: ohlcv.map((b: { high: number; low: number; close: number }) => ({
-          high: Number(b.high), low: Number(b.low), close: Number(b.close),
-        })),
-        mlSignal: rawSignal,
-        mlStrength: rawStrength,
-        mlReason: rawReason,
-        effectiveStrength,
-      };
-      void callLiveDecide(shadowPayload).then((py) => {
-        // Direction match is the load-bearing comparison — if TS
-        // said BUY and Python said SELL, live trading could go the
-        // wrong way once we cut over. Log as WARN so it surfaces.
-        if (py.normalisedSignal !== rawSignal) {
-          logger.warn('[live-signal-shadow] signal mismatch', {
-            symbol, ts: rawSignal, py: py.normalisedSignal,
-          });
-        }
-        if (py.regime !== regime) {
-          logger.warn('[live-signal-shadow] regime mismatch', {
-            symbol, ts: regime, py: py.regime,
-          });
-        }
-        if (py.signalKey !== signalKey) {
-          logger.warn('[live-signal-shadow] signalKey mismatch', {
-            symbol, ts: signalKey, py: py.signalKey,
-          });
-        }
-        const atrDiff = Math.abs(Number(py.atr) - atr);
-        // ATR absolute tolerance of 0.01 handles normal float noise;
-        // anything larger indicates a window-slicing or summation bug.
-        if (atrDiff > 0.01) {
-          logger.warn('[live-signal-shadow] atr drift', {
-            symbol, ts: atr, py: py.atr, diff: atrDiff,
-          });
-        }
-        // Order-presence match: both built an order or both didn't.
-        // A mismatch here means one side would trade and the other
-        // wouldn't — most critical divergence on the live path.
-        const tsHasOrder = order !== null;
-        const pyHasOrder = py.order !== null;
-        if (tsHasOrder !== pyHasOrder) {
-          logger.warn('[live-signal-shadow] order-presence mismatch', {
-            symbol, tsHasOrder, pyHasOrder,
-          });
-        }
-      }).catch((err) => {
-        logger.debug('[live-signal-shadow] parity fetch failed', {
-          symbol,
-          err: err instanceof Error ? err.message : String(err),
-        });
-      });
-    }
-
     if (!order) return;
 
     // 4. Build kernel context from the already-fetched accountCtx.
@@ -1099,9 +1063,20 @@ export class LiveSignalEngine extends EventEmitter {
       return;
     }
 
-    // Flip matching DB rows to closed. The reconciler would catch
-    // them on its next cycle anyway, but being prompt keeps the
-    // dashboard honest.
+    // Flip matching DB rows to closed.
+    //
+    // 2026-05-13 — broaden the filter to ALSO close Monkey rows on
+    // the same (symbol, side). poloniexFuturesService.closePosition
+    // flattens the EXCHANGE net position; if Monkey has stacked
+    // entries on the same side, those rows are now phantoms (DB
+    // open, exchange flat) and the reconciler's (symbol, side)
+    // ghost check can't distinguish them from valid rows when ANY
+    // exchange position remains on that key.
+    //
+    // Side normalization: LiveSignal writes side='buy'/'sell',
+    // Monkey writes side='long'/'short'. heldSide is long|short;
+    // we match both shapes.
+    const dbSideForMatch = heldSide === 'long' ? ['long', 'buy'] : ['short', 'sell'];
     try {
       await pool.query(
         `UPDATE autonomous_trades
@@ -1110,8 +1085,9 @@ export class LiveSignalEngine extends EventEmitter {
                 pnl = COALESCE(pnl, 0)
           WHERE symbol = $1
             AND status = 'open'
-            AND reason LIKE 'live_signal|%'`,
-        [symbol, closeReason],
+            AND side = ANY($3::text[])
+            AND (reason LIKE 'live_signal|%' OR reason LIKE 'monkey|%')`,
+        [symbol, closeReason, dbSideForMatch],
       );
     } catch (err) {
       logger.warn('[LiveSignal] DB close-row update failed (reconciler will catch up)', {
@@ -1229,15 +1205,29 @@ export class LiveSignalEngine extends EventEmitter {
     }
 
     // 2. Market order — this is the point of no return.
+    //
+    // 2026-05-14 fix: forward ``posSide`` (computed above from
+    // ``positionDirectionMode``) via the third-arg opts so the request
+    // body carries ``posSide: LONG | SHORT`` on HEDGE accounts. Without
+    // it, ``poloniexFuturesService.placeOrder`` defaults the body to
+    // ``posSide: BOTH``, which Poloniex v3 rejects on HEDGE accounts
+    // with code=11011 "Position mode and posSide do not match" — the
+    // exact failure observed since ~2026-05-14T00:53Z on prod. setLeverage
+    // already forwards posSide just above (line 1192) so the leverage
+    // call succeeded while the order itself failed every tick.
     let orderId: string | undefined;
     try {
-      const exchangeOrder = await poloniexFuturesService.placeOrder(credentials, {
-        symbol: order.symbol,
-        side: exchangeSide,
-        type: 'market',
-        size: formattedSize,
-        lotSize: symbolLotSize,
-      });
+      const exchangeOrder = await poloniexFuturesService.placeOrder(
+        credentials,
+        {
+          symbol: order.symbol,
+          side: exchangeSide,
+          type: 'market',
+          size: formattedSize,
+          lotSize: symbolLotSize,
+        },
+        posSide ? { posSide } : {},
+      );
       // Poloniex v3 futures returns the exchange order id as `ordId`.
       // Keep `orderId`/`id` fallbacks so mocked tests + any future
       // adapter variants still work without changing this line.

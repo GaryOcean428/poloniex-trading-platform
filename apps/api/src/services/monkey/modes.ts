@@ -59,36 +59,73 @@ export interface ModeProfile {
   description: string;
 }
 
+// 2026-05-13 — sovereignCapFloor inversion per user directive.
+//
+// Original mapping had INTEGRATION (trend confirmed) at the HIGHEST
+// leverage floor (25) and EXPLORATION (flat/hunting) at the lowest
+// (15). User's stated strategy is the inverse:
+//
+//   "high frequency high leverage in/out on flat markets and then
+//    that to proportionately ease back on leverage but larger
+//    longer trades on real movement"
+//
+// In QIG terms: flat market = basin orbiting near-critical κ with
+// low FR velocity and low coherence → many small reverting moves →
+// scalp them at high leverage with small size. Trending = basin
+// traversing a geodesic with high velocity + coherence → fewer, bigger
+// moves → ride them at low leverage with large size. Risk-per-trade
+// in dollars stays roughly constant.
+//
+// The size + TP rails already point the right direction (EXPLORATION
+// 0.08/0.4%, INTEGRATION 0.12/2.0%); only the leverage rail was
+// backwards. New mapping:
+//
+//   EXPLORATION   sovereignCapFloor 15 → 50  (max-leverage scalp)
+//   INVESTIGATION sovereignCapFloor 20 → 15  (transition)
+//   INTEGRATION   sovereignCapFloor 25 →  5  (let big notional ride)
+//
+// Risk envelope: a 50× scalp at 0.08 of equity ≈ 4× equity notional
+// vs a 5× trend at 0.12 of equity ≈ 0.6× equity notional. The scalp
+// hits its 0.4% TP at ~$60 on $1500 equity vs the trend's 2.0% TP at
+// ~$180 — both meaningful, both walked by exit gates. The scalp's
+// stop-bps is 0.6 × 0.4% = 0.24% adverse on notional × 4× = 1% of
+// equity. Trailing-regime stop + tape veto + L stop-loss catch
+// regime transitions before they bite.
+//
+// Available follow-up: regimeSizing.ts (separate file) provides
+// continuous interpolation between flat/trend rails as a function of
+// a regime score in [0,1]. Wire it into executive.ts when ready to
+// move from discrete mode steps to continuous transitions.
 export const MODE_PROFILES: Record<MonkeyMode, ModeProfile> = {
   [MonkeyMode.EXPLORATION]: {
     tpBaseFrac: 0.004,
     slRatio: 0.6,
     entryThresholdScale: 0.9,
     sizeFloor: 0.08,
-    sovereignCapFloor: 15,
+    sovereignCapFloor: 50,
     tickMs: 15_000,
     canEnter: true,
-    description: 'volatile / hunting — tight TP, fast cadence',
+    description: 'volatile / flat / hunting — max leverage, tight TP, fast cadence',
   },
   [MonkeyMode.INVESTIGATION]: {
     tpBaseFrac: 0.008,
     slRatio: 0.5,
     entryThresholdScale: 1.0,
     sizeFloor: 0.10,
-    sovereignCapFloor: 20,
+    sovereignCapFloor: 15,
     tickMs: 30_000,
     canEnter: true,
-    description: 'trend forming — medium TP, full size',
+    description: 'trend forming — medium leverage, medium TP, full size',
   },
   [MonkeyMode.INTEGRATION]: {
     tpBaseFrac: 0.020,
     slRatio: 0.3,
     entryThresholdScale: 1.1,
     sizeFloor: 0.12,
-    sovereignCapFloor: 25,
+    sovereignCapFloor: 5,
     tickMs: 60_000,
     canEnter: true,
-    description: 'trend confirmed — wide TP, let winners run',
+    description: 'trend confirmed — low leverage, wide TP, large notional, let winners run',
   },
   [MonkeyMode.DRIFT]: {
     tpBaseFrac: 0.005,

@@ -1,14 +1,27 @@
 /**
- * held_position_rejustification.ts — three internal exit checks that
+ * held_position_rejustification.ts — four internal exit checks that
  * fire when the kernel's own state contradicts what justified entry.
  *
- *   1. REGIME CHECK    — current mode != mode at open → exit
+ *   1. REGIME CHECK    — current mode != mode at open AND streak ≥ N
+ *                        AND basin moved by FR > 1/π → exit
+ *                        (hysteresis added 2026-05-01 to mirror the
+ *                        Python kernel's PR #631 behaviour; prevents
+ *                        single-tick mode flicker churn)
  *   2. PHI CHECK       — current Φ < phi_at_open / PHI_GOLDEN_FLOOR_RATIO → exit
  *   3. CONVICTION      — confidence < anxiety + confusion → exit
+ *                        (LIVE on TS path as of 2026-05-01: Layer 2B
+ *                        computeEmotions wired into loop.ts; when the
+ *                        kernel's geometric self-read says hesitation
+ *                        > conviction, the position closes)
+ *   4. STALE_BLEED     — duration ≥ N seconds AND ROI ≤ -X% → exit
+ *                        (belt-and-braces guard alongside conviction.
+ *                        Catches the edge case where conviction stays
+ *                        marginally positive but price has been
+ *                        adverse for an extended window. Likely
+ *                        retired once we observe how often conviction
+ *                        catches the same cases in production)
  *
- * All three are geometric: regime classifier output, Φ integration
- * measure, Layer 2B emotion stack. No streak counting, no hysteresis,
- * no time-based stops.
+ * Order: regime → phi → conviction → stale_bleed. First to fire wins.
  *
  * Used inline by loop.ts::processSymbol for TS parity with the Python
  * tick path (`monkey_kernel/tick.py::_decide_with_position`).
@@ -17,8 +30,8 @@
  * directly — the inline call site in loop.ts is mirrored bit-for-bit.
  */
 
-import type { MonkeyMode } from './modes.js';
 import { fisherRao, type Basin } from './basin.js';
+import type { MonkeyMode } from './modes.js';
 import {
   PHI_GOLDEN_FLOOR_RATIO,
   PI_STRUCT_BOUNDARY_R_SQUARED,
@@ -40,7 +53,10 @@ export interface RejustificationInput {
   regimeNow: MonkeyMode;
   /** Φ this tick. */
   phiNow: number;
-  /** Layer 2B emotion stack — TS uses NEUTRAL_EMOTIONS until ported. */
+  /** Layer 2B emotion stack — Python: compute_emotions; TS:
+   *  computeEmotions (both wired into their respective tick paths
+   *  as of 2026-05-01). The conviction gate uses confidence,
+   *  anxiety, confusion to decide whether to exit. */
   emotions: RejustificationEmotions;
   /**
    * Regime classifier's confidence ∈ [0, 1] for ``regimeNow`` (see
@@ -70,12 +86,23 @@ export interface RejustificationInput {
   regimeStabilityTicksRequired?: number;
   basinNow?: Basin;
   basinAtOpen?: Basin;
+  /**
+   * Held duration in seconds for the stale-bleed gate. Undefined
+   * disables the stale-bleed check (legacy callers / no entry timestamp).
+   */
+  heldDurationS?: number;
+  /**
+   * Current ROI on margin (signed fraction; -0.02 = -2% loss). Used
+   * by the stale-bleed gate. Undefined disables the check.
+   */
+  currentRoi?: number;
 }
 
 export type RejustificationFire =
   | 'regime_change'
   | 'phi_collapse'
-  | 'conviction_failed';
+  | 'conviction_failed'
+  | 'stale_bleed';
 
 export interface RejustificationResult {
   /** Whether anchors were available to check at all. */
@@ -97,11 +124,20 @@ export interface RejustificationResult {
 }
 
 /**
- * Run the three internal exit checks. Returns which (if any) fired.
+ * Stale-bleed defaults. A position held longer than 30 minutes at
+ * worse than -1% ROI on margin is exited. This is an interim guard
+ * for the dormant conviction gate; once Layer 2B emotions land in
+ * TS, this can be revisited (likely tightened or removed).
+ */
+export const STALE_BLEED_MIN_DURATION_S = 30 * 60;     // 30 min
+export const STALE_BLEED_ROI_THRESHOLD = -0.01;         // -1% on margin
+
+/**
+ * Run the four internal exit checks. Returns which (if any) fired.
  *
- * Order: regime → phi → conviction. The first to fire wins. No streak,
- * no hysteresis: a single tick where state contradicts entry exits the
- * position.
+ * Order: regime → phi → conviction → stale_bleed. The first to fire
+ * wins. The regime check carries hysteresis (streak + basin distance);
+ * the others fire on first match.
  */
 export function evaluateRejustification(
   input: RejustificationInput,
@@ -137,22 +173,22 @@ export function evaluateRejustification(
   // where the basin's geometry has barely moved (the kernel's
   // perception is still consonant with what justified entry).
   if (regimeNow !== regimeAtOpen) {
-    const labelDiverged = true;
     const confidenceLoadBearing = regimeConfidence > PI_STRUCT_BOUNDARY_R_SQUARED;
     const streakSatisfied = regimeChangeStreak >= regimeStabilityTicksRequired;
     // FR-distance gate. When anchors are missing (basin not plumbed),
     // fall back to a strict-fail so the regime exit cannot fire purely
     // on label flicker — the geometric component must be measurable.
     const frFires = frDistance !== null && frDistance > frThreshold;
-    if (labelDiverged && confidenceLoadBearing && streakSatisfied && frFires) {
+    if (confidenceLoadBearing && streakSatisfied && frFires) {
       const frStr = frDistance !== null ? frDistance.toFixed(3) : 'N/A';
       return {
         checked: true,
         fired: 'regime_change',
         reason:
-          `regime_change: opened in ${regimeAtOpen} (FR_dist ${frStr} > 1/π), ` +
-          `now ${regimeNow} stable for ${regimeChangeStreak} ticks ` +
-          `(confidence ${regimeConfidence.toFixed(3)} > 1/φ)`,
+          `regime_change: opened in ${regimeAtOpen} `
+          + `(FR_dist ${frStr} > 1/π), now ${regimeNow} stable for `
+          + `${regimeChangeStreak} ticks `
+          + `(confidence ${regimeConfidence.toFixed(3)} > 1/φ)`,
         phiFloor,
         frDistance, frThreshold,
         regimeChangeStreak, regimeStabilityTicksRequired,
@@ -174,6 +210,25 @@ export function evaluateRejustification(
       checked: true,
       fired: 'conviction_failed',
       reason: `conviction_failed: conf=${emotions.confidence.toFixed(3)} < anxiety+confusion=${(emotions.anxiety + emotions.confusion).toFixed(3)}`,
+      phiFloor,
+      frDistance, frThreshold,
+      regimeChangeStreak, regimeStabilityTicksRequired,
+    };
+  }
+  // 4. STALE_BLEED — belt-and-braces guard.
+  if (
+    input.heldDurationS !== undefined
+    && input.currentRoi !== undefined
+    && input.heldDurationS >= STALE_BLEED_MIN_DURATION_S
+    && input.currentRoi <= STALE_BLEED_ROI_THRESHOLD
+  ) {
+    return {
+      checked: true,
+      fired: 'stale_bleed',
+      reason:
+        `stale_bleed: held ${Math.round(input.heldDurationS)}s `
+        + `≥ ${STALE_BLEED_MIN_DURATION_S}s at ROI ${(input.currentRoi * 100).toFixed(2)}% `
+        + `≤ ${(STALE_BLEED_ROI_THRESHOLD * 100).toFixed(2)}%`,
       phiFloor,
       frDistance, frThreshold,
       regimeChangeStreak, regimeStabilityTicksRequired,

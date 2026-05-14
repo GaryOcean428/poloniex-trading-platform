@@ -33,7 +33,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 import numpy as np
 
@@ -47,6 +47,8 @@ from dataclasses import asdict
 
 from .autonomic import AutonomicKernel, AutonomicTickInputs
 from .basin import normalized_entropy, velocity
+from .bus_events import KernelEvent
+from .coordinator import GaryCoordinator, GaryReading
 from .emotions import compute_emotions, compute_funding_drag
 from .executive import (
     ExecBasinState,
@@ -93,6 +95,7 @@ from .candle_patterns import (
 )
 from .physical_emotions import compute_physical_emotions
 from .regime import ChopSuppressionResult, RegimeReading, chop_suppress_entry, classify_regime
+from .self_observation import compute_per_decision_triple
 from .sensations import compute_sensations
 from .state import BasinState as KernelBasinState
 from .state import LaneType, NeurochemicalState
@@ -273,19 +276,34 @@ class SymbolState:
     # multi-lane positions keep independent rejustification anchors.
     regime_at_open_by_lane: dict[str, str] = field(default_factory=dict)
     phi_at_open_by_lane: dict[str, float] = field(default_factory=dict)
-    # v0.8.7 regime-hysteresis state. The regime-change exit (PR #619 +
-    # confidence gate from PR #629) was firing on single-tick mode
-    # flickers — live tape 2026-05-01 showed 22% win rate with every
-    # close via regime_change. The triple-AND gate now requires a
-    # sustained streak (>= N ticks where regimeNow != regimeAtOpen) AND
-    # FR distance from basin_at_open > 1/π in addition to the existing
-    # label divergence + confidence checks. Per-lane streak so a swing
-    # position's flicker doesn't cross-contaminate a scalp position's
-    # gate. Basin_at_open is the basin snapshot captured at entry time;
-    # FR-distance from that anchor is the geometric "has the kernel's
-    # perception actually moved?" signal.
-    regime_change_streak_by_lane: dict[str, int] = field(default_factory=dict)
+    # Basin coordinate snapshot at open — used by the regime-change
+    # hysteresis check. Single-tick mode flicker ("investigation→drift"
+    # on noise) used to fire the regime exit immediately; with this
+    # snapshot, the exit also requires the basin to have moved
+    # by FR distance > 1/π (gravitating-fraction threshold) from the
+    # entry coordinate. Pure geometric guard — small mode wobbles
+    # don't overcome it.
     basin_at_open_by_lane: dict[str, np.ndarray] = field(default_factory=dict)
+    # Consecutive ticks where the held position's regime read differs
+    # from the regime-at-open. Drives the hysteresis: regime exit only
+    # fires when streak ≥ N (registry-controlled, default 3). Resets
+    # to 0 the first tick the regime returns to regime_at_open or the
+    # position closes/reopens.
+    regime_change_streak_by_lane: dict[str, int] = field(default_factory=dict)
+
+
+# Harvest-kind taxonomy (Phase 1.5). Mirrors the TS-side close_reason
+# values written to autonomous_trades.exit_reason. None when the action
+# isn't a close — entries, holds, regular flattens.
+HarvestKind = Literal[
+    "win",
+    "stop_loss",
+    "horizon_expired",
+    "regime_transition",
+    "mtf_horizon_expired",
+    "continuous_regime_drift",
+    "position_mismatch_phantom",
+]
 
 
 @dataclass
@@ -315,6 +333,15 @@ class TickDecision:
     direction: str = "flat"   # long | short | flat
     size_fraction: float = 1.0
     dca_intent: bool = False
+    # Phase 1.5 / 1.6 — kernel-cutover payload extensions.
+    # When the action is a close, harvest_kind reports the cascade tier;
+    # otherwise None. r_score / mtf_decision_action are observation-only
+    # for now (live values flow once the cutover lands).
+    harvest_kind: Optional[HarvestKind] = None
+    r_score: Optional[float] = None
+    mtf_decision_action: Optional[str] = None  # 'enter_long' | 'enter_short' | 'hold'
+    mtf_size_multiplier: Optional[float] = None
+    leverage_cap_from_regime: Optional[int] = None
 
 
 # ── Public API ───────────────────────────────────────────────────
@@ -382,7 +409,12 @@ def run_tick(
         open_positions=inputs.account.open_positions,
         session_age_ticks=state.session_ticks,
     ))
-    basin = refract(raw_basin, state.identity_basin, external_weight=0.30)
+    # refract external_weight is registry-backed (migration 047). Default
+    # 0.30 = 70% identity-weighted refraction toward §3.4 Pillar 3.
+    refract_external_weight = _registry.get(
+        "refract.external_weight", default=0.30,
+    )
+    basin = refract(raw_basin, state.identity_basin, external_weight=refract_external_weight)
 
     # ── Measure ────────────────────────────────────────────────
     f_health = normalized_entropy(basin)
@@ -1040,6 +1072,10 @@ def run_tick(
             # checks (regime change / Φ collapse / conviction failure).
             state.regime_at_open_by_lane[pre_lane] = mode
             state.phi_at_open_by_lane[pre_lane] = phi
+            state.basin_at_open_by_lane[pre_lane] = (
+                np.asarray(basin, dtype=np.float64).copy()
+            )
+            state.regime_change_streak_by_lane[pre_lane] = 0
     elif held_side:
         # Proposal #10: resolve the lane this single-position decision
         # belongs to. With ``lane_positions`` populated the lane is read
@@ -1063,6 +1099,7 @@ def run_tick(
             held_side=held_side,
             side_candidate=side_candidate,
             side_override=side_override,
+            direction=direction,
             entry_thr_val=entry_thr_d["value"],
             size_val=size_d["value"],
             leverage_val=leverage_d["value"],
@@ -1089,7 +1126,9 @@ def run_tick(
         elif action in ("reverse_long", "reverse_short"):
             state.regime_at_open_by_lane[position_lane] = mode
             state.phi_at_open_by_lane[position_lane] = phi
-            state.basin_at_open_by_lane[position_lane] = basin.copy()
+            state.basin_at_open_by_lane[position_lane] = (
+                np.asarray(basin, dtype=np.float64).copy()
+            )
             state.regime_change_streak_by_lane[position_lane] = 0
     elif (
         MODE_PROFILES[mode_enum].can_enter
@@ -1140,6 +1179,10 @@ def run_tick(
             # checks (regime change / Φ collapse / conviction failure).
             state.regime_at_open_by_lane[pre_lane] = mode
             state.phi_at_open_by_lane[pre_lane] = phi
+            state.basin_at_open_by_lane[pre_lane] = (
+                np.asarray(basin, dtype=np.float64).copy()
+            )
+            state.regime_change_streak_by_lane[pre_lane] = 0
     else:
         action = "hold"
         if not MODE_PROFILES[mode_enum].can_enter:
@@ -1378,6 +1421,7 @@ def _decide_with_position(
     emotions: Any = None,
     mode_value: str = "investigation",
     regime_confidence: float = 1.0,
+    direction: str = "flat",
 ) -> tuple[str, str, bool, bool]:
     """v0.6.1 exit gate order: profit harvest → scalp TP/SL → Loop 2 exit.
     v0.7.1 override-reverse. v0.6.2 DCA. Proposal #10: per-lane peak +
@@ -1462,11 +1506,11 @@ def _decide_with_position(
         return "scalp_exit", scalp["reason"], False, False
 
     # ── Held-position re-justification (this PR) ──────────────────
-    # Three internal exit checks. Each fires immediately when the
-    # kernel's current state contradicts the state that justified
-    # entry. No streak counting, no hysteresis, no time-based stops.
-    # All three are geometric: regime classifier output, Φ integration
-    # measure, Layer 2B emotion stack.
+    # Three internal exit checks. The regime check carries hysteresis
+    # (added 2026-05-01 per live churn diagnostics) — single-tick mode
+    # flicker would otherwise close every held position on noise. Φ
+    # collapse and conviction-fail still fire immediately; both are
+    # already conservative gates. All three are geometric.
     rejust: dict[str, Any] = {"checked": False}
     has_regime_anchor = position_lane in state.regime_at_open_by_lane
     has_phi_anchor = position_lane in state.phi_at_open_by_lane
@@ -1582,6 +1626,88 @@ def _decide_with_position(
             )
             return "scalp_exit", reason, False, False
     derivation["rejustification"] = rejust
+
+    # ── Green-turn reversal ───────────────────────────────────────
+    # When the position is GREEN and the kernel's geometric direction
+    # has flipped against the held side WITH tape confirmation, close
+    # the winner AND immediately open the new side — capture the
+    # realized gain + ride the reversal swing in one decision.
+    #
+    # Without this gate the kernel relies on should_profit_harvest
+    # (close-only, trailing retrace) followed by a hoped-for re-entry
+    # on some future tick. In a sharp chop reversal the re-entry is
+    # often margin-gated or cooldown-blocked, so the +50 → -30
+    # give-back observed 2026-05-14 was the position bleeding back
+    # through break-even before any re-entry fired.
+    #
+    # Distinct from:
+    #   * REVERSION-mode side_override reversal below (counter-trend
+    #     stud-topology flip) — that fires on flat/red too.
+    #   * should_profit_harvest — trailing retrace, close-only.
+    # This is a trend-FOLLOWING capture: the trend the position rode
+    # has turned, so flip with it while still green.
+    #
+    # Placement: AFTER rejustification (a contradicted position must
+    # exit, not reverse — rejustification's checks aren't PnL-aware
+    # and a flip signal can be noise) and BEFORE trailing-harvest
+    # (when both would fire, reverse strictly dominates harvest —
+    # same capture, plus the new-side entry).
+    green_turn_min_roi = float(_registry.get(
+        "executive.green_turn_reversal.min_roi", default=0.003,
+    ))
+    green_turn_tape_threshold = float(_registry.get(
+        "executive.green_turn_reversal.tape_threshold", default=0.25,
+    ))
+    position_roi = (
+        unrealized_pnl / (position_notional / max(1, leverage_val))
+        if position_notional > 0 else 0.0
+    )
+    tape_opposes_held = (
+        (held_side == "long" and tape_trend < -green_turn_tape_threshold)
+        or (held_side == "short" and tape_trend > green_turn_tape_threshold)
+    )
+    # direction must be a genuine non-flat read on the opposite side —
+    # side_candidate alone is insufficient (it defaults to 'long' when
+    # direction is flat, which would false-trigger on a held short).
+    direction_flipped = direction != "flat" and direction != held_side
+    emo_for_reverse = basin_state.emotions
+    green_turn_reversal_eligible = (
+        position_roi >= green_turn_min_roi
+        and tape_opposes_held
+        and direction_flipped
+        and MODE_PROFILES[mode_enum].can_enter
+        and emo_for_reverse is not None
+        and kernel_should_enter(emotions=emo_for_reverse)
+        and size_val > 0
+    )
+    derivation["green_turn_reversal"] = {
+        "eligible": green_turn_reversal_eligible,
+        "position_roi": position_roi,
+        "min_roi": green_turn_min_roi,
+        "tape_trend": tape_trend,
+        "tape_threshold": green_turn_tape_threshold,
+        "tape_opposes_held": tape_opposes_held,
+        "direction": direction,
+        "direction_flipped": direction_flipped,
+        "unrealized_pnl": unrealized_pnl,
+    }
+    if green_turn_reversal_eligible:
+        action = (
+            "reverse_long" if side_candidate == "long" else "reverse_short"
+        )
+        reason = (
+            f"GREEN_TURN_REVERSAL[{held_side}→{side_candidate}] "
+            f"roi={position_roi:.3%} tape={tape_trend:.2f} "
+            f"capture +{unrealized_pnl:.2f} then open {side_candidate} "
+            f"margin={size_val:.2f} lev={leverage_val}x"
+        )
+        derivation["scalp"] = {
+            "exit_type_bit": 4,  # green-turn-reversal capture leg
+            "unrealized_pnl": unrealized_pnl,
+            "mark_price": last_price,
+            "trade_id": trade_id,
+        }
+        return action, reason, False, True  # is_reverse=True
 
     # ── Trailing-harvest (existing) ───────────────────────────────
     harvest = should_profit_harvest(

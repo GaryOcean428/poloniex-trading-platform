@@ -5,6 +5,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { authenticateToken } from '../middleware/auth.js';
 import { logger } from '../utils/logger.js';
+import { runStackedGhostPnlBackfill } from '../services/backfillStackedGhostPnl.js';
 
 const router = express.Router();
 const __filename = fileURLToPath(import.meta.url);
@@ -189,6 +190,55 @@ router.get('/db-status', async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to get database status'
+    });
+  }
+});
+
+/**
+ * POST /api/admin/backfill-stacked-ghost-pnl
+ *
+ * One-off backfill for the reconciler PnL over-attribution bug
+ * (live 2026-05-13 01:32Z–05:40Z, between PR #658 and PR #660).
+ *
+ * Detects groups of ghost-closed rows in the corruption window that
+ * share the same (symbol, side, exit_time-truncated-to-second) and
+ * the same pnl value. The bug applied the aggregate position PnL to
+ * each stacked row instead of distributing pro-rata. This endpoint
+ * rewrites each row's pnl as its qty share of the aggregate.
+ *
+ * Body:
+ *   { apply?: boolean = false, startTs?: ISO string, endTs?: ISO string }
+ *
+ * Default is dry-run (apply=false). Returns the groups + proposed
+ * changes so an operator can verify before re-running with apply=true.
+ *
+ * Idempotent against itself: re-running with the same window on
+ * already-corrected data is a no-op (rows no longer share the same
+ * pnl value, so the detection skips them).
+ */
+router.post('/backfill-stacked-ghost-pnl', async (req, res) => {
+  try {
+    const apply = req.body?.apply === true;
+    const startTs = req.body?.startTs ? String(req.body.startTs) : undefined;
+    const endTs = req.body?.endTs ? String(req.body.endTs) : undefined;
+    if (startTs && !Number.isFinite(Date.parse(startTs))) {
+      return res.status(400).json({ success: false, error: 'invalid startTs' });
+    }
+    if (endTs && !Number.isFinite(Date.parse(endTs))) {
+      return res.status(400).json({ success: false, error: 'invalid endTs' });
+    }
+    const result = await runStackedGhostPnlBackfill({ apply, startTs, endTs });
+    logger.info(
+      `[BACKFILL] stacked-ghost PnL ${apply ? 'APPLIED' : 'DRY-RUN'}: ` +
+      `${result.groupsFound} groups, ${result.rowsAffected} rows, ` +
+      `net ledger correction ${result.netLedgerCorrectionUsdt.toFixed(4)} USDT`,
+    );
+    res.json({ success: true, ...result });
+  } catch (err) {
+    logger.error('[BACKFILL] stacked-ghost PnL failed', err);
+    res.status(500).json({
+      success: false,
+      error: err instanceof Error ? err.message : 'Backfill failed',
     });
   }
 });

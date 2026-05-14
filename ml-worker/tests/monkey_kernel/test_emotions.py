@@ -384,7 +384,9 @@ class TestFundingDragInEmotions:
             _m(transcendence=0.5), basin_distance=0.3, phi=0.5, basin_velocity=0.2,
             funding_drag=0.003,
         )
-        assert dragged.anxiety == pytest.approx(base.anxiety + 0.003, abs=1e-12)
+        # Möbius saturation: anxiety increases by drag_factor = drag / (1 + drag)
+        drag_factor = 0.003 / (1.0 + 0.003)
+        assert dragged.anxiety == pytest.approx(base.anxiety + drag_factor, abs=1e-12)
 
     def test_funding_drag_does_not_affect_other_emotions(self) -> None:
         base = compute_emotions(
@@ -397,19 +399,21 @@ class TestFundingDragInEmotions:
             basin_distance=0.3, phi=0.5, basin_velocity=0.2,
             funding_drag=0.005,
         )
+        # Non-anxiety/confidence emotions are unaffected by funding drag.
+        # anxiety and confidence ARE affected (Möbius saturation).
         for attr in ("wonder", "frustration", "satisfaction", "confusion",
-                     "clarity", "confidence", "boredom", "flow"):
+                     "clarity", "boredom", "flow"):
             assert getattr(base, attr) == pytest.approx(getattr(dragged, attr), abs=1e-12), (
                 f"{attr} changed unexpectedly"
             )
+        assert dragged.confidence < base.confidence, "confidence should decrease with drag"
+        assert dragged.anxiety > base.anxiety, "anxiety should increase with drag"
 
     def test_conviction_gate_fires_earlier_with_funding_drag(self) -> None:
         # Simulate a position that's marginal: confidence just above hesitation
         # without drag, but drag tips it over.
-        # conviction = confidence * (1 + wonder); hesitation = anxiety + confusion
-        # Set up: confidence=0.4, wonder=0, confusion=0.1 → conviction=0.4, hesitation=0.1+anxiety
-        # Without drag (anxiety=0.2): 0.4 > 0.3 → would enter
-        # With drag=0.15 (anxiety=0.35): 0.4 < 0.45 → hesitation wins → won't enter
+        # With Möbius drag, both confidence decreases AND anxiety increases,
+        # so the gate flips even more reliably.
         from monkey_kernel.executive import kernel_should_enter
         e_no_drag = compute_emotions(
             _m(transcendence=0.25, surprise=0.1),
@@ -421,8 +425,9 @@ class TestFundingDragInEmotions:
             basin_distance=0.0, phi=0.4, basin_velocity=0.8,
             funding_drag=0.15,
         )
-        # Verify anxiety increased by exactly the drag
-        assert e_with_drag.anxiety == pytest.approx(e_no_drag.anxiety + 0.15, abs=1e-12)
+        # Verify anxiety increased by drag_factor (Möbius) not raw drag
+        drag_factor = 0.15 / (1.0 + 0.15)
+        assert e_with_drag.anxiety == pytest.approx(e_no_drag.anxiety + drag_factor, abs=1e-12)
         # Verify the gate fires differently (one enters, one doesn't)
         enters_no_drag = kernel_should_enter(emotions=e_no_drag)
         enters_with_drag = kernel_should_enter(emotions=e_with_drag)

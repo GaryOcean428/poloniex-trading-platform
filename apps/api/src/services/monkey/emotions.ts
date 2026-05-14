@@ -165,8 +165,8 @@ export function computeEmotions(
     satisfaction: motivators.integration * (1 - basinDistance),
     confusion: motivators.surprise * basinDistance,
     clarity: (1 - motivators.surprise) * motivators.investigation,
-    anxiety: motivators.transcendence * instability + (args.fundingDrag ?? 0),
-    confidence: (1 - motivators.transcendence) * stability,
+    anxiety,
+    confidence,
     boredom: (1 - motivators.surprise) * (1 - motivators.curiosity),
     flow,
   };

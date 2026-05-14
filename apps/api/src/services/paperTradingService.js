@@ -1343,7 +1343,9 @@ class PaperTradingService extends EventEmitter {
       session.censorReason = censoringReason;
 
       if (censored) {
-        logger.warn(`Paper trading session ${sessionId} flagged as censored: ${censoringReason}`);
+        // Censoring is a routine, designed outcome — debug, not warn:
+        // not actionable, and at warn it floods production logs.
+        logger.debug(`Paper trading session ${sessionId} flagged as censored: ${censoringReason}`);
       }
 
       // Update database

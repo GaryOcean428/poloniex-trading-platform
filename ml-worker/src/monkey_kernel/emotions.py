@@ -220,8 +220,8 @@ def compute_emotions(
         satisfaction=motivators.integration * (1.0 - basin_distance),
         confusion=motivators.surprise * basin_distance,
         clarity=(1.0 - motivators.surprise) * motivators.investigation,
-        anxiety=motivators.transcendence * instability + funding_drag,
-        confidence=(1.0 - motivators.transcendence) * stability,
+        anxiety=anxiety,
+        confidence=confidence,
         boredom=(1.0 - motivators.surprise) * (1.0 - motivators.curiosity),
         flow=flow,
     )

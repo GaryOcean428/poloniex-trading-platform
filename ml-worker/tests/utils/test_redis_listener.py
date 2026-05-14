@@ -44,6 +44,11 @@ class _FakePubSub:
         self._messages = list(messages)
         self.subscribed: List[str] = []
         self.closed = False
+        # When get_message exhausts the batch, raise to simulate a
+        # connection drop so the outer reconnect loop runs. Tests
+        # exercise the message-receive path then expect a fresh
+        # pubsub on the next attempt.
+        self._exhaust_raise = True
 
     def subscribe(self, channel: str) -> None:
         self.subscribed.append(channel)
@@ -458,6 +463,7 @@ class _IdleTimeoutScript:
             def __init__(self):
                 self.subscribed = []
                 self.closed = False
+                self._delivered_message = False
 
             def subscribe(self, ch):
                 self.subscribed.append(ch)

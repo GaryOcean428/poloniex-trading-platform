@@ -12,6 +12,7 @@ import { apiCredentialsService } from './apiCredentialsService.js';
 import { monitoringService } from './monitoringService.js';
 import { getEngineVersion } from '../utils/engineVersion.js';
 import { logger } from '../utils/logger.js';
+import { BusEventType, getKernelBus } from './monkey/kernel_bus.js';
 
 export interface OrphanedPosition {
   symbol: string;
@@ -99,7 +100,7 @@ class StateReconciliationService {
 
       // ── 4. Fetch DB-recorded open trades ────────────────────────────────────
       const dbResult = await pool.query(
-        `SELECT id, symbol, side, entry_price, quantity, order_id
+        `SELECT id, symbol, side, entry_price, quantity, order_id, entry_time
          FROM autonomous_trades
          WHERE user_id = $1 AND status = 'open'`,
         [userId]
@@ -111,6 +112,7 @@ class StateReconciliationService {
         entry_price: string;
         quantity: string;
         order_id: string | null;
+        entry_time: Date | string;
       }[] = dbResult.rows;
 
       // Use the last recorded equity from autonomous_performance as DB balance.
@@ -142,14 +144,32 @@ class StateReconciliationService {
       const normalizeDbSide = (s: string): 'long' | 'short' =>
         s === 'buy' || s === 'long' ? 'long' : 'short';
 
+      // Resolve an EXCHANGE position's side. 2026-05-14 fix: HEDGE-mode
+      // Poloniex v3 positions carry a POSITIVE ``qty`` magnitude and the
+      // real side in ``posSide`` — so the legacy ``parseFloat(qty) > 0``
+      // test mislabels every HEDGE short as 'long'. After the side-aware
+      // FAT reconciler (PR #677) started closing side-mismatched rows,
+      // this mislabel produced a 1-minute create/close churn loop:
+      // orphan-detection inserted a 'long' row for a SHORT exchange
+      // position, the FAT reconciler closed it as a side mismatch, and
+      // the next reconciler tick re-inserted it. posSide-first resolution
+      // (same order as the #676/#677 fixes), Math.sign(qty) fallback for
+      // ONE_WAY accounts.
+      const resolveExchangeSide = (exPos: Record<string, unknown>): 'long' | 'short' => {
+        const posSide = String(exPos.posSide ?? '').toUpperCase();
+        const qtyNum = parseFloat(String(exPos.qty ?? exPos.availQty ?? '0'));
+        return posSide === 'SHORT' || (posSide !== 'LONG' && qtyNum < 0)
+          ? 'short'
+          : 'long';
+      };
+
       // ── 5. Orphan detection: on exchange but not in DB ───────────────────────
       for (const exPos of exchangePositions) {
         const symbol: string = exPos.symbol ?? exPos.instId ?? '';
         const size: number = Math.abs(parseFloat(exPos.qty ?? exPos.availQty ?? '0'));
         if (!symbol || size === 0) continue;
 
-        const side: string =
-          parseFloat(exPos.qty ?? '0') > 0 ? 'long' : 'short';
+        const side: 'long' | 'short' = resolveExchangeSide(exPos);
 
         // Check if this exchange symbol+side is already in the DB.
         // DB side may be 'buy'/'sell' (liveSignal) or 'long'/'short'
@@ -170,25 +190,53 @@ class StateReconciliationService {
           };
           result.orphans.push(orphan);
 
-          // Insert reconciled record into autonomous_trades
+          // Insert reconciled record into autonomous_trades, tagged as
+          // user-originated (agent='USER', lane='manual'). This lets the
+          // kernel's own queries — which filter by reason LIKE 'monkey|%' —
+          // continue to ignore manual positions, while dashboards and PnL
+          // accounting can identify them as user-placed. The reason field
+          // also embeds the source so historic queries can distinguish
+          // user opens from system retries.
           try {
+            const userReason = `manual_open_user|exchange_pid=${
+              exPos.positionId ?? exPos.id ?? 'na'
+            }|src=reconciler`;
             await pool.query(
               `INSERT INTO autonomous_trades
-               (user_id, symbol, side, entry_price, quantity, reason, status, engine_version)
-               VALUES ($1, $2, $3, $4, $5, $6, 'open', $7)`,
+               (user_id, symbol, side, entry_price, quantity, reason, status,
+                engine_version, agent, lane)
+               VALUES ($1, $2, $3, $4, $5, $6, 'open', $7, 'USER', 'manual')`,
               [
                 userId,
                 symbol,
                 side,
                 entryPrice,
                 size,
-                'reconciled',
+                userReason,
                 getEngineVersion(),
               ]
             );
             logger.info(
-              `[RECONCILE] Inserted orphaned position for user ${userId}: ${symbol} ${side}`
+              `[RECONCILE] Tracked user-opened position for user ${userId}: ${symbol} ${side} qty=${size} @${entryPrice}`
             );
+            // Emit an agent_events row so the audit trail captures the
+            // user action explicitly. metadata column was added in
+            // migration 044 (2026-05-02 incident).
+            await pool.query(
+              `INSERT INTO agent_events
+                 (user_id, event_type, execution_mode, description, market, metadata, created_at)
+               VALUES ($1, 'manual_position_detected', 'auto', $2, $3, $4, NOW())`,
+              [
+                userId,
+                `User-opened ${symbol} ${side} qty=${size} @${entryPrice} detected and tracked by reconciler`,
+                symbol,
+                JSON.stringify({
+                  source: 'reconciler',
+                  side, size, entryPrice,
+                  exchange_position_id: exPos.positionId ?? exPos.id ?? null,
+                }),
+              ]
+            ).catch(() => { /* fail-soft; main insert above is the source of truth */ });
           } catch (insertErr) {
             logger.error(
               `[RECONCILE] Failed to insert orphaned position for user ${userId}:`,
@@ -199,47 +247,274 @@ class StateReconciliationService {
       }
 
       // ── 6. Ghost detection: in DB but not on exchange ────────────────────────
-      for (const dbTrade of dbTrades) {
+      //
+      // 2026-05-13 — aggregate-qty check.
+      //
+      // Original (symbol, side) match handled the simple case (1 DB row
+      // per position). With Agent K/M/T/L stacking, a single exchange
+      // position can correspond to many DB rows. When the exchange has
+      // a partial close (force-harvest of half the stack, or user
+      // closes some manually), the simple match marked ALL stacked
+      // rows as still-valid because the (symbol, side) tuple still
+      // matches one exchange position — even when DB qty sum vastly
+      // exceeds exchange qty.
+      //
+      // Result observed 2026-05-13: dashboard reported DB=12 vs
+      // exchange=2 ("phantom state likely") because 10 of 12 rows were
+      // dead but unghosted.
+      //
+      // Per-key exchange qty map: aggregate exchange position qty by
+      // (symbol, side). We treat DB rows as ghosts in FIFO order
+      // (oldest first) until aggregate matches exchange qty on that
+      // key. Floor-only — never expand exchange qty by adding "phantom
+      // longs" of our own.
+      const exchangeQtyByKey = new Map<string, number>();
+      for (const exPos of exchangePositions) {
+        const exSymbol: string = exPos.symbol ?? exPos.instId ?? '';
+        if (!exSymbol) continue;
+        const exQty = Math.abs(parseFloat(exPos.qty ?? exPos.availQty ?? '0')) || 0;
+        if (exQty === 0) continue;
+        const exSide = resolveExchangeSide(exPos);
+        const key = `${exSymbol}|${exSide}`;
+        exchangeQtyByKey.set(key, (exchangeQtyByKey.get(key) ?? 0) + exQty);
+      }
+      // Track running DB-attributed qty per key. Once we've "consumed"
+      // the exchange qty on a key, additional DB rows on that key are
+      // phantoms even though the (symbol, side) match succeeds.
+      const consumedQtyByKey = new Map<string, number>();
+      const sortedDbTrades = [...dbTrades].sort((a, b) => {
+        // Oldest-first — keep the freshest rows aligned to the
+        // current exchange position; older rows are the phantoms.
+        const ta = new Date(a.entry_time).getTime() || 0;
+        const tb = new Date(b.entry_time).getTime() || 0;
+        return ta - tb;
+      });
+
+      // 2026-05-13 — two-phase ghost handling to fix PnL over-attribution.
+      //
+      // Phase 1 IDENTIFY: walk DB rows FIFO, mark anything past the
+      // exchange-qty boundary as a ghost. Collect into an array; do
+      // not write yet.
+      //
+      // Phase 2 RECOVER + WRITE: group ghosts by (symbol, side). For
+      // each group, fetch Poloniex position-history ONCE and find the
+      // single close record. The aggregate realizedPnl on that record
+      // is the position's total PnL; distribute pro-rata across rows
+      // by qty share. Prior single-pass logic applied the aggregate
+      // PnL to EACH stacked row, multiplying realized PnL by N (5×
+      // observed in production 2026-05-13 03:51 / 04:38 / 05:17).
+      type PendingGhost = {
+        dbTrade: typeof sortedDbTrades[0];
+        ghostReason: string;
+        agent: 'K' | 'M' | 'T' | 'L' | null;
+      };
+      const pendingGhosts: PendingGhost[] = [];
+
+      for (const dbTrade of sortedDbTrades) {
         const dbSide = normalizeDbSide(dbTrade.side);
-        const matched = exchangePositions.some(exPos => {
-          const exSymbol: string = exPos.symbol ?? exPos.instId ?? '';
-          const exQty = parseFloat(exPos.qty ?? exPos.availQty ?? '0');
-          const exSide = exQty > 0 ? 'long' : 'short';
-          return exSymbol === dbTrade.symbol && exSide === dbSide;
-        });
+        const key = `${dbTrade.symbol}|${dbSide}`;
+        const exchangeQty = exchangeQtyByKey.get(key) ?? 0;
+        const consumedQty = consumedQtyByKey.get(key) ?? 0;
+        const remainingExchangeQty = exchangeQty - consumedQty;
+        const rowQty = Math.abs(parseFloat(dbTrade.quantity)) || 0;
+        const QTY_TOLERANCE = 1e-9;
+        const matched = remainingExchangeQty > QTY_TOLERANCE;
+        if (matched) {
+          consumedQtyByKey.set(key, consumedQty + rowQty);
+          continue;
+        }
 
-        if (!matched) {
-          const ghost: GhostRecord = {
-            id: dbTrade.id,
-            symbol: dbTrade.symbol,
-            side: dbTrade.side,
-            entryPrice: parseFloat(dbTrade.entry_price)
-          };
-          result.ghosts.push(ghost);
+        // Ghost — classify reason + agent (no DB write yet).
+        const ghost: GhostRecord = {
+          id: dbTrade.id,
+          symbol: dbTrade.symbol,
+          side: dbTrade.side,
+          entryPrice: parseFloat(dbTrade.entry_price),
+        };
+        result.ghosts.push(ghost);
 
-          // Close the ghost record
+        let ghostReason = 'reconciled_not_on_exchange';
+        let agent: 'K' | 'M' | 'T' | 'L' | null = null;
+        try {
+          const ctxRow = await pool.query(
+            `SELECT exit_order_id, reason, agent FROM autonomous_trades WHERE id = $1`,
+            [dbTrade.id],
+          );
+          const ctx = ctxRow.rows[0] as
+            | { exit_order_id: string | null; reason: string | null; agent: string | null }
+            | undefined;
+          if (ctx?.exit_order_id) {
+            ghostReason = 'reconciled_post_close_race';
+          } else if (
+            ctx?.agent === 'USER' ||
+            (ctx?.reason && (
+              ctx.reason.startsWith('monkey|') ||
+              ctx.reason.startsWith('live_signal|') ||
+              ctx.reason.startsWith('autoTrader|') ||
+              ctx.reason.startsWith('manual_open_user') ||
+              ctx.reason === 'reconciled'
+            ))
+          ) {
+            ghostReason = 'manual_close_user';
+          }
+          const a = ctx?.agent;
+          if (a === 'K' || a === 'M' || a === 'T' || a === 'L') agent = a;
+        } catch {
+          /* fail-soft: keep generic reason */
+        }
+        pendingGhosts.push({ dbTrade, ghostReason, agent });
+      }
+
+      // Phase 2: group + recover + write.
+      const ghostsByKey = new Map<string, PendingGhost[]>();
+      for (const g of pendingGhosts) {
+        const k = `${g.dbTrade.symbol}|${normalizeDbSide(g.dbTrade.side)}`;
+        const list = ghostsByKey.get(k) ?? [];
+        list.push(g);
+        ghostsByKey.set(k, list);
+      }
+
+      for (const [groupKey, groupGhosts] of ghostsByKey) {
+        const [symbol, sideStr] = groupKey.split('|');
+        const groupSide: 'long' | 'short' = sideStr === 'long' ? 'long' : 'short';
+
+        // Aggregate qty across the group's ghost rows.
+        const groupQty = groupGhosts.reduce(
+          (s, g) => s + (Math.abs(parseFloat(g.dbTrade.quantity)) || 0),
+          0,
+        );
+
+        // Fetch Poloniex position history ONCE for this group. We look
+        // for a single close record whose openTime is within ±90s of
+        // the OLDEST ghost's entry_time and whose side matches.
+        let aggregateRealizedPnl: number | null = null;
+        const groupHasKernelAgent = groupGhosts.some((g) => g.agent !== null);
+        if (groupHasKernelAgent && credentials && symbol) {
+          try {
+            const polHistory = await poloniexFuturesService.getPositionHistory(
+              credentials,
+              { symbol, limit: 20 },
+            );
+            const histRows: any[] = Array.isArray(polHistory)
+              ? polHistory
+              : (polHistory?.data ?? []);
+            const oldestEntryMs = Math.min(
+              ...groupGhosts.map((g) => new Date(g.dbTrade.entry_time).getTime() || Infinity),
+            );
+            const wantSide = groupSide === 'long' ? 'LONG' : 'SHORT';
+            // Pick the closest-by-openTime match to the oldest ghost's
+            // entry; ±90s tolerance. Avoids picking a much-older stale
+            // record when the position was re-opened recently.
+            let bestMatch: any = null;
+            let bestDelta = Infinity;
+            for (const p of histRows) {
+              const polEntryMs = Number(p.openTime ?? p.cTime ?? p.openTimestamp ?? 0);
+              const polSide = String(p.posSide ?? p.side ?? '').toUpperCase();
+              if (polEntryMs <= 0 || polSide !== wantSide) continue;
+              const delta = Math.abs(polEntryMs - oldestEntryMs);
+              if (delta < 90_000 && delta < bestDelta) {
+                bestDelta = delta;
+                bestMatch = p;
+              }
+            }
+            if (bestMatch) {
+              const rawPnl = parseFloat(
+                bestMatch.realisedPnl ?? bestMatch.realizedPnl ?? bestMatch.pnl ?? '0',
+              );
+              if (Number.isFinite(rawPnl)) aggregateRealizedPnl = rawPnl;
+            }
+          } catch (recErr) {
+            logger.debug('[RECONCILE] PnL recovery query failed (non-fatal)', {
+              symbol,
+              err: recErr instanceof Error ? recErr.message : String(recErr),
+            });
+          }
+        }
+
+        if (aggregateRealizedPnl !== null && groupGhosts.length > 1) {
+          logger.info(
+            `[RECONCILE] PnL recovery split across ${groupGhosts.length} stacked rows for ${symbol} ${groupSide}: aggregate=${aggregateRealizedPnl.toFixed(4)} groupQty=${groupQty.toFixed(6)}`,
+          );
+        }
+
+        // Write each ghost row with pro-rata PnL share.
+        for (const g of groupGhosts) {
+          const rowQty = Math.abs(parseFloat(g.dbTrade.quantity)) || 0;
+          const rowShare = groupQty > 0 ? rowQty / groupQty : 0;
+          // Only attribute PnL to kernel-agent rows. Orphan/USER rows
+          // ghost-close without PnL because they're not part of the
+          // kernel's learning ledger.
+          const recoveredPnl: number | null =
+            aggregateRealizedPnl !== null && g.agent !== null
+              ? aggregateRealizedPnl * rowShare
+              : null;
+
           try {
             await pool.query(
               `UPDATE autonomous_trades
                SET status = 'closed',
-                   exit_reason = 'reconciled_not_on_exchange',
-                   exit_time = NOW()
-               WHERE id = $1`,
-              [dbTrade.id]
+                   exit_reason = $1,
+                   exit_time = NOW(),
+                   pnl = COALESCE($3, pnl)
+               WHERE id = $2`,
+              [g.ghostReason, g.dbTrade.id, recoveredPnl],
             );
             logger.info(
-              `[RECONCILE] Closed ghost DB record ${dbTrade.id} for user ${userId}: ${dbTrade.symbol} ${dbTrade.side}`
+              `[RECONCILE] Closed ghost DB record ${g.dbTrade.id} for user ${userId}: ${g.dbTrade.symbol} ${g.dbTrade.side} (reason=${g.ghostReason}${
+                recoveredPnl !== null ? `, share=${(rowShare * 100).toFixed(1)}%, recovered_pnl=${recoveredPnl.toFixed(4)}` : ''
+              })`,
             );
+            if (recoveredPnl !== null && g.agent !== null) {
+              try {
+                const bus = getKernelBus();
+                bus.publish({
+                  type: BusEventType.OUTCOME,
+                  source: 'reconciler',
+                  symbol: g.dbTrade.symbol,
+                  payload: {
+                    agent: g.agent,
+                    side: normalizeDbSide(g.dbTrade.side),
+                    pnl: recoveredPnl,
+                    source: `reconciler_recovered:${g.ghostReason}`,
+                    ghostReason: g.ghostReason,
+                    tradeId: g.dbTrade.id,
+                  },
+                });
+              } catch (busErr) {
+                logger.debug('[RECONCILE] OUTCOME publish failed', {
+                  err: busErr instanceof Error ? busErr.message : String(busErr),
+                });
+              }
+            }
           } catch (updateErr) {
             logger.error(
-              `[RECONCILE] Failed to close ghost record ${dbTrade.id} for user ${userId}:`,
-              updateErr
+              `[RECONCILE] Failed to close ghost record ${g.dbTrade.id} for user ${userId}:`,
+              updateErr,
             );
           }
         }
       }
 
-      // ── 7. Balance drift check ───────────────────────────────────────────────
+      // ── 7. Balance drift check + auto-sync ───────────────────────────────────
+      //
+      // The exchange is the source of truth for equity. Drift between
+      // DB-recorded equity (latest autonomous_performance row) and
+      // exchange-reported equity has two sources:
+      //   (a) manual cash flows — user deposits/withdrawals on Poloniex UI
+      //   (b) trade closes the DB writer missed (FAT disabled, FAT crash,
+      //       or close-time race)
+      //
+      // Both should be papered over by an authoritative sync from the
+      // exchange. The drift WARN log is preserved as the audit trail —
+      // operator sees the magnitude/direction and can correlate it to
+      // their own deposit/withdrawal activity. The auto-INSERT below
+      // ensures downstream consumers (Arbiter sizing, dashboards,
+      // notional ceilings) see correct equity within one reconciler tick.
+      //
+      // 2026-05-05 incident: FAT was disabled but was the sole writer of
+      // autonomous_performance. DB equity stayed frozen at $113.27 for
+      // hours while exchange balance grew to $369.10 from manual
+      // deposits — Arbiter was sizing against the stale $113.
       if (exchangeBalance !== null && dbBalance !== null && exchangeBalance > 0) {
         const drift = Math.abs(exchangeBalance - dbBalance) / exchangeBalance;
         result.balanceDrift = drift;
@@ -250,6 +525,43 @@ class StateReconciliationService {
             dbBalance,
             driftPercent: (drift * 100).toFixed(2)
           });
+
+          // Auto-sync: write a fresh autonomous_performance row with the
+          // exchange balance. Recompute total_return/drawdown when we have
+          // initial_capital from the config; else NULL them out (operator
+          // sees drift in logs and historical rows preserve old values).
+          try {
+            const cfgRow = await pool.query(
+              `SELECT initial_capital FROM autonomous_trading_configs WHERE user_id = $1 LIMIT 1`,
+              [userId]
+            );
+            const initialCapital =
+              cfgRow.rows[0]?.initial_capital != null
+                ? parseFloat(cfgRow.rows[0].initial_capital)
+                : null;
+            const totalReturn =
+              initialCapital && initialCapital > 0
+                ? ((exchangeBalance - initialCapital) / initialCapital) * 100
+                : null;
+            const drawdown =
+              initialCapital && initialCapital > 0
+                ? Math.max(0, (initialCapital - exchangeBalance) / initialCapital) * 100
+                : null;
+            await pool.query(
+              `INSERT INTO autonomous_performance
+                 (user_id, current_equity, total_return, drawdown, timestamp)
+               VALUES ($1, $2, $3, $4, NOW())`,
+              [userId, exchangeBalance, totalReturn, drawdown]
+            );
+            logger.info(
+              `[RECONCILE] Synced DB equity to exchange for user ${userId}: ${dbBalance.toFixed(2)} -> ${exchangeBalance.toFixed(2)}`
+            );
+          } catch (syncErr) {
+            logger.error(
+              `[RECONCILE] Failed to sync DB equity for user ${userId}:`,
+              syncErr
+            );
+          }
         }
       }
 

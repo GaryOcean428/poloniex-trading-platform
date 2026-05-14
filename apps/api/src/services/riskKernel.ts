@@ -54,6 +54,11 @@ export interface KernelAccountState {
   unrealizedPnlUsdt: number;
   openPositions: KernelOpenPosition[];
   restingOrders: KernelRestingOrder[];
+  /** v0.8.8: cumulative margin currently committed across all open
+   *  positions (cross-margin sum). Caller computes from balance feed
+   *  — kernel stays pure sync. Optional with default 0 to keep
+   *  back-compat for callers not yet threaded with margin telemetry. */
+  usedMarginUsdt?: number;
 }
 
 /**
@@ -76,7 +81,8 @@ export type KernelVetoCode =
   | 'unrealized_drawdown_kill_switch'
   | 'symbol_max_leverage'
   | 'execution_mode_paused'
-  | 'execution_mode_paper_only_blocks_live';
+  | 'execution_mode_paper_only_blocks_live'
+  | 'margin_headroom';
 
 export type ExecutionMode = 'auto' | 'paper_only' | 'pause';
 
@@ -218,6 +224,78 @@ export function checkSymbolMaxLeverage(
   return { allowed: true };
 }
 
+// ───────── Check 6: Margin headroom reserve (v0.8.8) ─────────
+
+/**
+ * Reserve N% of equity as uncommitted margin so closes / reverses /
+ * counter-positions always have room. Without this, Monkey can keep
+ * entering tick-after-tick when basin direction stays strong, until
+ * available margin → 0. At that point Poloniex rejects new orders
+ * (incl. reverses' fresh-open leg) and the kernel hangs in a loop.
+ *
+ * 2026-05-08 incident: 6 short entries in 2min, margin shrinking
+ * 17→13→8 USDT per entry, eventually couldn't open counter-positions.
+ *
+ * Reads ``MONKEY_MIN_MARGIN_HEADROOM_PCT`` env var (0.0-1.0). Default
+ * 0.0 = no-op (back-compat). Operators opt in via env (e.g. 0.25 for
+ * a 25% reserve). Out-of-range values fail OPEN (allow trading) so an
+ * env typo doesn't silently freeze the kernel.
+ */
+export const DEFAULT_MIN_MARGIN_HEADROOM_PCT = 0.0;
+
+function getMinMarginHeadroomPct(): number {
+  const raw = Number(process.env.MONKEY_MIN_MARGIN_HEADROOM_PCT ?? '');
+  if (!Number.isFinite(raw) || raw < 0 || raw >= 1) return DEFAULT_MIN_MARGIN_HEADROOM_PCT;
+  return raw;
+}
+
+/** 2026-05-13 — mode-conditional headroom reserves.
+ *
+ * EXPLORATION (flat / fast scalp): need MORE headroom because each
+ *   scalp cycle reserves and releases margin rapidly; can't get stuck
+ *   without room to enter the next opportunity.
+ * INTEGRATION (slow trend): need LESS headroom — one big slow
+ *   position is fine with most margin committed.
+ *
+ * Returns null if no monkeyMode supplied (caller falls back to env). */
+export function modeMarginHeadroomPct(mode?: string): number | null {
+  if (!mode) return null;
+  switch (mode) {
+    case 'exploration': return 0.35;
+    case 'investigation': return 0.25;
+    case 'integration': return 0.15;
+    case 'drift': return 0.50;
+    default: return null;
+  }
+}
+
+export function checkMarginHeadroom(
+  order: KernelOrder,
+  state: KernelAccountState,
+  minHeadroomPct?: number,
+): KernelDecision {
+  const pct = minHeadroomPct ?? getMinMarginHeadroomPct();
+  // Fail OPEN on degenerate inputs: out-of-range pct (negative or ≥ 1)
+  // means an operator typo or programmer error — we don't want to
+  // silently freeze the kernel. Pct == 0 is the "disabled" case.
+  if (!Number.isFinite(pct) || pct <= 0 || pct >= 1) return { allowed: true };
+  if (state.equityUsdt <= 0) return { allowed: true };
+
+  const used = state.usedMarginUsdt ?? 0;
+  const newMargin = Math.abs(order.notional) / Math.max(order.leverage, 1);
+  const projectedUsed = used + newMargin;
+  const freePct = (state.equityUsdt - projectedUsed) / state.equityUsdt;
+
+  if (freePct < pct) {
+    return {
+      allowed: false,
+      code: 'margin_headroom',
+      reason: `Margin headroom ${(freePct * 100).toFixed(1)}% below ${(pct * 100).toFixed(0)}% reserve (equity=${state.equityUsdt.toFixed(2)} used_after=${projectedUsed.toFixed(2)} new_margin=${newMargin.toFixed(2)})`,
+    };
+  }
+  return { allowed: true };
+}
+
 // ───────── Composer ─────────
 
 export interface KernelContext {
@@ -227,6 +305,12 @@ export interface KernelContext {
   mode: ExecutionMode;
   /** From marketCatalog.getMaxLeverage(symbol) — exchange ceiling. */
   symbolMaxLeverage: SymbolMaxLeverage;
+  /** 2026-05-13 — Monkey cognitive mode for regime-conditional
+   *  headroom. EXPLORATION gets tighter reserve (35% — fast cycles
+   *  need room), INTEGRATION gets looser (15% — slow positions
+   *  commit margin longer). Optional: if absent, env default
+   *  (MONKEY_MIN_MARGIN_HEADROOM_PCT) applies. */
+  monkeyMode?: string;
 }
 
 /**
@@ -245,11 +329,16 @@ export function evaluatePreTradeVetoes(
   state: KernelAccountState,
   context: KernelContext,
 ): KernelDecision {
+  // 2026-05-13 — mode-conditional headroom override. When the kernel
+  // supplies monkeyMode (cognitive mode), use that to pick the reserve
+  // pct. Otherwise fall through to env default.
+  const headroomPct = modeMarginHeadroomPct(context.monkeyMode) ?? undefined;
   const checks: KernelDecision[] = [
     checkUnrealizedDrawdown(state),
     checkExecutionMode(context.isLive, context.mode),
     checkSelfMatch(order, state),
     checkPerSymbolExposure(order, state),
+    checkMarginHeadroom(order, state, headroomPct),
     checkSymbolMaxLeverage(order, context.symbolMaxLeverage),
   ];
   for (const d of checks) {

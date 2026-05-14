@@ -120,7 +120,11 @@ describe('currentPositionSize notional ceiling — non-binding cases', () => {
     expect((out.derivation as any).notional).toBe(0);
   });
 
-  it('lane cap binds before ceiling for trend (budget=0)', () => {
+  it('lane cap binds before ceiling for trend (budget=0.10 of $1000 = $100)', () => {
+    // Was: trend.budgetFrac = 0 → margin collapses to 0.
+    // 2026-05-05: trend on at 0.10 → margin cap is 10% of equity = $100.
+    // Notional ceiling at 4× $1000 = $4000 is far higher, so the lane cap
+    // is what binds first.
     const out = currentPositionSize(
       basinState(),
       1000,
@@ -131,7 +135,7 @@ describe('currentPositionSize notional ceiling — non-binding cases', () => {
       'trend',
     );
     const d = out.derivation as any;
-    // Trend lane budget=0 → lane cap forces margin=0.
-    expect(d.margin).toBe(0);
+    expect(d.margin).toBeLessThanOrEqual(100 + 1e-6);
+    expect(d.notional).toBeLessThanOrEqual(4000 + 1e-6);
   });
 });

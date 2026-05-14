@@ -30,6 +30,7 @@ from trading.risk_kernel import (  # noqa: E402
     PER_SYMBOL_EXPOSURE_MAX_MULTIPLIER,
     UNREALIZED_DRAWDOWN_KILL_THRESHOLD,
     check_execution_mode,
+    check_margin_headroom,
     check_per_symbol_exposure,
     check_self_match,
     check_symbol_max_leverage,
@@ -342,3 +343,120 @@ if __name__ == "__main__":
                 print(f"  ✗ {cls_name}.{name}: {exc}")
     print(f"\n{passed} passed, {len(failed)} failed")
     sys.exit(0 if not failed else 1)
+
+
+# ─── Check 6: margin headroom (v0.8.8) — TS riskKernel.ts parity ───
+
+import os as _os_for_headroom
+
+
+class TestMarginHeadroom:
+    def test_disabled_by_default_passes(self):
+        """min_headroom_pct=0 → no-op, allowed."""
+        r = check_margin_headroom(
+            _nominal_order(notional=1000, leverage=10),
+            _nominal_state(equity_usdt=100, used_margin_usdt=99),
+            min_headroom_pct=0.0,
+        )
+        assert r.allowed is True
+
+    def test_zero_equity_divide_guard(self):
+        r = check_margin_headroom(
+            _nominal_order(notional=100, leverage=10),
+            _nominal_state(equity_usdt=0.0, used_margin_usdt=0.0),
+            min_headroom_pct=0.25,
+        )
+        assert r.allowed is True
+
+    def test_at_reserve_passes(self):
+        # equity=100, used=70, new_margin=50/10=5 → projected=75 → 25% free
+        r = check_margin_headroom(
+            _nominal_order(notional=50, leverage=10),
+            _nominal_state(equity_usdt=100, used_margin_usdt=70),
+            min_headroom_pct=0.25,
+        )
+        assert r.allowed is True
+
+    def test_one_dollar_below_reserve_blocks(self):
+        # equity=100, used=70, new_margin=60/10=6 → projected=76 → 24% free
+        r = check_margin_headroom(
+            _nominal_order(notional=60, leverage=10),
+            _nominal_state(equity_usdt=100, used_margin_usdt=70),
+            min_headroom_pct=0.25,
+        )
+        assert r.allowed is False
+        assert r.code == "margin_headroom"
+
+    def test_used_alone_past_reserve_blocks(self):
+        r = check_margin_headroom(
+            _nominal_order(notional=10, leverage=10),
+            _nominal_state(equity_usdt=100, used_margin_usdt=80),
+            min_headroom_pct=0.25,
+        )
+        assert r.allowed is False
+
+    def test_high_leverage_low_margin_passes(self):
+        # equity=100, used=50, new_margin=200/20=10 → projected=60 → 40% free
+        r = check_margin_headroom(
+            _nominal_order(notional=200, leverage=20),
+            _nominal_state(equity_usdt=100, used_margin_usdt=50),
+            min_headroom_pct=0.25,
+        )
+        assert r.allowed is True
+
+    def test_out_of_range_pct_fails_open(self):
+        # pct=1.5 (≥ 1) → veto disabled, allowed
+        r = check_margin_headroom(
+            _nominal_order(notional=1000, leverage=10),
+            _nominal_state(equity_usdt=100, used_margin_usdt=99),
+            min_headroom_pct=1.5,
+        )
+        assert r.allowed is True
+
+    def test_env_var_unset_defaults_to_zero(self):
+        prev = _os_for_headroom.environ.pop("MONKEY_MIN_MARGIN_HEADROOM_PCT", None)
+        try:
+            r = check_margin_headroom(
+                _nominal_order(notional=1000, leverage=10),
+                _nominal_state(equity_usdt=100, used_margin_usdt=99),
+            )
+            assert r.allowed is True  # no env → 0.0 → no-op
+        finally:
+            if prev is not None:
+                _os_for_headroom.environ["MONKEY_MIN_MARGIN_HEADROOM_PCT"] = prev
+
+
+class TestMarginHeadroomComposer:
+    def test_exposure_fires_before_headroom(self):
+        # equity=100. notional=600 breaches per_symbol cap (=500).
+        # ALSO new_margin=60, used=50 → projected=110 → would breach headroom.
+        # Composer order: exposure (priority 4) before headroom (priority 5).
+        prev = _os_for_headroom.environ.get("MONKEY_MIN_MARGIN_HEADROOM_PCT")
+        _os_for_headroom.environ["MONKEY_MIN_MARGIN_HEADROOM_PCT"] = "0.25"
+        try:
+            order = _nominal_order(notional=600, leverage=10)
+            state = _nominal_state(equity_usdt=100, used_margin_usdt=50)
+            r = evaluate_pre_trade_vetoes(order, state, _nominal_context())
+            assert r.allowed is False
+            assert r.code == "per_symbol_exposure_cap"
+        finally:
+            if prev is None:
+                _os_for_headroom.environ.pop("MONKEY_MIN_MARGIN_HEADROOM_PCT", None)
+            else:
+                _os_for_headroom.environ["MONKEY_MIN_MARGIN_HEADROOM_PCT"] = prev
+
+    def test_headroom_blocks_when_exposure_passes(self):
+        # notional=200 within 5× cap. used=70, new_margin=20 → projected=90 → 10% free
+        prev = _os_for_headroom.environ.get("MONKEY_MIN_MARGIN_HEADROOM_PCT")
+        _os_for_headroom.environ["MONKEY_MIN_MARGIN_HEADROOM_PCT"] = "0.25"
+        try:
+            order = _nominal_order(notional=200, leverage=10)
+            state = _nominal_state(equity_usdt=100, used_margin_usdt=70)
+            r = evaluate_pre_trade_vetoes(order, state, _nominal_context())
+            assert r.allowed is False
+            assert r.code == "margin_headroom"
+        finally:
+            if prev is None:
+                _os_for_headroom.environ.pop("MONKEY_MIN_MARGIN_HEADROOM_PCT", None)
+            else:
+                _os_for_headroom.environ["MONKEY_MIN_MARGIN_HEADROOM_PCT"] = prev

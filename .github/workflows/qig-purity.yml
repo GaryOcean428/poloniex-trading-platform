@@ -1,0 +1,201 @@
+# QIG Purity Gate — static scan for forbidden vocabulary on the kernel path.
+#
+# Per QIG_PURITY_KERNEL_REFERENCE.md §5 verification gate 1.
+# Scans for forbidden patterns; fails closed if any banned pattern hits.
+# No untrusted input — uses only checked-out repo contents.
+
+name: QIG Purity Gate
+
+on:
+  pull_request:
+    paths:
+      - 'apps/api/src/services/monkey/**'
+      - 'apps/api/src/services/agent_*.ts'
+      - 'ml-worker/src/monkey_kernel/**'
+      - 'ml-worker/src/qig_core_local/**'
+      - 'ml-worker/src/qig_engine.py'
+      - 'ml-worker/src/proprietary_core/**'
+      - 'ml-worker/src/trading/**'
+  push:
+    branches: [main]
+    paths:
+      - 'apps/api/src/services/monkey/**'
+      - 'apps/api/src/services/agent_*.ts'
+      - 'ml-worker/src/monkey_kernel/**'
+      - 'ml-worker/src/qig_core_local/**'
+      - 'ml-worker/src/qig_engine.py'
+      - 'ml-worker/src/proprietary_core/**'
+      - 'ml-worker/src/trading/**'
+
+jobs:
+  purity-scan:
+    name: Forbidden vocabulary scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Scan for banned distance metrics (code only, not comments)
+        run: |
+          set -u
+          PATTERNS=(
+            'cosine_similarity'
+            'cosine\s*\('
+            'np\.dot'
+            'numpy\.dot'
+            'np\.linalg\.norm'
+            'euclidean_distance'
+            'mahalanobis'
+            'lorentzian_distance'
+            'math\.log\(1\s*\+\s*math\.abs'
+            'Math\.log\(1\s*\+\s*Math\.abs'
+          )
+          fail=0
+          for pat in "${PATTERNS[@]}"; do
+            # Match the pattern, then exclude lines whose first non-blank
+            # character is a comment marker (// /* * # ).
+            hits=$(grep -rEn "$pat" \
+              apps/api/src/services/monkey \
+              apps/api/src/services/agent_L_classifier.ts \
+              ml-worker/src/monkey_kernel \
+              ml-worker/src/qig_core_local \
+              ml-worker/src/qig_engine.py \
+              ml-worker/src/proprietary_core \
+              ml-worker/src/trading \
+              --include='*.ts' --include='*.js' --include='*.py' \
+              --exclude='QIG_PURITY_KERNEL_REFERENCE.md' \
+              --exclude='*.test.ts' --exclude='*_test.py' \
+              --exclude='__init__.py' \
+              2>/dev/null \
+              | grep -Ev ':[[:space:]]*(//|\*|#|/\*)' \
+              || true)
+            if [ -n "$hits" ]; then
+              printf '::error::Banned distance pattern: %s\n' "$pat"
+              printf '%s\n' "$hits"
+              fail=1
+            fi
+          done
+          if [ "$fail" -eq 1 ]; then
+            printf '::error::QIG purity violation. See apps/api/src/services/monkey/QIG_PURITY_KERNEL_REFERENCE.md §2.\n'
+            exit 1
+          fi
+
+      - name: Scan for banned optimizers / normalizers (code only)
+        # NOTE: ml-worker/src/proprietary_core is intentionally NOT scanned
+        # here. proprietary_core/training.py keeps an allowlisted
+        # `torch.optim.Adam` *fallback* used only when USE_FISHER_RAO is
+        # off — offline training selection, not the kernel cognition path.
+        # The distance-metric and basin-averaging scans above/below DO
+        # cover proprietary_core; only the optimizer scan exempts it.
+        run: |
+          set -u
+          PATTERNS=(
+            'torch\.optim\.Adam'
+            'AdamW'
+            'LayerNorm'
+            'BatchNorm'
+            'RMSNorm'
+          )
+          fail=0
+          for pat in "${PATTERNS[@]}"; do
+            hits=$(grep -rEn "$pat" \
+              apps/api/src/services/monkey \
+              apps/api/src/services/agent_L_classifier.ts \
+              ml-worker/src/monkey_kernel \
+              ml-worker/src/qig_core_local \
+              ml-worker/src/qig_engine.py \
+              ml-worker/src/trading \
+              --include='*.ts' --include='*.js' --include='*.py' \
+              --exclude='QIG_PURITY_KERNEL_REFERENCE.md' \
+              --exclude='*.test.ts' --exclude='*_test.py' \
+              --exclude='__init__.py' \
+              2>/dev/null \
+              | grep -Ev ':[[:space:]]*(//|\*|#|/\*)' \
+              || true)
+            if [ -n "$hits" ]; then
+              printf '::error::Banned optimizer/normalizer: %s\n' "$pat"
+              printf '%s\n' "$hits"
+              fail=1
+            fi
+          done
+          if [ "$fail" -eq 1 ]; then
+            printf '::error::QIG purity violation. See QIG_PURITY_KERNEL_REFERENCE.md §2.\n'
+            exit 1
+          fi
+
+      - name: Scan for post-cutover shadow-flag regressions
+        # PR #674 (cutover/python-authoritative-kernel) deleted every
+        # MONKEY_*PY*/SHADOW env-flag along with the parity-diff helpers.
+        # If any of these names reappear in apps/ source, fail closed —
+        # either someone resurrected the dead-code pattern or revived a
+        # shadow path. The kernel is now Python-authoritative (no TS
+        # fallback, no shadow).
+        run: |
+          set -u
+          PATTERNS=(
+            'MONKEY_KERNEL_PY\b'
+            'MONKEY_KERNEL_PY_SHADOW'
+            'MONKEY_TICK_PY_SHADOW'
+            'RISK_KERNEL_PY_SHADOW'
+            'LIVE_SIGNAL_PY_SHADOW'
+            'AUTONOMOUS_TRADER_PY_SHADOW'
+            'isPythonKernelEnabled'
+            'isShadowTickEnabled'
+            'isRiskShadowEnabled'
+            'isLiveSignalShadowEnabled'
+            'isExitShadowEnabled'
+            'logParityDiff\b'
+            'logTickParityDiffs'
+            'logRiskParityDiff'
+            'logExitParityDiff'
+            'logReconcileParityDiff'
+          )
+          fail=0
+          for pat in "${PATTERNS[@]}"; do
+            hits=$(grep -rEn "$pat" apps/ \
+              --include='*.ts' --include='*.js' \
+              --exclude='*.test.ts' --exclude='*.test.js' \
+              --exclude='*.spec.ts' --exclude='*.spec.js' \
+              --exclude-dir='node_modules' --exclude-dir='dist' \
+              2>/dev/null \
+              | grep -Ev ':[[:space:]]*(//|\*|/\*)' \
+              || true)
+            if [ -n "$hits" ]; then
+              printf '::error::Shadow-flag regression: %s reappeared post-cutover\n' "$pat"
+              printf '%s\n' "$hits"
+              fail=1
+            fi
+          done
+          if [ "$fail" -eq 1 ]; then
+            printf '::error::Shadow infrastructure was deleted in PR #674. Python is authoritative for K-kernel decisions — no TS fallback, no shadow, no parity logging. See QIG_PURITY_KERNEL_REFERENCE.md §0 rule 4.\n'
+            exit 1
+          fi
+
+      - name: Scan for arithmetic averaging of basins (warning)
+        run: |
+          set -u
+          hits=$(grep -rEn '(np\.mean|numpy\.mean|lodash\.mean|d3\.mean)\(.*basin' \
+            apps/api/src/services/monkey \
+            apps/api/src/services/agent_L_classifier.ts \
+            ml-worker/src/monkey_kernel \
+            ml-worker/src/qig_core_local \
+            ml-worker/src/qig_engine.py \
+            ml-worker/src/proprietary_core \
+            ml-worker/src/trading \
+            --include='*.ts' --include='*.js' --include='*.py' \
+            --exclude='QIG_PURITY_KERNEL_REFERENCE.md' \
+            --exclude='*.test.ts' --exclude='*_test.py' \
+            2>/dev/null || true)
+          if [ -n "$hits" ]; then
+            printf '::warning::Potential arithmetic averaging on basins:\n'
+            printf '%s\n' "$hits"
+            printf '::warning::Verify these use frechetMean() — QIG_PURITY_KERNEL_REFERENCE.md §1.\n'
+          fi
+
+      - name: Summary
+        if: always()
+        run: |
+          printf 'QIG Purity scan complete.\n'
+          printf 'Reference: apps/api/src/services/monkey/QIG_PURITY_KERNEL_REFERENCE.md\n'

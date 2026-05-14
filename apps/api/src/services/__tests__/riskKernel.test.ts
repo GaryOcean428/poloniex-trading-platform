@@ -12,6 +12,7 @@ import {
   PER_SYMBOL_EXPOSURE_MAX_MULTIPLIER,
   UNREALIZED_DRAWDOWN_KILL_THRESHOLD,
   checkExecutionMode,
+  checkMarginHeadroom,
   checkPerSymbolExposure,
   checkSelfMatch,
   checkSymbolMaxLeverage,
@@ -265,5 +266,91 @@ describe('evaluatePreTradeVetoes composition', () => {
       { isLive: false, mode: 'auto', symbolMaxLeverage: SOL_MAX_LEV },
     );
     expect(decision.code).toBe('symbol_max_leverage');
+  });
+});
+
+describe('checkMarginHeadroom (v0.8.8)', () => {
+  it('disabled by default — pct=0 → no-op, allowed', () => {
+    const state: KernelAccountState = { ...emptyAccount, equityUsdt: 100, usedMarginUsdt: 99 };
+    expect(checkMarginHeadroom(btcOrder, state, 0).allowed).toBe(true);
+  });
+
+  it('zero equity passes the divide-guard', () => {
+    const state: KernelAccountState = { ...emptyAccount, equityUsdt: 0, usedMarginUsdt: 0 };
+    expect(checkMarginHeadroom(btcOrder, state, 0.25).allowed).toBe(true);
+  });
+
+  it('exactly at reserve passes', () => {
+    // equity=100, used=70, new_margin=50/10=5 → projected=75 → 25% free → at threshold
+    const state: KernelAccountState = { ...emptyAccount, equityUsdt: 100, usedMarginUsdt: 70 };
+    const order: KernelOrder = { ...btcOrder, notional: 50, leverage: 10 };
+    expect(checkMarginHeadroom(order, state, 0.25).allowed).toBe(true);
+  });
+
+  it('one-dollar below reserve blocks', () => {
+    // equity=100, used=70, new_margin=60/10=6 → projected=76 → 24% free < 25%
+    const state: KernelAccountState = { ...emptyAccount, equityUsdt: 100, usedMarginUsdt: 70 };
+    const order: KernelOrder = { ...btcOrder, notional: 60, leverage: 10 };
+    const r = checkMarginHeadroom(order, state, 0.25);
+    expect(r.allowed).toBe(false);
+    expect(r.code).toBe('margin_headroom');
+  });
+
+  it('high leverage / low margin commit passes within reserve', () => {
+    // equity=100, used=50, new_margin=200/20=10 → projected=60 → 40% free
+    const state: KernelAccountState = { ...emptyAccount, equityUsdt: 100, usedMarginUsdt: 50 };
+    const order: KernelOrder = { ...btcOrder, notional: 200, leverage: 20 };
+    expect(checkMarginHeadroom(order, state, 0.25).allowed).toBe(true);
+  });
+
+  it('used alone past reserve blocks even tiny new entry', () => {
+    // equity=100, used=80 (already 20% free) → any new entry pushes below 25%
+    const state: KernelAccountState = { ...emptyAccount, equityUsdt: 100, usedMarginUsdt: 80 };
+    const order: KernelOrder = { ...btcOrder, notional: 10, leverage: 10 };
+    expect(checkMarginHeadroom(order, state, 0.25).allowed).toBe(false);
+  });
+
+  it('back-compat — usedMarginUsdt undefined treats as 0', () => {
+    // No usedMarginUsdt field. equity=100, new_margin=50/10=5 → projected=5 → 95% free
+    const state: KernelAccountState = { ...emptyAccount, equityUsdt: 100 };
+    const order: KernelOrder = { ...btcOrder, notional: 50, leverage: 10 };
+    expect(checkMarginHeadroom(order, state, 0.25).allowed).toBe(true);
+  });
+
+  it('out-of-range env value fails OPEN (no veto)', () => {
+    // pct=1.5 (>1) → veto disabled, allowed
+    const state: KernelAccountState = { ...emptyAccount, equityUsdt: 100, usedMarginUsdt: 99 };
+    expect(checkMarginHeadroom(btcOrder, state, 1.5).allowed).toBe(true);
+  });
+});
+
+describe('evaluatePreTradeVetoes — margin_headroom priority', () => {
+  it('exposure cap fires before headroom when both would block', () => {
+    // notional 600 breaches 5× cap (=500); also breaches headroom.
+    // Composer order: exposure (priority 4) before headroom (priority 5).
+    const state: KernelAccountState = { ...emptyAccount, equityUsdt: 100, usedMarginUsdt: 50 };
+    const order: KernelOrder = { ...btcOrder, notional: 600, leverage: 10 };
+    process.env.MONKEY_MIN_MARGIN_HEADROOM_PCT = '0.25';
+    try {
+      const r = evaluatePreTradeVetoes(order, state, autoContext);
+      expect(r.allowed).toBe(false);
+      expect(r.code).toBe('per_symbol_exposure_cap');
+    } finally {
+      delete process.env.MONKEY_MIN_MARGIN_HEADROOM_PCT;
+    }
+  });
+
+  it('headroom blocks when exposure passes', () => {
+    // notional 200 within cap. used=70, new_margin=20 → projected=90 → 10% free < 25%
+    const state: KernelAccountState = { ...emptyAccount, equityUsdt: 100, usedMarginUsdt: 70 };
+    const order: KernelOrder = { ...btcOrder, notional: 200, leverage: 10 };
+    process.env.MONKEY_MIN_MARGIN_HEADROOM_PCT = '0.25';
+    try {
+      const r = evaluatePreTradeVetoes(order, state, autoContext);
+      expect(r.allowed).toBe(false);
+      expect(r.code).toBe('margin_headroom');
+    } finally {
+      delete process.env.MONKEY_MIN_MARGIN_HEADROOM_PCT;
+    }
   });
 });
