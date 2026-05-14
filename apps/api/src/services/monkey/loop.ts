@@ -31,7 +31,7 @@ import { getCurrentExecutionMode } from '../executionModeService.js';
 import { getMaxLeverage, getPrecisions } from '../marketCatalog.js';
 import mlPredictionService from '../mlPredictionService.js';
 import poloniexFuturesService from '../poloniexFuturesService.js';
-import { resolveExchangePositionSide } from '../exchangePositionSide.js';
+import { fetchAccountContext } from './loop_account.js';
 import {
   evaluatePreTradeVetoes,
   type KernelAccountState,
@@ -145,276 +145,28 @@ import {
   getMaxContractsPerPosition,
 } from './positionContractsBound.js';
 
-/** Default Monkey watchlist — matches liveSignalEngine for side-by-side. */
-const DEFAULT_SYMBOLS = ['BTC_USDT_PERP', 'ETH_USDT_PERP'];
-// v0.4: faster tick so scalp TP/SL exits catch sub-minute wiggles.
-// Full perception runs per tick; DB + compute cost is modest.
-const DEFAULT_TICK_MS = Number(process.env.MONKEY_TICK_MS) || 30_000;
-/** OHLCV window ml-worker also uses. */
-const OHLCV_LOOKBACK = 200;
+// Module-level constants + kill-switch and the loop type definitions
+// were extracted to loop_constants.ts / loop_types.ts (2026-05-14
+// modularization) — no behavioural change, loop.ts is now the
+// orchestration spine + the MonkeyKernel class only.
+import {
+  DEFAULT_SYMBOLS,
+  DEFAULT_TICK_MS,
+  OHLCV_LOOKBACK,
+  HISTORY_MAX,
+  REWARD_HALF_LIFE_MS,
+  REWARD_QUEUE_MAX,
+  REGIME_STABILITY_TICKS_FOR_EXIT,
+  BUS_RING_CAP,
+  isTradingPaused,
+} from './loop_constants.js';
+import type {
+  ActivityReward,
+  MonkeyKernelConfig,
+  SymbolState,
+} from './loop_types.js';
 
-/** Running history for Loop 1 self-observation + f_health trend. */
-const HISTORY_MAX = 100;
-
-/**
- * ActivityReward (v0.6.7) — pantheon-chat autonomic pattern port.
- *
- * When a trade closes with realized P&L, the kernel PUSHES one of these
- * onto its pendingRewards queue — it does NOT set dopamine directly.
- * Each tick, the tick loop sums recent rewards with exponential decay
- * and passes the result to computeNeurochemicals as an INPUT. The
- * chemical is still derived, just from a richer state.
- *
- * Preserves P5 Autonomy + P14 Variable Separation: rewards are STATE
- * events; neurotransmitters are derived VIEWS; nothing externally
- * writes the chemical levels.
- */
-interface ActivityReward {
-  source: string;           // 'trade_close' | 'witnessed_liveSignal' | ...
-  symbol?: string;
-  dopamineDelta: number;    // reward magnitude for dopamine boost
-  serotoninDelta: number;   // mood/stability boost (calm-close reward)
-  endorphinDelta: number;   // peak-state reward (win-in-high-coupling regime)
-  realizedPnlUsdt: number;  // source P&L (for audit)
-  pnlFraction: number;      // P&L / margin, signed
-  atMs: number;             // when the event landed
-}
-
-/** Half-life for reward decay (ms). Rewards older than ~3 × this are ≈ 0. */
-const REWARD_HALF_LIFE_MS = 20 * 60_000;  // 20 min
-
-/** Max rewards retained; FIFO eviction. */
-const REWARD_QUEUE_MAX = 50;
-
-/**
- * v0.8.7 regime-hysteresis — minimum number of consecutive ticks where
- * regimeNow != regimeAtOpen before the regime_change exit can fire. The
- * Python kernel reads this from the parameter registry as
- * ``executive.regime_stability_ticks_for_exit``; TS has no parameter
- * registry yet, so the constant is the default. Default 3: a flicker
- * (1-2 tick mode divergence) cannot trigger the exit alone — the
- * kernel must read the new regime stably for at least 3 ticks AND the
- * basin must have moved more than 1/π in Fisher-Rao distance from the
- * entry anchor.
- */
-const REGIME_STABILITY_TICKS_FOR_EXIT =
-  Number(process.env.MONKEY_REGIME_STABILITY_TICKS_FOR_EXIT) || 3;
-
-/**
- * v0.8.7 kill switch — when MONKEY_TRADING_PAUSED=true, gate
- * entry-order placement only. Exit orders (scalp_exit, auto_flatten,
- * hard SL, rejust exits) are NOT gated; existing positions must close
- * cleanly during deploy/incident response. Default false (no pause).
- *
- * Reads at order-placement time (live, not cached at startup) so the
- * operator can flip the env var on Railway without redeploying.
- */
-function isTradingPaused(): boolean {
-  return process.env.MONKEY_TRADING_PAUSED === 'true';
-}
-
-
-/**
- * Per-kernel configuration (v0.6b). Different sub-Monkeys differ in
- * timeframe, cadence, instance identity, and how they size relative to
- * their cap share. All share the underlying basin/executive/NC math.
- */
-export interface MonkeyKernelConfig {
-  /** Unique kernel identifier — written as `kernel=<id>` in trade reason and to monkey_basin_sync. */
-  instanceId: string;
-  /** Candle timeframe she perceives on. '5m' | '15m' | '1m' etc. */
-  timeframe: string;
-  /** Base tick cadence (ms) — mode profiles still adapt within this. */
-  tickMs: number;
-  /** Optional symbol override; defaults to DEFAULT_SYMBOLS. */
-  symbols?: string[];
-  /** Human label for logs. */
-  label?: string;
-  /** Fraction-of-margin cap. Two parallel kernels at 0.5 each stay under
-   *  the risk-kernel per-symbol 5× exposure cap when both are open. */
-  sizeFraction?: number;
-}
-
-interface SymbolState {
-  lastBasin: Basin;
-  /** Identity basin — starts uniform, crystallizes after N lived trades per §3.4 */
-  identityBasin: Basin;
-  /** Rolling Φ history for delta computation. */
-  phiHistory: number[];
-  /** Rolling f_health for auto-flatten trend check. */
-  fHealthHistory: number[];
-  /** Rolling identity-drift history (Fisher-Rao) for mode detection. */
-  driftHistory: number[];
-  /** Basin trajectory for repetition detection (Loop 1). */
-  basinHistory: Basin[];
-  /** Working memory (qig-cache) for recent bubbles. */
-  wm: WorkingMemory;
-  /** Kappa estimate — adaptive from basin velocity × coupling. */
-  kappa: number;
-  /** Active bubble id for the currently open position (if any). */
-  openBubbleId: string | null;
-  sessionTicks: number;
-  /** Last mode (for transition logging). */
-  lastMode: MonkeyMode | null;
-  /** Mode-specific tickMs last applied — used by adaptive-tick governor. */
-  currentTickMs: number;
-  /** v0.6.1: high-water-mark unrealized PnL on the currently-held trade.
-   *  Reset to null on close. Survives kernel restarts? No — will re-peak
-   *  as ticks come in, which is safer than over-claiming. */
-  peakPnlUsdt: number | null;
-  /** Trade id of the position currently being peak-tracked. If the open
-   *  trade id changes (new position), peak resets. */
-  peakTrackedTradeId: string | null;
-  /** v0.6.2: most recent entry time for this position (initial or DCA add).
-   *  Used for DCA cooldown gating. Null when flat. */
-  lastEntryAtMs: number | null;
-  /** v0.6.2: count of DCA adds on current position (0 = only initial entry). */
-  dcaAddCount: number;
-  /** Proposal #9: SL defer counter. When a hammer/inverted-hammer is
-   *  detected against a long position about to SL, set this to N
-   *  (default 2). Each tick decrements it. While > 0, scalp_exit
-   *  with exitTypeBit === -1 (stop loss) is suppressed.
-   *
-   *  Heuristic gate; impurity scoped to the SL-defer path only. */
-  slDeferRemainingTicks: number;
-  /** Proposal #4: sustained tape-flip streak counter. Increments
-   *  each tick where ``alignmentNow <= -0.25`` (bearish vs the held
-   *  side); resets when alignment recovers. ``shouldProfitHarvest``
-   *  consumes this — trend-flip harvest fires only when streak >= 3
-   *  so a single noise tick can't trigger an exit. */
-  tapeFlipStreak: number;
-  /** Proposal #10 — per-lane bookkeeping. Each lane independently
-   *  tracks its peak unrealized PnL, the trade id it's peak-tracking,
-   *  and its tape-flip streak so a swing-long's history never bleeds
-   *  into a scalp-short on the same symbol. Lanes that never held
-   *  state stay absent from these maps; reads default to the legacy
-   *  scalar values for back-compat. */
-  peakPnlUsdtByLane: Record<string, number | null>;
-  peakTrackedTradeIdByLane: Record<string, string | null>;
-  tapeFlipStreakByLane: Record<string, number>;
-  /** Held-position re-justification anchors — per-lane (regime, Φ)
-   *  snapshots taken at the moment a position opens. The kernel uses
-   *  these as the geometric anchor for "is current state still
-   *  consonant with entry?". Cleared on position close in that lane.
-   *  Same per-lane shape as peakPnlUsdtByLane above so future multi-lane
-   *  positions keep independent rejustification anchors. */
-  regimeAtOpenByLane: Record<string, string>;
-  phiAtOpenByLane: Record<string, number>;
-  /** Basin coordinate at entry — per-lane snapshot for the regime
-   *  hysteresis basin-distance gate (mirrors Python PR #631). Without
-   *  this anchor the regime gate falls back to streak-only. */
-  basinAtOpenByLane: Record<string, Basin>;
-  /** Consecutive ticks where regimeNow has differed from regimeAtOpen
-   *  for the lane. Driven by the rejustification call site — increments
-   *  on divergent tick, resets to 0 when regime returns to anchor. */
-  regimeChangeStreakByLane: Record<string, number>;
-  /** Wall-clock entry timestamp (ms) per lane. Used by the stale-bleed
-   *  gate: positions held longer than STALE_BLEED_MIN_DURATION_S at
-   *  worse than STALE_BLEED_ROI_THRESHOLD ROI exit. Cleared on close. */
-  entryTimeMsByLane: Record<string, number>;
-  /** Rolling (Φ, I_Q) history for the Integration motivator's CV
-   *  computation. Capped to 20 entries by computeMotivators's default
-   *  integrationWindow; we keep a wider buffer here for forward
-   *  extensibility. < 2 entries → integration motivator = 0. */
-  integrationHistory: Array<[number, number]>;
-  /** v0.8.7e: latest computed basinDir + tapeTrend from processSymbol, with
-   *  timestamp. Exposed via getLatestBasinSnapshot() for LiveSignal's
-   *  inter-engine agreement gate. Null until the first tick completes. */
-  latestBasinSnapshot: {
-    basinDir: number;
-    tapeTrend: number;
-    computedAtMs: number;
-  } | null;
-  /** v0.8.8 per-agent reactive cognition state. Each of K/M/T/L gets
-   *  its own emotion stack, neurochemistry, decision/outcome rings, and
-   *  bus event cursor. Outcome-driven (not basin-geometry-driven) —
-   *  each agent learns from its OWN PnL track record on this symbol.
-   *
-   *  Used to:
-   *    - Modulate per-agent sizing/conviction via riskModulator (dopamine
-   *      on wins boosts size; frustration on losses dampens)
-   *    - Power foresight + cross-agent observation hooks
-   *    - Surface per-agent self-observation (winRate, alignmentRate)
-   *
-   *  See per_agent_state.ts for the canonical update transforms. */
-  agentStates: Record<AgentLabel, PerAgentState>;
-  /** Recent bus events for cross-agent observation context. Bounded
-   *  ring; older events drop. Each agent reads from this on its tick. */
-  recentBusEvents: import('./kernel_bus.js').BusEvent[];
-  /** 2026-05-11 — wall-clock ms of the last force-harvest by side. Used
-   *  to give L one tick of "wiggle room" after a sweep so the next
-   *  entry sees a market that has actually moved, rather than re-entering
-   *  at a price within fractions of the close. Window is governed by
-   *  MONKEY_AGENT_L_HARVEST_COOLDOWN_MS (default 60 s — one tick).
-   *  Fees are not a concern (user has fee-free subscription); this is
-   *  about market-microstructure breathing room. */
-  lForceHarvestAtMsBySide: { long: number | null; short: number | null };
-  /** 2026-05-11 — ring of last N=5 L force-harvest PnLs on this symbol.
-   *  Consumed by the adaptive harvest threshold: when L is on a hot
-   *  streak (all 5 positive AND dopamine high), threshold widens from
-   *  0.3% to 0.6% to let winners run. Oldest entry drops on push. */
-  recentLHarvestPnls: number[];
-  /** 2026-05-13 — horizon-bounded exit per Change B.
-   *
-   *  Tracks the wall-clock ms of the most recent L decision that
-   *  confirmed (or proposed) the side. The L classifier's prediction
-   *  has a forward horizon (default 120 ticks = 60 min on 30s); once
-   *  that horizon elapses without L re-confirming, the position is
-   *  past its forecast window and must exit unless extended.
-   *
-   *  Updated whenever L decides enter_long/enter_short on this side
-   *  (regardless of whether the entry executes — gate/veto outcomes
-   *  don't affect the underlying L conviction). Cleared on harvest
-   *  so the next entry starts a fresh horizon clock.
-   */
-  lLastConfirmedAtMsBySide: { long: number | null; short: number | null };
-  /** 2026-05-13 — trailing regime stop anchor.
-   *
-   *  Mode at L's most recent confirmation per side. A high-leverage
-   *  scalp opened in EXPLORATION should exit if the kernel transitions
-   *  to INTEGRATION (slow trend regime) because the 50× leverage was
-   *  justified by the flat-tape thesis that no longer holds. Mirror
-   *  applies for a slow trend position entering EXPLORATION (less
-   *  catastrophic but the sizing/horizon assumptions are now wrong).
-   *
-   *  Cleared on harvest. */
-  lModeAtConfirmedBySide: { long: string | null; short: string | null };
-  /** 2026-05-13 — Multi-timeframe L state.
-   *
-   *  Per-timeframe down-sampled basin histories + agreement clocks.
-   *  Sampled on every tick (cheap conditional appends); mtfDecide
-   *  runs per tick once warm. Phase 1 shipped observation-only;
-   *  Phase 2 wires entry gating + size multiplier + longest-agreeing
-   *  horizon exit.
-   *
-   *  See mtfLClassifier.ts. */
-  mtfState: import('./mtfLClassifier.js').MTFState;
-  /** 2026-05-13 MTF Phase 2 — longest-agreeing timeframe label at
-   *  position open, per side. Used by the longest-horizon exit
-   *  policy: position must exit when this timeframe's horizon
-   *  expires without re-confirmation. */
-  mtfLongestAgreeingBySide: {
-    long: import('./mtfLClassifier.js').TimeframeLabel | null;
-    short: import('./mtfLClassifier.js').TimeframeLabel | null;
-  };
-  /** 2026-05-13 — continuous regime score r ∈ [0,1] from
-   *  regimeSizing.regimeScore(). 1=flat, 0=trending. Recomputed each
-   *  tick. Consumed by:
-   *    - trailing regime DRIFT stop (per-side rAtEntry snapshot;
-   *      fires when |rNow - rAtEntry| exceeds threshold even within
-   *      the same discrete mode)
-   *    - sanity bounds on mode-derived leverage and headroom
-   *  Null until first compute (insufficient history).  */
-  rScoreCurrent: number | null;
-  /** Per-side snapshot of r at the most recent L entry confirmation.
-   *  Trailing regime drift fires via regimeSizing.trailingRegimeStop().
-   *  Cleared on harvest. */
-  rScoreAtEntryBySide: { long: number | null; short: number | null };
-}
-
-/** Cap the recent-bus-event ring at this size — anything older than
- *  the bus window doesn't influence current decisions. */
-const BUS_RING_CAP = 32;
+export type { MonkeyKernelConfig };
 
 /**
  * MonkeyKernel — the top-level kernel that ticks Monkey.
@@ -857,7 +609,7 @@ export class MonkeyKernel extends EventEmitter {
       openPositions,
       heldSide: exchangeHeldSide,
       availableEquity,
-    } = await this.fetchAccountContext(symbol);
+    } = await fetchAccountContext(symbol);
 
     // ── PYTHON-AUTHORITATIVE KERNEL TICK (PR #674 Phase 3 cutover) ──
     //
@@ -1046,7 +798,7 @@ export class MonkeyKernel extends EventEmitter {
     const chosenLane: LaneType = pyDecision.lane;
     const positionLane: 'scalp' | 'swing' | 'trend' =
       chosenLane === 'observe' ? 'swing' : chosenLane;
-    const rollingStats = await this.getKellyRollingStats('K', positionLane);
+    const rollingStats = await getKellyRollingStats('K', positionLane);
     void rollingStats;
 
     const entryThr = {
@@ -2740,14 +2492,6 @@ export class MonkeyKernel extends EventEmitter {
    * Look up Monkey's most recent open trade row for a symbol. Used by
    * the scalp-exit gate (v0.4) to compute unrealized P&L.
    */
-  /** Delegates to the module-level exported getKellyRollingStats. */
-  private async getKellyRollingStats(
-    agent: string,
-    lane?: LaneType,
-  ): Promise<{ winRate: number; avgWin: number; avgLoss: number } | null> {
-    return getKellyRollingStats(agent, lane);
-  }
-
   private async findOpenMonkeyTrade(symbol: string): Promise<
     | { id: string; entry_price: string; quantity: string; leverage: number; order_id: string | null; side: 'long' | 'short'; lane: 'scalp' | 'swing' | 'trend' }
     | null
@@ -4395,60 +4139,6 @@ export class MonkeyKernel extends EventEmitter {
     }
   }
 
-  private async fetchAccountContext(symbol: string): Promise<{
-    equityFraction: number;
-    marginFraction: number;
-    openPositions: number;
-    heldSide: 'long' | 'short' | null;
-    availableEquity: number;
-  }> {
-    try {
-      const userRow = await pool.query(
-        `SELECT user_id FROM user_api_credentials WHERE exchange = 'poloniex' LIMIT 1`,
-      );
-      const userId = (userRow.rows[0] as { user_id?: string } | undefined)?.user_id;
-      if (!userId) {
-        return { equityFraction: 0, marginFraction: 0, openPositions: 0, heldSide: null, availableEquity: 0 };
-      }
-      const credentials = await apiCredentialsService.getCredentials(userId, 'poloniex');
-      if (!credentials) {
-        return { equityFraction: 0, marginFraction: 0, openPositions: 0, heldSide: null, availableEquity: 0 };
-      }
-      const [bal, positions] = await Promise.all([
-        poloniexFuturesService.getAccountBalance(credentials),
-        poloniexFuturesService.getPositions(credentials),
-      ]);
-      const equity = Number(bal?.totalBalance ?? bal?.eq ?? 0);
-      const upl = Number(bal?.unrealizedPnL ?? bal?.upl ?? 0);
-      const equityFraction = equity > 0 ? Math.min(1, equity / 27.15) : 0;
-      const marginFraction = equity > 0 ? Math.min(1, Math.max(0, (equity - Number(bal?.availableBalance ?? 0)) / equity)) : 0;
-      const positionsList = Array.isArray(positions) ? positions : [];
-      const forSymbol = positionsList.find((p: Record<string, unknown>) =>
-        String(p.symbol ?? '') === symbol && Math.abs(Number(p.qty ?? p.size ?? 0)) > 0);
-      // Side resolution: posSide-first, qty-sign fallback (shared helper).
-      // The prior "sign of qty is authoritative" assumption was wrong for
-      // HEDGE accounts — qty is a POSITIVE magnitude there and the side
-      // lives in posSide. It misread every HEDGE short as a long, so when
-      // a position was reversed long→short on the exchange the kernel
-      // stayed stuck on `held long`, could not DCA, and was paralysed
-      // (2026-05-14 incident).
-      const heldSide: 'long' | 'short' | null = forSymbol
-        ? resolveExchangePositionSide(forSymbol as Record<string, unknown>)
-        : null;
-      return {
-        equityFraction,
-        marginFraction,
-        openPositions: positionsList.length,
-        heldSide,
-        availableEquity: Number(bal?.availableBalance ?? bal?.availMgn ?? equity),
-      };
-    } catch (err) {
-      logger.debug('[Monkey] fetchAccountContext failed (fail-soft)', {
-        err: err instanceof Error ? err.message : String(err),
-      });
-      return { equityFraction: 0, marginFraction: 0, openPositions: 0, heldSide: null, availableEquity: 0 };
-    }
-  }
 }
 
 // ───────────── Singletons (v0.6b multi-kernel) ─────────────
