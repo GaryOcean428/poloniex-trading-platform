@@ -44,6 +44,7 @@ import { getMaxLeverage, getPrecisions } from './marketCatalog.js';
 import mlPredictionService from './mlPredictionService.js';
 import { monitoringService } from './monitoringService.js';
 import poloniexFuturesService from './poloniexFuturesService.js';
+import { resolveExchangePositionSide } from './exchangePositionSide.js';
 import {
   bucketOfLeverage,
   sampleBeta,
@@ -993,18 +994,16 @@ export class LiveSignalEngine extends EventEmitter {
       const equityUsdt = Number(balance?.totalBalance ?? balance?.eq ?? 0);
       const unrealizedPnlUsdt = Number(balance?.unrealizedPnL ?? balance?.upl ?? 0);
 
-      // v0.8.7d-7 fix: Poloniex v3 `side` field is next-action direction
-      // (e.g. "SELL" for a SHORT position — the order side that opened it
-      // and the same side that would close it in one-way mode). Position
-      // direction is the SIGN of qty. Previous code misread "SELL" as not
-      // "short" and classified shorts as longs, causing LiveSignal's
-      // signal-flip exit logic to treat BUY signals as confirming a long
-      // (so BUY on a SHORT never triggered exit).
+      // Side resolution: posSide-first, qty-sign fallback (shared helper).
+      // Pure qty-sign was wrong for HEDGE accounts — qty is a positive
+      // magnitude there and the side is in posSide — so every HEDGE short
+      // was classified `long`, and LiveSignal's signal-flip exit logic
+      // treated a BUY signal as confirming the (actually-short) position
+      // instead of triggering an exit.
       const openPositions = (Array.isArray(positions) ? positions : []).map((p: Record<string, unknown>) => {
-        const qtyNum = Number(p.qty ?? p.size ?? 0);
         return {
           symbol: String(p.symbol ?? ''),
-          side: (qtyNum < 0 ? 'short' : 'long') as 'long' | 'short',
+          side: resolveExchangePositionSide(p),
           notional: Math.abs(Number(p.notional ?? p.size ?? 0)),
         };
       }).filter((p) => p.symbol.length > 0);
