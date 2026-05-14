@@ -1272,15 +1272,29 @@ export class LiveSignalEngine extends EventEmitter {
     }
 
     // 2. Market order — this is the point of no return.
+    //
+    // 2026-05-14 fix: forward ``posSide`` (computed above from
+    // ``positionDirectionMode``) via the third-arg opts so the request
+    // body carries ``posSide: LONG | SHORT`` on HEDGE accounts. Without
+    // it, ``poloniexFuturesService.placeOrder`` defaults the body to
+    // ``posSide: BOTH``, which Poloniex v3 rejects on HEDGE accounts
+    // with code=11011 "Position mode and posSide do not match" — the
+    // exact failure observed since ~2026-05-14T00:53Z on prod. setLeverage
+    // already forwards posSide just above (line 1192) so the leverage
+    // call succeeded while the order itself failed every tick.
     let orderId: string | undefined;
     try {
-      const exchangeOrder = await poloniexFuturesService.placeOrder(credentials, {
-        symbol: order.symbol,
-        side: exchangeSide,
-        type: 'market',
-        size: formattedSize,
-        lotSize: symbolLotSize,
-      });
+      const exchangeOrder = await poloniexFuturesService.placeOrder(
+        credentials,
+        {
+          symbol: order.symbol,
+          side: exchangeSide,
+          type: 'market',
+          size: formattedSize,
+          lotSize: symbolLotSize,
+        },
+        posSide ? { posSide } : {},
+      );
       // Poloniex v3 futures returns the exchange order id as `ordId`.
       // Keep `orderId`/`id` fallbacks so mocked tests + any future
       // adapter variants still work without changing this line.
