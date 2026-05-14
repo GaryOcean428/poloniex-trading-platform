@@ -42,6 +42,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 from ensemble_predictor import EnsemblePredictor
 from proprietary_core.regime import RegimeDetector  # noqa: F401  (re-exported via StrategyLoop)
 from proprietary_core.strategy_loop import MarketRegime, StrategyLoop  # noqa: F401  (MarketRegime re-exported for ops)
+from signal_mapping import regime_to_direction, strategy_to_signal
 from utils.redis_listener import (
     ListenerConfig,
     env_redis_url,
@@ -194,55 +195,9 @@ def _start_trade_outcome_listener():
 # /kernels/core/health.py::_run_prediction)
 # ---------------------------------------------------------------------------
 
-def _strategy_to_signal(strategy_value: str, regime: str) -> dict[str, Any]:
-    """Translate StrategyLoop output into the signal format expected by polytrade-be.
-
-    Identical to kernels/core/health.py:_strategy_to_signal. Output shape
-    must stay byte-for-byte compatible — polytrade-be's mlPredictionService
-    is calibrated against this mapping.
-    """
-    strategy = strategy_value.lower()
-    regime_l = regime.lower() if regime else "unknown"
-
-    action_map = {
-        "momentum": "BUY",
-        "breakout": "BUY",
-        "trend_follow": "BUY",
-        "mean_revert": "SELL",
-        "cash": "HOLD",
-    }
-    strength_map = {
-        "momentum": 0.75,
-        "breakout": 0.65,
-        "trend_follow": 0.70,
-        "mean_revert": 0.60,
-        "cash": 0.30,
-    }
-
-    action = action_map.get(strategy, "HOLD")
-    strength = strength_map.get(strategy, 0.30)
-    return {
-        "signal": action,
-        "strength": strength,
-        "reason": f"regime={regime_l} strategy={strategy}",
-    }
-
-
-def _regime_to_direction(regime: str, trend_strength: float) -> str:
-    """Map (regime, trend_strength) → BULLISH / BEARISH / NEUTRAL.
-
-    Identical to kernels/core/health.py:_regime_to_direction.
-    """
-    regime_l = (regime or "").lower()
-    if regime_l == "creator" and trend_strength > 0.1:
-        return "BULLISH"
-    if regime_l == "preserver" and trend_strength > 0.15:
-        return "BULLISH"
-    if regime_l in ("dissolver",):
-        return "NEUTRAL"
-    if trend_strength < -0.05:
-        return "BEARISH"
-    return "NEUTRAL"
+# strategy_to_signal + regime_to_direction live in signal_mapping.py —
+# pure functions, extracted so they unit-test without importing the ML
+# stack. The 2026-05-14 direction-blindness fix lives there.
 
 
 def _handle_predict_strategyloop(payload: dict) -> dict:
@@ -292,12 +247,17 @@ def _handle_predict_strategyloop(payload: dict) -> dict:
     regime_val = decision.regime.regime.value if decision.regime else "dissolver"
     confidence_raw = decision.regime.confidence if decision.regime else 0.4
     trend_strength = decision.regime.trend_strength if decision.regime else 0.0
-    direction = _regime_to_direction(regime_val, trend_strength)
+    direction = regime_to_direction(regime_val, trend_strength)
     confidence_pct = int(min(max(confidence_raw * 100, 10), 95))
 
     if action == "signal":
-        sig = _strategy_to_signal(decision.selected_strategy.value, regime_val)
-        sig["strength"] = round(confidence_raw, 4)
+        sig = strategy_to_signal(
+            decision.selected_strategy.value, regime_val, direction,
+        )
+        # Preserve the model's own confidence as strength — but never for
+        # a HOLD (no direction → no conviction).
+        if sig["signal"] != "HOLD":
+            sig["strength"] = round(confidence_raw, 4)
         return sig
 
     horizon_decay = {"1h": 1.0, "4h": 0.85, "24h": 0.70}
