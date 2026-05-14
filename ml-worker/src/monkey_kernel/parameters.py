@@ -270,10 +270,24 @@ class ParameterRegistry:
         must never execute on the asyncio event-loop thread. Pure
         synchronous psycopg; raises on any DB/parse failure for _load to
         catch.
+
+        sslmode=disable: the Railway internal network
+        (postgres.railway.internal) is already private — SSL adds
+        nothing — and psycopg[binary]'s bundled libpq+openssl can
+        SEGFAULT during the TLS handshake when its openssl symbols
+        collide with the other native extensions loaded in the
+        ml-worker process (TensorFlow, scipy, sklearn, h5py). Skipping
+        the handshake avoids that crash path. Only appended when the
+        DSN doesn't already pin sslmode.
         """
         import psycopg
 
-        with psycopg.connect(self._dsn) as conn:
+        dsn = self._dsn
+        if dsn and "sslmode=" not in dsn:
+            sep = "&" if "?" in dsn else "?"
+            dsn = f"{dsn}{sep}sslmode=disable"
+
+        with psycopg.connect(dsn) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -323,6 +337,26 @@ class ParameterRegistry:
             if not self._loaded:
                 logger.warning(
                     "DATABASE_URL not set; registry will use defaults only"
+                )
+                self._loaded = True
+            return
+
+        # 2026-05-14: the live DB load is GATED OFF by default. psycopg's
+        # binary wheel bundles libpq+openssl; in the ml-worker process
+        # (TensorFlow / scipy / sklearn / h5py also loaded) the connect()
+        # path SEGFAULTS the whole process — an uncatchable native crash
+        # that restart-loops the service. Until the connect path is
+        # proven safe in that environment (sslmode=disable + a clean
+        # endpoint smoke-test), the registry runs on its hardcoded
+        # defaults — its documented fail-soft mode, and per migration
+        # 047 equal to the current DB values anyway. Flip
+        # MONKEY_PARAM_REGISTRY_DB=true to re-enable once verified.
+        if os.environ.get("MONKEY_PARAM_REGISTRY_DB", "").lower() != "true":
+            if not self._loaded:
+                logger.info(
+                    "parameter registry DB load disabled "
+                    "(MONKEY_PARAM_REGISTRY_DB != 'true') — using hardcoded "
+                    "defaults; this is the documented fail-soft mode",
                 )
                 self._loaded = True
             return
