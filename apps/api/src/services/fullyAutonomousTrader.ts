@@ -1232,7 +1232,19 @@ class FullyAutonomousTrader extends EventEmitter {
 
   /**
    * Reconcile DB position state with actual exchange positions.
-   * Logs drift but does not auto-close — lets the human investigate.
+   *
+   * 2026-05-14 fix: now side-aware. The legacy implementation only
+   * checked symbol-level presence (``new Set(exchangePositions.map(symbol))``)
+   * which silently skipped the case where the DB had a LONG row but the
+   * exchange had a same-symbol SHORT — both "contain BTC" so the
+   * symbol-only set diff yielded an empty mismatch list. Net effect on
+   * 2026-05-14: 3 BTC LONG rows in DB sat as phantoms for 50+ minutes
+   * after Poloniex netted them against a SHORT, and Monkey's
+   * stale_bleed gate spun every 30 s firing close orders that returned
+   * code=21002 "Position not enough". This implementation builds a
+   * per-symbol set of OPEN exchange sides (HEDGE-aware via ``posSide``,
+   * ONE_WAY fallback via ``Math.sign(qty)``) and closes any DB row
+   * whose ``(symbol, side)`` pair is not represented on the exchange.
    */
   private async reconcilePositions(userId: string): Promise<void> {
     try {
@@ -1241,22 +1253,54 @@ class FullyAutonomousTrader extends EventEmitter {
 
       // Get actual positions from Poloniex
       const exchangePositions = await poloniexFuturesService.getPositions(credentials);
-      const openSymbols = new Set(
-        (exchangePositions || [])
-          .filter((p: Record<string, unknown>) => Number(p.qty || p.currentQty || 0) !== 0)
-          .map((p: Record<string, unknown>) => String(p.symbol))
-      );
 
-      // Get DB open trades (non-paper)
+      // Build per-symbol set of OPEN exchange sides ('long' | 'short').
+      // HEDGE-aware: posSide=LONG → 'long', posSide=SHORT → 'short';
+      // ONE_WAY fallback: Math.sign(qty) decides side. Same resolution
+      // order used by managePositions's [FAT] side-label fix.
+      const exchangeSidesBySymbol = new Map<string, Set<'long' | 'short'>>();
+      for (const raw of (exchangePositions || []) as unknown[]) {
+        const p = raw as Record<string, unknown>;
+        const qty = Number(p.qty ?? p.currentQty ?? 0);
+        if (qty === 0) continue;
+        const symbol = String(p.symbol ?? '');
+        if (!symbol) continue;
+        const posSide = String(p.posSide ?? '').toUpperCase();
+        const side: 'long' | 'short' =
+          posSide === 'SHORT' || (posSide !== 'LONG' && qty < 0) ? 'short' : 'long';
+        if (!exchangeSidesBySymbol.has(symbol)) {
+          exchangeSidesBySymbol.set(symbol, new Set());
+        }
+        exchangeSidesBySymbol.get(symbol)!.add(side);
+      }
+      const openSymbols = new Set(exchangeSidesBySymbol.keys());
+
+      // Get DB open trades (non-paper). Fetches the row id + side so the
+      // side-aware mismatch check below can target specific rows.
       const dbResult = await pool.query(
-        `SELECT symbol, order_id FROM autonomous_trades
+        `SELECT id, symbol, side, order_id FROM autonomous_trades
          WHERE user_id = $1 AND status = 'open' AND paper_trade = false`,
         [userId]
       );
-      const dbSymbols = new Set(dbResult.rows.map((r: { symbol: string }) => r.symbol));
+      const dbRows = dbResult.rows as Array<{
+        id: string;
+        symbol: string;
+        side: string;
+        order_id?: string;
+      }>;
+      const dbSymbols = new Set(dbRows.map(r => r.symbol));
 
-      // Drift detection
-      const inDbNotExchange = [...dbSymbols].filter(s => !openSymbols.has(s));
+      // Side-aware phantom detection: a row is phantom when the exchange
+      // either has NO position on that symbol, OR has a position but on
+      // the OPPOSITE side. The latter is the 2026-05-14 trigger case.
+      const sideMismatchedRows = dbRows.filter(r => {
+        const sideRaw = String(r.side).toLowerCase();
+        const sideNorm: 'long' | 'short' =
+          sideRaw === 'sell' || sideRaw === 'short' ? 'short' : 'long';
+        const exchSides = exchangeSidesBySymbol.get(r.symbol);
+        return !exchSides || !exchSides.has(sideNorm);
+      });
+      const inDbNotExchange = [...new Set(sideMismatchedRows.map(r => r.symbol))];
       const inExchangeNotDb = ([...openSymbols] as string[]).filter(s => !dbSymbols.has(s));
 
       // v0.8.7d-4: fire-and-forget shadow call to /live/reconcile. TS
@@ -1292,19 +1336,31 @@ class FullyAutonomousTrader extends EventEmitter {
         });
       }
 
-      if (inDbNotExchange.length > 0) {
+      if (sideMismatchedRows.length > 0) {
         logger.warn(
-          `[RECONCILE] DB shows open positions not on exchange: ${inDbNotExchange.join(', ')} — ` +
-          `marking as closed`
+          `[RECONCILE] DB rows open but exchange has no matching side: ` +
+          `${sideMismatchedRows.length} row(s) on symbols ${inDbNotExchange.join(', ')} — ` +
+          `marking as closed`,
+          {
+            rows: sideMismatchedRows.map(r => ({
+              id: r.id, symbol: r.symbol, side: r.side,
+            })),
+            exchangeSidesBySymbol: Object.fromEntries(
+              [...exchangeSidesBySymbol.entries()].map(([k, v]) => [k, [...v]]),
+            ),
+          },
         );
-        for (const symbol of inDbNotExchange) {
-          await pool.query(
-            `UPDATE autonomous_trades SET status = 'closed', exit_time = NOW(),
-             exit_reason = 'reconciliation: position not found on exchange'
-             WHERE user_id = $1 AND symbol = $2 AND status = 'open' AND paper_trade = false`,
-            [userId, symbol]
-          );
-        }
+        // Close the specific phantom rows by id. Using ANY($1::uuid[])
+        // targets only the mismatched rows, NOT all open rows for the
+        // symbol — important because a same-symbol opposite-side row
+        // CAN legitimately coexist (e.g., HEDGE-mode lane-isolated
+        // positions), and bulk-closing by symbol would over-reach.
+        await pool.query(
+          `UPDATE autonomous_trades SET status = 'closed', exit_time = NOW(),
+           exit_reason = 'reconciliation: side mismatch with exchange'
+           WHERE id = ANY($1::uuid[])`,
+          [sideMismatchedRows.map(r => r.id)],
+        );
       }
 
       if (inExchangeNotDb.length > 0) {
