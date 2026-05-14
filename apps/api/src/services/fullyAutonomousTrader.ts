@@ -1020,10 +1020,16 @@ class FullyAutonomousTrader extends EventEmitter {
           // Non-fatal: proceed with whatever leverage the exchange currently has
         }
 
-        // Place real order - use 'size' field (not 'quantity') per Poloniex API
+        // Place real order — use 'size' field (not 'quantity') per Poloniex API.
+        // posSide is REQUIRED on the HEDGE account: omitting it makes
+        // placeOrder default posSide='BOTH', which Poloniex rejects with
+        // code=11011 "Position mode and posSide do not match" — i.e. FAT
+        // entries silently never filled. FAT only opens (never reverses)
+        // here, so side=buy → LONG leg, side=sell → SHORT leg.
         const order = await poloniexFuturesService.placeOrder(credentials, {
           symbol: normalizedSymbol,
           side: signal.side === 'long' ? 'buy' : 'sell',
+          posSide: signal.side === 'long' ? 'LONG' : 'SHORT',
           type: 'market',
           size: formattedOrderSize
         });
