@@ -90,9 +90,11 @@ describe('ResonanceBank — lane field', () => {
     const insertCall = vi.mocked(pool.query).mock.calls[1];
     const sql = String(insertCall[0]);
     expect(sql).toMatch(/lane/);
-    // Check the params include 'scalp' as last param
+    // Check the params carry the lane. (Not asserting position: the
+    // INSERT column order is `... engine_version, lane, loop`, so lane
+    // is not the last param — `loop` is.)
     const params = insertCall[1] as unknown[];
-    expect(params[params.length - 1]).toBe('scalp');
+    expect(params).toContain('scalp');
   });
 
   it('writeBubble defaults lane to swing when not in payload', async () => {
@@ -109,7 +111,7 @@ describe('ResonanceBank — lane field', () => {
 
     const insertCall = vi.mocked(pool.query).mock.calls[1];
     const params = insertCall[1] as unknown[];
-    expect(params[params.length - 1]).toBe('swing');
+    expect(params).toContain('swing');
   });
 
   it('findNearestBasins includes lane filter in SQL when provided', async () => {
