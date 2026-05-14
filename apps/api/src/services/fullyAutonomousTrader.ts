@@ -19,13 +19,6 @@ import { apiCredentialsService } from './apiCredentialsService.js';
 import backtestingEngine from './backtestingEngine.js';
 import { getPrecisions } from './marketCatalog.js';
 import mlPredictionService from './mlPredictionService.js';
-import {
-  callExitDecide,
-  callReconcile,
-  isExitShadowEnabled,
-  logExitParityDiff,
-  logReconcileParityDiff,
-} from './monkey/kernel_client.js';
 import poloniexFuturesService from './poloniexFuturesService.js';
 import riskService from './riskService.js';
 import { buildIndicatorMap, evaluateGenomeEntry, type SignalGenome } from './signalGenome.js';
@@ -1303,39 +1296,10 @@ class FullyAutonomousTrader extends EventEmitter {
       const inDbNotExchange = [...new Set(sideMismatchedRows.map(r => r.symbol))];
       const inExchangeNotDb = ([...openSymbols] as string[]).filter(s => !dbSymbols.has(s));
 
-      // v0.8.7d-4: fire-and-forget shadow call to /live/reconcile. TS
-      // side's inDbNotExchange / inExchangeNotDb are authoritative; the
-      // Python side runs the same diff for parity verification. Default
-      // OFF via isExitShadowEnabled() (AUTONOMOUS_TRADER_PY_SHADOW).
-      // Shadow errors swallowed at debug — cannot impact reconcile.
-      if (isExitShadowEnabled()) {
-        const shadowDbRows = dbResult.rows.map((r: { symbol: string; order_id?: string }) => ({
-          symbol: r.symbol,
-          orderId: r.order_id,
-        }));
-        const shadowExchangePositions = (exchangePositions || [])
-          .map((p: Record<string, unknown>) => ({
-            symbol: String(p.symbol),
-            qty: Number(p.qty || p.currentQty || 0),
-          }));
-        void callReconcile({
-          dbRows: shadowDbRows,
-          exchangePositions: shadowExchangePositions,
-        }).then((py) => {
-          logReconcileParityDiff(
-            {
-              phantomDbSymbols: inDbNotExchange as string[],
-              orphanExchangeSymbols: inExchangeNotDb as string[],
-            },
-            py,
-          );
-        }).catch((err) => {
-          logger.debug('[reconcile-shadow] parity fetch failed', {
-            err: err instanceof Error ? err.message : String(err),
-          });
-        });
-      }
-
+      // Note: the AUTONOMOUS_TRADER_PY_SHADOW /live/reconcile parity
+      // block was removed in the TS→Py kernel cutover (PR #674) — the
+      // shadow infrastructure no longer exists. The side-aware
+      // reconciler below (PR #677) is the sole authority.
       if (sideMismatchedRows.length > 0) {
         logger.warn(
           `[RECONCILE] DB rows open but exchange has no matching side: ` +
@@ -1543,54 +1507,6 @@ class FullyAutonomousTrader extends EventEmitter {
           await this.closePosition(userId, symbol, 'stop_loss_roi');
           void this.recordTradeResult(userId, unrealizedPnL, config?.initialCapital ?? 10000);
           continue;
-        }
-
-        // v0.8.7d-4: fire-and-forget shadow call to /live/exit-decide.
-        // TS exit-chain (below) remains authoritative; Python runs the
-        // same stop_loss → take_profit → trend_reversal → hold priority
-        // chain and logs divergence. Default OFF via isExitShadowEnabled.
-        //
-        // TS "shadow decision" inlined below for parity comparison — we
-        // can't capture what the TS code below is about to decide without
-        // evaluating it ourselves, because the `continue` statements make
-        // branch-taken unobservable from a post-decision hook.
-        if (isExitShadowEnabled()) {
-          const analysis = analyses.get(symbol);
-          const tsShadowDecision = ((): { shouldClose: boolean; reason: string } => {
-            if (pnlPercent < -slPercent) return { shouldClose: true, reason: 'stop_loss' };
-            if (pnlPercent > tpPercent) return { shouldClose: true, reason: 'take_profit' };
-            if (pnlPercent > trailingTrigger && analysis) {
-              // Use the outer-scope `isLong` (HEDGE-aware via posSide +
-              // qty-sign); the prior `const isLong = qty > 0` shadowing
-              // bypassed that and produced the same mislabel as the
-              // [FAT] log line on HEDGE accounts.
-              if ((isLong && analysis.trend === 'bearish') ||
-                  (!isLong && analysis.trend === 'bullish')) {
-                return { shouldClose: true, reason: 'trend_reversal' };
-              }
-            }
-            return { shouldClose: false, reason: 'hold' };
-          })();
-          void callExitDecide({
-            position: {
-              symbol,
-              qty,
-              entryPrice,
-              unrealizedPnl: unrealizedPnL,
-            },
-            config: {
-              stopLossPercent: slPercent,
-              takeProfitPercent: tpPercent,
-            },
-            analysis: analysis ? { trend: analysis.trend as 'bullish' | 'bearish' | 'neutral' | 'unknown' } : undefined,
-          }).then((py) => {
-            logExitParityDiff(tsShadowDecision, py);
-          }).catch((err) => {
-            logger.debug('[exit-shadow] parity fetch failed', {
-              symbol,
-              err: err instanceof Error ? err.message : String(err),
-            });
-          });
         }
 
         // Check stop loss using config percentage

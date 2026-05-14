@@ -96,10 +96,28 @@ class KernelContext:
       the 'paper_only_blocks_live' veto.
     - mode: Global operator override (agent_execution_mode).
     - symbol_max_leverage: From marketCatalog.getMaxLeverage(symbol).
+    - monkey_mode: Current Monkey mode (exploration/investigation/
+      integration/drift/reversion). Optional; when provided, the
+      margin-headroom check uses MODE_HEADROOM_FLOORS[monkey_mode]
+      as a floor on top of the global env-var setting. Mirrors TS
+      PR #668.
     """
     is_live: bool
     mode: ExecutionMode
     symbol_max_leverage: float
+    monkey_mode: Optional[str] = None
+
+
+# Per-mode reserve floors (TS PR #668). Tighter floor on flat (need
+# headroom for rapid scalp cycles); looser on trend (one slow large
+# position is OK). Keys match modes.py MonkeyMode values.
+MODE_HEADROOM_FLOORS: dict[str, float] = {
+    "exploration": 0.35,
+    "investigation": 0.25,
+    "integration": 0.15,
+    "drift": 0.50,
+    "reversion": 0.25,  # mirrors INVESTIGATION envelope
+}
 
 
 @dataclass(frozen=True)
@@ -292,6 +310,7 @@ def check_margin_headroom(
     order: KernelOrder,
     state: KernelAccountState,
     min_headroom_pct: Optional[float] = None,
+    monkey_mode: Optional[str] = None,
 ) -> KernelDecision:
     """Reserve N% of equity as uncommitted margin so closes / reverses /
     counter-positions always have room. Without this, Monkey can keep
@@ -302,10 +321,19 @@ def check_margin_headroom(
     min_headroom_pct=None reads MONKEY_MIN_MARGIN_HEADROOM_PCT env var
     (default 0.0 = no-op, parity with TS reference).
 
+    monkey_mode (TS PR #668) sets a per-mode floor that takes effect
+    when it's higher than the env-derived global. EXPLORATION 35% /
+    INVESTIGATION 25% / INTEGRATION 15% / DRIFT 50% / REVERSION 25%.
+
     Out-of-range pct (negative or ≥ 1) fails OPEN — operator typo
     shouldn't silently freeze the kernel.
     """
     pct = _min_margin_headroom_pct() if min_headroom_pct is None else min_headroom_pct
+    # Apply per-mode floor when monkey_mode is provided.
+    if monkey_mode is not None:
+        mode_floor = MODE_HEADROOM_FLOORS.get(monkey_mode.lower())
+        if mode_floor is not None and 0.0 < mode_floor < 1.0:
+            pct = max(pct, mode_floor)
     if pct is None or pct <= 0.0 or pct >= 1.0:
         return KernelDecision(allowed=True)
     if state.equity_usdt <= 0:
@@ -355,7 +383,7 @@ def evaluate_pre_trade_vetoes(
         check_execution_mode(context.is_live, context.mode),
         check_self_match(order, state),
         check_per_symbol_exposure(order, state),
-        check_margin_headroom(order, state),
+        check_margin_headroom(order, state, monkey_mode=context.monkey_mode),
         check_symbol_max_leverage(order, context.symbol_max_leverage),
     ):
         if not check.allowed:

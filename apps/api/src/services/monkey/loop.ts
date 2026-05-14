@@ -46,28 +46,24 @@ import {
   KAPPA_STAR,
   fisherRao,
   frechetMean,
-  normalizedEntropy,
-  toSimplex,
   uniformBasin,
-  velocity,
   type Basin,
 } from './basin.js';
-import { callAutonomicTick } from './autonomic_client.js';
 import { BasinSync } from './basin_sync.js';
 import { BusEventType, getKernelBus, type KernelBus } from './kernel_bus.js';
 import {
   callTickRun,
-  isShadowTickEnabled,
-  logParityDiff,
-  logTickParityDiffs,
   type TickRunAccount,
   type TickRunOHLCV,
   type TickRunSymbolState,
 } from './kernel_client.js';
-import { computeEmotions, type EmotionState } from './emotions.js';
-import { detectMode, MODE_PROFILES, MonkeyMode } from './modes.js';
-import { computeMotivators } from './motivators.js';
-import { computeNeurochemicals, summarizeNC, type NeurochemicalState } from './neurochemistry.js';
+// Post-cutover: TS K-cognition primitives (computeEmotions / detectMode /
+// computeMotivators / computeNeurochemicals) are NOT called by loop.ts —
+// Python is authoritative. We import the types only so the synthesized
+// bindings from pyDecision.derivation compile.
+import type { EmotionState } from './emotions.js';
+import { MODE_PROFILES, MonkeyMode } from './modes.js';
+import { summarizeNC, type NeurochemicalState } from './neurochemistry.js';
 import { mlAgentDecide } from '../ml_agent/decide.js';
 import type { MLAgentInputs } from '../ml_agent/types.js';
 import { Arbiter } from '../arbiter/arbiter.js';
@@ -80,41 +76,28 @@ import {
   type TurtleAgentInputs,
   type TurtleState,
 } from '../turtle_agent/index.js';
-import {
-  basinDirection as computeBasinDirection,
-  perceive,
-  refract,
-  trendProxy as computeTrendProxy,
-  type OHLCVCandle,
-} from './perception.js';
+// Post-cutover: perception.ts / candlePatterns.ts / classifyRegime are
+// not called from loop.ts (Python computes basin / candles / regime).
+// We import only the OHLCVCandle type for the array cast at the
+// poloniex-fetch boundary, plus chop-suppression constants used by
+// the dispatch tree's entry-gate.
+import type { OHLCVCandle } from './perception.js';
 import {
   CHOP_SUPPRESS_SWING_CONFIDENCE_DEFAULT,
   CHOP_SUPPRESS_TREND_CONFIDENCE_DEFAULT,
   chopSuppressEntry,
-  classifyRegime,
   type RegimeReading,
 } from './regime.js';
-import {
-  detectStrongest as detectStrongestCandlePattern,
-  hammerAgainstLongSl,
-  patternSignalScalar,
-} from './candlePatterns.js';
 import { evaluateBankWrite } from './learning_gate_client.js';
 import { resonanceBank } from './resonance_bank.js';
 import { computeSelfObservation, type SelfObservation } from './self_observation.js';
 import { WorkingMemory, type Bubble } from './working_memory.js';
 import {
-  currentEntryThreshold,
-  currentLeverage,
-  currentPositionSize,
-  kernelDirection,
   kernelShouldEnter,
-  shouldAutoFlatten,
   shouldDCAAdd,
   shouldExit,
   shouldProfitHarvest,
   shouldScalpExit,
-  chooseLane,
   type BasinState,
   type Direction,
   type LaneType,
@@ -136,10 +119,8 @@ import {
   isLongestHorizonExpired as mtfIsLongestHorizonExpired,
 } from './mtfLClassifier.js';
 import {
-  regimeScore as computeRegimeScore,
   regimeSizing as computeRegimeSizing,
   trailingRegimeStop as continuousTrailingRegimeStop,
-  basinAlignmentToWindow,
 } from './regimeSizing.js';
 import {
   applyOutcomeToState,
@@ -771,27 +752,29 @@ export class MonkeyKernel extends EventEmitter {
     const state = this.symbolStates.get(symbol);
     if (!state) return;
 
-    // v0.8.3b: snapshot serializable state BEFORE any mutation for the
-    // Python shadow tick. Captured here so Python sees the same "prior
-    // state" the TS pipeline starts from.
-    const shadowPrevState: TickRunSymbolState | null = isShadowTickEnabled()
-      ? {
-          symbol,
-          identity_basin: Array.from(state.identityBasin),
-          last_basin: state.lastBasin ? Array.from(state.lastBasin) : null,
-          kappa: state.kappa,
-          session_ticks: state.sessionTicks,
-          last_mode: state.lastMode,
-          basin_history: state.basinHistory.map((b) => Array.from(b)),
-          phi_history: [...state.phiHistory],
-          fhealth_history: [...state.fHealthHistory],
-          drift_history: [...state.driftHistory],
-          dca_add_count: state.dcaAddCount,
-          last_entry_at_ms: state.lastEntryAtMs,
-          peak_pnl_usdt: state.peakPnlUsdt,
-          peak_tracked_trade_id: state.peakTrackedTradeId,
-        }
-      : null;
+    // Python-authoritative tick: serialize the kernel state BEFORE any
+    // mutation, so the /monkey/tick/run call sees the same "prior state"
+    // the TS pipeline starts from. The TS cognition section below runs
+    // for M/T/L agent inputs but its decision is overridden by Python's
+    // (the K-kernel cutover — PR #674).
+    const prevPyState: TickRunSymbolState = {
+      symbol,
+      identity_basin: Array.from(state.identityBasin),
+      last_basin: state.lastBasin ? Array.from(state.lastBasin) : null,
+      kappa: state.kappa,
+      session_ticks: state.sessionTicks,
+      last_mode: state.lastMode,
+      basin_history: state.basinHistory.map((b) => Array.from(b)),
+      phi_history: [...state.phiHistory],
+      fhealth_history: [...state.fHealthHistory],
+      drift_history: [...state.driftHistory],
+      dca_add_count: state.dcaAddCount,
+      last_entry_at_ms: state.lastEntryAtMs,
+      peak_pnl_usdt: state.peakPnlUsdt,
+      peak_tracked_trade_id: state.peakTrackedTradeId,
+      regime_at_open_by_lane: { ...state.regimeAtOpenByLane },
+      phi_at_open_by_lane: { ...state.phiAtOpenByLane },
+    };
 
     state.sessionTicks++;
 
@@ -875,170 +858,130 @@ export class MonkeyKernel extends EventEmitter {
       availableEquity,
     } = await this.fetchAccountContext(symbol);
 
-    // 2. PERCEIVE — raw basin then refract through identity.
-    // Post #ml-separation: ml fields omitted; perception defaults dims
-    // 3..5 to neutral. Agent K's basin is built without ml inputs.
-    const rawBasin = perceive({
-      ohlcv,
-      equityFraction,
-      marginFraction,
-      openPositions,
-      sessionAgeTicks: state.sessionTicks,
-    });
-
-    // §3.3 Pillar 2 surface absorption — external input at 30% max
-    const basin = refract(rawBasin, state.identityBasin, 0.30);
-
-    // 3. MEASURE — Φ, κ, regime, basin velocity, neurochemistry
-    // Φ = 1 - normalized_entropy_of_noise_dims (integration)
-    //   high Φ = concentrated signal; low Φ = diffuse exploration
-    const fHealth = normalizedEntropy(basin);
-    // Φ inversely tracks fHealth: when the basin is concentrated (low entropy),
-    // integration is high; when diffuse (high entropy), Φ is low (exploration).
-    const phi = Math.max(0, Math.min(1, 1 - fHealth * 0.8));
-
-    // κ adapts from basin velocity × internal coupling. Stable near κ*
-    // when integration is high and basin velocity is low.
-    // Post #ml-separation: couplingHealth was mlStrength; replaced with
-    // a geometric self-read (Φ × (1 − basin velocity), [0,1]).
-    const bv = state.lastBasin ? velocity(state.lastBasin, basin) : 0;
-    const couplingHealth = phi * (1 - Math.min(bv, 1));
-    const kappaDelta = (couplingHealth - 0.5) * 5 - (bv - 0.2) * 10;
-    state.kappa = Math.max(20, Math.min(120, state.kappa * 0.8 + (KAPPA_STAR + kappaDelta) * 0.2));
-
-    // Three regime weights — read directly from the first 3 basin coords
-    const wQ = basin[0];
-    const wE = basin[1];
-    const wEq = basin[2];
-    const regTotal = wQ + wE + wEq;
-    const regimeWeights = regTotal > 0
-      ? { quantum: wQ / regTotal, efficient: wE / regTotal, equilibrium: wEq / regTotal }
-      : { quantum: 1 / 3, efficient: 1 / 3, equilibrium: 1 / 3 };
-
-    // Φ delta for dopamine
-    const lastPhi = state.phiHistory[state.phiHistory.length - 1] ?? phi;
-    const phiDelta = phi - lastPhi;
-
-    // v0.6.7: consume the decayed reward queue as a neurochemistry input.
-    // Nothing externally writes dopamine — the chemical is derived each
-    // tick from (Φ gradient + decayed lived-outcome stream).
-    const rewardDeltas = this.decayedRewardSums();
-    const nc: NeurochemicalState = computeNeurochemicals({
-      isAwake: true,
-      phiDelta,
-      basinVelocity: bv,
-      surprise: Math.abs(phiDelta) * 2,
-      quantumWeight: regimeWeights.quantum,
-      kappa: state.kappa,
-      externalCoupling: couplingHealth,
-      rewardDopamineDelta: rewardDeltas.dopamine,
-      rewardSerotoninDelta: rewardDeltas.serotonin,
-      rewardEndorphinDelta: rewardDeltas.endorphin,
-    });
-
-    // v0.7.10 shadow-mode: call the Python autonomic kernel in parallel
-    // and log parity diffs. TS path remains authoritative until
-    // MONKEY_KERNEL_PY=true flips the default. Fire-and-forget — shadow
-    // latency must not block the tick.
-    if (process.env.MONKEY_KERNEL_PY_SHADOW === 'true') {
-      void callAutonomicTick({
-        instanceId: this.instanceId,
-        phiDelta,
-        basinVelocity: bv,
-        surprise: Math.abs(phiDelta) * 2,
-        quantumWeight: regimeWeights.quantum,
-        kappa: state.kappa,
-        externalCoupling: couplingHealth,
-        currentMode: state.lastMode ?? 'investigation',
-        isFlat: !exchangeHeldSide,
-      }).then((pyResult) => {
-        logParityDiff('nc.dopamine', nc.dopamine, pyResult.nc.dopamine);
-        logParityDiff('nc.serotonin', nc.serotonin, pyResult.nc.serotonin);
-        logParityDiff('nc.endorphins', nc.endorphins, pyResult.nc.endorphins);
-        logParityDiff('nc.norepinephrine', nc.norepinephrine, pyResult.nc.norepinephrine);
-      }).catch((err) => {
-        logger.debug('[shadow] autonomic parity fetch failed', {
-          err: err instanceof Error ? err.message : String(err),
-        });
-      });
-    }
-
+    // ── PYTHON-AUTHORITATIVE KERNEL TICK (PR #674 Phase 3 cutover) ──
+    //
+    // Replaces the in-process TS K-cognition (perceive, refract,
+    // velocity, normalizedEntropy, computeNeurochemicals, detectMode,
+    // basinDirection, trendProxy, regimeScore/Sizing, classifyRegime,
+    // computeMotivators, computeEmotions, kernelDirection, candle
+    // patterns, computeSelfObservation, basinSync.update) with a single
+    // /monkey/tick/run call. The TS bindings below pull every shared
+    // local var (basin, basinDir, tapeTrend, basinState, mode, nc,
+    // emotions, motivators, regimeReading, ...) from pyDecision +
+    // pyState so the downstream K-dispatch tree and M/T/L agent paths
+    // continue to read the same local-var names without modification.
+    //
+    // Still TS-side (not yet ported; planned for the M/T/L cutover):
+    //   * MTF L classifier (mtfDecide(state.mtfState)) — L agent path
+    //   * Working memory bubble store (state.wm) — kept for L resonance
+    //   * Identity crystallization (state.identityBasin = frechetMean)
+    //   * Per-agent emotion-state decay (state.agentStates.K/M/T/L)
+    //   * Self-observation refresh (this.selfObs) — periodic
+    //
+    // Fail-loud: Python down → tick errors and operator sees it. No TS
+    // fallback. 5 s default timeout.
+    const maxLevBoundary = (await getMaxLeverage(symbol)) ?? 10;
+    const precisions = await getPrecisions(symbol).catch(() => null);
+    const lotSize = precisions?.lotSize ?? 0;
+    const minNotional = lastPrice * Math.max(lotSize, 1e-9);
+    const bankSize = await resonanceBank.bankSize();
     const sovereignty = await resonanceBank.sovereignty();
+    const ownOpenRow = await this.findOpenMonkeyTrade(symbol);
+    const heldSide: 'long' | 'short' | null = ownOpenRow
+      ? (exchangeHeldSide ?? ownOpenRow.side)
+      : null;
 
-    const basinState: BasinState = {
-      basin,
-      phi,
-      kappa: state.kappa,
-      regimeWeights,
-      neurochemistry: nc,
-      sovereignty,
-      basinVelocity: bv,
-      identityBasin: state.identityBasin,
+    const tickRunOhlcv: TickRunOHLCV[] = ohlcv.map((c) => ({
+      timestamp: Number(c.timestamp ?? 0),
+      open: Number(c.open),
+      high: Number(c.high),
+      low: Number(c.low),
+      close: Number(c.close),
+      volume: Number(c.volume),
+    }));
+    const tickRunAccount: TickRunAccount = {
+      equity_fraction: equityFraction,
+      margin_fraction: marginFraction,
+      open_positions: openPositions,
+      available_equity: availableEquity,
+      exchange_held_side: exchangeHeldSide,
+      own_position_entry_price: ownOpenRow ? Number(ownOpenRow.entry_price) : null,
+      own_position_quantity: ownOpenRow ? Number(ownOpenRow.quantity) : null,
+      own_position_trade_id: ownOpenRow ? String(ownOpenRow.id) : null,
     };
-
-    // v0.5: DETECT MODE — one of EXPLORATION / INVESTIGATION / INTEGRATION / DRIFT.
-    // driftHistory is maintained here so mode detector has the delta.
-    const driftNow = fisherRao(basin, state.identityBasin);
-    state.driftHistory.push(driftNow);
-    if (state.driftHistory.length > HISTORY_MAX) state.driftHistory.shift();
-    const modeDecision = detectMode({
-      basin,
-      identityBasin: state.identityBasin,
-      phi,
-      kappa: state.kappa,
-      basinVelocity: bv,
-      neurochemistry: nc,
-      phiHistory: state.phiHistory,
-      fHealthHistory: state.fHealthHistory,
-      driftHistory: state.driftHistory,
-    });
-    const mode = modeDecision.value;
-    if (state.lastMode !== null && state.lastMode !== mode) {
-      logger.info('[Monkey] mode transition', {
+    const tickRunResult = await callTickRun({
+      instance_id: this.instanceId,
+      inputs: {
         symbol,
-        from: state.lastMode,
-        to: mode,
-        reason: modeDecision.reason,
+        ohlcv: tickRunOhlcv,
+        account: tickRunAccount,
+        bank_size: bankSize,
+        sovereignty,
+        max_leverage: maxLevBoundary,
+        min_notional: minNotional,
+        size_fraction: this.sizeFraction,
+        self_obs_bias: this.selfObs?.entryBias ?? null,
+        funding_rate_8h: fundingRate8h,
+        rolling_kelly_stats: null,
+      },
+      prev_state: prevPyState,
+    });
+    const pyDecision = tickRunResult.decision;
+    const pyState = tickRunResult.new_state;
+
+    // Hydrate TS state from Python's authoritative new_state.
+    const prevMode = state.lastMode;
+    state.kappa = pyState.kappa;
+    state.lastMode = pyState.last_mode as MonkeyMode | null;
+    state.phiHistory = pyState.phi_history;
+    state.fHealthHistory = pyState.fhealth_history;
+    state.driftHistory = pyState.drift_history;
+    state.basinHistory = pyState.basin_history.map((b) => Float64Array.from(b) as Basin);
+    state.identityBasin = Float64Array.from(pyState.identity_basin) as Basin;
+    state.lastBasin = pyState.last_basin
+      ? Float64Array.from(pyState.last_basin) as Basin
+      : Float64Array.from(pyDecision.basin) as Basin;
+    state.dcaAddCount = pyState.dca_add_count;
+    state.lastEntryAtMs = pyState.last_entry_at_ms;
+    state.peakPnlUsdt = pyState.peak_pnl_usdt;
+    state.peakTrackedTradeId = pyState.peak_tracked_trade_id;
+    state.rScoreCurrent = pyDecision.r_score ?? null;
+
+    // Local-var bindings from pyDecision (the dispatch tree + M/T/L
+    // agents below read these names; preserved for behavioral parity).
+    const basin: Basin = state.lastBasin;
+    const phi = pyDecision.phi;
+    const fHealth = pyDecision.f_health;
+    const bv = pyDecision.basin_velocity;
+    const driftNow = pyDecision.drift_from_identity;
+    const basinDir = pyDecision.basin_direction;
+    const tapeTrend = pyDecision.tape_trend;
+    const mode = pyDecision.mode as MonkeyMode;
+    const sideCandidate: 'long' | 'short' =
+      pyDecision.side_candidate === 'short' ? 'short' : 'long';
+    const direction: Direction = pyDecision.direction as Direction;
+    const sideOverride = pyDecision.side_override;
+    const nc = pyDecision.neurochemistry as unknown as NeurochemicalState;
+    const regimeWeights = (
+      (pyDecision.derivation.regime_weights as { quantum: number; efficient: number; equilibrium: number } | undefined)
+      ?? { quantum: 1 / 3, efficient: 1 / 3, equilibrium: 1 / 3 }
+    );
+    state.latestBasinSnapshot = { basinDir, tapeTrend, computedAtMs: Date.now() };
+    if (prevMode !== null && prevMode !== mode) {
+      const modePyDeriv = pyDecision.derivation.mode as Record<string, unknown> | undefined;
+      const transitionReason = String(modePyDeriv?.reason ?? 'mode_transition');
+      logger.info('[Monkey] mode transition', {
+        symbol, from: prevMode, to: mode, reason: transitionReason,
       });
       this.bus.publish({
         type: BusEventType.MODE_TRANSITION,
         source: this.instanceId,
         symbol,
-        payload: { from: state.lastMode, to: mode, reason: modeDecision.reason, phi, kappa: state.kappa },
+        payload: { from: prevMode, to: mode, reason: transitionReason, phi, kappa: state.kappa },
       });
     }
-    state.lastMode = mode;
 
-    // Refresh self-observation entry bias every SELF_OBS_REFRESH_MS.
-    const now = Date.now();
-    if (now - this.selfObsLastUpdate > MonkeyKernel.SELF_OBS_REFRESH_MS) {
-      this.selfObs = await computeSelfObservation(24, this.instanceId);
-      this.selfObsLastUpdate = now;
-    }
-    // Side candidate (post #ml-separation):
-    //   Direction comes from basin geometry + tape consensus. The
-    //   previous OVERRIDE_REVERSE quorum + TURNING_SIGNAL paths are
-    //   gone — kernelDirection is the primary read.
-    //
-    // TS-side does not yet compute Layer 2B emotions (motivators /
-    // sensations / foresight ports pending). Until v0.8.8 Python
-    // cut-over, TS uses neutral emotions so direction reduces to
-    // pure geometry. Entry conviction continues to gate via the
-    // existing ml-strength threshold below — a geometry-only TS
-    // entry would require the full emotion stack ported. This is
-    // the documented "TS counterpart for parity" path.
-    const basinDir = computeBasinDirection(basin);
-    const tapeTrend = computeTrendProxy(ohlcv);
-    state.latestBasinSnapshot = {
-      basinDir,
-      tapeTrend,
-      computedAtMs: Date.now(),
-    };
-
-    // 2026-05-13 — MTF: down-sample basin into per-timeframe stores
-    // (15m / 1h / 4h) and compute agreement-count decision. Phase 2
-    // wires the result into L's entry sizing + harvest exit policy
-    // below; the per-tick log keeps observability.
+    // L agent's MTF state stays TS-side until M/T/L cutover.
     mtfOnTickAppend(state.mtfState, basin, state.sessionTicks);
     const mtfDec = mtfDecide(state.mtfState);
     if (mtfDec.action !== 'hold') {
@@ -1051,92 +994,39 @@ export class MonkeyKernel extends EventEmitter {
         agreement: `${mtfDec.agreementCount}/${mtfDec.totalTfs}`,
         sizeMult: mtfDec.sizeMultiplier.toFixed(2),
         longest: mtfDec.longestAgreeingLabel ?? '—',
-        perTf: mtfDec.perTimeframe.map(t =>
+        perTf: mtfDec.perTimeframe.map((t) =>
           `${t.label}:${t.warm ? (t.decision?.action ?? 'hold') : 'cold'}`,
         ).join(','),
       });
     }
 
-    // 2026-05-13 — continuous regime score r ∈ [0,1] (flat=1, trend=0)
-    // computed from basin velocity + directional chop + κ criticality.
-    // Used by L's trailing regime drift stop and entry sizing sanity.
-    // Falls back to null when basinHistory < 2 (cold start).
-    const rReading = computeRegimeScore(state.basinHistory, state.kappa ?? null);
-    state.rScoreCurrent = rReading?.r ?? null;
-    // Continuous-interpolated sizing rails from r (leverage / size /
-    // hold / stop / headroom). Used as sanity bound on the discrete
-    // mode-derived values: catches transition lag (mode still says
-    // EXPLORATION but r has shifted toward trending).
-    const continuousSizing = rReading ? computeRegimeSizing(rReading.r) : null;
-    if (rReading && state.sessionTicks % 10 === 0) {
-      // Basin alignment to recent window — Fisher-Rao distance from
-      // current basin to the Fréchet mean of the last 60 basins.
-      // Low = consonant with recent trajectory; high = outlier
-      // (surprise — fresh regime onset, news shock, breakout, etc).
-      const recentWindow = state.basinHistory.slice(-60);
-      const basinAlign = recentWindow.length > 1
-        ? basinAlignmentToWindow(basin, recentWindow)
-        : 0;
-      logger.info('[regime-r] continuous', {
-        symbol,
-        r: rReading.r.toFixed(3),
-        label: rReading.label,
-        velFlat: rReading.components.velocityFlatness.toFixed(2),
-        dirChop: rReading.components.directionalChop.toFixed(2),
-        kappaCrit: rReading.components.kappaCriticality.toFixed(2),
-        cLev: continuousSizing?.leverage ?? '—',
-        cStopBps: continuousSizing?.stopBps.toFixed(0) ?? '—',
-        cHeadroom: continuousSizing?.marginHeadroomFloor.toFixed(2) ?? '—',
-        basinAlign: basinAlign.toFixed(3),
-      });
+    // Self-observation refresh (kept TS-side; periodic, light-weight).
+    const now = Date.now();
+    if (now - this.selfObsLastUpdate > MonkeyKernel.SELF_OBS_REFRESH_MS) {
+      this.selfObs = await computeSelfObservation(24, this.instanceId);
+      this.selfObsLastUpdate = now;
     }
 
-    // Proposal #5: regime classification on basin trajectory + this
-    // tick's basin. Surfaced via derivation.regime for telemetry; the
-    // executive's threshold + harvest tightness will eventually consume
-    // it. Splice the current basin onto the history so the classifier
-    // sees the most-recent observation alongside prior ticks.
-    const regimeReading: RegimeReading = classifyRegime([
-      ...state.basinHistory,
-      basin,
-    ]);
+    // Working memory bubble (kept until WM moves to Python).
+    const bubble = state.wm.add(basin, phi, { symbol, tick: state.sessionTicks });
+    const wmStats = await state.wm.tick();
+    void bubble;
 
-    // Proposal #9: candlestick pattern detection at the perception
-    // input boundary. ``patternSignal`` is signed in [-1, +1];
-    // ``hammerDefer`` triggers the SL-defer path on long positions.
-    const candlePatternReading = detectStrongestCandlePattern(ohlcv as any[]);
-    const candlePatternSignal = patternSignalScalar(candlePatternReading);
-    const candleHammerDefer = hammerAgainstLongSl(ohlcv as any[]);
-    // Layer 1 + Layer 2B port (2026-05-01): replaces NEUTRAL_EMOTIONS
-    // placeholder. The conviction gate in held_position_rejustification
-    // is now alive on TS — confidence < anxiety + confusion can fire
-    // exits when the kernel's own state contradicts the position.
-    // Funding drag wiring TODO: fold lane_positions cumulative funding
-    // into ComputeEmotionsArgs.fundingDrag once the lane funding query
-    // surfaces in this scope. Defaults to 0 → no drag effect.
-    const motivators = computeMotivators(basinState, {
-      prevBasin: state.lastBasin,
-      integrationHistory: state.integrationHistory,
-    });
-    const basinDistance = driftNow;  // already fisherRao(basin, identity)
-    const emotions: EmotionState = computeEmotions(
-      motivators, basinDistance, phi, bv,
-    );
-    // Append (Φ, I_Q) for the next tick's Integration motivator CV.
-    state.integrationHistory.push([phi, motivators.iQ]);
-    if (state.integrationHistory.length > HISTORY_MAX) {
-      state.integrationHistory.shift();
-    }
-    const direction: Direction = kernelDirection({
-      basinDir, tapeTrend, emotions,
-    });
-    const sideCandidate: 'long' | 'short' = direction === 'flat' ? 'long' : direction;
-    const sideOverride = false;
-    // Note: REVERSION mode flip lives only in the Python kernel (Tier 9
-    // Stage 2 stud topology). TS does not implement REVERSION yet.
+    // Basin-sync publish — observability only, fail-soft.
+    const syncPublish = this.basinSync.update({
+      basin, phi, kappa: state.kappa, mode, driftFromIdentity: driftNow,
+    }).catch(() => { /* non-fatal */ });
+    void syncPublish;
 
-    // MONKEY_SHORTS_LIVE — sequencing protection retained from #575.
-    // Orthogonal to agent-separation; flipped via env independently.
+    // Synthesize BasinState for downstream readers (held-position
+    // rejustification + chop-suppression in the dispatch tree).
+    const basinState: BasinState = {
+      basin, phi, kappa: state.kappa, regimeWeights,
+      neurochemistry: nc, sovereignty, basinVelocity: bv,
+      identityBasin: state.identityBasin,
+    };
+
+    // Side / sizing / lane — all Python-authoritative.
     const SHORTS_LIVE = process.env.MONKEY_SHORTS_LIVE === 'true';
     const sideShortRefused = sideCandidate === 'short' && !SHORTS_LIVE;
     if (sideShortRefused) {
@@ -1145,72 +1035,34 @@ export class MonkeyKernel extends EventEmitter {
       });
     }
     const selfObsBias = this.selfObs?.entryBias[mode]?.[sideCandidate] ?? 1.0;
-
-    // v0.5: Basin sync — publish own state; pull observer-effect influence.
-    const syncPublish = this.basinSync.update({
-      basin,
-      phi,
-      kappa: state.kappa,
-      mode,
-      driftFromIdentity: driftNow,
-    }).catch(() => { /* non-fatal */ });
-    void syncPublish;
-
-    // 4. REMEMBER — add bubble; tick working memory
-    const bubble = state.wm.add(basin, phi, { symbol, tick: state.sessionTicks });
-    const wmStats = await state.wm.tick();
-
-    // 5. DERIVE — executive computes what Monkey would do (mode-aware)
-    // tapeTrend already computed above for side-override check.
-    const entryThr = currentEntryThreshold(basinState, mode, selfObsBias, tapeTrend, sideCandidate);
-    const maxLevBoundary = (await getMaxLeverage(symbol)) ?? 10;
-    const precisions = await getPrecisions(symbol).catch(() => null);
-    const lotSize = precisions?.lotSize ?? 0;
-    const minNotional = lastPrice * Math.max(lotSize, 1e-9);
-    const bankSize = await resonanceBank.bankSize();
-    // sizeFraction scales her share of equity so parallel sub-kernels
-    // stay out of each other's way. (0.5 each = 1.0 combined.) On small
-    // accounts this would halve margin below exchange min notional for
-    // BOTH kernels — observed 2026-04-21: $19 × 0.5 × 0.09 × 12x = $10
-    // notional, below ETH's $23 min. So: effective sizeFraction bumps
-    // back to 1.0 when capped equity × explorationFloor × newborn-leverage
-    // can't reach min notional. On larger accounts this stays at the
-    // configured 0.5 and both kernels share cleanly; the risk-kernel 5×
-    // exposure cap still bounds combined concurrency.
-    const expFloorApprox = 0.10;               // modes.ts EXPLORATION/INVESTIGATION baseline
-    const maxNewbornLev = 20;                  // newborn sovereignCap floor
+    const expFloorApprox = 0.10;
+    const maxNewbornLev = 20;
     const minNeededForMinNotional = minNotional / (expFloorApprox * maxNewbornLev);
     const effectiveSizeFraction = availableEquity * this.sizeFraction < minNeededForMinNotional
       ? 1.0
       : this.sizeFraction;
     const cappedEquity = availableEquity * effectiveSizeFraction;
-    // Proposal #10 — lane selection. Each tick picks the locally-optimal
-    // execution lane via softmax over basin features (parity with the
-    // Python kernel's choose_lane). The chosen lane gates size (per-lane
-    // budget fraction) AND, when a position is open, scopes the exit
-    // gate's TP/SL envelope.
-    const laneDecision = chooseLane(basinState, tapeTrend);
-    const chosenLane: LaneType = laneDecision.value;
+    const chosenLane: LaneType = pyDecision.lane;
     const positionLane: 'scalp' | 'swing' | 'trend' =
       chosenLane === 'observe' ? 'swing' : chosenLane;
-    // Proposal #3: Kelly leverage cap. Pull last 50 closed K-agent
-    // trades from autonomous_trades — lane-filtered so each lane learns
-    // from its own closed trades (scalp from scalps, etc.).
-    // Cold-start (< 5 closed trades in this lane): rollingStats is null,
-    // kelly cap becomes a no-op (geometric leverage unchanged). Each lane
-    // warms independently; scalp warms fastest (closes most often).
     const rollingStats = await this.getKellyRollingStats('K', positionLane);
-    const leverage = currentLeverage(
-      basinState, maxLevBoundary, mode, tapeTrend, rollingStats,
-    );
-    const size = currentPositionSize(
-      basinState, cappedEquity, minNotional, leverage.value, bankSize, mode,
-      positionLane,
-    );
-    // Surgical diagnostic for live size=0 regression (post PR #611). Fires
-    // only when sizing collapses to zero AND the account is flat — surfaces
-    // the exact numeric inputs feeding currentPositionSize so we can
-    // grep `[size-zero-diag]` from Railway and trace which guard tripped.
+    void rollingStats;
+
+    const entryThr = {
+      value: pyDecision.entry_threshold,
+      reason: pyDecision.reason,
+      derivation: (pyDecision.derivation.entry_threshold ?? {}) as Record<string, number>,
+    };
+    const leverage = {
+      value: pyDecision.leverage,
+      reason: pyDecision.reason,
+      derivation: (pyDecision.derivation.leverage ?? {}) as Record<string, number>,
+    };
+    const size = {
+      value: pyDecision.size_usdt,
+      reason: pyDecision.reason,
+      derivation: (pyDecision.derivation.size ?? {}) as Record<string, number>,
+    };
     if (size.value === 0 && exchangeHeldSide === null) {
       logger.info('[size-zero-diag]', {
         symbol, availableEquity, effectiveSizeFraction, cappedEquity,
@@ -1219,11 +1071,47 @@ export class MonkeyKernel extends EventEmitter {
         sizeDerivation: size.derivation,
       });
     }
-    const autoFlatten = shouldAutoFlatten(basinState, state.fHealthHistory);
 
-    // 6. DECIDE — propose action
-    let action: string;
-    let reason: string;
+    // Auto-flatten / regime / candle / emotion / motivator readings —
+    // all derived from pyDecision.derivation. Local shapes match what
+    // the dispatch tree (and held_position_rejustification.ts) expects.
+    const autoFlatten = {
+      value: pyDecision.action === 'flatten',
+      reason: pyDecision.action === 'flatten' ? pyDecision.reason : '',
+      derivation: (pyDecision.derivation.auto_flatten ?? {}) as Record<string, number>,
+    };
+    const regimeReading = (pyDecision.derivation.regime ?? {
+      regime: 'CHOP',
+      confidence: 0.5,
+      trendStrength: 0,
+      chopScore: 0.5,
+    }) as unknown as RegimeReading;
+    const emotions = (pyDecision.derivation.emotions ?? {}) as unknown as EmotionState;
+    const motivators = (pyDecision.derivation.motivators ?? {}) as unknown as {
+      iQ: number;
+      [k: string]: number;
+    };
+    void motivators;
+    const candlePatternReading = (pyDecision.derivation.candle_pattern ?? {
+      patternName: 'none', strength: 0, direction: 0,
+    }) as { patternName: string; strength: number; direction: number };
+    const candleDeriv = pyDecision.derivation.candle_pattern as Record<string, unknown> | undefined;
+    const candlePatternSignal = (candleDeriv?.signed_scalar ?? 0) as number;
+    const candleHammerDefer = (candleDeriv?.hammer_defer_long_sl ?? false) as boolean;
+    void candlePatternSignal;
+
+    // ``action``/``reason``/``derivation`` start at Python's verdict.
+    // The dispatch tree below still runs to perform its state-mutation
+    // side-effects (per-lane peak tracking, streak counters, regime
+    // anchors, SL defer); any action reassignments it makes are
+    // overridden by the explicit re-assertion at the end of this block.
+    let action: string = pyDecision.action;
+    let reason: string = pyDecision.reason;
+    const modeDecision = {
+      value: mode,
+      reason: String((pyDecision.derivation.mode as Record<string, unknown> | undefined)?.reason ?? ''),
+      derivation: (pyDecision.derivation.mode ?? {}) as Record<string, number | string>,
+    };
     const derivation: Record<string, unknown> = {
       phi, kappa: state.kappa, sovereignty, basinVelocity: bv,
       regimeWeights, nc,
@@ -1236,18 +1124,12 @@ export class MonkeyKernel extends EventEmitter {
       direction,
       sideOverride,
       agent: 'K',
-      // Proposal #5: regime telemetry. Discrete state + confidence
-      // surfaces alongside the kernel direction read. Read via
-      // derivation.regime in monkey_decisions analysis.
       regime: {
         regime: regimeReading.regime,
         confidence: regimeReading.confidence,
         trend_strength: regimeReading.trendStrength,
         chop_score: regimeReading.chopScore,
       },
-      // Proposal #9: candle-pattern telemetry. Signed scalar feeds
-      // into perception inputs; hammer-defer hint feeds the SL-fire
-      // path further down.
       candle_pattern: {
         pattern_name: candlePatternReading.patternName,
         strength: candlePatternReading.strength,
@@ -1255,24 +1137,33 @@ export class MonkeyKernel extends EventEmitter {
         signed_scalar: candlePatternSignal,
         hammer_defer_long_sl: candleHammerDefer,
       },
+      python_kernel: {
+        mode: pyDecision.mode,
+        action: pyDecision.action,
+        lane: pyDecision.lane,
+        direction: pyDecision.direction,
+        side_candidate: pyDecision.side_candidate,
+        side_override: pyDecision.side_override,
+        entry_threshold: pyDecision.entry_threshold,
+        leverage: pyDecision.leverage,
+        size_usdt: pyDecision.size_usdt,
+        phi: pyDecision.phi,
+        kappa: pyDecision.kappa,
+        basin_velocity: pyDecision.basin_velocity,
+        basin_direction: pyDecision.basin_direction,
+        tape_trend: pyDecision.tape_trend,
+        harvest_kind: pyDecision.harvest_kind ?? null,
+        r_score: pyDecision.r_score ?? null,
+        mtf_decision_action: pyDecision.mtf_decision_action ?? null,
+        mtf_size_multiplier: pyDecision.mtf_size_multiplier ?? null,
+        leverage_cap_from_regime: pyDecision.leverage_cap_from_regime ?? null,
+        derivation: pyDecision.derivation,
+      },
     };
+    void wmStats;
 
-    // v0.6.3: Monkey's "held side" is scoped to HER OWN open rows only.
-    // If only liveSignal holds a position on this symbol, Monkey treats
-    // herself as flat and her entry logic can still fire (risk kernel's
-    // exposure cap is the only thing bounding combined concurrency).
-    const ownOpenRow = await this.findOpenMonkeyTrade(symbol);
-    // v0.8.7d-8: when exchange says no position but DB has an open Monkey
-    // row, prefer the DB row's side over a hardcoded 'long' fallback.
-    // Previously: `exchangeHeldSide ?? 'long'` — caused OVERRIDE_REVERSE
-    // [long→short] loops whenever LiveSignal just closed a short and the
-    // exchange hadn't yet settled into the view Monkey reads, because
-    // Monkey's DB row said short but the fallback claimed long. DB row
-    // is authoritative for Monkey's own recent trades; reconciler closes
-    // stale rows within 60s when exchange disagrees permanently.
-    const heldSide: 'long' | 'short' | null = ownOpenRow
-      ? (exchangeHeldSide ?? ownOpenRow.side)
-      : null;
+    // v0.6.3: heldSide / ownOpenRow already bound from the early Python
+    // tick-run section above. The dispatch tree below consumes them.
     derivation.exchangeHeldSide = exchangeHeldSide;
     derivation.monkeyHeldSide = heldSide;
 
@@ -1654,67 +1545,6 @@ export class MonkeyKernel extends EventEmitter {
         ? CHOP_SUPPRESS_TREND_CONFIDENCE_DEFAULT
         : CHOP_SUPPRESS_SWING_CONFIDENCE_DEFAULT,
     };
-
-    // v0.8.3b — shadow the full Python tick pipeline. Fire-and-forget:
-    // Python's decision is NOT authoritative; we only log parity diffs.
-    // TS remains the live path. Gated by MONKEY_TICK_PY_SHADOW=true.
-    if (shadowPrevState !== null) {
-      const shadowOhlcv: TickRunOHLCV[] = ohlcv.map((c) => ({
-        timestamp: Number(c.timestamp ?? 0),
-        open: Number(c.open),
-        high: Number(c.high),
-        low: Number(c.low),
-        close: Number(c.close),
-        volume: Number(c.volume),
-      }));
-      const shadowAccount: TickRunAccount = {
-        equity_fraction: equityFraction,
-        margin_fraction: marginFraction,
-        open_positions: openPositions,
-        available_equity: availableEquity,
-        exchange_held_side: exchangeHeldSide,
-        own_position_entry_price: ownOpenRow ? Number(ownOpenRow.entry_price) : null,
-        own_position_quantity: ownOpenRow ? Number(ownOpenRow.quantity) : null,
-        own_position_trade_id: ownOpenRow ? String(ownOpenRow.id) : null,
-      };
-      void callTickRun({
-        instance_id: this.instanceId,
-        inputs: {
-          symbol,
-          ohlcv: shadowOhlcv,
-          ml_signal: mlSignal,
-          ml_strength: mlStrength,
-          account: shadowAccount,
-          bank_size: bankSize,
-          sovereignty,
-          max_leverage: maxLevBoundary,
-          min_notional: minNotional,
-          size_fraction: this.sizeFraction,
-          self_obs_bias: this.selfObs?.entryBias ?? null,
-          rolling_kelly_stats: rollingStats
-            ? [rollingStats.winRate, rollingStats.avgWin, rollingStats.avgLoss]
-            : null,
-        },
-        prev_state: shadowPrevState,
-      }).then((pyResult) => {
-        logTickParityDiffs(symbol, {
-          action,
-          entry_threshold: entryThr.value,
-          leverage: leverage.value,
-          size_usdt: size.value,
-          mode,
-          side_candidate: sideCandidate,
-          side_override: sideOverride,
-          phi,
-          kappa: state.kappa,
-        }, pyResult.decision);
-      }).catch((err) => {
-        logger.debug('[shadow-tick] tick/run parity fetch failed', {
-          symbol,
-          err: err instanceof Error ? err.message : String(err),
-        });
-      });
-    }
 
     // 6b. EXECUTE — gated by MONKEY_EXECUTE=true. Observe-only otherwise.
     //

@@ -33,7 +33,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 import numpy as np
 
@@ -292,6 +292,20 @@ class SymbolState:
     regime_change_streak_by_lane: dict[str, int] = field(default_factory=dict)
 
 
+# Harvest-kind taxonomy (Phase 1.5). Mirrors the TS-side close_reason
+# values written to autonomous_trades.exit_reason. None when the action
+# isn't a close — entries, holds, regular flattens.
+HarvestKind = Literal[
+    "win",
+    "stop_loss",
+    "horizon_expired",
+    "regime_transition",
+    "mtf_horizon_expired",
+    "continuous_regime_drift",
+    "position_mismatch_phantom",
+]
+
+
 @dataclass
 class TickDecision:
     """Output of one tick. Caller persists / executes as needed."""
@@ -319,6 +333,15 @@ class TickDecision:
     direction: str = "flat"   # long | short | flat
     size_fraction: float = 1.0
     dca_intent: bool = False
+    # Phase 1.5 / 1.6 — kernel-cutover payload extensions.
+    # When the action is a close, harvest_kind reports the cascade tier;
+    # otherwise None. r_score / mtf_decision_action are observation-only
+    # for now (live values flow once the cutover lands).
+    harvest_kind: Optional[HarvestKind] = None
+    r_score: Optional[float] = None
+    mtf_decision_action: Optional[str] = None  # 'enter_long' | 'enter_short' | 'hold'
+    mtf_size_multiplier: Optional[float] = None
+    leverage_cap_from_regime: Optional[int] = None
 
 
 # ── Public API ───────────────────────────────────────────────────

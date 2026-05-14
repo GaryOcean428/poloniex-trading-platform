@@ -102,6 +102,54 @@ jobs:
             exit 1
           fi
 
+      - name: Scan for post-cutover shadow-flag regressions
+        # PR #674 (cutover/python-authoritative-kernel) deleted every
+        # MONKEY_*PY*/SHADOW env-flag along with the parity-diff helpers.
+        # If any of these names reappear in apps/ source, fail closed —
+        # either someone resurrected the dead-code pattern or revived a
+        # shadow path. The kernel is now Python-authoritative (no TS
+        # fallback, no shadow).
+        run: |
+          set -u
+          PATTERNS=(
+            'MONKEY_KERNEL_PY\b'
+            'MONKEY_KERNEL_PY_SHADOW'
+            'MONKEY_TICK_PY_SHADOW'
+            'RISK_KERNEL_PY_SHADOW'
+            'LIVE_SIGNAL_PY_SHADOW'
+            'AUTONOMOUS_TRADER_PY_SHADOW'
+            'isPythonKernelEnabled'
+            'isShadowTickEnabled'
+            'isRiskShadowEnabled'
+            'isLiveSignalShadowEnabled'
+            'isExitShadowEnabled'
+            'logParityDiff\b'
+            'logTickParityDiffs'
+            'logRiskParityDiff'
+            'logExitParityDiff'
+            'logReconcileParityDiff'
+          )
+          fail=0
+          for pat in "${PATTERNS[@]}"; do
+            hits=$(grep -rEn "$pat" apps/ \
+              --include='*.ts' --include='*.js' \
+              --exclude='*.test.ts' --exclude='*.test.js' \
+              --exclude='*.spec.ts' --exclude='*.spec.js' \
+              --exclude-dir='node_modules' --exclude-dir='dist' \
+              2>/dev/null \
+              | grep -Ev ':[[:space:]]*(//|\*|/\*)' \
+              || true)
+            if [ -n "$hits" ]; then
+              printf '::error::Shadow-flag regression: %s reappeared post-cutover\n' "$pat"
+              printf '%s\n' "$hits"
+              fail=1
+            fi
+          done
+          if [ "$fail" -eq 1 ]; then
+            printf '::error::Shadow infrastructure was deleted in PR #674. Python is authoritative for K-kernel decisions — no TS fallback, no shadow, no parity logging. See QIG_PURITY_KERNEL_REFERENCE.md §0 rule 4.\n'
+            exit 1
+          fi
+
       - name: Scan for arithmetic averaging of basins (warning)
         run: |
           set -u
