@@ -37,4 +37,13 @@ describe('logger circular-structure safety', () => {
   it('still logs plain metadata correctly', () => {
     expect(() => logger.info('plain metadata', { endpoint: '/market/candles', status: 200 })).not.toThrow();
   });
+
+  it('does not throw when metadata contains a BigInt (JSON.stringify rejects it)', () => {
+    expect(() => logger.warn('bigint metadata', { qty: 9007199254740993n })).not.toThrow();
+  });
+
+  it('does not throw when a nested getter throws during serialization', () => {
+    const hostile = { get bad() { throw new Error('getter exploded'); } };
+    expect(() => logger.error('hostile metadata', { hostile })).not.toThrow();
+  });
 });
