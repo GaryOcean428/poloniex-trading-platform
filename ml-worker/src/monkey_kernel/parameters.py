@@ -29,6 +29,7 @@ and audit-logged by the DB trigger in migration 034.
 
 from __future__ import annotations
 
+import concurrent.futures
 import logging
 import os
 import threading
@@ -37,6 +38,29 @@ from enum import Enum
 from typing import Any, Optional
 
 logger = logging.getLogger("monkey.parameters")
+
+# ── psycopg isolation executor ───────────────────────────────────
+#
+# 2026-05-14 fix: psycopg's synchronous connect() must NEVER run on
+# the asyncio event-loop thread. ml-worker is a FastAPI/uvloop process
+# with heavy native extensions (TensorFlow, scipy, sklearn, h5py); when
+# psycopg3's sync `wait_conn` machinery runs on the event-loop thread
+# in that environment it segfaults / aborts the whole process — and a
+# native crash is NOT catchable by the try/except in _load(). Observed
+# in production: every `/monkey/tick/run` request crashed ml-worker via
+# Ocean.__init__ → parameters.get() → _load() → psycopg.connect().
+#
+# Routing every _load() through this single-worker executor guarantees
+# the native connect always runs on a dedicated OS thread that is never
+# the event loop — the supported way to use sync psycopg from async
+# code. Single worker (max_workers=1) because registry loads are rare
+# (startup + every refresh_every_ticks) and must not race each other.
+_DB_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=1, thread_name_prefix="param-registry-db",
+)
+# Hard ceiling on a single registry load — a hung connect must not
+# wedge the executor forever. The caller falls back to cache/defaults.
+_LOAD_TIMEOUT_S = 15.0
 
 
 class VariableCategory(Enum):
@@ -239,8 +263,62 @@ class ParameterRegistry:
 
     # ── Internal ─────────────────────────────────────────────────
 
+    def _query_parameters_table(self) -> dict[str, ParamValue]:
+        """Open a psycopg connection and read the whole parameters table.
+
+        Runs ONLY inside the _DB_EXECUTOR worker thread (see _load) — it
+        must never execute on the asyncio event-loop thread. Pure
+        synchronous psycopg; raises on any DB/parse failure for _load to
+        catch.
+        """
+        import psycopg
+
+        with psycopg.connect(self._dsn) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT name, category, value, bounds_low, bounds_high,
+                           justification, version
+                      FROM monkey_parameters
+                    """
+                )
+                new_cache: dict[str, ParamValue] = {}
+                for row in cur.fetchall():
+                    (name, category_str, value, b_low, b_high,
+                     justification, version) = row
+                    try:
+                        cat = VariableCategory(category_str)
+                    except ValueError:
+                        logger.warning(
+                            "registry row '%s' has unknown category '%s'; "
+                            "skipping",
+                            name, category_str,
+                        )
+                        continue
+                    new_cache[name] = ParamValue(
+                        name=name,
+                        category=cat,
+                        value=float(value),
+                        bounds_low=float(b_low) if b_low is not None else None,
+                        bounds_high=float(b_high) if b_high is not None else None,
+                        justification=justification,
+                        version=int(version),
+                    )
+        return new_cache
+
     def _load(self) -> None:
-        """Reload the entire parameters table into the cache."""
+        """Reload the entire parameters table into the cache.
+
+        The actual psycopg connect + query runs on the dedicated
+        _DB_EXECUTOR thread — NEVER on the calling thread. This is
+        load-bearing: if _load is reached from an async request handler
+        (Ocean.__init__ → parameters.get() → _load), running sync
+        psycopg on the uvloop event-loop thread segfaults the process
+        (2026-05-14 production incident). Submitting to the executor and
+        blocking on .result() keeps the native connect off the event
+        loop; the brief block is acceptable (registry loads are rare and
+        the startup pre-warm means request handlers hit the cache).
+        """
         if self._dsn is None:
             if not self._loaded:
                 logger.warning(
@@ -250,44 +328,15 @@ class ParameterRegistry:
             return
 
         try:
-            import psycopg
-
-            with psycopg.connect(self._dsn) as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        """
-                        SELECT name, category, value, bounds_low, bounds_high,
-                               justification, version
-                          FROM monkey_parameters
-                        """
-                    )
-                    new_cache: dict[str, ParamValue] = {}
-                    for row in cur.fetchall():
-                        (name, category_str, value, b_low, b_high,
-                         justification, version) = row
-                        try:
-                            cat = VariableCategory(category_str)
-                        except ValueError:
-                            logger.warning(
-                                "registry row '%s' has unknown category '%s'; "
-                                "skipping",
-                                name, category_str,
-                            )
-                            continue
-                        new_cache[name] = ParamValue(
-                            name=name,
-                            category=cat,
-                            value=float(value),
-                            bounds_low=float(b_low) if b_low is not None else None,
-                            bounds_high=float(b_high) if b_high is not None else None,
-                            justification=justification,
-                            version=int(version),
-                        )
+            future = _DB_EXECUTOR.submit(self._query_parameters_table)
+            new_cache = future.result(timeout=_LOAD_TIMEOUT_S)
             self._cache = new_cache
             self._loaded = True
             logger.debug("parameter registry loaded: %d entries", len(new_cache))
         except Exception as exc:
-            # Fail-soft: keep serving from existing cache.
+            # Fail-soft: keep serving from existing cache / defaults.
+            # Covers DB-unreachable, query errors, AND the executor
+            # timeout — the process stays up either way.
             logger.warning("parameter registry load failed: %s", exc)
             if not self._loaded:
                 self._loaded = True  # don't retry every .get() call
