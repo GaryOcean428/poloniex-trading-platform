@@ -14,15 +14,23 @@ const EXCLUDED_METADATA_KEYS = ['level', 'message', 'timestamp'];
 // `logger.error(msg, axiosErr)` would make JSON.stringify throw
 // "Converting circular structure to JSON" — and that throw replaces
 // the original error, turning a recoverable 429 into a failed tick.
+// The replacer handles circular refs and BigInt (JSON.stringify
+// rejects BigInt outright); the try/catch is the final guarantee —
+// whatever else is in the metadata, this returns a string, never throws.
 const safeStringify = (obj) => {
   const seen = new WeakSet();
-  return JSON.stringify(obj, (_key, value) => {
-    if (typeof value === 'object' && value !== null) {
-      if (seen.has(value)) return '[Circular]';
-      seen.add(value);
-    }
-    return value;
-  });
+  try {
+    return JSON.stringify(obj, (_key, value) => {
+      if (typeof value === 'bigint') return `${value}n`;
+      if (typeof value === 'object' && value !== null) {
+        if (seen.has(value)) return '[Circular]';
+        seen.add(value);
+      }
+      return value;
+    });
+  } catch (err) {
+    return `[unserializable metadata: ${err instanceof Error ? err.message : String(err)}]`;
+  }
 };
 
 const logFormat = winston.format.combine(
