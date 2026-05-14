@@ -23,6 +23,7 @@ import poloniexFuturesService from './poloniexFuturesService.js';
 import riskService from './riskService.js';
 import { buildIndicatorMap, evaluateGenomeEntry, type SignalGenome } from './signalGenome.js';
 import simpleMlService from './simpleMlService.js';
+import { isTradingPaused } from './tradingControls.js';
 
 /** Safe number formatting — returns fallback string for NaN/Infinity */
 function safeFixed(value: unknown, decimals: number, fallback = 'N/A'): string {
@@ -890,6 +891,13 @@ class FullyAutonomousTrader extends EventEmitter {
 
       // Only execute real trades if not in paper trading mode
       if (!config.paperTrading) {
+        // Global trading-pause kill switch. executeSignals only ever
+        // carries fresh BUY/SELL opens (closes go through closePosition),
+        // so suppressing here gates ENTRIES only — exits stay live.
+        if (isTradingPaused()) {
+          logger.info(`[LIVE] entry suppressed — trading paused (kill switch) for ${signal.symbol}`);
+          return;
+        }
         const credentials = await apiCredentialsService.getCredentials(userId);
         if (!credentials) {
           logger.warn(`No credentials for user ${userId}, cannot execute live trade`);

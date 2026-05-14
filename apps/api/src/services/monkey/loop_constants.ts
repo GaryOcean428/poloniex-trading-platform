@@ -43,17 +43,16 @@ export const REGIME_STABILITY_TICKS_FOR_EXIT =
 export const BUS_RING_CAP = 32;
 
 /**
- * v0.8.7 kill switch — when MONKEY_TRADING_PAUSED=true, gate
- * entry-order placement only. Exit orders (scalp_exit, auto_flatten,
- * hard SL, rejust exits) are NOT gated; existing positions must close
- * cleanly during deploy/incident response. Default false (no pause).
+ * v0.8.7 kill switch — gates entry-order placement only. Exit orders
+ * (scalp_exit, auto_flatten, hard SL, rejust exits) are NOT gated;
+ * existing positions must close cleanly during deploy/incident response.
  *
- * Reads at order-placement time (live, not cached at startup) so the
- * operator can flip the env var on Railway without redeploying.
+ * 2026-05-14: the canonical implementation moved to
+ * ../tradingControls.ts so LiveSignal and FAT honour the same switch
+ * (previously it was Monkey-only). Re-exported here unchanged so every
+ * existing loop.ts / loop_execution.ts import keeps working.
  */
-export function isTradingPaused(): boolean {
-  return process.env.MONKEY_TRADING_PAUSED === 'true';
-}
+export { isTradingPaused } from '../tradingControls.js';
 
 /** witnessExit dedup window (ms) — close path races the reconciler. */
 export const WITNESS_DEDUP_WINDOW_MS = 60_000;

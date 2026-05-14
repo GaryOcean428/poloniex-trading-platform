@@ -366,3 +366,68 @@ describe('ResonanceBank — #579 quarantine filter', () => {
     expect(loadSql).not.toMatch(/quarantined/i);
   });
 });
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Null-pnl guard — a ghost-close with realizedPnl=null must NOT be written
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// 2026-05-14: the writeBubble guard checked `=== undefined` but not `null`.
+// A ghost-close (reconciler marked the row closed but the fill/pnl was never
+// recovered) flows a bubble with realizedPnl=null. Pre-fix that passed the
+// guard, then `pnl > 0 ? 'win' : pnl < 0 ? 'loss' : 'breakeven'` resolved
+// null → 'breakeven': a phantom "this basin → breakeven" lesson the bank
+// should never learn. The guard is now `== null`, catching both.
+
+describe('ResonanceBank — null-pnl guard (no phantom breakeven lessons)', () => {
+  let bank: ResonanceBank;
+
+  beforeEach(() => {
+    bank = new ResonanceBank();
+    vi.mocked(pool.query).mockReset();
+  });
+
+  function bubbleWithPnl(realizedPnl: number | null | undefined): Bubble {
+    return {
+      id: 'test-nullpnl',
+      center: makeBasin(),
+      phi: 0.5,
+      createdAt: Date.now(),
+      lifetimeMs: 1_000,
+      status: 'promoted',
+      metadata: {},
+      payload: {
+        symbol: 'ETH',
+        signal: 'BUY',
+        realizedPnl,
+        entryBasin: makeBasin(),
+        orderId: 'ghost-close-1',
+      },
+    };
+  }
+
+  it('skips writeBubble when realizedPnl is null (ghost-close) — returns null, no INSERT', async () => {
+    const result = await bank.writeBubble(bubbleWithPnl(null), 'test-v1');
+    expect(result).toBeNull();
+    // No DB work at all — not even the seen-orderIds load.
+    expect(vi.mocked(pool.query)).not.toHaveBeenCalled();
+  });
+
+  it('skips writeBubble when realizedPnl is undefined — returns null, no INSERT', async () => {
+    const result = await bank.writeBubble(bubbleWithPnl(undefined), 'test-v1');
+    expect(result).toBeNull();
+    expect(vi.mocked(pool.query)).not.toHaveBeenCalled();
+  });
+
+  it('still writes when realizedPnl is a real number — including 0 (a genuine breakeven)', async () => {
+    // pnl=0 is a REAL outcome (genuine breakeven), distinct from null
+    // (unknown outcome). It must still be written.
+    vi.mocked(pool.query)
+      .mockResolvedValueOnce({ rows: [] } as never)                          // load
+      .mockResolvedValueOnce({ rows: [fakeDbRow('ghost-close-1', 'ETH', 0)] } as never); // INSERT
+
+    const result = await bank.writeBubble(bubbleWithPnl(0), 'test-v1');
+    expect(result).not.toBeNull();
+    expect(vi.mocked(pool.query)).toHaveBeenCalledTimes(2);
+  });
+});

@@ -49,11 +49,6 @@ interface EngineMarketData {
   candles: CandleData[];
 }
 
-interface EngineTradingSignal {
-  action: 'BUY' | 'SELL' | 'CLOSE' | 'HOLD';
-  size?: number;
-}
-
 export interface TradingSession {
   id: string;
   userId: string;
@@ -223,48 +218,37 @@ export class PersistentTradingEngine extends EventEmitter {
    */
   private async executeSessionStrategy(context: StrategyExecutionContext): Promise<void> {
     const { session, poloniexService } = context;
-    const { strategyConfig, positionState } = session;
+    const { strategyConfig } = session;
 
     logger.debug(`Executing strategy for session ${session.id}: ${session.sessionName || 'Unnamed'}`);
 
     try {
-      // 1. Get current account balance and positions
+      // 1. Get current account balance for the session metrics snapshot.
       const accountInfo = await poloniexService.getAccountBalance({
         apiKey: context.credentials.apiKey,
         apiSecret: context.credentials.apiSecret
       });
 
-      const positions = await poloniexService.getPositions(
-        { apiKey: context.credentials.apiKey, apiSecret: context.credentials.apiSecret },
-        strategyConfig.symbol
-      );
-
-      // 2. Analyze market conditions (get current market data)
+      // 2. Get current market data for the session metrics snapshot.
       const marketData = await this.getMarketData(strategyConfig.symbol);
       if (!marketData) {
         logger.debug(`No market data available for ${strategyConfig.symbol}`);
         return;
       }
 
-      // 3. Generate trading signals based on strategy type
-      const signal = await this.generateTradingSignal(
-        strategyConfig,
-        marketData,
-        positions,
-        positionState
-      );
+      // Signal generation + order placement intentionally live in
+      // fullyAutonomousTrader, not here. This engine only keeps session
+      // state + heartbeats warm so the dashboard sees sessions as alive.
+      // Until 2026-05-14 a dead executeTrade()/placeOrder path sat here
+      // with no risk-kernel veto and no kill-switch check — removed, as
+      // generateTradingSignal was already hardwired to return HOLD.
 
-      // 4. Execute trades if signal is valid
-      if (signal && signal.action !== 'HOLD') {
-        await this.executeTrade(context, signal, marketData);
-      }
-
-      // 5. Update performance metrics
+      // 3. Update performance metrics.
       const updatedMetrics = {
         ...session.performanceMetrics,
         lastBalance: accountInfo.data?.accountEquity || 0,
         lastCheckTime: new Date().toISOString(),
-        lastSignal: signal?.action || 'HOLD',
+        lastSignal: 'HOLD',
         lastPrice: marketData.price
       };
 
@@ -304,63 +288,6 @@ export class PersistentTradingEngine extends EventEmitter {
     } catch (error) {
       logger.error(`Error getting market data for ${symbol}:`, error);
       return null;
-    }
-  }
-
-  /**
-   * Generate trading signal based on strategy configuration
-   */
-  private async generateTradingSignal(
-    strategyConfig: StrategyConfig,
-    marketData: EngineMarketData,
-    _positions: unknown,
-    _positionState: PositionState
-  ): Promise<EngineTradingSignal> {
-    try {
-      if (!marketData || !marketData.price || marketData.price === 0) {
-        return { action: 'HOLD' };
-      }
-
-      // The persistent engine now returns HOLD.
-      // Trading signals should be generated via fullyAutonomousTrader.
-      logger.debug(`[PersistentEngine] Signal generation delegated to fullyAutonomousTrader (strategy: ${strategyConfig.type || 'unknown'})`);
-      return { action: 'HOLD' };
-    } catch (error) {
-      logger.error('Error generating trading signal:', error);
-      return { action: 'HOLD' };
-    }
-  }
-
-  /**
-   * Execute a trade based on signal
-   */
-  private async executeTrade(
-    context: StrategyExecutionContext,
-    signal: EngineTradingSignal,
-    _marketData: EngineMarketData
-  ): Promise<void> {
-    const { poloniexService, credentials, session } = context;
-
-    try {
-      logger.info(`Executing trade for session ${session.id}: ${signal.action}`);
-
-      // Place order through Poloniex API
-      const orderData = {
-        symbol: session.strategyConfig.symbol,
-        side: signal.action === 'BUY' ? 'buy' : 'sell',
-        type: 'market',
-        size: signal.size || session.strategyConfig.defaultSize,
-        leverage: session.strategyConfig.leverage || 1
-      };
-
-      const result = await poloniexService.placeOrder(credentials, orderData);
-
-      logger.info(`Trade executed successfully for session ${session.id}:`, result);
-      this.emit('trade-executed', { sessionId: session.id, signal, result });
-
-    } catch (error) {
-      logger.error(`Error executing trade for session ${session.id}:`, error);
-      throw error;
     }
   }
 

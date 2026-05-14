@@ -40,6 +40,7 @@ import { getEngineVersion } from '../utils/engineVersion.js';
 import { logger } from '../utils/logger.js';
 import { apiCredentialsService } from './apiCredentialsService.js';
 import { getCurrentExecutionMode } from './executionModeService.js';
+import { isTradingPaused } from './tradingControls.js';
 import { getMaxLeverage, getPrecisions } from './marketCatalog.js';
 import mlPredictionService from './mlPredictionService.js';
 import { monitoringService } from './monitoringService.js';
@@ -717,6 +718,15 @@ export class LiveSignalEngine extends EventEmitter {
         losses: counter.losses,
         rawStrength: rawStrength.toFixed(3),
       });
+      return;
+    }
+
+    // 2f. Global trading-pause kill switch. Gates ENTRIES only — we are
+    //     past the "existing exchange position" branch (2d), so reaching
+    //     here means this is a fresh open. Exit/close paths above are
+    //     untouched so positions still close cleanly while paused.
+    if (isTradingPaused()) {
+      logger.info(`[LiveSignal] ${symbol} entry suppressed — trading paused (kill switch)`);
       return;
     }
 
