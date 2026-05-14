@@ -50,7 +50,6 @@ vi.mock('../services/monkey/loop.js', () => ({
 }));
 vi.mock('../services/monkey/kernel_client.js', () => ({
   callLiveDecide: vi.fn(),
-  isLiveSignalShadowEnabled: vi.fn(() => false),
 }));
 vi.mock('../services/executionModeService.js', () => ({
   getCurrentExecutionMode: vi.fn(() => 'auto'),

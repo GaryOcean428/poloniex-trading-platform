@@ -52,14 +52,10 @@ import {
   velocity,
   type Basin,
 } from './basin.js';
-import { callAutonomicTick } from './autonomic_client.js';
 import { BasinSync } from './basin_sync.js';
 import { BusEventType, getKernelBus, type KernelBus } from './kernel_bus.js';
 import {
   callTickRun,
-  isShadowTickEnabled,
-  logParityDiff,
-  logTickParityDiffs,
   type TickRunAccount,
   type TickRunOHLCV,
   type TickRunSymbolState,
@@ -771,27 +767,29 @@ export class MonkeyKernel extends EventEmitter {
     const state = this.symbolStates.get(symbol);
     if (!state) return;
 
-    // v0.8.3b: snapshot serializable state BEFORE any mutation for the
-    // Python shadow tick. Captured here so Python sees the same "prior
-    // state" the TS pipeline starts from.
-    const shadowPrevState: TickRunSymbolState | null = isShadowTickEnabled()
-      ? {
-          symbol,
-          identity_basin: Array.from(state.identityBasin),
-          last_basin: state.lastBasin ? Array.from(state.lastBasin) : null,
-          kappa: state.kappa,
-          session_ticks: state.sessionTicks,
-          last_mode: state.lastMode,
-          basin_history: state.basinHistory.map((b) => Array.from(b)),
-          phi_history: [...state.phiHistory],
-          fhealth_history: [...state.fHealthHistory],
-          drift_history: [...state.driftHistory],
-          dca_add_count: state.dcaAddCount,
-          last_entry_at_ms: state.lastEntryAtMs,
-          peak_pnl_usdt: state.peakPnlUsdt,
-          peak_tracked_trade_id: state.peakTrackedTradeId,
-        }
-      : null;
+    // Python-authoritative tick: serialize the kernel state BEFORE any
+    // mutation, so the /monkey/tick/run call sees the same "prior state"
+    // the TS pipeline starts from. The TS cognition section below runs
+    // for M/T/L agent inputs but its decision is overridden by Python's
+    // (the K-kernel cutover — PR #674).
+    const prevPyState: TickRunSymbolState = {
+      symbol,
+      identity_basin: Array.from(state.identityBasin),
+      last_basin: state.lastBasin ? Array.from(state.lastBasin) : null,
+      kappa: state.kappa,
+      session_ticks: state.sessionTicks,
+      last_mode: state.lastMode,
+      basin_history: state.basinHistory.map((b) => Array.from(b)),
+      phi_history: [...state.phiHistory],
+      fhealth_history: [...state.fHealthHistory],
+      drift_history: [...state.driftHistory],
+      dca_add_count: state.dcaAddCount,
+      last_entry_at_ms: state.lastEntryAtMs,
+      peak_pnl_usdt: state.peakPnlUsdt,
+      peak_tracked_trade_id: state.peakTrackedTradeId,
+      regime_at_open_by_lane: { ...state.regimeAtOpenByLane },
+      phi_at_open_by_lane: { ...state.phiAtOpenByLane },
+    };
 
     state.sessionTicks++;
 
@@ -935,33 +933,6 @@ export class MonkeyKernel extends EventEmitter {
       rewardSerotoninDelta: rewardDeltas.serotonin,
       rewardEndorphinDelta: rewardDeltas.endorphin,
     });
-
-    // v0.7.10 shadow-mode: call the Python autonomic kernel in parallel
-    // and log parity diffs. TS path remains authoritative until
-    // MONKEY_KERNEL_PY=true flips the default. Fire-and-forget — shadow
-    // latency must not block the tick.
-    if (process.env.MONKEY_KERNEL_PY_SHADOW === 'true') {
-      void callAutonomicTick({
-        instanceId: this.instanceId,
-        phiDelta,
-        basinVelocity: bv,
-        surprise: Math.abs(phiDelta) * 2,
-        quantumWeight: regimeWeights.quantum,
-        kappa: state.kappa,
-        externalCoupling: couplingHealth,
-        currentMode: state.lastMode ?? 'investigation',
-        isFlat: !exchangeHeldSide,
-      }).then((pyResult) => {
-        logParityDiff('nc.dopamine', nc.dopamine, pyResult.nc.dopamine);
-        logParityDiff('nc.serotonin', nc.serotonin, pyResult.nc.serotonin);
-        logParityDiff('nc.endorphins', nc.endorphins, pyResult.nc.endorphins);
-        logParityDiff('nc.norepinephrine', nc.norepinephrine, pyResult.nc.norepinephrine);
-      }).catch((err) => {
-        logger.debug('[shadow] autonomic parity fetch failed', {
-          err: err instanceof Error ? err.message : String(err),
-        });
-      });
-    }
 
     const sovereignty = await resonanceBank.sovereignty();
 
@@ -1655,66 +1626,91 @@ export class MonkeyKernel extends EventEmitter {
         : CHOP_SUPPRESS_SWING_CONFIDENCE_DEFAULT,
     };
 
-    // v0.8.3b — shadow the full Python tick pipeline. Fire-and-forget:
-    // Python's decision is NOT authoritative; we only log parity diffs.
-    // TS remains the live path. Gated by MONKEY_TICK_PY_SHADOW=true.
-    if (shadowPrevState !== null) {
-      const shadowOhlcv: TickRunOHLCV[] = ohlcv.map((c) => ({
-        timestamp: Number(c.timestamp ?? 0),
-        open: Number(c.open),
-        high: Number(c.high),
-        low: Number(c.low),
-        close: Number(c.close),
-        volume: Number(c.volume),
-      }));
-      const shadowAccount: TickRunAccount = {
-        equity_fraction: equityFraction,
-        margin_fraction: marginFraction,
-        open_positions: openPositions,
-        available_equity: availableEquity,
-        exchange_held_side: exchangeHeldSide,
-        own_position_entry_price: ownOpenRow ? Number(ownOpenRow.entry_price) : null,
-        own_position_quantity: ownOpenRow ? Number(ownOpenRow.quantity) : null,
-        own_position_trade_id: ownOpenRow ? String(ownOpenRow.id) : null,
-      };
-      void callTickRun({
-        instance_id: this.instanceId,
-        inputs: {
-          symbol,
-          ohlcv: shadowOhlcv,
-          ml_signal: mlSignal,
-          ml_strength: mlStrength,
-          account: shadowAccount,
-          bank_size: bankSize,
-          sovereignty,
-          max_leverage: maxLevBoundary,
-          min_notional: minNotional,
-          size_fraction: this.sizeFraction,
-          self_obs_bias: this.selfObs?.entryBias ?? null,
-          rolling_kelly_stats: rollingStats
-            ? [rollingStats.winRate, rollingStats.avgWin, rollingStats.avgLoss]
-            : null,
-        },
-        prev_state: shadowPrevState,
-      }).then((pyResult) => {
-        logTickParityDiffs(symbol, {
-          action,
-          entry_threshold: entryThr.value,
-          leverage: leverage.value,
-          size_usdt: size.value,
-          mode,
-          side_candidate: sideCandidate,
-          side_override: sideOverride,
-          phi,
-          kappa: state.kappa,
-        }, pyResult.decision);
-      }).catch((err) => {
-        logger.debug('[shadow-tick] tick/run parity fetch failed', {
-          symbol,
-          err: err instanceof Error ? err.message : String(err),
-        });
-      });
-    }
+    // ── PYTHON-AUTHORITATIVE KERNEL DECISION (PR #674 cutover) ──
+    //
+    // Python's /monkey/tick/run is the source of truth for K's decision
+    // — action, entry threshold, leverage, size, lane, side. The TS
+    // cognition section above ran for M/T/L agent inputs (basin, basinDir,
+    // tapeTrend, emotions, motivators, mtfDec, lDecision) and still
+    // accumulates state for exit bookkeeping, but the K dispatch's
+    // ``action`` choice is now overridden by Python's verdict below.
+    //
+    // The follow-up PR moves M/T/L decisions to Python and deletes the
+    // TS cognition modules entirely (per_agent_state, working_memory,
+    // resonance_bank, agent_L_classifier, mtfLClassifier, etc.).
+    //
+    // Fail-loud: Python down = tick errors, operator alerted. No TS
+    // fallback. 5 s default timeout.
+    const tickRunOhlcv: TickRunOHLCV[] = ohlcv.map((c) => ({
+      timestamp: Number(c.timestamp ?? 0),
+      open: Number(c.open),
+      high: Number(c.high),
+      low: Number(c.low),
+      close: Number(c.close),
+      volume: Number(c.volume),
+    }));
+    const tickRunAccount: TickRunAccount = {
+      equity_fraction: equityFraction,
+      margin_fraction: marginFraction,
+      open_positions: openPositions,
+      available_equity: availableEquity,
+      exchange_held_side: exchangeHeldSide,
+      own_position_entry_price: ownOpenRow ? Number(ownOpenRow.entry_price) : null,
+      own_position_quantity: ownOpenRow ? Number(ownOpenRow.quantity) : null,
+      own_position_trade_id: ownOpenRow ? String(ownOpenRow.id) : null,
+    };
+    const tickRunResult = await callTickRun({
+      instance_id: this.instanceId,
+      inputs: {
+        symbol,
+        ohlcv: tickRunOhlcv,
+        account: tickRunAccount,
+        bank_size: bankSize,
+        sovereignty,
+        max_leverage: maxLevBoundary,
+        min_notional: minNotional,
+        size_fraction: this.sizeFraction,
+        self_obs_bias: this.selfObs?.entryBias ?? null,
+        funding_rate_8h: fundingRate8h,
+        rolling_kelly_stats: rollingStats
+          ? [rollingStats.winRate, rollingStats.avgWin, rollingStats.avgLoss]
+          : null,
+      },
+      prev_state: prevPyState,
+    });
+    const pyDecision = tickRunResult.decision;
+    // Python's decision overrides the TS dispatch's choice. The TS
+    // dispatch ran for its state-mutation side effects (per-lane peak
+    // tracking, streaks, regime anchors); its action verdict is discarded.
+    action = pyDecision.action;
+    reason = pyDecision.reason;
+    // Python's sizing is authoritative for the EXECUTE block below.
+    size.value = pyDecision.size_usdt;
+    leverage.value = pyDecision.leverage;
+    entryThr.value = pyDecision.entry_threshold;
+    derivation.python_kernel = {
+      mode: pyDecision.mode,
+      action: pyDecision.action,
+      lane: pyDecision.lane,
+      direction: pyDecision.direction,
+      side_candidate: pyDecision.side_candidate,
+      side_override: pyDecision.side_override,
+      entry_threshold: pyDecision.entry_threshold,
+      leverage: pyDecision.leverage,
+      size_usdt: pyDecision.size_usdt,
+      phi: pyDecision.phi,
+      kappa: pyDecision.kappa,
+      basin_velocity: pyDecision.basin_velocity,
+      basin_direction: pyDecision.basin_direction,
+      tape_trend: pyDecision.tape_trend,
+      harvest_kind: pyDecision.harvest_kind ?? null,
+      r_score: pyDecision.r_score ?? null,
+      mtf_decision_action: pyDecision.mtf_decision_action ?? null,
+      mtf_size_multiplier: pyDecision.mtf_size_multiplier ?? null,
+      leverage_cap_from_regime: pyDecision.leverage_cap_from_regime ?? null,
+      // Carry Python's full derivation as a nested object for forensics.
+      derivation: pyDecision.derivation,
+    };
 
     // 6b. EXECUTE — gated by MONKEY_EXECUTE=true. Observe-only otherwise.
     //
