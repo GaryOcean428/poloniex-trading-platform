@@ -1271,8 +1271,16 @@ export class MonkeyKernel extends EventEmitter {
     // Monkey's DB row said short but the fallback claimed long. DB row
     // is authoritative for Monkey's own recent trades; reconciler closes
     // stale rows within 60s when exchange disagrees permanently.
+    // 2026-05-14 (#77e0b54): must NOT prefer exchangeHeldSide either.
+    // exchangeHeldSide is the SHARED exchange state, resolved by a single
+    // .find() over every position. On a HEDGE account holding BOTH a long
+    // and a short on the same symbol it returns whichever side .find()
+    // hits first — so preferring it made the kernel read the opposite of
+    // its own position and emit a false "dca: side mismatch" every tick.
+    // heldSide is THIS kernel's own open row, exactly as the design note
+    // on exchangeHeldSide above prescribes.
     const heldSide: 'long' | 'short' | null = ownOpenRow
-      ? (exchangeHeldSide ?? ownOpenRow.side)
+      ? ownOpenRow.side
       : null;
     derivation.exchangeHeldSide = exchangeHeldSide;
     derivation.monkeyHeldSide = heldSide;
