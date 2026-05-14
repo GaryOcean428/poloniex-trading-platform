@@ -497,8 +497,34 @@ def _handle_predict_ensemble(payload: dict) -> dict:
 # FastAPI app
 # ---------------------------------------------------------------------------
 
+async def _prewarm_parameter_registry() -> None:
+    """Trigger the one-time parameter-registry DB load at startup, on a
+    worker thread (NOT the event loop).
+
+    2026-05-14 fix: without this, the registry's lazy _load() first
+    runs inside the `/monkey/tick/run` request handler chain
+    (Ocean.__init__ → parameters.get() → _load()). _load() now isolates
+    its psycopg work to a dedicated thread, but pre-warming here means
+    request handlers only ever hit the in-memory cache — the DB connect
+    happens exactly once, at startup, off the event loop. Fail-soft:
+    parameters.get() falls back to its hardcoded defaults if the load
+    fails, so a registry-unreachable startup must not abort boot.
+    """
+    try:
+        from monkey_kernel.parameters import get_registry
+
+        await asyncio.to_thread(get_registry().refresh)
+        logger.info("parameter registry pre-warmed at startup")
+    except Exception as exc:  # noqa: BLE001 — never block boot on this
+        logger.warning(
+            "parameter registry pre-warm failed (defaults will be used): %s",
+            exc,
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    await _prewarm_parameter_registry()
     _start_redis_listener()
     _start_trade_outcome_listener()
     logger.info("ML worker started")
