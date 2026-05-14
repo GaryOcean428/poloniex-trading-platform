@@ -117,6 +117,7 @@ import {
   type LaneType,
 } from './executive.js';
 import { evaluateRejustification } from './held_position_rejustification.js';
+import { shouldStaleBleedExit } from './staleBleedStop.js';
 import {
   computeAgentHeadroom,
   clampSizeToHeadroom,
@@ -1170,6 +1171,41 @@ export class MonkeyKernel extends EventEmitter {
           }
         }
 
+        // 3.5. Stale-bleed time stop — TS path's conviction gate is
+        // dormant (NEUTRAL_EMOTIONS hardcoded zeros above), so chronic
+        // flat positions never get an emotion-driven exit. This stop
+        // mirrors what Python's frustration > 0.6 would do here:
+        // when held > lane threshold with price move inside ±0.3%,
+        // force-close. 2026-05-01 live tape: scalp_exits average
+        // 62-96s; positions held > 10m almost always resolve via
+        // reconciliation. Once Layer 2B emotion stack ports to TS,
+        // this stop becomes redundant and can be removed. Distinct
+        // from held_position_rejustification's STALE_BLEED gate, which
+        // fires on LOSING positions (ROI ≤ -1%); this one fires on
+        // STAGNANT positions regardless of P&L sign.
+        if (!exitFired) {
+          const stale = shouldStaleBleedExit({
+            lastEntryAtMs: state.lastEntryAtMs,
+            positionNotional,
+            unrealizedPnl,
+            nowMs: Date.now(),
+            lane: heldLane,
+          });
+          derivation.staleBleed = { ...stale.derivation, tradeId };
+          if (stale.fire) {
+            action = 'scalp_exit';
+            reason = stale.reason;
+            exitFired = true;
+            derivation.scalp = {
+              exitTypeBit: 6,  // stale-bleed time stop
+              unrealizedPnl,
+              markPrice: lastPrice,
+              tradeId,
+              lane: heldLane,
+            };
+          }
+        }
+
         // 4. Scalp TP — only TP can reach here (SL was returned above
         // unless deferred; rejustification and harvest also returned).
         if (!exitFired && scalp.value && !isStopLoss) {
@@ -1460,6 +1496,7 @@ export class MonkeyKernel extends EventEmitter {
           exitTypeBit === -1 ? 'stop_loss' :
           exitTypeBit === 2 ? 'trailing_harvest' :
           exitTypeBit === 3 ? 'trend_flip_harvest' :
+          exitTypeBit === 6 ? 'stale_bleed_stop' :
           'scalp_exit';
         const pnlAtDecision = Number(scalpDeriv?.unrealizedPnl ?? 0);
         const scalpLane = (
