@@ -31,6 +31,7 @@ import { getCurrentExecutionMode } from '../executionModeService.js';
 import { getMaxLeverage, getPrecisions } from '../marketCatalog.js';
 import mlPredictionService from '../mlPredictionService.js';
 import poloniexFuturesService from '../poloniexFuturesService.js';
+import { resolveExchangePositionSide } from '../exchangePositionSide.js';
 import {
   evaluatePreTradeVetoes,
   type KernelAccountState,
@@ -4424,17 +4425,15 @@ export class MonkeyKernel extends EventEmitter {
       const positionsList = Array.isArray(positions) ? positions : [];
       const forSymbol = positionsList.find((p: Record<string, unknown>) =>
         String(p.symbol ?? '') === symbol && Math.abs(Number(p.qty ?? p.size ?? 0)) > 0);
-      // v0.8.7d-7 fix: Poloniex v3 one-way mode returns `side` as the
-      // next-action direction (BUY/SELL, also long/short for some fields),
-      // NOT the position direction. For a SHORT position, side="SELL".
-      // The sign of `qty` is the authoritative indicator (reconciler uses
-      // it correctly at stateReconciliationService.ts:152). Prior code
-      // read `p.side` and fell through the else branch ("sell" !== "short"
-      // → "long") causing Monkey to think shorts were longs, triggering
-      // the OVERRIDE_REVERSE[long→short] loop with 21002 close-rejections.
-      const qtyNum = forSymbol ? Number((forSymbol as Record<string, unknown>).qty ?? (forSymbol as Record<string, unknown>).size ?? 0) : 0;
-      const heldSide: 'long' | 'short' | null = forSymbol && qtyNum !== 0
-        ? (qtyNum < 0 ? 'short' : 'long')
+      // Side resolution: posSide-first, qty-sign fallback (shared helper).
+      // The prior "sign of qty is authoritative" assumption was wrong for
+      // HEDGE accounts — qty is a POSITIVE magnitude there and the side
+      // lives in posSide. It misread every HEDGE short as a long, so when
+      // a position was reversed long→short on the exchange the kernel
+      // stayed stuck on `held long`, could not DCA, and was paralysed
+      // (2026-05-14 incident).
+      const heldSide: 'long' | 'short' | null = forSymbol
+        ? resolveExchangePositionSide(forSymbol as Record<string, unknown>)
         : null;
       return {
         equityFraction,
