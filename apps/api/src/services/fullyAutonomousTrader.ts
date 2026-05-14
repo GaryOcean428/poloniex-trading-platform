@@ -19,13 +19,6 @@ import { apiCredentialsService } from './apiCredentialsService.js';
 import backtestingEngine from './backtestingEngine.js';
 import { getPrecisions } from './marketCatalog.js';
 import mlPredictionService from './mlPredictionService.js';
-import {
-  callExitDecide,
-  callReconcile,
-  isExitShadowEnabled,
-  logExitParityDiff,
-  logReconcileParityDiff,
-} from './monkey/kernel_client.js';
 import poloniexFuturesService from './poloniexFuturesService.js';
 import riskService from './riskService.js';
 import { buildIndicatorMap, evaluateGenomeEntry, type SignalGenome } from './signalGenome.js';
@@ -1232,7 +1225,19 @@ class FullyAutonomousTrader extends EventEmitter {
 
   /**
    * Reconcile DB position state with actual exchange positions.
-   * Logs drift but does not auto-close — lets the human investigate.
+   *
+   * 2026-05-14 fix: now side-aware. The legacy implementation only
+   * checked symbol-level presence (``new Set(exchangePositions.map(symbol))``)
+   * which silently skipped the case where the DB had a LONG row but the
+   * exchange had a same-symbol SHORT — both "contain BTC" so the
+   * symbol-only set diff yielded an empty mismatch list. Net effect on
+   * 2026-05-14: 3 BTC LONG rows in DB sat as phantoms for 50+ minutes
+   * after Poloniex netted them against a SHORT, and Monkey's
+   * stale_bleed gate spun every 30 s firing close orders that returned
+   * code=21002 "Position not enough". This implementation builds a
+   * per-symbol set of OPEN exchange sides (HEDGE-aware via ``posSide``,
+   * ONE_WAY fallback via ``Math.sign(qty)``) and closes any DB row
+   * whose ``(symbol, side)`` pair is not represented on the exchange.
    */
   private async reconcilePositions(userId: string): Promise<void> {
     try {
@@ -1241,70 +1246,85 @@ class FullyAutonomousTrader extends EventEmitter {
 
       // Get actual positions from Poloniex
       const exchangePositions = await poloniexFuturesService.getPositions(credentials);
-      const openSymbols = new Set(
-        (exchangePositions || [])
-          .filter((p: Record<string, unknown>) => Number(p.qty || p.currentQty || 0) !== 0)
-          .map((p: Record<string, unknown>) => String(p.symbol))
-      );
 
-      // Get DB open trades (non-paper)
+      // Build per-symbol set of OPEN exchange sides ('long' | 'short').
+      // HEDGE-aware: posSide=LONG → 'long', posSide=SHORT → 'short';
+      // ONE_WAY fallback: Math.sign(qty) decides side. Same resolution
+      // order used by managePositions's [FAT] side-label fix.
+      const exchangeSidesBySymbol = new Map<string, Set<'long' | 'short'>>();
+      for (const raw of (exchangePositions || []) as unknown[]) {
+        const p = raw as Record<string, unknown>;
+        const qty = Number(p.qty ?? p.currentQty ?? 0);
+        if (qty === 0) continue;
+        const symbol = String(p.symbol ?? '');
+        if (!symbol) continue;
+        const posSide = String(p.posSide ?? '').toUpperCase();
+        const side: 'long' | 'short' =
+          posSide === 'SHORT' || (posSide !== 'LONG' && qty < 0) ? 'short' : 'long';
+        if (!exchangeSidesBySymbol.has(symbol)) {
+          exchangeSidesBySymbol.set(symbol, new Set());
+        }
+        exchangeSidesBySymbol.get(symbol)!.add(side);
+      }
+      const openSymbols = new Set(exchangeSidesBySymbol.keys());
+
+      // Get DB open trades (non-paper). Fetches the row id + side so the
+      // side-aware mismatch check below can target specific rows.
       const dbResult = await pool.query(
-        `SELECT symbol, order_id FROM autonomous_trades
+        `SELECT id, symbol, side, order_id FROM autonomous_trades
          WHERE user_id = $1 AND status = 'open' AND paper_trade = false`,
         [userId]
       );
-      const dbSymbols = new Set(dbResult.rows.map((r: { symbol: string }) => r.symbol));
+      const dbRows = dbResult.rows as Array<{
+        id: string;
+        symbol: string;
+        side: string;
+        order_id?: string;
+      }>;
+      const dbSymbols = new Set(dbRows.map(r => r.symbol));
 
-      // Drift detection
-      const inDbNotExchange = [...dbSymbols].filter(s => !openSymbols.has(s));
+      // Side-aware phantom detection: a row is phantom when the exchange
+      // either has NO position on that symbol, OR has a position but on
+      // the OPPOSITE side. The latter is the 2026-05-14 trigger case.
+      const sideMismatchedRows = dbRows.filter(r => {
+        const sideRaw = String(r.side).toLowerCase();
+        const sideNorm: 'long' | 'short' =
+          sideRaw === 'sell' || sideRaw === 'short' ? 'short' : 'long';
+        const exchSides = exchangeSidesBySymbol.get(r.symbol);
+        return !exchSides || !exchSides.has(sideNorm);
+      });
+      const inDbNotExchange = [...new Set(sideMismatchedRows.map(r => r.symbol))];
       const inExchangeNotDb = ([...openSymbols] as string[]).filter(s => !dbSymbols.has(s));
 
-      // v0.8.7d-4: fire-and-forget shadow call to /live/reconcile. TS
-      // side's inDbNotExchange / inExchangeNotDb are authoritative; the
-      // Python side runs the same diff for parity verification. Default
-      // OFF via isExitShadowEnabled() (AUTONOMOUS_TRADER_PY_SHADOW).
-      // Shadow errors swallowed at debug — cannot impact reconcile.
-      if (isExitShadowEnabled()) {
-        const shadowDbRows = dbResult.rows.map((r: { symbol: string; order_id?: string }) => ({
-          symbol: r.symbol,
-          orderId: r.order_id,
-        }));
-        const shadowExchangePositions = (exchangePositions || [])
-          .map((p: Record<string, unknown>) => ({
-            symbol: String(p.symbol),
-            qty: Number(p.qty || p.currentQty || 0),
-          }));
-        void callReconcile({
-          dbRows: shadowDbRows,
-          exchangePositions: shadowExchangePositions,
-        }).then((py) => {
-          logReconcileParityDiff(
-            {
-              phantomDbSymbols: inDbNotExchange as string[],
-              orphanExchangeSymbols: inExchangeNotDb as string[],
-            },
-            py,
-          );
-        }).catch((err) => {
-          logger.debug('[reconcile-shadow] parity fetch failed', {
-            err: err instanceof Error ? err.message : String(err),
-          });
-        });
-      }
-
-      if (inDbNotExchange.length > 0) {
+      // Note: the AUTONOMOUS_TRADER_PY_SHADOW /live/reconcile parity
+      // block was removed in the TS→Py kernel cutover (PR #674) — the
+      // shadow infrastructure no longer exists. The side-aware
+      // reconciler below (PR #677) is the sole authority.
+      if (sideMismatchedRows.length > 0) {
         logger.warn(
-          `[RECONCILE] DB shows open positions not on exchange: ${inDbNotExchange.join(', ')} — ` +
-          `marking as closed`
+          `[RECONCILE] DB rows open but exchange has no matching side: ` +
+          `${sideMismatchedRows.length} row(s) on symbols ${inDbNotExchange.join(', ')} — ` +
+          `marking as closed`,
+          {
+            rows: sideMismatchedRows.map(r => ({
+              id: r.id, symbol: r.symbol, side: r.side,
+            })),
+            exchangeSidesBySymbol: Object.fromEntries(
+              [...exchangeSidesBySymbol.entries()].map(([k, v]) => [k, [...v]]),
+            ),
+          },
         );
-        for (const symbol of inDbNotExchange) {
-          await pool.query(
-            `UPDATE autonomous_trades SET status = 'closed', exit_time = NOW(),
-             exit_reason = 'reconciliation: position not found on exchange'
-             WHERE user_id = $1 AND symbol = $2 AND status = 'open' AND paper_trade = false`,
-            [userId, symbol]
-          );
-        }
+        // Close the specific phantom rows by id. Using ANY($1::uuid[])
+        // targets only the mismatched rows, NOT all open rows for the
+        // symbol — important because a same-symbol opposite-side row
+        // CAN legitimately coexist (e.g., HEDGE-mode lane-isolated
+        // positions), and bulk-closing by symbol would over-reach.
+        await pool.query(
+          `UPDATE autonomous_trades SET status = 'closed', exit_time = NOW(),
+           exit_reason = 'reconciliation: side mismatch with exchange'
+           WHERE id = ANY($1::uuid[])`,
+          [sideMismatchedRows.map(r => r.id)],
+        );
       }
 
       if (inExchangeNotDb.length > 0) {
@@ -1356,33 +1376,46 @@ class FullyAutonomousTrader extends EventEmitter {
 
         // 2026-05-06 incident: FAT closed a user-opened ETH LONG via
         // stop_loss_roi because it iterates ALL exchange positions and
-        // applies its SL/TP rules without checking ownership. The
-        // user-position guard skips agent='USER' rows so FAT doesn't
-        // manage manually-opened positions.
+        // applies its SL/TP rules without checking ownership.
         //
         // 2026-05-08: opt-in override. When the user wants FAT to
         // manage their manual positions (e.g. add to / hand off
         // ongoing supervision), set FAT_MANAGES_USER_POSITIONS=true.
-        // Default false preserves the safer guard.
-        const fatManagesUserPositions =
-          process.env.FAT_MANAGES_USER_POSITIONS === 'true';
-        if (!fatManagesUserPositions) {
-          try {
-            const userOwned = await pool.query(
-              `SELECT 1 FROM autonomous_trades
-                WHERE user_id = $1 AND symbol = $2 AND status = 'open'
-                  AND agent = 'USER' LIMIT 1`,
-              [userId, symbol],
-            );
-            if (userOwned.rows.length > 0) {
-              logger.info(`[FAT] skipping ${symbol} — user-owned position (agent='USER'), not FAT's to manage`);
-              continue;
-            }
-          } catch (ownerErr) {
-            logger.debug('[FAT] user-owned check failed (continuing — fail-open)', {
-              symbol, err: ownerErr instanceof Error ? ownerErr.message : String(ownerErr),
-            });
+        //
+        // 2026-05-11 incident: FAT closed a Monkey kernel-issued
+        // BTC LONG via stop_loss_roi at -$54 even though Monkey's
+        // exit cascade (rejustification + harvest + regime-stability
+        // streaks) wanted to hold. Market reverted favorably right
+        // after, locking in an unnecessary loss. The earlier guard
+        // only skipped agent='USER' — kernel-issued rows (K/M/T/L)
+        // were not skipped and FAT's blunt -15% ROI gate ran before
+        // Monkey's geometric gates could re-justify.
+        //
+        // Fixed: FAT now skips ANY position owned by a kernel agent
+        // OR USER (when FAT_MANAGES_USER_POSITIONS is off). Monkey
+        // owns its lifecycle end-to-end; FAT only acts on orphan or
+        // unknown-origin positions.
+        try {
+          const fatManagesUserPositions =
+            process.env.FAT_MANAGES_USER_POSITIONS === 'true';
+          const ownerAgentsToSkip = fatManagesUserPositions
+            ? ['K', 'M', 'T', 'L']
+            : ['K', 'M', 'T', 'L', 'USER'];
+          const owned = await pool.query(
+            `SELECT agent FROM autonomous_trades
+              WHERE user_id = $1 AND symbol = $2 AND status = 'open'
+                AND agent = ANY($3::text[]) LIMIT 1`,
+            [userId, symbol, ownerAgentsToSkip],
+          );
+          if (owned.rows.length > 0) {
+            const ownerAgent = String(owned.rows[0]?.agent ?? '?');
+            logger.info(`[FAT] skipping ${symbol} — owned by ${ownerAgent}, not FAT's to manage`);
+            continue;
           }
+        } catch (ownerErr) {
+          logger.debug('[FAT] ownership check failed (continuing — fail-open)', {
+            symbol, err: ownerErr instanceof Error ? ownerErr.message : String(ownerErr),
+          });
         }
         const markPx = parseFloat(position.markPx || position.markPrice || '0');
         const entryPrice = parseFloat(position.openAvgPx || position.entryPrice || '0');
@@ -1474,54 +1507,6 @@ class FullyAutonomousTrader extends EventEmitter {
           await this.closePosition(userId, symbol, 'stop_loss_roi');
           void this.recordTradeResult(userId, unrealizedPnL, config?.initialCapital ?? 10000);
           continue;
-        }
-
-        // v0.8.7d-4: fire-and-forget shadow call to /live/exit-decide.
-        // TS exit-chain (below) remains authoritative; Python runs the
-        // same stop_loss → take_profit → trend_reversal → hold priority
-        // chain and logs divergence. Default OFF via isExitShadowEnabled.
-        //
-        // TS "shadow decision" inlined below for parity comparison — we
-        // can't capture what the TS code below is about to decide without
-        // evaluating it ourselves, because the `continue` statements make
-        // branch-taken unobservable from a post-decision hook.
-        if (isExitShadowEnabled()) {
-          const analysis = analyses.get(symbol);
-          const tsShadowDecision = ((): { shouldClose: boolean; reason: string } => {
-            if (pnlPercent < -slPercent) return { shouldClose: true, reason: 'stop_loss' };
-            if (pnlPercent > tpPercent) return { shouldClose: true, reason: 'take_profit' };
-            if (pnlPercent > trailingTrigger && analysis) {
-              // Use the outer-scope `isLong` (HEDGE-aware via posSide +
-              // qty-sign); the prior `const isLong = qty > 0` shadowing
-              // bypassed that and produced the same mislabel as the
-              // [FAT] log line on HEDGE accounts.
-              if ((isLong && analysis.trend === 'bearish') ||
-                  (!isLong && analysis.trend === 'bullish')) {
-                return { shouldClose: true, reason: 'trend_reversal' };
-              }
-            }
-            return { shouldClose: false, reason: 'hold' };
-          })();
-          void callExitDecide({
-            position: {
-              symbol,
-              qty,
-              entryPrice,
-              unrealizedPnl: unrealizedPnL,
-            },
-            config: {
-              stopLossPercent: slPercent,
-              takeProfitPercent: tpPercent,
-            },
-            analysis: analysis ? { trend: analysis.trend as 'bullish' | 'bearish' | 'neutral' | 'unknown' } : undefined,
-          }).then((py) => {
-            logExitParityDiff(tsShadowDecision, py);
-          }).catch((err) => {
-            logger.debug('[exit-shadow] parity fetch failed', {
-              symbol,
-              err: err instanceof Error ? err.message : String(err),
-            });
-          });
         }
 
         // Check stop loss using config percentage
@@ -1778,6 +1763,16 @@ class FullyAutonomousTrader extends EventEmitter {
   /**
    * Record a trade result and update circuit breaker state.
    * Called after every position close.
+   *
+   * 2026-05-11 — capitalBase now reflects CURRENT EQUITY, not the
+   * static config.initialCapital. Previous behavior: a $54 loss
+   * against config.initialCapital=$12.40 reported as "435.8% of
+   * capital" and tripped the daily-loss CB on a single trade. The
+   * CB should be governing real risk against live exposure, not
+   * historical baseline. Resolution order:
+   *   1. Latest autonomous_performance.current_equity row
+   *   2. The passed capitalBase arg (legacy callers)
+   *   3. 10000 fallback
    */
   private async recordTradeResult(userId: string, pnl: number, capitalBase: number): Promise<void> {
     if (process.env.TRADING_ENGINE_PY === 'true') {
@@ -1794,6 +1789,27 @@ class FullyAutonomousTrader extends EventEmitter {
           `${pyErr instanceof Error ? pyErr.message : String(pyErr)}`
         );
       }
+    }
+
+    // Prefer the most recent recorded equity over the static
+    // initialCapital baseline that callers pass in.
+    let effectiveCapitalBase = capitalBase;
+    try {
+      const eqRow = await pool.query(
+        `SELECT current_equity FROM autonomous_performance
+          WHERE user_id = $1
+          ORDER BY timestamp DESC
+          LIMIT 1`,
+        [userId],
+      );
+      const liveEquity = Number(eqRow.rows[0]?.current_equity ?? 0);
+      if (Number.isFinite(liveEquity) && liveEquity > 0) {
+        effectiveCapitalBase = liveEquity;
+      }
+    } catch (eqErr) {
+      logger.debug('[CB] live-equity lookup failed; using passed capitalBase', {
+        userId, err: eqErr instanceof Error ? eqErr.message : String(eqErr),
+      });
     }
 
     const cb = this.getCircuitBreaker(userId);
@@ -1814,13 +1830,19 @@ class FullyAutonomousTrader extends EventEmitter {
       this.emit('circuit_breaker_tripped', { userId, reason: cb.trippedReason, consecutiveLosses: cb.consecutiveLosses });
     }
 
-    // Check daily loss limit
-    const dailyLossPercent = capitalBase > 0 ? (cb.dailyLoss / capitalBase) * 100 : 0;
+    // Check daily loss limit against current equity.
+    const dailyLossPercent = effectiveCapitalBase > 0
+      ? (cb.dailyLoss / effectiveCapitalBase) * 100
+      : 0;
     if (dailyLossPercent >= FullyAutonomousTrader.MAX_DAILY_LOSS_PERCENT) {
       cb.isTripped = true;
       cb.trippedAt = new Date();
       cb.trippedReason = `Daily loss limit reached (${safeFixed(dailyLossPercent, 1, '?')}% of capital) — halting until next day`;
-      logger.warn(`[CB] TRIPPED for user ${userId}: ${cb.trippedReason}`);
+      logger.warn(`[CB] TRIPPED for user ${userId}: ${cb.trippedReason}`, {
+        dailyLoss: cb.dailyLoss,
+        effectiveCapitalBase,
+        passedCapitalBase: capitalBase,
+      });
       this.emit('circuit_breaker_tripped', { userId, reason: cb.trippedReason, dailyLossPercent });
     }
   }

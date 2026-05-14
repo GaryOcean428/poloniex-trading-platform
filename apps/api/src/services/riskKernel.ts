@@ -249,6 +249,26 @@ function getMinMarginHeadroomPct(): number {
   return raw;
 }
 
+/** 2026-05-13 — mode-conditional headroom reserves.
+ *
+ * EXPLORATION (flat / fast scalp): need MORE headroom because each
+ *   scalp cycle reserves and releases margin rapidly; can't get stuck
+ *   without room to enter the next opportunity.
+ * INTEGRATION (slow trend): need LESS headroom — one big slow
+ *   position is fine with most margin committed.
+ *
+ * Returns null if no monkeyMode supplied (caller falls back to env). */
+export function modeMarginHeadroomPct(mode?: string): number | null {
+  if (!mode) return null;
+  switch (mode) {
+    case 'exploration': return 0.35;
+    case 'investigation': return 0.25;
+    case 'integration': return 0.15;
+    case 'drift': return 0.50;
+    default: return null;
+  }
+}
+
 export function checkMarginHeadroom(
   order: KernelOrder,
   state: KernelAccountState,
@@ -285,6 +305,12 @@ export interface KernelContext {
   mode: ExecutionMode;
   /** From marketCatalog.getMaxLeverage(symbol) — exchange ceiling. */
   symbolMaxLeverage: SymbolMaxLeverage;
+  /** 2026-05-13 — Monkey cognitive mode for regime-conditional
+   *  headroom. EXPLORATION gets tighter reserve (35% — fast cycles
+   *  need room), INTEGRATION gets looser (15% — slow positions
+   *  commit margin longer). Optional: if absent, env default
+   *  (MONKEY_MIN_MARGIN_HEADROOM_PCT) applies. */
+  monkeyMode?: string;
 }
 
 /**
@@ -303,12 +329,16 @@ export function evaluatePreTradeVetoes(
   state: KernelAccountState,
   context: KernelContext,
 ): KernelDecision {
+  // 2026-05-13 — mode-conditional headroom override. When the kernel
+  // supplies monkeyMode (cognitive mode), use that to pick the reserve
+  // pct. Otherwise fall through to env default.
+  const headroomPct = modeMarginHeadroomPct(context.monkeyMode) ?? undefined;
   const checks: KernelDecision[] = [
     checkUnrealizedDrawdown(state),
     checkExecutionMode(context.isLive, context.mode),
     checkSelfMatch(order, state),
     checkPerSymbolExposure(order, state),
-    checkMarginHeadroom(order, state),
+    checkMarginHeadroom(order, state, headroomPct),
     checkSymbolMaxLeverage(order, context.symbolMaxLeverage),
   ];
   for (const d of checks) {
