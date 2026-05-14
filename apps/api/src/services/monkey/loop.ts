@@ -1836,15 +1836,35 @@ export class MonkeyKernel extends EventEmitter {
           symbol, action: tDecision.action,
         });
       }
+      const tWantsToOpen =
+        tDecision.action === 'enter_long'
+        || tDecision.action === 'enter_short'
+        || tDecision.action === 'pyramid_long'
+        || tDecision.action === 'pyramid_short';
+      // 2026-05-14 — drift-mode gate for Agent T.
+      // Agent T (Turtle) is a regime-blind classical-TA control arm: by
+      // design it reads only OHLCV, not the kernel's regime. In a `drift`
+      // regime (sideways noise) the kernel itself stands down — "mode=drift
+      // blocks entry (observe only)". T did not, so in choppy tape it
+      // opened breakout units, got stopped, re-opened, and whipsawed —
+      // 2026-05-14: 6 trend-lane shorts opened in ~50 min, repeated
+      // turtle_stop losses. T now respects the same observe-only gate the
+      // kernel applies to itself. Exits (exit_stop / exit_donchian below)
+      // are NOT gated — held units must still close cleanly.
+      if (tWantsToOpen && tDecision.sizeUsdt > 0 && mode === 'drift') {
+        (derivation as Record<string, unknown>).agentTDriftGated = true;
+        logger.info('[AgentT] entry suppressed — kernel in drift mode (observe only)', {
+          symbol, action: tDecision.action,
+        });
+      }
       if (
-        (tDecision.action === 'enter_long'
-          || tDecision.action === 'enter_short'
-          || tDecision.action === 'pyramid_long'
-          || tDecision.action === 'pyramid_short')
+        tWantsToOpen
         && tDecision.sizeUsdt > 0
         // v0.8.7 kill switch — pause Agent T entries (including pyramids)
         // when MONKEY_TRADING_PAUSED=true. Exits below are unaffected.
         && !isTradingPaused()
+        // 2026-05-14 drift-mode gate — see comment above.
+        && mode !== 'drift'
       ) {
         const tSide: 'long' | 'short' =
           tDecision.action === 'enter_long' || tDecision.action === 'pyramid_long'
