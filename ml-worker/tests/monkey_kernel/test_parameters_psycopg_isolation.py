@@ -44,7 +44,86 @@ from monkey_kernel.parameters import (  # noqa: E402
 )
 
 
-def test_query_runs_on_db_executor_thread_not_caller() -> None:
+@pytest.fixture
+def db_gate_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Enable the live DB-load path. _load() is GATED OFF by default
+    (MONKEY_PARAM_REGISTRY_DB != 'true' → defaults-only) because
+    psycopg's binary wheel segfaults the ml-worker process during
+    connect. The DB-path tests below opt in via this fixture so they
+    actually reach _query_parameters_table / the executor."""
+    monkeypatch.setenv("MONKEY_PARAM_REGISTRY_DB", "true")
+
+
+def test_db_load_gated_off_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The load-bearing safety property: with MONKEY_PARAM_REGISTRY_DB
+    unset, _load() must NOT touch psycopg at all — it short-circuits to
+    defaults-only. This is what keeps ml-worker from segfaulting: no
+    psycopg.connect() call = no native crash."""
+    monkeypatch.delenv("MONKEY_PARAM_REGISTRY_DB", raising=False)
+    reg = ParameterRegistry(dsn="postgresql://stub/notused")
+    called = {"n": 0}
+
+    def must_not_run() -> dict:
+        called["n"] += 1
+        return {}
+
+    reg._query_parameters_table = must_not_run  # type: ignore[method-assign]
+    reg._load()
+
+    assert called["n"] == 0, (
+        "_query_parameters_table ran despite the DB gate being OFF — "
+        "this re-opens the segfault path"
+    )
+    assert reg._loaded is True
+    # get() still works — defaults-only fail-soft mode.
+    assert reg.get("physics.kappa_star", default=64.0) == 64.0
+
+
+def test_query_appends_sslmode_disable() -> None:
+    """_query_parameters_table appends sslmode=disable when the DSN
+    doesn't pin it — the Railway internal network is private (SSL adds
+    nothing) and psycopg[binary]'s bundled openssl is the crash path."""
+    seen: dict[str, str] = {}
+    reg = ParameterRegistry(dsn="postgresql://u:p@postgres.railway.internal:5432/railway")
+
+    class _FakeConn:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def cursor(self):
+            class _Cur:
+                def __enter__(self_): return self_
+                def __exit__(self_, *a): return False
+                def execute(self_, *a): pass
+                def fetchall(self_): return []
+            return _Cur()
+
+    import monkey_kernel.parameters as pm
+
+    class _FakePsycopg:
+        @staticmethod
+        def connect(dsn: str):
+            seen["dsn"] = dsn
+            return _FakeConn()
+
+    # _query_parameters_table does `import psycopg` locally; patch sys.modules.
+    sys.modules["psycopg"] = _FakePsycopg  # type: ignore[assignment]
+    try:
+        reg._query_parameters_table()
+    finally:
+        del sys.modules["psycopg"]
+
+    assert "sslmode=disable" in seen["dsn"], seen["dsn"]
+    # already had a query-string, so the separator must be '&'
+    reg2 = ParameterRegistry(dsn="postgresql://h/db?connect_timeout=5")
+    sys.modules["psycopg"] = _FakePsycopg  # type: ignore[assignment]
+    try:
+        reg2._query_parameters_table()
+    finally:
+        del sys.modules["psycopg"]
+    assert "?connect_timeout=5&sslmode=disable" in seen["dsn"], seen["dsn"]
+
+
+def test_query_runs_on_db_executor_thread_not_caller(db_gate_on: None) -> None:
     """The psycopg connect+query must execute on a _DB_EXECUTOR worker
     thread — never the thread that called _load(). This is the
     load-bearing property: on the real server _load() is reached from
@@ -72,7 +151,7 @@ def test_query_runs_on_db_executor_thread_not_caller() -> None:
     assert reg._loaded is True
 
 
-def test_load_is_failsoft_on_db_error() -> None:
+def test_load_is_failsoft_on_db_error(db_gate_on: None) -> None:
     """A DB/connect failure inside the executor must NOT propagate —
     _load() catches it, marks _loaded so it stops retrying, and the
     registry serves hardcoded defaults via get()."""
@@ -90,6 +169,7 @@ def test_load_is_failsoft_on_db_error() -> None:
 
 
 def test_load_is_failsoft_on_executor_timeout(
+    db_gate_on: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """If the connect hangs past _LOAD_TIMEOUT_S, _load() catches the
@@ -142,7 +222,7 @@ def test_no_dsn_path_unchanged() -> None:
     assert reg.get("executive.green_turn_reversal.min_roi", default=0.003) == 0.003
 
 
-def test_successful_load_populates_cache() -> None:
+def test_successful_load_populates_cache(db_gate_on: None) -> None:
     """Happy path: the executor returns a parameter map and _load()
     installs it as the cache; get() then returns the loaded value, not
     the default."""
