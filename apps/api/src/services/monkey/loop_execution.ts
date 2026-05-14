@@ -21,7 +21,7 @@ import { getCurrentExecutionMode } from '../executionModeService.js';
 import { getMaxLeverage, getPrecisions } from '../marketCatalog.js';
 import mlPredictionService from '../mlPredictionService.js';
 import poloniexFuturesService from '../poloniexFuturesService.js';
-import { resolveExchangePositionSide } from '../exchangePositionSide.js';
+import { resolveExchangePositionSide, resolveExchangePositionNotional } from '../exchangePositionSide.js';
 import { fetchAccountContext } from './loop_account.js';
 import {
   findOpenMonkeyTrade as dbFindOpenMonkeyTrade,
@@ -989,7 +989,11 @@ export async function executeEntry(
         // `String(p.side ?? 'long')` read EVERY HEDGE position as long,
         // blinding the kernel's exposure / stacking vetoes on this path.
         side: resolveExchangePositionSide(p),
-        notional: Math.abs(Number(p.notional ?? p.size ?? 0)),
+        // v3 positions have no `notional`/`size` field — derive from
+        // im × lever via the shared resolver. The old `p.notional ??
+        // p.size` read → 0 → checkPerSymbolExposure was blind to the
+        // existing stack (see resolveExchangePositionNotional docstring).
+        notional: resolveExchangePositionNotional(p),
       })).filter((p) => p.symbol.length > 0);
       // v0.8.8: thread used-margin telemetry to the kernel for the
       // headroom veto. Cross-margin: usedMargin = equity - availableBalance.

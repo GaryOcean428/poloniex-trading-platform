@@ -11,7 +11,10 @@
  * is in `posSide` — so every HEDGE short was misread as a long.
  */
 import { describe, it, expect } from 'vitest';
-import { resolveExchangePositionSide } from '../services/exchangePositionSide.js';
+import {
+  resolveExchangePositionSide,
+  resolveExchangePositionNotional,
+} from '../services/exchangePositionSide.js';
 
 describe('resolveExchangePositionSide', () => {
   it('HEDGE short — positive qty + posSide=SHORT — is short (the bug case)', () => {
@@ -45,5 +48,56 @@ describe('resolveExchangePositionSide', () => {
 
   it('lowercase posSide is handled (case-insensitive)', () => {
     expect(resolveExchangePositionSide({ posSide: 'short', qty: '10' })).toBe('short');
+  });
+});
+
+/**
+ * Regression: resolveExchangePositionNotional must derive notional from
+ * the v3 fields that actually exist (im × lever), NOT `p.notional` /
+ * `p.size` — neither of which Poloniex v3 /trade/position/opens emits.
+ *
+ * 2026-05 bloat incident: checkPerSymbolExposure summed `p.notional`,
+ * which read undefined → 0 on every open position, so the per-symbol
+ * cap only ever saw the NEW order and the BTC short stacked to ~$7k
+ * (≈5× equity), freezing the kernel on margin headroom.
+ */
+describe('resolveExchangePositionNotional', () => {
+  it('derives notional from im × lever (the real v3 BTC short)', () => {
+    // Live exchange row 2026-05-15: im 874.0357375, lever 8 → ≈6992.
+    expect(
+      resolveExchangePositionNotional({ im: '874.0357375', lever: '8', qty: '86' }),
+    ).toBeCloseTo(6992.29, 1);
+  });
+
+  it('derives notional from im × lever (the real v3 ETH short)', () => {
+    expect(
+      resolveExchangePositionNotional({ im: '124.7406', lever: '16', qty: '87' }),
+    ).toBeCloseTo(1995.85, 1);
+  });
+
+  it('the OLD read (p.notional ?? p.size) would have returned 0 — regression guard', () => {
+    // v3 positions carry neither field; the resolver must NOT return 0.
+    const v3Position = { symbol: 'BTC_USDT_PERP', posSide: 'SHORT', qty: '86', im: '874.04', lever: '8' };
+    expect(v3Position).not.toHaveProperty('notional');
+    expect(v3Position).not.toHaveProperty('size');
+    expect(resolveExchangePositionNotional(v3Position)).toBeGreaterThan(0);
+  });
+
+  it('falls back to mgn when im is absent', () => {
+    expect(resolveExchangePositionNotional({ mgn: '100', lever: '10' })).toBeCloseTo(1000, 5);
+  });
+
+  it('honours a direct notional/value field if present (already-normalized shape)', () => {
+    expect(resolveExchangePositionNotional({ notional: '5000' })).toBe(5000);
+    expect(resolveExchangePositionNotional({ value: '-5000' })).toBe(5000);
+  });
+
+  it('returns 0 only when margin and leverage are both absent', () => {
+    expect(resolveExchangePositionNotional({ symbol: 'BTC_USDT_PERP', qty: '86' })).toBe(0);
+    expect(resolveExchangePositionNotional({})).toBe(0);
+  });
+
+  it('returns 0 for a degenerate zero-leverage row rather than NaN', () => {
+    expect(resolveExchangePositionNotional({ im: '100', lever: '0' })).toBe(0);
   });
 });
