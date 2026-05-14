@@ -144,14 +144,32 @@ class StateReconciliationService {
       const normalizeDbSide = (s: string): 'long' | 'short' =>
         s === 'buy' || s === 'long' ? 'long' : 'short';
 
+      // Resolve an EXCHANGE position's side. 2026-05-14 fix: HEDGE-mode
+      // Poloniex v3 positions carry a POSITIVE ``qty`` magnitude and the
+      // real side in ``posSide`` — so the legacy ``parseFloat(qty) > 0``
+      // test mislabels every HEDGE short as 'long'. After the side-aware
+      // FAT reconciler (PR #677) started closing side-mismatched rows,
+      // this mislabel produced a 1-minute create/close churn loop:
+      // orphan-detection inserted a 'long' row for a SHORT exchange
+      // position, the FAT reconciler closed it as a side mismatch, and
+      // the next reconciler tick re-inserted it. posSide-first resolution
+      // (same order as the #676/#677 fixes), Math.sign(qty) fallback for
+      // ONE_WAY accounts.
+      const resolveExchangeSide = (exPos: Record<string, unknown>): 'long' | 'short' => {
+        const posSide = String(exPos.posSide ?? '').toUpperCase();
+        const qtyNum = parseFloat(String(exPos.qty ?? exPos.availQty ?? '0'));
+        return posSide === 'SHORT' || (posSide !== 'LONG' && qtyNum < 0)
+          ? 'short'
+          : 'long';
+      };
+
       // ── 5. Orphan detection: on exchange but not in DB ───────────────────────
       for (const exPos of exchangePositions) {
         const symbol: string = exPos.symbol ?? exPos.instId ?? '';
         const size: number = Math.abs(parseFloat(exPos.qty ?? exPos.availQty ?? '0'));
         if (!symbol || size === 0) continue;
 
-        const side: string =
-          parseFloat(exPos.qty ?? '0') > 0 ? 'long' : 'short';
+        const side: 'long' | 'short' = resolveExchangeSide(exPos);
 
         // Check if this exchange symbol+side is already in the DB.
         // DB side may be 'buy'/'sell' (liveSignal) or 'long'/'short'
@@ -256,7 +274,7 @@ class StateReconciliationService {
         if (!exSymbol) continue;
         const exQty = Math.abs(parseFloat(exPos.qty ?? exPos.availQty ?? '0')) || 0;
         if (exQty === 0) continue;
-        const exSide = parseFloat(exPos.qty ?? '0') > 0 ? 'long' : 'short';
+        const exSide = resolveExchangeSide(exPos);
         const key = `${exSymbol}|${exSide}`;
         exchangeQtyByKey.set(key, (exchangeQtyByKey.get(key) ?? 0) + exQty);
       }
