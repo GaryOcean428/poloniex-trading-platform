@@ -652,8 +652,18 @@ export class MonkeyKernel extends EventEmitter {
     const bankSize = await resonanceBank.bankSize();
     const sovereignty = await resonanceBank.sovereignty();
     const ownOpenRow = await this.findOpenMonkeyTrade(symbol);
+    // heldSide is the side of THIS kernel's OWN open position — derived
+    // from findOpenMonkeyTrade, exactly as the design note on
+    // exchangeHeldSide above prescribes ("her own held-side is derived
+    // per-kernel from findOpenMonkeyTrade"). It must NOT prefer
+    // exchangeHeldSide: that is the SHARED exchange state, resolved by a
+    // single .find() over every position. On a HEDGE account holding
+    // BOTH a long and a short on the same symbol it returns whichever
+    // side .find() hits first — so preferring it made the kernel read
+    // the opposite of its own position and emit a false
+    // "dca: side mismatch (short vs held long)" every tick (2026-05-14).
     const heldSide: 'long' | 'short' | null = ownOpenRow
-      ? (exchangeHeldSide ?? ownOpenRow.side)
+      ? ownOpenRow.side
       : null;
 
     const tickRunOhlcv: TickRunOHLCV[] = ohlcv.map((c) => ({
