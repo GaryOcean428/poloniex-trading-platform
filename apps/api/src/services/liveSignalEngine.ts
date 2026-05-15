@@ -793,6 +793,8 @@ export class LiveSignalEngine extends EventEmitter {
       return;
     }
 
+    // Precedence contract: LIVE_SIGNAL_PAPER_MODE=true overrides dry-run so
+    // staging can still execute simulated fills when LIVE_SIGNAL_EXECUTE=false.
     if (this.dryRun && !isLiveSignalPaperMode()) {
       logger.info('[LiveSignal] DRY RUN — would submit order', { order, signal });
       return;

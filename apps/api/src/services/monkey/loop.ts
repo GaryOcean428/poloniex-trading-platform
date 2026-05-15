@@ -3471,12 +3471,13 @@ export class MonkeyKernel extends EventEmitter {
             }
             const close = await paperClosePosition(String(row.order_id), lastPrice, 'agent_l_force_harvest');
             const rowPnl = Number.isFinite(close.pnl) ? close.pnl : (aggPnl * qtyShare);
+            const closeOrderId = `paper-close-${row.order_id}`;
             await pool.query(
               `UPDATE autonomous_trades
                   SET status = 'closed', exit_price = $1, exit_time = NOW(),
                       exit_reason = $2, exit_order_id = $3, pnl = $4
                 WHERE id = $5`,
-              [lastPrice, 'agent_l_force_harvest', row.order_id ?? null, rowPnl, row.id],
+              [lastPrice, 'agent_l_force_harvest', closeOrderId, rowPnl, row.id],
             );
             this.arbiter.recordSettled('L', rowPnl);
             this.applyOutcomeToAgent(symbol, 'L', sideKey, rowPnl);
@@ -3734,24 +3735,34 @@ export class MonkeyKernel extends EventEmitter {
               [`monkey|kernel=${this.instanceId}|%`, symbol],
             );
         const rows = openRows.rows as Array<{ id: string; quantity: string; agent: string | null; order_id: string | null }>;
-        const fallbackRows = rows.length > 0
-          ? rows
-          : [{ id: tradeId, quantity: '1', agent: 'K', order_id: null }];
-        const pnlPerRow = rows.length > 0 ? pnlAtDecision / rows.length : pnlAtDecision;
+        if (rows.length === 0) {
+          await pool.query(
+            `UPDATE autonomous_trades
+                SET status = 'closed', exit_price = $1, exit_time = NOW(),
+                    exit_reason = $2, exit_order_id = $3, pnl = $4
+              WHERE id = $5`,
+            [markPrice, exitReason, null, pnlAtDecision, tradeId],
+          );
+          this.arbiter.recordSettled('K', pnlAtDecision);
+          this.applyOutcomeToAgent(symbol, 'K', heldSide, pnlAtDecision);
+          return { executed: true, orderId: null, reason: 'closed_paper' };
+        }
+        const pnlPerRow = pnlAtDecision / rows.length;
         let orderId: string | null = null;
-        for (const row of fallbackRows) {
+        for (const row of rows) {
           let rowPnl = pnlPerRow;
+          const closeOrderId = row.order_id ? `paper-close-${row.order_id}` : `paper-close-${row.id}`;
           if (row.order_id && row.order_id.startsWith('paper-')) {
             const close = await paperClosePosition(row.order_id, markPrice, exitReason);
             rowPnl = close.pnl;
-            orderId = row.order_id;
+            orderId = closeOrderId;
           }
           await pool.query(
             `UPDATE autonomous_trades
                 SET status = 'closed', exit_price = $1, exit_time = NOW(),
                     exit_reason = $2, exit_order_id = $3, pnl = $4
               WHERE id = $5`,
-            [markPrice, exitReason, orderId, rowPnl, row.id],
+            [markPrice, exitReason, closeOrderId, rowPnl, row.id],
           );
           const agentLabel: AgentLabel =
             row.agent === 'M' ? 'M'
