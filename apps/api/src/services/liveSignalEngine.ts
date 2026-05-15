@@ -43,6 +43,7 @@ import { getCurrentExecutionMode } from './executionModeService.js';
 import { getMaxLeverage, getPrecisions } from './marketCatalog.js';
 import mlPredictionService from './mlPredictionService.js';
 import { monitoringService } from './monitoringService.js';
+import { paperPlaceOrder } from './paperExchangeSimulator.js';
 import poloniexFuturesService from './poloniexFuturesService.js';
 import { resolveExchangePositionSide, resolveExchangePositionNotional } from './exchangePositionSide.js';
 import {
@@ -140,6 +141,10 @@ const BANDIT_EXPLORATION_TRADES = 5;
  * its next trade." 0.4 = 40%, a reasonable not-obviously-losing bar.
  */
 const BANDIT_MIN_POSTERIOR = 0.4;
+
+function isLiveSignalPaperMode(): boolean {
+  return process.env.LIVE_SIGNAL_PAPER_MODE === 'true';
+}
 
 interface LiveSignalTick {
   readonly at: Date;
@@ -788,7 +793,9 @@ export class LiveSignalEngine extends EventEmitter {
       return;
     }
 
-    if (this.dryRun) {
+    // Precedence contract: LIVE_SIGNAL_PAPER_MODE=true overrides dry-run so
+    // staging can still execute simulated fills when LIVE_SIGNAL_EXECUTE=false.
+    if (this.dryRun && !isLiveSignalPaperMode()) {
       logger.info('[LiveSignal] DRY RUN — would submit order', { order, signal });
       return;
     }
@@ -982,7 +989,12 @@ export class LiveSignalEngine extends EventEmitter {
         `SELECT user_id FROM user_api_credentials WHERE exchange = 'poloniex' LIMIT 1`,
       );
       const userId = (userRow.rows[0] as { user_id?: string } | undefined)?.user_id;
-      if (!userId) return null;
+      if (!userId) {
+        if (isLiveSignalPaperMode()) {
+          logger.warn('[LiveSignal] paper_mode_no_user');
+        }
+        return null;
+      }
       const credentials = await apiCredentialsService.getCredentials(userId, 'poloniex');
       if (!credentials) return null;
 
@@ -1240,12 +1252,39 @@ export class LiveSignalEngine extends EventEmitter {
       signal,
     });
 
+    const liveSignalPaperMode = isLiveSignalPaperMode();
+    if (liveSignalPaperMode) {
+      if (!userId) {
+        logger.warn('[LiveSignal] paper mode enabled but no user_id resolvable');
+        await this.publishOutcomeEvent({
+          symbol: order.symbol,
+          phase: 'skipped',
+          reason: 'paper_mode_no_user',
+        });
+        return;
+      }
+      if (!Number.isFinite(order.price) || order.price <= 0) {
+        logger.warn('[LiveSignal] paper mode invalid mark price, skipping', {
+          symbol: order.symbol,
+          price: order.price,
+        });
+        await this.publishOutcomeEvent({
+          symbol: order.symbol,
+          phase: 'skipped',
+          reason: 'paper_mode_invalid_mark_price',
+        });
+        return;
+      }
+    }
+
     // Lazily detect Poloniex position-direction mode (HEDGE | ONE_WAY) and
     // cache it on the engine. Same pattern as Monkey.detectPositionDirectionMode
     // — see loop.ts:1557. Needed so the setLeverage body below carries
     // ``posSide`` on HEDGE accounts (Poloniex returns code=11011
     // "Position mode and posSide do not match" otherwise).
-    await this.ensurePositionDirectionMode(credentials);
+    if (!liveSignalPaperMode) {
+      await this.ensurePositionDirectionMode(credentials);
+    }
 
     // Derive posSide from the intended order direction. In HEDGE mode this
     // MUST be sent on /v3/position/leverage; in ONE_WAY mode we omit so
@@ -1257,55 +1296,85 @@ export class LiveSignalEngine extends EventEmitter {
         : undefined;
 
     // 1. Leverage — non-fatal if exchange rejects; order still proceeds.
-    try {
-      await poloniexFuturesService.setLeverage(
-        credentials,
-        order.symbol,
-        order.leverage,
-        posSide ? { posSide } : {},
-      );
-    } catch (levErr) {
-      logger.warn('[LiveSignal] setLeverage failed (non-fatal)', {
-        symbol: order.symbol,
-        leverage: order.leverage,
-        posSide,
-        err: levErr instanceof Error ? levErr.message : String(levErr),
-      });
+    if (!liveSignalPaperMode) {
+      try {
+        await poloniexFuturesService.setLeverage(
+          credentials,
+          order.symbol,
+          order.leverage,
+          posSide ? { posSide } : {},
+        );
+      } catch (levErr) {
+        logger.warn('[LiveSignal] setLeverage failed (non-fatal)', {
+          symbol: order.symbol,
+          leverage: order.leverage,
+          posSide,
+          err: levErr instanceof Error ? levErr.message : String(levErr),
+        });
+      }
     }
 
     // 2. Market order — this is the point of no return.
     let orderId: string | undefined;
+    let entryFillPrice = order.price;
     try {
-      const exchangeOrder = await poloniexFuturesService.placeOrder(credentials, {
-        symbol: order.symbol,
-        side: exchangeSide,
-        // posSide MUST be passed on HEDGE; placeOrder defaults to 'BOTH'
-        // when omitted, which Poloniex rejects with code=11011 "Position
-        // mode and posSide do not match." Same `posSide` already derived
-        // for the setLeverage body above. Undefined falls through to
-        // 'BOTH' inside placeOrder for ONE_WAY accounts.
-        posSide,
-        type: 'market',
-        size: formattedSize,
-        lotSize: symbolLotSize,
-      });
-      // Poloniex v3 futures returns the exchange order id as `ordId`.
-      // Keep `orderId`/`id` fallbacks so mocked tests + any future
-      // adapter variants still work without changing this line.
-      orderId =
-        exchangeOrder?.ordId ??
-        exchangeOrder?.orderId ??
-        exchangeOrder?.id ??
-        exchangeOrder?.clientOid;
-      logger.info('[LiveSignal] exchange order placed', {
-        orderId,
-        rawResponseKeys: exchangeOrder ? Object.keys(exchangeOrder) : [],
-        symbol: order.symbol,
-        side: exchangeSide,
-        size: formattedSize,
-      });
+      if (liveSignalPaperMode) {
+        const paperOrder = await paperPlaceOrder({
+          engine: 'live_signal',
+          userId,
+          symbol: order.symbol,
+          side: order.side === 'short' || order.side === 'sell' ? 'short' : 'long',
+          quantity: formattedSize,
+          leverage: order.leverage,
+          markPrice: order.price,
+          metadata: {
+            signalKey: signal.signalKey,
+            regime: signal.regime,
+            reason: signal.reason,
+          },
+        });
+        orderId = paperOrder.orderId;
+        entryFillPrice = paperOrder.fillPrice;
+        logger.info('[LiveSignal] paper order placed', {
+          orderId,
+          symbol: order.symbol,
+          side: exchangeSide,
+          size: formattedSize,
+          fillPrice: paperOrder.fillPrice,
+          slippageBps: paperOrder.slippageBps,
+        });
+      } else {
+        const exchangeOrder = await poloniexFuturesService.placeOrder(credentials, {
+          symbol: order.symbol,
+          side: exchangeSide,
+          // posSide MUST be passed on HEDGE; placeOrder defaults to 'BOTH'
+          // when omitted, which Poloniex rejects with code=11011 "Position
+          // mode and posSide do not match." Same `posSide` already derived
+          // for the setLeverage body above. Undefined falls through to
+          // 'BOTH' inside placeOrder for ONE_WAY accounts.
+          posSide,
+          type: 'market',
+          size: formattedSize,
+          lotSize: symbolLotSize,
+        });
+        // Poloniex v3 futures returns the exchange order id as `ordId`.
+        // Keep `orderId`/`id` fallbacks so mocked tests + any future
+        // adapter variants still work without changing this line.
+        orderId =
+          exchangeOrder?.ordId ??
+          exchangeOrder?.orderId ??
+          exchangeOrder?.id ??
+          exchangeOrder?.clientOid;
+        logger.info('[LiveSignal] exchange order placed', {
+          orderId,
+          rawResponseKeys: exchangeOrder ? Object.keys(exchangeOrder) : [],
+          symbol: order.symbol,
+          side: exchangeSide,
+          size: formattedSize,
+        });
+      }
     } catch (err) {
-      logger.error('[LiveSignal] exchange placeOrder failed', {
+      logger.error('[LiveSignal] order placement failed', {
         err: err instanceof Error ? err.message : String(err),
       });
       await this.publishOutcomeEvent({
@@ -1378,7 +1447,7 @@ export class LiveSignalEngine extends EventEmitter {
           userId,
           order.symbol,
           exchangeSide,
-          order.price,
+          entryFillPrice,
           formattedSize,
           order.leverage,
           stopLoss,
@@ -1386,7 +1455,7 @@ export class LiveSignalEngine extends EventEmitter {
           signal.effectiveStrength,
           reasonEncoded,
           orderId ?? null,
-          false,
+          liveSignalPaperMode,
           getEngineVersion(),
         ],
       );
@@ -1406,7 +1475,7 @@ export class LiveSignalEngine extends EventEmitter {
       strength: signal.strength,
       reason: signal.reason,
       phase: 'submitted',
-      price: order.price,
+      price: entryFillPrice,
       quantity: formattedSize,
       orderId,
     });
