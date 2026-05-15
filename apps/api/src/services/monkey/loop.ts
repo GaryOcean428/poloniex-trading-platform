@@ -1536,12 +1536,26 @@ export class MonkeyKernel extends EventEmitter {
         const scalpDeriv = derivation.scalp as Record<string, unknown> | undefined;
         const tradeId = scalpDeriv?.tradeId ? String(scalpDeriv.tradeId) : null;
         const exitTypeBit = Number(scalpDeriv?.exitTypeBit ?? 0);
+        // exitTypeBit 5 = held-position rejustification. The bit is shared
+        // by ALL four rejustification sub-checks — the specific one that
+        // fired is in derivation.rejustification.fired (regime_change /
+        // phi_collapse / conviction_failed / stale_bleed). Without a bit-5
+        // case every rejustification close fell through to the generic
+        // 'scalp_exit', making STALE_BLEED (and the other three)
+        // unobservable in autonomous_trades.exit_reason — the calibration
+        // analysis had to reconstruct them from monkey_decisions.
+        const rejustFired = (derivation.rejustification as Record<string, unknown> | undefined)?.fired;
         const exitType =
           exitTypeBit === 1 ? 'take_profit' :
           exitTypeBit === -1 ? 'stop_loss' :
           exitTypeBit === 2 ? 'trailing_harvest' :
           exitTypeBit === 3 ? 'trend_flip_harvest' :
           exitTypeBit === 6 ? 'stale_bleed_stop' :
+          exitTypeBit === 5 ? (
+            rejustFired === 'stale_bleed' ? 'stale_bleed_rejust' :
+            rejustFired ? `rejust_${String(rejustFired)}` :
+            'rejustification'
+          ) :
           'scalp_exit';
         const pnlAtDecision = Number(scalpDeriv?.unrealizedPnl ?? 0);
         const scalpLane = (
