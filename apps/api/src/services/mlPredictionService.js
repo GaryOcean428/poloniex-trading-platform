@@ -289,11 +289,33 @@ class MLPredictionService {
   async getTradingSignal(symbol, ohlcvData, currentPrice) {
     try {
       const result = await this._callWorker({ action: 'signal', symbol, data: ohlcvData, current_price: currentPrice });
-      logger.info(`ML trading signal for ${symbol}:`, {
+      // Warmup responses ("Insufficient data for regime detection") are
+      // a HOLD@0.30 with no conviction — emitted by the ml-worker
+      // strategyloop backend (ROUTE_VERSION=v0.8) when its
+      // RegimeDetector hasn't seen enough candles to classify yet.
+      // Production logs show one of our callers polls every ~60s
+      // with too few candles per symbol; that caller will be fixed
+      // in a follow-up, but until then the per-tick INFO line floods
+      // production logs without adding signal (12+ lines/minute on
+      // 3 symbols across both polling cadences). Demote those to
+      // debug; everything else — including HOLDs with real reason
+      // strings like "regime=creator strategy=breakout dir=neutral"
+      // — stays at info so genuine signal transitions and conviction
+      // shifts remain visible.
+      const isWarmup =
+        result?.signal === 'HOLD' &&
+        result?.reason === 'Insufficient data for regime detection';
+      const logMessage = `ML trading signal for ${symbol}:`;
+      const logPayload = {
         signal: result.signal,
         strength: result.strength,
         reason: result.reason,
-      });
+      };
+      if (isWarmup) {
+        logger.debug(logMessage, logPayload);
+      } else {
+        logger.info(logMessage, logPayload);
+      }
       return result;
     } catch (error) {
       if (error?.code !== ML_WORKER_NOT_CONFIGURED_CODE) {
