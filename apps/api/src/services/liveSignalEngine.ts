@@ -1319,6 +1319,7 @@ export class LiveSignalEngine extends EventEmitter {
     // SL/TP exchange-side placement for now; managePositions in the
     // trader loop catches SL/TP on the backend side. Leaving the block
     // for future re-enablement once the trigger endpoint is plumbed.
+    // eslint-disable-next-line no-constant-condition, no-constant-binary-expression -- intentionally dead until v3 trigger-order endpoint wired
     if (false && stopLoss > 0 && Number.isFinite(stopLoss)) {
       try {
         await poloniexFuturesService.placeOrder(credentials, {
@@ -1335,6 +1336,7 @@ export class LiveSignalEngine extends EventEmitter {
         });
       }
     }
+    // eslint-disable-next-line no-constant-condition, no-constant-binary-expression -- intentionally dead until v3 trigger-order endpoint wired (see SL block above)
     if (false && takeProfit > 0 && Number.isFinite(takeProfit)) {
       try {
         await poloniexFuturesService.placeOrder(credentials, {

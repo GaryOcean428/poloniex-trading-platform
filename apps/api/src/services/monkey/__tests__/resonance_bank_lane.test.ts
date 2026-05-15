@@ -90,9 +90,11 @@ describe('ResonanceBank — lane field', () => {
     const insertCall = vi.mocked(pool.query).mock.calls[1];
     const sql = String(insertCall[0]);
     expect(sql).toMatch(/lane/);
-    // Check the params include 'scalp' as last param
+    // Check the params include 'scalp'. Position-agnostic assertion —
+    // the INSERT carries other columns after `lane` (e.g. Tier 10 `loop`),
+    // so `params[length-1]` is brittle to column order.
     const params = insertCall[1] as unknown[];
-    expect(params[params.length - 1]).toBe('scalp');
+    expect(params).toContain('scalp');
   });
 
   it('writeBubble defaults lane to swing when not in payload', async () => {
@@ -109,7 +111,8 @@ describe('ResonanceBank — lane field', () => {
 
     const insertCall = vi.mocked(pool.query).mock.calls[1];
     const params = insertCall[1] as unknown[];
-    expect(params[params.length - 1]).toBe('swing');
+    // Position-agnostic — see writeBubble-includes-lane test above for why.
+    expect(params).toContain('swing');
   });
 
   it('findNearestBasins includes lane filter in SQL when provided', async () => {
