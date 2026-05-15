@@ -4361,7 +4361,7 @@ export class MonkeyKernel extends EventEmitter {
           },
         });
         const paperModeReason = `monkey_paper_mode: filled @ ${paper.fillPrice.toFixed(8)} (slippage ${paper.slippageBps.toFixed(2)} bps)`;
-        let orderId: string | null = paper.orderId;
+        const orderId: string | null = paper.orderId;
         const agentTag = req.agent ?? 'K';
         const laneTag = req.lane ?? 'swing';
         try {
