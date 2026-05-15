@@ -305,18 +305,16 @@ class MLPredictionService {
       const isWarmup =
         result?.signal === 'HOLD' &&
         result?.reason === 'Insufficient data for regime detection';
+      const logMessage = `ML trading signal for ${symbol}:`;
+      const logPayload = {
+        signal: result.signal,
+        strength: result.strength,
+        reason: result.reason,
+      };
       if (isWarmup) {
-        logger.debug(`ML trading signal for ${symbol}:`, {
-          signal: result.signal,
-          strength: result.strength,
-          reason: result.reason,
-        });
+        logger.debug(logMessage, logPayload);
       } else {
-        logger.info(`ML trading signal for ${symbol}:`, {
-          signal: result.signal,
-          strength: result.strength,
-          reason: result.reason,
-        });
+        logger.info(logMessage, logPayload);
       }
       return result;
     } catch (error) {
