@@ -29,7 +29,7 @@ import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Request
@@ -42,7 +42,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 from ensemble_predictor import EnsemblePredictor
 from proprietary_core.regime import RegimeDetector  # noqa: F401  (re-exported via StrategyLoop)
 from proprietary_core.strategy_loop import MarketRegime, StrategyLoop  # noqa: F401  (MarketRegime re-exported for ops)
-from signal_mapping import regime_to_direction, strategy_to_signal
 from utils.redis_listener import (
     ListenerConfig,
     env_redis_url,
@@ -195,9 +194,153 @@ def _start_trade_outcome_listener():
 # /kernels/core/health.py::_run_prediction)
 # ---------------------------------------------------------------------------
 
-# strategy_to_signal + regime_to_direction live in signal_mapping.py —
-# pure functions, extracted so they unit-test without importing the ML
-# stack. The 2026-05-14 direction-blindness fix lives there.
+def _strategy_to_signal(
+    strategy_value: str, regime: str, direction: str = "NEUTRAL",
+) -> dict[str, Any]:
+    """Translate StrategyLoop output into the signal format expected by polytrade-be.
+
+    Pre-2026-05-15 this mapped momentum/breakout/trend_follow → BUY
+    UNCONDITIONALLY — direction-blind. A breakout *down* in a clear
+    downtrend still returned BUY, so the ML signal was "consistently
+    wrong" whenever the market turned. The multi-horizon `predict`
+    path already respected direction; only the `signal` path did not.
+    That drove LiveSignal to fight a turning market.
+
+    Fix: the strategy decides conviction (strength); the regime
+    *direction* (BULLISH / BEARISH / NEUTRAL, from
+    _regime_to_direction) decides BUY vs SELL for trend-following
+    strategies. mean_revert (counter-trend SELL leg) and cash (HOLD)
+    are unchanged. HOLD strength is floored to 0.30 — no direction,
+    no conviction.
+
+    Output shape stays byte-compatible with polytrade-be's
+    mlPredictionService: signal / strength / reason. The reason
+    string gains a `dir=` suffix so the direction is visible in logs.
+    """
+    strategy = strategy_value.lower()
+    regime_l = regime.lower() if regime else "unknown"
+    dir_u = (direction or "NEUTRAL").upper()
+
+    strength_map = {
+        "momentum": 0.75,
+        "breakout": 0.65,
+        "trend_follow": 0.70,
+        "mean_revert": 0.60,
+        "cash": 0.30,
+    }
+    strength = strength_map.get(strategy, 0.30)
+
+    if strategy == "cash":
+        action = "HOLD"
+    elif strategy == "mean_revert":
+        # Counter-trend leg — the SELL source. Direction-aware handling
+        # of mean reversion is a separate strategy question; left as-is.
+        action = "SELL"
+    else:
+        # momentum / breakout / trend_follow are trend-FOLLOWING — the
+        # signal must follow the regime's direction, not assume BUY.
+        action = {"BULLISH": "BUY", "BEARISH": "SELL"}.get(dir_u, "HOLD")
+
+    # A HOLD carries no conviction regardless of which strategy produced it.
+    if action == "HOLD":
+        strength = 0.30
+
+    return {
+        "signal": action,
+        "strength": strength,
+        "reason": f"regime={regime_l} strategy={strategy} dir={dir_u.lower()}",
+    }
+
+
+def _strongest_recent_change(prices: list[float]) -> float:
+    """Multi-window recent-action probe for the regime tiebreaker.
+
+    Patched 2026-05-15T06:50Z: the prior single-window probe
+    (10 bars / ±1%) caught breakouts but missed breakdowns on
+    longer-candle-interval inputs. Production logs at 06:35-06:40Z
+    showed callers with both BUY dir=bullish AND HOLD dir=neutral on
+    the same symbol seconds apart — different OHLCV windows feeding
+    /ml/predict, only one of them showing >1% movement over 10 bars.
+
+    Strategy: check shortest viable window first, return the first
+    one that crosses its noise floor. Fresh fast action wins over
+    stale drift. Per-window floors calibrated so each window has
+    roughly the same probability of false-firing on quiet data:
+      - 3 bars / ±0.5% : fast breakdowns/breakouts (typical kernel
+        tape territory)
+      - 5 bars / ±0.5% : slightly slower acute moves
+      - 10 bars / ±0.7%: medium drift
+      - 15 bars / ±1.0%: sustained drift, same threshold as the
+        prior single-window probe
+
+    Returns 0.0 when no window clears its floor → tiebreaker is a
+    no-op and _regime_to_direction falls through to NEUTRAL.
+    """
+    if len(prices) < 4:
+        return 0.0
+    # (window_bars, noise_floor). Order matters — first match wins.
+    for n, floor in ((3, 0.005), (5, 0.005), (10, 0.007), (15, 0.01)):
+        if len(prices) <= n:
+            continue
+        start = prices[-(n + 1)]
+        if start <= 0:
+            continue
+        change = (prices[-1] - start) / start
+        if abs(change) >= floor:
+            return change
+    return 0.0
+
+
+def _regime_to_direction(
+    regime: str, trend_strength: float, recent_change_pct: float = 0.0,
+) -> str:
+    """Map (regime, trend_strength[, recent_change_pct]) → BULLISH / BEARISH / NEUTRAL.
+
+    Original patch 2026-05-15T05:04Z: added dead-zone tiebreaker for
+    breakdowns the long-window classification was missing.
+
+    Re-patched 2026-05-15T06:50Z: prior 10-bar/±1% tiebreaker worked
+    for breakouts but missed breakdowns on longer candle intervals.
+    Logic moved to caller via _strongest_recent_change, which probes
+    3-/5-/10-/15-bar windows with per-window noise floors.
+
+    Re-patched 2026-05-15T07:45Z: the prior version computed the probe
+    but never consulted it on the `creator + trend_strength > 0.1` /
+    `preserver + trend_strength > 0.15` early-return paths — they
+    short-circuited BULLISH before the probe was checked. Live ETH
+    07:37-07:39Z reproduced this exactly: regime=creator, positive
+    long-window trend, fresh probe-detected breakdown, output BUY.
+    Fix: probe pre-empts regime-class classification when decisive.
+    The probe's per-window noise floors (3-bar 0.5%, 5-bar 0.5%,
+    10-bar 0.7%, 15-bar 1.0%) already gate it to genuine moves, so
+    any non-zero signed value reflects a fresh decisive change that
+    should override the stale long-window verdict.
+    """
+    regime_l = (regime or "").lower()
+
+    # FRESH-MOVE OVERRIDE — probe is noise-floor-filtered upstream by
+    # _strongest_recent_change; a non-zero signed value means a window
+    # already cleared its floor and is a fresh decisive move. This
+    # must run BEFORE the regime-class early returns, otherwise
+    # creator/preserver with a positive `trend_strength` short-circuits
+    # BULLISH on a tape that's actively breaking down.
+    if recent_change_pct < 0:
+        return "BEARISH"
+    if recent_change_pct > 0:
+        return "BULLISH"
+
+    # Long-window regime + trend classification — consulted only when
+    # the probe was silent (true dead-zone — no window cleared its floor).
+    if regime_l == "creator" and trend_strength > 0.1:
+        return "BULLISH"
+    if regime_l == "preserver" and trend_strength > 0.15:
+        return "BULLISH"
+    if regime_l in ("dissolver",):
+        return "NEUTRAL"
+    if trend_strength < -0.05:
+        return "BEARISH"
+
+    return "NEUTRAL"
 
 
 def _handle_predict_strategyloop(payload: dict) -> dict:
@@ -247,17 +390,21 @@ def _handle_predict_strategyloop(payload: dict) -> dict:
     regime_val = decision.regime.regime.value if decision.regime else "dissolver"
     confidence_raw = decision.regime.confidence if decision.regime else 0.4
     trend_strength = decision.regime.trend_strength if decision.regime else 0.0
-    direction = regime_to_direction(regime_val, trend_strength)
+
+    # Multi-window recent-action probe for the dead-zone tiebreaker
+    # in _regime_to_direction. The probe handles its own windowing
+    # and noise filtering — checks 3/5/10/15 bars, returns the
+    # shortest decisive window or 0.0 (no-op). Catches fast
+    # breakdowns/breakouts that the StrategyLoop's longer-window
+    # trend_strength misses on callers with longer candle intervals.
+    recent_change_pct = _strongest_recent_change(prices)
+
+    direction = _regime_to_direction(regime_val, trend_strength, recent_change_pct)
     confidence_pct = int(min(max(confidence_raw * 100, 10), 95))
 
     if action == "signal":
-        sig = strategy_to_signal(
-            decision.selected_strategy.value, regime_val, direction,
-        )
-        # Preserve the model's own confidence as strength — but never for
-        # a HOLD (no direction → no conviction).
-        if sig["signal"] != "HOLD":
-            sig["strength"] = round(confidence_raw, 4)
+        sig = _strategy_to_signal(decision.selected_strategy.value, regime_val, direction)
+        sig["strength"] = round(confidence_raw, 4)
         return sig
 
     horizon_decay = {"1h": 1.0, "4h": 0.85, "24h": 0.70}
@@ -457,34 +604,8 @@ def _handle_predict_ensemble(payload: dict) -> dict:
 # FastAPI app
 # ---------------------------------------------------------------------------
 
-async def _prewarm_parameter_registry() -> None:
-    """Trigger the one-time parameter-registry DB load at startup, on a
-    worker thread (NOT the event loop).
-
-    2026-05-14 fix: without this, the registry's lazy _load() first
-    runs inside the `/monkey/tick/run` request handler chain
-    (Ocean.__init__ → parameters.get() → _load()). _load() now isolates
-    its psycopg work to a dedicated thread, but pre-warming here means
-    request handlers only ever hit the in-memory cache — the DB connect
-    happens exactly once, at startup, off the event loop. Fail-soft:
-    parameters.get() falls back to its hardcoded defaults if the load
-    fails, so a registry-unreachable startup must not abort boot.
-    """
-    try:
-        from monkey_kernel.parameters import get_registry
-
-        await asyncio.to_thread(get_registry().refresh)
-        logger.info("parameter registry pre-warmed at startup")
-    except Exception as exc:  # noqa: BLE001 — never block boot on this
-        logger.warning(
-            "parameter registry pre-warm failed (defaults will be used): %s",
-            exc,
-        )
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await _prewarm_parameter_registry()
     _start_redis_listener()
     _start_trade_outcome_listener()
     logger.info("ML worker started")
@@ -560,6 +681,7 @@ async def root():
             "ingest": "/run/ingest (POST)",
             "governance_status": "/governance/status (GET)",
             "governance_ml_parity": "/governance/ml-predict-parity (GET)",
+            "governance_regime_parity": "/governance/regime-parity (GET) — issue #695 shadow",
             "monkey_tick": "/monkey/tick/run (POST)",
             "monkey_autonomic_tick": "/monkey/autonomic/tick (POST)",
             "monkey_executive_decide": "/monkey/executive/decide (POST)",
@@ -714,6 +836,55 @@ async def governance_ml_predict_parity(limit: int = 200):
         "sample_count": len(rows),
         "signal_disagreements": diffs,
         "disagreement_ratio": (diffs / len(rows)) if rows else 0.0,
+        "rows": rows,
+    }
+
+
+@app.get("/governance/regime-parity")
+async def governance_regime_parity(limit: int = 200):
+    """Parity-diff ring buffer for issue #695 — qig_warp shadow regime.
+
+    Populated every time StrategyLoop.tick runs (i.e. every /ml/predict
+    call on the v0.8 path). Each row carries the live MarketRegime
+    (creator/preserver/dissolver) alongside the published
+    qig_warp.classify_regime output (CRITICAL/DISORDERED/ORDERED) and
+    the (h, J) inputs that drove the shadow call. The live trading
+    path is unaffected — this is read-only telemetry.
+
+    Promotion gate (per #689 discipline): the cutover PR that
+    replaces RegimeDetector with qig_warp.classify_regime ships only
+    after the parity-log accumulates a representative tape window and
+    the shadow/live mapping stabilises (or the mapping is re-calibrated
+    based on the observed diff distribution).
+    """
+    from proprietary_core.regime_shadow import (
+        get_regime_parity_log,
+        SHADOW_EQUIVALENCE_GUESS,
+    )
+    rows = get_regime_parity_log()
+    rows = rows[-max(1, min(limit, 2000)):]
+    # Tally diffs against the v0 first-order equivalence guess so the
+    # operator can eyeball mapping accuracy at a glance.
+    matches = 0
+    diffs = 0
+    errors = 0
+    for r in rows:
+        if r.get("shadow_error"):
+            errors += 1
+            continue
+        guess = SHADOW_EQUIVALENCE_GUESS.get(r.get("live_regime", ""))
+        if r.get("shadow_regime") == guess:
+            matches += 1
+        else:
+            diffs += 1
+    return {
+        "available": True,
+        "sample_count": len(rows),
+        "shadow_errors": errors,
+        "matches_v0_guess": matches,
+        "diffs_v0_guess": diffs,
+        "match_ratio": (matches / (matches + diffs)) if (matches + diffs) else 0.0,
+        "equivalence_guess_v0": SHADOW_EQUIVALENCE_GUESS,
         "rows": rows,
     }
 
