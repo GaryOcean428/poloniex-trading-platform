@@ -1,17 +1,29 @@
 /**
- * kernel_client.ts — HTTP client for ml-worker's Python kernel endpoints.
+ * kernel_client.ts — HTTP client for ml-worker /monkey/executive and
+ *                    /monkey/mode endpoints (v0.7.3 migration).
  *
- * Post-cutover: Python is authoritative for kernel decisions. There is
- * no TS fallback — if Python is down, the trading path errors and
- * surfaces. 5 s default timeout. The previous shadow flags
- * (MONKEY_KERNEL_PY, MONKEY_TICK_PY_SHADOW, RISK_KERNEL_PY_SHADOW,
- * LIVE_SIGNAL_PY_SHADOW, AUTONOMOUS_TRADER_PY_SHADOW) and parity-diff
- * loggers were removed in the TS→Py kernel cutover (PR #674).
+ * This sits next to autonomic_client.ts (v0.7) and provides the full
+ * executive surface the TS orchestrator needs. Feature-flagged via
+ * MONKEY_KERNEL_PY=true — when unset, loop.ts uses its in-process TS
+ * executive/modes code (the current live path).
+ *
+ * Design: one endpoint call per tick for the full executive pass.
+ * Latency on Railway's private network is ~2ms round-trip; negligible
+ * vs the purity benefit (no TS-port drift, all QIG math in one place).
+ *
+ * NOT YET wired into loop.ts — v0.7.3 ships only the client. v0.7.4
+ * wires under the feature flag with parity-compare telemetry.
  */
+
+import { logger } from '../../utils/logger.js';
 
 const ML_WORKER_URL =
   process.env.ML_WORKER_URL || 'http://ml-worker.railway.internal:8000';
 const DEFAULT_TIMEOUT_MS = 5000;
+
+export function isPythonKernelEnabled(): boolean {
+  return process.env.MONKEY_KERNEL_PY === 'true';
+}
 
 // ── Shared types matching Python monkey_kernel.state ──
 
@@ -141,7 +153,11 @@ export async function callModeDetect(
   }
 }
 
-// ── Tick run — full kernel pipeline (authoritative post-cutover) ──
+// ── Tick run — full pipeline shadow (v0.8.3b) ──
+
+export function isShadowTickEnabled(): boolean {
+  return process.env.MONKEY_TICK_PY_SHADOW === 'true';
+}
 
 /** OHLCV candle as the Python endpoint expects. */
 export interface TickRunOHLCV {
@@ -151,15 +167,6 @@ export interface TickRunOHLCV {
   low: number;
   close: number;
   volume: number;
-}
-
-/** Per-lane position carried from the orchestrator into Python. */
-export interface TickRunLanePosition {
-  lane: 'scalp' | 'swing' | 'trend';
-  side: 'long' | 'short';
-  notional: number;
-  margin_usdt: number;
-  funding_paid_usdt: number;
 }
 
 /** Account context slice sent to /monkey/tick/run. */
@@ -172,10 +179,14 @@ export interface TickRunAccount {
   own_position_entry_price?: number | null;
   own_position_quantity?: number | null;
   own_position_trade_id?: string | null;
-  lane_positions?: TickRunLanePosition[];
 }
 
-/** Inputs for one tick, matching Python TickInputs. */
+/** Inputs for one tick, matching Python TickInputs.
+ *
+ * Post #ml-separation: ml_signal / ml_strength are silently ignored
+ * if supplied. Kept as optional fields for back-compat during the
+ * deploy window only — callers should stop sending them.
+ */
 export interface TickRunInputs {
   symbol: string;
   ohlcv: TickRunOHLCV[];
@@ -186,10 +197,14 @@ export interface TickRunInputs {
   min_notional: number;
   size_fraction: number;
   self_obs_bias?: Record<string, Record<string, number>> | null;
-  funding_rate_8h?: number;
+  /** @deprecated post #ml-separation — silently ignored by Agent K. */
+  ml_signal?: string;
+  /** @deprecated post #ml-separation — silently ignored by Agent K. */
+  ml_strength?: number;
   /**
    * Per-lane Kelly rolling stats (proposal #3 + lane-conditioned split).
    * Tuple: [winRate, avgWin, avgLoss]. When null, Kelly cap is a no-op.
+   * Supplied by loop.ts after a lane-filtered getKellyRollingStats query.
    */
   rolling_kelly_stats?: [number, number, number] | null;
 }
@@ -212,7 +227,8 @@ export interface TickRunSymbolState {
   peak_tracked_trade_id: string | null;
   /**
    * Held-position re-justification anchors — per-lane (regime, Φ)
-   * snapshots taken at the moment a position opens.
+   * snapshots taken at the moment a position opens. Optional for
+   * backward compat with shadow callers that haven't been redeployed.
    */
   regime_at_open_by_lane?: Record<string, string>;
   phi_at_open_by_lane?: Record<string, number>;
@@ -249,12 +265,6 @@ export interface TickRunDecision {
   direction: 'long' | 'short' | 'flat';
   size_fraction: number;
   dca_intent: boolean;
-  // Phase 1 cutover-payload extensions
-  harvest_kind?: string | null;
-  r_score?: number | null;
-  mtf_decision_action?: string | null;
-  mtf_size_multiplier?: number | null;
-  leverage_cap_from_regime?: number | null;
 }
 
 export interface TickRunResponse {
@@ -283,14 +293,116 @@ export async function callTickRun(
   }
 }
 
+/**
+ * Log parity diffs between TS and Python full-pipeline tick decisions.
+ * Called from shadow path — fire-and-forget, non-blocking.
+ */
+export function logTickParityDiffs(
+  symbol: string,
+  tsDecision: {
+    action: string;
+    entry_threshold: number;
+    leverage: number;
+    size_usdt: number;
+    mode: string;
+    side_candidate: string;
+    side_override: boolean;
+    phi: number;
+    kappa: number;
+  },
+  pyDecision: TickRunDecision,
+): void {
+  if (tsDecision.action !== pyDecision.action) {
+    logger.warn('[shadow-tick] parity diff (action)', {
+      symbol,
+      ts: tsDecision.action,
+      py: pyDecision.action,
+    });
+  }
+  if (tsDecision.mode !== pyDecision.mode) {
+    logger.warn('[shadow-tick] parity diff (mode)', {
+      symbol,
+      ts: tsDecision.mode,
+      py: pyDecision.mode,
+    });
+  }
+  if (tsDecision.side_candidate !== pyDecision.side_candidate) {
+    logger.warn('[shadow-tick] parity diff (side_candidate)', {
+      symbol,
+      ts: tsDecision.side_candidate,
+      py: pyDecision.side_candidate,
+    });
+  }
+  logParityDiff('tick.entry_threshold', tsDecision.entry_threshold, pyDecision.entry_threshold);
+  logParityDiff('tick.leverage', tsDecision.leverage, pyDecision.leverage);
+  // Size tolerance wider (0.1 USDT) — rounding and sizeFraction edge-case
+  // arithmetic can legitimately differ between TS and Python by a few cents.
+  logParityDiff('tick.size_usdt', tsDecision.size_usdt, pyDecision.size_usdt, 0.1);
+  logParityDiff('tick.phi', tsDecision.phi, pyDecision.phi);
+  // κ tolerance 0.5 — EMA smoothing with f64 vs f64 can drift by ~0.3
+  // across 100-tick histories; 0.5 catches real divergence, not FP noise.
+  logParityDiff('tick.kappa', tsDecision.kappa, pyDecision.kappa, 0.5);
+  logParityDiff('tick.side_override', tsDecision.side_override, pyDecision.side_override);
+}
+
+// ── Parity-diff helper (v0.7.4 will use this) ──
+
+/**
+ * Compare two executive decisions and log if they diverge significantly.
+ * Called opportunistically when MONKEY_KERNEL_PY_SHADOW=true and the
+ * TS path is still authoritative — gives us parity telemetry before
+ * cutting over to Python-authoritative.
+ */
+export function logParityDiff(
+  kind: string,
+  tsValue: number | boolean,
+  pyValue: number | boolean,
+  tolerance: number = 0.01,
+): void {
+  if (typeof tsValue === 'boolean' || typeof pyValue === 'boolean') {
+    if (tsValue !== pyValue) {
+      logger.warn('[kernel_client] parity diff (boolean)', {
+        kind,
+        ts: tsValue,
+        py: pyValue,
+      });
+    }
+    return;
+  }
+  const diff = Math.abs(tsValue - pyValue);
+  if (diff > tolerance) {
+    logger.warn('[kernel_client] parity diff (numeric)', {
+      kind,
+      ts: tsValue,
+      py: pyValue,
+      diff,
+      tolerance,
+    });
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────
-// Trading decision endpoints (separate from the kernel tick):
-//   POST /risk/evaluate         — pre-trade blast-door gates
-//   POST /live/decide           — signal threshold + sizing + ATR
-//   POST /live/exit-decide      — stop-loss/take-profit/trailing
-//   POST /live/reconcile        — DB-vs-exchange symbol diff
+// v0.8.7d-1 — HTTP helpers for the four trading decision endpoints
+// shipped in v0.8.7a/b/c-1/c-2:
+//   POST /risk/evaluate         (v0.8.7a)  — pre-trade blast-door gates
+//   POST /live/decide           (v0.8.7b)  — signal threshold + sizing + ATR
+//   POST /live/exit-decide      (v0.8.7c-1) — stop-loss/take-profit/trailing
+//   POST /live/reconcile        (v0.8.7c-2) — DB-vs-exchange symbol diff
+//
+// Same pattern as callExecutiveDecide / callTickRun above: 5s timeout,
+// fire-and-forget on shadow, structured diff loggers alongside.
+// Shadow gating uses existing env var — one flag per shadow surface:
+//
+//   MONKEY_TICK_PY_SHADOW=true              → already wired (tick)
+//   RISK_KERNEL_PY_SHADOW=true              → v0.8.7d-2 wires
+//   LIVE_SIGNAL_PY_SHADOW=true              → v0.8.7d-3 wires
+//   AUTONOMOUS_TRADER_PY_SHADOW=true        → v0.8.7d-4 wires
 
 // ── /risk/evaluate ───────────────────────────────────────────────
+
+export function isRiskShadowEnabled(): boolean {
+  return process.env.RISK_KERNEL_PY_SHADOW === 'true';
+}
 
 export interface RiskKernelOrder {
   symbol: string;
@@ -360,7 +472,33 @@ export async function callRiskEvaluate(
   }
 }
 
+export function logRiskParityDiff(
+  ts: { allowed: boolean; code?: string | null },
+  py: RiskKernelDecision,
+): void {
+  // For risk, the meaningful diff is ALLOWED mismatch (safety) OR
+  // different veto code on a mutual-block (why we'd reject for a
+  // different reason). Not a numeric tolerance — it's boolean +
+  // string match.
+  if (ts.allowed !== py.allowed) {
+    logger.warn('[kernel_client] risk parity diff (allowed mismatch)', {
+      ts_allowed: ts.allowed, py_allowed: py.allowed,
+      ts_code: ts.code, py_code: py.code,
+    });
+    return;
+  }
+  if (!ts.allowed && ts.code !== py.code) {
+    logger.warn('[kernel_client] risk parity diff (veto code mismatch)', {
+      ts_code: ts.code, py_code: py.code,
+    });
+  }
+}
+
 // ── /live/decide ─────────────────────────────────────────────────
+
+export function isLiveSignalShadowEnabled(): boolean {
+  return process.env.LIVE_SIGNAL_PY_SHADOW === 'true';
+}
 
 export interface LiveDecideOHLCV {
   high: number;
@@ -422,6 +560,10 @@ export async function callLiveDecide(
 
 // ── /live/exit-decide ────────────────────────────────────────────
 
+export function isExitShadowEnabled(): boolean {
+  return process.env.AUTONOMOUS_TRADER_PY_SHADOW === 'true';
+}
+
 export interface ExitDecidePosition {
   symbol: string;
   qty: number;           // signed: +long / -short
@@ -478,6 +620,23 @@ export async function callExitDecide(
   }
 }
 
+export function logExitParityDiff(
+  ts: { shouldClose: boolean; reason: string },
+  py: ExitDecideResponse,
+): void {
+  if (ts.shouldClose !== py.shouldClose) {
+    logger.warn('[kernel_client] exit parity diff (shouldClose mismatch)', {
+      ts, py_reason: py.reason,
+    });
+    return;
+  }
+  if (ts.shouldClose && ts.reason !== py.reason) {
+    logger.warn('[kernel_client] exit parity diff (reason mismatch)', {
+      ts_reason: ts.reason, py_reason: py.reason,
+    });
+  }
+}
+
 // ── /live/reconcile ──────────────────────────────────────────────
 
 export interface ReconcileDbRow {
@@ -522,5 +681,27 @@ export async function callReconcile(
     return (await res.json()) as ReconcileResponse;
   } finally {
     clearTimeout(timer);
+  }
+}
+
+export function logReconcileParityDiff(
+  ts: { phantomDbSymbols: string[]; orphanExchangeSymbols: string[] },
+  py: ReconcileResponse,
+): void {
+  // Reconcile parity compares SETS (order-agnostic).
+  const eq = (a: string[], b: string[]) => {
+    if (a.length !== b.length) return false;
+    const bs = new Set(b);
+    return a.every((x) => bs.has(x));
+  };
+  if (!eq(ts.phantomDbSymbols, py.phantomDbSymbols)) {
+    logger.warn('[kernel_client] reconcile parity diff (phantoms mismatch)', {
+      ts: ts.phantomDbSymbols, py: py.phantomDbSymbols,
+    });
+  }
+  if (!eq(ts.orphanExchangeSymbols, py.orphanExchangeSymbols)) {
+    logger.warn('[kernel_client] reconcile parity diff (orphans mismatch)', {
+      ts: ts.orphanExchangeSymbols, py: py.orphanExchangeSymbols,
+    });
   }
 }

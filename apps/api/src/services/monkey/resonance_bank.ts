@@ -162,13 +162,7 @@ export class ResonanceBank {
    * and when both Position and Swing kernels witness the same exit.
    */
   async writeBubble(bubble: Bubble, engineVersion: string): Promise<BankEntry | null> {
-    // `== null` catches both undefined AND null. A null realizedPnl means
-    // the close path could not determine the outcome — e.g. a ghost-close
-    // where the reconciler marked the row closed but the fill (and pnl)
-    // was never recovered. Writing it anyway would land pnl=null →
-    // tradeOutcome='breakeven' below: a phantom "this basin → breakeven"
-    // lesson the bank should never learn. Skip until a real pnl exists.
-    if (!bubble.payload || bubble.payload.realizedPnl == null) {
+    if (!bubble.payload || bubble.payload.realizedPnl === undefined) {
       logger.debug('[Monkey.bank] skipping writeBubble — no outcome attached', {
         bubbleId: bubble.id,
       });

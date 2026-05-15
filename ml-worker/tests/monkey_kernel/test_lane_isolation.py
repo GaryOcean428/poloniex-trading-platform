@@ -95,12 +95,10 @@ class TestLaneParameterEnvelope:
             == pytest.approx(1.0, abs=1e-9)
         )
 
-    def test_trend_budget_default_is_ten_percent(self) -> None:
-        # v0.10.1 (2026-05-05) — trend lane FLIPPED ON per user directive
-        # at 0.10 (was 0.0). Matches TS executive.ts:161; the 2026-05-14
-        # TS→Py cutover had stale-reverted the Python default to 0.0,
-        # which silently collapsed every stud FRONT_LOOP entry to size 0.
-        assert lane_budget_fraction("trend") == pytest.approx(0.10, abs=1e-9)
+    def test_trend_budget_default_is_zero(self) -> None:
+        # Opt-in via parameter registry. Default 0 keeps initial batch
+        # to the two-lane (scalp + swing) split.
+        assert lane_budget_fraction("trend") == pytest.approx(0.0, abs=1e-9)
 
     def test_observe_budget_is_zero(self) -> None:
         # observe is decision-only; never holds capital.
@@ -145,19 +143,15 @@ class TestPositionSizeLaneBudget:
         assert result["derivation"]["lane"] == "swing"
         assert result["derivation"]["lane_budget_frac"] == pytest.approx(0.5)
 
-    def test_trend_lane_now_sizes_above_zero(self) -> None:
-        # v0.10.1 — trend budget is 0.10 (was 0.0). A trend-lane entry
-        # now produces a non-zero margin instead of collapsing to 0.
+    def test_trend_lane_zero_budget_makes_size_zero(self) -> None:
         bs = _basin_state()
         result = current_position_size(
             bs, available_equity_usdt=200.0, min_notional_usdt=1.0,
             leverage=5, bank_size=10, mode=MonkeyMode.INVESTIGATION,
             lane="trend",
         )
-        assert result["value"] > 0.0
-        # Margin is capped by the trend lane budget: 0.10 × 200 = 20.
-        assert result["value"] <= 0.10 * 200.0 + 1e-6
-        assert result["derivation"]["lane_budget_frac"] == pytest.approx(0.10)
+        # Default trend budget=0 → effective equity=0 → sized=0.
+        assert result["value"] == 0.0
 
 
 # ── 3. should_scalp_exit lane envelope widening ─────────────────────
@@ -399,18 +393,15 @@ class TestCrossLaneNonInterference:
         assert swing_long["value"] is False, "swing should hold its 12.75% ROI drawdown"
         assert scalp_short["value"] is True, "scalp should fire SL on 12.75% ROI loss"
 
-    def test_lane_budgets_and_notional_ceiling_bound_exposure(self) -> None:
-        # v0.10.1 — with trend flipped on, lane budgets sum to 1.10
-        # (scalp 0.50 + swing 0.50 + trend 0.10), intentionally > 1.0.
-        # The partition guarantee is no longer the budget sum; it's the
-        # notional ceiling (4× equity) — the hard cap on simultaneous
-        # multi-lane exposure (executive.ts:159 / NOTIONAL_CEILING_RATIO).
+    def test_lane_budgets_partition_capital(self) -> None:
+        # Two lanes' budgets should sum to <= 1.0 across position-bearing
+        # lanes so capital is partitioned, not double-counted.
         total = (
             lane_budget_fraction("scalp")
             + lane_budget_fraction("swing")
             + lane_budget_fraction("trend")
         )
-        assert total == pytest.approx(1.10, abs=1e-9)
+        assert total <= 1.0 + 1e-9
 
     def test_scalp_size_never_eats_swing_capital(self) -> None:
         bs = _basin_state(phi=0.7)
@@ -513,18 +504,17 @@ class TestFlatAccountLaneSizing:
         notional = result["value"] * 14
         assert notional + 1e-9 >= 22.49
 
-    def test_trend_lane_funds_after_v0_10_1_flip(self) -> None:
-        """v0.10.1 — trend lane flipped on at budget 0.10. A trend entry
-        now funds: margin cap = 0.10 × equity, size > 0. (Previously this
-        asserted trend collapsed to 0 — the opt-in-disabled era.)"""
+    def test_trend_lane_still_zero_post_fix(self) -> None:
+        """Trend lane budget=0 must still collapse to 0 — the opt-in
+        promise survives the fix. Cap = 0 × equity = 0 binds."""
         bs = _basin_state(phi=0.55)
         result = current_position_size(
             bs, available_equity_usdt=1000.0, min_notional_usdt=22.49,
             leverage=14, bank_size=20, mode=MonkeyMode.INVESTIGATION,
             lane="trend",
         )
-        assert result["value"] > 0.0
-        assert result["derivation"]["lane_margin_cap"] == pytest.approx(100.0)
+        assert result["value"] == 0.0
+        assert result["derivation"]["lane_margin_cap"] == 0.0
 
     def test_pre_fix_haircut_account_now_sizes_above_zero(self) -> None:
         """Direct reproduction of the pre-fix size=0 case: $4.50 equity
@@ -582,28 +572,18 @@ class TestFlatAccountLaneSizing:
             swing["derivation"]["lane_margin_cap"]
         )
 
-    def test_choose_lane_falls_back_when_top_pick_has_zero_budget(
-        self, monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """choose_lane must NEVER surface a position-bearing lane with
-        budget_frac=0. trend is funded since v0.10.1, so to exercise the
-        fallback we force trend's budget to 0: with sovereignty high and
-        tape strong the raw trend score dominates the softmax, but the
-        surfaced lane must be a positive-budget fallback (swing/scalp)."""
-        import monkey_kernel.executive as _exec
-        _orig = _exec.lane_budget_fraction
-        monkeypatch.setattr(
-            _exec, "lane_budget_fraction",
-            lambda l: 0.0 if l == "trend" else _orig(l),
-        )
+    def test_choose_lane_falls_back_when_top_pick_has_zero_budget(self) -> None:
+        """choose_lane must NEVER return a position-bearing lane with
+        budget_frac=0 (e.g. trend at default). With sovereignty high and
+        tape strong, raw trend score dominates — but the fallback should
+        push us into the next-highest positive-budget lane (swing/scalp)."""
         bs = _basin_state(phi=0.9)
         bs.sovereignty = 0.9  # high sov
         # tape_trend=1.0 maximises trend_score = phi × sov × 1 = 0.81
         result = choose_lane(bs, tape_trend=1.0)
-        # trend forced to budget=0, so we MUST land on a positive-budget lane.
+        # Trend has budget=0, so we MUST land on a positive-budget lane.
         assert result["value"] != "trend"
-        assert _orig(result["value"]) > 0.0
-        assert result["derivation"]["fallback_from_zero_budget"] == 1
+        assert lane_budget_fraction(result["value"]) > 0.0
 
     def test_choose_lane_keeps_observe_unchanged(self) -> None:
         """observe is decision-only; the fallback is for position-bearing

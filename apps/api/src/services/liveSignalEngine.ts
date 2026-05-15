@@ -40,7 +40,6 @@ import { getEngineVersion } from '../utils/engineVersion.js';
 import { logger } from '../utils/logger.js';
 import { apiCredentialsService } from './apiCredentialsService.js';
 import { getCurrentExecutionMode } from './executionModeService.js';
-import { isTradingPaused } from './tradingControls.js';
 import { getMaxLeverage, getPrecisions } from './marketCatalog.js';
 import mlPredictionService from './mlPredictionService.js';
 import { monitoringService } from './monitoringService.js';
@@ -53,6 +52,10 @@ import {
   type LeverageBucket,
 } from './thompsonBandit.js';
 import { allMonkeyKernels, getFreshestMonkeyBasinSnapshot } from './monkey/loop.js';
+import {
+  callLiveDecide,
+  isLiveSignalShadowEnabled,
+} from './monkey/kernel_client.js';
 import {
   evaluatePreTradeVetoes,
   type KernelAccountState,
@@ -595,31 +598,6 @@ export class LiveSignalEngine extends EventEmitter {
     //     stacked longs on 2026-04-19 sat bleeding for 14 hours
     //     while ML kept saying BUY and price dropped ~3%.
     if (existingPos) {
-      // Ownership guard: LiveSignal only manages positions IT opened.
-      // The exchange position list (ground truth for existence) also
-      // contains positions opened by the Monkey kernel (reason
-      // monkey|...) and by manual user action (agent=USER / reason
-      // manual_open_user). Acting on those is wrong. 2026-05-14: once
-      // the heldSide fix corrected LiveSignal's side-reading, its
-      // ML-flip exit began closing the user's manually-reversed shorts
-      // (and would close Monkey's positions) on the bull-biased ML BUY
-      // signal. LiveSignal owns a symbol only while it has an open
-      // autonomous_trades row tagged `live_signal|`.
-      const ownRow = await pool.query(
-        `SELECT 1 FROM autonomous_trades
-          WHERE symbol = $1 AND status = 'open'
-            AND reason LIKE 'live_signal|%'
-          LIMIT 1`,
-        [symbol],
-      );
-      if (ownRow.rowCount === 0) {
-        logger.info('[LiveSignal] position exists but not LiveSignal-owned — leaving it alone', {
-          symbol,
-          held: existingPos.side,
-          signalNow: signal.signal,
-        });
-        return;
-      }
       const isLongHeld = existingPos.side === 'long';
       const isShortHeld = existingPos.side === 'short';
       const signalsFlip = (isLongHeld && signal.signal === 'SELL') ||
@@ -721,18 +699,72 @@ export class LiveSignalEngine extends EventEmitter {
       return;
     }
 
-    // 2f. Global trading-pause kill switch. Gates ENTRIES only — we are
-    //     past the "existing exchange position" branch (2d), so reaching
-    //     here means this is a fresh open. Exit/close paths above are
-    //     untouched so positions still close cleanly while paused.
-    if (isTradingPaused()) {
-      logger.info(`[LiveSignal] ${symbol} entry suppressed — trading paused (kill switch)`);
-      return;
-    }
-
     // 3. Translate signal to a KernelOrder shape.
     const atr = this.computeATR(ohlcv, ATR_PERIOD);
     const order = this.buildOrder(symbol, signal, currentPrice, atr);
+
+    // v0.8.7d-3: fire-and-forget shadow call to the Python live_signal
+    // pipeline. TS decision stays authoritative. The Python side runs
+    // the same normalise → regime → ATR → buildOrder chain; we log
+    // any observable divergence on the fields that matter for trading
+    // (signal direction, regime key, ATR value, order presence).
+    //
+    // Default OFF via LIVE_SIGNAL_PY_SHADOW env flag. Shadow errors
+    // (timeout, 500) swallowed at debug level — never block the tick.
+    if (isLiveSignalShadowEnabled()) {
+      const shadowPayload = {
+        ohlcv: ohlcv.map((b: { high: number; low: number; close: number }) => ({
+          high: Number(b.high), low: Number(b.low), close: Number(b.close),
+        })),
+        mlSignal: rawSignal,
+        mlStrength: rawStrength,
+        mlReason: rawReason,
+        effectiveStrength,
+      };
+      void callLiveDecide(shadowPayload).then((py) => {
+        // Direction match is the load-bearing comparison — if TS
+        // said BUY and Python said SELL, live trading could go the
+        // wrong way once we cut over. Log as WARN so it surfaces.
+        if (py.normalisedSignal !== rawSignal) {
+          logger.warn('[live-signal-shadow] signal mismatch', {
+            symbol, ts: rawSignal, py: py.normalisedSignal,
+          });
+        }
+        if (py.regime !== regime) {
+          logger.warn('[live-signal-shadow] regime mismatch', {
+            symbol, ts: regime, py: py.regime,
+          });
+        }
+        if (py.signalKey !== signalKey) {
+          logger.warn('[live-signal-shadow] signalKey mismatch', {
+            symbol, ts: signalKey, py: py.signalKey,
+          });
+        }
+        const atrDiff = Math.abs(Number(py.atr) - atr);
+        // ATR absolute tolerance of 0.01 handles normal float noise;
+        // anything larger indicates a window-slicing or summation bug.
+        if (atrDiff > 0.01) {
+          logger.warn('[live-signal-shadow] atr drift', {
+            symbol, ts: atr, py: py.atr, diff: atrDiff,
+          });
+        }
+        // Order-presence match: both built an order or both didn't.
+        // A mismatch here means one side would trade and the other
+        // wouldn't — most critical divergence on the live path.
+        const tsHasOrder = order !== null;
+        const pyHasOrder = py.order !== null;
+        if (tsHasOrder !== pyHasOrder) {
+          logger.warn('[live-signal-shadow] order-presence mismatch', {
+            symbol, tsHasOrder, pyHasOrder,
+          });
+        }
+      }).catch((err) => {
+        logger.debug('[live-signal-shadow] parity fetch failed', {
+          symbol,
+          err: err instanceof Error ? err.message : String(err),
+        });
+      });
+    }
 
     if (!order) return;
 
@@ -1242,29 +1274,15 @@ export class LiveSignalEngine extends EventEmitter {
     }
 
     // 2. Market order — this is the point of no return.
-    //
-    // 2026-05-14 fix: forward ``posSide`` (computed above from
-    // ``positionDirectionMode``) via the third-arg opts so the request
-    // body carries ``posSide: LONG | SHORT`` on HEDGE accounts. Without
-    // it, ``poloniexFuturesService.placeOrder`` defaults the body to
-    // ``posSide: BOTH``, which Poloniex v3 rejects on HEDGE accounts
-    // with code=11011 "Position mode and posSide do not match" — the
-    // exact failure observed since ~2026-05-14T00:53Z on prod. setLeverage
-    // already forwards posSide just above (line 1192) so the leverage
-    // call succeeded while the order itself failed every tick.
     let orderId: string | undefined;
     try {
-      const exchangeOrder = await poloniexFuturesService.placeOrder(
-        credentials,
-        {
-          symbol: order.symbol,
-          side: exchangeSide,
-          type: 'market',
-          size: formattedSize,
-          lotSize: symbolLotSize,
-        },
-        posSide ? { posSide } : {},
-      );
+      const exchangeOrder = await poloniexFuturesService.placeOrder(credentials, {
+        symbol: order.symbol,
+        side: exchangeSide,
+        type: 'market',
+        size: formattedSize,
+        lotSize: symbolLotSize,
+      });
       // Poloniex v3 futures returns the exchange order id as `ordId`.
       // Keep `orderId`/`id` fallbacks so mocked tests + any future
       // adapter variants still work without changing this line.
@@ -1301,10 +1319,8 @@ export class LiveSignalEngine extends EventEmitter {
     // SL/TP exchange-side placement for now; managePositions in the
     // trader loop catches SL/TP on the backend side. Leaving the block
     // for future re-enablement once the trigger endpoint is plumbed.
-    // A named flag instead of `if (false && ...)` keeps the disabled
-    // block readable and lint-clean (no-constant-condition).
-    const EXCHANGE_SL_TP_TRIGGER_ENABLED = false;
-    if (EXCHANGE_SL_TP_TRIGGER_ENABLED && stopLoss > 0 && Number.isFinite(stopLoss)) {
+    // eslint-disable-next-line no-constant-condition, no-constant-binary-expression -- intentionally dead until v3 trigger-order endpoint wired
+    if (false && stopLoss > 0 && Number.isFinite(stopLoss)) {
       try {
         await poloniexFuturesService.placeOrder(credentials, {
           symbol: order.symbol,
@@ -1320,7 +1336,8 @@ export class LiveSignalEngine extends EventEmitter {
         });
       }
     }
-    if (EXCHANGE_SL_TP_TRIGGER_ENABLED && takeProfit > 0 && Number.isFinite(takeProfit)) {
+    // eslint-disable-next-line no-constant-condition, no-constant-binary-expression -- intentionally dead until v3 trigger-order endpoint wired (see SL block above)
+    if (false && takeProfit > 0 && Number.isFinite(takeProfit)) {
       try {
         await poloniexFuturesService.placeOrder(credentials, {
           symbol: order.symbol,

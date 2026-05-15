@@ -70,33 +70,6 @@ export interface ArbiterOptions {
   /** Trades required per agent before non-uniform allocation
    *  (default 5). */
   warmupTrades?: number;
-  /**
-   * Per-trade PnL winsorization clamp (absolute USDT, default 10).
-   * Every settled trade's PnL is clamped to ±maxAbsPnlPerTrade before
-   * it enters the rolling window — in BOTH ``recordSettled`` (live) and
-   * ``rehydrate`` (startup).
-   *
-   * Why: the window measures whether an agent's strategy is
-   * *consistently* good or bad. One catastrophic trade — a position
-   * entered during a pre-fix bug era that couldn't be exited cleanly,
-   * or a single black swan — must not be allowed to define an agent's
-   * allocation. Concretely: on 2026-05-13 Agent K took a 3-trade
-   * whipsaw cascade in 31 seconds (−$15.20, −$24.49, −$19.19 = −$58.88)
-   * — more than its entire 50-trade window deficit. Rehydrating that
-   * raw would have penalised K almost entirely for a bug that is now
-   * fixed. Clamping bounds any single trade's influence while leaving
-   * the *consistency* signal fully intact: an agent that loses small
-   * repeatedly is still fully down-weighted (failure is not rewarded);
-   * only a lone extreme observation is tamed. Symmetric — also clamps
-   * windfalls so an agent can't be over-rewarded for one lucky trade.
-   *
-   * Account-scale dependent: typical per-trade PnL on the current
-   * ~$1.5k account is sub-$2; 10 USDT sits in the gap above routine
-   * bad trades (~$8-9) and below the bug-era catastrophes ($15-24).
-   * Revisit if account size changes materially. Set to ``Infinity`` to
-   * disable (used by floor-mechanism tests that need extreme contrast).
-   */
-  maxAbsPnlPerTrade?: number;
 }
 
 export class Arbiter {
@@ -106,32 +79,18 @@ export class Arbiter {
   private readonly window: number;
   private readonly minShareOverride: number | undefined;
   private readonly warmupTrades: number;
-  private readonly maxAbsPnlPerTrade: number;
 
   constructor(opts: ArbiterOptions = {}) {
     this.window = opts.window ?? 50;
     this.minShareOverride = opts.minShare;
     this.warmupTrades = opts.warmupTrades ?? 5;
-    this.maxAbsPnlPerTrade = opts.maxAbsPnlPerTrade ?? 10;
     // Pre-create K and M buffers so legacy snapshots still report
     // 0 trades / 0 PnL for them even when no events have arrived.
     this.pnls.set('K', []);
     this.pnls.set('M', []);
   }
 
-  /** Winsorize a single trade's PnL to ±maxAbsPnlPerTrade. Bounds the
-   *  influence of one catastrophic (or windfall) trade on the rolling
-   *  window without erasing the broad consistency signal. See
-   *  ``ArbiterOptions.maxAbsPnlPerTrade``. */
-  private clampPnl(pnl: number): number {
-    const cap = this.maxAbsPnlPerTrade;
-    if (pnl > cap) return cap;
-    if (pnl < -cap) return -cap;
-    return pnl;
-  }
-
-  /** Record a settled trade outcome for ``agent`` (string label). The
-   *  PnL is winsorized via ``clampPnl`` before it enters the window. */
+  /** Record a settled trade outcome for ``agent`` (string label). */
   recordSettled(agent: string, pnl: number): void {
     if (!this.isValidLabel(agent)) {
       throw new Error(
@@ -140,47 +99,8 @@ export class Arbiter {
       );
     }
     const buf = this.getOrCreate(agent);
-    buf.push(this.clampPnl(pnl));
+    buf.push(pnl);
     if (buf.length > this.window) buf.shift();
-  }
-
-  /** Rolling-window size — exposed so the rehydration caller can fetch
-   *  exactly ``windowSize`` settled trades per agent. */
-  get windowSize(): number {
-    return this.window;
-  }
-
-  /**
-   * Seed the per-agent rolling PnL windows from persisted history.
-   *
-   * The Arbiter is documented as "single instance per kernel" and its
-   * entire performance-weighting design depends on a rolling window of
-   * settled trades — but a bare ``new Arbiter()`` starts empty, so
-   * every process restart (every Railway redeploy) wiped the window
-   * and dropped the allocator back into uniform-split bootstrap
-   * (``allWarm`` false until every agent re-accumulates ``warmupTrades``
-   * trades). Redeploys happen several times a day, so in practice the
-   * allocator never escaped bootstrap and never actually weighted by
-   * realised performance — a losing agent kept its full uniform share.
-   *
-   * ``rehydrate`` replays persisted settled-trade outcomes so a fresh
-   * instance immediately reflects realised performance. The Arbiter
-   * stays I/O-free: the caller loads the rows (from autonomous_trades)
-   * and passes them here. Rows MUST be oldest-first; only the last
-   * ``window`` per agent are retained, exactly as a live sequence of
-   * ``recordSettled`` calls would have left them. Unlike
-   * ``recordSettled``, invalid/non-agent labels (e.g. 'USER') and
-   * non-finite PnLs are skipped rather than thrown — rehydration runs
-   * over whatever history the table happens to hold.
-   */
-  rehydrate(history: ReadonlyArray<{ agent: string; pnl: number }>): void {
-    for (const { agent, pnl } of history) {
-      if (!this.isValidLabel(agent)) continue;
-      if (!Number.isFinite(pnl)) continue;
-      const buf = this.getOrCreate(agent);
-      buf.push(this.clampPnl(pnl));
-      if (buf.length > this.window) buf.shift();
-    }
   }
 
   /** Legacy 2-agent allocator. Equivalent to ``allocateMany(total,

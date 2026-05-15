@@ -806,12 +806,10 @@ async def risk_evaluate(request: Request):
             ],
         )
         c = body["context"]
-        monkey_mode_raw = c.get("monkeyMode")
         ctx = _KernelContext(
             is_live=bool(c["isLive"]),
             mode=str(c["mode"]),
             symbol_max_leverage=float(c["symbolMaxLeverage"]),
-            monkey_mode=str(monkey_mode_raw) if monkey_mode_raw else None,
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=f"bad kernel input: {exc}") from exc

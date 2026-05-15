@@ -50,6 +50,7 @@ vi.mock('../services/monkey/loop.js', () => ({
 }));
 vi.mock('../services/monkey/kernel_client.js', () => ({
   callLiveDecide: vi.fn(),
+  isLiveSignalShadowEnabled: vi.fn(() => false),
 }));
 vi.mock('../services/executionModeService.js', () => ({
   getCurrentExecutionMode: vi.fn(() => 'auto'),
@@ -155,64 +156,5 @@ describe('LiveSignalEngine.submitOrder — HEDGE-mode setLeverage posSide', () =
     // Mode probe should have been called once across both submitOrder calls.
     expect(poloniexFuturesService.getPositionDirectionMode).toHaveBeenCalledTimes(1);
     expect(priv(engine).positionDirectionMode).toBe('HEDGE');
-  });
-});
-
-// ──────────────────────────────────────────────────────────────────────────────
-// 2026-05-14 hotfix regression cover — placeOrder posSide on HEDGE.
-//
-// On 2026-05-14T00:53Z prod started emitting code=11011 "Position mode and
-// posSide do not match" on every LiveSignal tick. Root cause: submitOrder
-// forwarded posSide to setLeverage but NOT to placeOrder, so the order body
-// defaulted to posSide=BOTH and HEDGE accounts rejected it. setLeverage's
-// posSide plumbing is locked by the suite above; this suite locks the
-// matching placeOrder plumbing so a future refactor can't regress it.
-// ──────────────────────────────────────────────────────────────────────────────
-
-describe('LiveSignalEngine.submitOrder — HEDGE-mode placeOrder posSide (#11011 hotfix)', () => {
-  let engine: LiveSignalEngine;
-
-  beforeEach(() => {
-    engine = new LiveSignalEngine();
-    vi.mocked(poloniexFuturesService.setLeverage).mockClear();
-    vi.mocked(poloniexFuturesService.placeOrder).mockClear().mockResolvedValue({ ordId: 'mock-order-id' } as never);
-    vi.mocked(poloniexFuturesService.getPositionDirectionMode).mockReset();
-  });
-
-  it('HEDGE + long order → placeOrder receives opts = { posSide: \'LONG\' }', async () => {
-    vi.mocked(poloniexFuturesService.getPositionDirectionMode).mockResolvedValue({ posMode: 'HEDGE' } as never);
-
-    const order = { symbol: 'BTC_USDT_PERP', side: 'long' as const, notional: 50, leverage: 10, price: 50000 };
-    await priv(engine).submitOrder(order, SIGNAL, 100, 'user-1', CREDS);
-
-    expect(poloniexFuturesService.placeOrder).toHaveBeenCalledTimes(1);
-    const [, orderData, opts] = vi.mocked(poloniexFuturesService.placeOrder).mock.calls[0];
-    expect(orderData).toEqual(
-      expect.objectContaining({ symbol: 'BTC_USDT_PERP', side: 'buy', type: 'market' }),
-    );
-    expect(opts).toEqual({ posSide: 'LONG' });
-  });
-
-  it('HEDGE + short order → placeOrder receives opts = { posSide: \'SHORT\' }', async () => {
-    vi.mocked(poloniexFuturesService.getPositionDirectionMode).mockResolvedValue({ posMode: 'HEDGE' } as never);
-
-    const order = { symbol: 'ETH_USDT_PERP', side: 'short' as const, notional: 50, leverage: 20, price: 2250 };
-    await priv(engine).submitOrder(order, SIGNAL, 100, 'user-1', CREDS);
-
-    expect(poloniexFuturesService.placeOrder).toHaveBeenCalledTimes(1);
-    const [, , opts] = vi.mocked(poloniexFuturesService.placeOrder).mock.calls[0];
-    expect(opts).toEqual({ posSide: 'SHORT' });
-  });
-
-  it('ONE_WAY mode → placeOrder receives opts = {} (posSide omitted)', async () => {
-    vi.mocked(poloniexFuturesService.getPositionDirectionMode).mockResolvedValue({ posMode: 'ONE_WAY' } as never);
-
-    const order = { symbol: 'BTC_USDT_PERP', side: 'long' as const, notional: 50, leverage: 10, price: 50000 };
-    await priv(engine).submitOrder(order, SIGNAL, 100, 'user-1', CREDS);
-
-    expect(poloniexFuturesService.placeOrder).toHaveBeenCalledTimes(1);
-    const [, , opts] = vi.mocked(poloniexFuturesService.placeOrder).mock.calls[0];
-    expect(opts).toEqual({});
-    expect(opts).not.toHaveProperty('posSide');
   });
 });

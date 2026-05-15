@@ -1,12 +1,18 @@
 /**
  * autonomic_client.ts — HTTP client for ml-worker's /monkey/autonomic/*
- * endpoints.
+ * endpoints (v0.7 migration boundary).
  *
  * The TypeScript orchestrator calls these instead of computing
- * neurochemistry / reward decay / sleep phase locally. The math lives
- * in Python with qig_core_local primitives. After the cutover
- * (cutover/python-authoritative-kernel) there is no TS fallback — if
- * Python is down, the trading path errors and surfaces.
+ * neurochemistry / reward decay / sleep phase locally, so the math
+ * lives in Python with qig_core_local primitives (no TS-port drift).
+ *
+ * Feature-flagged via MONKEY_KERNEL_PY=true; when unset, loop.ts
+ * continues to use the in-process TS computeNeurochemicals. This
+ * lets us validate the Python kernel live-parallel before cutting
+ * over, and revert instantly if a drift / latency issue appears.
+ *
+ * NOT wired into loop.ts yet — that happens in a follow-up PR once
+ * we've observed one full tick round-trip in staging.
  */
 
 import { logger } from '../../utils/logger.js';
@@ -60,9 +66,9 @@ export interface RewardPush {
 
 /**
  * Single autonomic tick — returns neurochemistry + sleep phase.
- * Fail-loud: on HTTP error or timeout, throws. The post-cutover tick
- * has no TS fallback; a thrown error means the kernel stops trading
- * this tick and the operator is alerted. That is the intended property.
+ * Fail-soft: on HTTP error, throws so the caller can fall back to TS
+ * local compute. Caller must handle with try/catch under the
+ * MONKEY_KERNEL_PY flag.
  */
 export async function callAutonomicTick(
   req: AutonomicTickRequest,
@@ -134,3 +140,7 @@ export async function callAutonomicReward(req: RewardPush): Promise<void> {
   }
 }
 
+/** Feature-flag helper. */
+export function isPythonKernelEnabled(): boolean {
+  return process.env.MONKEY_KERNEL_PY === 'true';
+}

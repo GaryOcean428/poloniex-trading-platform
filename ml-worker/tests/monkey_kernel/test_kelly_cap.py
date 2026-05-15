@@ -438,7 +438,11 @@ class TestGetKellyRollingStats:
 
     def _run(self, coro):
         import asyncio
-        return asyncio.get_event_loop().run_until_complete(coro)
+        # asyncio.run is the forward-compatible spelling — Python 3.14
+        # no longer auto-creates a loop for asyncio.get_event_loop() in
+        # a thread that hasn't set one (3.13.x still does, hence deploy
+        # passed pre-3.14 even with the old call).
+        return asyncio.run(coro)
 
     # ── SQL query shape ──────────────────────────────────────────
 

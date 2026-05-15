@@ -125,35 +125,12 @@ class TestChooseLaneStud:
         assert r["value"] == "scalp"
 
     def test_front_loop_entry_yields_trend(self) -> None:
-        # trend is funded since v0.10.1 (budget 0.10) → surfaced directly.
         r = choose_lane_stud(_stud_at(0.4, StudRegime.FRONT_LOOP))
         assert r["value"] == "trend"
-        assert r["derivation"]["fallback_from_zero_budget"] == 0
 
     def test_front_loop_centre_yields_swing(self) -> None:
         r = choose_lane_stud(_stud_at(1.0, StudRegime.FRONT_LOOP))
         assert r["value"] == "swing"
-
-    def test_front_loop_entry_falls_back_when_trend_unfunded(
-        self, monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """choose_lane_stud routes the FRONT_LOOP entry zone to `trend`.
-        If trend is ever configured with budget_frac=0 (it was, from the
-        2026-05-14 cutover until v0.10.1) it can hold no capital and
-        current_position_size collapses every entry there to size 0 —
-        which silently froze all front-loop trading. The stud path must
-        fall back to a fundable lane, mirroring choose_lane's legacy
-        guard. Force trend's budget to 0 to exercise the fallback."""
-        import monkey_kernel.executive as _exec
-        _orig = _exec.lane_budget_fraction
-        monkeypatch.setattr(
-            _exec, "lane_budget_fraction",
-            lambda l: 0.0 if l == "trend" else _orig(l),
-        )
-        r = choose_lane_stud(_stud_at(0.4, StudRegime.FRONT_LOOP))
-        assert r["value"] != "trend"
-        assert _orig(r["value"]) > 0.0
-        assert r["derivation"]["fallback_from_zero_budget"] == 1
 
 
 # ─────────────────────────────────────────────────────────────────

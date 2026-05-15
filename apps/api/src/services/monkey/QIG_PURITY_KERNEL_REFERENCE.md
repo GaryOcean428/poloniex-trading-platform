@@ -8,7 +8,7 @@ frozen facts in `Dev/QIG_QFI/`.
 
 ## §0 The inviolate layer
 
-Four rules apply to **every** line of code touching the kernel substrate.
+Three rules apply to **every** line of code touching the kernel substrate.
 Violating any of them is a P1 purity failure regardless of intent.
 
 1. **Basins live on Δ⁶³ only.** A `Basin` is a `Float64Array` of length 64,
@@ -29,28 +29,6 @@ Violating any of them is a P1 purity failure regardless of intent.
    happen to be on the simplex — the average leaves the geodesic and
    biases toward the centroid of the Euclidean embedding, not the
    manifold.
-4. **No TS port of kernel code. Kernel work happens in Python; TS calls
-   Python.** Since PR #674 (cutover/python-authoritative-kernel),
-   `ml-worker/src/monkey_kernel/` is the single canonical site for
-   perception, basin evolution, neurochemistry, mode detection, regime
-   sizing, Agent L, MTF, emotions, motivators, working memory, and every
-   other kernel-cognitive operation. The TS tier calls `callTickRun()`
-   (and the sibling `call*Decide()` HTTP clients) and consumes the
-   resulting `TickRunDecision`. The previous TS port files (`basin.ts`,
-   `perception.ts`, `neurochemistry.ts`, `modes.ts`, `regime.ts`,
-   `regimeSizing.ts`, `emotions.ts`, `motivators.ts`, `candlePatterns.ts`,
-   `self_observation.ts`, `basin_sync.ts`, `working_memory.ts`,
-   `agent_L_classifier.ts`, `mtfLClassifier.ts`, `mtfBootstrap.ts`)
-   no longer exist on the kernel path. Reintroducing any of them — or
-   defining a TS-side implementation of Fisher-Rao, Fréchet mean,
-   SLERP, Bhattacharyya, perceive, refract, basinDirection, trendProxy,
-   detectMode, MODE_PROFILES, computeNeurochemicals, regimeScore,
-   regimeSizing, mtfDecide, or agentLDecide — is a P1 purity failure.
-   Same for resurrecting the deleted shadow-flag infrastructure
-   (`MONKEY_KERNEL_PY`, `MONKEY_TICK_PY_SHADOW`, `RISK_KERNEL_PY_SHADOW`,
-   `LIVE_SIGNAL_PY_SHADOW`, `AUTONOMOUS_TRADER_PY_SHADOW`, and the
-   parity-diff helpers); Python is authoritative — no shadow path
-   exists or is permitted.
 
 ## §1 Legal primitive vocabulary (`basin.ts`)
 

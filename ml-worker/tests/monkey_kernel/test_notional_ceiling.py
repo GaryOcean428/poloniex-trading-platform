@@ -192,12 +192,8 @@ class TestNotionalCeilingPrecedenceOrder:
     cap already binds tighter, ceiling is a no-op."""
 
     def test_lane_cap_binds_first(self) -> None:
-        # v0.10.1 — trend lane budget_frac = 0.10. The lane cap
-        # (0.10 × equity = 100) binds before the notional ceiling
-        # (4 × equity = 4000). The geometric formula wants more than 100;
-        # the lane cap is the binding constraint and the ceiling never
-        # engages. (Pre-v0.10.1 this asserted margin==0 — the era when
-        # trend budget was 0.)
+        # Trend lane has budget_frac = 0.0 by default → lane cap forces
+        # margin to 0; ceiling is moot.
         bs = _basin_state(phi=0.6, sovereignty=0.8)
         out = current_position_size(
             bs,
@@ -208,8 +204,6 @@ class TestNotionalCeilingPrecedenceOrder:
             mode=MonkeyMode.INVESTIGATION,
             lane="trend",
         )
-        assert out["derivation"]["margin"] == pytest.approx(100.0)
-        assert out["derivation"]["capped_by_lane"] == 1
-        # ceiling never engaged — the lane cap already constrained margin
-        # well below 4× equity.
-        assert out["derivation"]["capped_by_notional"] == 0
+        assert out["derivation"]["margin"] == 0
+        # capped_by_notional may be 0 because the binding constraint
+        # was the lane cap, not the ceiling.

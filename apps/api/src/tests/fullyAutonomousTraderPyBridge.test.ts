@@ -43,6 +43,9 @@ vi.mock('../services/simpleMlService.js', () => ({ default: {} }));
 vi.mock('../services/monkey/kernel_client.js', () => ({
   callExitDecide: vi.fn(),
   callReconcile: vi.fn(),
+  isExitShadowEnabled: vi.fn(() => false),
+  logExitParityDiff: vi.fn(),
+  logReconcileParityDiff: vi.fn(),
 }));
 vi.mock('../services/signalGenome.js', () => ({
   buildIndicatorMap: vi.fn(() => new Map()),

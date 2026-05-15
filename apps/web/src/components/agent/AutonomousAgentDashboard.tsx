@@ -1200,8 +1200,15 @@ const AutonomousAgentDashboard: React.FC = () => {
         Strategy pipeline details live on /backtesting. Sidebar nav
         handles that transition.
       */}
-      {/* Capability Tiers card retired — data source returned hardcoded
-          zeros. Dead `{false && ...}` JSX removed 2026-05-14. */}
+      {/* Capability Tiers card retired — data source returned hardcoded zeros. */}
+      {false && (
+        <div className="bg-white rounded-lg shadow-lg overflow-hidden">
+          <div className="p-6">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-sm">
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Live Trading Activity Feed */}
       <LiveTradingActivityFeed agentStatus={agentStatus?.status} />

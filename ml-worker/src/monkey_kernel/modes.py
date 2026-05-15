@@ -76,36 +76,30 @@ MODE_PROFILES: dict[MonkeyMode, ModeProfile] = {
         sl_ratio=0.65,  # was 0.6 — bumped toward Phase-B winner, keeps tightest of the three
         entry_threshold_scale=0.9,
         size_floor=0.08,
-        # Mirrors TS PR #667 inversion (2026-05-13). EXPLORATION
-        # (flat / hunting) gets the highest leverage cap because the
-        # mechanism is many small fast scalps; INTEGRATION (trend
-        # confirmed) gets the lowest cap because the position is large,
-        # slow, and dollar-risk is already bounded by the wider stop.
-        # Values match TS modes.ts exactly for parity.
-        sovereign_cap_floor=50,
+        sovereign_cap_floor=15,
         tick_ms=15_000,
         can_enter=True,
-        description="flat / hunting — high-leverage fast scalp, tight TP",
+        description="volatile / hunting — tight TP, fast cadence",
     ),
     MonkeyMode.INVESTIGATION: ModeProfile(
         tp_base_frac=0.008,
         sl_ratio=0.7,   # was 0.5 — Phase-B winner sl_ratio=0.7 (6/6 runs, both symbols, all profiles)
         entry_threshold_scale=1.0,
         size_floor=0.10,
-        sovereign_cap_floor=15,
+        sovereign_cap_floor=20,
         tick_ms=30_000,
         can_enter=True,
-        description="trend forming — medium leverage, medium TP",
+        description="trend forming — medium TP, full size",
     ),
     MonkeyMode.INTEGRATION: ModeProfile(
         tp_base_frac=0.020,
         sl_ratio=0.75,  # was 0.3 — Phase-B winner; INTEGRATION lets winners run, widest SL
         entry_threshold_scale=1.1,
         size_floor=0.12,
-        sovereign_cap_floor=5,
+        sovereign_cap_floor=25,
         tick_ms=60_000,
         can_enter=True,
-        description="trend confirmed — low leverage, wide TP, let winners run",
+        description="trend confirmed — wide TP, let winners run",
     ),
     MonkeyMode.DRIFT: ModeProfile(
         tp_base_frac=0.005,
@@ -127,9 +121,7 @@ MODE_PROFILES: dict[MonkeyMode, ModeProfile] = {
         sl_ratio=0.7,
         entry_threshold_scale=1.0,
         size_floor=0.10,
-        # Mirrors INVESTIGATION cap (15) post-inversion; REVERSION is
-        # a counter-trend bet within an INVESTIGATION envelope.
-        sovereign_cap_floor=15,
+        sovereign_cap_floor=20,
         tick_ms=30_000,
         can_enter=True,
         description="back-loop mean-reversion — counter-trend, INVESTIGATION envelope",

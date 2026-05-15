@@ -90,9 +90,9 @@ describe('ResonanceBank — lane field', () => {
     const insertCall = vi.mocked(pool.query).mock.calls[1];
     const sql = String(insertCall[0]);
     expect(sql).toMatch(/lane/);
-    // Check the params carry the lane. (Not asserting position: the
-    // INSERT column order is `... engine_version, lane, loop`, so lane
-    // is not the last param — `loop` is.)
+    // Check the params include 'scalp'. Position-agnostic assertion —
+    // the INSERT carries other columns after `lane` (e.g. Tier 10 `loop`),
+    // so `params[length-1]` is brittle to column order.
     const params = insertCall[1] as unknown[];
     expect(params).toContain('scalp');
   });
@@ -111,6 +111,7 @@ describe('ResonanceBank — lane field', () => {
 
     const insertCall = vi.mocked(pool.query).mock.calls[1];
     const params = insertCall[1] as unknown[];
+    // Position-agnostic — see writeBubble-includes-lane test above for why.
     expect(params).toContain('swing');
   });
 
