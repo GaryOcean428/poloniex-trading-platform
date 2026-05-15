@@ -33,6 +33,10 @@ import mlPredictionService from '../mlPredictionService.js';
 import poloniexFuturesService from '../poloniexFuturesService.js';
 import { resolveExchangePositionSide, resolveExchangePositionNotional } from '../exchangePositionSide.js';
 import {
+  paperClosePosition,
+  paperPlaceOrder,
+} from '../paperExchangeSimulator.js';
+import {
   evaluatePreTradeVetoes,
   type KernelAccountState,
   type KernelContext,
@@ -230,6 +234,10 @@ const REGIME_STABILITY_TICKS_FOR_EXIT =
  */
 function isTradingPaused(): boolean {
   return process.env.MONKEY_TRADING_PAUSED === 'true';
+}
+
+function isMonkeyPaperMode(): boolean {
+  return process.env.MONKEY_PAPER_MODE === 'true';
 }
 
 
@@ -1829,6 +1837,9 @@ export class MonkeyKernel extends EventEmitter {
         if (!executed) {
           reason += ` | execute: ${execResult.reason}`;
         } else {
+          if (execResult.reason.startsWith('monkey_paper_mode:')) {
+            reason += ` | ${execResult.reason}`;
+          }
           // v0.6.2 bookkeeping
           state.lastEntryAtMs = Date.now();
           if (isDCA) {
@@ -3303,13 +3314,14 @@ export class MonkeyKernel extends EventEmitter {
       entry_price: string;
       quantity: string;
       lane: string;
+      order_id: string | null;
     }>;
     try {
       const result = await pool.query(
-        `SELECT id, side, entry_price, quantity, lane
+        `SELECT id, side, entry_price, quantity, lane, order_id
            FROM autonomous_trades
-          WHERE status = 'open'
-            AND symbol = $1
+           WHERE status = 'open'
+             AND symbol = $1
             AND agent = 'L'
             AND reason LIKE $2`,
         [symbol, reasonPattern],
@@ -3448,6 +3460,63 @@ export class MonkeyKernel extends EventEmitter {
         dopamine: lDopamine.toFixed(2),
         recentHarvests: recentPnls.length,
       });
+
+      if (isMonkeyPaperMode()) {
+        try {
+          for (const row of rows) {
+            const rowQty = Math.abs(Number(row.quantity) || 0);
+            const qtyShare = aggQty > 0 ? rowQty / aggQty : 0;
+            if (!row.order_id) {
+              continue;
+            }
+            const close = await paperClosePosition(String(row.order_id), lastPrice, 'agent_l_force_harvest');
+            const rowPnl = Number.isFinite(close.pnl) ? close.pnl : (aggPnl * qtyShare);
+            await pool.query(
+              `UPDATE autonomous_trades
+                  SET status = 'closed', exit_price = $1, exit_time = NOW(),
+                      exit_reason = $2, exit_order_id = $3, pnl = $4
+                WHERE id = $5`,
+              [lastPrice, 'agent_l_force_harvest', row.order_id ?? null, rowPnl, row.id],
+            );
+            this.arbiter.recordSettled('L', rowPnl);
+            this.applyOutcomeToAgent(symbol, 'L', sideKey, rowPnl);
+          }
+        } catch (err) {
+          logger.error('[AgentL] force-harvest paper close failed', {
+            symbol,
+            err: err instanceof Error ? err.message : String(err),
+          });
+          continue;
+        }
+        logger.info('[AgentL] force-harvest PAPER CLOSED', {
+          symbol, side: sideKey, rowsClosed: rows.length, aggPnl: aggPnl.toFixed(4), regime: regimeLabel,
+        });
+        if (symState) {
+          symState.lForceHarvestAtMsBySide[sideKey] = Date.now();
+          symState.lLastConfirmedAtMsBySide[sideKey] = null;
+          symState.lModeAtConfirmedBySide[sideKey] = null;
+          symState.mtfLongestAgreeingBySide[sideKey] = null;
+          symState.rScoreAtEntryBySide[sideKey] = null;
+          symState.recentLHarvestPnls.push(aggPnl);
+          if (symState.recentLHarvestPnls.length > 5) {
+            symState.recentLHarvestPnls.shift();
+          }
+        }
+        this.bus.publish({
+          type: BusEventType.EXIT_TRIGGERED,
+          source: this.instanceId,
+          symbol,
+          payload: {
+            agent: 'L',
+            heldSide: sideKey,
+            markPrice: lastPrice,
+            orderId: null,
+            pnl: aggPnl,
+            exitReason: 'agent_l_force_harvest',
+          },
+        });
+        continue;
+      }
 
       // Reduce-only market for L's aggregate qty. In HEDGE mode pass
       // posSide; in ONE_WAY rely on opposite-side semantics.
@@ -3640,6 +3709,79 @@ export class MonkeyKernel extends EventEmitter {
   }): Promise<{ executed: boolean; orderId: string | null; reason: string }> {
     const { symbol, tradeId, heldSide, markPrice, exitReason, pnlAtDecision } = req;
     const closeLane = req.lane;
+    if (isMonkeyPaperMode()) {
+      if (!Number.isFinite(markPrice) || markPrice <= 0) {
+        logger.warn('[Monkey] paper mode invalid mark price, skipping close', {
+          symbol,
+          tradeId,
+          markPrice,
+        });
+        return { executed: false, orderId: null, reason: 'paper_mode_invalid_mark_price' };
+      }
+      try {
+        const openRows = closeLane
+          ? await pool.query(
+              `SELECT id, quantity, agent, order_id FROM autonomous_trades
+                WHERE reason LIKE $1 AND status = 'open' AND symbol = $2
+                  AND lane = $3
+                ORDER BY entry_time ASC`,
+              [`monkey|kernel=${this.instanceId}|%`, symbol, closeLane],
+            )
+          : await pool.query(
+              `SELECT id, quantity, agent, order_id FROM autonomous_trades
+                WHERE reason LIKE $1 AND status = 'open' AND symbol = $2
+                ORDER BY entry_time ASC`,
+              [`monkey|kernel=${this.instanceId}|%`, symbol],
+            );
+        const rows = openRows.rows as Array<{ id: string; quantity: string; agent: string | null; order_id: string | null }>;
+        const fallbackRows = rows.length > 0
+          ? rows
+          : [{ id: tradeId, quantity: '1', agent: 'K', order_id: null }];
+        const pnlPerRow = rows.length > 0 ? pnlAtDecision / rows.length : pnlAtDecision;
+        let orderId: string | null = null;
+        for (const row of fallbackRows) {
+          let rowPnl = pnlPerRow;
+          if (row.order_id && row.order_id.startsWith('paper-')) {
+            const close = await paperClosePosition(row.order_id, markPrice, exitReason);
+            rowPnl = close.pnl;
+            orderId = row.order_id;
+          }
+          await pool.query(
+            `UPDATE autonomous_trades
+                SET status = 'closed', exit_price = $1, exit_time = NOW(),
+                    exit_reason = $2, exit_order_id = $3, pnl = $4
+              WHERE id = $5`,
+            [markPrice, exitReason, orderId, rowPnl, row.id],
+          );
+          const agentLabel: AgentLabel =
+            row.agent === 'M' ? 'M'
+              : row.agent === 'T' ? 'T'
+                : row.agent === 'L' ? 'L'
+                  : 'K';
+          this.arbiter.recordSettled(agentLabel, rowPnl);
+          this.applyOutcomeToAgent(symbol, agentLabel, heldSide, rowPnl);
+        }
+
+        logger.info('[Monkey] PAPER POSITION CLOSED', {
+          symbol, heldSide, markPrice, orderId, tradeId,
+          exitReason,
+        });
+        this.bus.publish({
+          type: BusEventType.EXIT_TRIGGERED,
+          source: this.instanceId,
+          symbol,
+          payload: { heldSide, markPrice, orderId, tradeId, pnl: pnlAtDecision, exitReason },
+        });
+        return { executed: true, orderId, reason: 'closed_paper' };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error('[Monkey] paper close failed', { tradeId, err: message });
+        if (message.includes('paper_mode_misconfigured')) {
+          return { executed: false, orderId: null, reason: 'paper_mode_misconfigured' };
+        }
+        return { executed: false, orderId: null, reason: `paper_close_failed: ${message}` };
+      }
+    }
 
     // Load credentials + position to know size to close.
     let credentials: { apiKey: string; apiSecret: string; passphrase?: string };
@@ -4043,7 +4185,13 @@ export class MonkeyKernel extends EventEmitter {
         `SELECT user_id FROM user_api_credentials WHERE exchange = 'poloniex' LIMIT 1`,
       );
       userId = String((userRow.rows[0] as { user_id?: string } | undefined)?.user_id ?? '');
-      if (!userId) return { executed: false, orderId: null, reason: 'no_credentials' };
+      if (!userId) {
+        if (isMonkeyPaperMode()) {
+          logger.warn('[Monkey] paper mode enabled but no user_id resolvable');
+          return { executed: false, orderId: null, reason: 'paper_mode_no_user' };
+        }
+        return { executed: false, orderId: null, reason: 'no_credentials' };
+      }
       const c = await apiCredentialsService.getCredentials(userId, 'poloniex');
       if (!c) return { executed: false, orderId: null, reason: 'credentials_missing' };
       credentials = c;
@@ -4188,6 +4336,88 @@ export class MonkeyKernel extends EventEmitter {
       this.positionDirectionMode === 'HEDGE'
         ? (req.side === 'long' ? 'LONG' : 'SHORT')
         : undefined;
+
+    if (isMonkeyPaperMode()) {
+      if (!Number.isFinite(entryPrice) || entryPrice <= 0) {
+        logger.warn('[Monkey] paper mode invalid mark price, skipping entry', {
+          symbol,
+          entryPrice,
+        });
+        return { executed: false, orderId: null, reason: 'paper_mode_invalid_mark_price' };
+      }
+      try {
+        const paper = await paperPlaceOrder({
+          engine: 'monkey',
+          userId,
+          symbol,
+          side,
+          quantity: formattedSize,
+          leverage,
+          markPrice: entryPrice,
+          metadata: {
+            kernel: this.instanceId,
+            agent: req.agent ?? 'K',
+            lane: req.lane ?? 'swing',
+          },
+        });
+        const paperModeReason = `monkey_paper_mode: filled @ ${paper.fillPrice.toFixed(8)} (slippage ${paper.slippageBps.toFixed(2)} bps)`;
+        let orderId: string | null = paper.orderId;
+        const agentTag = req.agent ?? 'K';
+        const laneTag = req.lane ?? 'swing';
+        try {
+          const dcaTag = req.isDCAAdd ? `|dca=${req.dcaAddIndex ?? 1}` : '';
+          const reasonEncoded =
+            `monkey|kernel=${this.instanceId}|agent=${agentTag}|lane=${laneTag}|phi=${req.phi.toFixed(3)}|kappa=${req.kappa.toFixed(2)}|sov=${req.sovereignty.toFixed(3)}${dcaTag}|src=v0.10`;
+          await pool.query(
+            `INSERT INTO autonomous_trades
+               (user_id, symbol, side, entry_price, quantity, leverage,
+                confidence, reason, order_id, paper_trade, engine_version, agent, lane)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+            [
+              userId, symbol, exchangeSide, paper.fillPrice, formattedSize, leverage,
+              req.phi, reasonEncoded, orderId, true, getEngineVersion(), agentTag, laneTag,
+            ],
+          );
+        } catch (err) {
+          logger.error('[Monkey] paper DB insert failed after simulated placement — ORPHAN RISK', {
+            orderId, err: err instanceof Error ? err.message : String(err),
+          });
+        }
+
+        logger.info(req.isDCAAdd ? '[Monkey] PAPER DCA_ADD PLACED' : '[Monkey] PAPER ORDER PLACED', {
+          symbol, side, orderId,
+          margin: marginUsdt.toFixed(2),
+          notional: notionalUsdt.toFixed(2),
+          leverage,
+          formattedSize,
+          phi: req.phi.toFixed(3),
+          sov: req.sovereignty.toFixed(3),
+          dcaAddIndex: req.dcaAddIndex ?? 0,
+          fillPrice: paper.fillPrice,
+          slippageBps: paper.slippageBps,
+        });
+
+        this.bus.publish({
+          type: BusEventType.ENTRY_EXECUTED,
+          source: this.instanceId,
+          symbol,
+          payload: {
+            side, orderId, margin: marginUsdt, notional: notionalUsdt, leverage,
+            entryPrice: paper.fillPrice, phi: req.phi, kappa: req.kappa, sovereignty: req.sovereignty,
+            isDCAAdd: Boolean(req.isDCAAdd), dcaAddIndex: req.dcaAddIndex ?? 0,
+          },
+        });
+
+        return { executed: true, orderId, reason: paperModeReason };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.error('[Monkey] paper placeOrder failed', { symbol, side, err: message });
+        if (message.includes('paper_mode_misconfigured')) {
+          return { executed: false, orderId: null, reason: 'paper_mode_misconfigured' };
+        }
+        return { executed: false, orderId: null, reason: `paper_rejected: ${message}` };
+      }
+    }
 
     // Set leverage (non-fatal), then place market order.
     //
