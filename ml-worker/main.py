@@ -681,6 +681,7 @@ async def root():
             "ingest": "/run/ingest (POST)",
             "governance_status": "/governance/status (GET)",
             "governance_ml_parity": "/governance/ml-predict-parity (GET)",
+            "governance_regime_parity": "/governance/regime-parity (GET) — issue #695 shadow",
             "monkey_tick": "/monkey/tick/run (POST)",
             "monkey_autonomic_tick": "/monkey/autonomic/tick (POST)",
             "monkey_executive_decide": "/monkey/executive/decide (POST)",
@@ -835,6 +836,55 @@ async def governance_ml_predict_parity(limit: int = 200):
         "sample_count": len(rows),
         "signal_disagreements": diffs,
         "disagreement_ratio": (diffs / len(rows)) if rows else 0.0,
+        "rows": rows,
+    }
+
+
+@app.get("/governance/regime-parity")
+async def governance_regime_parity(limit: int = 200):
+    """Parity-diff ring buffer for issue #695 — qig_warp shadow regime.
+
+    Populated every time StrategyLoop.tick runs (i.e. every /ml/predict
+    call on the v0.8 path). Each row carries the live MarketRegime
+    (creator/preserver/dissolver) alongside the published
+    qig_warp.classify_regime output (CRITICAL/DISORDERED/ORDERED) and
+    the (h, J) inputs that drove the shadow call. The live trading
+    path is unaffected — this is read-only telemetry.
+
+    Promotion gate (per #689 discipline): the cutover PR that
+    replaces RegimeDetector with qig_warp.classify_regime ships only
+    after the parity-log accumulates a representative tape window and
+    the shadow/live mapping stabilises (or the mapping is re-calibrated
+    based on the observed diff distribution).
+    """
+    from proprietary_core.regime_shadow import (
+        get_regime_parity_log,
+        SHADOW_EQUIVALENCE_GUESS,
+    )
+    rows = get_regime_parity_log()
+    rows = rows[-max(1, min(limit, 2000)):]
+    # Tally diffs against the v0 first-order equivalence guess so the
+    # operator can eyeball mapping accuracy at a glance.
+    matches = 0
+    diffs = 0
+    errors = 0
+    for r in rows:
+        if r.get("shadow_error"):
+            errors += 1
+            continue
+        guess = SHADOW_EQUIVALENCE_GUESS.get(r.get("live_regime", ""))
+        if r.get("shadow_regime") == guess:
+            matches += 1
+        else:
+            diffs += 1
+    return {
+        "available": True,
+        "sample_count": len(rows),
+        "shadow_errors": errors,
+        "matches_v0_guess": matches,
+        "diffs_v0_guess": diffs,
+        "match_ratio": (matches / (matches + diffs)) if (matches + diffs) else 0.0,
+        "equivalence_guess_v0": SHADOW_EQUIVALENCE_GUESS,
         "rows": rows,
     }
 

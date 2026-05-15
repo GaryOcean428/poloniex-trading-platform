@@ -1279,6 +1279,12 @@ export class LiveSignalEngine extends EventEmitter {
       const exchangeOrder = await poloniexFuturesService.placeOrder(credentials, {
         symbol: order.symbol,
         side: exchangeSide,
+        // posSide MUST be passed on HEDGE; placeOrder defaults to 'BOTH'
+        // when omitted, which Poloniex rejects with code=11011 "Position
+        // mode and posSide do not match." Same `posSide` already derived
+        // for the setLeverage body above. Undefined falls through to
+        // 'BOTH' inside placeOrder for ONE_WAY accounts.
+        posSide,
         type: 'market',
         size: formattedSize,
         lotSize: symbolLotSize,

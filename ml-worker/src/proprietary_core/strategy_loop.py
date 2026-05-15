@@ -146,6 +146,19 @@ class StrategyLoop:
         # === FEEL: Regime detection ===
         self._last_regime = self._regime.update(price)
 
+        # === SHADOW: qig_warp.classify_regime parity probe (issue #695) ===
+        # Fire-and-forget — the shadow function never raises and the
+        # live MarketRegime drives the live decision below regardless.
+        # Diff lands in proprietary_core.regime_shadow._REGIME_PARITY_LOG
+        # and is exposed via /governance/regime-parity for post-hoc
+        # analysis. Per #689 discipline this stays shadow until the
+        # parity-log accumulates a representative window.
+        try:
+            from .regime_shadow import shadow_classify
+            shadow_classify(self._last_regime, symbol=self.symbol)
+        except Exception:  # noqa: BLE001 — shadow MUST NOT affect live
+            pass
+
         # === FEEL: Coupling update (if signal/pnl provided) ===
         if signal_value is not None and pnl_value is not None:
             self._last_coupling = self._coupling.update(signal_value, pnl_value)

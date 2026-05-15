@@ -1200,15 +1200,9 @@ const AutonomousAgentDashboard: React.FC = () => {
         Strategy pipeline details live on /backtesting. Sidebar nav
         handles that transition.
       */}
-      {/* Capability Tiers card retired — data source returned hardcoded zeros. */}
-      {false && (
-        <div className="bg-white rounded-lg shadow-lg overflow-hidden">
-          <div className="p-6">
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-sm">
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Capability Tiers card retired — data source returned hardcoded zeros.
+          Block fully removed in favour of a comment so eslint's
+          no-constant-binary-expression rule isn't tripped by `{false && (...)}`. */}
 
       {/* Live Trading Activity Feed */}
       <LiveTradingActivityFeed agentStatus={agentStatus?.status} />
