@@ -191,10 +191,19 @@ const HISTORY_MAX = 100;
  * Preserves P5 Autonomy + P14 Variable Separation: rewards are STATE
  * events; neurotransmitters are derived VIEWS; nothing externally
  * writes the chemical levels.
+ *
+ * Per-agent rewards (2026-05-16): tag every push with the agent that
+ * generated the outcome. The kernel runs ONE neurochemistry (K's brain);
+ * when it reads the reward queue to derive K's dopamine, it filters to
+ * K's rewards only. M/T/L wins/losses no longer dilute K's chemical
+ * state — they live in the queue for arbiter / cross-agent telemetry
+ * but don't pull K's dopamine sideways. Legacy callsites default to
+ * 'K' agent so back-compat behaviour is preserved on the K path.
  */
 interface ActivityReward {
   source: string;           // 'trade_close' | 'witnessed_liveSignal' | ...
   symbol?: string;
+  agent: AgentLabel;        // K | M | T | L — which agent generated the outcome
   dopamineDelta: number;    // reward magnitude for dopamine boost
   serotoninDelta: number;   // mood/stability boost (calm-close reward)
   endorphinDelta: number;   // peak-state reward (win-in-high-coupling regime)
@@ -477,6 +486,25 @@ export class MonkeyKernel extends EventEmitter {
    */
   private witnessExitDedup: Map<string, number> = new Map();
   private static readonly WITNESS_DEDUP_WINDOW_MS = 60_000;
+  /**
+   * Per-symbol MTF bootstrap status — keyed by symbol, valued by the
+   * last attempt's per-TF outcome. The retry hook in processSymbol
+   * re-runs only the timeframes that didn't succeed. Without this,
+   * silent fetch / synthesis failures left MTF L cold for the entire
+   * session and the agreement filter (the loudest noise-suppression
+   * in the stack) never fired.
+   *
+   * 2026-05-16: live tape showed `[MTF-L] decision agreement: 0/3,
+   * perTf: 15m:cold, 1h:cold, 4h:cold` across whole sessions.
+   * Without the agreement filter, single-tick noise drives entries.
+   */
+  private mtfBootstrapStatus: Map<string, import('./mtfBootstrap.js').BootstrapSymbolStatus> = new Map();
+  /** Per-symbol countdown of ticks to wait before retrying a partial /
+   *  failed bootstrap. Backs off 60s → 120s → 240s → 480s capped, so
+   *  a flaky exchange endpoint doesn't hammer on every tick. */
+  private mtfBootstrapRetryAtMs: Map<string, number> = new Map();
+  private static readonly MTF_BOOTSTRAP_INITIAL_RETRY_MS = 60_000;
+  private static readonly MTF_BOOTSTRAP_MAX_RETRY_MS = 480_000;
   /** Basin-sync instance — per-kernel, so sub-kernels appear as peers. */
   private readonly basinSync: BasinSync;
   /** Kernel bus — pub/sub for inter-kernel comms (v0.6a). */
@@ -562,25 +590,15 @@ export class MonkeyKernel extends EventEmitter {
     // need 80 days of live ticks to warm up. Async + fail-soft;
     // failures (network, parse) leave the bootstrap empty and the
     // MTF state warms up gradually from live ticks instead.
+    //
+    // 2026-05-16: per-symbol bootstrap status tracking + self-healing
+    // retry. The prior fire-and-forget swallowed silent failures (live
+    // logs showed `[MTF-L] decision agreement: 0/3, perTf:cold,cold,cold`
+    // for entire sessions). Now we await per-symbol bootstrap, retain
+    // the per-TF status, and ``maybeRetryMTFBootstrap`` re-runs cold
+    // timeframes on a later tick.
     if (process.env.MONKEY_MTF_BOOTSTRAP !== 'false') {
-      try {
-        const { bootstrapMTFForSymbol } = await import('./mtfBootstrap.js');
-        for (const sym of this.symbols) {
-          const state = this.symbolStates.get(sym);
-          if (state) {
-            // Fire-and-forget — each symbol's bootstrap is independent.
-            void bootstrapMTFForSymbol(sym, state.mtfState).catch((err) => {
-              logger.warn('[MTF-bootstrap] failed for symbol', {
-                symbol: sym, err: err instanceof Error ? err.message : String(err),
-              });
-            });
-          }
-        }
-      } catch (importErr) {
-        logger.warn('[MTF-bootstrap] import failed (non-fatal)', {
-          err: importErr instanceof Error ? importErr.message : String(importErr),
-        });
-      }
+      void this.runInitialMTFBootstrap();
     }
 
     // v0.8.8 cross-agent observation — subscribe to the bus and append
@@ -691,6 +709,102 @@ export class MonkeyKernel extends EventEmitter {
     computedAtMs: number;
   } | null {
     return this.symbolStates.get(symbol)?.latestBasinSnapshot ?? null;
+  }
+
+  /** Initial MTF bootstrap pass. Awaits per-symbol, records the
+   *  per-TF status, and schedules a retry for any symbol with at
+   *  least one cold TF. Called once at startup. */
+  private async runInitialMTFBootstrap(): Promise<void> {
+    let bootstrapMod: typeof import('./mtfBootstrap.js');
+    try {
+      bootstrapMod = await import('./mtfBootstrap.js');
+    } catch (importErr) {
+      logger.warn('[MTF-bootstrap] import failed (non-fatal)', {
+        err: importErr instanceof Error ? importErr.message : String(importErr),
+      });
+      return;
+    }
+    await Promise.all(
+      this.symbols.map(async (sym) => {
+        const state = this.symbolStates.get(sym);
+        if (!state) return;
+        try {
+          const status = await bootstrapMod.bootstrapMTFForSymbol(sym, state.mtfState);
+          this.mtfBootstrapStatus.set(sym, status);
+          if (status.allSucceeded) {
+            logger.info('[MTF-bootstrap] symbol ready', {
+              symbol: sym,
+              perTf: status.perTimeframe.map((p) => `${p.label}:${p.basinsPopulated}`).join(','),
+            });
+          } else {
+            const cold = status.perTimeframe.filter((p) => p.status !== 'success');
+            logger.warn('[MTF-bootstrap] partial — retry scheduled', {
+              symbol: sym,
+              cold: cold.map((p) => `${p.label}:${p.status}`).join(','),
+            });
+            this.mtfBootstrapRetryAtMs.set(
+              sym,
+              Date.now() + MonkeyKernel.MTF_BOOTSTRAP_INITIAL_RETRY_MS,
+            );
+          }
+        } catch (err) {
+          logger.warn('[MTF-bootstrap] failed for symbol', {
+            symbol: sym, err: err instanceof Error ? err.message : String(err),
+          });
+          this.mtfBootstrapRetryAtMs.set(
+            sym,
+            Date.now() + MonkeyKernel.MTF_BOOTSTRAP_INITIAL_RETRY_MS,
+          );
+        }
+      }),
+    );
+  }
+
+  /** Per-tick check: if a symbol has pending MTF bootstrap and the
+   *  retry timer has elapsed, re-run bootstrap for it. Backoff doubles
+   *  on each failed attempt, capped at MTF_BOOTSTRAP_MAX_RETRY_MS.
+   *  Called from processSymbol before the MTF L decision is read so
+   *  a successful retry warms the state in time for the same tick. */
+  private async maybeRetryMTFBootstrap(symbol: string): Promise<void> {
+    const retryAt = this.mtfBootstrapRetryAtMs.get(symbol);
+    if (retryAt === undefined) return;          // never bootstrapped — handled by run-on-startup
+    if (Date.now() < retryAt) return;            // backoff still running
+    const state = this.symbolStates.get(symbol);
+    if (!state) {
+      this.mtfBootstrapRetryAtMs.delete(symbol);
+      return;
+    }
+    try {
+      const { bootstrapMTFForSymbol } = await import('./mtfBootstrap.js');
+      const status = await bootstrapMTFForSymbol(symbol, state.mtfState);
+      this.mtfBootstrapStatus.set(symbol, status);
+      if (status.allSucceeded) {
+        logger.info('[MTF-bootstrap] retry success', { symbol });
+        this.mtfBootstrapRetryAtMs.delete(symbol);
+      } else {
+        // Still partial — double the backoff for next attempt.
+        const prevDelay = retryAt - (this.mtfBootstrapStatus.get(symbol)?.startedAtMs ?? Date.now());
+        const nextDelay = Math.min(
+          MonkeyKernel.MTF_BOOTSTRAP_MAX_RETRY_MS,
+          Math.max(MonkeyKernel.MTF_BOOTSTRAP_INITIAL_RETRY_MS, prevDelay * 2),
+        );
+        const cold = status.perTimeframe.filter((p) => p.status !== 'success');
+        logger.warn('[MTF-bootstrap] retry partial', {
+          symbol,
+          cold: cold.map((p) => `${p.label}:${p.status}`).join(','),
+          nextRetryInMs: nextDelay,
+        });
+        this.mtfBootstrapRetryAtMs.set(symbol, Date.now() + nextDelay);
+      }
+    } catch (err) {
+      logger.warn('[MTF-bootstrap] retry threw', {
+        symbol, err: err instanceof Error ? err.message : String(err),
+      });
+      this.mtfBootstrapRetryAtMs.set(
+        symbol,
+        Date.now() + MonkeyKernel.MTF_BOOTSTRAP_MAX_RETRY_MS,
+      );
+    }
   }
 
   private newSymbolState(): SymbolState {
@@ -931,7 +1045,14 @@ export class MonkeyKernel extends EventEmitter {
     // v0.6.7: consume the decayed reward queue as a neurochemistry input.
     // Nothing externally writes dopamine — the chemical is derived each
     // tick from (Φ gradient + decayed lived-outcome stream).
-    const rewardDeltas = this.decayedRewardSums();
+    //
+    // 2026-05-16: filtered to K's rewards only. The kernel running here
+    // IS K's brain — its neurochemistry should reinforce on K's wins,
+    // not on M/T/L outcomes that flow through the same queue for
+    // arbiter / telemetry. M/T/L are control arms with their own
+    // sizing/exit logic; their wins go to the arbiter (recordSettled)
+    // and bump their capital share, but K's dopamine is K's only.
+    const rewardDeltas = this.decayedRewardSums(Date.now(), 'K');
     const nc: NeurochemicalState = computeNeurochemicals({
       isAwake: true,
       phiDelta,
@@ -1048,6 +1169,12 @@ export class MonkeyKernel extends EventEmitter {
     // (15m / 1h / 4h) and compute agreement-count decision. Phase 2
     // wires the result into L's entry sizing + harvest exit policy
     // below; the per-tick log keeps observability.
+    //
+    // 2026-05-16: if MTF bootstrap previously failed for this symbol,
+    // retry now (backoff-gated). Awaited so a successful retry warms
+    // the state in time for this tick's mtfDecide read; on the
+    // retry-still-pending path it's a no-op resolved by the next tick.
+    await this.maybeRetryMTFBootstrap(symbol);
     mtfOnTickAppend(state.mtfState, basin, state.sessionTicks);
     const mtfDec = mtfDecide(state.mtfState);
     if (mtfDec.action !== 'hold') {
@@ -1785,7 +1912,47 @@ export class MonkeyKernel extends EventEmitter {
       tPnlWindowTotal: arbiterSnapshotMany.T?.pnlWindowTotal ?? 0,
       tTradesInWindow: arbiterSnapshotMany.T?.tradesInWindow ?? 0,
       tAllocatedUsdt: arbiterAllocationMany.T ?? 0,
+      // L-specific telemetry — added 2026-05-16 to surface the
+      // FR-KNN classifier's share alongside K/M/T. Without this the
+      // dashboard can't tell whether L is starved by the arbiter or
+      // by its own warmup floor.
+      lEligible,
+      lShare: arbiterSnapshotMany.L?.share ?? 0,
+      lPnlWindowTotal: arbiterSnapshotMany.L?.pnlWindowTotal ?? 0,
+      lTradesInWindow: arbiterSnapshotMany.L?.tradesInWindow ?? 0,
+      lAllocatedUsdt: arbiterAllocationMany.L ?? 0,
     };
+    // Per-agent neurochemistry windows — added 2026-05-16. The kernel's
+    // own dopamine derives from K-only rewards (decayedRewardSums('K')),
+    // but per-agent telemetry surfaces what M/T/L's "shadow" chemistry
+    // would look like if they had brains. Useful for the dashboard's
+    // "which agent is in flow" indicator.
+    const ncWindowsByAgent: Record<string, { dop: number; ser: number; endo: number }> = {};
+    for (const agent of ['K', 'M', 'T', 'L'] as const) {
+      const r = this.decayedRewardSums(Date.now(), agent);
+      ncWindowsByAgent[agent] = {
+        dop: r.dopamine,
+        ser: r.serotonin,
+        endo: r.endorphin,
+      };
+    }
+    derivation.ncByAgent = ncWindowsByAgent;
+    // MTF bootstrap status surface — 2026-05-16. Cold timeframes mean
+    // the agreement filter (the strongest noise filter in the stack)
+    // can't fire. Surfacing this in derivation makes silent failures
+    // visible in /monkey/snapshot.
+    const mtfStatus = this.mtfBootstrapStatus.get(symbol);
+    derivation.mtfBootstrap = mtfStatus
+      ? {
+          allSucceeded: mtfStatus.allSucceeded,
+          perTimeframe: mtfStatus.perTimeframe.map((p) => ({
+            label: p.label,
+            status: p.status,
+            basins: p.basinsPopulated,
+          })),
+          retryAtMs: this.mtfBootstrapRetryAtMs.get(symbol) ?? null,
+        }
+      : { allSucceeded: false, perTimeframe: [], retryAtMs: null };
 
     let executed = false;
     let monkeyOrderId: string | null = null;
@@ -4056,6 +4223,11 @@ export class MonkeyKernel extends EventEmitter {
     // (she has only one kernel state; we use one of her symbol states
     // for κ). Pushed as an EVENT; computeNeurochemicals derives the
     // actual dopamine lift next tick.
+    //
+    // K-tagged: closeHeldPosition is the K-kernel's own close path
+    // (M/T/L use their own execution paths that call recordSettled
+    // separately). Tagging the reward 'K' means K's brain gets the
+    // dopamine on K's wins.
     const symState = this.symbolStates.get(symbol);
     try {
       const totalQtyForMargin = exchangeQty || 0.01;
@@ -4067,6 +4239,7 @@ export class MonkeyKernel extends EventEmitter {
         realizedPnlUsdt: pnlAtDecision,
         marginUsdt: margin,
         kappaAtExit: symState?.kappa,
+        agent: 'K',
       });
     } catch { /* non-fatal */ }
     return { executed: true, orderId, reason: 'closed' };
@@ -4556,7 +4729,11 @@ export class MonkeyKernel extends EventEmitter {
     realizedPnlUsdt: number;
     marginUsdt: number;
     kappaAtExit?: number;
+    /** Which agent generated the outcome. Defaults to 'K' for
+     *  back-compat with pre-2026-05-16 callsites that didn't pass it. */
+    agent?: AgentLabel;
   }): void {
+    const agent: AgentLabel = input.agent ?? 'K';
     const pnlFrac = input.marginUsdt > 0
       ? input.realizedPnlUsdt / input.marginUsdt
       : 0;
@@ -4577,6 +4754,7 @@ export class MonkeyKernel extends EventEmitter {
     this.pendingRewards.push({
       source: input.source,
       symbol: input.symbol,
+      agent,
       dopamineDelta: dop,
       serotoninDelta: ser,
       endorphinDelta: endo,
@@ -4590,6 +4768,7 @@ export class MonkeyKernel extends EventEmitter {
     logger.info(`[${this.label}] reward pushed`, {
       source: input.source,
       symbol: input.symbol,
+      agent,
       pnl: input.realizedPnlUsdt.toFixed(4),
       pnlFrac: (pnlFrac * 100).toFixed(2) + '%',
       dop: dop.toFixed(3),
@@ -4603,14 +4782,24 @@ export class MonkeyKernel extends EventEmitter {
    * processSymbol to build the NeurochemicalInputs reward deltas.
    * Half-life = REWARD_HALF_LIFE_MS (20 min default). Old rewards decay
    * naturally; queue also FIFO-evicts at REWARD_QUEUE_MAX.
+   *
+   * `agentFilter` (added 2026-05-16) selects only the rewards generated
+   * by that agent. The kernel runs ONE neurochemistry (K's brain), so
+   * processSymbol passes 'K' — K's wins reinforce K's dopamine, M/T/L
+   * outcomes no longer dilute it. Omit the filter to get the legacy
+   * shared-pool behaviour (useful for cross-agent telemetry).
    */
-  private decayedRewardSums(nowMs: number = Date.now()): {
+  private decayedRewardSums(
+    nowMs: number = Date.now(),
+    agentFilter?: AgentLabel,
+  ): {
     dopamine: number;
     serotonin: number;
     endorphin: number;
   } {
     let dop = 0, ser = 0, endo = 0;
     for (const r of this.pendingRewards) {
+      if (agentFilter !== undefined && r.agent !== agentFilter) continue;
       const ageMs = nowMs - r.atMs;
       const decay = Math.pow(0.5, ageMs / REWARD_HALF_LIFE_MS);
       if (decay < 0.01) continue;  // negligible, skip
@@ -4807,12 +4996,14 @@ export class MonkeyKernel extends EventEmitter {
         // events — her bank learned from them, so her NC should too.
         // Dampen the reward magnitude since it wasn't her trade (she
         // just observed). Estimate margin from typical liveSignal
-        // position (~$5 at 16x).
+        // position (~$5 at 16x). Tagged 'K' because witnessExit feeds
+        // K's bank — observation belongs to K's cognitive stream.
         this.pushReward({
           source: 'witnessed_liveSignal',
           symbol,
           realizedPnlUsdt: realizedPnl * 0.5,  // half-weight (witnessed, not her own)
           marginUsdt: 5,
+          agent: 'K',
         });
       }
     } catch (err) {

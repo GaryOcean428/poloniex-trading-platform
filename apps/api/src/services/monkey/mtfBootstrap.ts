@@ -51,18 +51,49 @@ const POLONIEX_INTERVAL_FOR_TF: Record<TimeframeLabel, string> = {
   '4h': '4h',
 };
 
+/** Per-(symbol, timeframe) bootstrap outcome. Returned by
+ *  ``bootstrapMTFForSymbol`` so the caller can track which timeframes
+ *  are warm vs need retry. Added 2026-05-16 — the previous fire-and-
+ *  forget call ``void bootstrapMTFForSymbol(...)`` silently lost
+ *  failures, leaving MTF L cold for the whole session. */
+export type BootstrapTimeframeStatusCode =
+  | 'success'
+  | 'insufficient_candles'
+  | 'fetch_failed'
+  | 'synthesis_empty';
+
+export interface BootstrapTimeframeStatus {
+  label: TimeframeLabel;
+  status: BootstrapTimeframeStatusCode;
+  basinsPopulated: number;
+  errorMessage?: string;
+}
+
+export interface BootstrapSymbolStatus {
+  symbol: string;
+  startedAtMs: number;
+  finishedAtMs: number;
+  perTimeframe: BootstrapTimeframeStatus[];
+  /** True iff every TF reached ``success``. */
+  allSucceeded: boolean;
+}
+
 /** Pull OHLCV at the timeframe's resolution and synthesise basins
  *  for the bootstrap. Each candle becomes one basin via the same
  *  perceive() the live loop uses; the sliding-window context for
  *  perceive is the trailing N candles ending at each step.
  *
  *  Errors (network, parse, perceive throw) caught and logged; the
- *  function returns with whatever it managed to compute. The MTF
- *  state warms up gradually from live ticks if bootstrap is empty. */
+ *  function returns a per-TF status report. The MTF state warms up
+ *  gradually from live ticks if bootstrap is empty — but per-TF
+ *  status now surfaces silent failures so the caller can retry the
+ *  cold timeframes on a later tick. */
 export async function bootstrapMTFForSymbol(
   symbol: string,
   state: MTFState,
-): Promise<void> {
+): Promise<BootstrapSymbolStatus> {
+  const startedAtMs = Date.now();
+  const perTimeframe: BootstrapTimeframeStatus[] = [];
   for (const label of ['15m', '1h', '4h'] as const) {
     try {
       const interval = POLONIEX_INTERVAL_FOR_TF[label];
@@ -74,6 +105,12 @@ export async function bootstrapMTFForSymbol(
       if (!Array.isArray(candles) || candles.length < 100) {
         logger.warn('[MTF-bootstrap] insufficient OHLCV from exchange', {
           symbol, label, got: candles?.length ?? 0,
+        });
+        perTimeframe.push({
+          label,
+          status: 'insufficient_candles',
+          basinsPopulated: 0,
+          errorMessage: `got ${candles?.length ?? 0} candles (need ≥ 100)`,
         });
         continue;
       }
@@ -112,14 +149,44 @@ export async function bootstrapMTFForSymbol(
           // still useful for the classifier.
         }
       }
+      if (basins.length === 0) {
+        logger.warn('[MTF-bootstrap] synthesis empty', { symbol, label });
+        perTimeframe.push({
+          label,
+          status: 'synthesis_empty',
+          basinsPopulated: 0,
+          errorMessage: 'perceive() failed on every candle',
+        });
+        continue;
+      }
       setBootstrapHistory(state, label, basins);
       logger.info('[MTF-bootstrap] populated history', {
         symbol, label, basins: basins.length,
       });
+      perTimeframe.push({
+        label,
+        status: 'success',
+        basinsPopulated: basins.length,
+      });
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
       logger.warn('[MTF-bootstrap] failed for timeframe', {
-        symbol, label, err: err instanceof Error ? err.message : String(err),
+        symbol, label, err: message,
+      });
+      perTimeframe.push({
+        label,
+        status: 'fetch_failed',
+        basinsPopulated: 0,
+        errorMessage: message,
       });
     }
   }
+  const allSucceeded = perTimeframe.every((p) => p.status === 'success');
+  return {
+    symbol,
+    startedAtMs,
+    finishedAtMs: Date.now(),
+    perTimeframe,
+    allSucceeded,
+  };
 }
