@@ -120,6 +120,12 @@ const TradeHistory: React.FC = () => {
               amount: t.quantity || 0,
               price: t.entryPrice || 0,
               total: (t.quantity || 0) * (t.entryPrice || 0),
+              // TODO(BE): /api/autonomous/trades does not surface the
+              // per-trade fee column from autonomous_trades. Result:
+              // the Total Fees summary card on this page always reads
+              // $0.00 for the bot-trade portion. Add `fee` + `feeCurrency`
+              // to the autonomous trades payload (or join from the
+              // exchange-fill ledger) so this aggregation is correct.
               fee: 0,
               feeCurrency: 'USDT',
               pnl: t.pnl ?? undefined,
@@ -348,10 +354,15 @@ const TradeHistory: React.FC = () => {
         </p>
       </div>
 
-      {/* Trade Source Tabs */}
+      {/* Trade Source Tabs.
+          'All' shows the deduplicated union (exchange fills already
+          accounted for by a bot row are filtered out — see
+          dedupedExchangeTrades above), so the header count must use
+          the deduped length, not the raw sum. Previously displayed
+          e.g. "All Trades (200)" while the rendered list held ~105 rows. */}
       <div className="flex border-b border-border-subtle mb-6">
         {([
-          { key: 'all', label: 'All Trades', count: exchangeTrades.length + botTrades.length },
+          { key: 'all', label: 'All Trades', count: dedupedExchangeTrades.length + botTrades.length },
           { key: 'exchange', label: 'Exchange History', count: exchangeTrades.length },
           { key: 'bot', label: 'Bot Trades', count: botTrades.length }
         ] as const).map(tab => (
