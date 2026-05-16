@@ -543,6 +543,18 @@ def _handle_predict_ensemble(payload: dict) -> dict:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Pre-warm basin_sync_db connection on main thread BEFORE the
+    # server starts handling requests. Avoids the TF/libpq malloc
+    # corruption that segfaults psycopg.connect() when called from a
+    # request thread post-TF-init. See [[polytrade-consensus-architecture]]
+    # incident notes 2026-05-16T14:21Z. No-op when MONKEY_PY_BASIN_SYNC_DB_LIVE
+    # is unset (the master gate flag).
+    try:
+        from monkey_kernel.basin_sync_db import warm_connection as _warm_basin_sync
+        _warm_basin_sync()
+    except Exception as err:  # noqa: BLE001 — never block startup
+        logger.warning("basin_sync warm_connection failed: %s", err)
+
     _start_redis_listener()
     _start_trade_outcome_listener()
     logger.info("ML worker started")
