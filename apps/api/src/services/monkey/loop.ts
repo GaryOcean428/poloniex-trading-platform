@@ -136,6 +136,7 @@ import {
 } from './agentEquityBound.js';
 import { planCloseChunks } from './closeChunker.js';
 import { agentLDecide, type AgentLDecision } from './agent_L_classifier.js';
+import { QIGRAMv2State, isQigramV2Enabled } from './agent_L_qigram_v2.js';
 import {
   newMTFState,
   onTickAppend as mtfOnTickAppend,
@@ -589,6 +590,20 @@ const SELF_OBS_GAIN = 0.5;
 const SELF_OBS_MIN = 0.70;
 const SELF_OBS_MAX = 1.30;
 
+/** 2026-05-16 (#716): how often the kernel-level QIGRAMv2 store decays
+ *  all weights — DECAY_FACTOR=0.95 per integration step. Decaying every
+ *  tick would collapse weights too fast (0.95^120 ≈ 0.0019 in one
+ *  hour); every SOV_DECAY_PERIOD_TICKS=60 ticks (≈ 30 min on 30s
+ *  cadence) gives a ~90×30min = 45 hour half-life from weight 1.0 to
+ *  MIN_ACTIVE_WEIGHT=0.01, which lets sov fall away from 1.0 as old
+ *  basins fade without making the active-set vanish entirely.
+ *  Tick-only basin storage: we only push the current basin (weight=1)
+ *  every SOV_STORE_PERIOD_TICKS=10 ticks (≈ 5 min) so the store grows
+ *  at a rate consistent with the canonical QIGRAM integration cadence,
+ *  not at every-tick granularity. */
+const SOV_DECAY_PERIOD_TICKS = 60;
+const SOV_STORE_PERIOD_TICKS = 10;
+
 /**
  * MonkeyKernel — the top-level kernel that ticks Monkey.
  *
@@ -712,6 +727,22 @@ export class MonkeyKernel extends EventEmitter {
    * has no reference to BasinState or any ML field).
    */
   private readonly turtleStates: Map<string, TurtleState> = new Map();
+  /**
+   * 2026-05-16 (#716): kernel-level QIGRAMv2 store. Holds the current
+   * basin from each symbol (keyed by `<symbol>|tick=<n>` so successive
+   * snapshots don't collide), tagged with the regime label as category.
+   * Used to compute a live sovereignty ratio (N_active / N_total)
+   * grounded in the kernel's actual basin trajectory — the resonance-
+   * bank's `lived/total` ratio is pinned at 1.0 by design (every entry
+   * is lived). With weight decay applied periodically, sov falls below
+   * 1.0 as old basins fade past MIN_ACTIVE_WEIGHT, then rises back as
+   * fresh basins are integrated. Only consumed when
+   * `L_QIGRAM_V2_ENABLED === 'true'`; otherwise the legacy
+   * resonance-bank sovereignty path is preserved (default behavior). */
+  private readonly qigramV2Store: QIGRAMv2State = new QIGRAMv2State();
+  /** Tick counter for QIGRAMv2 store decay scheduling. Decays all
+   *  weights every SOV_DECAY_PERIOD_TICKS calls. */
+  private qigramV2TickCount = 0;
 
   constructor(config?: Partial<MonkeyKernelConfig>) {
     super();
@@ -1390,7 +1421,39 @@ export class MonkeyKernel extends EventEmitter {
       });
     }
 
-    const sovereignty = await resonanceBank.sovereignty();
+    // 2026-05-16 (#716): sovereignty path.
+    // Legacy: resonanceBank.sovereignty() is `lived/total` from
+    // monkey_resonance_bank; by design every entry is source='lived', so
+    // the ratio is pinned at 1.0. That value is useless to Ocean's
+    // maturity / juvenile→mature gate.
+    // Fix (flag-gated, default behaviour preserved when v2 is off):
+    // when `L_QIGRAM_V2_ENABLED === 'true'`, integrate the current basin
+    // into a kernel-level QIGRAMv2 store and read its active/total
+    // ratio. Decay runs on a slow cadence so the store doesn't collapse
+    // — sov falls below 1.0 as basins age past MIN_ACTIVE_WEIGHT, then
+    // recovers as fresh basins integrate. The store is per-process; a
+    // restart starts sov=0 and it climbs as ticks accumulate, matching
+    // the canonical "agent maturity grows with lived experience".
+    let sovereignty: number;
+    if (isQigramV2Enabled()) {
+      this.qigramV2TickCount += 1;
+      if (this.qigramV2TickCount % SOV_STORE_PERIOD_TICKS === 0) {
+        // Per-symbol|per-tick key so different symbols' snapshots
+        // coexist; weight=1.0 at storage time, correct=true so the
+        // entry counts toward active until decayed below threshold.
+        this.qigramV2Store.integrate(
+          `${symbol}|tick=${this.qigramV2TickCount}`,
+          basin,
+          { weight: 1.0, correct: true },
+        );
+      }
+      if (this.qigramV2TickCount % SOV_DECAY_PERIOD_TICKS === 0) {
+        this.qigramV2Store.decayAll();
+      }
+      sovereignty = this.qigramV2Store.sovereignty;
+    } else {
+      sovereignty = await resonanceBank.sovereignty();
+    }
 
     const basinState: BasinState = {
       basin,
