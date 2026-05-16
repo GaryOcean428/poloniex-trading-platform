@@ -135,7 +135,7 @@ import {
   clampMarginToNotionalHeadroom,
 } from './agentEquityBound.js';
 import { planCloseChunks } from './closeChunker.js';
-import { agentLDecide } from './agent_L_classifier.js';
+import { agentLDecide, type AgentLDecision } from './agent_L_classifier.js';
 import {
   newMTFState,
   onTickAppend as mtfOnTickAppend,
@@ -250,6 +250,113 @@ function isTradingPaused(): boolean {
 
 function isMonkeyPaperMode(): boolean {
   return process.env.MONKEY_PAPER_MODE === 'true';
+}
+
+// ─── L-veto-over-K (Option A) ─────────────────────────────────────
+//
+// 2026-05-16 — high-conviction Agent L vote BLOCKS Agent K entries on
+// the same tick when L and K disagree on side. K (geometric kernel) was
+// over-trading ETH (-$5.93, 12.3% WR over 227 trades / 24h) while L
+// (FR-KNN Lorentzian-equivalent, historically 76.4% WR) is structurally
+// constrained to "vote only" — L feeds K's basinDir via per_agent_bus
+// but cannot block K's executeEntry path.
+//
+// This gate adds that block. Flag-gated default OFF: with
+// L_VETO_OVER_K_ENABLED unset / not 'true', behavior is byte-identical
+// to today. ONLY blocks K ENTRIES (enter_long, enter_short, DCA adds,
+// reverse-reopen leg). Does NOT block K exits, harvest, scalp_exit,
+// force_harvest. Does NOT block M, T, L or LiveSignal — only K.
+//
+// QIG purity: pure helper, no Adam/AdamW/LayerNorm/cosine. Reads L's
+// AgentLDecision (signedScore, conviction, action) which is already
+// FR-KNN-derived, and a K side string. No new geometric operations.
+
+export const L_VETO_DEFAULT_CONVICTION_THRESHOLD = 0.6;
+
+function isLVetoOverKEnabled(): boolean {
+  return process.env.L_VETO_OVER_K_ENABLED === 'true';
+}
+
+function lVetoConvictionThreshold(): number {
+  const raw = process.env.L_VETO_CONVICTION_THRESHOLD;
+  if (raw === undefined) return L_VETO_DEFAULT_CONVICTION_THRESHOLD;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return L_VETO_DEFAULT_CONVICTION_THRESHOLD;
+  }
+  return parsed;
+}
+
+/** Pure evaluation of whether L's vote should veto K's entry on this
+ *  tick. No side effects; returns the decision + a structured reason
+ *  for logging / telemetry.
+ *
+ *  Veto fires iff ALL of:
+ *    1. env flag enabled (caller usually checks; included here as a
+ *       defense-in-depth so direct callers can't accidentally bypass)
+ *    2. K action is an entry (enter_long / enter_short)
+ *    3. L's action is also an entry (enter_long / enter_short — not hold)
+ *    4. L's |signedScore| × conviction > threshold (default 0.6)
+ *    5. L's preferred side disagrees with K's entry side
+ *
+ *  When any condition fails, vetoed=false and the helper returns the
+ *  reason so telemetry can attribute "why no veto" (helpful when
+ *  diagnosing under-firing).
+ */
+export interface LVetoEvaluation {
+  vetoed: boolean;
+  /** L's weighted conviction (|signedScore| × conviction). */
+  weightedConviction: number;
+  /** Threshold against which weightedConviction was checked. */
+  threshold: number;
+  /** L's preferred side derived from its action; null when L=hold. */
+  lSide: 'long' | 'short' | null;
+  /** Reason code — useful for log-grepping and dashboard counters. */
+  reasonCode:
+    | 'vetoed_high_conviction_disagreement'
+    | 'flag_disabled'
+    | 'k_not_entry'
+    | 'l_holding'
+    | 'l_agrees_with_k'
+    | 'l_conviction_below_threshold';
+}
+
+export function evaluateLVetoOverK(opts: {
+  enabled: boolean;
+  kAction: string;
+  lDecision: Pick<AgentLDecision, 'action' | 'signedScore' | 'conviction'>;
+  threshold: number;
+}): LVetoEvaluation {
+  const { enabled, kAction, lDecision, threshold } = opts;
+  const weightedConviction = Math.abs(lDecision.signedScore) * lDecision.conviction;
+  const lSide: 'long' | 'short' | null =
+    lDecision.action === 'enter_long' ? 'long'
+      : lDecision.action === 'enter_short' ? 'short'
+        : null;
+
+  if (!enabled) {
+    return { vetoed: false, weightedConviction, threshold, lSide, reasonCode: 'flag_disabled' };
+  }
+  const kIsEntry =
+    kAction === 'enter_long' ||
+    kAction === 'enter_short' ||
+    kAction === 'reverse_long' ||
+    kAction === 'reverse_short';
+  if (!kIsEntry) {
+    return { vetoed: false, weightedConviction, threshold, lSide, reasonCode: 'k_not_entry' };
+  }
+  if (lSide === null) {
+    return { vetoed: false, weightedConviction, threshold, lSide, reasonCode: 'l_holding' };
+  }
+  const kSide: 'long' | 'short' =
+    kAction === 'enter_long' || kAction === 'reverse_long' ? 'long' : 'short';
+  if (lSide === kSide) {
+    return { vetoed: false, weightedConviction, threshold, lSide, reasonCode: 'l_agrees_with_k' };
+  }
+  if (weightedConviction <= threshold) {
+    return { vetoed: false, weightedConviction, threshold, lSide, reasonCode: 'l_conviction_below_threshold' };
+  }
+  return { vetoed: true, weightedConviction, threshold, lSide, reasonCode: 'vetoed_high_conviction_disagreement' };
 }
 
 
@@ -540,6 +647,20 @@ export class MonkeyKernel extends EventEmitter {
    */
   private mlOutageStreak = 0;
   /**
+   * 2026-05-16 L-veto-over-K (Option A) telemetry counter. Increments
+   * every time L's high-conviction vote suppresses a K entry on the
+   * same tick (whole-process scope, single MonkeyKernel instance per
+   * process). Exposed via `getLVetoOverKStats()` for the
+   * /monkey/snapshot dashboard so the operator can see the veto rate
+   * before/after flipping `L_VETO_OVER_K_ENABLED=true`.
+   *
+   * Per-symbol breakdown lets the operator confirm the veto is
+   * actually firing on ETH (the over-trader) and not unintentionally
+   * suppressing BTC entries where K has been profitable.
+   */
+  private lVetoOverKCount = 0;
+  private lVetoOverKBySymbol: Map<string, number> = new Map();
+  /**
    * Proposal #10 — cached account-level position direction mode.
    * Read once at kernel start via assertHedgeModeIfPossible. When
    * 'HEDGE' the executor passes ``posSide: LONG | SHORT`` on entries
@@ -739,6 +860,47 @@ export class MonkeyKernel extends EventEmitter {
     computedAtMs: number;
   } | null {
     return this.symbolStates.get(symbol)?.latestBasinSnapshot ?? null;
+  }
+
+  /**
+   * 2026-05-16 — L-veto-over-K telemetry accessor. Returns the running
+   * total of K entries suppressed by L's high-conviction disagreeing
+   * vote, plus a per-symbol breakdown. Used by the /monkey/snapshot
+   * endpoint and the operator dashboard to confirm the veto fires
+   * after flipping `L_VETO_OVER_K_ENABLED=true`.
+   *
+   * Counts are process-lifetime (reset on restart) — no persistence.
+   */
+  getLVetoOverKStats(): {
+    total: number;
+    bySymbol: Record<string, number>;
+  } {
+    const bySymbol: Record<string, number> = {};
+    for (const [sym, n] of this.lVetoOverKBySymbol) bySymbol[sym] = n;
+    return { total: this.lVetoOverKCount, bySymbol };
+  }
+
+  /**
+   * Test-only reset of the veto counter. Lets vitest exercise the
+   * counter contract without spinning up a full kernel + symbol state.
+   * Not used in production.
+   */
+  resetLVetoOverKStats(): void {
+    this.lVetoOverKCount = 0;
+    this.lVetoOverKBySymbol.clear();
+  }
+
+  /**
+   * Test-only increment of the veto counter. Used by the integration
+   * test to confirm the public accessor reflects per-symbol increments
+   * without having to drive a full processSymbol tick.
+   */
+  incrementLVetoOverKForTest(symbol: string): void {
+    this.lVetoOverKCount += 1;
+    this.lVetoOverKBySymbol.set(
+      symbol,
+      (this.lVetoOverKBySymbol.get(symbol) ?? 0) + 1,
+    );
   }
 
   /** Initial MTF bootstrap pass. Awaits per-symbol, records the
@@ -2145,6 +2307,35 @@ export class MonkeyKernel extends EventEmitter {
 
     let executed = false;
     let monkeyOrderId: string | null = null;
+    // 2026-05-16 L-veto-over-K (Option A) gate evaluation.
+    //
+    // Default OFF — when `L_VETO_OVER_K_ENABLED` is unset / not 'true',
+    // the helper is short-circuited and `agentLDecide` is NOT called
+    // here (it still runs in L's own block below as today). With the
+    // flag on AND K proposing an entry, we compute L's current FR-KNN
+    // decision and check whether L's high-conviction vote disagrees
+    // with K's side. If so, K's entry is suppressed (the executeEntry
+    // call is skipped) — exits, harvest, scalp_exit are NOT affected.
+    let lVeto: LVetoEvaluation | null = null;
+    const lVetoEnabled = isLVetoOverKEnabled();
+    const kProposingEntry =
+      action === 'enter_long' ||
+      action === 'enter_short' ||
+      action === 'reverse_long' ||
+      action === 'reverse_short';
+    if (lVetoEnabled && kProposingEntry && state.basinHistory.length >= 480) {
+      // Recompute L's decision NOW so the veto reads L's current
+      // FR-KNN classification, not stale state. Pure function; the L
+      // execute block below recomputes it again (same inputs → same
+      // output). Marginal cost; correctness > saving one call.
+      const lDecisionForVeto = agentLDecide(state.basinHistory);
+      lVeto = evaluateLVetoOverK({
+        enabled: true,
+        kAction: action,
+        lDecision: lDecisionForVeto,
+        threshold: lVetoConvictionThreshold(),
+      });
+    }
     if (process.env.MONKEY_EXECUTE === 'true') {
       if ((action === 'enter_long' || action === 'enter_short') && size.value > 0) {
         // v0.8.7 kill switch — pause new entries (including DCA pyramids)
@@ -2157,6 +2348,32 @@ export class MonkeyKernel extends EventEmitter {
             action,
             reason: 'MONKEY_TRADING_PAUSED env',
           };
+        } else if (lVeto?.vetoed) {
+          // 2026-05-16 L-veto-over-K — high-conviction L vote suppresses
+          // K's entry on this tick. The position state is NOT touched
+          // (no DCA increment, no re-anchor); K simply skips this tick
+          // and the next tick re-evaluates. Counter increments for
+          // telemetry.
+          this.lVetoOverKCount += 1;
+          this.lVetoOverKBySymbol.set(
+            symbol,
+            (this.lVetoOverKBySymbol.get(symbol) ?? 0) + 1,
+          );
+          reason += ` | k_vetoed_by_l (weightedConviction=${lVeto.weightedConviction.toFixed(3)} thr=${lVeto.threshold.toFixed(2)} lSide=${lVeto.lSide} kSide=${action === 'enter_long' ? 'long' : 'short'})`;
+          (derivation as Record<string, unknown>).kVetoedByL = {
+            kAction: action,
+            lSide: lVeto.lSide,
+            weightedConviction: lVeto.weightedConviction,
+            threshold: lVeto.threshold,
+            reasonCode: lVeto.reasonCode,
+          };
+          logger.info(`[Monkey] ${symbol} K_VETOED_BY_L`, {
+            kAction: action,
+            lScore: lVeto.weightedConviction,
+            lConviction: lVeto.weightedConviction,
+            lSide: lVeto.lSide,
+            lSource: 'agentLDecide(state.basinHistory)',
+          });
         } else {
         const isDCA = Boolean(derivation.isDCAAdd);
         // Cap K's margin to its arbiter share. Without this, the existing
@@ -2322,6 +2539,32 @@ export class MonkeyKernel extends EventEmitter {
                 action,
                 reason: 'MONKEY_TRADING_PAUSED env (reverse-reopen leg)',
               };
+            } else if (lVeto?.vetoed) {
+              // 2026-05-16 L-veto-over-K — close already executed; the
+              // new-side reopen leg is suppressed. Counter increments
+              // for the reverse-reopen veto so telemetry stays accurate.
+              this.lVetoOverKCount += 1;
+              this.lVetoOverKBySymbol.set(
+                symbol,
+                (this.lVetoOverKBySymbol.get(symbol) ?? 0) + 1,
+              );
+              reason += ` | closed@${lastPrice.toFixed(2)} pnl=${pnlAtDecision.toFixed(4)} | k_vetoed_by_l (reverse-reopen leg; weightedConviction=${lVeto.weightedConviction.toFixed(3)} lSide=${lVeto.lSide})`;
+              (derivation as Record<string, unknown>).kVetoedByL = {
+                kAction: action,
+                lSide: lVeto.lSide,
+                weightedConviction: lVeto.weightedConviction,
+                threshold: lVeto.threshold,
+                reasonCode: lVeto.reasonCode,
+                leg: 'reverse_reopen',
+              };
+              logger.info(`[Monkey] ${symbol} K_VETOED_BY_L`, {
+                kAction: action,
+                lScore: lVeto.weightedConviction,
+                lConviction: lVeto.weightedConviction,
+                lSide: lVeto.lSide,
+                lSource: 'agentLDecide(state.basinHistory)',
+                leg: 'reverse_reopen',
+              });
             } else {
             // Settle delay — give the exchange ~500ms to flatten net.
             await new Promise((resolve) => setTimeout(resolve, 500));
