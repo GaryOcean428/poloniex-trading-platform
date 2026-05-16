@@ -1350,6 +1350,41 @@ def run_tick(
     effective_size_frac = inputs.size_fraction
     dca_intent = is_dca
 
+    # ── Cross-kernel proposal publish (Consensus Layer 1.5) ────
+    # CONSENSUS_PROPOSAL_BUS_LIVE flag-gated. Publish this kernel's
+    # proposed action to the shared Redis channel so the consensus
+    # arbiter (PR CONSENSUS-7) can subscribe. Fire-and-forget — never
+    # blocks the tick. See [[polytrade-consensus-architecture]].
+    try:
+        from .proposal_bus import ProposalEvent as _ProposalEvent
+        from .proposal_bus import publish_proposal_sync as _publish_proposal
+        _side: Optional[str] = (
+            "long" if direction == "long"
+            else "short" if direction == "short"
+            else None
+        )
+        _publish_proposal(_ProposalEvent(
+            instance_id=os.environ.get("MONKEY_PY_INSTANCE_ID", "monkey-py-shadow"),
+            symbol=inputs.symbol,
+            tick_id=f"{inputs.symbol}|{state.session_ticks}",
+            proposed_action=str(action),
+            side=_side,
+            lane=str(lane),
+            size_usdt=float(size_d["value"]),
+            leverage=float(leverage_d["value"]),
+            entry_threshold=float(entry_thr_d["value"]),
+            conviction=float(entry_thr_d["value"]),  # placeholder until ML conviction wired
+            basin_signature=[float(x) for x in np.asarray(basin).ravel()[:8]],
+            phi=float(phi),
+            kappa=float(state.kappa),
+            regime_label=None,  # populated in CONSENSUS-3 (regime_label tracking)
+            mode=str(mode),
+            at_ms=float(now_ms),
+            engine_version="v0.8.7c-3-py",
+        ))
+    except Exception:  # noqa: BLE001
+        pass
+
     return TickDecision(
         action=action,
         reason=reason,
