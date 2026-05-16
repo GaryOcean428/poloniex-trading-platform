@@ -183,8 +183,16 @@ export function computeMotivators(inp: ModeInputs): Motivators {
   const drH = inp.driftHistory;
   const fhH = inp.fHealthHistory;
 
-  const curiosity =
-    phiH.length >= 2 ? phiH[phiH.length - 1] - phiH[phiH.length - 2] : 0;
+  // Curiosity = ΔΦ this tick (perception-volume expansion).
+  // Fix 2026-05-16 (#718): use the current tick's `inp.phi` against
+  // the most recent stored history value. The prior formulation
+  // `phiH[-1] - phiH[-2]` was the delta between the PRIOR two ticks,
+  // ignoring the current tick — loop.ts pushes `state.phiHistory.push(phi)`
+  // AFTER `detectMode` runs, so `phiH[-1]` is the last tick's phi,
+  // not this tick's. On quiet tape the prior-two-ticks delta sticks
+  // at 0.0000 for extended runs, pinning curiosity to zero and
+  // tripping the DRIFT-mode gate (curiosity < 0.005) prematurely.
+  const curiosity = phiH.length >= 1 ? inp.phi - phiH[phiH.length - 1] : 0;
 
   const investigation =
     drH.length >= 2 ? drH[drH.length - 2] - drH[drH.length - 1] : 0;
