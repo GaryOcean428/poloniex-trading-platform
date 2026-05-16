@@ -1326,15 +1326,37 @@ export class MonkeyKernel extends EventEmitter {
     });
 
     // §3.3 Pillar 2 surface absorption — external input at 30% max
-    const basin = refract(rawBasin, state.identityBasin, 0.30);
+    let basin = refract(rawBasin, state.identityBasin, 0.30);
 
     // 3. MEASURE — Φ, κ, regime, basin velocity, neurochemistry
     // Φ = 1 - normalized_entropy_of_noise_dims (integration)
     //   high Φ = concentrated signal; low Φ = diffuse exploration
-    const fHealth = normalizedEntropy(basin);
+    let fHealth = normalizedEntropy(basin);
     // Φ inversely tracks fHealth: when the basin is concentrated (low entropy),
     // integration is high; when diffuse (high entropy), Φ is low (exploration).
-    const phi = Math.max(0, Math.min(1, 1 - fHealth * 0.8));
+    let phi = Math.max(0, Math.min(1, 1 - fHealth * 0.8));
+
+    // ── Cross-kernel observer effect (Consensus Layer 1) ──────
+    // CONSENSUS_CROSS_OBSERVATION_LIVE flag-gated. When live, basin is
+    // pulled toward peer kernels' basins (TS Monkey + Py Monkey) per
+    // Φ-weighted SLERP from qig-core canonical. Recomputes Φ after the
+    // pull so downstream sees consistent (basin, Φ). When the flag is
+    // off, peers are visible in telemetry only — basin unchanged.
+    // See [[polytrade-consensus-architecture]].
+    if (process.env.CONSENSUS_CROSS_OBSERVATION_LIVE === 'true') {
+      try {
+        const pull = await this.basinSync.applyObserverEffect(basin, phi);
+        if (pull.influenced) {
+          basin = pull.basin;
+          fHealth = normalizedEntropy(basin);
+          phi = Math.max(0, Math.min(1, 1 - fHealth * 0.8));
+        }
+      } catch (err) {
+        logger.debug('[BasinSync] applyObserverEffect failed', {
+          symbol, err: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
 
     // κ adapts from basin velocity × internal coupling. Stable near κ*
     // when integration is high and basin velocity is low.
@@ -2512,6 +2534,41 @@ export class MonkeyKernel extends EventEmitter {
         threshold: lVetoConvictionThreshold(),
       });
     }
+    // ── Cross-kernel proposal publish (Consensus Layer 1.5) ──
+    // CONSENSUS_PROPOSAL_BUS_LIVE flag-gated. Publish K-kernel's
+    // proposed action to Redis so consensus arbiter (PR CONSENSUS-7)
+    // can subscribe. Fire-and-forget — never blocks the orchestrator.
+    // See [[polytrade-consensus-architecture]].
+    try {
+      const { publishProposal: _publishProposal } = await import('./proposal_bus.js');
+      const _proposalSide: 'long' | 'short' | null =
+        (action === 'enter_long' || action === 'pyramid_long') ? 'long'
+        : (action === 'enter_short' || action === 'pyramid_short') ? 'short'
+        : null;
+      void _publishProposal({
+        instance_id: this.instanceId,
+        symbol,
+        tick_id: `${symbol}|${state.sessionTicks}`,
+        proposed_action: (action === 'enter_long' || action === 'enter_short'
+          || action === 'pyramid_long' || action === 'pyramid_short') ? 'enter_long'
+          : action === 'enter_short' ? 'enter_short'
+          : (action.startsWith('exit') ? 'exit' : 'hold'),
+        side: _proposalSide,
+        lane: 'swing',  // K-kernel default; CONSENSUS-3 wires per-lane attribution
+        size_usdt: Number(size.value ?? 0),
+        leverage: Number(leverage.value ?? 1),
+        entry_threshold: Number(entryThr.value ?? 0.5),
+        conviction: Number(entryThr.value ?? 0.5),
+        basin_signature: Array.from(basin.slice(0, 8)).map((x) => Number(x)),
+        phi: Number(phi),
+        kappa: Number(state.kappa),
+        regime_label: null,
+        mode: String(mode),
+        at_ms: Date.now(),
+        engine_version: 'v0.8-ts',
+      });
+    } catch { /* fail-soft */ }
+
     if (process.env.MONKEY_EXECUTE === 'true') {
       if ((action === 'enter_long' || action === 'enter_short') && size.value > 0) {
         // v0.8.7 kill switch — pause new entries (including DCA pyramids)
