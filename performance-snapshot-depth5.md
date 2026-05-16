@@ -1,0 +1,31 @@
+- generic [ref=e2]:
+  - generic:
+    - link "Skip to main content" [ref=e3] [cursor=pointer]:
+      - /url: "#main-content"
+    - link "Skip to navigation" [ref=e4] [cursor=pointer]:
+      - /url: "#navigation"
+  - generic [ref=e5]:
+    - navigation "Main navigation" [ref=e6]:
+      - generic [ref=e7]:
+        - generic [ref=e8]:
+          - generic [ref=e9]
+          - button "Collapse sidebar" [expanded] [ref=e13]
+        - generic [ref=e16]:
+          - generic [ref=e17]: Account Balance
+          - generic [ref=e18]: $91.96
+          - generic [ref=e19]: USDT
+        - navigation [ref=e20]:
+          - list [ref=e21]
+    - generic [ref=e85]:
+      - banner "Main navigation" [ref=e86]:
+        - heading "Poloniex Futures" [level=1] [ref=e88]
+        - generic [ref=e89]:
+          - button "Notifications (3 new)" [ref=e91]
+          - generic [ref=e96]
+      - main "Main content" [ref=e100]:
+        - generic [ref=e116]:
+          - generic [ref=e117]
+          - generic [ref=e129]
+          - generic [ref=e143]
+          - generic [ref=e176]
+          - generic [ref=e195]
