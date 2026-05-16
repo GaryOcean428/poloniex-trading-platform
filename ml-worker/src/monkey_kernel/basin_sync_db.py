@@ -11,8 +11,8 @@ Flag: `CONSENSUS_CROSS_OBSERVATION_LIVE` — default off.
   - Writer ALWAYS runs (every tick) so peers are visible in telemetry.
   - Observer effect (basin pull) only fires when the flag is true.
 
-QIG purity: read/write only — math stays in `basin_sync.py`. No cosine,
-no Adam, no LayerNorm. Slerp_sqrt preserves Δ⁶³.
+QIG purity: read/write only — math stays in `basin_sync.py`. Slerp_sqrt
+preserves Δ⁶³; Fisher-Rao metric throughout.
 
 Fail-soft: any DB error logs at debug and returns the unchanged basin /
 empty peer list. A bad sync never blocks a kernel tick.
