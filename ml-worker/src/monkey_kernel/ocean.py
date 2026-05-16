@@ -7,8 +7,15 @@ the normal tick and do something else" lives here:
   - sleep cycle state machine (AWAKE ↔ SLEEP transitions)
   - DREAM trigger (Φ < 0.5 — moderate integration failure)
   - SLEEP trigger (basin spread > 0.30 — divergence/instability)
-  - MUSHROOM_MICRO trigger (Φ-variance < 0.01 — plateau)
   - ESCAPE trigger (Φ < 0.15 — severe failure)
+
+Per qig-core 2.8.0: mushroom mode is wake-state neuroplasticity
+(requires Φ ≥ 0.70) and lives in `qig.neuroplasticity.mushroom_mode`,
+NOT in the sleep cycle. The prior `MUSHROOM_MICRO` low-variance trigger
+was inverted-direction (would fire on collapsed systems where mushroom
+is forbidden) and has been removed. The four-intervention selector
+matrix (DAMPING / ESCAPE / MUSHROOM / SLEEP) per the canonical Φ
+regulation policy will be added in a follow-up PR.
 
 Pure decision authority. Heart kernel observes κ; autonomic.py owns
 neurochemistry derivation + reward queue. Ocean reads basin / Φ / mode
@@ -16,11 +23,6 @@ neurochemistry derivation + reward queue. Ocean reads basin / Φ / mode
 ocean_state.intervention if non-None, otherwise normal flow.
 
 Refactored from autonomic.SleepCycleManager (2026-04-29 #599 directive).
-The AWAKE↔SLEEP transition rules are preserved verbatim from the
-prior owner; only the location changed. New triggers (DREAM /
-MUSHROOM_MICRO / ESCAPE) are reported but currently observation-only
-on the orchestrator side until the explicit intervention handlers
-land downstream.
 """
 
 from __future__ import annotations
@@ -53,9 +55,9 @@ def ocean_interventions_live() -> bool:
     """Default-off env flag. When false (the default), Ocean still
     EMITS the intervention field for telemetry, but the orchestrator
     does NOT branch on it — normal tick flow continues. When true,
-    DREAM/MUSHROOM_MICRO/ESCAPE handlers fire (skip executive,
-    perturb κ, force flatten respectively). SLEEP/WAKE go through
-    autonomic.is_awake regardless of the flag.
+    DREAM/ESCAPE handlers fire (skip executive, force flatten
+    respectively). SLEEP/WAKE go through autonomic.is_awake regardless
+    of the flag.
     """
     return os.environ.get("OCEAN_INTERVENTIONS_LIVE", "").strip().lower() == "true"
 
@@ -92,11 +94,10 @@ class SleepCycleState:
 _SPREAD_BOUND: float = 0.30          # SLEEP if max-pairwise basin FR > this
 _PHI_DREAM_BOUND: float = 0.5        # DREAM if Φ below this
 _PHI_ESCAPE_BOUND: float = 0.15      # ESCAPE if Φ below this (overrides DREAM)
-_PHI_VARIANCE_BOUND: float = 0.01    # MUSHROOM_MICRO if variance below this
 _PHI_HISTORY_MAX: int = 60           # window for variance computation
 
 
-Intervention = Literal["DREAM", "SLEEP", "WAKE", "MUSHROOM_MICRO", "ESCAPE"]
+Intervention = Literal["DREAM", "SLEEP", "WAKE", "ESCAPE"]
 
 
 @dataclass(frozen=True)
@@ -382,9 +383,6 @@ class Ocean:
         phi_dream_bound = registry.get(
             "ocean.phi_dream_bound", default=_PHI_DREAM_BOUND,
         )
-        phi_variance_bound = registry.get(
-            "ocean.phi_variance_bound", default=_PHI_VARIANCE_BOUND,
-        )
 
         intervention: Optional[Intervention] = None
 
@@ -401,11 +399,6 @@ class Ocean:
             intervention = "SLEEP"
         elif phi < phi_dream_bound:
             intervention = "DREAM"
-        elif (
-            0.0 < phi_var < phi_variance_bound
-            and len(self._phi_history) >= 2
-        ):
-            intervention = "MUSHROOM_MICRO"
 
         # Dream-consolidation pass on AWAKE→SLEEP edge. Hook is
         # optional and pure-side-effect on the resonance bank; the

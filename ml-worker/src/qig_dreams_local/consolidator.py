@@ -1,10 +1,10 @@
 """Polytrade glue between Ocean's 2-phase sleep machine and the
-canonical 4-phase SleepCycleManager consolidation pass.
+canonical 3-phase SleepCycleManager consolidation pass.
 
 Polytrade's `monkey_kernel/ocean.py` runs a simpler 2-phase
 (AWAKE/SLEEP) machine geared to trading-tick cadence. The canonical
-qig-core SleepCycleManager runs a 4-phase (AWAKE/DREAMING/MUSHROOM/
-CONSOLIDATING) machine driven by Φ/variance/divergence/f_health.
+qig-core 2.8.0 SleepCycleManager runs a 3-phase (AWAKE/DREAMING/
+CONSOLIDATING) machine driven by Φ/variance/divergence.
 
 The consolidator runs a one-shot consolidation pass on the
 AWAKE→SLEEP edge: it reads recent BankEntry rows, builds an

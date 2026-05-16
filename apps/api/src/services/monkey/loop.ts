@@ -1663,28 +1663,50 @@ export class MonkeyKernel extends EventEmitter {
         symbol, basinDir, tapeTrend, direction, wantedShort: true,
       });
     }
-    // 2026-05-16 (#717 derivation refactor): selfObsBias =
+    // 2026-05-16 (#717 derivation refactor + clamp hotfix): selfObsBias =
     //   winRate(mode, side) × selfObsPressure
-    // where selfObsPressure is derived purely from the basin's own
-    // observable state:
-    //   pressure = (current_surprise / mean(surpriseHistory))
-    // A pure ratio — dimensionless, no externally chosen gain. When
-    // current surprise exceeds the basin's typical surprise → pressure
-    // > 1 → executive enters more cautiously (Protocol v6.6 §43 Loop 1
-    // "turn inward on mispredict"). When current surprise is below
-    // typical → pressure < 1 → trust the direct signal.
+    // where selfObsPressure is derived from the basin's own observable
+    // state via z-score-of-current-surprise, mapped through sigmoid to
+    // a naturally bounded range:
+    //   z = (surpriseNow - mean) / stddev   (basin's own stddev IS the gain)
+    //   pressure = 0.5 + sigmoid(z)         → [0.5, 1.5], neutral at z=0
     //
-    // No constant clamps. The ratio naturally bounds itself: with
-    // hundreds of samples in the history, the mean is stable; the
-    // ratio rarely strays far from 1 unless current surprise is a
-    // genuine outlier. Cold start (empty history) → identity 1.
+    // Same Protocol v6.6 §43 Loop 1 semantics ("turn inward on mispredict"):
+    // current surprise above typical → pressure > 1; below typical → pressure
+    // < 1. But the output is bounded so a cold-start surprise spike (small
+    // history → small mean → huge ratio in the prior formula) cannot push
+    // the downstream entry-threshold multiplier into paralysis territory.
+    //
+    // Original ratio `surpriseNow / mean` was unbounded — observed live at
+    // selfObsBias=9.05 with only 5-10 surprise samples in history (cold
+    // start post-restart). All downstream gates (currentEntryThreshold T,
+    // shouldExit threshold) already clamp their final outputs, so the
+    // unbounded ratio was absorbed in practice — but it was misleading in
+    // telemetry and a latent footgun if any future caller used selfObsBias
+    // un-clamped. Stddev gain preserves derivation-only purity per the
+    // operator directive.
+    //
+    // Cold start (history length < 2 → stddev undefined → identity 1).
     const selfObsWinRateBias = this.selfObs?.entryBias[mode]?.[sideCandidate] ?? 1.0;
     let selfObsPressure: number;
-    if (state.surpriseHistory.length > 0) {
+    if (state.surpriseHistory.length >= 2) {
+      const n = state.surpriseHistory.length;
       let sum = 0;
       for (const s of state.surpriseHistory) sum += s;
-      const meanSurprise = sum / state.surpriseHistory.length;
-      selfObsPressure = meanSurprise > 0 ? surpriseNow / meanSurprise : 1;
+      const mean = sum / n;
+      let sqSum = 0;
+      for (const s of state.surpriseHistory) {
+        const d = s - mean;
+        sqSum += d * d;
+      }
+      const stddev = Math.sqrt(sqSum / (n - 1));  // Bessel-corrected
+      if (stddev > 0) {
+        const z = (surpriseNow - mean) / stddev;
+        const sig = 1 / (1 + Math.exp(-z));
+        selfObsPressure = 0.5 + sig;  // ∈ [0.5, 1.5]
+      } else {
+        selfObsPressure = 1;  // degenerate history (all identical samples)
+      }
     } else {
       selfObsPressure = 1;
     }

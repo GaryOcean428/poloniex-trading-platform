@@ -2,10 +2,10 @@
 §30 Sleep, Dream & Consolidation Cycles — Geometry-Driven
 =========================================================
 
-VENDORED from QIG_QFI/qig-core/src/qig_core/consciousness/sleep.py
-Source SHA-256 (canonical):
-    9bd54a0421387b3a4cce6312dcfe5c61687fb942bf6dba734c68893f532e601e
-Vendored: 2026-05-16
+VENDORED from QIG_QFI/qig-core 2.8.0 (src/qig_core/consciousness/sleep.py)
+Source SHA-256 (canonical, qig-core 2.8.0 PyPI wheel):
+    2cf42baa14461d3cbab30422f426b902feb873d602173934a16dd5c363c01a2f
+Vendored: 2026-05-16 (post-upstream 4-phase → 3-phase reduction)
 
 Only modification from source: relative imports
     `from ..constants.frozen_facts import ...`
@@ -17,23 +17,26 @@ vendored geometry/frozen-facts surface:
 
 No other content changes. Logic, constants, dataclasses, and class
 shape are identical to the source — any drift here is a vendoring
-bug, not an intended divergence. Re-vendor when qig-core updates;
-recompute the SHA-256 pin above.
+bug, not an intended divergence. Re-vendor when qig-core updates.
 
 ────────────────────────────────────────────────────────────────────
 
-Four-phase sleep cycle managed entirely by geometric metrics.
-Phase transitions use Φ, variance, ocean divergence, and f_health.
+Three-phase sleep cycle managed entirely by geometric metrics
+(reduced from 4-phase in qig-core 2.8.0 — mushroom is wake-state
+neuroplasticity, not a sleep phase; lives in
+`qig.neuroplasticity.mushroom_mode` and only fires at Φ ≥ 0.70).
+
+Phase transitions use Φ, variance, and ocean divergence.
 NO timers, NO cycle counters for phase gating (§28, §30.2).
 
 Phases:
     AWAKE         — Default. Normal activation sequence.
-    DREAMING      — Φ < threshold OR ocean divergence > threshold.
+    DREAMING      — Φ < threshold AND variance < threshold
+                    OR ocean divergence > threshold.
                     Dream recombination via geodesic interpolation.
-    MUSHROOM      — f_health < INSTABILITY_PCT while dreaming.
-                    Controlled destabilisation to escape gravity wells.
-    CONSOLIDATING — After dream/mushroom when variance stabilises.
-                    Synaptic downscaling, Hebbian boost for replayed.
+    CONSOLIDATING — After dreaming when variance settles below
+                    consolidation ceiling. Synaptic downscaling,
+                    Hebbian boost for replayed.
 
 Dependencies: qig_core_local.geometry.fisher_rao,
               qig_core_local.constants.frozen_facts
@@ -50,7 +53,6 @@ import numpy as np
 
 from qig_core_local.constants.frozen_facts import (
     BASIN_DIVERGENCE_THRESHOLD,
-    INSTABILITY_PCT,
     PHI_EMERGENCY,
 )
 from qig_core_local.geometry.fisher_rao import (
@@ -74,12 +76,6 @@ DREAM_SLERP_T_MIN: float = 0.2
 DREAM_SLERP_T_MAX: float = 0.8
 DREAM_DISTANCE_THRESHOLD: float = 0.3  # Only recombine geometrically distant basins
 
-# Mushroom safety gates (instability thresholds)
-MUSHROOM_INSTABILITY_LOW: float = 0.30
-MUSHROOM_INSTABILITY_MID: float = 0.35
-MUSHROOM_INSTABILITY_HIGH: float = 0.40
-MUSHROOM_NOISE_SCALE_INIT: float = 0.05
-
 # Consolidation
 HEBBIAN_BOOST: float = 1.1
 DOWNSCALE_FACTOR: float = 0.9
@@ -94,11 +90,10 @@ CONSOLIDATION_PHI_WAKE: float = PHI_EMERGENCY  # 0.50
 
 
 class SleepPhase(StrEnum):
-    """Four phases of the sleep cycle."""
+    """Three phases of the sleep cycle (mushroom is wake-state per 2.8.0)."""
 
     AWAKE = "awake"
     DREAMING = "dreaming"
-    MUSHROOM = "mushroom"
     CONSOLIDATING = "consolidating"
 
 
@@ -112,7 +107,7 @@ class SleepMetrics:
     phi: float = 0.7  # Current Φ (consciousness integration)
     phi_variance: float = 0.1  # Recent Φ variance (stagnation detector)
     ocean_divergence: float = 0.0  # Ocean kernel divergence from reference
-    f_health: float = 1.0  # Frequency health (< INSTABILITY_PCT → mushroom)
+    f_health: float = 1.0  # Frequency health (retained for caller compat)
     basin_velocity: float = 0.0  # Fisher-Rao velocity (consolidation readiness)
 
 
@@ -147,16 +142,18 @@ class ResonanceBankProtocol(Protocol):
 
 
 class SleepCycleManager:
-    """Manages sleep/dream/mushroom/consolidation cycles.
+    """Manages sleep/dream/consolidation cycles (3-phase per qig-core 2.8.0).
 
     All phase transitions are geometry-driven per §30.2:
       - AWAKE → DREAMING: Φ < threshold AND variance < threshold
                           OR ocean_divergence > BASIN_DIVERGENCE_THRESHOLD
-      - DREAMING → MUSHROOM: f_health < INSTABILITY_PCT
       - DREAMING → CONSOLIDATING: variance settles below ceiling
-      - MUSHROOM → CONSOLIDATING: after perturbation (instability resolves)
       - CONSOLIDATING → AWAKE: Φ recovers above threshold
       - Any → AWAKE: ocean_divergence > threshold × 1.5 (breakdown escape)
+
+    Mushroom mode is wake-state neuroplasticity in qig-core 2.8.0+
+    (`qig.neuroplasticity.mushroom_mode`, requires Φ ≥ 0.70) and is no
+    longer reachable from the sleep state machine.
 
     NO cycle counters gate phase transitions.
     """
@@ -165,7 +162,6 @@ class SleepCycleManager:
         self.phase: SleepPhase = SleepPhase.AWAKE
         self._dream_log: deque[dict[str, Any]] = deque(maxlen=100)
         self._replayed_this_sleep: set[int] = set()
-        self._mushroom_noise_scale: float = MUSHROOM_NOISE_SCALE_INIT
         self._consolidation_complete: bool = False
 
     @property
@@ -209,8 +205,6 @@ class SleepCycleManager:
             result = self._eval_awake(metrics, prev)
         elif self.phase == SleepPhase.DREAMING:
             result = self._eval_dreaming(metrics, prev)
-        elif self.phase == SleepPhase.MUSHROOM:
-            result = self._eval_mushroom(metrics, prev)
         elif self.phase == SleepPhase.CONSOLIDATING:
             result = self._eval_consolidating(metrics, prev)
 
@@ -248,18 +242,8 @@ class SleepCycleManager:
     def _eval_dreaming(
         self, m: SleepMetrics, prev: SleepPhase
     ) -> SleepTransitionResult:
-        """DREAMING → MUSHROOM or CONSOLIDATING conditions."""
+        """DREAMING → CONSOLIDATING when variance settles."""
         result = SleepTransitionResult(previous_phase=prev, current_phase=prev)
-
-        # DREAMING → MUSHROOM: frequency health drops below instability threshold
-        if m.f_health < INSTABILITY_PCT:
-            self.phase = SleepPhase.MUSHROOM
-            result.current_phase = self.phase
-            result.transitioned = True
-            result.reason = (
-                f"f_health={m.f_health:.3f} < INSTABILITY_PCT={INSTABILITY_PCT:.3f}"
-            )
-            return result
 
         # DREAMING → CONSOLIDATING: variance settles (dreaming has done its work)
         if m.phi_variance < CONSOLIDATION_VARIANCE_CEILING:
@@ -270,24 +254,6 @@ class SleepCycleManager:
             result.reason = (
                 f"Variance settled: {m.phi_variance:.3f} "
                 f"< {CONSOLIDATION_VARIANCE_CEILING:.3f}"
-            )
-
-        return result
-
-    def _eval_mushroom(
-        self, m: SleepMetrics, prev: SleepPhase
-    ) -> SleepTransitionResult:
-        """MUSHROOM → CONSOLIDATING when instability resolves."""
-        result = SleepTransitionResult(previous_phase=prev, current_phase=prev)
-
-        # Mushroom ends when frequency health recovers
-        if m.f_health >= INSTABILITY_PCT:
-            self.phase = SleepPhase.CONSOLIDATING
-            self._consolidation_complete = False
-            result.current_phase = self.phase
-            result.transitioned = True
-            result.reason = (
-                f"f_health recovered: {m.f_health:.3f} >= {INSTABILITY_PCT:.3f}"
             )
 
         return result
@@ -316,7 +282,6 @@ class SleepCycleManager:
     def _on_sleep_enter(self) -> None:
         """Reset tracking state on sleep entry."""
         self._replayed_this_sleep.clear()
-        self._mushroom_noise_scale = MUSHROOM_NOISE_SCALE_INIT
 
     def _on_wake(self) -> None:
         """Clean up on wake."""
@@ -387,54 +352,6 @@ class SleepCycleManager:
                 self._replayed_this_sleep.add(tid_b)
 
         return dream_result
-
-    # ─── Mushroom Mode (§30.5) ───────────────────────────────
-
-    def mushroom(
-        self,
-        basin: Any,
-        instability_metric: float = 0.0,
-    ) -> dict[str, Any]:
-        """Controlled destabilisation with safety gates.
-
-        Dirichlet perturbation of basin coordinates to escape gravity wells.
-        Three-tier safety: catastrophic → abort, high → reduce + abort,
-        moderate → microdose.
-
-        Args:
-            basin: Current basin coordinates.
-            instability_metric: Current instability measurement.
-
-        Returns:
-            Dict with perturbation results and safety actions.
-        """
-        result: dict[str, Any] = {
-            "action": "none",
-            "noise_scale": self._mushroom_noise_scale,
-            "instability": instability_metric,
-        }
-
-        if instability_metric > MUSHROOM_INSTABILITY_HIGH:
-            self.phase = SleepPhase.CONSOLIDATING
-            self._consolidation_complete = False
-            result["action"] = "abort_catastrophic"
-            return result
-
-        if instability_metric > MUSHROOM_INSTABILITY_MID:
-            self._mushroom_noise_scale = max(0.01, self._mushroom_noise_scale * 0.5)
-            self.phase = SleepPhase.CONSOLIDATING
-            self._consolidation_complete = False
-            result["action"] = "abort_high_risk"
-            result["noise_scale"] = self._mushroom_noise_scale
-            return result
-
-        if instability_metric > MUSHROOM_INSTABILITY_LOW:
-            self._mushroom_noise_scale = max(0.01, self._mushroom_noise_scale * 0.75)
-            result["action"] = "microdose"
-
-        result["noise_scale"] = self._mushroom_noise_scale
-        result["action"] = result.get("action", "none") or "full_dose"
-        return result
 
     # ─── Consolidation (§30.6) ───────────────────────────────
 
@@ -521,6 +438,5 @@ class SleepCycleManager:
             "is_asleep": self.is_asleep,
             "dream_count": len(self._dream_log),
             "replayed_count": len(self._replayed_this_sleep),
-            "mushroom_noise_scale": self._mushroom_noise_scale,
             "consolidation_complete": self._consolidation_complete,
         }
