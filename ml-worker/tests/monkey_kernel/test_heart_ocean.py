@@ -9,7 +9,7 @@ autonomic.py). Tests cover:
     SLEEP → AWAKE via timeout (preserved verbatim from old
     SleepCycleManager)
   - Ocean intervention triggers: ESCAPE / SLEEP / DREAM /
-    MUSHROOM_MICRO priority order
+    Intervention priority order (ESCAPE > SLEEP-on-spread > DREAM)
   - Ocean diagnostics: coherence, spread, phi_variance, drift_streak
 """
 from __future__ import annotations
@@ -230,7 +230,11 @@ class TestOceanInterventionPriority:
         )
         assert s.intervention == "DREAM"
 
-    def test_mushroom_micro_when_phi_variance_below_zero_point_zero_one(self) -> None:
+    def test_low_phi_variance_yields_no_intervention_post_qigcore_2_8(self) -> None:
+        """qig-core 2.8.0 removed MUSHROOM_MICRO. Low phi-variance with
+        Φ above DREAM bound and spread under SLEEP bound should now
+        yield no intervention (mushroom is wake-state neuroplasticity,
+        Φ≥0.70 gated, separate path)."""
         ocean = Ocean()
         # Build phi history with tiny variance, phi above DREAM bound
         for i in range(10):
@@ -245,7 +249,7 @@ class TestOceanInterventionPriority:
             current_mode="investigation", is_flat=False,
             now_ms=float(11 * 1000),
         )
-        assert s.intervention == "MUSHROOM_MICRO"
+        assert s.intervention is None
 
     def test_nominal_yields_no_intervention(self) -> None:
         ocean = Ocean()

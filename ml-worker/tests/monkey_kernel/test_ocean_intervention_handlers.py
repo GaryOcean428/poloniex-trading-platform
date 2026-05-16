@@ -3,8 +3,10 @@
 Verifies the orchestrator's branching on Ocean.intervention values
 when the flag is true vs false. Flag-off path preserves existing
 behaviour; flag-on path applies handlers (ESCAPE → flatten, DREAM →
-hold, MUSHROOM_MICRO → +5 κ, SLEEP/WAKE → already handled by autonomic
-is_awake passthrough).
+hold, SLEEP/WAKE → already handled by autonomic is_awake passthrough).
+
+MUSHROOM_MICRO removed in qig-core 2.8.0 bump — mushroom is wake-state
+neuroplasticity (Φ ≥ 0.70 gated), not a sleep-cycle κ kick.
 """
 from __future__ import annotations
 
@@ -79,7 +81,8 @@ class TestFlagOff:
         os.environ.pop("OCEAN_INTERVENTIONS_LIVE", None)
         # Force ESCAPE intervention by feeding a low Φ via a primed Ocean
         ocean = Ocean("t")
-        # Pre-feed phi history so variance check doesn't fire MUSHROOM
+        # Pre-feed phi history (variance-based MUSHROOM_MICRO removed
+        # in qig-core 2.8.0 bump; harmless to keep history priming).
         for _ in range(5):
             ocean.observe(
                 phi=0.5, basin=uniform_basin(64),
@@ -169,33 +172,11 @@ class TestFlagOnDream:
         assert "DREAM:hold" in decision.derivation["ocean_handler"]["applied"]
 
 
-class TestFlagOnMushroomMicro:
-    def test_mushroom_micro_perturbs_kappa_by_five(self, env_clean) -> None:
-        os.environ["OCEAN_INTERVENTIONS_LIVE"] = "true"
-        ocean = Ocean("t")
-        original_observe = ocean.observe
-
-        def force_mushroom(**kwargs):
-            result = original_observe(**kwargs)
-            from dataclasses import replace
-            return replace(result, intervention="MUSHROOM_MICRO")
-        ocean.observe = force_mushroom  # type: ignore[method-assign]
-
-        state = fresh_symbol_state("BTC_USDT_PERP", uniform_basin(64))
-        kappa_before = state.kappa
-        decision, new_state = run_tick(
-            _inputs(), state, AutonomicKernel("t"),
-            ocean=ocean, foresight=ForesightPredictor(), heart=HeartMonitor(),
-        )
-        # tick.py also evolves κ via its own clamp formula; with the
-        # +5 perturbation applied AFTER that evolution, the post-tick
-        # κ should be at least kappa_before + 5 - clamp_drift (small).
-        # Clamp formula: kappa = old*0.8 + (kappa_star+delta)*0.2.
-        # On first tick with default state.kappa = 64 = kappa_star and
-        # delta near 0, post-evolution κ ≈ 64. After +5 perturbation,
-        # final κ ≈ 69.
-        assert new_state.kappa >= kappa_before + 4.0
-        assert "MUSHROOM_MICRO:+5kappa" in decision.derivation["ocean_handler"]["applied"]
+# TestFlagOnMushroomMicro removed: MUSHROOM_MICRO trigger and +5 κ
+# perturbation deleted in qig-core 2.8.0 bump. Mushroom mode is
+# wake-state neuroplasticity (qig.neuroplasticity.mushroom_mode,
+# requires Φ ≥ 0.70) and is a separate code path from this sleep-cycle
+# intervention surface.
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -209,8 +190,8 @@ class TestSleepWakeUnaffectedByFlag:
     ) -> None:
         # SLEEP is reported by Ocean but the directive says it goes
         # through autonomic.is_awake — NOT through the OCEAN_INTERVENTIONS_LIVE
-        # flag's ESCAPE/DREAM/MUSHROOM branch. Verify the flag-on
-        # handler ignores SLEEP/WAKE.
+        # flag's ESCAPE/DREAM branch. Verify the flag-on handler
+        # ignores SLEEP/WAKE.
         os.environ["OCEAN_INTERVENTIONS_LIVE"] = "true"
         ocean = Ocean("t")
         original_observe = ocean.observe
@@ -226,11 +207,10 @@ class TestSleepWakeUnaffectedByFlag:
             _inputs(), state, AutonomicKernel("t"),
             ocean=ocean, foresight=ForesightPredictor(), heart=HeartMonitor(),
         )
-        # No ESCAPE/DREAM/MUSHROOM applied for SLEEP signal
+        # No ESCAPE/DREAM applied for SLEEP signal
         applied = decision.derivation["ocean_handler"]["applied"]
         assert "ESCAPE:flatten" not in applied
         assert "DREAM:hold" not in applied
-        assert "MUSHROOM_MICRO:+5kappa" not in applied
 
 
 if __name__ == "__main__":
