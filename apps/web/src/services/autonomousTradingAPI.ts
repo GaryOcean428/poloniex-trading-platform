@@ -355,8 +355,9 @@ class AutonomousTradingAPIService {
   async getStrategyPerformance(strategyId: string, timeframe: string = '24h'): Promise<any> {
         try {
                 const api = createAuthenticatedAxios();
-                // GET /api/agent/performance (overall performance)
-          const response = await api.get('/performance', { params: { timeframe } });
+                // GET /api/agent/performance accepts ?range=24h|7d|30d|90d|1y
+                // (param renamed from `timeframe` 2026-05-16; backend reads `range`).
+          const response = await api.get('/performance', { params: { range: timeframe } });
                 return response.data;
         } catch (error) {
                 this.handleError(error);
@@ -442,8 +443,9 @@ class AutonomousTradingAPIService {
   async getPerformanceAnalytics(timeframe: string = '24h'): Promise<PerformanceAnalytics> {
         try {
                 const api = createAuthenticatedAxios();
-                // GET /api/agent/performance
-          const response = await api.get('/performance', { params: { timeframe } });
+                // GET /api/agent/performance accepts ?range=24h|7d|30d|90d|1y
+                // (param renamed from `timeframe` 2026-05-16; backend reads `range`).
+          const response = await api.get('/performance', { params: { range: timeframe } });
                 const perf = response.data.performance || {};
                 return {
                           totalProfit: perf.totalPnl || 0,
