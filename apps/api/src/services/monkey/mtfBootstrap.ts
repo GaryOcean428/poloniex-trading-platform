@@ -129,10 +129,20 @@ export async function bootstrapMTFForSymbol(
     try {
       const interval = POLONIEX_INTERVAL_FOR_TF[label];
       const minCandlesNeeded = bootstrapMinCandlesNeeded(label);
+      // poloniexFuturesService.getHistoricalData caps at POLONIEX_MAX_PER_CALL
+      // (500) per single call. Without an explicit `startTime` opt the service
+      // does NOT loop, so a `limit=700` request silently returns 500 — well
+      // below the 480 + horizon warm threshold, leaving MTF L permanently
+      // cold (root cause of the 2026-05-15 scalp-spiral). Pass a startTime
+      // that spans BOOTSTRAP_CANDLE_COUNT intervals so the service's chunked
+      // loop activates and actually returns the count we asked for.
+      const intervalMs = label === '15m' ? 900_000 : label === '1h' ? 3_600_000 : 14_400_000;
+      const startTime = Date.now() - intervalMs * BOOTSTRAP_CANDLE_COUNT;
       const candles = (await poloniexFuturesService.getHistoricalData(
         symbol,
         interval,
         BOOTSTRAP_CANDLE_COUNT,
+        { startTime },
       )) as OHLCVCandle[];
       if (!Array.isArray(candles) || candles.length < minCandlesNeeded) {
         logger.warn('[MTF-bootstrap] insufficient OHLCV from exchange', {
