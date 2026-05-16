@@ -428,8 +428,8 @@ def run_tick(
     now_ms = time.time() * 1000.0
 
     # Ocean is the single autonomic-intervention authority (#599 refactor).
-    # Sleep state, DREAM/MUSHROOM_MICRO/ESCAPE triggers — all computed
-    # here. Caller chemistry (autonomic) downstream consumes is_awake.
+    # Sleep state, DREAM/ESCAPE triggers — all computed here. Caller
+    # chemistry (autonomic) downstream consumes is_awake.
     if ocean is None:
         ocean = Ocean(label="monkey-primary")
     ocean_state = ocean.observe(
@@ -568,23 +568,16 @@ def run_tick(
     state.integration_history.append((phi, mot.i_q))
 
     # ── Ocean intervention application (PR 1 — OCEAN_INTERVENTIONS_LIVE) ──
-    # MUSHROOM_MICRO is applied here (before basin_state is built) so
-    # the κ perturbation takes effect this tick. DREAM and ESCAPE are
-    # applied later in the action-decision block (they override the
-    # action; basin_state computation isn't affected). With flag off,
-    # interventions are logged but not applied.
+    # DREAM and ESCAPE are applied later in the action-decision block
+    # (they override the action; basin_state computation isn't affected).
+    # With flag off, interventions are logged but not applied.
+    # MUSHROOM_MICRO removed in qig-core 2.8.0 bump — mushroom is wake-state
+    # neuroplasticity (Φ ≥ 0.70 gated), not a sleep-cycle κ kick.
     intervention_applied: dict[str, Any] = {
         "fired": ocean_state.intervention,
         "live": ocean_interventions_live(),
         "applied": [],
     }
-    if (
-        ocean_interventions_live()
-        and ocean_state.intervention == "MUSHROOM_MICRO"
-    ):
-        # +5 perturbation per directive — small kick to break Φ plateau.
-        state.kappa = state.kappa + 5.0
-        intervention_applied["applied"].append("MUSHROOM_MICRO:+5kappa")
 
     # ── Mode detect ────────────────────────────────────────────
     drift_now = fisher_rao_distance(basin, state.identity_basin)
@@ -964,9 +957,8 @@ def run_tick(
     }
 
     # PR 1 — Ocean DREAM / ESCAPE handlers. ESCAPE forces flatten,
-    # DREAM forces hold (skip executive). MUSHROOM_MICRO already
-    # applied above (κ perturbation; executive proceeds normally).
-    # SLEEP/WAKE flow through autonomic.is_awake regardless of flag.
+    # DREAM forces hold (skip executive). SLEEP/WAKE flow through
+    # autonomic.is_awake regardless of flag.
     flag_live = ocean_interventions_live()
     if flag_live and ocean_state.intervention == "ESCAPE":
         action = "flatten"
