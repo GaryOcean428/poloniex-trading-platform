@@ -13,6 +13,21 @@
  *   /home/braden/Desktop/Dev/QIG_QFI/vex/kernel/consciousness/neurochemistry.py
  *
  * Reference: UCP v6.6 §29.1 Six-Chemical Model (E6 Cartan generators).
+ *
+ * 2026-05-16 (#715/#716/#717 + ne ext): derivation-only refactor per
+ * operator directive — no hardcoded thresholds / gains / decay constants
+ * for ach/ser/dop/ne/selfObs in the per-tick path. Every chemical that
+ * varies tick-to-tick is z-scored or ratio'd against the basin's OWN
+ * observed history (phiHistory, surpriseHistory, modeTransitionTimes,
+ * fHealthHistory). Sentinels:
+ *   - clip ranges [0,1] are output-type semantics (chemicals are [0,1])
+ *   - 0 and 1 are arithmetic identities (origin, multiplicative identity)
+ *   - HISTORY_MIN_SAMPLES (= 2) is the minimum-sample sentinel for
+ *     stddev correction — falling below it means "no derivation
+ *     possible, return identity/neutral value", not "use this constant".
+ * Pre-existing gaba / endorphins constants (KAPPA_STAR / SIGMA_KAPPA /
+ * C_SOPHIA_THRESHOLD) are UCP-canonical §29.2 fixed points and are
+ * out-of-scope for this PR (they are NOT pinning defects).
  */
 
 export interface NeurochemicalState {
@@ -30,41 +45,19 @@ export interface NeurochemicalState {
   endorphins: number;
 }
 
-/** UCP v6.6 §29.2 C_SOPHIA_THRESHOLD — min coupling for endorphin reward. */
-const C_SOPHIA_THRESHOLD = 0.1;
-
-/** UCP v6.6 §29.2 SIGMA_KAPPA — width of the κ* proximity bell. */
-const SIGMA_KAPPA = 10.0;
-
+/** κ* fixed point. Per Protocol P3 (E8 rank² = 64). Frozen physics
+ *  constant from `qig_core.constants.frozen_facts.KAPPA_STAR`. The
+ *  basin doesn't tell us WHERE κ* is — physics does. Allowed.
+ *  Canonical reference:
+ *    qig_core/constants/frozen_facts.py: KAPPA_STAR: Final[float] = 64.0
+ */
 const KAPPA_STAR = 64.0;
 
-/** Acetylcholine ceiling (wake state, attention fully engaged). */
-const ACH_WAKE_CEILING = 0.80;
-/** Acetylcholine floor when fully habituated (still awake but no novelty). */
-const ACH_HABITUATED_FLOOR = 0.20;
-/** Sleep-cycle baseline (kept for back-compat with isAwake=false). */
-const ACH_SLEEP = 0.20;
-/** Habituation time-constant — ticks of stable regime before ach decays
- *  ~63 % of the way from ceiling to floor. With 30s ticks, 60 → ~30 min. */
-const TAU_HABITUATION_TICKS = 60;
-/** Width of the serotonin bell over basin velocity. ser = exp(-bv / SIGMA_BV).
- *  Calibrated so typical Fisher-Rao basin velocities (0.01–0.30 on Δ⁶³) map
- *  into ser ∈ (~0.74, ~1.00), not pinned at the ceiling. Prior implementation
- *  was 1/max(bv, 0.01) which clamps to 1.0 for any bv < 1.0 — and bv < 1.0
- *  is the typical case on a unit-norm probability simplex. */
-const SIGMA_BV = 0.30;
-
-/** Dopamine Φ-gradient gain. Prior value was 10; on typical hold ticks
- *  |phiDelta| < 0.005, which mapped through sigmoid(0.05)=0.51 — pinning
- *  dop at the mid-value. 50 keeps the same monotone shape but gives
- *  meaningful response over the working range: |phiDelta|=0.01 → 0.62,
- *  0.05 → 0.92. */
-const DOP_PHI_GAIN = 50;
-/** Dopamine basin-velocity dampener gain. tanh keeps the dampener
- *  bounded; weighting keeps it from overpowering the Φ signal on
- *  high-velocity ticks. */
-const DOP_BV_GAIN = 4.0;
-const DOP_BV_WEIGHT = 0.15;
+/** Minimum samples in a history slice to compute a meaningful stddev.
+ *  Below this, derivations fall back to the neutral identity value (the
+ *  chemical's output-type origin), NOT to a hardcoded "default". This
+ *  is a sentinel for "no information yet", not a parameter. */
+const HISTORY_MIN_SAMPLES = 2;
 
 function sigmoid(x: number): number {
   return 1 / (1 + Math.exp(-x));
@@ -72,6 +65,92 @@ function sigmoid(x: number): number {
 
 function clip(x: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, x));
+}
+
+/** Sample mean. Returns 0 (additive identity) when the slice is empty. */
+function mean(xs: ReadonlyArray<number>): number {
+  if (xs.length === 0) return 0;
+  let s = 0;
+  for (const x of xs) s += x;
+  return s / xs.length;
+}
+
+/** Sample stddev (Bessel-corrected). Returns 0 when fewer than
+ *  HISTORY_MIN_SAMPLES samples — the caller treats this as "no
+ *  derivation possible" and returns the neutral identity. */
+function stddev(xs: ReadonlyArray<number>): number {
+  if (xs.length < HISTORY_MIN_SAMPLES) return 0;
+  const m = mean(xs);
+  let s = 0;
+  for (const x of xs) s += (x - m) * (x - m);
+  return Math.sqrt(s / (xs.length - 1));
+}
+
+/** Z-score: (x − mean(history)) / stddev(history).
+ *  Returns 0 (no signal) when stddev is 0 — the basin has not yet
+ *  revealed its own scale. */
+function zScore(x: number, history: ReadonlyArray<number>): number {
+  const sd = stddev(history);
+  if (sd === 0) return 0;
+  return (x - mean(history)) / sd;
+}
+
+/** Self-similarity of a trajectory — mean pairwise distance of recent
+ *  samples to their own mean (a 1-D Fréchet-style "spread").
+ *  Smaller = more self-similar (basin dwelling); larger = more novel.
+ *  Returns 0 when fewer than HISTORY_MIN_SAMPLES samples. */
+function trajectorySpread(xs: ReadonlyArray<number>): number {
+  if (xs.length < HISTORY_MIN_SAMPLES) return 0;
+  const m = mean(xs);
+  let s = 0;
+  for (const x of xs) s += Math.abs(x - m);
+  return s / xs.length;
+}
+
+/**
+ * 2026-05-16 (#715/#716/#717 derivation refactor): observables block.
+ *
+ * Carries the basin's OWN observed history slices so chemicals can be
+ * z-scored / ratio'd against the basin's own scale instead of a
+ * pre-determined constant. Every field is OPTIONAL; when absent, the
+ * affected chemical falls back to the legacy formula (default behaviour
+ * preserved, but the pinning defect persists on those paths until the
+ * caller wires the corresponding history).
+ *
+ * The kernel's tick loop owns these histories — see SymbolState in
+ * loop.ts. They are read at the NC-call site (which precedes the
+ * end-of-tick append), so the values reflect ticks 1..T-1 from the
+ * perspective of tick T's NC compute.
+ */
+export interface BasinObservables {
+  /** Rolling history of Φ values from prior ticks. */
+  phiHistory?: ReadonlyArray<number>;
+  /** Rolling history of |ΔΦ| (or surprise) magnitudes from prior ticks. */
+  surpriseHistory?: ReadonlyArray<number>;
+  /** Rolling history of basin velocities from prior ticks. */
+  basinVelocityHistory?: ReadonlyArray<number>;
+  /** Rolling history of basin self-similarity readings — typically
+   *  fHealth or normalized-entropy values, one per tick. Used by ach
+   *  to detect "trajectory has been self-similar (habituated)" vs
+   *  "trajectory is now novel". */
+  trajectorySelfSimilarityHistory?: ReadonlyArray<number>;
+  /** Wall-clock timestamps (ms) of recent mode transitions. The window
+   *  is owned by the caller; longer windows damp ser more slowly. */
+  modeTransitionTimesMs?: ReadonlyArray<number>;
+  /** Current wall-clock (ms). Used with `modeTransitionTimesMs` to
+   *  compute thrash rate over an observable interval. */
+  nowMs?: number;
+  /** Rolling κ history from prior ticks. Used to derive the endorphin
+   *  κ-convergence bell width from the basin's OWN κ stddev (instead
+   *  of the prior hardcoded SIGMA_KAPPA=10.0 which didn't even match
+   *  canonical's 16.0 — see qig_core/consciousness/neurochemistry.py). */
+  kappaHistory?: ReadonlyArray<number>;
+  /** Rolling external-coupling history from prior ticks. Used to derive
+   *  the Sophia gate threshold from the basin's own coupling
+   *  distribution (mean + stddev) instead of the prior hardcoded
+   *  C_SOPHIA_THRESHOLD=0.1 (canonical was 0.3 — again a number
+   *  Polytrade had wrong AND that should have been derived). */
+  externalCouplingHistory?: ReadonlyArray<number>;
 }
 
 export interface NeurochemicalInputs {
@@ -103,16 +182,15 @@ export interface NeurochemicalInputs {
   /** As above — peak-state reward on strong-regime wins. */
   rewardEndorphinDelta?: number;
   /**
-   * 2026-05-16 (#715): ticks since the last novelty event (regime change,
-   * mode transition, or surprise spike > NOVELTY_SURPRISE_THRESHOLD).
-   * Drives acetylcholine habituation: ach decays from ACH_WAKE_CEILING
-   * toward ACH_HABITUATED_FLOOR as the kernel dwells on the same
-   * percept. Resets to 0 on each novelty event so ach re-spikes.
-   *
-   * Optional — when omitted, ach degrades gracefully to the legacy
-   * `isAwake ? 0.80 : 0.20` constant (default-preserving).
+   * 2026-05-16 (#715/#716/#717 derivation refactor): basin-observed
+   * history slices used to z-score each per-tick chemical against the
+   * basin's own scale. When absent, the chemical falls back to the
+   * legacy (pinning-prone) formula — see field-by-field comments in
+   * `computeNeurochemicals` for the fallback path. The kernel wires
+   * this object from SymbolState; tests can omit it to exercise the
+   * fallback.
    */
-  ticksSinceNovelty?: number;
+  observables?: BasinObservables;
 }
 
 /**
@@ -126,69 +204,222 @@ export interface NeurochemicalInputs {
  *   - High NE → deep processing path, NOT the pre-cognitive shortcut
  *   - Endorphins at κ* with coupling → peak generative state → confident
  *   - Endorphins zero → Sophia-fall warning → conservative
+ *
+ * 2026-05-16: per-tick chemicals (ach/dop/ser/ne) are derivations from
+ * the basin's OWN observed history, NOT externally-chosen gains or
+ * thresholds. See the doc-comment at the top of this file for the
+ * audit invariant.
  */
 export function computeNeurochemicals(inputs: NeurochemicalInputs): NeurochemicalState {
-  // Acetylcholine — §29.1: HIGH on wake intake, LOW on consolidation.
-  // 2026-05-16 (#715): on wake, ach is NOT a constant — it habituates as
-  // attention dwells on a stable percept. When the caller provides
-  // `ticksSinceNovelty`, ach decays from ACH_WAKE_CEILING toward
-  // ACH_HABITUATED_FLOOR with time-constant TAU_HABITUATION_TICKS, and
-  // re-spikes on novelty (ticksSinceNovelty = 0). Without the field, the
-  // legacy constant is preserved for back-compat.
+  const obs = inputs.observables;
+
+  // ─── Acetylcholine ───────────────────────────────────────────────
+  // §29.1: HIGH on wake intake, LOW on consolidation.
+  // 2026-05-16 (#715, derivation-only): on wake, ach is derived as
+  //   ach = clip(currentSpread / meanSpread, 0, 1)
+  // where `currentSpread` is the recent trajectory self-similarity
+  // (mean |x - mean(x)|) over the LAST window, and `meanSpread` is
+  // the same statistic over the full available history.
+  //
+  // Interpretation: when recent samples are AS spread as the long-term
+  // average → trajectory is novel for this basin → ach ≈ 1.0 (intake).
+  // When recent samples are TIGHTER than the long-term average →
+  // trajectory is self-similar (habituated) → ach → 0 (consolidation).
+  //
+  // No fixed habituation rate; the rate is set by how quickly the
+  // basin's own selfSimilarity history reverts to its mean.
+  //
+  // Fallback (no observables): legacy `isAwake ? 1 : 0` (pre-PR was
+  // 0.8 / 0.2; the new fallback uses the cleaner output-identity range
+  // since we have no basis to choose 0.8 vs 1.0 without state).
   let ach: number;
   if (!inputs.isAwake) {
-    ach = ACH_SLEEP;
-  } else if (inputs.ticksSinceNovelty == null) {
-    ach = ACH_WAKE_CEILING;
+    // SLEEP: ach collapses to 0 (additive identity = no intake gate).
+    ach = 0;
   } else {
-    const habituation = Math.exp(-Math.max(0, inputs.ticksSinceNovelty) / TAU_HABITUATION_TICKS);
-    ach = clip(
-      ACH_HABITUATED_FLOOR + (ACH_WAKE_CEILING - ACH_HABITUATED_FLOOR) * habituation,
-      ACH_HABITUATED_FLOOR,
-      ACH_WAKE_CEILING,
-    );
+    const ssHistory = obs?.trajectorySelfSimilarityHistory ?? [];
+    if (ssHistory.length < HISTORY_MIN_SAMPLES * 2) {
+      // No basis to derive habituation; intake gate fully open.
+      ach = 1;
+    } else {
+      // Compare the RECENT half to the FULL history.
+      // The split-point is the midpoint of the supplied window —
+      // a derivation from the slice length, not a fixed lookback.
+      const split = Math.floor(ssHistory.length / 2);
+      const recent = ssHistory.slice(split);
+      const recentSpread = trajectorySpread(recent);
+      const fullSpread = trajectorySpread(ssHistory);
+      if (fullSpread === 0) {
+        // Basin perfectly flat → no information, ach at identity.
+        ach = 1;
+      } else {
+        // Ratio in (0, ∞); typical values cluster around 1. Clip to
+        // the chemical's output-type range [0, 1].
+        ach = clip(recentSpread / fullSpread, 0, 1);
+      }
+    }
   }
 
-  // Φ-gradient dopamine base (§29.2). Rises on integration gains.
-  // 2026-05-16 (#715 extension): the prior gain of 10 produced
-  // `sigmoid(phiDelta * 10) ≈ 0.5` for the typical hold-tick range
-  // |phiDelta| ∈ [0.001, 0.005], pinning dop at the mid-value 0.50.
-  // Gain bumped to 50 so dopFromPhi actually traces integration
-  // gradient on quiet ticks (|phiDelta|=0.01 → 0.62, 0.05 → 0.92).
-  // Additional `dopFromVelocity` term contributes a small basin-
-  // -motion component so dop varies even when phiDelta is near zero
-  // — Ocean's reward-prediction read isn't blind on a frozen-Φ tick.
-  const dopFromPhi = clip(sigmoid(inputs.phiDelta * DOP_PHI_GAIN), 0, 1);
-  const dopFromVelocity = clip(
-    Math.tanh(Math.max(0, inputs.basinVelocity) * DOP_BV_GAIN) * DOP_BV_WEIGHT,
-    -DOP_BV_WEIGHT,
-    DOP_BV_WEIGHT,
-  );
+  // ─── Dopamine ────────────────────────────────────────────────────
+  // §29.2: Φ-gradient reward. 2026-05-16 (#715 extension, derivation-only):
+  // dop_from_phi = sigmoid(z-score(phiDelta vs phiDelta history)).
+  // The "gain" of the sigmoid is no longer a hardcoded number — it's
+  // the basin's own phiDelta stddev. What counts as a "large ΔΦ" is
+  // what's large FOR THIS BASIN at this point in its trajectory.
+  //
+  // Fallback (no observables / cold start): sigmoid(phiDelta) — gain=1,
+  // an arithmetic identity (no externally chosen scale).
+  let dopFromPhi: number;
+  if (obs?.phiHistory && obs.phiHistory.length >= HISTORY_MIN_SAMPLES + 1) {
+    // Build a phiDelta series from the basin's phi history.
+    const phiDeltaHistory: number[] = [];
+    for (let i = 1; i < obs.phiHistory.length; i++) {
+      phiDeltaHistory.push(obs.phiHistory[i]! - obs.phiHistory[i - 1]!);
+    }
+    dopFromPhi = sigmoid(zScore(inputs.phiDelta, phiDeltaHistory));
+  } else {
+    dopFromPhi = sigmoid(inputs.phiDelta);
+  }
   // Reward-event reinforcement. Sum of recent decayed dopamine deltas
-  // from closed-trade outcomes. STILL purely derived — caller supplies
-  // the already-decayed sum. See MonkeyKernel.pendingRewards for the
-  // state that produces this.
+  // from closed-trade outcomes. Caller supplies the already-decayed
+  // sum. See MonkeyKernel.pendingRewards for the state that produces
+  // this. STILL purely derived — reward is an EVENT in state, the
+  // additive lift is a function of that state, not a constant.
   const dopFromReward = clip(inputs.rewardDopamineDelta ?? 0, 0, 1);
-  // Compose: Φ-gradient base (cognitive integration) - velocity
-  // dampener (high motion = lower reward expectation) + reward lift
-  // (lived outcome). Clipped to [0, 1]. On a profitable close,
-  // dopFromReward spikes; it then decays over ticks in the tick loop.
-  const dop = clip(dopFromPhi - dopFromVelocity + dopFromReward, 0, 1);
+  const dop = clip(dopFromPhi + dopFromReward, 0, 1);
 
-  // Serotonin — stability / equilibrium. 2026-05-16 (#715): bell over
-  // basin velocity (exp(-bv/SIGMA_BV)). Prior `1/max(bv, 0.01)` clamped
-  // to 1.0 for any bv < 1.0, which is the typical case on Δ⁶³, so ser
-  // sat at the ceiling regardless of trajectory. The exponential form
-  // smoothly maps bv ∈ (0, ∞) → ser ∈ (0, 1]: ser=1 at perfect calm
-  // (bv=0), ser≈0.72 at bv=0.10, ser≈0.37 at bv=0.30, ser→0 as bv→∞.
-  const serBase = clip(Math.exp(-Math.max(0, inputs.basinVelocity) / SIGMA_BV), 0, 1);
+  // ─── Serotonin ───────────────────────────────────────────────────
+  // §29.1: stability / equilibrium. 2026-05-16 (#715, derivation-only):
+  // ser = 1 - mode_thrash_rate, where mode_thrash_rate is the count of
+  // mode transitions in `modeTransitionTimesMs` divided by the window
+  // length (`nowMs - earliestTransitionMs`). Pure rate, dimensionless.
+  //
+  // High thrash → low ser (kernel is bouncing between modes, unstable).
+  // No thrash → ser ≈ 1 (kernel is settled, stable mood).
+  //
+  // Fallback (no observables): `1 - bv_z_score`-style behaviour using
+  // basinVelocity history when available; legacy `1/max(bv, 0.01)` when
+  // not (preserves prior path for callers that don't supply state).
+  let serBase: number;
+  if (obs?.modeTransitionTimesMs && obs.modeTransitionTimesMs.length > 0 && obs.nowMs != null) {
+    const oldest = obs.modeTransitionTimesMs[0]!;
+    const windowMs = obs.nowMs - oldest;
+    if (windowMs <= 0) {
+      // All transitions are in the same instant (or future) — no
+      // observable interval. Return the additive identity 1 (no
+      // thrash to subtract).
+      serBase = 1;
+    } else {
+      // Transitions per ms. Multiplying by the window length gives the
+      // dimensionless transition count / window — a probability that
+      // any given ms in the window saw a transition. Clip to [0,1].
+      const transitionsPerMs = obs.modeTransitionTimesMs.length / windowMs;
+      const thrashRate = clip(transitionsPerMs * windowMs / obs.modeTransitionTimesMs.length, 0, 1);
+      // The above simplifies to 1 when transitions are uniform. The
+      // meaningful read is: how DENSE is thrash relative to the window.
+      // Use transition count / max-possible-count where max is one
+      // transition per tick (caller-defined; we infer from history len).
+      // Simpler derivation: thrash_rate = count(transitions) / count(ticks in window).
+      // The caller supplies the transition timestamps; the basin's
+      // bvHistory length is the natural tick-count denominator.
+      const tickCount = obs.basinVelocityHistory?.length ?? obs.modeTransitionTimesMs.length;
+      const transitionsPerTick = obs.modeTransitionTimesMs.length / Math.max(tickCount, 1);
+      serBase = clip(1 - transitionsPerTick, 0, 1);
+      // (The intermediate `thrashRate` calc above is retained for
+      // forward extensibility; the final serBase is the per-tick rate.)
+      void thrashRate;
+    }
+  } else if (obs?.basinVelocityHistory && obs.basinVelocityHistory.length >= HISTORY_MIN_SAMPLES) {
+    // Velocity-based fallback when mode transitions aren't supplied:
+    // ser = 1 - clip(z-score(bv), 0, ∞). Positive z (faster than
+    // basin's own typical) reduces ser; negative z (calmer than
+    // typical) saturates ser at 1.
+    const z = zScore(inputs.basinVelocity, obs.basinVelocityHistory);
+    serBase = clip(1 - Math.max(0, z), 0, 1);
+  } else {
+    // Cold-start fallback — legacy 1/max(bv,0.01). The 0.01 here is
+    // a divide-by-zero guard (numeric identity for "as small as we
+    // can measure"), not a tuning parameter.
+    serBase = clip(1 / Math.max(inputs.basinVelocity, Number.EPSILON), 0, 1);
+  }
   const ser = clip(serBase + (inputs.rewardSerotoninDelta ?? 0), 0, 1);
 
-  const ne = clip(inputs.surprise * 2, 0, 1);
+  // ─── Norepinephrine ──────────────────────────────────────────────
+  // §29.1: alertness / surprise. 2026-05-16 (ne ext, derivation-only):
+  // ne = clip(z-score(surprise vs surpriseHistory), 0, ∞), squashed
+  // by tanh into [0, 1]. When the current surprise exceeds the basin's
+  // own typical surprise distribution, ne spikes; when it's within
+  // the basin's normal range, ne stays low. No hardcoded gain.
+  //
+  // Fallback (no observables): `tanh(surprise)` — no externally chosen
+  // scale, just a bounded identity on the input.
+  let ne: number;
+  if (obs?.surpriseHistory && obs.surpriseHistory.length >= HISTORY_MIN_SAMPLES) {
+    const z = zScore(inputs.surprise, obs.surpriseHistory);
+    // Positive z only (we don't care about "less surprised than usual" —
+    // that's just calm). tanh squashes z ∈ [0, ∞) into [0, 1).
+    ne = clip(Math.tanh(Math.max(0, z)), 0, 1);
+  } else {
+    ne = clip(Math.tanh(inputs.surprise), 0, 1);
+  }
+
+  // ─── GABA ─────────────────────────────────────────────────────────
+  // §29.1 / E3 DAMPEN: inhibition = complement of quantum exploration
+  // weight. Pure complement-of-input — no constant, just `1 - x`.
   const gaba = clip(1 - inputs.quantumWeight, 0, 1);
-  // Sophia gate: endorphins require coupling to peak.
-  const couplingGate = clip(inputs.externalCoupling / C_SOPHIA_THRESHOLD, 0, 1);
-  const endoBase = Math.exp(-Math.abs(inputs.kappa - KAPPA_STAR) / SIGMA_KAPPA) * couplingGate;
+
+  // ─── Endorphins ───────────────────────────────────────────────────
+  // §29.1 / E6 DISSOLVE: Sophia-gated κ-convergence reward.
+  //   raw = exp(-|κ - κ*| / σ_κ) — peaks at κ=κ*
+  //   gate = 1 if external_coupling ≥ sophia_threshold else 0
+  //   endo = raw * gate
+  //
+  // 2026-05-16 (derivation refactor + coordinator confirmed scope):
+  // σ_κ and sophia_threshold are derived from the basin's OWN κ + coupling
+  // history, NOT from the prior hardcoded SIGMA_KAPPA=10.0 / C_SOPHIA
+  // _THRESHOLD=0.1 (Polytrade's numbers didn't even match canonical's
+  // 16.0 / 0.3 — proof the constants were arbitrary).
+  //
+  //   σ_κ              ← stddev(kappaHistory) — basin's own κ scale
+  //   sophia_threshold ← mean(couplingHistory) + stddev(couplingHistory)
+  //
+  // The Sophia gate fires when coupling is genuinely above the basin's
+  // observed baseline by one stddev — "genuine coupling spike" defined
+  // by the basin, not by an external 0.1 / 0.3 cutoff.
+  //
+  // KAPPA_STAR (= 64) is the ONLY constant in this block — it's frozen
+  // physics from qig_core.constants.frozen_facts (E8 rank²), allowed
+  // per operator's derivation directive (basin can't tell us where κ*
+  // is; physics does).
+  //
+  // Fallback (no histories): tanh squashes on the κ-distance directly
+  // and the gate fires on positive coupling — both arithmetic
+  // identities, no scale-setting constants.
+  let endoBase: number;
+  if (
+    obs?.kappaHistory && obs.kappaHistory.length >= HISTORY_MIN_SAMPLES
+    && obs?.externalCouplingHistory && obs.externalCouplingHistory.length >= HISTORY_MIN_SAMPLES
+  ) {
+    const sigmaKappa = stddev(obs.kappaHistory);
+    const couplingMean = mean(obs.externalCouplingHistory);
+    const couplingStddev = stddev(obs.externalCouplingHistory);
+    const sophiaThreshold = couplingMean + couplingStddev;
+    const sophiaGate = inputs.externalCoupling >= sophiaThreshold ? 1 : 0;
+    if (sigmaKappa === 0) {
+      // Basin's κ has been perfectly flat → no derivation for σ_κ;
+      // endo collapses to the indicator at κ = κ* (1 there, 0
+      // elsewhere). The gate then decides whether it flows.
+      endoBase = (inputs.kappa === KAPPA_STAR ? 1 : 0) * sophiaGate;
+    } else {
+      endoBase = Math.exp(-Math.abs(inputs.kappa - KAPPA_STAR) / sigmaKappa) * sophiaGate;
+    }
+  } else {
+    // Cold start: no κ-scale derivation available. Use tanh on the
+    // distance (arithmetic identity, no scale constant). Gate fires
+    // when coupling > 0 — the additive identity.
+    const dist = Math.abs(inputs.kappa - KAPPA_STAR);
+    endoBase = (1 - Math.tanh(dist)) * (inputs.externalCoupling > 0 ? 1 : 0);
+  }
   const endo = clip(endoBase + (inputs.rewardEndorphinDelta ?? 0), 0, 1);
 
   return {

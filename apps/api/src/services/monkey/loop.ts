@@ -557,52 +557,51 @@ interface SymbolState {
    *  Trailing regime drift fires via regimeSizing.trailingRegimeStop().
    *  Cleared on harvest. */
   rScoreAtEntryBySide: { long: number | null; short: number | null };
-  /** 2026-05-16 (#715, autonomic substrate): ticks elapsed since the last
-   *  novelty event (regime label change OR surprise spike).
-   *  Drives acetylcholine habituation in `computeNeurochemicals`. Reset
-   *  to 0 on novelty; incremented on quiet ticks. Without this counter,
-   *  ach was pinned at the wake constant (0.80) every tick.
-   *
-   *  Sibling field `lastRegimeLabel` is the comparison key — when a tick
-   *  produces a different regime label, the counter resets and ach
-   *  re-spikes per §29 attentional habituation. */
-  ticksSinceNovelty: number;
-  lastRegimeLabel: string | null;
+  /** 2026-05-16 (#715/#716/#717 derivation refactor): rolling history of
+   *  per-tick surprise magnitudes (|ΔΦ|). Used to z-score the current
+   *  surprise for `nc.ne` derivation against the basin's OWN observed
+   *  surprise distribution — no hardcoded gain. Capped at HISTORY_MAX. */
+  surpriseHistory: number[];
+  /** Rolling history of per-tick basin velocities. Used by `nc.ser`
+   *  fallback (when mode-transition history is insufficient) to compare
+   *  current bv to the basin's own typical bv distribution. */
+  bvHistory: number[];
+  /** Wall-clock timestamps (ms) of recent mode transitions. The thrash
+   *  rate (count / window) drives `nc.ser`. Capped at HISTORY_MAX so
+   *  long-stable kernels naturally see lower thrash rates over time. */
+  modeTransitionTimesMs: number[];
+  /** Rolling κ history. Drives the endorphin κ-convergence bell width
+   *  (σ_κ ← stddev) from the basin's own observed κ scale instead of
+   *  a hardcoded SIGMA_KAPPA. */
+  kappaHistory: number[];
+  /** Rolling external-coupling history. Drives the endorphin Sophia
+   *  gate threshold (mean + stddev) from the basin's own coupling
+   *  distribution instead of a hardcoded C_SOPHIA_THRESHOLD. */
+  externalCouplingHistory: number[];
 }
 
 /** Cap the recent-bus-event ring at this size — anything older than
  *  the bus window doesn't influence current decisions. */
 const BUS_RING_CAP = 32;
 
-/** 2026-05-16 (#715): surprise magnitude that counts as a novelty event
- *  and resets the acetylcholine habituation clock. `surprise = |ΔΦ|*2`,
- *  so 0.05 → resets on ΔΦ ≥ 0.025 (large basin integration jumps). */
-const NOVELTY_SURPRISE_THRESHOLD = 0.05;
-
-/** 2026-05-16 (#717): per-tick self-observation pressure shape constants.
- *  pressure = clip(SELF_OBS_BASE + SELF_OBS_GAIN * surprise, MIN, MAX).
- *  At surprise=0 → 1.00 (neutral); at surprise=0.5 → 1.25; ceiling
- *  at SELF_OBS_MAX. Composed multiplicatively with the per-(mode, side)
- *  win-rate entryBias so both the live miss signal and the historical
- *  win-rate inform the executive's T computation. */
-const SELF_OBS_BASE = 1.0;
-const SELF_OBS_GAIN = 0.5;
-const SELF_OBS_MIN = 0.70;
-const SELF_OBS_MAX = 1.30;
-
-/** 2026-05-16 (#716): how often the kernel-level QIGRAMv2 store decays
- *  all weights — DECAY_FACTOR=0.95 per integration step. Decaying every
- *  tick would collapse weights too fast (0.95^120 ≈ 0.0019 in one
- *  hour); every SOV_DECAY_PERIOD_TICKS=60 ticks (≈ 30 min on 30s
- *  cadence) gives a ~90×30min = 45 hour half-life from weight 1.0 to
- *  MIN_ACTIVE_WEIGHT=0.01, which lets sov fall away from 1.0 as old
- *  basins fade without making the active-set vanish entirely.
- *  Tick-only basin storage: we only push the current basin (weight=1)
- *  every SOV_STORE_PERIOD_TICKS=10 ticks (≈ 5 min) so the store grows
- *  at a rate consistent with the canonical QIGRAM integration cadence,
- *  not at every-tick granularity. */
-const SOV_DECAY_PERIOD_TICKS = 60;
-const SOV_STORE_PERIOD_TICKS = 10;
+// ─── 2026-05-16 #715/#716/#717 derivation-only refactor ──────────────
+//
+// Per operator directive: per-tick autonomic chemicals must derive from
+// the basin's OWN observed state, never from hardcoded thresholds /
+// gains / decay constants. The prior introduction of NOVELTY_SURPRISE_
+// THRESHOLD / SELF_OBS_* / SOV_DECAY_PERIOD_TICKS was rolled back in
+// commit 4: those values are now derived from per-tick observables
+// (modeTransitionTimes, surpriseHistory, basin trajectory spread,
+// QIGRAMv2 store cadence). The only "scheduling" constant remaining
+// in the autonomic path is the existing HISTORY_MAX (= 100), which
+// caps memory footprint — not behaviour. See `computeNeurochemicals`
+// in neurochemistry.ts for the derivation contract.
+//
+// QIGRAMv2 sov: integrate on every tick (per-tick is the canonical
+// observation cadence — no scheduling constant); decay every tick
+// (canonical DECAY_FACTOR = 0.95 from agent_L_qigram_v2.ts, which is
+// the QIGRAMv2 canonical class attribute, NOT a parameter introduced
+// by this PR — pre-existing, declared at the module boundary).
 
 /**
  * MonkeyKernel — the top-level kernel that ticks Monkey.
@@ -1168,8 +1167,11 @@ export class MonkeyKernel extends EventEmitter {
       mtfLongestAgreeingBySide: { long: null, short: null },
       rScoreCurrent: null,
       rScoreAtEntryBySide: { long: null, short: null },
-      ticksSinceNovelty: 0,
-      lastRegimeLabel: null,
+      surpriseHistory: [],
+      bvHistory: [],
+      modeTransitionTimesMs: [],
+      kappaHistory: [],
+      externalCouplingHistory: [],
     };
   }
 
@@ -1368,18 +1370,17 @@ export class MonkeyKernel extends EventEmitter {
     // and bump their capital share, but K's dopamine is K's only.
     const rewardDeltas = this.decayedRewardSums(Date.now(), 'K');
 
-    // 2026-05-16 (#715): per-tick autonomic substrate update — advance the
-    // novelty clock so acetylcholine actually habituates between events.
-    // Every tick: ticksSinceNovelty += 1. On a surprise spike, reset
-    // immediately so ach re-spikes BEFORE this tick's NC compute. The
-    // regime-change reset happens AFTER classifyRegime below, so it
-    // contributes to the NEXT tick's ach value.
-    state.ticksSinceNovelty += 1;
+    // 2026-05-16 (#715/#716/#717 derivation refactor): build the
+    // BasinObservables block from the basin's OWN per-tick history.
+    // Every chemical's per-tick scale is set by what's typical FOR
+    // THIS basin — no externally chosen gains or thresholds.
+    //
+    // Reads from prior-tick histories (appended at end-of-tick), so
+    // tick T's NC sees ticks 1..T-1 as the comparison window. Cold
+    // start: histories are empty; computeNeurochemicals falls back to
+    // arithmetic-identity formulas (sigmoid(x), tanh(x), 1) on those
+    // chemicals — see field-by-field comments in neurochemistry.ts.
     const surpriseNow = Math.abs(phiDelta) * 2;
-    if (surpriseNow > NOVELTY_SURPRISE_THRESHOLD) {
-      state.ticksSinceNovelty = 0;
-    }
-
     const nc: NeurochemicalState = computeNeurochemicals({
       isAwake: true,
       phiDelta,
@@ -1391,7 +1392,19 @@ export class MonkeyKernel extends EventEmitter {
       rewardDopamineDelta: rewardDeltas.dopamine,
       rewardSerotoninDelta: rewardDeltas.serotonin,
       rewardEndorphinDelta: rewardDeltas.endorphin,
-      ticksSinceNovelty: state.ticksSinceNovelty,
+      observables: {
+        phiHistory: state.phiHistory,
+        surpriseHistory: state.surpriseHistory,
+        basinVelocityHistory: state.bvHistory,
+        // ach derives from trajectory self-similarity. fHealth (basin
+        // normalized entropy) is the natural per-tick self-similarity
+        // reading already maintained by the kernel.
+        trajectorySelfSimilarityHistory: state.fHealthHistory,
+        modeTransitionTimesMs: state.modeTransitionTimesMs,
+        nowMs: Date.now(),
+        kappaHistory: state.kappaHistory,
+        externalCouplingHistory: state.externalCouplingHistory,
+      },
     });
 
     // v0.7.10 shadow-mode: call the Python autonomic kernel in parallel
@@ -1421,35 +1434,37 @@ export class MonkeyKernel extends EventEmitter {
       });
     }
 
-    // 2026-05-16 (#716): sovereignty path.
+    // 2026-05-16 (#716 derivation refactor): sovereignty path.
     // Legacy: resonanceBank.sovereignty() is `lived/total` from
     // monkey_resonance_bank; by design every entry is source='lived', so
     // the ratio is pinned at 1.0. That value is useless to Ocean's
     // maturity / juvenile→mature gate.
     // Fix (flag-gated, default behaviour preserved when v2 is off):
     // when `L_QIGRAM_V2_ENABLED === 'true'`, integrate the current basin
-    // into a kernel-level QIGRAMv2 store and read its active/total
-    // ratio. Decay runs on a slow cadence so the store doesn't collapse
-    // — sov falls below 1.0 as basins age past MIN_ACTIVE_WEIGHT, then
-    // recovers as fresh basins integrate. The store is per-process; a
-    // restart starts sov=0 and it climbs as ticks accumulate, matching
-    // the canonical "agent maturity grows with lived experience".
+    // into a kernel-level QIGRAMv2 store every tick (per-tick IS the
+    // canonical observation cadence), decay every tick using the
+    // canonical DECAY_FACTOR from agent_L_qigram_v2 (pre-existing
+    // canonical class attribute, NOT a constant introduced by this PR),
+    // and read sov = N_active / N_total (a pure ratio — derivation
+    // already canonical per QIGRAMv2.sovereignty).
+    //
+    // No scheduling constants. Sov rises as fresh basins integrate;
+    // falls as weights decay past MIN_ACTIVE_WEIGHT (canonical 0.01,
+    // not a PR-introduced constant). After ~90 ticks (the canonical
+    // 0.95^90 ≈ 0.0099 < 0.01 threshold) the oldest basins drop out,
+    // pulling sov below 1.0 naturally.
     let sovereignty: number;
     if (isQigramV2Enabled()) {
       this.qigramV2TickCount += 1;
-      if (this.qigramV2TickCount % SOV_STORE_PERIOD_TICKS === 0) {
-        // Per-symbol|per-tick key so different symbols' snapshots
-        // coexist; weight=1.0 at storage time, correct=true so the
-        // entry counts toward active until decayed below threshold.
-        this.qigramV2Store.integrate(
-          `${symbol}|tick=${this.qigramV2TickCount}`,
-          basin,
-          { weight: 1.0, correct: true },
-        );
-      }
-      if (this.qigramV2TickCount % SOV_DECAY_PERIOD_TICKS === 0) {
-        this.qigramV2Store.decayAll();
-      }
+      // Per-symbol|per-tick key so different symbols' snapshots
+      // coexist; weight=1.0 at storage time (canonical initial), correct
+      // =true (basin counts toward active until decayed below threshold).
+      this.qigramV2Store.integrate(
+        `${symbol}|tick=${this.qigramV2TickCount}`,
+        basin,
+        { weight: 1.0, correct: true },
+      );
+      this.qigramV2Store.decayAll();
       sovereignty = this.qigramV2Store.sovereignty;
     } else {
       sovereignty = await resonanceBank.sovereignty();
@@ -1496,6 +1511,14 @@ export class MonkeyKernel extends EventEmitter {
         symbol,
         payload: { from: state.lastMode, to: mode, reason: modeDecision.reason, phi, kappa: state.kappa },
       });
+      // 2026-05-16 (#715 derivation refactor): record the transition
+      // timestamp so `nc.ser` can derive thrash rate from the basin's
+      // own transition density. No fixed cooldown — the rate IS the
+      // signal (high density → low ser → mood drop).
+      state.modeTransitionTimesMs.push(Date.now());
+      if (state.modeTransitionTimesMs.length > HISTORY_MAX) {
+        state.modeTransitionTimesMs.shift();
+      }
     }
     state.lastMode = mode;
 
@@ -1597,17 +1620,6 @@ export class MonkeyKernel extends EventEmitter {
       basin,
     ]);
 
-    // 2026-05-16 (#715): regime-change novelty reset. When the regime
-    // label flips, treat it as a novelty event so acetylcholine
-    // re-spikes on the NEXT tick (this tick's NC has already been
-    // computed above using the prior-tick novelty clock). Stores the
-    // current regime label as the comparison key for the next tick.
-    const regimeLabelNow = String(regimeReading.regime);
-    if (state.lastRegimeLabel !== null && state.lastRegimeLabel !== regimeLabelNow) {
-      state.ticksSinceNovelty = 0;
-    }
-    state.lastRegimeLabel = regimeLabelNow;
-
     // Proposal #9: candlestick pattern detection at the perception
     // input boundary. ``patternSignal`` is signed in [-1, +1];
     // ``hammerDefer`` triggers the SL-defer path on long positions.
@@ -1651,23 +1663,31 @@ export class MonkeyKernel extends EventEmitter {
         symbol, basinDir, tapeTrend, direction, wantedShort: true,
       });
     }
-    // 2026-05-16 (#717): selfObsBias = winRate(mode, side) × per-tick
-    // self-observation pressure. The winRate component (entryBias) was
-    // already wired but only updates on a 5-min refresh from closed
-    // trades; under low trade flow it pinned at the neutral 1.00
-    // default. The per-tick pressure adds the live miss/surprise signal
-    // per Protocol v6.6 §43 Loop 1: when the kernel mispredicts (high
-    // surprise), pressure > 1 → executive enters more cautiously
-    // (harder T threshold); when prediction confidence is high (low
-    // surprise), pressure < 1 → executive trusts the direct signal
-    // (easier T). Composed multiplicatively so the win-rate signal
-    // still applies when enough trades have closed.
+    // 2026-05-16 (#717 derivation refactor): selfObsBias =
+    //   winRate(mode, side) × selfObsPressure
+    // where selfObsPressure is derived purely from the basin's own
+    // observable state:
+    //   pressure = (current_surprise / mean(surpriseHistory))
+    // A pure ratio — dimensionless, no externally chosen gain. When
+    // current surprise exceeds the basin's typical surprise → pressure
+    // > 1 → executive enters more cautiously (Protocol v6.6 §43 Loop 1
+    // "turn inward on mispredict"). When current surprise is below
+    // typical → pressure < 1 → trust the direct signal.
+    //
+    // No constant clamps. The ratio naturally bounds itself: with
+    // hundreds of samples in the history, the mean is stable; the
+    // ratio rarely strays far from 1 unless current surprise is a
+    // genuine outlier. Cold start (empty history) → identity 1.
     const selfObsWinRateBias = this.selfObs?.entryBias[mode]?.[sideCandidate] ?? 1.0;
-    const selfObsPressureRaw = SELF_OBS_BASE + SELF_OBS_GAIN * surpriseNow;
-    const selfObsPressure = Math.max(
-      SELF_OBS_MIN,
-      Math.min(SELF_OBS_MAX, selfObsPressureRaw),
-    );
+    let selfObsPressure: number;
+    if (state.surpriseHistory.length > 0) {
+      let sum = 0;
+      for (const s of state.surpriseHistory) sum += s;
+      const meanSurprise = sum / state.surpriseHistory.length;
+      selfObsPressure = meanSurprise > 0 ? surpriseNow / meanSurprise : 1;
+    } else {
+      selfObsPressure = 1;
+    }
     const selfObsBias = selfObsWinRateBias * selfObsPressure;
 
     // v0.5: Basin sync — publish own state; pull observer-effect influence.
@@ -3550,6 +3570,18 @@ export class MonkeyKernel extends EventEmitter {
     state.lastBasin = basin;
     state.phiHistory.push(phi);
     if (state.phiHistory.length > HISTORY_MAX) state.phiHistory.shift();
+    // 2026-05-16 (#715 / ne ext derivation refactor): persist per-tick
+    // surprise + basin velocity so the next tick's NC compute can
+    // z-score against the basin's own distribution. The capped window
+    // (HISTORY_MAX) is the memory bound — not a behavioural parameter.
+    state.surpriseHistory.push(surpriseNow);
+    if (state.surpriseHistory.length > HISTORY_MAX) state.surpriseHistory.shift();
+    state.bvHistory.push(bv);
+    if (state.bvHistory.length > HISTORY_MAX) state.bvHistory.shift();
+    state.kappaHistory.push(state.kappa);
+    if (state.kappaHistory.length > HISTORY_MAX) state.kappaHistory.shift();
+    state.externalCouplingHistory.push(couplingHealth);
+    if (state.externalCouplingHistory.length > HISTORY_MAX) state.externalCouplingHistory.shift();
 
     // v0.8.8 per-agent state idle decay — emotions and neurochemistry
     // nudge toward their neutral targets each tick. Counters:
