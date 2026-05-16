@@ -1,8 +1,8 @@
 """signal_mapping.py — pure StrategyLoop-output → trading-signal mapping.
 
 Extracted from main.py so the mapping can be unit-tested without
-importing the FastAPI app and the whole ML stack (tensorflow, sklearn,
-ensemble_predictor). These are pure functions — no I/O, no model state.
+importing the FastAPI app. These are pure functions — no I/O, no
+model state.
 
 The output shape must stay compatible with polytrade-be's
 mlPredictionService, which is calibrated against it.
