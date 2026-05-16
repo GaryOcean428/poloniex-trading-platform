@@ -1,34 +1,35 @@
-"""basin_sync_db.py — Postgres adapter for cross-kernel basin sync.
+"""basin_sync_db.py — Redis-bridge adapter for cross-kernel basin sync.
 
 The pure-functional `basin_sync` module is stateless for unit testing;
-this adapter wraps it with read/write against the `monkey_basin_sync`
-table (migration 032). Both the TS and Python Monkey kernels write to
-the same table, enabling cross-process basin observation per Layer 1
-of the dual-kernel consensus architecture (see
-[[polytrade-consensus-architecture]]).
+this adapter wraps it with publish/read against the `monkey_basin_sync`
+table (migration 032). Both the TS and Python Monkey kernels coordinate
+through that table per Layer 1 of the dual-kernel consensus architecture
+(see [[polytrade-consensus-architecture]]).
 
-Flag: `CONSENSUS_CROSS_OBSERVATION_LIVE` — default off.
-  - Writer ALWAYS runs (every tick) so peers are visible in telemetry.
-  - Observer effect (basin pull) only fires when the flag is true.
+ARCHITECTURE (2026-05-16 pivot):
+The original design opened psycopg directly from this process. Under
+FastAPI worker threads sharing memory with TensorFlow / sklearn / cuda
+stubs, psycopg.connect() triggered `free(): invalid pointer` segfaults
+in libpq's C-layer allocator — TF runtime poisons libpq's malloc.
+
+The pivot:
+  - Python WRITES via Redis pub/sub. Payload published to
+    `monkey:basin:sync:writes`. The TS-side
+    `basin_sync_redis_bridge.ts` subscribes and persists via the TS
+    Postgres pool (no TF contamination).
+  - Python READS are a no-op here. Peer state is consumed by the
+    TS-side consensus arbiter (CONSENSUS-9), which already has direct
+    Postgres access. Python doesn't need direct peer access.
+
+Flag: `CONSENSUS_CROSS_OBSERVATION_LIVE` — kept for telemetry parity
+with the previous API. The shadow-pull computation still runs (against
+an empty peer list, so it's a no-op) so callers don't need to change.
 
 QIG purity: read/write only — math stays in `basin_sync.py`. Slerp_sqrt
 preserves Δ⁶³; Fisher-Rao metric throughout.
 
-Fail-soft: any DB error logs at debug and returns the unchanged basin /
-empty peer list. A bad sync never blocks a kernel tick.
-
-CONNECTION DISCIPLINE (2026-05-16 segfault fix):
-The initial implementation opened a fresh `psycopg.connect()` on every
-tick. Under FastAPI worker threads sharing memory with TensorFlow /
-sklearn / cuda stubs, the fresh-per-call connection triggered
-`free(): invalid pointer` segfaults in the C-layer libpq client — the
-TF runtime and libpq's memory allocators interfered when libpq was
-opened/closed repeatedly inside a request thread.
-
-Fix: use a module-level singleton psycopg connection guarded by a
-threading.Lock. One TCP connection, reused across ticks. Reconnects
-lazily on the first call after a connection failure. Same fail-soft
-semantics — a bad sync never blocks a tick.
+Fail-soft: any Redis or import error logs at debug and silently drops
+the write. A bad sync never blocks a kernel tick.
 """
 
 from __future__ import annotations
@@ -36,7 +37,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import threading
 import time
 from typing import Any
 
@@ -48,80 +48,54 @@ from .basin_sync import BasinSyncState, apply_observer_effect
 
 logger = logging.getLogger("monkey_kernel.basin_sync_db")
 
-# Singleton connection — opened lazily on first call, reused across
-# all ticks within a process. Thread-safe via _conn_lock.
-_conn = None  # type: ignore[var-annotated]
-_conn_lock = threading.Lock()
+
+_redis_pub_client = None  # type: ignore[var-annotated]
+BASIN_SYNC_WRITE_CHANNEL = "monkey:basin:sync:writes"
 
 
-def _get_conn():
-    """Return the shared psycopg connection. Lazy-init + auto-reconnect.
-
-    Returns None when DATABASE_URL is unset OR the connection cannot
-    be established (caller treats None as fail-soft no-op).
-
-    IMPORTANT: should ideally be called via warm_connection() at startup
-    BEFORE TensorFlow loads. If first called from a request thread
-    after TF init, psycopg.connect() can segfault due to libpq malloc
-    corruption from TF runtime. warm_connection() makes the FIRST
-    connect happen on the main thread at process startup.
-    """
-    global _conn
-    dsn = os.environ.get("DATABASE_URL")
-    if dsn is None:
+def _get_redis_publisher():
+    """Lazy-init the sync Redis client for basin-sync writes. Returns None
+    if REDIS_URL is unset OR import fails. Safe to call from any thread —
+    redis-py's sync client doesn't share libpq's allocator issue."""
+    global _redis_pub_client
+    if _redis_pub_client is not None:
+        return _redis_pub_client
+    url = os.environ.get("REDIS_URL")
+    if not url:
         return None
-    with _conn_lock:
-        if _conn is not None:
-            # Health check — psycopg connections expose `closed` flag.
-            try:
-                if not _conn.closed:
-                    return _conn
-            except Exception:  # noqa: BLE001
-                pass
-            # Connection is dead — drop and re-init below.
-            try:
-                _conn.close()
-            except Exception:  # noqa: BLE001
-                pass
-            _conn = None
-        try:
-            import psycopg
-            _conn = psycopg.connect(dsn, autocommit=True)
-            return _conn
-        except Exception as err:  # noqa: BLE001
-            logger.debug("[BasinSyncDB] connect failed: %s", err)
-            _conn = None
-            return None
+    try:
+        import redis as redis_sync
+        _redis_pub_client = redis_sync.from_url(url, decode_responses=True)
+        return _redis_pub_client
+    except Exception as err:  # noqa: BLE001
+        logger.debug("[BasinSyncDB] redis publisher init failed: %s", err)
+        return None
 
 
 def warm_connection() -> bool:
-    """Pre-warm the psycopg connection on the calling thread.
+    """No-op under the Redis-bridge architecture. Kept for backward-compat
+    with main.py's lifespan startup hook.
 
-    Call this from FastAPI lifespan startup (main thread) BEFORE TF /
-    sklearn / cuda stubs are loaded. The first psycopg.connect() then
-    happens in a clean malloc context — once the connection exists,
-    subsequent reads/writes from request threads only need to grab the
-    existing connection + execute a cursor, which doesn't trigger the
-    libpq malloc path that TF poisons.
-
-    Returns True if the connection was successfully opened OR was
-    already open. Returns False if DATABASE_URL is unset, the flag is
-    off, or the connect failed.
+    The previous implementation pre-warmed a psycopg connection on the
+    main thread to dodge TF/libpq malloc poisoning. We no longer touch
+    psycopg from this process, so there's nothing to warm. Returns True
+    when the flag is on (so the operator still sees the lifecycle log)
+    and False when the flag is off.
     """
     if not basin_sync_db_live():
         logger.info("[BasinSyncDB] warm_connection skipped — flag off")
         return False
-    conn = _get_conn()
-    if conn is None:
-        logger.warning("[BasinSyncDB] warm_connection failed — DB unreachable or DSN missing")
-        return False
-    logger.info("[BasinSyncDB] warm_connection succeeded — singleton ready on main thread")
+    logger.info(
+        "[BasinSyncDB] warm_connection no-op — using Redis bridge "
+        "(channel=%s)",
+        BASIN_SYNC_WRITE_CHANNEL,
+    )
     return True
 
 
 def cross_observation_live() -> bool:
-    """Default-off flag. When false, peers are visible (writer fires)
-    but the observer effect is NOT applied to the local basin."""
+    """Default-off flag. When false, peers are visible in telemetry but
+    the observer effect is NOT applied to the local basin."""
     return (
         os.environ.get("CONSENSUS_CROSS_OBSERVATION_LIVE", "").strip().lower()
         == "true"
@@ -129,21 +103,12 @@ def cross_observation_live() -> bool:
 
 
 def basin_sync_db_live() -> bool:
-    """Master enable for ALL DB ops in this module. Default OFF.
+    """Master enable for ALL sync ops in this module. Default OFF.
 
-    SEGFAULT GUARD (2026-05-16T14:21Z): even with all consensus flags
-    off, the previous unconditional `write_state` call from tick.py
-    triggered `free(): invalid pointer` segfaults during
-    psycopg.connect() inside a FastAPI request thread sharing memory
-    with TensorFlow + sklearn. The singleton-connection fix in PR #738
-    didn't help because the FIRST connect from the request thread is
-    what segfaults — TF runtime poisons libpq's allocator.
-
-    Until the TF/libpq interaction is properly isolated (e.g. move DB
-    writes to a separate process via redis-mediated queue, or warm
-    the connection at startup before TF loads), this flag must remain
-    off in production. Set MONKEY_PY_BASIN_SYNC_DB_LIVE=true ONLY in
-    environments where TF is not loaded.
+    With the Redis-bridge architecture (2026-05-16 pivot) the segfault
+    risk that previously required this gate is gone, but the flag is
+    kept so the operator retains a single-switch kill if the TS-side
+    bridge mis-behaves (e.g. write storms saturating Postgres).
     """
     return (
         os.environ.get("MONKEY_PY_BASIN_SYNC_DB_LIVE", "").strip().lower()
@@ -162,121 +127,49 @@ def write_state(
     regime_weights: dict[str, float] | None = None,
     neurochemistry: dict[str, float] | None = None,
 ) -> None:
-    """UPSERT this kernel instance's geometric + autonomic state. Fail-soft.
+    """Publish state to Redis for the TS-side bridge to persist. Fail-soft.
 
-    regime_weights + neurochemistry added in CONSENSUS-6 — extended
-    observables per CC red-team refinement #4 so the consensus arbiter
-    sees state-level peer signal, not just basin geometry. Both
-    optional for back-compat; None leaves the column NULL.
+    The TS-side `basin_sync_redis_bridge` subscribes to
+    `BASIN_SYNC_WRITE_CHANNEL`, parses the payload, and upserts into
+    monkey_basin_sync via the TS Postgres pool — which has no TF
+    interference. Same eventual consistency, no segfault risk.
+
+    regime_weights + neurochemistry added in CONSENSUS-6 (extended
+    observables) so the consensus arbiter sees state-level peer signal,
+    not just basin geometry. Both optional for back-compat.
     """
     if not basin_sync_db_live():
         return
-    conn = _get_conn()
-    if conn is None:
+    client = _get_redis_publisher()
+    if client is None:
         return
     try:
-        basin_json = json.dumps([float(x) for x in np.asarray(basin).ravel()])
-        regime_json = json.dumps(regime_weights) if regime_weights else None
-        nc_json = json.dumps(neurochemistry) if neurochemistry else None
-        with _conn_lock:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO monkey_basin_sync
-                        (instance_id, basin, phi, kappa, mode,
-                         drift_from_identity, regime_weights,
-                         neurochemistry, updated_at)
-                    VALUES (%s, %s::jsonb, %s, %s, %s, %s,
-                            %s::jsonb, %s::jsonb, NOW())
-                    ON CONFLICT (instance_id)
-                    DO UPDATE SET
-                        basin = EXCLUDED.basin,
-                        phi = EXCLUDED.phi,
-                        kappa = EXCLUDED.kappa,
-                        mode = EXCLUDED.mode,
-                        drift_from_identity = EXCLUDED.drift_from_identity,
-                        regime_weights = EXCLUDED.regime_weights,
-                        neurochemistry = EXCLUDED.neurochemistry,
-                        updated_at = NOW()
-                    """,
-                    (
-                        instance_id,
-                        basin_json,
-                        float(phi),
-                        float(kappa),
-                        str(mode),
-                        float(drift_from_identity),
-                        regime_json,
-                        nc_json,
-                    ),
-                )
-                # autocommit=True on connection — no explicit commit needed
-    except Exception as err:  # noqa: BLE001 — fail-soft per design
-        logger.debug("[BasinSyncDB] write_state failed: %s", err)
-        # Drop conn so next call re-inits — connection may be poisoned
-        global _conn
-        with _conn_lock:
-            if _conn is conn:
-                try:
-                    _conn.close()
-                except Exception:  # noqa: BLE001
-                    pass
-                _conn = None
+        payload = {
+            "instance_id": instance_id,
+            "basin": [float(x) for x in np.asarray(basin).ravel()],
+            "phi": float(phi),
+            "kappa": float(kappa),
+            "mode": str(mode),
+            "drift_from_identity": float(drift_from_identity),
+            "regime_weights": regime_weights,
+            "neurochemistry": neurochemistry,
+            "at_ms": time.time() * 1000.0,
+        }
+        client.publish(BASIN_SYNC_WRITE_CHANNEL, json.dumps(payload))
+    except Exception as err:  # noqa: BLE001
+        logger.debug("[BasinSyncDB] redis publish failed: %s", err)
 
 
 def read_peers(self_instance_id: str, stale_ms: int = 120_000) -> list[BasinSyncState]:
-    """Read all OTHER instances' rows fresher than `stale_ms`. Fail-soft."""
-    if not basin_sync_db_live():
-        return []
-    conn = _get_conn()
-    if conn is None:
-        return []
-    try:
-        with _conn_lock:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT instance_id, basin, phi, kappa, mode,
-                           drift_from_identity,
-                           EXTRACT(EPOCH FROM updated_at) * 1000 AS updated_at_ms
-                      FROM monkey_basin_sync
-                     WHERE instance_id != %s
-                       AND updated_at > NOW()
-                           - (%s::int * INTERVAL '1 millisecond')
-                    """,
-                    (self_instance_id, int(stale_ms)),
-                )
-                rows = cur.fetchall()
-    except Exception as err:  # noqa: BLE001
-        logger.debug("[BasinSyncDB] read_peers failed: %s", err)
-        # Drop conn so next call re-inits — connection may be poisoned
-        global _conn
-        with _conn_lock:
-            if _conn is conn:
-                try:
-                    _conn.close()
-                except Exception:  # noqa: BLE001
-                    pass
-                _conn = None
-        return []
+    """No-op under the Redis-bridge architecture.
 
-    out: list[BasinSyncState] = []
-    for row in rows:
-        try:
-            inst_id, basin_raw, phi, kappa, mode, drift, upd_ms = row
-            basin = _basin_from_jsonb(basin_raw)
-            out.append(BasinSyncState(
-                instance_id=str(inst_id),
-                basin=basin,
-                phi=float(phi),
-                kappa=float(kappa),
-                mode=str(mode),
-                drift_from_identity=float(drift),
-                updated_at_ms=float(upd_ms),
-            ))
-        except Exception as err:  # noqa: BLE001
-            logger.debug("[BasinSyncDB] row parse failed: %s", err)
-    return out
+    Peer state is consumed by the TS-side consensus arbiter directly
+    from Postgres. Python doesn't read peers — its only obligation is
+    to keep publishing its own state so TS can observe.
+
+    Returns an empty list. Kept so observe_and_pull's API is unchanged.
+    """
+    return []
 
 
 def observe_and_pull(
@@ -288,12 +181,9 @@ def observe_and_pull(
 ) -> tuple[np.ndarray, dict[str, Any]]:
     """Read peers and (if flag is live) pull own basin toward Φ-weighted mean.
 
-    Returns (basin, telemetry). When the flag is off, basin is unchanged
-    but telemetry still reports peer_count + would_have_been_influenced
-    for shadow validation.
-
-    The Φ-weighted SLERP math lives in `basin_sync.apply_observer_effect`
-    (qig-canonical). This function is the DB+flag wrapper.
+    Under the Redis-bridge architecture `read_peers` returns []. The
+    telemetry shape is preserved so the caller in tick.py doesn't need
+    to branch. shadow_pull_fr is only emitted when peers exist.
     """
     peers = read_peers(instance_id, stale_ms=stale_ms)
     flag_live = cross_observation_live()
@@ -309,12 +199,10 @@ def observe_and_pull(
     if not peers:
         return own_basin, telemetry
 
-    # Always compute the shadow result for telemetry, even when the flag
-    # is off — operator can compare "would have pulled to X" against
-    # "kernel actually went to Y" without committing live behavior.
+    # Shadow telemetry: compute the pull even when the flag is off so the
+    # operator can compare "would have pulled to X" against actual basin.
     result = apply_observer_effect(own_basin, own_phi, peers)
     shadow_basin = np.asarray(result["basin"], dtype=np.float64)
-    # Fisher-Rao distance — qig-canonical "how far the pull would take us"
     telemetry["shadow_pull_fr"] = float(fisher_rao_distance(
         np.asarray(own_basin, dtype=np.float64), shadow_basin,
     ))
@@ -324,14 +212,3 @@ def observe_and_pull(
         return shadow_basin, telemetry
 
     return own_basin, telemetry
-
-
-def _basin_from_jsonb(raw: Any) -> np.ndarray:
-    """Decode a basin field. psycopg returns list (jsonb) or str (json)."""
-    if isinstance(raw, list):
-        return np.asarray(raw, dtype=np.float64)
-    if isinstance(raw, str):
-        return np.asarray(json.loads(raw), dtype=np.float64)
-    if isinstance(raw, np.ndarray):
-        return raw.astype(np.float64, copy=False)
-    raise ValueError(f"unrecognized basin payload type: {type(raw).__name__}")

@@ -38,6 +38,7 @@ import { refreshKnownDatabaseCollationVersions } from './scripts/refreshCollatio
 import { runAllMigrations } from './scripts/runMigrations.js';
 import { agentScheduler } from './services/agentScheduler.js';
 import { liveSignalEngine } from './services/liveSignalEngine.js';
+import { initBasinSyncBridge } from './services/monkey/basin_sync_redis_bridge.js';
 import { monkeyKernel, swingMonkey } from './services/monkey/loop.js';
 import paperTradingService from './services/paperTradingService.js';
 import { persistentTradingEngine } from './services/persistentTradingEngine.js';
@@ -488,6 +489,15 @@ server.listen(PORT, '::', async () => {
     });
     swingMonkey.start().catch((err) => {
       logger.error('Failed to start Monkey.Swing kernel:', err);
+    });
+
+    // CONSENSUS-1 Redis-bridge: subscribe to the Python kernel's basin
+    // writes and proxy them into monkey_basin_sync. The Py worker can't
+    // safely open psycopg in-process (TF poisons libpq malloc), so it
+    // publishes JSON to Redis and we persist on its behalf. Gated by
+    // CONSENSUS_BASIN_SYNC_BRIDGE_LIVE — no-op when unset.
+    initBasinSyncBridge().catch((err) => {
+      logger.error('Failed to start basin-sync Redis bridge:', err);
     });
   }
 
