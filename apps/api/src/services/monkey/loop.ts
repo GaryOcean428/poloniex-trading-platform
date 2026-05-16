@@ -2580,6 +2580,102 @@ export class MonkeyKernel extends EventEmitter {
       });
     } catch { /* fail-soft */ }
 
+    // ── Consensus arbiter cutover (Consensus Layer 7, CONSENSUS-9) ──
+    // CONSENSUS_EXECUTOR_LIVE flag-gated. When live, the consensus
+    // arbiter (consensus_arbiter.ts) is consulted with own + peer
+    // proposals + regime-conditional WR matrix. The consensus output
+    // overrides the raw K-kernel action/size for execution. When off,
+    // raw K-kernel action is used (current behaviour preserved).
+    // Default off. See [[polytrade-consensus-architecture]].
+    let consensusOverride: {
+      action: string; side: 'long' | 'short' | null;
+      size_usdt: number; leverage: number; reason: string;
+      verdict: string;
+    } | null = null;
+    if (process.env.CONSENSUS_EXECUTOR_LIVE === 'true') {
+      try {
+        const { computeAndLogConsensus } = await import('./consensus_arbiter.js');
+        const { getRecentPeerProposal } = await import('./proposal_bus.js');
+        const { getWRMatrix } = await import('./wr_matrix.js');
+        const { getRetrospectiveShadowMatrix, mergeRetrospective } = await import('./wr_retrospective.js');
+        const { parseRegimeFromReason } = await import('./wr_matrix.js');
+
+        const peer = getRecentPeerProposal(symbol, this.instanceId);
+        const realMatrix = await getWRMatrix({});
+        const retroMatrix = await getRetrospectiveShadowMatrix({});
+        const mergedMatrix = mergeRetrospective(realMatrix, retroMatrix);
+
+        const ownProposalForConsensus = {
+          instance_id: this.instanceId,
+          symbol,
+          tick_id: `${symbol}|${state.sessionTicks}`,
+          proposed_action: (action === 'enter_long' || action === 'pyramid_long') ? 'enter_long' as const
+            : action === 'enter_short' ? 'enter_short' as const
+            : (action.startsWith('exit') ? 'exit' as const : 'hold' as const),
+          side: (action === 'enter_long' || action === 'pyramid_long') ? 'long' as const
+            : (action === 'enter_short' || action === 'pyramid_short') ? 'short' as const : null,
+          lane: 'swing',
+          size_usdt: Number(size.value ?? 0),
+          leverage: Number(leverage.value ?? 1),
+          entry_threshold: Number(entryThr.value ?? 0.5),
+          conviction: Number(entryThr.value ?? 0.5),
+          basin_signature: Array.from(basin.slice(0, 8)).map((x) => Number(x)),
+          phi: Number(phi),
+          kappa: Number(state.kappa),
+          regime_label: null,
+          mode: String(mode),
+          at_ms: Date.now(),
+          engine_version: 'v0.8-ts',
+        };
+
+        // Regime resolution — prefer reason-embedded label (matches
+        // wr_matrix shape); fall back to 'unknown'.
+        const regimeNow = parseRegimeFromReason(reason);
+
+        const consensus = computeAndLogConsensus({
+          ownProposal: ownProposalForConsensus,
+          peerProposal: peer,
+          wrMatrix: mergedMatrix,
+          selfEngineType: 'monkey-k',
+          peerEngineType: 'py-retrospective',
+          regime: regimeNow,
+          bankSize: bankSize ?? 0,
+          consecutiveLosses: { self: 0, peer: 0 },  // wired via CB state in follow-up
+          cumulativeLoss: { self: 0, peer: 0 },     // wired via CB state in follow-up
+        });
+
+        consensusOverride = {
+          action: consensus.action,
+          side: consensus.side,
+          size_usdt: consensus.size_usdt,
+          leverage: consensus.leverage,
+          reason: consensus.reason,
+          verdict: consensus.verdict,
+        };
+      } catch (err) {
+        logger.debug('[Consensus] arbiter computation failed; using raw K-kernel action', {
+          symbol, err: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    // Apply consensus override when live and produced. Original action /
+    // size remain available for logging via the override telemetry.
+    if (consensusOverride !== null) {
+      (derivation as Record<string, unknown>).consensus = consensusOverride;
+      // Replace action + size with consensus output. Note: side flips
+      // require flipping the action string too (enter_long ↔ enter_short).
+      if (consensusOverride.action === 'hold') {
+        action = 'hold';
+        size.value = 0;
+      } else if (consensusOverride.action === 'enter_long' || consensusOverride.action === 'enter_short') {
+        action = consensusOverride.action;
+        size.value = consensusOverride.size_usdt;
+        leverage.value = consensusOverride.leverage;
+      }
+      reason += ` | consensus.${consensusOverride.verdict}`;
+    }
+
     if (process.env.MONKEY_EXECUTE === 'true') {
       if ((action === 'enter_long' || action === 'enter_short') && size.value > 0) {
         // v0.8.7 kill switch — pause new entries (including DCA pyramids)
