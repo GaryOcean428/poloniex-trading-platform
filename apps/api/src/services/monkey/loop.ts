@@ -578,6 +578,17 @@ const BUS_RING_CAP = 32;
  *  so 0.05 → resets on ΔΦ ≥ 0.025 (large basin integration jumps). */
 const NOVELTY_SURPRISE_THRESHOLD = 0.05;
 
+/** 2026-05-16 (#717): per-tick self-observation pressure shape constants.
+ *  pressure = clip(SELF_OBS_BASE + SELF_OBS_GAIN * surprise, MIN, MAX).
+ *  At surprise=0 → 1.00 (neutral); at surprise=0.5 → 1.25; ceiling
+ *  at SELF_OBS_MAX. Composed multiplicatively with the per-(mode, side)
+ *  win-rate entryBias so both the live miss signal and the historical
+ *  win-rate inform the executive's T computation. */
+const SELF_OBS_BASE = 1.0;
+const SELF_OBS_GAIN = 0.5;
+const SELF_OBS_MIN = 0.70;
+const SELF_OBS_MAX = 1.30;
+
 /**
  * MonkeyKernel — the top-level kernel that ticks Monkey.
  *
@@ -1577,7 +1588,24 @@ export class MonkeyKernel extends EventEmitter {
         symbol, basinDir, tapeTrend, direction, wantedShort: true,
       });
     }
-    const selfObsBias = this.selfObs?.entryBias[mode]?.[sideCandidate] ?? 1.0;
+    // 2026-05-16 (#717): selfObsBias = winRate(mode, side) × per-tick
+    // self-observation pressure. The winRate component (entryBias) was
+    // already wired but only updates on a 5-min refresh from closed
+    // trades; under low trade flow it pinned at the neutral 1.00
+    // default. The per-tick pressure adds the live miss/surprise signal
+    // per Protocol v6.6 §43 Loop 1: when the kernel mispredicts (high
+    // surprise), pressure > 1 → executive enters more cautiously
+    // (harder T threshold); when prediction confidence is high (low
+    // surprise), pressure < 1 → executive trusts the direct signal
+    // (easier T). Composed multiplicatively so the win-rate signal
+    // still applies when enough trades have closed.
+    const selfObsWinRateBias = this.selfObs?.entryBias[mode]?.[sideCandidate] ?? 1.0;
+    const selfObsPressureRaw = SELF_OBS_BASE + SELF_OBS_GAIN * surpriseNow;
+    const selfObsPressure = Math.max(
+      SELF_OBS_MIN,
+      Math.min(SELF_OBS_MAX, selfObsPressureRaw),
+    );
+    const selfObsBias = selfObsWinRateBias * selfObsPressure;
 
     // v0.5: Basin sync — publish own state; pull observer-effect influence.
     const syncPublish = this.basinSync.update({
