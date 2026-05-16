@@ -489,10 +489,14 @@ export class MonkeyKernel extends EventEmitter {
   /**
    * Per-symbol MTF bootstrap status — keyed by symbol, valued by the
    * last attempt's per-TF outcome. The retry hook in processSymbol
-   * re-runs only the timeframes that didn't succeed. Without this,
-   * silent fetch / synthesis failures left MTF L cold for the entire
-   * session and the agreement filter (the loudest noise-suppression
-   * in the stack) never fired.
+   * uses this status to detect partial / failed bootstrap attempts and
+   * schedule another bootstrap for the symbol. This tracks which TFs
+   * were cold or failed, even though the current bootstrap path
+   * re-runs the symbol-level bootstrap rather than selectively
+   * fetching only failed timeframes. Without this status, silent
+   * fetch / synthesis failures left MTF L cold for the entire session
+   * and the agreement filter (the loudest noise-suppression in the
+   * stack) never fired.
    *
    * 2026-05-16: live tape showed `[MTF-L] decision agreement: 0/3,
    * perTf: 15m:cold, 1h:cold, 4h:cold` across whole sessions.
