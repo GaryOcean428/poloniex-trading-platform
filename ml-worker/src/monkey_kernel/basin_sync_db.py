@@ -52,22 +52,34 @@ def write_state(
     kappa: float,
     mode: str,
     drift_from_identity: float,
+    regime_weights: dict[str, float] | None = None,
+    neurochemistry: dict[str, float] | None = None,
 ) -> None:
-    """UPSERT this kernel instance's geometric state. Fail-soft."""
+    """UPSERT this kernel instance's geometric + autonomic state. Fail-soft.
+
+    regime_weights + neurochemistry added in CONSENSUS-6 — extended
+    observables per CC red-team refinement #4 so the consensus arbiter
+    sees state-level peer signal, not just basin geometry. Both
+    optional for back-compat; None leaves the column NULL.
+    """
     dsn = os.environ.get("DATABASE_URL")
     if dsn is None:
         return
     try:
         import psycopg
         basin_json = json.dumps([float(x) for x in np.asarray(basin).ravel()])
+        regime_json = json.dumps(regime_weights) if regime_weights else None
+        nc_json = json.dumps(neurochemistry) if neurochemistry else None
         with psycopg.connect(dsn) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
                     INSERT INTO monkey_basin_sync
                         (instance_id, basin, phi, kappa, mode,
-                         drift_from_identity, updated_at)
-                    VALUES (%s, %s::jsonb, %s, %s, %s, %s, NOW())
+                         drift_from_identity, regime_weights,
+                         neurochemistry, updated_at)
+                    VALUES (%s, %s::jsonb, %s, %s, %s, %s,
+                            %s::jsonb, %s::jsonb, NOW())
                     ON CONFLICT (instance_id)
                     DO UPDATE SET
                         basin = EXCLUDED.basin,
@@ -75,6 +87,8 @@ def write_state(
                         kappa = EXCLUDED.kappa,
                         mode = EXCLUDED.mode,
                         drift_from_identity = EXCLUDED.drift_from_identity,
+                        regime_weights = EXCLUDED.regime_weights,
+                        neurochemistry = EXCLUDED.neurochemistry,
                         updated_at = NOW()
                     """,
                     (
@@ -84,6 +98,8 @@ def write_state(
                         float(kappa),
                         str(mode),
                         float(drift_from_identity),
+                        regime_json,
+                        nc_json,
                     ),
                 )
                 conn.commit()
