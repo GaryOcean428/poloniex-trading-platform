@@ -74,6 +74,16 @@ class GovernanceBuffer:
     warp_regime: deque[str] = field(default_factory=lambda: deque(maxlen=200))
     gr_direction: deque[str] = field(default_factory=lambda: deque(maxlen=200))
     regime_confidence: deque[str] = field(default_factory=lambda: deque(maxlen=200))
+    # Diagnostic (2026-05-17): the raw (h, J) lattice inputs that
+    # qig_warp.regime_constants was called with. Critical for
+    # diagnosing scale mismatches between market data and qig_warp's
+    # physics-calibrated h_c=3.044J threshold. If h/J consistently
+    # exceeds 3.65 the system pins to DISORDERED regardless of market
+    # activity — operator watches the rolling h, J stats in
+    # warp_telemetry to confirm whether the inputs themselves vary or
+    # whether the qig_warp output is being quantized away.
+    h_input: deque[float] = field(default_factory=lambda: deque(maxlen=200))
+    j_input: deque[float] = field(default_factory=lambda: deque(maxlen=200))
     # Unbounded monotonic tick counter (2026-05-17). The rolling buffers
     # above cap at ``capacity`` so ``len(deque)`` plateaus at 200 once
     # full and can no longer signal freshness — external freshness
@@ -92,6 +102,8 @@ class GovernanceBuffer:
         warp_regime: Optional[str] = None,
         gr_direction: Optional[str] = None,
         regime_confidence: Optional[str] = None,
+        h_input: Optional[float] = None,
+        j_input: Optional[float] = None,
     ) -> None:
         self.tick_count_total += 1
         self.raw_drift_pct.append(float(raw_drift_pct))
@@ -108,6 +120,10 @@ class GovernanceBuffer:
             self.gr_direction.append(str(gr_direction))
         if regime_confidence is not None:
             self.regime_confidence.append(str(regime_confidence))
+        if h_input is not None:
+            self.h_input.append(float(h_input))
+        if j_input is not None:
+            self.j_input.append(float(j_input))
 
 
 @dataclass
@@ -247,6 +263,51 @@ def run_governance_check(buf: GovernanceBuffer) -> GovernanceReport:
             conf_dist[label] = conf_dist.get(label, 0) + 1
         warp_telemetry["regime_confidence_distribution"] = conf_dist
 
+    # Diagnostic add (2026-05-17): raw (h, J) lattice inputs +
+    # their ratio h/J. If h/J consistently exceeds 3.65 the qig_warp
+    # classifier pins to DISORDERED; if h/J stddev is tiny the inputs
+    # themselves are stuck (not just the regime quantization). h_j_ratio
+    # makes the "do we sit above the h_c threshold" question one number
+    # the operator can read.
+    h_vals = list(buf.h_input)
+    j_vals = list(buf.j_input)
+    if h_vals:
+        h_arr = _np.asarray(h_vals, dtype=_np.float64)
+        warp_telemetry["h_input"] = {
+            "mean": float(h_arr.mean()),
+            "stddev": float(h_arr.std()) if h_arr.size > 1 else 0.0,
+            "min": float(h_arr.min()),
+            "max": float(h_arr.max()),
+            "samples": int(h_arr.size),
+        }
+    if j_vals:
+        j_arr = _np.asarray(j_vals, dtype=_np.float64)
+        warp_telemetry["j_input"] = {
+            "mean": float(j_arr.mean()),
+            "stddev": float(j_arr.std()) if j_arr.size > 1 else 0.0,
+            "min": float(j_arr.min()),
+            "max": float(j_arr.max()),
+            "samples": int(j_arr.size),
+        }
+    if h_vals and j_vals and len(h_vals) == len(j_vals):
+        ratios = []
+        for h_v, j_v in zip(h_vals, j_vals):
+            if j_v > 1e-12:
+                ratios.append(h_v / j_v)
+        if ratios:
+            r_arr = _np.asarray(ratios, dtype=_np.float64)
+            warp_telemetry["h_j_ratio"] = {
+                "mean": float(r_arr.mean()),
+                "stddev": float(r_arr.std()) if r_arr.size > 1 else 0.0,
+                "min": float(r_arr.min()),
+                "max": float(r_arr.max()),
+                "samples": int(r_arr.size),
+                # h_c=3.044 for 2D; DISORDERED above 1.2*h_c=3.65
+                "above_disordered_threshold_frac": float(
+                    sum(1 for r in ratios if r > 3.653) / len(ratios)
+                ),
+            }
+
     return GovernanceReport(
         available=_GOVERNANCE_AVAILABLE,
         sample_count=n,
@@ -276,6 +337,8 @@ def record_tick(
     warp_regime: Optional[str] = None,
     gr_direction: Optional[str] = None,
     regime_confidence: Optional[str] = None,
+    h_input: Optional[float] = None,
+    j_input: Optional[float] = None,
 ) -> None:
     """Record one tick into the rolling governance buffer.
 
@@ -285,6 +348,11 @@ def record_tick(
     forecast_horizons.compute_forecast) supply them per tick so the
     /governance/status report can display the rolling distribution
     alongside the existing distributional-bias detectors.
+
+    Diagnostic add (2026-05-17): h_input / j_input let the operator
+    see the raw lattice inputs qig_warp was called with — surfaces
+    scale-mismatch issues where h/J consistently exceeds 3.65 and
+    pins the regime to DISORDERED regardless of market activity.
     """
     _buffer.record(
         raw_drift_pct=raw_drift_pct,
@@ -295,6 +363,8 @@ def record_tick(
         warp_regime=warp_regime,
         gr_direction=gr_direction,
         regime_confidence=regime_confidence,
+        h_input=h_input,
+        j_input=j_input,
     )
 
 

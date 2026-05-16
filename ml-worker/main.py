@@ -322,6 +322,8 @@ def _record_warp_telemetry_for_tick(
             warp_regime=warp_reg,
             gr_direction=gr_dir,
             regime_confidence=rc_conf,
+            h_input=h_value,
+            j_input=j_value,
         )
     except Exception as exc:  # noqa: BLE001 — telemetry must not break /ml/predict
         logger.debug("[mig-5] observable_governance.record_tick failed: %s", exc)

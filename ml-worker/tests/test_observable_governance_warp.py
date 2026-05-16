@@ -162,3 +162,85 @@ class TestTickCountTotalFreshness:
         report = og.report_as_dict()
         assert report["tick_count_total"] == 0
         assert report["sample_count"] == 0
+
+
+class TestHJDiagnosticSurface:
+    """Regression: 2026-05-17T20:24Z escalation surfaced mono-DISORDERED
+    pinned for 80 minutes. To diagnose whether the cause is (a) genuine
+    extended chop, (b) identical (h,J) inputs across ticks, or (c)
+    qig_warp output being quantized away despite varied inputs, the
+    operator needs the rolling (h, J) input stats. These tests verify
+    that surface."""
+
+    def test_h_j_inputs_recorded_and_surfaced(self) -> None:
+        og._buffer = og.GovernanceBuffer(capacity=200)
+        # 10 ticks with varying h, J landing above the DISORDERED threshold
+        # (h/J > 3.65 for all). All would classify as DISORDERED.
+        for i in range(10):
+            og.record_tick(
+                raw_drift_pct=0.001,
+                signal="HOLD",
+                regime="dissolver",
+                bridge_exponent=0.38,
+                screening_length=0.784,
+                warp_regime="disordered",
+                h_input=3.5 + 0.1 * i,
+                j_input=0.05 + 0.005 * i,
+            )
+        report = og.report_as_dict()
+        wt = report["warp_telemetry"]
+        assert "h_input" in wt
+        assert wt["h_input"]["samples"] == 10
+        assert wt["h_input"]["min"] == pytest.approx(3.5)
+        assert wt["h_input"]["max"] == pytest.approx(4.4)
+        assert wt["h_input"]["stddev"] > 0
+        assert "j_input" in wt
+        assert wt["j_input"]["samples"] == 10
+        # h/J ratio
+        assert "h_j_ratio" in wt
+        # All 10 ratios > 3.65 (above DISORDERED threshold)
+        assert wt["h_j_ratio"]["above_disordered_threshold_frac"] == pytest.approx(1.0)
+        assert wt["h_j_ratio"]["min"] > 3.653
+
+    def test_h_j_diagnostic_detects_identical_inputs(self) -> None:
+        """If the same (h, J) is recorded 20 times, stddev == 0 — that
+        proves the inputs are stuck, not just the regime quantization."""
+        og._buffer = og.GovernanceBuffer(capacity=200)
+        for _ in range(20):
+            og.record_tick(
+                raw_drift_pct=0.001,
+                signal="HOLD",
+                regime="dissolver",
+                warp_regime="disordered",
+                bridge_exponent=0.38,
+                screening_length=0.784,
+                h_input=3.5,
+                j_input=0.5,
+            )
+        report = og.report_as_dict()
+        wt = report["warp_telemetry"]
+        assert wt["h_input"]["stddev"] == 0.0
+        assert wt["j_input"]["stddev"] == 0.0
+        assert wt["h_j_ratio"]["stddev"] == 0.0
+        assert wt["h_j_ratio"]["mean"] == pytest.approx(7.0)
+
+    def test_h_j_diagnostic_below_threshold_frac(self) -> None:
+        """When h/J straddles the DISORDERED threshold, the fraction
+        above shows it. Validates the threshold computation."""
+        og._buffer = og.GovernanceBuffer(capacity=200)
+        # 4 ticks above 3.65 + 6 ticks below = 0.4
+        for h, j in [(4.0, 1.0), (5.0, 1.0), (10.0, 1.0), (4.0, 1.0)]:
+            og.record_tick(
+                raw_drift_pct=0.001, signal="HOLD", regime="dissolver",
+                bridge_exponent=0.38, screening_length=0.784, warp_regime="disordered",
+                h_input=h, j_input=j,
+            )
+        for h, j in [(1.0, 1.0), (2.0, 1.0), (2.5, 1.0), (0.5, 1.0), (1.5, 1.0), (3.0, 1.0)]:
+            og.record_tick(
+                raw_drift_pct=0.001, signal="HOLD", regime="creator",
+                bridge_exponent=0.86, screening_length=0.618, warp_regime="critical",
+                h_input=h, j_input=j,
+            )
+        report = og.report_as_dict()
+        wt = report["warp_telemetry"]
+        assert wt["h_j_ratio"]["above_disordered_threshold_frac"] == pytest.approx(0.4)
