@@ -17,7 +17,13 @@
  * Pure compute given OHLCV inputs; one I/O call (Poloniex public
  * candles endpoint) at the top.
  */
-import { setBootstrapHistory, type MTFState, type TimeframeLabel } from './mtfLClassifier.js';
+import {
+  DEFAULT_TIMEFRAMES,
+  setBootstrapHistory,
+  type MTFState,
+  type TimeframeConfig,
+  type TimeframeLabel,
+} from './mtfLClassifier.js';
 import { perceive } from './perception.js';
 import poloniexFuturesService from '../poloniexFuturesService.js';
 import { logger } from '../../utils/logger.js';
@@ -40,6 +46,7 @@ interface OHLCVCandle {
  *  the warmup minimum (480 + 120 horizon = 600) so the classifier
  *  is warm immediately at startup. */
 const BOOTSTRAP_CANDLE_COUNT = 700;
+const PERCEIVE_WINDOW = 50;
 
 /** Poloniex candle resolution strings keyed by our timeframe label.
  *  These map to the granularity the exchange provides; we DO NOT
@@ -78,6 +85,29 @@ export interface BootstrapSymbolStatus {
   allSucceeded: boolean;
 }
 
+/** Keep bootstrap warm-threshold logic aligned with mtfLClassifier's
+ *  warm gate (hist.length >= 480 + horizon). */
+function minBasinsNeededForTf(
+  label: TimeframeLabel,
+  timeframes: readonly TimeframeConfig[] = DEFAULT_TIMEFRAMES,
+): number {
+  const tf = timeframes.find((t) => t.label === label);
+  if (!tf) {
+    logger.warn('[MTF-bootstrap] timeframe config missing; using fallback horizon', {
+      label, fallbackHorizon: 120,
+    });
+  }
+  return 480 + (tf?.config.horizon ?? 120);
+}
+
+/** Raw candles needed so synthesised basins can meet warm threshold. */
+export function bootstrapMinCandlesNeeded(
+  label: TimeframeLabel,
+  timeframes: readonly TimeframeConfig[] = DEFAULT_TIMEFRAMES,
+): number {
+  return PERCEIVE_WINDOW + minBasinsNeededForTf(label, timeframes);
+}
+
 /** Pull OHLCV at the timeframe's resolution and synthesise basins
  *  for the bootstrap. Each candle becomes one basin via the same
  *  perceive() the live loop uses; the sliding-window context for
@@ -91,26 +121,28 @@ export interface BootstrapSymbolStatus {
 export async function bootstrapMTFForSymbol(
   symbol: string,
   state: MTFState,
+  labels: readonly TimeframeLabel[] = ['15m', '1h', '4h'],
 ): Promise<BootstrapSymbolStatus> {
   const startedAtMs = Date.now();
   const perTimeframe: BootstrapTimeframeStatus[] = [];
-  for (const label of ['15m', '1h', '4h'] as const) {
+  for (const label of labels) {
     try {
       const interval = POLONIEX_INTERVAL_FOR_TF[label];
+      const minCandlesNeeded = bootstrapMinCandlesNeeded(label);
       const candles = (await poloniexFuturesService.getHistoricalData(
         symbol,
         interval,
         BOOTSTRAP_CANDLE_COUNT,
       )) as OHLCVCandle[];
-      if (!Array.isArray(candles) || candles.length < 100) {
+      if (!Array.isArray(candles) || candles.length < minCandlesNeeded) {
         logger.warn('[MTF-bootstrap] insufficient OHLCV from exchange', {
-          symbol, label, got: candles?.length ?? 0,
+          symbol, label, got: candles?.length ?? 0, need: minCandlesNeeded,
         });
         perTimeframe.push({
           label,
           status: 'insufficient_candles',
           basinsPopulated: 0,
-          errorMessage: `got ${candles?.length ?? 0} candles (need ≥ 100)`,
+          errorMessage: `got ${candles?.length ?? 0} candles (need ≥ ${minCandlesNeeded})`,
         });
         continue;
       }
@@ -118,7 +150,6 @@ export async function bootstrapMTFForSymbol(
       // (matches the live perceive call's input shape). Skip the
       // first 50 candles since they don't have a full lookback.
       const basins: import('./basin.js').Basin[] = [];
-      const PERCEIVE_WINDOW = 50;
       for (let i = PERCEIVE_WINDOW; i < candles.length; i++) {
         const window = candles.slice(i - PERCEIVE_WINDOW, i + 1);
         try {
@@ -156,6 +187,19 @@ export async function bootstrapMTFForSymbol(
           status: 'synthesis_empty',
           basinsPopulated: 0,
           errorMessage: 'perceive() failed on every candle',
+        });
+        continue;
+      }
+      const minBasinsNeeded = minBasinsNeededForTf(label);
+      if (basins.length < minBasinsNeeded) {
+        logger.warn('[MTF-bootstrap] insufficient synthesized basins', {
+          symbol, label, got: basins.length, need: minBasinsNeeded,
+        });
+        perTimeframe.push({
+          label,
+          status: 'insufficient_candles',
+          basinsPopulated: basins.length,
+          errorMessage: `synthesized ${basins.length} basins (need ≥ ${minBasinsNeeded})`,
         });
         continue;
       }

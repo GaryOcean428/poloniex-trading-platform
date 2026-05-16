@@ -774,6 +774,17 @@ export class MonkeyKernel extends EventEmitter {
     const retryAt = this.mtfBootstrapRetryAtMs.get(symbol);
     if (retryAt === undefined) return;          // never bootstrapped — handled by run-on-startup
     if (Date.now() < retryAt) return;            // backoff still running
+    const previousStatus = this.mtfBootstrapStatus.get(symbol);
+    const labelsToRetry = previousStatus
+      ? previousStatus.perTimeframe
+          .filter((p) => p.status !== 'success')
+          .map((p) => p.label)
+      : undefined;
+    if (labelsToRetry && labelsToRetry.length === 0) {
+      this.mtfBootstrapRetryAtMs.delete(symbol);
+      this.mtfBootstrapLastDelayMs.delete(symbol);
+      return;
+    }
     const state = this.symbolStates.get(symbol);
     if (!state) {
       this.mtfBootstrapRetryAtMs.delete(symbol);
@@ -782,7 +793,8 @@ export class MonkeyKernel extends EventEmitter {
     }
     try {
       const { bootstrapMTFForSymbol } = await import('./mtfBootstrap.js');
-      const status = await bootstrapMTFForSymbol(symbol, state.mtfState);
+      const retryStatus = await bootstrapMTFForSymbol(symbol, state.mtfState, labelsToRetry);
+      const status = this.mergeMTFBootstrapStatus(previousStatus, retryStatus);
       this.mtfBootstrapStatus.set(symbol, status);
       if (status.allSucceeded) {
         logger.info('[MTF-bootstrap] retry success', { symbol });
@@ -817,6 +829,40 @@ export class MonkeyKernel extends EventEmitter {
         MonkeyKernel.MTF_BOOTSTRAP_MAX_RETRY_MS,
       );
     }
+  }
+
+  /** Merge a subset retry result into prior full per-TF status. */
+  private mergeMTFBootstrapStatus(
+    previous: import('./mtfBootstrap.js').BootstrapSymbolStatus | undefined,
+    retry: import('./mtfBootstrap.js').BootstrapSymbolStatus,
+  ): import('./mtfBootstrap.js').BootstrapSymbolStatus {
+    if (!previous) return retry;
+    const orderedLabels: Array<import('./mtfLClassifier.js').TimeframeLabel> = [];
+    const mergedByLabel = new Map<
+      import('./mtfLClassifier.js').TimeframeLabel,
+      import('./mtfBootstrap.js').BootstrapTimeframeStatus
+    >();
+    for (const p of previous.perTimeframe) {
+      orderedLabels.push(p.label);
+      mergedByLabel.set(p.label, p);
+    }
+    for (const p of retry.perTimeframe) {
+      if (!orderedLabels.includes(p.label)) {
+        orderedLabels.push(p.label);
+      }
+      mergedByLabel.set(p.label, p);
+    }
+    // Safe non-null assertion: orderedLabels is populated from keys that
+    // are always inserted into mergedByLabel in the loops above.
+    const perTimeframe = orderedLabels.map((label) => mergedByLabel.get(label)!);
+    const allSucceeded = perTimeframe.length > 0 && perTimeframe.every((p) => p.status === 'success');
+    return {
+      symbol: retry.symbol,
+      startedAtMs: retry.startedAtMs,
+      finishedAtMs: retry.finishedAtMs,
+      perTimeframe,
+      allSucceeded,
+    };
   }
 
   /** Schedule the next bootstrap retry attempt for ``symbol``.

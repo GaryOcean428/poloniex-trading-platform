@@ -49,17 +49,19 @@ describe('bootstrapMTFForSymbol — status reporting', () => {
     expect(status.perTimeframe.every((p) => p.basinsPopulated > 0)).toBe(true);
   });
 
-  it('reports insufficient_candles when exchange returns < 100', async () => {
+  it('reports insufficient_candles when exchange returns below warm threshold', async () => {
     vi.doMock('../../poloniexFuturesService.js', () => ({
-      default: { getHistoricalData: vi.fn().mockResolvedValue(repeatCandles(50)) },
+      default: { getHistoricalData: vi.fn().mockResolvedValue(repeatCandles(200)) },
     }));
-    const { bootstrapMTFForSymbol } = await import('../mtfBootstrap.js');
+    const { bootstrapMTFForSymbol, bootstrapMinCandlesNeeded } = await import('../mtfBootstrap.js');
     const { newMTFState } = await import('../mtfLClassifier.js');
     const state = newMTFState();
     const status = await bootstrapMTFForSymbol('BTC_USDT_PERP', state);
+    const need15m = bootstrapMinCandlesNeeded('15m');
     expect(status.allSucceeded).toBe(false);
     expect(status.perTimeframe.every((p) => p.status === 'insufficient_candles')).toBe(true);
-    expect(status.perTimeframe[0]!.errorMessage).toContain('got 50 candles');
+    expect(status.perTimeframe[0]!.errorMessage).toContain('got 200 candles');
+    expect(status.perTimeframe[0]!.errorMessage).toContain(`need ≥ ${need15m}`);
   });
 
   it('reports fetch_failed when getHistoricalData throws', async () => {
@@ -109,5 +111,21 @@ describe('bootstrapMTFForSymbol — status reporting', () => {
     expect(status.startedAtMs).toBeGreaterThanOrEqual(before);
     expect(status.finishedAtMs).toBeLessThanOrEqual(after);
     expect(status.finishedAtMs).toBeGreaterThanOrEqual(status.startedAtMs);
+  });
+
+  it('bootstraps only requested timeframes when labels filter is provided', async () => {
+    const stub = vi.fn().mockResolvedValue(repeatCandles(700));
+    vi.doMock('../../poloniexFuturesService.js', () => ({
+      default: { getHistoricalData: stub },
+    }));
+    const { bootstrapMTFForSymbol } = await import('../mtfBootstrap.js');
+    const { newMTFState } = await import('../mtfLClassifier.js');
+    const state = newMTFState();
+    const status = await bootstrapMTFForSymbol('BTC_USDT_PERP', state, ['1h']);
+    expect(status.perTimeframe).toHaveLength(1);
+    expect(status.perTimeframe[0]!.label).toBe('1h');
+    expect(status.perTimeframe[0]!.status).toBe('success');
+    expect(stub).toHaveBeenCalledTimes(1);
+    expect(stub).toHaveBeenCalledWith('BTC_USDT_PERP', '1h', 700);
   });
 });
