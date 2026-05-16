@@ -16,6 +16,19 @@ preserves Δ⁶³; Fisher-Rao metric throughout.
 
 Fail-soft: any DB error logs at debug and returns the unchanged basin /
 empty peer list. A bad sync never blocks a kernel tick.
+
+CONNECTION DISCIPLINE (2026-05-16 segfault fix):
+The initial implementation opened a fresh `psycopg.connect()` on every
+tick. Under FastAPI worker threads sharing memory with TensorFlow /
+sklearn / cuda stubs, the fresh-per-call connection triggered
+`free(): invalid pointer` segfaults in the C-layer libpq client — the
+TF runtime and libpq's memory allocators interfered when libpq was
+opened/closed repeatedly inside a request thread.
+
+Fix: use a module-level singleton psycopg connection guarded by a
+threading.Lock. One TCP connection, reused across ticks. Reconnects
+lazily on the first call after a connection failure. Same fail-soft
+semantics — a bad sync never blocks a tick.
 """
 
 from __future__ import annotations
@@ -23,6 +36,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 import time
 from typing import Any
 
@@ -33,6 +47,45 @@ from qig_core_local.geometry.fisher_rao import fisher_rao_distance
 from .basin_sync import BasinSyncState, apply_observer_effect
 
 logger = logging.getLogger("monkey_kernel.basin_sync_db")
+
+# Singleton connection — opened lazily on first call, reused across
+# all ticks within a process. Thread-safe via _conn_lock.
+_conn = None  # type: ignore[var-annotated]
+_conn_lock = threading.Lock()
+
+
+def _get_conn():
+    """Return the shared psycopg connection. Lazy-init + auto-reconnect.
+
+    Returns None when DATABASE_URL is unset OR the connection cannot
+    be established (caller treats None as fail-soft no-op).
+    """
+    global _conn
+    dsn = os.environ.get("DATABASE_URL")
+    if dsn is None:
+        return None
+    with _conn_lock:
+        if _conn is not None:
+            # Health check — psycopg connections expose `closed` flag.
+            try:
+                if not _conn.closed:
+                    return _conn
+            except Exception:  # noqa: BLE001
+                pass
+            # Connection is dead — drop and re-init below.
+            try:
+                _conn.close()
+            except Exception:  # noqa: BLE001
+                pass
+            _conn = None
+        try:
+            import psycopg
+            _conn = psycopg.connect(dsn, autocommit=True)
+            return _conn
+        except Exception as err:  # noqa: BLE001
+            logger.debug("[BasinSyncDB] connect failed: %s", err)
+            _conn = None
+            return None
 
 
 def cross_observation_live() -> bool:
@@ -62,15 +115,14 @@ def write_state(
     sees state-level peer signal, not just basin geometry. Both
     optional for back-compat; None leaves the column NULL.
     """
-    dsn = os.environ.get("DATABASE_URL")
-    if dsn is None:
+    conn = _get_conn()
+    if conn is None:
         return
     try:
-        import psycopg
         basin_json = json.dumps([float(x) for x in np.asarray(basin).ravel()])
         regime_json = json.dumps(regime_weights) if regime_weights else None
         nc_json = json.dumps(neurochemistry) if neurochemistry else None
-        with psycopg.connect(dsn) as conn:
+        with _conn_lock:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -102,19 +154,27 @@ def write_state(
                         nc_json,
                     ),
                 )
-                conn.commit()
+                # autocommit=True on connection — no explicit commit needed
     except Exception as err:  # noqa: BLE001 — fail-soft per design
         logger.debug("[BasinSyncDB] write_state failed: %s", err)
+        # Drop conn so next call re-inits — connection may be poisoned
+        global _conn
+        with _conn_lock:
+            if _conn is conn:
+                try:
+                    _conn.close()
+                except Exception:  # noqa: BLE001
+                    pass
+                _conn = None
 
 
 def read_peers(self_instance_id: str, stale_ms: int = 120_000) -> list[BasinSyncState]:
     """Read all OTHER instances' rows fresher than `stale_ms`. Fail-soft."""
-    dsn = os.environ.get("DATABASE_URL")
-    if dsn is None:
+    conn = _get_conn()
+    if conn is None:
         return []
     try:
-        import psycopg
-        with psycopg.connect(dsn) as conn:
+        with _conn_lock:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -131,6 +191,15 @@ def read_peers(self_instance_id: str, stale_ms: int = 120_000) -> list[BasinSync
                 rows = cur.fetchall()
     except Exception as err:  # noqa: BLE001
         logger.debug("[BasinSyncDB] read_peers failed: %s", err)
+        # Drop conn so next call re-inits — connection may be poisoned
+        global _conn
+        with _conn_lock:
+            if _conn is conn:
+                try:
+                    _conn.close()
+                except Exception:  # noqa: BLE001
+                    pass
+                _conn = None
         return []
 
     out: list[BasinSyncState] = []
