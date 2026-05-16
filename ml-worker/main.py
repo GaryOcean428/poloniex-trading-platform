@@ -327,19 +327,33 @@ def _handle_predict_strategyloop(payload: dict) -> dict:
         sig["strength"] = round(confidence_raw, 4)
         return sig
 
-    horizon_decay = {"1h": 1.0, "4h": 0.85, "24h": 0.70}
-    result: dict[str, Any] = {}
-    for h, decay in horizon_decay.items():
-        h_conf = int(min(confidence_pct * decay, 95))
-        h_dir = direction if h_conf >= 45 else "NEUTRAL"
-        horizon_hours = {"1h": 1, "4h": 4, "24h": 24}[h]
-        price_change = trend_strength * 0.01 * horizon_hours * (1.0 if h_dir != "BEARISH" else -1.0)
-        predicted_price = round(current_price * (1.0 + price_change), 8)
-        result[h] = {"price": predicted_price, "confidence": h_conf, "direction": h_dir}
+    # MIG-4 (2026-05-16): hardcoded horizon-decay table + linear
+    # extrapolation replaced with qig-warp bridge/screening-derived
+    # forecast horizons (Path 1) wrapped in qig-compute observable
+    # governance (Path 2) — both layers in one PR. Exactly one
+    # WarpBubble.qig_regime call per tick; derivation block in
+    # response so an operator can reproduce the forecast by hand
+    # from a single /ml/predict response.
+    from forecast_horizons import compute_forecast  # noqa: PLC0415
+    bundle = compute_forecast(
+        symbol=symbol,
+        current_price=current_price,
+        direction=direction,
+        confidence_raw=confidence_raw,
+        trend_strength=trend_strength,
+        entropy=float(decision.regime.entropy) if decision.regime else 0.0,
+    )
+    result: dict[str, Any] = {
+        label: hf.to_dict() for label, hf in bundle.horizons.items()
+    }
+    result["derivation"] = bundle.derivation
 
     if action == "predict":
         horizon = payload.get("horizon", "1h")
-        return result.get(horizon, result["1h"])
+        chosen = result.get(horizon, result.get("1h"))
+        if isinstance(chosen, dict):
+            return {**chosen, "derivation": bundle.derivation}
+        return chosen
 
     return result
 
@@ -1403,16 +1417,47 @@ async def monkey_mode_detect(request: Request):
 
 @app.get("/governance/status")
 async def governance_status():
-    """Observable-governance telemetry — signal distribution, drift
-    stats, and any detector violations (AMPLITUDE_COLLAPSE,
-    REGIME_SINGLE, etc.). Per audit P2 2026-04-21. Call from
-    dashboard / alerts to monitor for ensemble bias.
+    """Observable-governance telemetry.
+
+    Surfaces two layers of governance:
+      - ``observable_governance.report_as_dict()`` — the per-tick
+        distributional drift detectors (AMPLITUDE_COLLAPSE,
+        REGIME_SINGLE, OBSERVABLE_PROXY) added in audit P2 2026-04-21.
+      - ``forecast_horizons`` — MIG-4 per-forecast governance applied
+        around qig-warp bridge/screening output via qig-compute's
+        ``check_amplitude`` + ``check_observable_proxy`` +
+        ``check_regime_coverage``. Surfaces the rolling per-symbol
+        regime-h history that ``check_regime_coverage`` is evaluated
+        against on every ``/ml/predict`` call.
+
+    The two layers are complementary: the per-tick stream catches
+    distributional drift over time; the per-forecast governance catches
+    forecast-shape pathologies on each request.
     """
+    out: dict[str, Any] = {}
     try:
         from observable_governance import report_as_dict
-        return report_as_dict()
+        out["observable_governance"] = report_as_dict()
     except Exception as exc:  # noqa: BLE001
-        return {"error": str(exc), "available": False}
+        out["observable_governance"] = {"error": str(exc), "available": False}
+
+    try:
+        from forecast_horizons import (  # noqa: PLC0415
+            _REGIME_HISTORY, _TEMPORAL_SCALE_H, _AMPLITUDE_FLOOR,
+        )
+        out["forecast_governance"] = {
+            "available": True,
+            "temporal_scale_hours": _TEMPORAL_SCALE_H,
+            "amplitude_floor": dict(_AMPLITUDE_FLOOR),
+            "regime_history_per_symbol": {
+                sym: {"len": len(buf), "recent": list(buf)[-10:]}
+                for sym, buf in _REGIME_HISTORY.items()
+            },
+        }
+    except Exception as exc:  # noqa: BLE001
+        out["forecast_governance"] = {"error": str(exc), "available": False}
+
+    return out
 
 
 @app.post("/monkey/perception/perceive")
