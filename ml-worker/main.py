@@ -1,21 +1,19 @@
 """
-ML Worker FastAPI Server
-Serves ML predictions via HTTP and listens on Redis pub/sub.
+ML Worker FastAPI Server.
 
-v0.8.3.5a — unified deploy surface (previously split between
-/kernels/core/health.py and /ml-worker/main.py). /ml/predict now has
-two backends coexisting behind the ROUTE_VERSION env flag:
+Serves predictions via HTTP and listens on Redis pub/sub.
 
-  ROUTE_VERSION=v0.8    → StrategyLoop + RegimeDetector (deterministic,
-                          matches kernels/core/health.py live behavior)
-  anything else / unset → EnsemblePredictor (LSTM + Transformer + GBM
-                          + ARIMA + Prophet; requires trained weights
-                          at ./saved_models/)
+v0.9.0 — MIG-1 (2026-05-16). The TF / sklearn / statsmodels / prophet
+ensemble path has been stripped. ml-worker is now numpy + pandas +
+qig-* + psycopg + fastapi. Prediction routing:
 
-Stage 2 Railway cut-over sets ROUTE_VERSION=v0.8 so live behavior
-is preserved at deploy-flip time. The opposite backend runs in
-shadow mode when ML_PREDICT_SHADOW=true, logging parity diffs to
-/governance/ml-predict-parity for later promotion evidence.
+  /ml/predict {action: qig_analyze} → qig_engine.full_qig_analysis
+  /ml/predict {action: *}           → StrategyLoop (deterministic,
+                                       regime-based)
+
+The legacy ROUTE_VERSION / ML_PREDICT_SHADOW dual-backend selection is
+gone; strategyloop is the sole predictor. Regime classification moves
+to qig_warp.classify_regime in MIG-2.
 """
 
 import asyncio
@@ -39,17 +37,10 @@ from pydantic import BaseModel
 # Ensure src/ is on the path so models + proprietary_core can be imported
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 
-# NOTE: ``ensemble_predictor`` is intentionally NOT imported at module
-# load time. It transitively imports ``models/{LSTM,Transformer,GBM,
-# ARIMA,Prophet}_model.py`` which import ``tensorflow``, ``sklearn``,
-# ``statsmodels``, ``prophet`` and pull in 251 C-extension modules.
-# Those modules corrupt ``libpq``'s ``malloc`` context, so any
-# ``psycopg.connect()`` from this process — from any thread, at any
-# point — segfaults with ``free(): invalid pointer``. Until the
-# ensemble path is actually used (currently dead code in prod:
-# ROUTE_VERSION=v0.8 + ML_PREDICT_SHADOW=false) we keep TF out of the
-# process entirely. ``_get_predictor()`` does the deferred import on
-# first call.
+# MIG-1 (2026-05-16): legacy TF/sklearn/statsmodels/prophet ensemble
+# stripped out. ml-worker is now numpy + pandas + qig-* + psycopg +
+# fastapi. strategyloop is the sole prediction backend. qig_warp
+# canonical regime classifier (replaces RegimeDetector in MIG-2).
 from proprietary_core.regime import RegimeDetector  # noqa: F401  (re-exported via StrategyLoop)
 from proprietary_core.strategy_loop import MarketRegime, StrategyLoop  # noqa: F401  (MarketRegime re-exported for ops)
 from utils.redis_listener import (
@@ -65,24 +56,6 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 # ---------------------------------------------------------------------------
 # Globals
 # ---------------------------------------------------------------------------
-# Lazy singleton — imports + instantiates ``EnsemblePredictor`` on first
-# call. Production sets ROUTE_VERSION=v0.8 + ML_PREDICT_SHADOW=false so
-# the ensemble path is dead code; this accessor is never invoked and TF
-# never loads, keeping ml-worker's process clean for psycopg + qig-*.
-_predictor = None  # type: ignore[var-annotated]
-
-
-def _get_predictor():
-    """Lazy ``EnsemblePredictor`` accessor — defers TF / sklearn /
-    statsmodels / prophet imports until the ensemble path is actually
-    exercised. Returns a process-singleton instance."""
-    global _predictor
-    if _predictor is None:
-        from ensemble_predictor import EnsemblePredictor  # noqa: PLC0415
-        _predictor = EnsemblePredictor()
-    return _predictor
-
-
 REDIS_URL = os.environ.get("REDIS_URL", "")
 
 # ---------------------------------------------------------------------------
@@ -392,100 +365,30 @@ def _handle_predict_strategyloop(payload: dict) -> dict:
 # Shadow-diff ring buffer + parity telemetry (v0.8.3.5a per advisor)
 # ---------------------------------------------------------------------------
 #
-# Every /ml/predict call can optionally fire the OTHER backend in the
-# background (fire-and-forget) and record a parity-diff row. Exposed at
-# /governance/ml-predict-parity on the same pattern as /governance/status
-# from v0.7.11. This is the evidence stream that lets us promote
-# EnsemblePredictor later — or detect it was broken before the swap.
-
-_PARITY_LOG: list[dict[str, Any]] = []
-_PARITY_LOG_MAX = 2_000
-_PARITY_LOG_LOCK = threading.Lock()
-
-
-def _record_parity(row: dict[str, Any]) -> None:
-    with _PARITY_LOG_LOCK:
-        _PARITY_LOG.append(row)
-        if len(_PARITY_LOG) > _PARITY_LOG_MAX:
-            del _PARITY_LOG[: _PARITY_LOG_MAX // 10]
-
-
-def _shadow_compare(payload: dict, live_result: dict, live_backend: str) -> None:
-    """Run the non-live backend in a thread, log the diff. Never raises.
-
-    Called from the /ml/predict path as fire-and-forget. Latency is
-    borne by the worker pool, not the caller.
-    """
-    shadow_backend = "ensemble" if live_backend == "strategyloop" else "strategyloop"
-    started = time.monotonic()
-    shadow_result: dict[str, Any] | None = None
-    err: str | None = None
-    try:
-        if shadow_backend == "ensemble":
-            shadow_result = _handle_predict_ensemble(payload)
-        else:
-            shadow_result = _handle_predict_strategyloop(payload)
-    except Exception as exc:
-        err = f"{type(exc).__name__}: {exc}"
-
-    # For the "signal" action we can diff signal+strength cleanly. For
-    # multi_horizon the shapes differ between backends — just record
-    # both payloads and let downstream tooling compare fields.
-    row = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "action": payload.get("action"),
-        "symbol": payload.get("symbol"),
-        "live_backend": live_backend,
-        "shadow_backend": shadow_backend,
-        "live_signal": live_result.get("signal"),
-        "shadow_signal": (shadow_result or {}).get("signal"),
-        "live_strength": live_result.get("strength"),
-        "shadow_strength": (shadow_result or {}).get("strength"),
-        "shadow_error": err,
-        "shadow_latency_ms": round((time.monotonic() - started) * 1000, 2),
-    }
-    _record_parity(row)
-
-
 # ---------------------------------------------------------------------------
 # Shared prediction logic (dispatcher)
 # ---------------------------------------------------------------------------
 
 def _handle_predict(payload: dict) -> dict:
-    """Route /ml/predict to the selected backend.
+    """Route /ml/predict to the appropriate handler.
 
-    ROUTE_VERSION=v0.8  → StrategyLoop (live-equivalent to
-                          kernels/core). Ensure this is set on
-                          Railway at Stage 2 cut-over time.
-    unset / anything else → EnsemblePredictor (ml-worker's
-                            historical default).
+    qig_analyze   → physics-based market analysis (qig_engine)
+    everything    → strategyloop (deterministic regime-based predictor)
 
-    If ML_PREDICT_SHADOW=true, also fires the OTHER backend in a
-    background thread for parity-diff evidence.
+    MIG-1 (2026-05-16): removed legacy ensemble routing, ROUTE_VERSION
+    backend selection, and ML_PREDICT_SHADOW parity logging. strategyloop
+    is the sole prediction backend; qig_analyze stays on its own
+    code path since it's a fundamentally different computation.
     """
-    backend = "strategyloop" if os.environ.get("ROUTE_VERSION") == "v0.8" else "ensemble"
-    live_result = (
-        _handle_predict_strategyloop(payload) if backend == "strategyloop"
-        else _handle_predict_ensemble(payload)
-    )
-    if os.environ.get("ML_PREDICT_SHADOW") == "true":
-        t = threading.Thread(
-            target=_shadow_compare,
-            args=(payload, live_result, backend),
-            daemon=True, name="ml-predict-shadow",
-        )
-        t.start()
-    return live_result
+    if payload.get("action") == "qig_analyze":
+        return _handle_qig_analyze(payload)
+    return _handle_predict_strategyloop(payload)
 
 
-def _handle_predict_ensemble(payload: dict) -> dict:
-    """Route a prediction request to the ensemble predictor."""
-    action = payload.get("action", "predict")
+def _handle_qig_analyze(payload: dict) -> dict:
+    """QIG physics-based market analysis. Standalone — no ML models."""
     symbol = payload.get("symbol", "UNKNOWN")
     raw_data = payload.get("data", [])
-
-    if action == "health":
-        return {"status": "ok", "models": ["LSTM", "Transformer", "GBM", "ARIMA", "Prophet"]}
 
     data = pd.DataFrame(raw_data)
     if data.empty:
@@ -500,69 +403,36 @@ def _handle_predict_ensemble(payload: dict) -> dict:
     data = data.sort_values("timestamp")
 
     try:
-        predictor = _get_predictor()
-        if action == "train":
-            results = predictor.train_all_models(data, symbol)
-            predictor.save_models("./saved_models")
-            return {"status": "success", "symbol": symbol, "training_results": results, "data_points": len(data)}
+        from qig_engine import full_qig_analysis  # noqa: PLC0415
+    except ImportError:
+        return {"status": "error", "error": "QIG engine not available"}
 
-        # For prediction actions, attempt to load models (no-op if already loaded)
-        try:
-            predictor.load_models("./saved_models")
-        except Exception:
-            pass  # Models may not be trained yet
+    closes = data["close"].tolist()
+    highs = data["high"].tolist()
+    lows = data["low"].tolist()
+    current_price = float(payload.get("current_price", closes[-1] if closes else 0))
+    ml_predictions = payload.get("predictions", {})
 
-        if action == "predict":
-            horizon = payload.get("horizon", "1h")
-            prediction = predictor.predict(data, horizon=horizon)
-            return {"status": "success", "symbol": symbol, **prediction}
-
-        if action == "multi_horizon":
-            predictions = predictor.predict_multi_horizon(data)
-            return {"status": "success", "symbol": symbol, "predictions": predictions}
-
-        if action == "signal":
-            current_price = float(payload.get("current_price", 0))
-            signal = predictor.get_trading_signal(data, current_price)
-            return {"status": "success", "symbol": symbol, **signal}
-
-        if action == "qig_analyze":
-            # QIG physics-based market analysis (no ML models needed)
-            try:
-                from qig_engine import full_qig_analysis, market_state_distance
-            except ImportError:
-                return {"status": "error", "error": "QIG engine not available"}
-
-            closes = data["close"].tolist()
-            highs = data["high"].tolist()
-            lows = data["low"].tolist()
-            current_price = float(payload.get("current_price", closes[-1] if closes else 0))
-
-            # Run full QIG analysis — regime, geometric confidence, convergence
-            # Pass empty predictions dict when no ML predictions available
-            ml_predictions = payload.get("predictions", {})
-            analysis = full_qig_analysis(closes, highs, lows, ml_predictions, current_price)
-
-            return {
-                "status": "success",
-                "symbol": symbol,
-                "regime": analysis.regime.regime.value,
-                "regime_confidence": analysis.regime.confidence,
-                "volatility_ratio": analysis.regime.volatility_ratio,
-                "trend_strength": analysis.regime.trend_strength,
-                "regime_age_bars": analysis.regime.regime_age_bars,
-                "recommended_strategy": analysis.regime.recommended_strategy,
-                "geometric_confidence": analysis.geometric_confidence,
-                "geometric_agreement": analysis.geometric_agreement,
-                "regime_weights": analysis.regime_weights,
-                "qig_available": analysis.qig_available,
-            }
-
-        return {"status": "error", "error": f"Unknown action: {action}"}
-
+    try:
+        analysis = full_qig_analysis(closes, highs, lows, ml_predictions, current_price)
     except Exception as exc:
-        logger.error(f"Prediction error ({action}): {exc}", exc_info=True)
+        logger.error(f"qig_analyze error: {exc}", exc_info=True)
         return {"status": "error", "error": str(exc), "type": type(exc).__name__}
+
+    return {
+        "status": "success",
+        "symbol": symbol,
+        "regime": analysis.regime.regime.value,
+        "regime_confidence": analysis.regime.confidence,
+        "volatility_ratio": analysis.regime.volatility_ratio,
+        "trend_strength": analysis.regime.trend_strength,
+        "regime_age_bars": analysis.regime.regime_age_bars,
+        "recommended_strategy": analysis.regime.recommended_strategy,
+        "geometric_confidence": analysis.geometric_confidence,
+        "geometric_agreement": analysis.geometric_agreement,
+        "regime_weights": analysis.regime_weights,
+        "qig_available": analysis.qig_available,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -571,12 +441,11 @@ def _handle_predict_ensemble(payload: dict) -> dict:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Pre-warm basin_sync_db connection on main thread BEFORE the
-    # server starts handling requests. Avoids the TF/libpq malloc
-    # corruption that segfaults psycopg.connect() when called from a
-    # request thread post-TF-init. See [[polytrade-consensus-architecture]]
-    # incident notes 2026-05-16T14:21Z. No-op when MONKEY_PY_BASIN_SYNC_DB_LIVE
-    # is unset (the master gate flag).
+    # Surface the basin_sync_db wiring state in startup logs. Under the
+    # Redis-bridge architecture the call is a no-op publisher init; the
+    # TS-side bridge persists rows into monkey_basin_sync. With TF gone
+    # (MIG-1) libpq is clean enough that direct psycopg would also work,
+    # but the bridge stays canonical for the consensus pub/sub topology.
     try:
         from monkey_kernel.basin_sync_db import warm_connection as _warm_basin_sync
         _warm_basin_sync()
@@ -648,8 +517,8 @@ async def root():
     """
     return {
         "service": "ml-worker",
-        "version": "0.8.3.5a",
-        "route_version": os.environ.get("ROUTE_VERSION") or "default-ensemble",
+        "version": "0.9.0",
+        "backend": "strategyloop+qig_warp",
         "endpoints": {
             "health": "/health (GET)",
             "healthz": "/healthz (GET)",
@@ -657,8 +526,6 @@ async def root():
             "predict": "/ml/predict (POST)",
             "ingest": "/run/ingest (POST)",
             "governance_status": "/governance/status (GET)",
-            "governance_ml_parity": "/governance/ml-predict-parity (GET)",
-            "governance_regime_parity": "/governance/regime-parity (GET) — issue #695 shadow",
             "monkey_tick": "/monkey/tick/run (POST)",
             "monkey_autonomic_tick": "/monkey/autonomic/tick (POST)",
             "monkey_executive_decide": "/monkey/executive/decide (POST)",
@@ -679,8 +546,8 @@ async def ml_predict(request: PredictRequest):
     """
     try:
         result = _handle_predict(request.model_dump())
-        # EnsemblePredictor path may return {"status": "error", ...} rather
-        # than raising — honour that shape with 422.
+        # qig_analyze returns {"status": "error", ...} for missing-data
+        # cases rather than raising — honour that shape with 422.
         if isinstance(result, dict) and result.get("status") == "error":
             return JSONResponse(content=result, status_code=422)
         return {"status": "success", **result}
@@ -780,40 +647,11 @@ async def api_status():
     """Operational status snapshot. Ops-only; no TS callers today."""
     return {
         "service": "ml-worker",
-        "version": "0.8.3.5a",
-        "route_version": os.environ.get("ROUTE_VERSION") or "default-ensemble",
-        "shadow_enabled": os.environ.get("ML_PREDICT_SHADOW") == "true",
+        "version": "0.9.0",
+        "backend": "strategyloop+qig_warp",
         "redis_configured": bool(REDIS_URL),
         "trade_outcomes_buffered": len(get_recent_trade_outcomes(limit=_TRADE_OUTCOMES_MAX)),
-        "parity_log_size": len(_PARITY_LOG),
         "timestamp": datetime.now(timezone.utc).isoformat(),
-    }
-
-
-@app.get("/governance/ml-predict-parity")
-async def governance_ml_predict_parity(limit: int = 200):
-    """Parity-diff ring buffer for /ml/predict backends.
-
-    Evidence stream for later promotion of EnsemblePredictor. Populated
-    only while ML_PREDICT_SHADOW=true. Same telemetry pattern as
-    /governance/status (v0.7.11).
-    """
-    with _PARITY_LOG_LOCK:
-        rows = list(_PARITY_LOG[-max(1, min(limit, _PARITY_LOG_MAX)):])
-    # Compute a fast summary so ops can eyeball drift without downloading rows.
-    diffs = 0
-    for r in rows:
-        if r.get("shadow_error"):
-            continue
-        if r.get("live_signal") != r.get("shadow_signal"):
-            diffs += 1
-    return {
-        "available": True,
-        "shadow_enabled": os.environ.get("ML_PREDICT_SHADOW") == "true",
-        "sample_count": len(rows),
-        "signal_disagreements": diffs,
-        "disagreement_ratio": (diffs / len(rows)) if rows else 0.0,
-        "rows": rows,
     }
 
 

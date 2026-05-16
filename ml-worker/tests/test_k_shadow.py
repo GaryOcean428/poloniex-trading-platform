@@ -19,18 +19,10 @@ Three contracts pinned:
 
 The endpoint NEVER raises, even on internal exceptions — the response
 ALWAYS includes decided_at_ms so the TS caller can persist a parity row.
-
-Note: main.py at import time pulls EnsemblePredictor which imports
-tensorflow. tensorflow has no Python 3.14 wheels yet, so this test
-stubs `tensorflow` (and a handful of model-only sub-modules) before
-the main import so the endpoint code path can be exercised standalone.
-The shadow endpoint itself does NOT use tensorflow — it only consumes
-monkey_kernel.run_tick — so the stub is purely an import-time concern.
 """
 from __future__ import annotations
 
 import sys
-import types
 from pathlib import Path
 from typing import Any
 
@@ -40,53 +32,13 @@ ML_WORKER_ROOT = Path(__file__).resolve().parents[1]
 SRC_DIR = ML_WORKER_ROOT / "src"
 
 
-def _install_tensorflow_stub() -> None:
-    """Insert a no-op `tensorflow` (and friends) into sys.modules so
-    main.py's EnsemblePredictor import chain doesn't blow up under
-    Python 3.14 (no TF wheels yet). Only needed at import time —
-    the K-shadow code path does not call tensorflow."""
-    if "tensorflow" in sys.modules:
-        return
-    tf_stub = types.ModuleType("tensorflow")
-    tf_keras = types.ModuleType("tensorflow.keras")
-    tf_keras_models = types.ModuleType("tensorflow.keras.models")
-    tf_keras_layers = types.ModuleType("tensorflow.keras.layers")
-    tf_keras_callbacks = types.ModuleType("tensorflow.keras.callbacks")
-    tf_keras_opt = types.ModuleType("tensorflow.keras.optimizers")
-
-    # Provide just enough attribute surface to satisfy ``from X import Y``
-    # statements in models/*.py at import time. Calling any of these in
-    # the tests would error, but we only need them to exist for import.
-    for stub in (tf_keras_models, tf_keras_layers, tf_keras_callbacks, tf_keras_opt):
-        stub.__getattr__ = lambda _name, _stub=stub: type(_name, (), {})  # type: ignore[attr-defined]
-
-    tf_stub.keras = tf_keras  # type: ignore[attr-defined]
-    tf_keras.models = tf_keras_models  # type: ignore[attr-defined]
-    tf_keras.layers = tf_keras_layers  # type: ignore[attr-defined]
-    tf_keras.callbacks = tf_keras_callbacks  # type: ignore[attr-defined]
-    tf_keras.optimizers = tf_keras_opt  # type: ignore[attr-defined]
-    tf_stub.__getattr__ = lambda _name: type(_name, (), {})  # type: ignore[attr-defined]
-
-    sys.modules.update({
-        "tensorflow": tf_stub,
-        "tensorflow.keras": tf_keras,
-        "tensorflow.keras.models": tf_keras_models,
-        "tensorflow.keras.layers": tf_keras_layers,
-        "tensorflow.keras.callbacks": tf_keras_callbacks,
-        "tensorflow.keras.optimizers": tf_keras_opt,
-    })
-
-
 @pytest.fixture(scope="module")
 def client():
-    """Boot the FastAPI app once per module and return a TestClient.
-    Imports are deferred so the tensorflow stub lands first."""
+    """Boot the FastAPI app once per module and return a TestClient."""
     if str(SRC_DIR) not in sys.path:
         sys.path.insert(0, str(SRC_DIR))
     if str(ML_WORKER_ROOT) not in sys.path:
         sys.path.insert(0, str(ML_WORKER_ROOT))
-
-    _install_tensorflow_stub()
 
     try:
         from fastapi.testclient import TestClient

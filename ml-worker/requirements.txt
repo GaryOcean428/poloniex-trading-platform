@@ -1,14 +1,12 @@
 numpy>=1.24.0
 pandas>=2.0.0
-scikit-learn>=1.3.0
-tensorflow>=2.13.0
-statsmodels>=0.14.0
-prophet>=1.1.0
-joblib>=1.3.0
 fastapi>=0.110.0
 uvicorn[standard]>=0.29.0
 redis>=5.0.0
-# QIG physics-based intelligence
+# QIG physics-based intelligence. Canonical prediction + regime stack
+# post-MIG-1 (2026-05-16). Replaces the legacy TF/sklearn/statsmodels/
+# prophet ensemble that previously caused libpq malloc poisoning and
+# segfaulted basin_sync_db (PR #738/#739/#740/#741 trail).
 qig-core>=2.8.0
 qig-warp>=0.4.3
 # Observable governance detectors (AMPLITUDE_COLLAPSE, REGIME_SINGLE,
