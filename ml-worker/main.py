@@ -39,7 +39,17 @@ from pydantic import BaseModel
 # Ensure src/ is on the path so models + proprietary_core can be imported
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 
-from ensemble_predictor import EnsemblePredictor
+# NOTE: ``ensemble_predictor`` is intentionally NOT imported at module
+# load time. It transitively imports ``models/{LSTM,Transformer,GBM,
+# ARIMA,Prophet}_model.py`` which import ``tensorflow``, ``sklearn``,
+# ``statsmodels``, ``prophet`` and pull in 251 C-extension modules.
+# Those modules corrupt ``libpq``'s ``malloc`` context, so any
+# ``psycopg.connect()`` from this process — from any thread, at any
+# point — segfaults with ``free(): invalid pointer``. Until the
+# ensemble path is actually used (currently dead code in prod:
+# ROUTE_VERSION=v0.8 + ML_PREDICT_SHADOW=false) we keep TF out of the
+# process entirely. ``_get_predictor()`` does the deferred import on
+# first call.
 from proprietary_core.regime import RegimeDetector  # noqa: F401  (re-exported via StrategyLoop)
 from proprietary_core.strategy_loop import MarketRegime, StrategyLoop  # noqa: F401  (MarketRegime re-exported for ops)
 from utils.redis_listener import (
@@ -55,7 +65,24 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 # ---------------------------------------------------------------------------
 # Globals
 # ---------------------------------------------------------------------------
-predictor = EnsemblePredictor()
+# Lazy singleton — imports + instantiates ``EnsemblePredictor`` on first
+# call. Production sets ROUTE_VERSION=v0.8 + ML_PREDICT_SHADOW=false so
+# the ensemble path is dead code; this accessor is never invoked and TF
+# never loads, keeping ml-worker's process clean for psycopg + qig-*.
+_predictor = None  # type: ignore[var-annotated]
+
+
+def _get_predictor():
+    """Lazy ``EnsemblePredictor`` accessor — defers TF / sklearn /
+    statsmodels / prophet imports until the ensemble path is actually
+    exercised. Returns a process-singleton instance."""
+    global _predictor
+    if _predictor is None:
+        from ensemble_predictor import EnsemblePredictor  # noqa: PLC0415
+        _predictor = EnsemblePredictor()
+    return _predictor
+
+
 REDIS_URL = os.environ.get("REDIS_URL", "")
 
 # ---------------------------------------------------------------------------
@@ -473,6 +500,7 @@ def _handle_predict_ensemble(payload: dict) -> dict:
     data = data.sort_values("timestamp")
 
     try:
+        predictor = _get_predictor()
         if action == "train":
             results = predictor.train_all_models(data, symbol)
             predictor.save_models("./saved_models")
