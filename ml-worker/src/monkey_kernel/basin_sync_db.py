@@ -59,6 +59,12 @@ def _get_conn():
 
     Returns None when DATABASE_URL is unset OR the connection cannot
     be established (caller treats None as fail-soft no-op).
+
+    IMPORTANT: should ideally be called via warm_connection() at startup
+    BEFORE TensorFlow loads. If first called from a request thread
+    after TF init, psycopg.connect() can segfault due to libpq malloc
+    corruption from TF runtime. warm_connection() makes the FIRST
+    connect happen on the main thread at process startup.
     """
     global _conn
     dsn = os.environ.get("DATABASE_URL")
@@ -86,6 +92,31 @@ def _get_conn():
             logger.debug("[BasinSyncDB] connect failed: %s", err)
             _conn = None
             return None
+
+
+def warm_connection() -> bool:
+    """Pre-warm the psycopg connection on the calling thread.
+
+    Call this from FastAPI lifespan startup (main thread) BEFORE TF /
+    sklearn / cuda stubs are loaded. The first psycopg.connect() then
+    happens in a clean malloc context — once the connection exists,
+    subsequent reads/writes from request threads only need to grab the
+    existing connection + execute a cursor, which doesn't trigger the
+    libpq malloc path that TF poisons.
+
+    Returns True if the connection was successfully opened OR was
+    already open. Returns False if DATABASE_URL is unset, the flag is
+    off, or the connect failed.
+    """
+    if not basin_sync_db_live():
+        logger.info("[BasinSyncDB] warm_connection skipped — flag off")
+        return False
+    conn = _get_conn()
+    if conn is None:
+        logger.warning("[BasinSyncDB] warm_connection failed — DB unreachable or DSN missing")
+        return False
+    logger.info("[BasinSyncDB] warm_connection succeeded — singleton ready on main thread")
+    return True
 
 
 def cross_observation_live() -> bool:
