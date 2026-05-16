@@ -97,6 +97,29 @@ def cross_observation_live() -> bool:
     )
 
 
+def basin_sync_db_live() -> bool:
+    """Master enable for ALL DB ops in this module. Default OFF.
+
+    SEGFAULT GUARD (2026-05-16T14:21Z): even with all consensus flags
+    off, the previous unconditional `write_state` call from tick.py
+    triggered `free(): invalid pointer` segfaults during
+    psycopg.connect() inside a FastAPI request thread sharing memory
+    with TensorFlow + sklearn. The singleton-connection fix in PR #738
+    didn't help because the FIRST connect from the request thread is
+    what segfaults — TF runtime poisons libpq's allocator.
+
+    Until the TF/libpq interaction is properly isolated (e.g. move DB
+    writes to a separate process via redis-mediated queue, or warm
+    the connection at startup before TF loads), this flag must remain
+    off in production. Set MONKEY_PY_BASIN_SYNC_DB_LIVE=true ONLY in
+    environments where TF is not loaded.
+    """
+    return (
+        os.environ.get("MONKEY_PY_BASIN_SYNC_DB_LIVE", "").strip().lower()
+        == "true"
+    )
+
+
 def write_state(
     *,
     instance_id: str,
@@ -115,6 +138,8 @@ def write_state(
     sees state-level peer signal, not just basin geometry. Both
     optional for back-compat; None leaves the column NULL.
     """
+    if not basin_sync_db_live():
+        return
     conn = _get_conn()
     if conn is None:
         return
@@ -170,6 +195,8 @@ def write_state(
 
 def read_peers(self_instance_id: str, stale_ms: int = 120_000) -> list[BasinSyncState]:
     """Read all OTHER instances' rows fresher than `stale_ms`. Fail-soft."""
+    if not basin_sync_db_live():
+        return []
     conn = _get_conn()
     if conn is None:
         return []
