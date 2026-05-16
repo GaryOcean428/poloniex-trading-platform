@@ -556,11 +556,27 @@ interface SymbolState {
    *  Trailing regime drift fires via regimeSizing.trailingRegimeStop().
    *  Cleared on harvest. */
   rScoreAtEntryBySide: { long: number | null; short: number | null };
+  /** 2026-05-16 (#715, autonomic substrate): ticks elapsed since the last
+   *  novelty event (regime label change OR surprise spike).
+   *  Drives acetylcholine habituation in `computeNeurochemicals`. Reset
+   *  to 0 on novelty; incremented on quiet ticks. Without this counter,
+   *  ach was pinned at the wake constant (0.80) every tick.
+   *
+   *  Sibling field `lastRegimeLabel` is the comparison key — when a tick
+   *  produces a different regime label, the counter resets and ach
+   *  re-spikes per §29 attentional habituation. */
+  ticksSinceNovelty: number;
+  lastRegimeLabel: string | null;
 }
 
 /** Cap the recent-bus-event ring at this size — anything older than
  *  the bus window doesn't influence current decisions. */
 const BUS_RING_CAP = 32;
+
+/** 2026-05-16 (#715): surprise magnitude that counts as a novelty event
+ *  and resets the acetylcholine habituation clock. `surprise = |ΔΦ|*2`,
+ *  so 0.05 → resets on ΔΦ ≥ 0.025 (large basin integration jumps). */
+const NOVELTY_SURPRISE_THRESHOLD = 0.05;
 
 /**
  * MonkeyKernel — the top-level kernel that ticks Monkey.
@@ -1110,6 +1126,8 @@ export class MonkeyKernel extends EventEmitter {
       mtfLongestAgreeingBySide: { long: null, short: null },
       rScoreCurrent: null,
       rScoreAtEntryBySide: { long: null, short: null },
+      ticksSinceNovelty: 0,
+      lastRegimeLabel: null,
     };
   }
 
@@ -1307,17 +1325,31 @@ export class MonkeyKernel extends EventEmitter {
     // sizing/exit logic; their wins go to the arbiter (recordSettled)
     // and bump their capital share, but K's dopamine is K's only.
     const rewardDeltas = this.decayedRewardSums(Date.now(), 'K');
+
+    // 2026-05-16 (#715): per-tick autonomic substrate update — advance the
+    // novelty clock so acetylcholine actually habituates between events.
+    // Every tick: ticksSinceNovelty += 1. On a surprise spike, reset
+    // immediately so ach re-spikes BEFORE this tick's NC compute. The
+    // regime-change reset happens AFTER classifyRegime below, so it
+    // contributes to the NEXT tick's ach value.
+    state.ticksSinceNovelty += 1;
+    const surpriseNow = Math.abs(phiDelta) * 2;
+    if (surpriseNow > NOVELTY_SURPRISE_THRESHOLD) {
+      state.ticksSinceNovelty = 0;
+    }
+
     const nc: NeurochemicalState = computeNeurochemicals({
       isAwake: true,
       phiDelta,
       basinVelocity: bv,
-      surprise: Math.abs(phiDelta) * 2,
+      surprise: surpriseNow,
       quantumWeight: regimeWeights.quantum,
       kappa: state.kappa,
       externalCoupling: couplingHealth,
       rewardDopamineDelta: rewardDeltas.dopamine,
       rewardSerotoninDelta: rewardDeltas.serotonin,
       rewardEndorphinDelta: rewardDeltas.endorphin,
+      ticksSinceNovelty: state.ticksSinceNovelty,
     });
 
     // v0.7.10 shadow-mode: call the Python autonomic kernel in parallel
@@ -1490,6 +1522,17 @@ export class MonkeyKernel extends EventEmitter {
       ...state.basinHistory,
       basin,
     ]);
+
+    // 2026-05-16 (#715): regime-change novelty reset. When the regime
+    // label flips, treat it as a novelty event so acetylcholine
+    // re-spikes on the NEXT tick (this tick's NC has already been
+    // computed above using the prior-tick novelty clock). Stores the
+    // current regime label as the comparison key for the next tick.
+    const regimeLabelNow = String(regimeReading.regime);
+    if (state.lastRegimeLabel !== null && state.lastRegimeLabel !== regimeLabelNow) {
+      state.ticksSinceNovelty = 0;
+    }
+    state.lastRegimeLabel = regimeLabelNow;
 
     // Proposal #9: candlestick pattern detection at the perception
     // input boundary. ``patternSignal`` is signed in [-1, +1];

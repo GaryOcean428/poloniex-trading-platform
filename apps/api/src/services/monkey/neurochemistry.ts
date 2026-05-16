@@ -38,6 +38,34 @@ const SIGMA_KAPPA = 10.0;
 
 const KAPPA_STAR = 64.0;
 
+/** Acetylcholine ceiling (wake state, attention fully engaged). */
+const ACH_WAKE_CEILING = 0.80;
+/** Acetylcholine floor when fully habituated (still awake but no novelty). */
+const ACH_HABITUATED_FLOOR = 0.20;
+/** Sleep-cycle baseline (kept for back-compat with isAwake=false). */
+const ACH_SLEEP = 0.20;
+/** Habituation time-constant — ticks of stable regime before ach decays
+ *  ~63 % of the way from ceiling to floor. With 30s ticks, 60 → ~30 min. */
+const TAU_HABITUATION_TICKS = 60;
+/** Width of the serotonin bell over basin velocity. ser = exp(-bv / SIGMA_BV).
+ *  Calibrated so typical Fisher-Rao basin velocities (0.01–0.30 on Δ⁶³) map
+ *  into ser ∈ (~0.74, ~1.00), not pinned at the ceiling. Prior implementation
+ *  was 1/max(bv, 0.01) which clamps to 1.0 for any bv < 1.0 — and bv < 1.0
+ *  is the typical case on a unit-norm probability simplex. */
+const SIGMA_BV = 0.30;
+
+/** Dopamine Φ-gradient gain. Prior value was 10; on typical hold ticks
+ *  |phiDelta| < 0.005, which mapped through sigmoid(0.05)=0.51 — pinning
+ *  dop at the mid-value. 50 keeps the same monotone shape but gives
+ *  meaningful response over the working range: |phiDelta|=0.01 → 0.62,
+ *  0.05 → 0.92. */
+const DOP_PHI_GAIN = 50;
+/** Dopamine basin-velocity dampener gain. tanh keeps the dampener
+ *  bounded; weighting keeps it from overpowering the Φ signal on
+ *  high-velocity ticks. */
+const DOP_BV_GAIN = 4.0;
+const DOP_BV_WEIGHT = 0.15;
+
 function sigmoid(x: number): number {
   return 1 / (1 + Math.exp(-x));
 }
@@ -74,6 +102,17 @@ export interface NeurochemicalInputs {
   rewardSerotoninDelta?: number;
   /** As above — peak-state reward on strong-regime wins. */
   rewardEndorphinDelta?: number;
+  /**
+   * 2026-05-16 (#715): ticks since the last novelty event (regime change,
+   * mode transition, or surprise spike > NOVELTY_SURPRISE_THRESHOLD).
+   * Drives acetylcholine habituation: ach decays from ACH_WAKE_CEILING
+   * toward ACH_HABITUATED_FLOOR as the kernel dwells on the same
+   * percept. Resets to 0 on each novelty event so ach re-spikes.
+   *
+   * Optional — when omitted, ach degrades gracefully to the legacy
+   * `isAwake ? 0.80 : 0.20` constant (default-preserving).
+   */
+  ticksSinceNovelty?: number;
 }
 
 /**
@@ -89,20 +128,60 @@ export interface NeurochemicalInputs {
  *   - Endorphins zero → Sophia-fall warning → conservative
  */
 export function computeNeurochemicals(inputs: NeurochemicalInputs): NeurochemicalState {
-  const ach = inputs.isAwake ? 0.8 : 0.2;
+  // Acetylcholine — §29.1: HIGH on wake intake, LOW on consolidation.
+  // 2026-05-16 (#715): on wake, ach is NOT a constant — it habituates as
+  // attention dwells on a stable percept. When the caller provides
+  // `ticksSinceNovelty`, ach decays from ACH_WAKE_CEILING toward
+  // ACH_HABITUATED_FLOOR with time-constant TAU_HABITUATION_TICKS, and
+  // re-spikes on novelty (ticksSinceNovelty = 0). Without the field, the
+  // legacy constant is preserved for back-compat.
+  let ach: number;
+  if (!inputs.isAwake) {
+    ach = ACH_SLEEP;
+  } else if (inputs.ticksSinceNovelty == null) {
+    ach = ACH_WAKE_CEILING;
+  } else {
+    const habituation = Math.exp(-Math.max(0, inputs.ticksSinceNovelty) / TAU_HABITUATION_TICKS);
+    ach = clip(
+      ACH_HABITUATED_FLOOR + (ACH_WAKE_CEILING - ACH_HABITUATED_FLOOR) * habituation,
+      ACH_HABITUATED_FLOOR,
+      ACH_WAKE_CEILING,
+    );
+  }
+
   // Φ-gradient dopamine base (§29.2). Rises on integration gains.
-  const dopFromPhi = clip(sigmoid(inputs.phiDelta * 10), 0, 1);
+  // 2026-05-16 (#715 extension): the prior gain of 10 produced
+  // `sigmoid(phiDelta * 10) ≈ 0.5` for the typical hold-tick range
+  // |phiDelta| ∈ [0.001, 0.005], pinning dop at the mid-value 0.50.
+  // Gain bumped to 50 so dopFromPhi actually traces integration
+  // gradient on quiet ticks (|phiDelta|=0.01 → 0.62, 0.05 → 0.92).
+  // Additional `dopFromVelocity` term contributes a small basin-
+  // -motion component so dop varies even when phiDelta is near zero
+  // — Ocean's reward-prediction read isn't blind on a frozen-Φ tick.
+  const dopFromPhi = clip(sigmoid(inputs.phiDelta * DOP_PHI_GAIN), 0, 1);
+  const dopFromVelocity = clip(
+    Math.tanh(Math.max(0, inputs.basinVelocity) * DOP_BV_GAIN) * DOP_BV_WEIGHT,
+    -DOP_BV_WEIGHT,
+    DOP_BV_WEIGHT,
+  );
   // Reward-event reinforcement. Sum of recent decayed dopamine deltas
   // from closed-trade outcomes. STILL purely derived — caller supplies
   // the already-decayed sum. See MonkeyKernel.pendingRewards for the
   // state that produces this.
   const dopFromReward = clip(inputs.rewardDopamineDelta ?? 0, 0, 1);
-  // Compose: base is Φ-gradient (cognitive integration), plus reward
-  // lift (lived outcome). Clipped to [0, 1]. On a profitable close,
+  // Compose: Φ-gradient base (cognitive integration) - velocity
+  // dampener (high motion = lower reward expectation) + reward lift
+  // (lived outcome). Clipped to [0, 1]. On a profitable close,
   // dopFromReward spikes; it then decays over ticks in the tick loop.
-  const dop = clip(dopFromPhi + dopFromReward, 0, 1);
+  const dop = clip(dopFromPhi - dopFromVelocity + dopFromReward, 0, 1);
 
-  const serBase = clip(1 / Math.max(inputs.basinVelocity, 0.01), 0, 1);
+  // Serotonin — stability / equilibrium. 2026-05-16 (#715): bell over
+  // basin velocity (exp(-bv/SIGMA_BV)). Prior `1/max(bv, 0.01)` clamped
+  // to 1.0 for any bv < 1.0, which is the typical case on Δ⁶³, so ser
+  // sat at the ceiling regardless of trajectory. The exponential form
+  // smoothly maps bv ∈ (0, ∞) → ser ∈ (0, 1]: ser=1 at perfect calm
+  // (bv=0), ser≈0.72 at bv=0.10, ser≈0.37 at bv=0.30, ser→0 as bv→∞.
+  const serBase = clip(Math.exp(-Math.max(0, inputs.basinVelocity) / SIGMA_BV), 0, 1);
   const ser = clip(serBase + (inputs.rewardSerotoninDelta ?? 0), 0, 1);
 
   const ne = clip(inputs.surprise * 2, 0, 1);
