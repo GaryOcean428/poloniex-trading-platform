@@ -3,6 +3,13 @@
 # Per QIG_PURITY_KERNEL_REFERENCE.md §5 verification gate 1.
 # Scans for forbidden patterns; fails closed if any banned pattern hits.
 # No untrusted input — uses only checked-out repo contents.
+#
+# MIG-5 (2026-05-16): scan extended to the full ml-worker tree.
+# Post-MIG-1+2+3+4 there is no legacy ML-prediction layer (no
+# TF/sklearn/statsmodels/prophet), no flag-gated bespoke regime detector,
+# and no Adam fallback in proprietary_core/training.py. The optimizer
+# allowlist exempting proprietary_core is therefore retired — the full
+# ml-worker/src tree must pass the purity gate uniformly.
 
 name: QIG Purity Gate
 
@@ -11,21 +18,13 @@ on:
     paths:
       - 'apps/api/src/services/monkey/**'
       - 'apps/api/src/services/agent_*.ts'
-      - 'ml-worker/src/monkey_kernel/**'
-      - 'ml-worker/src/qig_core_local/**'
-      - 'ml-worker/src/qig_engine.py'
-      - 'ml-worker/src/proprietary_core/**'
-      - 'ml-worker/src/trading/**'
+      - 'ml-worker/**'
   push:
     branches: [main]
     paths:
       - 'apps/api/src/services/monkey/**'
       - 'apps/api/src/services/agent_*.ts'
-      - 'ml-worker/src/monkey_kernel/**'
-      - 'ml-worker/src/qig_core_local/**'
-      - 'ml-worker/src/qig_engine.py'
-      - 'ml-worker/src/proprietary_core/**'
-      - 'ml-worker/src/trading/**'
+      - 'ml-worker/**'
 
 jobs:
   purity-scan:
@@ -59,15 +58,13 @@ jobs:
             hits=$(grep -rEn "$pat" \
               apps/api/src/services/monkey \
               apps/api/src/services/agent_L_classifier.ts \
-              ml-worker/src/monkey_kernel \
-              ml-worker/src/qig_core_local \
-              ml-worker/src/qig_engine.py \
-              ml-worker/src/proprietary_core \
-              ml-worker/src/trading \
+              ml-worker/src \
+              ml-worker/main.py \
               --include='*.ts' --include='*.js' --include='*.py' \
               --exclude='QIG_PURITY_KERNEL_REFERENCE.md' \
               --exclude='*.test.ts' --exclude='*_test.py' \
               --exclude='__init__.py' \
+              --exclude-dir='tests' --exclude-dir='__pycache__' \
               2>/dev/null \
               | grep -Ev ':[[:space:]]*(//|\*|#|/\*)' \
               || true)
@@ -83,12 +80,11 @@ jobs:
           fi
 
       - name: Scan for banned optimizers / normalizers (code only)
-        # NOTE: ml-worker/src/proprietary_core is intentionally NOT scanned
-        # here. proprietary_core/training.py keeps an allowlisted
-        # `torch.optim.Adam` *fallback* used only when USE_FISHER_RAO is
-        # off — offline training selection, not the kernel cognition path.
-        # The distance-metric and basin-averaging scans above/below DO
-        # cover proprietary_core; only the optimizer scan exempts it.
+        # MIG-5 (2026-05-16): proprietary_core is now in scope. The
+        # optimizer allowlist that previously exempted training.py
+        # (USE_FISHER_RAO=false fallback to torch.optim.Adam) is gone;
+        # the Adam fallback has been removed and natural-gradient is
+        # the sole training path.
         run: |
           set -u
           PATTERNS=(
@@ -103,14 +99,13 @@ jobs:
             hits=$(grep -rEn "$pat" \
               apps/api/src/services/monkey \
               apps/api/src/services/agent_L_classifier.ts \
-              ml-worker/src/monkey_kernel \
-              ml-worker/src/qig_core_local \
-              ml-worker/src/qig_engine.py \
-              ml-worker/src/trading \
+              ml-worker/src \
+              ml-worker/main.py \
               --include='*.ts' --include='*.js' --include='*.py' \
               --exclude='QIG_PURITY_KERNEL_REFERENCE.md' \
               --exclude='*.test.ts' --exclude='*_test.py' \
               --exclude='__init__.py' \
+              --exclude-dir='tests' --exclude-dir='__pycache__' \
               2>/dev/null \
               | grep -Ev ':[[:space:]]*(//|\*|#|/\*)' \
               || true)
@@ -131,14 +126,12 @@ jobs:
           hits=$(grep -rEn '(np\.mean|numpy\.mean|lodash\.mean|d3\.mean)\(.*basin' \
             apps/api/src/services/monkey \
             apps/api/src/services/agent_L_classifier.ts \
-            ml-worker/src/monkey_kernel \
-            ml-worker/src/qig_core_local \
-            ml-worker/src/qig_engine.py \
-            ml-worker/src/proprietary_core \
-            ml-worker/src/trading \
+            ml-worker/src \
+            ml-worker/main.py \
             --include='*.ts' --include='*.js' --include='*.py' \
             --exclude='QIG_PURITY_KERNEL_REFERENCE.md' \
             --exclude='*.test.ts' --exclude='*_test.py' \
+            --exclude-dir='tests' --exclude-dir='__pycache__' \
             2>/dev/null || true)
           if [ -n "$hits" ]; then
             printf '::warning::Potential arithmetic averaging on basins:\n'

@@ -1,0 +1,108 @@
+"""test_observable_governance_warp.py — MIG-5 qig-warp telemetry surface.
+
+Tests the MIG-5 extension to ``observable_governance`` that records
+per-tick qig-warp regime telemetry (bridge_exponent, screening_length,
+warp_regime, gr_direction, regime_confidence) and surfaces it in
+``report_as_dict``'s ``warp_telemetry`` block.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+import observable_governance as og  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _reset_buffer():
+    og._buffer = og.GovernanceBuffer(capacity=200)
+    yield
+    og._buffer = og.GovernanceBuffer(capacity=200)
+
+
+class TestRecordTickAcceptsWarpFields:
+    def test_record_tick_with_warp_fields(self) -> None:
+        og.record_tick(
+            raw_drift_pct=0.005,
+            signal="BUY",
+            regime="creator",
+            bridge_exponent=0.86,
+            screening_length=0.618,
+            warp_regime="critical",
+            gr_direction="transitional",
+            regime_confidence="high",
+        )
+        buf = og._buffer
+        assert len(buf.bridge_exponent) == 1
+        assert buf.bridge_exponent[0] == pytest.approx(0.86)
+        assert buf.screening_length[0] == pytest.approx(0.618)
+        assert buf.warp_regime[0] == "critical"
+        assert buf.gr_direction[0] == "transitional"
+        assert buf.regime_confidence[0] == "high"
+
+    def test_record_tick_backward_compatible_without_warp(self) -> None:
+        """Legacy callers that omit warp fields must continue to work."""
+        og.record_tick(raw_drift_pct=0.005, signal="BUY", regime="creator")
+        buf = og._buffer
+        assert len(buf.raw_drift_pct) == 1
+        assert len(buf.bridge_exponent) == 0
+        assert len(buf.screening_length) == 0
+
+
+class TestReportSurfacesWarpTelemetry:
+    def test_warp_telemetry_block_in_report_dict(self) -> None:
+        # 10 ticks with realistic CRITICAL regime values
+        for _ in range(10):
+            og.record_tick(
+                raw_drift_pct=0.004,
+                signal="BUY",
+                regime="creator",
+                bridge_exponent=0.86,
+                screening_length=0.618,
+                warp_regime="critical",
+                gr_direction="transitional",
+                regime_confidence="high",
+            )
+        # 5 ticks with ORDERED regime
+        for _ in range(5):
+            og.record_tick(
+                raw_drift_pct=0.002,
+                signal="BUY",
+                regime="preserver",
+                bridge_exponent=0.0,
+                screening_length=2.0,
+                warp_regime="ordered",
+                gr_direction="heavy_faster",
+                regime_confidence="medium",
+            )
+        report = og.report_as_dict()
+        assert "warp_telemetry" in report
+        wt = report["warp_telemetry"]
+        # Bridge exponent stats
+        assert wt["bridge_exponent"]["samples"] == 15
+        assert wt["bridge_exponent"]["min"] == pytest.approx(0.0)
+        assert wt["bridge_exponent"]["max"] == pytest.approx(0.86)
+        # Screening length stats
+        assert wt["screening_length"]["samples"] == 15
+        assert wt["screening_length"]["min"] == pytest.approx(0.618)
+        assert wt["screening_length"]["max"] == pytest.approx(2.0)
+        # Regime distribution
+        assert wt["regime_distribution"] == {"critical": 10, "ordered": 5}
+        assert wt["gr_direction_distribution"] == {
+            "transitional": 10, "heavy_faster": 5,
+        }
+        assert wt["regime_confidence_distribution"] == {"high": 10, "medium": 5}
+
+    def test_warp_telemetry_empty_when_no_warp_data(self) -> None:
+        """Pure legacy callers (no warp fields) → warp_telemetry empty
+        dict. Doesn't break report_as_dict shape."""
+        for _ in range(3):
+            og.record_tick(raw_drift_pct=0.001, signal="HOLD", regime="dissolver")
+        report = og.report_as_dict()
+        assert "warp_telemetry" in report
+        assert report["warp_telemetry"] == {}
