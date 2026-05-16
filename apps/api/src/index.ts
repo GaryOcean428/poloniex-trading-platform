@@ -19,6 +19,7 @@ import confidenceScoringRoutes from './routes/confidenceScoring.js';
 import dashboardRoutes from './routes/dashboard.js';
 import debugRoutes from './routes/debug.js';
 import futuresRoutes from './routes/futures.js';
+import governanceRoutes from './routes/governance.js';
 import marketsRoutes from './routes/markets.js';
 import mlRoutes from './routes/ml.js';
 import monitoringRoutes from './routes/monitoring.js';
@@ -182,6 +183,7 @@ app.use('/api/agent', agentRoutes); // Autonomous trading agent routes
 app.use('/api/autonomous', autonomousTraderRoutes); // Fully autonomous trading system
 app.use('/api/reconciliation', reconciliationRoutes); // State reconciliation service
 app.use('/api/monitoring', monitoringRoutes); // Monitoring and error tracking routes
+app.use('/api/governance', governanceRoutes); // Operator-facing kernel observability (sleep-state, parity logs)
 app.use('/api/admin', adminRoutes); // Admin routes for migrations
 app.use('/api/dashboard', dashboardRoutes); // Unified dashboard data endpoint
 app.use('/api/ml', mlRoutes); // ML model predictions and performance
