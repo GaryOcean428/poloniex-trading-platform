@@ -126,6 +126,50 @@ describe('bootstrapMTFForSymbol — status reporting', () => {
     expect(status.perTimeframe[0]!.label).toBe('1h');
     expect(status.perTimeframe[0]!.status).toBe('success');
     expect(stub).toHaveBeenCalledTimes(1);
-    expect(stub).toHaveBeenCalledWith('BTC_USDT_PERP', '1h', 700);
+    // 4th arg is the opts object containing startTime so the service's
+    // chunked-loop pagination actually returns the requested count
+    // (otherwise the 500-per-call cap silently truncates → MTF L cold).
+    expect(stub).toHaveBeenCalledWith(
+      'BTC_USDT_PERP',
+      '1h',
+      700,
+      expect.objectContaining({ startTime: expect.any(Number) }),
+    );
+  });
+
+  it('passes a startTime opt so getHistoricalData paginates past the 500-per-call cap', async () => {
+    // Regression for the 2026-05-16 scalp-spiral root cause: bootstrap
+    // demanded 700 candles, exchange capped each single-call response at
+    // 500, mtfBootstrap was NOT supplying opts.startTime so the service
+    // never engaged its loop → 500 returned < 650 bootstrapMinCandlesNeeded
+    // ('15m') → marked insufficient_candles → MTF L permanently cold →
+    // no 3-of-3 agreement gate on K's entries → scalp-spiral.
+    const stub = vi.fn().mockResolvedValue(repeatCandles(700));
+    vi.doMock('../../poloniexFuturesService.js', () => ({
+      default: { getHistoricalData: stub },
+    }));
+    const { bootstrapMTFForSymbol } = await import('../mtfBootstrap.js');
+    const { newMTFState } = await import('../mtfLClassifier.js');
+    const state = newMTFState();
+    const beforeMs = Date.now();
+    await bootstrapMTFForSymbol('BTC_USDT_PERP', state, ['15m', '1h', '4h']);
+    // 15m: 700 candles × 15min = ~7.3 days back
+    const callFor = (label: '15m' | '1h' | '4h') => {
+      const expectedIntervalMs = label === '15m' ? 900_000 : label === '1h' ? 3_600_000 : 14_400_000;
+      const c = stub.mock.calls.find((args) => args[1] === label);
+      expect(c, `expected one call for ${label}`).toBeTruthy();
+      const opts = c![3] as { startTime: number };
+      expect(opts).toBeDefined();
+      expect(typeof opts.startTime).toBe('number');
+      // startTime must be back by approximately BOOTSTRAP_CANDLE_COUNT (700)
+      // × intervalMs from "now" — tolerate small drift from the test
+      // setup wall-clock.
+      const expectedStart = beforeMs - expectedIntervalMs * 700;
+      expect(opts.startTime).toBeGreaterThan(expectedStart - 60_000);
+      expect(opts.startTime).toBeLessThan(expectedStart + 60_000);
+    };
+    callFor('15m');
+    callFor('1h');
+    callFor('4h');
   });
 });

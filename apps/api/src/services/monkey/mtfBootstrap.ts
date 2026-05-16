@@ -48,14 +48,17 @@ interface OHLCVCandle {
 const BOOTSTRAP_CANDLE_COUNT = 700;
 const PERCEIVE_WINDOW = 50;
 
-/** Poloniex candle resolution strings keyed by our timeframe label.
- *  These map to the granularity the exchange provides; we DO NOT
- *  do further down-sampling because the basin synthesis already
- *  encodes the perceptual scale via perceive(). */
-const POLONIEX_INTERVAL_FOR_TF: Record<TimeframeLabel, string> = {
-  '15m': '15m',
-  '1h': '1h',
-  '4h': '4h',
+/** Poloniex candle resolution per timeframe label. The `format` field is
+ *  the granularity string the exchange API expects; `intervalMs` is the
+ *  duration of one candle at that resolution. Both are colocated so a
+ *  future TF addition or rename updates a single record — addresses the
+ *  Sourcery review note about a duplicated 15m/1h/4h ms mapping inside
+ *  the bootstrap loop. We DO NOT do further down-sampling because the
+ *  basin synthesis already encodes the perceptual scale via perceive(). */
+const POLONIEX_TF_CONFIG: Record<TimeframeLabel, { format: string; intervalMs: number }> = {
+  '15m': { format: '15m', intervalMs: 15 * 60 * 1000 },
+  '1h':  { format: '1h',  intervalMs: 60 * 60 * 1000 },
+  '4h':  { format: '4h',  intervalMs: 4 * 60 * 60 * 1000 },
 };
 
 /** Per-(symbol, timeframe) bootstrap outcome. Returned by
@@ -123,16 +126,30 @@ export async function bootstrapMTFForSymbol(
   state: MTFState,
   labels: readonly TimeframeLabel[] = ['15m', '1h', '4h'],
 ): Promise<BootstrapSymbolStatus> {
+  // Single `nowMs` captured outside the per-TF loop so the three startTime
+  // values are deterministically separated by exact integer multiples of
+  // each timeframe's intervalMs — no per-TF wall-clock drift. Also enables
+  // test injection of a fixed clock if needed later.
   const startedAtMs = Date.now();
+  const nowMs = startedAtMs;
   const perTimeframe: BootstrapTimeframeStatus[] = [];
   for (const label of labels) {
     try {
-      const interval = POLONIEX_INTERVAL_FOR_TF[label];
+      const { format: interval, intervalMs } = POLONIEX_TF_CONFIG[label];
       const minCandlesNeeded = bootstrapMinCandlesNeeded(label);
+      // poloniexFuturesService.getHistoricalData caps at POLONIEX_MAX_PER_CALL
+      // (500) per single call. Without an explicit `startTime` opt the service
+      // does NOT loop, so a `limit=700` request silently returns 500 — well
+      // below the 480 + horizon warm threshold, leaving MTF L permanently
+      // cold (root cause of the 2026-05-15 scalp-spiral). Pass a startTime
+      // that spans BOOTSTRAP_CANDLE_COUNT intervals so the service's chunked
+      // loop activates and actually returns the count we asked for.
+      const startTime = nowMs - intervalMs * BOOTSTRAP_CANDLE_COUNT;
       const candles = (await poloniexFuturesService.getHistoricalData(
         symbol,
         interval,
         BOOTSTRAP_CANDLE_COUNT,
+        { startTime },
       )) as OHLCVCandle[];
       if (!Array.isArray(candles) || candles.length < minCandlesNeeded) {
         logger.warn('[MTF-bootstrap] insufficient OHLCV from exchange', {
