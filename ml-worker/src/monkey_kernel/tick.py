@@ -31,6 +31,7 @@ Literal disposition (per the v0.8 plan, P25):
 from __future__ import annotations
 
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
@@ -392,6 +393,24 @@ def run_tick(
         "refract.external_weight", default=0.30,
     )
     basin = refract(raw_basin, state.identity_basin, external_weight=refract_external_weight)
+
+    # ── Cross-kernel observer effect (Consensus Layer 1) ──────
+    # CONSENSUS_CROSS_OBSERVATION_LIVE flag-gated. When live, basin is
+    # pulled toward peer kernels' basins per Φ-weighted SLERP (qig-core
+    # canonical observer-effect). When off, peers are still visible in
+    # telemetry but basin is unchanged. See [[polytrade-consensus-architecture]].
+    try:
+        from .basin_sync_db import observe_and_pull as _basin_observe_pull
+        # Φ for the pull weight uses pre-pull phi; recompute below uses
+        # the (possibly) pulled basin.
+        _pre_pull_phi = max(0.0, min(1.0, 1.0 - normalized_entropy(basin) * 0.8))
+        basin, _basin_pull_telem = _basin_observe_pull(
+            instance_id=os.environ.get("MONKEY_PY_INSTANCE_ID", "monkey-py-shadow"),
+            own_basin=basin,
+            own_phi=_pre_pull_phi,
+        )
+    except Exception:  # noqa: BLE001 — never block a tick on basin-sync
+        _basin_pull_telem = None
 
     # ── Measure ────────────────────────────────────────────────
     f_health = normalized_entropy(basin)
@@ -1288,6 +1307,24 @@ def run_tick(
         persistence.push_basin(symbol, basin)
         persistence.push_drift(symbol, drift_now)
         persistence.push_fhealth(symbol, f_health)
+
+    # ── Cross-kernel basin publish (Consensus Layer 1) ────────
+    # UNCONDITIONAL write — peers must see our state for telemetry +
+    # future consensus arbitration. The pull (above) is flag-gated;
+    # the write is always-on so the data is there when the flag flips.
+    # Fail-soft per design — never blocks a tick.
+    try:
+        from .basin_sync_db import write_state as _basin_sync_write
+        _basin_sync_write(
+            instance_id=os.environ.get("MONKEY_PY_INSTANCE_ID", "monkey-py-shadow"),
+            basin=basin,
+            phi=phi,
+            kappa=state.kappa,
+            mode=str(state.last_mode or "investigation"),
+            drift_from_identity=float(drift_now),
+        )
+    except Exception:  # noqa: BLE001
+        pass
         # integration_history was appended earlier in the upper-stack block
         # with (phi, i_q); persist that latest tuple.
         if state.integration_history:
