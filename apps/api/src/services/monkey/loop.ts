@@ -503,6 +503,11 @@ export class MonkeyKernel extends EventEmitter {
    *  failed bootstrap. Backs off 60s → 120s → 240s → 480s capped, so
    *  a flaky exchange endpoint doesn't hammer on every tick. */
   private mtfBootstrapRetryAtMs: Map<string, number> = new Map();
+  /** Per-symbol last-applied backoff delay (ms). Doubled on each
+   *  failed retry to compute the next backoff; stored explicitly
+   *  rather than reconstructed from (retryAt − startedAtMs) which
+   *  mixed unrelated timestamps and produced bogus delays. */
+  private mtfBootstrapLastDelayMs: Map<string, number> = new Map();
   private static readonly MTF_BOOTSTRAP_INITIAL_RETRY_MS = 60_000;
   private static readonly MTF_BOOTSTRAP_MAX_RETRY_MS = 480_000;
   /** Basin-sync instance — per-kernel, so sub-kernels appear as peers. */
@@ -742,18 +747,18 @@ export class MonkeyKernel extends EventEmitter {
               symbol: sym,
               cold: cold.map((p) => `${p.label}:${p.status}`).join(','),
             });
-            this.mtfBootstrapRetryAtMs.set(
+            this.scheduleMTFBootstrapRetry(
               sym,
-              Date.now() + MonkeyKernel.MTF_BOOTSTRAP_INITIAL_RETRY_MS,
+              MonkeyKernel.MTF_BOOTSTRAP_INITIAL_RETRY_MS,
             );
           }
         } catch (err) {
           logger.warn('[MTF-bootstrap] failed for symbol', {
             symbol: sym, err: err instanceof Error ? err.message : String(err),
           });
-          this.mtfBootstrapRetryAtMs.set(
+          this.scheduleMTFBootstrapRetry(
             sym,
-            Date.now() + MonkeyKernel.MTF_BOOTSTRAP_INITIAL_RETRY_MS,
+            MonkeyKernel.MTF_BOOTSTRAP_INITIAL_RETRY_MS,
           );
         }
       }),
@@ -772,6 +777,7 @@ export class MonkeyKernel extends EventEmitter {
     const state = this.symbolStates.get(symbol);
     if (!state) {
       this.mtfBootstrapRetryAtMs.delete(symbol);
+      this.mtfBootstrapLastDelayMs.delete(symbol);
       return;
     }
     try {
@@ -781,9 +787,15 @@ export class MonkeyKernel extends EventEmitter {
       if (status.allSucceeded) {
         logger.info('[MTF-bootstrap] retry success', { symbol });
         this.mtfBootstrapRetryAtMs.delete(symbol);
+        this.mtfBootstrapLastDelayMs.delete(symbol);
       } else {
-        // Still partial — double the backoff for next attempt.
-        const prevDelay = retryAt - (this.mtfBootstrapStatus.get(symbol)?.startedAtMs ?? Date.now());
+        // Still partial — double the previous backoff for next attempt.
+        // Tracked explicitly in mtfBootstrapLastDelayMs (per Sourcery
+        // review on PR #700: reconstructing it from
+        // retryAt − startedAtMs mixed unrelated timestamps and
+        // produced bogus delays).
+        const prevDelay = this.mtfBootstrapLastDelayMs.get(symbol)
+          ?? MonkeyKernel.MTF_BOOTSTRAP_INITIAL_RETRY_MS;
         const nextDelay = Math.min(
           MonkeyKernel.MTF_BOOTSTRAP_MAX_RETRY_MS,
           Math.max(MonkeyKernel.MTF_BOOTSTRAP_INITIAL_RETRY_MS, prevDelay * 2),
@@ -794,17 +806,26 @@ export class MonkeyKernel extends EventEmitter {
           cold: cold.map((p) => `${p.label}:${p.status}`).join(','),
           nextRetryInMs: nextDelay,
         });
-        this.mtfBootstrapRetryAtMs.set(symbol, Date.now() + nextDelay);
+        this.scheduleMTFBootstrapRetry(symbol, nextDelay);
       }
     } catch (err) {
       logger.warn('[MTF-bootstrap] retry threw', {
         symbol, err: err instanceof Error ? err.message : String(err),
       });
-      this.mtfBootstrapRetryAtMs.set(
+      this.scheduleMTFBootstrapRetry(
         symbol,
-        Date.now() + MonkeyKernel.MTF_BOOTSTRAP_MAX_RETRY_MS,
+        MonkeyKernel.MTF_BOOTSTRAP_MAX_RETRY_MS,
       );
     }
+  }
+
+  /** Schedule the next bootstrap retry attempt for ``symbol``.
+   *  Stores both the absolute retry time AND the delay used so the
+   *  next backoff can correctly double from the actual previous delay
+   *  (not a derived value from unrelated timestamps). */
+  private scheduleMTFBootstrapRetry(symbol: string, delayMs: number): void {
+    this.mtfBootstrapRetryAtMs.set(symbol, Date.now() + delayMs);
+    this.mtfBootstrapLastDelayMs.set(symbol, delayMs);
   }
 
   private newSymbolState(): SymbolState {
@@ -1926,10 +1947,14 @@ export class MonkeyKernel extends EventEmitter {
     // own dopamine derives from K-only rewards (decayedRewardSums('K')),
     // but per-agent telemetry surfaces what M/T/L's "shadow" chemistry
     // would look like if they had brains. Useful for the dashboard's
-    // "which agent is in flow" indicator.
+    // "which agent is in flow" indicator. Snapshot `now` once so all
+    // four agents see the same decay reference within this tick (per
+    // Sourcery review on PR #700: separate Date.now() calls per agent
+    // produced slightly different decay snapshots in the same tick).
+    const ncSnapshotMs = Date.now();
     const ncWindowsByAgent: Record<string, { dop: number; ser: number; endo: number }> = {};
     for (const agent of ['K', 'M', 'T', 'L'] as const) {
-      const r = this.decayedRewardSums(Date.now(), agent);
+      const r = this.decayedRewardSums(ncSnapshotMs, agent);
       ncWindowsByAgent[agent] = {
         dop: r.dopamine,
         ser: r.serotonin,
