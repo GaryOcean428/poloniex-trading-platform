@@ -348,6 +348,29 @@ def _handle_predict_strategyloop(payload: dict) -> dict:
     }
     result["derivation"] = bundle.derivation
 
+    # MIG-5: record this tick's qig-warp telemetry into
+    # observable_governance so /governance/status carries the rolling
+    # bridge_exponent / screening_length / regime distribution. The
+    # warp telemetry comes from the bundle's derivation block (the
+    # single per-tick WarpBubble.qig_regime call).
+    try:
+        from observable_governance import record_tick  # noqa: PLC0415
+        deriv = bundle.derivation or {}
+        record_tick(
+            raw_drift_pct=float(trend_strength) * (
+                1.0 if direction == "BULLISH"
+                else -1.0 if direction == "BEARISH"
+                else 0.0
+            ),
+            signal={"BULLISH": "BUY", "BEARISH": "SELL"}.get(direction, "HOLD"),
+            regime=regime_val,
+            bridge_exponent=deriv.get("alpha"),
+            screening_length=deriv.get("xi"),
+            warp_regime=deriv.get("regime"),
+        )
+    except Exception as exc:  # noqa: BLE001 — telemetry must not break /ml/predict
+        logger.debug("[mig-5] observable_governance.record_tick failed: %s", exc)
+
     if action == "predict":
         horizon = payload.get("horizon", "1h")
         chosen = result.get(horizon, result.get("1h"))

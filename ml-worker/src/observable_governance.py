@@ -55,15 +55,25 @@ class GovernanceBuffer:
     """Ring buffers of recent ensemble observables.
 
     Fields:
-      raw_drift_pct — mean signed predicted return, per tick
-      signal_str    — final signal string ('BUY'/'SELL'/'HOLD')
-      regime        — QIG regime classification from qig_engine
+      raw_drift_pct      — mean signed predicted return, per tick
+      signal_str         — final signal string ('BUY'/'SELL'/'HOLD')
+      regime             — MarketRegime label from RegimeAdapter
+      bridge_exponent    — qig-warp α (MIG-5)
+      screening_length   — qig-warp ξ (MIG-5)
+      warp_regime        — qig-warp Regime.value (MIG-5)
+      gr_direction       — qig-warp gr_direction (MIG-5)
+      regime_confidence  — qig-warp RegimeConstants.confidence (MIG-5)
     """
 
     capacity: int = 200
     raw_drift_pct: deque[float] = field(default_factory=lambda: deque(maxlen=200))
     signal_str: deque[str] = field(default_factory=lambda: deque(maxlen=200))
     regime: deque[str] = field(default_factory=lambda: deque(maxlen=200))
+    bridge_exponent: deque[float] = field(default_factory=lambda: deque(maxlen=200))
+    screening_length: deque[float] = field(default_factory=lambda: deque(maxlen=200))
+    warp_regime: deque[str] = field(default_factory=lambda: deque(maxlen=200))
+    gr_direction: deque[str] = field(default_factory=lambda: deque(maxlen=200))
+    regime_confidence: deque[str] = field(default_factory=lambda: deque(maxlen=200))
 
     def record(
         self,
@@ -71,11 +81,26 @@ class GovernanceBuffer:
         raw_drift_pct: float,
         signal: str,
         regime: Optional[str] = None,
+        bridge_exponent: Optional[float] = None,
+        screening_length: Optional[float] = None,
+        warp_regime: Optional[str] = None,
+        gr_direction: Optional[str] = None,
+        regime_confidence: Optional[str] = None,
     ) -> None:
         self.raw_drift_pct.append(float(raw_drift_pct))
         self.signal_str.append(str(signal))
         if regime is not None:
             self.regime.append(str(regime))
+        if bridge_exponent is not None:
+            self.bridge_exponent.append(float(bridge_exponent))
+        if screening_length is not None:
+            self.screening_length.append(float(screening_length))
+        if warp_regime is not None:
+            self.warp_regime.append(str(warp_regime))
+        if gr_direction is not None:
+            self.gr_direction.append(str(gr_direction))
+        if regime_confidence is not None:
+            self.regime_confidence.append(str(regime_confidence))
 
 
 @dataclass
@@ -89,6 +114,8 @@ class GovernanceReport:
     directional_bias_ratio: float  # |BUY - SELL| / total in [0, 1]
     drift_mean: float
     drift_stddev: float
+    # MIG-5: qig-warp regime telemetry surface
+    warp_telemetry: dict[str, Any] = field(default_factory=dict)
 
 
 def run_governance_check(buf: GovernanceBuffer) -> GovernanceReport:
@@ -170,6 +197,48 @@ def run_governance_check(buf: GovernanceBuffer) -> GovernanceReport:
             "note": "Only one regime observed across large window",
         })
 
+    # MIG-5: surface qig-warp regime telemetry rolling state. Mean
+    # alpha / xi give an at-a-glance read of "is the bridge strong?
+    # are correlations long-ranged?" — physics observables that
+    # supplement the distributional bias / regime coverage detectors.
+    alphas = list(buf.bridge_exponent)
+    xis = list(buf.screening_length)
+    warp_regimes = list(buf.warp_regime)
+    warp_telemetry: dict[str, Any] = {}
+    if alphas:
+        alpha_arr = _np.asarray(alphas, dtype=_np.float64)
+        warp_telemetry["bridge_exponent"] = {
+            "mean": float(alpha_arr.mean()),
+            "stddev": float(alpha_arr.std()) if alpha_arr.size > 1 else 0.0,
+            "min": float(alpha_arr.min()),
+            "max": float(alpha_arr.max()),
+            "samples": int(alpha_arr.size),
+        }
+    if xis:
+        xi_arr = _np.asarray(xis, dtype=_np.float64)
+        warp_telemetry["screening_length"] = {
+            "mean": float(xi_arr.mean()),
+            "stddev": float(xi_arr.std()) if xi_arr.size > 1 else 0.0,
+            "min": float(xi_arr.min()),
+            "max": float(xi_arr.max()),
+            "samples": int(xi_arr.size),
+        }
+    if warp_regimes:
+        warp_dist: dict[str, int] = {}
+        for label in warp_regimes:
+            warp_dist[label] = warp_dist.get(label, 0) + 1
+        warp_telemetry["regime_distribution"] = warp_dist
+    if buf.gr_direction:
+        gr_dist: dict[str, int] = {}
+        for label in buf.gr_direction:
+            gr_dist[label] = gr_dist.get(label, 0) + 1
+        warp_telemetry["gr_direction_distribution"] = gr_dist
+    if buf.regime_confidence:
+        conf_dist: dict[str, int] = {}
+        for label in buf.regime_confidence:
+            conf_dist[label] = conf_dist.get(label, 0) + 1
+        warp_telemetry["regime_confidence_distribution"] = conf_dist
+
     return GovernanceReport(
         available=_GOVERNANCE_AVAILABLE,
         sample_count=n,
@@ -179,6 +248,7 @@ def run_governance_check(buf: GovernanceBuffer) -> GovernanceReport:
         directional_bias_ratio=bias,
         drift_mean=drift_mean,
         drift_stddev=drift_std,
+        warp_telemetry=warp_telemetry,
     )
 
 
@@ -192,8 +262,31 @@ def record_tick(
     raw_drift_pct: float,
     signal: str,
     regime: Optional[str] = None,
+    bridge_exponent: Optional[float] = None,
+    screening_length: Optional[float] = None,
+    warp_regime: Optional[str] = None,
+    gr_direction: Optional[str] = None,
+    regime_confidence: Optional[str] = None,
 ) -> None:
-    _buffer.record(raw_drift_pct=raw_drift_pct, signal=signal, regime=regime)
+    """Record one tick into the rolling governance buffer.
+
+    MIG-5 (2026-05-16): the bridge_exponent / screening_length /
+    warp_regime / gr_direction / regime_confidence fields are the
+    qig-warp regime telemetry surface. Callers (RegimeAdapter,
+    forecast_horizons.compute_forecast) supply them per tick so the
+    /governance/status report can display the rolling distribution
+    alongside the existing distributional-bias detectors.
+    """
+    _buffer.record(
+        raw_drift_pct=raw_drift_pct,
+        signal=signal,
+        regime=regime,
+        bridge_exponent=bridge_exponent,
+        screening_length=screening_length,
+        warp_regime=warp_regime,
+        gr_direction=gr_direction,
+        regime_confidence=regime_confidence,
+    )
 
 
 def report() -> GovernanceReport:
@@ -211,4 +304,5 @@ def report_as_dict() -> dict[str, Any]:
         "directional_bias_ratio": r.directional_bias_ratio,
         "drift_mean": r.drift_mean,
         "drift_stddev": r.drift_stddev,
+        "warp_telemetry": r.warp_telemetry,
     }
