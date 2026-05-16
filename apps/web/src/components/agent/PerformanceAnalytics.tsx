@@ -28,7 +28,10 @@ interface PerformanceData {
 
 interface PerformanceAnalyticsProps {
   agentStatus?: string;
-  timeRange?: '24h' | '7d' | '30d' | 'all';
+  // Backend /api/agent/performance accepts ?range=24h|7d|30d|90d|1y.
+  // 'all' was a legacy value that the new backend treats as invalid —
+  // selector below now offers 90d / 1y instead.
+  timeRange?: '24h' | '7d' | '30d' | '90d' | '1y';
   /**
    * Execution-mode filter from the parent's Performance Mode tabs.
    * The backend accepts 'paper' | 'live' (derived from order_id prefix)
@@ -350,17 +353,17 @@ const PerformanceAnalytics: React.FC<PerformanceAnalyticsProps> = ({
             Performance Analytics
           </h3>
           <div className="flex gap-2">
-            {['24h', '7d', '30d', 'all'].map((range) => (
+            {(['24h', '7d', '30d', '90d', '1y'] as const).map((range) => (
               <button
                 key={range}
-                onClick={() => setSelectedRange(range as any)}
+                onClick={() => setSelectedRange(range)}
                 className={`px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${
                   selectedRange === range
                     ? 'bg-blue-600 text-white'
                     : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                 }`}
               >
-                {range === '24h' ? '24 Hours' : range === '7d' ? '7 Days' : range === '30d' ? '30 Days' : 'All Time'}
+                {range === '24h' ? '24 Hours' : range === '7d' ? '7 Days' : range === '30d' ? '30 Days' : range === '90d' ? '90 Days' : '1 Year'}
               </button>
             ))}
           </div>
