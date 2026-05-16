@@ -24,6 +24,21 @@ import { logger } from '../../utils/logger.js';
 
 import { fisherRao, slerp, type Basin } from './basin.js';
 
+export interface RegimeWeights {
+  quantum: number;
+  efficient: number;
+  equilibrium: number;
+}
+
+export interface NeurochemistrySnapshot {
+  acetylcholine: number;
+  dopamine: number;
+  serotonin: number;
+  norepinephrine: number;
+  gaba: number;
+  endorphins: number;
+}
+
 export interface BasinSyncState {
   instanceId: string;
   basin: Basin;
@@ -31,6 +46,10 @@ export interface BasinSyncState {
   kappa: number;
   mode: string;
   driftFromIdentity: number;
+  /** CONSENSUS-6: three-regime mixture weights. Optional for back-compat. */
+  regimeWeights?: RegimeWeights;
+  /** CONSENSUS-6: six-chemical snapshot. Optional for back-compat. */
+  neurochemistry?: NeurochemistrySnapshot;
   updatedAt: Date;
 }
 
@@ -81,14 +100,17 @@ export class BasinSync {
 
   /**
    * Publish this instance's current state. Upsert so the latest row is
-   * always the canonical snapshot.
+   * always the canonical snapshot. regimeWeights + neurochemistry are
+   * extended observables per CONSENSUS-6 (nullable in DB; written when
+   * caller supplies them).
    */
   async update(state: Omit<BasinSyncState, 'instanceId' | 'updatedAt'>): Promise<void> {
     try {
       await pool.query(
         `INSERT INTO monkey_basin_sync
-           (instance_id, basin, phi, kappa, mode, drift_from_identity, updated_at)
-         VALUES ($1, $2::jsonb, $3, $4, $5, $6, NOW())
+           (instance_id, basin, phi, kappa, mode, drift_from_identity,
+            regime_weights, neurochemistry, updated_at)
+         VALUES ($1, $2::jsonb, $3, $4, $5, $6, $7::jsonb, $8::jsonb, NOW())
          ON CONFLICT (instance_id)
          DO UPDATE SET
            basin = EXCLUDED.basin,
@@ -96,6 +118,8 @@ export class BasinSync {
            kappa = EXCLUDED.kappa,
            mode = EXCLUDED.mode,
            drift_from_identity = EXCLUDED.drift_from_identity,
+           regime_weights = EXCLUDED.regime_weights,
+           neurochemistry = EXCLUDED.neurochemistry,
            updated_at = NOW()`,
         [
           this.instanceId,
@@ -104,6 +128,8 @@ export class BasinSync {
           state.kappa,
           state.mode,
           state.driftFromIdentity,
+          state.regimeWeights ? JSON.stringify(state.regimeWeights) : null,
+          state.neurochemistry ? JSON.stringify(state.neurochemistry) : null,
         ],
       );
     } catch (err) {

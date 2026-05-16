@@ -1322,6 +1322,10 @@ def run_tick(
             kappa=state.kappa,
             mode=str(state.last_mode or "investigation"),
             drift_from_identity=float(drift_now),
+            # CONSENSUS-6 extended observables — passed when in scope so
+            # peers see state-level signal (per CC red-team refinement #4).
+            regime_weights=regime_weights,
+            neurochemistry=nc.as_dict() if hasattr(nc, "as_dict") else None,
         )
     except Exception:  # noqa: BLE001
         pass

@@ -1735,12 +1735,23 @@ export class MonkeyKernel extends EventEmitter {
     const selfObsBias = selfObsWinRateBias * selfObsPressure;
 
     // v0.5: Basin sync — publish own state; pull observer-effect influence.
+    // CONSENSUS-6: now also publishes regime_weights + neurochemistry so
+    // peers see state-level signal, not just basin geometry.
     const syncPublish = this.basinSync.update({
       basin,
       phi,
       kappa: state.kappa,
       mode,
       driftFromIdentity: driftNow,
+      regimeWeights: regimeWeights as { quantum: number; efficient: number; equilibrium: number },
+      neurochemistry: {
+        acetylcholine: nc.acetylcholine,
+        dopamine: nc.dopamine,
+        serotonin: nc.serotonin,
+        norepinephrine: nc.norepinephrine,
+        gaba: nc.gaba,
+        endorphins: nc.endorphins,
+      },
     }).catch(() => { /* non-fatal */ });
     void syncPublish;
 
