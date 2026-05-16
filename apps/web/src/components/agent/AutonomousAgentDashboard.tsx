@@ -67,6 +67,20 @@ const AutonomousAgentDashboard: React.FC = () => {
   const [agentStatus, setAgentStatus] = useState<AgentStatus | null>(null);
   const [activity, setActivity] = useState<AgentActivity[]>([]);
   const [strategies, setStrategies] = useState<AgentStrategy[]>([]);
+  // C6/C7 — surface real LIVE-vs-PAPER state and detect stale baseline.
+  //  • /api/autonomous/status returns { enabled, config.paperTrading,
+  //    config.initialCapital } — drives the status badge AND the
+  //    baseline-divergence banner.
+  //  • /api/dashboard/balance returns { data.totalBalance } — compared
+  //    against initialCapital to detect drift > 20% which makes the
+  //    totalPnlPercent display absurd (e.g. 777% on a stale $440 baseline
+  //    while current equity is $91).
+  const [autonomousStatus, setAutonomousStatus] = useState<{
+    enabled: boolean;
+    paperTrading: boolean;
+    initialCapital: number | null;
+  } | null>(null);
+  const [currentBalance, setCurrentBalance] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastPolled, setLastPolled] = useState<Date | null>(null);
@@ -209,6 +223,8 @@ const AutonomousAgentDashboard: React.FC = () => {
     fetchStrategies();
     fetchHealth();
     fetchCapabilities();
+    fetchAutonomousStatus();
+    fetchCurrentBalance();
 
     // WebSocket real-time updates
     let socket: { on: (event: string, cb: (data: any) => void) => void; disconnect: () => void } | null = null;
@@ -261,6 +277,8 @@ const AutonomousAgentDashboard: React.FC = () => {
 
     const interval = setInterval(() => {
       fetchAgentStatus();
+      fetchAutonomousStatus();
+      fetchCurrentBalance();
       if (agentStatusRef.current === 'running') {
         fetchActivity();
         fetchStrategies();
@@ -284,7 +302,7 @@ const AutonomousAgentDashboard: React.FC = () => {
       const response = await axios.get(`${API_BASE_URL}/api/agent/status`, {
         headers: getAuthHeaders()
       });
-      
+
       if (response.data.success) {
         setAgentStatus(response.data.status);
         consecutiveErrorsRef.current = 0; // Reset on success
@@ -293,6 +311,45 @@ const AutonomousAgentDashboard: React.FC = () => {
     } catch (_err: unknown) {
       consecutiveErrorsRef.current = Math.min(consecutiveErrorsRef.current + 1, MAX_CONSECUTIVE_ERRORS);
       setLastPolled(new Date());
+    }
+  };
+
+  // C6 — pull the authoritative LIVE/PAPER flag and the stored baseline
+  // from /api/autonomous/status. The /api/agent/status payload exposes
+  // status.trader.paperTrading but the autonomous endpoint also returns
+  // config.initialCapital (needed for the C7 divergence check), so we
+  // hit it once on mount + on poll ticks for a consistent snapshot.
+  const fetchAutonomousStatus = async () => {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/api/autonomous/status`, {
+        headers: getAuthHeaders()
+      });
+      if (response.data.success) {
+        setAutonomousStatus({
+          enabled: !!response.data.enabled,
+          paperTrading: !!response.data.config?.paperTrading,
+          initialCapital:
+            typeof response.data.config?.initialCapital === 'number'
+              ? response.data.config.initialCapital
+              : null,
+        });
+      }
+    } catch {
+      // Non-critical — badge/banner just won't render.
+    }
+  };
+
+  // C7 — current futures equity for baseline-divergence detection.
+  const fetchCurrentBalance = async () => {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/api/dashboard/balance`, {
+        headers: getAuthHeaders()
+      });
+      if (response.data.success && typeof response.data.data?.totalBalance === 'number') {
+        setCurrentBalance(response.data.data.totalBalance);
+      }
+    } catch {
+      // Non-critical.
     }
   };
 
@@ -528,6 +585,45 @@ const AutonomousAgentDashboard: React.FC = () => {
             <p className="mt-2 opacity-90">
               AI-powered autonomous trading system using Claude Sonnet 4.5
             </p>
+            {/* C6 — capital-mode badge. Renders against the actual
+                {enabled, paperTrading} state pulled from
+                /api/autonomous/status, NOT the localStorage execution-mode
+                preference (which can disagree with the kernel's truth). */}
+            {autonomousStatus && (
+              (() => {
+                if (!autonomousStatus.enabled) {
+                  return (
+                    <span
+                      role="status"
+                      aria-label="Autonomous trading stopped"
+                      className="mt-3 inline-flex items-center gap-2 px-3 py-1 rounded-md bg-gray-800/60 text-gray-100 text-sm font-semibold border border-gray-500/40"
+                    >
+                      <span aria-hidden>⚫</span> STOPPED
+                    </span>
+                  );
+                }
+                if (autonomousStatus.paperTrading) {
+                  return (
+                    <span
+                      role="status"
+                      aria-label="Paper trading mode — simulated capital"
+                      className="mt-3 inline-flex items-center gap-2 px-3 py-1 rounded-md bg-yellow-100 text-yellow-900 text-sm font-semibold border border-yellow-300"
+                    >
+                      <span aria-hidden>🟡</span> PAPER — Simulated capital
+                    </span>
+                  );
+                }
+                return (
+                  <span
+                    role="status"
+                    aria-label="Live trading active — real capital at risk"
+                    className="mt-3 inline-flex items-center gap-2 px-3 py-1 rounded-md bg-red-600 text-white text-sm font-bold border-2 border-red-300 shadow-md animate-pulse"
+                  >
+                    <span aria-hidden>🔴</span> LIVE — REAL CAPITAL
+                  </span>
+                );
+              })()
+            )}
           </div>
 
           <div className="flex items-center gap-3">
@@ -566,6 +662,57 @@ const AutonomousAgentDashboard: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* C7 — Baseline-divergence banner.
+          totalPnlPercent on this dashboard is computed against the
+          stored autonomous_trading_configs.initial_capital. If that
+          baseline is more than 20% off the current futures equity,
+          the % display goes nonsensical (e.g. 777% when $440 baseline
+          vs $91 actual). Surface a warning + the suggested reset
+          value so the user can fix it via the config endpoint.
+
+          NOTE: there is no BE reset endpoint today — this banner is
+          informational only. Once /api/autonomous/config (or similar)
+          accepts a PATCH for initial_capital, wire the CTA to it. */}
+      {autonomousStatus?.initialCapital !== undefined
+        && autonomousStatus?.initialCapital !== null
+        && autonomousStatus.initialCapital > 0
+        && currentBalance !== null
+        && currentBalance > 0
+        && (() => {
+          const drift = Math.abs(currentBalance - autonomousStatus.initialCapital!)
+            / autonomousStatus.initialCapital!;
+          if (drift <= 0.2) return null;
+          const direction = currentBalance > autonomousStatus.initialCapital! ? 'above' : 'below';
+          return (
+            <div
+              className="bg-amber-50 border border-amber-300 rounded-lg p-4 flex items-start gap-3"
+              role="alert"
+              aria-label="Stale baseline warning"
+            >
+              <AlertCircle className="w-6 h-6 text-amber-600 flex-shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <h3 className="text-amber-800 font-semibold">Stale baseline detected</h3>
+                <p className="text-amber-700 text-sm mt-1">
+                  Stored baseline is{' '}
+                  <strong>${autonomousStatus.initialCapital!.toFixed(2)}</strong>
+                  {' '}but current equity is{' '}
+                  <strong>${safeNum(currentBalance).toFixed(2)}</strong>
+                  {' '}— a {safeNum(drift * 100).toFixed(0)}% drift {direction} the baseline.
+                  The Total P&amp;L % shown on this dashboard is computed against
+                  the stored baseline and will read as nonsense until the baseline
+                  is reset to the current equity.
+                </p>
+                <p className="text-amber-700 text-xs mt-2">
+                  TODO: wire a backend PATCH endpoint (e.g.
+                  <code className="px-1 mx-1 bg-amber-100 rounded">PATCH /api/autonomous/config</code>
+                  with <code className="px-1 bg-amber-100 rounded">{`{ initialCapital: ${safeNum(currentBalance).toFixed(2)} }`}</code>)
+                  to reset baseline from the UI.
+                </p>
+              </div>
+            </div>
+          );
+        })()}
 
       {/* Existing Session Banner */}
       {existingSession && (
