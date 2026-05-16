@@ -74,6 +74,12 @@ class GovernanceBuffer:
     warp_regime: deque[str] = field(default_factory=lambda: deque(maxlen=200))
     gr_direction: deque[str] = field(default_factory=lambda: deque(maxlen=200))
     regime_confidence: deque[str] = field(default_factory=lambda: deque(maxlen=200))
+    # Unbounded monotonic tick counter (2026-05-17). The rolling buffers
+    # above cap at ``capacity`` so ``len(deque)`` plateaus at 200 once
+    # full and can no longer signal freshness — external freshness
+    # checks must use this counter instead. Incremented once per
+    # successful ``record()`` call.
+    tick_count_total: int = 0
 
     def record(
         self,
@@ -87,6 +93,7 @@ class GovernanceBuffer:
         gr_direction: Optional[str] = None,
         regime_confidence: Optional[str] = None,
     ) -> None:
+        self.tick_count_total += 1
         self.raw_drift_pct.append(float(raw_drift_pct))
         self.signal_str.append(str(signal))
         if regime is not None:
@@ -106,7 +113,8 @@ class GovernanceBuffer:
 @dataclass
 class GovernanceReport:
     available: bool
-    sample_count: int
+    sample_count: int             # current rolling-buffer length (caps at capacity)
+    tick_count_total: int         # unbounded monotonic — use this for freshness
     amplitude_violations: list[dict[str, Any]]
     regime_violations: list[dict[str, Any]]
     # Local heuristic checks (always run, even without qig-compute)
@@ -242,6 +250,7 @@ def run_governance_check(buf: GovernanceBuffer) -> GovernanceReport:
     return GovernanceReport(
         available=_GOVERNANCE_AVAILABLE,
         sample_count=n,
+        tick_count_total=buf.tick_count_total,
         amplitude_violations=amplitude_violations,
         regime_violations=regime_violations,
         signal_distribution=dist,
@@ -298,6 +307,7 @@ def report_as_dict() -> dict[str, Any]:
     return {
         "available": r.available,
         "sample_count": r.sample_count,
+        "tick_count_total": r.tick_count_total,
         "amplitude_violations": r.amplitude_violations,
         "regime_violations": r.regime_violations,
         "signal_distribution": r.signal_distribution,

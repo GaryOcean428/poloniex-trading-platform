@@ -106,3 +106,59 @@ class TestReportSurfacesWarpTelemetry:
         report = og.report_as_dict()
         assert "warp_telemetry" in report
         assert report["warp_telemetry"] == {}
+
+
+class TestTickCountTotalFreshness:
+    """Regression: ``sample_count`` plateaus at the deque ``maxlen``
+    (200) once the rolling buffer fills, so external freshness checks
+    cannot use it. ``tick_count_total`` is the unbounded monotonic
+    counter that DOES advance on every record — overnight monitor
+    2026-05-17T18:13Z surfaced this false-positive freshness alert
+    when the buffer hit capacity. This test proves the counter
+    advances past the buffer cap."""
+
+    def test_tick_count_total_advances_past_buffer_cap(self) -> None:
+        """Push more ticks than the buffer capacity. ``sample_count``
+        caps at 200; ``tick_count_total`` keeps climbing."""
+        # Small buffer for the test — same shape as production.
+        og._buffer = og.GovernanceBuffer(capacity=200)
+        # Override the deque maxlens to match the capacity parameter
+        # so we don't have to push thousands of ticks.
+        from collections import deque
+        og._buffer.raw_drift_pct = deque(maxlen=10)
+        og._buffer.signal_str = deque(maxlen=10)
+        og._buffer.regime = deque(maxlen=10)
+        og._buffer.bridge_exponent = deque(maxlen=10)
+        og._buffer.screening_length = deque(maxlen=10)
+        og._buffer.warp_regime = deque(maxlen=10)
+        og._buffer.gr_direction = deque(maxlen=10)
+        og._buffer.regime_confidence = deque(maxlen=10)
+
+        for i in range(25):
+            og.record_tick(
+                raw_drift_pct=0.001,
+                signal="HOLD",
+                regime="dissolver",
+                bridge_exponent=0.38,
+                screening_length=0.784,
+                warp_regime="disordered",
+            )
+
+        report = og.report_as_dict()
+        # sample_count is the len() of the bounded deque — capped at 10.
+        assert report["sample_count"] == 10
+        # tick_count_total is the monotonic ground-truth — 25 because
+        # 25 ticks were pushed.
+        assert report["tick_count_total"] == 25
+        # Continued ticks → counter keeps climbing past buffer cap.
+        for _ in range(15):
+            og.record_tick(raw_drift_pct=0.001, signal="HOLD", regime="dissolver")
+        report = og.report_as_dict()
+        assert report["sample_count"] == 10  # still capped
+        assert report["tick_count_total"] == 40
+
+    def test_tick_count_total_starts_at_zero(self) -> None:
+        og._buffer = og.GovernanceBuffer(capacity=200)
+        report = og.report_as_dict()
+        assert report["tick_count_total"] == 0
+        assert report["sample_count"] == 0
