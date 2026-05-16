@@ -1326,15 +1326,37 @@ export class MonkeyKernel extends EventEmitter {
     });
 
     // §3.3 Pillar 2 surface absorption — external input at 30% max
-    const basin = refract(rawBasin, state.identityBasin, 0.30);
+    let basin = refract(rawBasin, state.identityBasin, 0.30);
 
     // 3. MEASURE — Φ, κ, regime, basin velocity, neurochemistry
     // Φ = 1 - normalized_entropy_of_noise_dims (integration)
     //   high Φ = concentrated signal; low Φ = diffuse exploration
-    const fHealth = normalizedEntropy(basin);
+    let fHealth = normalizedEntropy(basin);
     // Φ inversely tracks fHealth: when the basin is concentrated (low entropy),
     // integration is high; when diffuse (high entropy), Φ is low (exploration).
-    const phi = Math.max(0, Math.min(1, 1 - fHealth * 0.8));
+    let phi = Math.max(0, Math.min(1, 1 - fHealth * 0.8));
+
+    // ── Cross-kernel observer effect (Consensus Layer 1) ──────
+    // CONSENSUS_CROSS_OBSERVATION_LIVE flag-gated. When live, basin is
+    // pulled toward peer kernels' basins (TS Monkey + Py Monkey) per
+    // Φ-weighted SLERP from qig-core canonical. Recomputes Φ after the
+    // pull so downstream sees consistent (basin, Φ). When the flag is
+    // off, peers are visible in telemetry only — basin unchanged.
+    // See [[polytrade-consensus-architecture]].
+    if (process.env.CONSENSUS_CROSS_OBSERVATION_LIVE === 'true') {
+      try {
+        const pull = await this.basinSync.applyObserverEffect(basin, phi);
+        if (pull.influenced) {
+          basin = pull.basin;
+          fHealth = normalizedEntropy(basin);
+          phi = Math.max(0, Math.min(1, 1 - fHealth * 0.8));
+        }
+      } catch (err) {
+        logger.debug('[BasinSync] applyObserverEffect failed', {
+          symbol, err: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
 
     // κ adapts from basin velocity × internal coupling. Stable near κ*
     // when integration is high and basin velocity is low.
