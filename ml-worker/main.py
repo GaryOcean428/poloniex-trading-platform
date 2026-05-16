@@ -253,32 +253,19 @@ def _strategy_to_signal(
     }
 
 
-def _strongest_recent_change(prices: list[float]) -> float:
-    """Multi-window recent-action probe for the regime tiebreaker.
+def _regime_to_direction(regime: str, prices: list[float]) -> str:
+    """Map (regime, prices) → BULLISH / BEARISH / NEUTRAL.
 
-    Now delegates to ``regime_signal.strongest_recent_change`` so the
-    pure logic is unit-testable without dragging the full ml-worker
-    import chain (pandas, FastAPI, sklearn, TF). Kept as a thin alias
-    so callers and any downstream patches that grep this name still
-    resolve. See ``regime_signal.py`` for the implementation history.
-    """
-    from regime_signal import strongest_recent_change
-    return strongest_recent_change(prices)
-
-
-def _regime_to_direction(
-    regime: str, trend_strength: float, recent_change_pct: float = 0.0,
-) -> str:
-    """Map (regime, trend_strength[, recent_change_pct]) → BULLISH /
-    BEARISH / NEUTRAL.
-
-    Now delegates to ``regime_signal.regime_to_direction``. See
-    ``regime_signal.py`` for the patch history (dead-zone tiebreaker,
-    multi-window probe, probe-pre-empts-early-returns, largest-
-    magnitude-wins).
+    MIG-3 (2026-05-16): hardcoded probe-window tiebreaker
+    (``_PROBE_WINDOWS = (3, 5, 10, 15, 60, 120)`` + largest-magnitude
+    selection) retired in favour of qig_warp's regime-aware bridge
+    exponent. When the bridge is strong (CRITICAL) or the regime is
+    ORDERED, follow the sign of the mean return; otherwise NEUTRAL.
+    No window literals; no largest-magnitude tiebreaker; no #725
+    class of bug.
     """
     from regime_signal import regime_to_direction
-    return regime_to_direction(regime, trend_strength, recent_change_pct)
+    return regime_to_direction(regime, prices)
 
 
 def _handle_predict_strategyloop(payload: dict) -> dict:
@@ -329,15 +316,10 @@ def _handle_predict_strategyloop(payload: dict) -> dict:
     confidence_raw = decision.regime.confidence if decision.regime else 0.4
     trend_strength = decision.regime.trend_strength if decision.regime else 0.0
 
-    # Multi-window recent-action probe for the dead-zone tiebreaker
-    # in _regime_to_direction. The probe handles its own windowing
-    # and noise filtering — checks 3/5/10/15 bars, returns the
-    # shortest decisive window or 0.0 (no-op). Catches fast
-    # breakdowns/breakouts that the StrategyLoop's longer-window
-    # trend_strength misses on callers with longer candle intervals.
-    recent_change_pct = _strongest_recent_change(prices)
-
-    direction = _regime_to_direction(regime_val, trend_strength, recent_change_pct)
+    # MIG-3: direction comes from qig_warp's regime-aware bridge
+    # exponent + the sign of the mean return — no hardcoded probe
+    # windows. See regime_signal.regime_to_direction.
+    direction = _regime_to_direction(regime_val, prices)
     confidence_pct = int(min(max(confidence_raw * 100, 10), 95))
 
     if action == "signal":
