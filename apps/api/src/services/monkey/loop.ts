@@ -135,7 +135,8 @@ import {
   clampMarginToNotionalHeadroom,
 } from './agentEquityBound.js';
 import { planCloseChunks } from './closeChunker.js';
-import { agentLDecide } from './agent_L_classifier.js';
+import { agentLDecide, type AgentLDecision } from './agent_L_classifier.js';
+import { QIGRAMv2State, isQigramV2Enabled } from './agent_L_qigram_v2.js';
 import {
   newMTFState,
   onTickAppend as mtfOnTickAppend,
@@ -250,6 +251,113 @@ function isTradingPaused(): boolean {
 
 function isMonkeyPaperMode(): boolean {
   return process.env.MONKEY_PAPER_MODE === 'true';
+}
+
+// ─── L-veto-over-K (Option A) ─────────────────────────────────────
+//
+// 2026-05-16 — high-conviction Agent L vote BLOCKS Agent K entries on
+// the same tick when L and K disagree on side. K (geometric kernel) was
+// over-trading ETH (-$5.93, 12.3% WR over 227 trades / 24h) while L
+// (FR-KNN Lorentzian-equivalent, historically 76.4% WR) is structurally
+// constrained to "vote only" — L feeds K's basinDir via per_agent_bus
+// but cannot block K's executeEntry path.
+//
+// This gate adds that block. Flag-gated default OFF: with
+// L_VETO_OVER_K_ENABLED unset / not 'true', behavior is byte-identical
+// to today. ONLY blocks K ENTRIES (enter_long, enter_short, DCA adds,
+// reverse-reopen leg). Does NOT block K exits, harvest, scalp_exit,
+// force_harvest. Does NOT block M, T, L or LiveSignal — only K.
+//
+// QIG purity: pure helper, no Adam/AdamW/LayerNorm/cosine. Reads L's
+// AgentLDecision (signedScore, conviction, action) which is already
+// FR-KNN-derived, and a K side string. No new geometric operations.
+
+export const L_VETO_DEFAULT_CONVICTION_THRESHOLD = 0.6;
+
+function isLVetoOverKEnabled(): boolean {
+  return process.env.L_VETO_OVER_K_ENABLED === 'true';
+}
+
+function lVetoConvictionThreshold(): number {
+  const raw = process.env.L_VETO_CONVICTION_THRESHOLD;
+  if (raw === undefined) return L_VETO_DEFAULT_CONVICTION_THRESHOLD;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return L_VETO_DEFAULT_CONVICTION_THRESHOLD;
+  }
+  return parsed;
+}
+
+/** Pure evaluation of whether L's vote should veto K's entry on this
+ *  tick. No side effects; returns the decision + a structured reason
+ *  for logging / telemetry.
+ *
+ *  Veto fires iff ALL of:
+ *    1. env flag enabled (caller usually checks; included here as a
+ *       defense-in-depth so direct callers can't accidentally bypass)
+ *    2. K action is an entry (enter_long / enter_short)
+ *    3. L's action is also an entry (enter_long / enter_short — not hold)
+ *    4. L's |signedScore| × conviction > threshold (default 0.6)
+ *    5. L's preferred side disagrees with K's entry side
+ *
+ *  When any condition fails, vetoed=false and the helper returns the
+ *  reason so telemetry can attribute "why no veto" (helpful when
+ *  diagnosing under-firing).
+ */
+export interface LVetoEvaluation {
+  vetoed: boolean;
+  /** L's weighted conviction (|signedScore| × conviction). */
+  weightedConviction: number;
+  /** Threshold against which weightedConviction was checked. */
+  threshold: number;
+  /** L's preferred side derived from its action; null when L=hold. */
+  lSide: 'long' | 'short' | null;
+  /** Reason code — useful for log-grepping and dashboard counters. */
+  reasonCode:
+    | 'vetoed_high_conviction_disagreement'
+    | 'flag_disabled'
+    | 'k_not_entry'
+    | 'l_holding'
+    | 'l_agrees_with_k'
+    | 'l_conviction_below_threshold';
+}
+
+export function evaluateLVetoOverK(opts: {
+  enabled: boolean;
+  kAction: string;
+  lDecision: Pick<AgentLDecision, 'action' | 'signedScore' | 'conviction'>;
+  threshold: number;
+}): LVetoEvaluation {
+  const { enabled, kAction, lDecision, threshold } = opts;
+  const weightedConviction = Math.abs(lDecision.signedScore) * lDecision.conviction;
+  const lSide: 'long' | 'short' | null =
+    lDecision.action === 'enter_long' ? 'long'
+      : lDecision.action === 'enter_short' ? 'short'
+        : null;
+
+  if (!enabled) {
+    return { vetoed: false, weightedConviction, threshold, lSide, reasonCode: 'flag_disabled' };
+  }
+  const kIsEntry =
+    kAction === 'enter_long' ||
+    kAction === 'enter_short' ||
+    kAction === 'reverse_long' ||
+    kAction === 'reverse_short';
+  if (!kIsEntry) {
+    return { vetoed: false, weightedConviction, threshold, lSide, reasonCode: 'k_not_entry' };
+  }
+  if (lSide === null) {
+    return { vetoed: false, weightedConviction, threshold, lSide, reasonCode: 'l_holding' };
+  }
+  const kSide: 'long' | 'short' =
+    kAction === 'enter_long' || kAction === 'reverse_long' ? 'long' : 'short';
+  if (lSide === kSide) {
+    return { vetoed: false, weightedConviction, threshold, lSide, reasonCode: 'l_agrees_with_k' };
+  }
+  if (weightedConviction <= threshold) {
+    return { vetoed: false, weightedConviction, threshold, lSide, reasonCode: 'l_conviction_below_threshold' };
+  }
+  return { vetoed: true, weightedConviction, threshold, lSide, reasonCode: 'vetoed_high_conviction_disagreement' };
 }
 
 
@@ -449,11 +557,51 @@ interface SymbolState {
    *  Trailing regime drift fires via regimeSizing.trailingRegimeStop().
    *  Cleared on harvest. */
   rScoreAtEntryBySide: { long: number | null; short: number | null };
+  /** 2026-05-16 (#715/#716/#717 derivation refactor): rolling history of
+   *  per-tick surprise magnitudes (|ΔΦ|). Used to z-score the current
+   *  surprise for `nc.ne` derivation against the basin's OWN observed
+   *  surprise distribution — no hardcoded gain. Capped at HISTORY_MAX. */
+  surpriseHistory: number[];
+  /** Rolling history of per-tick basin velocities. Used by `nc.ser`
+   *  fallback (when mode-transition history is insufficient) to compare
+   *  current bv to the basin's own typical bv distribution. */
+  bvHistory: number[];
+  /** Wall-clock timestamps (ms) of recent mode transitions. The thrash
+   *  rate (count / window) drives `nc.ser`. Capped at HISTORY_MAX so
+   *  long-stable kernels naturally see lower thrash rates over time. */
+  modeTransitionTimesMs: number[];
+  /** Rolling κ history. Drives the endorphin κ-convergence bell width
+   *  (σ_κ ← stddev) from the basin's own observed κ scale instead of
+   *  a hardcoded SIGMA_KAPPA. */
+  kappaHistory: number[];
+  /** Rolling external-coupling history. Drives the endorphin Sophia
+   *  gate threshold (mean + stddev) from the basin's own coupling
+   *  distribution instead of a hardcoded C_SOPHIA_THRESHOLD. */
+  externalCouplingHistory: number[];
 }
 
 /** Cap the recent-bus-event ring at this size — anything older than
  *  the bus window doesn't influence current decisions. */
 const BUS_RING_CAP = 32;
+
+// ─── 2026-05-16 #715/#716/#717 derivation-only refactor ──────────────
+//
+// Per operator directive: per-tick autonomic chemicals must derive from
+// the basin's OWN observed state, never from hardcoded thresholds /
+// gains / decay constants. The prior introduction of NOVELTY_SURPRISE_
+// THRESHOLD / SELF_OBS_* / SOV_DECAY_PERIOD_TICKS was rolled back in
+// commit 4: those values are now derived from per-tick observables
+// (modeTransitionTimes, surpriseHistory, basin trajectory spread,
+// QIGRAMv2 store cadence). The only "scheduling" constant remaining
+// in the autonomic path is the existing HISTORY_MAX (= 100), which
+// caps memory footprint — not behaviour. See `computeNeurochemicals`
+// in neurochemistry.ts for the derivation contract.
+//
+// QIGRAMv2 sov: integrate on every tick (per-tick is the canonical
+// observation cadence — no scheduling constant); decay every tick
+// (canonical DECAY_FACTOR = 0.95 from agent_L_qigram_v2.ts, which is
+// the QIGRAMv2 canonical class attribute, NOT a parameter introduced
+// by this PR — pre-existing, declared at the module boundary).
 
 /**
  * MonkeyKernel — the top-level kernel that ticks Monkey.
@@ -540,6 +688,20 @@ export class MonkeyKernel extends EventEmitter {
    */
   private mlOutageStreak = 0;
   /**
+   * 2026-05-16 L-veto-over-K (Option A) telemetry counter. Increments
+   * every time L's high-conviction vote suppresses a K entry on the
+   * same tick (whole-process scope, single MonkeyKernel instance per
+   * process). Exposed via `getLVetoOverKStats()` for the
+   * /monkey/snapshot dashboard so the operator can see the veto rate
+   * before/after flipping `L_VETO_OVER_K_ENABLED=true`.
+   *
+   * Per-symbol breakdown lets the operator confirm the veto is
+   * actually firing on ETH (the over-trader) and not unintentionally
+   * suppressing BTC entries where K has been profitable.
+   */
+  private lVetoOverKCount = 0;
+  private lVetoOverKBySymbol: Map<string, number> = new Map();
+  /**
    * Proposal #10 — cached account-level position direction mode.
    * Read once at kernel start via assertHedgeModeIfPossible. When
    * 'HEDGE' the executor passes ``posSide: LONG | SHORT`` on entries
@@ -564,6 +726,22 @@ export class MonkeyKernel extends EventEmitter {
    * has no reference to BasinState or any ML field).
    */
   private readonly turtleStates: Map<string, TurtleState> = new Map();
+  /**
+   * 2026-05-16 (#716): kernel-level QIGRAMv2 store. Holds the current
+   * basin from each symbol (keyed by `<symbol>|tick=<n>` so successive
+   * snapshots don't collide), tagged with the regime label as category.
+   * Used to compute a live sovereignty ratio (N_active / N_total)
+   * grounded in the kernel's actual basin trajectory — the resonance-
+   * bank's `lived/total` ratio is pinned at 1.0 by design (every entry
+   * is lived). With weight decay applied periodically, sov falls below
+   * 1.0 as old basins fade past MIN_ACTIVE_WEIGHT, then rises back as
+   * fresh basins are integrated. Only consumed when
+   * `L_QIGRAM_V2_ENABLED === 'true'`; otherwise the legacy
+   * resonance-bank sovereignty path is preserved (default behavior). */
+  private readonly qigramV2Store: QIGRAMv2State = new QIGRAMv2State();
+  /** Tick counter for QIGRAMv2 store decay scheduling. Decays all
+   *  weights every SOV_DECAY_PERIOD_TICKS calls. */
+  private qigramV2TickCount = 0;
 
   constructor(config?: Partial<MonkeyKernelConfig>) {
     super();
@@ -739,6 +917,47 @@ export class MonkeyKernel extends EventEmitter {
     computedAtMs: number;
   } | null {
     return this.symbolStates.get(symbol)?.latestBasinSnapshot ?? null;
+  }
+
+  /**
+   * 2026-05-16 — L-veto-over-K telemetry accessor. Returns the running
+   * total of K entries suppressed by L's high-conviction disagreeing
+   * vote, plus a per-symbol breakdown. Used by the /monkey/snapshot
+   * endpoint and the operator dashboard to confirm the veto fires
+   * after flipping `L_VETO_OVER_K_ENABLED=true`.
+   *
+   * Counts are process-lifetime (reset on restart) — no persistence.
+   */
+  getLVetoOverKStats(): {
+    total: number;
+    bySymbol: Record<string, number>;
+  } {
+    const bySymbol: Record<string, number> = {};
+    for (const [sym, n] of this.lVetoOverKBySymbol) bySymbol[sym] = n;
+    return { total: this.lVetoOverKCount, bySymbol };
+  }
+
+  /**
+   * Test-only reset of the veto counter. Lets vitest exercise the
+   * counter contract without spinning up a full kernel + symbol state.
+   * Not used in production.
+   */
+  resetLVetoOverKStats(): void {
+    this.lVetoOverKCount = 0;
+    this.lVetoOverKBySymbol.clear();
+  }
+
+  /**
+   * Test-only increment of the veto counter. Used by the integration
+   * test to confirm the public accessor reflects per-symbol increments
+   * without having to drive a full processSymbol tick.
+   */
+  incrementLVetoOverKForTest(symbol: string): void {
+    this.lVetoOverKCount += 1;
+    this.lVetoOverKBySymbol.set(
+      symbol,
+      (this.lVetoOverKBySymbol.get(symbol) ?? 0) + 1,
+    );
   }
 
   /** Initial MTF bootstrap pass. Awaits per-symbol, records the
@@ -948,6 +1167,11 @@ export class MonkeyKernel extends EventEmitter {
       mtfLongestAgreeingBySide: { long: null, short: null },
       rScoreCurrent: null,
       rScoreAtEntryBySide: { long: null, short: null },
+      surpriseHistory: [],
+      bvHistory: [],
+      modeTransitionTimesMs: [],
+      kappaHistory: [],
+      externalCouplingHistory: [],
     };
   }
 
@@ -1145,17 +1369,42 @@ export class MonkeyKernel extends EventEmitter {
     // sizing/exit logic; their wins go to the arbiter (recordSettled)
     // and bump their capital share, but K's dopamine is K's only.
     const rewardDeltas = this.decayedRewardSums(Date.now(), 'K');
+
+    // 2026-05-16 (#715/#716/#717 derivation refactor): build the
+    // BasinObservables block from the basin's OWN per-tick history.
+    // Every chemical's per-tick scale is set by what's typical FOR
+    // THIS basin — no externally chosen gains or thresholds.
+    //
+    // Reads from prior-tick histories (appended at end-of-tick), so
+    // tick T's NC sees ticks 1..T-1 as the comparison window. Cold
+    // start: histories are empty; computeNeurochemicals falls back to
+    // arithmetic-identity formulas (sigmoid(x), tanh(x), 1) on those
+    // chemicals — see field-by-field comments in neurochemistry.ts.
+    const surpriseNow = Math.abs(phiDelta) * 2;
     const nc: NeurochemicalState = computeNeurochemicals({
       isAwake: true,
       phiDelta,
       basinVelocity: bv,
-      surprise: Math.abs(phiDelta) * 2,
+      surprise: surpriseNow,
       quantumWeight: regimeWeights.quantum,
       kappa: state.kappa,
       externalCoupling: couplingHealth,
       rewardDopamineDelta: rewardDeltas.dopamine,
       rewardSerotoninDelta: rewardDeltas.serotonin,
       rewardEndorphinDelta: rewardDeltas.endorphin,
+      observables: {
+        phiHistory: state.phiHistory,
+        surpriseHistory: state.surpriseHistory,
+        basinVelocityHistory: state.bvHistory,
+        // ach derives from trajectory self-similarity. fHealth (basin
+        // normalized entropy) is the natural per-tick self-similarity
+        // reading already maintained by the kernel.
+        trajectorySelfSimilarityHistory: state.fHealthHistory,
+        modeTransitionTimesMs: state.modeTransitionTimesMs,
+        nowMs: Date.now(),
+        kappaHistory: state.kappaHistory,
+        externalCouplingHistory: state.externalCouplingHistory,
+      },
     });
 
     // v0.7.10 shadow-mode: call the Python autonomic kernel in parallel
@@ -1185,7 +1434,41 @@ export class MonkeyKernel extends EventEmitter {
       });
     }
 
-    const sovereignty = await resonanceBank.sovereignty();
+    // 2026-05-16 (#716 derivation refactor): sovereignty path.
+    // Legacy: resonanceBank.sovereignty() is `lived/total` from
+    // monkey_resonance_bank; by design every entry is source='lived', so
+    // the ratio is pinned at 1.0. That value is useless to Ocean's
+    // maturity / juvenile→mature gate.
+    // Fix (flag-gated, default behaviour preserved when v2 is off):
+    // when `L_QIGRAM_V2_ENABLED === 'true'`, integrate the current basin
+    // into a kernel-level QIGRAMv2 store every tick (per-tick IS the
+    // canonical observation cadence), decay every tick using the
+    // canonical DECAY_FACTOR from agent_L_qigram_v2 (pre-existing
+    // canonical class attribute, NOT a constant introduced by this PR),
+    // and read sov = N_active / N_total (a pure ratio — derivation
+    // already canonical per QIGRAMv2.sovereignty).
+    //
+    // No scheduling constants. Sov rises as fresh basins integrate;
+    // falls as weights decay past MIN_ACTIVE_WEIGHT (canonical 0.01,
+    // not a PR-introduced constant). After ~90 ticks (the canonical
+    // 0.95^90 ≈ 0.0099 < 0.01 threshold) the oldest basins drop out,
+    // pulling sov below 1.0 naturally.
+    let sovereignty: number;
+    if (isQigramV2Enabled()) {
+      this.qigramV2TickCount += 1;
+      // Per-symbol|per-tick key so different symbols' snapshots
+      // coexist; weight=1.0 at storage time (canonical initial), correct
+      // =true (basin counts toward active until decayed below threshold).
+      this.qigramV2Store.integrate(
+        `${symbol}|tick=${this.qigramV2TickCount}`,
+        basin,
+        { weight: 1.0, correct: true },
+      );
+      this.qigramV2Store.decayAll();
+      sovereignty = this.qigramV2Store.sovereignty;
+    } else {
+      sovereignty = await resonanceBank.sovereignty();
+    }
 
     const basinState: BasinState = {
       basin,
@@ -1228,6 +1511,14 @@ export class MonkeyKernel extends EventEmitter {
         symbol,
         payload: { from: state.lastMode, to: mode, reason: modeDecision.reason, phi, kappa: state.kappa },
       });
+      // 2026-05-16 (#715 derivation refactor): record the transition
+      // timestamp so `nc.ser` can derive thrash rate from the basin's
+      // own transition density. No fixed cooldown — the rate IS the
+      // signal (high density → low ser → mood drop).
+      state.modeTransitionTimesMs.push(Date.now());
+      if (state.modeTransitionTimesMs.length > HISTORY_MAX) {
+        state.modeTransitionTimesMs.shift();
+      }
     }
     state.lastMode = mode;
 
@@ -1372,7 +1663,54 @@ export class MonkeyKernel extends EventEmitter {
         symbol, basinDir, tapeTrend, direction, wantedShort: true,
       });
     }
-    const selfObsBias = this.selfObs?.entryBias[mode]?.[sideCandidate] ?? 1.0;
+    // 2026-05-16 (#717 derivation refactor + clamp hotfix): selfObsBias =
+    //   winRate(mode, side) × selfObsPressure
+    // where selfObsPressure is derived from the basin's own observable
+    // state via z-score-of-current-surprise, mapped through sigmoid to
+    // a naturally bounded range:
+    //   z = (surpriseNow - mean) / stddev   (basin's own stddev IS the gain)
+    //   pressure = 0.5 + sigmoid(z)         → [0.5, 1.5], neutral at z=0
+    //
+    // Same Protocol v6.6 §43 Loop 1 semantics ("turn inward on mispredict"):
+    // current surprise above typical → pressure > 1; below typical → pressure
+    // < 1. But the output is bounded so a cold-start surprise spike (small
+    // history → small mean → huge ratio in the prior formula) cannot push
+    // the downstream entry-threshold multiplier into paralysis territory.
+    //
+    // Original ratio `surpriseNow / mean` was unbounded — observed live at
+    // selfObsBias=9.05 with only 5-10 surprise samples in history (cold
+    // start post-restart). All downstream gates (currentEntryThreshold T,
+    // shouldExit threshold) already clamp their final outputs, so the
+    // unbounded ratio was absorbed in practice — but it was misleading in
+    // telemetry and a latent footgun if any future caller used selfObsBias
+    // un-clamped. Stddev gain preserves derivation-only purity per the
+    // operator directive.
+    //
+    // Cold start (history length < 2 → stddev undefined → identity 1).
+    const selfObsWinRateBias = this.selfObs?.entryBias[mode]?.[sideCandidate] ?? 1.0;
+    let selfObsPressure: number;
+    if (state.surpriseHistory.length >= 2) {
+      const n = state.surpriseHistory.length;
+      let sum = 0;
+      for (const s of state.surpriseHistory) sum += s;
+      const mean = sum / n;
+      let sqSum = 0;
+      for (const s of state.surpriseHistory) {
+        const d = s - mean;
+        sqSum += d * d;
+      }
+      const stddev = Math.sqrt(sqSum / (n - 1));  // Bessel-corrected
+      if (stddev > 0) {
+        const z = (surpriseNow - mean) / stddev;
+        const sig = 1 / (1 + Math.exp(-z));
+        selfObsPressure = 0.5 + sig;  // ∈ [0.5, 1.5]
+      } else {
+        selfObsPressure = 1;  // degenerate history (all identical samples)
+      }
+    } else {
+      selfObsPressure = 1;
+    }
+    const selfObsBias = selfObsWinRateBias * selfObsPressure;
 
     // v0.5: Basin sync — publish own state; pull observer-effect influence.
     const syncPublish = this.basinSync.update({
@@ -2145,6 +2483,35 @@ export class MonkeyKernel extends EventEmitter {
 
     let executed = false;
     let monkeyOrderId: string | null = null;
+    // 2026-05-16 L-veto-over-K (Option A) gate evaluation.
+    //
+    // Default OFF — when `L_VETO_OVER_K_ENABLED` is unset / not 'true',
+    // the helper is short-circuited and `agentLDecide` is NOT called
+    // here (it still runs in L's own block below as today). With the
+    // flag on AND K proposing an entry, we compute L's current FR-KNN
+    // decision and check whether L's high-conviction vote disagrees
+    // with K's side. If so, K's entry is suppressed (the executeEntry
+    // call is skipped) — exits, harvest, scalp_exit are NOT affected.
+    let lVeto: LVetoEvaluation | null = null;
+    const lVetoEnabled = isLVetoOverKEnabled();
+    const kProposingEntry =
+      action === 'enter_long' ||
+      action === 'enter_short' ||
+      action === 'reverse_long' ||
+      action === 'reverse_short';
+    if (lVetoEnabled && kProposingEntry && state.basinHistory.length >= 480) {
+      // Recompute L's decision NOW so the veto reads L's current
+      // FR-KNN classification, not stale state. Pure function; the L
+      // execute block below recomputes it again (same inputs → same
+      // output). Marginal cost; correctness > saving one call.
+      const lDecisionForVeto = agentLDecide(state.basinHistory);
+      lVeto = evaluateLVetoOverK({
+        enabled: true,
+        kAction: action,
+        lDecision: lDecisionForVeto,
+        threshold: lVetoConvictionThreshold(),
+      });
+    }
     if (process.env.MONKEY_EXECUTE === 'true') {
       if ((action === 'enter_long' || action === 'enter_short') && size.value > 0) {
         // v0.8.7 kill switch — pause new entries (including DCA pyramids)
@@ -2157,6 +2524,32 @@ export class MonkeyKernel extends EventEmitter {
             action,
             reason: 'MONKEY_TRADING_PAUSED env',
           };
+        } else if (lVeto?.vetoed) {
+          // 2026-05-16 L-veto-over-K — high-conviction L vote suppresses
+          // K's entry on this tick. The position state is NOT touched
+          // (no DCA increment, no re-anchor); K simply skips this tick
+          // and the next tick re-evaluates. Counter increments for
+          // telemetry.
+          this.lVetoOverKCount += 1;
+          this.lVetoOverKBySymbol.set(
+            symbol,
+            (this.lVetoOverKBySymbol.get(symbol) ?? 0) + 1,
+          );
+          reason += ` | k_vetoed_by_l (weightedConviction=${lVeto.weightedConviction.toFixed(3)} thr=${lVeto.threshold.toFixed(2)} lSide=${lVeto.lSide} kSide=${action === 'enter_long' ? 'long' : 'short'})`;
+          (derivation as Record<string, unknown>).kVetoedByL = {
+            kAction: action,
+            lSide: lVeto.lSide,
+            weightedConviction: lVeto.weightedConviction,
+            threshold: lVeto.threshold,
+            reasonCode: lVeto.reasonCode,
+          };
+          logger.info(`[Monkey] ${symbol} K_VETOED_BY_L`, {
+            kAction: action,
+            lScore: lVeto.weightedConviction,
+            lConviction: lVeto.weightedConviction,
+            lSide: lVeto.lSide,
+            lSource: 'agentLDecide(state.basinHistory)',
+          });
         } else {
         const isDCA = Boolean(derivation.isDCAAdd);
         // Cap K's margin to its arbiter share. Without this, the existing
@@ -2322,6 +2715,32 @@ export class MonkeyKernel extends EventEmitter {
                 action,
                 reason: 'MONKEY_TRADING_PAUSED env (reverse-reopen leg)',
               };
+            } else if (lVeto?.vetoed) {
+              // 2026-05-16 L-veto-over-K — close already executed; the
+              // new-side reopen leg is suppressed. Counter increments
+              // for the reverse-reopen veto so telemetry stays accurate.
+              this.lVetoOverKCount += 1;
+              this.lVetoOverKBySymbol.set(
+                symbol,
+                (this.lVetoOverKBySymbol.get(symbol) ?? 0) + 1,
+              );
+              reason += ` | closed@${lastPrice.toFixed(2)} pnl=${pnlAtDecision.toFixed(4)} | k_vetoed_by_l (reverse-reopen leg; weightedConviction=${lVeto.weightedConviction.toFixed(3)} lSide=${lVeto.lSide})`;
+              (derivation as Record<string, unknown>).kVetoedByL = {
+                kAction: action,
+                lSide: lVeto.lSide,
+                weightedConviction: lVeto.weightedConviction,
+                threshold: lVeto.threshold,
+                reasonCode: lVeto.reasonCode,
+                leg: 'reverse_reopen',
+              };
+              logger.info(`[Monkey] ${symbol} K_VETOED_BY_L`, {
+                kAction: action,
+                lScore: lVeto.weightedConviction,
+                lConviction: lVeto.weightedConviction,
+                lSide: lVeto.lSide,
+                lSource: 'agentLDecide(state.basinHistory)',
+                leg: 'reverse_reopen',
+              });
             } else {
             // Settle delay — give the exchange ~500ms to flatten net.
             await new Promise((resolve) => setTimeout(resolve, 500));
@@ -3173,6 +3592,18 @@ export class MonkeyKernel extends EventEmitter {
     state.lastBasin = basin;
     state.phiHistory.push(phi);
     if (state.phiHistory.length > HISTORY_MAX) state.phiHistory.shift();
+    // 2026-05-16 (#715 / ne ext derivation refactor): persist per-tick
+    // surprise + basin velocity so the next tick's NC compute can
+    // z-score against the basin's own distribution. The capped window
+    // (HISTORY_MAX) is the memory bound — not a behavioural parameter.
+    state.surpriseHistory.push(surpriseNow);
+    if (state.surpriseHistory.length > HISTORY_MAX) state.surpriseHistory.shift();
+    state.bvHistory.push(bv);
+    if (state.bvHistory.length > HISTORY_MAX) state.bvHistory.shift();
+    state.kappaHistory.push(state.kappa);
+    if (state.kappaHistory.length > HISTORY_MAX) state.kappaHistory.shift();
+    state.externalCouplingHistory.push(couplingHealth);
+    if (state.externalCouplingHistory.length > HISTORY_MAX) state.externalCouplingHistory.shift();
 
     // v0.8.8 per-agent state idle decay — emotions and neurochemistry
     // nudge toward their neutral targets each tick. Counters:

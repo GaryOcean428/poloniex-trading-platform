@@ -290,14 +290,23 @@ class Motivators:
 
 def compute_motivators(
     *,
+    phi_now: float,
     phi_history: list[float],
     drift_history: list[float],
     fhealth_history: list[float],
     neurochemistry: NeurochemicalState,
 ) -> Motivators:
-    curiosity = (
-        phi_history[-1] - phi_history[-2] if len(phi_history) >= 2 else 0.0
-    )
+    # Curiosity = ΔΦ this tick (perception-volume expansion).
+    # Fix 2026-05-16 (#718): use the current tick's phi_now vs the
+    # most recent stored history value. The prior formulation
+    # ``phi_history[-1] - phi_history[-2]`` was the delta between
+    # the PRIOR two ticks, ignoring the current tick — the
+    # state.phi_history.push(phi) in tick.py runs AFTER detect_mode,
+    # so phi_history[-1] is last tick's phi, not this tick's. On
+    # quiet tape the prior-two-ticks delta sticks at 0.0000 for
+    # extended runs, pinning curiosity to zero and tripping the
+    # drift-mode gate (curiosity < 0.005) prematurely.
+    curiosity = phi_now - phi_history[-1] if phi_history else 0.0
     investigation = (
         drift_history[-2] - drift_history[-1] if len(drift_history) >= 2 else 0.0
     )
@@ -376,7 +385,7 @@ def detect_mode(
     *,
     basin: np.ndarray,
     identity_basin: np.ndarray,
-    phi: float,  # kept for signature parity with TS; unused here
+    phi: float,  # current tick's Φ — fed to compute_motivators for ΔΦ curiosity
     kappa: float,  # kept for signature parity with TS; unused here
     basin_velocity: float,
     neurochemistry: NeurochemicalState,
@@ -403,6 +412,7 @@ def detect_mode(
     drift_now = fisher_rao_distance(basin, identity_basin)
     fh_now = fhealth_history[-1] if fhealth_history else 0.5
     mot = compute_motivators(
+        phi_now=phi,
         phi_history=phi_history,
         drift_history=drift_history,
         fhealth_history=fhealth_history,

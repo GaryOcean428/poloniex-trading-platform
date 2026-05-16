@@ -33,10 +33,45 @@
  *
  * Mirrors the agent K/M/T pattern: `agentLDecide(inputs) → AgentLDecision`.
  * The thin orchestration layer in loop.ts handles state, history, execution.
+ *
+ * QIGRAMv2 (optional, flag-gated):
+ *   The v2 layer (`agent_L_qigram_v2.ts`) ports the canonical
+ *   QIGRAMv2 class from `qig-applied/inference/qigram.py` —
+ *   weighted basins, wrong-answer decay, κ tacking, recall_by_category,
+ *   and sovereignty. It is ADDITIVE: when `L_QIGRAM_V2_ENABLED === 'true'`
+ *   AND a `v2Store` is supplied via config, `agentLDecide` attaches a
+ *   `v2` telemetry block to the returned decision. The FR-KNN math is
+ *   never altered. With the env var unset (the default), the decision
+ *   is byte-identical to the pre-port version.
  */
 
 import { fisherRao, frechetMean, type Basin } from './basin.js';
 import { basinDirection } from './perception.js';
+import {
+  type QIGRAMv2State,
+  type RecallResultV2,
+  type CategoryRecallResultV2,
+  isQigramV2Enabled,
+} from './agent_L_qigram_v2.js';
+
+// Re-export the v2 surface so callers can import the entire L API from
+// a single module (matches the original "everything from
+// agent_L_classifier" import pattern used in loop.ts).
+export {
+  QIGRAMv2State,
+  makeBasinEntryV2,
+  isQigramV2Enabled,
+  DECAY_FACTOR,
+  MIN_ACTIVE_WEIGHT,
+  KAPPA_FIXED_POINT,
+  KAPPA_MIN,
+  KAPPA_MAX,
+} from './agent_L_qigram_v2.js';
+export type {
+  BasinEntryV2,
+  RecallResultV2,
+  CategoryRecallResultV2,
+} from './agent_L_qigram_v2.js';
 
 /** A multi-scale basin tuple. One slot per time scale.
  *
@@ -143,6 +178,21 @@ export interface AgentLDecision {
   conviction: number;
   /** The K nearest neighbors used. Surfaced for telemetry. */
   neighbors: KNNNeighbor[];
+  /** Optional QIGRAMv2 telemetry. Populated only when the v2 layer
+   *  is enabled (`L_QIGRAM_V2_ENABLED === 'true'`) AND a v2 store was
+   *  supplied via config. Default-off invariant: undefined when v2
+   *  is not active. */
+  v2?: {
+    /** Recall of the current basin against the v2 store, if any active
+     *  entries exist. null when the store is empty / all-dead. */
+    recall: RecallResultV2 | null;
+    /** Optional category recall result, if `config.v2Category` was set. */
+    categoryRecall: CategoryRecallResultV2 | null;
+    /** Current κ after tacking (the store's mutable kappa). */
+    kappa: number;
+    /** Sovereignty ratio (N_active / N_total) of the v2 store. */
+    sovereignty: number;
+  };
   /** 2026-05-11 — diagnostic: distribution of realized labels across the
    *  K neighbors, plus the raw IDW weight totals per direction. Lets the
    *  caller distinguish "all neighbors agreed long" (legitimate strong
@@ -187,6 +237,19 @@ export interface AgentLConfig {
   actionThreshold: number;
   /** Lookback cap on history. Default 2000 (matches Pine Script default). */
   maxLookback: number;
+  /** Optional QIGRAMv2 weighted-basin store. When supplied AND
+   *  `L_QIGRAM_V2_ENABLED === 'true'`, the classifier surfaces a v2
+   *  recall + sovereignty + κ telemetry block in the decision. The
+   *  v2 store does NOT change the FR-KNN math — it is purely
+   *  additive telemetry / wormhole-shortcut surface.
+   *
+   *  Default-off invariant: when undefined (or the env var is not
+   *  exactly 'true'), the v2 code path is skipped entirely and the
+   *  returned decision is byte-identical to today. */
+  v2Store?: QIGRAMv2State;
+  /** Optional category for `recallByCategory` (e.g. regime label).
+   *  Only consulted when v2 is enabled and a store is supplied. */
+  v2Category?: string;
 }
 
 export const DEFAULT_AGENT_L_CONFIG: AgentLConfig = {
@@ -210,6 +273,29 @@ export const DEFAULT_AGENT_L_CONFIG: AgentLConfig = {
  *    - K-NN search produced fewer than `k/2` neighbors with valid labels
  *    - signed score magnitude is below action threshold
  */
+/** Compute the optional QIGRAMv2 telemetry block. Returns undefined
+ *  when the v2 path is OFF (env flag !== 'true' OR no store supplied),
+ *  preserving the byte-identical default behavior. Pure read of the
+ *  store — never mutates it. */
+function maybeV2Telemetry(
+  currentBasin: Basin | null,
+  config: AgentLConfig,
+): AgentLDecision['v2'] {
+  if (!isQigramV2Enabled()) return undefined;
+  if (!config.v2Store) return undefined;
+  const store = config.v2Store;
+  const recall = currentBasin !== null ? store.recall(currentBasin) : null;
+  const categoryRecall = config.v2Category
+    ? store.recallByCategory(config.v2Category)
+    : null;
+  return {
+    recall,
+    categoryRecall,
+    kappa: store.kappa,
+    sovereignty: store.sovereignty,
+  };
+}
+
 export function agentLDecide(
   basinHistory: readonly Basin[],
   config: AgentLConfig = DEFAULT_AGENT_L_CONFIG,
@@ -220,11 +306,15 @@ export function agentLDecide(
     nearestDistance: 0, farthestDistance: 0,
   };
   const cur = buildBasinTuple(basinHistory);
+  // v2 telemetry uses the current (finest-scale) basin for recall.
+  const currentBasin = cur?.current ?? null;
+  const v2 = maybeV2Telemetry(currentBasin, config);
   if (cur === null) {
     return {
       action: 'hold', signedScore: 0, conviction: 0, neighbors: [],
       labelDistribution: emptyDist,
       reason: 'history empty',
+      ...(v2 !== undefined ? { v2 } : {}),
     };
   }
 
@@ -250,6 +340,7 @@ export function agentLDecide(
       action: 'hold', signedScore: 0, conviction: 0, neighbors: [],
       labelDistribution: emptyDist,
       reason: `insufficient candidates (${candidates.length} < ${Math.ceil(config.k / 2)})`,
+      ...(v2 !== undefined ? { v2 } : {}),
     };
   }
 
@@ -297,6 +388,7 @@ export function agentLDecide(
       action: 'hold', signedScore, conviction, neighbors: topK,
       labelDistribution,
       reason: `signed score ${signedScore.toFixed(3)} below action threshold ${config.actionThreshold}`,
+      ...(v2 !== undefined ? { v2 } : {}),
     };
   }
 
@@ -307,5 +399,6 @@ export function agentLDecide(
     neighbors: topK,
     labelDistribution,
     reason: `FR-KNN k=${config.k} score=${signedScore.toFixed(3)} conviction=${conviction.toFixed(2)}`,
+    ...(v2 !== undefined ? { v2 } : {}),
   };
 }
