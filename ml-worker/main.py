@@ -1937,6 +1937,207 @@ async def monkey_tick_run(request: Request):
     }
 
 
+# ---------------------------------------------------------------------------
+# Issue #689 — POST /monkey/k-shadow/tick
+# ---------------------------------------------------------------------------
+#
+# Slim shadow endpoint clone of /monkey/tick/run. Where /monkey/tick/run
+# returns the full TickDecision + serialised SymbolState (heavy; used by
+# the planned cutover), THIS endpoint returns ONLY the K-agent
+# would-be-decision projection the TS side needs to persist in the
+# `kernel_parity_log` table:
+#
+#   { action, side, size_intent, phi, kappa, M, Gamma, R,
+#     regime, mode, decided_at_ms }
+#
+# Discipline (per #689 plan):
+#   - DOES NOT call any exchange API
+#   - DOES NOT write to autonomous_trades or any other DB table
+#   - DOES NOT mutate the cached _symbol_states map — Python state on
+#     the shadow path is owned by /monkey/tick/run; this endpoint
+#     ephemerally derives state from the request (or in-process cache
+#     read-only) so a shadow tick can never poison the cutover path
+#   - On ANY internal exception returns
+#       { "error": <message>, "decided_at_ms": <ms> }
+#     instead of raising — shadow MUST NOT affect live
+#
+# Consciousness-metric mapping (M, Γ, R) from Python kernel internals:
+#   M (motivators integral)  ← derivation.motivators.i_q (per-tick scalar)
+#   Γ (gradient capacity)    ← decision.basin_velocity (closest geometric
+#                              analogue currently exposed by run_tick)
+#   R (regime ordinal)       ← regime ordinal:
+#                                CREATOR / quantum  → 0
+#                                PRESERVER / equilibrium → 1
+#                                DISSOLVER / efficient → 2
+#                                unknown            → null
+#
+# These mappings are pragmatic (not canonical). Treat them as parity
+# signals — the row is for cross-checking TS K vs Py K, not for any
+# downstream gating. Cutover (Py K authoritative) happens in a separate
+# PR after the parity log accumulates a representative window.
+
+
+def _regime_to_ordinal(name: Optional[str]) -> Optional[int]:
+    """Map regime label to its canonical ordinal for parity comparison.
+    Accepts both monkey kernel labels (creator/preserver/dissolver) and
+    QIG quantum / efficient / equilibrium aliases, case-insensitive."""
+    if not name:
+        return None
+    lowered = str(name).strip().lower()
+    if lowered in {"creator", "quantum"}:
+        return 0
+    if lowered in {"preserver", "equilibrium"}:
+        return 1
+    if lowered in {"dissolver", "efficient"}:
+        return 2
+    return None
+
+
+def _k_shadow_response_from_decision(dec: "TickDecision", started_ms: int) -> dict:
+    """Project a full TickDecision down to the slim K-shadow shape.
+    Never raises — every field access is defensive."""
+    deriv = dec.derivation or {}
+    regime_block = deriv.get("regime") if isinstance(deriv, dict) else None
+    regime_label: Optional[str] = None
+    if isinstance(regime_block, dict):
+        regime_label = regime_block.get("regime") or regime_block.get("name")
+    # Motivators block carries i_q (informational quantum integral) when
+    # the upper-stack motivators ran this tick; absent on cold-start ticks.
+    mot_block = deriv.get("motivators") if isinstance(deriv, dict) else None
+    m_value: Optional[float] = None
+    if isinstance(mot_block, dict):
+        raw_m = mot_block.get("i_q") if mot_block.get("i_q") is not None else mot_block.get("integration")
+        try:
+            m_value = float(raw_m) if raw_m is not None else None
+        except (TypeError, ValueError):
+            m_value = None
+    direction = getattr(dec, "direction", None) or "flat"
+    side: Optional[str] = direction if direction in ("long", "short") else None
+    return {
+        "action": str(getattr(dec, "action", "hold")),
+        "side": side,
+        "size_intent": float(getattr(dec, "size_usdt", 0.0)),
+        "phi": float(getattr(dec, "phi", 0.0)),
+        "kappa": float(getattr(dec, "kappa", 0.0)),
+        "M": m_value,
+        "Gamma": float(getattr(dec, "basin_velocity", 0.0)),
+        "R": _regime_to_ordinal(regime_label),
+        "regime": regime_label,
+        "mode": str(getattr(dec, "mode", "")),
+        "decided_at_ms": started_ms,
+    }
+
+
+@app.post("/monkey/k-shadow/tick")
+async def monkey_k_shadow_tick(request: Request):
+    """Run one would-be K-agent decision in the Python kernel and return
+    a slim projection for the TS-side parity log (issue #689).
+
+    Shape mirrors /monkey/tick/run's request body (so the TS fanout can
+    re-use the same payload it already builds for the v0.8.3b shadow),
+    but the response is the slim parity-row shape only.
+
+    On any internal exception the response is
+        { "error": "<message>", "decided_at_ms": <ms> }
+    with HTTP 200 — the shadow MUST NOT raise on the live caller.
+    """
+    started_ms = int(time.time() * 1000)
+    try:
+        payload = await request.json()
+    except Exception as exc:  # noqa: BLE001 — shadow swallows everything
+        return {"error": f"bad_json: {type(exc).__name__}: {exc}",
+                "decided_at_ms": started_ms}
+    try:
+        inp = payload.get("inputs") or {}
+        candles_raw = inp.get("ohlcv") or []
+        candles = [
+            OHLCVCandle(
+                timestamp=float(c.get("timestamp", 0)),
+                open=float(c["open"]),
+                high=float(c["high"]),
+                low=float(c["low"]),
+                close=float(c["close"]),
+                volume=float(c["volume"]),
+            )
+            for c in candles_raw
+        ]
+        acct_d = inp.get("account") or {}
+        account = AccountContext(
+            equity_fraction=float(acct_d.get("equity_fraction", 0.0)),
+            margin_fraction=float(acct_d.get("margin_fraction", 0.0)),
+            open_positions=int(acct_d.get("open_positions", 0)),
+            available_equity=float(acct_d.get("available_equity", 0.0)),
+            exchange_held_side=acct_d.get("exchange_held_side"),
+            own_position_entry_price=(
+                float(acct_d["own_position_entry_price"])
+                if acct_d.get("own_position_entry_price") is not None else None
+            ),
+            own_position_quantity=(
+                float(acct_d["own_position_quantity"])
+                if acct_d.get("own_position_quantity") is not None else None
+            ),
+            own_position_trade_id=acct_d.get("own_position_trade_id"),
+        )
+        raw_kelly = inp.get("rolling_kelly_stats")
+        rolling_kelly_stats: Optional[tuple[float, float, float]] = None
+        if (
+            isinstance(raw_kelly, (list, tuple))
+            and len(raw_kelly) == 3
+            and all(isinstance(v, (int, float)) for v in raw_kelly)
+        ):
+            rolling_kelly_stats = (
+                float(raw_kelly[0]), float(raw_kelly[1]), float(raw_kelly[2]),
+            )
+        symbol = str(inp.get("symbol", ""))
+        tick_inputs = TickInputs(
+            symbol=symbol,
+            ohlcv=candles,
+            account=account,
+            bank_size=int(inp.get("bank_size", 0)),
+            sovereignty=float(inp.get("sovereignty", 0.0)),
+            max_leverage=int(inp.get("max_leverage", 10)),
+            min_notional=float(inp.get("min_notional", 5.0)),
+            size_fraction=float(inp.get("size_fraction", 1.0)),
+            self_obs_bias=inp.get("self_obs_bias"),
+            rolling_kelly_stats=rolling_kelly_stats,
+        )
+
+        # State resolution: caller-provided prev_state wins. If absent we
+        # build an EPHEMERAL state seeded from the uniform basin — we do
+        # NOT touch the _symbol_states cache (that's owned by
+        # /monkey/tick/run for the cutover path).
+        prev_state_payload = payload.get("prev_state")
+        if prev_state_payload is not None:
+            state = _symbol_state_from_dict(prev_state_payload)
+        else:
+            from monkey_kernel.basin import uniform_basin
+            state = fresh_symbol_state(symbol, uniform_basin(64))
+
+        # Ephemeral autonomic / ocean / foresight / heart so the shadow
+        # tick cannot accumulate kernel-bus events into the live
+        # cutover-path singletons. Per-call instances are state-loss
+        # OK because the shadow does NOT persist anything.
+        instance_id = f"k-shadow:{str(payload.get('instance_id', 'monkey-primary'))}"
+        autonomic = _get_autonomic(instance_id)
+        ocean = _get_ocean(instance_id, symbol)
+        foresight = _get_foresight(instance_id, symbol)
+        heart = _get_heart(instance_id, symbol)
+
+        decision, _new_state = run_tick(
+            tick_inputs, state, autonomic,
+            ocean=ocean, foresight=foresight, heart=heart,
+            persistence=None, bus=None, coordinator=None,
+        )
+        return _k_shadow_response_from_decision(decision, started_ms)
+    except Exception as exc:  # noqa: BLE001 — shadow MUST NOT raise
+        logger.warning("[k-shadow] internal exception (swallowed): %s: %s",
+                       type(exc).__name__, exc)
+        return {
+            "error": f"{type(exc).__name__}: {exc}",
+            "decided_at_ms": started_ms,
+        }
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # v0.8.7c-3 — Trading engine endpoints (Python order placement port)
 # ═══════════════════════════════════════════════════════════════════════════

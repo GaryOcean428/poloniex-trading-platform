@@ -684,6 +684,90 @@ export async function callReconcile(
   }
 }
 
+// ─────────────────────────────────────────────────────────────────
+// Issue #689 — Python K shadow (translation-only)
+// ─────────────────────────────────────────────────────────────────
+//
+// Slim client for /monkey/k-shadow/tick. Where callTickRun returns the
+// full TickDecision + serialised SymbolState (heavy; for the planned
+// cutover), this client returns ONLY the projection the kernel_parity_log
+// table stores: action / side / size_intent / phi / kappa / M / Gamma /
+// R / regime / mode / decided_at_ms.
+//
+// Discipline (per #689 plan):
+//   * 1-second timeout (loop.ts cadence is 60s — a slow shadow that
+//     drags TS K past its tick window must be killed)
+//   * On ANY error returns { error: <message>, decided_at_ms } — never
+//     throws. The TS K decision path MUST stay on rails.
+//   * Caller fires fire-and-forget; the response is logged into
+//     kernel_parity_log alongside the TS row.
+
+/** Slim K-shadow response — see ml-worker main.py:monkey_k_shadow_tick. */
+export interface KShadowResponse {
+  action?: string;
+  side?: 'long' | 'short' | null;
+  size_intent?: number;
+  phi?: number;
+  kappa?: number;
+  M?: number | null;
+  Gamma?: number;
+  R?: number | null;
+  regime?: string | null;
+  mode?: string;
+  decided_at_ms: number;
+  /** Populated when the Python shadow internally caught an exception
+   * or when the HTTP / network layer errored. Non-null means
+   * the row should record py_error and leave py_* metrics null. */
+  error?: string;
+}
+
+const K_SHADOW_TIMEOUT_MS = 1_000;
+
+/** Fire-and-forget POST to /monkey/k-shadow/tick. Never throws — any
+ * failure resolves to { error, decided_at_ms } so the caller can
+ * persist a parity row with py_error populated.
+ *
+ * Re-uses the TickRunRequest body shape so the TS fanout site doesn't
+ * need to construct two payloads — the Python endpoint accepts the
+ * same inputs the v0.8.3b shadow already builds. */
+export async function callKShadowTick(
+  req: TickRunRequest,
+): Promise<KShadowResponse> {
+  const startedAt = Date.now();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), K_SHADOW_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${ML_WORKER_URL}/monkey/k-shadow/tick`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      return {
+        error: `HTTP ${res.status}: ${text.slice(0, 180)}`,
+        decided_at_ms: startedAt,
+      };
+    }
+    const body = (await res.json()) as KShadowResponse;
+    // Pass through whatever the endpoint sent. Endpoint guarantees
+    // decided_at_ms is present even on error, so default-fill from
+    // local clock only if the field is missing (defensive).
+    if (body.decided_at_ms == null) body.decided_at_ms = startedAt;
+    return body;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const wasAbort = err instanceof Error && err.name === 'AbortError';
+    return {
+      error: wasAbort ? `timeout_${K_SHADOW_TIMEOUT_MS}ms` : `fetch_error: ${msg}`,
+      decided_at_ms: startedAt,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export function logReconcileParityDiff(
   ts: { phantomDbSymbols: string[]; orphanExchangeSymbols: string[] },
   py: ReconcileResponse,
