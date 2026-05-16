@@ -667,6 +667,24 @@ export class MonkeyKernel extends EventEmitter {
           src.startsWith('reconciler_recovered');
         if (!isRecovered) return;
         this.applyOutcomeToAgent(event.symbol, agent, side as 'long' | 'short', pnl);
+        // 2026-05-16 per-agent NC: also feed reconciler-recovered
+        // ghost-closes into the agent's chemistry queue. Without this,
+        // M/T/L closes that the close-path missed (exchange-side
+        // liquidation, manual UI close, partial-fill cleanup) would
+        // update emotion state but NOT the agent's dopamine window.
+        // Margin estimation: ghost-recovered events lack qty + mark
+        // price; reuse the witnessExit pattern of a fixed nominal
+        // margin (5 USDT) so pnlFraction = pnl / 5 stays bounded and
+        // doesn't blow out the dop/ser/endo deltas on a one-off ghost.
+        try {
+          this.pushReward({
+            source: `reconciler_recovered:${String(payload.ghostReason ?? 'unknown')}`,
+            symbol: event.symbol,
+            realizedPnlUsdt: pnl,
+            marginUsdt: 5,
+            agent,
+          });
+        } catch { /* non-fatal */ }
         const ghostReason = String(payload.ghostReason ?? 'unknown');
         logger.info(
           `[Monkey] Agent ${agent} emotion stack updated from recovered ghost close: pnl=${pnl.toFixed(4)} side=${side} reason=${ghostReason}`,
@@ -3800,6 +3818,8 @@ export class MonkeyKernel extends EventEmitter {
       });
 
       if (isMonkeyPaperMode()) {
+        let lPaperRealizedPnl = 0;
+        let lPaperRealizedQty = 0;
         try {
           for (const row of rows) {
             const rowQty = Math.abs(Number(row.quantity) || 0);
@@ -3819,6 +3839,8 @@ export class MonkeyKernel extends EventEmitter {
             );
             this.arbiter.recordSettled('L', rowPnl);
             this.applyOutcomeToAgent(symbol, 'L', sideKey, rowPnl);
+            lPaperRealizedPnl += rowPnl;
+            lPaperRealizedQty += rowQty;
           }
         } catch (err) {
           logger.error('[AgentL] force-harvest paper close failed', {
@@ -3826,6 +3848,17 @@ export class MonkeyKernel extends EventEmitter {
             err: err instanceof Error ? err.message : String(err),
           });
           continue;
+        }
+        // 2026-05-16 per-agent NC — L paper-harvest pushes into L's
+        // own reward window (was a no-op before; L outcomes never
+        // reached the chemistry queue).
+        if (lPaperRealizedQty > 0) {
+          this.pushPerAgentCloseRewards(symbol, lastPrice, {
+            K: { pnl: 0, qty: 0 },
+            M: { pnl: 0, qty: 0 },
+            T: { pnl: 0, qty: 0 },
+            L: { pnl: lPaperRealizedPnl, qty: lPaperRealizedQty },
+          });
         }
         logger.info('[AgentL] force-harvest PAPER CLOSED', {
           symbol, side: sideKey, rowsClosed: rows.length, aggPnl: aggPnl.toFixed(4), regime: regimeLabel,
@@ -3965,6 +3998,8 @@ export class MonkeyKernel extends EventEmitter {
       }
 
       // Update only L's rows (close them with proportional PnL).
+      let lLiveRealizedPnl = 0;
+      let lLiveRealizedQty = 0;
       try {
         for (const row of rows) {
           const rowQty = Math.abs(Number(row.quantity) || 0);
@@ -3979,10 +4014,23 @@ export class MonkeyKernel extends EventEmitter {
           );
           this.arbiter.recordSettled('L', rowPnl);
           this.applyOutcomeToAgent(symbol, 'L', sideKey, rowPnl);
+          lLiveRealizedPnl += rowPnl;
+          lLiveRealizedQty += rowQty;
         }
       } catch (err) {
         logger.error('[AgentL] force-harvest DB update failed — ORPHAN RISK', {
           symbol, err: err instanceof Error ? err.message : String(err),
+        });
+      }
+      // 2026-05-16 per-agent NC — L live-harvest pushes into L's own
+      // reward window. Before this, L outcomes never reached the
+      // chemistry queue (force-harvest skipped closeHeldPosition).
+      if (lLiveRealizedQty > 0) {
+        this.pushPerAgentCloseRewards(symbol, lastPrice, {
+          K: { pnl: 0, qty: 0 },
+          M: { pnl: 0, qty: 0 },
+          T: { pnl: 0, qty: 0 },
+          L: { pnl: lLiveRealizedPnl, qty: lLiveRealizedQty },
         });
       }
 
@@ -4073,6 +4121,15 @@ export class MonkeyKernel extends EventEmitter {
               [`monkey|kernel=${this.instanceId}|%`, symbol],
             );
         const rows = openRows.rows as Array<{ id: string; quantity: string; agent: string | null; order_id: string | null }>;
+        // 2026-05-16 per-agent NC — same pattern as the live close
+        // branch below. Accumulate per-agent totals so M/T/L close
+        // outcomes feed their own NC windows (not K's pool).
+        const paperPerAgentTotals: Record<AgentLabel, { pnl: number; qty: number }> = {
+          K: { pnl: 0, qty: 0 },
+          M: { pnl: 0, qty: 0 },
+          T: { pnl: 0, qty: 0 },
+          L: { pnl: 0, qty: 0 },
+        };
         if (rows.length === 0) {
           await pool.query(
             `UPDATE autonomous_trades
@@ -4083,6 +4140,12 @@ export class MonkeyKernel extends EventEmitter {
           );
           this.arbiter.recordSettled('K', pnlAtDecision);
           this.applyOutcomeToAgent(symbol, 'K', heldSide, pnlAtDecision);
+          paperPerAgentTotals.K.pnl += pnlAtDecision;
+          // Paper-mode single-row fallback: estimate qty from
+          // pnl/markPrice — only used for margin denominator below;
+          // a tiny floor keeps margin non-zero on near-flat closes.
+          paperPerAgentTotals.K.qty += Math.max(Math.abs(pnlAtDecision) / Math.max(markPrice, 1), 0.01);
+          this.pushPerAgentCloseRewards(symbol, markPrice, paperPerAgentTotals);
           return { executed: true, orderId: null, reason: 'closed_paper' };
         }
         const pnlPerRow = pnlAtDecision / rows.length;
@@ -4109,7 +4172,10 @@ export class MonkeyKernel extends EventEmitter {
                   : 'K';
           this.arbiter.recordSettled(agentLabel, rowPnl);
           this.applyOutcomeToAgent(symbol, agentLabel, heldSide, rowPnl);
+          paperPerAgentTotals[agentLabel].pnl += rowPnl;
+          paperPerAgentTotals[agentLabel].qty += Math.abs(Number(row.quantity) || 0);
         }
+        this.pushPerAgentCloseRewards(symbol, markPrice, paperPerAgentTotals);
 
         logger.info('[Monkey] PAPER POSITION CLOSED', {
           symbol, heldSide, markPrice, orderId, tradeId,
@@ -4333,6 +4399,19 @@ export class MonkeyKernel extends EventEmitter {
           );
       const rows = openRows.rows as Array<{ id: string; quantity: string; agent: string | null }>;
       const totalQty = rows.reduce((s, r) => s + Math.abs(Number(r.quantity) || 0), 0);
+      // Accumulate per-agent (pnl, qty) inside the row loop so we can
+      // push ONE reward event per agent at the end. Per-row pushes would
+      // flood the bounded reward queue (REWARD_QUEUE_MAX=50) on DCA
+      // closes; per-agent aggregation keeps the queue stable while still
+      // attributing chemistry to the agent that actually generated each
+      // win. Each agent gets its own margin estimate from its own qty
+      // share so pnlFraction = pnl / margin is meaningful per agent.
+      const perAgentTotals: Record<AgentLabel, { pnl: number; qty: number }> = {
+        K: { pnl: 0, qty: 0 },
+        M: { pnl: 0, qty: 0 },
+        T: { pnl: 0, qty: 0 },
+        L: { pnl: 0, qty: 0 },
+      };
       if (rows.length === 0 || totalQty === 0) {
         // Fallback — single-row close (covers edge case of race)
         await pool.query(
@@ -4348,9 +4427,12 @@ export class MonkeyKernel extends EventEmitter {
         // emotion + neurochemistry stack (dopamine on win, frustration
         // on loss). See per_agent_state.ts.
         this.applyOutcomeToAgent(symbol, 'K', heldSide, pnlAtDecision);
+        perAgentTotals.K.pnl += pnlAtDecision;
+        perAgentTotals.K.qty += exchangeQty || 0.01;
       } else {
         for (const row of rows) {
-          const qtyShare = Math.abs(Number(row.quantity) || 0) / totalQty;
+          const rowQty = Math.abs(Number(row.quantity) || 0);
+          const qtyShare = rowQty / totalQty;
           const rowPnl = pnlAtDecision * qtyShare;
           await pool.query(
             `UPDATE autonomous_trades
@@ -4372,8 +4454,15 @@ export class MonkeyKernel extends EventEmitter {
                   : 'K';
           this.arbiter.recordSettled(agentLabel, rowPnl);
           this.applyOutcomeToAgent(symbol, agentLabel, heldSide, rowPnl);
+          perAgentTotals[agentLabel].pnl += rowPnl;
+          perAgentTotals[agentLabel].qty += rowQty;
         }
       }
+
+      // v0.6.7 + 2026-05-16 per-agent NC: push one reward event per
+      // agent that contributed to this close. See
+      // pushPerAgentCloseRewards for margin derivation + rationale.
+      this.pushPerAgentCloseRewards(symbol, markPrice, perAgentTotals);
     } catch (err) {
       logger.error('[Monkey] close DB update failed — ORPHAN RISK (reconciler will catch)', {
         tradeId, err: err instanceof Error ? err.message : String(err),
@@ -4390,29 +4479,6 @@ export class MonkeyKernel extends EventEmitter {
       symbol,
       payload: { heldSide, markPrice, orderId, tradeId, pnl: pnlAtDecision, exitReason },
     });
-    // v0.6.7 autonomic reward event. Margin ≈ markPrice × totalQty / lev
-    // (she has only one kernel state; we use one of her symbol states
-    // for κ). Pushed as an EVENT; computeNeurochemicals derives the
-    // actual dopamine lift next tick.
-    //
-    // K-tagged: closeHeldPosition is the K-kernel's own close path
-    // (M/T/L use their own execution paths that call recordSettled
-    // separately). Tagging the reward 'K' means K's brain gets the
-    // dopamine on K's wins.
-    const symState = this.symbolStates.get(symbol);
-    try {
-      const totalQtyForMargin = exchangeQty || 0.01;
-      const notional = markPrice * totalQtyForMargin;
-      const margin = notional / Math.max(1, 16);  // typical lev on close; kappa boost uses exit κ
-      this.pushReward({
-        source: 'own_close',
-        symbol,
-        realizedPnlUsdt: pnlAtDecision,
-        marginUsdt: margin,
-        kappaAtExit: symState?.kappa,
-        agent: 'K',
-      });
-    } catch { /* non-fatal */ }
     return { executed: true, orderId, reason: 'closed' };
   }
 
@@ -4882,6 +4948,43 @@ export class MonkeyKernel extends EventEmitter {
    */
 
   /**
+   * Per-agent reward push helper (2026-05-16). Closes that touch
+   * multiple agent rows (M+T shared lane, K + L co-occupying trend,
+   * etc.) accumulate per-agent (pnl, qty) totals during the row loop
+   * and then call this once. Each agent with non-zero qty gets ONE
+   * reward event tagged with its own agent label, so
+   * `decayedRewardSums(now, 'M')` only sees M's outcomes.
+   *
+   * Margin = (markPrice × agentQty) / 16 — same formula
+   * closeHeldPosition has always used for the K-only aggregate, just
+   * stratified by agent now. Skipping zero-qty agents avoids a flood
+   * of zero-pnl reward events in the bounded queue.
+   */
+  private pushPerAgentCloseRewards(
+    symbol: string,
+    markPrice: number,
+    totals: Record<AgentLabel, { pnl: number; qty: number }>,
+  ): void {
+    const symState = this.symbolStates.get(symbol);
+    try {
+      for (const agentKey of ['K', 'M', 'T', 'L'] as const) {
+        const t = totals[agentKey];
+        if (t.qty <= 0) continue;
+        const notional = markPrice * t.qty;
+        const margin = notional / Math.max(1, 16);
+        this.pushReward({
+          source: 'own_close',
+          symbol,
+          realizedPnlUsdt: t.pnl,
+          marginUsdt: margin,
+          kappaAtExit: symState?.kappa,
+          agent: agentKey,
+        });
+      }
+    } catch { /* non-fatal */ }
+  }
+
+  /**
    * Push an autonomic reward event (v0.6.7). Called whenever a trade
    * closes with realized P&L. The kernel's tick loop will consume these
    * via `decayedRewardSums()` and pass the summed deltas to
@@ -4959,8 +5062,12 @@ export class MonkeyKernel extends EventEmitter {
    * processSymbol passes 'K' — K's wins reinforce K's dopamine, M/T/L
    * outcomes no longer dilute it. Omit the filter to get the legacy
    * shared-pool behaviour (useful for cross-agent telemetry).
+   *
+   * Public (2026-05-16) so per-agent NC telemetry tests + the dashboard
+   * snapshot path can read decayed windows by agent. Still pure / no-op
+   * if the queue is empty.
    */
-  private decayedRewardSums(
+  decayedRewardSums(
     nowMs: number = Date.now(),
     agentFilter?: AgentLabel,
   ): {
