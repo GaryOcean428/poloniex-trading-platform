@@ -26,7 +26,7 @@ import numpy as np
 
 from .lattice_inputs import market_to_lattice_inputs
 from .regime import MarketRegime, RegimeState
-from .regime_qigwarp import classify_with_qig_warp
+from .regime_observer import classify_via_observer
 
 logger = logging.getLogger(__name__)
 
@@ -74,14 +74,18 @@ class RegimeAdapter:
         vol = float(np.std(returns))
         pillar1 = vol > self.min_volatility
 
-        # qig_warp call. If qig_warp is unreachable we surface as
-        # DISSOLVER (the safe "don't trade" regime) and log loudly —
-        # this should never happen post-MIG-1 since qig-warp is pinned.
+        # CAL-3 (2026-05-17): observer-driven regime classification.
+        # The observer maintains a rolling-quantile estimate of the
+        # basin's own h/J distribution and partitions it into terciles
+        # (ORDERED / CRITICAL / DISORDERED). Cold-start falls through
+        # to qig_warp's physics-fixed thresholds for the first 30
+        # ticks per process, then switches to observed terciles. No
+        # hardcoded scale knobs — Canonical Principles v2.1 P1.
         try:
-            regime = classify_with_qig_warp(h_value, j_value, dim=2)
+            regime = classify_via_observer(h_value, j_value, dim=2)
         except Exception as exc:  # noqa: BLE001 — tick handler must not raise
             logger.error(
-                "[RegimeAdapter] classify_with_qig_warp failed (h=%.3f J=%.3f); "
+                "[RegimeAdapter] classify_via_observer failed (h=%.3f J=%.3f); "
                 "falling back to DISSOLVER for this tick: %s",
                 h_value, j_value, exc,
             )
