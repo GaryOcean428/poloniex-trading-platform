@@ -13,13 +13,13 @@ from pydantic import BaseModel, Field
 
 from .basins import BasinDetector
 from .coupling import CouplingEstimator
-from .regime import RegimeDetector
+from .regime_adapter import RegimeAdapter
 from .strategy_loop import StrategyLoop
 
 router = APIRouter(prefix="/intelligence", tags=["Intelligence Layer"])
 
 # Per-symbol state stores (Pillar 3: each symbol gets its own instances)
-_regime_detectors: dict[str, RegimeDetector] = {}
+_regime_detectors: dict[str, RegimeAdapter] = {}
 _coupling_estimators: dict[str, CouplingEstimator] = {}
 _basin_detectors: dict[str, BasinDetector] = {}
 _strategy_loops: dict[str, StrategyLoop] = {}
@@ -58,7 +58,7 @@ class LoopTick(BaseModel):
 def regime_tick(data: PriceTick):
     """Feed a single price tick and get regime classification."""
     if data.symbol not in _regime_detectors:
-        _regime_detectors[data.symbol] = RegimeDetector()
+        _regime_detectors[data.symbol] = RegimeAdapter()
     det = _regime_detectors[data.symbol]
     state = det.update(data.price)
     if state is None:
@@ -80,7 +80,7 @@ def regime_tick(data: PriceTick):
 def regime_batch(data: PriceBatch):
     """Feed a batch of prices and get current regime."""
     if data.symbol not in _regime_detectors:
-        _regime_detectors[data.symbol] = RegimeDetector()
+        _regime_detectors[data.symbol] = RegimeAdapter()
     det = _regime_detectors[data.symbol]
     state = det.update_batch(data.prices)
     if state is None:

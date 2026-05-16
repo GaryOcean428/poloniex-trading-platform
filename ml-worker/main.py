@@ -3,17 +3,18 @@ ML Worker FastAPI Server.
 
 Serves predictions via HTTP and listens on Redis pub/sub.
 
-v0.9.0 — MIG-1 (2026-05-16). The TF / sklearn / statsmodels / prophet
-ensemble path has been stripped. ml-worker is now numpy + pandas +
-qig-* + psycopg + fastapi. Prediction routing:
+v0.9.1 — MIG-1 + MIG-2 (2026-05-16). ml-worker is numpy + pandas +
+qig-* + psycopg + fastapi. The TF / sklearn / statsmodels / prophet
+ensemble path is gone (MIG-1); the bespoke RegimeDetector is gone
+(MIG-2). Prediction routing:
 
   /ml/predict {action: qig_analyze} → qig_engine.full_qig_analysis
-  /ml/predict {action: *}           → StrategyLoop (deterministic,
-                                       regime-based)
+  /ml/predict {action: *}           → StrategyLoop (regime label from
+                                       qig_warp.classify_regime via
+                                       RegimeAdapter)
 
-The legacy ROUTE_VERSION / ML_PREDICT_SHADOW dual-backend selection is
-gone; strategyloop is the sole predictor. Regime classification moves
-to qig_warp.classify_regime in MIG-2.
+The legacy ROUTE_VERSION / ML_PREDICT_SHADOW / REGIME_CLASSIFIER flags
+no longer exist; strategyloop + qig_warp is the sole stack.
 """
 
 import asyncio
@@ -39,9 +40,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 
 # MIG-1 (2026-05-16): legacy TF/sklearn/statsmodels/prophet ensemble
 # stripped out. ml-worker is now numpy + pandas + qig-* + psycopg +
-# fastapi. strategyloop is the sole prediction backend. qig_warp
-# canonical regime classifier (replaces RegimeDetector in MIG-2).
-from proprietary_core.regime import RegimeDetector  # noqa: F401  (re-exported via StrategyLoop)
+# fastapi.
+# MIG-2 (2026-05-16): bespoke RegimeDetector deleted; regime is now
+# qig_warp.classify_regime via RegimeAdapter (canonical mapping).
 from proprietary_core.strategy_loop import MarketRegime, StrategyLoop  # noqa: F401  (MarketRegime re-exported for ops)
 from utils.redis_listener import (
     ListenerConfig,
@@ -285,7 +286,7 @@ def _handle_predict_strategyloop(payload: dict) -> dict:
 
     Ported 1:1 from kernels/core/health.py:_run_prediction. Produces the
     exact signal distribution polytrade-be's risk engine is calibrated
-    against. Default path once ROUTE_VERSION=v0.8 is set.
+    against. Sole prediction backend post-MIG-1.
     """
     action = payload.get("action", "multi_horizon")
     symbol = payload.get("symbol", "UNKNOWN")
@@ -373,12 +374,14 @@ def _handle_predict(payload: dict) -> dict:
     """Route /ml/predict to the appropriate handler.
 
     qig_analyze   → physics-based market analysis (qig_engine)
-    everything    → strategyloop (deterministic regime-based predictor)
+    everything    → strategyloop (regime-based predictor; regime label
+                    comes from qig_warp.classify_regime via RegimeAdapter
+                    post-MIG-2)
 
-    MIG-1 (2026-05-16): removed legacy ensemble routing, ROUTE_VERSION
-    backend selection, and ML_PREDICT_SHADOW parity logging. strategyloop
-    is the sole prediction backend; qig_analyze stays on its own
-    code path since it's a fundamentally different computation.
+    MIG-1 + MIG-2 removed: legacy ensemble routing, ROUTE_VERSION
+    backend selection, ML_PREDICT_SHADOW parity logging, REGIME_CLASSIFIER
+    flag, bespoke RegimeDetector. qig_analyze stays on its own code path
+    since it's a fundamentally different computation.
     """
     if payload.get("action") == "qig_analyze":
         return _handle_qig_analyze(payload)
@@ -496,8 +499,8 @@ async def health():
     return {
         "status": "ok",
         "service": "ml-worker",
-        "version": "0.8.3.5a",
-        "route_version": os.environ.get("ROUTE_VERSION") or "default-ensemble",
+        "version": "0.9.1",
+        "backend": "strategyloop+qig_warp",
     }
 
 
@@ -517,7 +520,7 @@ async def root():
     """
     return {
         "service": "ml-worker",
-        "version": "0.9.0",
+        "version": "0.9.1",
         "backend": "strategyloop+qig_warp",
         "endpoints": {
             "health": "/health (GET)",
@@ -647,7 +650,7 @@ async def api_status():
     """Operational status snapshot. Ops-only; no TS callers today."""
     return {
         "service": "ml-worker",
-        "version": "0.9.0",
+        "version": "0.9.1",
         "backend": "strategyloop+qig_warp",
         "redis_configured": bool(REDIS_URL),
         "trade_outcomes_buffered": len(get_recent_trade_outcomes(limit=_TRADE_OUTCOMES_MAX)),
@@ -655,53 +658,8 @@ async def api_status():
     }
 
 
-@app.get("/governance/regime-parity")
-async def governance_regime_parity(limit: int = 200):
-    """Parity-diff ring buffer for issue #695 — qig_warp shadow regime.
-
-    Populated every time StrategyLoop.tick runs (i.e. every /ml/predict
-    call on the v0.8 path). Each row carries the live MarketRegime
-    (creator/preserver/dissolver) alongside the published
-    qig_warp.classify_regime output (CRITICAL/DISORDERED/ORDERED) and
-    the (h, J) inputs that drove the shadow call. The live trading
-    path is unaffected — this is read-only telemetry.
-
-    Promotion gate (per #689 discipline): the cutover PR that
-    replaces RegimeDetector with qig_warp.classify_regime ships only
-    after the parity-log accumulates a representative tape window and
-    the shadow/live mapping stabilises (or the mapping is re-calibrated
-    based on the observed diff distribution).
-    """
-    from proprietary_core.regime_shadow import (
-        get_regime_parity_log,
-        SHADOW_EQUIVALENCE_GUESS,
-    )
-    rows = get_regime_parity_log()
-    rows = rows[-max(1, min(limit, 2000)):]
-    # Tally diffs against the v0 first-order equivalence guess so the
-    # operator can eyeball mapping accuracy at a glance.
-    matches = 0
-    diffs = 0
-    errors = 0
-    for r in rows:
-        if r.get("shadow_error"):
-            errors += 1
-            continue
-        guess = SHADOW_EQUIVALENCE_GUESS.get(r.get("live_regime", ""))
-        if r.get("shadow_regime") == guess:
-            matches += 1
-        else:
-            diffs += 1
-    return {
-        "available": True,
-        "sample_count": len(rows),
-        "shadow_errors": errors,
-        "matches_v0_guess": matches,
-        "diffs_v0_guess": diffs,
-        "match_ratio": (matches / (matches + diffs)) if (matches + diffs) else 0.0,
-        "equivalence_guess_v0": SHADOW_EQUIVALENCE_GUESS,
-        "rows": rows,
-    }
+# /governance/regime-parity removed (MIG-2). The qig_warp cutover is
+# complete and canonical; there is no shadow log to publish anymore.
 
 
 # ---------------------------------------------------------------------------
