@@ -20,6 +20,7 @@
 import type { Request, Response } from 'express';
 import express from 'express';
 import { createClient, type RedisClientType } from 'redis';
+import { pool } from '../db/connection.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { logger } from '../utils/logger.js';
 
@@ -161,6 +162,232 @@ router.get('/sleep-state/:agent', authenticateToken, async (req: Request, res: R
       sleep_state: null,
       fetched_at_ms: fetchedAtMs,
       source: 'error',
+    });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Issue #689 — Python K shadow governance views
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Read-only views over `kernel_parity_log` (migration 051). Populated by
+// the K-block fanout in apps/api/src/services/monkey/loop.ts which posts
+// the same K-tick inputs to ml-worker /monkey/k-shadow/tick after TS K
+// finalises its decision and before execution. The parity row carries
+// both TS and Py would-be decisions so the operator can verify the
+// Python kernel reproduces TS behavior before the cutover PR ships.
+
+const K_PARITY_MAX_LIMIT = 1_000;
+const K_PARITY_DEFAULT_LIMIT = 200;
+
+function parseKParityLimit(raw: unknown): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return K_PARITY_DEFAULT_LIMIT;
+  return Math.min(K_PARITY_MAX_LIMIT, Math.floor(n));
+}
+
+function parseKParitySince(raw: unknown): Date | null {
+  if (raw == null || raw === '') return null;
+  const d = new Date(String(raw));
+  return Number.isFinite(d.getTime()) ? d : null;
+}
+
+/**
+ * GET /api/governance/k-parity?limit=N&since=ISO
+ *
+ * Returns paginated rows from kernel_parity_log alongside agreement
+ * counts. Read-only — does NOT mutate kernel_parity_log or any other
+ * table. Default limit 200; max 1000.
+ *
+ * Response shape:
+ *   {
+ *     count: <int>,
+ *     since: <ISO|null>,
+ *     summary: {
+ *       total_count, agree_action_count, disagree_action_count,
+ *       py_error_count, agree_side_count
+ *     },
+ *     rows: [{ id, tick_id, symbol, symbol_timestamp,
+ *              ts_action, ts_side, ts_phi, ts_kappa, ts_M, ts_Gamma, ts_R,
+ *              ts_regime, ts_decision_ms,
+ *              py_action, py_side, py_phi, py_kappa, py_M, py_Gamma, py_R,
+ *              py_regime, py_decision_ms, py_error,
+ *              agree_action, agree_side, delta_phi, delta_kappa,
+ *              created_at }, ...]
+ *   }
+ */
+router.get('/k-parity', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const limit = parseKParityLimit(req.query.limit);
+    const since = parseKParitySince(req.query.since);
+
+    const params: (Date | number)[] = [];
+    const where: string[] = [];
+    if (since) {
+      params.push(since);
+      where.push(`created_at >= $${params.length}`);
+    }
+    params.push(limit);
+    const limitIdx = params.length;
+    const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    const rowsQuery = `
+      SELECT
+        id, tick_id, symbol, symbol_timestamp,
+        ts_action, ts_side, ts_phi, ts_kappa, ts_M, ts_Gamma, ts_R,
+        ts_regime, ts_decision_ms,
+        py_action, py_side, py_phi, py_kappa, py_M, py_Gamma, py_R,
+        py_regime, py_decision_ms, py_error,
+        agree_action, agree_side, delta_phi, delta_kappa,
+        created_at
+      FROM kernel_parity_log
+      ${whereClause}
+      ORDER BY created_at DESC
+      LIMIT $${limitIdx}
+    `;
+
+    const summaryQuery = `
+      SELECT
+        COUNT(*) FILTER (WHERE agree_action IS TRUE)  AS agree_action_count,
+        COUNT(*) FILTER (WHERE agree_action IS FALSE) AS disagree_action_count,
+        COUNT(*) FILTER (WHERE py_error IS NOT NULL)  AS py_error_count,
+        COUNT(*) FILTER (WHERE agree_side IS TRUE)    AS agree_side_count,
+        COUNT(*)                                       AS total_count
+      FROM kernel_parity_log
+      ${whereClause}
+    `;
+
+    const [rowsRes, summaryRes] = await Promise.all([
+      pool.query(rowsQuery, params),
+      pool.query(summaryQuery, since ? [since] : []),
+    ]);
+
+    const summaryRow = summaryRes.rows[0] ?? {};
+    return res.json({
+      count: rowsRes.rows.length,
+      since: since ? since.toISOString() : null,
+      summary: {
+        total_count: Number(summaryRow.total_count ?? 0),
+        agree_action_count: Number(summaryRow.agree_action_count ?? 0),
+        disagree_action_count: Number(summaryRow.disagree_action_count ?? 0),
+        py_error_count: Number(summaryRow.py_error_count ?? 0),
+        agree_side_count: Number(summaryRow.agree_side_count ?? 0),
+      },
+      rows: rowsRes.rows,
+    });
+  } catch (err) {
+    logger.error('[governance/k-parity] query failed', {
+      err: err instanceof Error ? err.message : String(err),
+    });
+    return res.status(500).json({
+      error: 'k_parity_query_failed',
+      message: err instanceof Error ? err.message : String(err),
+    });
+  }
+});
+
+/**
+ * GET /api/governance/k-consciousness?kernel=ts|py|both&limit=N&since=ISO
+ *
+ * Per-tick consciousness trajectory for the requested kernel. When
+ * kernel=both, each row carries both ts_* and py_* series so a single
+ * chart can overlay them.
+ *
+ *   C := phi * (kappa / 64.0)     (coarse composite; kappa★ = 64)
+ *
+ * Rows are returned ASCENDING by symbol_timestamp so the response is
+ * plot-ready without a client-side sort.
+ *
+ * Read-only — does NOT mutate kernel_parity_log or any other table.
+ */
+router.get('/k-consciousness', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const limit = parseKParityLimit(req.query.limit);
+    const since = parseKParitySince(req.query.since);
+    const kernelParam = String(req.query.kernel ?? 'both').toLowerCase();
+    const kernel: 'ts' | 'py' | 'both' =
+      kernelParam === 'ts' ? 'ts' :
+      kernelParam === 'py' ? 'py' :
+      'both';
+
+    const params: (Date | number)[] = [];
+    const where: string[] = [];
+    if (since) {
+      params.push(since);
+      where.push(`created_at >= $${params.length}`);
+    }
+    // ts_phi is always present (TS K always produces a decision), but
+    // py_phi is null on shadow-error rows. The kernel filter keeps
+    // those rows out of the trajectory so a 0-phi outlier doesn't
+    // pull the chart line to the floor.
+    if (kernel === 'ts') {
+      where.push('ts_phi IS NOT NULL');
+    } else if (kernel === 'py') {
+      where.push('py_phi IS NOT NULL');
+    } else {
+      where.push('(ts_phi IS NOT NULL OR py_phi IS NOT NULL)');
+    }
+    params.push(limit);
+    const limitIdx = params.length;
+    const whereClause = `WHERE ${where.join(' AND ')}`;
+
+    let selectCols: string;
+    if (kernel === 'ts') {
+      selectCols = `
+        symbol, symbol_timestamp, created_at,
+        ts_phi   AS phi,
+        ts_kappa AS kappa,
+        ts_M     AS m,
+        ts_Gamma AS gamma,
+        ts_R     AS r,
+        ts_regime AS regime,
+        ts_action AS action,
+        (ts_phi * (ts_kappa / 64.0)) AS c
+      `;
+    } else if (kernel === 'py') {
+      selectCols = `
+        symbol, symbol_timestamp, created_at,
+        py_phi   AS phi,
+        py_kappa AS kappa,
+        py_M     AS m,
+        py_Gamma AS gamma,
+        py_R     AS r,
+        py_regime AS regime,
+        py_action AS action,
+        (py_phi * (py_kappa / 64.0)) AS c
+      `;
+    } else {
+      selectCols = `
+        symbol, symbol_timestamp, created_at,
+        ts_phi, ts_kappa, ts_M, ts_Gamma, ts_R, ts_regime, ts_action,
+        (ts_phi * (ts_kappa / 64.0)) AS ts_c,
+        py_phi, py_kappa, py_M, py_Gamma, py_R, py_regime, py_action,
+        (py_phi * (py_kappa / 64.0)) AS py_c
+      `;
+    }
+
+    const rowsQuery = `
+      SELECT ${selectCols}
+      FROM kernel_parity_log
+      ${whereClause}
+      ORDER BY symbol_timestamp ASC
+      LIMIT $${limitIdx}
+    `;
+
+    const result = await pool.query(rowsQuery, params);
+    return res.json({
+      kernel,
+      count: result.rows.length,
+      since: since ? since.toISOString() : null,
+      rows: result.rows,
+    });
+  } catch (err) {
+    logger.error('[governance/k-consciousness] query failed', {
+      err: err instanceof Error ? err.message : String(err),
+    });
+    return res.status(500).json({
+      error: 'k_consciousness_query_failed',
+      message: err instanceof Error ? err.message : String(err),
     });
   }
 });
