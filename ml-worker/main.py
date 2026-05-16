@@ -1811,8 +1811,21 @@ async def monkey_tick_run(request: Request):
 
     # State resolution: caller-provided wins, else in-process cache, else
     # newborn seeded from uniform basin.
+    #
+    # PY_INDEPENDENT_STATE_LIVE flag (Consensus Layer 3, CONSENSUS-5):
+    # when true, IGNORE the caller-supplied `prev_state` and use Py's own
+    # cached/persisted state instead. This makes Py's basin trajectory
+    # genuinely independent of TS — necessary for the consensus arbiter
+    # (PR CONSENSUS-7) to weight against meaningful divergence. Default
+    # off preserves shadow-mode behaviour: TS feeds prev_state, Py
+    # rebuilds the same basin TS just computed.
     key = (instance_id, tick_inputs.symbol)
-    prev_state_payload = payload.get("prev_state")
+    py_independent_state_live = (
+        os.environ.get("PY_INDEPENDENT_STATE_LIVE", "").strip().lower() == "true"
+    )
+    prev_state_payload = (
+        None if py_independent_state_live else payload.get("prev_state")
+    )
     persistence = _get_persistence(instance_id)
     state_loaded_from_persistence = False
     if prev_state_payload is not None:
