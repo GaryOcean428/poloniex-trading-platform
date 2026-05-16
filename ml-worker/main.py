@@ -255,92 +255,29 @@ def _strategy_to_signal(
 def _strongest_recent_change(prices: list[float]) -> float:
     """Multi-window recent-action probe for the regime tiebreaker.
 
-    Patched 2026-05-15T06:50Z: the prior single-window probe
-    (10 bars / ±1%) caught breakouts but missed breakdowns on
-    longer-candle-interval inputs. Production logs at 06:35-06:40Z
-    showed callers with both BUY dir=bullish AND HOLD dir=neutral on
-    the same symbol seconds apart — different OHLCV windows feeding
-    /ml/predict, only one of them showing >1% movement over 10 bars.
-
-    Strategy: check shortest viable window first, return the first
-    one that crosses its noise floor. Fresh fast action wins over
-    stale drift. Per-window floors calibrated so each window has
-    roughly the same probability of false-firing on quiet data:
-      - 3 bars / ±0.5% : fast breakdowns/breakouts (typical kernel
-        tape territory)
-      - 5 bars / ±0.5% : slightly slower acute moves
-      - 10 bars / ±0.7%: medium drift
-      - 15 bars / ±1.0%: sustained drift, same threshold as the
-        prior single-window probe
-
-    Returns 0.0 when no window clears its floor → tiebreaker is a
-    no-op and _regime_to_direction falls through to NEUTRAL.
+    Now delegates to ``regime_signal.strongest_recent_change`` so the
+    pure logic is unit-testable without dragging the full ml-worker
+    import chain (pandas, FastAPI, sklearn, TF). Kept as a thin alias
+    so callers and any downstream patches that grep this name still
+    resolve. See ``regime_signal.py`` for the implementation history.
     """
-    if len(prices) < 4:
-        return 0.0
-    # (window_bars, noise_floor). Order matters — first match wins.
-    for n, floor in ((3, 0.005), (5, 0.005), (10, 0.007), (15, 0.01)):
-        if len(prices) <= n:
-            continue
-        start = prices[-(n + 1)]
-        if start <= 0:
-            continue
-        change = (prices[-1] - start) / start
-        if abs(change) >= floor:
-            return change
-    return 0.0
+    from regime_signal import strongest_recent_change
+    return strongest_recent_change(prices)
 
 
 def _regime_to_direction(
     regime: str, trend_strength: float, recent_change_pct: float = 0.0,
 ) -> str:
-    """Map (regime, trend_strength[, recent_change_pct]) → BULLISH / BEARISH / NEUTRAL.
+    """Map (regime, trend_strength[, recent_change_pct]) → BULLISH /
+    BEARISH / NEUTRAL.
 
-    Original patch 2026-05-15T05:04Z: added dead-zone tiebreaker for
-    breakdowns the long-window classification was missing.
-
-    Re-patched 2026-05-15T06:50Z: prior 10-bar/±1% tiebreaker worked
-    for breakouts but missed breakdowns on longer candle intervals.
-    Logic moved to caller via _strongest_recent_change, which probes
-    3-/5-/10-/15-bar windows with per-window noise floors.
-
-    Re-patched 2026-05-15T07:45Z: the prior version computed the probe
-    but never consulted it on the `creator + trend_strength > 0.1` /
-    `preserver + trend_strength > 0.15` early-return paths — they
-    short-circuited BULLISH before the probe was checked. Live ETH
-    07:37-07:39Z reproduced this exactly: regime=creator, positive
-    long-window trend, fresh probe-detected breakdown, output BUY.
-    Fix: probe pre-empts regime-class classification when decisive.
-    The probe's per-window noise floors (3-bar 0.5%, 5-bar 0.5%,
-    10-bar 0.7%, 15-bar 1.0%) already gate it to genuine moves, so
-    any non-zero signed value reflects a fresh decisive change that
-    should override the stale long-window verdict.
+    Now delegates to ``regime_signal.regime_to_direction``. See
+    ``regime_signal.py`` for the patch history (dead-zone tiebreaker,
+    multi-window probe, probe-pre-empts-early-returns, largest-
+    magnitude-wins).
     """
-    regime_l = (regime or "").lower()
-
-    # FRESH-MOVE OVERRIDE — probe is noise-floor-filtered upstream by
-    # _strongest_recent_change; a non-zero signed value means a window
-    # already cleared its floor and is a fresh decisive move. This
-    # must run BEFORE the regime-class early returns, otherwise
-    # creator/preserver with a positive `trend_strength` short-circuits
-    # BULLISH on a tape that's actively breaking down.
-    if recent_change_pct < 0:
-        return "BEARISH"
-    if recent_change_pct > 0:
-        return "BULLISH"
-
-    # Long-window regime + trend classification — consulted only when
-    # the probe was silent (true dead-zone — no window cleared its floor).
-    if regime_l == "creator" and trend_strength > 0.1:
-        return "BULLISH"
-    if regime_l == "preserver" and trend_strength > 0.15:
-        return "BULLISH"
-    if regime_l in ("dissolver",):
-        return "NEUTRAL"
-    if trend_strength < -0.05:
-        return "BEARISH"
-
-    return "NEUTRAL"
+    from regime_signal import regime_to_direction
+    return regime_to_direction(regime, trend_strength, recent_change_pct)
 
 
 def _handle_predict_strategyloop(payload: dict) -> dict:
