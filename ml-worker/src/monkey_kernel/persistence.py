@@ -24,6 +24,7 @@ Architecture:
 
 Keyspace (per directive):
   monkey:ocean:{instance}:sleep_state              string (JSON), no TTL
+  monkey:ocean:{instance}:last_consolidation       string (JSON), no TTL
   monkey:ocean:{instance}:intervention_history     list,  1000 max, 7d TTL
   monkey:ocean:{instance}:reward_queue             list,  50 max,   1h TTL
   monkey:symbol:{instance}:{symbol}:kappa_history  list,  60 max,  24h TTL
@@ -257,6 +258,33 @@ class PersistentMemory:
                     "drift_streak": 0,
                 }
         return raw
+
+    # ── Ocean: last_consolidation summary ────────────────────────
+    #
+    # Written once per AWAKE→SLEEP transition by the dream-consolidation
+    # pass (qig_dreams_local.consolidate_bank). Read by the TS
+    # governance/sleep-state endpoint so operators can see the most
+    # recent consolidation without re-running the pass.
+    #
+    # Key shape mirrors sleep_state: one string-value JSON blob per
+    # instance, no TTL — always reflect the latest pass.
+
+    def _last_consolidation_key(self) -> str:
+        return f"monkey:ocean:{self.instance_id}:last_consolidation"
+
+    def save_last_consolidation(self, summary: dict[str, Any]) -> bool:
+        """Write the dream-consolidation summary blob. Called by the
+        AWAKE→SLEEP transition handler after the consolidator runs.
+        Returns False (silent) when persistence is unavailable; the
+        kernel keeps running in in-memory-only mode."""
+        return self._set_json(
+            self._last_consolidation_key(), summary, TTL_SLEEP_STATE,
+        )
+
+    def load_last_consolidation(self) -> Optional[dict[str, Any]]:
+        """Read the most recent consolidation summary, or None if Redis
+        is unreachable or the key has never been written."""
+        return self._get_json(self._last_consolidation_key())
 
     # ── Ocean: intervention history (forensic ring buffer) ───────
 

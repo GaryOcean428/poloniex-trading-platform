@@ -86,6 +86,9 @@ const AGENT_TO_INSTANCE: Record<string, string> = {
  *     redis_key: string,
  *     sleep_state: { phase, phase_started_at_ms, last_sleep_ended_at_ms,
  *                    sleep_count, drift_streak } | null,
+ *     last_consolidation_ts: number | null,
+ *     dream_packet_size_bytes: number,
+ *     consolidation_summary: string | null,
  *     fetched_at_ms: number,
  *     source: 'redis' | 'empty' | 'not_configured' | 'error'
  *   }
@@ -96,7 +99,40 @@ const AGENT_TO_INSTANCE: Record<string, string> = {
  *              persisted state yet, or runs without persistence enabled)
  *   - 'not_configured': REDIS_URL env var is absent
  *   - 'error': Redis read failed (logged separately)
+ *
+ * Dream-consolidation fields (added with qig_dreams_local wiring):
+ *   - last_consolidation_ts: epoch-ms of the most recent AWAKE→SLEEP
+ *     consolidation pass, or null if none has run yet.
+ *   - dream_packet_size_bytes: byte length of the consolidation blob
+ *     persisted under `monkey:ocean:{instance}:last_consolidation`,
+ *     or 0 when absent. Sized off the raw Redis value (pre-parse) so
+ *     it reflects what the kernel actually wrote.
+ *   - consolidation_summary: human-readable one-liner from the kernel
+ *     (basin count, boost/downscale/prune counts, sqrt-traversal),
+ *     or null when no pass has run.
  */
+/**
+ * Helper: derive the (ts, summary) pair from a parsed last_consolidation
+ * blob. The Python kernel writes a DreamConsolidationSummary serialised
+ * via asdict + summary_string injection (see ml-worker/src/qig_dreams_local
+ * /consolidator.py). We accept the documented shape but defensively
+ * handle missing fields so a half-populated blob doesn't 500 the route.
+ */
+function extractConsolidationFields(parsed: unknown): {
+  last_consolidation_ts: number | null;
+  consolidation_summary: string | null;
+} {
+  if (parsed == null || typeof parsed !== 'object') {
+    return { last_consolidation_ts: null, consolidation_summary: null };
+  }
+  const obj = parsed as Record<string, unknown>;
+  const tsRaw = obj.completed_at_ms;
+  const summaryRaw = obj.summary_string;
+  const ts = typeof tsRaw === 'number' && Number.isFinite(tsRaw) ? tsRaw : null;
+  const summary = typeof summaryRaw === 'string' ? summaryRaw : null;
+  return { last_consolidation_ts: ts, consolidation_summary: summary };
+}
+
 router.get('/sleep-state/:agent', authenticateToken, async (req: Request, res: Response) => {
   const fetchedAtMs = Date.now();
   const rawAgent = (req.params.agent ?? '').toString();
@@ -108,6 +144,7 @@ router.get('/sleep-state/:agent', authenticateToken, async (req: Request, res: R
     });
   }
   const redisKey = `monkey:ocean:${instanceId}:sleep_state`;
+  const consolidationKey = `monkey:ocean:${instanceId}:last_consolidation`;
   const client = await getRedisClient();
   if (!client) {
     return res.json({
@@ -116,12 +153,55 @@ router.get('/sleep-state/:agent', authenticateToken, async (req: Request, res: R
       instance_id: instanceId,
       redis_key: redisKey,
       sleep_state: null,
+      last_consolidation_ts: null,
+      dream_packet_size_bytes: 0,
+      consolidation_summary: null,
       fetched_at_ms: fetchedAtMs,
       source: REDIS_URL ? 'error' : 'not_configured',
     });
   }
   try {
-    const raw = await client.get(redisKey);
+    // Fetch sleep_state + last_consolidation concurrently. The
+    // consolidation read is best-effort: if it fails or returns
+    // null/garbage, we fall back to null/0 on those fields rather
+    // than failing the whole response (the kernel may legitimately
+    // have no consolidation pass on record yet).
+    const [raw, consolidationRaw] = await Promise.all([
+      client.get(redisKey),
+      client.get(consolidationKey).catch((err: unknown) => {
+        logger.warn(
+          `[governance.sleep-state] redis get ${consolidationKey} failed: ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+        );
+        return null;
+      }),
+    ]);
+
+    // Compute consolidation-derived fields once, reused by both
+    // 'empty' (no sleep_state, but maybe a consolidation) and
+    // 'redis' branches below.
+    const consolidationStr =
+      consolidationRaw == null
+        ? null
+        : (typeof consolidationRaw === 'string' ? consolidationRaw : String(consolidationRaw));
+    const dreamPacketSizeBytes = consolidationStr == null
+      ? 0
+      : Buffer.byteLength(consolidationStr, 'utf8');
+    let consolidationFields: {
+      last_consolidation_ts: number | null;
+      consolidation_summary: string | null;
+    } = { last_consolidation_ts: null, consolidation_summary: null };
+    if (consolidationStr != null) {
+      try {
+        consolidationFields = extractConsolidationFields(JSON.parse(consolidationStr));
+      } catch (parseErr) {
+        logger.warn(
+          `[governance.sleep-state] JSON parse failed for ${consolidationKey}: ` +
+          `${parseErr instanceof Error ? parseErr.message : String(parseErr)}`,
+        );
+      }
+    }
+
     if (raw == null) {
       return res.json({
         success: true,
@@ -129,6 +209,9 @@ router.get('/sleep-state/:agent', authenticateToken, async (req: Request, res: R
         instance_id: instanceId,
         redis_key: redisKey,
         sleep_state: null,
+        last_consolidation_ts: consolidationFields.last_consolidation_ts,
+        dream_packet_size_bytes: dreamPacketSizeBytes,
+        consolidation_summary: consolidationFields.consolidation_summary,
         fetched_at_ms: fetchedAtMs,
         source: 'empty',
       });
@@ -149,6 +232,9 @@ router.get('/sleep-state/:agent', authenticateToken, async (req: Request, res: R
       instance_id: instanceId,
       redis_key: redisKey,
       sleep_state: sleepState,
+      last_consolidation_ts: consolidationFields.last_consolidation_ts,
+      dream_packet_size_bytes: dreamPacketSizeBytes,
+      consolidation_summary: consolidationFields.consolidation_summary,
       fetched_at_ms: fetchedAtMs,
       source: 'redis',
     });
@@ -160,6 +246,9 @@ router.get('/sleep-state/:agent', authenticateToken, async (req: Request, res: R
       instance_id: instanceId,
       redis_key: redisKey,
       sleep_state: null,
+      last_consolidation_ts: null,
+      dream_packet_size_bytes: 0,
+      consolidation_summary: null,
       fetched_at_ms: fetchedAtMs,
       source: 'error',
     });

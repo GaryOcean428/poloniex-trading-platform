@@ -171,6 +171,14 @@ class Ocean:
     SLEEP_DURATION_MS: float = 15 * 60 * 1000.0    # 15 min
     DRIFT_TRIGGER_TICKS: int = 10                  # ~5 min at 30s tick
 
+    # Recent basin history fed into the dream-consolidator on the
+    # AWAKE→SLEEP edge. Lifetime is intentionally short (32 ticks ≈
+    # 16 min at 30s tick) — the consolidator only needs to report
+    # sqrt-space traversal across the awake window leading up to
+    # sleep, not the entire kernel history. The TS-side resonance
+    # bank holds the long-term basin record.
+    BASIN_HISTORY_MAX: int = 32
+
     def __init__(
         self,
         label: str = "monkey-primary",
@@ -178,11 +186,21 @@ class Ocean:
         persistence: Optional["PersistentMemory"] = None,
         bus: Optional["KernelBus"] = None,
         symbol: Optional[str] = None,
+        consolidation_hook: Optional[Any] = None,
     ) -> None:
         self.label = label
         self._persistence = persistence
         self._bus = bus
         self._symbol = symbol
+        # Hook called on the AWAKE→SLEEP edge. Signature:
+        #   hook(recent_basins: list[np.ndarray], now_ms: float)
+        #     -> Optional[dict[str, Any]]  # JSON-serialisable summary
+        # When None, the dream-consolidation pass is skipped (legacy
+        # behaviour). When set, the result is persisted under
+        # `monkey:ocean:{instance}:last_consolidation` via
+        # PersistentMemory.save_last_consolidation, and the same
+        # blob is published as OCEAN_REGIME payload `consolidation`.
+        self._consolidation_hook = consolidation_hook
         # Load prior sleep state from Redis if available; the load
         # applies timestamp-correction so a kernel that "slept"
         # through downtime wakes at the right moment.
@@ -194,6 +212,7 @@ class Ocean:
             get_registry().get("ocean.phi_history_max", default=float(_PHI_HISTORY_MAX))
         )
         self._phi_history: Deque[float] = deque(maxlen=history_max)
+        self._basin_history: Deque[np.ndarray] = deque(maxlen=self.BASIN_HISTORY_MAX)
 
     def _load_sleep_state_or_fresh(self) -> SleepCycleState:
         if self._persistence is None or not self._persistence.is_available:
@@ -327,6 +346,14 @@ class Ocean:
             variance(self._phi_history) if len(self._phi_history) >= 2 else 0.0
         )
 
+        # Track basin trajectory for the dream-consolidation pass.
+        # Store a copy so downstream mutation can't corrupt our
+        # history. Bounded by BASIN_HISTORY_MAX (32 ticks).
+        try:
+            self._basin_history.append(np.asarray(basin, dtype=np.float64).copy())
+        except Exception:  # noqa: BLE001 — never block observe on a bad basin
+            pass
+
         # Geometric reads
         coherence = _basin_coherence(basin)
         lanes = cross_lane_basins if cross_lane_basins is not None else []
@@ -380,10 +407,32 @@ class Ocean:
         ):
             intervention = "MUSHROOM_MICRO"
 
+        # Dream-consolidation pass on AWAKE→SLEEP edge. Hook is
+        # optional and pure-side-effect on the resonance bank; the
+        # returned summary is persisted under
+        # `monkey:ocean:{instance}:last_consolidation` for the
+        # governance/sleep-state endpoint to surface. Failures are
+        # logged-and-swallowed so a bad bank never blocks a tick.
+        consolidation_summary: Optional[dict[str, Any]] = None
+        if sleep_step["entered_sleep"] and self._consolidation_hook is not None:
+            try:
+                consolidation_summary = self._consolidation_hook(
+                    list(self._basin_history), float(now_ms),
+                )
+            except Exception as err:  # noqa: BLE001
+                logger.warning(
+                    "[%s.ocean] dream-consolidation hook failed: %s",
+                    self.label, err,
+                )
+                consolidation_summary = None
+
         # Write-through to qig-cache. Every tick, sleep snapshot;
-        # interventions only when something fires (forensic ring).
+        # interventions only when something fires (forensic ring);
+        # consolidation summary only on the AWAKE→SLEEP edge.
         if self._persistence is not None and self._persistence.is_available:
             self._persistence.save_sleep_state(self.snapshot())
+            if consolidation_summary is not None:
+                self._persistence.save_last_consolidation(consolidation_summary)
             if intervention is not None:
                 self._persistence.push_intervention({
                     "intervention": intervention,
