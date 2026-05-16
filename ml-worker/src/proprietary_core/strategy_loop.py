@@ -151,13 +151,44 @@ class StrategyLoop:
         # live MarketRegime drives the live decision below regardless.
         # Diff lands in proprietary_core.regime_shadow._REGIME_PARITY_LOG
         # and is exposed via /governance/regime-parity for post-hoc
-        # analysis. Per #689 discipline this stays shadow until the
-        # parity-log accumulates a representative window.
+        # analysis. The shadow stays on even when the qig_warp cutover
+        # is live so the operator can confirm the swap matches what
+        # the parity log predicted.
         try:
             from .regime_shadow import shadow_classify
             shadow_classify(self._last_regime, symbol=self.symbol)
         except Exception:  # noqa: BLE001 — shadow MUST NOT affect live
             pass
+
+        # === CUTOVER: flag-gated swap to qig_warp.classify_regime ===
+        # Per #695. When REGIME_CLASSIFIER=qig_warp, replace the
+        # bespoke RegimeDetector's regime label with the published
+        # qig_warp classifier's output (mapped via the canonical
+        # CRITICAL→CREATOR / ORDERED→PRESERVER / DISORDERED→DISSOLVER
+        # table). All other RegimeState fields (entropy, fisher_info,
+        # trend_strength, volatility, confidence, is_transition,
+        # pillar1_gate) keep their bespoke values — they're the
+        # ancillary metrics the downstream consumers (_select_strategy,
+        # _sizer.compute) and the parity log depend on.
+        #
+        # Fail-soft: if qig_warp is unreachable / unrecognised, the
+        # bespoke regime is preserved. Never raises.
+        if self._last_regime is not None:
+            try:
+                from .regime_qigwarp import (
+                    classify_with_qig_warp, qig_warp_classifier_live,
+                )
+                if qig_warp_classifier_live():
+                    mapped = classify_with_qig_warp(self._last_regime)
+                    if mapped is not None and mapped != self._last_regime.regime:
+                        # Rebuild RegimeState with the swapped regime label.
+                        # Cheap dataclass replace — keeps every other field.
+                        from dataclasses import replace as _dc_replace
+                        self._last_regime = _dc_replace(
+                            self._last_regime, regime=mapped,
+                        )
+            except Exception:  # noqa: BLE001 — never break live on cutover path
+                pass
 
         # === FEEL: Coupling update (if signal/pnl provided) ===
         if signal_value is not None and pnl_value is not None:
