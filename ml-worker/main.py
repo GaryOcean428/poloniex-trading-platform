@@ -268,6 +268,65 @@ def _regime_to_direction(regime: str, prices: list[float]) -> str:
     return regime_to_direction(regime, prices)
 
 
+def _record_warp_telemetry_for_tick(
+    *,
+    decision: Any,
+    regime_val: str,
+    direction: str,
+) -> None:
+    """Push this tick's qig-warp regime telemetry into observable_governance.
+
+    Fires on every /ml/predict path (signal + forecast) so the
+    /governance/status rolling buffer reflects the actual load — the
+    original MIG-5 wiring placed this call after the action == "signal"
+    early-return, which is the high-volume trading path, leaving the
+    buffer permanently empty.
+
+    Fail-soft on qig_warp or observable_governance import errors —
+    telemetry must never break /ml/predict.
+    """
+    if decision is None or decision.regime is None:
+        return
+    h_value = float(decision.regime.entropy)
+    j_value = float(decision.regime.trend_strength)
+    bridge_exp: float | None = None
+    screen_len: float | None = None
+    warp_reg: str | None = None
+    gr_dir: str | None = None
+    rc_conf: str | None = None
+    try:
+        from qig_warp import regime_constants  # type: ignore[import-not-found]
+        rc = regime_constants(h=h_value, J=j_value, dim=2)
+        bridge_exp = float(rc.bridge_exponent)
+        screen_len = float(rc.screening_length)
+        warp_reg = getattr(rc.regime, "value", str(rc.regime))
+        gr_dir = str(rc.gr_direction) if getattr(rc, "gr_direction", None) else None
+        rc_conf = str(rc.confidence) if getattr(rc, "confidence", None) else None
+    except Exception as exc:  # noqa: BLE001 — fail-soft per tick contract
+        logger.debug("[mig-5] regime_constants failed (h=%.3f J=%.3f): %s",
+                     h_value, j_value, exc)
+
+    try:
+        from observable_governance import record_tick  # noqa: PLC0415
+        drift_pct = j_value * (
+            1.0 if direction == "BULLISH"
+            else -1.0 if direction == "BEARISH"
+            else 0.0
+        )
+        record_tick(
+            raw_drift_pct=drift_pct,
+            signal={"BULLISH": "BUY", "BEARISH": "SELL"}.get(direction, "HOLD"),
+            regime=regime_val,
+            bridge_exponent=bridge_exp,
+            screening_length=screen_len,
+            warp_regime=warp_reg,
+            gr_direction=gr_dir,
+            regime_confidence=rc_conf,
+        )
+    except Exception as exc:  # noqa: BLE001 — telemetry must not break /ml/predict
+        logger.debug("[mig-5] observable_governance.record_tick failed: %s", exc)
+
+
 def _handle_predict_strategyloop(payload: dict) -> dict:
     """Deterministic regime-based predictor.
 
@@ -322,6 +381,17 @@ def _handle_predict_strategyloop(payload: dict) -> dict:
     direction = _regime_to_direction(regime_val, prices)
     confidence_pct = int(min(max(confidence_raw * 100, 10), 95))
 
+    # MIG-5 HOTFIX (2026-05-17): record warp telemetry BEFORE the
+    # action == "signal" early-return so the recording fires on every
+    # /ml/predict path. polytrade-be drives most ticks via the signal
+    # action; placing the call after the signal return left the
+    # observable_governance buffer permanently empty.
+    _record_warp_telemetry_for_tick(
+        decision=decision,
+        regime_val=regime_val,
+        direction=direction,
+    )
+
     if action == "signal":
         sig = _strategy_to_signal(decision.selected_strategy.value, regime_val, direction)
         sig["strength"] = round(confidence_raw, 4)
@@ -331,9 +401,9 @@ def _handle_predict_strategyloop(payload: dict) -> dict:
     # extrapolation replaced with qig-warp bridge/screening-derived
     # forecast horizons (Path 1) wrapped in qig-compute observable
     # governance (Path 2) — both layers in one PR. Exactly one
-    # WarpBubble.qig_regime call per tick; derivation block in
-    # response so an operator can reproduce the forecast by hand
-    # from a single /ml/predict response.
+    # WarpBubble.qig_regime call per tick on the forecast path;
+    # derivation block in response so an operator can reproduce the
+    # forecast by hand from a single /ml/predict response.
     from forecast_horizons import compute_forecast  # noqa: PLC0415
     bundle = compute_forecast(
         symbol=symbol,
@@ -347,29 +417,6 @@ def _handle_predict_strategyloop(payload: dict) -> dict:
         label: hf.to_dict() for label, hf in bundle.horizons.items()
     }
     result["derivation"] = bundle.derivation
-
-    # MIG-5: record this tick's qig-warp telemetry into
-    # observable_governance so /governance/status carries the rolling
-    # bridge_exponent / screening_length / regime distribution. The
-    # warp telemetry comes from the bundle's derivation block (the
-    # single per-tick WarpBubble.qig_regime call).
-    try:
-        from observable_governance import record_tick  # noqa: PLC0415
-        deriv = bundle.derivation or {}
-        record_tick(
-            raw_drift_pct=float(trend_strength) * (
-                1.0 if direction == "BULLISH"
-                else -1.0 if direction == "BEARISH"
-                else 0.0
-            ),
-            signal={"BULLISH": "BUY", "BEARISH": "SELL"}.get(direction, "HOLD"),
-            regime=regime_val,
-            bridge_exponent=deriv.get("alpha"),
-            screening_length=deriv.get("xi"),
-            warp_regime=deriv.get("regime"),
-        )
-    except Exception as exc:  # noqa: BLE001 — telemetry must not break /ml/predict
-        logger.debug("[mig-5] observable_governance.record_tick failed: %s", exc)
 
     if action == "predict":
         horizon = payload.get("horizon", "1h")
