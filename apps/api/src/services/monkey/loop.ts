@@ -2545,6 +2545,41 @@ export class MonkeyKernel extends EventEmitter {
         threshold: lVetoConvictionThreshold(),
       });
     }
+    // ── Cross-kernel proposal publish (Consensus Layer 1.5) ──
+    // CONSENSUS_PROPOSAL_BUS_LIVE flag-gated. Publish K-kernel's
+    // proposed action to Redis so consensus arbiter (PR CONSENSUS-7)
+    // can subscribe. Fire-and-forget — never blocks the orchestrator.
+    // See [[polytrade-consensus-architecture]].
+    try {
+      const { publishProposal: _publishProposal } = await import('./proposal_bus.js');
+      const _proposalSide: 'long' | 'short' | null =
+        (action === 'enter_long' || action === 'pyramid_long') ? 'long'
+        : (action === 'enter_short' || action === 'pyramid_short') ? 'short'
+        : null;
+      void _publishProposal({
+        instance_id: this.instanceId,
+        symbol,
+        tick_id: `${symbol}|${state.sessionTicks}`,
+        proposed_action: (action === 'enter_long' || action === 'enter_short'
+          || action === 'pyramid_long' || action === 'pyramid_short') ? 'enter_long'
+          : action === 'enter_short' ? 'enter_short'
+          : (action.startsWith('exit') ? 'exit' : 'hold'),
+        side: _proposalSide,
+        lane: 'swing',  // K-kernel default; CONSENSUS-3 wires per-lane attribution
+        size_usdt: Number(size.value ?? 0),
+        leverage: Number(leverage.value ?? 1),
+        entry_threshold: Number(entryThr.value ?? 0.5),
+        conviction: Number(entryThr.value ?? 0.5),
+        basin_signature: Array.from(basin.slice(0, 8)).map((x) => Number(x)),
+        phi: Number(phi),
+        kappa: Number(state.kappa),
+        regime_label: null,
+        mode: String(mode),
+        at_ms: Date.now(),
+        engine_version: 'v0.8-ts',
+      });
+    } catch { /* fail-soft */ }
+
     if (process.env.MONKEY_EXECUTE === 'true') {
       if ((action === 'enter_long' || action === 'enter_short') && size.value > 0) {
         // v0.8.7 kill switch — pause new entries (including DCA pyramids)
