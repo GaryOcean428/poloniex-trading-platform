@@ -133,11 +133,14 @@ router.get('/sleep-state/:agent', authenticateToken, async (req: Request, res: R
       });
     }
     let sleepState: unknown = null;
+    // redis v4 client typings widen to `string | {}` in some configs;
+    // coerce here so JSON.parse always sees a string.
+    const rawStr = typeof raw === 'string' ? raw : String(raw);
     try {
-      sleepState = JSON.parse(raw);
+      sleepState = JSON.parse(rawStr);
     } catch (parseErr) {
       logger.warn(`[governance.sleep-state] JSON parse failed for ${redisKey}: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`);
-      sleepState = { _raw: raw };
+      sleepState = { _raw: rawStr };
     }
     return res.json({
       success: true,
