@@ -158,6 +158,7 @@ def main(args: Iterable[str]) -> int:
         scan_roots = [
             ml_worker_src / "monkey_kernel",
             ml_worker_src / "qig_core_local",
+            ml_worker_src / "qig_dreams_local",
         ]
         paths = []
         for root in scan_roots:
