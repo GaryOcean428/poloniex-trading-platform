@@ -778,7 +778,17 @@ def run_tick(
     # only when sizing collapses to zero AND the account is flat — surfaces
     # the exact numeric inputs feeding current_position_size so we can grep
     # `[size-zero-diag]` from Railway and trace which guard tripped.
-    if size_d["value"] == 0 and inputs.account.exchange_held_side is None:
+    #
+    # 2026-05-16: also suppress when `pre_lane == "observe"`. The observe
+    # lane is decision-only by design (`lane_budget_fraction("observe") == 0`),
+    # so size=0 is the intended outcome — not a regression to investigate.
+    # Pre-fix the diag fired every observe-lane tick on shadow/observe
+    # kernel instances, flooding the log with false positives.
+    if (
+        size_d["value"] == 0
+        and inputs.account.exchange_held_side is None
+        and pre_lane != "observe"
+    ):
         logger.info(
             "[size-zero-diag] symbol=%s avail=%.4f effFrac=%.4f cap=%.4f "
             "minNot=%.4f lev=%s bank=%s mode=%s lane=%s size=%.4f deriv=%s",
