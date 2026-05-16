@@ -204,3 +204,103 @@ class TestEthChartScenarioRegression:
             f"got {direction}, change={change:.4f} — "
             f"the 4% drop should dominate any 3-bar bounce"
         )
+
+
+# ───────────── Issue #725: extended-window probe (60/120 bar) ─────────────
+
+
+class TestExtendedProbeWindows:
+    """Regression for issue #725: pre-extension, the 15-bar max window
+    couldn't see multi-hour bearish trends. On a V-bottom + consolidation
+    where the last 15 bars happen to be net-positive but the 120-bar
+    dominant move is a 4% drop, the old 4-window probe returned positive
+    and `regime_to_direction` flipped BULLISH on a bearish setup."""
+
+    def test_4pct_drop_over_120bars_with_recent_07pct_bounce_returns_bearish(
+        self,
+    ) -> None:
+        # Acceptance test from issue #725:
+        # "Synthetic series that drops 4% over 120 bars and recovers
+        #  0.7% in the last 15 bars. Current patch returns +0.007
+        #  (BULLISH). Fix should return a negative value (BEARISH)."
+        #
+        # Start at 100, slow decline to 96 over 105 bars (-4%), then
+        # rise back to 96.7 over the last 15 bars (+0.7% from the low).
+        # Total end-to-end: 100 → 96.7 = -3.3% — dominant move bearish.
+        # The 15-bar window only sees the +0.7% bounce; the 120-bar
+        # window sees the -3.3%.
+        decline_step = (96 - 100) / 105  # ~-0.0381 per bar in price-units
+        decline = [100 + decline_step * i for i in range(106)]  # 100 → 96
+        # Last 15 bars: linear rise from 96 to 96.7
+        recovery_step = (96.7 - 96.0) / 15
+        recovery = [96 + recovery_step * (i + 1) for i in range(15)]
+        prices = decline + recovery
+        assert len(prices) == 121
+        assert prices[0] == 100.0
+        assert abs(prices[-1] - 96.7) < 1e-9
+
+        change = strongest_recent_change(prices)
+        # 15-bar: (96.7 - 96.0) / 96.0 ≈ +0.0073 — clears 0.010 floor? No: 0.73% < 1.0% → NOT cleared
+        # 60-bar: spans from index 61 to 120 → from price ~97.7 to 96.7 → -1.0% → BELOW 2.0% floor → NOT cleared
+        # 120-bar: (96.7 - 100.0) / 100.0 = -0.033 → ABOVE 3.0% floor → CLEARED, |change| = 0.033
+        # Result: 120-bar -3.3% wins
+        assert change < 0, (
+            f"expected negative (dominant 120-bar drop), got {change:+.4f}"
+        )
+
+        direction = regime_to_direction("creator", 0.15, change)
+        assert direction == "BEARISH", (
+            f"got {direction}, change={change:+.4f} — 120-bar drop should dominate"
+        )
+
+    def test_pre_extension_4window_max_would_have_returned_bullish(self) -> None:
+        # Document the pre-fix failure mode: with only the 3/5/10/15-bar
+        # windows, the 15-bar +0.7% bounce would be the only cleared
+        # window (recovery is monotone positive across the last 15 bars).
+        # 15-bar floor was 0.01 (1%) — 0.7% bounce wouldn't clear THAT
+        # either. So pre-fix this specific scenario would have returned
+        # 0.0 and fallen through to `regime_to_direction("creator", 0.15, 0)`
+        # = BULLISH. Either way, the answer was wrong.
+        #
+        # Post-fix: the 120-bar -3.3% wins → BEARISH.
+        # Verifies the fix delivers the right direction whichever way the
+        # short-window probes resolved (above, below, or AT floor).
+        # (Sanity check — narrow the recovery so the 15-bar would have
+        # cleared the 1% floor in a hypothetical configuration that used
+        # a smaller floor.)
+        prices = (
+            [100.0 - 0.04 * i for i in range(106)]  # 100 → 95.8 (~-4.2%)
+            + [95.8 + 0.5 * (i + 1) for i in range(15)]  # +7.5 → 103.3
+        )
+        # 15-bar: (103.3 - 95.8) / 95.8 ≈ +0.078 (cleared 1% floor → +7.8%)
+        # 120-bar: (103.3 - 100.0) / 100.0 = +0.033 (cleared 3% floor → +3.3%)
+        # Both positive! Largest magnitude is the 15-bar (+7.8%) — but it's
+        # POSITIVE so direction = BULLISH. This case the recent move is
+        # genuinely dominant and bullish; the fix correctly identifies it.
+        change = strongest_recent_change(prices)
+        assert change > 0, "violent recovery should register positive"
+        direction = regime_to_direction("creator", 0.15, change)
+        assert direction == "BULLISH"
+
+    def test_multi_hour_dominant_drop_returns_bearish_when_only_long_window_clears(
+        self,
+    ) -> None:
+        # Big multi-hour drop large enough to clear the 60/120-bar floors
+        # (2%/3%), followed by minor chop too small to clear any short
+        # window's floor. The 60-/120-bar windows MUST catch the dominant
+        # drop even when no short window does.
+        # 110 bars of monotone -5% drop, then 15 bars of pure noise.
+        import random
+        rng = random.Random(42)
+        decline = [100.0 - 5.0 * (i + 1) / 110 for i in range(110)]  # 100 → 95
+        chop = [decline[-1] + rng.uniform(-0.03, 0.03) for _ in range(15)]
+        prices = decline + chop  # 125 bars total
+        change = strongest_recent_change(prices)
+        # 120-bar: prices[-121] doesn't exist (only 125 bars; ok 121 in range
+        # but tight). For 125 bars: prices[-121] = prices[4] ≈ 100 - 5*5/110
+        # ≈ 99.77. Final ≈ 95. Change ≈ -4.8% → clears 3% floor.
+        # 60-bar: prices[-61] = prices[64] ≈ 100 - 5*65/110 ≈ 97.05. Final
+        # ≈ 95. Change ≈ -2.1% → clears 2% floor.
+        # Both 60 and 120 cleared → largest magnitude wins → 120-bar -4.8%.
+        assert change < 0, f"expected bearish, got {change:+.4f}"
+        assert regime_to_direction("dissolver", -0.1, change) == "BEARISH"

@@ -26,11 +26,25 @@ from __future__ import annotations
 # Floors calibrated so each window has roughly the same probability
 # of false-firing on quiet data. Order is informational only now
 # (was load-bearing pre-fix when "first match" semantics applied).
+#
+# 2026-05-16 (issue #725): added 60- and 120-bar windows. The prior
+# max window (15 bars) covers ~75min on the 5m feed (or ~3.75h on 15m).
+# That's too short to capture multi-hour bearish trends. On a tape
+# that dropped 4% over 10h and recovered 0.7% in the last 15 bars,
+# the 15-bar window's positive return won as "largest magnitude"
+# because no longer-window check existed — and `regime_to_direction`
+# returned BULLISH on a clearly bearish setup. Extending to 60/120
+# bars lets the largest-magnitude rule correctly identify dominant
+# multi-hour moves (4% drop over 60-120 bars wins over 0.7% recent
+# bounce). Floors scaled with window length (longer = more cumulative
+# noise tolerance).
 _PROBE_WINDOWS: tuple[tuple[int, float], ...] = (
-    (3, 0.005),   # fast — 3 bars at 15m = 45min
-    (5, 0.005),   # slightly slower acute moves
-    (10, 0.007),  # medium drift
-    (15, 0.01),   # sustained drift
+    (3, 0.005),    # fast — 3 bars
+    (5, 0.005),    # slightly slower acute moves
+    (10, 0.007),   # medium drift
+    (15, 0.010),   # sustained drift
+    (60, 0.020),   # multi-hour dominant trend
+    (120, 0.030),  # session-scale dominant trend
 )
 
 
