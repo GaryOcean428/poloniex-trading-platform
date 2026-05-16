@@ -329,7 +329,36 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
     if (!traderStatus.enabled && !traderStatus.metrics) return res.json({ success: true, performance: defaultPerformance });
     try {
       const mode = req.query.mode as string | undefined;
-      const modeFilter = mode === 'paper' ? " AND order_id LIKE 'paper_%'" : mode === 'live' ? " AND (order_id IS NULL OR order_id NOT LIKE 'paper_%')" : '';
+      // Per-engine filter uses the `engine_type` column populated by
+      // migration 050. The prior `order_id LIKE 'paper_%'` heuristic at
+      // this site conflated NULL-order_id ghost rows with live trades
+      // (so mode='live' was identical to mode='all'). engine_type makes
+      // live / paper / backtest cleanly separable. NULL engine_type
+      // (rows pre-050 with order_ids that didn't match any pattern) is
+      // treated as 'unknown' and excluded from per-mode filtered views;
+      // mode='all' (or absent) still includes everything.
+      const modeFilter =
+        mode === 'paper'    ? " AND engine_type = 'paper'"
+        : mode === 'live'     ? " AND engine_type = 'live'"
+        : mode === 'backtest' ? " AND engine_type = 'backtest'"
+        :                       '';
+      // Range filter — 24h / 7d / 30d / 90d / 1y / all. Previously
+      // absent: the UI timeframe selector re-fetched with each value
+      // but the backend returned identical data for every range. Now
+      // every aggregate query (trades stats, returns, daily, per-agent,
+      // per-symbol) honors the same window.
+      const range = req.query.range as string | undefined;
+      const rangeInterval =
+        range === '24h' ? '24 hours'
+        : range === '7d'  ? '7 days'
+        : range === '30d' ? '30 days'
+        : range === '90d' ? '90 days'
+        : range === '1y'  ? '1 year'
+        :                   null;
+      const rangeFilter = rangeInterval
+        ? ` AND created_at > NOW() - INTERVAL '${rangeInterval}'`
+        : '';
+      const filters = `${modeFilter}${rangeFilter}`;
       const tradesResult = await pool.query(
         `SELECT
             COUNT(*) AS total_trades,
@@ -342,13 +371,13 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
             MIN(pnl) AS worst_trade,
             SUM(CASE WHEN pnl > 0 THEN pnl ELSE 0 END) AS gross_wins,
             SUM(CASE WHEN pnl < 0 THEN ABS(pnl) ELSE 0 END) AS gross_losses
-         FROM autonomous_trades WHERE user_id = $1 AND pnl IS NOT NULL${modeFilter}`,
+         FROM autonomous_trades WHERE user_id = $1 AND pnl IS NOT NULL${filters}`,
         [userId],
       );
       const metrics = tradesResult.rows[0];
       let sharpeRatio = 0; let maxDrawdown = 0;
       try {
-        const returnsResult = await pool.query(`SELECT pnl FROM autonomous_trades WHERE user_id = $1 AND pnl IS NOT NULL${modeFilter} ORDER BY created_at ASC`, [userId]);
+        const returnsResult = await pool.query(`SELECT pnl FROM autonomous_trades WHERE user_id = $1 AND pnl IS NOT NULL${filters} ORDER BY created_at ASC`, [userId]);
         const pnls = returnsResult.rows.map((r: { pnl: string }) => parseFloat(r.pnl));
         if (pnls.length > 1) {
           const mean = pnls.reduce((a: number, b: number) => a + b, 0) / pnls.length;
@@ -361,7 +390,7 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
       } catch { /* keep defaults */ }
       let dailyPerformance: Array<{ date: string; pnl: number; cumulativePnL: number; trades: number }> = [];
       try {
-        const dailyResult = await pool.query(`SELECT DATE(created_at) AS trade_date, SUM(pnl) AS daily_pnl, COUNT(*) AS daily_trades FROM autonomous_trades WHERE user_id = $1 AND pnl IS NOT NULL${modeFilter} GROUP BY DATE(created_at) ORDER BY trade_date ASC`, [userId]);
+        const dailyResult = await pool.query(`SELECT DATE(created_at) AS trade_date, SUM(pnl) AS daily_pnl, COUNT(*) AS daily_trades FROM autonomous_trades WHERE user_id = $1 AND pnl IS NOT NULL${filters} GROUP BY DATE(created_at) ORDER BY trade_date ASC`, [userId]);
         let cumPnl = 0;
         dailyPerformance = dailyResult.rows.map((r: { trade_date: string; daily_pnl: string; daily_trades: string }) => {
           const dayPnl = parseFloat(r.daily_pnl) || 0;
@@ -386,7 +415,7 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
                     THEN (SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END)::float * 100.0 / COUNT(*))
                     ELSE 0 END AS win_rate
              FROM autonomous_trades
-            WHERE user_id = $1 AND pnl IS NOT NULL${modeFilter}
+            WHERE user_id = $1 AND pnl IS NOT NULL${filters}
             GROUP BY agent
             ORDER BY pnl DESC NULLS LAST`,
           [userId],
@@ -409,7 +438,7 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
                     THEN (SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END)::float * 100.0 / COUNT(*))
                     ELSE 0 END AS win_rate
              FROM autonomous_trades
-            WHERE user_id = $1 AND pnl IS NOT NULL${modeFilter}
+            WHERE user_id = $1 AND pnl IS NOT NULL${filters}
             GROUP BY symbol
             ORDER BY pnl DESC NULLS LAST`,
           [userId],

@@ -146,7 +146,24 @@ router.get('/status', authenticateToken, async (req: Request, res: Response) => 
 router.get('/performance', authenticateToken, async (req: Request, res: Response) => {
   try {
     const userId = String(req.user.id);
-    const days = parseInt(req.query.days as string, 10) || 30;
+    // Accept both `days` (raw integer) and `timeframe` (semantic alias the
+    // FE timeframe-pill component sends — '24h' / '7d' / '30d' / '90d' / '1y').
+    // Before this alias the handler silently fell through to the 30-day default
+    // for every timeframe selection because `parseInt('7d', 10)` returns 7 but
+    // `parseInt('24h', 10)` returns 24 (24 days, not 24 hours) — and other
+    // values like '90d' coincidentally worked while '24h' was unintentionally
+    // a 24-day window. Explicit mapping below removes the ambiguity.
+    const timeframe = req.query.timeframe as string | undefined;
+    const timeframeToDays: Record<string, number> = {
+      '24h': 1,
+      '7d': 7,
+      '30d': 30,
+      '90d': 90,
+      '1y': 365,
+    };
+    const days = timeframe && timeframeToDays[timeframe] != null
+      ? timeframeToDays[timeframe]
+      : (parseInt(req.query.days as string, 10) || 30);
 
     // Get performance history
     const performanceResult = await pool.query(
