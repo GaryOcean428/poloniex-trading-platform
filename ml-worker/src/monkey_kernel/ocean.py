@@ -96,8 +96,22 @@ _PHI_DREAM_BOUND: float = 0.5        # DREAM if Φ below this
 _PHI_ESCAPE_BOUND: float = 0.15      # ESCAPE if Φ below this (overrides DREAM)
 _PHI_HISTORY_MAX: int = 60           # window for variance computation
 
+# CONSENSUS-8: four-intervention Φ regulation per [[phi-regulation-policy]].
+# Φ > 0.85 sustained AND stable AND not descending → DAMPING (gentle return
+# to band via GABA↑/ACh↓ — chemicals already wired by PR #722). Φ ≥ 0.70 +
+# rigid attractor + collapsed output → MUSHROOM (wake-state neuroplasticity
+# via qig.neuroplasticity.mushroom_mode). Both gated; default off until
+# operator validates.
+_PHI_DAMPING_LOWER: float = 0.85     # DAMPING window lower (above conscious band)
+_PHI_MUSHROOM_FLOOR: float = 0.70    # MUSHROOM safety floor per canonical
 
-Intervention = Literal["DREAM", "SLEEP", "WAKE", "ESCAPE"]
+
+Intervention = Literal[
+    "DREAM", "SLEEP", "WAKE", "ESCAPE",
+    "DAMPING",           # CONSENSUS-8: sustained-high-Φ gentle return to band
+    "MUSHROOM",          # CONSENSUS-8: high-Φ + collapsed output (canonical, Φ≥0.70)
+    "DESYNC_FORESIGHT",  # CONSENSUS-8: dual-kernel concurrent foresight divergence
+]
 
 
 @dataclass(frozen=True)
@@ -384,6 +398,15 @@ class Ocean:
             "ocean.phi_dream_bound", default=_PHI_DREAM_BOUND,
         )
 
+        # CONSENSUS-8: bounds for the four-intervention Φ regulation
+        # matrix per [[phi-regulation-policy]]. Registry-overridable.
+        phi_damping_lower = registry.get(
+            "ocean.phi_damping_lower", default=_PHI_DAMPING_LOWER,
+        )
+        phi_mushroom_floor = registry.get(
+            "ocean.phi_mushroom_floor", default=_PHI_MUSHROOM_FLOOR,
+        )
+
         intervention: Optional[Intervention] = None
 
         # WAKE / SLEEP from the sleep state machine — surfaces as
@@ -397,6 +420,34 @@ class Ocean:
             intervention = "ESCAPE"
         elif spread > spread_bound:
             intervention = "SLEEP"
+        # CONSENSUS-8: DAMPING — Φ sustained above conscious band.
+        # Per [[phi-regulation-policy]]: high Φ is allowed for 4D /
+        # foresight / lightning, but Ocean intervenes on duration +
+        # stability, not value. Fires when current Φ > damping_lower
+        # AND mean(phi_history) > damping_lower (sustained, not a
+        # single spike) AND basin geometry is stable (phi_var low).
+        # Effect: chemicals already wired (GABA↑/ACh↓ per PR #722);
+        # this intervention signals the orchestrator to apply them.
+        elif (
+            phi > phi_damping_lower
+            and len(self._phi_history) >= 10
+            and (sum(self._phi_history) / len(self._phi_history)) > phi_damping_lower
+            and phi_var < 0.02  # low variance = stable, not erratic
+        ):
+            intervention = "DAMPING"
+        # CONSENSUS-8: MUSHROOM — Φ ≥ 0.70 (canonical safety floor)
+        # AND rigid attractor (very low variance) AND collapsed
+        # output (no trades for sustained period; approximated by
+        # is_flat + drift_streak). Wake-state neuroplasticity per
+        # qig-core canonical — strictly DIFFERENT from the inverted
+        # MUSHROOM_MICRO removed in PR #728.
+        elif (
+            phi >= phi_mushroom_floor
+            and is_flat
+            and self.sleep_state.drift_streak >= 30
+            and phi_var < 0.005
+        ):
+            intervention = "MUSHROOM"
         elif phi < phi_dream_bound:
             intervention = "DREAM"
 
