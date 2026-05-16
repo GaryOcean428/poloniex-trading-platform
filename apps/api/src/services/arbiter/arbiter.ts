@@ -30,7 +30,19 @@
  *     callers that have not migrated yet.
  *   * Min-share floor scales as ``1/(2N)`` by default so the laggard
  *     in an N-agent race still gets exploration capital.
+ *
+ * Operator tuning (2026-05-16):
+ *   * ``ARBITER_MIN_SHARE_FACTOR`` env var (parseFloat) multiplies the
+ *     adaptive floor at runtime. Default 1.0 (unchanged behavior). Set
+ *     0.5 to halve the floor (e.g. 5% per agent at N=4 instead of 10%)
+ *     when high-WR agents (L, T) have earned more capital and a thick
+ *     laggard floor is over-protecting K. Set > 1.0 to be more cautious.
+ *     Invalid/zero/negative values fall back to 1.0 with a warn log.
+ *     Constructor-supplied ``opts.minShare`` STILL wins over env (env
+ *     is operational tuning; opts is for tests).
  */
+
+import { logger } from '../../utils/logger.js';
 
 /** Back-compat 2-agent allocation shape — preserved so existing
  *  callers (loop.ts, telemetry, snapshots) keep compiling. New
@@ -72,6 +84,43 @@ export interface ArbiterOptions {
   warmupTrades?: number;
 }
 
+/** Read ``ARBITER_MIN_SHARE_FACTOR`` from the environment with a
+ *  defensive parse. The factor multiplies the adaptive min-share floor
+ *  computed inside ``allocateMany``:
+ *
+ *    effectiveFloor = adaptiveFloor * factor
+ *
+ *  Defaults to 1.0 (no change from today) when:
+ *   * the var is unset
+ *   * the var is empty / non-numeric (warn-logged so the operator can
+ *     see their typo and fix it)
+ *   * the parsed value is <= 0 or non-finite (we don't allow disabling
+ *     the floor entirely via this knob — tests can still pass
+ *     ``opts.minShare: 0`` if they need that)
+ *
+ *  Exported for tests and so loop.ts can log the effective config on
+ *  startup. */
+export function readMinShareFactor(): number {
+  const raw = process.env.ARBITER_MIN_SHARE_FACTOR;
+  if (raw === undefined || raw === null || raw === '') return 1.0;
+  const parsed = parseFloat(raw);
+  if (!Number.isFinite(parsed)) {
+    logger.warn(
+      `arbiter: ARBITER_MIN_SHARE_FACTOR=${JSON.stringify(raw)} is not a ` +
+      'finite number; using factor=1.0 (no change to floor).',
+    );
+    return 1.0;
+  }
+  if (parsed <= 0) {
+    logger.warn(
+      `arbiter: ARBITER_MIN_SHARE_FACTOR=${parsed} is <= 0; using ` +
+      'factor=1.0 (refusing to disable the laggard floor entirely).',
+    );
+    return 1.0;
+  }
+  return parsed;
+}
+
 export class Arbiter {
   /** Per-agent rolling PnL window. ``Map<label, number[]>`` so
    *  arbitrary labels are first-class. */
@@ -79,15 +128,40 @@ export class Arbiter {
   private readonly window: number;
   private readonly minShareOverride: number | undefined;
   private readonly warmupTrades: number;
+  /** Multiplier applied to the adaptive floor inside ``allocateMany``.
+   *  Sourced from ``ARBITER_MIN_SHARE_FACTOR`` at construction time so
+   *  one Arbiter instance has stable floor behavior across ticks. */
+  private readonly minShareFactor: number;
 
   constructor(opts: ArbiterOptions = {}) {
     this.window = opts.window ?? 50;
     this.minShareOverride = opts.minShare;
     this.warmupTrades = opts.warmupTrades ?? 5;
+    this.minShareFactor = readMinShareFactor();
     // Pre-create K and M buffers so legacy snapshots still report
     // 0 trades / 0 PnL for them even when no events have arrived.
     this.pnls.set('K', []);
     this.pnls.set('M', []);
+    // One-shot operator visibility: log effective floor config so the
+    // operator can confirm ARBITER_MIN_SHARE_FACTOR took effect. We
+    // illustrate against N=4 (the default K|M|T|L lineup) so the
+    // number is concrete; the actual N is per allocate-call.
+    if (this.minShareOverride !== undefined) {
+      logger.info(
+        `arbiter: min-share floor = ${this.minShareOverride} (explicit ` +
+        'opts.minShare; env factor ignored)',
+      );
+    } else {
+      const sampleN = 4;
+      const sampleAdaptive = Math.min(0.10, 0.5 / sampleN);
+      const sampleEffective = sampleAdaptive * this.minShareFactor;
+      logger.info(
+        `arbiter: min-share factor = ${this.minShareFactor} ` +
+        `(ARBITER_MIN_SHARE_FACTOR; effective floor at N=${sampleN}: ` +
+        `${sampleEffective.toFixed(4)} = ${sampleAdaptive} * ` +
+        `${this.minShareFactor})`,
+      );
+    }
   }
 
   /** Record a settled trade outcome for ``agent`` (string label). */
@@ -142,7 +216,14 @@ export class Arbiter {
     // gets exploration capital but the floor doesn't dominate the
     // mass distribution among 6+ agents. Caller can override via
     // ``ArbiterOptions.minShare``.
-    const adaptiveFloor = Math.min(0.10, 0.5 / n);
+    //
+    // Operator knob: ARBITER_MIN_SHARE_FACTOR (default 1.0) multiplies
+    // the adaptive floor so the operator can tighten the floor
+    // (factor=0.5 → halved, factor=0.25 → quartered) when high-WR
+    // agents have earned more capital than the floor would let them
+    // claim. opts.minShare STILL wins — env is operational tuning, opts
+    // is for tests / per-instance overrides.
+    const adaptiveFloor = Math.min(0.10, 0.5 / n) * this.minShareFactor;
     const minShare = this.minShareOverride ?? adaptiveFloor;
     // Bootstrap path — uniform split until every agent has data.
     const allWarm = agents.every((a) => (this.pnls.get(a)?.length ?? 0) >= this.warmupTrades);
