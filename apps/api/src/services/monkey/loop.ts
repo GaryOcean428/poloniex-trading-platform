@@ -1659,7 +1659,7 @@ export class MonkeyKernel extends EventEmitter {
     // executive's threshold + harvest tightness will eventually consume
     // it. Splice the current basin onto the history so the classifier
     // sees the most-recent observation alongside prior ticks.
-    const regimeReading: RegimeReading = classifyRegime([
+    const regimeReading: RegimeReading = classifyRegime(symbol, [
       ...state.basinHistory,
       basin,
     ]);
