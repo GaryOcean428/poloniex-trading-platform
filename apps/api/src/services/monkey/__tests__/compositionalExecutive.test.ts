@@ -1,0 +1,107 @@
+import { describe, it, expect } from 'vitest';
+import {
+  evaluateCell,
+  regimeToDirection,
+  canonicalToPhase,
+  type RegimePhase,
+  type TrajectoryDirection,
+} from '../compositional_executive.js';
+
+describe('evaluateCell — 3×3 compositional matrix coverage', () => {
+  const phases: RegimePhase[] = ['CREATOR', 'PRESERVER', 'DISSOLVER'];
+  const directions: TrajectoryDirection[] = ['TREND_UP', 'CHOP', 'TREND_DOWN'];
+
+  it('returns a CellAction for every (phase, direction) pair (all 9 cells covered)', () => {
+    for (const p of phases) {
+      for (const d of directions) {
+        const cell = evaluateCell(p, d);
+        expect(cell.phase).toBe(p);
+        expect(cell.direction).toBe(d);
+        expect(cell.label).toContain(p);
+        expect(['trend', 'swing', 'scalp', 'observe']).toContain(cell.laneBias);
+        expect(['loose', 'normal', 'tight']).toContain(cell.harvestTightness);
+        expect(cell.sizeMultiplier).toBeGreaterThanOrEqual(0);
+        expect(cell.sizeMultiplier).toBeLessThanOrEqual(1.0);
+      }
+    }
+  });
+
+  it('DISSOLVER cells all have sizeMultiplier=0 (sit out)', () => {
+    for (const d of directions) {
+      const cell = evaluateCell('DISSOLVER', d);
+      expect(cell.sizeMultiplier).toBe(0.0);
+      expect(cell.laneBias).toBe('observe');
+    }
+  });
+
+  it('PRESERVER + TREND cells favour loose-harvest trend lane', () => {
+    for (const d of ['TREND_UP', 'TREND_DOWN'] as const) {
+      const cell = evaluateCell('PRESERVER', d);
+      expect(cell.laneBias).toBe('trend');
+      expect(cell.harvestTightness).toBe('loose');
+      expect(cell.sizeMultiplier).toBe(1.0);
+    }
+  });
+
+  it('CREATOR + CHOP → scalp bias, tight harvest, half size', () => {
+    const cell = evaluateCell('CREATOR', 'CHOP');
+    expect(cell.laneBias).toBe('scalp');
+    expect(cell.harvestTightness).toBe('tight');
+    expect(cell.sizeMultiplier).toBe(0.5);
+  });
+
+  it('PRESERVER + CHOP → swing (mean-revert), normal harvest, 0.7x size', () => {
+    const cell = evaluateCell('PRESERVER', 'CHOP');
+    expect(cell.laneBias).toBe('swing');
+    expect(cell.harvestTightness).toBe('normal');
+    expect(cell.sizeMultiplier).toBe(0.7);
+  });
+
+  it('CREATOR + TREND_UP and CREATOR + TREND_DOWN → trend lane, full size', () => {
+    for (const d of ['TREND_UP', 'TREND_DOWN'] as const) {
+      const cell = evaluateCell('CREATOR', d);
+      expect(cell.laneBias).toBe('trend');
+      expect(cell.sizeMultiplier).toBe(1.0);
+    }
+  });
+
+  it('DISSOLVER cells label distinguishes CHOP from TREND sub-cases', () => {
+    expect(evaluateCell('DISSOLVER', 'CHOP').label).toContain('sit out');
+    expect(evaluateCell('DISSOLVER', 'TREND_UP').label).toContain("don't trade");
+    expect(evaluateCell('DISSOLVER', 'TREND_DOWN').label).toContain("don't trade");
+  });
+
+  it('is pure — same input always yields same output', () => {
+    const a = evaluateCell('CREATOR', 'TREND_UP');
+    const b = evaluateCell('CREATOR', 'TREND_UP');
+    expect(a).toEqual(b);
+  });
+});
+
+describe('regimeToDirection — trajectory regime string mapping', () => {
+  it('maps recognised TREND_UP / CHOP / TREND_DOWN', () => {
+    expect(regimeToDirection('TREND_UP')).toBe('TREND_UP');
+    expect(regimeToDirection('CHOP')).toBe('CHOP');
+    expect(regimeToDirection('TREND_DOWN')).toBe('TREND_DOWN');
+  });
+
+  it('returns null for unrecognised inputs', () => {
+    expect(regimeToDirection('unknown')).toBe(null);
+    expect(regimeToDirection('')).toBe(null);
+    expect(regimeToDirection('creator')).toBe(null);  // phase regime, not direction
+  });
+});
+
+describe('canonicalToPhase — qig_warp regime string mapping', () => {
+  it('maps recognised creator / preserver / dissolver', () => {
+    expect(canonicalToPhase('creator')).toBe('CREATOR');
+    expect(canonicalToPhase('preserver')).toBe('PRESERVER');
+    expect(canonicalToPhase('dissolver')).toBe('DISSOLVER');
+  });
+
+  it('returns null for unrecognised inputs', () => {
+    expect(canonicalToPhase('TREND_UP')).toBe(null);  // direction regime, not phase
+    expect(canonicalToPhase(null)).toBe(null);
+    expect(canonicalToPhase('disordered')).toBe(null);  // qig_warp uses 'dissolver' not 'disordered'
+  });
+});

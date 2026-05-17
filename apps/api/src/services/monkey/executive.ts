@@ -874,11 +874,17 @@ export type LaneType = 'scalp' | 'swing' | 'trend' | 'observe';
  * historical performance at the current time-of-day get more probability
  * mass. Returning null OR 0.5 from the callback means "no signal" and
  * yields the same softmax as the no-prior case.
+ *
+ * Optional `cellLaneBias` (REGIME-1 Phase 3) is the lane recommended by
+ * the compositional 3×3 cell matrix. When non-null and not 'observe',
+ * adds a fixed +0.5 shift to that lane's exp() input — strong nudge
+ * but not a hard override.
  */
 export function chooseLane(
   s: BasinState,
   tapeTrend: number = 0,
   lanePrior?: (lane: LaneType) => number | null,
+  cellLaneBias?: LaneType | null,
 ): ExecutiveDecision<LaneType> {
   // κ → 0 must yield τ → ∞ (exploration); only clamp away from div-by-zero.
   const tau = 1.0 / Math.max(s.kappa, 1e-6);
@@ -908,6 +914,16 @@ export function chooseLane(
         priorShift[k] = rate - 0.5;
       }
     }
+  }
+  // REGIME-1 Phase 3 — compositional cell lane bias. Adds a fixed +0.5
+  // boost to the cell-recommended lane's softmax input. Stacks with
+  // SENSE-2c prior; together they can push the recommended lane up by
+  // ~0.5 + (rate - 0.5) at most. 'observe' bias is intentionally not
+  // boosted — DISSOLVER cells get size=0 elsewhere, so steering the
+  // lane to observe here is redundant and would prevent the eventual
+  // sense2c prior recovery when the regime transitions.
+  if (cellLaneBias && cellLaneBias !== 'observe') {
+    priorShift[cellLaneBias] += 0.5;
   }
 
   const maxS = Math.max(...Object.values(scores));
