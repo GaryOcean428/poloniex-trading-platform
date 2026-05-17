@@ -223,6 +223,128 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
 });
 
 /**
+ * PATCH /api/autonomous/config
+ *
+ * Reset the user's autonomous-trading baseline (initial_capital) to a
+ * new value. Use case: user deposits or withdraws capital from the
+ * exchange and the dashboard's Total P&L % goes nonsensical because
+ * it's still measured against the old stored baseline. This endpoint
+ * lets the user (or a deposit/withdrawal auto-detector) update the
+ * baseline so the % display reflects the actual current capital.
+ *
+ * Request body (any combination of these fields is allowed; all
+ * optional; at least one must be present):
+ *   {
+ *     initialCapital?: number,      // dollars, > 0
+ *     maxRiskPerTrade?: number,     // [0, 1]
+ *     maxDrawdown?: number,         // [0, 1]
+ *     targetDailyReturn?: number,   // [0, 1]
+ *     paperTrading?: boolean
+ *   }
+ *
+ * Response: 200 + updated config (same shape as GET /status.config).
+ * 400 on validation failure; 404 if the user has no config row; 500
+ * on DB failure.
+ *
+ * Auth required (same as the rest of /api/autonomous/*).
+ */
+router.patch('/config', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const userId = String(req.user.id);
+    const {
+      initialCapital,
+      maxRiskPerTrade,
+      maxDrawdown,
+      targetDailyReturn,
+      paperTrading,
+    } = req.body ?? {};
+
+    // Validate: at least one field, each within its valid range.
+    const updates: { col: string; val: number | boolean }[] = [];
+    if (initialCapital !== undefined) {
+      if (typeof initialCapital !== 'number' || !Number.isFinite(initialCapital) || initialCapital <= 0) {
+        return res.status(400).json({
+          success: false,
+          error: 'initialCapital must be a positive number (dollars)',
+        });
+      }
+      updates.push({ col: 'initial_capital', val: initialCapital });
+    }
+    if (maxRiskPerTrade !== undefined) {
+      if (typeof maxRiskPerTrade !== 'number' || maxRiskPerTrade < 0 || maxRiskPerTrade > 1) {
+        return res.status(400).json({ success: false, error: 'maxRiskPerTrade must be in [0, 1]' });
+      }
+      updates.push({ col: 'max_risk_per_trade', val: maxRiskPerTrade });
+    }
+    if (maxDrawdown !== undefined) {
+      if (typeof maxDrawdown !== 'number' || maxDrawdown < 0 || maxDrawdown > 1) {
+        return res.status(400).json({ success: false, error: 'maxDrawdown must be in [0, 1]' });
+      }
+      updates.push({ col: 'max_drawdown', val: maxDrawdown });
+    }
+    if (targetDailyReturn !== undefined) {
+      if (typeof targetDailyReturn !== 'number' || targetDailyReturn < 0 || targetDailyReturn > 1) {
+        return res.status(400).json({ success: false, error: 'targetDailyReturn must be in [0, 1]' });
+      }
+      updates.push({ col: 'target_daily_return', val: targetDailyReturn });
+    }
+    if (paperTrading !== undefined) {
+      if (typeof paperTrading !== 'boolean') {
+        return res.status(400).json({ success: false, error: 'paperTrading must be boolean' });
+      }
+      updates.push({ col: 'paper_trading', val: paperTrading });
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'At least one field must be provided (initialCapital | maxRiskPerTrade | maxDrawdown | targetDailyReturn | paperTrading)',
+      });
+    }
+
+    // Build parameterised UPDATE statement.
+    const setClauses = updates.map((u, i) => `${u.col} = $${i + 2}`).join(', ');
+    const values: (string | number | boolean)[] = [userId, ...updates.map((u) => u.val)];
+    const result = await pool.query(
+      `UPDATE autonomous_trading_configs
+         SET ${setClauses}, updated_at = NOW()
+       WHERE user_id = $1
+       RETURNING *`,
+      values,
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'No autonomous_trading_configs row found for this user. Use POST /api/autonomous/enable to create one first.',
+      });
+    }
+
+    const row = result.rows[0];
+    logger.info('[autonomousTrader] config patched', {
+      userId, updatedFields: updates.map((u) => u.col),
+    });
+    return res.json({
+      success: true,
+      config: {
+        initialCapital: parseFloat(row.initial_capital),
+        maxRiskPerTrade: parseFloat(row.max_risk_per_trade),
+        maxDrawdown: parseFloat(row.max_drawdown),
+        targetDailyReturn: parseFloat(row.target_daily_return),
+        symbols: row.symbols,
+        paperTrading: row.paper_trading,
+      },
+    });
+  } catch (error: unknown) {
+    logger.error('Error patching autonomous trading config:', error);
+    return res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to patch config',
+    });
+  }
+});
+
+/**
  * GET /api/autonomous/trades
  * Get trade history
  */
