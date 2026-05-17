@@ -136,6 +136,7 @@ import {
 } from './agentEquityBound.js';
 import { planCloseChunks } from './closeChunker.js';
 import { tryAcquireClose, releaseClose, isLikelyRaceLoss } from './close_coordinator.js';
+import { observeEquity, sizeDeflection } from './equity_gradient.js';
 import { agentLDecide, type AgentLDecision } from './agent_L_classifier.js';
 import { QIGRAMv2State, isQigramV2Enabled } from './agent_L_qigram_v2.js';
 import {
@@ -1856,7 +1857,15 @@ export class MonkeyKernel extends EventEmitter {
     const effectiveSizeFraction = availableEquity * this.sizeFraction < minNeededForMinNotional
       ? 1.0
       : this.sizeFraction;
-    const cappedEquity = availableEquity * effectiveSizeFraction;
+    // SENSE-3 Phase 2 (#769) — equity-gradient size deflection. Push the
+    // current account equity into the rolling observer, then derive a
+    // multiplicative deflection: accelerating drawdowns scale size toward
+    // SIZE_FLOOR=0.5; flat/recovering equity passes through at 1.0. The
+    // deflection ratio is self-derived from |acceleration|/|gradient| —
+    // no operator-tunable sensitivity knob (P1-pure).
+    const equityReading = observeEquity(`${this.instanceId}:${symbol}`, availableEquity);
+    const sense3Deflection = sizeDeflection(equityReading);
+    const cappedEquity = availableEquity * effectiveSizeFraction * sense3Deflection;
     // Proposal #10 — lane selection. Each tick picks the locally-optimal
     // execution lane via softmax over basin features (parity with the
     // Python kernel's choose_lane). The chosen lane gates size (per-lane
@@ -1890,6 +1899,9 @@ export class MonkeyKernel extends EventEmitter {
         minNotional, leverage: leverage.value, bankSize, mode,
         sizeValue: size.value, lane: positionLane,
         sizeDerivation: size.derivation,
+        sense3Deflection,
+        equityGradient: equityReading.gradient,
+        equityAcceleration: equityReading.acceleration,
       });
     }
     const autoFlatten = shouldAutoFlatten(basinState, state.fHealthHistory);
@@ -1927,6 +1939,17 @@ export class MonkeyKernel extends EventEmitter {
         direction: candlePatternReading.direction,
         signed_scalar: candlePatternSignal,
         hammer_defer_long_sl: candleHammerDefer,
+      },
+      // SENSE-3 Phase 2 (#769): equity-gradient size deflection. Records
+      // the actual multiplier applied to cappedEquity this tick so
+      // retrospective analysis can correlate accelerating-loss observations
+      // with subsequent recovery vs continued bleed.
+      sense3: {
+        deflection: sense3Deflection,
+        gradient: equityReading.gradient,
+        acceleration: equityReading.acceleration,
+        n: equityReading.n,
+        warmup: equityReading.warmup,
       },
     };
 
