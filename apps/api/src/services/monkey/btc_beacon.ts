@@ -151,6 +151,58 @@ export function observeBtcBeacon(
   return computeBtcBeacon(s.symbolPrices, s.btcPrices, window);
 }
 
+/**
+ * SENSE-2 Phase 2: derive a multiplicative entry-threshold modifier
+ * from a BtcBeaconReading and a proposed entry side. Returned value is
+ * in [1.0, 1.0 + MAX_TIGHTEN] — a multiplier on the existing entry
+ * threshold. Higher value = harder to enter; 1.0 = no change.
+ *
+ * Suppression logic (the canonical "alt-long during BTC dump" fix):
+ *   predictedAltDirection = correlation × btcDirection
+ *   proposedSign = +1 for LONG, -1 for SHORT
+ *   if predictedAltDirection × proposedSign < 0 → BTC predicts the
+ *     opposite of what we want → tighten entry threshold
+ *
+ * The tightening magnitude is suppressionMagnitude (already tanh-saturated
+ * to [0, 1]), capped by MAX_TIGHTEN. No operator-tunable sensitivity knob
+ * — the suppression magnitude comes directly from the beacon observation.
+ *
+ * MAX_TIGHTEN (0.5) is a P25-allowed SAFETY_BOUND — the never-exceed
+ * cap preventing any single observation from making entry impossible.
+ *
+ * Cold-start (warmup): returns 1.0 (neutral — no signal yet).
+ */
+const MAX_TIGHTEN = 0.5;
+
+export function entrySuppressionMultiplier(
+  reading: BtcBeaconReading,
+  proposedSide: 'long' | 'short',
+): number {
+  if (reading.warmup) return 1.0;
+  const proposedSign = proposedSide === 'long' ? 1 : -1;
+  const predictedAltDirection = reading.correlation * reading.btcDirection;
+  const agreement = predictedAltDirection * proposedSign;
+  if (agreement >= 0) return 1.0;  // BTC bias agrees with proposed side → no suppression
+  return 1.0 + MAX_TIGHTEN * reading.suppressionMagnitude;
+}
+
+/** Latest-observed BTC mark price, shared across per-symbol beacon
+ *  observers within a process. Set by callers processing BTC ticks;
+ *  read by callers processing non-BTC ticks. Null until first observation. */
+let _latestBtcPrice: number | null = null;
+
+export function noteBtcPrice(price: number): void {
+  if (Number.isFinite(price) && price > 0) _latestBtcPrice = price;
+}
+
+export function getLatestBtcPrice(): number | null {
+  return _latestBtcPrice;
+}
+
+export function _resetLatestBtcPrice(): void {
+  _latestBtcPrice = null;
+}
+
 /** Test/diagnostic helpers. */
 export function _resetBtcBeacon(symbol?: string): void {
   if (symbol === undefined) { _states.clear(); return; }

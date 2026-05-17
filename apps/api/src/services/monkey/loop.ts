@@ -137,6 +137,13 @@ import {
 import { planCloseChunks } from './closeChunker.js';
 import { tryAcquireClose, releaseClose, isLikelyRaceLoss } from './close_coordinator.js';
 import { observeEquity, sizeDeflection } from './equity_gradient.js';
+import {
+  observeBtcBeacon,
+  entrySuppressionMultiplier,
+  noteBtcPrice,
+  getLatestBtcPrice,
+  type BtcBeaconReading,
+} from './btc_beacon.js';
 import { agentLDecide, type AgentLDecision } from './agent_L_classifier.js';
 import { QIGRAMv2State, isQigramV2Enabled } from './agent_L_qigram_v2.js';
 import {
@@ -1301,6 +1308,14 @@ export class MonkeyKernel extends EventEmitter {
     const lastPrice = Number(ohlcv[ohlcv.length - 1].close);
     if (!Number.isFinite(lastPrice) || lastPrice <= 0) return;
 
+    // SENSE-2 Phase 2 (#768) — BTC beacon shared price cache. BTC ticks
+    // write the latest mark; non-BTC ticks read it for cross-symbol
+    // correlation. The beacon reading itself is computed below (after
+    // the basin reading) and consumed at the entry-threshold gate.
+    if (symbol === 'BTC_USDT_PERP') {
+      noteBtcPrice(lastPrice);
+    }
+
     // Funding rate for the symbol's perpetual contract (8h rate from exchange).
     // Non-blocking: fetch failure → rate=0 → no drag perturbation this tick.
     // The rate is forwarded to the Python kernel so compute_funding_drag can
@@ -1836,7 +1851,28 @@ export class MonkeyKernel extends EventEmitter {
 
     // 5. DERIVE — executive computes what Monkey would do (mode-aware)
     // tapeTrend already computed above for side-override check.
-    const entryThr = currentEntryThreshold(basinState, mode, selfObsBias, tapeTrend, sideCandidate);
+    const entryThrBase = currentEntryThreshold(basinState, mode, selfObsBias, tapeTrend, sideCandidate);
+    // SENSE-2 Phase 2 (#768) — BTC beacon entry suppression. For non-BTC
+    // symbols, observe (this-symbol-price, BTC-price) into the rolling
+    // beacon buffer and derive a tightening multiplier on the entry
+    // threshold when BTC bias predicts the OPPOSITE direction to the
+    // proposed side. Pure observer-derived (no operator knob); MAX_TIGHTEN
+    // is a P25 SAFETY_BOUND capping the maximum threshold inflation.
+    let btcBeacon: BtcBeaconReading | null = null;
+    let btcEntryMul = 1.0;
+    if (symbol !== 'BTC_USDT_PERP') {
+      const latestBtc = getLatestBtcPrice();
+      if (latestBtc !== null) {
+        btcBeacon = observeBtcBeacon(symbol, lastPrice, latestBtc);
+        btcEntryMul = entrySuppressionMultiplier(btcBeacon, sideCandidate);
+      }
+    }
+    const entryThr = btcEntryMul === 1.0
+      ? entryThrBase
+      : {
+          value: entryThrBase.value * btcEntryMul,
+          derivation: { ...entryThrBase.derivation, btcEntryMul, btcBeacon },
+        };
     const maxLevBoundary = (await getMaxLeverage(symbol)) ?? 10;
     const precisions = await getPrecisions(symbol).catch(() => null);
     const lotSize = precisions?.lotSize ?? 0;
@@ -1951,6 +1987,20 @@ export class MonkeyKernel extends EventEmitter {
         n: equityReading.n,
         warmup: equityReading.warmup,
       },
+      // SENSE-2 Phase 2 (#768): BTC beacon entry suppression. btcEntryMul
+      // > 1.0 means BTC bias predicted the opposite of sideCandidate and
+      // entry was made harder. Null btcBeacon when symbol IS BTC or when
+      // BTC price hasn't yet been observed this session.
+      sense2: btcBeacon === null
+        ? null
+        : {
+            correlation: btcBeacon.correlation,
+            btcDirection: btcBeacon.btcDirection,
+            suppressionMagnitude: btcBeacon.suppressionMagnitude,
+            entryMultiplier: btcEntryMul,
+            n: btcBeacon.n,
+            warmup: btcBeacon.warmup,
+          },
     };
 
     // v0.6.3: Monkey's "held side" is scoped to HER OWN open rows only.
