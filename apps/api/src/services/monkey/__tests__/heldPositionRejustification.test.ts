@@ -310,6 +310,97 @@ describe('CALIB-1 — conviction-failed debounce (single-tick noise rejection)',
   });
 });
 
+describe('CALIB-3 — directional disagreement exit (early, regardless of ROI)', () => {
+  it('does NOT fire when sides agree (streak=0)', () => {
+    const out = evaluateRejustification({
+      regimeAtOpen: MonkeyMode.INVESTIGATION,
+      phiAtOpen: 0.27,
+      regimeNow: MonkeyMode.INVESTIGATION,
+      phiNow: 0.25,
+      emotions: STRONG_EMO,
+      directionalDisagreementStreak: 0,
+    });
+    expect(out.fired).toBeNull();
+  });
+
+  it('does NOT fire on the first tick of disagreement (streak=1, default required=4)', () => {
+    const out = evaluateRejustification({
+      regimeAtOpen: MonkeyMode.INVESTIGATION,
+      phiAtOpen: 0.27,
+      regimeNow: MonkeyMode.INVESTIGATION,
+      phiNow: 0.25,
+      emotions: STRONG_EMO,
+      directionalDisagreementStreak: 1,
+    });
+    expect(out.fired).toBeNull();
+  });
+
+  it('fires on the 4th consecutive tick with default required', () => {
+    const out = evaluateRejustification({
+      regimeAtOpen: MonkeyMode.INVESTIGATION,
+      phiAtOpen: 0.27,
+      regimeNow: MonkeyMode.INVESTIGATION,
+      phiNow: 0.25,
+      emotions: STRONG_EMO,  // emotions NOT in conviction-failed range
+      directionalDisagreementStreak: 4,
+    });
+    expect(out.fired).toBe('directional_disagreement');
+    expect(out.reason).toMatch(/directional_disagreement/);
+    expect(out.reason).toContain('4 consecutive ticks');
+  });
+
+  it('fires even when position is in PROFIT — per operator directive "exit early, re-enter if false positive"', () => {
+    const out = evaluateRejustification({
+      regimeAtOpen: MonkeyMode.INVESTIGATION,
+      phiAtOpen: 0.27,
+      regimeNow: MonkeyMode.INVESTIGATION,
+      phiNow: 0.25,
+      emotions: STRONG_EMO,
+      directionalDisagreementStreak: 4,
+      currentRoi: 0.015,  // +1.5% in profit
+    });
+    expect(out.fired).toBe('directional_disagreement');
+    expect(out.reason).toContain('1.50%');
+    expect(out.reason).toMatch(/re-enter on false positive/);
+  });
+
+  it('lane-scaled requirement — swing needs 12 ticks (3× scalp), trend needs 40 (10×)', () => {
+    // Scalp would fire at 4 ticks; swing at 12; trend at 40.
+    // Verify by passing different required values directly.
+    const swing_at_8 = evaluateRejustification({
+      regimeAtOpen: MonkeyMode.INVESTIGATION,
+      phiAtOpen: 0.27,
+      regimeNow: MonkeyMode.INVESTIGATION,
+      phiNow: 0.25,
+      emotions: STRONG_EMO,
+      directionalDisagreementStreak: 8,
+      directionalDisagreementTicksRequired: 12,
+    });
+    expect(swing_at_8.fired).toBeNull();
+    const swing_at_12 = evaluateRejustification({
+      regimeAtOpen: MonkeyMode.INVESTIGATION,
+      phiAtOpen: 0.27,
+      regimeNow: MonkeyMode.INVESTIGATION,
+      phiNow: 0.25,
+      emotions: STRONG_EMO,
+      directionalDisagreementStreak: 12,
+      directionalDisagreementTicksRequired: 12,
+    });
+    expect(swing_at_12.fired).toBe('directional_disagreement');
+  });
+
+  it('absent input defaults to 0 (no fire) — fail-OPEN for legacy callers', () => {
+    const out = evaluateRejustification({
+      regimeAtOpen: MonkeyMode.INVESTIGATION,
+      phiAtOpen: 0.27,
+      regimeNow: MonkeyMode.INVESTIGATION,
+      phiNow: 0.25,
+      emotions: STRONG_EMO,
+    });
+    expect(out.fired).toBeNull();
+  });
+});
+
 // ─── Negative — checks do NOT fire ─────────────────────────────────
 
 describe('held-position rejustification — regime unchanged', () => {
