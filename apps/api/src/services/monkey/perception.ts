@@ -78,6 +78,17 @@ export interface PerceptionInputs {
   mlStrength?: number;
   /** 0..1 post-bandit-multiplier strength. Optional, defaults to 0. */
   mlEffectiveStrength?: number;
+  /**
+   * PERCEPTION-1: canonical regime label from the observer-driven
+   * classifier (regime_classifier_client.classifyPrices). When
+   * provided AND the PERCEPTION_V2_LIVE flag is set, dims 0/1/2
+   * encode a canonical one-hot mixture in the order
+   *   0 = CREATOR, 1 = PRESERVER, 2 = DISSOLVER
+   * Otherwise the legacy ATR / trend×ml / residual encoding stands.
+   * Caller is expected to fetch this from the ml-worker per tick
+   * (cached client; <15s staleness). null = legacy path.
+   */
+  canonicalRegime?: 'creator' | 'preserver' | 'dissolver' | null;
 }
 
 /**
@@ -250,13 +261,41 @@ export function perceive(inputs: PerceptionInputs): Basin {
   const mlStrength = inputs.mlStrength ?? 0;
   const mlEffectiveStrength = inputs.mlEffectiveStrength ?? 0;
 
-  // dims 0..2 — Three regimes (§4.1)
-  const atr = rollingVol(ohlcv, 14);
-  const vol_frac = lastClose > 0 ? atr / lastClose : 0;
-  const trend = Math.abs(logReturn(ohlcv, 20));
-  v[0] = norm01(vol_frac, 0.01);                                       // quantum
-  v[1] = clip01(trend * 10) * mlEffectiveStrength;                     // efficient
-  v[2] = Math.max(0.01, 1 - v[0] - v[1]);                              // equilibrium residual
+  // dims 0..2 — Three regimes
+  //
+  // PERCEPTION-1 (CAL-3-aligned, 2026-05-17): when the caller passes
+  // a `canonicalRegime` AND PERCEPTION_V2_LIVE=true, dims 0/1/2
+  // encode a canonical one-hot mixture from the single-source
+  // observer-driven classifier:
+  //   0 = CREATOR, 1 = PRESERVER, 2 = DISSOLVER  (canonical Python ordering)
+  // Closes three stacked bugs in the legacy encoding:
+  //   (A) v[1] *= mlEffectiveStrength → pinned at 0 since #ml-separation
+  //   (B) TS file labelled v[1]='efficient' but Python canonical maps
+  //       dim 1 to PRESERVER — label collision across the bridge
+  //   (C) `trend * 10` is a hardcoded magnification (P1 violation)
+  //
+  // Legacy path retained behind the flag for parity-log soak per
+  // directive. Both paths compute every tick; flag selects which
+  // wins on the wire. After 24h soak the legacy path will be
+  // removed.
+  const perceptionV2Live = process.env.PERCEPTION_V2_LIVE === 'true';
+  if (perceptionV2Live && (inputs.canonicalRegime === 'creator'
+      || inputs.canonicalRegime === 'preserver'
+      || inputs.canonicalRegime === 'dissolver')) {
+    const epsilon = 1e-3;
+    v[0] = inputs.canonicalRegime === 'creator' ? (1 - 2 * epsilon) : epsilon;
+    v[1] = inputs.canonicalRegime === 'preserver' ? (1 - 2 * epsilon) : epsilon;
+    v[2] = inputs.canonicalRegime === 'dissolver' ? (1 - 2 * epsilon) : epsilon;
+  } else {
+    // Legacy path: ATR / trend×ml / residual. Preserved here for the
+    // 24h parity-log soak window before removal.
+    const atr = rollingVol(ohlcv, 14);
+    const vol_frac = lastClose > 0 ? atr / lastClose : 0;
+    const trend = Math.abs(logReturn(ohlcv, 20));
+    v[0] = norm01(vol_frac, 0.01);                                       // quantum (legacy)
+    v[1] = clip01(trend * 10) * mlEffectiveStrength;                     // efficient (legacy, pinned at 0)
+    v[2] = Math.max(0.01, 1 - v[0] - v[1]);                              // equilibrium residual (legacy)
+  }
 
   // dims 3..6 — ML posture (constant when ml inputs absent).
   v[3] = mlSignal === 'BUY' ? mlStrength : 0.01;
