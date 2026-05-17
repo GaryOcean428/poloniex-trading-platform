@@ -131,13 +131,8 @@ function App() {
                             <Route path="/settings" element={<Settings />} />
                             <Route path="/status" element={<Status />} />
                             <Route path="/login" element={<Login />} />
-                            {/* Redirects for removed/consolidated nav items */}
-                            <Route path="/dashboard/live" element={<Navigate to="/" replace />} />
+                            {/* Backward-compat redirect — old bookmarks may exist. */}
                             <Route path="/dashboard" element={<Navigate to="/" replace />} />
-                            <Route path="/transactions" element={<Navigate to="/history" replace />} />
-                            <Route path="/trades" element={<Navigate to="/history" replace />} />
-                            <Route path="/chat" element={<Navigate to="/" replace />} />
-                            <Route path="/extension" element={<Navigate to="/" replace />} />
                             <Route path="/404" element={<NotFound />} />
                             <Route path="*" element={<NotFound />} />
                           </Routes>
