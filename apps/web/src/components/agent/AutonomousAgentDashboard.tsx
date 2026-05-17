@@ -6,6 +6,7 @@ import { getAccessToken } from '@/utils/auth';
 import { usePersistedState } from '@/hooks/usePersistedState';
 import { getBackendUrl } from '@/utils/environment';
 import ActiveStrategiesPanel from './ActiveStrategiesPanel';
+import GovernanceStatusPanel from './GovernanceStatusPanel';
 import LiveTradingActivityFeed from './LiveTradingActivityFeed';
 import MLLiveRecommendations from './MLLiveRecommendations';
 import PerformanceAnalytics from './PerformanceAnalytics';
@@ -1393,6 +1394,9 @@ const AutonomousAgentDashboard: React.FC = () => {
       {/* Capability Tiers card retired — data source returned hardcoded zeros.
           Block fully removed in favour of a comment so eslint's
           no-constant-binary-expression rule isn't tripped by `{false && (...)}`. */}
+
+      {/* Governance Status — observable drift + forecast observer state */}
+      <GovernanceStatusPanel />
 
       {/* Live Trading Activity Feed */}
       <LiveTradingActivityFeed agentStatus={agentStatus?.status} />
