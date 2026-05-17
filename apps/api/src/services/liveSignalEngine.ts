@@ -1481,49 +1481,22 @@ export class LiveSignalEngine extends EventEmitter {
       return;
     }
 
-    // 3. Best-effort exchange-side SL + TP (reduce-only). Failures
-    //    are logged but don't roll back — the server-side managed
-    //    loop handles SL/TP as a fallback.
-    // Stop-market trigger orders currently fall back to MARKET in the
-    // placeOrder body mapping — they aren't true trigger orders until we
-    // wire the dedicated Poloniex v3 trigger-order endpoint. Skipping
-    // SL/TP exchange-side placement for now; managePositions in the
-    // trader loop catches SL/TP on the backend side. Leaving the block
-    // for future re-enablement once the trigger endpoint is plumbed.
-    // eslint-disable-next-line no-constant-condition, no-constant-binary-expression -- intentionally dead until v3 trigger-order endpoint wired
-    if (false && stopLoss > 0 && Number.isFinite(stopLoss)) {
-      try {
-        await poloniexFuturesService.placeOrder(credentials, {
-          symbol: order.symbol,
-          side: closeSide,
-          type: 'stop_market',
-          size: formattedSize,
-          lotSize: symbolLotSize,
-          reduceOnly: true,
-        });
-      } catch (slErr) {
-        logger.warn('[LiveSignal] SL placement failed (non-fatal)', {
-          err: slErr instanceof Error ? slErr.message : String(slErr),
-        });
-      }
-    }
-    // eslint-disable-next-line no-constant-condition, no-constant-binary-expression -- intentionally dead until v3 trigger-order endpoint wired (see SL block above)
-    if (false && takeProfit > 0 && Number.isFinite(takeProfit)) {
-      try {
-        await poloniexFuturesService.placeOrder(credentials, {
-          symbol: order.symbol,
-          side: closeSide,
-          type: 'stop_market',
-          size: formattedSize,
-          lotSize: symbolLotSize,
-          reduceOnly: true,
-        });
-      } catch (tpErr) {
-        logger.warn('[LiveSignal] TP placement failed (non-fatal)', {
-          err: tpErr instanceof Error ? tpErr.message : String(tpErr),
-        });
-      }
-    }
+    // 3. Exchange-side SL/TP — NOT SUPPORTED on Poloniex v3 REST.
+    //
+    // The v3 POST /v3/trade/order endpoint does NOT accept tpTrgPx /
+    // slTrgPx / triggerPrice / stopType params (verified 2026-05-17 via
+    // api-docs.poloniex.com/v3/futures/api/trade/place-order). The
+    // tpTrgPx / slTrgPx fields appear in position-query responses but
+    // there is NO documented REST endpoint to SET them post-position-open.
+    //
+    // Previous dead-stub block (was gated behind `if (false && ...)`) is
+    // removed here. Exits are managed entirely by:
+    //   - Monkey's basin-derived exit gates (held_position_rejustification)
+    //   - LiveSignal's ML-flip exit + cross-engine Monkey-disagreement (PR #796/#797)
+    //   - managePositions (legacy fallback)
+    //
+    // Reference: issue #693 investigation comment.
+    void stopLoss; void takeProfit;  // intentionally unused — see comment above
 
     // 4. Persist. Encode bandit key + regime + leverage bucket into
     //    `reason` so the close-hook can look them up cheaply (no schema
