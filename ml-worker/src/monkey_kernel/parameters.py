@@ -285,23 +285,19 @@ class ParameterRegistry:
         synchronous psycopg; raises on any DB/parse failure for _load to
         catch.
 
-        sslmode=disable: the Railway internal network
-        (postgres.railway.internal) is already private — SSL adds
-        nothing — and psycopg[binary]'s bundled libpq+openssl can
-        SEGFAULT during the TLS handshake when its openssl symbols
-        collide with the other native extensions loaded in the
-        ml-worker process (TensorFlow, scipy, sklearn, h5py). Skipping
-        the handshake avoids that crash path. Only appended when the
-        DSN doesn't already pin sslmode.
+        Prior to MIG-1 (2026-05-16) this path appended sslmode=disable
+        because psycopg[binary]'s bundled libpq+openssl could SEGFAULT
+        during the TLS handshake when its openssl symbols collided with
+        TensorFlow / scipy / sklearn / h5py loaded in the same process.
+        MIG-1 stripped TF and the other native libs out of ml-worker, so
+        the segfault path no longer exists. The DSN now passes through
+        unchanged — psycopg defaults to sslmode=prefer, which TLS-handshakes
+        opportunistically and falls back to plaintext on the private
+        Railway internal network if SSL isn't offered.
         """
         import psycopg
 
-        dsn = self._dsn
-        if dsn and "sslmode=" not in dsn:
-            sep = "&" if "?" in dsn else "?"
-            dsn = f"{dsn}{sep}sslmode=disable"
-
-        with psycopg.connect(dsn) as conn:
+        with psycopg.connect(self._dsn) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -356,26 +352,14 @@ class ParameterRegistry:
                 self._loaded = True
             return
 
-        # 2026-05-14: the live DB load is GATED OFF by default. psycopg's
-        # binary wheel bundles libpq+openssl; in the ml-worker process
-        # (TensorFlow / scipy / sklearn / h5py also loaded) the connect()
-        # path SEGFAULTS the whole process — an uncatchable native crash
-        # that restart-loops the service. Until the connect path is
-        # proven safe in that environment (sslmode=disable + a clean
-        # endpoint smoke-test), the registry runs on its hardcoded
-        # defaults — its documented fail-soft mode, and per migration
-        # 047 equal to the current DB values anyway. Flip
-        # MONKEY_PARAM_REGISTRY_DB=true to re-enable once verified.
-        if os.environ.get("MONKEY_PARAM_REGISTRY_DB", "").lower() != "true":
-            if not self._loaded:
-                logger.info(
-                    "parameter registry DB load disabled "
-                    "(MONKEY_PARAM_REGISTRY_DB != 'true') — using hardcoded "
-                    "defaults; this is the documented fail-soft mode",
-                )
-                self._defaults_only = True
-                self._loaded = True
-            return
+        # PARAM-1 (2026-05-17): the MONKEY_PARAM_REGISTRY_DB gate that
+        # used to live here was added 2026-05-14 to guard against a
+        # psycopg/libpq/openssl SEGFAULT that only manifested when the
+        # ml-worker process had TensorFlow + scipy + sklearn loaded
+        # alongside. MIG-1 (PR #743) stripped those out, eliminating the
+        # crash path. The gate flipped to true on Railway 2026-05-17T01:51Z
+        # and the live DB load has been clean since. The gate is removed
+        # so the registry always loads when DATABASE_URL is present.
 
         try:
             future = _DB_EXECUTOR.submit(self._query_parameters_table)
@@ -386,10 +370,14 @@ class ParameterRegistry:
         except Exception as exc:
             # Fail-soft: keep serving from existing cache / defaults.
             # Covers DB-unreachable, query errors, AND the executor
-            # timeout — the process stays up either way.
+            # timeout — the process stays up either way. Setting
+            # _defaults_only suppresses the per-parameter "missing from
+            # registry" warning in get() so a failed load doesn't flood
+            # the log with one WARN per get() call per tick.
             logger.warning("parameter registry load failed: %s", exc)
             if not self._loaded:
                 self._loaded = True  # don't retry every .get() call
+                self._defaults_only = True
 
 
 # ── Process-global singleton ─────────────────────────────────────

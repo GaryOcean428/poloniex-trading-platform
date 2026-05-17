@@ -45,44 +45,40 @@ from monkey_kernel.parameters import (  # noqa: E402
 
 
 @pytest.fixture
-def db_gate_on(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Enable the live DB-load path. _load() is GATED OFF by default
-    (MONKEY_PARAM_REGISTRY_DB != 'true' → defaults-only) because
-    psycopg's binary wheel segfaults the ml-worker process during
-    connect. The DB-path tests below opt in via this fixture so they
-    actually reach _query_parameters_table / the executor."""
-    monkeypatch.setenv("MONKEY_PARAM_REGISTRY_DB", "true")
+def db_gate_on() -> None:
+    """PARAM-1 (2026-05-17) removed the env-var gate. The fixture is now
+    a no-op; left in place so the rest of the test surface continues to
+    document where the live-DB path is exercised."""
+    return None
 
 
-def test_db_load_gated_off_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The load-bearing safety property: with MONKEY_PARAM_REGISTRY_DB
-    unset, _load() must NOT touch psycopg at all — it short-circuits to
-    defaults-only. This is what keeps ml-worker from segfaulting: no
-    psycopg.connect() call = no native crash."""
+def test_db_load_runs_when_dsn_present(monkeypatch: pytest.MonkeyPatch) -> None:
+    """PARAM-1 contract: when a DSN is configured, _load() always reaches
+    _query_parameters_table — the old MONKEY_PARAM_REGISTRY_DB gate is
+    gone. The segfault path it guarded against was eliminated by MIG-1
+    (TensorFlow + scipy + sklearn + h5py removed from ml-worker)."""
     monkeypatch.delenv("MONKEY_PARAM_REGISTRY_DB", raising=False)
     reg = ParameterRegistry(dsn="postgresql://stub/notused")
     called = {"n": 0}
 
-    def must_not_run() -> dict:
+    def fake_query() -> dict:
         called["n"] += 1
         return {}
 
-    reg._query_parameters_table = must_not_run  # type: ignore[method-assign]
+    reg._query_parameters_table = fake_query  # type: ignore[method-assign]
     reg._load()
 
-    assert called["n"] == 0, (
-        "_query_parameters_table ran despite the DB gate being OFF — "
-        "this re-opens the segfault path"
-    )
+    assert called["n"] == 1, "_query_parameters_table should run regardless of env var"
     assert reg._loaded is True
-    # get() still works — defaults-only fail-soft mode.
+    # Empty cache + default still works via get().
     assert reg.get("physics.kappa_star", default=64.0) == 64.0
 
 
-def test_query_appends_sslmode_disable() -> None:
-    """_query_parameters_table appends sslmode=disable when the DSN
-    doesn't pin it — the Railway internal network is private (SSL adds
-    nothing) and psycopg[binary]'s bundled openssl is the crash path."""
+def test_query_passes_dsn_through_unchanged() -> None:
+    """PARAM-1 contract: the sslmode=disable workaround is removed. The
+    DSN passes to psycopg.connect unchanged — psycopg defaults to
+    sslmode=prefer, which TLS-handshakes opportunistically and falls
+    back to plaintext on the private Railway internal network."""
     seen: dict[str, str] = {}
     reg = ParameterRegistry(dsn="postgresql://u:p@postgres.railway.internal:5432/railway")
 
@@ -97,30 +93,20 @@ def test_query_appends_sslmode_disable() -> None:
                 def fetchall(self_): return []
             return _Cur()
 
-    import monkey_kernel.parameters as pm
-
     class _FakePsycopg:
         @staticmethod
         def connect(dsn: str):
             seen["dsn"] = dsn
             return _FakeConn()
 
-    # _query_parameters_table does `import psycopg` locally; patch sys.modules.
     sys.modules["psycopg"] = _FakePsycopg  # type: ignore[assignment]
     try:
         reg._query_parameters_table()
     finally:
         del sys.modules["psycopg"]
 
-    assert "sslmode=disable" in seen["dsn"], seen["dsn"]
-    # already had a query-string, so the separator must be '&'
-    reg2 = ParameterRegistry(dsn="postgresql://h/db?connect_timeout=5")
-    sys.modules["psycopg"] = _FakePsycopg  # type: ignore[assignment]
-    try:
-        reg2._query_parameters_table()
-    finally:
-        del sys.modules["psycopg"]
-    assert "?connect_timeout=5&sslmode=disable" in seen["dsn"], seen["dsn"]
+    assert seen["dsn"] == "postgresql://u:p@postgres.railway.internal:5432/railway"
+    assert "sslmode" not in seen["dsn"], "DSN must not be mutated post-PARAM-1"
 
 
 def test_query_runs_on_db_executor_thread_not_caller(db_gate_on: None) -> None:
