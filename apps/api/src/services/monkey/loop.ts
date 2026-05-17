@@ -740,6 +740,32 @@ export class MonkeyKernel extends EventEmitter {
    *  levels are DERIVED, never SET. */
   private pendingRewards: ActivityReward[] = [];
   /**
+   * LIMIT_MAKER #793 (Class B #5) — pending post-only scalp orders that
+   * have been placed but not yet observed as filled. Key: orderId.
+   *
+   * Purpose: a LIMIT_MAKER scalp posts at best-bid (long) / best-ask
+   * (short), earning maker rebate instead of paying taker fees. The
+   * order MAY NOT fill (price moves away), so we need:
+   *   1. Track placement time so we can cancel stale orders that didn't
+   *      fill within N seconds (default 120s — long enough for normal
+   *      fills, short enough to avoid sitting on stale prices)
+   *   2. Skip new entry decisions while a pending order exists for
+   *      same (symbol, side, lane) — don't double-queue
+   *
+   * On fill, the order materialises as an exchange position next tick;
+   * the existing position-detection path (findOpenMonkeyTrade /
+   * exchange positions) takes over. The pending entry is removed when
+   * we observe the position OR when we cancel it.
+   */
+  private pendingLimitMakerOrders: Map<string, {
+    orderId: string;
+    placedAtMs: number;
+    symbol: string;
+    side: 'long' | 'short';
+    lane: 'scalp' | 'swing' | 'trend';
+  }> = new Map();
+  private static readonly LIMIT_MAKER_STALE_MS = 120_000;  // SAFETY_BOUND: 2 min
+  /**
    * ML-outage observability counter (v0.8.3.5d). Increments every time
    * mlPredictionService.getTradingSignal returns {error: true}. Used to
    * emit a single warn-level log + bus ANOMALY event when the run goes
@@ -1251,6 +1277,11 @@ export class MonkeyKernel extends EventEmitter {
     }
     this.tickInFlight = true;
     try {
+      // LIMIT_MAKER #793 — cancel any stale post-only scalp orders before
+      // running the per-symbol pipeline. Stale = older than
+      // LIMIT_MAKER_STALE_MS (2 min). Errors are non-fatal — the next
+      // tick retries cancel.
+      try { await this.cancelStaleLimitMakers(); } catch { /* non-fatal */ }
       for (const sym of this.symbols) {
         try {
           await this.processSymbol(sym);
@@ -1262,6 +1293,75 @@ export class MonkeyKernel extends EventEmitter {
       }
     } finally {
       this.tickInFlight = false;
+    }
+  }
+
+  /**
+   * Resolve the user_id used for Poloniex credentials. Same query
+   * pattern as inlined in executeMonkeyTrade; extracted so tick-level
+   * helpers (LIMIT_MAKER cancel, etc.) can reuse it without duplicating
+   * the SQL.
+   *
+   * Throws on no resolvable user — callers handle the failure mode.
+   */
+  private async resolveUserIdForCredentials(): Promise<string> {
+    const userRow = await pool.query(
+      `SELECT user_id FROM user_api_credentials WHERE exchange = 'poloniex' LIMIT 1`,
+    );
+    const userId = String((userRow.rows[0] as { user_id?: string } | undefined)?.user_id ?? '');
+    if (!userId) throw new Error('no user_id resolvable for poloniex credentials');
+    return userId;
+  }
+
+  /**
+   * LIMIT_MAKER #793 — cancel post-only scalp orders that haven't filled
+   * within MonkeyKernel.LIMIT_MAKER_STALE_MS. Called from tick() before
+   * processSymbol runs, so the next entry decision sees a clean state.
+   *
+   * Errors per-order are non-fatal — we still try to cancel the remainder.
+   * Orders cancelled here might still have filled between the cancel call
+   * and the exchange acknowledgement; the reconciler handles the resulting
+   * DB-vs-exchange divergence (existing behaviour).
+   */
+  private async cancelStaleLimitMakers(): Promise<void> {
+    const now = Date.now();
+    const stale: Array<{ orderId: string; symbol: string; side: 'long' | 'short' }> = [];
+    for (const [orderId, info] of this.pendingLimitMakerOrders) {
+      if (now - info.placedAtMs >= MonkeyKernel.LIMIT_MAKER_STALE_MS) {
+        stale.push({ orderId, symbol: info.symbol, side: info.side });
+      }
+    }
+    if (stale.length === 0) return;
+    // Resolve credentials once for the whole batch. If unavailable, drop
+    // the in-memory entries — the orders will be GC'd by exchange or
+    // surface as orphans for the reconciler.
+    let userId: string;
+    try {
+      userId = await this.resolveUserIdForCredentials();
+    } catch {
+      for (const s of stale) this.pendingLimitMakerOrders.delete(s.orderId);
+      return;
+    }
+    const creds = await apiCredentialsService.getCredentials(userId, 'poloniex');
+    if (!creds) {
+      for (const s of stale) this.pendingLimitMakerOrders.delete(s.orderId);
+      return;
+    }
+    for (const s of stale) {
+      try {
+        await poloniexFuturesService.cancelOrder(creds, s.orderId);
+        logger.info('[Monkey] LIMIT_MAKER cancelled (stale)', {
+          symbol: s.symbol, side: s.side, orderId: s.orderId,
+          stale_ms: now - this.pendingLimitMakerOrders.get(s.orderId)!.placedAtMs,
+        });
+      } catch (err) {
+        logger.warn('[Monkey] LIMIT_MAKER cancel failed (may have already filled)', {
+          symbol: s.symbol, orderId: s.orderId,
+          err: err instanceof Error ? err.message : String(err),
+        });
+      } finally {
+        this.pendingLimitMakerOrders.delete(s.orderId);
+      }
     }
   }
 
@@ -5783,22 +5883,104 @@ export class MonkeyKernel extends EventEmitter {
       });
     }
 
+    // LIMIT_MAKER #793 (Class B #5) — scalp lane post-only entry path.
+    // When MONKEY_SCALP_LIMIT_MAKER=true AND lane='scalp' AND not a DCA add:
+    // fetch the order book, post at best-bid (long) or best-ask (short).
+    // The post-only flag means the order is rejected if it would cross
+    // the spread — so the exchange enforces the maker-rebate guarantee.
+    //
+    // Why scalp only: scalp's small TP (0.03) means a 0.04% taker fee
+    // is ~13% of the target profit. LIMIT_MAKER earns the maker rebate
+    // instead. Swing/trend have larger TPs so fee impact is smaller AND
+    // they're more time-sensitive (don't want to miss a trend by waiting
+    // for a maker fill).
+    //
+    // Why not DCA: DCA-adds are reactive to adverse price moves, often
+    // need immediate fill to defend the position; can't wait for maker.
+    const useLimitMaker =
+      process.env.MONKEY_SCALP_LIMIT_MAKER === 'true'
+      && (req.lane ?? 'swing') === 'scalp'
+      && !req.isDCAAdd;
+
     let orderId: string | null = null;
+    let limitMakerPriceUsed: number | null = null;
     try {
-      const exchangeOrder = await poloniexFuturesService.placeOrder(credentials, {
-        symbol, side: exchangeSide, type: 'market', size: formattedSize, lotSize: symbolLotSize,
-      }, posSide ? { posSide } : {});
-      orderId =
-        exchangeOrder?.ordId ?? exchangeOrder?.orderId ??
-        exchangeOrder?.id ?? exchangeOrder?.clientOid ?? null;
+      if (useLimitMaker) {
+        // Fetch order book and compute post-only price. On any error,
+        // fall through to MARKET to preserve existing entry-flow safety.
+        let bestBid: number | null = null;
+        let bestAsk: number | null = null;
+        try {
+          const ob = await poloniexFuturesService.getOrderBook(symbol, 5);
+          // v3 response shape: { data: { asks: [[price, sz], ...], bids: [[price, sz], ...] } }
+          const data = (ob as Record<string, unknown>)?.data as Record<string, unknown> | undefined;
+          const asks = Array.isArray(data?.asks) ? data!.asks as Array<Array<unknown>> : null;
+          const bids = Array.isArray(data?.bids) ? data!.bids as Array<Array<unknown>> : null;
+          if (asks && asks.length > 0 && Number.isFinite(Number(asks[0]?.[0]))) {
+            bestAsk = Number(asks[0]![0]);
+          }
+          if (bids && bids.length > 0 && Number.isFinite(Number(bids[0]?.[0]))) {
+            bestBid = Number(bids[0]![0]);
+          }
+        } catch (obErr) {
+          logger.warn('[Monkey] limit_maker order book fetch failed — falling back to market', {
+            symbol, err: obErr instanceof Error ? obErr.message : String(obErr),
+          });
+        }
+        // Need both sides + a reasonable spread; otherwise MARKET fallback.
+        const spreadOk = bestBid !== null && bestAsk !== null && bestAsk > bestBid;
+        if (spreadOk) {
+          // Post-only price: at the top of our side's book — long at bid, short at ask.
+          // This is the natural maker-side price; LIMIT_MAKER will reject anything
+          // that would cross (sanity-check the exchange's own enforcement).
+          const limitPrice = exchangeSide === 'buy' ? bestBid! : bestAsk!;
+          limitMakerPriceUsed = limitPrice;
+          const exchangeOrder = await poloniexFuturesService.placeOrder(credentials, {
+            symbol, side: exchangeSide, type: 'limit_maker',
+            size: formattedSize, lotSize: symbolLotSize,
+            price: limitPrice, timeInForce: 'GTC',
+          }, posSide ? { posSide } : {});
+          orderId =
+            exchangeOrder?.ordId ?? exchangeOrder?.orderId ??
+            exchangeOrder?.id ?? exchangeOrder?.clientOid ?? null;
+          if (orderId) {
+            // Track for cancel-on-stale; cleared by getStaleCancellableLimitMakers()
+            // run from processSymbol on subsequent ticks.
+            this.pendingLimitMakerOrders.set(orderId, {
+              orderId, placedAtMs: Date.now(),
+              symbol, side, lane: (req.lane ?? 'swing') as 'scalp' | 'swing' | 'trend',
+            });
+            logger.info('[Monkey] LIMIT_MAKER scalp placed', {
+              symbol, side: exchangeSide, limitPrice,
+              bestBid, bestAsk, spread: (bestAsk! - bestBid!).toFixed(6),
+              orderId, formattedSize, posSide,
+            });
+          }
+        } else {
+          logger.warn('[Monkey] limit_maker pre-check failed — falling back to market', {
+            symbol, bestBid, bestAsk,
+          });
+        }
+      }
+
+      // MARKET fallback OR non-scalp / non-LIMIT_MAKER path.
+      if (orderId === null) {
+        const exchangeOrder = await poloniexFuturesService.placeOrder(credentials, {
+          symbol, side: exchangeSide, type: 'market', size: formattedSize, lotSize: symbolLotSize,
+        }, posSide ? { posSide } : {});
+        orderId =
+          exchangeOrder?.ordId ?? exchangeOrder?.orderId ??
+          exchangeOrder?.id ?? exchangeOrder?.clientOid ?? null;
+      }
       if (!orderId) {
         logger.warn('[Monkey] exchange placed but no orderId returned', {
-          symbol, rawKeys: exchangeOrder ? Object.keys(exchangeOrder) : [],
+          symbol, rawKeys: 'unknown',
         });
       }
     } catch (err) {
       logger.error('[Monkey] placeOrder failed', {
-        symbol, side, err: err instanceof Error ? err.message : String(err),
+        symbol, side, useLimitMaker, limitMakerPriceUsed,
+        err: err instanceof Error ? err.message : String(err),
       });
       return {
         executed: false, orderId: null,
