@@ -30,14 +30,22 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from forecast_horizons import (
-    _AMPLITUDE_FLOOR,
     _CONFIDENCE_NEUTRAL_FLOOR,
     _GOVERNANCE_FLOOR,
     _GOVERNANCE_PENALTY,
-    _TEMPORAL_SCALE_H,
     HorizonForecast,
     compute_forecast,
     _reset_history,
+)
+# CAL-4: _AMPLITUDE_FLOOR + _TEMPORAL_SCALE_H retired; legacy constants
+# live in forecast_horizon_observer as fall-through values during the
+# per-regime observer warmup. Tests that previously asserted against
+# the hardcoded values still hold during warmup (observer returns
+# legacy until per-regime n >= 30).
+from forecast_horizon_observer import (
+    _LEGACY_AMPLITUDE_FLOOR as _AMPLITUDE_FLOOR,
+    _LEGACY_TEMPORAL_SCALE_H as _TEMPORAL_SCALE_H,
+    _reset_observer as _reset_horizon_observer,
 )
 
 
@@ -111,11 +119,15 @@ def _patch_qig(
 
 
 @pytest.fixture(autouse=True)
-def _reset_regime_history():
-    """Each test starts with a clean per-symbol regime-history map."""
+def _reset_state_between_tests():
+    """Each test starts with clean per-symbol regime-history map +
+    fresh per-regime forecast-horizon observer (so prior tests don't
+    pollute rolling amplitude/temporal buffers)."""
     _reset_history()
+    _reset_horizon_observer()
     yield
     _reset_history()
+    _reset_horizon_observer()
 
 
 # ── Substitution math — no hardcoded literals ────────────────────

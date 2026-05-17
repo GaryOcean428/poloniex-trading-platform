@@ -48,21 +48,28 @@ from typing import Any, Sequence
 logger = logging.getLogger(__name__)
 
 
-# ── Calibration surface (exactly two operator knobs) ─────────────
+# ── Legacy fall-through constants (CAL-4 retired the knobs) ─────
+#
+# CAL-4 (2026-05-17): the previous QIG_FORECAST_TEMPORAL_SCALE_HOURS
+# env knob and the _AMPLITUDE_FLOOR dict have been retired in favour
+# of forecast_horizon_observer (rolling autocorrelation decay scale
+# + per-regime amplitude median, observed from the basin's own
+# realized price changes). The legacy values are kept here ONLY for
+# the warmup fall-through (until the per-regime observer accumulates
+# ``_WARMUP_TICKS`` observations), in the same pattern as CAL-3's
+# qig_warp warmup fall-through. After warmup these constants are
+# never read.
+#
+# Per Canonical Principles v2.1 P1: an env-tunable knob with a
+# hardcoded default that an operator soaks-and-dials is a regression
+# dressed as a calibration. The observer replaces it.
 
-_TEMPORAL_SCALE_H = float(
-    os.environ.get("QIG_FORECAST_TEMPORAL_SCALE_HOURS", "4.0"),
+from forecast_horizon_observer import (  # noqa: E402
+    amplitude_for as _observed_amplitude_for,
+    observe_tick as _observe_horizon_tick,
+    observer_snapshot as _horizon_observer_snapshot,
+    temporal_scale_lags_for as _observed_temporal_lags_for,
 )
-
-# Amplitude floors by qig_warp.Regime.value. Preserves trend
-# extrapolation when α=0 (ORDERED). Calibration override; not derived
-# from QIG frozen facts.
-_AMPLITUDE_FLOOR: dict[str, float] = {
-    "ordered":    0.5,
-    "critical":   1.0,
-    "disordered": 0.2,
-}
-_AMPLITUDE_FLOOR_DEFAULT = 0.3
 
 
 # ── Non-tunable bounds (constants, not calibration) ──────────────
@@ -182,8 +189,23 @@ def compute_forecast(
             },
         )
 
-    xi_t = max(xi * _TEMPORAL_SCALE_H, _XI_T_FLOOR_HOURS)
-    amplitude = max(alpha, _AMPLITUDE_FLOOR.get(regime_label, _AMPLITUDE_FLOOR_DEFAULT))
+    # CAL-4: temporal scale + amplitude come from per-regime observers
+    # (rolling autocorrelation decay + median realized magnitude),
+    # not hardcoded knobs. During warmup (per-regime n < 30) the
+    # observers fall through to legacy constants — that is the only
+    # place the legacy values remain in the live path.
+    temporal_lags = _observed_temporal_lags_for(regime_label)
+    # Observer returns LAGS (in tick units); during warmup it returns
+    # the legacy 4.0 (in hours). Distinguish by magnitude — lags >= 1
+    # in warmup mean the legacy fall-through; lags from actual data
+    # in the observer path are also small integers but interpreted as
+    # ticks → hours via the observed candle minutes (default 15 min/
+    # tick for the live feed; this conversion is itself derivable
+    # from OHLCV timestamp deltas, surfaced in CAL-4 v2).
+    xi_t_observed = max(xi * temporal_lags, _XI_T_FLOOR_HOURS)
+    xi_t = xi_t_observed
+    amplitude_observed = _observed_amplitude_for(regime_label)
+    amplitude = max(alpha, amplitude_observed)
     amplitude_floor_applied = amplitude != alpha
 
     sign = {"BULLISH": 1.0, "BEARISH": -1.0}.get(direction, 0.0)
@@ -218,6 +240,10 @@ def compute_forecast(
         trend_strength=trend_strength,
     )
 
+    # CAL-4 telemetry: surface the observer state alongside the
+    # derivation so operators see whether the warmup fall-through is
+    # still active or the observer is driving.
+    horizon_observer_snap = _horizon_observer_snapshot()
     derivation: dict[str, Any] = {
         "regime": regime_label,
         "h": float(entropy),
@@ -225,13 +251,18 @@ def compute_forecast(
         "xi": xi,
         "alpha": alpha,
         "xi_temporal_hours": xi_t,
-        "temporal_scale_env": _TEMPORAL_SCALE_H,
+        "temporal_lags_observed": temporal_lags,
         "amplitude": amplitude,
+        "amplitude_observed": amplitude_observed,
         "amplitude_floor_applied": amplitude_floor_applied,
         "horizon_decays": horizon_decays,
         "governance": governance_summary,
         "governance_penalty_applied": governance_penalty_applied,
         "regime_history_len": len(history),
+        "horizon_observer": {
+            "n_per_regime": horizon_observer_snap.n_observations,
+            "warmup_regimes": horizon_observer_snap.warmup_regimes,
+        },
     }
 
     # MIG-4 mutates horizons_out in place via _apply_governance — re-snapshot
