@@ -26,6 +26,7 @@ from qig_warp.auto import NavigationResult
 
 from .spec import StrategySpec, AxisName, SWEEPABLE_AXES
 from .replay import replay_ohlcv, BacktestResult, score_strategy, ScoreWeights
+from .prelaunch_checklist import log_postflight, log_preflight
 
 
 @dataclass
@@ -83,6 +84,11 @@ def sweep_axis(
 
     closes = np.asarray(closes, dtype=np.float64)
 
+    # GAP 6 — log the QIG 8-point pre-launch checklist. Inventory only;
+    # does not block the sweep. See prelaunch_checklist.py for what
+    # each row tracks.
+    log_preflight()
+
     # Cache results so we can rebuild ranked Candidate list at the end.
     # qig_navigate just gives back {param: score} — we need full bt info.
     bt_cache: dict[float, BacktestResult] = {}
@@ -101,6 +107,12 @@ def sweep_axis(
         return float(score_strategy(bt, weights=weights))
 
     nav = qig_navigate(fn, list(map(float, values)), budget_s=budget_s)
+
+    # GAPs 3 + 4 — surface qig_warp's discoveries (convergence_rate, cost
+    # exponent, screening length). These are the audit's "Anderson-alpha
+    # early stop" and "bridge cost prediction" capabilities; they already
+    # run inside qig_warp.auto.navigate, this just makes them visible.
+    log_postflight(nav)
 
     # Build full Candidate list from cache
     candidates: list[Candidate] = []
