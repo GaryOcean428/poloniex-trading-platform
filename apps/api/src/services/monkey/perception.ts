@@ -261,40 +261,35 @@ export function perceive(inputs: PerceptionInputs): Basin {
   const mlStrength = inputs.mlStrength ?? 0;
   const mlEffectiveStrength = inputs.mlEffectiveStrength ?? 0;
 
-  // dims 0..2 — Three regimes
+  // dims 0..2 — Three regimes (canonical one-hot from observer-driven
+  // classifier; CAL-3 + PERCEPTION-1). Indices match canonical
+  // Python ordering:
+  //   0 = CREATOR    1 = PRESERVER    2 = DISSOLVER
   //
-  // PERCEPTION-1 (CAL-3-aligned, 2026-05-17): when the caller passes
-  // a `canonicalRegime` AND PERCEPTION_V2_LIVE=true, dims 0/1/2
-  // encode a canonical one-hot mixture from the single-source
-  // observer-driven classifier:
-  //   0 = CREATOR, 1 = PRESERVER, 2 = DISSOLVER  (canonical Python ordering)
-  // Closes three stacked bugs in the legacy encoding:
-  //   (A) v[1] *= mlEffectiveStrength → pinned at 0 since #ml-separation
-  //   (B) TS file labelled v[1]='efficient' but Python canonical maps
-  //       dim 1 to PRESERVER — label collision across the bridge
-  //   (C) `trend * 10` is a hardcoded magnification (P1 violation)
+  // Caller (loop.ts) fetches the classification from ml-worker's
+  // POST /regime/classify_prices (cached per symbol) and passes the
+  // label here. ε=1e-3 padding keeps the simplex non-degenerate for
+  // the downstream toSimplex normaliser.
   //
-  // Legacy path retained behind the flag for parity-log soak per
-  // directive. Both paths compute every tick; flag selects which
-  // wins on the wire. After 24h soak the legacy path will be
-  // removed.
-  const perceptionV2Live = process.env.PERCEPTION_V2_LIVE === 'true';
-  if (perceptionV2Live && (inputs.canonicalRegime === 'creator'
-      || inputs.canonicalRegime === 'preserver'
-      || inputs.canonicalRegime === 'dissolver')) {
-    const epsilon = 1e-3;
-    v[0] = inputs.canonicalRegime === 'creator' ? (1 - 2 * epsilon) : epsilon;
-    v[1] = inputs.canonicalRegime === 'preserver' ? (1 - 2 * epsilon) : epsilon;
-    v[2] = inputs.canonicalRegime === 'dissolver' ? (1 - 2 * epsilon) : epsilon;
+  // When the classifier is unreachable, canonicalRegime is null and
+  // we emit a uniform 1/3-each prior — the safest interim until the
+  // next /regime/classify_prices succeeds.
+  //
+  // The prior ATR/trend×ml/residual encoding had three known bugs
+  // (mlEffectiveStrength always 0, label collision with canonical,
+  // hardcoded *10 magnification) and was retired in full. No
+  // flag-gated dual-path soak: canonical is the only path.
+  const epsilon = 1e-3;
+  if (inputs.canonicalRegime === 'creator') {
+    v[0] = 1 - 2 * epsilon; v[1] = epsilon; v[2] = epsilon;
+  } else if (inputs.canonicalRegime === 'preserver') {
+    v[0] = epsilon; v[1] = 1 - 2 * epsilon; v[2] = epsilon;
+  } else if (inputs.canonicalRegime === 'dissolver') {
+    v[0] = epsilon; v[1] = epsilon; v[2] = 1 - 2 * epsilon;
   } else {
-    // Legacy path: ATR / trend×ml / residual. Preserved here for the
-    // 24h parity-log soak window before removal.
-    const atr = rollingVol(ohlcv, 14);
-    const vol_frac = lastClose > 0 ? atr / lastClose : 0;
-    const trend = Math.abs(logReturn(ohlcv, 20));
-    v[0] = norm01(vol_frac, 0.01);                                       // quantum (legacy)
-    v[1] = clip01(trend * 10) * mlEffectiveStrength;                     // efficient (legacy, pinned at 0)
-    v[2] = Math.max(0.01, 1 - v[0] - v[1]);                              // equilibrium residual (legacy)
+    // Classifier unreachable — uniform prior (safer than picking
+    // one regime when we have no information).
+    v[0] = 1 / 3; v[1] = 1 / 3; v[2] = 1 / 3;
   }
 
   // dims 3..6 — ML posture (constant when ml inputs absent).
