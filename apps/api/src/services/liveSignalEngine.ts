@@ -207,6 +207,25 @@ export class LiveSignalEngine extends EventEmitter {
    */
   private positionDirectionMode: 'HEDGE' | 'ONE_WAY' | undefined = undefined;
 
+  /**
+   * Per-(symbol, side) streak of consecutive ticks where Monkey's basinDir
+   * strongly disagrees with the LiveSignal-held side. When the streak hits
+   * MONKEY_DISAGREEMENT_TICKS_FOR_EXIT, LiveSignal closes the position
+   * REGARDLESS of ML signal strength — analog of Monkey's own CALIB-3 #786
+   * directional_disagreement exit applied across the engine boundary.
+   *
+   * Key format: `${symbol}|${side}`. Reset to 0 on agree-tick or close.
+   *
+   * Why this exists: 2026-05-17 03:00-08:00 — LiveSignal held shorts on
+   * BTC + ETH while Monkey basinDir = +0.10 to +0.13 (mild long bias).
+   * ML signal hovered at HOLD@0.33 (below LIVE_EXIT_STRENGTH=0.35 flip
+   * threshold). LiveSignal kept "does not warrant exit", positions bled
+   * ~$1.10 over 4h. Monkey's own CALIB-3 couldn't act on these because
+   * they're not in monkey's openMonkeyTrade DB tracking. This streak
+   * counter closes the gap.
+   */
+  private monkeyDisagreementStreak: Map<string, number> = new Map();
+
   async start(options: StartOptions = {}): Promise<void> {
     this.symbols = options.symbols ?? [...DEFAULT_WATCH_SYMBOLS];
     this.dryRun = options.dryRun ?? false;
@@ -678,8 +697,69 @@ export class LiveSignalEngine extends EventEmitter {
         );
         return;
       }
+      // CALIB-3 (cross-engine) — Monkey-disagreement exit. When Monkey's
+      // basinDir strongly disagrees with held side for N consecutive ticks,
+      // close even without an ML BUY/SELL flip. This is the LiveSignal
+      // equivalent of monkey's own #786 directional_disagreement gate —
+      // closes the cross-engine blind spot where LiveSignal holds a stale
+      // short while Monkey's basin already favors long.
+      //
+      // Threshold: re-uses the SAME 0.15 SAFETY_BOUND as the existing
+      // ML-flip Monkey-agreement gate (line ~625). Required streak count
+      // bounds operator-observable risk: at the 60s LiveSignal tick
+      // cadence, 5 ticks ≈ 5 minutes of persistent disagreement before
+      // forced exit. Configurable via env for ops.
+      const streakKey = `${symbol}|${existingPos.side}`;
+      const monkeySnap = getFreshestMonkeyBasinSnapshot(symbol);
+      const MONKEY_DISAGREEMENT_THRESHOLD = 0.15;  // SAFETY_BOUND, matches existing gate
+      const MONKEY_DISAGREEMENT_TICKS_FOR_EXIT =
+        Number(process.env.LIVE_MONKEY_DISAGREEMENT_TICKS) || 5;
+      let strongDisagreeNow = false;
+      let disagreeReason = 'no-snap';
+      if (monkeySnap !== null) {
+        const age = Date.now() - monkeySnap.computedAtMs;
+        if (age <= 120_000) {
+          // Held LONG → Monkey strongly disagrees if basinDir < -threshold (favors short).
+          // Held SHORT → Monkey strongly disagrees if basinDir > +threshold (favors long).
+          strongDisagreeNow = isLongHeld
+            ? monkeySnap.basinDir < -MONKEY_DISAGREEMENT_THRESHOLD
+            : monkeySnap.basinDir > MONKEY_DISAGREEMENT_THRESHOLD;
+          disagreeReason =
+            `basinDir=${monkeySnap.basinDir.toFixed(3)} held=${existingPos.side} ` +
+            `thr=${MONKEY_DISAGREEMENT_THRESHOLD} disagree=${strongDisagreeNow}`;
+        } else {
+          disagreeReason = `snap-stale-${age}ms`;
+        }
+      }
+      const prevStreak = this.monkeyDisagreementStreak.get(streakKey) ?? 0;
+      const nextStreak = strongDisagreeNow ? prevStreak + 1 : 0;
+      this.monkeyDisagreementStreak.set(streakKey, nextStreak);
+      if (nextStreak >= MONKEY_DISAGREEMENT_TICKS_FOR_EXIT) {
+        logger.info('[LiveSignal] Monkey-disagreement exit — basin opposed held side', {
+          symbol,
+          held: existingPos.side,
+          streak: nextStreak,
+          required: MONKEY_DISAGREEMENT_TICKS_FOR_EXIT,
+          monkey: disagreeReason,
+          signalNow: signal.signal,
+          strength: signal.strength,
+        });
+        // Reset streak so close doesn't re-fire on a stale entry next tick.
+        this.monkeyDisagreementStreak.set(streakKey, 0);
+        await this.closeExistingPosition(
+          symbol,
+          existingPos.side,
+          'monkey_disagreement',
+          accountCtx.credentials,
+          signal.signalKey,
+          signal.regime,
+          signal.leverageBucket,
+        );
+        return;
+      }
+
       // Hold: position exists + signal doesn't warrant exit.
-      logger.info(`[LiveSignal] ${symbol} holding — position open, signal ${signal.signal}@${signal.strength.toFixed(3)} does not warrant exit`);
+      logger.info(`[LiveSignal] ${symbol} holding — position open, signal ${signal.signal}@${signal.strength.toFixed(3)} does not warrant exit (monkey_disagree_streak=${nextStreak}/${MONKEY_DISAGREEMENT_TICKS_FOR_EXIT})`);
       return;
     }
 
