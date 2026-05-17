@@ -848,59 +848,79 @@ class PoloniexFuturesService {
 
     // Apply rate limiting
     return rateLimiter.execute(endpoint, async () => {
-      try {
-        const requestPath = `/v3${endpoint}`;
-        const url = `${this.baseURL}${requestPath}`;
-        
-        const queryString = Object.keys(params).length > 0
-          ? '?' + new globalThis.URLSearchParams(params).toString()
-          : '';
-        
-        const fullUrl = url + queryString;
-        
-        const config = {
-          method: method.toLowerCase(),
-          url: fullUrl,
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          timeout: this.timeout
-        };
-        
-        if (Object.keys(params).length > 0 && method === 'GET') {
-          config.params = params;
-        }
-        
-        logger.info(`Making Poloniex v3 public ${method} request to ${requestPath}`);
-        const response = await axios(config);
-        
-        // Poloniex V3 API returns: { code: 200, data: [...], msg: "Success" }
-        // Extract the data field if present, otherwise return the full response
-        let result;
-        if (response.data && typeof response.data === 'object' && 'data' in response.data) {
-          result = response.data.data;
-        } else {
-          result = response.data;
-        }
+      const requestPath = `/v3${endpoint}`;
+      const url = `${this.baseURL}${requestPath}`;
+      const queryString = Object.keys(params).length > 0
+        ? '?' + new globalThis.URLSearchParams(params).toString()
+        : '';
+      const fullUrl = url + queryString;
+      const config = {
+        method: method.toLowerCase(),
+        url: fullUrl,
+        headers: { 'Content-Type': 'application/json' },
+        timeout: this.timeout,
+      };
+      if (Object.keys(params).length > 0 && method === 'GET') {
+        config.params = params;
+      }
 
-        // Cache successful GET responses
-        if (method === 'GET') {
-          const ttl = getTtlForEndpoint(endpoint);
-          if (ttl > 0) {
-            const cacheKey = `GET:${endpoint}:${serializeParams(params)}`;
-            apiCache.set(cacheKey, result, ttl);
+      // 429 retry-with-backoff. Live evidence 2026-05-17: the MTF bootstrap
+      // burst + LiveSignal startup occasionally trips Poloniex's instant
+      // burst guard for /market/candles even when within the 20/s window
+      // cap. Treat 429 as transient — honour Retry-After when present,
+      // exponential backoff otherwise. Bubble up the underlying error
+      // after MAX_429_RETRIES so genuine sustained throttling still
+      // surfaces.
+      const MAX_429_RETRIES = 3;
+      let attempt = 0;
+      // Read-only loop: only the 429 branch retries; every other path
+      // returns or throws.
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        try {
+          logger.info(`Making Poloniex v3 public ${method} request to ${requestPath}`);
+          const response = await axios(config);
+
+          // Poloniex V3 API returns: { code: 200, data: [...], msg: "Success" }
+          let result;
+          if (response.data && typeof response.data === 'object' && 'data' in response.data) {
+            result = response.data.data;
+          } else {
+            result = response.data;
           }
+          if (method === 'GET') {
+            const ttl = getTtlForEndpoint(endpoint);
+            if (ttl > 0) {
+              const cacheKey = `GET:${endpoint}:${serializeParams(params)}`;
+              apiCache.set(cacheKey, result, ttl);
+            }
+          }
+          return result;
+        } catch (error) {
+          const status = error.response?.status;
+          const retriable = status === 429 || status === 503;
+          if (retriable && attempt < MAX_429_RETRIES) {
+            const retryAfterHeader = error.response?.headers?.['retry-after'];
+            const headerSeconds = retryAfterHeader != null ? Number(retryAfterHeader) : NaN;
+            const waitMs = Number.isFinite(headerSeconds) && headerSeconds > 0
+              ? Math.min(headerSeconds * 1000, 10_000)
+              : Math.min(250 * Math.pow(2, attempt), 4_000);
+            logger.warn(`Poloniex v3 public request ${status} (transient); backing off`, {
+              endpoint, status, attempt: attempt + 1, waitMs,
+            });
+            await new Promise((r) => setTimeout(r, waitMs));
+            attempt += 1;
+            continue;
+          }
+          logger.error('Poloniex v3 public API request error:', {
+            endpoint: endpoint,
+            status,
+            data: error.response?.data,
+            message: error.message,
+            attempts: attempt + 1,
+          });
+          throw error;
         }
-
-        return result;
-      } catch (error) {
-        logger.error('Poloniex v3 public API request error:', {
-          endpoint: endpoint,
-          status: error.response?.status,
-          data: error.response?.data,
-          message: error.message
-        });
-        throw error;
       }
     });
   }

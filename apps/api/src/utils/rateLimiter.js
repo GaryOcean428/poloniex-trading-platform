@@ -125,15 +125,23 @@ class RateLimiter {
   getBucket(endpointType) {
     if (!this.buckets.has(endpointType)) {
       const limit = this.getRateLimit(endpointType);
-      
+      // Candle bucket: cap the *initial* burst capacity below the steady-state
+      // refill rate so a process-startup burst (both Monkey kernels + LiveSignal
+      // all warming OHLCV at once) can't fire 15 instantaneous calls. Refill
+      // rate stays 15/s, so steady-state throughput is unchanged. Production
+      // 429 storm 2026-05-17 was the trigger: 6 instant calls cleared the
+      // limiter at deploy boot but landed at Poloniex within ~50ms, exceeding
+      // their instantaneous-burst guard despite being under the 20/s window cap.
+      const initialBurst = endpointType === 'candles' ? Math.min(limit, 5) : limit;
+
       this.buckets.set(endpointType, {
-        tokens: limit,
+        tokens: initialBurst,
         maxTokens: limit,
         lastRefill: Date.now(),
         refillRate: limit // tokens per second
       });
     }
-    
+
     return this.buckets.get(endpointType);
   }
 
