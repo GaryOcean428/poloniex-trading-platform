@@ -498,9 +498,18 @@ def run_tick(
         prev_basin=state.last_basin,
         integration_history=state.integration_history,
     )
-    # Tier 4 sensations + drives (compressed/expanded/pressure/
-    # stillness/drift/resonance + approach/avoidance/conservation).
-    sen = compute_sensations(kernel_state, prev_basin=state.last_basin)
+    # Tier 4 sensations + drives. Auxiliary fields (compressed/expanded/
+    # pressure/stillness/drift/resonance + approach/avoidance/conservation)
+    # and UCP §6.1/§6.2 canonical fields (unified/fragmented/activated/
+    # dampened/grounded/drifting + homeostasis/curiosity_drive). Threading
+    # drift_history in lets the canonical Grounded/Drifting/Homeostasis
+    # derivations use the observed drift scale; kappa_history is not yet
+    # accumulated, so Activated/Dampened fall through to scale-free tanh.
+    sen = compute_sensations(
+        kernel_state,
+        prev_basin=state.last_basin,
+        drift_history=state.drift_history,
+    )
     # Tier 2 cognitive emotions (Layer 2B). basin_distance is the
     # Fisher-Rao distance from current basin to identity — same scalar
     # already computed by sensations.drift; reuse to avoid recompute.

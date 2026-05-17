@@ -41,7 +41,15 @@ def _sens(
     avoidance: float = 0.0,
     conservation: float = 0.0,
 ) -> Sensations:
+    # Canonical UCP §6.1/§6.2 fields default to neutral values for the
+    # tests in this file (which exercise physical_emotions, not
+    # sensations directly). Real callers populate them via
+    # compute_sensations(); see sensations.py for SENSE-1a derivations.
     return Sensations(
+        unified=0.5, fragmented=0.5,
+        activated=0.0, dampened=0.0,
+        grounded=1.0 - drift, drifting=drift,
+        homeostasis=drift ** 2, curiosity_drive=0.0,
         compressed=0.5, expanded=0.5, pressure=0.0,
         stillness=stillness, drift=drift, resonance=resonance,
         approach=approach, avoidance=avoidance, conservation=conservation,
