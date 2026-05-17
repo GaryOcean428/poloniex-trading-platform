@@ -2,7 +2,11 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   computeBtcBeacon,
   observeBtcBeacon,
+  entrySuppressionMultiplier,
+  noteBtcPrice,
+  getLatestBtcPrice,
   _resetBtcBeacon,
+  _resetLatestBtcPrice,
   _peekBtcBeacon,
 } from '../btc_beacon.js';
 
@@ -126,5 +130,91 @@ describe('SENSE-2 reference scenario — BTC-dump suppresses alt-long', () => {
     expect(r.correlation).toBeGreaterThan(0);
     expect(Math.abs(r.btcDirection)).toBeLessThan(0.001);  // tiny move
     expect(r.suppressionMagnitude).toBeLessThan(0.5);
+  });
+});
+
+describe('entrySuppressionMultiplier — SENSE-2 Phase 2 entry-threshold modifier', () => {
+  it('returns 1.0 (neutral) during warmup', () => {
+    const r = computeBtcBeacon([100, 100], [50000, 50001]);  // n < MIN_SAMPLES
+    expect(r.warmup).toBe(true);
+    expect(entrySuppressionMultiplier(r, 'long')).toBe(1.0);
+    expect(entrySuppressionMultiplier(r, 'short')).toBe(1.0);
+  });
+
+  it('returns 1.0 when proposed side AGREES with BTC bias (positive corr, BTC up, propose long)', () => {
+    // Synchronised up move → corr × btcDir > 0 → predicted alt direction = up
+    // Propose long → agree → no suppression.
+    const eth = [100, 101, 102, 103, 104, 105, 106, 107, 108, 109];
+    const btc = [50_000, 50_100, 50_200, 50_300, 50_400, 50_500, 50_600, 50_700, 50_800, 50_900];
+    const r = computeBtcBeacon(eth, btc);
+    expect(r.correlation).toBeGreaterThan(0);
+    expect(r.btcDirection).toBeGreaterThan(0);
+    expect(entrySuppressionMultiplier(r, 'long')).toBe(1.0);
+  });
+
+  it('tightens entry threshold when proposed side DISAGREES with BTC bias (positive corr, BTC down, propose long)', () => {
+    // Inverse: BTC dumps, ETH dumps with it. Operator wants to LONG ETH.
+    // Predicted alt direction = down; propose long → disagree → suppress.
+    const eth = [109, 108, 107, 106, 105, 104, 103, 102, 101, 100];
+    const btc = [50_900, 50_800, 50_700, 50_600, 50_500, 50_400, 50_300, 50_200, 50_100, 50_000];
+    const r = computeBtcBeacon(eth, btc);
+    expect(r.correlation).toBeGreaterThan(0);
+    expect(r.btcDirection).toBeLessThan(0);
+    const mult = entrySuppressionMultiplier(r, 'long');
+    expect(mult).toBeGreaterThan(1.0);
+    expect(mult).toBeLessThanOrEqual(1.5);  // floored at 1 + MAX_TIGHTEN
+  });
+
+  it('tightens for short when corr positive + BTC up (alt expected up, short disagrees)', () => {
+    const eth = [100, 101, 102, 103, 104, 105, 106, 107, 108, 109];
+    const btc = [50_000, 50_100, 50_200, 50_300, 50_400, 50_500, 50_600, 50_700, 50_800, 50_900];
+    const r = computeBtcBeacon(eth, btc);
+    expect(entrySuppressionMultiplier(r, 'short')).toBeGreaterThan(1.0);
+  });
+
+  it('respects MAX_TIGHTEN cap of 0.5 (max multiplier = 1.5)', () => {
+    // Extreme correlation × direction → suppressionMagnitude saturates to 1
+    // → multiplier = 1 + 0.5 * 1 = 1.5
+    const eth = [200, 195, 190, 185, 180, 170, 160, 150, 140, 120];
+    const btc = [50_000, 49_000, 48_000, 47_000, 46_000, 44_000, 42_000, 40_000, 38_000, 34_000];
+    const r = computeBtcBeacon(eth, btc);
+    const mult = entrySuppressionMultiplier(r, 'long');
+    expect(mult).toBeGreaterThan(1.0);
+    expect(mult).toBeLessThanOrEqual(1.5);
+  });
+
+  it('inverse-correlated symbol — short alt during BTC dump is structurally CORRECT, not suppressed', () => {
+    // Stablecoin or hedge: alt UP when BTC DOWN (negative correlation).
+    // BTC dumps → predicted alt = neg×neg = up. Propose long alt → agree → no suppression.
+    const eth = [100, 101, 102, 103, 104, 105, 106, 107, 108, 109];
+    const btc = [50_900, 50_800, 50_700, 50_600, 50_500, 50_400, 50_300, 50_200, 50_100, 50_000];
+    const r = computeBtcBeacon(eth, btc);
+    expect(r.correlation).toBeLessThan(0);
+    expect(r.btcDirection).toBeLessThan(0);
+    expect(entrySuppressionMultiplier(r, 'long')).toBe(1.0);  // corr × btcDir > 0 → alt expected up → long agrees
+  });
+});
+
+describe('latest-BTC-price shared cache', () => {
+  beforeEach(() => _resetLatestBtcPrice());
+
+  it('returns null before any observation', () => {
+    expect(getLatestBtcPrice()).toBe(null);
+  });
+
+  it('stores valid positive prices', () => {
+    noteBtcPrice(50000);
+    expect(getLatestBtcPrice()).toBe(50000);
+    noteBtcPrice(50100);
+    expect(getLatestBtcPrice()).toBe(50100);
+  });
+
+  it('ignores invalid prices (NaN, infinity, zero, negative)', () => {
+    noteBtcPrice(50000);
+    noteBtcPrice(NaN);
+    noteBtcPrice(Infinity);
+    noteBtcPrice(0);
+    noteBtcPrice(-100);
+    expect(getLatestBtcPrice()).toBe(50000);  // unchanged
   });
 });
