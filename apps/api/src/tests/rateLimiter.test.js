@@ -175,6 +175,23 @@ describe('RateLimiter', () => {
       expect(elapsed).toBeGreaterThan(0);
     });
 
+    it('caps the candle bucket initial burst at 5 (steady-state refill stays 15/s)', () => {
+      // Production 429 storm 2026-05-17: starting candles at the full 15-token
+      // burst let 15 calls fire instantly at deploy boot, landing at Poloniex
+      // within ~50ms and tripping their instant burst guard. Capping the
+      // *initial* burst at 5 forces the post-burst calls through the 15/s
+      // refill pace.
+      const fresh = new RateLimiter();
+      const candles = fresh.getBucket('candles');
+      expect(candles.tokens).toBe(5);
+      expect(candles.maxTokens).toBe(15);
+      expect(candles.refillRate).toBe(15);
+
+      // Other buckets remain at full burst capacity.
+      const orders = fresh.getBucket('orders');
+      expect(orders.tokens).toBe(orders.maxTokens);
+    });
+
     it('throttles a concurrent burst instead of letting waiters over-consume', async () => {
       // The MTF-bootstrap pattern: many candle calls fired at once. The
       // old single-wait waitForToken let all concurrent waiters wake and
