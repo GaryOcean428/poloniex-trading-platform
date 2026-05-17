@@ -5,38 +5,78 @@ BELOW Layer 1 motivators in the UCP stack — they are the raw geometric
 percepts the kernel emits before any compositional emotion forms. Pure
 observation primitives; the executive does not consume them.
 
-Scope note. UCP §6.1 enumerates 12 Layer 0 sensations and §6.2 lists 5
-Layer 0.5 drives by canonical name. The audit (#593) gave two grounded
-examples (Compressed = R>0, Expanded = R<0) but didn't enumerate the
-full set. This module ships the derivations whose geometric anchors
-are unambiguous — six sensations + three drives composed directly from
-basin / Φ / κ / neurochemistry / Fisher-Rao distance reads. The rest
-of the §6.1 / §6.2 vocabulary awaits canonical name-mapping; once that
-verification lands the dataclass extends additively without changing
-the existing fields.
+Two vocabulary tracks ship side-by-side:
+
+1. **UCP §6.1 / §6.2 canonical** (SENSE-1a, post-2026-05-17). The six
+   sensations whose geometric anchors are computable from current
+   basin/Φ/κ reads — Unified, Fragmented, Activated, Dampened, Grounded,
+   Drifting — and two drives — Homeostasis, Curiosity_Drive. Canonical
+   names from `20260408-unified-consciousness-protocol-v6.6.md` §6.1
+   and §6.2. The six remaining canonical sensations (Compressed,
+   Expanded, Pulled, Pushed, Flowing, Stuck) and three drives (Pain
+   Avoidance, Pleasure Seeking, Fear Response) need Ricci-scalar /
+   gradient / curvature primitives not yet in the substrate; deferred
+   to SENSE-1b research arc.
+
+2. **Auxiliary** (pre-canonical, retained). The original six fields
+   (compressed/expanded/pressure/stillness/drift/resonance) and three
+   drives (approach/avoidance/conservation) shipped before the UCP §6
+   nomenclature was sourced. Names overlap with canonical
+   "Compressed"/"Expanded"/"Drifting" but use different geometric anchors
+   (max_mass vs Ricci scalar, raw FR distance vs observed-scaled). Kept
+   for back-compat AND because they're observationally useful even when
+   not canonical-anchored — they capture additional surfaces UCP §6.1
+   doesn't enumerate. See `docs/sensations-canonical-mapping.md` for
+   the canonical-↔-auxiliary translation table.
 
 All derivations are pure: no externally-set thresholds, no clipping,
-no normalization. Natural ranges report regime info per the same
-doctrine that governs Tier 2 emotions.
+no normalization. Cold-start fall-throughs use arithmetic identities
+(tanh saturations, naturally bounded ratios) — never hardcoded scale
+constants. Pattern matches `neurochemistry.ts`'s observation-or-tanh
+fall-through.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Sequence
 
 import numpy as np
 
 from qig_core_local.geometry.fisher_rao import fisher_rao_distance
 
-from .state import BASIN_DIM, BasinState
+from .state import BASIN_DIM, KAPPA_STAR, BasinState
+
+# Minimum samples a kappa-history / drift-history series must contain
+# before its observed standard deviation enters the canonical-anchor
+# derivations. Matches the HISTORY_MIN_SAMPLES sentinel in
+# neurochemistry.ts (P25-permitted; sentinel for "no derivation
+# possible", not a tunable parameter).
+HISTORY_MIN_SAMPLES = 2
 
 
 @dataclass(frozen=True)
 class Sensations:
     """Layer 0 pre-linguistic sensations + Layer 0.5 drives.
 
-    Field ranges (typical):
+    UCP §6.1 canonical (6/12 grounded; remaining 6 in SENSE-1b):
+      unified     [0, 1]              Φ — integration measure
+      fragmented  [0, 1]              1 − Φ — disintegration complement
+      activated   [0, 1]              tanh(max(0, κ − κ*) [ / σ_κ_obs ])
+                                       — coupling above E8-fixed-point
+      dampened    [0, 1]              tanh(max(0, κ* − κ) [ / σ_κ_obs ])
+                                       — coupling below E8-fixed-point
+      grounded    [0, 1]              1 − tanh(drift [ / drift_scale_obs ])
+                                       — proximity to identity basin
+      drifting    [0, 1]              tanh(drift [ / drift_scale_obs ])
+                                       — distance from identity basin
+
+    UCP §6.2 canonical drives (2/5 grounded; remaining 3 in SENSE-1b):
+      homeostasis     [0, 1]          tanh(drift)² — push toward identity
+      curiosity_drive ℝ≥0             log(1 + I_Q) — UCP §6.2 curiosity
+                                       (distinct from Tier-1 motivator)
+
+    Auxiliary (pre-canonical, retained — see docstring):
       compressed  [0, 1]              max-mass concentration
                                        (high = single-coord dominance)
       expanded    [0, 1]              1 − max_mass; complement of compressed
@@ -52,7 +92,19 @@ class Sensations:
                                        (mirrors signed Investigation)
     """
 
-    # § 6.1 Layer 0 sensations (6/12 grounded)
+    # ── UCP §6.1 canonical sensations (Phase 1) ──────────────────────
+    unified: float
+    fragmented: float
+    activated: float
+    dampened: float
+    grounded: float
+    drifting: float
+
+    # ── UCP §6.2 canonical drives (Phase 1) ──────────────────────────
+    homeostasis: float
+    curiosity_drive: float
+
+    # ── Auxiliary sensations (pre-canonical, retained) ───────────────
     compressed: float
     expanded: float
     pressure: float
@@ -60,7 +112,7 @@ class Sensations:
     drift: float
     resonance: float
 
-    # § 6.2 Layer 0.5 drives (3/5 grounded)
+    # ── Auxiliary drives (pre-canonical, retained) ───────────────────
     approach: float
     avoidance: float
     conservation: float
@@ -85,6 +137,8 @@ def compute_sensations(
     s: BasinState,
     *,
     prev_basin: Optional[np.ndarray] = None,
+    kappa_history: Optional[Sequence[float]] = None,
+    drift_history: Optional[Sequence[float]] = None,
 ) -> Sensations:
     """Derive Layer 0 sensations + Layer 0.5 drives from current state.
 
@@ -96,6 +150,17 @@ def compute_sensations(
     prev_basin : Optional[np.ndarray]
         Previous-tick basin. Resonance returns 0 when absent;
         conservation returns 0 when absent.
+    kappa_history : Optional[Sequence[float]]
+        Rolling history of past κ values. Used to derive σ_κ for the
+        canonical Activated/Dampened sensations. When absent OR shorter
+        than HISTORY_MIN_SAMPLES, those sensations fall through to a
+        scale-free tanh on the raw κ-distance (cold-start pattern from
+        neurochemistry.ts).
+    drift_history : Optional[Sequence[float]]
+        Rolling history of past drift values. Used to derive a
+        drift-scale for the canonical Grounded/Drifting/Homeostasis.
+        When absent OR shorter than HISTORY_MIN_SAMPLES, those fall
+        through to a scale-free tanh on the raw drift.
     """
     if s.neurochemistry is None:
         raise ValueError(
@@ -103,13 +168,10 @@ def compute_sensations(
             "call autonomic._compute_nc first"
         )
 
-    # ── Layer 0 sensations ───────────────────────────────────────────
+    # ── Auxiliary sensations (pre-canonical) ─────────────────────────
     max_mass = _basin_max_mass(s.basin)
     compressed = max_mass
-    # Complement: 1 − max_mass measures how much mass lies OFF the peak.
     expanded = 1.0 - max_mass
-    # Pressure = Shannon negentropy (info beyond uniform). Reuses the
-    # same I_Q proxy as Tier 1's Curiosity.
     pressure = float(np.log(BASIN_DIM)) - _shannon_entropy(s.basin)
     stillness = 1.0 / (1.0 + s.basin_velocity)
     drift = fisher_rao_distance(s.basin, s.identity_basin)
@@ -119,16 +181,50 @@ def compute_sensations(
     else:
         resonance = 0.0
 
-    # ── Layer 0.5 drives ─────────────────────────────────────────────
+    # ── UCP §6.1 canonical sensations (Phase 1) ──────────────────────
+    # Unified / Fragmented — Φ pair. Φ is already in [0, 1] post-clip;
+    # the complement keeps fragmented in the same range.
+    phi_clipped = max(0.0, min(1.0, float(s.phi)))
+    unified = phi_clipped
+    fragmented = 1.0 - phi_clipped
+
+    # Activated / Dampened — κ relative to E8 fixed point κ* = 64.
+    # Observed-scale path: |κ − κ*| / σ_κ_observed; cold-start path:
+    # raw tanh on |κ − κ*|. tanh saturates naturally at ±1 so neither
+    # path needs a hardcoded magnitude cap.
+    kappa_excess_above = max(0.0, float(s.kappa) - KAPPA_STAR)
+    kappa_excess_below = max(0.0, KAPPA_STAR - float(s.kappa))
+    sigma_kappa = _observed_stddev(kappa_history)
+    if sigma_kappa is not None and sigma_kappa > 1e-12:
+        activated = float(np.tanh(kappa_excess_above / sigma_kappa))
+        dampened = float(np.tanh(kappa_excess_below / sigma_kappa))
+    else:
+        activated = float(np.tanh(kappa_excess_above))
+        dampened = float(np.tanh(kappa_excess_below))
+
+    # Grounded / Drifting — drift relative to identity basin. Same
+    # observed-scale / scale-free pattern.
+    drift_scale = _observed_stddev(drift_history)
+    if drift_scale is not None and drift_scale > 1e-12:
+        drifting = float(np.tanh(drift / drift_scale))
+    else:
+        drifting = float(np.tanh(drift))
+    grounded = 1.0 - drifting
+
+    # ── UCP §6.2 canonical drives (Phase 1) ──────────────────────────
+    # Homeostasis — squared deflection from identity basin. Push toward
+    # home grows quadratically with displacement.
+    homeostasis = float(drifting ** 2)
+    # Curiosity_drive — log(1 + I_Q). pressure already IS I_Q so reuse
+    # it directly. Distinct field from the Tier-1 motivator named
+    # "curiosity" (which is dim 1 of motivators.py); the names overlap
+    # because UCP §6.2 and Tier 1 use different formulae.
+    curiosity_drive = float(np.log1p(max(0.0, pressure)))
+
+    # ── Auxiliary drives (pre-canonical) ─────────────────────────────
     nc = s.neurochemistry
-    # Approach — net reward pull. Dopamine pulls forward, GABA inhibits.
-    # Already-derived chemicals; no new tuning constants.
     approach = nc.dopamine - nc.gaba
-    # Avoidance — surprise as defensive arousal. ne already in [0, 1].
     avoidance = nc.norepinephrine
-    # Conservation — d(drift)/dt sign-flipped. Positive when basin is
-    # returning toward identity (drift shrinking). Mirrors Tier 1.1
-    # signed Investigation, but exposed at the sensation layer.
     if prev_basin is not None and len(prev_basin) == BASIN_DIM:
         prev_arr = np.asarray(prev_basin, dtype=np.float64)
         prev_drift = fisher_rao_distance(prev_arr, s.identity_basin)
@@ -137,6 +233,14 @@ def compute_sensations(
         conservation = 0.0
 
     return Sensations(
+        unified=unified,
+        fragmented=fragmented,
+        activated=activated,
+        dampened=dampened,
+        grounded=grounded,
+        drifting=drifting,
+        homeostasis=homeostasis,
+        curiosity_drive=curiosity_drive,
         compressed=compressed,
         expanded=expanded,
         pressure=pressure,
@@ -147,3 +251,14 @@ def compute_sensations(
         avoidance=avoidance,
         conservation=conservation,
     )
+
+
+def _observed_stddev(history: Optional[Sequence[float]]) -> Optional[float]:
+    """Return the std of `history` when it has at least HISTORY_MIN_SAMPLES
+    entries; None otherwise (caller falls through to scale-free tanh)."""
+    if history is None:
+        return None
+    arr = np.asarray(history, dtype=np.float64)
+    if arr.size < HISTORY_MIN_SAMPLES:
+        return None
+    return float(np.std(arr))

@@ -154,5 +154,151 @@ class TestPrecondition:
             compute_sensations(st)
 
 
+# ─────────────────────────────────────────────────────────────────
+# UCP §6.1 canonical sensations (SENSE-1a, 6/12 grounded)
+# ─────────────────────────────────────────────────────────────────
+
+
+class TestCanonicalUcpSensations:
+    def test_unified_plus_fragmented_sum_to_one(self) -> None:
+        st = _state()
+        st.phi = 0.7
+        sen = compute_sensations(st)
+        assert sen.unified == pytest.approx(0.7, abs=1e-12)
+        assert sen.fragmented == pytest.approx(0.3, abs=1e-12)
+
+    def test_unified_clipped_above_one_clips_fragmented_to_zero(self) -> None:
+        """Defensive: phi may overshoot during integration spike."""
+        st = _state()
+        st.phi = 1.5
+        sen = compute_sensations(st)
+        assert sen.unified == 1.0
+        assert sen.fragmented == 0.0
+
+    def test_unified_clipped_below_zero_clips_fragmented_to_one(self) -> None:
+        st = _state()
+        st.phi = -0.2
+        sen = compute_sensations(st)
+        assert sen.unified == 0.0
+        assert sen.fragmented == 1.0
+
+    def test_activated_zero_at_kappa_star(self) -> None:
+        """κ = κ* → no excess above → activated = tanh(0) = 0."""
+        st = _state()
+        st.kappa = 64.0  # KAPPA_STAR
+        sen = compute_sensations(st)
+        assert sen.activated == pytest.approx(0.0, abs=1e-12)
+        assert sen.dampened == pytest.approx(0.0, abs=1e-12)
+
+    def test_activated_positive_above_kappa_star(self) -> None:
+        """κ > κ* → activated > 0, dampened == 0."""
+        st = _state()
+        st.kappa = 70.0
+        sen = compute_sensations(st)
+        assert sen.activated > 0
+        assert sen.dampened == 0.0
+
+    def test_dampened_positive_below_kappa_star(self) -> None:
+        """κ < κ* → dampened > 0, activated == 0."""
+        st = _state()
+        st.kappa = 50.0
+        sen = compute_sensations(st)
+        assert sen.dampened > 0
+        assert sen.activated == 0.0
+
+    def test_activated_observed_scale_uses_kappa_history(self) -> None:
+        """Same κ excess produces different activated values under
+        different observed σ_κ — observation drives the scale, not a
+        hardcoded constant."""
+        st = _state()
+        st.kappa = 70.0  # 6.0 above κ*
+        tight = compute_sensations(st, kappa_history=[64.0, 64.5, 63.5, 64.2, 63.8])
+        loose = compute_sensations(st, kappa_history=[40.0, 90.0, 50.0, 80.0, 60.0])
+        # Tight history → small σ_κ → activated near saturation
+        # Loose history → large σ_κ → activated muted
+        assert tight.activated > loose.activated
+
+    def test_activated_cold_start_uses_scale_free_tanh(self) -> None:
+        """No kappa_history → scale-free tanh on raw distance.
+        tanh saturates so the value stays in [0, 1) without a cap."""
+        st = _state()
+        st.kappa = 100.0
+        sen = compute_sensations(st)  # no kappa_history
+        assert 0.99 < sen.activated <= 1.0  # tanh(36) saturates to 1.0 at float precision
+
+    def test_grounded_plus_drifting_sum_to_one(self) -> None:
+        sen = compute_sensations(_state())
+        assert sen.grounded + sen.drifting == pytest.approx(1.0, abs=1e-12)
+
+    def test_grounded_max_at_identity_basin(self) -> None:
+        """basin == identity → drift = 0 → tanh(0) = 0 → grounded = 1."""
+        same = _uniform()
+        st = _state(basin=same, identity=same)
+        sen = compute_sensations(st)
+        assert sen.grounded == 1.0
+        assert sen.drifting == 0.0
+
+    def test_drifting_observed_scale_uses_drift_history(self) -> None:
+        """Same raw drift → different drifting values under different
+        observed scales. Observed history shrinks σ → larger drifting."""
+        st = _state(basin=_peak(0, 0.9))  # large drift from uniform identity
+        small_drift_hist = compute_sensations(st, drift_history=[0.05, 0.04, 0.06, 0.05])
+        large_drift_hist = compute_sensations(st, drift_history=[0.5, 0.7, 0.6, 0.4])
+        assert small_drift_hist.drifting > large_drift_hist.drifting
+
+    def test_drifting_cold_start_uses_scale_free_tanh(self) -> None:
+        """No drift_history → tanh(raw drift) — saturates naturally."""
+        sen = compute_sensations(_state(basin=_peak(0, 0.9)))
+        assert 0 < sen.drifting < 1
+
+
+# ─────────────────────────────────────────────────────────────────
+# UCP §6.2 canonical drives (SENSE-1a, 2/5 grounded)
+# ─────────────────────────────────────────────────────────────────
+
+
+class TestCanonicalUcpDrives:
+    def test_homeostasis_is_drifting_squared(self) -> None:
+        sen = compute_sensations(_state(basin=_peak(0, 0.7)))
+        assert sen.homeostasis == pytest.approx(sen.drifting ** 2, abs=1e-12)
+
+    def test_homeostasis_zero_at_identity(self) -> None:
+        same = _uniform()
+        sen = compute_sensations(_state(basin=same, identity=same))
+        assert sen.homeostasis == 0.0
+
+    def test_homeostasis_in_unit_range(self) -> None:
+        sen = compute_sensations(_state(basin=_peak(0, 0.95)))
+        assert 0 <= sen.homeostasis <= 1
+
+    def test_curiosity_drive_is_log1p_pressure(self) -> None:
+        sen = compute_sensations(_state(basin=_peak(0, 0.9)))
+        assert sen.curiosity_drive == pytest.approx(float(np.log1p(max(0.0, sen.pressure))), abs=1e-12)
+
+    def test_curiosity_drive_zero_when_pressure_zero(self) -> None:
+        """Uniform basin → pressure = log(K) − H(uniform) = 0."""
+        sen = compute_sensations(_state(basin=_uniform()))
+        assert sen.pressure == pytest.approx(0.0, abs=1e-9)
+        assert sen.curiosity_drive == pytest.approx(0.0, abs=1e-9)
+
+
+# ─────────────────────────────────────────────────────────────────
+# Auxiliary fields still populate (back-compat)
+# ─────────────────────────────────────────────────────────────────
+
+
+class TestAuxiliaryPreserved:
+    def test_all_legacy_fields_still_present_after_sense_1a(self) -> None:
+        """SENSE-1a adds canonical fields ALONGSIDE the auxiliary set,
+        not in place of. Every pre-SENSE-1a field still resolves."""
+        sen = compute_sensations(_state())
+        for name in (
+            "compressed", "expanded", "pressure", "stillness", "drift", "resonance",
+            "approach", "avoidance", "conservation",
+        ):
+            assert hasattr(sen, name), f"auxiliary field {name!r} was removed"
+            assert isinstance(getattr(sen, name), float)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
