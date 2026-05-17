@@ -76,30 +76,30 @@ MODE_PROFILES: dict[MonkeyMode, ModeProfile] = {
         sl_ratio=0.65,  # was 0.6 — bumped toward Phase-B winner, keeps tightest of the three
         entry_threshold_scale=0.9,
         size_floor=0.08,
-        sovereign_cap_floor=15,
+        sovereign_cap_floor=50,  # MODES-1a 2026-05-17: TS-canonical (operator-directive 2026-05-13 inversion — EXPLORATION = max-leverage scalp on flat markets)
         tick_ms=15_000,
         can_enter=True,
-        description="volatile / hunting — tight TP, fast cadence",
+        description="volatile / hunting — tight TP, fast cadence, max-leverage scalp",
     ),
     MonkeyMode.INVESTIGATION: ModeProfile(
         tp_base_frac=0.008,
         sl_ratio=0.7,   # was 0.5 — Phase-B winner sl_ratio=0.7 (6/6 runs, both symbols, all profiles)
         entry_threshold_scale=1.0,
         size_floor=0.10,
-        sovereign_cap_floor=20,
+        sovereign_cap_floor=15,  # MODES-1a 2026-05-17: TS-canonical (operator-directive 2026-05-13 inversion — INVESTIGATION = medium leverage as trend forms)
         tick_ms=30_000,
         can_enter=True,
-        description="trend forming — medium TP, full size",
+        description="trend forming — medium TP, full size, medium leverage",
     ),
     MonkeyMode.INTEGRATION: ModeProfile(
         tp_base_frac=0.020,
         sl_ratio=0.75,  # was 0.3 — Phase-B winner; INTEGRATION lets winners run, widest SL
         entry_threshold_scale=1.1,
         size_floor=0.12,
-        sovereign_cap_floor=25,
+        sovereign_cap_floor=5,   # MODES-1a 2026-05-17: TS-canonical (operator-directive 2026-05-13 inversion — INTEGRATION = low leverage, large notional, ride trend)
         tick_ms=60_000,
         can_enter=True,
-        description="trend confirmed — wide TP, let winners run",
+        description="trend confirmed — wide TP, let winners run, low leverage on large notional",
     ),
     MonkeyMode.DRIFT: ModeProfile(
         tp_base_frac=0.005,
@@ -121,7 +121,7 @@ MODE_PROFILES: dict[MonkeyMode, ModeProfile] = {
         sl_ratio=0.7,
         entry_threshold_scale=1.0,
         size_floor=0.10,
-        sovereign_cap_floor=20,
+        sovereign_cap_floor=15,  # MODES-1a 2026-05-17: matches INVESTIGATION envelope per docstring; was 20, now 15 (INVESTIGATION canonical)
         tick_ms=30_000,
         can_enter=True,
         description="back-loop mean-reversion — counter-trend, INVESTIGATION envelope",
