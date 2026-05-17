@@ -35,6 +35,7 @@ from .risk_kernel import (
 from .exit_decisions import (
     ExitConfig,
     ExitDecision,
+    ExitModifiers,
     ExitReason,
     MarketAnalysis,
     PositionSnapshot,
@@ -53,6 +54,7 @@ __all__ = [
     "ExchangePosition",
     "ExitConfig",
     "ExitDecision",
+    "ExitModifiers",
     "ExitReason",
     "KernelAccountState",
     "KernelContext",
