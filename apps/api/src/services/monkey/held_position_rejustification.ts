@@ -105,13 +105,36 @@ export interface RejustificationInput {
    */
   convictionFailedTicksRequired?: number;
   /**
+   * CALIB-3 (2026-05-17): consecutive-tick counter for "current tick's
+   * preferred side disagrees with held side". When the disagreement
+   * persists, an EARLY exit fires regardless of current ROI — per
+   * operator directive 2026-05-17: "better to close in positive than
+   * wait and close in negative; if false positive, can re-enter
+   * original direction." Faster than STALE_BLEED (30min + <-1% ROI)
+   * and orthogonal to conviction-failed (which gates on emotion,
+   * not direction). Live diagnostic showed swing-lane positions
+   * sitting on wrong side for hours with no fast exit. Caller tracks
+   * the streak per-lane; observer-style reset to 0 when sides agree.
+   */
+  directionalDisagreementStreak?: number;
+  /**
+   * Required streak before directional_disagreement fires. Default 4
+   * ticks for scalp; caller should scale UP for swing (×3) and trend
+   * (×10) per the operator's scalp=micro/swing=moderate/trend=macro
+   * timescale doctrine — encoded in loop.ts DISAGREEMENT_LANE_MULTIPLIER.
+   * NO ROI gate by design: the whole point is to exit before ROI
+   * flips negative.
+   */
+  directionalDisagreementTicksRequired?: number;
+  /**
    * Held duration in seconds for the stale-bleed gate. Undefined
    * disables the stale-bleed check (legacy callers / no entry timestamp).
    */
   heldDurationS?: number;
   /**
    * Current ROI on margin (signed fraction; -0.02 = -2% loss). Used
-   * by the stale-bleed gate. Undefined disables the check.
+   * by the stale-bleed gate AND the CALIB-3 directional_disagreement
+   * gate. Undefined disables both checks.
    */
   currentRoi?: number;
 }
@@ -120,7 +143,8 @@ export type RejustificationFire =
   | 'regime_change'
   | 'phi_collapse'
   | 'conviction_failed'
-  | 'stale_bleed';
+  | 'stale_bleed'
+  | 'directional_disagreement';
 
 export interface RejustificationResult {
   /** Whether anchors were available to check at all. */
@@ -144,6 +168,11 @@ export interface RejustificationResult {
   convictionFailedStreak: number;
   /** Required streak length before conviction_failed fires (CALIB-1). */
   convictionFailedTicksRequired: number;
+  /** Streak of consecutive ticks where current-tick side disagrees with
+   *  held side (CALIB-3). 0 when sides agree this tick. */
+  directionalDisagreementStreak: number;
+  /** Required streak length before directional_disagreement fires (CALIB-3). */
+  directionalDisagreementTicksRequired: number;
 }
 
 /**
@@ -171,6 +200,9 @@ export function evaluateRejustification(
   const regimeStabilityTicksRequired = input.regimeStabilityTicksRequired ?? 3;
   const convictionFailedStreak = input.convictionFailedStreak ?? 0;
   const convictionFailedTicksRequired = input.convictionFailedTicksRequired ?? 2;
+  const directionalDisagreementStreak = input.directionalDisagreementStreak ?? 0;
+  const directionalDisagreementTicksRequired =
+    input.directionalDisagreementTicksRequired ?? 4;
   const frThreshold = PI_STRUCT_GRAVITATING_FRACTION;  // 1/π ≈ 0.318
   let frDistance: number | null = null;
   if (input.basinNow !== undefined && input.basinAtOpen !== undefined) {
@@ -182,6 +214,7 @@ export function evaluateRejustification(
       frDistance, frThreshold,
       regimeChangeStreak, regimeStabilityTicksRequired,
       convictionFailedStreak, convictionFailedTicksRequired,
+      directionalDisagreementStreak, directionalDisagreementTicksRequired,
     };
   }
   const phiFloor = phiAtOpen / PHI_GOLDEN_FLOOR_RATIO;
@@ -217,6 +250,7 @@ export function evaluateRejustification(
           + `(confidence ${regimeConfidence.toFixed(3)} > 1/φ)`,
         phiFloor,
         convictionFailedStreak, convictionFailedTicksRequired,
+        directionalDisagreementStreak, directionalDisagreementTicksRequired,
         frDistance, frThreshold,
         regimeChangeStreak, regimeStabilityTicksRequired,
       };
@@ -231,6 +265,7 @@ export function evaluateRejustification(
       frDistance, frThreshold,
       regimeChangeStreak, regimeStabilityTicksRequired,
       convictionFailedStreak, convictionFailedTicksRequired,
+      directionalDisagreementStreak, directionalDisagreementTicksRequired,
     };
   }
   // CALIB-1 (2026-05-17): require convictionFailedStreak >= required ticks
@@ -257,6 +292,7 @@ export function evaluateRejustification(
       frDistance, frThreshold,
       regimeChangeStreak, regimeStabilityTicksRequired,
       convictionFailedStreak, convictionFailedTicksRequired,
+      directionalDisagreementStreak, directionalDisagreementTicksRequired,
     };
   }
   // 4. STALE_BLEED — belt-and-braces guard.
@@ -277,11 +313,52 @@ export function evaluateRejustification(
       frDistance, frThreshold,
       regimeChangeStreak, regimeStabilityTicksRequired,
       convictionFailedStreak, convictionFailedTicksRequired,
+      directionalDisagreementStreak, directionalDisagreementTicksRequired,
+    };
+  }
+  // 5. CALIB-3 (2026-05-17): directional_disagreement — when the
+  //    current tick's preferred side has disagreed with the held side
+  //    for >= directionalDisagreementTicksRequired consecutive ticks,
+  //    exit REGARDLESS of current ROI. Per operator directive 2026-05-17:
+  //    "exit early so it doesn't wait until the switch in direction
+  //    takes hold and the held position goes negative before the
+  //    switch. Always better to close in positive than wait and close
+  //    in the negative — if the switch is a false positive, can
+  //    re-enter the original direction." Sits between the fast
+  //    conviction-failed gate and the slow 30-min stale_bleed gate.
+  //
+  //    The streak requirement is lane-scaled by the caller — scalp
+  //    lane gets a fast (4-tick) requirement; swing gets moderate;
+  //    trend gets slow. Encoded by the caller passing the right
+  //    `directionalDisagreementTicksRequired` value per lane (the
+  //    user's scalp=micro/swing=moderate/trend=macro doctrine).
+  //
+  //    No ROI gate — by design. The whole point is to exit before ROI
+  //    flips negative. currentRoi is included in the reason string for
+  //    operator visibility only.
+  if (directionalDisagreementStreak >= directionalDisagreementTicksRequired) {
+    const roiStr = input.currentRoi !== undefined
+      ? `${(input.currentRoi * 100).toFixed(2)}%`
+      : 'unknown';
+    return {
+      checked: true,
+      fired: 'directional_disagreement',
+      reason:
+        `directional_disagreement: held side opposed by current-tick `
+        + `for ${directionalDisagreementStreak} consecutive ticks `
+        + `(≥ ${directionalDisagreementTicksRequired} required, ROI ${roiStr}) `
+        + `— exiting before ROI flips negative; can re-enter on false positive`,
+      phiFloor,
+      frDistance, frThreshold,
+      regimeChangeStreak, regimeStabilityTicksRequired,
+      convictionFailedStreak, convictionFailedTicksRequired,
+      directionalDisagreementStreak, directionalDisagreementTicksRequired,
     };
   }
   return {
     checked: true, fired: null, reason: '', phiFloor,
     convictionFailedStreak, convictionFailedTicksRequired,
+    directionalDisagreementStreak, directionalDisagreementTicksRequired,
     frDistance, frThreshold,
     regimeChangeStreak, regimeStabilityTicksRequired,
   };

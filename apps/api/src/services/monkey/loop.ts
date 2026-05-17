@@ -245,6 +245,26 @@ const REGIME_STABILITY_TICKS_FOR_EXIT =
  *  can override via MONKEY_CONVICTION_STABILITY_TICKS_FOR_EXIT env. */
 const CONVICTION_STABILITY_TICKS_FOR_EXIT =
   Number(process.env.MONKEY_CONVICTION_STABILITY_TICKS_FOR_EXIT) || 2;
+/** CALIB-3 (2026-05-17): base tick requirement for the directional-
+ *  disagreement exit. The actual per-lane requirement scales this up
+ *  via DISAGREEMENT_LANE_MULTIPLIER so that scalp tolerates wrong-side
+ *  briefly, swing tolerates moderately, trend tolerates persistently
+ *  — per the user's "scalp=micro, swing=moderate, trend=macro"
+ *  timescale doctrine. Live diagnostic 2026-05-17 showed swing-lane
+ *  wrong-side positions bleeding with no fast-exit path.
+ *  Operator can override via MONKEY_DISAGREEMENT_BASE_TICKS_FOR_EXIT env. */
+const DISAGREEMENT_BASE_TICKS_FOR_EXIT =
+  Number(process.env.MONKEY_DISAGREEMENT_BASE_TICKS_FOR_EXIT) || 4;
+/** CALIB-3 lane-timescale multipliers. Encodes the user's lane-
+ *  timeframe doctrine: scalp = micro (1×), swing = moderate (3×),
+ *  trend = macro (10×). With base=4, this gives scalp=4 ticks (≈2 min
+ *  at 30s tick), swing=12 ticks (≈6 min), trend=40 ticks (≈20 min).
+ *  Same multipliers apply to convictionFailed via lane-scaled call. */
+const DISAGREEMENT_LANE_MULTIPLIER: Record<'scalp' | 'swing' | 'trend', number> = {
+  scalp: 1,
+  swing: 3,
+  trend: 10,
+};
 
 /**
  * v0.8.7 kill switch — when MONKEY_TRADING_PAUSED=true, gate
@@ -473,6 +493,18 @@ interface SymbolState {
    *  2026-05-17 CSV analysis showed single-tick conviction noise was
    *  driving 60% of losses in chop-zone scalping. */
   convictionFailedStreakByLane: Record<string, number>;
+  /** CALIB-3 (2026-05-17): consecutive-tick counter for "current tick's
+   *  preferred side disagrees with held side" per-lane. Drives the
+   *  directional_disagreement exit. Increments on disagreement, resets
+   *  to 0 when sides agree. Per operator directive: exit before ROI
+   *  flips negative; can re-enter if false positive. Held-side comes
+   *  from the lane's most recent open trade row; current-tick side
+   *  from this tick's executive decision. */
+  directionalDisagreementStreakByLane: Record<string, number>;
+  /** Last recorded "held side" per lane, used as the disagreement
+   *  baseline for the CALIB-3 streak. 'flat' = no position; 'long' or
+   *  'short' = corresponding held direction. Updated on entry/close. */
+  heldSideByLane: Record<string, 'long' | 'short' | 'flat'>;
   /** Wall-clock entry timestamp (ms) per lane. Used by the stale-bleed
    *  gate: positions held longer than STALE_BLEED_MIN_DURATION_S at
    *  worse than STALE_BLEED_ROI_THRESHOLD ROI exit. Cleared on close. */
@@ -1168,6 +1200,8 @@ export class MonkeyKernel extends EventEmitter {
       basinAtOpenByLane: {},
       regimeChangeStreakByLane: {},
       convictionFailedStreakByLane: {},
+      directionalDisagreementStreakByLane: {},
+      heldSideByLane: {},
       entryTimeMsByLane: {},
       integrationHistory: [],
       latestBasinSnapshot: null,
@@ -2065,6 +2099,19 @@ export class MonkeyKernel extends EventEmitter {
         } else {
           state.convictionFailedStreakByLane[heldLane] = 0;
         }
+        // CALIB-3 (2026-05-17): per-lane directional-disagreement streak.
+        // sideCandidate is the current tick's preferred side (from the
+        // executive's basinDir-derived choice); heldSide is the lane's
+        // current open position direction. Increments when they
+        // disagree; resets to 0 when they agree. Per operator directive:
+        // exit early before ROI flips negative; can re-enter if false
+        // positive.
+        if (heldSide !== null && heldSide !== sideCandidate) {
+          state.directionalDisagreementStreakByLane[heldLane] =
+            (state.directionalDisagreementStreakByLane[heldLane] ?? 0) + 1;
+        } else {
+          state.directionalDisagreementStreakByLane[heldLane] = 0;
+        }
         const heldDurationS = entryTimeMs !== undefined
           ? (Date.now() - entryTimeMs) / 1000
           : undefined;
@@ -2073,11 +2120,19 @@ export class MonkeyKernel extends EventEmitter {
           : undefined;
         const regimeChangeStreak = state.regimeChangeStreakByLane[heldLane] ?? 0;
         const convictionFailedStreak = state.convictionFailedStreakByLane[heldLane] ?? 0;
+        const directionalDisagreementStreak =
+          state.directionalDisagreementStreakByLane[heldLane] ?? 0;
         // Registry-controlled stability requirement; default 3 ticks.
         // TS has no parameter registry yet — the constant lives in
         // executive.ts mirroring ml-worker's _DEFAULT_REGIME_STABILITY_TICKS_FOR_EXIT.
         const regimeStabilityTicksRequired = REGIME_STABILITY_TICKS_FOR_EXIT;
-        const convictionFailedTicksRequired = CONVICTION_STABILITY_TICKS_FOR_EXIT;
+        // CALIB-3 lane timescale doctrine: scalp=micro (1×), swing=moderate (3×),
+        // trend=macro (10×). Applies to both conviction-failed and directional-
+        // disagreement so the same scalp-tolerates-noise-but-swing-doesn't logic
+        // governs both streak gates. See DISAGREEMENT_LANE_MULTIPLIER comment.
+        const laneMultiplier = DISAGREEMENT_LANE_MULTIPLIER[heldLane] ?? 1;
+        const convictionFailedTicksRequired = CONVICTION_STABILITY_TICKS_FOR_EXIT * laneMultiplier;
+        const directionalDisagreementTicksRequired = DISAGREEMENT_BASE_TICKS_FOR_EXIT * laneMultiplier;
         const rejustResult = !exitFired
           ? evaluateRejustification({
               regimeAtOpen,
@@ -2090,6 +2145,8 @@ export class MonkeyKernel extends EventEmitter {
               regimeStabilityTicksRequired,
               convictionFailedStreak,
               convictionFailedTicksRequired,
+              directionalDisagreementStreak,
+              directionalDisagreementTicksRequired,
               basinNow: basin,
               basinAtOpen,
               heldDurationS,
@@ -2103,6 +2160,8 @@ export class MonkeyKernel extends EventEmitter {
               regimeStabilityTicksRequired,
               convictionFailedStreak,
               convictionFailedTicksRequired,
+              directionalDisagreementStreak,
+              directionalDisagreementTicksRequired,
             };
         const rejust: Record<string, unknown> = {
           checked: rejustResult.checked,
@@ -2835,6 +2894,8 @@ export class MonkeyKernel extends EventEmitter {
             state.basinAtOpenByLane[entryLane] = Float64Array.from(basin) as Basin;
             state.regimeChangeStreakByLane[entryLane] = 0;
             state.convictionFailedStreakByLane[entryLane] = 0;
+            state.directionalDisagreementStreakByLane[entryLane] = 0;
+            state.heldSideByLane[entryLane] = sideCandidate;
             state.entryTimeMsByLane[entryLane] = Date.now();
           }
         }
@@ -2879,6 +2940,8 @@ export class MonkeyKernel extends EventEmitter {
             delete state.basinAtOpenByLane[scalpLane];
             delete state.regimeChangeStreakByLane[scalpLane];
             delete state.convictionFailedStreakByLane[scalpLane];
+            delete state.directionalDisagreementStreakByLane[scalpLane];
+            delete state.heldSideByLane[scalpLane];
             delete state.entryTimeMsByLane[scalpLane];
             // Mirror legacy scalars for any non-lane-aware reader.
             state.peakPnlUsdt = null;
@@ -2931,6 +2994,8 @@ export class MonkeyKernel extends EventEmitter {
             delete state.basinAtOpenByLane[reversalLane];
             delete state.regimeChangeStreakByLane[reversalLane];
             delete state.convictionFailedStreakByLane[reversalLane];
+            delete state.directionalDisagreementStreakByLane[reversalLane];
+            delete state.heldSideByLane[reversalLane];
             delete state.entryTimeMsByLane[reversalLane];
             // v0.8.7 kill switch — close on the reverse path proceeded
             // (exits unaffected); skip the new-entry leg when paused.
@@ -2997,6 +3062,8 @@ export class MonkeyKernel extends EventEmitter {
               state.basinAtOpenByLane[reversalLane] = Float64Array.from(basin) as Basin;
               state.regimeChangeStreakByLane[reversalLane] = 0;
               state.convictionFailedStreakByLane[reversalLane] = 0;
+              state.directionalDisagreementStreakByLane[reversalLane] = 0;
+              state.heldSideByLane[reversalLane] = newSide;
               state.entryTimeMsByLane[reversalLane] = Date.now();
               reason += ` | closed@${lastPrice.toFixed(2)} pnl=${pnlAtDecision.toFixed(4)} | new ${newSide} orderId=${monkeyOrderId}`;
             } else {
