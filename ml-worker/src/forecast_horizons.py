@@ -362,7 +362,7 @@ def _apply_governance(
             "warnings": [
                 {
                     "id": w.id,
-                    "severity": w.severity.name,
+                    "severity": getattr(w.severity, "name", str(w.severity)),
                     "message": w.message,
                 }
                 for w in report.warnings

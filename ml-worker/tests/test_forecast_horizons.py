@@ -377,7 +377,7 @@ class TestDerivationBlock:
         deriv = bundle.derivation
         required = {
             "regime", "h", "J", "xi", "alpha", "xi_temporal_hours",
-            "temporal_scale_env", "amplitude", "amplitude_floor_applied",
+            "temporal_lags_observed", "amplitude", "amplitude_floor_applied",
             "horizon_decays", "governance", "governance_penalty_applied",
         }
         missing = required - set(deriv.keys())

@@ -72,6 +72,7 @@ def get_optimizer(
         ``DiagonalNaturalGradient`` — ml-worker deploy is broken and
         the legacy Euclidean fallback is intentionally not present.
     """
+    qig_core_msg: str | None = None
     try:
         from qig_core.optimization import DiagonalNaturalGradient  # type: ignore[import]
         logger.info(
@@ -80,6 +81,7 @@ def get_optimizer(
         )
         return DiagonalNaturalGradient(params, lr=lr, **kwargs)
     except ImportError as qig_core_exc:
+        qig_core_msg = str(qig_core_exc)
         logger.debug(
             "[training] qig_core.optimization unavailable (%s); "
             "trying qigkernels", qig_core_exc,
@@ -97,6 +99,6 @@ def get_optimizer(
             "and qigkernels — ml-worker deploy is broken. Euclidean "
             "fallback deliberately removed in MIG-5; geometric training "
             "is non-negotiable. Errors: qig-core: {0}; qigkernels: {1}".format(
-                qig_core_exc, qigkernels_exc,
+                qig_core_msg, qigkernels_exc,
             ),
         ) from qigkernels_exc
