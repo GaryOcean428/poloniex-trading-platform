@@ -2442,6 +2442,71 @@ export class MonkeyKernel extends EventEmitter {
         }
         derivation.rejustification = rejust;
 
+        // REGIME-2 #800 — regime-aware held-position exit on cell degradation.
+        // When REGIME_HELD_EXIT_LIVE=true AND the current compositional cell
+        // is a preservation-mandate cell (harvestTightness === 'tight':
+        // DISSOLVER × any, CREATOR × CHOP) AND we hold a profitable position,
+        // take the profit immediately rather than waiting for the regime-blind
+        // TP threshold that the existing trailing harvest gate enforces.
+        //
+        // This is the operator-stated doctrine "sell in profit not eat equity"
+        // expressed as a cell-conditional rule. The compositional executive
+        // (PR #792) governs entry posture; this rule governs the symmetric
+        // exit posture on held positions when the regime has degraded toward
+        // preservation-mandate cells.
+        //
+        // Threshold: any positive ROI (currentRoi > 0). The cell-tightness
+        // signal is qualitative ("the regime says preserve") — once any
+        // profit exists, take it rather than risk it evaporating into the
+        // bleeding chop. This is structurally distinct from the trailing
+        // harvest (giveback-based) and stale-bleed (negative-ROI duration)
+        // gates that operate without regime context.
+        if (
+          !exitFired
+          && process.env.REGIME_HELD_EXIT_LIVE === 'true'
+          && cellAction !== null
+          && cellAction.harvestTightness === 'tight'
+          && currentRoi !== undefined
+          && currentRoi > 0
+        ) {
+          const roiPct = (currentRoi * 100).toFixed(3);
+          action = 'scalp_exit';
+          reason =
+            `regime_held_exit: cell ${cellAction.label}, ROI ${roiPct}% — `
+            + `preservation-mandate cell + profitable position → take profit now`;
+          exitFired = true;
+          derivation.scalp = {
+            exitTypeBit: 6,  // REGIME-2 regime-aware held exit
+            unrealizedPnl,
+            markPrice: lastPrice,
+            tradeId,
+            lane: heldLane,
+          };
+          derivation.regime2HeldExit = {
+            fired: true,
+            cellLabel: cellAction.label,
+            cellHarvestTightness: cellAction.harvestTightness,
+            currentRoi,
+            unrealizedPnl,
+          };
+        } else if (cellAction !== null) {
+          // Telemetry — record the would-fire condition each tick so the
+          // operator can grep `regime2HeldExit.fired` for both true (exit
+          // executed) and false (would not have exited) over time.
+          derivation.regime2HeldExit = {
+            fired: false,
+            cellLabel: cellAction.label,
+            cellHarvestTightness: cellAction.harvestTightness,
+            currentRoi: currentRoi ?? null,
+            reason:
+              process.env.REGIME_HELD_EXIT_LIVE !== 'true' ? 'flag_off'
+              : cellAction.harvestTightness !== 'tight' ? 'cell_not_tight'
+              : currentRoi === undefined ? 'roi_unknown'
+              : currentRoi <= 0 ? 'not_profitable'
+              : 'unknown',
+          };
+        }
+
         // 3. Profit harvest — trailing stop + trend-flip, only while green.
         if (!exitFired) {
           const harvest = shouldProfitHarvest(
