@@ -17,7 +17,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
+from typing import Literal, Optional
 
 from .basins import BasinDetector, BasinMap
 from .coupling import CouplingEstimator, CouplingState
@@ -36,6 +36,9 @@ class StrategyType(str, Enum):
     CASH = "cash"  # Dissolver regime: do nothing
 
 
+BasinFillKind = Literal["fresh", "held", "none"]
+
+
 @dataclass
 class LoopDecision:
     """Output of one strategy loop iteration."""
@@ -49,6 +52,14 @@ class LoopDecision:
     selected_strategy: StrategyType
     should_trade: bool
     reason: str
+    # GAP 5 — prediction-fill provenance for the basin field. "fresh" =
+    # basins.detect() ran this tick; "held" = last-known value carried
+    # forward (basin detection only runs every 20 ticks after the 50-tick
+    # warmup); "none" = no detection has ever happened yet.
+    basin_fill_kind: BasinFillKind = "none"
+    # Ticks since the last fresh basin detection — 0 on fresh ticks,
+    # incrementing on held ticks. Useful for confidence decay.
+    ticks_since_basin_detection: int = 0
 
     def to_dict(self) -> dict:
         """Serialise for API response / audit log."""
@@ -70,6 +81,9 @@ class LoopDecision:
             "strategy": self.selected_strategy.value,
             "should_trade": self.should_trade,
             "reason": self.reason,
+            # GAP 5 — prediction-fill provenance for the basin field
+            "basin_fill_kind": self.basin_fill_kind,
+            "ticks_since_basin_detection": self.ticks_since_basin_detection,
         }
 
 
@@ -105,6 +119,13 @@ class StrategyLoop:
     _last_coupling: Optional[CouplingState] = field(default=None)
     _last_basins: Optional[BasinMap] = field(default=None)
     _decision_log: list[LoopDecision] = field(default_factory=list)
+    # GAP 5 — basin prediction-fill counters per [[hidden-coalescing-noodle]].
+    # _ticks_total counts every tick() call. _ticks_with_basin_fresh counts
+    # ticks where basins.detect() actually ran. _ticks_since_basin_detection
+    # is the held-streak counter (0 on fresh, +1 each held tick).
+    _ticks_total: int = 0
+    _ticks_with_basin_fresh: int = 0
+    _ticks_since_basin_detection: int = 0
 
     def __post_init__(self) -> None:
         if self._regime is None:
@@ -140,6 +161,7 @@ class StrategyLoop:
             Current portfolio exposure as fraction of equity.
         """
         ts = time.time()
+        self._ticks_total += 1
 
         # === SCAN: Ingest ===
         self._basins.update(price)
@@ -158,8 +180,27 @@ class StrategyLoop:
             self._last_coupling = self._coupling.update(signal_value, pnl_value)
 
         # === FEEL: Basin detection (less frequent, heavier) ===
-        if len(self._basins._prices) >= 50 and len(self._basins._prices) % 20 == 0:
+        # GAP 5 — track prediction-fill provenance. When detect() runs the
+        # basin field is "fresh"; otherwise it's "held" (last-known value
+        # carried forward, which is the existing implicit behaviour now
+        # surfaced as telemetry).
+        basin_fresh_this_tick = (
+            len(self._basins._prices) >= 50
+            and len(self._basins._prices) % 20 == 0
+        )
+        if basin_fresh_this_tick:
             self._last_basins = self._basins.detect(price)
+            self._ticks_with_basin_fresh += 1
+            self._ticks_since_basin_detection = 0
+        else:
+            self._ticks_since_basin_detection += 1
+
+        if self._last_basins is None:
+            basin_fill_kind: BasinFillKind = "none"
+        elif basin_fresh_this_tick:
+            basin_fill_kind = "fresh"
+        else:
+            basin_fill_kind = "held"
 
         # === THINK: Strategy selection ===
         if self._last_regime is None:
@@ -169,6 +210,8 @@ class StrategyLoop:
                 selected_strategy=StrategyType.CASH,
                 should_trade=False,
                 reason="Insufficient data for regime detection",
+                basin_fill_kind=basin_fill_kind,
+                ticks_since_basin_detection=self._ticks_since_basin_detection,
             )
 
         strategy = self._select_strategy(self._last_regime, self._last_coupling)
@@ -206,6 +249,8 @@ class StrategyLoop:
             selected_strategy=strategy,
             should_trade=should_trade,
             reason="; ".join(reasons),
+            basin_fill_kind=basin_fill_kind,
+            ticks_since_basin_detection=self._ticks_since_basin_detection,
         )
 
         # === OBSERVE: Log for feedback ===
@@ -262,6 +307,24 @@ class StrategyLoop:
         """Last 50 decisions for dashboard display."""
         return self._decision_log[-50:]
 
+    @property
+    def prediction_fill_ratio(self) -> float:
+        """GAP 5 — fraction of ticks where the basin field was a held
+        (predicted) value rather than a fresh detection.
+
+        At steady state with default cadence (basins.detect() every 20
+        ticks after a 50-tick warmup) this trends toward 19/20 = 0.95.
+        Higher than that signals that detection is stalling; lower means
+        the loop is running with mostly-fresh basins (rare).
+
+        Returns 0.0 when no ticks have been processed yet (avoids div-by-0
+        and gives a meaningful "no fill yet" reading).
+        """
+        if self._ticks_total <= 0:
+            return 0.0
+        held = self._ticks_total - self._ticks_with_basin_fresh
+        return float(held) / float(self._ticks_total)
+
     def reset(self) -> None:
         """Clear all internal state."""
         self._regime.reset()
@@ -271,3 +334,7 @@ class StrategyLoop:
         self._last_coupling = None
         self._last_basins = None
         self._decision_log.clear()
+        # GAP 5 — reset prediction-fill counters
+        self._ticks_total = 0
+        self._ticks_with_basin_fresh = 0
+        self._ticks_since_basin_detection = 0
