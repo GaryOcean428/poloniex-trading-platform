@@ -5918,7 +5918,7 @@ export class MonkeyKernel extends EventEmitter {
     }
 
     // LIMIT_MAKER #793 (Class B #5) — scalp lane post-only entry path.
-    // When MONKEY_SCALP_LIMIT_MAKER=true AND lane='scalp' AND not a DCA add:
+    // When SCALP_LIMIT_MAKER_LIVE=true AND lane='scalp' AND not a DCA add:
     // fetch the order book, post at best-bid (long) or best-ask (short).
     // The post-only flag means the order is rejected if it would cross
     // the spread — so the exchange enforces the maker-rebate guarantee.
@@ -5932,7 +5932,7 @@ export class MonkeyKernel extends EventEmitter {
     // Why not DCA: DCA-adds are reactive to adverse price moves, often
     // need immediate fill to defend the position; can't wait for maker.
     const useLimitMaker =
-      process.env.MONKEY_SCALP_LIMIT_MAKER === 'true'
+      process.env.SCALP_LIMIT_MAKER_LIVE === 'true'
       && (req.lane ?? 'swing') === 'scalp'
       && !req.isDCAAdd;
 
