@@ -4129,8 +4129,17 @@ export class MonkeyKernel extends EventEmitter {
     }
 
     // Info-level log — the user asked for end-to-end observability.
+    // REGIME-1 #792 cell token added: emit `cell=PHASE_DIRECTION` per
+    // tick so the operator can grep `cell=` for distribution histograms
+    // without DB queries. Format matches the operator-stated convention
+    // `(DISSOLVER|PRESERVER|CREATOR)_(TREND_UP|CHOP|TREND_DOWN)`.
+    const cellToken = cellAction !== null
+      ? `${cellAction.phase}_${cellAction.direction}`
+      : 'CELL_UNRESOLVED';
     logger.info(`[Monkey] ${symbol} [${mode}] ${action}${executed ? ' EXECUTED' : ''}`, {
       mode,
+      cell: cellToken,
+      cellLive: process.env.REGIME_COMPOSITIONAL_LIVE === 'true',
       phi: phi.toFixed(3),
       kappa: state.kappa.toFixed(2),
       nc: summarizeNC(nc),
