@@ -23,16 +23,32 @@ from .replay import (
     SCORE_PROFILES,
 )
 from .sweep import sweep_axis, SweepResult, Candidate
+from .prelaunch_checklist import (
+    ChecklistItem,
+    PostflightReport,
+    PreflightReport,
+    build_postflight,
+    build_preflight,
+    log_postflight,
+    log_preflight,
+)
 
 __all__ = [
-    "StrategySpec",
-    "default_spec",
-    "replay_ohlcv",
     "BacktestResult",
-    "score_strategy",
-    "ScoreWeights",
-    "SCORE_PROFILES",
-    "sweep_axis",
-    "SweepResult",
     "Candidate",
+    "ChecklistItem",
+    "PostflightReport",
+    "PreflightReport",
+    "SCORE_PROFILES",
+    "ScoreWeights",
+    "StrategySpec",
+    "SweepResult",
+    "build_postflight",
+    "build_preflight",
+    "default_spec",
+    "log_postflight",
+    "log_preflight",
+    "replay_ohlcv",
+    "score_strategy",
+    "sweep_axis",
 ]
