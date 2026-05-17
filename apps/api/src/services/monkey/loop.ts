@@ -145,6 +145,12 @@ import {
   type BtcBeaconReading,
 } from './btc_beacon.js';
 import { recordLaneOutcome, weightedWinRate } from './time_of_day_winrate.js';
+import {
+  evaluateCell,
+  regimeToDirection,
+  canonicalToPhase,
+  type CellAction,
+} from './compositional_executive.js';
 import { agentLDecide, type AgentLDecision } from './agent_L_classifier.js';
 import { QIGRAMv2State, isQigramV2Enabled } from './agent_L_qigram_v2.js';
 import {
@@ -1733,6 +1739,17 @@ export class MonkeyKernel extends EventEmitter {
       basin,
     ]);
 
+    // REGIME-1 Phase 3 — compositional cell executive (3×3 (phase, direction)
+    // matrix). Always evaluated for telemetry (shadow); only ENFORCED on size
+    // and lane bias when REGIME_COMPOSITIONAL_LIVE=true. When either axis
+    // is unresolved (null), the cell is null and the legacy path takes over.
+    const cellPhase = canonicalToPhase(canonicalRegime);
+    const cellDirection = regimeToDirection(regimeReading.regime);
+    const cellAction: CellAction | null = (cellPhase !== null && cellDirection !== null)
+      ? evaluateCell(cellPhase, cellDirection)
+      : null;
+    const cellLive = process.env.REGIME_COMPOSITIONAL_LIVE === 'true';
+
     // Proposal #9: candlestick pattern detection at the perception
     // input boundary. ``patternSignal`` is signed in [-1, +1];
     // ``hammerDefer`` triggers the SL-defer path on long positions.
@@ -1902,7 +1919,12 @@ export class MonkeyKernel extends EventEmitter {
     // no operator-tunable sensitivity knob (P1-pure).
     const equityReading = observeEquity(`${this.instanceId}:${symbol}`, availableEquity);
     const sense3Deflection = sizeDeflection(equityReading);
-    const cappedEquity = availableEquity * effectiveSizeFraction * sense3Deflection;
+    // REGIME-1 Phase 3 — when REGIME_COMPOSITIONAL_LIVE=true, fold the
+    // cell-recommended sizeMultiplier in. DISSOLVER cells suppress entries
+    // entirely (multiplier=0); CREATOR×CHOP halves them; PRESERVER×CHOP
+    // is 0.7x; trending cells are 1.0x (no further effect).
+    const cellSizeMul = (cellLive && cellAction) ? cellAction.sizeMultiplier : 1.0;
+    const cappedEquity = availableEquity * effectiveSizeFraction * sense3Deflection * cellSizeMul;
     // Proposal #10 — lane selection. Each tick picks the locally-optimal
     // execution lane via softmax over basin features (parity with the
     // Python kernel's choose_lane). The chosen lane gates size (per-lane
@@ -1916,7 +1938,12 @@ export class MonkeyKernel extends EventEmitter {
       const r = weightedWinRate(lane);
       return r.rate;
     };
-    const laneDecision = chooseLane(basinState, tapeTrend, lanePriorCb);
+    // REGIME-1 Phase 3 — when REGIME_COMPOSITIONAL_LIVE=true, also pass
+    // the cell-recommended lane bias to nudge the softmax toward the
+    // joint-state-coherent lane. Shadow-mode (cellLive=false): bias is
+    // ignored, only telemetry is recorded.
+    const cellLaneBias = (cellLive && cellAction) ? cellAction.laneBias : null;
+    const laneDecision = chooseLane(basinState, tapeTrend, lanePriorCb, cellLaneBias);
     const chosenLane: LaneType = laneDecision.value;
     const positionLane: 'scalp' | 'swing' | 'trend' =
       chosenLane === 'observe' ? 'swing' : chosenLane;
@@ -1947,6 +1974,9 @@ export class MonkeyKernel extends EventEmitter {
         sense3Deflection,
         equityGradient: equityReading.gradient,
         equityAcceleration: equityReading.acceleration,
+        cellLabel: cellAction?.label ?? null,
+        cellSizeMul,
+        cellLive,
       });
     }
     const autoFlatten = shouldAutoFlatten(basinState, state.fHealthHistory);
@@ -2021,6 +2051,22 @@ export class MonkeyKernel extends EventEmitter {
         trend: weightedWinRate('trend').rate,
         observe: weightedWinRate('observe').rate,
       },
+      // REGIME-1 Phase 3: compositional cell action. Always recorded
+      // (shadow); enforced on size + lane bias only when
+      // REGIME_COMPOSITIONAL_LIVE=true. `cellLive` flags which mode this
+      // tick was in so retrospective analysis can compare shadow vs live
+      // decisions when the flag is flipped.
+      regime1_cell: cellAction === null
+        ? null
+        : {
+            phase: cellAction.phase,
+            direction: cellAction.direction,
+            laneBias: cellAction.laneBias,
+            sizeMultiplier: cellAction.sizeMultiplier,
+            harvestTightness: cellAction.harvestTightness,
+            label: cellAction.label,
+            live: cellLive,
+          },
     };
 
     // v0.6.3: Monkey's "held side" is scoped to HER OWN open rows only.
