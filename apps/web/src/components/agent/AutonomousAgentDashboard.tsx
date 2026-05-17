@@ -85,6 +85,11 @@ const AutonomousAgentDashboard: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [lastPolled, setLastPolled] = useState<Date | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<'connected' | 'disconnected' | 'polling'>('polling');
+  // Baseline-rebase action state — drives the "Reset baseline" CTA in the
+  // stale-baseline banner. Tracks the in-flight POST so we can disable the
+  // button + show feedback on success/failure.
+  const [rebasing, setRebasing] = useState<boolean>(false);
+  const [rebaseMsg, setRebaseMsg] = useState<string | null>(null);
   const [circuitBreaker, setCircuitBreaker] = useState<{
     isTripped: boolean;
     reason?: string;
@@ -336,6 +341,37 @@ const AutonomousAgentDashboard: React.FC = () => {
       }
     } catch {
       // Non-critical — badge/banner just won't render.
+    }
+  };
+
+  // Reset the stored autonomous_trading_configs.initial_capital to the
+  // current futures equity. Invoked from the stale-baseline banner CTA
+  // when the user has added/removed capital from the exchange and the
+  // % P&L display is measuring against a now-meaningless baseline.
+  const rebaseBaselineToCurrent = async (newBaseline: number) => {
+    if (!Number.isFinite(newBaseline) || newBaseline <= 0) return;
+    setRebasing(true);
+    setRebaseMsg(null);
+    try {
+      const response = await axios.patch(
+        `${API_BASE_URL}/api/autonomous/config`,
+        { initialCapital: newBaseline },
+        { headers: getAuthHeaders() },
+      );
+      if (response.data.success) {
+        setRebaseMsg(`Baseline reset to $${newBaseline.toFixed(2)}.`);
+        // Pull fresh status so the banner re-evaluates and disappears.
+        await fetchAutonomousStatus();
+      } else {
+        setRebaseMsg(
+          response.data.error || 'Reset failed for an unknown reason.',
+        );
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setRebaseMsg(`Reset failed: ${msg}`);
+    } finally {
+      setRebasing(false);
     }
   };
 
@@ -663,17 +699,12 @@ const AutonomousAgentDashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* C7 — Baseline-divergence banner.
+      {/* Baseline-divergence banner.
           totalPnlPercent on this dashboard is computed against the
           stored autonomous_trading_configs.initial_capital. If that
           baseline is more than 20% off the current futures equity,
-          the % display goes nonsensical (e.g. 777% when $440 baseline
-          vs $91 actual). Surface a warning + the suggested reset
-          value so the user can fix it via the config endpoint.
-
-          NOTE: there is no BE reset endpoint today — this banner is
-          informational only. Once /api/autonomous/config (or similar)
-          accepts a PATCH for initial_capital, wire the CTA to it. */}
+          the % display goes nonsensical. Surface the diff + a one-
+          click reset CTA wired to PATCH /api/autonomous/config. */}
       {autonomousStatus?.initialCapital !== undefined
         && autonomousStatus?.initialCapital !== null
         && autonomousStatus.initialCapital > 0
@@ -699,16 +730,28 @@ const AutonomousAgentDashboard: React.FC = () => {
                   {' '}but current equity is{' '}
                   <strong>${safeNum(currentBalance).toFixed(2)}</strong>
                   {' '}— a {safeNum(drift * 100).toFixed(0)}% drift {direction} the baseline.
-                  The Total P&amp;L % shown on this dashboard is computed against
-                  the stored baseline and will read as nonsense until the baseline
-                  is reset to the current equity.
+                  Reset to make the Total P&amp;L % accurate.
                 </p>
-                <p className="text-amber-700 text-xs mt-2">
-                  TODO: wire a backend PATCH endpoint (e.g.
-                  <code className="px-1 mx-1 bg-amber-100 rounded">PATCH /api/autonomous/config</code>
-                  with <code className="px-1 bg-amber-100 rounded">{`{ initialCapital: ${safeNum(currentBalance).toFixed(2)} }`}</code>)
-                  to reset baseline from the UI.
-                </p>
+                <div className="flex items-center gap-3 mt-3">
+                  <button
+                    type="button"
+                    onClick={() => rebaseBaselineToCurrent(safeNum(currentBalance))}
+                    disabled={rebasing}
+                    className="px-4 py-2 bg-amber-600 text-white rounded-md text-sm font-medium hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
+                  >
+                    {rebasing
+                      ? 'Resetting…'
+                      : `Reset baseline to $${safeNum(currentBalance).toFixed(2)}`}
+                  </button>
+                  {rebaseMsg && (
+                    <span
+                      className={`text-xs ${rebaseMsg.startsWith('Reset failed') ? 'text-red-700' : 'text-amber-800'}`}
+                      role="status"
+                    >
+                      {rebaseMsg}
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
           );
