@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   computeEquityGradient,
   observeEquity,
+  sizeDeflection,
   _resetEquityGradient,
   _peekEquityBuffer,
 } from '../equity_gradient.js';
@@ -123,6 +124,49 @@ describe('observeEquity — per-key rolling buffer', () => {
     _resetEquityGradient();
     expect(_peekEquityBuffer('A')).toHaveLength(0);
     expect(_peekEquityBuffer('B')).toHaveLength(0);
+  });
+});
+
+describe('sizeDeflection — SENSE-3 Phase 2 size modulator', () => {
+  it('returns 1.0 (neutral) during warmup', () => {
+    const r = computeEquityGradient([100]);  // n < MIN_SAMPLES
+    expect(sizeDeflection(r)).toBe(1.0);
+  });
+
+  it('returns 1.0 when equity is rising (gradient > 0)', () => {
+    const r = computeEquityGradient([100, 101, 102, 103, 104, 105]);
+    expect(sizeDeflection(r)).toBe(1.0);
+  });
+
+  it('returns 1.0 when loss is decelerating (acceleration > 0)', () => {
+    const r = computeEquityGradient([100, 95, 90, 85, 84, 84, 84, 84]);
+    expect(r.gradient).toBeLessThan(0);
+    expect(r.acceleration).toBeGreaterThan(0);
+    expect(sizeDeflection(r)).toBe(1.0);
+  });
+
+  it('returns < 1.0 when loss is accelerating (both gradient and acceleration negative)', () => {
+    const r = computeEquityGradient([100, 99.5, 99, 98.5, 98, 97, 96, 94]);
+    expect(r.gradient).toBeLessThan(0);
+    expect(r.acceleration).toBeLessThan(0);
+    expect(sizeDeflection(r)).toBeLessThan(1.0);
+  });
+
+  it('is floored at SIZE_FLOOR=0.5 even under extreme acceleration', () => {
+    // Make |acceleration| >> |gradient| → tanh(very large) → 1
+    // → multiplier = 1 - 0.5*1 = 0.5
+    const r = computeEquityGradient([100, 99.99, 99.98, 99.97, 80, 60, 40, 0]);
+    expect(sizeDeflection(r)).toBeGreaterThanOrEqual(0.5);
+    expect(sizeDeflection(r)).toBeCloseTo(0.5, 1);
+  });
+
+  it('output is monotonic in acceleration severity (more-negative accel → smaller multiplier)', () => {
+    const mild = computeEquityGradient([100, 99.5, 99, 98.5, 98, 97.5, 97, 96.5]);
+    const harsh = computeEquityGradient([100, 99.5, 99, 98.5, 98, 96, 94, 90]);
+    expect(mild.acceleration).toBeLessThan(0);
+    expect(harsh.acceleration).toBeLessThan(0);
+    expect(Math.abs(harsh.acceleration)).toBeGreaterThan(Math.abs(mild.acceleration));
+    expect(sizeDeflection(harsh)).toBeLessThanOrEqual(sizeDeflection(mild));
   });
 });
 

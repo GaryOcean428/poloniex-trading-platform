@@ -119,6 +119,34 @@ export function observeEquity(
   return computeEquityGradient(buf, window);
 }
 
+/**
+ * SENSE-3 Phase 2: derive a multiplicative size deflection from an
+ * EquityGradientReading. Returned multiplier is in [SIZE_FLOOR, 1.0].
+ *
+ * Pure derivation — no operator-tunable scale. The deflection compares
+ * |acceleration| to |gradient|: when the bleed is accelerating faster
+ * than its current rate, the ratio exceeds 1 and the size shrinks
+ * smoothly via tanh saturation toward SIZE_FLOOR. When equity is
+ * recovering (acceleration ≥ 0) or only the gradient is negative
+ * (steady drift, not accelerating), the multiplier stays at 1.0 —
+ * deflection only fires on accelerating loss.
+ *
+ * SIZE_FLOOR (0.5) is a P25-allowed SAFETY_BOUND — it's the
+ * never-cross floor preventing any single observation from collapsing
+ * sizing to zero. Not an operator-tunable threshold.
+ *
+ * Cold-start (warmup): returns 1.0 (neutral — no signal yet).
+ */
+const SIZE_FLOOR = 0.5;
+
+export function sizeDeflection(reading: EquityGradientReading): number {
+  if (reading.warmup) return 1.0;
+  if (reading.acceleration >= 0) return 1.0;
+  if (reading.gradient >= 0) return 1.0;
+  const ratio = Math.abs(reading.acceleration) / Math.max(Math.abs(reading.gradient), 1e-9);
+  return 1 - SIZE_FLOOR * Math.tanh(ratio);
+}
+
 /** Test/diagnostic helper. */
 export function _resetEquityGradient(key?: string): void {
   if (key === undefined) {
