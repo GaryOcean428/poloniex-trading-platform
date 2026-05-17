@@ -35,7 +35,7 @@ table (the same one ``regime_qigwarp.map_warp_to_market`` already uses):
 
 Cold-start fall-through
 -----------------------
-Before ``_WARMUP_TICKS`` (30) observations have accumulated, the
+Before ``_WARMUP_TICKS`` observations have accumulated, the
 observer falls through to ``qig_warp.classify_regime`` with its
 fixed physics thresholds. During the brief warmup the system stays
 conservatively DISORDERED (which is what crypto data classifies as
@@ -74,11 +74,28 @@ logger = logging.getLogger(__name__)
 
 # Warmup buffer-fill threshold. Before this many observations accumulate
 # per process, the observer falls through to qig_warp's fixed-threshold
-# classifier (which classifies crypto data as DISORDERED, conservative
-# default). Chosen to give the rolling-quantile estimator a stable
-# baseline within ~5 minutes of /ml/predict traffic at the observed
-# 7-call/min rate. NOT a calibration knob — a buffer-fill guard.
-_WARMUP_TICKS = 30
+# classifier (which on crypto h/J ratios consistently returns DISORDERED,
+# pinning the kernel in cash-only mode for the entire warmup window).
+#
+# CALIB-2 (2026-05-17): reduced from 30 to 5. Live observation showed
+# every fresh deploy left the kernel inert for the first 30 minutes —
+# the chicken-and-egg flaw is:
+#   - observer needs N samples to derive terciles
+#   - warmup fall-through returns DISORDERED on every crypto tick
+#     (h/J ratio ~100, far above qig_warp's h_c=3.044 calibration)
+#   - so the observer ONLY ever sees DISORDERED-labelled ticks
+# Reducing the warmup to 5 lets the observer take over with its own
+# tercile-derived classification much sooner (≈ 1 min at observed
+# /ml/predict rate). 5 samples is enough for a meaningful tercile
+# (33/67 quantiles on 5 points have positions 1.32 and 2.68, so they
+# bracket distinct samples). NOT a calibration knob — a buffer-fill
+# guard, but sized for the live deploy cadence rather than session
+# stability.
+#
+# Long-term fix is to persist `_ratios` to Redis so warmup survives
+# restarts (tracked separately); reducing the threshold is the
+# tactical fix that doesn't require new infrastructure.
+_WARMUP_TICKS = 5
 
 # Rolling window over which the observer derives its terciles. Larger
 # windows give more stable boundaries but slower adaptation to regime
