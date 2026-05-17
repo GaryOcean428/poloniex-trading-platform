@@ -704,14 +704,30 @@ export class LiveSignalEngine extends EventEmitter {
       // closes the cross-engine blind spot where LiveSignal holds a stale
       // short while Monkey's basin already favors long.
       //
-      // Threshold: re-uses the SAME 0.15 SAFETY_BOUND as the existing
-      // ML-flip Monkey-agreement gate (line ~625). Required streak count
-      // bounds operator-observable risk: at the 60s LiveSignal tick
-      // cadence, 5 ticks ≈ 5 minutes of persistent disagreement before
-      // forced exit. Configurable via env for ops.
+      // Threshold semantics — DIFFERENT from the existing ML-flip
+      // agreement-block gate at line ~625:
+      //   - AGREEMENT-block (0.15): "Monkey must NOT strongly oppose
+      //     an ML-flip-driven exit" — high threshold = strict block.
+      //   - DISAGREEMENT-trigger (0.10, THIS one): "Persistent mild
+      //     Monkey opposition is enough to force-exit even without an
+      //     ML flip" — lower threshold catches the stale-direction-bleed
+      //     pattern where Monkey leans the opposite direction by
+      //     0.10-0.13 (real but mild) for many minutes while ML stays
+      //     at HOLD.
+      //
+      // Calibration: live tape 2026-05-17 showed BTC + ETH shorts
+      // bleeding for 4+ hours while Monkey basinDir = +0.10 to +0.13
+      // (long-leaning). The initial 0.15 threshold (PR #796) didn't
+      // catch this — same order-of-magnitude SAFETY_BOUND but tuned
+      // for "persistent mild disagreement" rather than "strong opposition."
+      //
+      // Required streak count bounds operator-observable risk: at the
+      // 60s LiveSignal tick cadence, 5 ticks ≈ 5 minutes of persistent
+      // disagreement before forced exit. Env-configurable for ops.
       const streakKey = `${symbol}|${existingPos.side}`;
       const monkeySnap = getFreshestMonkeyBasinSnapshot(symbol);
-      const MONKEY_DISAGREEMENT_THRESHOLD = 0.15;  // SAFETY_BOUND, matches existing gate
+      const MONKEY_DISAGREEMENT_THRESHOLD =
+        Number(process.env.LIVE_MONKEY_DISAGREEMENT_THRESHOLD) || 0.10;  // SAFETY_BOUND
       const MONKEY_DISAGREEMENT_TICKS_FOR_EXIT =
         Number(process.env.LIVE_MONKEY_DISAGREEMENT_TICKS) || 5;
       let strongDisagreeNow = false;
