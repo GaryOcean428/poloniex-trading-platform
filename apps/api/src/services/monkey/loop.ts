@@ -135,6 +135,7 @@ import {
   clampMarginToNotionalHeadroom,
 } from './agentEquityBound.js';
 import { planCloseChunks } from './closeChunker.js';
+import { tryAcquireClose, releaseClose, isLikelyRaceLoss } from './close_coordinator.js';
 import { agentLDecide, type AgentLDecision } from './agent_L_classifier.js';
 import { QIGRAMv2State, isQigramV2Enabled } from './agent_L_qigram_v2.js';
 import {
@@ -1542,6 +1543,7 @@ export class MonkeyKernel extends EventEmitter {
     const mode = modeDecision.value;
     if (state.lastMode !== null && state.lastMode !== mode) {
       logger.info('[Monkey] mode transition', {
+        instanceId: this.instanceId,
         symbol,
         from: state.lastMode,
         to: mode,
@@ -4813,6 +4815,34 @@ export class MonkeyKernel extends EventEmitter {
       }
     }
 
+    // Cross-kernel close coordinator: serialize close attempts per
+    // (symbol, side) across both monkey kernels (Position 15m + Swing 5m)
+    // and all agent arms inside each. Without this, both kernels can
+    // independently submit close orders ~280ms apart and the loser gets
+    // Poloniex code=21002 "Position not enough" or sees qty=0 on the
+    // re-read and logs the misleading "exchange_position_vanished".
+    const acquired = tryAcquireClose(symbol, heldSide, this.instanceId);
+    if (acquired.ok === false) {
+      // Sibling kernel/agent is mid-close or just finished — the exchange
+      // position is gone (or about to be). Mark our local row closed so
+      // bookkeeping stays consistent; no exchange call needed.
+      await pool.query(
+        `UPDATE autonomous_trades SET status='closed', exit_price=$1, exit_time=NOW(),
+                exit_reason='race_lost_to_sibling', pnl=$2 WHERE id=$3`,
+        [markPrice, pnlAtDecision, tradeId],
+      ).catch(() => { /* non-fatal */ });
+      const reason = acquired.reason === 'recently_closed'
+        ? `race_lost_to_sibling: closed by ${acquired.heldBy} ${acquired.ageMs}ms ago`
+        : `race_lost_to_sibling: ${acquired.heldBy} mid-close (${acquired.ageMs}ms)`;
+      return { executed: false, orderId: null, reason };
+    }
+
+    // From here on every exit MUST go through `releaseClose`. Use a flag
+    // so the finally-style release can record success-vs-failure for the
+    // cooldown timer.
+    let closeSucceeded = false;
+    try {
+
     // Load credentials + position to know size to close.
     let credentials: { apiKey: string; apiSecret: string; passphrase?: string };
     try {
@@ -4862,14 +4892,22 @@ export class MonkeyKernel extends EventEmitter {
       };
     }
     if (exchangeQty <= 0) {
-      // Position vanished between decide and close — reconciler will
-      // catch the DB row; nothing for us to close on-exchange.
+      // Most often: a sibling kernel/agent's close just settled and the
+      // exchange-side aggregate is already 0. The coordinator lock should
+      // catch most of these via `recently_closed` BEFORE we reach the
+      // getPositions call, but the call can still slip through when the
+      // sibling's close settled between our acquire and our position read.
+      const race = isLikelyRaceLoss(symbol, heldSide, this.instanceId);
+      const dbExitReason = race.raced ? 'race_lost_to_sibling' : 'vanished_before_close';
+      const reason = race.raced
+        ? `race_lost_to_sibling: exchange position already 0 (sibling=${race.siblingId} ${race.ageMs}ms ago)`
+        : 'exchange_position_vanished';
       await pool.query(
         `UPDATE autonomous_trades SET status='closed', exit_price=$1, exit_time=NOW(),
-                exit_reason='vanished_before_close', pnl=$2 WHERE id=$3`,
-        [markPrice, pnlAtDecision, tradeId],
+                exit_reason=$2, pnl=$3 WHERE id=$4`,
+        [markPrice, dbExitReason, pnlAtDecision, tradeId],
       ).catch(() => { /* non-fatal */ });
-      return { executed: false, orderId: null, reason: 'exchange_position_vanished' };
+      return { executed: false, orderId: null, reason };
     }
 
     // Lot-size round.
@@ -4980,9 +5018,28 @@ export class MonkeyKernel extends EventEmitter {
       // exit_order_id reflects every leg. Single-order legacy keeps a single id.
       orderId = orderIds.length === 1 ? orderIds[0]! : orderIds.join(',');
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      // 21002 "Position not enough" with a sibling close in the cooldown
+      // window is a benign race-loss, not a real error. Mark the local
+      // row closed and surface a clear reason; don't spam ERROR.
+      const is21002 = message.includes('21002') || message.toLowerCase().includes('position not enough');
+      if (is21002) {
+        const race = isLikelyRaceLoss(symbol, heldSide, this.instanceId);
+        if (race.raced) {
+          await pool.query(
+            `UPDATE autonomous_trades SET status='closed', exit_price=$1, exit_time=NOW(),
+                    exit_reason=$2, pnl=$3 WHERE id=$4`,
+            [markPrice, 'race_lost_to_sibling', pnlAtDecision, tradeId],
+          ).catch(() => { /* non-fatal */ });
+          return {
+            executed: false, orderId: null,
+            reason: `race_lost_to_sibling: 21002 after sibling close (${race.siblingId} ${race.ageMs}ms ago)`,
+          };
+        }
+      }
       return {
         executed: false, orderId: null,
-        reason: `close_exchange_rejected: ${err instanceof Error ? err.message : String(err)}`,
+        reason: `close_exchange_rejected: ${message}`,
       };
     }
 
@@ -5085,6 +5142,7 @@ export class MonkeyKernel extends EventEmitter {
     }
 
     logger.info('[Monkey] POSITION CLOSED', {
+      instanceId: this.instanceId,
       symbol, heldSide, markPrice, orderId, tradeId,
       pnl: pnlAtDecision.toFixed(4), exitReason,
     });
@@ -5094,7 +5152,11 @@ export class MonkeyKernel extends EventEmitter {
       symbol,
       payload: { heldSide, markPrice, orderId, tradeId, pnl: pnlAtDecision, exitReason },
     });
+    closeSucceeded = true;
     return { executed: true, orderId, reason: 'closed' };
+    } finally {
+      releaseClose(symbol, heldSide, this.instanceId, closeSucceeded);
+    }
   }
 
   /**
@@ -5524,6 +5586,7 @@ export class MonkeyKernel extends EventEmitter {
     }
 
     logger.info(req.isDCAAdd ? '[Monkey] DCA_ADD PLACED' : '[Monkey] ORDER PLACED', {
+      instanceId: this.instanceId,
       symbol, side, orderId,
       margin: marginUsdt.toFixed(2),
       notional: notionalUsdt.toFixed(2),
