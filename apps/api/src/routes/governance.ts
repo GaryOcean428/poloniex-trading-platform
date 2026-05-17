@@ -481,4 +481,35 @@ router.get('/k-consciousness', authenticateToken, async (req: Request, res: Resp
   }
 });
 
+/**
+ * GET /api/governance/perception-parity?limit=N
+ *
+ * Ring buffer of (legacy vs canonical) perception dims 0/1/2 diffs
+ * recorded during the PERCEPTION-1 soak window. Read-only; no auth
+ * required (telemetry surface, no sensitive data). After 24h with
+ * stable behaviour the legacy path will be removed and this
+ * endpoint will be retired alongside it.
+ *
+ * Response:
+ *   tick_count_total: unbounded monotonic
+ *   sample_count:     bounded by ring capacity
+ *   argmax_disagreement_count + ratio: how often legacy and canonical
+ *     argmax to different dims (the bottom-line "are these encodings
+ *     producing different trading-relevant signals?" metric)
+ *   l2_diff: distribution of per-tick L2 distances
+ *   regime_distribution: which canonical regime drove each tick
+ *   rows: last 200 raw rows for spot-checking
+ */
+router.get('/perception-parity', async (_req: Request, res: Response) => {
+  try {
+    const { snapshot } = await import('../services/monkey/perception_parity.js');
+    res.json(snapshot());
+  } catch (err) {
+    res.status(500).json({
+      error: 'perception_parity_unavailable',
+      message: err instanceof Error ? err.message : String(err),
+    });
+  }
+});
+
 export default router;

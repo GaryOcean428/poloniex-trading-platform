@@ -631,6 +631,93 @@ async def ml_predict(request: PredictRequest):
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+class RegimeClassifyRequest(BaseModel):
+    """PERCEPTION-1: TS-side perception fetches the canonical regime
+    classification for a price window. The classifier is the same
+    observer-driven one MIG-2/3 + CAL-3 use — single source of truth."""
+
+    symbol: str = "UNKNOWN"
+    prices: list[float] = []
+
+
+@app.post("/regime/classify_prices")
+async def regime_classify_prices(request: RegimeClassifyRequest):
+    """Canonical regime classifier for TS-side perception (PERCEPTION-1).
+
+    Computes (h, J) from log returns via lattice_inputs, classifies
+    via the observer (CAL-3, falls through to qig_warp during warmup),
+    returns regime + observer state. Single source of truth for
+    regime classification across TS-perception and Python-strategyloop.
+
+    Response shape (stable JSON, suitable for caching):
+      {
+        "regime": "creator" | "preserver" | "dissolver",
+        "h": float, "j": float,
+        "observer_state": {"n": int, "warm": bool, "lower": float|null, "upper": float|null},
+        "symbol": str
+      }
+    """
+    try:
+        import numpy as _np  # noqa: PLC0415
+        from proprietary_core.lattice_inputs import market_to_lattice_inputs  # noqa: PLC0415
+        from proprietary_core.regime_observer import (  # noqa: PLC0415
+            classify_via_observer, observer_snapshot,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=500,
+            detail=f"regime classifier unavailable: {type(exc).__name__}: {exc}",
+        ) from exc
+
+    prices = [float(p) for p in request.prices if p is not None]
+    if len(prices) < 2:
+        return {
+            "regime": "dissolver",
+            "h": 0.0,
+            "j": 0.0,
+            "observer_state": {"n": 0, "warm": False, "lower": None, "upper": None},
+            "symbol": request.symbol,
+            "note": "insufficient prices (<2) — defaulting to dissolver",
+        }
+
+    p_arr = _np.asarray(prices, dtype=_np.float64)
+    p_arr = p_arr[p_arr > 0]
+    if len(p_arr) < 2:
+        return {
+            "regime": "dissolver",
+            "h": 0.0,
+            "j": 0.0,
+            "observer_state": {"n": 0, "warm": False, "lower": None, "upper": None},
+            "symbol": request.symbol,
+            "note": "no positive prices",
+        }
+    returns = _np.diff(p_arr) / p_arr[:-1]
+    h_value, j_value = market_to_lattice_inputs(returns)
+
+    try:
+        regime = classify_via_observer(float(h_value), float(j_value), dim=2)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=500,
+            detail=f"classify_via_observer raised: {type(exc).__name__}: {exc}",
+        ) from exc
+
+    n, bounds = observer_snapshot()
+    state = {
+        "n": int(n),
+        "warm": bool(bounds is not None),
+        "lower": float(bounds.lower) if bounds is not None else None,
+        "upper": float(bounds.upper) if bounds is not None else None,
+    }
+    return {
+        "regime": regime.value,
+        "h": float(h_value),
+        "j": float(j_value),
+        "observer_state": state,
+        "symbol": request.symbol,
+    }
+
+
 MAX_OUTPUT_LENGTH = 4000  # subprocess tail length for /run/ingest responses
 
 

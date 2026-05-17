@@ -1317,13 +1317,68 @@ export class MonkeyKernel extends EventEmitter {
     // 2. PERCEIVE — raw basin then refract through identity.
     // Post #ml-separation: ml fields omitted; perception defaults dims
     // 3..5 to neutral. Agent K's basin is built without ml inputs.
+    //
+    // PERCEPTION-1: fetch the canonical regime from ml-worker (observer-
+    // driven classifier, CAL-3). Fail-soft to null → perception falls
+    // through to the legacy ATR/trend×ml/residual encoding. Both
+    // encodings of dims 0/1/2 are computed each tick; the parity log
+    // captures the diff for the 24h soak window. PERCEPTION_V2_LIVE
+    // flag controls which encoding wins on the wire.
+    let canonicalRegime: 'creator' | 'preserver' | 'dissolver' | null = null;
+    let observerWarm = false;
+    try {
+      const { classifyPrices } = await import('./regime_classifier_client.js');
+      const closes = ohlcv.map((c) => c.close);
+      const cls = await classifyPrices(symbol, closes);
+      if (cls) {
+        canonicalRegime = cls.regime;
+        observerWarm = cls.observer.warm;
+      }
+    } catch (err) {
+      logger.debug('[perception-1] regime classifier fetch failed', {
+        symbol, err: err instanceof Error ? err.message : String(err),
+      });
+    }
+
     const rawBasin = perceive({
       ohlcv,
       equityFraction,
       marginFraction,
       openPositions,
       sessionAgeTicks: state.sessionTicks,
+      canonicalRegime,
     });
+
+    // PERCEPTION-1 parity log: compute the legacy basin separately and
+    // record (legacy, canonical) dims 0/1/2 for soak analysis. This
+    // runs unconditionally so the operator has the diff distribution
+    // available before flipping the flag. Wrapped in try/catch — must
+    // not break the tick.
+    if (canonicalRegime) {
+      try {
+        const legacyBasinForParity = perceive({
+          ohlcv,
+          equityFraction,
+          marginFraction,
+          openPositions,
+          sessionAgeTicks: state.sessionTicks,
+          // Intentionally omit canonicalRegime so this runs the legacy path.
+        });
+        const { recordParity } = await import('./perception_parity.js');
+        recordParity({
+          at_ms: Date.now(),
+          symbol,
+          legacy: [legacyBasinForParity[0]!, legacyBasinForParity[1]!, legacyBasinForParity[2]!],
+          canonical: [rawBasin[0]!, rawBasin[1]!, rawBasin[2]!],
+          regime: canonicalRegime,
+          observer_warm: observerWarm,
+        });
+      } catch (err) {
+        logger.debug('[perception-1] parity record failed', {
+          symbol, err: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
 
     // §3.3 Pillar 2 surface absorption — external input at 30% max
     let basin = refract(rawBasin, state.identityBasin, 0.30);
