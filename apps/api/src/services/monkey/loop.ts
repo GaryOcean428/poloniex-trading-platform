@@ -144,6 +144,7 @@ import {
   getLatestBtcPrice,
   type BtcBeaconReading,
 } from './btc_beacon.js';
+import { recordLaneOutcome, weightedWinRate } from './time_of_day_winrate.js';
 import { agentLDecide, type AgentLDecision } from './agent_L_classifier.js';
 import { QIGRAMv2State, isQigramV2Enabled } from './agent_L_qigram_v2.js';
 import {
@@ -1907,7 +1908,15 @@ export class MonkeyKernel extends EventEmitter {
     // Python kernel's choose_lane). The chosen lane gates size (per-lane
     // budget fraction) AND, when a position is open, scopes the exit
     // gate's TP/SL envelope.
-    const laneDecision = chooseLane(basinState, tapeTrend);
+    // SENSE-2c Phase 2 (#787 follow-up) — fold time-of-day-weighted
+    // per-lane winrate into the softmax. The accumulator is in-memory
+    // and warms up over a session; warmup lanes return rate=0.5 (neutral)
+    // so the chooser falls back to pure basin-geometry softmax.
+    const lanePriorCb = (lane: LaneType): number => {
+      const r = weightedWinRate(lane);
+      return r.rate;
+    };
+    const laneDecision = chooseLane(basinState, tapeTrend, lanePriorCb);
     const chosenLane: LaneType = laneDecision.value;
     const positionLane: 'scalp' | 'swing' | 'trend' =
       chosenLane === 'observe' ? 'swing' : chosenLane;
@@ -2001,6 +2010,17 @@ export class MonkeyKernel extends EventEmitter {
             n: btcBeacon.n,
             warmup: btcBeacon.warmup,
           },
+      // SENSE-2c Phase 2 (#787 follow-up): per-lane time-of-day-weighted
+      // winrate observed across this kernel's session. Folded into
+      // chooseLane via priorShift = rate - 0.5 inside the softmax exp().
+      // Telemetry only here (derivation.lanePriorShift already records
+      // the actual shift applied).
+      sense2c_winrate: {
+        scalp: weightedWinRate('scalp').rate,
+        swing: weightedWinRate('swing').rate,
+        trend: weightedWinRate('trend').rate,
+        observe: weightedWinRate('observe').rate,
+      },
     };
 
     // v0.6.3: Monkey's "held side" is scoped to HER OWN open rows only.
@@ -6003,7 +6023,7 @@ export class MonkeyKernel extends EventEmitter {
       // so legacy rows still write.
       const triple = await pool
         .query(
-          `SELECT sovereignty_score, convergence_type, created_at, exit_time
+          `SELECT sovereignty_score, convergence_type, created_at, exit_time, lane
              FROM autonomous_trades
             WHERE order_id = $1
             ORDER BY created_at DESC LIMIT 1`,
@@ -6016,8 +6036,19 @@ export class MonkeyKernel extends EventEmitter {
             convergence_type?: string | null;
             created_at?: Date | null;
             exit_time?: Date | null;
+            lane?: string | null;
           }
         | undefined;
+      // SENSE-2c Phase 2 (#787 follow-up) — record (lane, win) into the
+      // time-of-day-weighted accumulator. Win = realizedPnl > 0. The
+      // accumulator is read by chooseLane on subsequent ticks. Recording
+      // happens BEFORE the gate; the gate decides what flows into the bank,
+      // not what flows into self-knowledge of "did this lane work at this hour".
+      const closedLane = tripleRow?.lane as 'scalp' | 'swing' | 'trend' | 'observe' | null | undefined;
+      if (closedLane === 'scalp' || closedLane === 'swing' || closedLane === 'trend' || closedLane === 'observe') {
+        const isWin = realizedPnl > 0;
+        recordLaneOutcome(closedLane, isWin);
+      }
       const sovereigntyScore =
         tripleRow?.sovereignty_score == null ? 0.5 : Number(tripleRow.sovereignty_score);
       const convergenceType =

@@ -867,10 +867,18 @@ export type LaneType = 'scalp' | 'swing' | 'trend' | 'observe';
 /**
  * Select execution lane from basin geometry via softmax.
  * Temperature τ = 1/κ — high κ = exploitation, low κ = exploration.
+ *
+ * Optional `lanePrior` callback (SENSE-2c Phase 2) lets the executive
+ * fold a per-lane observed-winrate prior into the softmax: the returned
+ * rate in [0, 1] is added inside the exp() so lanes with stronger
+ * historical performance at the current time-of-day get more probability
+ * mass. Returning null OR 0.5 from the callback means "no signal" and
+ * yields the same softmax as the no-prior case.
  */
 export function chooseLane(
   s: BasinState,
   tapeTrend: number = 0,
+  lanePrior?: (lane: LaneType) => number | null,
 ): ExecutiveDecision<LaneType> {
   // κ → 0 must yield τ → ∞ (exploration); only clamp away from div-by-zero.
   const tau = 1.0 / Math.max(s.kappa, 1e-6);
@@ -887,11 +895,26 @@ export function chooseLane(
     observe: observeScore,
   };
 
+  // SENSE-2c Phase 2 — per-lane session prior, centred on 0.5 so the
+  // additive term in the softmax exp() is 0 at the neutral rate. Lanes
+  // with stronger time-of-day-similar history get a positive shift; lanes
+  // with weaker history get a negative shift. Callbacks returning null are
+  // treated as neutral (shift = 0).
+  const priorShift: Record<LaneType, number> = { scalp: 0, swing: 0, trend: 0, observe: 0 };
+  if (lanePrior) {
+    for (const k of Object.keys(scores) as LaneType[]) {
+      const rate = lanePrior(k);
+      if (rate !== null && Number.isFinite(rate)) {
+        priorShift[k] = rate - 0.5;
+      }
+    }
+  }
+
   const maxS = Math.max(...Object.values(scores));
   const expScores: Record<LaneType, number> = { scalp: 0, swing: 0, trend: 0, observe: 0 };
   let total = 0;
   for (const [k, v] of Object.entries(scores) as [LaneType, number][]) {
-    const e = Math.exp((v - maxS) / Math.max(tau, 1e-6));
+    const e = Math.exp((v - maxS) / Math.max(tau, 1e-6) + priorShift[k]);
     expScores[k] = e;
     total += e;
   }
@@ -947,6 +970,10 @@ export function chooseLane(
       basinVelocity: s.basinVelocity,
       tapeTrend,
       fallbackFromZeroBudget: fallbackFrom && fallbackFrom !== lane ? 1 : 0,
+      lanePriorShiftScalp: priorShift.scalp,
+      lanePriorShiftSwing: priorShift.swing,
+      lanePriorShiftTrend: priorShift.trend,
+      lanePriorShiftObserve: priorShift.observe,
     },
   };
 }
