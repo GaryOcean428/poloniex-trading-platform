@@ -394,6 +394,25 @@ def _handle_predict_strategyloop(payload: dict) -> dict:
         direction=direction,
     )
 
+    # CAL-4 (2026-05-17): feed per-tick observations into the forecast
+    # horizon observer (per-regime amplitude + temporal coherence).
+    # Both the signal and forecast paths benefit — the observer needs
+    # the full traffic to stay warm and adaptive. Compute the most
+    # recent price-change from the OHLCV window we already have.
+    try:
+        from forecast_horizon_observer import observe_tick as _ft_observe_tick  # noqa: PLC0415
+        if len(prices) >= 2 and prices[-2] > 0:
+            recent_change_pct = (prices[-1] - prices[-2]) / prices[-2]
+            import math as _m  # noqa: PLC0415
+            recent_log_return = _m.log(prices[-1] / prices[-2])
+            _ft_observe_tick(
+                regime=regime_val,
+                price_change_pct=recent_change_pct,
+                log_return=recent_log_return,
+            )
+    except Exception as exc:  # noqa: BLE001 — telemetry must not break /ml/predict
+        logger.debug("[cal-4] forecast_horizon_observer.observe_tick failed: %s", exc)
+
     if action == "signal":
         sig = _strategy_to_signal(decision.selected_strategy.value, regime_val, direction)
         sig["strength"] = round(confidence_raw, 4)
@@ -1601,13 +1620,17 @@ async def governance_status():
         out["observable_governance"] = {"error": str(exc), "available": False}
 
     try:
-        from forecast_horizons import (  # noqa: PLC0415
-            _REGIME_HISTORY, _TEMPORAL_SCALE_H, _AMPLITUDE_FLOOR,
-        )
+        from forecast_horizons import _REGIME_HISTORY  # noqa: PLC0415
+        from forecast_horizon_observer import observer_snapshot  # noqa: PLC0415
+        snap = observer_snapshot()
         out["forecast_governance"] = {
             "available": True,
-            "temporal_scale_hours": _TEMPORAL_SCALE_H,
-            "amplitude_floor": dict(_AMPLITUDE_FLOOR),
+            "observer": {
+                "n_per_regime": snap.n_observations,
+                "amplitude_per_regime": snap.amplitude_per_regime,
+                "temporal_scale_per_regime_lags": snap.temporal_scale_per_regime,
+                "warmup_regimes": snap.warmup_regimes,
+            },
             "regime_history_per_symbol": {
                 sym: {"len": len(buf), "recent": list(buf)[-10:]}
                 for sym, buf in _REGIME_HISTORY.items()
