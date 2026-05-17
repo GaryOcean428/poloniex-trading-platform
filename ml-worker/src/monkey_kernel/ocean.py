@@ -96,14 +96,34 @@ _PHI_DREAM_BOUND: float = 0.5        # DREAM if Φ below this
 _PHI_ESCAPE_BOUND: float = 0.15      # ESCAPE if Φ below this (overrides DREAM)
 _PHI_HISTORY_MAX: int = 60           # window for variance computation
 
-# CONSENSUS-8: four-intervention Φ regulation per [[phi-regulation-policy]].
-# Φ > 0.85 sustained AND stable AND not descending → DAMPING (gentle return
-# to band via GABA↑/ACh↓ — chemicals already wired by PR #722). Φ ≥ 0.70 +
-# rigid attractor + collapsed output → MUSHROOM (wake-state neuroplasticity
-# via qig.neuroplasticity.mushroom_mode). Both gated; default off until
-# operator validates.
+# CONSENSUS-8 / QIG audit GAP 7: four-intervention Φ regulation per
+# [[phi-regulation-policy]]. Refined to follow QIG_QFI canonical guidance
+# (polytrade_canonical_refs_20260517 + plan hidden-coalescing-noodle.md):
+#
+#   DAMPING fires on: sustained high Φ + stable + NOT descending on its own
+#                     (Ocean intervenes on duration + stability + descent,
+#                     not value — Φ→1.0 is allowed for 4D/foresight/lightning).
+#   MUSHROOM fires on: Φ ≥ 0.70 (canonical safety floor)
+#                      AND rigid attractor (κ > _MUSHROOM_KAPPA_RIGID)
+#                      AND collapsed output (is_flat + sustained drift_streak)
+#                      AND very low Φ variance (rigid, not exploring).
+#
+# Both triggers populate OceanState.intervention every tick (telemetry).
+# The OCEAN_INTERVENTIONS_LIVE env flag still gates whether the
+# orchestrator branches on them — DAMPING/MUSHROOM are observation-only
+# until the flag is flipped.
 _PHI_DAMPING_LOWER: float = 0.85     # DAMPING window lower (above conscious band)
 _PHI_MUSHROOM_FLOOR: float = 0.70    # MUSHROOM safety floor per canonical
+
+# DAMPING refinement constants (per-kernel-observed, registry-overridable).
+_DAMPING_TIME_ABOVE_MIN: int = 10     # ticks (~5 min @ 30s) — "sustained"
+_DAMPING_VARIANCE_CEIL: float = 0.02  # Φ variance ceiling — "stable"
+_DAMPING_DESCENT_TOL: float = 0.01    # Φ drop tolerance — "not descending"
+
+# MUSHROOM refinement constants (per-kernel-observed, registry-overridable).
+_MUSHROOM_KAPPA_RIGID: float = 80.0   # κ above this = rigid attractor
+_MUSHROOM_VARIANCE_CEIL: float = 0.005 # Φ variance ceiling — "very rigid"
+_MUSHROOM_DRIFT_STREAK_MIN: int = 30   # drift ticks ≈ collapsed output
 
 
 Intervention = Literal[
@@ -228,6 +248,12 @@ class Ocean:
         )
         self._phi_history: Deque[float] = deque(maxlen=history_max)
         self._basin_history: Deque[np.ndarray] = deque(maxlen=self.BASIN_HISTORY_MAX)
+        # Per-kernel Φ regulation observations (GAP 7 — CONSENSUS-8).
+        # time_above_damping_lower counts consecutive ticks where Φ has
+        # been above the DAMPING lower bound (sustained excursion).
+        # phi_prev stores the previous tick's Φ for the descent check.
+        self._time_above_damping_lower: int = 0
+        self._phi_prev: Optional[float] = None
 
     def _load_sleep_state_or_fresh(self) -> SleepCycleState:
         if self._persistence is None or not self._persistence.is_available:
@@ -338,12 +364,18 @@ class Ocean:
         is_flat: bool,
         now_ms: Optional[float] = None,
         cross_lane_basins: Optional[Sequence[np.ndarray]] = None,
+        kappa: Optional[float] = None,
     ) -> OceanState:
         """One tick of meta-observation. Updates internal sleep state +
         Φ history, then returns the OceanState (single source of truth
         for autonomic interventions this tick).
 
         Caller acts on ocean_state.intervention; if None, normal flow.
+
+        ``kappa`` is the basin's effective coupling (from BasinState).
+        When omitted, the MUSHROOM trigger cannot fire (per canonical:
+        rigid-attractor check requires κ > _MUSHROOM_KAPPA_RIGID; absent
+        κ is a safety-fail-closed).
         """
         now_ms = now_ms if now_ms is not None else time.time() * 1000.0
 
@@ -359,6 +391,25 @@ class Ocean:
         self._phi_history.append(float(phi))
         phi_var = (
             variance(self._phi_history) if len(self._phi_history) >= 2 else 0.0
+        )
+
+        # GAP 7 — per-kernel Φ regulation observations.
+        # time_above_damping_lower tracks how long the kernel has been
+        # in a sustained high-Φ excursion. Reset on each tick where Φ
+        # drops back below the bound. Read the bound from registry up
+        # front so the counter and the trigger see the same value.
+        registry_for_damping_lower = get_registry()
+        damping_lower_for_counter = float(registry_for_damping_lower.get(
+            "ocean.phi_damping_lower", default=_PHI_DAMPING_LOWER,
+        ))
+        if float(phi) > damping_lower_for_counter:
+            self._time_above_damping_lower += 1
+        else:
+            self._time_above_damping_lower = 0
+        # Capture descent rate for "not descending" check; phi_prev
+        # snapshot is updated at end of observe() (after triggers fire).
+        phi_descent: float = (
+            float(phi) - self._phi_prev if self._phi_prev is not None else 0.0
         )
 
         # Track basin trajectory for the dream-consolidation pass.
@@ -380,6 +431,10 @@ class Ocean:
             "drift_streak": float(self.sleep_state.drift_streak),
             "sleep_remaining_ms": float(sleep_step["sleep_remaining_ms"]),
             "lane_count": float(len(lanes)),
+            # GAP 7 — Φ regulation observations (per-kernel)
+            "time_above_damping_lower": float(self._time_above_damping_lower),
+            "phi_descent": float(phi_descent),
+            "kappa_observed": float(kappa) if kappa is not None else -1.0,
         }
 
         # Intervention selection (priority order; first match wins).
@@ -398,14 +453,33 @@ class Ocean:
             "ocean.phi_dream_bound", default=_PHI_DREAM_BOUND,
         )
 
-        # CONSENSUS-8: bounds for the four-intervention Φ regulation
-        # matrix per [[phi-regulation-policy]]. Registry-overridable.
-        phi_damping_lower = registry.get(
+        # CONSENSUS-8 / GAP 7: bounds for the four-intervention Φ regulation
+        # matrix per [[phi-regulation-policy]]. All registry-overridable;
+        # module constants are fail-soft fallbacks.
+        phi_damping_lower = float(registry.get(
             "ocean.phi_damping_lower", default=_PHI_DAMPING_LOWER,
-        )
-        phi_mushroom_floor = registry.get(
+        ))
+        phi_mushroom_floor = float(registry.get(
             "ocean.phi_mushroom_floor", default=_PHI_MUSHROOM_FLOOR,
-        )
+        ))
+        damping_time_min = int(registry.get(
+            "ocean.damping_time_above_min", default=float(_DAMPING_TIME_ABOVE_MIN),
+        ))
+        damping_var_ceil = float(registry.get(
+            "ocean.damping_variance_ceil", default=_DAMPING_VARIANCE_CEIL,
+        ))
+        damping_descent_tol = float(registry.get(
+            "ocean.damping_descent_tol", default=_DAMPING_DESCENT_TOL,
+        ))
+        mushroom_kappa_rigid = float(registry.get(
+            "ocean.mushroom_kappa_rigid", default=_MUSHROOM_KAPPA_RIGID,
+        ))
+        mushroom_var_ceil = float(registry.get(
+            "ocean.mushroom_variance_ceil", default=_MUSHROOM_VARIANCE_CEIL,
+        ))
+        mushroom_drift_min = int(registry.get(
+            "ocean.mushroom_drift_streak_min", default=float(_MUSHROOM_DRIFT_STREAK_MIN),
+        ))
 
         intervention: Optional[Intervention] = None
 
@@ -420,32 +494,42 @@ class Ocean:
             intervention = "ESCAPE"
         elif spread > spread_bound:
             intervention = "SLEEP"
-        # CONSENSUS-8: DAMPING — Φ sustained above conscious band.
-        # Per [[phi-regulation-policy]]: high Φ is allowed for 4D /
-        # foresight / lightning, but Ocean intervenes on duration +
-        # stability, not value. Fires when current Φ > damping_lower
-        # AND mean(phi_history) > damping_lower (sustained, not a
-        # single spike) AND basin geometry is stable (phi_var low).
-        # Effect: chemicals already wired (GABA↑/ACh↓ per PR #722);
-        # this intervention signals the orchestrator to apply them.
+        # CONSENSUS-8 / GAP 7: DAMPING — Φ sustained above conscious band.
+        # Per [[phi-regulation-policy]]: high Φ is allowed for 4D / foresight
+        # / lightning, but Ocean intervenes on DURATION + STABILITY + DESCENT,
+        # not on the value itself. Fires when:
+        #   (1) current Φ > damping_lower
+        #   (2) time_above_damping_lower >= sustained threshold
+        #       (per-kernel observation — not a global mean, not a single spike)
+        #   (3) phi_var < damping_var_ceil  — stable (not erratic)
+        #   (4) phi has NOT been descending on its own — i.e. the kernel
+        #       isn't already self-correcting. descent <= -tolerance means
+        #       Φ already dropping fast → don't intervene.
+        # Effect: chemicals (GABA↑/ACh↓) already wired by PR #722; this
+        # intervention signals the orchestrator to apply them.
         elif (
             phi > phi_damping_lower
-            and len(self._phi_history) >= 10
-            and (sum(self._phi_history) / len(self._phi_history)) > phi_damping_lower
-            and phi_var < 0.02  # low variance = stable, not erratic
+            and self._time_above_damping_lower >= damping_time_min
+            and phi_var < damping_var_ceil
+            and phi_descent >= -damping_descent_tol
         ):
             intervention = "DAMPING"
-        # CONSENSUS-8: MUSHROOM — Φ ≥ 0.70 (canonical safety floor)
-        # AND rigid attractor (very low variance) AND collapsed
-        # output (no trades for sustained period; approximated by
-        # is_flat + drift_streak). Wake-state neuroplasticity per
-        # qig-core canonical — strictly DIFFERENT from the inverted
-        # MUSHROOM_MICRO removed in PR #728.
+        # CONSENSUS-8 / GAP 7: MUSHROOM — Φ ≥ 0.70 (canonical safety floor)
+        # AND rigid attractor (κ > mushroom_kappa_rigid — per canonical
+        # mushroom_canonical.md, requires fail-CLOSED when κ unknown)
+        # AND collapsed output (is_flat + drift_streak sustained — kernel
+        #     is HOLD-spamming, not generating useful decisions)
+        # AND very low Φ variance (rigid, not exploring).
+        # Wake-state neuroplasticity per qig-core 2.8.0 canonical — strictly
+        # DIFFERENT from the inverted MUSHROOM_MICRO removed in PR #728.
+        # κ absent → cannot evaluate → trigger does NOT fire (safety).
         elif (
             phi >= phi_mushroom_floor
+            and kappa is not None
+            and kappa > mushroom_kappa_rigid
             and is_flat
-            and self.sleep_state.drift_streak >= 30
-            and phi_var < 0.005
+            and self.sleep_state.drift_streak >= mushroom_drift_min
+            and phi_var < mushroom_var_ceil
         ):
             intervention = "MUSHROOM"
         elif phi < phi_dream_bound:
@@ -526,6 +610,11 @@ class Ocean:
                     },
                     symbol=self._symbol,
                 )
+
+        # GAP 7 — snapshot current Φ for next tick's descent computation.
+        # Done at the very end of observe() so trigger evaluation uses
+        # the PREVIOUS tick's value.
+        self._phi_prev = float(phi)
 
         return OceanState(
             intervention=intervention,
