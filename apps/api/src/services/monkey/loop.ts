@@ -236,6 +236,15 @@ const REWARD_QUEUE_MAX = 50;
  */
 const REGIME_STABILITY_TICKS_FOR_EXIT =
   Number(process.env.MONKEY_REGIME_STABILITY_TICKS_FOR_EXIT) || 3;
+/** CALIB-1 (2026-05-17): require N consecutive ticks of the conviction-
+ *  failed condition before the exit fires. Same anti-noise rationale as
+ *  REGIME_STABILITY_TICKS_FOR_EXIT — single-tick noise was driving most
+ *  of the chop-zone losses observed in the 2026-05-17 CSV analysis.
+ *  Default 2 is the minimum-evidence sentinel (1 = noise; ≥ 2 = signal),
+ *  matching the HISTORY_MIN_SAMPLES=2 pattern in neurochemistry. Operator
+ *  can override via MONKEY_CONVICTION_STABILITY_TICKS_FOR_EXIT env. */
+const CONVICTION_STABILITY_TICKS_FOR_EXIT =
+  Number(process.env.MONKEY_CONVICTION_STABILITY_TICKS_FOR_EXIT) || 2;
 
 /**
  * v0.8.7 kill switch — when MONKEY_TRADING_PAUSED=true, gate
@@ -456,6 +465,14 @@ interface SymbolState {
    *  for the lane. Driven by the rejustification call site — increments
    *  on divergent tick, resets to 0 when regime returns to anchor. */
   regimeChangeStreakByLane: Record<string, number>;
+  /** CALIB-1 (2026-05-17): consecutive-tick counter for the conviction-
+   *  failed condition (emotions.confidence < emotions.anxiety+confusion)
+   *  per held-position lane. Drives the rejustification call site — the
+   *  exit only fires after >= CONVICTION_STABILITY_TICKS_FOR_EXIT
+   *  consecutive ticks, mirroring the regime_change streak gate above.
+   *  2026-05-17 CSV analysis showed single-tick conviction noise was
+   *  driving 60% of losses in chop-zone scalping. */
+  convictionFailedStreakByLane: Record<string, number>;
   /** Wall-clock entry timestamp (ms) per lane. Used by the stale-bleed
    *  gate: positions held longer than STALE_BLEED_MIN_DURATION_S at
    *  worse than STALE_BLEED_ROI_THRESHOLD ROI exit. Cleared on close. */
@@ -1150,6 +1167,7 @@ export class MonkeyKernel extends EventEmitter {
       phiAtOpenByLane: {},
       basinAtOpenByLane: {},
       regimeChangeStreakByLane: {},
+      convictionFailedStreakByLane: {},
       entryTimeMsByLane: {},
       integrationHistory: [],
       latestBasinSnapshot: null,
@@ -2034,6 +2052,19 @@ export class MonkeyKernel extends EventEmitter {
             state.regimeChangeStreakByLane[heldLane] = 0;
           }
         }
+        // CALIB-1 (2026-05-17): per-lane conviction-failed streak.
+        // Increments on each tick where confidence < anxiety+confusion;
+        // resets to 0 the moment it flips false. Same pattern as the
+        // regime streak above. Caller pre-computes the condition since
+        // we have direct access to emotions here.
+        const convictionFailedConditionNow =
+          emotions.confidence < emotions.anxiety + emotions.confusion;
+        if (convictionFailedConditionNow) {
+          state.convictionFailedStreakByLane[heldLane] =
+            (state.convictionFailedStreakByLane[heldLane] ?? 0) + 1;
+        } else {
+          state.convictionFailedStreakByLane[heldLane] = 0;
+        }
         const heldDurationS = entryTimeMs !== undefined
           ? (Date.now() - entryTimeMs) / 1000
           : undefined;
@@ -2041,10 +2072,12 @@ export class MonkeyKernel extends EventEmitter {
           ? unrealizedPnl / (positionNotional / Math.max(1, leverage.value))
           : undefined;
         const regimeChangeStreak = state.regimeChangeStreakByLane[heldLane] ?? 0;
+        const convictionFailedStreak = state.convictionFailedStreakByLane[heldLane] ?? 0;
         // Registry-controlled stability requirement; default 3 ticks.
         // TS has no parameter registry yet — the constant lives in
         // executive.ts mirroring ml-worker's _DEFAULT_REGIME_STABILITY_TICKS_FOR_EXIT.
         const regimeStabilityTicksRequired = REGIME_STABILITY_TICKS_FOR_EXIT;
+        const convictionFailedTicksRequired = CONVICTION_STABILITY_TICKS_FOR_EXIT;
         const rejustResult = !exitFired
           ? evaluateRejustification({
               regimeAtOpen,
@@ -2055,6 +2088,8 @@ export class MonkeyKernel extends EventEmitter {
               regimeConfidence: regimeReading.confidence,
               regimeChangeStreak,
               regimeStabilityTicksRequired,
+              convictionFailedStreak,
+              convictionFailedTicksRequired,
               basinNow: basin,
               basinAtOpen,
               heldDurationS,
@@ -2066,6 +2101,8 @@ export class MonkeyKernel extends EventEmitter {
               frThreshold: 1 / Math.PI,
               regimeChangeStreak,
               regimeStabilityTicksRequired,
+              convictionFailedStreak,
+              convictionFailedTicksRequired,
             };
         const rejust: Record<string, unknown> = {
           checked: rejustResult.checked,
@@ -2797,6 +2834,7 @@ export class MonkeyKernel extends EventEmitter {
             state.phiAtOpenByLane[entryLane] = phi;
             state.basinAtOpenByLane[entryLane] = Float64Array.from(basin) as Basin;
             state.regimeChangeStreakByLane[entryLane] = 0;
+            state.convictionFailedStreakByLane[entryLane] = 0;
             state.entryTimeMsByLane[entryLane] = Date.now();
           }
         }
@@ -2840,6 +2878,7 @@ export class MonkeyKernel extends EventEmitter {
             delete state.phiAtOpenByLane[scalpLane];
             delete state.basinAtOpenByLane[scalpLane];
             delete state.regimeChangeStreakByLane[scalpLane];
+            delete state.convictionFailedStreakByLane[scalpLane];
             delete state.entryTimeMsByLane[scalpLane];
             // Mirror legacy scalars for any non-lane-aware reader.
             state.peakPnlUsdt = null;
@@ -2891,6 +2930,7 @@ export class MonkeyKernel extends EventEmitter {
             delete state.phiAtOpenByLane[reversalLane];
             delete state.basinAtOpenByLane[reversalLane];
             delete state.regimeChangeStreakByLane[reversalLane];
+            delete state.convictionFailedStreakByLane[reversalLane];
             delete state.entryTimeMsByLane[reversalLane];
             // v0.8.7 kill switch — close on the reverse path proceeded
             // (exits unaffected); skip the new-entry leg when paused.
@@ -2956,6 +2996,7 @@ export class MonkeyKernel extends EventEmitter {
               state.phiAtOpenByLane[reversalLane] = phi;
               state.basinAtOpenByLane[reversalLane] = Float64Array.from(basin) as Basin;
               state.regimeChangeStreakByLane[reversalLane] = 0;
+              state.convictionFailedStreakByLane[reversalLane] = 0;
               state.entryTimeMsByLane[reversalLane] = Date.now();
               reason += ` | closed@${lastPrice.toFixed(2)} pnl=${pnlAtDecision.toFixed(4)} | new ${newSide} orderId=${monkeyOrderId}`;
             } else {

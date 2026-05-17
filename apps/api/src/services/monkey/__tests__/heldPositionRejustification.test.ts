@@ -210,19 +210,103 @@ describe('held-position rejustification — phi check fires', () => {
 });
 
 describe('held-position rejustification — conviction check fires', () => {
-  it('confidence < anxiety + confusion exits', () => {
-    // 0.4 < 0.3 + 0.2 = 0.5 — conviction fails
+  it('confidence < anxiety + confusion exits AFTER streak >= required', () => {
+    // 0.4 < 0.3 + 0.2 = 0.5 — conviction fails on this tick. With
+    // CALIB-1 (#778) the exit only fires when the streak meets the
+    // required minimum (default 2).
     const out = evaluateRejustification({
       regimeAtOpen: MonkeyMode.INVESTIGATION,
       phiAtOpen: 0.27,
       regimeNow: MonkeyMode.INVESTIGATION,
       phiNow: 0.25,
       emotions: WEAK_EMO,
+      convictionFailedStreak: 2,  // post-debounce: 2nd consecutive tick
     });
     expect(out.fired).toBe('conviction_failed');
     expect(out.reason).toMatch(/^conviction_failed/);
     expect(out.reason).toContain('0.400');
     expect(out.reason).toContain('0.500');
+    expect(out.reason).toContain('for 2 consecutive ticks');
+  });
+});
+
+describe('CALIB-1 — conviction-failed debounce (single-tick noise rejection)', () => {
+  it('does NOT fire on the first tick of conviction failure (streak=1)', () => {
+    // Single-tick conviction noise — should be rejected by the debounce
+    // gate. Same anti-noise rationale as the regime_change streak filter
+    // (PR #629). 2026-05-17 CSV analysis showed this driving 60% of
+    // chop-zone losses.
+    const out = evaluateRejustification({
+      regimeAtOpen: MonkeyMode.INVESTIGATION,
+      phiAtOpen: 0.27,
+      regimeNow: MonkeyMode.INVESTIGATION,
+      phiNow: 0.25,
+      emotions: WEAK_EMO,
+      convictionFailedStreak: 1,  // first tick — noise candidate
+    });
+    expect(out.fired).toBeNull();
+  });
+
+  it('fires on the 2nd consecutive tick when default required = 2', () => {
+    const out = evaluateRejustification({
+      regimeAtOpen: MonkeyMode.INVESTIGATION,
+      phiAtOpen: 0.27,
+      regimeNow: MonkeyMode.INVESTIGATION,
+      phiNow: 0.25,
+      emotions: WEAK_EMO,
+      convictionFailedStreak: 2,
+    });
+    expect(out.fired).toBe('conviction_failed');
+  });
+
+  it('respects operator-set required ticks (3-tick override)', () => {
+    const at2 = evaluateRejustification({
+      regimeAtOpen: MonkeyMode.INVESTIGATION,
+      phiAtOpen: 0.27,
+      regimeNow: MonkeyMode.INVESTIGATION,
+      phiNow: 0.25,
+      emotions: WEAK_EMO,
+      convictionFailedStreak: 2,
+      convictionFailedTicksRequired: 3,
+    });
+    expect(at2.fired).toBeNull();
+    const at3 = evaluateRejustification({
+      regimeAtOpen: MonkeyMode.INVESTIGATION,
+      phiAtOpen: 0.27,
+      regimeNow: MonkeyMode.INVESTIGATION,
+      phiNow: 0.25,
+      emotions: WEAK_EMO,
+      convictionFailedStreak: 3,
+      convictionFailedTicksRequired: 3,
+    });
+    expect(at3.fired).toBe('conviction_failed');
+  });
+
+  it('streak 0 (condition currently false) never fires', () => {
+    const out = evaluateRejustification({
+      regimeAtOpen: MonkeyMode.INVESTIGATION,
+      phiAtOpen: 0.27,
+      regimeNow: MonkeyMode.INVESTIGATION,
+      phiNow: 0.25,
+      emotions: WEAK_EMO,
+      convictionFailedStreak: 0,
+    });
+    expect(out.fired).toBeNull();
+  });
+
+  it('absent streak (undefined input) defaults to 0 — fail-open for legacy callers', () => {
+    // Callers that haven't migrated to CALIB-1 yet keep old behaviour
+    // (no debounce, but also no fire since default streak=0). This is
+    // intentionally fail-OPEN so the caller has to opt in.
+    const out = evaluateRejustification({
+      regimeAtOpen: MonkeyMode.INVESTIGATION,
+      phiAtOpen: 0.27,
+      regimeNow: MonkeyMode.INVESTIGATION,
+      phiNow: 0.25,
+      emotions: WEAK_EMO,
+      // convictionFailedStreak not passed
+    });
+    expect(out.fired).toBeNull();
   });
 });
 
@@ -577,16 +661,19 @@ describe('held-position rejustification — stale_bleed', () => {
 // ─── Layer 2B port verification (added 2026-05-01) ────────────────
 
 describe('held-position rejustification — conviction post-Layer-2B-port', () => {
-  it('catches stale-bleed pattern via low confidence + small anxiety', () => {
+  it('catches stale-bleed pattern via low confidence + small anxiety (post-CALIB-1 streak gate)', () => {
     // The path that was structurally dead pre-2026-05-01. With real
     // computeEmotions output, conviction now catches positions where
     // the kernel's own self-read no longer supports the trade.
+    // Post-CALIB-1 (#778) requires the convictionFailedStreak >=
+    // default 2 ticks to fire — passing the post-debounce state here.
     const out = evaluateRejustification({
       regimeAtOpen: MonkeyMode.INVESTIGATION,
       phiAtOpen: 0.27,
       regimeNow: MonkeyMode.INVESTIGATION,
       phiNow: 0.25,
       emotions: { confidence: 0.05, anxiety: 0.15, confusion: 0.10 },
+      convictionFailedStreak: 2,
     });
     expect(out.fired).toBe('conviction_failed');
   });
