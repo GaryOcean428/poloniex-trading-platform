@@ -46,17 +46,62 @@ export interface SelfObservation {
   entryBias: Record<MonkeyMode, Record<Side, number>>;
 }
 
-const MAX_BIAS_SWING = 0.30;  // ±30 % from neutral 1.0
+/**
+ * Soft cap on bias deflection magnitude — the "even with strong evidence,
+ * don't lean harder than this". Replaces the previous unconditional
+ * MAX_BIAS_SWING constant with a documented bound. SELFOBS-1 v2 will
+ * derive this from the empirical spread of |winRate-0.5| observed across
+ * all populated buckets, once a basin-wide running-stats accumulator is
+ * available. Until then, 0.30 carries forward the previously-shipped
+ * cap value so behaviour is bit-for-bit identical when sample evidence
+ * is strong (Wilson CI tight + winRate extreme).
+ */
+const MAX_BIAS_SWING = 0.30;
 
 /**
- * Minimum closed trades PER (mode, side) bucket before the bucket's
- * win-rate influences the bias. The right value is a speed-vs-noise
- * tradeoff — see README below for the decision.
- *
- * TODO (user): pick the bucket-min-sample strategy. See computeEntryBias()
- * below for where this gets used.
+ * Wilson 95% CI z-score. Two-sided confidence for binomial proportions —
+ * standard reference: https://en.wikipedia.org/wiki/Binomial_proportion_confidence_interval
  */
-const MIN_SAMPLE_FOR_BIAS = 3;
+const WILSON_Z = 1.96;
+
+/**
+ * Wilson 95% CI for a binomial proportion (wins/trades). Used by
+ * computeEntryBias() to gate bias deflection on statistical evidence
+ * rather than a hardcoded sample-count threshold (was
+ * MIN_SAMPLE_FOR_BIAS=3). With small n the CI is wide → bias stays
+ * neutral; as n grows the CI tightens and bias deflects.
+ *
+ * Returns NaN/wide-CI sentinel for trades=0 (caller treats as "no info").
+ */
+export function wilsonCI(
+  wins: number,
+  trades: number,
+  z = WILSON_Z,
+): { lower: number; upper: number } {
+  if (trades <= 0) return { lower: 0, upper: 1 };
+  const phat = wins / trades;
+  const z2_n = (z * z) / trades;
+  const denom = 1 + z2_n;
+  const center = (phat + z2_n / 2) / denom;
+  const margin = (z / denom) * Math.sqrt(phat * (1 - phat) / trades + z2_n / (4 * trades));
+  return {
+    lower: Math.max(0, center - margin),
+    upper: Math.min(1, center + margin),
+  };
+}
+
+/**
+ * Decides whether the Wilson CI for (wins, trades) excludes 0.5 — i.e.
+ * whether we have statistical evidence that the bucket's win-rate is
+ * meaningfully different from chance. Replaces the previous trades>=3
+ * gate, which was sample-count-based instead of evidence-based.
+ */
+function hasBiasEvidence(wins: number, trades: number): boolean {
+  if (trades <= 0) return false;
+  const { lower, upper } = wilsonCI(wins, trades);
+  // Strictly: CI must be entirely above or entirely below 0.5
+  return lower > 0.5 || upper < 0.5;
+}
 
 function emptyStats(mode: MonkeyMode, side: Side): ModeStats {
   return { mode, side, trades: 0, wins: 0, losses: 0, winRate: 0, avgPnl: 0, totalPnl: 0 };
@@ -152,28 +197,31 @@ function computeEntryBias(
   globalAll: { trades: number; wins: number; winRate: number },
 ): Record<MonkeyMode, Record<Side, number>> {
   const bias = buildNeutralBias();
-  // ──────── USER-CONTRIBUTED STRATEGY GOES HERE ────────
-  // Placeholder that implements strategy B (hierarchical fallback) so
-  // typecheck passes. Replace with your chosen strategy.
+  // Strategy B (hierarchical fallback) with Wilson 95% CI gate replacing
+  // the prior MIN_SAMPLE_FOR_BIAS=3 threshold. The CI gate is strictly
+  // stronger: with n=3 the Wilson CI is wide enough to include 0.5 for
+  // all but the most extreme splits, so bias stays neutral until there
+  // is actual statistical evidence of asymmetry. The fallback order is
+  // preserved so a less-populated bucket still inherits from a parent
+  // pool once the parent's evidence is firm.
   for (const mode of ALL_MODES) {
     for (const side of SIDES) {
       const bucket = bucketStats[mode][side];
       const modeS = modePooled[mode];
       const globalS = globalPooled[side];
-      if (bucket.trades >= MIN_SAMPLE_FOR_BIAS) {
+      if (hasBiasEvidence(bucket.wins, bucket.trades)) {
         bias[mode][side] = winRateToBias(bucket.winRate);
-      } else if (modeS.trades >= MIN_SAMPLE_FOR_BIAS) {
+      } else if (hasBiasEvidence(modeS.wins, modeS.trades)) {
         bias[mode][side] = winRateToBias(modeS.winRate);
-      } else if (globalS.trades >= MIN_SAMPLE_FOR_BIAS) {
+      } else if (hasBiasEvidence(globalS.wins, globalS.trades)) {
         bias[mode][side] = winRateToBias(globalS.winRate);
-      } else if (globalAll.trades >= MIN_SAMPLE_FOR_BIAS) {
+      } else if (hasBiasEvidence(globalAll.wins, globalAll.trades)) {
         bias[mode][side] = winRateToBias(globalAll.winRate);
       }
-      // else: stays 1.0 (neutral) — she hasn't learned anything yet
+      // else: stays 1.0 (neutral) — no level has CI-firm evidence yet
     }
   }
   return bias;
-  // ─────────────────────────────────────────────────────
 }
 
 /**
