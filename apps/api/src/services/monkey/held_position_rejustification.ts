@@ -87,6 +87,24 @@ export interface RejustificationInput {
   basinNow?: Basin;
   basinAtOpen?: Basin;
   /**
+   * Streak of consecutive ticks where the conviction-failed condition
+   * (confidence < anxiety + confusion) has been true. CALIB-1 (2026-05-17)
+   * mirrors the regime_change streak gate at line 175 — same anti-noise
+   * rationale (PR #629). Single-tick conviction noise was driving 60% of
+   * losses in chop-zone observed via the 2026-05-17 CSV analysis. Caller
+   * tracks the streak per-lane; observer-style reset to 0 on any tick
+   * where the condition flips false. Undefined treats as 0 (fail-open;
+   * no debounce — preserves pre-CALIB-1 behaviour for callers that
+   * haven't migrated).
+   */
+  convictionFailedStreak?: number;
+  /**
+   * Required streak length before the conviction_failed exit fires.
+   * Default 2 ticks — minimum-evidence sentinel (1 tick = noise; ≥ 2 =
+   * signal). Same pattern as HISTORY_MIN_SAMPLES=2 in neurochemistry.
+   */
+  convictionFailedTicksRequired?: number;
+  /**
    * Held duration in seconds for the stale-bleed gate. Undefined
    * disables the stale-bleed check (legacy callers / no entry timestamp).
    */
@@ -121,6 +139,11 @@ export interface RejustificationResult {
   regimeChangeStreak: number;
   /** Required streak length before the regime exit fires. */
   regimeStabilityTicksRequired: number;
+  /** Streak of consecutive ticks where conviction-failed condition was
+   *  true (CALIB-1 #778). 0 when the condition is currently false. */
+  convictionFailedStreak: number;
+  /** Required streak length before conviction_failed fires (CALIB-1). */
+  convictionFailedTicksRequired: number;
 }
 
 /**
@@ -146,6 +169,8 @@ export function evaluateRejustification(
   const regimeConfidence = input.regimeConfidence ?? 1.0;
   const regimeChangeStreak = input.regimeChangeStreak ?? 0;
   const regimeStabilityTicksRequired = input.regimeStabilityTicksRequired ?? 3;
+  const convictionFailedStreak = input.convictionFailedStreak ?? 0;
+  const convictionFailedTicksRequired = input.convictionFailedTicksRequired ?? 2;
   const frThreshold = PI_STRUCT_GRAVITATING_FRACTION;  // 1/π ≈ 0.318
   let frDistance: number | null = null;
   if (input.basinNow !== undefined && input.basinAtOpen !== undefined) {
@@ -156,6 +181,7 @@ export function evaluateRejustification(
       checked: false, fired: null, reason: '', phiFloor: null,
       frDistance, frThreshold,
       regimeChangeStreak, regimeStabilityTicksRequired,
+      convictionFailedStreak, convictionFailedTicksRequired,
     };
   }
   const phiFloor = phiAtOpen / PHI_GOLDEN_FLOOR_RATIO;
@@ -190,6 +216,7 @@ export function evaluateRejustification(
           + `${regimeChangeStreak} ticks `
           + `(confidence ${regimeConfidence.toFixed(3)} > 1/φ)`,
         phiFloor,
+        convictionFailedStreak, convictionFailedTicksRequired,
         frDistance, frThreshold,
         regimeChangeStreak, regimeStabilityTicksRequired,
       };
@@ -203,16 +230,33 @@ export function evaluateRejustification(
       phiFloor,
       frDistance, frThreshold,
       regimeChangeStreak, regimeStabilityTicksRequired,
+      convictionFailedStreak, convictionFailedTicksRequired,
     };
   }
-  if (emotions.confidence < emotions.anxiety + emotions.confusion) {
+  // CALIB-1 (2026-05-17): require convictionFailedStreak >= required ticks
+  // before firing. Mirrors the regime_change streak gate above (rationale
+  // PR #629 — single-tick noise drove 22% win rate in 2026-05-01 16:11
+  // incident; same anti-noise logic applies here). 2026-05-17 CSV
+  // analysis: 60% loss rate at $0.08 avg loss vs $0.10 avg win, dominated
+  // by single-tick conviction-failed exits in chop-zone scalping. Default
+  // requirement is 2 ticks — minimum-evidence sentinel, same pattern as
+  // HISTORY_MIN_SAMPLES=2 in neurochemistry.
+  if (
+    emotions.confidence < emotions.anxiety + emotions.confusion
+    && convictionFailedStreak >= convictionFailedTicksRequired
+  ) {
     return {
       checked: true,
       fired: 'conviction_failed',
-      reason: `conviction_failed: conf=${emotions.confidence.toFixed(3)} < anxiety+confusion=${(emotions.anxiety + emotions.confusion).toFixed(3)}`,
+      reason:
+        `conviction_failed: conf=${emotions.confidence.toFixed(3)} `
+        + `< anxiety+confusion=${(emotions.anxiety + emotions.confusion).toFixed(3)} `
+        + `for ${convictionFailedStreak} consecutive ticks `
+        + `(≥ ${convictionFailedTicksRequired} required)`,
       phiFloor,
       frDistance, frThreshold,
       regimeChangeStreak, regimeStabilityTicksRequired,
+      convictionFailedStreak, convictionFailedTicksRequired,
     };
   }
   // 4. STALE_BLEED — belt-and-braces guard.
@@ -232,10 +276,12 @@ export function evaluateRejustification(
       phiFloor,
       frDistance, frThreshold,
       regimeChangeStreak, regimeStabilityTicksRequired,
+      convictionFailedStreak, convictionFailedTicksRequired,
     };
   }
   return {
     checked: true, fired: null, reason: '', phiFloor,
+    convictionFailedStreak, convictionFailedTicksRequired,
     frDistance, frThreshold,
     regimeChangeStreak, regimeStabilityTicksRequired,
   };
