@@ -145,6 +145,7 @@ import {
   type BtcBeaconReading,
 } from './btc_beacon.js';
 import { recordLaneOutcome, weightedWinRate } from './time_of_day_winrate.js';
+import { observeFundingArb } from './funding_arb_observer.js';
 import {
   evaluateCell,
   regimeToDirection,
@@ -765,6 +766,13 @@ export class MonkeyKernel extends EventEmitter {
     lane: 'scalp' | 'swing' | 'trend';
   }> = new Map();
   private static readonly LIMIT_MAKER_STALE_MS = 120_000;  // SAFETY_BOUND: 2 min
+  /**
+   * Funding-arb #794 — latest funding rate per symbol with timestamp.
+   * Populated by processSymbol after each funding-rate fetch; consumed
+   * by the cross-symbol pair observer (funding_arb_observer.ts) when
+   * both BTC and ETH have fresh (< 2 min) data.
+   */
+  private latestFundingBySymbol: Map<string, { rate: number; atMs: number }> = new Map();
   /**
    * ML-outage observability counter (v0.8.3.5d). Increments every time
    * mlPredictionService.getTradingSignal returns {error: true}. Used to
@@ -1429,6 +1437,32 @@ export class MonkeyKernel extends EventEmitter {
     // modulate anxiety for held positions (P14: real-world boundary → STATE).
     const fundingRateResp = await poloniexFuturesService.getFundingRate(symbol).catch(() => null) as { fundingRate?: string | number } | null;
     const fundingRate8h = Number(fundingRateResp?.fundingRate) || 0;
+
+    // Funding-arb #794 (Class B #7) — push this symbol's latest rate
+    // into the cross-symbol cache. When both BTC and ETH have fresh
+    // (< 2 min) observations, observe the pair into the arb observer
+    // and log signal if it fires. Telemetry-first wire-in.
+    if (Number.isFinite(fundingRate8h) && fundingRate8h !== 0) {
+      this.latestFundingBySymbol.set(symbol, { rate: fundingRate8h, atMs: Date.now() });
+      const btc = this.latestFundingBySymbol.get('BTC_USDT_PERP');
+      const eth = this.latestFundingBySymbol.get('ETH_USDT_PERP');
+      const now = Date.now();
+      if (btc && eth && (now - btc.atMs) < 120_000 && (now - eth.atMs) < 120_000) {
+        const reading = observeFundingArb(btc.rate, eth.rate);
+        if (reading.signalFires) {
+          logger.info('[Monkey] FUNDING_ARB signal fires', {
+            symbol_triggered: symbol,
+            btcFunding: reading.btcFunding,
+            ethFunding: reading.ethFunding,
+            currentGap: reading.currentGap,
+            zScore: reading.zScore,
+            zUpperTercile: reading.zUpperTercile,
+            suggestedDirection: reading.suggestedDirection,
+            samples: reading.n,
+          });
+        }
+      }
+    }
 
     const raw = await mlPredictionService.getTradingSignal(symbol, ohlcv, lastPrice);
     const mlSignal = String(raw?.signal ?? 'HOLD').toUpperCase();
