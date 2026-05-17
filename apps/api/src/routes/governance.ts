@@ -481,4 +481,49 @@ router.get('/k-consciousness', authenticateToken, async (req: Request, res: Resp
   }
 });
 
+/**
+ * GET /api/governance/status
+ * Thin proxy to ml-worker's GET /governance/status — surfaces the two
+ * governance layers (observable-governance distributional drift +
+ * forecast-horizon observer state) that previously required curl to
+ * inspect. The UI calls this directly so operators don't have to
+ * remember the ml-worker URL or use the CLI.
+ */
+router.get('/status', authenticateToken, async (_req: Request, res: Response) => {
+  const base = (process.env.ML_WORKER_URL ?? '').replace(/\/$/, '');
+  if (!base) {
+    return res.status(503).json({
+      error: 'ml_worker_unconfigured',
+      message: 'ML_WORKER_URL env var is not set',
+      ml_worker_url_configured: false,
+    });
+  }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
+  try {
+    const r = await fetch(`${base}/governance/status`, { signal: controller.signal });
+    if (!r.ok) {
+      return res.status(502).json({
+        error: 'ml_worker_governance_status_non_2xx',
+        status: r.status,
+        ml_worker_url_configured: true,
+      });
+    }
+    const body = await r.json();
+    return res.json({
+      ...body,
+      ml_worker_url_configured: true,
+      fetched_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    return res.status(502).json({
+      error: 'ml_worker_unreachable',
+      message: err instanceof Error ? err.message : String(err),
+      ml_worker_url_configured: true,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+});
+
 export default router;
