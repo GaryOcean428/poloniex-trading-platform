@@ -46,9 +46,29 @@ Side = Literal["long", "short"]
 class ExitConfig:
     """Per-user trading config passed in by orchestration layer.
     Sourced from agent_config / TradingConfig in the TS side.
+
+    The 2%/4% defaults are the SAFETY_BOUNDS layer (P25): operator
+    knobs that cap the effective thresholds after regime adaptation.
+    Regime-adaptive scaling is supplied separately via the
+    ``modifiers`` argument to ``decide_exit`` so this dataclass stays
+    a pure config record.
     """
     stop_loss_percent: float = 2.0    # e.g. 2 = 2%
     take_profit_percent: float = 4.0
+
+
+@dataclass(frozen=True)
+class ExitModifiers:
+    """Regime-derived multipliers for SL/TP thresholds (P25).
+
+    Mirrors the dataclass defined in ``monkey_kernel.regime`` so this
+    trading module can stay decoupled from the kernel module — callers
+    that have a kernel ``regime.ExitModifiers`` instance can pass it
+    in directly (duck-typed: only ``sl_multiplier`` / ``tp_multiplier``
+    attributes are read).
+    """
+    sl_multiplier: float = 1.0
+    tp_multiplier: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -103,18 +123,28 @@ def decide_exit(
     position: PositionSnapshot,
     config: ExitConfig,
     analysis: Optional[MarketAnalysis] = None,
+    modifiers: Optional[ExitModifiers] = None,
 ) -> ExitDecision:
     """Run the three-gate exit chain. First-trigger-wins matches the
-    TS managePositions flow. `analysis` is optional because in TS it's
+    TS managePositions flow. ``analysis`` is optional because in TS it's
     a .get() lookup that may miss — in that case trend-reversal can't
     fire but stop_loss / take_profit still can.
+
+    ``modifiers`` is the regime-adaptive layer (P25): when supplied,
+    SL and TP thresholds are scaled by ``modifiers.sl_multiplier`` and
+    ``modifiers.tp_multiplier`` respectively before the gates evaluate.
+    The base ``config`` thresholds remain the SAFETY_BOUNDS the operator
+    set; the modifier only modulates within that envelope at the
+    decision-time tick.
 
     Returns ExitDecision(should_close=False, reason='hold', …) when no
     trigger fires — caller continues holding.
     """
     pnl_pct = position.pnl_percent()
-    sl_thr = config.stop_loss_percent
-    tp_thr = config.take_profit_percent
+    sl_mult = modifiers.sl_multiplier if modifiers is not None else 1.0
+    tp_mult = modifiers.tp_multiplier if modifiers is not None else 1.0
+    sl_thr = config.stop_loss_percent * sl_mult
+    tp_thr = config.take_profit_percent * tp_mult
     trailing_trigger = sl_thr  # TS line 1231: "start trailing stop when profit exceeds SL distance"
 
     # Gate 1: stop-loss (account-saving; runs first)

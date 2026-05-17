@@ -192,6 +192,49 @@ def regime_harvest_tightness(reading: RegimeReading) -> float:
     return 1.0 + 0.30 * reading.confidence  # looser
 
 
+@dataclass(frozen=True)
+class ExitModifiers:
+    """Regime-adaptive multipliers for stop-loss and take-profit thresholds.
+
+    Applied to operator-configured SL/TP percentages at exit-decision time.
+    Both multipliers default to 1.0 (no regime effect) if no reading is
+    available; the caller is responsible for SAFETY_BOUNDS clamping
+    (executive.py) on the resulting effective thresholds.
+    """
+    sl_multiplier: float
+    tp_multiplier: float
+
+
+def regime_exit_modifier(reading: RegimeReading) -> ExitModifiers:
+    """Return regime-adaptive multipliers for SL and TP thresholds (P25).
+
+    The asymmetry between SL and TP semantics matters:
+
+      - **SL = safety bound.** Tightening SL in CHOP would whipsaw out
+        of trades on noise that doesn't break the position thesis. So
+        SL widens SLIGHTLY in CHOP (room for noise) and MORE in TREND
+        (room for pullbacks). It never tightens.
+
+      - **TP = harvest discipline.** Reuses the existing
+        ``regime_harvest_tightness`` semantics: in CHOP harvest faster
+        (before mean reversion eats the gain), in TREND let winners run.
+
+    Ranges (at confidence 1.0):
+        CHOP:    sl_mult = 1.05, tp_mult = 0.70
+        TREND:   sl_mult = 1.15, tp_mult = 1.30
+
+    The base SL/TP percentages remain SAFETY_BOUNDS in executive.py per
+    P25; this only modulates them within the bounds layer.
+    """
+    if reading.regime == "CHOP":
+        sl_mult = 1.0 + 0.05 * reading.confidence  # slight widen for chop noise
+        tp_mult = 1.0 - 0.30 * reading.confidence  # tighten harvest before reversion
+    else:  # TREND_UP or TREND_DOWN
+        sl_mult = 1.0 + 0.15 * reading.confidence  # give trend room for pullbacks
+        tp_mult = 1.0 + 0.30 * reading.confidence  # let trend winners run
+    return ExitModifiers(sl_multiplier=sl_mult, tp_multiplier=tp_mult)
+
+
 # ── CHOP regime entry suppression (issue #623) ───────────────────
 #
 # Conservative defaults; registry-overridable via propose_change().

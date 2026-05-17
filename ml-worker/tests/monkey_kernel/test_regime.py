@@ -13,9 +13,11 @@ if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
 
 from monkey_kernel.regime import (  # noqa: E402
+    ExitModifiers,
     RegimeReading,
     classify_regime,
     regime_entry_threshold_modifier,
+    regime_exit_modifier,
     regime_harvest_tightness,
 )
 
@@ -272,3 +274,76 @@ class TestRegimeWithRealisticHistory:
         # tests the corner case carefully.
         r = classify_regime(hist)
         assert r.regime in ("CHOP", "TREND_UP")
+
+
+class TestRegimeExitModifier:
+    """regime_exit_modifier — P25 exit-threshold adaptation.
+
+    Verifies the asymmetric SL/TP semantics: SL never tightens (safety
+    bound), TP follows the harvest_tightness regime semantics.
+    """
+
+    def test_returns_exitmodifiers_instance(self):
+        r = RegimeReading(regime="CHOP", confidence=0.5,
+                          trend_strength=0.0, chop_score=0.8)
+        m = regime_exit_modifier(r)
+        assert isinstance(m, ExitModifiers)
+
+    def test_chop_widens_sl_slightly(self):
+        """In CHOP, SL widens (>= 1.0) — chop noise should not whipsaw stops."""
+        r = RegimeReading(regime="CHOP", confidence=1.0,
+                          trend_strength=0.0, chop_score=0.9)
+        m = regime_exit_modifier(r)
+        assert m.sl_multiplier >= 1.0
+        assert m.sl_multiplier == pytest.approx(1.05)
+
+    def test_chop_tightens_tp(self):
+        """In CHOP, TP tightens — harvest before mean reversion."""
+        r = RegimeReading(regime="CHOP", confidence=1.0,
+                          trend_strength=0.0, chop_score=0.9)
+        m = regime_exit_modifier(r)
+        assert m.tp_multiplier < 1.0
+        assert m.tp_multiplier == pytest.approx(0.70)
+
+    def test_trend_widens_both_sl_and_tp(self):
+        """In TREND, both widen — give the trend room AND let winners run."""
+        r = RegimeReading(regime="TREND_UP", confidence=1.0,
+                          trend_strength=0.5, chop_score=0.1)
+        m = regime_exit_modifier(r)
+        assert m.sl_multiplier == pytest.approx(1.15)
+        assert m.tp_multiplier == pytest.approx(1.30)
+
+    def test_trend_down_symmetric_with_trend_up(self):
+        up = regime_exit_modifier(RegimeReading(
+            regime="TREND_UP", confidence=0.7,
+            trend_strength=0.4, chop_score=0.2))
+        down = regime_exit_modifier(RegimeReading(
+            regime="TREND_DOWN", confidence=0.7,
+            trend_strength=-0.4, chop_score=0.2))
+        assert up.sl_multiplier == pytest.approx(down.sl_multiplier)
+        assert up.tp_multiplier == pytest.approx(down.tp_multiplier)
+
+    def test_zero_confidence_collapses_to_identity(self):
+        """At confidence=0 the modifier should be identity (1.0, 1.0)."""
+        for regime in ("CHOP", "TREND_UP", "TREND_DOWN"):
+            r = RegimeReading(regime=regime, confidence=0.0,
+                              trend_strength=0.0, chop_score=0.5)
+            m = regime_exit_modifier(r)
+            assert m.sl_multiplier == pytest.approx(1.0)
+            assert m.tp_multiplier == pytest.approx(1.0)
+
+    def test_sl_never_tightens_in_any_regime(self):
+        """Property check: SL multiplier is always >= 1.0 regardless of regime/confidence.
+
+        This is the safety-bound invariant — chop should never make stops
+        tighter (whipsaw protection).
+        """
+        for regime in ("CHOP", "TREND_UP", "TREND_DOWN"):
+            for conf in (0.0, 0.25, 0.5, 0.75, 1.0):
+                r = RegimeReading(regime=regime, confidence=conf,
+                                  trend_strength=0.0, chop_score=0.5)
+                m = regime_exit_modifier(r)
+                assert m.sl_multiplier >= 1.0, (
+                    f"SL tightened in {regime} at conf={conf}: "
+                    f"sl_mult={m.sl_multiplier}"
+                )
