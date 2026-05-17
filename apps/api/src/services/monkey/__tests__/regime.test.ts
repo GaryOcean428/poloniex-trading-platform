@@ -1,9 +1,14 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import {
   classifyRegime,
   regimeEntryThresholdModifier,
   regimeHarvestTightness,
 } from '../regime.js';
+import {
+  _resetTrajectoryObserver,
+  observerSnapshot,
+  observeAndClassify,
+} from '../trajectory_observer.js';
 import { BASIN_DIM, type Basin } from '../basin.js';
 
 function bullishBasin(intensity = 0.9): Basin {
@@ -23,28 +28,34 @@ function flatBasin(): Basin {
   return new Float64Array(BASIN_DIM).fill(1 / BASIN_DIM) as unknown as Basin;
 }
 
+// Each test gets a fresh observer state so per-symbol buffers don't leak
+// across tests.
+beforeEach(() => {
+  _resetTrajectoryObserver();
+});
+
 describe('classifyRegime — basics', () => {
   it('empty history -> CHOP at low confidence', () => {
-    const r = classifyRegime([]);
+    const r = classifyRegime('TEST', []);
     expect(r.regime).toBe('CHOP');
     expect(r.confidence).toBeLessThan(0.5);
   });
 
   it('single basin -> CHOP at low confidence', () => {
-    const r = classifyRegime([flatBasin()]);
+    const r = classifyRegime('TEST', [flatBasin()]);
     expect(r.regime).toBe('CHOP');
   });
 
   it('consistent bull -> TREND_UP', () => {
     const hist = Array.from({ length: 16 }, () => bullishBasin());
-    const r = classifyRegime(hist);
+    const r = classifyRegime('TEST', hist);
     expect(r.regime).toBe('TREND_UP');
     expect(r.confidence).toBeGreaterThan(0.5);
   });
 
   it('consistent bear -> TREND_DOWN', () => {
     const hist = Array.from({ length: 16 }, () => bearishBasin(0.1));
-    const r = classifyRegime(hist);
+    const r = classifyRegime('TEST', hist);
     expect(r.regime).toBe('TREND_DOWN');
     expect(r.confidence).toBeGreaterThan(0.5);
   });
@@ -54,7 +65,7 @@ describe('classifyRegime — basics', () => {
     for (let i = 0; i < 16; i++) {
       hist.push(i % 2 === 0 ? bullishBasin() : bearishBasin(0.1));
     }
-    const r = classifyRegime(hist);
+    const r = classifyRegime('TEST', hist);
     expect(r.regime).toBe('CHOP');
     expect(r.chopScore).toBeGreaterThan(0.5);
   });
@@ -62,25 +73,26 @@ describe('classifyRegime — basics', () => {
 
 describe('classifyRegime — fields', () => {
   it('trendStrength is signed', () => {
-    const bull = classifyRegime(Array.from({ length: 16 }, () => bullishBasin()));
-    const bear = classifyRegime(Array.from({ length: 16 }, () => bearishBasin(0.1)));
+    const bull = classifyRegime('TEST_BULL', Array.from({ length: 16 }, () => bullishBasin()));
+    const bear = classifyRegime('TEST_BEAR', Array.from({ length: 16 }, () => bearishBasin(0.1)));
     expect(bull.trendStrength).toBeGreaterThan(0);
     expect(bear.trendStrength).toBeLessThan(0);
   });
 
   it('chopScore in [0, 1]', () => {
-    const r = classifyRegime(Array.from({ length: 16 }, () => flatBasin()));
+    const r = classifyRegime('TEST', Array.from({ length: 16 }, () => flatBasin()));
     expect(r.chopScore).toBeGreaterThanOrEqual(0);
     expect(r.chopScore).toBeLessThanOrEqual(1);
   });
 
   it('confidence in [0, 1]', () => {
+    let i = 0;
     for (const hist of [
       Array.from({ length: 16 }, () => bullishBasin()),
       Array.from({ length: 16 }, () => bearishBasin(0.1)),
       Array.from({ length: 16 }, () => flatBasin()),
     ]) {
-      const r = classifyRegime(hist);
+      const r = classifyRegime(`TEST_${i++}`, hist);
       expect(r.confidence).toBeGreaterThanOrEqual(0);
       expect(r.confidence).toBeLessThanOrEqual(1);
     }
@@ -123,16 +135,6 @@ describe('classifyRegime — modifiers', () => {
   });
 });
 
-describe('classifyRegime — configurable thresholds', () => {
-  it('looser thresholds promote borderline cases to TREND', () => {
-    const hist = Array.from({ length: 16 }, () => bullishBasin(0.7));
-    const tight = classifyRegime(hist, { trendThreshold: 0.95, chopThreshold: 0.05 });
-    expect(tight.regime).toBe('CHOP');
-    const loose = classifyRegime(hist, { trendThreshold: 0.001, chopThreshold: 0.95 });
-    expect(loose.regime).toBe('TREND_UP');
-  });
-});
-
 describe('classifyRegime — stability', () => {
   it('majority bull with noise stays TREND_UP', () => {
     const hist: Basin[] = [];
@@ -144,7 +146,63 @@ describe('classifyRegime — stability', () => {
     for (let i = 0; i < 16; i++) {
       hist.push(rand() < 0.85 ? bullishBasin() : flatBasin());
     }
-    const r = classifyRegime(hist);
+    const r = classifyRegime('TEST', hist);
+    expect(r.regime).toBe('TREND_UP');
+  });
+});
+
+describe('TrajectoryObserver — per-symbol isolation', () => {
+  it('ETH observer state is independent from BTC', () => {
+    // Seed ETH with bullish basins so its rolling buffer skews bullish.
+    for (let i = 0; i < 50; i++) {
+      observeAndClassify('ETH_USDT_PERP', bullishBasin());
+    }
+    // Seed BTC with bearish basins.
+    for (let i = 0; i < 50; i++) {
+      observeAndClassify('BTC_USDT_PERP', bearishBasin(0.1));
+    }
+    const eth = observerSnapshot('ETH_USDT_PERP');
+    const btc = observerSnapshot('BTC_USDT_PERP');
+    expect(eth.n).toBe(50);
+    expect(btc.n).toBe(50);
+    expect(eth.isWarmup).toBe(false);
+    expect(btc.isWarmup).toBe(false);
+    // Tercile bounds derived from each symbol's own distribution should
+    // exist independently (pooling would produce one shared boundary).
+    expect(eth.lower).not.toBeNull();
+    expect(btc.lower).not.toBeNull();
+  });
+});
+
+describe('TrajectoryObserver — warmup contract', () => {
+  it('isWarmup true while n < 30 ticks for that symbol', () => {
+    for (let i = 0; i < 5; i++) {
+      observeAndClassify('TEST_WARMUP', bullishBasin());
+    }
+    const snap = observerSnapshot('TEST_WARMUP');
+    expect(snap.isWarmup).toBe(true);
+    expect(snap.n).toBe(5);
+    expect(snap.lower).toBeNull();
+    expect(snap.upper).toBeNull();
+  });
+
+  it('isWarmup false once n >= 30 ticks for that symbol', () => {
+    for (let i = 0; i < 30; i++) {
+      observeAndClassify('TEST_WARM', bullishBasin());
+    }
+    const snap = observerSnapshot('TEST_WARM');
+    expect(snap.isWarmup).toBe(false);
+    expect(snap.n).toBe(30);
+    expect(snap.lower).not.toBeNull();
+    expect(snap.upper).not.toBeNull();
+  });
+
+  it('classifyRegime under warmup uses legacy thresholds for back-compat', () => {
+    // 16-bar bullish history is too small to warm a 30-tick observer,
+    // but bullish classification must still emerge via the legacy
+    // fall-through (which uses TREND_THRESHOLD=0.025 / CHOP_THRESHOLD=0.55).
+    const hist = Array.from({ length: 16 }, () => bullishBasin());
+    const r = classifyRegime('TEST_FALLTHROUGH', hist);
     expect(r.regime).toBe('TREND_UP');
   });
 });
