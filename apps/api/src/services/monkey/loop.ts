@@ -4383,6 +4383,27 @@ export class MonkeyKernel extends EventEmitter {
     const cellToken = cellAction !== null
       ? `${cellAction.phase}_${cellAction.direction}`
       : 'CELL_UNRESOLVED';
+    // REGIME-3 postclose-cooldown observability: surface remaining
+    // cooldown seconds for the side-candidate so the operator can verify
+    // cooldown timing in live tape without needing to grep for veto logs.
+    // Always reports the lower of long/short cooldowns + which side they
+    // apply to. Format: `Lside=Xs|Rside=Ys` or omitted when both 0.
+    const cooldownLongAt = this.lastCloseAtMs.get(`${symbol}|long`);
+    const cooldownShortAt = this.lastCloseAtMs.get(`${symbol}|short`);
+    const cooldownMs =
+      Number(process.env.POSTCLOSE_COOLDOWN_MS)
+      || Number(process.env.POSTWIN_COOLDOWN_MS)
+      || MonkeyKernel.POST_CLOSE_COOLDOWN_MS_DEFAULT;
+    const cooldownLongRemS = cooldownLongAt
+      ? Math.max(0, (cooldownMs - (Date.now() - cooldownLongAt)) / 1000)
+      : 0;
+    const cooldownShortRemS = cooldownShortAt
+      ? Math.max(0, (cooldownMs - (Date.now() - cooldownShortAt)) / 1000)
+      : 0;
+    const cooldown = cooldownLongRemS > 0 || cooldownShortRemS > 0
+      ? `L${cooldownLongRemS.toFixed(0)}s|S${cooldownShortRemS.toFixed(0)}s`
+      : undefined;
+
     logger.info(`[Monkey] ${symbol} [${mode}] ${action}${executed ? ' EXECUTED' : ''}`, {
       mode,
       cell: cellToken,
@@ -4409,6 +4430,7 @@ export class MonkeyKernel extends EventEmitter {
       basinDir: basinDir.toFixed(3),
       side: sideCandidate,
       override: sideOverride,
+      cooldown,  // REGIME-3 postclose cooldown remaining (per side)
       orderId: monkeyOrderId ?? undefined,
       reason,
     });
