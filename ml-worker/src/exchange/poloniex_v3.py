@@ -382,11 +382,34 @@ class PoloniexV3Client:
         return await self._request("POST", "/trade/orders", body={"orders": orders})
 
     async def cancel_order(self, order_id: str, symbol: str) -> Any:
-        """DELETE /v3/trade/order."""
-        return await self._request(
-            "DELETE", "/trade/order",
-            body={"symbol": symbol, "orderId": order_id},
-        )
+        """DELETE /v3/trade/order.
+
+        Body field is ``ordId`` (camelCase v3), not ``orderId``. The TS
+        client got this wrong historically and produced 401s (signature
+        validation against the wire body); matching the corrected form
+        from PR #824 here so flipping TRADING_ENGINE_PY=true doesn't
+        reintroduce the bug.
+
+        Idempotent on code=11008 ("The order does not exist"). Race
+        where the order filled or cancelled between our decision and
+        the DELETE arriving — the desired terminal state already holds,
+        so return a synthetic success and let the caller advance its
+        state-machine to reconcile from the next fills poll.
+        """
+        try:
+            return await self._request(
+                "DELETE", "/trade/order",
+                body={"symbol": symbol, "ordId": order_id},
+            )
+        except PoloniexV3Error as err:
+            if err.poloniex_code == 11008 or str(err.poloniex_code) == "11008":
+                logger.info(
+                    "cancel_order 11008 race — order already terminal; "
+                    "treating as success (symbol=%s ordId=%s)",
+                    symbol, order_id,
+                )
+                return {"ok": True, "raceResolved": True, "code": 11008}
+            raise
 
     async def cancel_all_orders(self, symbol: Optional[str] = None) -> Any:
         """DELETE /v3/trade/allOrders."""

@@ -298,6 +298,32 @@ describe('PoloniexFuturesService', () => {
       expect(axios).toHaveBeenCalled();
     });
 
+    it('should swallow code=11008 (order already terminal — stale-cancel race)', async () => {
+      // Simulate the race: order filled between our stale-decision and
+      // the DELETE arriving. Poloniex returns {code: 11008, msg: "The
+      // order does not exist"}; makeRequest throws an Error with
+      // err.poloniexCode = 11008. cancelOrder must catch and return a
+      // raceResolved sentinel so callers can advance their state-machine.
+      axios.mockResolvedValueOnce({
+        data: { code: 11008, msg: 'The order does not exist' },
+      });
+      const result = await poloniexFuturesService.cancelOrder(
+        mockCredentials, 'BTC_USDT_PERP', '579679007277432832',
+      );
+      expect(result).toEqual({ ok: true, raceResolved: true, code: 11008 });
+    });
+
+    it('should rethrow non-11008 errors from cancelOrder', async () => {
+      axios.mockResolvedValueOnce({
+        data: { code: 10001, msg: 'Invalid signature' },
+      });
+      await expect(
+        poloniexFuturesService.cancelOrder(
+          mockCredentials, 'BTC_USDT_PERP', '999',
+        ),
+      ).rejects.toThrow(/code=10001/);
+    });
+
     it('should get current orders', async () => {
       const symbol = 'BTC_USDT_PERP';
       const result = await poloniexFuturesService.getCurrentOrders(mockCredentials, symbol);
