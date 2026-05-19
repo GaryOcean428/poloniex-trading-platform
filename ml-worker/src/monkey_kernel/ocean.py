@@ -143,7 +143,12 @@ class OceanState:
       intervention   : Optional[Intervention]
                        None when nominal; otherwise the chosen action
       sleep_phase    : Literal["AWAKE", "SLEEP"]
-                       current sleep state machine phase
+                       legacy 2-phase timer machine — drives behaviour
+      dream_phase    : Optional[Literal["AWAKE","DREAMING","CONSOLIDATING"]]
+                       canonical 3-phase geometry machine (qig-core §30).
+                       Telemetry-only when MONKEY_SLEEP_3PHASE_LIVE=true;
+                       None otherwise. Observation-only — does not drive
+                       behaviour. Dream/consolidate hooks are deferred.
       coherence      : float  [0, 1]
                        basin self-coherence (1 - normalised entropy)
       spread         : float  [0, π/2]
@@ -158,6 +163,7 @@ class OceanState:
     coherence: float
     spread: float
     diagnostics: dict[str, float]
+    dream_phase: Optional[Literal["AWAKE", "DREAMING", "CONSOLIDATING"]] = None
 
 
 def _basin_coherence(basin: np.ndarray) -> float:
@@ -254,6 +260,13 @@ class Ocean:
         # phi_prev stores the previous tick's Φ for the descent check.
         self._time_above_damping_lower: int = 0
         self._phi_prev: Optional[float] = None
+
+        # Canonical 3-phase sleep cycle (qig-core §30). Runs in parallel
+        # with the timer-based 2-phase machine above when
+        # MONKEY_SLEEP_3PHASE_LIVE=true; telemetry-only (does NOT drive
+        # behaviour). Default OFF for safe rollout.
+        from .sleep_cycle import SleepCycleManager  # local import (no cycle)
+        self._sleep_cycle = SleepCycleManager()
 
     def _load_sleep_state_or_fresh(self) -> SleepCycleState:
         if self._persistence is None or not self._persistence.is_available:
@@ -616,12 +629,53 @@ class Ocean:
         # the PREVIOUS tick's value.
         self._phi_prev = float(phi)
 
+        # Canonical 3-phase sleep cycle (qig-core §30). Parallel state
+        # machine; surfaces through OceanState.dream_phase as telemetry.
+        # Does NOT drive behaviour — the legacy 2-phase machine above is
+        # still authoritative. Gated by MONKEY_SLEEP_3PHASE_LIVE.
+        dream_phase: Optional[Literal["AWAKE", "DREAMING", "CONSOLIDATING"]] = None
+        try:
+            from .sleep_cycle import (
+                SleepMetrics as _SleepMetrics,
+                sleep_3phase_live as _sleep_3p_live,
+            )
+            if _sleep_3p_live():
+                # ocean_divergence proxy = current basin spread across
+                # cross-lane basins. spread saturates at π/2; we read
+                # the same value the spread_bound trigger reads above.
+                _metrics = _SleepMetrics(
+                    phi=float(phi),
+                    phi_variance=float(phi_var),
+                    ocean_divergence=float(spread),
+                    f_health=float(coherence),
+                    basin_velocity=0.0,
+                )
+                _trans = self._sleep_cycle.evaluate_transition(_metrics)
+                if _trans.transitioned:
+                    logger.info(
+                        "[%s.sleep_cycle] %s → %s (%s)",
+                        self.label,
+                        _trans.previous_phase.value,
+                        _trans.current_phase.value,
+                        _trans.reason,
+                    )
+                _phase_value = self._sleep_cycle.phase.value
+                dream_phase = (
+                    "DREAMING" if _phase_value == "dreaming"
+                    else "CONSOLIDATING" if _phase_value == "consolidating"
+                    else "AWAKE"
+                )
+        except Exception as err:  # noqa: BLE001 — never block on telemetry
+            logger.warning("[%s.sleep_cycle] eval failed: %s", self.label, err)
+            dream_phase = None
+
         return OceanState(
             intervention=intervention,
             sleep_phase=sleep_phase,
             coherence=coherence,
             spread=spread,
             diagnostics=diagnostics,
+            dream_phase=dream_phase,
         )
 
     def snapshot(self) -> dict[str, Any]:
