@@ -2661,21 +2661,33 @@ export class MonkeyKernel extends EventEmitter {
         // realized close (close uses MARKET, so taker on at least the
         // exit; assume taker on both legs as conservative baseline when
         // entry routing isn't known here). Poloniex futures taker = 0.075%
-        // notional one-side. Threshold = notional × (2 × taker + 3bps slip).
+        // notional one-side. Base threshold = notional × (2 × taker + 3bps slip).
         //
-        // Diagnosed 2026-05-19 from user-reported "~$1 loss" on a BTC
-        // close kernel-reported as +$0.168: at $2300 notional (post-deposit
-        // scale-up), the dollar fee was ~$3.45 round-trip + ~$0.69 slip =
-        // $4.14 needed to clear. Kernel mark PnL of $0.168 < $4.14 → fired
-        // anyway and netted as a loss. Dollar-based (not percentage-based)
-        // is the right unit because fees are dollar-amount per notional,
-        // not ROI on margin.
+        // TIME-DECAY: fresh positions need full floor (prevents fee-only
+        // closes). Aged positions get a relaxed floor (prevents stuck-in-
+        // no-man's-land where a small profit sits open for 20+ minutes
+        // waiting for the full floor to clear). After REGIME_HELD_FEE_DECAY_S
+        // (default 300s = 5 min) the floor scales linearly toward 0 at
+        // REGIME_HELD_FEE_FLOOR_ZERO_S (default 900s = 15 min). User
+        // observation 2026-05-19 08:50: Agent T ETH positions held 20-30
+        // min unable to fire REGIME-2 because the full floor never cleared.
         const TAKER_FEE_FRAC = 0.00075;
         const FEE_SAFETY_BPS = 0.0003;  // 3 bps slip + price-impact buffer
-        const minProfitablePnl =
+        const baseMinProfitablePnl =
           positionNotional > 0
             ? positionNotional * (2 * TAKER_FEE_FRAC + FEE_SAFETY_BPS)
             : Number.POSITIVE_INFINITY;
+        const feeDecayStartS =
+          Number(process.env.REGIME_HELD_FEE_DECAY_S) || 300;
+        const feeDecayZeroS =
+          Number(process.env.REGIME_HELD_FEE_FLOOR_ZERO_S) || 900;
+        const decayFraction = (() => {
+          if (heldDurationS === undefined || heldDurationS <= feeDecayStartS) return 1.0;
+          if (heldDurationS >= feeDecayZeroS) return 0.0;
+          // Linear ramp from 1.0 at feeDecayStartS to 0.0 at feeDecayZeroS.
+          return 1.0 - (heldDurationS - feeDecayStartS) / (feeDecayZeroS - feeDecayStartS);
+        })();
+        const minProfitablePnl = baseMinProfitablePnl * decayFraction;
         const profitClearsFees =
           unrealizedPnl !== undefined && unrealizedPnl > minProfitablePnl;
         if (
@@ -2688,11 +2700,13 @@ export class MonkeyKernel extends EventEmitter {
           && profitClearsFees
         ) {
           const roiPct = (currentRoi * 100).toFixed(3);
+          const ageS = heldDurationS !== undefined ? `${heldDurationS.toFixed(0)}s` : 'unknown';
           action = 'scalp_exit';
           reason =
             `regime_held_exit: cell ${cellAction.label}, ROI ${roiPct}% — `
             + `preservation-mandate cell + profitable position → take profit now `
-            + `(pnl=$${unrealizedPnl?.toFixed(4)} > fees=$${minProfitablePnl.toFixed(4)})`;
+            + `(pnl=$${unrealizedPnl?.toFixed(4)} > fees=$${minProfitablePnl.toFixed(4)} `
+            + `[decay=${decayFraction.toFixed(2)} age=${ageS}])`;
           exitFired = true;
           derivation.scalp = {
             exitTypeBit: 6,  // REGIME-2 regime-aware held exit
@@ -2722,7 +2736,50 @@ export class MonkeyKernel extends EventEmitter {
               : cellAction.harvestTightness !== 'tight' ? 'cell_not_tight'
               : currentRoi === undefined ? 'roi_unknown'
               : currentRoi <= 0 ? 'not_profitable'
+              : !profitClearsFees ? 'below_fee_floor'
               : 'unknown',
+          };
+        }
+
+        // STALE_HELD forced close — agent-agnostic safety net for
+        // positions held too long without firing any other exit. User
+        // observation 2026-05-19 08:50: Agent T (Turtle) positions sat
+        // 20-30 min on ETH because Turtle's exit logic is trend-reversal
+        // based and the regime-aware exits (REGIME-2, trailing_harvest)
+        // are designed around Agent K's scalp/swing cadence.
+        //
+        // Rule: if held > STALE_HELD_S (default 1200s = 20 min) AND
+        // ROI > 0 (any profit), close. Aged positions that haven't moved
+        // are wasting margin even if they're slightly profitable.
+        // Operator override: MONKEY_STALE_HELD_S (set 0 to disable).
+        const staleHeldS = Number(process.env.MONKEY_STALE_HELD_S) || 1200;
+        if (
+          !exitFired
+          && staleHeldS > 0
+          && heldDurationS !== undefined
+          && heldDurationS >= staleHeldS
+          && currentRoi !== undefined
+          && currentRoi > 0
+        ) {
+          const roiPct = (currentRoi * 100).toFixed(3);
+          action = 'scalp_exit';
+          reason =
+            `stale_held: position open ${heldDurationS.toFixed(0)}s `
+            + `(>= ${staleHeldS}s) at ROI ${roiPct}% — agent-agnostic forced close`;
+          exitFired = true;
+          derivation.scalp = {
+            exitTypeBit: 7,  // STALE_HELD forced close
+            unrealizedPnl,
+            markPrice: lastPrice,
+            tradeId,
+            lane: heldLane,
+          };
+          derivation.staleHeld = {
+            fired: true,
+            heldDurationS,
+            staleHeldS,
+            currentRoi,
+            unrealizedPnl,
           };
         }
 
