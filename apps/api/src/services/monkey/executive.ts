@@ -670,6 +670,96 @@ export function shouldProfitHarvest(
 }
 
 /**
+ * shouldSlowBleedExit — time-based escape for slow adverse bleeds.
+ *
+ * Evidence (2026-05-19 19:00:13 incident): BTC short held 103 minutes
+ * through a 0.334% adverse raw price move. At lev=22 that's +7.3% ROI
+ * on margin — below the 15% swing-lane SL threshold by design. The
+ * SL gate held correctly under its own rules; the time axis was
+ * uncovered. Position bled $13.34 across the hold.
+ *
+ * Doctrine: a position that's still red after holding >60min AND has
+ * accumulated ≥50% of its SL budget AND has clearly-adverse tape
+ * alignment is "we were wrong, the move isn't coming." Get out via
+ * time-axis rather than waiting for SL to trip.
+ *
+ * Gating (all must hold):
+ *   lane ∈ {swing, trend}  — scalp has its own fast TP/SL, skip
+ *   heldMs >= 60 min       — give the thesis time to play out
+ *   roiFrac < 0            — must be in the red
+ *   |roiFrac| >= 0.5×laneSL — bled at least half the SL budget
+ *   tape adverse (align ≤ -0.2) — tape supports the opposite side
+ *
+ * Doesn't override SL (still fires at 15% / 40% as configured per lane);
+ * fires sooner when time + tape evidence is conclusive.
+ *
+ * Per red-team audit promotion (claude.ai 2026-05-19): this is the
+ * single highest-EV gate addition for the BTC bleed pattern observed
+ * across the day. Validated against the 7-position 17:16-19:00 stuck
+ * positions earlier — would have closed each at ~60min instead of
+ * 103min, cutting ~$8 off the worst-case adverse hold.
+ */
+export function shouldSlowBleedExit(args: {
+  unrealizedPnlUsdt: number;
+  notionalUsdt: number;
+  leverage: number;
+  heldMs: number;
+  tapeTrend: number;
+  heldSide: 'long' | 'short';
+  lane: LaneType;
+}): ExecutiveDecision<boolean> {
+  const { unrealizedPnlUsdt, notionalUsdt, leverage, heldMs, tapeTrend, heldSide, lane } = args;
+  // Encode lane / heldSide as numeric flags so derivation typing
+  // (Record<string, number>) is satisfied. scalp=0/swing=1/trend=2,
+  // long=1/short=-1.
+  const laneCode = lane === 'scalp' ? 0 : lane === 'swing' ? 1 : 2;
+  const sideCode = heldSide === 'long' ? 1 : -1;
+  if (lane !== 'swing' && lane !== 'trend') {
+    return { value: false, reason: 'scalp_lane_skip', derivation: { laneCode } };
+  }
+  if (notionalUsdt <= 0) {
+    return { value: false, reason: 'no_position', derivation: {} };
+  }
+  const heldS = heldMs / 1000;
+  const minHeldS = 60 * 60;  // 60 min
+  if (heldS < minHeldS) {
+    return { value: false, reason: 'under_60min', derivation: { heldS, minHeldS } };
+  }
+  // ROI on margin (matching #828's currentRoi convention so the user
+  // can reason about the gate in same terms as displayed PnL%).
+  const roiFrac = (unrealizedPnlUsdt / notionalUsdt) * Math.max(1, leverage);
+  if (roiFrac >= 0) {
+    return { value: false, reason: 'not_in_loss', derivation: { roiFrac } };
+  }
+  const laneSL = laneParam(lane, 'slPct');
+  if (Math.abs(roiFrac) < 0.5 * laneSL) {
+    return {
+      value: false, reason: 'under_half_sl',
+      derivation: { roiFrac, laneSL, halfSL: 0.5 * laneSL },
+    };
+  }
+  // Tape alignment with held side: for long, positive tape is aligned;
+  // for short, negative tape is aligned. Adverse = alignment < -0.2.
+  const alignment = heldSide === 'long' ? tapeTrend : -tapeTrend;
+  if (alignment > -0.2) {
+    return {
+      value: false, reason: 'tape_neutral_or_aligned',
+      derivation: { alignment, tapeTrend, sideCode },
+    };
+  }
+  const heldMin = (heldS / 60).toFixed(0);
+  return {
+    value: true,
+    reason: `slow_bleed_exit[${lane}]: ${heldMin}min @ ROI=${(roiFrac * 100).toFixed(1)}% (>=${(50 * laneSL).toFixed(0)}% of SL), tape adverse (align=${alignment.toFixed(2)})`,
+    derivation: {
+      roiFrac, laneSL, halfSL: 0.5 * laneSL,
+      heldS, heldMs, alignment, tapeTrend, sideCode, laneCode,
+      exitTypeBit: 9,  // SLOW_BLEED_EXIT
+    },
+  };
+}
+
+/**
  * shouldScalpExit — P&L-driven take-profit / stop-loss gate (v0.4).
  *
  * Reward-harvesting exit per UCP v6.6 §29.4: when realized reward
