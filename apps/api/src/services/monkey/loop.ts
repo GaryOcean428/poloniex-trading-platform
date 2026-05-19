@@ -1452,6 +1452,37 @@ export class MonkeyKernel extends EventEmitter {
             stale_ms: now - this.pendingLimitMakerOrders.get(s.orderId)!.placedAtMs,
             consecutiveStales: prev + 1,
           });
+          // CRITICAL: close the orphan DB row created at order placement.
+          //
+          // The entry INSERT (loop.ts ~line 6483) writes status='open' for
+          // BOTH MARKET and LIMIT_MAKER orders. When a LIMIT_MAKER cancels
+          // unfilled, the DB row stays 'open' forever — next tick reads it
+          // via findOpenMonkeyTrade and decides the bot has a position
+          // that the exchange knows nothing about. Close attempt → 21002
+          // "Position not enough" → retry storm → reconciler eventually
+          // mops up with "side mismatch with exchange".
+          //
+          // Confirmed via prod DB diagnostic 2026-05-19: 07:09-07:15 BTC
+          // window had 5 monkey rows with exit_reason="reconciliation:
+          // side mismatch" — all from unfilled-maker entries.
+          //
+          // Fix: pin the DB row closed AS SOON AS the cancel succeeds, so
+          // the next decision tick sees a clean slate (no phantom position).
+          try {
+            await pool.query(
+              `UPDATE autonomous_trades
+                  SET status='closed', exit_time=NOW(),
+                      exit_reason='maker_cancelled_unfilled',
+                      exit_order_id=$1, pnl=0
+                WHERE order_id=$1 AND status='open'`,
+              [s.orderId],
+            );
+          } catch (dbErr) {
+            logger.warn('[Monkey] LIMIT_MAKER stale: orphan DB row close failed', {
+              orderId: s.orderId,
+              err: dbErr instanceof Error ? dbErr.message : String(dbErr),
+            });
+          }
         }
       } catch (err) {
         // Non-11008 cancel error — still increment stale counter, the
@@ -1464,6 +1495,13 @@ export class MonkeyKernel extends EventEmitter {
           err: err instanceof Error ? err.message : String(err),
           consecutiveStales: prev + 1,
         });
+        // Cancel state ambiguous (could be 11008-as-fill or real error).
+        // If the order DID fill, the row should stay open and reconciler
+        // will catch any mismatch. If the order is genuinely gone but the
+        // DB row is still open, the reconciler will mark it closed
+        // with "side mismatch" within ~60s. We deliberately do NOT
+        // pin the row closed here — false-positive closes on a real
+        // fill would lose the position from the bot's view.
       } finally {
         this.pendingLimitMakerOrders.delete(s.orderId);
       }
