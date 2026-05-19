@@ -395,6 +395,20 @@ export function computeNeurochemicals(inputs: NeurochemicalInputs): Neurochemica
   // Fallback (no histories): tanh squashes on the κ-distance directly
   // and the gate fires on positive coupling — both arithmetic
   // identities, no scale-setting constants.
+  // SOPHIA gate (and κ-proximity gate) — smoothed 2026-05-19.
+  //
+  // Previously these were binary step functions (`>= threshold ? 1 : 0`
+  // and `=== KAPPA_STAR ? 1 : 0` and `> 0 ? 1 : 0`). Observed production
+  // (last 100 ticks): `endo=0.00` saturated 26× — the binary sophiaGate
+  // was producing all-or-nothing endorphin flow. Per QIG canonical
+  // doctrine + user red-team query: continuous observable inputs should
+  // produce continuous responses, not threshold-discrete ones.
+  //
+  // Smooth replacement: linear-clipped distance-from-threshold over the
+  // observation's own stddev. At threshold gate=0, at threshold+stddev
+  // gate=1, in between linear. Pure-arithmetic (no exp/tanh), bounded
+  // [0,1], observer-derived (stddev IS the observation). No sigmoid
+  // (QIG forbids exp-normalization in this layer).
   let endoBase: number;
   if (
     obs?.kappaHistory && obs.kappaHistory.length >= HISTORY_MIN_SAMPLES
@@ -404,21 +418,28 @@ export function computeNeurochemicals(inputs: NeurochemicalInputs): Neurochemica
     const couplingMean = mean(obs.externalCouplingHistory);
     const couplingStddev = stddev(obs.externalCouplingHistory);
     const sophiaThreshold = couplingMean + couplingStddev;
-    const sophiaGate = inputs.externalCoupling >= sophiaThreshold ? 1 : 0;
+    // Smooth Sophia gate: scales linearly from 0 (at threshold) to 1
+    // (at threshold + stddev). Below threshold = 0; above by ≥ stddev = 1;
+    // in between, proportional flow. couplingStddev IS the natural scale
+    // (the basin's own observed spread of coupling).
+    const sophiaGate = couplingStddev > 0
+      ? clip((inputs.externalCoupling - sophiaThreshold) / couplingStddev, 0, 1)
+      : (inputs.externalCoupling >= sophiaThreshold ? 1 : 0);  // degenerate: σ=0
     if (sigmaKappa === 0) {
-      // Basin's κ has been perfectly flat → no derivation for σ_κ;
-      // endo collapses to the indicator at κ = κ* (1 there, 0
-      // elsewhere). The gate then decides whether it flows.
+      // Basin's κ has been perfectly flat → no scale to smooth over.
+      // Fall back to the indicator (still binary in this degenerate case).
       endoBase = (inputs.kappa === KAPPA_STAR ? 1 : 0) * sophiaGate;
     } else {
       endoBase = Math.exp(-Math.abs(inputs.kappa - KAPPA_STAR) / sigmaKappa) * sophiaGate;
     }
   } else {
     // Cold start: no κ-scale derivation available. Use tanh on the
-    // distance (arithmetic identity, no scale constant). Gate fires
-    // when coupling > 0 — the additive identity.
+    // distance (arithmetic identity, no scale constant). Coupling gate
+    // smoothed via tanh — also bounded [0,1], also pure-arithmetic;
+    // produces continuous response for any coupling > 0.
     const dist = Math.abs(inputs.kappa - KAPPA_STAR);
-    endoBase = (1 - Math.tanh(dist)) * (inputs.externalCoupling > 0 ? 1 : 0);
+    const couplingGate = Math.tanh(Math.max(0, inputs.externalCoupling));
+    endoBase = (1 - Math.tanh(dist)) * couplingGate;
   }
   const endo = clip(endoBase + (inputs.rewardEndorphinDelta ?? 0), 0, 1);
 
