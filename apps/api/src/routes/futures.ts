@@ -326,7 +326,10 @@ router.delete('/order/:orderId', authenticateToken, async (req: Request, res: Re
       });
     }
 
-    const result = await poloniexFuturesService.cancelOrder(credentials, orderId, symbol as string);
+    // v3 spec: cancelOrder(credentials, symbol, ordId, clOrdId?). Symbol
+    // is REQUIRED — see cancelOrder write-up in poloniexFuturesService.js
+    // for the 2026-05-19 401 incident that drove this signature change.
+    const result = await poloniexFuturesService.cancelOrder(credentials, symbol as string, orderId);
     res.json(result);
   } catch (error: unknown) {
     logger.error('Error canceling order:', error);

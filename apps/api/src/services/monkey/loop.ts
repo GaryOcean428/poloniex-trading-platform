@@ -1394,7 +1394,11 @@ export class MonkeyKernel extends EventEmitter {
     }
     for (const s of stale) {
       try {
-        await poloniexFuturesService.cancelOrder(creds, s.orderId);
+        // Poloniex v3 DELETE /trade/order requires symbol. Pre-fix the
+        // call shape was (creds, orderId) which sent body {orderId: …}
+        // (wrong field name) and no symbol → 401. See cancelOrder
+        // signature in poloniexFuturesService.js for the write-up.
+        await poloniexFuturesService.cancelOrder(creds, s.symbol, s.orderId);
         logger.info('[Monkey] LIMIT_MAKER cancelled (stale)', {
           symbol: s.symbol, side: s.side, orderId: s.orderId,
           stale_ms: now - this.pendingLimitMakerOrders.get(s.orderId)!.placedAtMs,
