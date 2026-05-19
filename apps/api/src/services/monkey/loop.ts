@@ -2795,6 +2795,67 @@ export class MonkeyKernel extends EventEmitter {
           };
         }
 
+        // FAST_ADVERSE_EXIT — emergency close when both:
+        //   (a) currentRoi < FAST_ADVERSE_ROI_PCT (red position below threshold)
+        //   (b) basinDir × sideSign < -FAST_ADVERSE_BASIN_FLOOR (basin clearly
+        //       wrong-side; for a SHORT, basinDir>0.10 means clearly going up)
+        //
+        // User report 2026-05-19 09:46: "orders remaining open far too long
+        // after the market has clearly moved." Hold logs showed
+        // `disagreement 0.20 < 0.550 → hold` on adverse positions — the
+        // CALIB-3 directional-disagreement gate's 10×-tick trend multiplier
+        // (5 min at 30s cadence) + 0.55 threshold made the exit slow even
+        // when the basin already disagreed with held side.
+        //
+        // This bypasses the per-lane multiplier when BOTH conditions hold —
+        // not just basin disagreement, but ALSO a meaningful loss already
+        // accrued. Fires aggressively because we already have evidence of
+        // both (a) the position is losing money, (b) basin signal supports
+        // the OTHER side. Combined = "we were wrong, get out."
+        //
+        // Env overrides (all conservative defaults):
+        //   MONKEY_FAST_ADVERSE_ROI_PCT  (default -0.30 — fire when ROI < -0.30%)
+        //   MONKEY_FAST_ADVERSE_BASIN_FLOOR (default 0.10 — basin must be
+        //                                    > 0.10 wrong-side; below = noise)
+        //   MONKEY_FAST_ADVERSE_LIVE  (default true; set false to disable)
+        const fastAdverseLive = process.env.MONKEY_FAST_ADVERSE_LIVE !== 'false';
+        const fastAdverseRoiPct =
+          Number(process.env.MONKEY_FAST_ADVERSE_ROI_PCT) || -0.30;
+        const fastAdverseBasinFloor =
+          Number(process.env.MONKEY_FAST_ADVERSE_BASIN_FLOOR) || 0.10;
+        const sideSign = heldSide === 'long' ? 1 : -1;
+        const alignedBasinDir = basinDir * sideSign;
+        if (
+          !exitFired
+          && fastAdverseLive
+          && currentRoi !== undefined
+          && currentRoi * 100 < fastAdverseRoiPct
+          && alignedBasinDir < -fastAdverseBasinFloor
+        ) {
+          const roiPct = (currentRoi * 100).toFixed(3);
+          action = 'scalp_exit';
+          reason =
+            `fast_adverse_exit: ROI ${roiPct}% (< ${fastAdverseRoiPct}%) `
+            + `AND basinDir×side=${alignedBasinDir.toFixed(3)} `
+            + `(< -${fastAdverseBasinFloor}) — bot wrong, exiting`;
+          exitFired = true;
+          derivation.scalp = {
+            exitTypeBit: 8,  // FAST_ADVERSE_EXIT
+            unrealizedPnl,
+            markPrice: lastPrice,
+            tradeId,
+            lane: heldLane,
+          };
+          derivation.fastAdverseExit = {
+            fired: true,
+            currentRoi,
+            roiThresholdPct: fastAdverseRoiPct,
+            basinDir,
+            alignedBasinDir,
+            basinFloor: fastAdverseBasinFloor,
+          };
+        }
+
         // STALE_HELD forced close — agent-agnostic safety net for
         // positions held too long without firing any other exit. User
         // observation 2026-05-19 08:50: Agent T (Turtle) positions sat
