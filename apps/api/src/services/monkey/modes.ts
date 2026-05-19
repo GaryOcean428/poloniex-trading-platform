@@ -158,6 +158,21 @@ export interface ModeInputs {
   fHealthHistory: number[];
   /** Recent identity-drift history (Fisher-Rao, last N, newest last). */
   driftHistory: number[];
+  /**
+   * Optional tape-trend signal from the price OHLCV (computeTrendProxy).
+   * Used to gate DRIFT mode — when tape is strongly directional but
+   * basin happens to be quiet, the kernel was perceiving "nothing
+   * happening" while market was clearly active.
+   *
+   * Parallel to #841's cellDirection tape-override fix. Same lag class:
+   * basin-derived metrics (curiosity = ΔΦ, basinDir) can stay flat
+   * during steady-rate moves because Φ tracks integration of the
+   * already-stable regime; price IS moving but the regime isn't
+   * changing.
+   *
+   * Optional for back-compat with existing tests that don't pass tape.
+   */
+  tapeTrend?: number;
 }
 
 /**
@@ -237,15 +252,46 @@ export function detectMode(inp: ModeInputs): ExecutiveDecision<MonkeyMode> {
   const basinDir = basinDirection(inp.basin);
   const hasDirection = Math.abs(basinDir) > 0.30;
 
+  // 2026-05-19 (parallel to #841): tape-trend ALSO gates DRIFT.
+  //
+  // User report 11:54: "why is curiosity 0.00" — log showed kernel
+  // transitioning to DRIFT with curiosity=0.0000 flat, bv=0.005,
+  // basinDir=0.04. All basin-derived metrics flat, but tape may have
+  // been clearly directional at that moment.
+  //
+  // Root cause: same lag class as cellDirection's CHOP mis-read
+  // (fixed by #841). Basin signals (curiosity = ΔΦ, basinDir) track
+  // INTERNAL state evolution; on a steady-rate price move, basin can
+  // stay flat because the regime isn't CHANGING — only the price is.
+  // The kernel reads "quiet" and drops to DRIFT, blocking entries that
+  // tape conviction would otherwise support.
+  //
+  // Threshold MONKEY_MODE_TAPE_OVERRIDE_THRESHOLD (default 0.30, same
+  // magnitude as basinDir's hasDirection gate). When `|tape| > threshold`,
+  // hasTapeDirection blocks the DRIFT gate even on flat basin.
+  const tapeOverrideThreshold = (() => {
+    const raw = process.env.MONKEY_MODE_TAPE_OVERRIDE_THRESHOLD;
+    if (raw === undefined || raw === '') return 0.30;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : 0.30;
+  })();
+  const hasTapeDirection =
+    inp.tapeTrend !== undefined && Math.abs(inp.tapeTrend) > tapeOverrideThreshold;
+
   if (
     fHealthNow > 0.97 &&
     Math.abs(mot.curiosity) < 0.005 &&
     inp.basinVelocity < 0.015 &&
-    !hasDirection
+    !hasDirection &&
+    !hasTapeDirection
   ) {
     // DRIFT: diffuse basin + no curiosity + slow change + no direction
+    // (basin AND tape).
     mode = MonkeyMode.DRIFT;
-    reason = `fh=${fHealthNow.toFixed(3)} diffuse, curiosity=${mot.curiosity.toFixed(4)} flat, bv=${inp.basinVelocity.toFixed(3)}, basinDir=${basinDir.toFixed(2)} flat`;
+    const tapeReport = inp.tapeTrend !== undefined
+      ? `, tape=${inp.tapeTrend.toFixed(2)} flat`
+      : '';
+    reason = `fh=${fHealthNow.toFixed(3)} diffuse, curiosity=${mot.curiosity.toFixed(4)} flat, bv=${inp.basinVelocity.toFixed(3)}, basinDir=${basinDir.toFixed(2)} flat${tapeReport}`;
   } else if (driftNow > 0.30 && mot.curiosity > 0.002) {
     // EXPLORATION: high drift + expanding perception volume
     mode = MonkeyMode.EXPLORATION;

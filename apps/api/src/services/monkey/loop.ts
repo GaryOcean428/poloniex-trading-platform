@@ -1946,6 +1946,11 @@ export class MonkeyKernel extends EventEmitter {
     const driftNow = fisherRao(basin, state.identityBasin);
     state.driftHistory.push(driftNow);
     if (state.driftHistory.length > HISTORY_MAX) state.driftHistory.shift();
+    // 2026-05-19: compute tapeTrend HERE so detectMode can gate DRIFT
+    // on tape direction (parallel to #841 cellDirection fix). Same
+    // computation runs again later at line ~2005 for basin snapshot
+    // and entry-decision — idempotent (pure derivation from ohlcv).
+    const tapeTrendForMode = computeTrendProxy(ohlcv);
     const modeDecision = detectMode({
       basin,
       identityBasin: state.identityBasin,
@@ -1956,6 +1961,7 @@ export class MonkeyKernel extends EventEmitter {
       phiHistory: state.phiHistory,
       fHealthHistory: state.fHealthHistory,
       driftHistory: state.driftHistory,
+      tapeTrend: tapeTrendForMode,
     });
     const mode = modeDecision.value;
     if (state.lastMode !== null && state.lastMode !== mode) {
