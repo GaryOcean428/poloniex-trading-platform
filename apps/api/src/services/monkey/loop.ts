@@ -774,6 +774,13 @@ export class MonkeyKernel extends EventEmitter {
    */
   private latestFundingBySymbol: Map<string, { rate: number; atMs: number }> = new Map();
   /**
+   * REGIME-3 #806 — per-symbol timestamp of the last winning close.
+   * Consumed by the entry-path cooldown veto to break the win-then-loss
+   * tilt chain. Set by POSITION CLOSED when pnlAtDecision > 0.
+   */
+  private lastWinClosedAtMs: Map<string, number> = new Map();
+  private static readonly POST_WIN_COOLDOWN_MS_DEFAULT = 60_000;  // SAFETY_BOUND: 1 min
+  /**
    * ML-outage observability counter (v0.8.3.5d). Increments every time
    * mlPredictionService.getTradingSignal returns {error: true}. Used to
    * emit a single warn-level log + bus ANOMALY event when the run goes
@@ -5601,6 +5608,16 @@ export class MonkeyKernel extends EventEmitter {
       symbol, heldSide, markPrice, orderId, tradeId,
       pnl: pnlAtDecision.toFixed(4), exitReason,
     });
+    // REGIME-3 #806 — post-win tilt cooldown. After a winning close,
+    // record the timestamp. The entry path's cooldown check rejects new
+    // entries on this symbol for POSTWIN_COOLDOWN_MS unless the operator
+    // has REGIME_POSTWIN_COOLDOWN_LIVE=false. Diagnosed in 2026-05-19
+    // CSV post-mortem: +$0.20 BTC win at 08:21 followed by -$0.52 BTC loss
+    // at 08:29 (8 min later) + cluster of -$0.34 in next 5 min. Pattern:
+    // big winner emboldens immediate re-entry into adverse conditions.
+    if (pnlAtDecision > 0) {
+      this.lastWinClosedAtMs.set(symbol, Date.now());
+    }
     this.bus.publish({
       type: BusEventType.EXIT_TRIGGERED,
       source: this.instanceId,
@@ -5726,6 +5743,36 @@ export class MonkeyKernel extends EventEmitter {
           orderId: null,
           reason: `cross_agent_tape_veto: tape=${tape.toFixed(3)} vs side=${side} (threshold ${tapeVetoThreshold})`,
         };
+      }
+    }
+
+    // REGIME-3 #806 — post-win cooldown veto. After a winning close on
+    // this symbol, suppress new entries for POSTWIN_COOLDOWN_MS to break
+    // the win-then-loss tilt chain observed in 2026-05-19 CSV (+$0.20 BTC
+    // win at 08:21 followed by -$0.52 BTC loss at 08:29 + cluster of
+    // -$0.34 in the next 5 min). DCA-adds bypass — defending an existing
+    // position is the explicit override for the cooldown rule.
+    if (
+      !req.isDCAAdd
+      && process.env.REGIME_POSTWIN_COOLDOWN_LIVE === 'true'
+    ) {
+      const cooldownMs =
+        Number(process.env.POSTWIN_COOLDOWN_MS) || MonkeyKernel.POST_WIN_COOLDOWN_MS_DEFAULT;
+      const lastWinAt = this.lastWinClosedAtMs.get(symbol);
+      if (lastWinAt !== undefined) {
+        const elapsedMs = Date.now() - lastWinAt;
+        if (elapsedMs < cooldownMs) {
+          logger.info('[Monkey] postwin_cooldown veto', {
+            symbol, side, elapsedMs, cooldownMs,
+            remaining_s: ((cooldownMs - elapsedMs) / 1000).toFixed(1),
+          });
+          return {
+            executed: false, orderId: null,
+            reason:
+              `postwin_cooldown: ${(elapsedMs / 1000).toFixed(1)}s since last win, `
+              + `${((cooldownMs - elapsedMs) / 1000).toFixed(1)}s remaining`,
+          };
+        }
       }
     }
 
