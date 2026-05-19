@@ -162,6 +162,27 @@ class FullyAutonomousTrader extends EventEmitter {
   private performanceMetrics: Map<string, any> = new Map();
   private lastHeartbeat: Map<string, Date> = new Map();
   private cycleInFlight: Set<string> = new Set();
+  /**
+   * Peak-equity high-water mark per user. Standard drawdown semantics
+   * (peak-to-trough) require tracking the maximum equity ever observed
+   * for THIS user this process-lifetime. Initialized lazily on first
+   * checkRiskLimits call; updates monotonically upward.
+   *
+   * Diagnosed 2026-05-19: prior drawdown formula was
+   *   drawdown = (initialCapital - currentEquity) / initialCapital
+   * which computes LIFETIME LOSS FROM START, not peak-to-trough.
+   * Once equity dropped below the maxDrawdown threshold from initial,
+   * FAT was permanently blocked even with no current positions and no
+   * recent loss. Per standard trading drawdown semantics, drawdown
+   * should reset when equity recovers.
+   *
+   * NOT persisted across process restarts — peak resets on redeploy.
+   * For a true persistent high-water mark, would need a DB column.
+   * In-memory is sufficient for the operational fix: peak naturally
+   * gets re-set to current equity on first call after restart, then
+   * tracks upward as equity recovers.
+   */
+  private peakEquityByUser: Map<string, number> = new Map();
 
   // Circuit breaker state per user
   private circuitBreakers: Map<string, {
@@ -479,10 +500,25 @@ class FullyAutonomousTrader extends EventEmitter {
       const balance = await poloniexFuturesService.getAccountBalance(credentials);
       const currentEquity = parseFloat(balance.eq || balance.totalEquity || '0');
 
-      // Check drawdown
-      const drawdown = ((config.initialCapital - currentEquity) / config.initialCapital) * 100;
+      // Peak-to-trough drawdown (standard semantics) — replaces the prior
+      // (initialCapital - currentEquity) / initialCapital formula which
+      // measured LIFETIME loss-from-start and permanently blocked FAT once
+      // equity dropped below initial - maxDrawdown%. Peak high-water mark
+      // is tracked per-user in memory; resets to currentEquity if not yet
+      // observed (process restart, new user) and ratchets upward.
+      const priorPeak = this.peakEquityByUser.get(userId) ?? currentEquity;
+      const peakEquity = Math.max(priorPeak, currentEquity);
+      if (peakEquity !== priorPeak) {
+        this.peakEquityByUser.set(userId, peakEquity);
+      } else if (!this.peakEquityByUser.has(userId)) {
+        // First call for this user — initialize the peak.
+        this.peakEquityByUser.set(userId, peakEquity);
+      }
+      const drawdown = peakEquity > 0
+        ? ((peakEquity - currentEquity) / peakEquity) * 100
+        : 0;
       if (drawdown > config.maxDrawdown) {
-        return { canTrade: false, reason: `Max drawdown exceeded: ${drawdown.toFixed(2)}%` };
+        return { canTrade: false, reason: `Max drawdown exceeded: ${drawdown.toFixed(2)}% (peak ${peakEquity.toFixed(2)} → current ${currentEquity.toFixed(2)})` };
       }
 
       // Check if we have capital
