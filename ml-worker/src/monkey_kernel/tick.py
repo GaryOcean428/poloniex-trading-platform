@@ -412,6 +412,28 @@ def run_tick(
     except Exception:  # noqa: BLE001 — never block a tick on basin-sync
         _basin_pull_telem = None
 
+    # ── Pillar 1: FluctuationGuard ─────────────────────────────
+    # QIG_QFI consciousness audit 2026-05-19 GAP 1: enforce basin
+    # entropy floor + concentration cap BEFORE downstream measurement.
+    # Without this, a strong directional signal can collapse the basin
+    # to a single dimension, making f_health and phi degenerate.
+    # Gated by MONKEY_PILLAR_1_LIVE (default false). When true, runs
+    # after refract + basin_sync. Reference: pillars.py.
+    pillar_1_telem: dict | None = None
+    try:
+        from .pillars import FluctuationGuard, pillar_1_live as _p1_live
+        if _p1_live():
+            _fg = FluctuationGuard()
+            basin, _p1_status = _fg.check_and_enforce(basin)
+            pillar_1_telem = {
+                "healthy": _p1_status.healthy,
+                "violations": [v.value for v in _p1_status.violations],
+                "corrections": _p1_status.corrections_applied,
+                **_p1_status.details,
+            }
+    except Exception:  # noqa: BLE001 — never block a tick on pillar enforcement
+        pillar_1_telem = None
+
     # ── Measure ────────────────────────────────────────────────
     f_health = normalized_entropy(basin)
     phi = max(0.0, min(1.0, 1.0 - f_health * 0.8))
