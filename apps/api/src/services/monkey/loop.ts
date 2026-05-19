@@ -122,6 +122,7 @@ import {
   shouldExit,
   shouldProfitHarvest,
   shouldScalpExit,
+  shouldSlowBleedExit,
   chooseLane,
   type BasinState,
   type Direction,
@@ -2988,6 +2989,42 @@ export class MonkeyKernel extends EventEmitter {
             currentRoi,
             unrealizedPnl,
           };
+        }
+
+        // 2.5 Slow-bleed escape — time-based exit for adverse swing/trend
+        // positions where SL hasn't tripped. Per red-team audit promotion
+        // (2026-05-19): the -$13.34 BTC short at 17:16-19:00 bled 103 min
+        // through 0.334% adverse — SL gate held by design (lev=22 →
+        // 7.3% ROI < 15% SL), time axis was uncovered. shouldSlowBleedExit
+        // fires when held >= 60min AND |ROI| >= 0.5×laneSL AND tape adverse.
+        // Env: MONKEY_SLOW_BLEED_LIVE (default true; set false to disable).
+        const slowBleedLive = process.env.MONKEY_SLOW_BLEED_LIVE !== 'false';
+        if (!exitFired && slowBleedLive && entryTimeMs !== undefined) {
+          const heldMs = Date.now() - entryTimeMs;
+          const slowBleed = shouldSlowBleedExit({
+            unrealizedPnlUsdt: unrealizedPnl,
+            notionalUsdt: positionNotional,
+            leverage: leverage.value,
+            heldMs,
+            tapeTrend,
+            heldSide,
+            lane: heldLane,
+          });
+          if (slowBleed.value) {
+            action = 'scalp_exit';
+            reason = slowBleed.reason;
+            exitFired = true;
+            derivation.scalp = {
+              exitTypeBit: slowBleed.derivation.exitTypeBit,
+              unrealizedPnl,
+              markPrice: lastPrice,
+              tradeId,
+              lane: heldLane,
+            };
+            derivation.slowBleedExit = slowBleed.derivation;
+          } else {
+            derivation.slowBleedExit = { fired: false, ...slowBleed.derivation };
+          }
         }
 
         // 3. Profit harvest — trailing stop + trend-flip, only while green.
