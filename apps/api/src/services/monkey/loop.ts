@@ -7243,12 +7243,25 @@ export class MonkeyKernel extends EventEmitter {
 // both are open on the same symbol; the risk kernel's 5× blast door
 // still enforces the hard ceiling.
 
+// User report 2026-05-19 09:53: "taking up pretty small positions compared
+// to the equity. very low leverage. all wins are tiny."
+//
+// Sizing compounds three throttles:
+//   1. sizeFraction per kernel — was 0.5 each = 1.0 combined
+//   2. CREATOR_CHOP cellSizeMultiplier 0.5 (compositional_executive.ts)
+//   3. phi-derived rawFrac (~0.2 typical) inside computeSize
+//
+// Net: 0.5 × 0.5 × 0.2 = 0.05 × bank — positions ~5% of equity.
+//
+// Defaults bumped to 0.7 per kernel (combined 1.4× when same-direction).
+// CREATOR_CHOP raised in compositional_executive.ts companion change.
+// All env-tunable for operator-driven tuning per [[feedback-standing-env-flip-auth]].
 export const monkeyKernel = new MonkeyKernel({
   instanceId: 'monkey-position',
   timeframe: '15m',
   tickMs: 30_000,
   label: 'Monkey.Position',
-  sizeFraction: 0.5,
+  sizeFraction: Number(process.env.MONKEY_POSITION_SIZE_FRACTION) || 0.7,
 });
 
 export const swingMonkey = new MonkeyKernel({
@@ -7256,7 +7269,7 @@ export const swingMonkey = new MonkeyKernel({
   timeframe: '5m',
   tickMs: 30_000,
   label: 'Monkey.Swing',
-  sizeFraction: 0.5,
+  sizeFraction: Number(process.env.MONKEY_SWING_SIZE_FRACTION) || 0.7,
 });
 
 export const allMonkeyKernels: readonly MonkeyKernel[] = [
