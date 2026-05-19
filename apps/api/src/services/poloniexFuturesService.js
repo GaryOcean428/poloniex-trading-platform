@@ -695,10 +695,15 @@ class PoloniexFuturesService {
    * Endpoint: DELETE /v3/trade/order
    */
   async cancelOrder(credentials, orderId, clientOid = null) {
+    // Poloniex v3 spec field names — `ordId` not `orderId`, `clOrdId` not
+    // `clientOid`. Live tape 2026-05-19 06:01 showed every LIMIT_MAKER
+    // stale-cancel returning 401 "Invalid signature" because the wrong
+    // field names made the signed body not match what the server validated.
+    // Same camelCase v3 convention as placeOrder (which uses clOrdId).
     const body = {};
-    if (orderId) body.orderId = orderId;
-    if (clientOid) body.clientOid = clientOid;
-    
+    if (orderId) body.ordId = orderId;
+    if (clientOid) body.clOrdId = clientOid;
+
     const result = await this.makeRequest(credentials, 'DELETE', '/trade/order', body);
     apiCache.invalidatePrefix('GET:/account/balance');
     apiCache.invalidatePrefix('GET:/trade/position');
@@ -711,10 +716,12 @@ class PoloniexFuturesService {
    * Endpoint: DELETE /v3/trade/batchOrders
    */
   async cancelMultipleOrders(credentials, orderIds = [], clientOids = []) {
+    // v3 spec field names: ordIds / clOrdIds (same convention as
+    // single-order cancel — see cancelOrder above).
     const body = {};
-    if (orderIds.length > 0) body.orderIds = orderIds;
-    if (clientOids.length > 0) body.clientOids = clientOids;
-    
+    if (orderIds.length > 0) body.ordIds = orderIds;
+    if (clientOids.length > 0) body.clOrdIds = clientOids;
+
     const result = await this.makeRequest(credentials, 'DELETE', '/trade/batchOrders', body);
     apiCache.invalidatePrefix('GET:/account/balance');
     apiCache.invalidatePrefix('GET:/trade/position');
