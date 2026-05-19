@@ -180,7 +180,29 @@ class StateReconciliationService {
         );
 
         if (!matched) {
-          const entryPrice = parseFloat(exPos.avgPrice ?? exPos.entryPrice ?? '0');
+          // Poloniex v3 /trade/position/opens emits `openAvgPx`
+          // (camelCase) or `avg_open_price` (snake-case) for the
+          // position's average entry price. Earlier versions of this
+          // file used `avgPrice ?? entryPrice` — neither field exists
+          // on v3 responses, so orphans were always inserted with
+          // entry_price=0, which broke every downstream check that
+          // gates on entry_price > 0 (ROI %, TP/SL calc, exit logic).
+          // Same un-normalized-v3-response bug class as
+          // exchangePositionSide.ts. Field order matches the v3
+          // canonical preference; legacy aliases at the tail are
+          // defensive in case the response shape changes again.
+          const entryPrice = parseFloat(
+            exPos.openAvgPx
+            ?? exPos.avg_open_price
+            ?? exPos.avgEntryPrice
+            ?? exPos.avgPrice
+            ?? exPos.entryPrice
+            ?? '0',
+          );
+          const leverFromExchange = parseInt(
+            String(exPos.lever ?? exPos.leverage ?? '1'),
+            10,
+          );
           const orphan: OrphanedPosition = {
             symbol,
             side,
@@ -203,15 +225,16 @@ class StateReconciliationService {
             }|src=reconciler`;
             await pool.query(
               `INSERT INTO autonomous_trades
-               (user_id, symbol, side, entry_price, quantity, reason, status,
-                engine_version, agent, lane)
-               VALUES ($1, $2, $3, $4, $5, $6, 'open', $7, 'USER', 'manual')`,
+               (user_id, symbol, side, entry_price, quantity, leverage, reason,
+                status, engine_version, agent, lane)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, 'open', $8, 'USER', 'manual')`,
               [
                 userId,
                 symbol,
                 side,
                 entryPrice,
                 size,
+                leverFromExchange > 0 ? leverFromExchange : 1,
                 userReason,
                 getEngineVersion(),
               ]
