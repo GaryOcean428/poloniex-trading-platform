@@ -543,7 +543,7 @@ const Backtesting: React.FC = () => {
                   </div>
                 </div>
                 <div className="flex items-center space-x-4">
-                  {strategy.performance.winRate !== null && (
+                  {strategy.performance.winRate != null && (
                     <span className="text-sm text-text-secondary">
                       WR: {(strategy.performance.winRate * 100).toFixed(1)}%
                     </span>
