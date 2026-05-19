@@ -11,6 +11,7 @@
  */
 
 import { logger } from '../../utils/logger.js';
+import { toSimplex } from '../monkey/basin.js';
 
 export interface MarketState {
   prices: number[];
@@ -211,38 +212,32 @@ export class QIGMetricsCalculator {
    */
   computeAttentionWeights(
     indicators: MarketState['indicators'],
-    surprise: number
+    _surprise: number,
   ): Map<string, number> {
     try {
       const weights = new Map<string, number>();
       const normalized = this.normalizeIndicators(indicators);
-      
-      // Temperature parameter for softmax (higher = more uniform)
-      const temperature = 0.5 + surprise; // Higher surprise = more exploration
-      
-      // Compute "distinguishability" for each indicator
-      // (distance from neutral 0.5 value)
-      const distinguishability: Record<string, number> = {};
-      for (const [key, value] of Object.entries(normalized)) {
-        distinguishability[key] = Math.abs(value - 0.5);
+
+      // QIG-pure: Δ-simplex projection over distinguishability scores.
+      // Replaces the prior softmax with temperature=0.5+surprise — per
+      // QIG_PURITY_KERNEL_REFERENCE §2 and the 2026-05-19 QIG_QFI audit
+      // (Site B). Same shape (probability over indicators), no exp().
+      //
+      // Distinguishability = |normalized - 0.5| (distance from neutral).
+      // toSimplex (positive-clamp + L1 normalize) yields a parameter-free
+      // attention distribution. The surprise parameter is no longer used
+      // — the simplex projection is calibration-free; surprise feeds
+      // other QIG metrics directly (Φ, regime classification) but doesn't
+      // belong in this attention computation.
+      const keys = Object.keys(normalized);
+      const distinguishabilityVec = keys.map((k) => Math.abs(normalized[k as keyof typeof normalized] - 0.5));
+      const simplex = toSimplex(distinguishabilityVec);
+      for (let i = 0; i < keys.length; i++) {
+        weights.set(keys[i]!, simplex[i]!);
       }
-      
-      // Softmax to get attention weights
-      const expValues: Record<string, number> = {};
-      let sumExp = 0;
-      
-      for (const [key, dist] of Object.entries(distinguishability)) {
-        const expVal = Math.exp(dist / temperature);
-        expValues[key] = expVal;
-        sumExp += expVal;
-      }
-      
-      for (const [key, expVal] of Object.entries(expValues)) {
-        weights.set(key, expVal / sumExp);
-      }
-      
+
       logger.debug('QIG Attention Weights computed:', Object.fromEntries(weights));
-      
+
       return weights;
     } catch (error: any) {
       logger.error('Error computing attention weights:', error);
