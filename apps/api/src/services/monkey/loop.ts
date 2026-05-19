@@ -769,10 +769,18 @@ export class MonkeyKernel extends EventEmitter {
   /**
    * Funding-arb #794 — latest funding rate per symbol with timestamp.
    * Populated by processSymbol after each funding-rate fetch; consumed
-   * by the cross-symbol pair observer (funding_arb_observer.ts) when
-   * both BTC and ETH have fresh (< 2 min) data.
+   * by:
+   *   1. the cross-symbol pair observer (funding_arb_observer.ts) when
+   *      both BTC and ETH have fresh (< 2 min) data.
+   *   2. the pre-entry funding gate in executeEntry (2026-05-19) —
+   *      suppresses entries that would pay funding within the gate
+   *      window (default 10 min). nextFundingTimeMs is the exchange-
+   *      provided next funding event timestamp (Poloniex v3).
    */
-  private latestFundingBySymbol: Map<string, { rate: number; atMs: number }> = new Map();
+  private latestFundingBySymbol: Map<
+    string,
+    { rate: number; atMs: number; nextFundingTimeMs?: number }
+  > = new Map();
   /**
    * REGIME-3 — per-(symbol,side) timestamp of the last close (any PnL).
    * Consumed by the entry-path cooldown veto to break post-close tilt.
@@ -1464,15 +1472,26 @@ export class MonkeyKernel extends EventEmitter {
     // Non-blocking: fetch failure → rate=0 → no drag perturbation this tick.
     // The rate is forwarded to the Python kernel so compute_funding_drag can
     // modulate anxiety for held positions (P14: real-world boundary → STATE).
-    const fundingRateResp = await poloniexFuturesService.getFundingRate(symbol).catch(() => null) as { fundingRate?: string | number } | null;
+    const fundingRateResp = await poloniexFuturesService.getFundingRate(symbol).catch(() => null) as {
+      fundingRate?: string | number;
+      nextFundingTime?: string | number;
+    } | null;
     const fundingRate8h = Number(fundingRateResp?.fundingRate) || 0;
+    // Poloniex v3 returns nextFundingTime as ms epoch on the futures
+    // /v3/market/fundingRate response. Coerce defensively — absent/0
+    // means "unknown" and the entry-side funding gate falls open.
+    const nextFundingTimeMs = Number(fundingRateResp?.nextFundingTime) || undefined;
 
     // Funding-arb #794 (Class B #7) — push this symbol's latest rate
     // into the cross-symbol cache. When both BTC and ETH have fresh
     // (< 2 min) observations, observe the pair into the arb observer
     // and log signal if it fires. Telemetry-first wire-in.
     if (Number.isFinite(fundingRate8h) && fundingRate8h !== 0) {
-      this.latestFundingBySymbol.set(symbol, { rate: fundingRate8h, atMs: Date.now() });
+      this.latestFundingBySymbol.set(symbol, {
+        rate: fundingRate8h,
+        atMs: Date.now(),
+        nextFundingTimeMs,
+      });
       const btc = this.latestFundingBySymbol.get('BTC_USDT_PERP');
       const eth = this.latestFundingBySymbol.get('ETH_USDT_PERP');
       const now = Date.now();
@@ -5826,6 +5845,54 @@ export class MonkeyKernel extends EventEmitter {
             reason:
               `postclose_cooldown: ${(elapsedMs / 1000).toFixed(1)}s since last close on ${symbol}|${side}, `
               + `${((cooldownMs - elapsedMs) / 1000).toFixed(1)}s remaining`,
+          };
+        }
+      }
+    }
+
+    // FUNDING-GATE — pre-entry funding-cost suppression. Block entries
+    // that would PAY funding within the gate window. Triggered by
+    // claude.ai 13:32 snapshot 2026-05-19 finding: $0.044 funding paid
+    // across 6 events (all LONGs during positive-rate cycles). Small
+    // per-event but it's pure unforced cost layered on top of fees.
+    //
+    // Logic:
+    //   side=long  pays  when fundingRate8h > 0  (longs pay positives)
+    //   side=short pays  when fundingRate8h < 0  (shorts pay negatives)
+    //   active when |now - nextFundingTime| <= FUNDING_GATE_WINDOW_MIN (default 10 min)
+    //
+    // Bypass conditions:
+    //   - MONKEY_FUNDING_GATE_LIVE != 'true'  → gate disabled
+    //   - nextFundingTimeMs absent             → schedule unknown, fail-open
+    //   - req.isDCAAdd                         → defending existing position
+    //
+    // Opposite side (would RECEIVE funding) is unaffected — entering
+    // INTO a favourable funding cycle is a small free EV the gate should not block.
+    if (
+      !req.isDCAAdd
+      && process.env.MONKEY_FUNDING_GATE_LIVE === 'true'
+    ) {
+      const funding = this.latestFundingBySymbol.get(symbol);
+      if (funding && funding.nextFundingTimeMs && Number.isFinite(funding.rate)) {
+        const windowMin = Number(process.env.MONKEY_FUNDING_GATE_WINDOW_MIN) || 10;
+        const windowMs = windowMin * 60_000;
+        const msUntilFunding = funding.nextFundingTimeMs - Date.now();
+        const willPay =
+          (side === 'long' && funding.rate > 0)
+          || (side === 'short' && funding.rate < 0);
+        if (willPay && msUntilFunding >= 0 && msUntilFunding <= windowMs) {
+          const minsUntil = (msUntilFunding / 60_000).toFixed(1);
+          logger.info('[Monkey] funding_gate veto', {
+            symbol, side,
+            fundingRate8h: funding.rate,
+            minsUntilFunding: minsUntil,
+            windowMin,
+          });
+          return {
+            executed: false, orderId: null,
+            reason:
+              `funding_gate: ${side} pays ${(funding.rate * 100).toFixed(4)}% in ${minsUntil}min `
+              + `(window ${windowMin}min)`,
           };
         }
       }
