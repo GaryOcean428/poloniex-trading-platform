@@ -5821,14 +5821,92 @@ export class MonkeyKernel extends EventEmitter {
       return { executed: false, orderId: null, reason };
     }
 
+    // SIDE-MISMATCH RESOLUTION — close OWN size, not exchange aggregate.
+    //
+    // Bug observed 2026-05-19 19:00:13: kernel-position closed BTC short
+    // (its tracked row = 4 contracts) but the exchange position was 52
+    // contracts (aggregate across monkey-position + monkey-swing + agents
+    // K/T + scalp/trend lanes). The current logic used `exchangeQty=52`
+    // as the close size → exchange close fired for the FULL aggregate,
+    // leaving 0 on exchange. Other kernels/lanes' DB rows (48 contracts'
+    // worth) stayed status='open' until the reconciler later marked them
+    // 'reconciliation: side mismatch with exchange'.
+    //
+    // Effects:
+    //   - Per-row PnL attribution wrong (this kernel's row gets ALL the
+    //     close PnL; others get NULL from reconciler).
+    //   - Phantom open positions on the bot's view until reconciler sweeps.
+    //   - Per-agent NC feedback mis-attributed.
+    //   - Risk of stale-state decisions on phantom rows (re-entry via
+    //     postclose_cooldown could be inverted if cooldown tracks the
+    //     phantom-closed row).
+    //
+    // Fix: sum OWN tracked rows (by reason filter + lane), clamp to
+    // exchange aggregate as upper bound. reduceOnly+specific size lets
+    // the exchange close only OUR share; other kernels' positions remain
+    // intact for them to close on their own decision cycle.
+    //
+    // The reason filter (`monkey|kernel=this.instanceId|%`) scopes to
+    // THIS kernel instance; the same SELECT pattern as the post-close
+    // PnL distribution at line ~5673. If the lane is scoped, only count
+    // that lane's rows; otherwise count all of this kernel's rows.
+    //
+    // Defensive `lane IS NULL` matches #829 — picks up legacy rows.
+    let ownTrackedQty = 0;
+    try {
+      const ownRowsQuery = closeLane
+        ? await pool.query(
+            `SELECT COALESCE(SUM(ABS(quantity)), 0) AS qty
+               FROM autonomous_trades
+              WHERE reason LIKE $1 AND status = 'open' AND symbol = $2
+                AND (lane = $3 OR lane IS NULL)
+                AND side = $4`,
+            [`monkey|kernel=${this.instanceId}|%`, symbol, closeLane,
+              heldSide === 'long' ? 'buy' : 'sell'],
+          )
+        : await pool.query(
+            `SELECT COALESCE(SUM(ABS(quantity)), 0) AS qty
+               FROM autonomous_trades
+              WHERE reason LIKE $1 AND status = 'open' AND symbol = $2
+                AND side = $3`,
+            [`monkey|kernel=${this.instanceId}|%`, symbol,
+              heldSide === 'long' ? 'buy' : 'sell'],
+          );
+      ownTrackedQty = Number(ownRowsQuery.rows[0]?.qty ?? 0);
+    } catch (qErr) {
+      // Fail-soft: fall back to exchangeQty (legacy behavior) if DB read
+      // fails — better to over-close than to fail entirely on a hot exit.
+      logger.warn('[Monkey] close own-size SUM(quantity) read failed, falling back to exchangeQty', {
+        symbol, err: qErr instanceof Error ? qErr.message : String(qErr),
+      });
+      ownTrackedQty = exchangeQty;
+    }
+
+    // Use min(ownTrackedQty, exchangeQty). If ownTracked > exchange,
+    // exchange has been partially closed by something else — only close
+    // what's actually there. If ownTracked < exchange, other kernels
+    // hold the rest — only close OUR share, leave theirs intact.
+    //
+    // If ownTracked is 0 (stale row?), fall back to closing tradeId's
+    // own quantity as a last resort — at least close *something* rather
+    // than 0 and leave the position open.
+    const own_or_fallback = ownTrackedQty > 0 ? ownTrackedQty : exchangeQty;
+    const closeSize = Math.min(own_or_fallback, exchangeQty);
+    if (closeSize < exchangeQty) {
+      logger.info('[Monkey] close sized to OWN share, not exchange aggregate', {
+        symbol, heldSide, exchangeQty, ownTrackedQty, closeSize,
+        message: 'leaving sibling kernels their positions',
+      });
+    }
+
     // Lot-size round.
-    let formattedSize = exchangeQty;
+    let formattedSize = closeSize;
     let symbolLotSize = 0;
     try {
       const precisions = await getPrecisions(symbol);
       if (precisions.lotSize && precisions.lotSize > 0) {
         symbolLotSize = precisions.lotSize;
-        formattedSize = Math.floor(exchangeQty / precisions.lotSize) * precisions.lotSize;
+        formattedSize = Math.floor(closeSize / precisions.lotSize) * precisions.lotSize;
       }
     } catch { /* use raw */ }
     if (formattedSize <= 0) {
