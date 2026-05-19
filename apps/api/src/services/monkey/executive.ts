@@ -710,6 +710,92 @@ export function shouldProfitHarvest(
 }
 
 /**
+ * shouldAggregateHarvest — cross-kernel aggregate-PnL harvest gate.
+ *
+ * Companion to shouldProfitHarvest. While shouldProfitHarvest decides
+ * based on a SINGLE kernel's view of its own subset of a position,
+ * shouldAggregateHarvest decides based on the AGGREGATE position
+ * across all in-process kernels + agents (read from aggregatePeakTracker,
+ * which FAT populates each cycle from the exchange-side position view).
+ *
+ * Why both: per-subset peaks fragment a $3+ aggregate profit into
+ * ~$0.50-$1.50 chunks — below the % activation threshold AND below the
+ * abs-USD threshold in #855. The aggregate gate sees the user-facing
+ * peak directly and fires when the aggregate has given back, regardless
+ * of how the position is split internally.
+ *
+ * Decision flow per tick (in loop.ts):
+ *   1. Call shouldProfitHarvest with local subset PnL + peak. If fires
+ *      on the existing % or per-subset abs path → close subset.
+ *   2. ALSO call shouldAggregateHarvest with aggregate PnL + peak from
+ *      the cross-kernel tracker. If fires → close subset.
+ *   Each kernel running this evaluates the SAME aggregate state and
+ *   independently closes its own subset; total realized ≈ aggregate
+ *   current at firing time.
+ *
+ * The threshold defaults to MONKEY_HARVEST_AGG_PEAK_USD (default $3 —
+ * tracks the operator's stated expectation) and is independent of
+ * MONKEY_HARVEST_ABS_PEAK_USD which gates the per-subset abs path.
+ *
+ * Returns { value: false } when aggregate inputs are null/undefined
+ * (FAT hasn't observed yet); caller falls through to the per-subset
+ * path with no behaviour change.
+ */
+export function shouldAggregateHarvest(
+  aggregateCurrentPnlUsdt: number | null,
+  aggregatePeakPnlUsdt: number | null,
+  s: BasinState,
+): ExecutiveDecision<boolean> {
+  if (
+    aggregateCurrentPnlUsdt === null
+    || aggregatePeakPnlUsdt === null
+  ) {
+    return {
+      value: false,
+      reason: 'aggregate_unavailable: FAT has not observed yet',
+      derivation: {},
+    };
+  }
+
+  const absPeakMinUsd = Number(process.env.MONKEY_HARVEST_AGG_PEAK_USD) || 3.0;
+
+  // Use the SAME serotonin-scaled giveback as the per-subset path so
+  // the discipline is consistent across the two harvest gates.
+  // (Calm market → wider giveback, lets winners run; unstable market →
+  // tighter, harvests sooner.)
+  const giveback = 0.30 + 0.20 * s.neurochemistry.serotonin;
+  const floor = aggregatePeakPnlUsdt * (1 - giveback);
+
+  if (
+    aggregatePeakPnlUsdt >= absPeakMinUsd
+    && aggregateCurrentPnlUsdt > 0
+    && aggregateCurrentPnlUsdt < floor
+  ) {
+    return {
+      value: true,
+      reason: `aggregate_harvest: peak $${aggregatePeakPnlUsdt.toFixed(2)} → now $${aggregateCurrentPnlUsdt.toFixed(2)} < $${floor.toFixed(2)} floor (threshold $${absPeakMinUsd.toFixed(2)}, giveback ${(giveback * 100).toFixed(0)}%)`,
+      derivation: {
+        aggregateCurrentPnlUsdt,
+        aggregatePeakPnlUsdt,
+        absPeakMinUsd,
+        floor,
+        giveback,
+        exitTypeBit: 5,
+      },
+    };
+  }
+
+  return {
+    value: false,
+    reason: `aggregate_hold: peak $${aggregatePeakPnlUsdt.toFixed(2)}, current $${aggregateCurrentPnlUsdt.toFixed(2)}, floor $${floor.toFixed(2)} (threshold $${absPeakMinUsd.toFixed(2)})`,
+    derivation: {
+      aggregateCurrentPnlUsdt, aggregatePeakPnlUsdt,
+      absPeakMinUsd, floor, giveback,
+    },
+  };
+}
+
+/**
  * shouldSlowBleedExit — time-based escape for slow adverse bleeds.
  *
  * Evidence (2026-05-19 19:00:13 incident): BTC short held 103 minutes

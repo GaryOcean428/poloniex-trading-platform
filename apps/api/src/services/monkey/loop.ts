@@ -59,6 +59,7 @@ import {
   type Basin,
 } from './basin.js';
 import { callAutonomicTick } from './autonomic_client.js';
+import { aggregatePeakTracker } from './aggregate_peak.js';
 import { BasinSync } from './basin_sync.js';
 import { BusEventType, getKernelBus, type KernelBus } from './kernel_bus.js';
 import {
@@ -118,6 +119,7 @@ import {
   kernelDirection,
   kernelShouldEnter,
   shouldAutoFlatten,
+  shouldAggregateHarvest,
   shouldDCAAdd,
   shouldExit,
   shouldProfitHarvest,
@@ -3055,6 +3057,40 @@ export class MonkeyKernel extends EventEmitter {
               markPrice: lastPrice,
               tradeId,
               lane: heldLane,
+            };
+          }
+        }
+
+        // 3b. Aggregate harvest — gate on the FAT-observed cross-kernel
+        //     position's peak (not this kernel's subset peak). Fixes the
+        //     multi-kernel fragmentation that lets $3+ aggregate wins
+        //     evaporate when per-subset peaks each sit at $1-2. Each
+        //     kernel running this evaluates the SAME aggregate state and
+        //     closes its own subset; total realized ≈ aggregate current
+        //     at firing time. See aggregate_peak.ts for the rationale.
+        if (!exitFired) {
+          const aggPeak = aggregatePeakTracker.getPeak(symbol, heldSide);
+          const aggCurrent = aggregatePeakTracker.getLastPnl(symbol, heldSide);
+          const aggHarvest = shouldAggregateHarvest(
+            aggCurrent, aggPeak, basinState,
+          );
+          derivation.aggHarvest = {
+            ...aggHarvest.derivation,
+            symbol,
+            side: heldSide,
+            lane: heldLane,
+          };
+          if (aggHarvest.value) {
+            action = 'scalp_exit';
+            reason = aggHarvest.reason;
+            exitFired = true;
+            derivation.scalp = {
+              exitTypeBit: aggHarvest.derivation.exitTypeBit,
+              unrealizedPnl,
+              markPrice: lastPrice,
+              tradeId,
+              lane: heldLane,
+              source: 'aggregate',
             };
           }
         }
