@@ -1440,34 +1440,91 @@ export class LiveSignalEngine extends EventEmitter {
           slippageBps: paperOrder.slippageBps,
         });
       } else {
-        const exchangeOrder = await poloniexFuturesService.placeOrder(credentials, {
-          symbol: order.symbol,
-          side: exchangeSide,
-          // posSide MUST be passed on HEDGE; placeOrder defaults to 'BOTH'
-          // when omitted, which Poloniex rejects with code=11011 "Position
-          // mode and posSide do not match." Same `posSide` already derived
-          // for the setLeverage body above. Undefined falls through to
-          // 'BOTH' inside placeOrder for ONE_WAY accounts.
-          posSide,
-          type: 'market',
-          size: formattedSize,
-          lotSize: symbolLotSize,
-        });
-        // Poloniex v3 futures returns the exchange order id as `ordId`.
-        // Keep `orderId`/`id` fallbacks so mocked tests + any future
-        // adapter variants still work without changing this line.
-        orderId =
-          exchangeOrder?.ordId ??
-          exchangeOrder?.orderId ??
-          exchangeOrder?.id ??
-          exchangeOrder?.clientOid;
-        logger.info('[LiveSignal] exchange order placed', {
-          orderId,
-          rawResponseKeys: exchangeOrder ? Object.keys(exchangeOrder) : [],
-          symbol: order.symbol,
-          side: exchangeSide,
-          size: formattedSize,
-        });
+        // LIMIT_MAKER entry path (env-gated, falls back to MARKET).
+        // Mirrors Monkey's maker entry pattern (#820 fix). LiveSignal
+        // was 100% taker on entries pre-this-PR — completes the maker
+        // rebate strategy across all engines.
+        //
+        // Gating: LIVE_SIGNAL_MAKER_ENTRY_LIVE=true (default OFF). Falls
+        // back to MARKET on any orderbook failure, missing best-bid/ask,
+        // or maker-place rejection. Single attempt per entry — no
+        // stale-cancel tracking yet (LiveSignal entries trigger at
+        // tighter cadence than Monkey, separate path needed for fully
+        // tracked maker entries; deferred).
+        const makerEntryLive = process.env.LIVE_SIGNAL_MAKER_ENTRY_LIVE === 'true';
+        let placed = false;
+        if (makerEntryLive) {
+          try {
+            const ob = await poloniexFuturesService.getOrderBook(order.symbol, 5);
+            const rec = ob as Record<string, unknown>;
+            const asks = Array.isArray(rec.asks) ? rec.asks as Array<Array<unknown>> : null;
+            const bids = Array.isArray(rec.bids) ? rec.bids as Array<Array<unknown>> : null;
+            const bestAsk = asks && asks.length > 0 && Number.isFinite(Number(asks[0]?.[0]))
+              ? Number(asks[0]![0]) : null;
+            const bestBid = bids && bids.length > 0 && Number.isFinite(Number(bids[0]?.[0]))
+              ? Number(bids[0]![0]) : null;
+            if (bestBid !== null && bestAsk !== null && bestAsk > bestBid) {
+              const makerPrice = exchangeSide === 'buy' ? bestBid : bestAsk;
+              const makerOrder = await poloniexFuturesService.placeOrder(credentials, {
+                symbol: order.symbol,
+                side: exchangeSide,
+                posSide,
+                type: 'limit_maker',
+                size: formattedSize,
+                lotSize: symbolLotSize,
+                price: makerPrice,
+                timeInForce: 'GTC',
+              });
+              const makerId =
+                makerOrder?.ordId ?? makerOrder?.orderId ??
+                makerOrder?.id ?? makerOrder?.clientOid;
+              if (makerId) {
+                orderId = makerId;
+                placed = true;
+                logger.info('[LiveSignal] LIMIT_MAKER entry placed', {
+                  orderId, symbol: order.symbol, side: exchangeSide,
+                  size: formattedSize, makerPrice, bestBid, bestAsk,
+                });
+              }
+            }
+          } catch (makerErr) {
+            logger.warn('[LiveSignal] LIMIT_MAKER entry failed — falling back to MARKET', {
+              symbol: order.symbol,
+              err: makerErr instanceof Error ? makerErr.message : String(makerErr),
+            });
+          }
+        }
+
+        if (!placed) {
+          const exchangeOrder = await poloniexFuturesService.placeOrder(credentials, {
+            symbol: order.symbol,
+            side: exchangeSide,
+            // posSide MUST be passed on HEDGE; placeOrder defaults to 'BOTH'
+            // when omitted, which Poloniex rejects with code=11011 "Position
+            // mode and posSide do not match." Same `posSide` already derived
+            // for the setLeverage body above. Undefined falls through to
+            // 'BOTH' inside placeOrder for ONE_WAY accounts.
+            posSide,
+            type: 'market',
+            size: formattedSize,
+            lotSize: symbolLotSize,
+          });
+          // Poloniex v3 futures returns the exchange order id as `ordId`.
+          // Keep `orderId`/`id` fallbacks so mocked tests + any future
+          // adapter variants still work without changing this line.
+          orderId =
+            exchangeOrder?.ordId ??
+            exchangeOrder?.orderId ??
+            exchangeOrder?.id ??
+            exchangeOrder?.clientOid;
+          logger.info('[LiveSignal] exchange order placed', {
+            orderId,
+            rawResponseKeys: exchangeOrder ? Object.keys(exchangeOrder) : [],
+            symbol: order.symbol,
+            side: exchangeSide,
+            size: formattedSize,
+          });
+        }
       }
     } catch (err) {
       logger.error('[LiveSignal] order placement failed', {
