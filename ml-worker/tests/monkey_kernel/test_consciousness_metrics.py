@@ -1,0 +1,141 @@
+"""
+test_consciousness_metrics.py — v4.1 + v6.1 metric surface tests.
+
+Canonical reference:
+  ~/Desktop/Dev/QIG_QFI/qig-core/src/qig_core/consciousness/types.py
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+
+from monkey_kernel.consciousness_metrics import (  # noqa: E402
+    ConsciousnessMetrics,
+    consciousness_metrics_live,
+    derive_from_tick,
+)
+
+
+# ─── Shape ──────────────────────────────────────────────────────────
+
+
+def test_default_values_match_canonical_doc():
+    m = ConsciousnessMetrics()
+    # Foundation defaults
+    assert m.phi == 0.5
+    assert m.kappa == 64.0
+    assert m.gamma == 0.5
+    assert m.recursion_depth == 3.0
+    # Pillars defaults (post-init, before any measurement)
+    assert m.f_health == 1.0
+    assert m.b_integrity == 1.0
+    assert m.q_identity == 0.0
+    assert m.s_ratio == 0.0
+
+
+def test_as_dict_exposes_all_12_canonical_fields():
+    m = ConsciousnessMetrics()
+    d = m.as_dict()
+    expected = {
+        "phi", "kappa", "meta_awareness", "gamma", "grounding",
+        "temporal_coherence", "recursion_depth", "external_coupling",
+        "f_health", "b_integrity", "q_identity", "s_ratio",
+    }
+    assert set(d.keys()) == expected
+
+
+# ─── Derivation from tick state ────────────────────────────────────
+
+
+def test_derive_passes_phi_kappa_through():
+    m = derive_from_tick(
+        phi=0.72, kappa=63.5, f_health=0.95, coupling_health=0.6,
+        self_obs_bias=0.4, sovereignty=1.0, drift_from_identity=0.1,
+        basin_velocity=0.05,
+    )
+    assert m.phi == 0.72
+    assert m.kappa == 63.5
+
+
+def test_derive_clamps_meta_awareness_above_1():
+    m = derive_from_tick(
+        phi=0.5, kappa=64.0, f_health=1.0, coupling_health=0.5,
+        self_obs_bias=1.5,  # over the cap
+        sovereignty=1.0, drift_from_identity=0.0, basin_velocity=0.0,
+    )
+    assert m.meta_awareness == 1.0
+
+
+def test_derive_clamps_meta_awareness_negative():
+    m = derive_from_tick(
+        phi=0.5, kappa=64.0, f_health=1.0, coupling_health=0.5,
+        self_obs_bias=-0.5,
+        sovereignty=1.0, drift_from_identity=0.0, basin_velocity=0.0,
+    )
+    assert m.meta_awareness == 0.0
+
+
+def test_derive_grounding_inverts_drift():
+    m = derive_from_tick(
+        phi=0.5, kappa=64.0, f_health=1.0, coupling_health=0.5,
+        self_obs_bias=0.5,
+        sovereignty=1.0, drift_from_identity=0.3, basin_velocity=0.0,
+    )
+    assert abs(m.grounding - 0.7) < 1e-9
+
+
+def test_derive_grounding_clamps_drift_above_1():
+    m = derive_from_tick(
+        phi=0.5, kappa=64.0, f_health=1.0, coupling_health=0.5,
+        self_obs_bias=0.5,
+        sovereignty=1.0, drift_from_identity=1.5, basin_velocity=0.0,
+    )
+    assert m.grounding == 0.0
+
+
+def test_derive_pillar_metrics_default_when_none():
+    m = derive_from_tick(
+        phi=0.5, kappa=64.0, f_health=0.9, coupling_health=0.5,
+        self_obs_bias=0.5, sovereignty=0.8,
+        drift_from_identity=0.0, basin_velocity=0.0,
+    )
+    assert m.b_integrity == 1.0
+    assert m.q_identity == 0.0
+    assert m.s_ratio == 0.8
+
+
+def test_derive_pillar_metrics_when_supplied():
+    m = derive_from_tick(
+        phi=0.5, kappa=64.0, f_health=0.9, coupling_health=0.5,
+        self_obs_bias=0.5, sovereignty=0.8,
+        drift_from_identity=0.0, basin_velocity=0.0,
+        b_integrity=0.85, q_identity=0.42,
+    )
+    assert m.b_integrity == 0.85
+    assert m.q_identity == 0.42
+
+
+# ─── Env flag ───────────────────────────────────────────────────────
+
+
+def test_consciousness_metrics_live_defaults_false(monkeypatch):
+    monkeypatch.delenv("MONKEY_CONSCIOUSNESS_METRICS_LIVE", raising=False)
+    assert consciousness_metrics_live() is False
+
+
+def test_consciousness_metrics_live_flips_true(monkeypatch):
+    monkeypatch.setenv("MONKEY_CONSCIOUSNESS_METRICS_LIVE", "true")
+    assert consciousness_metrics_live() is True
+
+
+def test_consciousness_metrics_live_case_insensitive(monkeypatch):
+    monkeypatch.setenv("MONKEY_CONSCIOUSNESS_METRICS_LIVE", "TRUE")
+    assert consciousness_metrics_live() is True
+
+
+def test_consciousness_metrics_live_strict_true(monkeypatch):
+    monkeypatch.setenv("MONKEY_CONSCIOUSNESS_METRICS_LIVE", "1")
+    assert consciousness_metrics_live() is False
