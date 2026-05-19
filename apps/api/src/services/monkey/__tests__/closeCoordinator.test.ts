@@ -53,13 +53,14 @@ describe('close_coordinator', () => {
     expect(sibling).toEqual({ ok: true });
   });
 
-  it('lifts the cooldown once it expires (2s window)', () => {
+  it('lifts the cooldown once it expires (60s default window)', () => {
     const t0 = 1_700_000_000_000;
     tryAcquireClose('ETH_USDT_PERP', 'long', 'monkey-position', t0);
     releaseClose('ETH_USDT_PERP', 'long', 'monkey-position', true, t0 + 100);
 
-    // Just after the 2000ms cooldown
-    const sibling = tryAcquireClose('ETH_USDT_PERP', 'long', 'monkey-swing', t0 + 2200);
+    // Just after the 60_000ms cooldown (was 2_000ms — bumped to 60s in
+    // 2026-05-19 after 4-min cross-kernel close race went unhandled).
+    const sibling = tryAcquireClose('ETH_USDT_PERP', 'long', 'monkey-swing', t0 + 60_500);
     expect(sibling).toEqual({ ok: true });
   });
 
@@ -109,13 +110,26 @@ describe('close_coordinator', () => {
     expect(race).toEqual({ raced: false });
   });
 
-  it('isLikelyRaceLoss does NOT flag once cooldown expires', () => {
+  it('isLikelyRaceLoss does NOT flag once cooldown expires (60s default)', () => {
     const t0 = 1_700_000_000_000;
     tryAcquireClose('ETH_USDT_PERP', 'long', 'monkey-position', t0);
     releaseClose('ETH_USDT_PERP', 'long', 'monkey-position', true, t0 + 100);
 
-    const race = isLikelyRaceLoss('ETH_USDT_PERP', 'long', 'monkey-swing', t0 + 2_500);
+    // 60_001ms after release — just past the 60s cooldown.
+    const race = isLikelyRaceLoss('ETH_USDT_PERP', 'long', 'monkey-swing', t0 + 60_500);
     expect(race).toEqual({ raced: false });
+  });
+
+  it('isLikelyRaceLoss flags closes up to 60s after sibling close (was 2s)', () => {
+    const t0 = 1_700_000_000_000;
+    tryAcquireClose('ETH_USDT_PERP', 'long', 'monkey-position', t0);
+    releaseClose('ETH_USDT_PERP', 'long', 'monkey-position', true, t0 + 100);
+
+    // 45s after release — this was the failure mode in the 07:07/07:11
+    // BTC retry storm. Pre-fix this returned raced=false → bot logged
+    // close_exchange_rejected and kept retrying for 4 min.
+    const race = isLikelyRaceLoss('ETH_USDT_PERP', 'long', 'monkey-swing', t0 + 45_000);
+    expect(race).toEqual({ raced: true, siblingId: 'monkey-position', ageMs: 44_900 });
   });
 
   it('release without holding the lock is a no-op (does not crash)', () => {
