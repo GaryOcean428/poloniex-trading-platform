@@ -809,12 +809,30 @@ export function shouldScalpExit(
   const nc = s.neurochemistry;
   // Mode picks the baseline; Φ + dopamine modulate within that mode.
   const profile = MODE_PROFILES[mode];
-  // Geometric thresholds are on the raw-price-move scale (TP floor
-  // exists to clear fees, which is a raw-move quantity). Promote them
-  // onto the ROI scale by × leverage so they compose with the ROI-scale
-  // lane envelope under max().
+  // Geometric thresholds are on the raw-price-move scale.
+  //
+  // The 0.003 (0.3% raw) floor was originally justified as
+  // "clear ~0.12% round-trip taker fee with buffer." Operator confirmed
+  // 2026-05-19 they're on a fee-free Polo tier, so the fee-clearing
+  // rationale is dead. Only the noise-floor rationale remains, and that
+  // can be much lower than 0.3% (BTC tick noise is single-bp scale).
+  //
+  // Lowered floor 0.003 → 0.001 (0.1% raw, 10bp) — still well above
+  // tick-noise, but lets the geometric TP fire at lower leverage where
+  // lane TP (15% ROI) would otherwise dominate the threshold.
+  //
+  // Env: MONKEY_SCALP_TP_FLOOR_RAW (default 0.001; set 0.003 if fees
+  // return to a positive value, or higher if too much noise-flap).
+  // Inline env-zero-aware coercion (same pattern as loop.ts:envNumber
+  // helper — avoid cross-module import to keep executive.ts hermetic).
+  const tpFloorRaw = (() => {
+    const raw = process.env.MONKEY_SCALP_TP_FLOOR_RAW;
+    if (raw === undefined || raw === '') return 0.001;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : 0.001;
+  })();
   const geometricTpRaw = Math.max(
-    0.003,
+    tpFloorRaw,
     profile.tpBaseFrac - 0.003 * nc.dopamine + 0.005 * s.phi,
   );
   const geometricSlRaw = geometricTpRaw * profile.slRatio;
