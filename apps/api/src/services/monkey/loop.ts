@@ -5338,11 +5338,19 @@ export class MonkeyKernel extends EventEmitter {
         return { executed: false, orderId: null, reason: 'paper_mode_invalid_mark_price' };
       }
       try {
+        // Defensive `lane IS NULL` — picks up legacy rows (pre-migration
+        // 042 backfill) and any row inserted by a code path that didn't
+        // set lane explicitly. Without this, a NULL-lane row whose logical
+        // lane is `swing` gets silently skipped by `AND lane = 'swing'`
+        // (SQL: NULL = anything is UNKNOWN, not true), leaves status='open',
+        // and the next decision tick re-finds it → 21002 retry storm.
+        // The reason filter still scopes to this kernel instance so we
+        // don't accidentally close LiveSignal rows.
         const openRows = closeLane
           ? await pool.query(
               `SELECT id, quantity, agent, order_id FROM autonomous_trades
                 WHERE reason LIKE $1 AND status = 'open' AND symbol = $2
-                  AND lane = $3
+                  AND (lane = $3 OR lane IS NULL)
                 ORDER BY entry_time ASC`,
               [`monkey|kernel=${this.instanceId}|%`, symbol, closeLane],
             )
@@ -5670,11 +5678,16 @@ export class MonkeyKernel extends EventEmitter {
       // Proposal #10 — when a lane is scoped, only close that lane's
       // open rows. Other lanes (e.g. swing-long while we're closing a
       // scalp-short) keep their bookkeeping intact.
+      //
+      // Defensive `lane IS NULL` — same reasoning as paper-mode SELECT
+      // above. Without it, NULL-lane Monkey rows get silently skipped
+      // by `AND lane = X`, stay status='open', and the next decision
+      // tick re-fires close → 21002 retry storm.
       const openRows = closeLane
         ? await pool.query(
             `SELECT id, quantity, agent FROM autonomous_trades
               WHERE reason LIKE $1 AND status = 'open' AND symbol = $2
-                AND lane = $3
+                AND (lane = $3 OR lane IS NULL)
               ORDER BY entry_time ASC`,
             [`monkey|kernel=${this.instanceId}|%`, symbol, closeLane],
           )
@@ -6297,6 +6310,33 @@ export class MonkeyKernel extends EventEmitter {
     // Why no TREND cells: directional moves require instant fill or the
     // move gets away. Trend lane SHOULD pay taker fees — the TP/SL is
     // wider (0.4%) so fee impact is proportionally smaller.
+    // M.1 — entry gate against stacked makers on the same (symbol, side, lane).
+    // Pre-fix, the entry path never read pendingLimitMakerOrders before
+    // placing — each 30s tick could post a fresh maker order even with
+    // one already resting at the same price (observed in prod logs
+    // 07:09:43/07:09:44/07:09:46: three placements within 3s). This
+    // amplified the cancel-and-replace cycle and worsened latency. The
+    // tracker Map was design-documented as a double-queue guard (loop.ts
+    // class field comment) but the read was never wired. Wiring it now.
+    //
+    // DCA adds bypass — they intentionally stack onto an existing pending
+    // entry to defend a position.
+    if (!req.isDCAAdd) {
+      const targetLane = (req.lane ?? 'swing') as 'scalp' | 'swing' | 'trend';
+      for (const info of this.pendingLimitMakerOrders.values()) {
+        if (info.symbol === symbol && info.side === side && info.lane === targetLane) {
+          const ageMs = Date.now() - info.placedAtMs;
+          logger.debug('[Monkey] skipping entry — maker already pending', {
+            symbol, side, lane: targetLane, pendingOrderId: info.orderId, ageMs,
+          });
+          return {
+            executed: false, orderId: null,
+            reason: `maker_already_pending: orderId=${info.orderId} age=${(ageMs / 1000).toFixed(1)}s`,
+          };
+        }
+      }
+    }
+
     // Operator-toggleable scope: SCALP_LIMIT_MAKER_BROAD=false reverts
     // to the original scalp-lane-only routing if broad-CHOP routing's
     // latency outweighs the rebate on the current symbol mix. The PR
