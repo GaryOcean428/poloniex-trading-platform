@@ -191,6 +191,29 @@ import {
 
 /** Default Monkey watchlist — matches liveSignalEngine for side-by-side. */
 const DEFAULT_SYMBOLS = ['BTC_USDT_PERP', 'ETH_USDT_PERP'];
+
+/**
+ * Env-number coercion that respects 0 as a legitimate value.
+ *
+ * The `Number(process.env.X) || DEFAULT` pattern is broken for env vars
+ * where 0 means "disable this gate" — `Number('0')` is `0` which is
+ * falsy, so `||` short-circuits to DEFAULT. Operator setting `=0` to
+ * disable the gate gets the default applied instead. Verified bug
+ * 2026-05-19: operator set `MONKEY_FEE_FLOOR_COLD_FRAC=0` to disable
+ * the fee-floor under fee-free trading; the env was treated as 0.0018
+ * and continued blocking legitimate any-profit closes.
+ *
+ * Use this helper for any env var where 0 is a meaningful disable
+ * value. Leave `|| DEFAULT` patterns alone where 0 doesn't make sense
+ * (leverage caps, threshold ratios, etc.).
+ */
+function envNumber(key: string, def: number): number {
+  const raw = process.env[key];
+  if (raw === undefined || raw === '') return def;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : def;
+}
+
 // v0.4: faster tick so scalp TP/SL exits catch sub-minute wiggles.
 // Full perception runs per tick; DB + compute cost is modest.
 const DEFAULT_TICK_MS = Number(process.env.MONKEY_TICK_MS) || 30_000;
@@ -2755,11 +2778,23 @@ export class MonkeyKernel extends EventEmitter {
         // Use rolling upper-tercile of observed (kernel_pnl - realized_pnl)
         // per notional once we have MIN_SAMPLES observations; cold-start
         // falls back to the env-tunable SAFETY_BOUND.
-        const effectiveCostFrac = (() => {
+        //
+        // Master toggle MONKEY_FEE_FLOOR_LIVE (default true):
+        //   true  — apply the floor (legacy fee-aware behavior)
+        //   false — floor is 0; ANY positive PnL clears the gate.
+        //
+        // Set to `false` under fee-free trading (operator's Poloniex tier
+        // pays zero on both maker and taker per CSV verification 2026-05-19).
+        // The floor was originally calibrated against ~0.18% round-trip
+        // taker fees + slip buffer; at zero fees, ANY positive ROI is net
+        // positive and the gate is just blocking legitimate small wins.
+        const feeFloorLive = process.env.MONKEY_FEE_FLOOR_LIVE !== 'false';
+        const effectiveCostFrac = !feeFloorLive ? 0 : (() => {
           const n = this.rollingEffectiveCostFrac.length;
-          const coldDefault =
-            Number(process.env.MONKEY_FEE_FLOOR_COLD_FRAC)
-            || MonkeyKernel.EFFECTIVE_COST_COLD_DEFAULT;
+          const coldDefault = envNumber(
+            'MONKEY_FEE_FLOOR_COLD_FRAC',
+            MonkeyKernel.EFFECTIVE_COST_COLD_DEFAULT,
+          );
           if (n < MonkeyKernel.EFFECTIVE_COST_MIN_SAMPLES) return coldDefault;
           // Upper tercile of observed costs — conservatively assumes
           // worst-case slip from the rolling distribution rather than
@@ -2772,10 +2807,10 @@ export class MonkeyKernel extends EventEmitter {
           positionNotional > 0
             ? positionNotional * effectiveCostFrac
             : Number.POSITIVE_INFINITY;
-        const feeDecayStartS =
-          Number(process.env.REGIME_HELD_FEE_DECAY_S) || 300;
-        const feeDecayZeroS =
-          Number(process.env.REGIME_HELD_FEE_FLOOR_ZERO_S) || 900;
+        // envNumber respects 0 as "disable decay grace period" instead of
+        // falsy-defaulting to 300. Bug fixed 2026-05-19 — see envNumber helper.
+        const feeDecayStartS = envNumber('REGIME_HELD_FEE_DECAY_S', 300);
+        const feeDecayZeroS = envNumber('REGIME_HELD_FEE_FLOOR_ZERO_S', 900);
         const decayFraction = (() => {
           if (heldDurationS === undefined || heldDurationS <= feeDecayStartS) return 1.0;
           if (heldDurationS >= feeDecayZeroS) return 0.0;
@@ -2916,14 +2951,15 @@ export class MonkeyKernel extends EventEmitter {
         // Env overrides (specific > generic > 0=disable):
         //   MONKEY_STALE_HELD_S_TREND, MONKEY_STALE_HELD_S_SWING, MONKEY_STALE_HELD_S_SCALP
         //   MONKEY_STALE_HELD_S (fallback for unspecified lanes)
+        // envNumber respects 0 as "disable this lane's stale-held" instead
+        // of falsy-defaulting. Bug fixed 2026-05-19 — see envNumber helper.
         const stalePerLane: Record<string, number> = {
-          scalp: Number(process.env.MONKEY_STALE_HELD_S_SCALP) || 900,
-          swing: Number(process.env.MONKEY_STALE_HELD_S_SWING) || 1500,
-          trend: Number(process.env.MONKEY_STALE_HELD_S_TREND) || 2700,
+          scalp: envNumber('MONKEY_STALE_HELD_S_SCALP', 900),
+          swing: envNumber('MONKEY_STALE_HELD_S_SWING', 1500),
+          trend: envNumber('MONKEY_STALE_HELD_S_TREND', 2700),
         };
         const staleHeldS = stalePerLane[heldLane]
-          ?? Number(process.env.MONKEY_STALE_HELD_S)
-          ?? 1500;
+          ?? envNumber('MONKEY_STALE_HELD_S', 1500);
         if (
           !exitFired
           && staleHeldS > 0
