@@ -1476,15 +1476,31 @@ export class MonkeyKernel extends EventEmitter {
     // Non-blocking: fetch failure → rate=0 → no drag perturbation this tick.
     // The rate is forwarded to the Python kernel so compute_funding_drag can
     // modulate anxiety for held positions (P14: real-world boundary → STATE).
+    //
+    // Poloniex v3 /v3/market/fundingRate returns ABBREVIATED field names:
+    //   { s: symbol, fR: fundingRate, fT: fundingTime,
+    //                 nFR: nextFundingRate, nFT: nextFundingTime }
+    // Verified 2026-05-19 14:30 via curl against the public endpoint.
+    // The full-name fields (.fundingRate, .nextFundingTime) used here
+    // pre-fix were silently returning undefined → coerced to 0 →
+    // funding-arb observer #794 + funding-gate #823 were both dead-code
+    // in production. Read .fR first (abbreviated, canonical); fall back
+    // to .fundingRate for back-compat with the WS shape in
+    // websocketData.ts:80 where the WS feed does include the full name.
     const fundingRateResp = await poloniexFuturesService.getFundingRate(symbol).catch(() => null) as {
+      fR?: string | number;
+      nFT?: string | number;
       fundingRate?: string | number;
       nextFundingTime?: string | number;
     } | null;
-    const fundingRate8h = Number(fundingRateResp?.fundingRate) || 0;
-    // Poloniex v3 returns nextFundingTime as ms epoch on the futures
-    // /v3/market/fundingRate response. Coerce defensively — absent/0
-    // means "unknown" and the entry-side funding gate falls open.
-    const nextFundingTimeMs = Number(fundingRateResp?.nextFundingTime) || undefined;
+    const fundingRate8h =
+      Number(fundingRateResp?.fR)
+      || Number(fundingRateResp?.fundingRate)
+      || 0;
+    const nextFundingTimeMs =
+      Number(fundingRateResp?.nFT)
+      || Number(fundingRateResp?.nextFundingTime)
+      || undefined;
 
     // Funding-arb #794 (Class B #7) — push this symbol's latest rate
     // into the cross-symbol cache. When both BTC and ETH have fresh
