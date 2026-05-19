@@ -2748,11 +2748,26 @@ export class MonkeyKernel extends EventEmitter {
         // based and the regime-aware exits (REGIME-2, trailing_harvest)
         // are designed around Agent K's scalp/swing cadence.
         //
-        // Rule: if held > STALE_HELD_S (default 1200s = 20 min) AND
-        // ROI > 0 (any profit), close. Aged positions that haven't moved
-        // are wasting margin even if they're slightly profitable.
-        // Operator override: MONKEY_STALE_HELD_S (set 0 to disable).
-        const staleHeldS = Number(process.env.MONKEY_STALE_HELD_S) || 1200;
+        // PER-LANE THRESHOLDS — informed by 2-week DB audit 2026-05-19:
+        //   trend lane (Agent T + L): 64.6% / 84% real WR, trend-following
+        //                              by design = needs longer hold.
+        //                              Default 2700s (45 min).
+        //   swing lane (Agent K + M): 50.4% / 80% real WR, swing cadence
+        //                              ≈ 5m-15m typical hold. Default 1500s (25 min).
+        //   scalp lane (Agent K):     82.8% WR, sub-minute typical hold.
+        //                              Default 900s (15 min).
+        //
+        // Env overrides (specific > generic > 0=disable):
+        //   MONKEY_STALE_HELD_S_TREND, MONKEY_STALE_HELD_S_SWING, MONKEY_STALE_HELD_S_SCALP
+        //   MONKEY_STALE_HELD_S (fallback for unspecified lanes)
+        const stalePerLane: Record<string, number> = {
+          scalp: Number(process.env.MONKEY_STALE_HELD_S_SCALP) || 900,
+          swing: Number(process.env.MONKEY_STALE_HELD_S_SWING) || 1500,
+          trend: Number(process.env.MONKEY_STALE_HELD_S_TREND) || 2700,
+        };
+        const staleHeldS = stalePerLane[heldLane]
+          ?? Number(process.env.MONKEY_STALE_HELD_S)
+          ?? 1500;
         if (
           !exitFired
           && staleHeldS > 0
@@ -2765,7 +2780,7 @@ export class MonkeyKernel extends EventEmitter {
           action = 'scalp_exit';
           reason =
             `stale_held: position open ${heldDurationS.toFixed(0)}s `
-            + `(>= ${staleHeldS}s) at ROI ${roiPct}% — agent-agnostic forced close`;
+            + `(>= ${staleHeldS}s for lane=${heldLane}) at ROI ${roiPct}% — agent-agnostic forced close`;
           exitFired = true;
           derivation.scalp = {
             exitTypeBit: 7,  // STALE_HELD forced close
