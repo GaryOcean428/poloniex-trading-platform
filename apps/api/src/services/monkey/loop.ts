@@ -769,17 +769,47 @@ export class MonkeyKernel extends EventEmitter {
   /**
    * Funding-arb #794 — latest funding rate per symbol with timestamp.
    * Populated by processSymbol after each funding-rate fetch; consumed
-   * by the cross-symbol pair observer (funding_arb_observer.ts) when
-   * both BTC and ETH have fresh (< 2 min) data.
+   * by:
+   *   1. the cross-symbol pair observer (funding_arb_observer.ts) when
+   *      both BTC and ETH have fresh (< 2 min) data.
+   *   2. the pre-entry funding gate in executeEntry (2026-05-19) —
+   *      suppresses entries that would pay funding within the gate
+   *      window (default 10 min). nextFundingTimeMs is the exchange-
+   *      provided next funding event timestamp (Poloniex v3).
    */
-  private latestFundingBySymbol: Map<string, { rate: number; atMs: number }> = new Map();
+  private latestFundingBySymbol: Map<
+    string,
+    { rate: number; atMs: number; nextFundingTimeMs?: number }
+  > = new Map();
   /**
-   * REGIME-3 #806 — per-symbol timestamp of the last winning close.
-   * Consumed by the entry-path cooldown veto to break the win-then-loss
-   * tilt chain. Set by POSITION CLOSED when pnlAtDecision > 0.
+   * REGIME-3 — per-(symbol,side) timestamp of the last close (any PnL).
+   * Consumed by the entry-path cooldown veto to break post-close tilt.
+   *
+   * 2026-05-19 calibration history:
+   *   #806: post-WIN only (pnl>0). Goal: break win-then-loss tilt chain.
+   *   #819: 60s→180s default + side-aware key.
+   *   THIS PR: extended to ALL closes (loss too). Trigger was claude.ai
+   *   13:32 snapshot — 13:14:31 BTC -$0.22 came from re-entry 2min after
+   *   a TINY LOSS (-$0.0036) on the same (symbol,side). Post-win-only
+   *   gate missed it. Same-direction post-close re-entry within the
+   *   cooldown window is the structural failure mode regardless of the
+   *   prior close's sign.
+   *
+   * Key format: `${symbol}|${side}`. Two entries per symbol max.
+   * SAME-SIDE re-entry is the strongest tilt signal; OPPOSITE-SIDE
+   * (reversal decision) isn't gated by this — it has its own gates
+   * (REGIME-2 + directional_disagreement).
    */
-  private lastWinClosedAtMs: Map<string, number> = new Map();
-  private static readonly POST_WIN_COOLDOWN_MS_DEFAULT = 60_000;  // SAFETY_BOUND: 1 min
+  private lastCloseAtMs: Map<string, number> = new Map();
+  /** SAFETY_BOUND: 3 min default — calibrated 2026-05-19 from observed
+   *  BTC short→short tilt pattern (62s re-entry slipped past prior 60s
+   *  default) and BTC long→long tilt pattern (2min re-entry after small
+   *  loss → -$0.22 blow-out). 3 min is long enough to break the
+   *  immediate-press impulse on the typical 30-90s scalp/swing tick
+   *  cadence; short enough that genuine signal recovery isn't blocked
+   *  indefinitely. Operator can override via POSTCLOSE_COOLDOWN_MS env
+   *  (legacy POSTWIN_COOLDOWN_MS still honored for back-compat). */
+  private static readonly POST_CLOSE_COOLDOWN_MS_DEFAULT = 180_000;
   /**
    * ML-outage observability counter (v0.8.3.5d). Increments every time
    * mlPredictionService.getTradingSignal returns {error: true}. Used to
@@ -1364,7 +1394,11 @@ export class MonkeyKernel extends EventEmitter {
     }
     for (const s of stale) {
       try {
-        await poloniexFuturesService.cancelOrder(creds, s.orderId);
+        // Poloniex v3 DELETE /trade/order requires symbol. Pre-fix the
+        // call shape was (creds, orderId) which sent body {orderId: …}
+        // (wrong field name) and no symbol → 401. See cancelOrder
+        // signature in poloniexFuturesService.js for the write-up.
+        await poloniexFuturesService.cancelOrder(creds, s.symbol, s.orderId);
         logger.info('[Monkey] LIMIT_MAKER cancelled (stale)', {
           symbol: s.symbol, side: s.side, orderId: s.orderId,
           stale_ms: now - this.pendingLimitMakerOrders.get(s.orderId)!.placedAtMs,
@@ -1442,15 +1476,26 @@ export class MonkeyKernel extends EventEmitter {
     // Non-blocking: fetch failure → rate=0 → no drag perturbation this tick.
     // The rate is forwarded to the Python kernel so compute_funding_drag can
     // modulate anxiety for held positions (P14: real-world boundary → STATE).
-    const fundingRateResp = await poloniexFuturesService.getFundingRate(symbol).catch(() => null) as { fundingRate?: string | number } | null;
+    const fundingRateResp = await poloniexFuturesService.getFundingRate(symbol).catch(() => null) as {
+      fundingRate?: string | number;
+      nextFundingTime?: string | number;
+    } | null;
     const fundingRate8h = Number(fundingRateResp?.fundingRate) || 0;
+    // Poloniex v3 returns nextFundingTime as ms epoch on the futures
+    // /v3/market/fundingRate response. Coerce defensively — absent/0
+    // means "unknown" and the entry-side funding gate falls open.
+    const nextFundingTimeMs = Number(fundingRateResp?.nextFundingTime) || undefined;
 
     // Funding-arb #794 (Class B #7) — push this symbol's latest rate
     // into the cross-symbol cache. When both BTC and ETH have fresh
     // (< 2 min) observations, observe the pair into the arb observer
     // and log signal if it fires. Telemetry-first wire-in.
     if (Number.isFinite(fundingRate8h) && fundingRate8h !== 0) {
-      this.latestFundingBySymbol.set(symbol, { rate: fundingRate8h, atMs: Date.now() });
+      this.latestFundingBySymbol.set(symbol, {
+        rate: fundingRate8h,
+        atMs: Date.now(),
+        nextFundingTimeMs,
+      });
       const btc = this.latestFundingBySymbol.get('BTC_USDT_PERP');
       const eth = this.latestFundingBySymbol.get('ETH_USDT_PERP');
       const now = Date.now();
@@ -3207,6 +3252,7 @@ export class MonkeyKernel extends EventEmitter {
           lane: isDCA && heldSide
             ? (ownOpenRow?.lane ?? positionLane)
             : positionLane,
+          cellDirection,
         }) : { executed: false, orderId: null, reason: 'k_arbiter_zero' };
         executed = execResult.executed;
         monkeyOrderId = execResult.orderId;
@@ -3396,6 +3442,7 @@ export class MonkeyKernel extends EventEmitter {
               // Reversal lands in the same lane the previous position
               // occupied — REVERSION mode flips side, not lane.
               lane: reversalLane,
+              cellDirection,
             });
             executed = execResult.executed;
             monkeyOrderId = execResult.orderId;
@@ -3573,6 +3620,7 @@ export class MonkeyKernel extends EventEmitter {
           isDCAAdd: false,
           dcaAddIndex: 0,
           agent: 'M',
+          cellDirection,
         });
         derivation.agentMExecuted = mResult.executed;
         if (!mResult.executed) {
@@ -3713,6 +3761,7 @@ export class MonkeyKernel extends EventEmitter {
           dcaAddIndex: 0,
           agent: 'T',
           lane: 'trend',
+          cellDirection,
         });
         derivation.agentTExecuted = tResult.executed;
         if (tResult.executed) {
@@ -4040,6 +4089,7 @@ export class MonkeyKernel extends EventEmitter {
               dcaAddIndex: 0,
               agent: 'L',
               lane: 'trend',  // L is a long-horizon classifier; co-locate with trend lane
+              cellDirection,
             });
             (derivation as Record<string, unknown>).agentLExecuted = lResult.executed;
             if (lResult.executed) {
@@ -5616,16 +5666,23 @@ export class MonkeyKernel extends EventEmitter {
       symbol, heldSide, markPrice, orderId, tradeId,
       pnl: pnlAtDecision.toFixed(4), exitReason,
     });
-    // REGIME-3 #806 — post-win tilt cooldown. After a winning close,
-    // record the timestamp. The entry path's cooldown check rejects new
-    // entries on this symbol for POSTWIN_COOLDOWN_MS unless the operator
-    // has REGIME_POSTWIN_COOLDOWN_LIVE=false. Diagnosed in 2026-05-19
-    // CSV post-mortem: +$0.20 BTC win at 08:21 followed by -$0.52 BTC loss
-    // at 08:29 (8 min later) + cluster of -$0.34 in next 5 min. Pattern:
-    // big winner emboldens immediate re-entry into adverse conditions.
-    if (pnlAtDecision > 0) {
-      this.lastWinClosedAtMs.set(symbol, Date.now());
-    }
+    // REGIME-3 — post-close tilt cooldown. Records timestamp on EVERY
+    // close (any PnL). The entry path's cooldown check rejects same-side
+    // re-entry within POSTCLOSE_COOLDOWN_MS unless the operator has
+    // REGIME_POSTWIN_COOLDOWN_LIVE=false (env var name kept for back-compat).
+    //
+    // Diagnosed in 2026-05-19 CSV post-mortems:
+    //   #806: +$0.20 BTC win at 08:21 → -$0.52 BTC loss at 08:29 (win-then-loss)
+    //   #819: BTC short→short re-open at 62s (slipped past 60s default)
+    //   THIS: 13:11:54 BTC long close -$0.0036 (TINY LOSS) → 13:13:55 BTC
+    //         long re-open (2 min later) → 13:14:31 close -$0.2247.
+    //         Post-win-only gate didn't fire because the prior close was
+    //         a tiny loss, not a win. Same structural failure mode.
+    //
+    // Side-aware: key by (symbol, side). Same-symbol SAME-SIDE re-entry
+    // is the gated case. Opposite-side (reversal) isn't gated by THIS
+    // check — it has its own gates (REGIME-2, directional_disagreement).
+    this.lastCloseAtMs.set(`${symbol}|${heldSide}`, Date.now());
     this.bus.publish({
       type: BusEventType.EXIT_TRIGGERED,
       source: this.instanceId,
@@ -5675,6 +5732,13 @@ export class MonkeyKernel extends EventEmitter {
     /** Proposal #10: execution lane key. Default 'swing' = pre-#10 implicit
      *  lane so existing call sites remain bit-identical. */
     lane?: 'scalp' | 'swing' | 'trend';
+    /** REGIME-1 cell direction hint for LIMIT_MAKER routing. When
+     *  'CHOP', the entry is non-time-critical (lateral market) and
+     *  should post as maker to earn the rebate. When 'TREND_UP' or
+     *  'TREND_DOWN', the entry is directional and should use MARKET
+     *  for instant fill. Null when cell isn't resolved (legacy
+     *  call sites). */
+    cellDirection?: 'TREND_UP' | 'CHOP' | 'TREND_DOWN' | null;
   }): Promise<{ executed: boolean; orderId: string | null; reason: string }> {
     const { symbol, side, marginUsdt, entryPrice, minNotional } = req;
     // 2026-05-13 — continuous-regime leverage sanity bound.
@@ -5754,31 +5818,85 @@ export class MonkeyKernel extends EventEmitter {
       }
     }
 
-    // REGIME-3 #806 — post-win cooldown veto. After a winning close on
-    // this symbol, suppress new entries for POSTWIN_COOLDOWN_MS to break
-    // the win-then-loss tilt chain observed in 2026-05-19 CSV (+$0.20 BTC
-    // win at 08:21 followed by -$0.52 BTC loss at 08:29 + cluster of
-    // -$0.34 in the next 5 min). DCA-adds bypass — defending an existing
-    // position is the explicit override for the cooldown rule.
+    // REGIME-3 — post-close cooldown veto. After ANY close on this
+    // (symbol, side), suppress same-side re-entry for POSTCLOSE_COOLDOWN_MS
+    // to break post-close tilt. Originally post-WIN only (#806/#819);
+    // extended 2026-05-19 to any close after the 13:14:31 BTC -$0.22 loss
+    // came from re-entry 2min after a tiny loss (post-win-only gate missed it).
+    //
+    // Env compat:
+    //   REGIME_POSTWIN_COOLDOWN_LIVE=true  → activates the gate (legacy name kept)
+    //   POSTCLOSE_COOLDOWN_MS overrides; POSTWIN_COOLDOWN_MS is a fallback alias.
+    //   DCA-adds bypass — defending an existing position is the explicit override.
     if (
       !req.isDCAAdd
       && process.env.REGIME_POSTWIN_COOLDOWN_LIVE === 'true'
     ) {
       const cooldownMs =
-        Number(process.env.POSTWIN_COOLDOWN_MS) || MonkeyKernel.POST_WIN_COOLDOWN_MS_DEFAULT;
-      const lastWinAt = this.lastWinClosedAtMs.get(symbol);
-      if (lastWinAt !== undefined) {
-        const elapsedMs = Date.now() - lastWinAt;
+        Number(process.env.POSTCLOSE_COOLDOWN_MS)
+        || Number(process.env.POSTWIN_COOLDOWN_MS)
+        || MonkeyKernel.POST_CLOSE_COOLDOWN_MS_DEFAULT;
+      const lastCloseAt = this.lastCloseAtMs.get(`${symbol}|${side}`);
+      if (lastCloseAt !== undefined) {
+        const elapsedMs = Date.now() - lastCloseAt;
         if (elapsedMs < cooldownMs) {
-          logger.info('[Monkey] postwin_cooldown veto', {
+          logger.info('[Monkey] postclose_cooldown veto', {
             symbol, side, elapsedMs, cooldownMs,
             remaining_s: ((cooldownMs - elapsedMs) / 1000).toFixed(1),
           });
           return {
             executed: false, orderId: null,
             reason:
-              `postwin_cooldown: ${(elapsedMs / 1000).toFixed(1)}s since last win, `
+              `postclose_cooldown: ${(elapsedMs / 1000).toFixed(1)}s since last close on ${symbol}|${side}, `
               + `${((cooldownMs - elapsedMs) / 1000).toFixed(1)}s remaining`,
+          };
+        }
+      }
+    }
+
+    // FUNDING-GATE — pre-entry funding-cost suppression. Block entries
+    // that would PAY funding within the gate window. Triggered by
+    // claude.ai 13:32 snapshot 2026-05-19 finding: $0.044 funding paid
+    // across 6 events (all LONGs during positive-rate cycles). Small
+    // per-event but it's pure unforced cost layered on top of fees.
+    //
+    // Logic:
+    //   side=long  pays  when fundingRate8h > 0  (longs pay positives)
+    //   side=short pays  when fundingRate8h < 0  (shorts pay negatives)
+    //   active when |now - nextFundingTime| <= FUNDING_GATE_WINDOW_MIN (default 10 min)
+    //
+    // Bypass conditions:
+    //   - MONKEY_FUNDING_GATE_LIVE != 'true'  → gate disabled
+    //   - nextFundingTimeMs absent             → schedule unknown, fail-open
+    //   - req.isDCAAdd                         → defending existing position
+    //
+    // Opposite side (would RECEIVE funding) is unaffected — entering
+    // INTO a favourable funding cycle is a small free EV the gate should not block.
+    if (
+      !req.isDCAAdd
+      && process.env.MONKEY_FUNDING_GATE_LIVE === 'true'
+    ) {
+      const funding = this.latestFundingBySymbol.get(symbol);
+      if (funding && funding.nextFundingTimeMs && Number.isFinite(funding.rate)) {
+        const windowMin = Number(process.env.MONKEY_FUNDING_GATE_WINDOW_MIN) || 10;
+        const windowMs = windowMin * 60_000;
+        const msUntilFunding = funding.nextFundingTimeMs - Date.now();
+        const willPay =
+          (side === 'long' && funding.rate > 0)
+          || (side === 'short' && funding.rate < 0);
+        if (willPay && msUntilFunding >= 0 && msUntilFunding <= windowMs) {
+          const minsUntil = (msUntilFunding / 60_000).toFixed(1);
+          logger.info('[Monkey] funding_gate veto', {
+            symbol, side,
+            fundingRate8h: funding.rate,
+            minsUntilFunding: minsUntil,
+            windowMin,
+          });
+          return {
+            executed: false, orderId: null,
+            reason:
+              `funding_gate: ${side} pays ${(funding.rate * 100).toFixed(4)}% in ${minsUntil}min `
+              + `(window ${windowMin}min)`,
           };
         }
       }
@@ -6046,23 +6164,31 @@ export class MonkeyKernel extends EventEmitter {
       });
     }
 
-    // LIMIT_MAKER #793 (Class B #5) — scalp lane post-only entry path.
-    // When SCALP_LIMIT_MAKER_LIVE=true AND lane='scalp' AND not a DCA add:
-    // fetch the order book, post at best-bid (long) or best-ask (short).
-    // The post-only flag means the order is rejected if it would cross
-    // the spread — so the exchange enforces the maker-rebate guarantee.
+    // LIMIT_MAKER #793 + cell-conditional routing (audit 2026-05-19).
     //
-    // Why scalp only: scalp's small TP (0.03) means a 0.04% taker fee
-    // is ~13% of the target profit. LIMIT_MAKER earns the maker rebate
-    // instead. Swing/trend have larger TPs so fee impact is smaller AND
-    // they're more time-sensitive (don't want to miss a trend by waiting
-    // for a maker fill).
+    // Trigger semantics: use LIMIT_MAKER for non-time-critical entries.
+    // The defining property is "lateral market — no rush to fill" rather
+    // than "scalp lane." Per claude.ai 2026-05-19 analysis of 30 fills:
+    // 100% taker despite SCALP_LIMIT_MAKER_LIVE=true because the chooseLane
+    // softmax has a structural zero (scalpScore=0 when sov=1.0), so scalp
+    // lane only wins argmax in CREATOR_CHOP cells (where cellLaneBias=scalp
+    // boost overcomes the 0). All other CHOP cells routed to swing/trend,
+    // missed the maker rebate. Counterfactual: -$0.23 → +$0.62 net for
+    // the observed window with maker routing active across all CHOP cells.
     //
-    // Why not DCA: DCA-adds are reactive to adverse price moves, often
-    // need immediate fill to defend the position; can't wait for maker.
+    // New rule: LIMIT_MAKER fires when ANY of:
+    //   (a) cellDirection === 'CHOP'  — lateral market, can wait for maker
+    //   (b) lane === 'scalp'          — explicit scalp routing (legacy path)
+    // AND NOT a DCA add (DCA defends existing position, needs instant fill).
+    //
+    // Why no TREND cells: directional moves require instant fill or the
+    // move gets away. Trend lane SHOULD pay taker fees — the TP/SL is
+    // wider (0.4%) so fee impact is proportionally smaller.
+    const cellIsChop = req.cellDirection === 'CHOP';
+    const laneIsScalp = (req.lane ?? 'swing') === 'scalp';
     const useLimitMaker =
       process.env.SCALP_LIMIT_MAKER_LIVE === 'true'
-      && (req.lane ?? 'swing') === 'scalp'
+      && (cellIsChop || laneIsScalp)
       && !req.isDCAAdd;
 
     let orderId: string | null = null;
@@ -6075,10 +6201,17 @@ export class MonkeyKernel extends EventEmitter {
         let bestAsk: number | null = null;
         try {
           const ob = await poloniexFuturesService.getOrderBook(symbol, 5);
-          // v3 response shape: { data: { asks: [[price, sz], ...], bids: [[price, sz], ...] } }
-          const data = (ob as Record<string, unknown>)?.data as Record<string, unknown> | undefined;
-          const asks = Array.isArray(data?.asks) ? data!.asks as Array<Array<unknown>> : null;
-          const bids = Array.isArray(data?.bids) ? data!.bids as Array<Array<unknown>> : null;
+          // Poloniex v3 raw response: { code: 200, data: { asks, bids, s, ts }, msg }
+          // BUT poloniexFuturesService.makePublicRequest already UNWRAPS
+          // the `data` field (see line 887). So ob === {asks, bids, s, ts}
+          // directly, NOT { data: {...} }. Diagnosed 2026-05-19 from live
+          // log: `limit_maker pre-check failed bestBid=null bestAsk=null`
+          // — my prior `ob.data.asks` access was undefined → MARKET
+          // fallback → 100% taker fills despite the cell-conditional
+          // routing being correct in #817.
+          const rec = ob as Record<string, unknown>;
+          const asks = Array.isArray(rec.asks) ? rec.asks as Array<Array<unknown>> : null;
+          const bids = Array.isArray(rec.bids) ? rec.bids as Array<Array<unknown>> : null;
           if (asks && asks.length > 0 && Number.isFinite(Number(asks[0]?.[0]))) {
             bestAsk = Number(asks[0]![0]);
           }

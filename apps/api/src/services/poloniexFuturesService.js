@@ -69,8 +69,14 @@ class PoloniexFuturesService {
       // Build parameter string
       let paramString = '';
       
-      if (body && (methodUpper === 'POST' || methodUpper === 'PUT')) {
-        // For POST/PUT with body
+      if (body && (methodUpper === 'POST' || methodUpper === 'PUT' || methodUpper === 'DELETE')) {
+        // For POST/PUT/DELETE with body. Per v3 spec, all DELETE requests
+        // that do not require query params must include a request body
+        // (often `{}`) and the body IS part of the signed canonical form.
+        // Previous behavior signed DELETE+body as `signTimestamp=...` only,
+        // dropping the body — server validated against full body → 401
+        // "Invalid signature". Diagnosed 2026-05-19 06:01 on LIMIT_MAKER
+        // stale-cancel path post-PR #808.
         const bodyJson = JSON.stringify(body);
         paramString = `requestBody=${bodyJson}&signTimestamp=${timestamp}`;
       } else if (params && Object.keys(params).length > 0) {
@@ -694,11 +700,36 @@ class PoloniexFuturesService {
    * Cancel an order
    * Endpoint: DELETE /v3/trade/order
    */
-  async cancelOrder(credentials, orderId, clientOid = null) {
+  async cancelOrder(credentials, symbolOrOrderId, orderId = null, clientOid = null) {
+    // Poloniex v3 spec for DELETE /v3/trade/order:
+    //   REQUIRED: symbol
+    //   OPTIONAL: ordId, clOrdId (provide at least one)
+    //
+    // Field names are camelCase v3 — `ordId` not `orderId`, `clOrdId`
+    // not `clientOid`. Live tape 2026-05-19 06:01 showed every LIMIT_MAKER
+    // stale-cancel returning 401 because the body shape didn't match
+    // what the signature was computed against (server validates body
+    // contents during HMAC verification).
+    //
+    // Back-compat: existing callers pass `(creds, orderId)` (2 args, no
+    // symbol). Detect that shape and treat it as legacy — the call will
+    // fail at the exchange with 401 (symbol is required), but at least
+    // we don't crash. New code should pass `(creds, symbol, ordId, clOrdId?)`.
+    let symbol;
+    let resolvedOrderId;
+    if (orderId === null && clientOid === null) {
+      // Legacy 2-arg shape: cancelOrder(creds, orderId)
+      resolvedOrderId = symbolOrOrderId;
+      symbol = null;
+    } else {
+      symbol = symbolOrOrderId;
+      resolvedOrderId = orderId;
+    }
     const body = {};
-    if (orderId) body.orderId = orderId;
-    if (clientOid) body.clientOid = clientOid;
-    
+    if (symbol) body.symbol = symbol;
+    if (resolvedOrderId) body.ordId = resolvedOrderId;
+    if (clientOid) body.clOrdId = clientOid;
+
     const result = await this.makeRequest(credentials, 'DELETE', '/trade/order', body);
     apiCache.invalidatePrefix('GET:/account/balance');
     apiCache.invalidatePrefix('GET:/trade/position');
@@ -710,11 +741,34 @@ class PoloniexFuturesService {
    * Cancel multiple orders
    * Endpoint: DELETE /v3/trade/batchOrders
    */
-  async cancelMultipleOrders(credentials, orderIds = [], clientOids = []) {
+  async cancelMultipleOrders(credentials, symbol, orderIds = [], clientOids = []) {
+    // Poloniex v3 spec for DELETE /v3/trade/batchOrders:
+    //   REQUIRED: symbol
+    //   OPTIONAL: ordIds, clOrdIds (provide at least one)
+    //
+    // Field names are camelCase v3 — `ordIds` not `orderIds`,
+    // `clOrdIds` not `clientOids`. Same root cause as cancelOrder
+    // single-cancel 401s (see above).
+    //
+    // Back-compat: legacy callers pass `(creds, orderIds, clientOids)`.
+    // Detect by checking if symbol-position is actually an array.
+    let resolvedSymbol;
+    let resolvedOrderIds;
+    let resolvedClientOids;
+    if (Array.isArray(symbol)) {
+      resolvedSymbol = null;
+      resolvedOrderIds = symbol;
+      resolvedClientOids = Array.isArray(orderIds) ? orderIds : [];
+    } else {
+      resolvedSymbol = symbol;
+      resolvedOrderIds = orderIds;
+      resolvedClientOids = clientOids;
+    }
     const body = {};
-    if (orderIds.length > 0) body.orderIds = orderIds;
-    if (clientOids.length > 0) body.clientOids = clientOids;
-    
+    if (resolvedSymbol) body.symbol = resolvedSymbol;
+    if (resolvedOrderIds.length > 0) body.ordIds = resolvedOrderIds;
+    if (resolvedClientOids.length > 0) body.clOrdIds = resolvedClientOids;
+
     const result = await this.makeRequest(credentials, 'DELETE', '/trade/batchOrders', body);
     apiCache.invalidatePrefix('GET:/account/balance');
     apiCache.invalidatePrefix('GET:/trade/position');
