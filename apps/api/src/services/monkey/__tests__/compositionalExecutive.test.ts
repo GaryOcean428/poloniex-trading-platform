@@ -43,18 +43,22 @@ describe('evaluateCell — 3×3 compositional matrix coverage', () => {
     }
   });
 
-  it('CREATOR + CHOP → scalp bias, tight harvest, half size', () => {
+  it('CREATOR + CHOP → scalp bias, tight harvest, 0.75x size (env-tunable)', () => {
     const cell = evaluateCell('CREATOR', 'CHOP');
     expect(cell.laneBias).toBe('scalp');
     expect(cell.harvestTightness).toBe('tight');
-    expect(cell.sizeMultiplier).toBe(0.5);
+    // 0.75 default (bumped from 0.5 in 2026-05-19 sizing-knobs pass per
+    // user report "small positions, low leverage, tiny wins").
+    // Env override: REGIME_CREATOR_CHOP_SIZE_MULT.
+    expect(cell.sizeMultiplier).toBe(0.75);
   });
 
-  it('PRESERVER + CHOP → swing (mean-revert), normal harvest, 0.7x size', () => {
+  it('PRESERVER + CHOP → swing (mean-revert), normal harvest, 0.85x size (env-tunable)', () => {
     const cell = evaluateCell('PRESERVER', 'CHOP');
     expect(cell.laneBias).toBe('swing');
     expect(cell.harvestTightness).toBe('normal');
-    expect(cell.sizeMultiplier).toBe(0.7);
+    // 0.85 default (bumped from 0.7). Env: REGIME_PRESERVER_CHOP_SIZE_MULT.
+    expect(cell.sizeMultiplier).toBe(0.85);
   });
 
   it('CREATOR + TREND_UP and CREATOR + TREND_DOWN → trend lane, full size', () => {

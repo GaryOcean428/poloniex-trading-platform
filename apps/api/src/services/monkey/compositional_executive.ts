@@ -64,9 +64,16 @@ export function evaluateCell(
       harvestTightness: 'normal',
       label: 'CREATOR×TREND_DOWN: aggressive trend-follow (short)',
     };
-    // CHOP within CREATOR — symmetry-breaking imminent, trade lightly
+    // CHOP within CREATOR — symmetry-breaking imminent, trade lightly.
+    // 2026-05-19: sizeMultiplier bumped 0.5 → 0.75 per user report
+    // "small positions, low leverage, tiny wins." Doctrine preserved
+    // (still "lightly" — full size = 1.0 for trending cells, 0.75 here)
+    // but the prior 0.5 compounded with sizeFraction 0.5 to leave bot
+    // at 0.25× equity per side — entries were structurally too small
+    // to produce meaningful absolute wins. Env-tunable for operator tuning.
     return {
-      phase, direction, laneBias: 'scalp', sizeMultiplier: 0.5,
+      phase, direction, laneBias: 'scalp',
+      sizeMultiplier: Number(process.env.REGIME_CREATOR_CHOP_SIZE_MULT) || 0.75,
       harvestTightness: 'tight',
       label: 'CREATOR×CHOP: trade lightly, expect breakout',
     };
@@ -84,9 +91,13 @@ export function evaluateCell(
       harvestTightness: 'loose',
       label: 'PRESERVER×TREND_DOWN: ride established short',
     };
-    // CHOP within PRESERVER — consolidating before continuation, mean-revert
+    // CHOP within PRESERVER — consolidating before continuation, mean-revert.
+    // sizeMultiplier env-tunable (default 0.85, bumped from 0.7 in 2026-05-19
+    // sizing-knobs pass — preservation cells still get full conviction since
+    // continuation is the likely outcome).
     return {
-      phase, direction, laneBias: 'swing', sizeMultiplier: 0.7,
+      phase, direction, laneBias: 'swing',
+      sizeMultiplier: Number(process.env.REGIME_PRESERVER_CHOP_SIZE_MULT) || 0.85,
       harvestTightness: 'normal',
       label: 'PRESERVER×CHOP: mean-revert (consolidating)',
     };
