@@ -765,7 +765,39 @@ export class MonkeyKernel extends EventEmitter {
     side: 'long' | 'short';
     lane: 'scalp' | 'swing' | 'trend';
   }> = new Map();
-  private static readonly LIMIT_MAKER_STALE_MS = 120_000;  // SAFETY_BOUND: 2 min
+  // SAFETY_BOUND tunable via env. Default 45s — long enough for normal
+  // fills on liquid pairs (BTC/ETH typical fill < 15s), short enough
+  // that post-only orders don't sit through a regime change. 120s
+  // (prior default) was visibly sluggish under broad cell routing
+  // because every CHOP cell now posts maker; multiplying issuers ×
+  // 2-min hold made entry latency blow up (0/12 fill rate observed
+  // 2026-05-19 07:00-07:18). Operator override: MONKEY_LIMIT_MAKER_STALE_MS.
+  private static readonly LIMIT_MAKER_STALE_MS =
+    Number(process.env.MONKEY_LIMIT_MAKER_STALE_MS) || 45_000;
+  /**
+   * LIMIT_MAKER fallback counter — tracks consecutive stale-cancels
+   * (orders that posted but never filled) per (symbol, side). When this
+   * crosses the MAX_CONSECUTIVE_STALES threshold, the next entry attempt
+   * for that key uses MARKET (taker) instead of LIMIT_MAKER, so the bot
+   * isn't paralyzed by a market state where its bid sits at the back of
+   * the queue and never gets hit.
+   *
+   * Reset on any successful MARKET placement (we know it filled because
+   * the placeOrder call returned an orderId without throwing). Maker
+   * fills don't reset the counter explicitly — they implicitly clear
+   * via the next MARKET success after the fall-back threshold is hit.
+   *
+   * Diagnosed 2026-05-19 07:14: 0/12 maker fills in a 15-min window —
+   * every order timed out at the 120s stale boundary. User-visible
+   * symptom: "much slower to respond since we changed to maker."
+   *
+   * Key format: `${symbol}|${side}`.
+   */
+  private makerStaleCountByKey: Map<string, number> = new Map();
+  /** SAFETY_BOUND: 2 consecutive stale-cancels before falling back to
+   *  MARKET for the next entry. Operator can override via
+   *  MAKER_MAX_CONSECUTIVE_STALES env. */
+  private static readonly MAX_CONSECUTIVE_STALES_DEFAULT = 2;
   /**
    * Funding-arb #794 — latest funding rate per symbol with timestamp.
    * Populated by processSymbol after each funding-rate fetch; consumed
@@ -1398,15 +1430,39 @@ export class MonkeyKernel extends EventEmitter {
         // call shape was (creds, orderId) which sent body {orderId: …}
         // (wrong field name) and no symbol → 401. See cancelOrder
         // signature in poloniexFuturesService.js for the write-up.
-        await poloniexFuturesService.cancelOrder(creds, s.symbol, s.orderId);
-        logger.info('[Monkey] LIMIT_MAKER cancelled (stale)', {
-          symbol: s.symbol, side: s.side, orderId: s.orderId,
-          stale_ms: now - this.pendingLimitMakerOrders.get(s.orderId)!.placedAtMs,
-        });
+        const cancelResult = await poloniexFuturesService.cancelOrder(creds, s.symbol, s.orderId);
+        // raceResolved sentinel from #826: order filled before our cancel
+        // arrived. That's a SUCCESSFUL maker fill, not a stale — don't
+        // increment the fallback counter (the entry path worked).
+        const raceResolved = cancelResult && cancelResult.raceResolved === true;
+        if (raceResolved) {
+          logger.info('[Monkey] LIMIT_MAKER fill detected (cancel race) — resetting stale counter', {
+            symbol: s.symbol, side: s.side, orderId: s.orderId,
+          });
+          this.makerStaleCountByKey.set(`${s.symbol}|${s.side}`, 0);
+        } else {
+          // True stale: order sat in queue and never filled. Bump the
+          // counter so the next entry attempt on this (symbol, side)
+          // knows to fall back to MARKET if maker keeps missing.
+          const key = `${s.symbol}|${s.side}`;
+          const prev = this.makerStaleCountByKey.get(key) ?? 0;
+          this.makerStaleCountByKey.set(key, prev + 1);
+          logger.info('[Monkey] LIMIT_MAKER cancelled (stale)', {
+            symbol: s.symbol, side: s.side, orderId: s.orderId,
+            stale_ms: now - this.pendingLimitMakerOrders.get(s.orderId)!.placedAtMs,
+            consecutiveStales: prev + 1,
+          });
+        }
       } catch (err) {
+        // Non-11008 cancel error — still increment stale counter, the
+        // order's terminal state is uncertain but it didn't fill cleanly.
+        const key = `${s.symbol}|${s.side}`;
+        const prev = this.makerStaleCountByKey.get(key) ?? 0;
+        this.makerStaleCountByKey.set(key, prev + 1);
         logger.warn('[Monkey] LIMIT_MAKER cancel failed (may have already filled)', {
           symbol: s.symbol, orderId: s.orderId,
           err: err instanceof Error ? err.message : String(err),
+          consecutiveStales: prev + 1,
         });
       } finally {
         this.pendingLimitMakerOrders.delete(s.orderId);
@@ -2563,6 +2619,27 @@ export class MonkeyKernel extends EventEmitter {
         // bleeding chop. This is structurally distinct from the trailing
         // harvest (giveback-based) and stale-bleed (negative-ROI duration)
         // gates that operate without regime context.
+        // Fee-aware floor — REGIME-2 must clear round-trip taker on the
+        // realized close (close uses MARKET, so taker on at least the
+        // exit; assume taker on both legs as conservative baseline when
+        // entry routing isn't known here). Poloniex futures taker = 0.075%
+        // notional one-side. Threshold = notional × (2 × taker + 3bps slip).
+        //
+        // Diagnosed 2026-05-19 from user-reported "~$1 loss" on a BTC
+        // close kernel-reported as +$0.168: at $2300 notional (post-deposit
+        // scale-up), the dollar fee was ~$3.45 round-trip + ~$0.69 slip =
+        // $4.14 needed to clear. Kernel mark PnL of $0.168 < $4.14 → fired
+        // anyway and netted as a loss. Dollar-based (not percentage-based)
+        // is the right unit because fees are dollar-amount per notional,
+        // not ROI on margin.
+        const TAKER_FEE_FRAC = 0.00075;
+        const FEE_SAFETY_BPS = 0.0003;  // 3 bps slip + price-impact buffer
+        const minProfitablePnl =
+          positionNotional > 0
+            ? positionNotional * (2 * TAKER_FEE_FRAC + FEE_SAFETY_BPS)
+            : Number.POSITIVE_INFINITY;
+        const profitClearsFees =
+          unrealizedPnl !== undefined && unrealizedPnl > minProfitablePnl;
         if (
           !exitFired
           && process.env.REGIME_HELD_EXIT_LIVE === 'true'
@@ -2570,12 +2647,14 @@ export class MonkeyKernel extends EventEmitter {
           && cellAction.harvestTightness === 'tight'
           && currentRoi !== undefined
           && currentRoi > 0
+          && profitClearsFees
         ) {
           const roiPct = (currentRoi * 100).toFixed(3);
           action = 'scalp_exit';
           reason =
             `regime_held_exit: cell ${cellAction.label}, ROI ${roiPct}% — `
-            + `preservation-mandate cell + profitable position → take profit now`;
+            + `preservation-mandate cell + profitable position → take profit now `
+            + `(pnl=$${unrealizedPnl?.toFixed(4)} > fees=$${minProfitablePnl.toFixed(4)})`;
           exitFired = true;
           derivation.scalp = {
             exitTypeBit: 6,  // REGIME-2 regime-aware held exit
@@ -5675,6 +5754,24 @@ export class MonkeyKernel extends EventEmitter {
       logger.error('[Monkey] close DB update failed — ORPHAN RISK (reconciler will catch)', {
         tradeId, err: err instanceof Error ? err.message : String(err),
       });
+      // Defensive single-row close so subsequent ticks don't re-decide
+      // on this position. The bulk per-row UPDATE above failed; this
+      // pins at least the primary tradeId row to closed, breaking the
+      // 21002-retry loop. Reconciler still picks up any siblings.
+      try {
+        await pool.query(
+          `UPDATE autonomous_trades
+              SET status='closed', exit_price=$1, exit_time=NOW(),
+                  exit_reason=$2, exit_order_id=$3, pnl=$4
+            WHERE id=$5 AND status='open'`,
+          [markPrice, `${exitReason}__db_recovery`, orderId, pnlAtDecision, tradeId],
+        );
+      } catch (recoveryErr) {
+        logger.error('[Monkey] close DB recovery also failed — full reconciler dependency', {
+          tradeId,
+          recoveryErr: recoveryErr instanceof Error ? recoveryErr.message : String(recoveryErr),
+        });
+      }
     }
 
     logger.info('[Monkey] POSITION CLOSED', {
@@ -6200,12 +6297,38 @@ export class MonkeyKernel extends EventEmitter {
     // Why no TREND cells: directional moves require instant fill or the
     // move gets away. Trend lane SHOULD pay taker fees — the TP/SL is
     // wider (0.4%) so fee impact is proportionally smaller.
+    // Operator-toggleable scope: SCALP_LIMIT_MAKER_BROAD=false reverts
+    // to the original scalp-lane-only routing if broad-CHOP routing's
+    // latency outweighs the rebate on the current symbol mix. The PR
+    // #817 counterfactual was a single window; this lever lets you A/B
+    // without a redeploy.
+    const broadMakerRouting = process.env.SCALP_LIMIT_MAKER_BROAD !== 'false';
     const cellIsChop = req.cellDirection === 'CHOP';
     const laneIsScalp = (req.lane ?? 'swing') === 'scalp';
+    // Fallback after consecutive stale-cancels: when maker has failed
+    // to fill N times in a row on this (symbol, side), the next entry
+    // uses MARKET. Without this gate, a market state where our post-only
+    // bid sits at the back of the queue produces 0% fill rate and the
+    // bot can't enter at all (observed 2026-05-19 07:00-07:18 window:
+    // 0/12 maker fills — every order timed out at 120s STALE_MS).
+    // Counter resets to 0 on successful MARKET fill (placeOrder returns
+    // an orderId), so the next attempt after fallback retries maker.
+    const makerKey = `${symbol}|${side}`;
+    const maxStales =
+      Number(process.env.MAKER_MAX_CONSECUTIVE_STALES)
+      || MonkeyKernel.MAX_CONSECUTIVE_STALES_DEFAULT;
+    const consecutiveStales = this.makerStaleCountByKey.get(makerKey) ?? 0;
+    const makerCircuitOpen = consecutiveStales >= maxStales;
+    if (makerCircuitOpen) {
+      logger.info('[Monkey] LIMIT_MAKER circuit open — using MARKET for this entry', {
+        symbol, side, consecutiveStales, maxStales,
+      });
+    }
     const useLimitMaker =
       process.env.SCALP_LIMIT_MAKER_LIVE === 'true'
-      && (cellIsChop || laneIsScalp)
-      && !req.isDCAAdd;
+      && (laneIsScalp || (broadMakerRouting && cellIsChop))
+      && !req.isDCAAdd
+      && !makerCircuitOpen;
 
     let orderId: string | null = null;
     let limitMakerPriceUsed: number | null = null;
@@ -6283,6 +6406,13 @@ export class MonkeyKernel extends EventEmitter {
         orderId =
           exchangeOrder?.ordId ?? exchangeOrder?.orderId ??
           exchangeOrder?.id ?? exchangeOrder?.clientOid ?? null;
+        if (orderId) {
+          // MARKET fills immediately (or rejects). Reset the maker
+          // stale-counter so the next entry on this (symbol, side)
+          // can retry maker — we don't want to stay on taker forever
+          // just because maker missed twice in a row.
+          this.makerStaleCountByKey.set(makerKey, 0);
+        }
       }
       if (!orderId) {
         logger.warn('[Monkey] exchange placed but no orderId returned', {

@@ -50,10 +50,23 @@ interface RecentClose {
 const inFlight = new Map<string, InFlight>();
 const recentlyClosed = new Map<string, RecentClose>();
 
-/** Cooldown window after a successful close. Sized to comfortably exceed
- *  the observed prod race window (~280ms) while staying short enough that
- *  a legitimate re-entry isn't blocked perceptibly. */
-const RECENT_CLOSE_COOLDOWN_MS = 2000;
+/** Cooldown window for treating a 21002 ("Position not enough") as a
+ *  race-loss against a sibling close (rather than a real error).
+ *
+ *  Originally 2s — sized for the simultaneous-tick race. But 2026-05-19
+ *  07:07/07:11 prod log showed a 4-min gap: monkey-position closed BTC
+ *  successfully at 07:07:11, then monkey-swing's separate tick decided
+ *  to close at 07:11:14 (its tracked DB row was still status='open',
+ *  but the merged exchange position was already gone). The 21002 fell
+ *  outside this 2s window so it was logged as a real error and the DB
+ *  row stayed open for the reconciler to mop up — 4 minutes of bogus
+ *  retry storms in between.
+ *
+ *  60s is long enough to cover normal cross-kernel decision lag (tick
+ *  cadence + processing). Operator override:
+ *  MONKEY_RECENT_CLOSE_COOLDOWN_MS. */
+const RECENT_CLOSE_COOLDOWN_MS =
+  Number(process.env.MONKEY_RECENT_CLOSE_COOLDOWN_MS) || 60_000;
 
 /** Defensive max — an in-flight close should never take longer than this.
  *  If the lock holder crashes mid-close, the next caller after this window
