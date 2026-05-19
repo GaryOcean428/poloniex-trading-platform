@@ -5800,24 +5800,122 @@ export class MonkeyKernel extends EventEmitter {
       const isHedge = this.positionDirectionMode === 'HEDGE';
       const closePosSide: 'LONG' | 'SHORT' | undefined =
         isHedge ? (heldSide === 'long' ? 'LONG' : 'SHORT') : undefined;
+
+      // MAKER-CLOSE for preservation-mandate exits (REGIME-2, trailing_harvest,
+      // trend_flip_harvest, stale_held). These are "we have time" exits — the
+      // doctrine that justifies them ("preservation-mandate cell + profitable
+      // position → take profit now") explicitly contemplates patience. Posting
+      // a LIMIT_MAKER close at best-ask (close long) or best-bid (close short)
+      // earns the maker rebate instead of paying taker on every exit. On a
+      // round-trip with maker entry (#820+chain), this completes the rebate
+      // chain — currently maker entries / taker exits leaves us paying half
+      // the fee burden the rebate strategy was meant to avoid.
+      //
+      // Conservative gating:
+      //   1. Env flag MONKEY_MAKER_CLOSE_LIVE=true (default OFF, safe rollout)
+      //   2. Single-chunk only (chunkSizes.length === 1) — multi-chunk maker
+      //      close has unhandled partial-fill complexity, defer to follow-up
+      //   3. Exit reason matches preservation pattern (regime_held_exit,
+      //      trailing_harvest, trend_flip_harvest, stale_held). Stop-loss,
+      //      vanished, race, scalp_exit-from-anchor-rejustification all use
+      //      MARKET (urgent or already mid-flow).
+      //
+      // Fallback: if MAKER place fails or fills 0, this attempt logs the
+      // failure and the close goes through MARKET as the chunked loop normally
+      // would. We do NOT track stale-maker-close in pendingLimitMakerOrders
+      // (different lifecycle — close-side stale needs to retry-as-MARKET, not
+      // close-orphan-row); that retry path is handled by the outer tick loop's
+      // next decision firing the same exit signal again.
+      const makerCloseLive = process.env.MONKEY_MAKER_CLOSE_LIVE === 'true';
+      const isPreservationExit =
+        exitReason.startsWith('regime_held_exit')
+        || exitReason.startsWith('trailing_harvest')
+        || exitReason.startsWith('trend_flip_harvest')
+        || exitReason.startsWith('stale_held');
+      const useMakerClose =
+        makerCloseLive
+        && chunkSizes.length === 1
+        && isPreservationExit;
+
       const orderIds: string[] = [];
-      for (let i = 0; i < chunkSizes.length; i++) {
-        const chunkSize = chunkSizes[i]!;
-        const exchangeOrder = await poloniexFuturesService.placeOrder(credentials, {
-          symbol, side: closeSide, type: 'market', size: chunkSize, lotSize: symbolLotSize,
-          reduceOnly: true,
-        }, {
-          positionMode: isHedge ? 'HEDGE' : 'ONE_WAY',
-          ...(closePosSide ? { posSide: closePosSide } : {}),
-        });
-        const id =
-          exchangeOrder?.ordId ?? exchangeOrder?.orderId ??
-          exchangeOrder?.id ?? exchangeOrder?.clientOid ?? null;
-        if (id) orderIds.push(String(id));
-        if (chunkSizes.length > 1) {
-          logger.info('[Monkey] close chunk placed', {
-            symbol, chunk: i + 1, total: chunkSizes.length, size: chunkSize, orderId: id,
+      if (useMakerClose) {
+        // Fetch orderbook for post-only price computation. Same shape as
+        // entry-side maker (#820 fix — makePublicRequest unwraps `data`
+        // already, so ob.asks / ob.bids is direct).
+        let bestBid: number | null = null;
+        let bestAsk: number | null = null;
+        try {
+          const ob = await poloniexFuturesService.getOrderBook(symbol, 5);
+          const rec = ob as Record<string, unknown>;
+          const asks = Array.isArray(rec.asks) ? rec.asks as Array<Array<unknown>> : null;
+          const bids = Array.isArray(rec.bids) ? rec.bids as Array<Array<unknown>> : null;
+          if (asks && asks.length > 0 && Number.isFinite(Number(asks[0]?.[0]))) {
+            bestAsk = Number(asks[0]![0]);
+          }
+          if (bids && bids.length > 0 && Number.isFinite(Number(bids[0]?.[0]))) {
+            bestBid = Number(bids[0]![0]);
+          }
+        } catch (obErr) {
+          logger.warn('[Monkey] maker-close orderbook fetch failed — falling back to MARKET', {
+            symbol, err: obErr instanceof Error ? obErr.message : String(obErr),
           });
+        }
+        // Maker side mirroring of entry semantics:
+        //   close-LONG (sell): post at best-ASK (above mid; won't immediately match)
+        //   close-SHORT (buy): post at best-BID (below mid; won't immediately match)
+        if (bestBid !== null && bestAsk !== null && bestAsk > bestBid) {
+          const makerPrice = closeSide === 'sell' ? bestAsk : bestBid;
+          try {
+            const makerOrder = await poloniexFuturesService.placeOrder(credentials, {
+              symbol, side: closeSide, type: 'limit_maker',
+              size: chunkSizes[0]!, lotSize: symbolLotSize,
+              price: makerPrice, timeInForce: 'GTC',
+              reduceOnly: true,
+            }, {
+              positionMode: isHedge ? 'HEDGE' : 'ONE_WAY',
+              ...(closePosSide ? { posSide: closePosSide } : {}),
+            });
+            const makerId =
+              makerOrder?.ordId ?? makerOrder?.orderId ??
+              makerOrder?.id ?? makerOrder?.clientOid ?? null;
+            if (makerId) {
+              orderIds.push(String(makerId));
+              logger.info('[Monkey] MAKER_CLOSE placed', {
+                symbol, side: closeSide, heldSide, makerPrice,
+                bestBid, bestAsk, exitReason,
+                orderId: makerId,
+              });
+            }
+          } catch (makerErr) {
+            logger.warn('[Monkey] MAKER_CLOSE place failed — falling back to MARKET', {
+              symbol, side: closeSide,
+              err: makerErr instanceof Error ? makerErr.message : String(makerErr),
+            });
+          }
+        }
+      }
+
+      // MARKET path: original chunked close. Runs when maker-close is
+      // disabled OR maker-close place above failed (no orderId yet).
+      if (orderIds.length === 0) {
+        for (let i = 0; i < chunkSizes.length; i++) {
+          const chunkSize = chunkSizes[i]!;
+          const exchangeOrder = await poloniexFuturesService.placeOrder(credentials, {
+            symbol, side: closeSide, type: 'market', size: chunkSize, lotSize: symbolLotSize,
+            reduceOnly: true,
+          }, {
+            positionMode: isHedge ? 'HEDGE' : 'ONE_WAY',
+            ...(closePosSide ? { posSide: closePosSide } : {}),
+          });
+          const id =
+            exchangeOrder?.ordId ?? exchangeOrder?.orderId ??
+            exchangeOrder?.id ?? exchangeOrder?.clientOid ?? null;
+          if (id) orderIds.push(String(id));
+          if (chunkSizes.length > 1) {
+            logger.info('[Monkey] close chunk placed', {
+              symbol, chunk: i + 1, total: chunkSizes.length, size: chunkSize, orderId: id,
+            });
+          }
         }
       }
       if (orderIds.length === 0) {
