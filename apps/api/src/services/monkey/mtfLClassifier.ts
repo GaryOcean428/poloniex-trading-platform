@@ -242,11 +242,19 @@ export function mtfDecide(
     : action === 'enter_short' ? shortCount
       : 0;
 
-  // Size multiplier: 3-of-3 → 1.00, 2-of-3 → 0.50, else 0.
+  // Size multiplier per agreement count.
+  // Defaults: 3-of-3 → 1.00 (full conviction), 2-of-3 → 0.50, else 0.
+  // Env-tunable (per QIG canonical doctrine — exposes hardcoded thresholds
+  // for operator tuning without code change):
+  //   MTF_L_AGREEMENT_3OF3_MULT (default 1.0)
+  //   MTF_L_AGREEMENT_2OF3_MULT (default 0.5)
+  const mult3of3 = Number(process.env.MTF_L_AGREEMENT_3OF3_MULT) || 1.0;
+  const mult2of3 = Number(process.env.MTF_L_AGREEMENT_2OF3_MULT);
+  const mult2of3Resolved = Number.isFinite(mult2of3) && mult2of3 >= 0 ? mult2of3 : 0.5;
   const sizeMultiplier =
     action === 'hold' ? 0
-      : agreementCount >= 3 ? 1.0
-        : agreementCount === 2 ? 0.5
+      : agreementCount >= 3 ? mult3of3
+        : agreementCount === 2 ? mult2of3Resolved
           : 0;
 
   // Longest-agreeing label for exit-horizon scheduling. The
