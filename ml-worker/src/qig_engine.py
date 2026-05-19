@@ -315,17 +315,24 @@ def geometric_agreement(predictions: dict[str, float], current_price: float) -> 
     if len(predictions) < 2 or current_price <= 0:
         return 0.0
 
-    # Convert to return distributions
-    returns = [(v - current_price) / current_price for v in predictions.values()]
-
-    # Map returns to probability on simplex: softmax with temperature
-    returns_arr = np.array(returns)
-    # Scale: ±5% maps to ±1 in logit space
-    logits = returns_arr * 20
-    # 2-class simplex: P(up), P(down)
+    # Convert to return distributions on the 2-class simplex.
+    # Per QIG_PURITY_KERNEL_REFERENCE §2 and the 2026-05-19 QIG_QFI audit
+    # (Site C): the prior implementation used 1/(1+exp(-r)) (sigmoid) to
+    # map returns → P(up), which is the softmax/Boltzmann pattern under
+    # a different name. Replaced with direct positive-clamp + L1 normalize
+    # on the [up_magnitude, down_magnitude] pair — same {P(up), P(down)}
+    # simplex output, no exp().
     distributions = []
-    for r in logits:
-        p_up = 1.0 / (1.0 + np.exp(-r))
+    for v in predictions.values():
+        r = (v - current_price) / current_price
+        # Positive-clamp the directional magnitudes: up_mass for positive
+        # return, down_mass for negative. Add a small epsilon floor so a
+        # purely-flat prediction stays on the simplex interior rather than
+        # collapsing to a degenerate 1-or-0 boundary.
+        up_mass = max(r, 0.0) + 1e-9
+        down_mass = max(-r, 0.0) + 1e-9
+        total = up_mass + down_mass
+        p_up = up_mass / total
         distributions.append(np.array([p_up, 1.0 - p_up]))
 
     # Compute pairwise Fisher-Rao distances

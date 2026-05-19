@@ -4147,6 +4147,14 @@ export class MonkeyKernel extends EventEmitter {
       mode,
       cell: cellToken,
       cellLive: process.env.REGIME_COMPOSITIONAL_LIVE === 'true',
+      // chosenLane surfaces the lane chooseLane picked this tick (after
+      // simplex projection + cellLaneBias + SENSE-2c prior). Critical
+      // observability for LIMIT_MAKER routing: scalp lane routes to
+      // post-only entries, trend/swing route to MARKET. If chosenLane
+      // stays at swing/trend even when cell=CREATOR_CHOP (laneBias=scalp),
+      // that surfaces a routing bug — grep `chosenLane=swing` with
+      // `cell=CREATOR_CHOP` to find mismatches.
+      chosenLane,
       phi: phi.toFixed(3),
       kappa: state.kappa.toFixed(2),
       nc: summarizeNC(nc),
@@ -6652,6 +6660,16 @@ export const allMonkeyKernels: readonly MonkeyKernel[] = [
   monkeyKernel,
   swingMonkey,
 ];
+
+// QIG_QFI audit Action 2 (2026-05-19) — attach the dual-kernel pair
+// detector to the shared bus at module load. Telemetry-only: detects
+// opposing-side entries by different MonkeyKernel instances on the same
+// symbol within PAIR_WINDOW_MS (60s), then evaluates the pair outcome
+// when both sides exit. Logs governance warning when loser-side loss >
+// winner-side gain × LOSS_OVERRUN_RATIO (1.5). Stats surfaced via
+// getPairStats() for dashboards.
+import { attachDualKernelPairDetector } from './dual_kernel_pair_detector.js';
+attachDualKernelPairDetector(getKernelBus());
 
 
 /**

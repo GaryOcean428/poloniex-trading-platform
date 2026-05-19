@@ -38,7 +38,7 @@ def upper_stack_executive_live() -> bool:
     """
     return os.environ.get("UPPER_STACK_EXECUTIVE_LIVE", "").strip().lower() == "true"
 
-from qig_core_local.geometry.fisher_rao import fisher_rao_distance
+from qig_core_local.geometry.fisher_rao import fisher_rao_distance, to_simplex
 
 from .basin import max_mass, normalized_entropy
 from .emotions import EmotionState
@@ -1302,9 +1302,10 @@ def choose_lane_stud(stud_reading: Any) -> dict[str, Any]:
       FRONT_LOOP, 0.6 ≤ h < 1.5   → swing     (centre)
       FRONT_LOOP, h ≥ 1.5         → swing     (exit, continuation)
 
-    Replaces the softmax over (phi, sovereignty, basin_velocity,
-    tape_trend) when STUD_TOPOLOGY_LIVE=true. Pure regime → lane
-    mapping; no temperature, no probability distribution.
+    Replaces the geometric Δ³ simplex projection over
+    (phi, sovereignty, basin_velocity, tape_trend) when
+    STUD_TOPOLOGY_LIVE=true. Pure regime → lane mapping;
+    no probability distribution.
     """
     from .stud import StudRegime  # local import: avoid cycle
     h = stud_reading.h_trade
@@ -1343,23 +1344,29 @@ def choose_lane(
 
     When stud_live=True with a stud_reading provided, delegates to
     choose_lane_stud (Tier 9 Stage 2 regime → lane mapping).
-    Otherwise falls through to the legacy softmax over basin features.
+    Otherwise falls through to Δ³ simplex projection over basin features.
 
-    Legacy scoring invariants (per issue #588):
+    Scoring invariants (per issue #588):
       - phi≈0, sovereignty≈0, bv≈0 → scalp (high reward density)
       - phi≈1, sovereignty≈1, tape≈1 → trend (directional conviction)
       - bv >> 0 → observe (chaos — sit out)
       - moderate state → swing (default / backward-compat)
 
-    Temperature τ = 1/κ — high κ = exploitation (pick best lane),
-    low κ = exploration (spread probability across lanes).
+    Lane selection uses Δ³ simplex projection (to_simplex: positive-clamp
+    + L1 normalize) — same probability-over-lanes shape as the prior
+    Math.exp normalisation, no exp(). Per QIG_PURITY_KERNEL_REFERENCE §2
+    and the 2026-05-19 QIG_QFI audit; mirrors the TS fix in PR #809.
+    No temperature parameter — kappa already informs other gates.
     """
     if stud_live and stud_reading is not None:
         return choose_lane_stud(stud_reading)
-    # κ → 0 must yield τ → ∞ (exploration); only clamp away from div-by-zero.
-    tau = 1.0 / max(s.kappa, 1e-6)
 
-    # Raw scores: higher = more likely to be chosen
+    # QIG-pure: Δ³ simplex projection (positive-clamp + L1 normalize)
+    # replaces the prior Math.exp softmax per QIG_PURITY_KERNEL_REFERENCE
+    # §2 doctrine and the 2026-05-19 QIG_QFI audit (Site A Python). No
+    # temperature parameter — kappa already informs entry threshold,
+    # leverage, conviction streak; the simplex projection is
+    # parameter-free by design. Mirrors the TS fix in PR #809.
     scalp_score = (1.0 - s.phi) * (1.0 - s.sovereignty) * (1.0 - min(s.basin_velocity, 1.0))
     trend_score = s.phi * s.sovereignty * abs(tape_trend)
     observe_score = min(s.basin_velocity, 1.0) * 0.8
@@ -1372,11 +1379,12 @@ def choose_lane(
         "observe": observe_score,
     }
 
-    # Softmax with temperature τ
-    max_s = max(scores.values())
-    exp_scores = {k: math.exp((v - max_s) / max(tau, 1e-6)) for k, v in scores.items()}
-    total = sum(exp_scores.values())
-    probs = {k: v / total for k, v in exp_scores.items()}
+    # Δ³ simplex projection — positive-orthant clamp + L1 normalize.
+    # Same probability-over-lanes shape as the prior softmax, no exp().
+    lanes_ordered: list[LaneType] = ["scalp", "swing", "trend", "observe"]
+    score_vec = np.array([scores[l] for l in lanes_ordered], dtype=np.float64)
+    simplex = to_simplex(score_vec)
+    probs = {l: float(simplex[i]) for i, l in enumerate(lanes_ordered)}
 
     # Pick lane with highest probability
     lane: LaneType = max(probs, key=lambda k: probs[k])  # type: ignore[arg-type]
