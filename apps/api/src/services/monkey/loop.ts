@@ -2187,7 +2187,23 @@ export class MonkeyKernel extends EventEmitter {
           value: entryThrBase.value * btcEntryMul,
           derivation: { ...entryThrBase.derivation, btcEntryMul, btcBeacon },
         };
-    const maxLevBoundary = (await getMaxLeverage(symbol)) ?? 10;
+    // Leverage ceiling. Exchange max-lev (typically 75× on BTC/ETH perps)
+    // is the absolute boundary, but a 2-week DB audit 2026-05-19 found
+    // higher leverage tiers are net-negative even though the bot can
+    // technically reach them:
+    //   lev=15: 306 trades, +$51.73 net  ← breadwinner
+    //   lev=14: 104 trades, -$17.64 net  (worst -$22.55)
+    //   lev=16: 170 trades, -$9.76  net
+    //   lev=18:   9 trades, -$18.02 net  (worst -$19.29)
+    //   lev=22:   9 trades, -$27.58 net  (worst -$24.49!)
+    // Above lev=15, fat-tail losses dominate the small-win edge — capital
+    // efficiency goes negative. Cap at 15 by default; operator can raise
+    // via MONKEY_MAX_LEVERAGE_CAP if intentional (e.g., scalp lane on
+    // tighter setup). Below cap, leverage choice is observer-driven per
+    // existing continuous-r regime sizing — no behavior change.
+    const exchangeMaxLev = (await getMaxLeverage(symbol)) ?? 10;
+    const operatorMaxLev = Number(process.env.MONKEY_MAX_LEVERAGE_CAP) || 15;
+    const maxLevBoundary = Math.min(exchangeMaxLev, operatorMaxLev);
     const precisions = await getPrecisions(symbol).catch(() => null);
     const lotSize = precisions?.lotSize ?? 0;
     const minNotional = lastPrice * Math.max(lotSize, 1e-9);
