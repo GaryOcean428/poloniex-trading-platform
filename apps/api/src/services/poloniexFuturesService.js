@@ -730,7 +730,34 @@ class PoloniexFuturesService {
     if (resolvedOrderId) body.ordId = resolvedOrderId;
     if (clientOid) body.clOrdId = clientOid;
 
-    const result = await this.makeRequest(credentials, 'DELETE', '/trade/order', body);
+    let result;
+    try {
+      result = await this.makeRequest(credentials, 'DELETE', '/trade/order', body);
+    } catch (err) {
+      // 11008 = "The order does not exist". Stale-cancel race: order
+      // filled (or cancelled by another path) between our stale-decision
+      // and the DELETE arriving. The desired terminal state — no live
+      // order with that id — is already true, so treat as success and
+      // force a fills/positions resync so the ledger picks up the fill
+      // before the next decision tick.
+      //
+      // Observed live 2026-05-19 06:39:26 + 06:47:04 post-PR #824:
+      //   [Poloniex] /v3/trade/order returned code=11008 …
+      //   [Monkey]   LIMIT_MAKER cancel failed (may have already filled)
+      // Local state stayed 'cancelling' until the next poll resynced,
+      // which created a window where the engine could double-act on the
+      // (already-filled) leg.
+      if (err && (err.poloniexCode === 11008 || String(err.poloniexCode) === '11008')) {
+        logger.info('[cancelOrder] 11008 race — order already terminal; treating as success', {
+          symbol, ordId: resolvedOrderId, clOrdId: clientOid,
+        });
+        apiCache.invalidatePrefix('GET:/trade/order');
+        apiCache.invalidatePrefix('GET:/trade/position');
+        apiCache.invalidatePrefix('GET:/account/balance');
+        return { ok: true, raceResolved: true, code: 11008 };
+      }
+      throw err;
+    }
     apiCache.invalidatePrefix('GET:/account/balance');
     apiCache.invalidatePrefix('GET:/trade/position');
     apiCache.invalidatePrefix('GET:/trade/order');
