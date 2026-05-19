@@ -2062,7 +2062,48 @@ export class MonkeyKernel extends EventEmitter {
     // and lane bias when REGIME_COMPOSITIONAL_LIVE=true. When either axis
     // is unresolved (null), the cell is null and the legacy path takes over.
     const cellPhase = canonicalToPhase(canonicalRegime);
-    const cellDirection = regimeToDirection(regimeReading.regime);
+    const basinDirection = regimeToDirection(regimeReading.regime);
+
+    // TAPE OVERRIDE — user report 2026-05-19 10:00 UTC with ETH chart:
+    // bot logs said `cell=PRESERVER_CHOP` while the chart clearly showed
+    // a strong downward move. Production log confirmed:
+    //   tape=-0.521  (strongly negative, market moving DOWN)
+    //   basinDir=0.021  (near-zero, below ABS_CHOP_FLOOR=0.10)
+    //   regime → CHOP  (because basinDir-based classifier missed the move)
+    //
+    // TrajectoryObserver uses ONLY basinDir for direction. When the basin
+    // signal is small but tape is strongly directional, the classifier
+    // mis-reads as CHOP — which compounds the "tiny wins" problem:
+    //   - CHOP cellSizeMultiplier reduces position size
+    //   - CHOP cellLaneBias routes to scalp/swing (short hold)
+    //   - CHOP harvestTightness exits early
+    //
+    // Fix: when basinDir-derived direction is CHOP but |tape| exceeds
+    // MONKEY_TAPE_OVERRIDE_THRESHOLD (default 0.40), override to TREND_UP
+    // or TREND_DOWN matching tape sign. Tape's threshold is the same
+    // order-of-magnitude as the existing cross-agent tape-veto (0.20)
+    // but tighter — we want STRONG tape signal before overriding.
+    //
+    // Env: MONKEY_TAPE_OVERRIDE_LIVE (default true; set false to disable)
+    //      MONKEY_TAPE_OVERRIDE_THRESHOLD (default 0.40)
+    const tapeOverrideLive = process.env.MONKEY_TAPE_OVERRIDE_LIVE !== 'false';
+    const tapeOverrideThreshold =
+      Number(process.env.MONKEY_TAPE_OVERRIDE_THRESHOLD) || 0.40;
+    let cellDirection = basinDirection;
+    let cellDirectionOverridden = false;
+    if (
+      tapeOverrideLive
+      && cellDirection === 'CHOP'
+      && Math.abs(tapeTrend) >= tapeOverrideThreshold
+    ) {
+      cellDirection = tapeTrend > 0 ? 'TREND_UP' : 'TREND_DOWN';
+      cellDirectionOverridden = true;
+      logger.info('[Monkey] cellDirection tape-override', {
+        symbol, basinBasedDirection: basinDirection, tapeTrend: tapeTrend.toFixed(3),
+        threshold: tapeOverrideThreshold, resolvedDirection: cellDirection,
+      });
+    }
+    void cellDirectionOverridden;  // surfaced via log only; tests via env-disable
     const cellAction: CellAction | null = (cellPhase !== null && cellDirection !== null)
       ? evaluateCell(cellPhase, cellDirection)
       : null;
