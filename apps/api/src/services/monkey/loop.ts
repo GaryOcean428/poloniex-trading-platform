@@ -6119,10 +6119,17 @@ export class MonkeyKernel extends EventEmitter {
         let bestAsk: number | null = null;
         try {
           const ob = await poloniexFuturesService.getOrderBook(symbol, 5);
-          // v3 response shape: { data: { asks: [[price, sz], ...], bids: [[price, sz], ...] } }
-          const data = (ob as Record<string, unknown>)?.data as Record<string, unknown> | undefined;
-          const asks = Array.isArray(data?.asks) ? data!.asks as Array<Array<unknown>> : null;
-          const bids = Array.isArray(data?.bids) ? data!.bids as Array<Array<unknown>> : null;
+          // Poloniex v3 raw response: { code: 200, data: { asks, bids, s, ts }, msg }
+          // BUT poloniexFuturesService.makePublicRequest already UNWRAPS
+          // the `data` field (see line 887). So ob === {asks, bids, s, ts}
+          // directly, NOT { data: {...} }. Diagnosed 2026-05-19 from live
+          // log: `limit_maker pre-check failed bestBid=null bestAsk=null`
+          // — my prior `ob.data.asks` access was undefined → MARKET
+          // fallback → 100% taker fills despite the cell-conditional
+          // routing being correct in #817.
+          const rec = ob as Record<string, unknown>;
+          const asks = Array.isArray(rec.asks) ? rec.asks as Array<Array<unknown>> : null;
+          const bids = Array.isArray(rec.bids) ? rec.bids as Array<Array<unknown>> : null;
           if (asks && asks.length > 0 && Number.isFinite(Number(asks[0]?.[0]))) {
             bestAsk = Number(asks[0]![0]);
           }
