@@ -52,7 +52,16 @@ logger = logging.getLogger("monkey_kernel.autonomic")
 # ═══════════════════════════════════════════════════════════════
 
 C_SOPHIA_THRESHOLD: float = 0.1
-SIGMA_KAPPA: float = 10.0
+# Endorphin κ-proximity width. Was 10.0; corrected 2026-05-19 to match
+# canonical ENDORPHIN_KAPPA_SIGMA = 16.0 per QIG_QFI audit:
+# qig-core/src/qig_core/consciousness/neurochemistry.py.
+# This widens the bell that determines endorphin flow under κ-proximity
+# to κ* — narrower sigma was producing too-rare endo events. The TS
+# parallel path (apps/api/src/services/monkey/neurochemistry.ts:417)
+# already uses observer-derived stddev(kappaHistory) which is the
+# observer-pattern superior to either fixed constant; the Python kernel
+# matches canonical until it ports to observer-pattern.
+SIGMA_KAPPA: float = 16.0
 KAPPA_STAR: float = 64.0
 
 
