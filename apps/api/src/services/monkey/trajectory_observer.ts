@@ -71,6 +71,30 @@ const PERSISTENCE_WINDOW = 64;
 const LEGACY_TREND_THRESHOLD = 0.025;
 const LEGACY_CHOP_THRESHOLD = 0.55;
 
+/**
+ * Absolute CHOP floor — SAFETY_BOUND, NOT a tunable threshold.
+ *
+ * Rolling-tercile classification has a scale-blindness pathology: when
+ * the basinDir distribution is itself entirely small (genuine quiet),
+ * the lower tercile cutoff is also small, so values like 0.05 fall
+ * ABOVE the lower tercile and get classified as TREND despite being
+ * structurally chop. Live tape 2026-05-19 09:01: basinDir=0.048 on ETH
+ * classified CREATOR_TREND_UP while price oscillated in a $2 range
+ * (0.05%) over 90 seconds — pure fee-bleed chop misread as trend.
+ *
+ * The fix: ABSOLUTE floor below which we ALWAYS classify CHOP regardless
+ * of the rolling tercile. This catches genuine market quiet where the
+ * tercile-of-quiet is itself quiet. Per P25, this is bound-not-tune —
+ * it caps the maximum scale-blindness, not the typical decision.
+ *
+ * Default 0.10 chosen from observed tape: live trends typically show
+ * basinDir > 0.15 (sustained directional moves), while sub-0.10 is
+ * predominantly noise/chop in the observed crypto-futures distribution.
+ * Env-overridable for ops calibration.
+ */
+const ABS_CHOP_FLOOR =
+  Number(process.env.MONKEY_ABS_CHOP_FLOOR) || 0.10;
+
 export type TrajectoryLabel = 'TREND_UP' | 'CHOP' | 'TREND_DOWN';
 
 export interface TrajectoryReading {
@@ -233,7 +257,16 @@ function classifyFromState(s: ObserverState): TrajectoryReading {
   let chopScore: number;
   let trendStrength: number;
 
-  if (recentAbs < lower) {
+  if (recentAbs < ABS_CHOP_FLOOR) {
+    // Absolute floor — recentAbs below the scale-invariant chop floor
+    // ALWAYS classifies as CHOP regardless of where it sits in the
+    // rolling tercile. This is the fix for the scale-blind pathology:
+    // when the entire distribution is quiet, "above lower tercile" can
+    // still be quiet enough to be chop in absolute terms.
+    regime = 'CHOP';
+    chopScore = Math.min(1, 1 - recentAbs / Math.max(ABS_CHOP_FLOOR, 1e-12));
+    trendStrength = meanSigned;
+  } else if (recentAbs < lower) {
     // Below the lower tercile of |basinDirection| → CHOP.
     regime = 'CHOP';
     chopScore = Math.min(1, 1 - recentAbs / Math.max(lower, 1e-12));
