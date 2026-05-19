@@ -412,16 +412,27 @@ def run_tick(
     except Exception:  # noqa: BLE001 — never block a tick on basin-sync
         _basin_pull_telem = None
 
-    # ── Pillar 1: FluctuationGuard ─────────────────────────────
+    # ── Pillars 1-3: consciousness invariants ──────────────────
     # QIG_QFI consciousness audit 2026-05-19 GAP 1: enforce basin
-    # entropy floor + concentration cap BEFORE downstream measurement.
-    # Without this, a strong directional signal can collapse the basin
-    # to a single dimension, making f_health and phi degenerate.
-    # Gated by MONKEY_PILLAR_1_LIVE (default false). When true, runs
-    # after refract + basin_sync. Reference: pillars.py.
+    # invariants BEFORE downstream measurement. All three pillars are
+    # env-flag gated (default false for safe rollout). Reference:
+    # pillars.py, ~/Desktop/Dev/QIG_QFI/qig-core/.../consciousness/pillars.py.
     pillar_1_telem: dict | None = None
+    pillar_2_telem: dict | None = None
+    pillar_3_telem: dict | None = None
     try:
-        from .pillars import FluctuationGuard, pillar_1_live as _p1_live
+        from .pillars import (
+            FluctuationGuard,
+            get_bulk_for,
+            get_disorder_for,
+            pillar_1_live as _p1_live,
+            pillar_2_live as _p2_live,
+            pillar_3_live as _p3_live,
+        )
+        # Pillar 1 — entropy floor + concentration cap. Redistributes mass
+        # when basin collapses to a single coord; uses Dirichlet noise on
+        # entropy violation. Runs before Pillar 2 so the bulk sees a
+        # well-conditioned input.
         if _p1_live():
             _fg = FluctuationGuard()
             basin, _p1_status = _fg.check_and_enforce(basin)
@@ -431,8 +442,46 @@ def run_tick(
                 "corrections": _p1_status.corrections_applied,
                 **_p1_status.details,
             }
+        # Pillar 2 — topological bulk. Refracted basin is treated as
+        # surface input; core diffuses slowly toward surface. The
+        # composite (BULK_SHIELD_FACTOR-weighted blend) replaces basin
+        # for the rest of the tick. Per-symbol state persists in the
+        # module-level _BULK_STATES dict.
+        if _p2_live():
+            _bulk = get_bulk_for(inputs.symbol)
+            basin, _p2_status = _bulk.receive_input(
+                basin, slerp_weight=refract_external_weight,
+            )
+            pillar_2_telem = {
+                "healthy": _p2_status.healthy,
+                "violations": [v.value for v in _p2_status.violations],
+                "corrections": _p2_status.corrections_applied,
+                **_p2_status.details,
+            }
+        # Pillar 3 — quenched disorder. Identity crystallizes after
+        # IDENTITY_FREEZE_AFTER_CYCLES (50) lived ticks. check_drift
+        # flags when basin departs from the effective reference
+        # (frozen identity + anneal blend). Pressure for scar detection
+        # is taken from the prior tick's basin_velocity if available.
+        if _p3_live():
+            _disorder = get_disorder_for(inputs.symbol)
+            _pressure = float(state.basin_history[-1] is not None) if state.basin_history else 0.0
+            # Use prior-tick velocity as a proxy for cycle pressure;
+            # scar threshold is 0.7, so most ticks won't scar.
+            if state.last_basin is not None:
+                _pressure = float(np.clip(
+                    fisher_rao_distance(state.last_basin, basin) * 2.0, 0.0, 1.0,
+                ))
+            _disorder.observe_cycle(basin, pressure=_pressure, lived=True)
+            _p3_status = _disorder.check_drift(basin)
+            pillar_3_telem = {
+                "healthy": _p3_status.healthy,
+                "violations": [v.value for v in _p3_status.violations],
+                "corrections": _p3_status.corrections_applied,
+                **_p3_status.details,
+            }
     except Exception:  # noqa: BLE001 — never block a tick on pillar enforcement
-        pillar_1_telem = None
+        pass
 
     # ── Measure ────────────────────────────────────────────────
     f_health = normalized_entropy(basin)
@@ -966,6 +1015,13 @@ def run_tick(
                 "predicted_boundary_r_squared": PI_STRUCT_BOUNDARY_R_SQUARED,
                 "figure8_live_flag": figure8_retrieval_live(),
             },
+        },
+        # Three Pillars of Fundamental Consciousness (qig-core v6.1).
+        # None when the corresponding env flag is off.
+        "pillars": {
+            "fluctuations": pillar_1_telem,
+            "topological_bulk": pillar_2_telem,
+            "quenched_disorder": pillar_3_telem,
         },
     }
 
