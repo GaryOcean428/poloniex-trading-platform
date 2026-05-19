@@ -19,6 +19,7 @@ import { apiCredentialsService } from './apiCredentialsService.js';
 import backtestingEngine from './backtestingEngine.js';
 import { getPrecisions } from './marketCatalog.js';
 import mlPredictionService from './mlPredictionService.js';
+import { aggregatePeakTracker } from './monkey/aggregate_peak.js';
 import {
   callExitDecide,
   callReconcile,
@@ -1554,6 +1555,15 @@ class FullyAutonomousTrader extends EventEmitter {
         logger.info(`[FAT] ${symbol} ${isLong ? 'LONG' : 'SHORT'} pnl=${unrealizedPnL.toFixed(4)}u ` +
           `priceMove=${priceMovePct.toFixed(3)}% roi=${roiPct.toFixed(2)}% ` +
           `entry=${entryPrice} mark=${markPx} lev=${leverage}x`);
+
+        // Cross-kernel aggregate-PnL peak tracking. FAT sees the full
+        // exchange-side position per (symbol, side) — share this
+        // aggregate with all in-process kernels so harvest decisions
+        // gate against the user-facing peak, not a per-subset
+        // fragment. See aggregate_peak.ts for rationale.
+        aggregatePeakTracker.recordTick(
+          symbol, isLong ? 'long' : 'short', unrealizedPnL,
+        );
 
         // B. Parity invariant — priceMove should equal roi/leverage within
         // float precision. If it doesn't, our understanding of one field is
