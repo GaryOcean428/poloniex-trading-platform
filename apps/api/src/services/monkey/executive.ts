@@ -632,6 +632,46 @@ export function shouldProfitHarvest(
     };
   }
 
+  // ABSOLUTE-USD harvest — operator-observed gap (2026-05-19):
+  //
+  // Peak tracking is per-(symbol, lane) inside each kernel instance.
+  // With multi-kernel + multi-agent (monkey-position + monkey-swing
+  // running K + T sides), a single user-facing position is split into
+  // subsets. A $5+ user-visible profit fragments into ~$1-2 per subset
+  // — below the % activation threshold (0.2-0.4% of subset notional) on
+  // wider lanes (trend at 40% TP target), so no subset arms the
+  // trailing harvest. Market reverses, turtle_stop fires for a loss,
+  // and the operator watches a $5+ peak round-trip to red.
+  //
+  // Fix: parallel absolute-USD gate. When peak ≥ MONKEY_HARVEST_ABS_PEAK_USD
+  // (default $3) AND current has given back to ≤ peak × (1 - giveback)
+  // BUT still positive, harvest. Independent of % activation so it
+  // fires regardless of subset size or lane width. Default $3 matches
+  // operator expectation: "kernels should take the small wins, fees
+  // aren't a factor on this tier".
+  //
+  // The default is intentionally tunable via env so the operator can
+  // dial it once the realized-PnL distribution stabilises.
+  const absPeakMinUsd = Number(process.env.MONKEY_HARVEST_ABS_PEAK_USD) || 3.0;
+  if (
+    peakPnlUsdt >= absPeakMinUsd
+    && currentFrac > 0
+    && unrealizedPnlUsdt < peakPnlUsdt * (1 - giveback)
+  ) {
+    return {
+      value: true,
+      reason: `abs_usd_harvest: peak $${peakPnlUsdt.toFixed(2)} → now $${unrealizedPnlUsdt.toFixed(2)} < $${(peakPnlUsdt * (1 - giveback)).toFixed(2)} floor (threshold $${absPeakMinUsd.toFixed(2)}, giveback ${(giveback * 100).toFixed(0)}%)`,
+      derivation: {
+        currentPnlUsdt: unrealizedPnlUsdt,
+        peakPnlUsdt,
+        absPeakMinUsd,
+        absoluteFloor: peakPnlUsdt * (1 - giveback),
+        giveback,
+        exitTypeBit: 4,
+      },
+    };
+  }
+
   // TREND-FLIP trigger. Aligned entry means tapeTrend had the same sign
   // as heldSide when she entered; if tape reverses against her while
   // she's green, harvest now — but only if the tape flip is SUSTAINED
