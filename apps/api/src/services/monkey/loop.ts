@@ -3207,6 +3207,7 @@ export class MonkeyKernel extends EventEmitter {
           lane: isDCA && heldSide
             ? (ownOpenRow?.lane ?? positionLane)
             : positionLane,
+          cellDirection,
         }) : { executed: false, orderId: null, reason: 'k_arbiter_zero' };
         executed = execResult.executed;
         monkeyOrderId = execResult.orderId;
@@ -3396,6 +3397,7 @@ export class MonkeyKernel extends EventEmitter {
               // Reversal lands in the same lane the previous position
               // occupied — REVERSION mode flips side, not lane.
               lane: reversalLane,
+              cellDirection,
             });
             executed = execResult.executed;
             monkeyOrderId = execResult.orderId;
@@ -3573,6 +3575,7 @@ export class MonkeyKernel extends EventEmitter {
           isDCAAdd: false,
           dcaAddIndex: 0,
           agent: 'M',
+          cellDirection,
         });
         derivation.agentMExecuted = mResult.executed;
         if (!mResult.executed) {
@@ -3713,6 +3716,7 @@ export class MonkeyKernel extends EventEmitter {
           dcaAddIndex: 0,
           agent: 'T',
           lane: 'trend',
+          cellDirection,
         });
         derivation.agentTExecuted = tResult.executed;
         if (tResult.executed) {
@@ -4040,6 +4044,7 @@ export class MonkeyKernel extends EventEmitter {
               dcaAddIndex: 0,
               agent: 'L',
               lane: 'trend',  // L is a long-horizon classifier; co-locate with trend lane
+              cellDirection,
             });
             (derivation as Record<string, unknown>).agentLExecuted = lResult.executed;
             if (lResult.executed) {
@@ -5675,6 +5680,13 @@ export class MonkeyKernel extends EventEmitter {
     /** Proposal #10: execution lane key. Default 'swing' = pre-#10 implicit
      *  lane so existing call sites remain bit-identical. */
     lane?: 'scalp' | 'swing' | 'trend';
+    /** REGIME-1 cell direction hint for LIMIT_MAKER routing. When
+     *  'CHOP', the entry is non-time-critical (lateral market) and
+     *  should post as maker to earn the rebate. When 'TREND_UP' or
+     *  'TREND_DOWN', the entry is directional and should use MARKET
+     *  for instant fill. Null when cell isn't resolved (legacy
+     *  call sites). */
+    cellDirection?: 'TREND_UP' | 'CHOP' | 'TREND_DOWN' | null;
   }): Promise<{ executed: boolean; orderId: string | null; reason: string }> {
     const { symbol, side, marginUsdt, entryPrice, minNotional } = req;
     // 2026-05-13 — continuous-regime leverage sanity bound.
@@ -6046,23 +6058,31 @@ export class MonkeyKernel extends EventEmitter {
       });
     }
 
-    // LIMIT_MAKER #793 (Class B #5) — scalp lane post-only entry path.
-    // When SCALP_LIMIT_MAKER_LIVE=true AND lane='scalp' AND not a DCA add:
-    // fetch the order book, post at best-bid (long) or best-ask (short).
-    // The post-only flag means the order is rejected if it would cross
-    // the spread — so the exchange enforces the maker-rebate guarantee.
+    // LIMIT_MAKER #793 + cell-conditional routing (audit 2026-05-19).
     //
-    // Why scalp only: scalp's small TP (0.03) means a 0.04% taker fee
-    // is ~13% of the target profit. LIMIT_MAKER earns the maker rebate
-    // instead. Swing/trend have larger TPs so fee impact is smaller AND
-    // they're more time-sensitive (don't want to miss a trend by waiting
-    // for a maker fill).
+    // Trigger semantics: use LIMIT_MAKER for non-time-critical entries.
+    // The defining property is "lateral market — no rush to fill" rather
+    // than "scalp lane." Per claude.ai 2026-05-19 analysis of 30 fills:
+    // 100% taker despite SCALP_LIMIT_MAKER_LIVE=true because the chooseLane
+    // softmax has a structural zero (scalpScore=0 when sov=1.0), so scalp
+    // lane only wins argmax in CREATOR_CHOP cells (where cellLaneBias=scalp
+    // boost overcomes the 0). All other CHOP cells routed to swing/trend,
+    // missed the maker rebate. Counterfactual: -$0.23 → +$0.62 net for
+    // the observed window with maker routing active across all CHOP cells.
     //
-    // Why not DCA: DCA-adds are reactive to adverse price moves, often
-    // need immediate fill to defend the position; can't wait for maker.
+    // New rule: LIMIT_MAKER fires when ANY of:
+    //   (a) cellDirection === 'CHOP'  — lateral market, can wait for maker
+    //   (b) lane === 'scalp'          — explicit scalp routing (legacy path)
+    // AND NOT a DCA add (DCA defends existing position, needs instant fill).
+    //
+    // Why no TREND cells: directional moves require instant fill or the
+    // move gets away. Trend lane SHOULD pay taker fees — the TP/SL is
+    // wider (0.4%) so fee impact is proportionally smaller.
+    const cellIsChop = req.cellDirection === 'CHOP';
+    const laneIsScalp = (req.lane ?? 'swing') === 'scalp';
     const useLimitMaker =
       process.env.SCALP_LIMIT_MAKER_LIVE === 'true'
-      && (req.lane ?? 'swing') === 'scalp'
+      && (cellIsChop || laneIsScalp)
       && !req.isDCAAdd;
 
     let orderId: string | null = null;
