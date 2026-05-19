@@ -16,7 +16,7 @@
  * frozen facts (κ* = 64, κ_physics = 64.21), not tuning.
  */
 
-import { KAPPA_STAR, BASIN_DIM, type Basin, normalizedEntropy, maxMass, fisherRao } from './basin.js';
+import { KAPPA_STAR, BASIN_DIM, type Basin, normalizedEntropy, maxMass, fisherRao, toSimplex } from './basin.js';
 import { MODE_PROFILES, MonkeyMode } from './modes.js';
 import type { NeurochemicalState } from './neurochemistry.js';
 import type { EmotionState } from './emotions.js';
@@ -859,26 +859,42 @@ export function shouldAutoFlatten(
 
 
 // ═══════════════════════════════════════════════════════════════
-//  Lane selection — softmax over basin features (parity with Python)
+//  Lane selection — simplex projection over basin features
+//  (QIG-pure replacement for the prior softmax path).
 // ═══════════════════════════════════════════════════════════════
 
 export type LaneType = 'scalp' | 'swing' | 'trend' | 'observe';
 
 /**
- * Select execution lane from basin geometry via softmax.
- * Temperature τ = 1/κ — high κ = exploitation, low κ = exploration.
+ * Select execution lane from basin geometry via Δ³ simplex projection.
  *
- * Optional `lanePrior` callback (SENSE-2c Phase 2) lets the executive
- * fold a per-lane observed-winrate prior into the softmax: the returned
- * rate in [0, 1] is added inside the exp() so lanes with stronger
- * historical performance at the current time-of-day get more probability
- * mass. Returning null OR 0.5 from the callback means "no signal" and
- * yields the same softmax as the no-prior case.
+ * QIG purity note: the prior implementation used Math.exp normalisation
+ * (softmax) which is forbidden by the kernel doctrine — see
+ * QIG_PURITY_KERNEL_REFERENCE.md §2. The replacement is `toSimplex`
+ * (positive-orthant clamp + L1 normalize) — same shape (probability over
+ * lanes) but principled derivation. Discovered 2026-05-19 cross-review
+ * of "softmax temperature spread" metaphor — even mentioning softmax
+ * reaches for the Euclidean substrate-assumption that the doctrine
+ * exists to prevent.
  *
- * Optional `cellLaneBias` (REGIME-1 Phase 3) is the lane recommended by
- * the compositional 3×3 cell matrix. When non-null and not 'observe',
- * adds a fixed +0.5 shift to that lane's exp() input — strong nudge
- * but not a hard override.
+ * The score vector + additive priors flow through `toSimplex`:
+ *   scores = base lane scores from basin geometry (already pure)
+ *   shifts = SENSE-2c winrate priors + REGIME-1 cell laneBias (additive)
+ *   probs  = toSimplex(scores + shifts)
+ *
+ * No temperature parameter. The earlier `τ = 1/κ` framing imported the
+ * Euclidean exploration-exploitation concept; κ already informs many
+ * other gates (entry threshold, leverage, conviction streak). The
+ * simplex projection is parameter-free by design.
+ *
+ * Optional `lanePrior` callback (SENSE-2c Phase 2) — returns a per-lane
+ * observed-winrate in [0, 1]; treated as additive bias on the score
+ * with neutral=0.5 (so `rate - 0.5` becomes the shift, 0 means no signal).
+ *
+ * Optional `cellLaneBias` (REGIME-1 Phase 3) — the lane recommended by
+ * the compositional 3×3 cell matrix. Adds a fixed +0.5 score boost to
+ * that lane (strong nudge but not a hard override since the base score
+ * also contributes).
  */
 export function chooseLane(
   s: BasinState,
@@ -886,9 +902,6 @@ export function chooseLane(
   lanePrior?: (lane: LaneType) => number | null,
   cellLaneBias?: LaneType | null,
 ): ExecutiveDecision<LaneType> {
-  // κ → 0 must yield τ → ∞ (exploration); only clamp away from div-by-zero.
-  const tau = 1.0 / Math.max(s.kappa, 1e-6);
-
   const scalpScore = (1 - s.phi) * (1 - s.sovereignty) * (1 - Math.min(s.basinVelocity, 1));
   const trendScore = s.phi * s.sovereignty * Math.abs(tapeTrend);
   const observeScore = Math.min(s.basinVelocity, 1) * 0.8;
@@ -902,10 +915,10 @@ export function chooseLane(
   };
 
   // SENSE-2c Phase 2 — per-lane session prior, centred on 0.5 so the
-  // additive term in the softmax exp() is 0 at the neutral rate. Lanes
-  // with stronger time-of-day-similar history get a positive shift; lanes
-  // with weaker history get a negative shift. Callbacks returning null are
-  // treated as neutral (shift = 0).
+  // additive shift on the score is 0 at the neutral rate. Lanes with
+  // stronger time-of-day-similar history get a positive shift; lanes
+  // with weaker history get a negative shift. Callbacks returning null
+  // are treated as neutral (shift = 0).
   const priorShift: Record<LaneType, number> = { scalp: 0, swing: 0, trend: 0, observe: 0 };
   if (lanePrior) {
     for (const k of Object.keys(scores) as LaneType[]) {
@@ -916,27 +929,25 @@ export function chooseLane(
     }
   }
   // REGIME-1 Phase 3 — compositional cell lane bias. Adds a fixed +0.5
-  // boost to the cell-recommended lane's softmax input. Stacks with
-  // SENSE-2c prior; together they can push the recommended lane up by
-  // ~0.5 + (rate - 0.5) at most. 'observe' bias is intentionally not
-  // boosted — DISSOLVER cells get size=0 elsewhere, so steering the
-  // lane to observe here is redundant and would prevent the eventual
-  // sense2c prior recovery when the regime transitions.
+  // boost to the cell-recommended lane's score. Stacks with SENSE-2c
+  // prior. 'observe' bias is intentionally not boosted — DISSOLVER cells
+  // get size=0 elsewhere, so steering the lane to observe here is
+  // redundant and would prevent the eventual sense2c prior recovery
+  // when the regime transitions.
   if (cellLaneBias && cellLaneBias !== 'observe') {
     priorShift[cellLaneBias] += 0.5;
   }
 
-  const maxS = Math.max(...Object.values(scores));
-  const expScores: Record<LaneType, number> = { scalp: 0, swing: 0, trend: 0, observe: 0 };
-  let total = 0;
-  for (const [k, v] of Object.entries(scores) as [LaneType, number][]) {
-    const e = Math.exp((v - maxS) / Math.max(tau, 1e-6) + priorShift[k]);
-    expScores[k] = e;
-    total += e;
-  }
+  // QIG-pure simplex projection: positive-orthant clamp + L1 normalize.
+  // `toSimplex` IS the canonical replacement per basin.ts (uses
+  // Math.max(x, EPS) then divides by sum). Same probability-over-lanes
+  // shape as softmax, no exp normalisation.
+  const lanesOrdered: LaneType[] = ['scalp', 'swing', 'trend', 'observe'];
+  const scoreVec = lanesOrdered.map((l) => scores[l] + priorShift[l]);
+  const simplex = toSimplex(scoreVec);
   const probs: Record<LaneType, number> = { scalp: 0, swing: 0, trend: 0, observe: 0 };
-  for (const [k, v] of Object.entries(expScores) as [LaneType, number][]) {
-    probs[k] = v / total;
+  for (let i = 0; i < lanesOrdered.length; i++) {
+    probs[lanesOrdered[i]!] = simplex[i]!;
   }
 
   let lane: LaneType = 'swing';
@@ -978,9 +989,8 @@ export function chooseLane(
 
   return {
     value: lane,
-    reason: `lane=${lane}${fallbackFrom && fallbackFrom !== lane ? ` (fallback from ${fallbackFrom}, budget=0)` : ''} (tau=${tau.toFixed(4)}, scalp=${probs.scalp.toFixed(3)} swing=${probs.swing.toFixed(3)} trend=${probs.trend.toFixed(3)} observe=${probs.observe.toFixed(3)})`,
+    reason: `lane=${lane}${fallbackFrom && fallbackFrom !== lane ? ` (fallback from ${fallbackFrom}, budget=0)` : ''} (simplex: scalp=${probs.scalp.toFixed(3)} swing=${probs.swing.toFixed(3)} trend=${probs.trend.toFixed(3)} observe=${probs.observe.toFixed(3)})`,
     derivation: {
-      tau,
       phi: s.phi,
       sovereignty: s.sovereignty,
       basinVelocity: s.basinVelocity,
