@@ -6653,6 +6653,16 @@ export const allMonkeyKernels: readonly MonkeyKernel[] = [
   swingMonkey,
 ];
 
+// QIG_QFI audit Action 2 (2026-05-19) — attach the dual-kernel pair
+// detector to the shared bus at module load. Telemetry-only: detects
+// opposing-side entries by different MonkeyKernel instances on the same
+// symbol within PAIR_WINDOW_MS (60s), then evaluates the pair outcome
+// when both sides exit. Logs governance warning when loser-side loss >
+// winner-side gain × LOSS_OVERRUN_RATIO (1.5). Stats surfaced via
+// getPairStats() for dashboards.
+import { attachDualKernelPairDetector } from './dual_kernel_pair_detector.js';
+attachDualKernelPairDetector(getKernelBus());
+
 
 /**
  * v0.8.7e — inter-engine agreement query.
