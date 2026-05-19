@@ -774,28 +774,34 @@ export class MonkeyKernel extends EventEmitter {
    */
   private latestFundingBySymbol: Map<string, { rate: number; atMs: number }> = new Map();
   /**
-   * REGIME-3 #806 — per-symbol timestamp of the last winning close.
-   * Consumed by the entry-path cooldown veto to break the win-then-loss
-   * tilt chain. Set by POSITION CLOSED when pnlAtDecision > 0.
+   * REGIME-3 — per-(symbol,side) timestamp of the last close (any PnL).
+   * Consumed by the entry-path cooldown veto to break post-close tilt.
    *
-   * 2026-05-19 calibration: split into per-side tracking. Same-symbol
-   * SAME-SIDE re-entry is the strongest tilt signal (the operator just
-   * took profit on a short; opening another short immediately is the
-   * classic "press the winner" pattern that flips to loss). Same-symbol
-   * OPPOSITE-SIDE re-entry is less concerning (genuine reversal
-   * decision, often legitimate). Side-aware tracking lets the cooldown
-   * apply asymmetrically.
+   * 2026-05-19 calibration history:
+   *   #806: post-WIN only (pnl>0). Goal: break win-then-loss tilt chain.
+   *   #819: 60s→180s default + side-aware key.
+   *   THIS PR: extended to ALL closes (loss too). Trigger was claude.ai
+   *   13:32 snapshot — 13:14:31 BTC -$0.22 came from re-entry 2min after
+   *   a TINY LOSS (-$0.0036) on the same (symbol,side). Post-win-only
+   *   gate missed it. Same-direction post-close re-entry within the
+   *   cooldown window is the structural failure mode regardless of the
+   *   prior close's sign.
    *
    * Key format: `${symbol}|${side}`. Two entries per symbol max.
+   * SAME-SIDE re-entry is the strongest tilt signal; OPPOSITE-SIDE
+   * (reversal decision) isn't gated by this — it has its own gates
+   * (REGIME-2 + directional_disagreement).
    */
-  private lastWinClosedAtMs: Map<string, number> = new Map();
+  private lastCloseAtMs: Map<string, number> = new Map();
   /** SAFETY_BOUND: 3 min default — calibrated 2026-05-19 from observed
    *  BTC short→short tilt pattern (62s re-entry slipped past prior 60s
-   *  default). 3 min is long enough to break the immediate-press impulse
-   *  on the typical 30-90s scalp/swing tick cadence; short enough that
-   *  genuine signal recovery isn't blocked indefinitely. Operator can
-   *  override via POSTWIN_COOLDOWN_MS env. */
-  private static readonly POST_WIN_COOLDOWN_MS_DEFAULT = 180_000;
+   *  default) and BTC long→long tilt pattern (2min re-entry after small
+   *  loss → -$0.22 blow-out). 3 min is long enough to break the
+   *  immediate-press impulse on the typical 30-90s scalp/swing tick
+   *  cadence; short enough that genuine signal recovery isn't blocked
+   *  indefinitely. Operator can override via POSTCLOSE_COOLDOWN_MS env
+   *  (legacy POSTWIN_COOLDOWN_MS still honored for back-compat). */
+  private static readonly POST_CLOSE_COOLDOWN_MS_DEFAULT = 180_000;
   /**
    * ML-outage observability counter (v0.8.3.5d). Increments every time
    * mlPredictionService.getTradingSignal returns {error: true}. Used to
@@ -5637,21 +5643,23 @@ export class MonkeyKernel extends EventEmitter {
       symbol, heldSide, markPrice, orderId, tradeId,
       pnl: pnlAtDecision.toFixed(4), exitReason,
     });
-    // REGIME-3 #806 — post-win tilt cooldown. After a winning close,
-    // record the timestamp. The entry path's cooldown check rejects new
-    // entries on this symbol for POSTWIN_COOLDOWN_MS unless the operator
-    // has REGIME_POSTWIN_COOLDOWN_LIVE=false. Diagnosed in 2026-05-19
-    // CSV post-mortem: +$0.20 BTC win at 08:21 followed by -$0.52 BTC loss
-    // at 08:29 (8 min later) + cluster of -$0.34 in next 5 min. Pattern:
-    // big winner emboldens immediate re-entry into adverse conditions.
+    // REGIME-3 — post-close tilt cooldown. Records timestamp on EVERY
+    // close (any PnL). The entry path's cooldown check rejects same-side
+    // re-entry within POSTCLOSE_COOLDOWN_MS unless the operator has
+    // REGIME_POSTWIN_COOLDOWN_LIVE=false (env var name kept for back-compat).
     //
-    // 2026-05-19 calibration: side-aware tracking. Key by (symbol, side)
-    // so same-symbol same-side re-entry is the gated case. Opposite-side
-    // re-entry (reversal decision) isn't gated by THIS check — it has
-    // its own gates (REGIME-2, directional_disagreement).
-    if (pnlAtDecision > 0) {
-      this.lastWinClosedAtMs.set(`${symbol}|${heldSide}`, Date.now());
-    }
+    // Diagnosed in 2026-05-19 CSV post-mortems:
+    //   #806: +$0.20 BTC win at 08:21 → -$0.52 BTC loss at 08:29 (win-then-loss)
+    //   #819: BTC short→short re-open at 62s (slipped past 60s default)
+    //   THIS: 13:11:54 BTC long close -$0.0036 (TINY LOSS) → 13:13:55 BTC
+    //         long re-open (2 min later) → 13:14:31 close -$0.2247.
+    //         Post-win-only gate didn't fire because the prior close was
+    //         a tiny loss, not a win. Same structural failure mode.
+    //
+    // Side-aware: key by (symbol, side). Same-symbol SAME-SIDE re-entry
+    // is the gated case. Opposite-side (reversal) isn't gated by THIS
+    // check — it has its own gates (REGIME-2, directional_disagreement).
+    this.lastCloseAtMs.set(`${symbol}|${heldSide}`, Date.now());
     this.bus.publish({
       type: BusEventType.EXIT_TRIGGERED,
       source: this.instanceId,
@@ -5787,33 +5795,36 @@ export class MonkeyKernel extends EventEmitter {
       }
     }
 
-    // REGIME-3 #806 — post-win cooldown veto. After a winning close on
-    // this symbol-side, suppress same-side re-entry for POSTWIN_COOLDOWN_MS
-    // to break the win-then-loss tilt chain. Observed 2026-05-19: BTC short
-    // closed at 05:12:41 (+$0.0026), re-opened SAME SIDE at 05:13:43 (62s
-    // later, slipping past the prior 60s default). Bumped default to 3min
-    // + made side-aware (opposite-side reversal isn't gated by this — it
-    // has its own gates via REGIME-2 + directional_disagreement).
-    // DCA-adds also bypass — defending an existing position is the
-    // explicit override.
+    // REGIME-3 — post-close cooldown veto. After ANY close on this
+    // (symbol, side), suppress same-side re-entry for POSTCLOSE_COOLDOWN_MS
+    // to break post-close tilt. Originally post-WIN only (#806/#819);
+    // extended 2026-05-19 to any close after the 13:14:31 BTC -$0.22 loss
+    // came from re-entry 2min after a tiny loss (post-win-only gate missed it).
+    //
+    // Env compat:
+    //   REGIME_POSTWIN_COOLDOWN_LIVE=true  → activates the gate (legacy name kept)
+    //   POSTCLOSE_COOLDOWN_MS overrides; POSTWIN_COOLDOWN_MS is a fallback alias.
+    //   DCA-adds bypass — defending an existing position is the explicit override.
     if (
       !req.isDCAAdd
       && process.env.REGIME_POSTWIN_COOLDOWN_LIVE === 'true'
     ) {
       const cooldownMs =
-        Number(process.env.POSTWIN_COOLDOWN_MS) || MonkeyKernel.POST_WIN_COOLDOWN_MS_DEFAULT;
-      const lastWinAt = this.lastWinClosedAtMs.get(`${symbol}|${side}`);
-      if (lastWinAt !== undefined) {
-        const elapsedMs = Date.now() - lastWinAt;
+        Number(process.env.POSTCLOSE_COOLDOWN_MS)
+        || Number(process.env.POSTWIN_COOLDOWN_MS)
+        || MonkeyKernel.POST_CLOSE_COOLDOWN_MS_DEFAULT;
+      const lastCloseAt = this.lastCloseAtMs.get(`${symbol}|${side}`);
+      if (lastCloseAt !== undefined) {
+        const elapsedMs = Date.now() - lastCloseAt;
         if (elapsedMs < cooldownMs) {
-          logger.info('[Monkey] postwin_cooldown veto', {
+          logger.info('[Monkey] postclose_cooldown veto', {
             symbol, side, elapsedMs, cooldownMs,
             remaining_s: ((cooldownMs - elapsedMs) / 1000).toFixed(1),
           });
           return {
             executed: false, orderId: null,
             reason:
-              `postwin_cooldown: ${(elapsedMs / 1000).toFixed(1)}s since last win, `
+              `postclose_cooldown: ${(elapsedMs / 1000).toFixed(1)}s since last close on ${symbol}|${side}, `
               + `${((cooldownMs - elapsedMs) / 1000).toFixed(1)}s remaining`,
           };
         }
