@@ -13,6 +13,12 @@ import { monitoringService } from './monitoringService.js';
 import { getEngineVersion } from '../utils/engineVersion.js';
 import { logger } from '../utils/logger.js';
 import { BusEventType, getKernelBus } from './monkey/kernel_bus.js';
+import { inferLaneFromLeverage, kernelAdoptLive } from './laneFromLeverage.js';
+
+// Re-export so callers continue to import these from
+// stateReconciliationService for backward compat. Definitions live in
+// the dep-free laneFromLeverage module so they're unit-testable.
+export { inferLaneFromLeverage };
 
 export interface OrphanedPosition {
   symbol: string;
@@ -21,6 +27,7 @@ export interface OrphanedPosition {
   entryPrice: number;
   exchangePositionId?: string;
 }
+
 
 export interface GhostRecord {
   id: string;
@@ -212,35 +219,54 @@ class StateReconciliationService {
           };
           result.orphans.push(orphan);
 
-          // Insert reconciled record into autonomous_trades, tagged as
-          // user-originated (agent='USER', lane='manual'). This lets the
-          // kernel's own queries — which filter by reason LIKE 'monkey|%' —
-          // continue to ignore manual positions, while dashboards and PnL
-          // accounting can identify them as user-placed. The reason field
-          // also embeds the source so historic queries can distinguish
-          // user opens from system retries.
+          // Insert reconciled record into autonomous_trades.
+          //
+          // Adoption mode (MONKEY_RECONCILER_KERNEL_ADOPT_LIVE, default ON):
+          //   agent='K', lane=inferLaneFromLeverage(lev). The kernel
+          //   picks up exit management on the next tick — scalp_exit,
+          //   regime_change, slow_bleed_exit, stop_loss all fire on
+          //   the adopted row. The operator's chosen leverage encodes
+          //   their conviction signal (high lev → trend lane with
+          //   wider retreat tolerance).
+          //
+          // Legacy mode (env=false):
+          //   agent='USER', lane='manual'. Row exists for accounting
+          //   only; no kernel exit logic fires.
           try {
-            const userReason = `manual_open_user|exchange_pid=${
-              exPos.positionId ?? exPos.id ?? 'na'
-            }|src=reconciler`;
+            const adoptLive = kernelAdoptLive();
+            const effectiveLever = leverFromExchange > 0 ? leverFromExchange : 1;
+            const inferredLane = inferLaneFromLeverage(effectiveLever);
+            const adoptAgent = adoptLive ? 'K' : 'USER';
+            const adoptLane = adoptLive ? inferredLane : 'manual';
+            const reasonPrefix = adoptLive
+              ? 'kernel_adopted'
+              : 'manual_open_user';
+            const userReason =
+              `${reasonPrefix}|exchange_pid=${
+                exPos.positionId ?? exPos.id ?? 'na'
+              }|lev=${effectiveLever}|inferred_lane=${inferredLane}|src=reconciler`;
             await pool.query(
               `INSERT INTO autonomous_trades
                (user_id, symbol, side, entry_price, quantity, leverage, reason,
                 status, engine_version, agent, lane)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, 'open', $8, 'USER', 'manual')`,
+               VALUES ($1, $2, $3, $4, $5, $6, $7, 'open', $8, $9, $10)`,
               [
                 userId,
                 symbol,
                 side,
                 entryPrice,
                 size,
-                leverFromExchange > 0 ? leverFromExchange : 1,
+                effectiveLever,
                 userReason,
                 getEngineVersion(),
+                adoptAgent,
+                adoptLane,
               ]
             );
             logger.info(
-              `[RECONCILE] Tracked user-opened position for user ${userId}: ${symbol} ${side} qty=${size} @${entryPrice}`
+              `[RECONCILE] ${adoptLive ? 'Kernel-adopted' : 'Tracked USER'} position for ${userId}: ` +
+              `${symbol} ${side} qty=${size} @${entryPrice} lev=${effectiveLever}x ` +
+              `→ agent=${adoptAgent} lane=${adoptLane}`
             );
             // Emit an agent_events row so the audit trail captures the
             // user action explicitly. metadata column was added in
@@ -375,9 +401,13 @@ class StateReconciliationService {
               ctx.reason.startsWith('live_signal|') ||
               ctx.reason.startsWith('autoTrader|') ||
               ctx.reason.startsWith('manual_open_user') ||
+              ctx.reason.startsWith('kernel_adopted') ||
               ctx.reason === 'reconciled'
             ))
           ) {
+            // Operator-closed (manual close in exchange UI) — applies to
+            // both legacy USER/manual rows and kernel-adopted rows that
+            // originated from operator action.
             ghostReason = 'manual_close_user';
           }
           const a = ctx?.agent;
