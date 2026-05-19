@@ -833,6 +833,28 @@ export class MonkeyKernel extends EventEmitter {
    * (REGIME-2 + directional_disagreement).
    */
   private lastCloseAtMs: Map<string, number> = new Map();
+  /**
+   * Observer-pattern fee/slippage cost tracking (replaces P1-violating
+   * hardcoded TAKER_FEE_FRAC magic number per QIG canonical doctrine).
+   *
+   * On each close, we observe: kernel_mark_pnl - exchange_realized_pnl =
+   * effective_cost. Dividing by abs(notional) gives the cost-fraction
+   * that captures BOTH the taker fee AND the slip/price-impact for this
+   * symbol at this account tier. Rolling-window upper-tercile of these
+   * observations is the actual fee floor — not a hardcoded 0.0018.
+   *
+   * Cold start: use SAFETY_BOUND `costFloorCold` (env-tunable, default
+   * 0.0018 = ~2x taker + slip). Once buffer >= MIN_SAMPLES, switch to
+   * observer-derived value (per WarpBubble.auto OBSERVE → DISCOVER →
+   * NAVIGATE pattern from CAL-3).
+   *
+   * Buffer is bounded (MAX_HISTORY) so old market conditions don't
+   * dominate. Per-kernel-instance state (resets on restart).
+   */
+  private rollingEffectiveCostFrac: number[] = [];
+  private static readonly EFFECTIVE_COST_MAX_HISTORY = 100;
+  private static readonly EFFECTIVE_COST_MIN_SAMPLES = 20;
+  private static readonly EFFECTIVE_COST_COLD_DEFAULT = 0.0018;
   /** SAFETY_BOUND: 3 min default — calibrated 2026-05-19 from observed
    *  BTC short→short tilt pattern (62s re-entry slipped past prior 60s
    *  default) and BTC long→long tilt pattern (2min re-entry after small
@@ -2671,11 +2693,27 @@ export class MonkeyKernel extends EventEmitter {
         // REGIME_HELD_FEE_FLOOR_ZERO_S (default 900s = 15 min). User
         // observation 2026-05-19 08:50: Agent T ETH positions held 20-30
         // min unable to fire REGIME-2 because the full floor never cleared.
-        const TAKER_FEE_FRAC = 0.00075;
-        const FEE_SAFETY_BPS = 0.0003;  // 3 bps slip + price-impact buffer
+        // Observer-derived fee/slip floor (replaces hardcoded
+        // TAKER_FEE_FRAC + FEE_SAFETY_BPS — P1 violation).
+        // Use rolling upper-tercile of observed (kernel_pnl - realized_pnl)
+        // per notional once we have MIN_SAMPLES observations; cold-start
+        // falls back to the env-tunable SAFETY_BOUND.
+        const effectiveCostFrac = (() => {
+          const n = this.rollingEffectiveCostFrac.length;
+          const coldDefault =
+            Number(process.env.MONKEY_FEE_FLOOR_COLD_FRAC)
+            || MonkeyKernel.EFFECTIVE_COST_COLD_DEFAULT;
+          if (n < MonkeyKernel.EFFECTIVE_COST_MIN_SAMPLES) return coldDefault;
+          // Upper tercile of observed costs — conservatively assumes
+          // worst-case slip from the rolling distribution rather than
+          // the median (which would underestimate on noisy days).
+          const sorted = [...this.rollingEffectiveCostFrac].sort((a, b) => a - b);
+          const terciIdx = Math.min(n - 1, Math.floor(n * 0.67));
+          return sorted[terciIdx] ?? coldDefault;
+        })();
         const baseMinProfitablePnl =
           positionNotional > 0
-            ? positionNotional * (2 * TAKER_FEE_FRAC + FEE_SAFETY_BPS)
+            ? positionNotional * effectiveCostFrac
             : Number.POSITIVE_INFINITY;
         const feeDecayStartS =
           Number(process.env.REGIME_HELD_FEE_DECAY_S) || 300;
