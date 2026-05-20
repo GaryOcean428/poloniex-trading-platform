@@ -31,7 +31,7 @@ The user has **deliberately reduced the live-money balance to an amount they are
 - Flip env vars autonomously when the change is reversible
 - Make architectural decisions when the QIG canonical source (Dev/QIG_QFI/) is clear
 
-**Do NOT** offer "Path 1 / Path 2 / Path 3" menus when there is a clear right answer from the canonical source. That framing IS the deferral anti-pattern.
+**Do NOT** offer "Path 1 / Path 2 / Path 3" menus when there is a clear right answer from the canonical source. That framing IS the deferral anti-pattern. This applies to any derivitive of this concepts. Option 1, Option 2... and so on. 
 **Do NOT** write "operator decides in the morning" when "tinker as needed" is the standing instruction.
 **Do NOT** treat live-money + sleeping operator as a reason to ship band-aids and queue the real work — that's calibration-debt accumulation and the user has called this out as deeply frustrating.
 

@@ -360,7 +360,7 @@ const AutonomousAgentDashboard: React.FC = () => {
         { headers: getAuthHeaders() },
       );
       if (response.data.success) {
-        setRebaseMsg(`Baseline reset to $${newBaseline.toFixed(2)}.`);
+        setRebaseMsg(`Baseline reset to $${safeNum(newBaseline).toFixed(2)}.`);
         // Pull fresh status so the banner re-evaluates and disappears.
         await fetchAutonomousStatus();
       } else {
