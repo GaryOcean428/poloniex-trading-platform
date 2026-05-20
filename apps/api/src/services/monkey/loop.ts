@@ -60,6 +60,8 @@ import {
 } from './basin.js';
 import { callAutonomicTick } from './autonomic_client.js';
 import { aggregatePeakTracker } from './aggregate_peak.js';
+import { wsPositionCache } from './ws_position_cache.js';
+import futuresWebSocket from '../../websocket/futuresWebSocket.js';
 import { BasinSync } from './basin_sync.js';
 import { BusEventType, getKernelBus, type KernelBus } from './kernel_bus.js';
 import {
@@ -1036,6 +1038,16 @@ export class MonkeyKernel extends EventEmitter {
       },
     });
 
+    // Phase D — event-driven position truth. When MONKEY_WS_PRIVATE_LIVE,
+    // connect the Poloniex v3 private WebSocket and feed its `position`
+    // events into wsPositionCache. Additive + shadow-only: REST polling
+    // stays authoritative; the cache is a fresher cross-check surface a
+    // later PR can flip to primary on evidence. Fail-soft — a WS failure
+    // leaves the kernel on REST exactly as before.
+    if (process.env.MONKEY_WS_PRIVATE_LIVE === 'true') {
+      void this.startWsPositionFeed();
+    }
+
     // 2026-05-08 #11 — OUTCOME subscriber for the reconciler PnL
     // recovery path.
     // 2026-05-10 #12 — broadened to ALL ghost-close reasons. When ANY
@@ -1448,6 +1460,36 @@ export class MonkeyKernel extends EventEmitter {
     const userId = String((userRow.rows[0] as { user_id?: string } | undefined)?.user_id ?? '');
     if (!userId) throw new Error('no user_id resolvable for poloniex credentials');
     return userId;
+  }
+
+  /**
+   * Phase D — start the event-driven position feed. Connects the
+   * Poloniex v3 private WebSocket, subscribes the `position` channel,
+   * and attaches wsPositionCache to it. Entirely fail-soft: any failure
+   * (no credentials, WS unreachable) is logged and the kernel proceeds
+   * on REST polling exactly as before — the feed is additive, never a
+   * dependency. Called once from start() under MONKEY_WS_PRIVATE_LIVE.
+   */
+  private async startWsPositionFeed(): Promise<void> {
+    try {
+      const userId = await this.resolveUserIdForCredentials();
+      const creds = await apiCredentialsService.getCredentials(userId, 'poloniex');
+      if (!creds?.apiKey || !creds?.apiSecret) {
+        logger.warn('[Monkey] WS private feed: no credentials — staying on REST');
+        return;
+      }
+      wsPositionCache.startFeed();
+      await futuresWebSocket.connectPrivate({
+        apiKey: creds.apiKey,
+        apiSecret: creds.apiSecret,
+      });
+      futuresWebSocket.subscribeToPrivateChannels(['position']);
+      logger.info('[Monkey] WS private position feed started (shadow — REST authoritative)');
+    } catch (err) {
+      logger.warn('[Monkey] WS private feed start failed — REST polling continues', {
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   /**
