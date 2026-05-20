@@ -6900,16 +6900,34 @@ export class MonkeyKernel extends EventEmitter {
       userId = String((userRow.rows[0] as { user_id?: string } | undefined)?.user_id ?? '');
       if (!userId) {
         if (isMonkeyPaperMode()) {
-          // Paper mode — a paper/staging DB may carry no credentials
-          // row. The autonomous_trades INSERT still needs a non-null
-          // user_id; fall back to any existing user, else the nil-UUID
-          // sentinel. paper_trade=true marks the row; no exchange call.
+          // Paper mode — resolve a user_id that satisfies the
+          // autonomous_trades.user_id → users(id) foreign key. Prefer
+          // any existing user; on a fresh paper/staging DB (empty
+          // users table) bootstrap a deterministic paper user row
+          // idempotently so the paper-trade INSERT has a valid FK.
+          // No exchange call; paper_trade=true marks the rows.
+          const PAPER_USER_ID = '00000000-0000-0000-0000-000000000000';
           let paperUser = '';
           try {
             const ur = await pool.query('SELECT id FROM users LIMIT 1');
             paperUser = String((ur.rows[0] as { id?: string } | undefined)?.id ?? '');
-          } catch { /* no users table — fall through to sentinel */ }
-          userId = paperUser || '00000000-0000-0000-0000-000000000000';
+          } catch { /* users table unreadable — fall through to bootstrap */ }
+          if (!paperUser) {
+            try {
+              await pool.query(
+                `INSERT INTO users (id, email, username, password_hash)
+                 VALUES ($1, 'paper@monkey.local', 'paper-monkey', 'paper-no-login')
+                 ON CONFLICT (id) DO NOTHING`,
+                [PAPER_USER_ID],
+              );
+              paperUser = PAPER_USER_ID;
+            } catch (bootErr) {
+              logger.warn('[Monkey] paper user bootstrap failed', {
+                err: bootErr instanceof Error ? bootErr.message : String(bootErr),
+              });
+            }
+          }
+          userId = paperUser || PAPER_USER_ID;
         } else {
           return { executed: false, orderId: null, reason: 'no_credentials' };
         }
