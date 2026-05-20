@@ -22,9 +22,25 @@ router.get('/settings', authenticateToken, async (req: Request, res: Response) =
       );
       
       if (result.rows.length > 0) {
+        // Map snake_case columns → the camelCase shape the RiskSettings
+        // UI expects. Before migration 055 the table did not exist and
+        // this branch never ran (the catch fell through to defaults);
+        // now that it persists, the row must be mapped or the UI reads
+        // undefined for every field.
+        const row = result.rows[0];
         return res.json({
           success: true,
-          settings: result.rows[0]
+          settings: {
+            userId,
+            maxDrawdown: Number(row.max_drawdown),
+            maxPositionSize: Number(row.max_position_size),
+            maxConcurrentPositions: Number(row.max_concurrent_positions),
+            stopLoss: Number(row.stop_loss),
+            takeProfit: Number(row.take_profit),
+            dailyLossLimit: Number(row.daily_loss_limit),
+            maxLeverage: Number(row.max_leverage),
+            riskLevel: row.risk_level,
+          }
         });
       }
     } catch (dbError) {
