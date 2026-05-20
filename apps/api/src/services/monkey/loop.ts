@@ -1776,13 +1776,16 @@ export class MonkeyKernel extends EventEmitter {
 
     // Operator risk profile (RiskSettings UI → risk_settings table,
     // migration 055). Honest hard ceilings only — leverage clamp,
-    // max-concurrent-positions gate, daily-loss halt. Cached 60s;
-    // falls back to defaults so a DB hiccup never blocks trading.
+    // max-concurrent-positions gate, daily-loss halt. Cached 60s.
     // riskSettings is null when no operator profile is saved → the
     // ceilings below are skipped entirely (opt-in; no behaviour change).
-    const riskSettings = await getOperatorRiskSettings();
-    const todayRealizedPnl = await getTodayMonkeyRealizedPnl();
-    const openMonkeyPositions = await getOpenMonkeyPositionCount();
+    // The three reads are independent — fetch in parallel so a
+    // cache-miss tick costs one round-trip of latency, not three.
+    const [riskSettings, todayRealizedPnl, openMonkeyPositions] = await Promise.all([
+      getOperatorRiskSettings(),
+      getTodayMonkeyRealizedPnl(),
+      getOpenMonkeyPositionCount(),
+    ]);
     const dailyLossHalt = riskSettings
       ? dailyLossHalted(todayRealizedPnl, riskSettings.dailyLossLimit, availableEquity)
       : false;

@@ -121,8 +121,14 @@ export function resetRiskSettingsCache(): void {
 }
 
 /**
- * The operator's risk profile — the most recently saved `risk_settings`
- * row (single-operator system). Cached 60 s.
+ * The operator's risk profile. Cached 60 s.
+ *
+ * Single-operator assumption (deliberate): reads the most-recently-saved
+ * row via `ORDER BY updated_at DESC LIMIT 1`, NOT scoped by user_id.
+ * polytrade runs one operator, and the kernel's credential user_id
+ * (user_api_credentials) can differ from the UI's logged-in user_id —
+ * taking the latest saved row sidesteps that mismatch. If polytrade ever
+ * becomes multi-tenant this MUST be re-keyed by the operator's user_id.
  *
  * Returns `null` when no profile has been saved (empty table) OR on a
  * DB error. `null` means the kernel applies NO ceilings — behaviour is
@@ -162,11 +168,15 @@ export async function getTodayMonkeyRealizedPnl(): Promise<number> {
   if (pnlCache && Date.now() - pnlCache.atMs < TTL_MS) return pnlCache.value;
   try {
     const r = await pool.query(
+      // Explicit UTC day boundary — date_trunc on a bare NOW() would use
+      // the DB session timezone. Drop NOW() to UTC wall-clock, truncate
+      // to the day, then re-attach UTC so the comparison against
+      // exit_time (timestamptz) is unambiguous regardless of server tz.
       `SELECT COALESCE(SUM(pnl), 0) AS pnl
          FROM autonomous_trades
         WHERE status = 'closed'
           AND reason LIKE 'monkey|%'
-          AND exit_time >= date_trunc('day', NOW())`,
+          AND exit_time >= date_trunc('day', NOW() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'`,
     );
     const pnl = Number((r.rows[0] as { pnl?: unknown } | undefined)?.pnl ?? 0);
     const value = Number.isFinite(pnl) ? pnl : 0;
