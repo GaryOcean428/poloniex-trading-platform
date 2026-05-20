@@ -154,6 +154,12 @@ import {
 } from './compositional_executive.js';
 import { agentLDecide, type AgentLDecision } from './agent_L_classifier.js';
 import { signalScorer, resolveEntryGate } from './signal_scorer.js';
+import {
+  getOperatorRiskSettings,
+  getTodayMonkeyRealizedPnl,
+  getOpenMonkeyPositionCount,
+  dailyLossHalted,
+} from './risk_settings.js';
 import { QIGRAMv2State, isQigramV2Enabled } from './agent_L_qigram_v2.js';
 import {
   newMTFState,
@@ -1768,6 +1774,17 @@ export class MonkeyKernel extends EventEmitter {
       availableEquity,
     } = await this.fetchAccountContext(symbol);
 
+    // Operator risk profile (RiskSettings UI → risk_settings table,
+    // migration 055). Honest hard ceilings only — leverage clamp,
+    // max-concurrent-positions gate, daily-loss halt. Cached 60s;
+    // falls back to defaults so a DB hiccup never blocks trading.
+    const riskSettings = await getOperatorRiskSettings();
+    const todayRealizedPnl = await getTodayMonkeyRealizedPnl();
+    const openMonkeyPositions = await getOpenMonkeyPositionCount();
+    const dailyLossHalt = dailyLossHalted(
+      todayRealizedPnl, riskSettings.dailyLossLimit, availableEquity,
+    );
+
     // 2. PERCEIVE — raw basin then refract through identity.
     // Post #ml-separation: ml fields omitted; perception defaults dims
     // 3..5 to neutral. Agent K's basin is built without ml inputs.
@@ -2362,7 +2379,10 @@ export class MonkeyKernel extends EventEmitter {
     // existing continuous-r regime sizing — no behavior change.
     const exchangeMaxLev = (await getMaxLeverage(symbol)) ?? 10;
     const operatorMaxLev = Number(process.env.MONKEY_MAX_LEVERAGE_CAP) || 15;
-    const maxLevBoundary = Math.min(exchangeMaxLev, operatorMaxLev);
+    // risk_settings.maxLeverage (RiskSettings UI) is a third ceiling —
+    // it can only clamp leverage DOWN. The audited operatorMaxLev (15)
+    // still binds: a UI "aggressive" preset of 20 resolves to min(…,15).
+    const maxLevBoundary = Math.min(exchangeMaxLev, operatorMaxLev, riskSettings.maxLeverage);
     const precisions = await getPrecisions(symbol).catch(() => null);
     const lotSize = precisions?.lotSize ?? 0;
     const minNotional = lastPrice * Math.max(lotSize, 1e-9);
@@ -3771,6 +3791,31 @@ export class MonkeyKernel extends EventEmitter {
             lSide: lVeto.lSide,
             lSource: 'agentLDecide(state.basinHistory)',
           });
+        } else if (dailyLossHalt) {
+          // risk_settings daily-loss halt — today's realised Monkey PnL
+          // is at/below -dailyLossLimit% of equity. New entries are
+          // suppressed; exits are unaffected so losers can still close.
+          reason += ` | risk_settings: daily loss limit — today ${todayRealizedPnl.toFixed(2)} USDT ≤ -${riskSettings.dailyLossLimit}% of ${availableEquity.toFixed(2)} (entry suppressed; exits unaffected)`;
+          (derivation as Record<string, unknown>).riskSettingsHalt = {
+            kind: 'daily_loss_limit',
+            todayRealizedPnl,
+            limitPct: riskSettings.dailyLossLimit,
+            equityUsdt: availableEquity,
+          };
+          logger.warn(`[Monkey] ${symbol} entry suppressed — risk_settings daily loss limit`, {
+            todayRealizedPnl,
+            limitPct: riskSettings.dailyLossLimit,
+            equityUsdt: availableEquity,
+          });
+        } else if (openMonkeyPositions >= riskSettings.maxConcurrentPositions) {
+          // risk_settings max-concurrent-positions ceiling — counts
+          // Monkey-owned open rows only (never the account-wide total).
+          reason += ` | risk_settings: max concurrent positions (${openMonkeyPositions}/${riskSettings.maxConcurrentPositions})`;
+          (derivation as Record<string, unknown>).riskSettingsHalt = {
+            kind: 'max_concurrent_positions',
+            openMonkeyPositions,
+            cap: riskSettings.maxConcurrentPositions,
+          };
         } else {
         const isDCA = Boolean(derivation.isDCAAdd);
         // Cap K's margin to its arbiter share. Without this, the existing
