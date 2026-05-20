@@ -135,6 +135,8 @@ export function fisherRaoTupleDistance(
  * at π/2, so even the farthest of the K neighbours keeps weight
  * ≈1/1.57; −log(BC) is unbounded, so far neighbours decay toward 0 —
  * a sharper IDW where the closest historical analogues dominate.
+ *
+ * This is LIVE — Agent L's vote weight always uses this divergence.
  */
 export function renyiTupleDistance(
   a: BasinTuple,
@@ -151,13 +153,6 @@ export function renyiTupleDistance(
     weights.medium * renyiScale(a.medium, b.medium) +
     weights.long * renyiScale(a.long, b.long)
   );
-}
-
-/** True iff MONKEY_L_RENYI_IDW=true — when set, Agent L's vote weight
- *  uses the Rényi-½ divergence instead of the Fisher-Rao distance.
- *  Neighbour selection is unaffected. Default off. */
-function renyiIdwEnabled(): boolean {
-  return process.env.MONKEY_L_RENYI_IDW === 'true';
 }
 
 /** Build a multi-scale basin tuple from a basin history.
@@ -210,10 +205,9 @@ export interface KNNNeighbor {
   /** Canonical Fisher-Rao tuple distance — used for neighbour SELECTION
    *  (the sort) and telemetry. */
   distance: number;
-  /** Distance used for the inverse-distance VOTE WEIGHT. Equals
-   *  `distance` unless MONKEY_L_RENYI_IDW is set, in which case it is
-   *  the Rényi-½ tuple divergence (Improvement C). Optional — readers
-   *  fall back to `distance`. */
+  /** Distance used for the inverse-distance VOTE WEIGHT — the Rényi-½
+   *  tuple divergence (live). Optional only so neighbours constructed
+   *  in tests without it fall back to `distance`. */
   weightDistance?: number;
   label: -1 | 0 | 1;
 }
@@ -373,7 +367,6 @@ export function agentLDecide(
   // 30s ticks; K/M/T continue trading during L's warmup.
   const minTupleStart = 480;
 
-  const renyiIdw = renyiIdwEnabled();
   const candidates: KNNNeighbor[] = [];
   for (let i = startIdx + minTupleStart; i < basinHistory.length - config.horizon; i++) {
     if ((i - startIdx) % config.spacing !== 0) continue;
@@ -381,12 +374,9 @@ export function agentLDecide(
     if (histTuple === null) continue;
     const d = fisherRaoTupleDistance(cur, histTuple, config.weights);
     const label = realizedLabel(basinHistory, i, config.horizon, config.labelThreshold);
-    // weightDistance feeds the IDW vote weight only. Selection sorts on
-    // `distance` (canonical FR) regardless — arccos is monotone in
-    // −log(BC) so the K-nearest set is identical either way.
-    const weightDistance = renyiIdw
-      ? renyiTupleDistance(cur, histTuple, config.weights)
-      : d;
+    // Selection sorts on `distance` (canonical FR); the IDW vote weight
+    // uses `weightDistance` (Rényi-½ divergence) — live, unconditional.
+    const weightDistance = renyiTupleDistance(cur, histTuple, config.weights);
     candidates.push({ index: i, distance: d, weightDistance, label });
   }
 

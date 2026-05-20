@@ -2476,6 +2476,10 @@ export class MonkeyKernel extends EventEmitter {
     // 6. DECIDE — propose action
     let action: string;
     let reason: string;
+    // v4 over-gating fix: chop regime is a size FILTER, not an entry
+    // veto. Set inside the K entry branch when chop is active; applied
+    // to the entry margin. 1.0 = no reduction.
+    let chopSizeFactor = 1.0;
     const derivation: Record<string, unknown> = {
       phi, kappa: state.kappa, sovereignty, basinVelocity: bv,
       regimeWeights, nc,
@@ -3416,36 +3420,39 @@ export class MonkeyKernel extends EventEmitter {
       MODE_PROFILES[mode].canEnter &&
       direction !== 'flat' &&
       size.value > 0 &&
-      !sideShortRefused &&
-      !chopSuppressEntry(regimeReading, positionLane).suppressed
+      !sideShortRefused
     ) {
-      // Regime suppression check (issue #623): before opening a new entry,
-      // consult the regime classifier reading. Held positions are unaffected —
-      // re-justification (#619) owns those exits independently.
+      // v4 over-gating fix (QIG-FR v4 Problem 5): the chop regime is a
+      // FILTER, not a mandatory veto. The base geometric prediction
+      // fires the entry whenever mode/direction/size/short allow it;
+      // a chop regime no longer BLOCKS it — it only sizes it down.
+      // The reduction is observer-derived from the regime classifier's
+      // own confidence (P1: no hardcoded knob) — deeper chop → smaller
+      // entry, floored at 0.2× as a SAFETY_BOUND.
       const suppressionResult = chopSuppressEntry(regimeReading, positionLane);
+      chopSizeFactor = suppressionResult.suppressed
+        ? Math.max(0.2, 1 - suppressionResult.confidence)
+        : 1.0;
       derivation.regime_suppression = {
         regime: suppressionResult.regime,
         confidence: suppressionResult.confidence,
         lane: suppressionResult.lane,
         suppressed: suppressionResult.suppressed,
         suppress_reason: suppressionResult.suppressReason,
+        chop_size_factor: chopSizeFactor,
       };
-      if (suppressionResult.suppressed) {
-        action = 'hold';
-        reason = suppressionResult.suppressReason!;
-        derivation.entryThreshold = entryThr.derivation;
-      } else {
-        // sideCandidate from kernelDirection (geometric, post #ml-separation).
-        // Entry gate is geometric: direction != flat (basinDir + 0.5*tapeTrend
-        // != 0). Conviction gating via Layer 2B emotions is Python-only until
-        // emotions are ported to TS — TS uses neutral emotions which collapse
-        // kernelShouldEnter to false, so we gate on direction here instead.
-        action = sideCandidate === 'long' ? 'enter_long' : 'enter_short';
-        reason = `[${mode}] kernel-K geometric: basinDir=${basinDir.toFixed(3)} tape=${tapeTrend.toFixed(3)} → ${sideCandidate}; margin=${size.value.toFixed(2)} lev=${leverage.value}x notional=${(size.value * leverage.value).toFixed(2)}`;
-        derivation.entryThreshold = entryThr.derivation;
-        derivation.size = size.derivation;
-        derivation.leverage = leverage.derivation;
-      }
+      // sideCandidate from kernelDirection (geometric, post #ml-separation).
+      // Entry gate is geometric: direction != flat (basinDir + 0.5*tapeTrend
+      // != 0). Conviction gating via Layer 2B emotions is Python-only until
+      // emotions are ported to TS — TS uses neutral emotions which collapse
+      // kernelShouldEnter to false, so we gate on direction here instead.
+      action = sideCandidate === 'long' ? 'enter_long' : 'enter_short';
+      reason = `[${mode}] kernel-K geometric: basinDir=${basinDir.toFixed(3)} tape=${tapeTrend.toFixed(3)} → ${sideCandidate}; margin=${size.value.toFixed(2)}`
+        + (suppressionResult.suppressed ? `×${chopSizeFactor.toFixed(2)} (chop filter)` : '')
+        + ` lev=${leverage.value}x notional=${(size.value * chopSizeFactor * leverage.value).toFixed(2)}`;
+      derivation.entryThreshold = entryThr.derivation;
+      derivation.size = size.derivation;
+      derivation.leverage = leverage.derivation;
     } else {
       action = 'hold';
       const chopSuppressionForLane = chopSuppressEntry(regimeReading, positionLane);
@@ -3939,7 +3946,11 @@ export class MonkeyKernel extends EventEmitter {
         // Cap K's margin to its arbiter share. Without this, the existing
         // size formula could exceed K's allocation when M has been
         // accumulating and K's share has shrunk.
-        const cappedMargin = Math.min(size.value, arbiterAllocation.k);
+        // v4 over-gating fix: chopSizeFactor (< 1 only when a chop regime
+        // was active at decision time) sizes the entry down instead of
+        // the chop gate vetoing it outright.
+        const cappedMargin =
+          Math.min(size.value, arbiterAllocation.k) * chopSizeFactor;
         if (cappedMargin <= 0) {
           reason += ` | k_capped_to_zero (kShare=${arbiterSnapshot.kShare.toFixed(2)})`;
         }
