@@ -12,14 +12,21 @@ import MLLiveRecommendations from './MLLiveRecommendations';
 import PerformanceAnalytics from './PerformanceAnalytics';
 import StateOfTheBotCard from './StateOfTheBotCard';
 import StrategyApprovalQueue from './StrategyApprovalQueue';
+import RiskSettings from '@/components/risk/RiskSettings';
 import { safeNum } from '@/utils/safeNum';
 
 const API_BASE_URL = getBackendUrl();
 
+// Risk-appetite presets. The first four fields feed the /api/agent/start
+// payload; takeProfit / dailyLossLimit / maxLeverage extend the preset so
+// it maps cleanly onto the risk_settings table (PUT /api/risk/settings),
+// letting a risk-appetite change apply LIVE without restarting the agent.
+// maxLeverage stays <= 15 — the audited profitable ceiling (the kernel
+// clamps there regardless); "aggressive" raises size/drawdown, not lev.
 const RISK_CONFIGS = {
-  conservative: { maxDrawdown: 8, positionSize: 1, stopLossPercentage: 3, maxConcurrentPositions: 2 },
-  balanced: { maxDrawdown: 15, positionSize: 2, stopLossPercentage: 5, maxConcurrentPositions: 3 },
-  aggressive: { maxDrawdown: 25, positionSize: 5, stopLossPercentage: 8, maxConcurrentPositions: 5 }
+  conservative: { maxDrawdown: 8, positionSize: 1, stopLossPercentage: 3, maxConcurrentPositions: 2, takeProfit: 6, dailyLossLimit: 3, maxLeverage: 8 },
+  balanced: { maxDrawdown: 15, positionSize: 2, stopLossPercentage: 5, maxConcurrentPositions: 3, takeProfit: 8, dailyLossLimit: 5, maxLeverage: 15 },
+  aggressive: { maxDrawdown: 25, positionSize: 5, stopLossPercentage: 8, maxConcurrentPositions: 5, takeProfit: 12, dailyLossLimit: 10, maxLeverage: 15 }
 } as const;
 
 const FALLBACK_HEALTH_STATUS = {
@@ -111,6 +118,8 @@ const AutonomousAgentDashboard: React.FC = () => {
     timestamp: string;
   } | null>(null);
   const [riskAppetite, setRiskAppetite] = usePersistedState<'conservative' | 'balanced' | 'aggressive'>('agent_risk_appetite', 'balanced');
+  // True while a risk-appetite change is being PUT to /api/risk/settings.
+  const [riskAppetiteUpdating, setRiskAppetiteUpdating] = useState(false);
   // Execution Mode is a SAFETY OVERRIDE enforced by the server-side risk
   // kernel. The UI fetches it on mount and pushes updates via PUT; the
   // cache in localStorage is just an optimistic UI value so the buttons
@@ -163,6 +172,43 @@ const AutonomousAgentDashboard: React.FC = () => {
       setExecutionModeUpdating(false);
     }
   }, [setExecutionModeRaw]);
+
+  /**
+   * Apply a risk-appetite change LIVE. Writes the preset to the
+   * risk_settings table via PUT /api/risk/settings; the Monkey kernel
+   * reads that table every tick (60s cache), so the new ceilings take
+   * effect without stopping or restarting the agent. The risk-appetite
+   * preset still also feeds the /api/agent/start payload for fresh
+   * starts — this just removes the stop→edit→restart requirement.
+   */
+  const setRiskAppetiteLive = useCallback(async (v: 'conservative' | 'balanced' | 'aggressive') => {
+    // Optimistic local update so the button highlight is instant.
+    setRiskAppetite(v);
+    setRiskAppetiteUpdating(true);
+    try {
+      const token = getAccessToken();
+      const rc = RISK_CONFIGS[v];
+      await axios.put(
+        `${API_BASE_URL}/api/risk/settings`,
+        {
+          maxDrawdown: rc.maxDrawdown,
+          maxPositionSize: rc.positionSize,
+          maxConcurrentPositions: rc.maxConcurrentPositions,
+          stopLoss: rc.stopLossPercentage,
+          takeProfit: rc.takeProfit,
+          dailyLossLimit: rc.dailyLossLimit,
+          maxLeverage: rc.maxLeverage,
+          riskLevel: v,
+        },
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+    } catch (err) {
+      // The optimistic localStorage value stands; surface the failure.
+      console.error('Failed to apply risk appetite live', err);
+    } finally {
+      setRiskAppetiteUpdating(false);
+    }
+  }, [setRiskAppetite]);
 
   /** Pull server-authoritative mode on mount so UI matches reality. */
   useEffect(() => {
@@ -830,8 +876,8 @@ const AutonomousAgentDashboard: React.FC = () => {
                 { value: 'aggressive', label: 'Aggressive', desc: 'High risk, high reward', activeClass: 'border-orange-500 bg-orange-50' }
               ] as const).map(opt => (
                 <button key={opt.value}
-                  onClick={() => setRiskAppetite(opt.value)}
-                  disabled={agentStatus?.status === 'running'}
+                  onClick={() => setRiskAppetiteLive(opt.value)}
+                  disabled={riskAppetiteUpdating}
                   className={`p-3 rounded-lg border-2 text-left transition-all disabled:opacity-50 ${
                     riskAppetite === opt.value
                       ? opt.activeClass
@@ -874,6 +920,21 @@ const AutonomousAgentDashboard: React.FC = () => {
             )}
           </div>
         </div>
+      </div>
+
+      {/* Detailed Risk Limits — the granular operator ceilings, kept
+          visually together with Risk Appetite above. Both write the same
+          risk_settings table; the Monkey kernel reads it live (60s cache,
+          no restart). Single home for risk config — RiskSettings was
+          removed from the Settings page so it is not split across two
+          screens. */}
+      <div className="bg-white rounded-lg shadow-lg p-6">
+        <h3 className="text-lg font-bold text-gray-900 mb-1">Detailed Risk Limits</h3>
+        <p className="text-sm text-gray-500 mb-4">
+          Applied live by the kernel — no need to stop the agent. Risk
+          Appetite above sets these in one click; adjust individually here.
+        </p>
+        <RiskSettings />
       </div>
 
       {/* Emergency Stop — visible when live trading is active. "Auto" mode
