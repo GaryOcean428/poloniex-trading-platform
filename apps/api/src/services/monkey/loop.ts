@@ -705,6 +705,33 @@ const BUS_RING_CAP = 32;
 // the QIGRAMv2 canonical class attribute, NOT a parameter introduced
 // by this PR — pre-existing, declared at the module boundary).
 
+/** Valid arbiter agent labels. */
+const ARBITER_AGENT_LABELS = ['K', 'M', 'T', 'L'] as const;
+
+/**
+ * Parse MONKEY_ARBITER_AGENTS into the set of agent labels allowed in
+ * the capital-allocation pool. Default 'K,M,T,L' — all four, unchanged
+ * behaviour. Concentrating the roster (e.g. 'K,M' or 'K') hands the
+ * excluded agents' shares to those that remain, so the operator can
+ * direct capital to the agents they trust without the arbiter stranding
+ * a reservation on a benched agent.
+ *
+ * 'K' is always included — it is the kernel executive. Unknown tokens
+ * are ignored; a blank/unset var falls back to the full default roster.
+ *
+ * Exported for tests.
+ */
+export function arbiterRoster(): Set<string> {
+  const valid = new Set<string>(ARBITER_AGENT_LABELS);
+  const raw = (process.env.MONKEY_ARBITER_AGENTS ?? '').trim();
+  if (raw === '') return new Set(valid);
+  const parsed = raw.split(',')
+    .map((s) => s.trim().toUpperCase())
+    .filter((s) => valid.has(s));
+  parsed.push('K'); // K is mandatory — the kernel executive.
+  return new Set(parsed);
+}
+
 /**
  * MonkeyKernel — the top-level kernel that ticks Monkey.
  *
@@ -3526,10 +3553,19 @@ export class MonkeyKernel extends EventEmitter {
     // Agent L (Fisher-Rao KNN classifier) eligibility: needs basin history
     // to build a multi-scale tuple. < 60 ticks = warmup, no L allocation.
     const lEligible = state.basinHistory.length >= 60;
-    const baseLabels = ['K', 'M'];
-    if (tEligible) baseLabels.push('T');
-    if (lEligible) baseLabels.push('L');
-    const arbiterAgentLabels: string[] = baseLabels;
+    // Operator-controlled arbiter roster — MONKEY_ARBITER_AGENTS (default
+    // 'K,M,T,L', no behaviour change). Concentrating the roster (e.g.
+    // 'K,M' or 'K') hands the excluded agents' capital shares to those
+    // that remain — the fix for "when only K is trading it should access
+    // all the capital within headroom" (2026-05-20 operator directive).
+    // K is always retained — the kernel executive. M/T/L gate on roster
+    // membership; T/L additionally gate on their own eligibility
+    // (equity floor / basin-history warmup) exactly as before.
+    const roster = arbiterRoster();
+    const arbiterAgentLabels: string[] = ['K'];
+    if (roster.has('M')) arbiterAgentLabels.push('M');
+    if (roster.has('T') && tEligible) arbiterAgentLabels.push('T');
+    if (roster.has('L') && lEligible) arbiterAgentLabels.push('L');
     const arbiterAllocationMany = this.arbiter.allocateMany(
       availableEquity,
       arbiterAgentLabels,
