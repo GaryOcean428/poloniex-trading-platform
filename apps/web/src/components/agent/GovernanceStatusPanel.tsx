@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import axios from 'axios';
 import { Activity, AlertTriangle, CheckCircle2, RefreshCw } from 'lucide-react';
 import { getBackendUrl } from '@/utils/environment';
+import { safeNum } from '@/utils/safeNum';
 
 const API_BASE_URL = getBackendUrl();
 const POLL_INTERVAL_MS = 30_000;
@@ -41,12 +42,12 @@ interface GovernanceStatusResponse {
 
 function pct(n: number | undefined | null, digits = 1): string {
   if (typeof n !== 'number' || !Number.isFinite(n)) return '—';
-  return `${(n * 100).toFixed(digits)}%`;
+  return `${safeNum(n * 100).toFixed(digits)}%`;
 }
 
 function fmt(n: number | undefined | null, digits = 4): string {
   if (typeof n !== 'number' || !Number.isFinite(n)) return '—';
-  return n.toFixed(digits);
+  return safeNum(n).toFixed(digits);
 }
 
 export default function GovernanceStatusPanel() {

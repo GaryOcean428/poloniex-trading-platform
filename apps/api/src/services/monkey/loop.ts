@@ -22,7 +22,6 @@
  */
 
 import { EventEmitter } from 'events';
-import { randomUUID } from 'crypto';
 
 import { pool } from '../../db/connection.js';
 import { getEngineVersion } from '../../utils/engineVersion.js';
@@ -65,17 +64,7 @@ import { marketIntelCache } from './market_intel.js';
 import futuresWebSocket from '../../websocket/futuresWebSocket.js';
 import { BasinSync } from './basin_sync.js';
 import { BusEventType, getKernelBus, type KernelBus } from './kernel_bus.js';
-import {
-  callKShadowTick,
-  callTickRun,
-  isShadowTickEnabled,
-  logParityDiff,
-  logTickParityDiffs,
-  type TickRunAccount,
-  type TickRunOHLCV,
-  type TickRunSymbolState,
-} from './kernel_client.js';
-import { recordKParityRow, regimeToOrdinal } from './k_parity_log.js';
+import { logParityDiff } from './kernel_client.js';
 import { computeEmotions, type EmotionState } from './emotions.js';
 import { detectMode, MODE_PROFILES, MonkeyMode } from './modes.js';
 import { computeMotivators } from './motivators.js';
@@ -164,6 +153,7 @@ import {
   type CellAction,
 } from './compositional_executive.js';
 import { agentLDecide, type AgentLDecision } from './agent_L_classifier.js';
+import { signalScorer, resolveEntryGate } from './signal_scorer.js';
 import { QIGRAMv2State, isQigramV2Enabled } from './agent_L_qigram_v2.js';
 import {
   newMTFState,
@@ -1624,28 +1614,6 @@ export class MonkeyKernel extends EventEmitter {
     const state = this.symbolStates.get(symbol);
     if (!state) return;
 
-    // v0.8.3b: snapshot serializable state BEFORE any mutation for the
-    // Python shadow tick. Captured here so Python sees the same "prior
-    // state" the TS pipeline starts from.
-    const shadowPrevState: TickRunSymbolState | null = isShadowTickEnabled()
-      ? {
-          symbol,
-          identity_basin: Array.from(state.identityBasin),
-          last_basin: state.lastBasin ? Array.from(state.lastBasin) : null,
-          kappa: state.kappa,
-          session_ticks: state.sessionTicks,
-          last_mode: state.lastMode,
-          basin_history: state.basinHistory.map((b) => Array.from(b)),
-          phi_history: [...state.phiHistory],
-          fhealth_history: [...state.fHealthHistory],
-          drift_history: [...state.driftHistory],
-          dca_add_count: state.dcaAddCount,
-          last_entry_at_ms: state.lastEntryAtMs,
-          peak_pnl_usdt: state.peakPnlUsdt,
-          peak_tracked_trade_id: state.peakTrackedTradeId,
-        }
-      : null;
-
     state.sessionTicks++;
 
     // 1. Fetch inputs (same as liveSignalEngine sees).
@@ -1660,6 +1628,17 @@ export class MonkeyKernel extends EventEmitter {
     }
     const lastPrice = Number(ohlcv[ohlcv.length - 1].close);
     if (!Number.isFinite(lastPrice) || lastPrice <= 0) return;
+
+    // QIG-FR v4 Problem 4 — score the kernel's RAW directional
+    // predictions recorded ~SCORE_HORIZON ticks ago against where price
+    // actually moved. Runs before this tick records its own. Pure
+    // telemetry; see signal_scorer.ts.
+    signalScorer.scoreMatured({
+      instanceId: this.instanceId,
+      symbol,
+      tick: state.sessionTicks,
+      price: lastPrice,
+    });
 
     // SENSE-2 Phase 2 (#768) — BTC beacon shared price cache. BTC ticks
     // write the latest mark; non-BTC ticks read it for cross-symbol
@@ -2476,6 +2455,15 @@ export class MonkeyKernel extends EventEmitter {
     // 6. DECIDE — propose action
     let action: string;
     let reason: string;
+    // v4 over-gating fix: chop regime is a size FILTER, not an entry
+    // veto. Set inside the K entry branch when chop is active; applied
+    // to the entry margin. 1.0 = no reduction.
+    let chopSizeFactor = 1.0;
+    // signal-scorer (QIG-FR v4 Problem 4) facts — hoisted to function
+    // scope so the per-gate attribution at end-of-K-block can see the
+    // final K margin cap and any executeEntry rejection code.
+    let cappedMargin = 0;
+    let kEntryRejectCode: string | null = null;
     const derivation: Record<string, unknown> = {
       phi, kappa: state.kappa, sovereignty, basinVelocity: bv,
       regimeWeights, nc,
@@ -3416,36 +3404,39 @@ export class MonkeyKernel extends EventEmitter {
       MODE_PROFILES[mode].canEnter &&
       direction !== 'flat' &&
       size.value > 0 &&
-      !sideShortRefused &&
-      !chopSuppressEntry(regimeReading, positionLane).suppressed
+      !sideShortRefused
     ) {
-      // Regime suppression check (issue #623): before opening a new entry,
-      // consult the regime classifier reading. Held positions are unaffected —
-      // re-justification (#619) owns those exits independently.
+      // v4 over-gating fix (QIG-FR v4 Problem 5): the chop regime is a
+      // FILTER, not a mandatory veto. The base geometric prediction
+      // fires the entry whenever mode/direction/size/short allow it;
+      // a chop regime no longer BLOCKS it — it only sizes it down.
+      // The reduction is observer-derived from the regime classifier's
+      // own confidence (P1: no hardcoded knob) — deeper chop → smaller
+      // entry, floored at 0.2× as a SAFETY_BOUND.
       const suppressionResult = chopSuppressEntry(regimeReading, positionLane);
+      chopSizeFactor = suppressionResult.suppressed
+        ? Math.max(0.2, 1 - suppressionResult.confidence)
+        : 1.0;
       derivation.regime_suppression = {
         regime: suppressionResult.regime,
         confidence: suppressionResult.confidence,
         lane: suppressionResult.lane,
         suppressed: suppressionResult.suppressed,
         suppress_reason: suppressionResult.suppressReason,
+        chop_size_factor: chopSizeFactor,
       };
-      if (suppressionResult.suppressed) {
-        action = 'hold';
-        reason = suppressionResult.suppressReason!;
-        derivation.entryThreshold = entryThr.derivation;
-      } else {
-        // sideCandidate from kernelDirection (geometric, post #ml-separation).
-        // Entry gate is geometric: direction != flat (basinDir + 0.5*tapeTrend
-        // != 0). Conviction gating via Layer 2B emotions is Python-only until
-        // emotions are ported to TS — TS uses neutral emotions which collapse
-        // kernelShouldEnter to false, so we gate on direction here instead.
-        action = sideCandidate === 'long' ? 'enter_long' : 'enter_short';
-        reason = `[${mode}] kernel-K geometric: basinDir=${basinDir.toFixed(3)} tape=${tapeTrend.toFixed(3)} → ${sideCandidate}; margin=${size.value.toFixed(2)} lev=${leverage.value}x notional=${(size.value * leverage.value).toFixed(2)}`;
-        derivation.entryThreshold = entryThr.derivation;
-        derivation.size = size.derivation;
-        derivation.leverage = leverage.derivation;
-      }
+      // sideCandidate from kernelDirection (geometric, post #ml-separation).
+      // Entry gate is geometric: direction != flat (basinDir + 0.5*tapeTrend
+      // != 0). Conviction gating via Layer 2B emotions is Python-only until
+      // emotions are ported to TS — TS uses neutral emotions which collapse
+      // kernelShouldEnter to false, so we gate on direction here instead.
+      action = sideCandidate === 'long' ? 'enter_long' : 'enter_short';
+      reason = `[${mode}] kernel-K geometric: basinDir=${basinDir.toFixed(3)} tape=${tapeTrend.toFixed(3)} → ${sideCandidate}; margin=${size.value.toFixed(2)}`
+        + (suppressionResult.suppressed ? `×${chopSizeFactor.toFixed(2)} (chop filter)` : '')
+        + ` lev=${leverage.value}x notional=${(size.value * chopSizeFactor * leverage.value).toFixed(2)}`;
+      derivation.entryThreshold = entryThr.derivation;
+      derivation.size = size.derivation;
+      derivation.leverage = leverage.derivation;
     } else {
       action = 'hold';
       const chopSuppressionForLane = chopSuppressEntry(regimeReading, positionLane);
@@ -3481,160 +3472,6 @@ export class MonkeyKernel extends EventEmitter {
         ? CHOP_SUPPRESS_TREND_CONFIDENCE_DEFAULT
         : CHOP_SUPPRESS_SWING_CONFIDENCE_DEFAULT,
     };
-
-    // v0.8.3b — shadow the full Python tick pipeline. Fire-and-forget:
-    // Python's decision is NOT authoritative; we only log parity diffs.
-    // TS remains the live path. Gated by MONKEY_TICK_PY_SHADOW=true.
-    if (shadowPrevState !== null) {
-      const shadowOhlcv: TickRunOHLCV[] = ohlcv.map((c) => ({
-        timestamp: Number(c.timestamp ?? 0),
-        open: Number(c.open),
-        high: Number(c.high),
-        low: Number(c.low),
-        close: Number(c.close),
-        volume: Number(c.volume),
-      }));
-      const shadowAccount: TickRunAccount = {
-        equity_fraction: equityFraction,
-        margin_fraction: marginFraction,
-        open_positions: openPositions,
-        available_equity: availableEquity,
-        exchange_held_side: exchangeHeldSide,
-        own_position_entry_price: ownOpenRow ? Number(ownOpenRow.entry_price) : null,
-        own_position_quantity: ownOpenRow ? Number(ownOpenRow.quantity) : null,
-        own_position_trade_id: ownOpenRow ? String(ownOpenRow.id) : null,
-      };
-      void callTickRun({
-        instance_id: this.instanceId,
-        inputs: {
-          symbol,
-          ohlcv: shadowOhlcv,
-          ml_signal: mlSignal,
-          ml_strength: mlStrength,
-          account: shadowAccount,
-          bank_size: bankSize,
-          sovereignty,
-          max_leverage: maxLevBoundary,
-          min_notional: minNotional,
-          size_fraction: this.sizeFraction,
-          self_obs_bias: this.selfObs?.entryBias ?? null,
-          rolling_kelly_stats: rollingStats
-            ? [rollingStats.winRate, rollingStats.avgWin, rollingStats.avgLoss]
-            : null,
-        },
-        prev_state: shadowPrevState,
-      }).then((pyResult) => {
-        logTickParityDiffs(symbol, {
-          action,
-          entry_threshold: entryThr.value,
-          leverage: leverage.value,
-          size_usdt: size.value,
-          mode,
-          side_candidate: sideCandidate,
-          side_override: sideOverride,
-          phi,
-          kappa: state.kappa,
-        }, pyResult.decision);
-      }).catch((err) => {
-        logger.debug('[shadow-tick] tick/run parity fetch failed', {
-          symbol,
-          err: err instanceof Error ? err.message : String(err),
-        });
-      });
-    }
-
-    // ── Issue #689 — Python K shadow (translation-only) ──
-    //
-    // Fire-and-forget POST to ml-worker /monkey/k-shadow/tick with the
-    // same inputs TS K just used. Captures the would-be Python K
-    // decision and persists one row to kernel_parity_log (migration
-    // 051). The TS K decision (above) is UNCHANGED — this block runs
-    // after action / size / side are finalised, before execution.
-    //
-    // Always-on once shipped — no env-var gate at this layer. The
-    // gate is at the CUTOVER PR (where Py decision drives execution),
-    // which is NOT this PR.
-    //
-    // The shadow uses its own 1-second timeout (callKShadowTick) so a
-    // slow Python responder cannot extend the tick. Errors are
-    // captured in py_error on the parity row, not raised.
-    {
-      const tickId = randomUUID();
-      const symbolTimestamp = new Date(Number(ohlcv[ohlcv.length - 1]?.timestamp ?? Date.now()));
-      const tsDecisionStartedAt = Date.now();
-      const tsSide: 'long' | 'short' | null =
-        action === 'enter_long' ? 'long' :
-        action === 'enter_short' ? 'short' :
-        (heldSide ?? null);
-      // M (motivators integral) is not currently surfaced from the TS
-      // executive in a stable scalar; left null on the TS side until
-      // a future commit ports compute_motivators TS-side. Py rows
-      // will carry M from derivation.motivators.i_q when present.
-      const tsRow = {
-        tickId,
-        symbol,
-        symbolTimestamp,
-        tsAction: action,
-        tsSide,
-        tsPhi: Number.isFinite(phi) ? phi : null,
-        tsKappa: Number.isFinite(state.kappa) ? state.kappa : null,
-        tsM: null as number | null,
-        tsGamma: Number.isFinite(bv) ? bv : null,
-        tsR: regimeToOrdinal(regimeReading.regime),
-        tsRegime: String(regimeReading.regime),
-        tsDecisionMs: Date.now() - tsDecisionStartedAt,
-      };
-      // Build the shadow request body. Re-uses the same shape as the
-      // existing v0.8.3b shadow tick so the Python endpoint receives
-      // exactly what TS K computed against this tick.
-      const kShadowOhlcv: TickRunOHLCV[] = ohlcv.map((c) => ({
-        timestamp: Number(c.timestamp ?? 0),
-        open: Number(c.open),
-        high: Number(c.high),
-        low: Number(c.low),
-        close: Number(c.close),
-        volume: Number(c.volume),
-      }));
-      const kShadowAccount: TickRunAccount = {
-        equity_fraction: equityFraction,
-        margin_fraction: marginFraction,
-        open_positions: openPositions,
-        available_equity: availableEquity,
-        exchange_held_side: exchangeHeldSide,
-        own_position_entry_price: ownOpenRow ? Number(ownOpenRow.entry_price) : null,
-        own_position_quantity: ownOpenRow ? Number(ownOpenRow.quantity) : null,
-        own_position_trade_id: ownOpenRow ? String(ownOpenRow.id) : null,
-      };
-      void callKShadowTick({
-        instance_id: this.instanceId,
-        inputs: {
-          symbol,
-          ohlcv: kShadowOhlcv,
-          account: kShadowAccount,
-          bank_size: bankSize,
-          sovereignty,
-          max_leverage: maxLevBoundary,
-          min_notional: minNotional,
-          size_fraction: this.sizeFraction,
-          self_obs_bias: this.selfObs?.entryBias ?? null,
-          rolling_kelly_stats: rollingStats
-            ? [rollingStats.winRate, rollingStats.avgWin, rollingStats.avgLoss]
-            : null,
-        },
-        prev_state: shadowPrevState,
-      }).then((py) => {
-        void recordKParityRow(tsRow, py);
-      }).catch((err) => {
-        // callKShadowTick swallows errors and returns { error }, so a
-        // throw here is exceptional — log once and still record a row
-        // with py_error populated so the operator sees the gap.
-        const msg = err instanceof Error ? err.message : String(err);
-        logger.warn('[k-shadow] unexpected throw from callKShadowTick', {
-          symbol, err: msg,
-        });
-        void recordKParityRow(tsRow, { error: `unexpected: ${msg}`, decided_at_ms: Date.now() });
-      });
-    }
 
     // 6b. EXECUTE — gated by MONKEY_EXECUTE=true. Observe-only otherwise.
     //
@@ -3939,7 +3776,11 @@ export class MonkeyKernel extends EventEmitter {
         // Cap K's margin to its arbiter share. Without this, the existing
         // size formula could exceed K's allocation when M has been
         // accumulating and K's share has shrunk.
-        const cappedMargin = Math.min(size.value, arbiterAllocation.k);
+        // v4 over-gating fix: chopSizeFactor (< 1 only when a chop regime
+        // was active at decision time) sizes the entry down instead of
+        // the chop gate vetoing it outright.
+        cappedMargin =
+          Math.min(size.value, arbiterAllocation.k) * chopSizeFactor;
         if (cappedMargin <= 0) {
           reason += ` | k_capped_to_zero (kShare=${arbiterSnapshot.kShare.toFixed(2)})`;
         }
@@ -3970,6 +3811,7 @@ export class MonkeyKernel extends EventEmitter {
         monkeyOrderId = execResult.orderId;
         if (!executed) {
           reason += ` | execute: ${execResult.reason}`;
+          kEntryRejectCode = execResult.reason;
         } else {
           if (execResult.reason.startsWith('monkey_paper_mode:')) {
             reason += ` | ${execResult.reason}`;
@@ -4180,6 +4022,31 @@ export class MonkeyKernel extends EventEmitter {
         }
       }
     }
+
+    // QIG-FR v4 Problem 4 — record this tick's RAW K prediction and the
+    // gate that suppressed entry (or `passed`), to be scored
+    // SCORE_HORIZON ticks from now. resolveEntryGate mirrors the actual
+    // gate priority chain above. Pure telemetry — wired ON, no flag; it
+    // observes the prediction→8-gate pipeline, it never alters it.
+    signalScorer.record({
+      instanceId: this.instanceId,
+      symbol,
+      tick: state.sessionTicks,
+      price: lastPrice,
+      direction,
+      gate: resolveEntryGate({
+        executed,
+        heldSide,
+        modeCanEnter: MODE_PROFILES[mode].canEnter,
+        sideShortRefused,
+        sizeValue: size.value,
+        executeEnabled: process.env.MONKEY_EXECUTE === 'true',
+        tradingPaused: isTradingPaused(),
+        lVetoed: Boolean(lVeto?.vetoed),
+        cappedMargin,
+        entryRejectCode: kEntryRejectCode,
+      }),
+    });
 
     // 6c. AGENT M EXECUTE — independent ML-only path. Runs against
     // arbiter.allocation.m. Threshold-based: enters when mlSignal !=
@@ -4600,6 +4467,25 @@ export class MonkeyKernel extends EventEmitter {
       && state.basinHistory.length >= 480
     ) {
       const lDecision = agentLDecide(state.basinHistory);
+      // QIG-FR v4 Problem 3 — basin discrimination guard. When the
+      // K-neighbour set is degenerate (nearest FR distance ≈ farthest)
+      // the FR-KNN vote is noise, not signal. Surface it when L is
+      // about to act so a low-discrimination entry is visible, not
+      // silent. 0.15 is a diagnostic warn threshold, not a trade gate.
+      {
+        const lDisc = lDecision.labelDistribution.discrimination;
+        if (Number.isFinite(lDisc) && lDisc < 0.15 && lDecision.action !== 'hold') {
+          logger.warn(
+            `[agent-L] ${symbol} low basin discrimination — FR-KNN vote may be noise`,
+            {
+              discrimination: Number(lDisc.toFixed(3)),
+              nearest: Number(lDecision.labelDistribution.nearestDistance.toFixed(4)),
+              farthest: Number(lDecision.labelDistribution.farthestDistance.toFixed(4)),
+              action: lDecision.action,
+            },
+          );
+        }
+      }
       // 2026-05-13 Change B — record per-side L confirmation timestamp
       // + cognitive mode at confirmation. Updated even when the entry
       // is vetoed: the L conviction is the signal, the gate is the
@@ -6889,11 +6775,52 @@ export class MonkeyKernel extends EventEmitter {
       userId = String((userRow.rows[0] as { user_id?: string } | undefined)?.user_id ?? '');
       if (!userId) {
         if (isMonkeyPaperMode()) {
-          logger.warn('[Monkey] paper mode enabled but no user_id resolvable');
-          return { executed: false, orderId: null, reason: 'paper_mode_no_user' };
+          // Paper mode — resolve a user_id that satisfies the
+          // autonomous_trades.user_id → users(id) foreign key. Prefer
+          // any existing user; on a fresh paper/staging DB (empty
+          // users table) bootstrap a deterministic paper user row
+          // idempotently so the paper-trade INSERT has a valid FK.
+          // No exchange call; paper_trade=true marks the rows.
+          const PAPER_USER_ID = '00000000-0000-0000-0000-000000000000';
+          let paperUser = '';
+          try {
+            const ur = await pool.query('SELECT id FROM users LIMIT 1');
+            paperUser = String((ur.rows[0] as { id?: string } | undefined)?.id ?? '');
+          } catch { /* users table unreadable — fall through to bootstrap */ }
+          if (!paperUser) {
+            try {
+              await pool.query(
+                `INSERT INTO users (id, email, username, password_hash)
+                 VALUES ($1, 'paper@monkey.local', 'paper-monkey', 'paper-no-login')
+                 ON CONFLICT (id) DO NOTHING`,
+                [PAPER_USER_ID],
+              );
+              paperUser = PAPER_USER_ID;
+            } catch (bootErr) {
+              logger.warn('[Monkey] paper user bootstrap failed', {
+                err: bootErr instanceof Error ? bootErr.message : String(bootErr),
+              });
+            }
+          }
+          userId = paperUser || PAPER_USER_ID;
+        } else {
+          return { executed: false, orderId: null, reason: 'no_credentials' };
         }
-        return { executed: false, orderId: null, reason: 'no_credentials' };
       }
+      if (isMonkeyPaperMode()) {
+        // Paper mode — synthetic risk-kernel state at the paper
+        // bankroll, no exchange call. Equity matches what the sizing
+        // path (fetchAccountContext) used, so the risk kernel's
+        // headroom check does not reject paper entries.
+        credentials = { apiKey: 'paper', apiSecret: 'paper' };
+        kernelState = {
+          equityUsdt: Number(process.env.MONKEY_PAPER_EQUITY_USDT) || 1000,
+          unrealizedPnlUsdt: 0,
+          openPositions: [],
+          restingOrders: [],
+          usedMarginUsdt: 0,
+        };
+      } else {
       const c = await apiCredentialsService.getCredentials(userId, 'poloniex');
       if (!c) return { executed: false, orderId: null, reason: 'credentials_missing' };
       credentials = c;
@@ -6925,6 +6852,7 @@ export class MonkeyKernel extends EventEmitter {
       );
       const usedMarginUsdt = Math.max(0, equityUsdt - availableBalance);
       kernelState = { equityUsdt, unrealizedPnlUsdt, openPositions, restingOrders: [], usedMarginUsdt };
+      }
     } catch (err) {
       return {
         executed: false, orderId: null,
@@ -7752,6 +7680,26 @@ export class MonkeyKernel extends EventEmitter {
     heldSide: 'long' | 'short' | null;
     availableEquity: number;
   }> {
+    // Paper mode — synthetic bankroll, no exchange dependency. Without
+    // this the kernel sizes against the REAL exchange balance even in
+    // paper mode, so on an unfunded staging account availableEquity=0
+    // → size.value=0 → every entry dies at the size>0 gate before any
+    // trading logic runs (paper mode previously only simulated the
+    // order FILL, never the equity). MONKEY_PAPER_EQUITY_USDT sets the
+    // fictional bankroll; default 1000 comfortably clears BTC/ETH min
+    // notionals so the kernel can size + place paper trades. The
+    // kernel's paper positions live in autonomous_trades (read via
+    // findOpenMonkeyTrade), so a null exchange heldSide here is correct.
+    if (isMonkeyPaperMode()) {
+      const paperEquity = Number(process.env.MONKEY_PAPER_EQUITY_USDT) || 1000;
+      return {
+        equityFraction: Math.min(1, paperEquity / 27.15),
+        marginFraction: 0,
+        openPositions: 0,
+        heldSide: null,
+        availableEquity: paperEquity,
+      };
+    }
     try {
       const userRow = await pool.query(
         `SELECT user_id FROM user_api_credentials WHERE exchange = 'poloniex' LIMIT 1`,

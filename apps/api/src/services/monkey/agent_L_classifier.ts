@@ -119,6 +119,42 @@ export function fisherRaoTupleDistance(
   );
 }
 
+/**
+ * Combined Rényi-½ divergence between two basin tuples (Improvement C,
+ * from the v4 QIG-FR design's Problem-1 learning).
+ *
+ * Per scale: −log(BC), where BC = cos(d_FR) recovered from the
+ * Fisher-Rao distance (d_FR = arccos(BC) ⇒ BC = cos(d_FR)). This is
+ * the Rényi-½ divergence — a valid information divergence on the
+ * simplex, UNBOUNDED on [0, ∞).
+ *
+ * Used ONLY for the inverse-distance vote weight, never for neighbour
+ * SELECTION. Selection stays on canonical Fisher-Rao (arccos is a
+ * strict monotone transform of −log(BC), so the K-nearest set is
+ * byte-identical either way). The difference: Fisher-Rao is bounded
+ * at π/2, so even the farthest of the K neighbours keeps weight
+ * ≈1/1.57; −log(BC) is unbounded, so far neighbours decay toward 0 —
+ * a sharper IDW where the closest historical analogues dominate.
+ *
+ * This is LIVE — Agent L's vote weight always uses this divergence.
+ */
+export function renyiTupleDistance(
+  a: BasinTuple,
+  b: BasinTuple,
+  weights: ScaleWeights = DEFAULT_SCALE_WEIGHTS,
+): number {
+  const EPS = 1e-12;
+  const renyiScale = (p: Basin, q: Basin): number => {
+    const bc = Math.cos(fisherRao(p, q));   // BC ∈ [0, 1]
+    return -Math.log(Math.max(bc, EPS));    // [0, ∞)
+  };
+  return (
+    weights.current * renyiScale(a.current, b.current) +
+    weights.medium * renyiScale(a.medium, b.medium) +
+    weights.long * renyiScale(a.long, b.long)
+  );
+}
+
 /** Build a multi-scale basin tuple from a basin history.
  *  - current = the most recent basin (history[history.length - 1])
  *  - medium = Fréchet mean of the last `mediumWindow` basins (default 120)
@@ -166,7 +202,13 @@ export function realizedLabel(
 
 export interface KNNNeighbor {
   index: number;
+  /** Canonical Fisher-Rao tuple distance — used for neighbour SELECTION
+   *  (the sort) and telemetry. */
   distance: number;
+  /** Distance used for the inverse-distance VOTE WEIGHT — the Rényi-½
+   *  tuple divergence (live). Optional only so neighbours constructed
+   *  in tests without it fall back to `distance`. */
+  weightDistance?: number;
   label: -1 | 0 | 1;
 }
 
@@ -211,6 +253,12 @@ export interface AgentLDecision {
     /** Maximum FR distance in the top-K — proxy for "how loose is the
      *  K-th neighbor". Wide spread + clean vote = robust signal. */
     farthestDistance: number;
+    /** Basin discrimination — `1 - nearestDistance/farthestDistance`,
+     *  in [0, 1). 0 means every K-neighbour is equidistant: the basin
+     *  is NOT discriminating and KNN is voting on noise (QIG-FR v4
+     *  Problem 3 — "features must spread"). Higher means the nearest
+     *  historical analog is clearly closer than the K-th. */
+    discrimination: number;
   };
   reason: string;
 }
@@ -303,7 +351,7 @@ export function agentLDecide(
   const emptyDist: AgentLDecision['labelDistribution'] = {
     long: 0, short: 0, neutral: 0,
     longWeight: 0, shortWeight: 0,
-    nearestDistance: 0, farthestDistance: 0,
+    nearestDistance: 0, farthestDistance: 0, discrimination: 0,
   };
   const cur = buildBasinTuple(basinHistory);
   // v2 telemetry uses the current (finest-scale) basin for recall.
@@ -332,7 +380,10 @@ export function agentLDecide(
     if (histTuple === null) continue;
     const d = fisherRaoTupleDistance(cur, histTuple, config.weights);
     const label = realizedLabel(basinHistory, i, config.horizon, config.labelThreshold);
-    candidates.push({ index: i, distance: d, label });
+    // Selection sorts on `distance` (canonical FR); the IDW vote weight
+    // uses `weightDistance` (Rényi-½ divergence) — live, unconditional.
+    const weightDistance = renyiTupleDistance(cur, histTuple, config.weights);
+    candidates.push({ index: i, distance: d, weightDistance, label });
   }
 
   if (candidates.length < Math.ceil(config.k / 2)) {
@@ -359,7 +410,10 @@ export function agentLDecide(
   let longWeight = 0;
   let shortWeight = 0;
   for (const n of topK) {
-    const w = 1 / (n.distance + eps);
+    // IDW weight uses weightDistance (Rényi when MONKEY_L_RENYI_IDW is
+    // set, else the FR distance). Falls back to `distance` for any
+    // neighbour built without the field.
+    const w = 1 / ((n.weightDistance ?? n.distance) + eps);
     weightSum += w;
     signedSum += w * n.label;
     if (n.label === 1) { longCount++; longWeight += w; }
@@ -373,14 +427,21 @@ export function agentLDecide(
   }
   const conviction = topK.length > 0 ? alignCount / topK.length : 0;
 
+  const nearestDistance = topK[0]?.distance ?? 0;
+  const farthestDistance = topK[topK.length - 1]?.distance ?? 0;
   const labelDistribution: AgentLDecision['labelDistribution'] = {
     long: longCount,
     short: shortCount,
     neutral: neutralCount,
     longWeight,
     shortWeight,
-    nearestDistance: topK[0]?.distance ?? 0,
-    farthestDistance: topK[topK.length - 1]?.distance ?? 0,
+    nearestDistance,
+    farthestDistance,
+    // QIG-FR v4 Problem 3 — when nearest ≈ farthest the K-neighbour set
+    // is degenerate and the vote is noise. 0 = no discrimination.
+    discrimination: farthestDistance > 0
+      ? 1 - nearestDistance / farthestDistance
+      : 0,
   };
 
   if (Math.abs(signedScore) < config.actionThreshold) {
