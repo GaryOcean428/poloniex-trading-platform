@@ -18,6 +18,7 @@ import {
   checkSymbolMaxLeverage,
   checkUnrealizedDrawdown,
   evaluatePreTradeVetoes,
+  explicitMinMarginHeadroomPct,
   type KernelAccountState,
   type KernelContext,
   type KernelOrder,
@@ -352,5 +353,73 @@ describe('evaluatePreTradeVetoes — margin_headroom priority', () => {
     } finally {
       delete process.env.MONKEY_MIN_MARGIN_HEADROOM_PCT;
     }
+  });
+});
+
+describe('explicitMinMarginHeadroomPct', () => {
+  it('returns null when the env var is unset', () => {
+    delete process.env.MONKEY_MIN_MARGIN_HEADROOM_PCT;
+    expect(explicitMinMarginHeadroomPct()).toBeNull();
+  });
+
+  it('returns the parsed reserve when set to a valid value', () => {
+    process.env.MONKEY_MIN_MARGIN_HEADROOM_PCT = '0.15';
+    try {
+      expect(explicitMinMarginHeadroomPct()).toBe(0.15);
+    } finally {
+      delete process.env.MONKEY_MIN_MARGIN_HEADROOM_PCT;
+    }
+  });
+
+  it('returns null for an out-of-range value (≥ 1)', () => {
+    process.env.MONKEY_MIN_MARGIN_HEADROOM_PCT = '1.5';
+    try {
+      expect(explicitMinMarginHeadroomPct()).toBeNull();
+    } finally {
+      delete process.env.MONKEY_MIN_MARGIN_HEADROOM_PCT;
+    }
+  });
+
+  it('returns 0 (explicit disable) when set to "0"', () => {
+    process.env.MONKEY_MIN_MARGIN_HEADROOM_PCT = '0';
+    try {
+      expect(explicitMinMarginHeadroomPct()).toBe(0);
+    } finally {
+      delete process.env.MONKEY_MIN_MARGIN_HEADROOM_PCT;
+    }
+  });
+});
+
+describe('evaluatePreTradeVetoes — operator headroom overrides the mode table', () => {
+  // Regression fix (2026-05-20): before this, the mode-conditional table
+  // (investigation = 25%) ALWAYS overrode the operator's env var because
+  // monkeyMode is set on every live tick — a dead knob. The operator's
+  // explicit value must now win.
+  const investigationCtx: KernelContext = {
+    isLive: true, mode: 'auto', symbolMaxLeverage: BTC_MAX_LEV,
+    monkeyMode: 'investigation',
+  };
+
+  it('operator 15% reserve wins over investigation-mode 25%', () => {
+    // used=60, new_margin=20 → projected=80 → 20% free.
+    // 20% ≥ 15% (operator) → ALLOW. 20% < 25% (mode) would BLOCK.
+    const state: KernelAccountState = { ...emptyAccount, equityUsdt: 100, usedMarginUsdt: 60 };
+    const order: KernelOrder = { ...btcOrder, notional: 200, leverage: 10 };
+    process.env.MONKEY_MIN_MARGIN_HEADROOM_PCT = '0.15';
+    try {
+      expect(evaluatePreTradeVetoes(order, state, investigationCtx).allowed).toBe(true);
+    } finally {
+      delete process.env.MONKEY_MIN_MARGIN_HEADROOM_PCT;
+    }
+  });
+
+  it('falls back to the mode table when the operator var is unset', () => {
+    // Same 20%-free case; no env var → investigation 25% applies → block.
+    const state: KernelAccountState = { ...emptyAccount, equityUsdt: 100, usedMarginUsdt: 60 };
+    const order: KernelOrder = { ...btcOrder, notional: 200, leverage: 10 };
+    delete process.env.MONKEY_MIN_MARGIN_HEADROOM_PCT;
+    const r = evaluatePreTradeVetoes(order, state, investigationCtx);
+    expect(r.allowed).toBe(false);
+    expect(r.code).toBe('margin_headroom');
   });
 });

@@ -249,6 +249,27 @@ function getMinMarginHeadroomPct(): number {
   return raw;
 }
 
+/**
+ * Operator-explicit headroom override. Returns the parsed reserve when
+ * MONKEY_MIN_MARGIN_HEADROOM_PCT is set to a valid value in [0, 1); null
+ * when unset / blank / out-of-range (caller falls back to the
+ * mode-conditional default).
+ *
+ * Distinct from getMinMarginHeadroomPct(), which collapses "unset" into
+ * the 0.0 disabled default and so cannot be used to tell "operator chose
+ * 0" apart from "operator chose nothing". evaluatePreTradeVetoes needs
+ * that distinction: an explicit operator value must win over the
+ * mode-conditional table (before 2026-05-20 the mode table silently
+ * overrode the env var on every live tick — a dead knob).
+ */
+export function explicitMinMarginHeadroomPct(): number | null {
+  const raw = process.env.MONKEY_MIN_MARGIN_HEADROOM_PCT;
+  if (raw === undefined || raw === null || raw === '') return null;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed >= 1) return null;
+  return parsed;
+}
+
 /** 2026-05-13 — mode-conditional headroom reserves.
  *
  * EXPLORATION (flat / fast scalp): need MORE headroom because each
@@ -329,10 +350,19 @@ export function evaluatePreTradeVetoes(
   state: KernelAccountState,
   context: KernelContext,
 ): KernelDecision {
-  // 2026-05-13 — mode-conditional headroom override. When the kernel
-  // supplies monkeyMode (cognitive mode), use that to pick the reserve
-  // pct. Otherwise fall through to env default.
-  const headroomPct = modeMarginHeadroomPct(context.monkeyMode) ?? undefined;
+  // Headroom reserve precedence (2026-05-20):
+  //   1. operator-explicit MONKEY_MIN_MARGIN_HEADROOM_PCT (wins always)
+  //   2. mode-conditional default (exploration 35% … drift 50%)
+  //   3. env default (0.0 = disabled)
+  // Before 2026-05-20 the mode table (step 2) always overrode the env
+  // var, because monkeyMode is set on every live tick — so the operator
+  // could set MONKEY_MIN_MARGIN_HEADROOM_PCT and it did nothing. The
+  // operator's explicit reserve is now authoritative; the mode table is
+  // the default used only when the operator has not set the var.
+  const explicitHeadroom = explicitMinMarginHeadroomPct();
+  const headroomPct = explicitHeadroom
+    ?? modeMarginHeadroomPct(context.monkeyMode)
+    ?? undefined;
   const checks: KernelDecision[] = [
     checkUnrealizedDrawdown(state),
     checkExecutionMode(context.isLive, context.mode),
