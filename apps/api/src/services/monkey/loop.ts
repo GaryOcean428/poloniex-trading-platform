@@ -6387,20 +6387,23 @@ export class MonkeyKernel extends EventEmitter {
       : chunkContracts;
 
     let orderId: string | null = null;
+    // Proposal #10 — in HEDGE mode the close must specify which side
+    // of the hedge book it's reducing, otherwise the exchange may
+    // route against the wrong leg.
+    //
+    // HEDGE close: posSide=LONG|SHORT, NO reduceOnly — Poloniex v3
+    // rejects reduceOnly in HEDGE with "Param error reduceOnly cannot
+    // be set to true in hedge" (prod incident 2026-04-30). The
+    // poloniexFuturesService strips reduceOnly for HEDGE mode, but we
+    // also pass `positionMode` explicitly so the contract is obvious
+    // at the call site.
+    //
+    // Hoisted above the try so the 21002 retry handler in `catch` can
+    // re-place the close with the same position-mode contract.
+    const isHedge = this.positionDirectionMode === 'HEDGE';
+    const closePosSide: 'LONG' | 'SHORT' | undefined =
+      isHedge ? (heldSide === 'long' ? 'LONG' : 'SHORT') : undefined;
     try {
-      // Proposal #10 — in HEDGE mode the close must specify which side
-      // of the hedge book it's reducing, otherwise the exchange may
-      // route against the wrong leg.
-      //
-      // HEDGE close: posSide=LONG|SHORT, NO reduceOnly — Poloniex v3
-      // rejects reduceOnly in HEDGE with "Param error reduceOnly cannot
-      // be set to true in hedge" (prod incident 2026-04-30). The
-      // poloniexFuturesService strips reduceOnly for HEDGE mode, but we
-      // also pass `positionMode` explicitly so the contract is obvious
-      // at the call site.
-      const isHedge = this.positionDirectionMode === 'HEDGE';
-      const closePosSide: 'LONG' | 'SHORT' | undefined =
-        isHedge ? (heldSide === 'long' ? 'LONG' : 'SHORT') : undefined;
 
       // MAKER-CLOSE for preservation-mandate exits (REGIME-2, trailing_harvest,
       // trend_flip_harvest, stale_held). These are "we have time" exits — the
@@ -6544,11 +6547,77 @@ export class MonkeyKernel extends EventEmitter {
             reason: `race_lost_to_sibling: 21002 after sibling close (${race.siblingId} ${race.ageMs}ms ago)`,
           };
         }
+        // Not a sibling race — the close order exceeded the live exchange
+        // position. Common on adopted operator rows whose DB `quantity`
+        // has drifted above the exchange net position, or after a partial
+        // fill. Poloniex v3 has no close-all/percentage param and rejects
+        // an oversize reduceOnly order rather than clamping it, so the
+        // reliable "close 100%" is: re-read the live position and retry
+        // the close at exactly what is there. One retry only — no loop.
+        try {
+          const freshPositions = await poloniexFuturesService.getPositions(credentials);
+          const freshForSymbol = (Array.isArray(freshPositions) ? freshPositions : []).filter(
+            (p: Record<string, unknown>) => String(p.symbol ?? '') === symbol,
+          );
+          const freshTarget = (isHedge && closePosSide)
+            ? (freshForSymbol.find((p: Record<string, unknown>) =>
+                String(p.side ?? p.posSide ?? '').toUpperCase() ===
+                (heldSide === 'long' ? 'LONG' : 'SHORT')) ?? freshForSymbol[0])
+            : freshForSymbol[0];
+          const freshQty = Math.abs(Number(freshTarget?.qty ?? freshTarget?.size ?? 0));
+          if (freshQty <= 0) {
+            // Position is already flat — nothing to close. Mark the row.
+            await pool.query(
+              `UPDATE autonomous_trades SET status='closed', exit_price=$1, exit_time=NOW(),
+                      exit_reason=$2, pnl=$3 WHERE id=$4`,
+              [markPrice, 'exchange_position_vanished', pnlAtDecision, tradeId],
+            ).catch(() => { /* non-fatal */ });
+            return {
+              executed: false, orderId: null,
+              reason: '21002_position_already_flat',
+            };
+          }
+          // Floor to whole contracts so the retry never re-overshoots.
+          // The live position is smaller than the rejected order, so it
+          // is well under the 10k-contract single-order cap — no chunking.
+          const freshContracts = symbolLotSize > 0
+            ? Math.floor(freshQty / symbolLotSize)
+            : Math.floor(freshQty);
+          if (freshContracts <= 0) {
+            return { executed: false, orderId: null, reason: '21002_retry_lot_rounding_zero' };
+          }
+          const retrySize = symbolLotSize > 0 ? freshContracts * symbolLotSize : freshContracts;
+          const retryOrder = await poloniexFuturesService.placeOrder(credentials, {
+            symbol, side: closeSide, type: 'market', size: retrySize, lotSize: symbolLotSize,
+            reduceOnly: true,
+          }, {
+            positionMode: isHedge ? 'HEDGE' : 'ONE_WAY',
+            ...(closePosSide ? { posSide: closePosSide } : {}),
+          });
+          const retryId =
+            retryOrder?.ordId ?? retryOrder?.orderId ??
+            retryOrder?.id ?? retryOrder?.clientOid ?? null;
+          if (!retryId) {
+            return { executed: false, orderId: null, reason: '21002_retry_no_orderId' };
+          }
+          logger.info('[Monkey] close retried at live qty after 21002', {
+            symbol, heldSide, freshQty, retrySize, orderId: String(retryId),
+          });
+          // Success — set orderId and fall through to the settle/accounting
+          // block below (closes all open rows for this kernel+symbol).
+          orderId = String(retryId);
+        } catch (retryErr) {
+          return {
+            executed: false, orderId: null,
+            reason: `21002_retry_failed: ${retryErr instanceof Error ? retryErr.message : String(retryErr)}`,
+          };
+        }
+      } else {
+        return {
+          executed: false, orderId: null,
+          reason: `close_exchange_rejected: ${message}`,
+        };
       }
-      return {
-        executed: false, orderId: null,
-        reason: `close_exchange_rejected: ${message}`,
-      };
     }
 
     // v0.6.2: close ALL open monkey rows for this (kernel, symbol). DCA
