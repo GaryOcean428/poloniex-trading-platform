@@ -66,6 +66,47 @@ export interface FrTradeParamsInput {
   basinVelocityMedian: number;
 }
 
+/**
+ * Geometry-derived bracket distances — the regime-INDEPENDENT subset of
+ * the P25 block. The TP/SL formulas (Pine L174-176) depend only on ATR,
+ * φ and rConf; regime feeds only trade-type → leverage. Phase B's
+ * synthetic bracket needs exactly this subset at entry time, so it is
+ * exported separately — a caller that has φ/rConf/ATR but does not need
+ * to resolve the CREATOR/PRESERVER/DISSOLVER phase can derive a correct
+ * bracket without it.
+ */
+export interface FrBracket {
+  /** TP distance in price units — Pine `tp_distance` L175. */
+  tpDistance: number;
+  /** SL distance in price units — Pine `sl_distance` L174. */
+  slDistance: number;
+  /** Reward:risk ratio — Pine `risk_reward` L176. */
+  riskReward: number;
+}
+
+/**
+ * Derive the geometry TP/SL bracket distances. Pure.
+ *
+ *   slDistance = ATR × (1/max(φ,0.3))         [Pine L174]
+ *   tpDistance = ATR × φ × (1 + rConf) × 2    [Pine L175]
+ *
+ * φ is floored at 0.3 so a low-integration basin cannot blow the stop
+ * out to infinity. The asymmetry (TP scales WITH φ, SL scales INVERSELY)
+ * is intentional: a confident, well-integrated basin earns a far target
+ * and a tight stop; an uncertain one gets a near target and a wide stop,
+ * which naturally yields good R:R in PRESERVER and poor R:R in DISSOLVER.
+ */
+export function frBracketDistances(
+  phi: number,
+  rConf: number,
+  atr: number,
+): FrBracket {
+  const slDistance = atr * (1.0 / Math.max(phi, 0.3));
+  const tpDistance = atr * phi * (1.0 + rConf) * 2.0;
+  const riskReward = tpDistance / Math.max(slDistance, 1e-10);
+  return { tpDistance, slDistance, riskReward };
+}
+
 export interface FrTradeParams {
   tradeType: FrTradeType;
   /** Suggested leverage, integer, 1..FR_MAX_LEV. */
@@ -136,14 +177,11 @@ export function deriveFrTradeParams(
   const predRangeAbs = atr * (1.0 + bv * 10.0);
 
   // ── TP / SL derivation [Pine L174-176] ──────────────────────────
-  // SL = ATR × (1/φ) — low integration → wider stop (less certain of
-  //   direction). φ is floored at 0.3 so the stop can't blow out.
-  // TP = ATR × φ × (1 + rConf) × 2 — high integration + confidence →
-  //   further target. This naturally gives good R:R in PRESERVER and
-  //   poor R:R in DISSOLVER, which is the intended geometry behaviour.
-  const slDistance = atr * (1.0 / Math.max(phi, 0.3));
-  const tpDistance = atr * phi * (1.0 + rConf) * 2.0;
-  const riskReward = tpDistance / Math.max(slDistance, 1e-10);
+  // Delegated to frBracketDistances — the regime-independent subset,
+  // shared with Phase B's synthetic bracket so the formula has one home.
+  const { tpDistance, slDistance, riskReward } = frBracketDistances(
+    phi, rConf, atr,
+  );
 
   return {
     tradeType,

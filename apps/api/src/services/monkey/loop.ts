@@ -90,12 +90,14 @@ import {
   type TurtleState,
 } from '../turtle_agent/index.js';
 import {
+  atr14,
   basinDirection as computeBasinDirection,
   perceive,
   refract,
   trendProxy as computeTrendProxy,
   type OHLCVCandle,
 } from './perception.js';
+import { frBracketDistances } from './fr_trade_params.js';
 import {
   CHOP_SUPPRESS_SWING_CONFIDENCE_DEFAULT,
   CHOP_SUPPRESS_TREND_CONFIDENCE_DEFAULT,
@@ -671,6 +673,12 @@ interface SymbolState {
    *  gate threshold (mean + stddev) from the basin's own coupling
    *  distribution instead of a hardcoded C_SOPHIA_THRESHOLD. */
   externalCouplingHistory: number[];
+  /** Phase B — geometry-derived TP/SL bracket distances (price units),
+   *  recomputed each tick from φ, regime confidence and ATR via
+   *  `frBracketDistances`. `executeEntry` reads this when opening a
+   *  position so the bracket is committed at entry. null until the
+   *  first tick with ≥15 candles of history (ATR needs period+1). */
+  lastFrBracket: { tpDistance: number; slDistance: number } | null;
 }
 
 /** Cap the recent-bus-event ring at this size — anything older than
@@ -1392,6 +1400,7 @@ export class MonkeyKernel extends EventEmitter {
       modeTransitionTimesMs: [],
       kappaHistory: [],
       externalCouplingHistory: [],
+      lastFrBracket: null,
     };
   }
 
@@ -2089,6 +2098,24 @@ export class MonkeyKernel extends EventEmitter {
       ...state.basinHistory,
       basin,
     ]);
+
+    // Phase B — geometry-derived TP/SL bracket. Recompute each tick from
+    // the current φ, regime confidence and ATR(14); stash on symbol state
+    // so executeEntry can commit the bracket at entry without re-deriving.
+    // ATR needs period+1 candles; frBracketDistances returns a 0-distance
+    // bracket on a 0 ATR, which we treat as "not derivable" → leave null.
+    {
+      const atrNow = atr14(ohlcv);
+      if (atrNow > 0) {
+        const fb = frBracketDistances(phi, regimeReading.confidence, atrNow);
+        state.lastFrBracket = {
+          tpDistance: fb.tpDistance,
+          slDistance: fb.slDistance,
+        };
+      } else {
+        state.lastFrBracket = null;
+      }
+    }
 
     // REGIME-1 Phase 3 — compositional cell executive (3×3 (phase, direction)
     // matrix). Always evaluated for telemetry (shadow); only ENFORCED on size
@@ -6509,6 +6536,25 @@ export class MonkeyKernel extends EventEmitter {
     const quantity = notionalUsdt / entryPrice;
     const exchangeSide: 'buy' | 'sell' = side === 'long' ? 'buy' : 'sell';
 
+    // Phase B (B1) — commit the geometry-derived TP/SL bracket at entry.
+    // symStateForLev.lastFrBracket holds the φ/rConf/ATR-derived distances
+    // recomputed each tick. A LONG takes profit ABOVE entry and stops
+    // BELOW; a SHORT is mirrored. Persisted to the take_profit/stop_loss
+    // columns (long-NULL before this change). B1 only PERSISTS the bracket
+    // — the mechanical exit gate that READS it ships flag-gated in B2, so
+    // this is behaviour-neutral. null bracket (ATR warmup) → NULL columns.
+    const frBracket = symStateForLev?.lastFrBracket ?? null;
+    const tpPrice = frBracket
+      ? (side === 'long'
+          ? entryPrice + frBracket.tpDistance
+          : entryPrice - frBracket.tpDistance)
+      : null;
+    const slPrice = frBracket
+      ? (side === 'long'
+          ? entryPrice - frBracket.slDistance
+          : entryPrice + frBracket.slDistance)
+      : null;
+
     // 2026-05-13 — CROSS-AGENT tape-disagreement veto.
     //
     // Observed 5/13 ~18:00-19:15Z: bot took -$68 in 3h by repeatedly
@@ -6836,11 +6882,13 @@ export class MonkeyKernel extends EventEmitter {
           await pool.query(
             `INSERT INTO autonomous_trades
                (user_id, symbol, side, entry_price, quantity, leverage,
-                confidence, reason, order_id, paper_trade, engine_version, agent, lane)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+                confidence, reason, order_id, paper_trade, engine_version, agent, lane,
+                take_profit, stop_loss)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
             [
               userId, symbol, exchangeSide, paper.fillPrice, formattedSize, leverage,
               req.phi, reasonEncoded, orderId, true, getEngineVersion(), agentTag, laneTag,
+              tpPrice, slPrice,
             ],
           );
         } catch (err) {
@@ -7096,11 +7144,13 @@ export class MonkeyKernel extends EventEmitter {
       await pool.query(
         `INSERT INTO autonomous_trades
            (user_id, symbol, side, entry_price, quantity, leverage,
-            confidence, reason, order_id, paper_trade, engine_version, agent, lane)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+            confidence, reason, order_id, paper_trade, engine_version, agent, lane,
+            take_profit, stop_loss)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
         [
           userId, symbol, exchangeSide, entryPrice, formattedSize, leverage,
           req.phi, reasonEncoded, orderId, false, getEngineVersion(), agentTag, laneTag,
+          tpPrice, slPrice,
         ],
       );
     } catch (err) {

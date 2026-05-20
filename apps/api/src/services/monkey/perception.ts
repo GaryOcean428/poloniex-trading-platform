@@ -126,6 +126,41 @@ function rollingVol(ohlcv: OHLCVCandle[], n: number): number {
 }
 
 /**
+ * Average True Range over `period` candles (Wilder, simple-mean variant).
+ *
+ *   TR_i  = max( high−low,
+ *                |high − close_{i-1}|,
+ *                |low  − close_{i-1}| )
+ *   ATR   = mean(TR) over the last `period` candles
+ *
+ * This is the canonical ATR the Pine indicator uses (`ta.atr(14)`,
+ * Pine L93) — proper true range, not the `rollingVol` close-to-close
+ * approximation above. Phase B's synthetic TP/SL bracket is derived
+ * from this ATR via `frBracketDistances`.
+ *
+ * Returns 0 when there is insufficient history (fewer than period+1
+ * candles) — callers treat 0 as "no bracket derivable, fall through".
+ * Exported because the kernel's entry path (loop.ts) needs it.
+ */
+export function atr14(
+  ohlcv: OHLCVCandle[],
+  period: number = 14,
+): number {
+  if (ohlcv.length < period + 1) return 0;
+  let sum = 0;
+  for (let i = ohlcv.length - period; i < ohlcv.length; i++) {
+    const prevClose = ohlcv[i - 1].close;
+    const tr = Math.max(
+      ohlcv[i].high - ohlcv[i].low,
+      Math.abs(ohlcv[i].high - prevClose),
+      Math.abs(ohlcv[i].low - prevClose),
+    );
+    sum += tr;
+  }
+  return sum / period;
+}
+
+/**
  * Basin direction: signed scalar in [-1, 1] read DIRECTLY from Monkey's
  * own perception basin's momentum-spectrum dims (7..14).
  *
