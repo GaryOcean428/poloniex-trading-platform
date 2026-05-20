@@ -88,6 +88,20 @@ const MAX_POSITION_FRACTION = 0.1;      // Max 10% of capital per position
 const VOLATILITY_HIGH = 0.03;           // >3% = high volatility
 const VOLATILITY_MEDIUM = 0.01;         // >1% = medium volatility
 
+/**
+ * Master kill-switch for the FAT trading loop.
+ *
+ * Disabled by default after 2026-05-20: the operator found FAT (and
+ * LiveSignal) detrimental relative to the Monkey kernel and asked for
+ * both to be switched off. LiveSignal/Persistent/AgentScheduler are
+ * already env-gated in index.ts — but FAT's loop auto-restores on
+ * module construction via loadActiveConfigs(), so AGENT_SCHEDULER_ENABLE
+ * never reached it. This gate is the single chokepoint: every path to
+ * the trading loop funnels through startTrading(). Re-enable with
+ * FAT_ENABLE=true.
+ */
+const fatEngineEnabled = (): boolean => process.env.FAT_ENABLE === 'true';
+
 interface TradingConfig {
   userId: string;
   initialCapital: number;
@@ -386,6 +400,16 @@ class FullyAutonomousTrader extends EventEmitter {
   private async startTrading(userId: string): Promise<void> {
     const config = this.configs.get(userId);
     if (!config || !config.enabled) {
+      return;
+    }
+
+    // Master kill-switch — FAT is disabled by default (2026-05-20 operator
+    // directive). The config stays in memory so getStatus() reports it
+    // honestly, but no trading interval is armed. See fatEngineEnabled().
+    if (!fatEngineEnabled()) {
+      logger.info(
+        `[FAT] startTrading skipped for user ${userId} — FAT engine disabled (set FAT_ENABLE=true to re-enable)`,
+      );
       return;
     }
 
