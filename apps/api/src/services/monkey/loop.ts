@@ -2594,6 +2594,13 @@ export class MonkeyKernel extends EventEmitter {
       }
     }
 
+    // Adoption pickup — the reconciler inserts operator-opened positions
+    // with reason `kernel_adopted|…`, which findOpenMonkeyTrade (keyed on
+    // the `monkey|kernel=<instance>|` prefix) would never see. Claim them
+    // onto the monkey-position instance and commit a bracket. Runs BEFORE
+    // findOpenMonkeyTrade so a row claimed this tick is managed this tick.
+    await this.claimAdoptedPositions(symbol, state.lastFrBracket);
+
     // v0.6.3: Monkey's "held side" is scoped to HER OWN open rows only.
     // If only liveSignal holds a position on this symbol, Monkey treats
     // herself as flat and her entry logic can still fire (risk kernel's
@@ -2681,9 +2688,11 @@ export class MonkeyKernel extends EventEmitter {
         // active, the discretionary PROFIT gates below (profit-harvest,
         // aggregate-harvest, scalp-TP) are skipped via `bracketActive`.
         // The loss-side safety gates (hard SL, fast-adverse, slow-bleed)
-        // still run — a price stop is not a time/tape stop. Default OFF;
-        // ships dark, flipped after observation.
-        const bracketExitLive = process.env.MONKEY_BRACKET_EXIT_LIVE === 'true';
+        // still run — a price stop is not a time/tape stop. Default ON
+        // (2026-05-20 operator directive: "close trades at its predicted
+        // or adjusted limit"); set MONKEY_BRACKET_EXIT_LIVE=false to
+        // disable as a kill-switch.
+        const bracketExitLive = process.env.MONKEY_BRACKET_EXIT_LIVE !== 'false';
         const hasBracket = (openRow.take_profit ?? null) !== null
           || (openRow.stop_loss ?? null) !== null;
         const bracketActive = bracketExitLive && hasBracket;
@@ -3303,9 +3312,12 @@ export class MonkeyKernel extends EventEmitter {
         // and trail the SL toward profit. Both edits are strictly
         // monotonic in the position's favour (shouldExtendBracket
         // enforces it), so revising every tick can only improve the
-        // bracket. Flag MONKEY_BRACKET_EXTEND_LIVE (default off).
+        // bracket. Default ON (2026-05-20 operator directive: "close
+        // trades at its predicted or adjusted limit" — the revision is
+        // the "adjusted" half); set MONKEY_BRACKET_EXTEND_LIVE=false to
+        // disable as a kill-switch.
         const bracketExtendLive =
-          process.env.MONKEY_BRACKET_EXTEND_LIVE === 'true';
+          process.env.MONKEY_BRACKET_EXTEND_LIVE !== 'false';
         if (
           !exitFired && bracketActive && bracketExtendLive
           && state.lastFrBracket !== null
@@ -5100,6 +5112,74 @@ export class MonkeyKernel extends EventEmitter {
     lane?: LaneType,
   ): Promise<{ winRate: number; avgWin: number; avgLoss: number } | null> {
     return getKellyRollingStats(agent, lane);
+  }
+
+  /**
+   * Claim operator-opened positions adopted by the reconciler.
+   *
+   * The reconciler (stateReconciliationService) inserts operator-opened
+   * positions with `agent='K'` but `reason='kernel_adopted|…'`. Every
+   * kernel lookup (findOpenMonkeyTrade / findOpenMonkeyTradesByLane / the
+   * bracket-revision UPDATE) keys on the `monkey|kernel=<instanceId>|`
+   * reason prefix, so an adopted row is invisible to every exit path —
+   * the "kernel adopts and manages it" contract was silently broken.
+   *
+   * Fix: exactly ONE instance — monkey-position, the patient 15m kernel —
+   * rewrites the `kernel_adopted|` prefix to
+   * `monkey|kernel=monkey-position|adopted|`. After the rewrite the row
+   * matches the canonical owned-row pattern and every existing query and
+   * UPDATE picks it up unchanged. A single deterministic owner avoids a
+   * dual-instance management race. The reconciler's orphan dedup keys on
+   * symbol+side (not `reason`), so the rewrite cannot trigger a duplicate
+   * insert.
+   *
+   * Adopted rows are inserted with NULL take_profit/stop_loss, so once
+   * claimed we commit a geometry-derived bracket (this tick's φ/ATR
+   * around the operator's recorded entry price) — the synthetic
+   * bracket-exit gate needs a limit to enforce. Also backfills any
+   * kernel-opened row whose Phase-B1 commit was skipped on a 0-ATR tick.
+   * Skipped entirely when geometry is not yet derivable.
+   */
+  private async claimAdoptedPositions(
+    symbol: string,
+    frBracket: { tpDistance: number; slDistance: number } | null,
+  ): Promise<void> {
+    // Single deterministic owner — only the position instance claims.
+    if (this.instanceId !== 'monkey-position') return;
+    try {
+      const claimed = await pool.query(
+        `UPDATE autonomous_trades
+            SET reason = replace(reason,
+                  'kernel_adopted|', 'monkey|kernel=monkey-position|adopted|')
+          WHERE reason LIKE 'kernel_adopted|%'
+            AND status = 'open' AND symbol = $1`,
+        [symbol],
+      );
+      if ((claimed.rowCount ?? 0) > 0) {
+        logger.info('[Monkey] adopted position(s) claimed', {
+          symbol, count: claimed.rowCount, instance: this.instanceId,
+        });
+      }
+      // Commit a geometry-derived bracket on any owned row that lacks
+      // one — side-aware TP/SL around the row's recorded entry price.
+      if (frBracket && frBracket.tpDistance > 0 && frBracket.slDistance > 0) {
+        await pool.query(
+          `UPDATE autonomous_trades
+              SET take_profit = entry_price + (CASE
+                    WHEN side IN ('long', 'buy') THEN $2 ELSE -$2 END),
+                  stop_loss   = entry_price + (CASE
+                    WHEN side IN ('long', 'buy') THEN -$3 ELSE $3 END)
+            WHERE reason LIKE 'monkey|kernel=monkey-position|%'
+              AND status = 'open' AND symbol = $1
+              AND take_profit IS NULL AND stop_loss IS NULL`,
+          [symbol, frBracket.tpDistance, frBracket.slDistance],
+        );
+      }
+    } catch (err) {
+      logger.warn('[Monkey] claimAdoptedPositions failed', {
+        symbol, err: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   private async findOpenMonkeyTrade(symbol: string): Promise<
