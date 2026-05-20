@@ -21,7 +21,12 @@
  * cannot push the kernel past its own observer-derived sizing or past
  * the leverage audit; that would be the P1 operator-knob anti-pattern.
  *
- * Reads are cached 60 s and fail soft to defaults / 0 — a DB hiccup must
+ * Strictly opt-in: when no operator profile has been saved (empty table,
+ * or a DB error) getOperatorRiskSettings returns null and the kernel
+ * applies NO ceilings — behaviour is identical to before this module.
+ * The ceilings only ever engage once the operator saves a profile.
+ *
+ * Reads are cached 60 s and fail soft (null / 0) — a DB hiccup must
  * never block trading or fabricate a loss halt.
  *
  * QIG purity: SQL + arithmetic only. No geometric ops.
@@ -104,7 +109,7 @@ export function dailyLossHalted(
 
 const TTL_MS = 60_000;
 
-let settingsCache: { value: OperatorRiskSettings; atMs: number } | null = null;
+let settingsCache: { value: OperatorRiskSettings | null; atMs: number } | null = null;
 let pnlCache: { value: number; atMs: number } | null = null;
 let openCountCache: { value: number; atMs: number } | null = null;
 
@@ -117,9 +122,14 @@ export function resetRiskSettingsCache(): void {
 
 /**
  * The operator's risk profile — the most recently saved `risk_settings`
- * row (single-operator system). Cached 60 s; defaults on empty/error.
+ * row (single-operator system). Cached 60 s.
+ *
+ * Returns `null` when no profile has been saved (empty table) OR on a
+ * DB error. `null` means the kernel applies NO ceilings — behaviour is
+ * identical to before this module. The risk panel is strictly opt-in:
+ * an unset profile must never make the kernel more (or less) aggressive.
  */
-export async function getOperatorRiskSettings(): Promise<OperatorRiskSettings> {
+export async function getOperatorRiskSettings(): Promise<OperatorRiskSettings | null> {
   if (settingsCache && Date.now() - settingsCache.atMs < TTL_MS) return settingsCache.value;
   try {
     const r = await pool.query(
@@ -129,16 +139,17 @@ export async function getOperatorRiskSettings(): Promise<OperatorRiskSettings> {
         ORDER BY updated_at DESC
         LIMIT 1`,
     );
-    const value = parseRiskSettingsRow(r.rows[0] as Record<string, unknown> | undefined);
+    const value = r.rows.length > 0
+      ? parseRiskSettingsRow(r.rows[0] as Record<string, unknown>)
+      : null;
     settingsCache = { value, atMs: Date.now() };
     return value;
   } catch (err) {
-    logger.warn('[risk-settings] read failed — using defaults', {
+    logger.warn('[risk-settings] read failed — no ceilings applied this cycle', {
       err: err instanceof Error ? err.message : String(err),
     });
-    const value = { ...DEFAULT_RISK_SETTINGS };
-    settingsCache = { value, atMs: Date.now() };
-    return value;
+    settingsCache = { value: null, atMs: Date.now() };
+    return null;
   }
 }
 

@@ -1778,12 +1778,14 @@ export class MonkeyKernel extends EventEmitter {
     // migration 055). Honest hard ceilings only — leverage clamp,
     // max-concurrent-positions gate, daily-loss halt. Cached 60s;
     // falls back to defaults so a DB hiccup never blocks trading.
+    // riskSettings is null when no operator profile is saved → the
+    // ceilings below are skipped entirely (opt-in; no behaviour change).
     const riskSettings = await getOperatorRiskSettings();
     const todayRealizedPnl = await getTodayMonkeyRealizedPnl();
     const openMonkeyPositions = await getOpenMonkeyPositionCount();
-    const dailyLossHalt = dailyLossHalted(
-      todayRealizedPnl, riskSettings.dailyLossLimit, availableEquity,
-    );
+    const dailyLossHalt = riskSettings
+      ? dailyLossHalted(todayRealizedPnl, riskSettings.dailyLossLimit, availableEquity)
+      : false;
 
     // 2. PERCEIVE — raw basin then refract through identity.
     // Post #ml-separation: ml fields omitted; perception defaults dims
@@ -2379,10 +2381,12 @@ export class MonkeyKernel extends EventEmitter {
     // existing continuous-r regime sizing — no behavior change.
     const exchangeMaxLev = (await getMaxLeverage(symbol)) ?? 10;
     const operatorMaxLev = Number(process.env.MONKEY_MAX_LEVERAGE_CAP) || 15;
-    // risk_settings.maxLeverage (RiskSettings UI) is a third ceiling —
-    // it can only clamp leverage DOWN. The audited operatorMaxLev (15)
-    // still binds: a UI "aggressive" preset of 20 resolves to min(…,15).
-    const maxLevBoundary = Math.min(exchangeMaxLev, operatorMaxLev, riskSettings.maxLeverage);
+    // risk_settings.maxLeverage (RiskSettings UI) is a third ceiling when
+    // a profile is saved — it can only clamp leverage DOWN. The audited
+    // operatorMaxLev (15) still binds. No profile saved → unchanged.
+    const maxLevBoundary = riskSettings
+      ? Math.min(exchangeMaxLev, operatorMaxLev, riskSettings.maxLeverage)
+      : Math.min(exchangeMaxLev, operatorMaxLev);
     const precisions = await getPrecisions(symbol).catch(() => null);
     const lotSize = precisions?.lotSize ?? 0;
     const minNotional = lastPrice * Math.max(lotSize, 1e-9);
@@ -3807,7 +3811,7 @@ export class MonkeyKernel extends EventEmitter {
             limitPct: riskSettings.dailyLossLimit,
             equityUsdt: availableEquity,
           });
-        } else if (openMonkeyPositions >= riskSettings.maxConcurrentPositions) {
+        } else if (riskSettings && openMonkeyPositions >= riskSettings.maxConcurrentPositions) {
           // risk_settings max-concurrent-positions ceiling — counts
           // Monkey-owned open rows only (never the account-wide total).
           reason += ` | risk_settings: max concurrent positions (${openMonkeyPositions}/${riskSettings.maxConcurrentPositions})`;
