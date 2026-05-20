@@ -119,6 +119,47 @@ export function fisherRaoTupleDistance(
   );
 }
 
+/**
+ * Combined Rényi-½ divergence between two basin tuples (Improvement C,
+ * from the v4 QIG-FR design's Problem-1 learning).
+ *
+ * Per scale: −log(BC), where BC = cos(d_FR) recovered from the
+ * Fisher-Rao distance (d_FR = arccos(BC) ⇒ BC = cos(d_FR)). This is
+ * the Rényi-½ divergence — a valid information divergence on the
+ * simplex, UNBOUNDED on [0, ∞).
+ *
+ * Used ONLY for the inverse-distance vote weight, never for neighbour
+ * SELECTION. Selection stays on canonical Fisher-Rao (arccos is a
+ * strict monotone transform of −log(BC), so the K-nearest set is
+ * byte-identical either way). The difference: Fisher-Rao is bounded
+ * at π/2, so even the farthest of the K neighbours keeps weight
+ * ≈1/1.57; −log(BC) is unbounded, so far neighbours decay toward 0 —
+ * a sharper IDW where the closest historical analogues dominate.
+ */
+export function renyiTupleDistance(
+  a: BasinTuple,
+  b: BasinTuple,
+  weights: ScaleWeights = DEFAULT_SCALE_WEIGHTS,
+): number {
+  const EPS = 1e-12;
+  const renyiScale = (p: Basin, q: Basin): number => {
+    const bc = Math.cos(fisherRao(p, q));   // BC ∈ [0, 1]
+    return -Math.log(Math.max(bc, EPS));    // [0, ∞)
+  };
+  return (
+    weights.current * renyiScale(a.current, b.current) +
+    weights.medium * renyiScale(a.medium, b.medium) +
+    weights.long * renyiScale(a.long, b.long)
+  );
+}
+
+/** True iff MONKEY_L_RENYI_IDW=true — when set, Agent L's vote weight
+ *  uses the Rényi-½ divergence instead of the Fisher-Rao distance.
+ *  Neighbour selection is unaffected. Default off. */
+function renyiIdwEnabled(): boolean {
+  return process.env.MONKEY_L_RENYI_IDW === 'true';
+}
+
 /** Build a multi-scale basin tuple from a basin history.
  *  - current = the most recent basin (history[history.length - 1])
  *  - medium = Fréchet mean of the last `mediumWindow` basins (default 120)
@@ -166,7 +207,14 @@ export function realizedLabel(
 
 export interface KNNNeighbor {
   index: number;
+  /** Canonical Fisher-Rao tuple distance — used for neighbour SELECTION
+   *  (the sort) and telemetry. */
   distance: number;
+  /** Distance used for the inverse-distance VOTE WEIGHT. Equals
+   *  `distance` unless MONKEY_L_RENYI_IDW is set, in which case it is
+   *  the Rényi-½ tuple divergence (Improvement C). Optional — readers
+   *  fall back to `distance`. */
+  weightDistance?: number;
   label: -1 | 0 | 1;
 }
 
@@ -325,6 +373,7 @@ export function agentLDecide(
   // 30s ticks; K/M/T continue trading during L's warmup.
   const minTupleStart = 480;
 
+  const renyiIdw = renyiIdwEnabled();
   const candidates: KNNNeighbor[] = [];
   for (let i = startIdx + minTupleStart; i < basinHistory.length - config.horizon; i++) {
     if ((i - startIdx) % config.spacing !== 0) continue;
@@ -332,7 +381,13 @@ export function agentLDecide(
     if (histTuple === null) continue;
     const d = fisherRaoTupleDistance(cur, histTuple, config.weights);
     const label = realizedLabel(basinHistory, i, config.horizon, config.labelThreshold);
-    candidates.push({ index: i, distance: d, label });
+    // weightDistance feeds the IDW vote weight only. Selection sorts on
+    // `distance` (canonical FR) regardless — arccos is monotone in
+    // −log(BC) so the K-nearest set is identical either way.
+    const weightDistance = renyiIdw
+      ? renyiTupleDistance(cur, histTuple, config.weights)
+      : d;
+    candidates.push({ index: i, distance: d, weightDistance, label });
   }
 
   if (candidates.length < Math.ceil(config.k / 2)) {
@@ -359,7 +414,10 @@ export function agentLDecide(
   let longWeight = 0;
   let shortWeight = 0;
   for (const n of topK) {
-    const w = 1 / (n.distance + eps);
+    // IDW weight uses weightDistance (Rényi when MONKEY_L_RENYI_IDW is
+    // set, else the FR distance). Falls back to `distance` for any
+    // neighbour built without the field.
+    const w = 1 / ((n.weightDistance ?? n.distance) + eps);
     weightSum += w;
     signedSum += w * n.label;
     if (n.label === 1) { longCount++; longWeight += w; }
