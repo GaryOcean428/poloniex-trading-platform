@@ -8,7 +8,7 @@ This guide provides step-by-step instructions for setting up all required enviro
 
 ## Quick Reference
 
-### Required Variables (Backend)
+### Required Variables (Backend — polytrade-be)
 | Variable | Example | Description | Required |
 |----------|---------|-------------|----------|
 | `NODE_ENV` | `production` | Environment mode | ✅ Yes |
@@ -18,12 +18,20 @@ This guide provides step-by-step instructions for setting up all required enviro
 | `API_ENCRYPTION_KEY` | `<32-char-secret>` | Data encryption key | ✅ Yes |
 | `FRONTEND_URL` | `https://${{polytrade-fe.RAILWAY_PUBLIC_DOMAIN}}` | Frontend URL for CORS | ✅ Yes |
 | `FRONTEND_STANDALONE` | `true` | Deployment mode | ✅ Yes |
+| `ML_WORKER_URL` | `https://${{ml-worker.RAILWAY_PUBLIC_DOMAIN}}` | ML worker HTTP endpoint | ✅ Yes |
 
-### Required Variables (Frontend)
+### Required Variables (Frontend — polytrade-fe)
 | Variable | Example | Description | Required |
 |----------|---------|-------------|----------|
 | `VITE_API_URL` | `https://${{polytrade-be.RAILWAY_PUBLIC_DOMAIN}}` | Backend API URL | ✅ Yes |
 | `VITE_WS_URL` | `wss://${{polytrade-be.RAILWAY_PUBLIC_DOMAIN}}` | WebSocket URL | ✅ Yes |
+
+### Required Variables (ML Worker — ml-worker)
+| Variable | Example | Description | Required |
+|----------|---------|-------------|----------|
+| `REDIS_URL` | `${{Redis Stack.REDIS_URL}}` | Redis Stack connection string | ✅ Yes |
+
+> ⚠️ **Important**: The `REDIS_URL` reference for ml-worker must use the exact service name `Redis Stack` with no surrounding quotes. The correct Railway reference syntax is `${{Redis Stack.REDIS_URL}}`. Using escaped quotes (e.g. `${{"Redis Stack".REDIS_URL}}`) will break the reference resolution and cause runtime connection failures.
 
 ### Trading Credentials (Optional but Recommended)
 | Variable | Description | Required |
@@ -80,6 +88,9 @@ API_ENCRYPTION_KEY=<paste-your-generated-encryption-key>
 FRONTEND_URL=https://${{polytrade-fe.RAILWAY_PUBLIC_DOMAIN}}
 CORS_ALLOWED_ORIGINS=https://${{polytrade-fe.RAILWAY_PUBLIC_DOMAIN}}
 
+# ML Worker inter-service reference (dual-kernel consensus)
+ML_WORKER_URL=https://${{ml-worker.RAILWAY_PUBLIC_DOMAIN}}
+
 # Deployment Mode
 FRONTEND_STANDALONE=true
 
@@ -99,9 +110,6 @@ POLONIEX_PASSPHRASE=<your-poloniex-passphrase>
 ```bash
 # Logging
 LOG_LEVEL=info
-
-# Redis (if using caching)
-# REDIS_URL=<redis-connection-string>
 
 # Memory (if needed for large builds)
 # NODE_OPTIONS=--max-old-space-size=2048
@@ -124,6 +132,19 @@ YARN_ENABLE_STRICT_SETTINGS=false
 # Optional: Mock Mode (for development/testing without API)
 # VITE_FORCE_MOCK_MODE=false
 ```
+
+---
+
+### Step 3.5: Configure ML Worker Service (ml-worker)
+
+In Railway Dashboard → ml-worker service → Variables tab:
+
+```bash
+# Redis Stack connection — use exact service name, no quotes
+REDIS_URL=${{Redis Stack.REDIS_URL}}
+```
+
+> ⚠️ **Critical**: The variable value must be `${{Redis Stack.REDIS_URL}}` verbatim. Do **not** wrap the service name in quotes. Escaped-quote variants such as `${{"Redis Stack".REDIS_URL}}` are invalid Railway reference syntax and will cause ml-worker to start without a Redis connection, silently disabling pub/sub and trade-outcome listeners.
 
 ---
 
