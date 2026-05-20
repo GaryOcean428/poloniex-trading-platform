@@ -228,3 +228,4 @@ redis_data/
 .playwright-mcp/
 agent-dashboard-*.png
 .claude/scheduled_tasks.lock
+.claude/worktrees/
