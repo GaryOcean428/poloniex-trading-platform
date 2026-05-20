@@ -10,8 +10,6 @@ import {
   X,
   Shield
 } from 'lucide-react';
-import RiskSettings from '@/components/risk/RiskSettings';
-import RiskMeter from '@/components/risk/RiskMeter';
 import { useSettings } from '../hooks/useSettings';
 import { usePoloniexData } from '../hooks/usePoloniexData';
 import { useDateFormatter } from '../hooks/useDateFormatter'; 
@@ -428,14 +426,16 @@ const Settings: React.FC = () => {
                 <Shield className="h-6 w-6 text-blue-600" />
                 <h2 className="text-xl font-bold">Risk Management</h2>
               </div>
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                <div className="lg:col-span-2">
-                  <RiskSettings />
-                </div>
-                <div>
-                  <RiskMeter />
-                </div>
-              </div>
+              <p className="text-sm text-neutral-600">
+                Risk configuration now lives with the trading agent — Risk
+                Appetite presets and the detailed risk limits are together on
+                the{' '}
+                <a href="/autonomous-agent" className="font-medium text-blue-600 hover:underline">
+                  Autonomous Agent
+                </a>{' '}
+                page, so every risk control is in one place and applies live
+                without restarting the agent.
+              </p>
             </div>
           </div>
         </form>
