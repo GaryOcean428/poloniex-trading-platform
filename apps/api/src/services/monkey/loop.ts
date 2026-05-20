@@ -22,7 +22,6 @@
  */
 
 import { EventEmitter } from 'events';
-import { randomUUID } from 'crypto';
 
 import { pool } from '../../db/connection.js';
 import { getEngineVersion } from '../../utils/engineVersion.js';
@@ -65,17 +64,7 @@ import { marketIntelCache } from './market_intel.js';
 import futuresWebSocket from '../../websocket/futuresWebSocket.js';
 import { BasinSync } from './basin_sync.js';
 import { BusEventType, getKernelBus, type KernelBus } from './kernel_bus.js';
-import {
-  callKShadowTick,
-  callTickRun,
-  isShadowTickEnabled,
-  logParityDiff,
-  logTickParityDiffs,
-  type TickRunAccount,
-  type TickRunOHLCV,
-  type TickRunSymbolState,
-} from './kernel_client.js';
-import { recordKParityRow, regimeToOrdinal } from './k_parity_log.js';
+import { logParityDiff } from './kernel_client.js';
 import { computeEmotions, type EmotionState } from './emotions.js';
 import { detectMode, MODE_PROFILES, MonkeyMode } from './modes.js';
 import { computeMotivators } from './motivators.js';
@@ -1623,28 +1612,6 @@ export class MonkeyKernel extends EventEmitter {
   private async processSymbol(symbol: string): Promise<void> {
     const state = this.symbolStates.get(symbol);
     if (!state) return;
-
-    // v0.8.3b: snapshot serializable state BEFORE any mutation for the
-    // Python shadow tick. Captured here so Python sees the same "prior
-    // state" the TS pipeline starts from.
-    const shadowPrevState: TickRunSymbolState | null = isShadowTickEnabled()
-      ? {
-          symbol,
-          identity_basin: Array.from(state.identityBasin),
-          last_basin: state.lastBasin ? Array.from(state.lastBasin) : null,
-          kappa: state.kappa,
-          session_ticks: state.sessionTicks,
-          last_mode: state.lastMode,
-          basin_history: state.basinHistory.map((b) => Array.from(b)),
-          phi_history: [...state.phiHistory],
-          fhealth_history: [...state.fHealthHistory],
-          drift_history: [...state.driftHistory],
-          dca_add_count: state.dcaAddCount,
-          last_entry_at_ms: state.lastEntryAtMs,
-          peak_pnl_usdt: state.peakPnlUsdt,
-          peak_tracked_trade_id: state.peakTrackedTradeId,
-        }
-      : null;
 
     state.sessionTicks++;
 
@@ -3488,160 +3455,6 @@ export class MonkeyKernel extends EventEmitter {
         ? CHOP_SUPPRESS_TREND_CONFIDENCE_DEFAULT
         : CHOP_SUPPRESS_SWING_CONFIDENCE_DEFAULT,
     };
-
-    // v0.8.3b — shadow the full Python tick pipeline. Fire-and-forget:
-    // Python's decision is NOT authoritative; we only log parity diffs.
-    // TS remains the live path. Gated by MONKEY_TICK_PY_SHADOW=true.
-    if (shadowPrevState !== null) {
-      const shadowOhlcv: TickRunOHLCV[] = ohlcv.map((c) => ({
-        timestamp: Number(c.timestamp ?? 0),
-        open: Number(c.open),
-        high: Number(c.high),
-        low: Number(c.low),
-        close: Number(c.close),
-        volume: Number(c.volume),
-      }));
-      const shadowAccount: TickRunAccount = {
-        equity_fraction: equityFraction,
-        margin_fraction: marginFraction,
-        open_positions: openPositions,
-        available_equity: availableEquity,
-        exchange_held_side: exchangeHeldSide,
-        own_position_entry_price: ownOpenRow ? Number(ownOpenRow.entry_price) : null,
-        own_position_quantity: ownOpenRow ? Number(ownOpenRow.quantity) : null,
-        own_position_trade_id: ownOpenRow ? String(ownOpenRow.id) : null,
-      };
-      void callTickRun({
-        instance_id: this.instanceId,
-        inputs: {
-          symbol,
-          ohlcv: shadowOhlcv,
-          ml_signal: mlSignal,
-          ml_strength: mlStrength,
-          account: shadowAccount,
-          bank_size: bankSize,
-          sovereignty,
-          max_leverage: maxLevBoundary,
-          min_notional: minNotional,
-          size_fraction: this.sizeFraction,
-          self_obs_bias: this.selfObs?.entryBias ?? null,
-          rolling_kelly_stats: rollingStats
-            ? [rollingStats.winRate, rollingStats.avgWin, rollingStats.avgLoss]
-            : null,
-        },
-        prev_state: shadowPrevState,
-      }).then((pyResult) => {
-        logTickParityDiffs(symbol, {
-          action,
-          entry_threshold: entryThr.value,
-          leverage: leverage.value,
-          size_usdt: size.value,
-          mode,
-          side_candidate: sideCandidate,
-          side_override: sideOverride,
-          phi,
-          kappa: state.kappa,
-        }, pyResult.decision);
-      }).catch((err) => {
-        logger.debug('[shadow-tick] tick/run parity fetch failed', {
-          symbol,
-          err: err instanceof Error ? err.message : String(err),
-        });
-      });
-    }
-
-    // ── Issue #689 — Python K shadow (translation-only) ──
-    //
-    // Fire-and-forget POST to ml-worker /monkey/k-shadow/tick with the
-    // same inputs TS K just used. Captures the would-be Python K
-    // decision and persists one row to kernel_parity_log (migration
-    // 051). The TS K decision (above) is UNCHANGED — this block runs
-    // after action / size / side are finalised, before execution.
-    //
-    // Always-on once shipped — no env-var gate at this layer. The
-    // gate is at the CUTOVER PR (where Py decision drives execution),
-    // which is NOT this PR.
-    //
-    // The shadow uses its own 1-second timeout (callKShadowTick) so a
-    // slow Python responder cannot extend the tick. Errors are
-    // captured in py_error on the parity row, not raised.
-    {
-      const tickId = randomUUID();
-      const symbolTimestamp = new Date(Number(ohlcv[ohlcv.length - 1]?.timestamp ?? Date.now()));
-      const tsDecisionStartedAt = Date.now();
-      const tsSide: 'long' | 'short' | null =
-        action === 'enter_long' ? 'long' :
-        action === 'enter_short' ? 'short' :
-        (heldSide ?? null);
-      // M (motivators integral) is not currently surfaced from the TS
-      // executive in a stable scalar; left null on the TS side until
-      // a future commit ports compute_motivators TS-side. Py rows
-      // will carry M from derivation.motivators.i_q when present.
-      const tsRow = {
-        tickId,
-        symbol,
-        symbolTimestamp,
-        tsAction: action,
-        tsSide,
-        tsPhi: Number.isFinite(phi) ? phi : null,
-        tsKappa: Number.isFinite(state.kappa) ? state.kappa : null,
-        tsM: null as number | null,
-        tsGamma: Number.isFinite(bv) ? bv : null,
-        tsR: regimeToOrdinal(regimeReading.regime),
-        tsRegime: String(regimeReading.regime),
-        tsDecisionMs: Date.now() - tsDecisionStartedAt,
-      };
-      // Build the shadow request body. Re-uses the same shape as the
-      // existing v0.8.3b shadow tick so the Python endpoint receives
-      // exactly what TS K computed against this tick.
-      const kShadowOhlcv: TickRunOHLCV[] = ohlcv.map((c) => ({
-        timestamp: Number(c.timestamp ?? 0),
-        open: Number(c.open),
-        high: Number(c.high),
-        low: Number(c.low),
-        close: Number(c.close),
-        volume: Number(c.volume),
-      }));
-      const kShadowAccount: TickRunAccount = {
-        equity_fraction: equityFraction,
-        margin_fraction: marginFraction,
-        open_positions: openPositions,
-        available_equity: availableEquity,
-        exchange_held_side: exchangeHeldSide,
-        own_position_entry_price: ownOpenRow ? Number(ownOpenRow.entry_price) : null,
-        own_position_quantity: ownOpenRow ? Number(ownOpenRow.quantity) : null,
-        own_position_trade_id: ownOpenRow ? String(ownOpenRow.id) : null,
-      };
-      void callKShadowTick({
-        instance_id: this.instanceId,
-        inputs: {
-          symbol,
-          ohlcv: kShadowOhlcv,
-          account: kShadowAccount,
-          bank_size: bankSize,
-          sovereignty,
-          max_leverage: maxLevBoundary,
-          min_notional: minNotional,
-          size_fraction: this.sizeFraction,
-          self_obs_bias: this.selfObs?.entryBias ?? null,
-          rolling_kelly_stats: rollingStats
-            ? [rollingStats.winRate, rollingStats.avgWin, rollingStats.avgLoss]
-            : null,
-        },
-        prev_state: shadowPrevState,
-      }).then((py) => {
-        void recordKParityRow(tsRow, py);
-      }).catch((err) => {
-        // callKShadowTick swallows errors and returns { error }, so a
-        // throw here is exceptional — log once and still record a row
-        // with py_error populated so the operator sees the gap.
-        const msg = err instanceof Error ? err.message : String(err);
-        logger.warn('[k-shadow] unexpected throw from callKShadowTick', {
-          symbol, err: msg,
-        });
-        void recordKParityRow(tsRow, { error: `unexpected: ${msg}`, decided_at_ms: Date.now() });
-      });
-    }
 
     // 6b. EXECUTE — gated by MONKEY_EXECUTE=true. Observe-only otherwise.
     //
