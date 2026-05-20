@@ -143,6 +143,19 @@ export const getBackendUrl = (): string => {
       return `${protocol}//${hostname}:8765`;
     }
 
+    // Railway split FE/BE deploys (staging, PR previews) name the
+    // frontend host `polytrade-fe-<suffix>` and the backend
+    // `polytrade-be-<suffix>` (e.g. polytrade-fe-staging ↔
+    // polytrade-be-staging). Derive the backend host so these
+    // environments work WITHOUT a per-env VITE_BACKEND_URL build var —
+    // without this the same-origin fallback below POSTs the API to the
+    // static frontend host and gets index.html back (breaks auth).
+    // Production sets VITE_BACKEND_URL explicitly (priority 1) and never
+    // reaches this branch; its host name does not contain `polytrade-fe`.
+    if (hostname.includes('polytrade-fe')) {
+      return `${protocol}//${hostname.replace('polytrade-fe', 'polytrade-be')}`;
+    }
+
     // Fall back to same origin for other cases
     return window.location.origin;
   }
