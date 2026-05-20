@@ -6900,11 +6900,34 @@ export class MonkeyKernel extends EventEmitter {
       userId = String((userRow.rows[0] as { user_id?: string } | undefined)?.user_id ?? '');
       if (!userId) {
         if (isMonkeyPaperMode()) {
-          logger.warn('[Monkey] paper mode enabled but no user_id resolvable');
-          return { executed: false, orderId: null, reason: 'paper_mode_no_user' };
+          // Paper mode — a paper/staging DB may carry no credentials
+          // row. The autonomous_trades INSERT still needs a non-null
+          // user_id; fall back to any existing user, else the nil-UUID
+          // sentinel. paper_trade=true marks the row; no exchange call.
+          let paperUser = '';
+          try {
+            const ur = await pool.query('SELECT id FROM users LIMIT 1');
+            paperUser = String((ur.rows[0] as { id?: string } | undefined)?.id ?? '');
+          } catch { /* no users table — fall through to sentinel */ }
+          userId = paperUser || '00000000-0000-0000-0000-000000000000';
+        } else {
+          return { executed: false, orderId: null, reason: 'no_credentials' };
         }
-        return { executed: false, orderId: null, reason: 'no_credentials' };
       }
+      if (isMonkeyPaperMode()) {
+        // Paper mode — synthetic risk-kernel state at the paper
+        // bankroll, no exchange call. Equity matches what the sizing
+        // path (fetchAccountContext) used, so the risk kernel's
+        // headroom check does not reject paper entries.
+        credentials = { apiKey: 'paper', apiSecret: 'paper' };
+        kernelState = {
+          equityUsdt: Number(process.env.MONKEY_PAPER_EQUITY_USDT) || 1000,
+          unrealizedPnlUsdt: 0,
+          openPositions: [],
+          restingOrders: [],
+          usedMarginUsdt: 0,
+        };
+      } else {
       const c = await apiCredentialsService.getCredentials(userId, 'poloniex');
       if (!c) return { executed: false, orderId: null, reason: 'credentials_missing' };
       credentials = c;
@@ -6936,6 +6959,7 @@ export class MonkeyKernel extends EventEmitter {
       );
       const usedMarginUsdt = Math.max(0, equityUsdt - availableBalance);
       kernelState = { equityUsdt, unrealizedPnlUsdt, openPositions, restingOrders: [], usedMarginUsdt };
+      }
     } catch (err) {
       return {
         executed: false, orderId: null,
