@@ -561,6 +561,69 @@ export function shouldDCAAdd(req: {
 }
 
 /**
+ * shouldBracketExit — mechanical synthetic-bracket exit (Phase B2).
+ *
+ * The commit-and-revise exit model: at entry the kernel commits a
+ * geometry-derived TP/SL bracket (Phase B1 persists tpPrice/slPrice on
+ * the trade row). This gate is the *mechanical enforcer* — no
+ * discretion, no per-tick judgement: has the mark price crossed the
+ * committed level? Poloniex v3 has no native TP/SL order, so the
+ * kernel watches the price and fires the close itself; the decision
+ * was already made at entry.
+ *
+ * When this gate is live (MONKEY_BRACKET_EXIT_LIVE) and a row carries a
+ * bracket, it REPLACES the discretionary profit-take path
+ * (shouldProfitHarvest / shouldAggregateHarvest / scalp-TP). The
+ * loss-side time/tape safety gates (slow-bleed, fast-adverse) still run
+ * — a bracket SL is a price stop, not a time stop.
+ *
+ * LONG: TP above entry, SL below. SHORT mirrored. A null level is
+ * simply not checked (ATR-warmup entries have NULL columns); null on
+ * BOTH → no_bracket, caller falls through to the legacy gates.
+ *
+ * exitTypeBit 11 = BRACKET_TP, 12 = BRACKET_SL.
+ */
+export function shouldBracketExit(
+  markPrice: number,
+  heldSide: 'long' | 'short',
+  tpPrice: number | null,
+  slPrice: number | null,
+): ExecutiveDecision<boolean> {
+  if (tpPrice === null && slPrice === null) {
+    return { value: false, reason: 'no_bracket', derivation: {} };
+  }
+  const tpHit = tpPrice !== null && (
+    heldSide === 'long' ? markPrice >= tpPrice : markPrice <= tpPrice
+  );
+  if (tpHit) {
+    return {
+      value: true,
+      reason: `bracket_tp: mark ${markPrice} ${heldSide === 'long' ? '>=' : '<='} TP ${tpPrice}`,
+      derivation: { markPrice, tpPrice: tpPrice as number, exitTypeBit: 11 },
+    };
+  }
+  const slHit = slPrice !== null && (
+    heldSide === 'long' ? markPrice <= slPrice : markPrice >= slPrice
+  );
+  if (slHit) {
+    return {
+      value: true,
+      reason: `bracket_sl: mark ${markPrice} ${heldSide === 'long' ? '<=' : '>='} SL ${slPrice}`,
+      derivation: { markPrice, slPrice: slPrice as number, exitTypeBit: 12 },
+    };
+  }
+  return {
+    value: false,
+    reason: 'within_bracket',
+    derivation: {
+      markPrice,
+      ...(tpPrice !== null ? { tpPrice } : {}),
+      ...(slPrice !== null ? { slPrice } : {}),
+    },
+  };
+}
+
+/**
  * shouldProfitHarvest — early-exit WHILE IN PROFIT (v0.6.1).
  *
  * Runs BEFORE shouldScalpExit. When a trade has been in profit, the peak
