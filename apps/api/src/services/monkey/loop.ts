@@ -123,6 +123,7 @@ import {
   shouldAutoFlatten,
   shouldAggregateBleedExit,
   shouldAggregateHarvest,
+  shouldBracketExit,
   shouldDCAAdd,
   shouldExit,
   shouldProfitHarvest,
@@ -2583,6 +2584,42 @@ export class MonkeyKernel extends EventEmitter {
         const lanePeak = state.peakPnlUsdtByLane[heldLane] ?? 0;
         const laneStreak = state.tapeFlipStreakByLane[heldLane] ?? 0;
 
+        // ── Gate 0: synthetic bracket exit (Phase B2) ────────────────
+        // Commit-and-revise model: when MONKEY_BRACKET_EXIT_LIVE and the
+        // row carries a geometry-derived bracket (Phase B1 populates
+        // take_profit/stop_loss), the mechanical TP/SL check OWNS
+        // profit-taking. It runs before every discretionary gate; when
+        // active, the discretionary PROFIT gates below (profit-harvest,
+        // aggregate-harvest, scalp-TP) are skipped via `bracketActive`.
+        // The loss-side safety gates (hard SL, fast-adverse, slow-bleed)
+        // still run — a price stop is not a time/tape stop. Default OFF;
+        // ships dark, flipped after observation.
+        const bracketExitLive = process.env.MONKEY_BRACKET_EXIT_LIVE === 'true';
+        const hasBracket = (openRow.take_profit ?? null) !== null
+          || (openRow.stop_loss ?? null) !== null;
+        const bracketActive = bracketExitLive && hasBracket;
+        if (!exitFired && bracketActive) {
+          const bracket = shouldBracketExit(
+            lastPrice, heldSide,
+            openRow.take_profit ?? null, openRow.stop_loss ?? null,
+          );
+          derivation.bracketExit = {
+            ...bracket.derivation, fired: bracket.value, tradeId, lane: heldLane,
+          };
+          if (bracket.value) {
+            action = 'scalp_exit';
+            reason = bracket.reason;
+            exitFired = true;
+            derivation.scalp = {
+              exitTypeBit: bracket.derivation.exitTypeBit,
+              unrealizedPnl,
+              markPrice: lastPrice,
+              tradeId,
+              lane: heldLane,
+            };
+          }
+        }
+
         // 1. Hard SL pre-check (SAFETY_BOUND) — must precede the
         // rejustification block so a position bleeding hard against
         // the kernel always closes on price before the kernel re-reads
@@ -3097,7 +3134,9 @@ export class MonkeyKernel extends EventEmitter {
         }
 
         // 3. Profit harvest — trailing stop + trend-flip, only while green.
-        if (!exitFired) {
+        // Phase B2: skipped when bracketActive — the synthetic bracket
+        // (Gate 0) owns profit-taking under the commit-and-revise model.
+        if (!exitFired && !bracketActive) {
           const harvest = shouldProfitHarvest(
             unrealizedPnl,
             lanePeak,
@@ -3129,7 +3168,8 @@ export class MonkeyKernel extends EventEmitter {
         //     kernel running this evaluates the SAME aggregate state and
         //     closes its own subset; total realized ≈ aggregate current
         //     at firing time. See aggregate_peak.ts for the rationale.
-        if (!exitFired) {
+        // Phase B2: skipped when bracketActive — bracket owns profit-take.
+        if (!exitFired && !bracketActive) {
           const aggPeak = aggregatePeakTracker.getPeak(symbol, heldSide);
           const aggCurrent = aggregatePeakTracker.getLastPnl(symbol, heldSide);
           const aggHarvest = shouldAggregateHarvest(
@@ -3158,7 +3198,10 @@ export class MonkeyKernel extends EventEmitter {
 
         // 4. Scalp TP — only TP can reach here (SL was returned above
         // unless deferred; rejustification and harvest also returned).
-        if (!exitFired && scalp.value && !isStopLoss) {
+        // Phase B2: skipped when bracketActive — the synthetic bracket
+        // owns profit-taking. The scalp-SL branch (gate 1 above) is
+        // unaffected — a price stop is always a safety bound.
+        if (!exitFired && !bracketActive && scalp.value && !isStopLoss) {
           action = 'scalp_exit';
           reason = scalp.reason;
           exitFired = true;
@@ -4990,7 +5033,7 @@ export class MonkeyKernel extends EventEmitter {
   }
 
   private async findOpenMonkeyTrade(symbol: string): Promise<
-    | { id: string; entry_price: string; quantity: string; leverage: number; order_id: string | null; side: 'long' | 'short'; lane: 'scalp' | 'swing' | 'trend' }
+    | { id: string; entry_price: string; quantity: string; leverage: number; order_id: string | null; side: 'long' | 'short'; lane: 'scalp' | 'swing' | 'trend'; take_profit: number | null; stop_loss: number | null }
     | null
   > {
     // Aggregate over ALL open lanes (back-compat: callers that don't
@@ -5000,7 +5043,8 @@ export class MonkeyKernel extends EventEmitter {
     try {
       const reasonPattern = `monkey|kernel=${this.instanceId}|%`;
       const result = await pool.query(
-        `SELECT id, entry_price, quantity, leverage, order_id, side, lane
+        `SELECT id, entry_price, quantity, leverage, order_id, side, lane,
+                take_profit, stop_loss
            FROM autonomous_trades
           WHERE reason LIKE $2 AND status = 'open' AND symbol = $1
           ORDER BY entry_time ASC`,
@@ -5009,14 +5053,27 @@ export class MonkeyKernel extends EventEmitter {
       const rows = result.rows as Array<{
         id: string; entry_price: string; quantity: string; leverage: number;
         order_id: string | null; side: string; lane: string;
+        take_profit: string | null; stop_loss: string | null;
       }>;
       const normSide = (s: string): 'long' | 'short' =>
         s === 'buy' || s === 'long' ? 'long' : 'short';
       const normLane = (l: string | null | undefined): 'scalp' | 'swing' | 'trend' =>
         (l === 'scalp' || l === 'trend') ? l : 'swing';
+      // numeric(20,8) columns come back as strings — normalise to
+      // number|null. The synthetic-bracket gate (shouldBracketExit)
+      // reads these; the OLDEST row's bracket represents the position's
+      // founding thesis (DCA adds extend it; Phase C revises it).
+      const numOrNull = (v: string | null): number | null =>
+        v === null || v === undefined ? null : Number(v);
       if (rows.length === 0) return null;
       if (rows.length === 1) {
-        return { ...rows[0], side: normSide(rows[0].side), lane: normLane(rows[0].lane) };
+        return {
+          ...rows[0],
+          side: normSide(rows[0].side),
+          lane: normLane(rows[0].lane),
+          take_profit: numOrNull(rows[0].take_profit),
+          stop_loss: numOrNull(rows[0].stop_loss),
+        };
       }
       // Multi-row: aggregate by quantity-weighted entry price across
       // ALL rows for legacy callers. The lane-aware path operates per
@@ -5035,6 +5092,8 @@ export class MonkeyKernel extends EventEmitter {
         order_id: rows[0].order_id,
         side: normSide(rows[0].side),
         lane: normLane(rows[0].lane),
+        take_profit: numOrNull(rows[0].take_profit),
+        stop_loss: numOrNull(rows[0].stop_loss),
       };
     } catch (err) {
       logger.debug('[Monkey] findOpenMonkeyTrade failed', {
