@@ -61,6 +61,7 @@ import {
 import { callAutonomicTick } from './autonomic_client.js';
 import { aggregatePeakTracker } from './aggregate_peak.js';
 import { wsPositionCache } from './ws_position_cache.js';
+import { marketIntelCache } from './market_intel.js';
 import futuresWebSocket from '../../websocket/futuresWebSocket.js';
 import { BasinSync } from './basin_sync.js';
 import { BusEventType, getKernelBus, type KernelBus } from './kernel_bus.js';
@@ -2161,6 +2162,18 @@ export class MonkeyKernel extends EventEmitter {
       }
     }
 
+    // Phase E — wider market-data intel. When MONKEY_MARKET_INTEL_LIVE,
+    // keep the per-symbol Open Interest / index / premium / funding
+    // cache fresh (fire-and-forget, 60s throttle inside refreshIfStale —
+    // never blocks the tick). Fail-soft via the cache's own try/catch.
+    // Telemetry is written into `derivation` further down, once it is
+    // declared. Additive + shadow-only: no decision path consumes the
+    // signals yet; folding them into the perception basin is a
+    // deliberate follow-on.
+    if (process.env.MONKEY_MARKET_INTEL_LIVE === 'true') {
+      void marketIntelCache.refreshIfStale(symbol, 60_000);
+    }
+
     // REGIME-1 Phase 3 — compositional cell executive (3×3 (phase, direction)
     // matrix). Always evaluated for telemetry (shadow); only ENFORCED on size
     // and lane bias when REGIME_COMPOSITIONAL_LIVE=true. When either axis
@@ -2547,6 +2560,24 @@ export class MonkeyKernel extends EventEmitter {
             live: cellLive,
           },
     };
+
+    // Phase E — market-intel telemetry. The cache is kept fresh by the
+    // fire-and-forget refreshIfStale call above; surface the derived
+    // signals (premium basis, OI direction, funding) so retrospective
+    // analysis can correlate them with outcomes before a later PR folds
+    // them into the perception basin.
+    if (process.env.MONKEY_MARKET_INTEL_LIVE === 'true') {
+      const mi = marketIntelCache.get(symbol);
+      if (mi) {
+        derivation.marketIntel = {
+          premiumBasisPct: mi.premiumBasisPct,
+          oiDelta: mi.oiDelta,
+          oiDirection: mi.oiDirection,
+          fundingRate: mi.fundingRate,
+          ageMs: Date.now() - mi.observedAt,
+        };
+      }
+    }
 
     // v0.6.3: Monkey's "held side" is scoped to HER OWN open rows only.
     // If only liveSignal holds a position on this symbol, Monkey treats
