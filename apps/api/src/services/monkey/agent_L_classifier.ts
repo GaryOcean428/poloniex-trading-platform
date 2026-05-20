@@ -253,6 +253,12 @@ export interface AgentLDecision {
     /** Maximum FR distance in the top-K — proxy for "how loose is the
      *  K-th neighbor". Wide spread + clean vote = robust signal. */
     farthestDistance: number;
+    /** Basin discrimination — `1 - nearestDistance/farthestDistance`,
+     *  in [0, 1). 0 means every K-neighbour is equidistant: the basin
+     *  is NOT discriminating and KNN is voting on noise (QIG-FR v4
+     *  Problem 3 — "features must spread"). Higher means the nearest
+     *  historical analog is clearly closer than the K-th. */
+    discrimination: number;
   };
   reason: string;
 }
@@ -345,7 +351,7 @@ export function agentLDecide(
   const emptyDist: AgentLDecision['labelDistribution'] = {
     long: 0, short: 0, neutral: 0,
     longWeight: 0, shortWeight: 0,
-    nearestDistance: 0, farthestDistance: 0,
+    nearestDistance: 0, farthestDistance: 0, discrimination: 0,
   };
   const cur = buildBasinTuple(basinHistory);
   // v2 telemetry uses the current (finest-scale) basin for recall.
@@ -421,14 +427,21 @@ export function agentLDecide(
   }
   const conviction = topK.length > 0 ? alignCount / topK.length : 0;
 
+  const nearestDistance = topK[0]?.distance ?? 0;
+  const farthestDistance = topK[topK.length - 1]?.distance ?? 0;
   const labelDistribution: AgentLDecision['labelDistribution'] = {
     long: longCount,
     short: shortCount,
     neutral: neutralCount,
     longWeight,
     shortWeight,
-    nearestDistance: topK[0]?.distance ?? 0,
-    farthestDistance: topK[topK.length - 1]?.distance ?? 0,
+    nearestDistance,
+    farthestDistance,
+    // QIG-FR v4 Problem 3 — when nearest ≈ farthest the K-neighbour set
+    // is degenerate and the vote is noise. 0 = no discrimination.
+    discrimination: farthestDistance > 0
+      ? 1 - nearestDistance / farthestDistance
+      : 0,
   };
 
   if (Math.abs(signedScore) < config.actionThreshold) {

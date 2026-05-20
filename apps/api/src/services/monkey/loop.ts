@@ -153,6 +153,7 @@ import {
   type CellAction,
 } from './compositional_executive.js';
 import { agentLDecide, type AgentLDecision } from './agent_L_classifier.js';
+import { signalScorer, resolveEntryGate } from './signal_scorer.js';
 import { QIGRAMv2State, isQigramV2Enabled } from './agent_L_qigram_v2.js';
 import {
   newMTFState,
@@ -1628,6 +1629,17 @@ export class MonkeyKernel extends EventEmitter {
     const lastPrice = Number(ohlcv[ohlcv.length - 1].close);
     if (!Number.isFinite(lastPrice) || lastPrice <= 0) return;
 
+    // QIG-FR v4 Problem 4 — score the kernel's RAW directional
+    // predictions recorded ~SCORE_HORIZON ticks ago against where price
+    // actually moved. Runs before this tick records its own. Pure
+    // telemetry; see signal_scorer.ts.
+    signalScorer.scoreMatured({
+      instanceId: this.instanceId,
+      symbol,
+      tick: state.sessionTicks,
+      price: lastPrice,
+    });
+
     // SENSE-2 Phase 2 (#768) — BTC beacon shared price cache. BTC ticks
     // write the latest mark; non-BTC ticks read it for cross-symbol
     // correlation. The beacon reading itself is computed below (after
@@ -2447,6 +2459,11 @@ export class MonkeyKernel extends EventEmitter {
     // veto. Set inside the K entry branch when chop is active; applied
     // to the entry margin. 1.0 = no reduction.
     let chopSizeFactor = 1.0;
+    // signal-scorer (QIG-FR v4 Problem 4) facts — hoisted to function
+    // scope so the per-gate attribution at end-of-K-block can see the
+    // final K margin cap and any executeEntry rejection code.
+    let cappedMargin = 0;
+    let kEntryRejectCode: string | null = null;
     const derivation: Record<string, unknown> = {
       phi, kappa: state.kappa, sovereignty, basinVelocity: bv,
       regimeWeights, nc,
@@ -3762,7 +3779,7 @@ export class MonkeyKernel extends EventEmitter {
         // v4 over-gating fix: chopSizeFactor (< 1 only when a chop regime
         // was active at decision time) sizes the entry down instead of
         // the chop gate vetoing it outright.
-        const cappedMargin =
+        cappedMargin =
           Math.min(size.value, arbiterAllocation.k) * chopSizeFactor;
         if (cappedMargin <= 0) {
           reason += ` | k_capped_to_zero (kShare=${arbiterSnapshot.kShare.toFixed(2)})`;
@@ -3794,6 +3811,7 @@ export class MonkeyKernel extends EventEmitter {
         monkeyOrderId = execResult.orderId;
         if (!executed) {
           reason += ` | execute: ${execResult.reason}`;
+          kEntryRejectCode = execResult.reason;
         } else {
           if (execResult.reason.startsWith('monkey_paper_mode:')) {
             reason += ` | ${execResult.reason}`;
@@ -4004,6 +4022,31 @@ export class MonkeyKernel extends EventEmitter {
         }
       }
     }
+
+    // QIG-FR v4 Problem 4 — record this tick's RAW K prediction and the
+    // gate that suppressed entry (or `passed`), to be scored
+    // SCORE_HORIZON ticks from now. resolveEntryGate mirrors the actual
+    // gate priority chain above. Pure telemetry — wired ON, no flag; it
+    // observes the prediction→8-gate pipeline, it never alters it.
+    signalScorer.record({
+      instanceId: this.instanceId,
+      symbol,
+      tick: state.sessionTicks,
+      price: lastPrice,
+      direction,
+      gate: resolveEntryGate({
+        executed,
+        heldSide,
+        modeCanEnter: MODE_PROFILES[mode].canEnter,
+        sideShortRefused,
+        sizeValue: size.value,
+        executeEnabled: process.env.MONKEY_EXECUTE === 'true',
+        tradingPaused: isTradingPaused(),
+        lVetoed: Boolean(lVeto?.vetoed),
+        cappedMargin,
+        entryRejectCode: kEntryRejectCode,
+      }),
+    });
 
     // 6c. AGENT M EXECUTE — independent ML-only path. Runs against
     // arbiter.allocation.m. Threshold-based: enters when mlSignal !=
@@ -4424,6 +4467,25 @@ export class MonkeyKernel extends EventEmitter {
       && state.basinHistory.length >= 480
     ) {
       const lDecision = agentLDecide(state.basinHistory);
+      // QIG-FR v4 Problem 3 — basin discrimination guard. When the
+      // K-neighbour set is degenerate (nearest FR distance ≈ farthest)
+      // the FR-KNN vote is noise, not signal. Surface it when L is
+      // about to act so a low-discrimination entry is visible, not
+      // silent. 0.15 is a diagnostic warn threshold, not a trade gate.
+      {
+        const lDisc = lDecision.labelDistribution.discrimination;
+        if (Number.isFinite(lDisc) && lDisc < 0.15 && lDecision.action !== 'hold') {
+          logger.warn(
+            `[agent-L] ${symbol} low basin discrimination — FR-KNN vote may be noise`,
+            {
+              discrimination: Number(lDisc.toFixed(3)),
+              nearest: Number(lDecision.labelDistribution.nearestDistance.toFixed(4)),
+              farthest: Number(lDecision.labelDistribution.farthestDistance.toFixed(4)),
+              action: lDecision.action,
+            },
+          );
+        }
+      }
       // 2026-05-13 Change B — record per-side L confirmation timestamp
       // + cognitive mode at confirmation. Updated even when the entry
       // is vetoed: the L conviction is the signal, the gate is the
