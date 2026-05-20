@@ -119,6 +119,7 @@ import {
   kernelDirection,
   kernelShouldEnter,
   shouldAutoFlatten,
+  shouldAggregateBleedExit,
   shouldAggregateHarvest,
   shouldDCAAdd,
   shouldExit,
@@ -3032,6 +3033,39 @@ export class MonkeyKernel extends EventEmitter {
             derivation.slowBleedExit = slowBleed.derivation;
           } else {
             derivation.slowBleedExit = { fired: false, ...slowBleed.derivation };
+          }
+        }
+
+        // 2b. Aggregate slow-bleed — gate on the FAT-observed cross-kernel
+        //     loss + age, not this kernel's subset. Catches the
+        //     fragmentation case where a position bleeds in aggregate
+        //     while each subset sits below the per-subset gate (the
+        //     −$2.59 / 2h54m ETH bleed from the 2026-05-20 CSV audit).
+        //     Loss-side mirror of the aggregate harvest gate (#856).
+        if (!exitFired && slowBleedLive) {
+          const aggBleedPnl = aggregatePeakTracker.getLastPnl(symbol, heldSide);
+          const aggBleedAge = aggregatePeakTracker.getAgeMs(symbol, heldSide);
+          const aggBleed = shouldAggregateBleedExit(
+            aggBleedPnl, aggBleedAge, tapeTrend, heldSide,
+          );
+          derivation.aggBleedExit = {
+            ...aggBleed.derivation,
+            symbol,
+            side: heldSide,
+            lane: heldLane,
+          };
+          if (aggBleed.value) {
+            action = 'scalp_exit';
+            reason = aggBleed.reason;
+            exitFired = true;
+            derivation.scalp = {
+              exitTypeBit: aggBleed.derivation.exitTypeBit,
+              unrealizedPnl,
+              markPrice: lastPrice,
+              tradeId,
+              lane: heldLane,
+              source: 'aggregate',
+            };
           }
         }
 

@@ -857,11 +857,34 @@ export function shouldSlowBleedExit(args: {
   if (roiFrac >= 0) {
     return { value: false, reason: 'not_in_loss', derivation: { roiFrac } };
   }
+  // Qualifying-magnitude gate. Two independent arms (either trips):
+  //
+  //   PCT arm  — |roiFrac| ≥ 0.5 × laneSL. The original gate.
+  //   ABS arm  — |unrealizedPnlUsdt| ≥ MONKEY_SLOW_BLEED_ABS_USD.
+  //
+  // The ABS arm was added 2026-05-20 from a Poloniex-export audit:
+  // an ETH position bled −$2.59 over 2h54m but sat at only ≈−0.8%
+  // ROI the whole hold — far below the 7.5%/20% half-SL pct gate, so
+  // slow-bleed never fired. Same %-vs-$ mismatch that motivated the
+  // absolute-USD harvest gates (#855/#856). The ABS arm makes the
+  // loss-side time-exit symmetric with the win-side harvest: if a
+  // position is still red by more than the harvest peak threshold
+  // after 60min + adverse tape, the thesis is wrong — exit.
+  //
+  // Default $3 mirrors MONKEY_HARVEST_AGG_PEAK_USD so win/loss
+  // discipline is symmetric out of the box; tune via env if the
+  // realized-PnL distribution argues for it.
   const laneSL = laneParam(lane, 'slPct');
-  if (Math.abs(roiFrac) < 0.5 * laneSL) {
+  const absBleedUsd = Number(process.env.MONKEY_SLOW_BLEED_ABS_USD) || 3.0;
+  const pctArm = Math.abs(roiFrac) >= 0.5 * laneSL;
+  const absArm = Math.abs(unrealizedPnlUsdt) >= absBleedUsd;
+  if (!pctArm && !absArm) {
     return {
-      value: false, reason: 'under_half_sl',
-      derivation: { roiFrac, laneSL, halfSL: 0.5 * laneSL },
+      value: false, reason: 'under_half_sl_and_under_abs',
+      derivation: {
+        roiFrac, laneSL, halfSL: 0.5 * laneSL,
+        unrealizedPnlUsdt, absBleedUsd,
+      },
     };
   }
   // Tape alignment with held side: for long, positive tape is aligned;
@@ -874,13 +897,86 @@ export function shouldSlowBleedExit(args: {
     };
   }
   const heldMin = (heldS / 60).toFixed(0);
+  const armLabel = pctArm && absArm ? 'pct+abs' : pctArm ? 'pct' : 'abs';
   return {
     value: true,
-    reason: `slow_bleed_exit[${lane}]: ${heldMin}min @ ROI=${(roiFrac * 100).toFixed(1)}% (>=${(50 * laneSL).toFixed(0)}% of SL), tape adverse (align=${alignment.toFixed(2)})`,
+    reason: `slow_bleed_exit[${lane}]: ${heldMin}min @ ROI=${(roiFrac * 100).toFixed(1)}% pnl=$${unrealizedPnlUsdt.toFixed(2)} (${armLabel} arm), tape adverse (align=${alignment.toFixed(2)})`,
     derivation: {
       roiFrac, laneSL, halfSL: 0.5 * laneSL,
+      unrealizedPnlUsdt, absBleedUsd,
       heldS, heldMs, alignment, tapeTrend, sideCode, laneCode,
       exitTypeBit: 9,  // SLOW_BLEED_EXIT
+    },
+  };
+}
+
+/**
+ * shouldAggregateBleedExit — cross-kernel companion to shouldSlowBleedExit.
+ *
+ * shouldSlowBleedExit decides on a SINGLE kernel's subset. A position
+ * split across kernels (monkey-position + monkey-swing × K + T) bleeds
+ * in aggregate while each subset sits at a fraction of the loss — the
+ * exact fragmentation that lets a −$2.59 ETH bleed run 2h54m without
+ * any subset's gate tripping. This gate reads the AGGREGATE loss + age
+ * from aggregatePeakTracker (FAT-populated) so the decision is made on
+ * the user-facing position.
+ *
+ * Mirror of shouldAggregateHarvest on the loss side. Each kernel that
+ * evaluates this closes its own subset; together they flatten the
+ * aggregate. Fires when:
+ *   - aggregate age ≥ MONKEY_SLOW_BLEED_MIN_MIN (default 60min)
+ *   - aggregate current PnL ≤ −MONKEY_SLOW_BLEED_ABS_USD (default $3)
+ *   - tape adverse to the held side (alignment ≤ -0.2)
+ *
+ * No lane / SL-percent arm here — the aggregate has no single lane and
+ * the whole point is the dollar-magnitude axis the pct gate misses.
+ *
+ * Returns { value:false } when aggregate inputs are null (FAT has not
+ * observed yet); caller falls through to per-subset shouldSlowBleedExit.
+ */
+export function shouldAggregateBleedExit(
+  aggregateCurrentPnlUsdt: number | null,
+  aggregateAgeMs: number | null,
+  tapeTrend: number,
+  heldSide: 'long' | 'short',
+): ExecutiveDecision<boolean> {
+  if (aggregateCurrentPnlUsdt === null || aggregateAgeMs === null) {
+    return {
+      value: false,
+      reason: 'aggregate_unavailable: FAT has not observed yet',
+      derivation: {},
+    };
+  }
+  const absBleedUsd = Number(process.env.MONKEY_SLOW_BLEED_ABS_USD) || 3.0;
+  const minHeldMin = Number(process.env.MONKEY_SLOW_BLEED_MIN_MIN) || 60;
+  const ageMin = aggregateAgeMs / 60_000;
+
+  if (ageMin < minHeldMin) {
+    return {
+      value: false, reason: `under_${minHeldMin}min (age ${ageMin.toFixed(0)}min)`,
+      derivation: { ageMin, minHeldMin },
+    };
+  }
+  if (aggregateCurrentPnlUsdt > -absBleedUsd) {
+    return {
+      value: false, reason: `under_abs_bleed ($${aggregateCurrentPnlUsdt.toFixed(2)} > -$${absBleedUsd.toFixed(2)})`,
+      derivation: { aggregateCurrentPnlUsdt, absBleedUsd, ageMin },
+    };
+  }
+  const alignment = heldSide === 'long' ? tapeTrend : -tapeTrend;
+  if (alignment > -0.2) {
+    return {
+      value: false, reason: 'tape_neutral_or_aligned',
+      derivation: { alignment, tapeTrend, aggregateCurrentPnlUsdt },
+    };
+  }
+  return {
+    value: true,
+    reason: `aggregate_bleed_exit: ${ageMin.toFixed(0)}min, aggregate pnl=$${aggregateCurrentPnlUsdt.toFixed(2)} ≤ -$${absBleedUsd.toFixed(2)}, tape adverse (align=${alignment.toFixed(2)})`,
+    derivation: {
+      aggregateCurrentPnlUsdt, absBleedUsd, ageMin, minHeldMin,
+      alignment, tapeTrend,
+      exitTypeBit: 10,  // AGGREGATE_BLEED_EXIT
     },
   };
 }

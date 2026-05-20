@@ -44,6 +44,10 @@ interface AggregatePeakRecord {
   peakPnlUsdt: number;
   lastPnlUsdt: number;
   peakObservedAt: number;
+  /** When FAT first observed this (symbol, side) — proxy for position
+   *  age, consumed by the cross-kernel slow-bleed exit. Survives DCA
+   *  adds (the aggregate position persists); reset only by clearOnClose. */
+  firstObservedAt: number;
   updatedAt: number;
 }
 
@@ -72,6 +76,7 @@ class AggregatePeakTracker {
         peakPnlUsdt: currentPnlUsdt,
         lastPnlUsdt: currentPnlUsdt,
         peakObservedAt: now,
+        firstObservedAt: now,
         updatedAt: now,
       });
       return;
@@ -93,6 +98,19 @@ class AggregatePeakTracker {
   getPeak(symbol: string, side: PositionSide): number | null {
     const r = this.records.get(AggregatePeakTracker.key(symbol, side));
     return r ? r.peakPnlUsdt : null;
+  }
+
+  /**
+   * Age of the aggregate position in ms — `now - firstObservedAt`.
+   * Returns null when no record exists. Proxy for position hold time,
+   * consumed by the cross-kernel slow-bleed exit (a position FAT has
+   * been watching for >60min that's still red is "the move isn't
+   * coming"). FAT's observe cadence (~per cycle) means firstObservedAt
+   * lags the true exchange-open by at most one cycle.
+   */
+  getAgeMs(symbol: string, side: PositionSide): number | null {
+    const r = this.records.get(AggregatePeakTracker.key(symbol, side));
+    return r ? Date.now() - r.firstObservedAt : null;
   }
 
   /**
