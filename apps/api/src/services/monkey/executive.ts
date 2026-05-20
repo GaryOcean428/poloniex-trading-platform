@@ -1442,3 +1442,104 @@ export function kernelShouldEnter(args: { emotions: EmotionState }): boolean {
   const hesitation = args.emotions.anxiety + args.emotions.confusion;
   return conviction > hesitation;
 }
+
+/**
+ * shouldExtendBracket — revise a committed bracket on fresh intel (Phase C).
+ *
+ * The "revise" half of commit-and-revise. Once a position carries a
+ * synthetic bracket (Phase B), each tick re-reads the geometry. When the
+ * fresh Fisher-Rao state says the move has further to run, the kernel:
+ *   - EXTENDS the take-profit further out (never pulls it in), and
+ *   - TRAILS the stop-loss toward profit (never widens it).
+ *
+ * Both edits are strictly monotonic in the position's favour — a bracket
+ * can only ever improve. That invariant is what makes revision safe to
+ * run every tick: it cannot turn a winning thesis into a worse one.
+ *
+ * TP extension gates (all must hold):
+ *   - position is in profit (currentRoiFrac > 0) — never chase a TP out
+ *     on a losing position
+ *   - conviction ≥ MONKEY_BRACKET_EXTEND_CONV (default 0.5) — only a
+ *     well-integrated, confident basin earns a longer target
+ *   - the freshly-projected TP is strictly further than the current one
+ *
+ * SL trail gates:
+ *   - position is in profit — trailing a stop on a red position is just
+ *     a tighter loss; the loss-side safety gates own that
+ *   - the trailed SL is strictly better (higher for long, lower for
+ *     short) than the current SL
+ *
+ * Returns `newTp` / `newSl` as numbers when a revision is warranted,
+ * null when that side is unchanged. Pure — caller performs the DB write.
+ */
+export interface BracketRevision {
+  /** True iff at least one of newTp / newSl is non-null. */
+  changed: boolean;
+  /** Revised take-profit price, or null to leave it unchanged. */
+  newTp: number | null;
+  /** Revised stop-loss price, or null to leave it unchanged. */
+  newSl: number | null;
+  /** Human-readable summary for telemetry / the trade reason field. */
+  reason: string;
+}
+
+export function shouldExtendBracket(args: {
+  heldSide: 'long' | 'short';
+  entryPrice: number;
+  markPrice: number;
+  currentTp: number | null;
+  currentSl: number | null;
+  /** Fresh FR bracket distances this tick (frBracketDistances output). */
+  freshTpDistance: number;
+  freshSlDistance: number;
+  /** Fresh conviction = φ × rConf ∈ [0,1]. */
+  conviction: number;
+  /** Current unrealised ROI as a fraction (e.g. +0.02 = +2%). */
+  currentRoiFrac: number;
+}): BracketRevision {
+  const {
+    heldSide, entryPrice, markPrice, currentTp, currentSl,
+    freshTpDistance, freshSlDistance, conviction, currentRoiFrac,
+  } = args;
+
+  const convThreshold =
+    Number(process.env.MONKEY_BRACKET_EXTEND_CONV) || 0.5;
+  const inProfit = currentRoiFrac > 0;
+  const long = heldSide === 'long';
+
+  // ── TP extension ────────────────────────────────────────────────
+  let newTp: number | null = null;
+  if (inProfit && conviction >= convThreshold && currentTp !== null) {
+    const candidateTp = long
+      ? entryPrice + freshTpDistance
+      : entryPrice - freshTpDistance;
+    // "Further out" = away from entry in the profit direction.
+    const further = long ? candidateTp > currentTp : candidateTp < currentTp;
+    if (further) newTp = candidateTp;
+  }
+
+  // ── SL trail ────────────────────────────────────────────────────
+  // Trail the stop `freshSlDistance` behind the mark, ratcheting only
+  // in the favourable direction.
+  let newSl: number | null = null;
+  if (inProfit && currentSl !== null) {
+    const candidateSl = long
+      ? markPrice - freshSlDistance
+      : markPrice + freshSlDistance;
+    const better = long ? candidateSl > currentSl : candidateSl < currentSl;
+    if (better) newSl = candidateSl;
+  }
+
+  const changed = newTp !== null || newSl !== null;
+  return {
+    changed,
+    newTp,
+    newSl,
+    reason: changed
+      ? `extend_bracket: ${newTp !== null ? `TP->${newTp.toFixed(2)} ` : ''}`
+        + `${newSl !== null ? `SL->${newSl.toFixed(2)} ` : ''}`
+        + `(conv=${conviction.toFixed(2)}, roi=${(currentRoiFrac * 100).toFixed(2)}%)`
+      : `bracket_hold: no favourable revision (conv=${conviction.toFixed(2)}, `
+        + `inProfit=${inProfit})`,
+  };
+}

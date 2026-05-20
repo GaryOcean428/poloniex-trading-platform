@@ -124,6 +124,7 @@ import {
   shouldAggregateBleedExit,
   shouldAggregateHarvest,
   shouldBracketExit,
+  shouldExtendBracket,
   shouldDCAAdd,
   shouldExit,
   shouldProfitHarvest,
@@ -3205,6 +3206,64 @@ export class MonkeyKernel extends EventEmitter {
           action = 'scalp_exit';
           reason = scalp.reason;
           exitFired = true;
+        }
+
+        // ── Phase C: bracket revision on fresh intel ─────────────────
+        // The "revise" half of commit-and-revise. When the position is
+        // held (no exit fired), the bracket is live, and this tick's FR
+        // read says the move has further to run, extend the TP outward
+        // and trail the SL toward profit. Both edits are strictly
+        // monotonic in the position's favour (shouldExtendBracket
+        // enforces it), so revising every tick can only improve the
+        // bracket. Flag MONKEY_BRACKET_EXTEND_LIVE (default off).
+        const bracketExtendLive =
+          process.env.MONKEY_BRACKET_EXTEND_LIVE === 'true';
+        if (
+          !exitFired && bracketActive && bracketExtendLive
+          && state.lastFrBracket !== null
+          && currentRoi !== undefined
+        ) {
+          const revision = shouldExtendBracket({
+            heldSide,
+            entryPrice: Number(openRow.entry_price),
+            markPrice: lastPrice,
+            currentTp: openRow.take_profit ?? null,
+            currentSl: openRow.stop_loss ?? null,
+            freshTpDistance: state.lastFrBracket.tpDistance,
+            freshSlDistance: state.lastFrBracket.slDistance,
+            conviction: phi * regimeReading.confidence,
+            currentRoiFrac: currentRoi,
+          });
+          derivation.bracketRevision = {
+            changed: revision.changed ? 1 : 0,
+            ...(revision.newTp !== null ? { newTp: revision.newTp } : {}),
+            ...(revision.newSl !== null ? { newSl: revision.newSl } : {}),
+          };
+          if (revision.changed) {
+            try {
+              // Revise every open row this kernel owns on the symbol so
+              // a DCA stack shares one coherent bracket. COALESCE keeps
+              // the unchanged side intact.
+              await pool.query(
+                `UPDATE autonomous_trades
+                    SET take_profit = COALESCE($1, take_profit),
+                        stop_loss   = COALESCE($2, stop_loss)
+                  WHERE reason LIKE $3 AND status = 'open' AND symbol = $4`,
+                [
+                  revision.newTp, revision.newSl,
+                  `monkey|kernel=${this.instanceId}|%`, symbol,
+                ],
+              );
+              logger.info('[Monkey] bracket revised', {
+                symbol, heldSide, reason: revision.reason,
+              });
+            } catch (revErr) {
+              logger.warn('[Monkey] bracket revision UPDATE failed', {
+                symbol,
+                err: revErr instanceof Error ? revErr.message : String(revErr),
+              });
+            }
+          }
         }
 
         // Decrement defer window each tick we did not exit.
