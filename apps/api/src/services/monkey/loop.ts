@@ -7763,6 +7763,26 @@ export class MonkeyKernel extends EventEmitter {
     heldSide: 'long' | 'short' | null;
     availableEquity: number;
   }> {
+    // Paper mode — synthetic bankroll, no exchange dependency. Without
+    // this the kernel sizes against the REAL exchange balance even in
+    // paper mode, so on an unfunded staging account availableEquity=0
+    // → size.value=0 → every entry dies at the size>0 gate before any
+    // trading logic runs (paper mode previously only simulated the
+    // order FILL, never the equity). MONKEY_PAPER_EQUITY_USDT sets the
+    // fictional bankroll; default 1000 comfortably clears BTC/ETH min
+    // notionals so the kernel can size + place paper trades. The
+    // kernel's paper positions live in autonomous_trades (read via
+    // findOpenMonkeyTrade), so a null exchange heldSide here is correct.
+    if (isMonkeyPaperMode()) {
+      const paperEquity = Number(process.env.MONKEY_PAPER_EQUITY_USDT) || 1000;
+      return {
+        equityFraction: Math.min(1, paperEquity / 27.15),
+        marginFraction: 0,
+        openPositions: 0,
+        heldSide: null,
+        availableEquity: paperEquity,
+      };
+    }
     try {
       const userRow = await pool.query(
         `SELECT user_id FROM user_api_credentials WHERE exchange = 'poloniex' LIMIT 1`,
