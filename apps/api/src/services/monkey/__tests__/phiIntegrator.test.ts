@@ -16,6 +16,9 @@ import {
   PHI_MAX,
   PHI_GAIN,
   PHI_RATE,
+  PHI_GAIN_CALIBRATION,
+  isPhiLeakyEnabled,
+  phiGainCalibrationBands,
 } from '../phi_integrator.js';
 
 describe('phi_integrator — leaky-integrator Φ', () => {
@@ -49,9 +52,10 @@ describe('phi_integrator — leaky-integrator Φ', () => {
 
   it('steady state traverses the canonical bands as activity rises', () => {
     expect(steadyStatePhi(0)).toBeCloseTo(PHI_EQUILIBRIUM, 5);   // quiet → GRAPH floor
-    expect(steadyStatePhi(0.057)).toBeGreaterThan(0.55);          // median → GRAPH
-    expect(steadyStatePhi(0.133)).toBeGreaterThan(0.70);          // p90 → FORESIGHT
-    expect(steadyStatePhi(0.206)).toBeGreaterThan(0.85);          // p99 → LIGHTNING
+    const bands = phiGainCalibrationBands();
+    expect(bands.median).toBeGreaterThan(PHI_EQUILIBRIUM);        // median → GRAPH
+    expect(bands.p90).toBeGreaterThan(PHI_GAIN_CALIBRATION.minP90Phi);
+    expect(bands.p99).toBeGreaterThan(PHI_GAIN_CALIBRATION.minP99Phi);
   });
 
   it('clamps to [0, PHI_MAX] — never pegs past the canonical ceiling', () => {
@@ -69,5 +73,13 @@ describe('phi_integrator — leaky-integrator Φ', () => {
     const b = updateLeakyPhi(0.6, 0.06);
     expect(a).not.toBe(b);
     expect(Math.abs(a - b)).toBeLessThan(0.01);
+  });
+
+  it('parses the live flag explicitly with default-on semantics', () => {
+    expect(isPhiLeakyEnabled(undefined)).toBe(true);
+    expect(isPhiLeakyEnabled('false')).toBe(false);
+    expect(isPhiLeakyEnabled(' FALSE ')).toBe(false);
+    expect(isPhiLeakyEnabled('0')).toBe(false);
+    expect(isPhiLeakyEnabled('true')).toBe(true);
   });
 });

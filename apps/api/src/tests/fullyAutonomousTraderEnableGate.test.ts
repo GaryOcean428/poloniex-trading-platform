@@ -1,11 +1,8 @@
 /**
  * Unit tests for the FAT master kill-switch (FAT_ENABLE).
  *
- * FAT was disabled by default on 2026-05-20 (operator directive: FAT and
- * LiveSignal found detrimental relative to the Monkey kernel). FAT's loop
- * auto-restores on module construction via loadActiveConfigs(), so the
- * env gate must sit on startTrading() — the single chokepoint every path
- * to the trading interval funnels through. These tests lock that gate.
+ * FAT is disabled by default. Its loop auto-restores on module construction
+ * via loadActiveConfigs(), so startTrading() owns the env gate.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -72,18 +69,29 @@ describe('FullyAutonomousTrader – FAT_ENABLE kill-switch', () => {
     if (interval) clearInterval(interval);
     if (savedEnv === undefined) delete process.env.FAT_ENABLE;
     else process.env.FAT_ENABLE = savedEnv;
+    vi.restoreAllMocks();
   });
 
   it('does NOT arm a trading interval when FAT_ENABLE is unset', async () => {
     delete process.env.FAT_ENABLE;
     await priv(trader).startTrading(USER);
     expect(priv(trader).runningIntervals.has(USER)).toBe(false);
+    expect(priv(trader).tradingCycle).not.toHaveBeenCalled();
+    expect(priv(trader).bootstrapMlModels).not.toHaveBeenCalled();
   });
 
   it('does NOT arm a trading interval when FAT_ENABLE is "false"', async () => {
     process.env.FAT_ENABLE = 'false';
     await priv(trader).startTrading(USER);
     expect(priv(trader).runningIntervals.has(USER)).toBe(false);
+    expect(priv(trader).tradingCycle).not.toHaveBeenCalled();
+    expect(priv(trader).bootstrapMlModels).not.toHaveBeenCalled();
+  });
+
+  it('treats FAT_ENABLE case and whitespace insensitively', async () => {
+    process.env.FAT_ENABLE = ' TRUE ';
+    await priv(trader).startTrading(USER);
+    expect(priv(trader).runningIntervals.has(USER)).toBe(true);
   });
 
   it('arms the trading interval when FAT_ENABLE is "true"', async () => {

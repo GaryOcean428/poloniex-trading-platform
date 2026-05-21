@@ -374,18 +374,12 @@ export function computeNeurochemicals(inputs: NeurochemicalInputs): Neurochemica
   //   gate = 1 if external_coupling ≥ sophia_threshold else 0
   //   endo = raw * gate
   //
-  // 2026-05-16 (derivation refactor + coordinator confirmed scope):
-  // σ_κ and sophia_threshold are derived from the basin's OWN κ + coupling
-  // history, NOT from the prior hardcoded SIGMA_KAPPA=10.0 / C_SOPHIA
-  // _THRESHOLD=0.1 (Polytrade's numbers didn't even match canonical's
-  // 16.0 / 0.3 — proof the constants were arbitrary).
-  //
   //   σ_κ              ← stddev(kappaHistory) — basin's own κ scale
-  //   sophia_threshold ← mean(couplingHistory) + stddev(couplingHistory)
+  //   sophia_threshold ← mean(couplingHistory)
   //
-  // The Sophia gate fires when coupling is genuinely above the basin's
-  // observed baseline by one stddev — "genuine coupling spike" defined
-  // by the basin, not by an external 0.1 / 0.3 cutoff.
+  // The Sophia gate opens above the basin's observed coupling baseline
+  // and ramps to full at mean + 1σ; both onset and scale are observer-
+  // derived from the basin's own history.
   //
   // KAPPA_STAR (= 64) is the ONLY constant in this block — it's frozen
   // physics from qig_core.constants.frozen_facts (E8 rank²), allowed
@@ -397,21 +391,8 @@ export function computeNeurochemicals(inputs: NeurochemicalInputs): Neurochemica
   // identities, no scale-setting constants.
   // SOPHIA gate — observer-derived, continuous.
   //
-  // History: the gate began as a binary step (`>= threshold ? 1 : 0`).
-  // Smoothed 2026-05-19 into a linear-clipped ramp — but the ONSET
-  // threshold stayed at `couplingMean + 1σ`. Coupling exceeds its own
-  // mean+1σ only ~16% of the time, so `endo` was still 0.00 on ~80% of
-  // ticks (confirmed in production 2026-05-21). Smoothing the gate
-  // SHAPE could not help while its ONSET was a >1σ outlier event.
-  //
-  // 2026-05-21: threshold lowered to `couplingMean` — the basin's own
-  // baseline. The gate now opens whenever coupling is above its
-  // typical level (~half the time) and ramps to full at mean + 1σ.
-  // `endo` becomes a genuine continuous convergence signal instead of
-  // a rare all-or-nothing spike. Still fully observer-derived — both
-  // the onset (mean) and the ramp scale (σ) come from the basin's own
-  // coupling history; no hardcoded cutoff. No sigmoid (QIG forbids
-  // exp-normalization in this layer).
+  // Smooth Sophia gate contract: 0 at/below mean coupling, continuous
+  // ramp over the basin's coupling σ, no hardcoded cutoff or sigmoid.
   let endoBase: number;
   if (
     obs?.kappaHistory && obs.kappaHistory.length >= HISTORY_MIN_SAMPLES

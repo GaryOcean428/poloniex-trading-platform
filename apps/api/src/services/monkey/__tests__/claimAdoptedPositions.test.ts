@@ -31,6 +31,14 @@ async function makeKernel(instanceId: string) {
   return new MonkeyKernel({ instanceId, timeframe: '15m', tickMs: 30_000 });
 }
 
+async function adoptionConstants() {
+  const {
+    ADOPTED_POSITION_REASON_PREFIX,
+    OWNED_ADOPTED_POSITION_REASON_PREFIX,
+  } = await import('../loop.js');
+  return { ADOPTED_POSITION_REASON_PREFIX, OWNED_ADOPTED_POSITION_REASON_PREFIX };
+}
+
 describe('claimAdoptedPositions', () => {
   beforeEach(() => {
     queryMock.mockReset();
@@ -53,11 +61,18 @@ describe('claimAdoptedPositions', () => {
     // frBracket is null → claim UPDATE only, no bracket commit.
     expect(queryMock).toHaveBeenCalledTimes(1);
     const [sql, params] = queryMock.mock.calls[0];
+    const {
+      ADOPTED_POSITION_REASON_PREFIX,
+      OWNED_ADOPTED_POSITION_REASON_PREFIX,
+    } = await adoptionConstants();
     expect(sql).toContain('replace(reason');
-    expect(sql).toContain("'kernel_adopted|'");
-    expect(sql).toContain("'monkey|kernel=monkey-position|adopted|'");
-    expect(sql).toContain("reason LIKE 'kernel_adopted|%'");
-    expect(params).toEqual(['BTC_USDT_PERP']);
+    expect(sql).toContain("agent = 'K'");
+    expect(sql).toContain("reason LIKE $2 || '%'");
+    expect(params).toEqual([
+      'BTC_USDT_PERP',
+      ADOPTED_POSITION_REASON_PREFIX,
+      OWNED_ADOPTED_POSITION_REASON_PREFIX,
+    ]);
   });
 
   it('commits a side-aware bracket when geometry is derivable', async () => {
@@ -69,10 +84,13 @@ describe('claimAdoptedPositions', () => {
     // claim UPDATE + bracket-commit UPDATE.
     expect(queryMock).toHaveBeenCalledTimes(2);
     const [sql, params] = queryMock.mock.calls[1];
+    const { OWNED_ADOPTED_POSITION_REASON_PREFIX } = await adoptionConstants();
     expect(sql).toContain('take_profit = entry_price');
+    expect(sql).toContain('$3::numeric');
+    expect(sql).toContain('$4::numeric');
     expect(sql).toContain('stop_loss');
     expect(sql).toContain('take_profit IS NULL AND stop_loss IS NULL');
-    expect(params).toEqual(['ETH_USDT_PERP', 80, 40]);
+    expect(params).toEqual(['ETH_USDT_PERP', OWNED_ADOPTED_POSITION_REASON_PREFIX, 80, 40]);
   });
 
   it('skips the bracket commit when geometry is not derivable (0 distances)', async () => {

@@ -91,16 +91,11 @@ const VOLATILITY_MEDIUM = 0.01;         // >1% = medium volatility
 /**
  * Master kill-switch for the FAT trading loop.
  *
- * Disabled by default after 2026-05-20: the operator found FAT (and
- * LiveSignal) detrimental relative to the Monkey kernel and asked for
- * both to be switched off. LiveSignal/Persistent/AgentScheduler are
- * already env-gated in index.ts — but FAT's loop auto-restores on
- * module construction via loadActiveConfigs(), so AGENT_SCHEDULER_ENABLE
- * never reached it. This gate is the single chokepoint: every path to
- * the trading loop funnels through startTrading(). Re-enable with
- * FAT_ENABLE=true.
+ * Disabled by default. FAT's loop auto-restores on module construction
+ * via loadActiveConfigs(), so the gate must live at the startTrading()
+ * chokepoint. Re-enable explicitly with FAT_ENABLE=true.
  */
-const fatEngineEnabled = (): boolean => process.env.FAT_ENABLE === 'true';
+const fatEngineEnabled = (): boolean => process.env.FAT_ENABLE?.trim().toLowerCase() === 'true';
 
 interface TradingConfig {
   userId: string;

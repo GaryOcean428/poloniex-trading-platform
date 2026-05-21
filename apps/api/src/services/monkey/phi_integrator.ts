@@ -35,11 +35,17 @@ export const PHI_EQUILIBRIUM = 0.55;
  *  equilibrium; memory half-life ≈ ln2/RATE ≈ 46 ticks. */
 export const PHI_RATE = 0.015;
 
-/** Motion gain. Observer-derived 2026-05-21 from the production `bv`
- *  distribution (analysis/polytrade_qig_telemetry/telemetry_ticks.csv:
- *  median 0.057, p90 0.133, p99 0.206) — chosen so median bv → mid-GRAPH,
- *  p90 → FORESIGHT, p99 → LIGHTNING. Φ_ss = 0.55 + bv·GAIN/RATE.
- *  Recompute if the bv distribution shifts materially. */
+export const PHI_GAIN_CALIBRATION = {
+  medianBv: 0.057,
+  p90Bv: 0.133,
+  p99Bv: 0.206,
+  minP90Phi: 0.70,
+  minP99Phi: 0.85,
+} as const;
+
+/** Motion gain. Observer-derived from production basin-velocity quantiles
+ *  above — chosen so median bv stays in GRAPH, p90 reaches FORESIGHT, and
+ *  p99 reaches LIGHTNING. Φ_ss = 0.55 + bv·GAIN/RATE. */
 export const PHI_GAIN = 0.024;
 
 /** vex Φ clamp ceiling. */
@@ -64,4 +70,21 @@ export function updateLeakyPhi(prevPhi: number, bv: number): number {
 export function steadyStatePhi(meanBv: number): number {
   const ss = PHI_EQUILIBRIUM + (Math.max(0, meanBv) * PHI_GAIN) / PHI_RATE;
   return Math.max(0, Math.min(PHI_MAX, ss));
+}
+
+export function phiGainCalibrationBands(): {
+  median: number;
+  p90: number;
+  p99: number;
+} {
+  return {
+    median: steadyStatePhi(PHI_GAIN_CALIBRATION.medianBv),
+    p90: steadyStatePhi(PHI_GAIN_CALIBRATION.p90Bv),
+    p99: steadyStatePhi(PHI_GAIN_CALIBRATION.p99Bv),
+  };
+}
+
+export function isPhiLeakyEnabled(value: string | undefined = process.env.MONKEY_PHI_LEAKY_LIVE): boolean {
+  if (value === undefined) return true;
+  return !['false', '0', 'no', 'off'].includes(value.trim().toLowerCase());
 }

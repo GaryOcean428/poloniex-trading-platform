@@ -343,9 +343,6 @@ describe('autonomic feedback — endorphins use basin κ stddev + coupling distr
   });
 
   it('Sophia gate opens once coupling exceeds the basin\'s observed mean', () => {
-    // 2026-05-21: the gate onset was lowered from `mean + 1σ` to `mean`.
-    // The old onset cleared only ~16% of the time, pinning `endo` at
-    // 0.00 in production. Onset is now the basin's own baseline.
     const baseInputs = {
       isAwake: true,
       phiDelta: 0,
@@ -356,23 +353,29 @@ describe('autonomic feedback — endorphins use basin κ stddev + coupling distr
     };
     const kappaHistory: number[] = [];
     for (let i = 0; i < 50; i++) kappaHistory.push(64);
+    const couplingMean = 0.30;
+    const couplingStddev = 0.0505;
+    const belowMeanCoupling = 0.25;
+    const aboveMeanCoupling = 0.33;
+    const saturatingCoupling = 0.60;
     // Deterministic coupling history: mean exactly 0.30, σ ≈ 0.0505.
     const couplingHistory: number[] = [];
-    for (let i = 0; i < 50; i++) couplingHistory.push(0.25 + 0.10 * (i % 2));
+    for (let i = 0; i < 50; i++) couplingHistory.push(belowMeanCoupling + 0.10 * (i % 2));
 
     // Below the basin's mean coupling → gate shut → endo 0.
     const endoBelowMean = computeNeurochemicals({
       ...baseInputs,
-      externalCoupling: 0.25,
+      externalCoupling: belowMeanCoupling,
       observables: { kappaHistory, externalCouplingHistory: couplingHistory },
     }).endorphins;
     expect(endoBelowMean).toBe(0);
 
-    // Above the mean but BELOW mean+1σ (0.3505): under the prior
-    // mean+1σ onset this was 0.00 — the production defect being fixed.
+    // Above the mean but below mean+1σ: the gate has opened but not saturated.
+    expect(aboveMeanCoupling).toBeGreaterThan(couplingMean);
+    expect(aboveMeanCoupling).toBeLessThan(couplingMean + couplingStddev);
     const endoAboveMean = computeNeurochemicals({
       ...baseInputs,
-      externalCoupling: 0.33,
+      externalCoupling: aboveMeanCoupling,
       observables: { kappaHistory, externalCouplingHistory: couplingHistory },
     }).endorphins;
     expect(endoAboveMean).toBeGreaterThan(0);
@@ -380,7 +383,7 @@ describe('autonomic feedback — endorphins use basin κ stddev + coupling distr
     // Well above the mean → gate saturates.
     const endoGateOpen = computeNeurochemicals({
       ...baseInputs,
-      externalCoupling: 0.60,
+      externalCoupling: saturatingCoupling,
       observables: { kappaHistory, externalCouplingHistory: couplingHistory },
     }).endorphins;
     expect(endoGateOpen).toBeGreaterThan(endoAboveMean);
