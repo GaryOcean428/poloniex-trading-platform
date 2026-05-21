@@ -323,10 +323,12 @@ export function computeAndLogConsensus(inputs: ConsensusInputs): ConsensusDecisi
     symbol: inputs.ownProposal.symbol,
     verdict: decision.verdict,
     action: decision.action,
-    // `side` is the executable trade side — null on a hold, by design.
-    // `lean` is the kernel's geometric directional read, surfaced even on
-    // holds so the [Consensus] line matches the [Monkey] tick telemetry.
-    side: decision.side,
+    // `side` is the executable trade side — 'none' on a hold, by design
+    // (logged as the string 'none', not a bare null, so the line does
+    // not read as missing data). `lean` is the kernel's geometric
+    // directional read, surfaced even on holds so the [Consensus] line
+    // matches the [Monkey] tick telemetry.
+    side: decision.side ?? 'none',
     lean: inputs.ownLean ?? 'flat',
     size_usdt: decision.size_usdt,
     leverage: decision.leverage,

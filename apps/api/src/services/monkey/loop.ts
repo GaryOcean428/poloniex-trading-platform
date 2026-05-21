@@ -4590,13 +4590,15 @@ export class MonkeyKernel extends EventEmitter {
           leverage: tDecision.leverage,
           entryPrice: lastPrice,
           minNotional,
-          // T does not consume kernel state. Pass zeros for the
-          // K-only fields the executor uses for its reason-encoding;
-          // these are diagnostic, not used by the executor's risk
-          // logic. The agent='T' tag is what matters downstream.
-          phi: 0,
-          kappa: 0,
-          sovereignty: 0,
+          // T does not consume kernel state for its DECISION, but the
+          // executor stamps phi/kappa/sovereignty onto the ORDER PLACED
+          // log and the autonomous_trades `reason` string as "kernel
+          // state at order time". Pass the real tick values, not zeros,
+          // so an AgentT trade row does not read as a dead-kernel
+          // phi=0.000 / sov=0.000 (misleading telemetry — 2026-05-21).
+          phi,
+          kappa: state.kappa,
+          sovereignty,
           trajectoryId: null,
           isDCAAdd: false,
           dcaAddIndex: 0,

@@ -236,13 +236,16 @@ describe('computeAndLogConsensus — [Consensus] log telemetry', () => {
         ownLean: 'long',
       });
       const decision = computeAndLogConsensus(inputs);
-      // Execution side stays null — a hold opens no trade. Correct by design.
+      // The decision's executable side stays null — a hold opens no
+      // trade. Correct by design.
       expect(decision.side).toBeNull();
-      // The log line still surfaces the geometric lean so a hold is not an
-      // observability black hole when debugging directional bias.
+      // The log line renders that as the string 'none' (not a bare
+      // null, so the line does not read as missing data) and still
+      // surfaces the geometric lean so a hold is not an observability
+      // black hole when debugging directional bias.
       const lastCall = spy.mock.calls.at(-1);
       expect(lastCall?.[0]).toBe('[Consensus]');
-      expect(lastCall?.[1]).toMatchObject({ side: null, lean: 'long' });
+      expect(lastCall?.[1]).toMatchObject({ side: 'none', lean: 'long' });
     } finally {
       spy.mockRestore();
     }
