@@ -1,0 +1,62 @@
+{
+  "log_source": "/home/braden/Downloads/logs.1779189081583.csv",
+  "telemetry_window": {
+    "window_start": "2026-05-19 09:56:52.963000+00:00",
+    "window_end": "2026-05-19 10:13:26.552000+00:00",
+    "window_hours": 0.27599694444444445,
+    "n_trades_in_window": 4
+  },
+  "n_ticks": 109,
+  "streams": [
+    {
+      "symbol": "BTC_USDT_PERP",
+      "n_phi": 52,
+      "min": 0.213,
+      "max": 0.217,
+      "span": 0.004,
+      "mean": 0.214635,
+      "median": 0.214,
+      "std": 0.001048,
+      "class": "flatlined"
+    },
+    {
+      "symbol": "ETH_USDT_PERP",
+      "n_phi": 57,
+      "min": 0.214,
+      "max": 0.219,
+      "span": 0.005,
+      "mean": 0.215316,
+      "median": 0.215,
+      "std": 0.001404,
+      "class": "flatlined"
+    }
+  ],
+  "n_trades": 223,
+  "buckets": {
+    "FLAT": 122,
+    "WIN": 54,
+    "LOSS": 47
+  },
+  "sides": {
+    "long": 129,
+    "short": 93,
+    "unknown": 1
+  },
+  "trade_window": [
+    "2026-05-19 07:14:01+00:00",
+    "2026-05-21 08:00:14+00:00"
+  ],
+  "n_trades_overlapping_telemetry": 6,
+  "phi_std_by_cell_family": {
+    "CREATOR": 0.001127,
+    "DISSOLVER": 0.001445,
+    "PRESERVER": 0.000577
+  },
+  "cell_family_dist": {
+    "DISSOLVER": 57,
+    "CREATOR": 49,
+    "PRESERVER": 3
+  },
+  "dissolver_entries": 0,
+  "sense3_n": 0
+}
