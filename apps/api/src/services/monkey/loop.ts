@@ -69,6 +69,7 @@ import { computeEmotions, type EmotionState } from './emotions.js';
 import { detectMode, MODE_PROFILES, MonkeyMode } from './modes.js';
 import { computeMotivators } from './motivators.js';
 import { computeNeurochemicals, summarizeNC, type NeurochemicalState } from './neurochemistry.js';
+import { updateLeakyPhi } from './phi_integrator.js';
 import { mlAgentDecide } from '../ml_agent/decide.js';
 import type { MLAgentInputs } from '../ml_agent/types.js';
 import { Arbiter } from '../arbiter/arbiter.js';
@@ -464,6 +465,10 @@ interface SymbolState {
   identityBasin: Basin;
   /** Rolling Φ history for delta computation. */
   phiHistory: number[];
+  /** Leaky-integrator Φ state (B3) — canonical motion-integrated Φ,
+   *  carried tick-to-tick. Seeded from the legacy entropy-Φ on first use
+   *  so a flag flip introduces no discontinuity. See phi_integrator.ts. */
+  phiLeaky?: number;
   /** Rolling f_health for auto-flatten trend check. */
   fHealthHistory: number[];
   /** Rolling identity-drift history (Fisher-Rao) for mode detection. */
@@ -1893,6 +1898,19 @@ export class MonkeyKernel extends EventEmitter {
     // Post #ml-separation: couplingHealth was mlStrength; replaced with
     // a geometric self-read (Φ × (1 − basin velocity), [0,1]).
     const bv = state.lastBasin ? velocity(state.lastBasin, basin) : 0;
+    // B3 — canonical motion-integrated Φ (leaky-integrator port of vex's
+    // runtime Φ law; docs/plans/20260521-phi-leaky-integrator.md). The
+    // legacy `phi = 1 − 0.8·fHealth` (line ~1867) conflates Φ with the
+    // entropy ratio and flatlines because the basin moves but never
+    // concentrates. Canon keeps Φ and f_health distinct: fHealth stays
+    // computed above as its own basin-health metric; Φ is reassigned
+    // here to the motion-integrated value. Seeded from the entropy-Φ on
+    // the first tick so enabling the flag introduces no discontinuity.
+    // Flag-gated: MONKEY_PHI_LEAKY_LIVE=false reverts instantly.
+    if (process.env.MONKEY_PHI_LEAKY_LIVE !== 'false') {
+      phi = updateLeakyPhi(state.phiLeaky ?? phi, bv);
+      state.phiLeaky = phi;
+    }
     const couplingHealth = phi * (1 - Math.min(bv, 1));
     const kappaDelta = (couplingHealth - 0.5) * 5 - (bv - 0.2) * 10;
     state.kappa = Math.max(20, Math.min(120, state.kappa * 0.8 + (KAPPA_STAR + kappaDelta) * 0.2));
