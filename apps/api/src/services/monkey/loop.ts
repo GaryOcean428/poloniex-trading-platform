@@ -5199,12 +5199,16 @@ export class MonkeyKernel extends EventEmitter {
       // Commit a geometry-derived bracket on any owned row that lacks
       // one — side-aware TP/SL around the row's recorded entry price.
       if (frBracket && frBracket.tpDistance > 0 && frBracket.slDistance > 0) {
+        // Positional params arrive as Postgres type `unknown`; unary
+        // minus on `unknown` is ambiguous ("operator is not unique:
+        // - unknown"). Explicit ::numeric casts resolve it — entry_price
+        // is DECIMAL(30,18) = NUMERIC, so the arithmetic types match.
         await pool.query(
           `UPDATE autonomous_trades
               SET take_profit = entry_price + (CASE
-                    WHEN side IN ('long', 'buy') THEN $2 ELSE -$2 END),
+                    WHEN side IN ('long', 'buy') THEN $2::numeric ELSE -($2::numeric) END),
                   stop_loss   = entry_price + (CASE
-                    WHEN side IN ('long', 'buy') THEN -$3 ELSE $3 END)
+                    WHEN side IN ('long', 'buy') THEN -($3::numeric) ELSE $3::numeric END)
             WHERE reason LIKE 'monkey|kernel=monkey-position|%'
               AND status = 'open' AND symbol = $1
               AND take_profit IS NULL AND stop_loss IS NULL`,
