@@ -1,7 +1,7 @@
 /**
  * SIMULATION ONLY — This service runs virtual paper trading for SLE evaluation.
- * For live trade execution, use fullyAutonomousTrader.ts.
- * Do NOT add live order placement to this file.
+ * For live trade execution, the Monkey kernel (services/monkey/loop.ts) is
+ * authoritative. Do NOT add live order placement to this file.
  */
 
 import { EventEmitter } from 'events';

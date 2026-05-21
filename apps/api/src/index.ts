@@ -30,18 +30,14 @@ import qigRoutes from './routes/qig.js';
 import reconciliationRoutes from './routes/reconciliation.js';
 import riskRoutes from './routes/risk.js';
 import statusRoutes from './routes/status.js';
-import tradingSessionsRoutes from './routes/tradingSessions.js';
 import versionCheckRoutes from './routes/version-check.js';
 
 // Import services
 import { refreshKnownDatabaseCollationVersions } from './scripts/refreshCollationVersion.js';
 import { runAllMigrations } from './scripts/runMigrations.js';
-import { agentScheduler } from './services/agentScheduler.js';
-import { liveSignalEngine } from './services/liveSignalEngine.js';
 import { initBasinSyncBridge } from './services/monkey/basin_sync_redis_bridge.js';
 import { monkeyKernel, swingMonkey } from './services/monkey/loop.js';
 import paperTradingService from './services/paperTradingService.js';
-import { persistentTradingEngine } from './services/persistentTradingEngine.js';
 import { startPipelineHealthProbe } from './services/pipelineHealthProbe.js';
 import { stateReconciliationService } from './services/stateReconciliationService.js';
 import { maybeRunStartupBackfill } from './services/backfillStackedGhostPnl.js';
@@ -177,11 +173,10 @@ app.use('/api/backtest', backtestRoutes);
 app.use('/api/paper-trading', paperTradingRoutes);
 app.use('/api/risk', riskRoutes);
 app.use('/api/confidence-scoring', confidenceScoringRoutes);
-app.use('/api/trading-sessions', tradingSessionsRoutes);
 app.use('/api/status', statusRoutes);
 app.use('/api/debug', debugRoutes); // Debug, diagnostic, and test-balance routes (consolidated)
 app.use('/api/agent', agentRoutes); // Autonomous trading agent routes
-app.use('/api/autonomous', autonomousTraderRoutes); // Fully autonomous trading system
+app.use('/api/autonomous', autonomousTraderRoutes); // trade-history read (FAT control stripped 2026-05-21)
 app.use('/api/reconciliation', reconciliationRoutes); // State reconciliation service
 app.use('/api/monitoring', monitoringRoutes); // Monitoring and error tracking routes
 app.use('/api/governance', governanceRoutes); // Operator-facing kernel observability (sleep-state, parity logs)
@@ -310,24 +305,16 @@ const gracefulShutdown = (signal: string): void => {
     process.exit(1);
   }, 10000); // 10 second timeout
 
-  // First, stop the trading engine
-  persistentTradingEngine.stop().then(() => {
-    logger.info('Trading engine stopped');
+  // Close Socket.IO to disconnect all websocket connections
+  io.close(() => {
+    logger.info('Socket.IO server closed');
 
-    // Then close Socket.IO to disconnect all websocket connections
-    io.close(() => {
-      logger.info('Socket.IO server closed');
-
-      // Then close the HTTP server
-      server.close(() => {
-        logger.info('HTTP server closed');
-        clearTimeout(forceExitTimeout);
-        process.exit(0);
-      });
+    // Then close the HTTP server
+    server.close(() => {
+      logger.info('HTTP server closed');
+      clearTimeout(forceExitTimeout);
+      process.exit(0);
     });
-  }).catch(error => {
-    logger.error('Error stopping trading engine:', error);
-    process.exit(1);
   });
 };
 
@@ -417,73 +404,28 @@ server.listen(PORT, '::', async () => {
   };
   scheduleReconciliation();
 
-  // Persistent trading engine — pre-2026 batch-SLE engine. Disabled by
-  // default after 2026-05-02 architectural decision: monkey-swing is the
-  // sole profitable engine over 24h (+$4.57 over 170 closes). Re-enable
-  // with PERSISTENT_TRADING_ENABLE=true.
-  if (process.env.PERSISTENT_TRADING_ENABLE === 'true') {
-    persistentTradingEngine.start().catch(error => {
-      logger.error('Failed to start persistent trading engine:', error);
-    });
-  } else {
-    logger.info('[startup] persistent trading engine disabled — set PERSISTENT_TRADING_ENABLE=true to enable');
-  }
-
-  // Agent scheduler — restores per-user FAT sessions from DB. Disabled by
-  // default after 2026-05-02 stale-orphan incident: FAT opened shorts that
-  // couldn't be reconciled to a DB trade_id, so Monkey couldn't close them
-  // and FAT itself had no exit logic for the orphan state. Re-enable with
-  // AGENT_SCHEDULER_ENABLE=true once FAT has a deterministic exit path.
-  if (process.env.AGENT_SCHEDULER_ENABLE === 'true') {
-    agentScheduler.start().catch(error => {
-      logger.error('Failed to start agent scheduler:', error);
-    });
-  } else {
-    logger.info('[startup] agent scheduler disabled — set AGENT_SCHEDULER_ENABLE=true to enable');
-  }
-
   // Initialize paper trading service (loads active sessions, subscribes to market data)
   paperTradingService.initialize().catch(error => {
     logger.error('Failed to initialize paper trading service:', error);
   });
 
-  // Pipeline health probe: converts silent failures into pagable alerts.
-  // Catches the "paper mode selected but zero paper trades" bug class
-  // within minutes instead of weeks. The predicate gates the trades-
-  // floor alert on BOTH the engine being up AND the pipeline having
-  // recently produced (or currently having) paper-eligible strategies —
-  // this suppresses the startup false-positive where alerting fires
-  // just because no strategy has cleared backtest yet.
+  // Pipeline health probe: converts silent failures into pageable
+  // alerts — catches the "paper mode selected but zero paper trades"
+  // bug class within minutes. The predicate gates the trades-floor
+  // alert on the SLE pipeline having recently produced (or currently
+  // holding) paper-eligible strategies, so it doesn't false-fire at
+  // startup before any strategy clears backtest. The predicate's old
+  // `persistentTradingEngine.isEngineRunning()` clause was dropped
+  // 2026-05-21 with that engine — the SLE paper pipeline is the
+  // remaining producer.
   if (process.env.NODE_ENV !== 'test') {
-    startPipelineHealthProbe(
-      undefined,
-      async () => {
-        if (!persistentTradingEngine.isEngineRunning()) return false;
-        return shouldExpectPaperTrades();
-      },
-    );
+    startPipelineHealthProbe(undefined, async () => shouldExpectPaperTrades());
   }
 
-  // Live Signal Engine — ML-signal-primary fast loop. Disabled by default
-  // after 2026-05-02 architectural decision (its exit gate `ml_signal_flip`
-  // can't fire on a SHORT held against a BUY-leaning ML signal, leaving
-  // positions stranded). Two-flag control: LIVE_SIGNAL_ENABLE gates the
-  // engine entirely; LIVE_SIGNAL_EXECUTE flips dry-run vs live execution.
+  // Monkey v0.6b — two parallel sub-kernels sharing the bank + bus:
+  //   Position (15 m, slow, patient) and Swing (5 m, tactical).
+  // Sole trading engine — FAT / LiveSignal / Persistent stripped 2026-05-21.
   if (process.env.NODE_ENV !== 'test') {
-    if (process.env.LIVE_SIGNAL_ENABLE === 'true') {
-      liveSignalEngine.start({
-        dryRun: process.env.LIVE_SIGNAL_EXECUTE !== 'true',
-      }).catch((err) => {
-        logger.error('Failed to start live signal engine:', err);
-      });
-    } else {
-      logger.info('[startup] live signal engine disabled — set LIVE_SIGNAL_ENABLE=true to enable');
-    }
-
-    // Monkey v0.6b — two parallel sub-kernels sharing the bank + bus:
-    //   Position (15 m, slow, patient) and Swing (5 m, tactical).
-    // They share the 5× exposure cap via sizeFraction=0.5 each.
-    // Sole always-on trading engine post-2026-05-02; the others gate above.
     monkeyKernel.start().catch((err) => {
       logger.error('Failed to start Monkey.Position kernel:', err);
     });

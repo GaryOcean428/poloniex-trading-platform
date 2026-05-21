@@ -1,16 +1,14 @@
 /**
  * loop.ts — Monkey's heartbeat
  *
- * Observe-only in v0.1: Monkey runs alongside liveSignalEngine on the
- * same 60s cadence, with the same market data. She produces decisions
- * (enter/exit/hold/flatten with size+leverage), logs them to
- * monkey_decisions, updates her working memory + resonance bank, but
- * does NOT execute orders.
+ * Monkey is the sole live execution engine. Each 60s tick she produces
+ * decisions (enter/exit/hold/flatten with size+leverage), logs them to
+ * monkey_decisions, updates her working memory + resonance bank, and
+ * executes orders through the shared risk kernel.
  *
- * This gives us a side-by-side comparison: for every tick, what did
- * liveSignalEngine do vs what did Monkey propose. When her emergent
- * params consistently land in sensible territory, we promote her to
- * primary (MONKEY_PRIMARY=true env flag).
+ * History: in v0.1 she ran observe-only alongside the legacy LiveSignal
+ * engine for a side-by-side comparison. LiveSignal was removed
+ * 2026-05-21; Monkey now runs as primary.
  *
  * UCP v6.6 protocol compliance:
  *   §0 (thermodynamic pressure): desire = equity gradient
@@ -197,7 +195,7 @@ import {
   getMaxContractsPerPosition,
 } from './positionContractsBound.js';
 
-/** Default Monkey watchlist — matches liveSignalEngine for side-by-side. */
+/** Default Monkey watchlist. */
 const DEFAULT_SYMBOLS = ['BTC_USDT_PERP', 'ETH_USDT_PERP'];
 
 /**
@@ -566,8 +564,8 @@ interface SymbolState {
    *  extensibility. < 2 entries → integration motivator = 0. */
   integrationHistory: Array<[number, number]>;
   /** v0.8.7e: latest computed basinDir + tapeTrend from processSymbol, with
-   *  timestamp. Exposed via getLatestBasinSnapshot() for LiveSignal's
-   *  inter-engine agreement gate. Null until the first tick completes. */
+   *  timestamp. Exposed via getLatestBasinSnapshot() for the kernel's own
+   *  inter-tick agreement gate. Null until the first tick completes. */
   latestBasinSnapshot: {
     basinDir: number;
     tapeTrend: number;
@@ -1022,10 +1020,8 @@ export class MonkeyKernel extends EventEmitter {
   }
 
   /**
-   * Start Monkey's heartbeat. She ticks alongside liveSignalEngine —
-   * same data, same cadence, different (emergent) decisions.
-   *
-   * In v0.1 she's observe-only. MONKEY_EXECUTE=true swaps her in.
+   * Start Monkey's heartbeat — the 60s tick that drives all live
+   * execution. MONKEY_EXECUTE gates whether ticks place real orders.
    */
   async start(): Promise<void> {
     for (const sym of this.symbols) {
@@ -1173,11 +1169,10 @@ export class MonkeyKernel extends EventEmitter {
    * tape trend for a symbol. Returns null if the kernel hasn't ticked
    * that symbol yet, or if the snapshot is too stale (caller's problem).
    *
-   * Used by liveSignalEngine's ml_signal_flip exit gate to require
-   * Monkey-basin agreement before closing a position (prevents the
-   * LiveSignal-closes-then-Monkey-reopens yo-yo observed in the
-   * 2026-04-24 trading log — 30 trades in 5h, net PNL -0.26 USDT
-   * from fee churn).
+   * Feeds the kernel's own inter-tick agreement gate — requiring
+   * basin agreement before closing a position prevents the
+   * close-then-reopen yo-yo observed in the 2026-04-24 trading log
+   * (30 trades in 5h, net PNL -0.26 USDT from fee churn).
    */
   getLatestBasinSnapshot(symbol: string): {
     basinDir: number;
@@ -1654,7 +1649,7 @@ export class MonkeyKernel extends EventEmitter {
 
     state.sessionTicks++;
 
-    // 1. Fetch inputs (same as liveSignalEngine sees).
+    // 1. Fetch inputs.
     const ohlcv = (await poloniexFuturesService.getHistoricalData(
       symbol,
       this.timeframe,
@@ -1791,10 +1786,10 @@ export class MonkeyKernel extends EventEmitter {
       this.mlOutageStreak = 0;
     }
 
-    // Account context (also shared with liveSignalEngine).
+    // Account context.
     // NOTE: exchangeHeldSide is the SHARED exchange position state —
-    // includes positions held by liveSignalEngine and any other engine.
-    // Do NOT use it to gate Monkey's entry logic (2026-04-21 bug: she
+    // includes positions opened directly by the operator or any other
+    // source. Do NOT use it to gate Monkey's entry logic (2026-04-21 bug: she
     // was locked out any time liveSignal held a position). Use it only
     // for perception inputs; her own held-side is derived per-kernel
     // from findOpenMonkeyTrade below.
@@ -6809,7 +6804,7 @@ export class MonkeyKernel extends EventEmitter {
    * Execution path (v0.3): route Monkey's proposed entry through the
    * shared risk kernel, submit to Poloniex v3 futures, and persist the
    * row to autonomous_trades with reason prefix `monkey|...` so the
-   * reconciler + dashboard attribute it to her (not liveSignalEngine).
+   * reconciler + dashboard attribute it to her.
    *
    * Returns { executed, orderId, reason }. Callers should not throw on
    * veto — treat veto as the expected "she decided but kernel blocked"
@@ -7030,7 +7025,7 @@ export class MonkeyKernel extends EventEmitter {
       }
     }
 
-    // Load account + credentials like liveSignalEngine.loadAccountContext.
+    // Load account + credentials.
     let userId: string;
     let credentials: { apiKey: string; apiSecret: string; passphrase?: string };
     let kernelState: KernelAccountState;
@@ -7126,7 +7121,7 @@ export class MonkeyKernel extends EventEmitter {
       };
     }
 
-    // Risk kernel — same blast-door liveSignalEngine uses.
+    // Risk kernel — the shared blast-door all execution passes through.
     const order: KernelOrder = { symbol, side, notional: notionalUsdt, leverage, price: entryPrice };
     const mode = await getCurrentExecutionMode();
     const symbolMaxLeverage = (await getMaxLeverage(symbol)) ?? leverage;
@@ -7152,8 +7147,8 @@ export class MonkeyKernel extends EventEmitter {
       return { executed: false, orderId: null, reason: `veto:${decision.code}:${decision.reason}` };
     }
 
-    // Round quantity to the symbol's lot step. Same pattern liveSignalEngine
-    // follows after the 2026-04-19 `Param error sz` incident.
+    // Round quantity to the symbol's lot step — required after the
+    // 2026-04-19 `Param error sz` incident.
     let formattedSize = quantity;
     let symbolLotSize = 0;
     try {
@@ -7569,20 +7564,6 @@ export class MonkeyKernel extends EventEmitter {
 
     return { executed: true, orderId, reason: 'placed' };
   }
-
-  /**
-   * Bootstrap hook (v0.2): when liveSignalEngine closes a trade,
-   * attribute the outcome to the perception basin Monkey held at
-   * the moment of entry. This grows her resonance bank from the
-   * trading already happening — no new capital risk, sovereignty
-   * accrues, and the chicken-and-egg (size = Φ × sovereignty = 0)
-   * unsticks within hours instead of never.
-   *
-   * Restart-safe: reads the entry basin from monkey_trajectory, so
-   * a process restart between entry and exit is transparent.
-   *
-   * Called fire-and-forget from liveSignalEngine.reconcileClosedTrades.
-   */
 
   /**
    * Per-agent reward push helper (2026-05-16). Closes that touch

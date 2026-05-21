@@ -75,29 +75,10 @@ const AutonomousAgentDashboard: React.FC = () => {
   const [agentStatus, setAgentStatus] = useState<AgentStatus | null>(null);
   const [activity, setActivity] = useState<AgentActivity[]>([]);
   const [strategies, setStrategies] = useState<AgentStrategy[]>([]);
-  // C6/C7 — surface real LIVE-vs-PAPER state and detect stale baseline.
-  //  • /api/autonomous/status returns { enabled, config.paperTrading,
-  //    config.initialCapital } — drives the status badge AND the
-  //    baseline-divergence banner.
-  //  • /api/dashboard/balance returns { data.totalBalance } — compared
-  //    against initialCapital to detect drift > 20% which makes the
-  //    totalPnlPercent display absurd (e.g. 777% on a stale $440 baseline
-  //    while current equity is $91).
-  const [autonomousStatus, setAutonomousStatus] = useState<{
-    enabled: boolean;
-    paperTrading: boolean;
-    initialCapital: number | null;
-  } | null>(null);
-  const [currentBalance, setCurrentBalance] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastPolled, setLastPolled] = useState<Date | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<'connected' | 'disconnected' | 'polling'>('polling');
-  // Baseline-rebase action state — drives the "Reset baseline" CTA in the
-  // stale-baseline banner. Tracks the in-flight POST so we can disable the
-  // button + show feedback on success/failure.
-  const [rebasing, setRebasing] = useState<boolean>(false);
-  const [rebaseMsg, setRebaseMsg] = useState<string | null>(null);
   const [circuitBreaker, setCircuitBreaker] = useState<{
     isTripped: boolean;
     reason?: string;
@@ -275,8 +256,6 @@ const AutonomousAgentDashboard: React.FC = () => {
     fetchStrategies();
     fetchHealth();
     fetchCapabilities();
-    fetchAutonomousStatus();
-    fetchCurrentBalance();
 
     // WebSocket real-time updates
     let socket: { on: (event: string, cb: (data: any) => void) => void; disconnect: () => void } | null = null;
@@ -329,8 +308,6 @@ const AutonomousAgentDashboard: React.FC = () => {
 
     const interval = setInterval(() => {
       fetchAgentStatus();
-      fetchAutonomousStatus();
-      fetchCurrentBalance();
       if (agentStatusRef.current === 'running') {
         fetchActivity();
         fetchStrategies();
@@ -363,76 +340,6 @@ const AutonomousAgentDashboard: React.FC = () => {
     } catch (_err: unknown) {
       consecutiveErrorsRef.current = Math.min(consecutiveErrorsRef.current + 1, MAX_CONSECUTIVE_ERRORS);
       setLastPolled(new Date());
-    }
-  };
-
-  // C6 — pull the authoritative LIVE/PAPER flag and the stored baseline
-  // from /api/autonomous/status. The /api/agent/status payload exposes
-  // status.trader.paperTrading but the autonomous endpoint also returns
-  // config.initialCapital (needed for the C7 divergence check), so we
-  // hit it once on mount + on poll ticks for a consistent snapshot.
-  const fetchAutonomousStatus = async () => {
-    try {
-      const response = await axios.get(`${API_BASE_URL}/api/autonomous/status`, {
-        headers: getAuthHeaders()
-      });
-      if (response.data.success) {
-        setAutonomousStatus({
-          enabled: !!response.data.enabled,
-          paperTrading: !!response.data.config?.paperTrading,
-          initialCapital:
-            typeof response.data.config?.initialCapital === 'number'
-              ? response.data.config.initialCapital
-              : null,
-        });
-      }
-    } catch {
-      // Non-critical — badge/banner just won't render.
-    }
-  };
-
-  // Reset the stored autonomous_trading_configs.initial_capital to the
-  // current futures equity. Invoked from the stale-baseline banner CTA
-  // when the user has added/removed capital from the exchange and the
-  // % P&L display is measuring against a now-meaningless baseline.
-  const rebaseBaselineToCurrent = async (newBaseline: number) => {
-    if (!Number.isFinite(newBaseline) || newBaseline <= 0) return;
-    setRebasing(true);
-    setRebaseMsg(null);
-    try {
-      const response = await axios.patch(
-        `${API_BASE_URL}/api/autonomous/config`,
-        { initialCapital: newBaseline },
-        { headers: getAuthHeaders() },
-      );
-      if (response.data.success) {
-        setRebaseMsg(`Baseline reset to $${safeNum(newBaseline).toFixed(2)}.`);
-        // Pull fresh status so the banner re-evaluates and disappears.
-        await fetchAutonomousStatus();
-      } else {
-        setRebaseMsg(
-          response.data.error || 'Reset failed for an unknown reason.',
-        );
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setRebaseMsg(`Reset failed: ${msg}`);
-    } finally {
-      setRebasing(false);
-    }
-  };
-
-  // C7 — current futures equity for baseline-divergence detection.
-  const fetchCurrentBalance = async () => {
-    try {
-      const response = await axios.get(`${API_BASE_URL}/api/dashboard/balance`, {
-        headers: getAuthHeaders()
-      });
-      if (response.data.success && typeof response.data.data?.totalBalance === 'number') {
-        setCurrentBalance(response.data.data.totalBalance);
-      }
-    } catch {
-      // Non-critical.
     }
   };
 
@@ -668,45 +575,6 @@ const AutonomousAgentDashboard: React.FC = () => {
             <p className="mt-2 opacity-90">
               AI-powered autonomous trading system using Claude Sonnet 4.5
             </p>
-            {/* C6 — capital-mode badge. Renders against the actual
-                {enabled, paperTrading} state pulled from
-                /api/autonomous/status, NOT the localStorage execution-mode
-                preference (which can disagree with the kernel's truth). */}
-            {autonomousStatus && (
-              (() => {
-                if (!autonomousStatus.enabled) {
-                  return (
-                    <span
-                      role="status"
-                      aria-label="Autonomous trading stopped"
-                      className="mt-3 inline-flex items-center gap-2 px-3 py-1 rounded-md bg-gray-800/60 text-gray-100 text-sm font-semibold border border-gray-500/40"
-                    >
-                      <span aria-hidden>⚫</span> STOPPED
-                    </span>
-                  );
-                }
-                if (autonomousStatus.paperTrading) {
-                  return (
-                    <span
-                      role="status"
-                      aria-label="Paper trading mode — simulated capital"
-                      className="mt-3 inline-flex items-center gap-2 px-3 py-1 rounded-md bg-yellow-100 text-yellow-900 text-sm font-semibold border border-yellow-300"
-                    >
-                      <span aria-hidden>🟡</span> PAPER — Simulated capital
-                    </span>
-                  );
-                }
-                return (
-                  <span
-                    role="status"
-                    aria-label="Live trading active — real capital at risk"
-                    className="mt-3 inline-flex items-center gap-2 px-3 py-1 rounded-md bg-red-600 text-white text-sm font-bold border-2 border-red-300 shadow-md animate-pulse"
-                  >
-                    <span aria-hidden>🔴</span> LIVE — REAL CAPITAL
-                  </span>
-                );
-              })()
-            )}
           </div>
 
           <div className="flex items-center gap-3">
@@ -745,64 +613,6 @@ const AutonomousAgentDashboard: React.FC = () => {
           </div>
         </div>
       </div>
-
-      {/* Baseline-divergence banner.
-          totalPnlPercent on this dashboard is computed against the
-          stored autonomous_trading_configs.initial_capital. If that
-          baseline is more than 20% off the current futures equity,
-          the % display goes nonsensical. Surface the diff + a one-
-          click reset CTA wired to PATCH /api/autonomous/config. */}
-      {autonomousStatus?.initialCapital !== undefined
-        && autonomousStatus?.initialCapital !== null
-        && autonomousStatus.initialCapital > 0
-        && currentBalance !== null
-        && currentBalance > 0
-        && (() => {
-          const drift = Math.abs(currentBalance - autonomousStatus.initialCapital!)
-            / autonomousStatus.initialCapital!;
-          if (drift <= 0.2) return null;
-          const direction = currentBalance > autonomousStatus.initialCapital! ? 'above' : 'below';
-          return (
-            <div
-              className="bg-amber-50 border border-amber-300 rounded-lg p-4 flex items-start gap-3"
-              role="alert"
-              aria-label="Stale baseline warning"
-            >
-              <AlertCircle className="w-6 h-6 text-amber-600 flex-shrink-0 mt-0.5" />
-              <div className="flex-1">
-                <h3 className="text-amber-800 font-semibold">Stale baseline detected</h3>
-                <p className="text-amber-700 text-sm mt-1">
-                  Stored baseline is{' '}
-                  <strong>${autonomousStatus.initialCapital!.toFixed(2)}</strong>
-                  {' '}but current equity is{' '}
-                  <strong>${safeNum(currentBalance).toFixed(2)}</strong>
-                  {' '}— a {safeNum(drift * 100).toFixed(0)}% drift {direction} the baseline.
-                  Reset to make the Total P&amp;L % accurate.
-                </p>
-                <div className="flex items-center gap-3 mt-3">
-                  <button
-                    type="button"
-                    onClick={() => rebaseBaselineToCurrent(safeNum(currentBalance))}
-                    disabled={rebasing}
-                    className="px-4 py-2 bg-amber-600 text-white rounded-md text-sm font-medium hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
-                  >
-                    {rebasing
-                      ? 'Resetting…'
-                      : `Reset baseline to $${safeNum(currentBalance).toFixed(2)}`}
-                  </button>
-                  {rebaseMsg && (
-                    <span
-                      className={`text-xs ${rebaseMsg.startsWith('Reset failed') ? 'text-red-700' : 'text-amber-800'}`}
-                      role="status"
-                    >
-                      {rebaseMsg}
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
-          );
-        })()}
 
       {/* Existing Session Banner */}
       {existingSession && (

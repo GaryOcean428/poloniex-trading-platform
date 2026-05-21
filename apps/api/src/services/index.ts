@@ -13,9 +13,7 @@ export * from './userService.js';
 
 // Trading Services
 export * from './backtestingEngine.js';
-export * from './fullyAutonomousTrader.js';
 export * from './paperTradingService.js';
-export * from './persistentTradingEngine.js';
 
 // Strategy Services
 export * from './strategyService.js';
@@ -44,7 +42,6 @@ export * from './riskService.js';
 export * from './profitBankingService.js';
 
 // Agent & Scheduling
-export * from './agentScheduler.js';
 export * from './agentSettingsService.js';
 
 // Automation

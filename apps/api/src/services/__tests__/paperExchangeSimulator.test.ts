@@ -22,8 +22,6 @@ describe('paperExchangeSimulator', () => {
   afterEach(() => {
     delete process.env.MONKEY_TRADING_PAUSED;
     delete process.env.MONKEY_PAPER_MODE;
-    delete process.env.LIVE_SIGNAL_EXECUTE;
-    delete process.env.LIVE_SIGNAL_PAPER_MODE;
   });
 
   it('paperPlaceOrder returns a synthetic order id prefixed paper-', async () => {
@@ -120,11 +118,4 @@ describe('paperExchangeSimulator', () => {
     expect(shouldRouteToPaper).toBe(false);
   });
 
-  it('LIVE_SIGNAL_EXECUTE=false with LIVE_SIGNAL_PAPER_MODE=true routes to paper execution', () => {
-    process.env.LIVE_SIGNAL_EXECUTE = 'false';
-    process.env.LIVE_SIGNAL_PAPER_MODE = 'true';
-    const dryRun = process.env.LIVE_SIGNAL_EXECUTE !== 'true';
-    const shouldUsePaper = dryRun && process.env.LIVE_SIGNAL_PAPER_MODE === 'true';
-    expect(shouldUsePaper).toBe(true);
-  });
 });

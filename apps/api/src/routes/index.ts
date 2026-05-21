@@ -12,7 +12,6 @@ export { default as futuresRoutes } from './futures.js';
 export { default as backtestRoutes } from './backtest.js';
 export { default as paperTradingRoutes } from './paper-trading.js';
 export { default as autonomousTraderRoutes } from './autonomousTrader.js';
-export { default as tradingSessionsRoutes } from './tradingSessions.js';
 
 // Strategy & Risk Management
 export { default as riskRoutes } from './risk.js';

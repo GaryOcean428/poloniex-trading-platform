@@ -5,7 +5,6 @@ import simpleMlService from '../services/simpleMlService.js';
 import poloniexFuturesService from '../services/poloniexFuturesService.js';
 import { strategyLearningEngine } from '../services/strategyLearningEngine.js';
 import parallelStrategyRunner from '../services/parallelStrategyRunner.js';
-import fullyAutonomousTrader from '../services/fullyAutonomousTrader.js';
 import { logger } from '../utils/logger.js';
 
 const router = express.Router();
@@ -278,35 +277,18 @@ router.post('/learning/recommendations/:strategyId/confirm', authenticateToken, 
       return res.status(401).json({ success: false, error: 'Unauthorized' });
     }
 
-    // Step 1: Update strategy status to 'live' in strategy_performance
+    // Update strategy status to 'live' in strategy_performance. The
+    // executor that historically acted on this promotion
+    // (fullyAutonomousTrader) was stripped 2026-05-21 — promotion is now
+    // a DB status change; the always-on Monkey kernel is the sole live
+    // executor.
+    void userId;
     const strategy = await strategyLearningEngine.confirmLivePromotion(strategyId);
-
-    // Step 2: Enable autonomous trader in live mode with the strategy's parameters
-    try {
-      await fullyAutonomousTrader.enableAutonomousTrading(userId, {
-        paperTrading: false,
-        symbols: [strategy.symbol],
-        leverage: strategy.leverage,
-      });
-      logger.info(`[SLE→FAT] Live trading enabled for user ${userId}, strategy ${strategyId}, symbol ${strategy.symbol}`);
-    } catch (fatErr: unknown) {
-      // If the trader fails to start (e.g. missing API keys), still return the
-      // promotion result so the UI reflects the DB change, but include the warning.
-      logger.warn(`[SLE→FAT] fullyAutonomousTrader.enableAutonomousTrading failed: ${fatErr instanceof Error ? fatErr.message : String(fatErr)}`);
-      // 202 Accepted: the DB promotion succeeded but execution has not yet started
-      return res.status(202).json({
-        success: true,
-        strategy,
-        message: 'Strategy promoted to live but autonomous trader could not start. Check API credentials.',
-        traderStarted: false,
-      });
-    }
 
     res.json({
       success: true,
       strategy,
-      message: `Strategy ${strategyId} promoted to live trading and autonomous trader started`,
-      traderStarted: true,
+      message: `Strategy ${strategyId} promoted to live (status flag).`,
     });
   } catch (error: unknown) {
     logger.error(`[SLE] confirm-live failed for ${req.params.strategyId}:`, error);
