@@ -3893,6 +3893,7 @@ export class MonkeyKernel extends EventEmitter {
           bankSize: bankSize ?? 0,
           consecutiveLosses: { self: 0, peer: 0 },  // wired via CB state in follow-up
           cumulativeLoss: { self: 0, peer: 0 },     // wired via CB state in follow-up
+          ownLean: direction,  // geometric lean — surfaced on holds too
         });
 
         consensusOverride = {
