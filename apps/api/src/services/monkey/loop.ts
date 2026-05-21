@@ -2426,7 +2426,20 @@ export class MonkeyKernel extends EventEmitter {
     const direction: Direction = kernelDirection({
       basinDir, tapeTrend, emotions,
     });
-    const sideCandidate: 'long' | 'short' = direction === 'flat' ? 'long' : direction;
+    // sideCandidate must be a concrete long|short. When `direction` is
+    // 'flat' (low conviction — confidence < anxiety — or an exactly-zero
+    // geometric signal) it is NOT hardcoded 'long': that was a
+    // structural long-bias — every low-conviction tick logged, threshold-
+    // indexed and (if it ever entered) traded long, even on a clearly
+    // falling market (basinDir/tape both negative). Instead tiebreak on
+    // the SAME geometric signal kernelDirection uses (basinDir +
+    // 0.5·tapeTrend), so the candidate side reflects the real — if weak —
+    // geometric lean. Symmetric: a flat-but-down tape reads 'short'. The
+    // conviction gate (kernelShouldEnter) still decides whether to act.
+    const sideCandidate: 'long' | 'short' =
+      direction !== 'flat'
+        ? direction
+        : (basinDir + 0.5 * tapeTrend >= 0 ? 'long' : 'short');
     const sideOverride = false;
     // Note: REVERSION mode flip lives only in the Python kernel (Tier 9
     // Stage 2 stud topology). TS does not implement REVERSION yet.
