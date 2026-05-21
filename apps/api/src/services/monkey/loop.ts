@@ -7439,12 +7439,16 @@ export class MonkeyKernel extends EventEmitter {
             `INSERT INTO autonomous_trades
                (user_id, symbol, side, entry_price, quantity, leverage,
                 confidence, reason, order_id, paper_trade, engine_version, agent, lane,
-                take_profit, stop_loss)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+                take_profit, stop_loss, engine_type)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
             [
               userId, symbol, exchangeSide, paper.fillPrice, formattedSize, leverage,
               req.phi, reasonEncoded, orderId, true, getEngineVersion(), agentTag, laneTag,
-              tpPrice, slPrice,
+              // engine_type — consensus WR-matrix key; must match
+              // consensus_arbiter `selfEngineType` ('monkey-k'). Without it
+              // the kernel's trades bucket under 'unknown' and the arbiter
+              // never reaches `self_min` → permanent no-trade-divergence.
+              tpPrice, slPrice, 'monkey-k',
             ],
           );
         } catch (err) {
@@ -7701,12 +7705,14 @@ export class MonkeyKernel extends EventEmitter {
         `INSERT INTO autonomous_trades
            (user_id, symbol, side, entry_price, quantity, leverage,
             confidence, reason, order_id, paper_trade, engine_version, agent, lane,
-            take_profit, stop_loss)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+            take_profit, stop_loss, engine_type)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
         [
           userId, symbol, exchangeSide, entryPrice, formattedSize, leverage,
           req.phi, reasonEncoded, orderId, false, getEngineVersion(), agentTag, laneTag,
-          tpPrice, slPrice,
+          // engine_type — consensus WR-matrix key; must match
+          // consensus_arbiter `selfEngineType` ('monkey-k').
+          tpPrice, slPrice, 'monkey-k',
         ],
       );
     } catch (err) {
