@@ -202,6 +202,65 @@ def get_recent_peer_proposal(symbol: str, self_instance_id: str) -> Optional[Pro
     return best
 
 
+def proposal_from_tick_decision(
+    *,
+    symbol: str,
+    instance_id: str,
+    action: str,
+    side: Optional[str],
+    size_usdt: float,
+    leverage: float,
+    entry_threshold: float,
+    basin_signature: list[float],
+    phi: float,
+    kappa: float,
+    mode: str,
+    tick_id: str,
+    lane: str = "swing",
+    conviction: float = 0.0,
+    regime_label: Optional[str] = None,
+    engine_version: str = "v0.8.7c-3-py",
+) -> ProposalEvent:
+    """Map a tick decision to a ProposalEvent for the consensus bus.
+
+    Normalises action variants to the canonical set used by the TS bus:
+      - pyramid_long / pyramid_short → enter_long / enter_short
+      - exit_long / exit_short / exit → exit
+      - everything else → hold
+
+    Mirrors the TS normalisation at loop.ts:3806-3818.
+    """
+    # Normalise action — same logic as loop.ts self-proposal block
+    if action in ("enter_long", "pyramid_long"):
+        normalised_action = "enter_long"
+    elif action in ("enter_short", "pyramid_short"):
+        normalised_action = "enter_short"
+    elif action == "exit" or action.startswith("exit"):
+        normalised_action = "exit"
+    else:
+        normalised_action = "hold"
+
+    return ProposalEvent(
+        instance_id=instance_id,
+        symbol=symbol,
+        tick_id=tick_id,
+        proposed_action=normalised_action,
+        side=side,
+        lane=lane,
+        size_usdt=size_usdt,
+        leverage=leverage,
+        entry_threshold=entry_threshold,
+        conviction=conviction,
+        basin_signature=list(basin_signature),
+        phi=phi,
+        kappa=kappa,
+        regime_label=regime_label,
+        mode=mode,
+        at_ms=time.time() * 1000.0,
+        engine_version=engine_version,
+    )
+
+
 def _reset_for_tests() -> None:
     """Test cleanup — clear peer proposals + publisher client."""
     global _publisher_client, _subscriber_task

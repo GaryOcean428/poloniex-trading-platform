@@ -176,6 +176,16 @@ export function getRecentPeerProposal(
   return best;
 }
 
+/**
+ * Test helper — directly inject a proposal into the in-process peer-proposal
+ * map without going through Redis. Used for unit tests that need to simulate
+ * a peer proposal being received without a live Redis connection.
+ */
+export function _injectPeerProposal(evt: ProposalEvent): void {
+  const key = `${evt.instance_id}|${evt.symbol}`;
+  _peerProposals.set(key, evt);
+}
+
 /** Test/cleanup helper — disconnect and reset state. */
 export async function _resetProposalBus(): Promise<void> {
   _peerProposals.clear();

@@ -1926,6 +1926,47 @@ async def monkey_tick_run(request: Request):
     )
     _symbol_states[key] = new_state
 
+    # ── Consensus proposal publish (Layer 1.5) ──
+    # Publish this kernel's proposal to Redis so the TS consensus arbiter
+    # (loop.ts CONSENSUS_EXECUTOR_LIVE block) can subscribe via
+    # getRecentPeerProposal(). Fire-and-forget; errors swallowed so they
+    # never break the tick. No-op when CONSENSUS_PROPOSAL_BUS_LIVE is off.
+    # Gated by CONSENSUS_PEER_FANOUT_LIVE on the TS side — the Python
+    # endpoint always publishes when the bus flag is on.
+    try:
+        from monkey_kernel.proposal_bus import (
+            proposal_from_tick_decision,
+            publish_proposal_sync,
+        )
+        _tick_id = f"{tick_inputs.symbol}|{new_state.session_ticks}"
+        _basin_sig = (
+            [float(x) for x in decision.basin[:8]]
+            if decision.basin is not None else []
+        )
+        # Map side_candidate to the ProposalEvent side field.
+        # side_candidate is 'long' | 'short' for entries; 'flat' or empty
+        # for holds/exits. The ProposalEvent side must be 'long' | 'short' | None.
+        _raw_side = decision.side_candidate
+        _side: str | None = _raw_side if _raw_side in ("long", "short") else None
+        _proposal_evt = proposal_from_tick_decision(
+            symbol=tick_inputs.symbol,
+            instance_id=instance_id,
+            action=decision.action,
+            side=_side,
+            size_usdt=float(decision.size_usdt or 0.0),
+            leverage=float(decision.leverage or 1.0),
+            entry_threshold=float(decision.entry_threshold or 0.5),
+            basin_signature=_basin_sig,
+            phi=float(decision.phi),
+            kappa=float(decision.kappa),
+            mode=str(decision.mode),
+            tick_id=_tick_id,
+            lane=str(decision.lane),
+        )
+        publish_proposal_sync(_proposal_evt)
+    except Exception as _pub_err:  # noqa: BLE001 — must never break the tick
+        logger.debug("[ProposalBus] tick publish failed: %s", _pub_err)
+
     # Persistence telemetry — what restored vs cold-started this tick.
     # Surfaced so post-deploy validation can confirm every key family
     # actually rehydrates on the first tick after a Railway redeploy.
