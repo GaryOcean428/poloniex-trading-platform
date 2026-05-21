@@ -3842,6 +3842,37 @@ export class MonkeyKernel extends EventEmitter {
       });
     } catch { /* fail-soft */ }
 
+    // ── Python peer kernel fanout (Consensus Layer 1.5, Task 4) ──
+    // CONSENSUS_PEER_FANOUT_LIVE flag-gated. Fan this tick's inputs to the
+    // Python /monkey/tick/run endpoint so the Py kernel can publish its own
+    // ProposalEvent to the same bus. The arbiter reads the peer proposal on
+    // the NEXT tick (freshness window = 60 s; one tick interval is ~5–30 s).
+    // Fire-and-forget — never awaited; Python kernel latency never blocks
+    // the TS orchestrator. Dark until CONSENSUS_PEER_FANOUT_LIVE is flipped.
+    try {
+      const { fanoutToPeerKernel } = await import('./peer_kernel_client.js');
+      void fanoutToPeerKernel({
+        instanceId: this.instanceId,
+        symbol,
+        ohlcv: (ohlcv as Array<{ timestamp: number; open: number; high: number; low: number; close: number; volume: number; }>),
+        account: {
+          equity_fraction: Number(equityFraction),
+          margin_fraction: Number(marginFraction),
+          open_positions: Number(openPositions),
+          available_equity: Number(availableEquity),
+          exchange_held_side: exchangeHeldSide ?? null,
+          own_position_entry_price: null,
+          own_position_quantity: null,
+          own_position_trade_id: null,
+        },
+        bankSize: Number(bankSize ?? 0),
+        sovereignty: Number(sovereignty ?? 0),
+        maxLeverage: Number(maxLevBoundary),
+        minNotional: Number(minNotional),
+        sizeFraction: Number(this.sizeFraction),
+      });
+    } catch { /* fail-soft */ }
+
     // ── Consensus arbiter cutover (Consensus Layer 7, CONSENSUS-9) ──
     // CONSENSUS_EXECUTOR_LIVE flag-gated. When live, the consensus
     // arbiter (consensus_arbiter.ts) is consulted with own + peer
