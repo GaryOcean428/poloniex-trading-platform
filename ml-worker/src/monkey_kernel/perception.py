@@ -25,6 +25,7 @@ version stays live until v0.7.10 cuts loop.ts over.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Sequence
 
@@ -84,6 +85,24 @@ def _norm01(x: float, scale: float = 1.0) -> float:
         return 0.5
     y = 1.0 / (1.0 + float(np.exp(-x / scale)))
     return max(0.0, min(1.0, y))
+
+
+# B1 (2026-05-21) — momentum basin coordinate: linear, expressive,
+# 0.5-neutral. Mirror of perception.ts:momentumCoord — see that file
+# for the full rationale. Summary: norm01's sigmoid saturated the
+# momentum band into [0.45,0.55] on the realized log-return
+# distribution → near-uniform basin → |basinDirection| < 0.05 → the
+# magnitude gates (M-agent, FAST_ADVERSE_EXIT) never fired. The linear
+# map keeps the 0.5 neutral (so basinDirection's #880 neutral is
+# unaffected) but is expressive. GAIN 50 = trendProxy's existing
+# log-return sensitivity.
+_MOMENTUM_GAIN = 50.0
+
+
+def _momentum_coord(log_ret: float) -> float:
+    if not np.isfinite(log_ret):
+        return 0.5
+    return max(0.02, min(1.0, 0.5 + _MOMENTUM_GAIN * log_ret))
 
 
 def _clip01(x: float) -> float:
@@ -155,9 +174,13 @@ def perceive(inputs: PerceptionInputs) -> np.ndarray:
     v[5] = 0.5 if sig == "HOLD" else max(0.01, 1.0 - inputs.ml_strength)
     v[6] = inputs.ml_effective_strength
 
-    # dims 7..14 — Momentum spectrum
+    # dims 7..14 — Momentum spectrum.
+    # B1: linear expressive encoding (_momentum_coord), flag-gated.
+    # MONKEY_PERCEPTION_EXPRESSIVE_LIVE=false reverts to norm01.
+    _expressive_mom = os.environ.get("MONKEY_PERCEPTION_EXPRESSIVE_LIVE") != "false"
     for i, n in enumerate([1, 2, 3, 5, 8, 13, 21, 34]):
-        v[7 + i] = _norm01(_log_return(ohlcv, n), 0.01)
+        _lr = _log_return(ohlcv, n)
+        v[7 + i] = _momentum_coord(_lr) if _expressive_mom else _norm01(_lr, 0.01)
 
     # dims 15..22 — Volatility spectrum
     for i, n in enumerate([4, 8, 14, 21, 34, 55, 89, 144]):

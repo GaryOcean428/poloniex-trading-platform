@@ -110,6 +110,40 @@ function norm01(x: number, scale: number = 1): number {
   return Math.min(1, Math.max(0, y));
 }
 
+/**
+ * B1 (2026-05-21) — momentum basin coordinate: linear, expressive,
+ * 0.5-neutral. Replaces the `norm01` sigmoid for the momentum band
+ * (dims 7..14).
+ *
+ * WHY: `norm01(logReturn, 0.01)` = sigmoid(logReturn·100) saturates.
+ * On the realized 15m log-return distribution (BTC+ETH, 1000 candles,
+ * 2026-05-21 — |logReturn| p50=0.0022, p90=0.0085) every momentum dim
+ * landed inside [0.45, 0.55] → near-uniform basin → |basinDirection|
+ * structurally pinned < 0.05. The magnitude gates that read it —
+ * M-agent and FAST_ADVERSE_EXIT (|basinDir| > 0.10), modes.ts
+ * `hasDirection` (> 0.30) — could therefore never fire (the operator-
+ * reported dead M-agent + dead loss-cut, 2026-05-21).
+ *
+ * FIX: linear `0.5 + GAIN·logReturn`. Keeps the exact 0.5 neutral
+ * (logReturn 0 → 0.5) so basinDirection's #880 observer-derived neutral
+ * is unaffected — only the momentum band changes, the volatility/volume
+ * peer bands are untouched, so the direction SIGN cannot invert. But it
+ * is expressive across the real range: p90 reaches 0.5±0.42, p99 clamps
+ * geometrically. GAIN = 50 is the log-return sensitivity `trendProxy()`
+ * already uses in this file — not a new intuition knob. Floor 0.02
+ * keeps the dim off the simplex boundary.
+ *
+ * §8 follow-up: GAIN becomes observer-derived from the rolling
+ * per-symbol log-return distribution. v1 freezes it at the trendProxy
+ * value (recomputable — recompute if the distribution shifts).
+ */
+const MOMENTUM_GAIN = 50;
+function momentumCoord(logRet: number): number {
+  if (!Number.isFinite(logRet)) return 0.5;
+  const y = 0.5 + MOMENTUM_GAIN * logRet;
+  return Math.min(1, Math.max(0.02, y));
+}
+
 function clip01(x: number): number {
   if (!Number.isFinite(x)) return 0;
   return Math.min(1, Math.max(0, x));
@@ -378,10 +412,15 @@ export function perceive(inputs: PerceptionInputs): Basin {
   v[5] = mlSignal === 'HOLD' ? 0.5 : Math.max(0.01, 1 - mlStrength);
   v[6] = mlEffectiveStrength;
 
-  // dims 7..14 — Momentum spectrum
+  // dims 7..14 — Momentum spectrum.
+  // B1: linear expressive encoding (momentumCoord) — flag-gated.
+  // MONKEY_PERCEPTION_EXPRESSIVE_LIVE=false reverts to the legacy
+  // norm01 sigmoid instantly. See momentumCoord for the rationale.
   const moms = [1, 2, 3, 5, 8, 13, 21, 34];
+  const expressiveMomentum = process.env.MONKEY_PERCEPTION_EXPRESSIVE_LIVE !== 'false';
   for (let i = 0; i < moms.length; i++) {
-    v[7 + i] = norm01(logReturn(ohlcv, moms[i]), 0.01);
+    const lr = logReturn(ohlcv, moms[i]);
+    v[7 + i] = expressiveMomentum ? momentumCoord(lr) : norm01(lr, 0.01);
   }
 
   // dims 15..22 — Volatility spectrum

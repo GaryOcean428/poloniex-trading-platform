@@ -68,6 +68,7 @@ import { detectMode, MODE_PROFILES, MonkeyMode } from './modes.js';
 import { computeMotivators } from './motivators.js';
 import { computeNeurochemicals, summarizeNC, type NeurochemicalState } from './neurochemistry.js';
 import { isPhiLeakyEnabled, updateLeakyPhi } from './phi_integrator.js';
+import { structuralVetoMonitor } from './structural_veto_monitor.js';
 import { mlAgentDecide } from '../ml_agent/decide.js';
 import type { MLAgentInputs } from '../ml_agent/types.js';
 import { Arbiter } from '../arbiter/arbiter.js';
@@ -2207,6 +2208,16 @@ export class MonkeyKernel extends EventEmitter {
       tapeTrend,
       computedAtMs: Date.now(),
     };
+
+    // B1 — structural-veto telemetry. The |basinDir| magnitude gates
+    // (M-agent + FAST_ADVERSE_EXIT at 0.10; modes.ts hasDirection at
+    // 0.30) sat always-false on the pre-B1 near-uniform basin — a dead
+    // gate invisible per-tick. Observing them surfaces the structural
+    // failure and confirms the expressive-momentum fix un-sticks it.
+    structuralVetoMonitor.observe(
+      `${this.instanceId}:${symbol}:basindir_mag_0.10`, Math.abs(basinDir) > 0.10);
+    structuralVetoMonitor.observe(
+      `${this.instanceId}:${symbol}:basindir_dir_0.30`, Math.abs(basinDir) > 0.30);
 
     // 2026-05-13 — MTF: down-sample basin into per-timeframe stores
     // (15m / 1h / 4h) and compute agreement-count decision. Phase 2
