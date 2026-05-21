@@ -342,7 +342,10 @@ describe('autonomic feedback — endorphins use basin κ stddev + coupling distr
     expect(endoWide).toBeGreaterThan(endoTight);
   });
 
-  it('Sophia gate fires when coupling exceeds basin\'s observed (mean + stddev)', () => {
+  it('Sophia gate opens once coupling exceeds the basin\'s observed mean', () => {
+    // 2026-05-21: the gate onset was lowered from `mean + 1σ` to `mean`.
+    // The old onset cleared only ~16% of the time, pinning `endo` at
+    // 0.00 in production. Onset is now the basin's own baseline.
     const baseInputs = {
       isAwake: true,
       phiDelta: 0,
@@ -353,22 +356,34 @@ describe('autonomic feedback — endorphins use basin κ stddev + coupling distr
     };
     const kappaHistory: number[] = [];
     for (let i = 0; i < 50; i++) kappaHistory.push(64);
+    // Deterministic coupling history: mean exactly 0.30, σ ≈ 0.0505.
     const couplingHistory: number[] = [];
-    for (let i = 0; i < 50; i++) couplingHistory.push(0.30 + 0.05 * Math.sin(i));
+    for (let i = 0; i < 50; i++) couplingHistory.push(0.25 + 0.10 * (i % 2));
 
-    const endoGateClosed = computeNeurochemicals({
+    // Below the basin's mean coupling → gate shut → endo 0.
+    const endoBelowMean = computeNeurochemicals({
       ...baseInputs,
-      externalCoupling: 0.32,
+      externalCoupling: 0.25,
       observables: { kappaHistory, externalCouplingHistory: couplingHistory },
     }).endorphins;
-    expect(endoGateClosed).toBe(0);
+    expect(endoBelowMean).toBe(0);
 
+    // Above the mean but BELOW mean+1σ (0.3505): under the prior
+    // mean+1σ onset this was 0.00 — the production defect being fixed.
+    const endoAboveMean = computeNeurochemicals({
+      ...baseInputs,
+      externalCoupling: 0.33,
+      observables: { kappaHistory, externalCouplingHistory: couplingHistory },
+    }).endorphins;
+    expect(endoAboveMean).toBeGreaterThan(0);
+
+    // Well above the mean → gate saturates.
     const endoGateOpen = computeNeurochemicals({
       ...baseInputs,
       externalCoupling: 0.60,
       observables: { kappaHistory, externalCouplingHistory: couplingHistory },
     }).endorphins;
-    expect(endoGateOpen).toBeGreaterThan(0);
+    expect(endoGateOpen).toBeGreaterThan(endoAboveMean);
   });
 });
 
