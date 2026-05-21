@@ -44,9 +44,9 @@ def basin_direction(basin: np.ndarray) -> float:
     and structurally suppresses short conviction. The new
     formulation computes a SIGNED, NORMALISED Fisher-Rao distance:
 
-      sign = sign(mom_mass - MOM_NEUTRAL)
-      antipode = a copy of ``basin`` with the momentum band flattened
-                 to its uniform expectation (no-momentum reference)
+      sign = sign(mom_mass - neutral_mom_mass)
+      antipode = a copy of ``basin`` with the momentum band rescaled
+                 to ``neutral_mom_mass`` (the no-momentum reference)
       d_FR = arccos(Σ √(basin · antipode))
       return sign * d_FR / (π/2)
 
@@ -71,10 +71,26 @@ def basin_direction(basin: np.ndarray) -> float:
     produced basinDir ≈ −1.0 on every tick. The 2026-04-24 fix
     introduced ``mom_mass - MOM_NEUTRAL`` then tanh-saturated; this
     proposal replaces that with the Fisher-Rao reprojection above.
+
+    BUG FIX (2026-05-21): the neutral reference was a hardcoded
+    ``MOM_NEUTRAL = 8/64`` — the momentum-band mass of a *uniform*
+    basin. perceive()'s real basin is not uniform: dims 39..54 are a
+    noise floor pinned at 0.0055 (sub-uniform), which forces every
+    other dim's mass share above uniform. So ``mom_mass`` exceeded
+    8/64 even on a flat market → ``sign`` pinned +1 → basinDir never
+    went negative → the live "only longs" bug (operator report,
+    2026-05-21). Fixed by deriving the neutral from the basin's own
+    direction-agnostic peer bands (volatility 15..22 + volume 23..30):
+    ``neutral_mom_mass = 8 × mean(p[15:31])``. Observer-derived, no
+    hardcoded knob (P1 / perception-workstream §8).
     """
     BASIN_DIM = 64
-    MOM_NEUTRAL = 8.0 / BASIN_DIM  # 0.125 — uniform mass on 8 momentum dims
     EPS = 1e-12
+    # Degenerate-basin fallback ONLY. The live neutral reference is
+    # observer-derived below (``neutral_mom_mass``). A hardcoded 8/64 is
+    # correct only for a uniform basin; perceive()'s sub-uniform noise
+    # floor breaks that — see the 2026-05-21 BUG FIX note above.
+    MOM_NEUTRAL_FALLBACK = 8.0 / BASIN_DIM
 
     arr = np.asarray(basin, dtype=np.float64)
     if arr.shape[0] != BASIN_DIM:
@@ -91,26 +107,40 @@ def basin_direction(basin: np.ndarray) -> float:
     p = arr / mass  # simplex-normalised basin
 
     mom_mass = float(np.sum(p[7:15]))
-    sign = 1.0 if mom_mass >= MOM_NEUTRAL else -1.0
 
-    # Build the no-momentum antipode: rescale the momentum band so
-    # its total mass equals MOM_NEUTRAL (the uniform-on-band
-    # expectation), and redistribute the surplus/deficit uniformly
-    # across the 56 non-momentum dims. The antipode stays on Δ⁶³
-    # (sum = 1). Critically, when the basin's momentum band carries
-    # ABOVE-uniform mass — even if the band is internally flat — the
-    # antipode differs from the basin, so the Fisher-Rao distance
-    # captures the directional deviation.
+    # Observer-derived neutral reference (P1 — no hardcoded knob, per
+    # the perception-workstream §8 directive). The momentum band's mass
+    # when momentum is NEUTRAL equals 8× the per-dim mass of its
+    # direction-agnostic peer bands: volatility (15..22) and volume
+    # (23..30) carry magnitude, not sign. A hardcoded 8/64 holds only
+    # for a uniform basin; perceive()'s 16 noise-floor dims (39..54,
+    # pinned 0.0055) sit below uniform and force every other dim's
+    # share above uniform — so mom_mass exceeds 8/64 even on a flat
+    # market. Deriving the neutral from the basin's own peer bands
+    # self-corrects for whatever the noise floor does.
+    peer_mean = float(np.mean(p[15:31]))  # 16 direction-agnostic dims
+    neutral_mom_mass = (
+        8.0 * peer_mean if peer_mean > EPS else MOM_NEUTRAL_FALLBACK
+    )
+    sign = 1.0 if mom_mass >= neutral_mom_mass else -1.0
+
+    # Build the no-momentum antipode: rescale the momentum band so its
+    # total mass equals ``neutral_mom_mass`` (the observer-derived
+    # no-momentum reference), and redistribute the surplus/deficit
+    # uniformly across the 56 non-momentum dims. The antipode stays on
+    # Δ⁶³ (sum = 1). When the momentum band carries above-neutral mass
+    # — even if internally flat — the antipode differs from the basin,
+    # so the Fisher-Rao distance captures the directional deviation.
     antipode = p.copy()
     band_n = 8
     nonband_n = BASIN_DIM - band_n  # 56
-    excess = mom_mass - MOM_NEUTRAL
+    excess = mom_mass - neutral_mom_mass
     if mom_mass > EPS:
-        # Scale momentum band down to MOM_NEUTRAL total.
-        antipode[7:15] = p[7:15] * (MOM_NEUTRAL / mom_mass)
+        # Scale momentum band to the observer-derived neutral total.
+        antipode[7:15] = p[7:15] * (neutral_mom_mass / mom_mass)
     else:
         # Degenerate basin (zero mass on momentum band) — flatten band.
-        antipode[7:15] = MOM_NEUTRAL / band_n
+        antipode[7:15] = neutral_mom_mass / band_n
     # Redistribute the excess across the non-momentum dims.
     if nonband_n > 0:
         non_mask = np.ones(BASIN_DIM, dtype=bool)
