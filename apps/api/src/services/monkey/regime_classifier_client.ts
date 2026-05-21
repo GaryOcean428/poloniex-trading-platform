@@ -24,6 +24,15 @@ export type CanonicalRegime = 'creator' | 'preserver' | 'dissolver';
 
 export interface RegimeClassification {
   regime: CanonicalRegime;
+  /**
+   * Continuous 3-way regime membership from the soft observer (CAL-3).
+   * Sums to ~1. `null` during the observer's warmup or when the
+   * ml-worker omits it — perception then falls back to a one-hot of
+   * the hard `regime` label. Encoding this continuously on basin dims
+   * 0-2 is what keeps downstream neurochemistry off the rails (e.g.
+   * `gaba = 1 - quantumWeight` was binary while the regime was one-hot).
+   */
+  scores: { creator: number; preserver: number; dissolver: number } | null;
   h: number;
   j: number;
   observer: {
@@ -46,6 +55,27 @@ const _cache = new Map<string, CacheEntry>();
 /** Test/cleanup helper. */
 export function _resetClassifierCache(): void {
   _cache.clear();
+}
+
+/**
+ * Parse + validate the optional soft 3-way regime membership from an
+ * ml-worker response. Returns null unless all three components are
+ * finite, non-negative, and sum to > 0 — a partial / NaN / all-zero
+ * payload must not poison the continuous encoding (perception then
+ * falls back to the hard one-hot label). Exported for unit testing.
+ */
+export function parseRegimeScores(
+  rs: unknown,
+): { creator: number; preserver: number; dissolver: number } | null {
+  if (!rs || typeof rs !== 'object') return null;
+  const o = rs as Record<string, unknown>;
+  const c = Number(o.creator);
+  const p = Number(o.preserver);
+  const d = Number(o.dissolver);
+  if ([c, p, d].every((x) => Number.isFinite(x) && x >= 0) && c + p + d > 0) {
+    return { creator: c, preserver: p, dissolver: d };
+  }
+  return null;
 }
 
 /**
@@ -87,6 +117,7 @@ export async function classifyPrices(
     }
     const body = await res.json() as {
       regime?: string;
+      regime_scores?: { creator?: number; preserver?: number; dissolver?: number } | null;
       h?: number;
       j?: number;
       observer_state?: { n?: number; warm?: boolean; lower?: number | null; upper?: number | null };
@@ -98,6 +129,7 @@ export async function classifyPrices(
     }
     const classification: RegimeClassification = {
       regime,
+      scores: parseRegimeScores(body.regime_scores),
       h: Number(body.h ?? 0),
       j: Number(body.j ?? 0),
       observer: {

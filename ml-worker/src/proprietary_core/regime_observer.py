@@ -221,6 +221,49 @@ class RegimeObserver:
         bounds = self._discover_bounds(snap)
         return n, bounds
 
+    def soft_scores(self, ratio: float) -> Optional[dict[str, float]]:
+        """Continuous 3-way regime membership for ``ratio``.
+
+        The hard ``_navigate`` buckets a tick's h/J ratio into exactly
+        one tercile. Downstream consumers (TS perception → basin dims
+        0-2 → neurochemistry) then only ever see three discrete states,
+        which pins derived signals like ``gaba = 1 - quantum_weight``.
+
+        Soft variant: place the ratio's percentile rank ``p`` in the
+        observed window onto a triangular partition-of-unity over the
+        three regimes:
+
+            p → 0    ordered    (PRESERVER)
+            p → 0.5  critical   (CREATOR)
+            p → 1    disordered (DISSOLVER)
+
+        Pure arithmetic, sums to 1 by construction, no exp-normalization
+        (the neurochemistry layer that ultimately consumes this forbids
+        exp-softmax — keep the whole regime path consistent).
+
+        Returns None during warmup or when the ratio is degenerate
+        (non-finite) — the caller falls back to the hard one-hot label.
+        """
+        if not np.isfinite(ratio):
+            return None
+        with self._lock:
+            window = [r for r in self._ratios if np.isfinite(r)]
+        if len(window) < self.warmup:
+            return None
+        arr = np.asarray(window, dtype=np.float64)
+        # Percentile rank of this tick's ratio within the observed
+        # window — bounded [0, 1] regardless of the raw h/J scale.
+        p = float(np.count_nonzero(arr <= ratio)) / float(len(arr))
+        # Triangular partition of unity on p ∈ [0, 1].
+        m_preserver = max(0.0, 1.0 - 2.0 * p)
+        m_creator = 1.0 - abs(2.0 * p - 1.0)
+        m_dissolver = max(0.0, 2.0 * p - 1.0)
+        return {
+            "creator": m_creator,
+            "preserver": m_preserver,
+            "dissolver": m_dissolver,
+        }
+
     def reset(self) -> None:
         """Test helper — clear the rolling buffer."""
         with self._lock:
@@ -243,6 +286,23 @@ def classify_via_observer(
 def observer_snapshot() -> tuple[int, Optional[RegimeBoundaries]]:
     """Diagnostic accessor for /governance/status surfacing."""
     return _observer.snapshot()
+
+
+def observer_soft_scores(
+    h_value: float, j_value: float,
+) -> Optional[dict[str, float]]:
+    """Continuous regime membership for the current (h, J).
+
+    Read-only: does NOT append to the observation window.
+    ``classify_via_observer`` already observed this tick — calling this
+    afterwards scores the same ratio against the (post-append) window.
+    Returns None during warmup / degenerate coupling.
+    """
+    if j_value > 1e-12:
+        ratio = h_value / j_value
+    else:
+        ratio = float("inf")
+    return _observer.soft_scores(ratio)
 
 
 def _reset_observer() -> None:

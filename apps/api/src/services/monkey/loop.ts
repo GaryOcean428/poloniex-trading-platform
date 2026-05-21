@@ -1826,12 +1826,18 @@ export class MonkeyKernel extends EventEmitter {
     // 0/1/2. Classifier unreachable → null → perception emits a
     // uniform 1/3 prior on dims 0/1/2.
     let canonicalRegime: 'creator' | 'preserver' | 'dissolver' | null = null;
+    let canonicalRegimeScores:
+      | { creator: number; preserver: number; dissolver: number }
+      | null = null;
     try {
       const { classifyPrices } = await import('./regime_classifier_client.js');
       const closes = ohlcv.map((c) => c.close);
       const cls = await classifyPrices(symbol, closes);
       if (cls) {
         canonicalRegime = cls.regime;
+        // Soft 3-way membership (null during observer warmup) — lets
+        // perception encode dims 0-2 continuously instead of one-hot.
+        canonicalRegimeScores = cls.scores;
       }
     } catch (err) {
       logger.debug('[perception] regime classifier fetch failed', {
@@ -1846,6 +1852,7 @@ export class MonkeyKernel extends EventEmitter {
       openPositions,
       sessionAgeTicks: state.sessionTicks,
       canonicalRegime,
+      canonicalRegimeScores,
     });
 
     // §3.3 Pillar 2 surface absorption — external input at 30% max

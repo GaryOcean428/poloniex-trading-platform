@@ -89,6 +89,15 @@ export interface PerceptionInputs {
    * (cached client; <15s staleness). null = legacy path.
    */
   canonicalRegime?: 'creator' | 'preserver' | 'dissolver' | null;
+  /**
+   * PERCEPTION-1 (soft): continuous 3-way regime membership from the
+   * CAL-3 soft observer. When present, dims 0/1/2 encode this
+   * continuous distribution instead of a one-hot of `canonicalRegime`
+   * — which keeps downstream signals (quantumWeight → gaba, basin
+   * entropy → Φ) continuous instead of quantised. null/absent →
+   * one-hot fallback. Sums to ~1; need not be exactly normalised.
+   */
+  canonicalRegimeScores?: { creator: number; preserver: number; dissolver: number } | null;
 }
 
 /**
@@ -296,26 +305,39 @@ export function perceive(inputs: PerceptionInputs): Basin {
   const mlStrength = inputs.mlStrength ?? 0;
   const mlEffectiveStrength = inputs.mlEffectiveStrength ?? 0;
 
-  // dims 0..2 — Three regimes (canonical one-hot from observer-driven
-  // classifier; CAL-3 + PERCEPTION-1). Indices match canonical
-  // Python ordering:
+  // dims 0..2 — Three regimes (canonical, observer-driven classifier;
+  // CAL-3 + PERCEPTION-1). Indices match canonical Python ordering:
   //   0 = CREATOR    1 = PRESERVER    2 = DISSOLVER
   //
   // Caller (loop.ts) fetches the classification from ml-worker's
-  // POST /regime/classify_prices (cached per symbol) and passes the
-  // label here. ε=1e-3 padding keeps the simplex non-degenerate for
-  // the downstream toSimplex normaliser.
+  // POST /regime/classify_prices (cached per symbol). ε=1e-3 padding
+  // keeps the simplex non-degenerate for the downstream toSimplex
+  // normaliser.
   //
-  // When the classifier is unreachable, canonicalRegime is null and
-  // we emit a uniform 1/3-each prior — the safest interim until the
-  // next /regime/classify_prices succeeds.
+  // PREFERRED — continuous: when the soft observer supplies a 3-way
+  // membership (`canonicalRegimeScores`), encode it CONTINUOUSLY. A
+  // one-hot label snaps dims 0-2 to a fixed (winner, loser, loser)
+  // triple every tick, which quantises everything derived from them
+  // (quantumWeight → gaba went binary; basin entropy → Φ pinned).
+  // The soft scores move tick-to-tick, so dims 0-2 carry live signal.
   //
-  // The prior ATR/trend×ml/residual encoding had three known bugs
-  // (mlEffectiveStrength always 0, label collision with canonical,
-  // hardcoded *10 magnification) and was retired in full. No
-  // flag-gated dual-path soak: canonical is the only path.
+  // FALLBACK — one-hot: during the observer's warmup, or when the
+  // ml-worker omits scores, encode a one-hot of the hard `regime`
+  // label. Classifier unreachable entirely → uniform 1/3 prior.
   const epsilon = 1e-3;
-  if (inputs.canonicalRegime === 'creator') {
+  const scores = inputs.canonicalRegimeScores;
+  const scoreSum = scores
+    ? Math.max(0, scores.creator) + Math.max(0, scores.preserver) + Math.max(0, scores.dissolver)
+    : 0;
+  if (scores && scoreSum > 0) {
+    // Normalise to a simplex with an ε floor on each dim so no regime
+    // is exactly 0 (keeps toSimplex non-degenerate) while preserving
+    // the relative continuous weighting.
+    const span = 1 - 3 * epsilon;
+    v[0] = epsilon + span * (Math.max(0, scores.creator) / scoreSum);
+    v[1] = epsilon + span * (Math.max(0, scores.preserver) / scoreSum);
+    v[2] = epsilon + span * (Math.max(0, scores.dissolver) / scoreSum);
+  } else if (inputs.canonicalRegime === 'creator') {
     v[0] = 1 - 2 * epsilon; v[1] = epsilon; v[2] = epsilon;
   } else if (inputs.canonicalRegime === 'preserver') {
     v[0] = epsilon; v[1] = 1 - 2 * epsilon; v[2] = epsilon;
