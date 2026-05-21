@@ -1080,6 +1080,19 @@ export class MonkeyKernel extends EventEmitter {
     // seed is in place when tick 1 reads `state.phiLeaky`.
     await this.seedLeakyPhiFromHistory();
 
+    // Consensus proposal bus — start the Redis subscriber so peer
+    // proposals land in the in-process peer map. `publishProposal` and
+    // `getRecentPeerProposal` were already wired, but nothing ever
+    // called `initProposalBus()` — so the subscriber never connected and
+    // `getRecentPeerProposal()` always returned null, pinning every
+    // arbiter verdict to `single-kernel` even with a live peer fanout.
+    // Idempotent; no-ops when CONSENSUS_PROPOSAL_BUS_LIVE is off;
+    // fail-soft (connect errors are swallowed inside initProposalBus).
+    try {
+      const { initProposalBus } = await import('./proposal_bus.js');
+      await initProposalBus();
+    } catch { /* fail-soft — arbiter falls back to single-kernel */ }
+
     // 2026-05-13 MTF Phase 2 — bootstrap per-timeframe basin
     // histories from historical OHLCV so the 4h classifier doesn't
     // need 80 days of live ticks to warm up. Async + fail-soft;
