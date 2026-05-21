@@ -156,6 +156,79 @@ class TestZeroCouplingHandling:
         assert bounds.upper == float("inf")
 
 
+class TestSoftScores:
+    """Continuous 3-way regime membership. The hard ``_navigate`` buckets
+    a ratio into one tercile; ``soft_scores`` places its percentile rank
+    on a triangular partition-of-unity so downstream consumers see a
+    continuous distribution, not three discrete states."""
+
+    def _warm_observer(self) -> RegimeObserver:
+        """A RegimeObserver seeded with a uniform 0..100 ratio window."""
+        observer = RegimeObserver(window=_WARMUP_TICKS + 100, warmup=_WARMUP_TICKS)
+        fake = _fake_qig_warp("ordered")
+        with mock.patch.dict(sys.modules, {"qig_warp": fake}):
+            for r in np.linspace(0.0, 100.0, _WARMUP_TICKS + 100):
+                observer.observe_and_classify(h_value=r, j_value=1.0)
+        return observer
+
+    def test_warmup_returns_none(self) -> None:
+        """Before warmup there is no window to derive a percentile from."""
+        observer = RegimeObserver(window=_WARMUP_TICKS + 100, warmup=_WARMUP_TICKS)
+        assert observer.soft_scores(3.5) is None
+
+    def test_non_finite_ratio_returns_none(self) -> None:
+        """Zero-coupling (inf ratio) has no soft derivation — caller
+        falls back to the hard DISSOLVER label."""
+        observer = self._warm_observer()
+        assert observer.soft_scores(float("inf")) is None
+
+    def test_scores_are_a_partition_of_unity(self) -> None:
+        """creator + preserver + dissolver == 1 for any ratio."""
+        observer = self._warm_observer()
+        for ratio in (1.0, 10.0, 33.0, 50.0, 67.0, 90.0, 200.0):
+            scores = observer.soft_scores(ratio)
+            assert scores is not None
+            assert set(scores) == {"creator", "preserver", "dissolver"}
+            assert all(v >= 0.0 for v in scores.values())
+            assert sum(scores.values()) == pytest.approx(1.0, abs=1e-9)
+
+    def test_low_ratio_favours_preserver(self) -> None:
+        """Bottom of the window → ordered → PRESERVER dominant."""
+        observer = self._warm_observer()
+        scores = observer.soft_scores(5.0)
+        assert scores is not None
+        assert scores["preserver"] > scores["creator"]
+        assert scores["preserver"] > scores["dissolver"]
+
+    def test_median_ratio_favours_creator(self) -> None:
+        """Middle of the window → critical → CREATOR dominant."""
+        observer = self._warm_observer()
+        scores = observer.soft_scores(50.0)
+        assert scores is not None
+        assert scores["creator"] > scores["preserver"]
+        assert scores["creator"] > scores["dissolver"]
+
+    def test_high_ratio_favours_dissolver(self) -> None:
+        """Top of the window → disordered → DISSOLVER dominant."""
+        observer = self._warm_observer()
+        scores = observer.soft_scores(95.0)
+        assert scores is not None
+        assert scores["dissolver"] > scores["creator"]
+        assert scores["dissolver"] > scores["preserver"]
+
+    def test_scores_are_continuous_across_ratios(self) -> None:
+        """The defect being fixed: a small ratio change must move the
+        scores continuously, not snap between discrete states."""
+        observer = self._warm_observer()
+        a = observer.soft_scores(48.0)
+        b = observer.soft_scores(52.0)
+        assert a is not None and b is not None
+        # Distinct (not snapped to the same triple) yet close (continuous).
+        assert a != b
+        for key in ("creator", "preserver", "dissolver"):
+            assert abs(a[key] - b[key]) < 0.25
+
+
 class TestObserverSnapshotDiagnostic:
     def test_snapshot_returns_n_and_bounds(self) -> None:
         """Used by /governance/status to surface the observer state."""

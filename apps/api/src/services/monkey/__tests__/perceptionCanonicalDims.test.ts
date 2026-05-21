@@ -80,3 +80,67 @@ describe('perception canonical dims', () => {
     expect(basin[1]).toBeCloseTo(basin[2]!, 4);
   });
 });
+
+describe('perception canonical dims — continuous soft scores', () => {
+  const base = {
+    ohlcv: syntheticOhlcv(100),
+    equityFraction: 1, marginFraction: 0, openPositions: 0, sessionAgeTicks: 0,
+  };
+
+  it('soft scores encode dims 0/1/2 in proportion (creator-heavy)', () => {
+    const basin = perceive({
+      ...base,
+      canonicalRegime: 'creator',
+      canonicalRegimeScores: { creator: 0.5, preserver: 0.3, dissolver: 0.2 },
+    });
+    expect(basin[0]).toBeGreaterThan(basin[1]!);
+    expect(basin[1]).toBeGreaterThan(basin[2]!);
+  });
+
+  it('soft scores are continuous — a near-even triple is NOT pinned to a one-hot', () => {
+    // The defect being fixed: one-hot snapped the loser dims to ~ε.
+    // With continuous scores, every dim carries real weight.
+    const basin = perceive({
+      ...base,
+      canonicalRegime: 'creator',
+      canonicalRegimeScores: { creator: 0.4, preserver: 0.35, dissolver: 0.25 },
+    });
+    // Smallest dim is a substantial fraction of the largest — not ~ε.
+    expect(basin[2]! / basin[0]!).toBeGreaterThan(0.3);
+    // And distinct from the one-hot encoding of the same label.
+    const oneHot = perceive({ ...base, canonicalRegime: 'creator' });
+    expect(basin[2]! / basin[0]!).toBeGreaterThan(oneHot[2]! / oneHot[0]! * 10);
+  });
+
+  it('soft scores take precedence over the hard canonicalRegime label', () => {
+    // Label says creator, but scores say dissolver-dominant → dim 2 wins.
+    const basin = perceive({
+      ...base,
+      canonicalRegime: 'creator',
+      canonicalRegimeScores: { creator: 0.2, preserver: 0.2, dissolver: 0.6 },
+    });
+    expect(basin[2]).toBeGreaterThan(basin[0]!);
+    expect(basin[2]).toBeGreaterThan(basin[1]!);
+  });
+
+  it('null soft scores → falls back to one-hot of the hard label', () => {
+    const basin = perceive({
+      ...base,
+      canonicalRegime: 'preserver',
+      canonicalRegimeScores: null,
+    });
+    expect(basin[1]).toBeGreaterThan(basin[0]!);
+    expect(basin[1]).toBeGreaterThan(basin[2]!);
+    expect(basin[0]).toBeCloseTo(basin[2]!, 4);
+  });
+
+  it('degenerate zero-sum soft scores → one-hot fallback (no divide-by-zero)', () => {
+    const basin = perceive({
+      ...base,
+      canonicalRegime: 'dissolver',
+      canonicalRegimeScores: { creator: 0, preserver: 0, dissolver: 0 },
+    });
+    expect(Number.isFinite(basin[0]!)).toBe(true);
+    expect(basin[2]).toBeGreaterThan(basin[0]!);  // fell back to dissolver one-hot
+  });
+});

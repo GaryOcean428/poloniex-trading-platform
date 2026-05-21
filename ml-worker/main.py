@@ -680,7 +680,7 @@ async def regime_classify_prices(request: RegimeClassifyRequest):
         import numpy as _np  # noqa: PLC0415
         from proprietary_core.lattice_inputs import market_to_lattice_inputs  # noqa: PLC0415
         from proprietary_core.regime_observer import (  # noqa: PLC0415
-            classify_via_observer, observer_snapshot,
+            classify_via_observer, observer_snapshot, observer_soft_scores,
         )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(
@@ -692,6 +692,7 @@ async def regime_classify_prices(request: RegimeClassifyRequest):
     if len(prices) < 2:
         return {
             "regime": "dissolver",
+            "regime_scores": None,
             "h": 0.0,
             "j": 0.0,
             "observer_state": {"n": 0, "warm": False, "lower": None, "upper": None},
@@ -704,6 +705,7 @@ async def regime_classify_prices(request: RegimeClassifyRequest):
     if len(p_arr) < 2:
         return {
             "regime": "dissolver",
+            "regime_scores": None,
             "h": 0.0,
             "j": 0.0,
             "observer_state": {"n": 0, "warm": False, "lower": None, "upper": None},
@@ -728,8 +730,15 @@ async def regime_classify_prices(request: RegimeClassifyRequest):
         "lower": float(bounds.lower) if bounds is not None else None,
         "upper": float(bounds.upper) if bounds is not None else None,
     }
+    # Continuous 3-way regime membership. None during warmup — the TS
+    # client / perception then falls back to the hard one-hot label.
+    # Lets perception encode a continuous distribution on basin dims
+    # 0-2 instead of a quantised one-hot (which pinned downstream
+    # neurochemistry — e.g. gaba = 1 - quantum_weight went binary).
+    regime_scores = observer_soft_scores(float(h_value), float(j_value))
     return {
         "regime": regime.value,
+        "regime_scores": regime_scores,
         "h": float(h_value),
         "j": float(j_value),
         "observer_state": state,
