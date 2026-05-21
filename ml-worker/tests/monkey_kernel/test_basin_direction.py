@@ -356,3 +356,77 @@ class TestBasinDirectionParametrized:
         d = basin_direction(v)
         assert -1.0 <= d <= 1.0
         assert np.isfinite(d)
+
+
+# --- Production-basin-shape regression (CC2, 2026-05-21) ---------------
+# Every test above builds basins with _make_simplex_basin / np.full —
+# i.e. all 64 dims at one uniform level. On a uniform basin MOM_NEUTRAL =
+# 8/64 is coincidentally the correct neutral, so the bug never showed.
+#
+# The REAL perceive() basin is NOT uniform: dims 39..54 are a noise
+# floor pinned at 0.0055 — far below uniform (1/64 ≈ 0.0156). That
+# sub-uniform mass forces every other dim's share ABOVE uniform, so
+# mom_mass is structurally > 8/64 even when the momentum band sits at
+# the SAME level as its direction-agnostic peer bands. Comparing
+# mom_mass to a hardcoded 8/64 therefore reads "uptrend" on a flat
+# market and can never read negative — the live "only longs" bug
+# (operator report, 2026-05-21).
+
+def _make_production_shaped_basin(mom_value: float) -> np.ndarray:
+    """A 64-dim basin matching perceive()'s real layout.
+
+    The momentum band (7..14) is set to ``mom_value``; its
+    direction-agnostic peer bands — volatility (15..22) and volume
+    (23..30) — sit at the neutral 0.5. So ``mom_value == 0.5`` is a
+    genuinely flat market and must read ~0. dims 39..54 carry the
+    real 0.0055 noise floor. Returned as a simplex point.
+    """
+    v = np.zeros(BASIN_DIM, dtype=np.float64)
+    v[0:3] = 1.0 / 3.0                  # regime — uniform prior
+    v[3:7] = [0.01, 0.01, 0.5, 0.0]     # ml posture (K runs ml-free)
+    v[7:15] = mom_value                 # momentum spectrum
+    v[15:23] = 0.5                      # volatility — direction-agnostic peer
+    v[23:31] = 0.5                      # volume shape — direction-agnostic peer
+    v[31:39] = 0.5                      # price-structure
+    v[39:55] = 0.0055                   # noise floor — sub-uniform, the culprit
+    v[55:59] = [0.3, 0.2, 0.1, 0.1]     # account / coupling
+    v[59:64] = 0.01                     # reserved
+    return v / v.sum()
+
+
+class TestBasinDirectionProductionShape:
+    """basin_direction on the REAL perceive() basin shape (sub-uniform
+    noise floor present). Guards the 2026-05-21 'only longs' bug."""
+
+    def test_flat_market_reads_near_zero_with_noise_floor(self):
+        """Momentum band at the same 0.5 level as its direction-agnostic
+        peer bands (volatility, volume) = a flat market. basin_direction
+        MUST read ~0. The pre-fix code compares mom_mass to a hardcoded
+        8/64 — wrong once the noise floor drags the uniform reference
+        below the momentum band — and reads positive."""
+        flat = _make_production_shaped_basin(0.5)
+        d = basin_direction(flat)
+        assert abs(d) < 1e-6, f"flat market read {d:+.4f}, expected ~0"
+
+    def test_downtrend_reads_negative_with_noise_floor(self):
+        """Momentum band BELOW its peer bands = a downtrend. Must read
+        negative even though the noise floor inflates mom_mass past
+        8/64."""
+        bear = _make_production_shaped_basin(0.40)
+        d = basin_direction(bear)
+        assert d < 0.0, f"downtrend read {d:+.4f}, expected negative"
+
+    def test_uptrend_reads_positive_with_noise_floor(self):
+        """Companion guard: momentum band ABOVE its peers reads positive
+        on the production shape (must survive the fix)."""
+        bull = _make_production_shaped_basin(0.60)
+        d = basin_direction(bull)
+        assert d > 0.0, f"uptrend read {d:+.4f}, expected positive"
+
+    def test_production_shape_sign_is_symmetric_about_peer_level(self):
+        """Reflecting the momentum band around its peer level (0.5)
+        flips the sign — the neutral reference is the peer bands, not a
+        hardcoded constant."""
+        d_bear = basin_direction(_make_production_shaped_basin(0.40))
+        d_bull = basin_direction(_make_production_shaped_basin(0.60))
+        assert d_bear < 0.0 < d_bull
