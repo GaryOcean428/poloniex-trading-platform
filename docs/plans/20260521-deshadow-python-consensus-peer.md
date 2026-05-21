@@ -198,3 +198,32 @@ git commit -m "feat(monkey): fan each tick out to the Python consensus peer"
 - [ ] `tsc --noEmit` clean for `apps/api`.
 - [ ] Production `[Consensus]` logs show non-`single-kernel` verdicts after the fanout flag flips.
 - [ ] `TRADING_ENGINE_PY` untouched throughout.
+
+---
+
+## Decision (Task 1)
+
+**Decided by:** executor agent on 2026-05-21
+
+### Q1 — Peer source: TS-driven fanout vs Python independent loop?
+
+**Decision: TS-driven fanout** — loop.ts fans the tick inputs to `/monkey/tick/run` immediately before the `CONSENSUS_EXECUTOR_LIVE` block (i.e., right after the self-proposal publish at line 3832). This pairs each Python proposal deterministically with the TS tick that consults it, keeps the `PEER_PROPOSAL_FRESHNESS_MS=60_000` window trivially satisfied (Python proposal arrives well within 60 s of the next `getRecentPeerProposal()` call), and reuses the tick inputs loop.ts already assembles. `PY_INDEPENDENT_STATE_LIVE` is a flag that already exists on `/monkey/tick/run`; the per-tick fanout respects it (Python can use its own independent state once that flag is set, still via the same endpoint).
+
+### Q2 — State: persistent `/monkey/tick/run` vs ephemeral `/monkey/k-shadow/tick`?
+
+**Decision: `/monkey/tick/run` (persistent state).** Confirmed by reading both endpoints:
+- `/monkey/tick/run` (line 1778) populates and reads `_symbol_states[(instance_id, symbol)]` — the in-process persistent cache — and restores from Redis on cold-start. It is the authoritative stateful kernel path.
+- `/monkey/k-shadow/tick` (line 2035) explicitly documents "we do NOT touch the `_symbol_states` cache" and seeds each call from a fresh uniform basin. A consensus peer with amnesiac state is not a meaningful second opinion; an independent stateful kernel IS.
+
+The peer instance_id used for the fanout is `"monkey-py-peer"` — distinct from the TS self id (`this.instanceId`, which is `"monkey-primary"` in production) and from the shadow id (`"k-shadow:monkey-primary"`). This ensures `_symbol_states[("monkey-py-peer", symbol)]` accumulates its own independent trajectory.
+
+### Q3 — Engine label: `py-retrospective` or `py-live`?
+
+**Decision: use a new label `py-live`** — but wire the consensus arbiter call in loop.ts with `peerEngineType: 'py-live'` rather than `'py-retrospective'`. Rationale:
+
+- `wr_retrospective.ts` defaults `shadowEngineLabel` to `'py-retrospective'` and that is the column key in the WR matrix for retrospective/shadow attributions. The retrospective scoring joins `kernel_parity_log` rows under that label.
+- Once the Python kernel is a live forward peer (proposals from real per-tick runs via `/monkey/tick/run`), its trades are recorded under whatever `engine_type` the kernel reports — which will be `'py-live'` (set as the engine label in the fanout request's `instance_id`).
+- `wr_matrix.ts` queries `autonomous_trades.engine_type` — so attribution goes to whatever engine_type the trade row carries. A separate `'py-live'` label keeps live-forward outcomes distinct from the retrospective estimates, avoids double-counting, and lets the operator observe cold-start (no `'py-live'` entries in wr_matrix) vs established WR cleanly.
+- On cold-start (no `'py-live'` trades yet), the arbiter falls back to the retrospective matrix for the peer WR (since `getCellWR` returns 0 for unknown labels, the dominance defaults to 0.5 — equal weight). This is the correct safe default.
+
+The `peerEngineType: 'py-retrospective'` in the existing `loop.ts:3891` line is retained for the current shadow mode; the new fanout path uses `'py-live'`. Both coexist until the retrospective path is formally retired.
