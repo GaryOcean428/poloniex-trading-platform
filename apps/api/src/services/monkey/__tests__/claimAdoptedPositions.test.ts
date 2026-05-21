@@ -10,6 +10,11 @@
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
+import {
+  ADOPTED_POSITION_REASON_PREFIX,
+  OWNED_ADOPTED_POSITION_REASON_PREFIX,
+} from '../loop.js';
+
 // Mirror the env mock used by the other loop.ts-importing tests so the
 // module load chain doesn't blow up on missing DATABASE_URL / JWT_SECRET.
 vi.mock('../../../config/env.js', () => ({
@@ -21,7 +26,7 @@ vi.mock('../../../config/env.js', () => ({
   },
 }));
 
-const queryMock = vi.fn();
+const { queryMock } = vi.hoisted(() => ({ queryMock: vi.fn() }));
 vi.mock('../../../db/connection.js', () => ({
   pool: { query: queryMock },
 }));
@@ -29,14 +34,6 @@ vi.mock('../../../db/connection.js', () => ({
 async function makeKernel(instanceId: string) {
   const { MonkeyKernel } = await import('../loop.js');
   return new MonkeyKernel({ instanceId, timeframe: '15m', tickMs: 30_000 });
-}
-
-async function adoptionConstants() {
-  const {
-    ADOPTED_POSITION_REASON_PREFIX,
-    OWNED_ADOPTED_POSITION_REASON_PREFIX,
-  } = await import('../loop.js');
-  return { ADOPTED_POSITION_REASON_PREFIX, OWNED_ADOPTED_POSITION_REASON_PREFIX };
 }
 
 describe('claimAdoptedPositions', () => {
@@ -61,10 +58,6 @@ describe('claimAdoptedPositions', () => {
     // frBracket is null → claim UPDATE only, no bracket commit.
     expect(queryMock).toHaveBeenCalledTimes(1);
     const [sql, params] = queryMock.mock.calls[0];
-    const {
-      ADOPTED_POSITION_REASON_PREFIX,
-      OWNED_ADOPTED_POSITION_REASON_PREFIX,
-    } = await adoptionConstants();
     expect(sql).toContain('replace(reason');
     expect(sql).toContain("agent = 'K'");
     expect(sql).toContain("reason LIKE $2 || '%'");
@@ -84,7 +77,6 @@ describe('claimAdoptedPositions', () => {
     // claim UPDATE + bracket-commit UPDATE.
     expect(queryMock).toHaveBeenCalledTimes(2);
     const [sql, params] = queryMock.mock.calls[1];
-    const { OWNED_ADOPTED_POSITION_REASON_PREFIX } = await adoptionConstants();
     expect(sql).toContain('take_profit = entry_price');
     expect(sql).toContain('$3::numeric');
     expect(sql).toContain('$4::numeric');

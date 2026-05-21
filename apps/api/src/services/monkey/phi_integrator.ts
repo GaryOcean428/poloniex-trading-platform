@@ -84,7 +84,8 @@ export function phiGainCalibrationBands(): {
   };
 }
 
-export function isPhiLeakyEnabled(value: string | undefined = process.env.MONKEY_PHI_LEAKY_LIVE): boolean {
-  if (value === undefined) return true;
-  return !['false', '0', 'no', 'off'].includes(value.trim().toLowerCase());
+export function isPhiLeakyEnabled(value?: string): boolean {
+  const raw = value ?? process.env.MONKEY_PHI_LEAKY_LIVE;
+  if (raw === undefined) return true;
+  return !['false', '0', 'no', 'off'].includes(raw.trim().toLowerCase());
 }

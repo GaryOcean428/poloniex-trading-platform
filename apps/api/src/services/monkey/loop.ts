@@ -6662,7 +6662,7 @@ export class MonkeyKernel extends EventEmitter {
           });
           // Success — set orderId and fall through to the settle/accounting
           // block below (closes all open rows for this kernel+symbol).
-          orderId = retryOrderIds.length === 1 ? retryOrderIds[0]! : retryOrderIds.join(',');
+          orderId = retryOrderIds.length === 1 ? (retryOrderIds[0] ?? null) : retryOrderIds.join(',');
         } catch (retryErr) {
           return {
             executed: false, orderId: null,
