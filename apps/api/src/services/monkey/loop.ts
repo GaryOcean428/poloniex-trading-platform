@@ -67,7 +67,7 @@ import { computeEmotions, type EmotionState } from './emotions.js';
 import { detectMode, MODE_PROFILES, MonkeyMode } from './modes.js';
 import { computeMotivators } from './motivators.js';
 import { computeNeurochemicals, summarizeNC, type NeurochemicalState } from './neurochemistry.js';
-import { updateLeakyPhi } from './phi_integrator.js';
+import { isPhiLeakyEnabled, updateLeakyPhi } from './phi_integrator.js';
 import { mlAgentDecide } from '../ml_agent/decide.js';
 import type { MLAgentInputs } from '../ml_agent/types.js';
 import { Arbiter } from '../arbiter/arbiter.js';
@@ -710,6 +710,45 @@ const BUS_RING_CAP = 32;
 
 /** Valid arbiter agent labels. */
 const ARBITER_AGENT_LABELS = ['K', 'M', 'T', 'L'] as const;
+export type ArbiterAgentLabel = (typeof ARBITER_AGENT_LABELS)[number];
+
+export const ADOPTED_POSITION_OWNER_INSTANCE = 'monkey-position';
+export const ADOPTED_POSITION_REASON_PREFIX = 'kernel_adopted|';
+export const OWNED_ADOPTED_POSITION_REASON_PREFIX =
+  `monkey|kernel=${ADOPTED_POSITION_OWNER_INSTANCE}|adopted|`;
+
+export function isArbiterAgentLabel(value: string): value is ArbiterAgentLabel {
+  return (ARBITER_AGENT_LABELS as readonly string[]).includes(value);
+}
+
+type RetryClosePlan =
+  | { ok: true; freshQty: number; chunkSizes: number[] }
+  | { ok: false; reason: '21002_retry_invalid_live_qty' | '21002_position_already_flat' | '21002_retry_lot_rounding_zero' };
+
+export function plan21002RetryClose(liveQty: unknown, symbolLotSize: number): RetryClosePlan {
+  const freshQtyRaw = Number(liveQty ?? 0);
+  if (!Number.isFinite(freshQtyRaw)) {
+    return { ok: false, reason: '21002_retry_invalid_live_qty' };
+  }
+  const freshQty = Math.abs(freshQtyRaw);
+  if (freshQty <= 0) {
+    return { ok: false, reason: '21002_position_already_flat' };
+  }
+  const freshContracts = symbolLotSize > 0
+    ? Math.floor(freshQty / symbolLotSize)
+    : Math.floor(freshQty);
+  if (freshContracts <= 0) {
+    return { ok: false, reason: '21002_retry_lot_rounding_zero' };
+  }
+  const retryChunks = planCloseChunks(freshContracts, 1).chunks;
+  const chunkSizes = symbolLotSize > 0
+    ? retryChunks.map((contracts) => contracts * symbolLotSize)
+    : retryChunks;
+  if (chunkSizes.length === 0) {
+    return { ok: false, reason: '21002_retry_lot_rounding_zero' };
+  }
+  return { ok: true, freshQty, chunkSizes };
+}
 
 /**
  * Parse MONKEY_ARBITER_AGENTS into the set of agent labels allowed in
@@ -724,13 +763,19 @@ const ARBITER_AGENT_LABELS = ['K', 'M', 'T', 'L'] as const;
  *
  * Exported for tests.
  */
-export function arbiterRoster(): Set<string> {
-  const valid = new Set<string>(ARBITER_AGENT_LABELS);
+export function arbiterRoster(): Set<ArbiterAgentLabel> {
+  const valid = new Set<ArbiterAgentLabel>(ARBITER_AGENT_LABELS);
   const raw = (process.env.MONKEY_ARBITER_AGENTS ?? '').trim();
   if (raw === '') return new Set(valid);
-  const parsed = raw.split(',')
-    .map((s) => s.trim().toUpperCase())
-    .filter((s) => valid.has(s));
+  const tokens = raw.split(',').map((s) => s.trim().toUpperCase()).filter(Boolean);
+  const unknown = tokens.filter((s) => !isArbiterAgentLabel(s));
+  if (unknown.length > 0) {
+    logger.warn('[Monkey] ignoring unknown MONKEY_ARBITER_AGENTS tokens', {
+      unknown,
+      allowed: ARBITER_AGENT_LABELS,
+    });
+  }
+  const parsed = tokens.filter(isArbiterAgentLabel);
   parsed.push('K'); // K is mandatory — the kernel executive.
   return new Set(parsed);
 }
@@ -1944,8 +1989,8 @@ export class MonkeyKernel extends EventEmitter {
     // computed above as its own basin-health metric; Φ is reassigned
     // here to the motion-integrated value. Seeded from the entropy-Φ on
     // the first tick so enabling the flag introduces no discontinuity.
-    // Flag-gated: MONKEY_PHI_LEAKY_LIVE=false reverts instantly.
-    if (process.env.MONKEY_PHI_LEAKY_LIVE !== 'false') {
+    // Flag-gated: MONKEY_PHI_LEAKY_LIVE=false/0/no/off reverts instantly.
+    if (isPhiLeakyEnabled()) {
       phi = updateLeakyPhi(state.phiLeaky ?? phi, bv);
       state.phiLeaky = phi;
     }
@@ -5244,15 +5289,15 @@ export class MonkeyKernel extends EventEmitter {
     frBracket: { tpDistance: number; slDistance: number } | null,
   ): Promise<void> {
     // Single deterministic owner — only the position instance claims.
-    if (this.instanceId !== 'monkey-position') return;
+    if (this.instanceId !== ADOPTED_POSITION_OWNER_INSTANCE) return;
     try {
       const claimed = await pool.query(
         `UPDATE autonomous_trades
-            SET reason = replace(reason,
-                  'kernel_adopted|', 'monkey|kernel=monkey-position|adopted|')
-          WHERE reason LIKE 'kernel_adopted|%'
+            SET reason = replace(reason, $2, $3)
+          WHERE reason LIKE $2 || '%'
+            AND agent = 'K'
             AND status = 'open' AND symbol = $1`,
-        [symbol],
+        [symbol, ADOPTED_POSITION_REASON_PREFIX, OWNED_ADOPTED_POSITION_REASON_PREFIX],
       );
       if ((claimed.rowCount ?? 0) > 0) {
         logger.info('[Monkey] adopted position(s) claimed', {
@@ -5269,13 +5314,13 @@ export class MonkeyKernel extends EventEmitter {
         await pool.query(
           `UPDATE autonomous_trades
               SET take_profit = entry_price + (CASE
-                    WHEN side IN ('long', 'buy') THEN $2::numeric ELSE -($2::numeric) END),
+                    WHEN side IN ('long', 'buy') THEN $3::numeric ELSE -($3::numeric) END),
                   stop_loss   = entry_price + (CASE
-                    WHEN side IN ('long', 'buy') THEN -($3::numeric) ELSE $3::numeric END)
-            WHERE reason LIKE 'monkey|kernel=monkey-position|%'
+                    WHEN side IN ('long', 'buy') THEN -($4::numeric) ELSE $4::numeric END)
+            WHERE reason LIKE $2 || '%'
               AND status = 'open' AND symbol = $1
               AND take_profit IS NULL AND stop_loss IS NULL`,
-          [symbol, frBracket.tpDistance, frBracket.slDistance],
+          [symbol, OWNED_ADOPTED_POSITION_REASON_PREFIX, frBracket.tpDistance, frBracket.slDistance],
         );
       }
     } catch (err) {
@@ -6631,8 +6676,17 @@ export class MonkeyKernel extends EventEmitter {
                 String(p.side ?? p.posSide ?? '').toUpperCase() ===
                 (heldSide === 'long' ? 'LONG' : 'SHORT')) ?? freshForSymbol[0])
             : freshForSymbol[0];
-          const freshQty = Math.abs(Number(freshTarget?.qty ?? freshTarget?.size ?? 0));
-          if (freshQty <= 0) {
+          const retryPlan = plan21002RetryClose(
+            freshTarget?.qty ?? freshTarget?.size ?? 0,
+            symbolLotSize,
+          );
+          if (retryPlan.ok === false && retryPlan.reason === '21002_retry_invalid_live_qty') {
+            logger.warn('[Monkey] 21002 retry skipped invalid live quantity', {
+              symbol, heldSide, liveQty: freshTarget?.qty ?? freshTarget?.size ?? null,
+            });
+            return { executed: false, orderId: null, reason: retryPlan.reason };
+          }
+          if (retryPlan.ok === false && retryPlan.reason === '21002_position_already_flat') {
             // Position is already flat — nothing to close. Mark the row.
             await pool.query(
               `UPDATE autonomous_trades SET status='closed', exit_price=$1, exit_time=NOW(),
@@ -6641,38 +6695,35 @@ export class MonkeyKernel extends EventEmitter {
             ).catch(() => { /* non-fatal */ });
             return {
               executed: false, orderId: null,
-              reason: '21002_position_already_flat',
+              reason: retryPlan.reason,
             };
           }
-          // Floor to whole contracts so the retry never re-overshoots.
-          // The live position is smaller than the rejected order, so it
-          // is well under the 10k-contract single-order cap — no chunking.
-          const freshContracts = symbolLotSize > 0
-            ? Math.floor(freshQty / symbolLotSize)
-            : Math.floor(freshQty);
-          if (freshContracts <= 0) {
-            return { executed: false, orderId: null, reason: '21002_retry_lot_rounding_zero' };
+          if (retryPlan.ok === false) {
+            return { executed: false, orderId: null, reason: retryPlan.reason };
           }
-          const retrySize = symbolLotSize > 0 ? freshContracts * symbolLotSize : freshContracts;
-          const retryOrder = await poloniexFuturesService.placeOrder(credentials, {
-            symbol, side: closeSide, type: 'market', size: retrySize, lotSize: symbolLotSize,
-            reduceOnly: true,
-          }, {
-            positionMode: isHedge ? 'HEDGE' : 'ONE_WAY',
-            ...(closePosSide ? { posSide: closePosSide } : {}),
-          });
-          const retryId =
-            retryOrder?.ordId ?? retryOrder?.orderId ??
-            retryOrder?.id ?? retryOrder?.clientOid ?? null;
-          if (!retryId) {
+          const retryOrderIds: string[] = [];
+          for (const retrySize of retryPlan.chunkSizes) {
+            const retryOrder = await poloniexFuturesService.placeOrder(credentials, {
+              symbol, side: closeSide, type: 'market', size: retrySize, lotSize: symbolLotSize,
+              reduceOnly: true,
+            }, {
+              positionMode: isHedge ? 'HEDGE' : 'ONE_WAY',
+              ...(closePosSide ? { posSide: closePosSide } : {}),
+            });
+            const retryId =
+              retryOrder?.ordId ?? retryOrder?.orderId ??
+              retryOrder?.id ?? retryOrder?.clientOid ?? null;
+            if (retryId) retryOrderIds.push(String(retryId));
+          }
+          if (retryOrderIds.length === 0) {
             return { executed: false, orderId: null, reason: '21002_retry_no_orderId' };
           }
           logger.info('[Monkey] close retried at live qty after 21002', {
-            symbol, heldSide, freshQty, retrySize, orderId: String(retryId),
+            symbol, heldSide, freshQty: retryPlan.freshQty, chunks: retryPlan.chunkSizes.length, orderIds: retryOrderIds,
           });
           // Success — set orderId and fall through to the settle/accounting
           // block below (closes all open rows for this kernel+symbol).
-          orderId = String(retryId);
+          orderId = retryOrderIds.length === 1 ? (retryOrderIds[0] ?? null) : retryOrderIds.join(',');
         } catch (retryErr) {
           return {
             executed: false, orderId: null,

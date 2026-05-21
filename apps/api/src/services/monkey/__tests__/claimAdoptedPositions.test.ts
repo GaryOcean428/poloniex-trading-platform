@@ -10,6 +10,11 @@
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
+import {
+  ADOPTED_POSITION_REASON_PREFIX,
+  OWNED_ADOPTED_POSITION_REASON_PREFIX,
+} from '../loop.js';
+
 // Mirror the env mock used by the other loop.ts-importing tests so the
 // module load chain doesn't blow up on missing DATABASE_URL / JWT_SECRET.
 vi.mock('../../../config/env.js', () => ({
@@ -21,7 +26,7 @@ vi.mock('../../../config/env.js', () => ({
   },
 }));
 
-const queryMock = vi.fn();
+const { queryMock } = vi.hoisted(() => ({ queryMock: vi.fn() }));
 vi.mock('../../../db/connection.js', () => ({
   pool: { query: queryMock },
 }));
@@ -54,10 +59,13 @@ describe('claimAdoptedPositions', () => {
     expect(queryMock).toHaveBeenCalledTimes(1);
     const [sql, params] = queryMock.mock.calls[0];
     expect(sql).toContain('replace(reason');
-    expect(sql).toContain("'kernel_adopted|'");
-    expect(sql).toContain("'monkey|kernel=monkey-position|adopted|'");
-    expect(sql).toContain("reason LIKE 'kernel_adopted|%'");
-    expect(params).toEqual(['BTC_USDT_PERP']);
+    expect(sql).toContain("agent = 'K'");
+    expect(sql).toContain("reason LIKE $2 || '%'");
+    expect(params).toEqual([
+      'BTC_USDT_PERP',
+      ADOPTED_POSITION_REASON_PREFIX,
+      OWNED_ADOPTED_POSITION_REASON_PREFIX,
+    ]);
   });
 
   it('commits a side-aware bracket when geometry is derivable', async () => {
@@ -70,9 +78,11 @@ describe('claimAdoptedPositions', () => {
     expect(queryMock).toHaveBeenCalledTimes(2);
     const [sql, params] = queryMock.mock.calls[1];
     expect(sql).toContain('take_profit = entry_price');
+    expect(sql).toContain('$3::numeric');
+    expect(sql).toContain('$4::numeric');
     expect(sql).toContain('stop_loss');
     expect(sql).toContain('take_profit IS NULL AND stop_loss IS NULL');
-    expect(params).toEqual(['ETH_USDT_PERP', 80, 40]);
+    expect(params).toEqual(['ETH_USDT_PERP', OWNED_ADOPTED_POSITION_REASON_PREFIX, 80, 40]);
   });
 
   it('skips the bracket commit when geometry is not derivable (0 distances)', async () => {
