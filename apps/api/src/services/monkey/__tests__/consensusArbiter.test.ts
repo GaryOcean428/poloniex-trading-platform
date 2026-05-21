@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { logger } from '../../../utils/logger.js';
 import {
@@ -6,7 +6,12 @@ import {
   computeConsensus,
   type ConsensusInputs,
 } from '../consensus_arbiter.js';
-import type { ProposalEvent } from '../proposal_bus.js';
+import {
+  _injectPeerProposal,
+  _resetProposalBus,
+  getRecentPeerProposal,
+  type ProposalEvent,
+} from '../proposal_bus.js';
 import type { RegimeMatrix } from '../wr_matrix.js';
 
 function makeProposal(overrides: Partial<ProposalEvent>): ProposalEvent {
@@ -255,5 +260,232 @@ describe('computeAndLogConsensus — [Consensus] log telemetry', () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+// ── Task 5: py-live peer path drives non-single-kernel verdict ──────────
+// Regression guard: once a py-live peer proposal is in the bus, the
+// arbiter must yield a verdict OTHER than 'single-kernel'. This is the
+// end-to-end integration test that the peer path is correctly wired:
+//   1. _injectPeerProposal → bus stores it
+//   2. getRecentPeerProposal returns it
+//   3. computeConsensus yields non-single-kernel
+//
+// Uses _injectPeerProposal (test-only) to bypass Redis; mirrors what the
+// in-process subscriber stores when a real py-live proposal arrives.
+
+function makePyLiveMatrix(): RegimeMatrix {
+  const cell = (w: number, t: number) => ({
+    wins: w, losses: t - w, total: t, wr: t > 0 ? w / t : 0,
+  });
+  const empty = { wins: 0, losses: 0, total: 0, wr: 0 };
+  return {
+    'monkey-k': {
+      creator: cell(6, 10),
+      preserver: empty, dissolver: empty, unknown: empty,
+    },
+    'py-live': {
+      creator: cell(5, 10),
+      preserver: empty, dissolver: empty, unknown: empty,
+    },
+  };
+}
+
+describe('py-live peer path — non-single-kernel verdict regression guard', () => {
+  beforeEach(async () => {
+    process.env.CONSENSUS_PROPOSAL_BUS_LIVE = 'true';
+    await _resetProposalBus();
+  });
+
+  afterEach(async () => {
+    await _resetProposalBus();
+    delete process.env.CONSENSUS_PROPOSAL_BUS_LIVE;
+  });
+
+  it('getRecentPeerProposal returns injected py-live proposal', () => {
+    const pyProposal: ProposalEvent = {
+      instance_id: 'monkey-py-peer',
+      symbol: 'BTC_USDT_PERP',
+      tick_id: 'BTC|42',
+      proposed_action: 'enter_long',
+      side: 'long',
+      lane: 'swing',
+      size_usdt: 20,
+      leverage: 4,
+      entry_threshold: 0.55,
+      conviction: 0.6,
+      basin_signature: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8],
+      phi: 0.28,
+      kappa: 64,
+      regime_label: 'creator',
+      mode: 'investigation',
+      at_ms: Date.now(),
+      engine_version: 'v0.8.7c-3-py',
+    };
+
+    _injectPeerProposal(pyProposal);
+
+    // TS self id is 'monkey-primary'; peer id is 'monkey-py-peer' → different
+    const peer = getRecentPeerProposal('BTC_USDT_PERP', 'monkey-primary');
+    expect(peer).not.toBeNull();
+    expect(peer!.instance_id).toBe('monkey-py-peer');
+    expect(peer!.proposed_action).toBe('enter_long');
+  });
+
+  it('computeConsensus yields same-side-slerp when py-live peer agrees on side', () => {
+    const pyProposal: ProposalEvent = {
+      instance_id: 'monkey-py-peer',
+      symbol: 'BTC_USDT_PERP',
+      tick_id: 'BTC|43',
+      proposed_action: 'enter_long',
+      side: 'long',
+      lane: 'swing',
+      size_usdt: 20,
+      leverage: 4,
+      entry_threshold: 0.55,
+      conviction: 0.6,
+      basin_signature: [],
+      phi: 0.28,
+      kappa: 64,
+      regime_label: 'creator',
+      mode: 'investigation',
+      at_ms: Date.now(),
+      engine_version: 'v0.8.7c-3-py',
+    };
+
+    _injectPeerProposal(pyProposal);
+    const peer = getRecentPeerProposal('BTC_USDT_PERP', 'monkey-primary');
+    expect(peer).not.toBeNull();
+
+    const inputs: ConsensusInputs = {
+      ownProposal: makeProposal({
+        instance_id: 'monkey-primary',
+        proposed_action: 'enter_long',
+        side: 'long',
+        size_usdt: 30,
+        leverage: 5,
+      }),
+      peerProposal: peer,
+      wrMatrix: makePyLiveMatrix(),
+      selfEngineType: 'monkey-k',
+      peerEngineType: 'py-live',
+      regime: 'creator',
+      bankSize: 200,
+      consecutiveLosses: { self: 0, peer: 0 },
+      cumulativeLoss: { self: 0, peer: 0 },
+    };
+
+    const d = computeConsensus(inputs);
+    // Must NOT be single-kernel — the peer IS present
+    expect(d.verdict).not.toBe('single-kernel');
+    // Both agree on 'long' → same-side-slerp
+    expect(d.verdict).toBe('same-side-slerp');
+    expect(d.side).toBe('long');
+    expect(d.telemetry.peer_wr).toBeGreaterThan(0);
+  });
+
+  it('computeConsensus yields dominant-fires when py-live peer disagrees and gap > floor', () => {
+    const pyProposal: ProposalEvent = {
+      instance_id: 'monkey-py-peer',
+      symbol: 'BTC_USDT_PERP',
+      tick_id: 'BTC|44',
+      proposed_action: 'enter_short',
+      side: 'short',      // disagrees with TS self (long)
+      lane: 'swing',
+      size_usdt: 20,
+      leverage: 3,
+      entry_threshold: 0.5,
+      conviction: 0.5,
+      basin_signature: [],
+      phi: 0.25,
+      kappa: 64,
+      regime_label: 'creator',
+      mode: 'investigation',
+      at_ms: Date.now(),
+      engine_version: 'v0.8.7c-3-py',
+    };
+
+    _injectPeerProposal(pyProposal);
+    const peer = getRecentPeerProposal('BTC_USDT_PERP', 'monkey-primary');
+    expect(peer).not.toBeNull();
+
+    const matrix: RegimeMatrix = {
+      'monkey-k': {
+        creator: { wins: 7, losses: 3, total: 10, wr: 0.7 },
+        preserver: { wins: 0, losses: 0, total: 0, wr: 0 },
+        dissolver: { wins: 0, losses: 0, total: 0, wr: 0 },
+        unknown: { wins: 0, losses: 0, total: 0, wr: 0 },
+      },
+      'py-live': {
+        creator: { wins: 5, losses: 5, total: 10, wr: 0.5 },  // gap = 0.20 > 0.15 floor
+        preserver: { wins: 0, losses: 0, total: 0, wr: 0 },
+        dissolver: { wins: 0, losses: 0, total: 0, wr: 0 },
+        unknown: { wins: 0, losses: 0, total: 0, wr: 0 },
+      },
+    };
+
+    const d = computeConsensus({
+      ownProposal: makeProposal({
+        instance_id: 'monkey-primary',
+        proposed_action: 'enter_long',
+        side: 'long',
+        size_usdt: 30,
+        leverage: 5,
+      }),
+      peerProposal: peer,
+      wrMatrix: matrix,
+      selfEngineType: 'monkey-k',
+      peerEngineType: 'py-live',
+      regime: 'creator',
+      bankSize: 200,
+      consecutiveLosses: { self: 0, peer: 0 },
+      cumulativeLoss: { self: 0, peer: 0 },
+    });
+
+    expect(d.verdict).not.toBe('single-kernel');
+    expect(d.verdict).toBe('dominant-fires');
+    expect(d.side).toBe('long');  // TS (0.7 WR) wins
+  });
+
+  it('stale py-live proposal (> 60s) falls back to single-kernel', async () => {
+    const staleProposal: ProposalEvent = {
+      instance_id: 'monkey-py-peer',
+      symbol: 'BTC_USDT_PERP',
+      tick_id: 'BTC|45',
+      proposed_action: 'enter_long',
+      side: 'long',
+      lane: 'swing',
+      size_usdt: 20,
+      leverage: 4,
+      entry_threshold: 0.5,
+      conviction: 0.5,
+      basin_signature: [],
+      phi: 0.25,
+      kappa: 64,
+      regime_label: null,
+      mode: 'investigation',
+      at_ms: Date.now() - 65_000,  // 65 s ago — beyond 60 s freshness window
+      engine_version: 'v0.8.7c-3-py',
+    };
+
+    _injectPeerProposal(staleProposal);
+    // Stale → getRecentPeerProposal should return null
+    const peer = getRecentPeerProposal('BTC_USDT_PERP', 'monkey-primary');
+    expect(peer).toBeNull();
+
+    const d = computeConsensus({
+      ownProposal: makeProposal({ instance_id: 'monkey-primary' }),
+      peerProposal: peer,
+      wrMatrix: makePyLiveMatrix(),
+      selfEngineType: 'monkey-k',
+      peerEngineType: 'py-live',
+      regime: 'creator',
+      bankSize: 200,
+      consecutiveLosses: { self: 0, peer: 0 },
+      cumulativeLoss: { self: 0, peer: 0 },
+    });
+
+    // Stale peer → arbiter falls back to single-kernel (correct safe default)
+    expect(d.verdict).toBe('single-kernel');
   });
 });
