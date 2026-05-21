@@ -70,6 +70,13 @@ export interface ConsensusInputs {
   /** Per-engine loss bookkeeping for RETHINK trigger. */
   consecutiveLosses: { self: number; peer: number };
   cumulativeLoss: { self: number; peer: number };
+  /**
+   * Self kernel's geometric directional read for this tick (basinDir +
+   * tape). Telemetry-only — distinct from the executable `side`, which is
+   * null on a hold. Logging the lean keeps a hold from being an
+   * observability black hole when debugging directional bias.
+   */
+  ownLean?: 'long' | 'short' | 'flat';
 }
 
 export type ConsensusVerdict =
@@ -316,7 +323,11 @@ export function computeAndLogConsensus(inputs: ConsensusInputs): ConsensusDecisi
     symbol: inputs.ownProposal.symbol,
     verdict: decision.verdict,
     action: decision.action,
+    // `side` is the executable trade side — null on a hold, by design.
+    // `lean` is the kernel's geometric directional read, surfaced even on
+    // holds so the [Consensus] line matches the [Monkey] tick telemetry.
     side: decision.side,
+    lean: inputs.ownLean ?? 'flat',
     size_usdt: decision.size_usdt,
     leverage: decision.leverage,
     self_wr: decision.telemetry.self_wr,

@@ -1,6 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { computeConsensus, type ConsensusInputs } from '../consensus_arbiter.js';
+import { logger } from '../../../utils/logger.js';
+import {
+  computeAndLogConsensus,
+  computeConsensus,
+  type ConsensusInputs,
+} from '../consensus_arbiter.js';
 import type { ProposalEvent } from '../proposal_bus.js';
 import type { RegimeMatrix } from '../wr_matrix.js';
 
@@ -213,5 +218,42 @@ describe('computeConsensus — rethink trigger', () => {
     expect(d.verdict).toBe('single-kernel');
     expect(d.size_usdt).toBe(15);  // 30 × 0.5
     expect(d.telemetry.rethink_active).toBe(true);
+  });
+});
+
+describe('computeAndLogConsensus — [Consensus] log telemetry', () => {
+  it('logs the kernel directional lean even when the executed side is null (hold)', () => {
+    const spy = vi.spyOn(logger, 'info').mockImplementation(() => logger);
+    try {
+      const inputs = baseInputs({
+        peerProposal: null,
+        ownProposal: makeProposal({ proposed_action: 'hold', side: null }),
+        ownLean: 'long',
+      });
+      const decision = computeAndLogConsensus(inputs);
+      // Execution side stays null — a hold opens no trade. Correct by design.
+      expect(decision.side).toBeNull();
+      // The log line still surfaces the geometric lean so a hold is not an
+      // observability black hole when debugging directional bias.
+      const lastCall = spy.mock.calls.at(-1);
+      expect(lastCall?.[0]).toBe('[Consensus]');
+      expect(lastCall?.[1]).toMatchObject({ side: null, lean: 'long' });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('lean falls back to flat when no directional read is supplied', () => {
+    const spy = vi.spyOn(logger, 'info').mockImplementation(() => logger);
+    try {
+      const inputs = baseInputs({
+        peerProposal: null,
+        ownProposal: makeProposal({ proposed_action: 'hold', side: null }),
+      });
+      computeAndLogConsensus(inputs);
+      expect(spy.mock.calls.at(-1)?.[1]).toMatchObject({ lean: 'flat' });
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
