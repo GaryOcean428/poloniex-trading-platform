@@ -275,3 +275,89 @@ describe('basinDirection — production basin shape (only-longs regression)', ()
     expect(d).toBeGreaterThan(0);
   });
 });
+
+// --- Skewed peer bands (B1.1 noise-floor-anchor regression) --------------
+// makeProductionShapedBasin() above sets the volatility + volume peer bands
+// to a uniform 0.5, so #880's `8·peerMean` neutral is coincidentally exact.
+// The REAL perceive() volume band is NOT 0.5-centred: it encodes
+// norm01(log(volRatio)) and volRatio runs mostly < 1, so volume dims sit
+// ~0.40. That biased `8·peerMean` LOW → momMass cleared it even on a
+// downtrend → sign pinned +1 (the post-#882 "still only longs" finding).
+//
+// B1.1 anchors the neutral to the noise floor instead — dims 39..54 are a
+// known fixed raw NOISE_FLOOR_VALUE, so they pin the simplex scale and the
+// neutral momentum share is exact, with zero dependence on the peer bands.
+
+/** Production-shaped basin with an independently skewable volume band. */
+function makeSkewedProductionBasin(momValue: number, volumeValue: number): Basin {
+  const v = new Float64Array(BASIN_DIM);
+  for (let i = 0; i < 3; i++) v[i] = 1 / 3;
+  v[3] = 0.01; v[4] = 0.01; v[5] = 0.5; v[6] = 0.0;
+  for (let i = 7; i <= 14; i++) v[i] = momValue;        // momentum spectrum
+  for (let i = 15; i <= 22; i++) v[i] = 0.5;            // volatility peer band
+  for (let i = 23; i <= 30; i++) v[i] = volumeValue;    // volume peer band — skewed
+  for (let i = 31; i <= 38; i++) v[i] = 0.5;
+  for (let i = 39; i <= 54; i++) v[i] = 0.0055;         // noise floor — the anchor
+  v[55] = 0.3; v[56] = 0.2; v[57] = 0.1; v[58] = 0.1;
+  for (let i = 59; i < 64; i++) v[i] = 0.01;
+  return toSimplex(v);
+}
+
+describe('basinDirection — skewed volume band (B1.1 noise-floor anchor)', () => {
+  const FLAG = 'MONKEY_PERCEPTION_EXPRESSIVE_LIVE';
+
+  function withFlag(value: string | undefined, fn: () => void): void {
+    const orig = process.env[FLAG];
+    if (value === undefined) delete process.env[FLAG];
+    else process.env[FLAG] = value;
+    try { fn(); }
+    finally {
+      if (orig === undefined) delete process.env[FLAG];
+      else process.env[FLAG] = orig;
+    }
+  }
+
+  it('the peer-derived fallback IS skewed by a low volume band (the bug)', () => {
+    // Flag off → basinDirection falls back to #880's 8·peerMean. A
+    // downtrend (mom 0.45) with a low volume band (0.35) misreads as
+    // positive — this is the production "only longs" sign-pin.
+    withFlag('false', () => {
+      const d = basinDirection(makeSkewedProductionBasin(0.45, 0.35));
+      expect(d).toBeGreaterThan(0);
+    });
+  });
+
+  it('the noise-floor anchor reads the same downtrend as negative (the fix)', () => {
+    // Flag on (default) → noise-floor-anchored neutral. Same skewed basin,
+    // correct sign.
+    withFlag(undefined, () => {
+      const d = basinDirection(makeSkewedProductionBasin(0.45, 0.35));
+      expect(d).toBeLessThan(0);
+    });
+  });
+
+  it('a flat market reads ~ 0 even when the volume band is skewed', () => {
+    withFlag(undefined, () => {
+      const d = basinDirection(makeSkewedProductionBasin(0.5, 0.35));
+      expect(Math.abs(d)).toBeLessThan(1e-6);
+    });
+  });
+
+  it('an uptrend reads positive even when the volume band is skewed', () => {
+    withFlag(undefined, () => {
+      const d = basinDirection(makeSkewedProductionBasin(0.60, 0.35));
+      expect(d).toBeGreaterThan(0);
+    });
+  });
+
+  it('the anchor is monotone in momentum, immune to the volume skew', () => {
+    withFlag(undefined, () => {
+      let prev = -2;
+      for (const mom of [0.2, 0.35, 0.45, 0.5, 0.55, 0.65, 0.8]) {
+        const d = basinDirection(makeSkewedProductionBasin(mom, 0.35));
+        expect(d).toBeGreaterThanOrEqual(prev - 1e-9);
+        prev = d;
+      }
+    });
+  });
+});

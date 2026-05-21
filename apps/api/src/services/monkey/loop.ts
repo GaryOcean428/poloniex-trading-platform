@@ -2201,7 +2201,18 @@ export class MonkeyKernel extends EventEmitter {
     // existing ml-strength threshold below — a geometry-only TS
     // entry would require the full emotion stack ported. This is
     // the documented "TS counterpart for parity" path.
-    const basinDir = computeBasinDirection(basin);
+    // B1.1 — basinDir reads market DIRECTION, which lives in the RAW
+    // perception. The refracted `basin` is 70% frozen identity + 30%
+    // market (Pillar 2) — reading direction off it damps the market
+    // signal to 30% and muddies the sign. rawBasin is a verified
+    // perceive() output, so basinDirection's noise-floor neutral anchor
+    // engages exactly on it. Flag-gated with the rest of B1;
+    // MONKEY_PERCEPTION_EXPRESSIVE_LIVE=false reverts to the refracted
+    // basin (and basinDirection's #880 peerMean neutral).
+    const basinDir =
+      process.env.MONKEY_PERCEPTION_EXPRESSIVE_LIVE !== 'false'
+        ? computeBasinDirection(rawBasin)
+        : computeBasinDirection(basin);
     const tapeTrend = computeTrendProxy(ohlcv);
     state.latestBasinSnapshot = {
       basinDir,
