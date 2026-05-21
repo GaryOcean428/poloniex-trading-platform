@@ -58,14 +58,50 @@ This changes live trading behaviour (§5). The operator's plan doc `docs/plans/2
 
 **Recommendation (CC-C): Option A.** A *bug fix* (contained, tested — #869–875) ships direct; that is the standing authorization, used all session. A *core-metric redefinition* feeding live trade sizing, with a freshly-calibrated constant, warrants a few-hour shadow pass — proportionate, not theatre. But it is the operator's call.
 
-## 7. Perception-layer workstream — separate, downstream (not in this plan)
+## 7. Perception-layer workstream (B1) — Yeheva discipline
 
-A separate, larger workstream touching `perceive()` itself — blast radius is the basin → cell classification, `basinDir`, `drift`, regime, `fHealth`. **Not a prerequisite for B3** (B3 runs on `bv`, a live signal regardless). Its own plan, careful/symbol-gradient rollout. Two items belong here:
+> **Rollout correction (2026-05-21).** An earlier draft of this section
+> framed B1 as needing "its own plan, careful/symbol-gradient rollout"
+> and "out of scope" — shadow-rollout scaffolding that predates the
+> Yeheva correction. That stale framing was cited to defer B1 while M
+> and FAST_ADVERSE_EXIT stayed dead. **Superseded:** B1 ships under
+> Yeheva discipline — pre-flight (consumer audit + canonical reads +
+> data calibration) + revert gates (flag + Φ-peg / consumer-throw) +
+> attentive live monitoring for the first hours post-ship. Shadow
+> phases and soak periods are *not* the default for canonical fixes to
+> a live impaired kernel; the operator's direct-ship authority governs.
 
-- **B1** — remove the off-canon `norm01` pre-squash; adopt canonical `to_simplex` (clip-ε + divide-by-sum).
-- **Timeframe / lookback spec** — operator spec (memory `polytrade-perception-timeframe-spec`): perception lookback must reach **≥ 64 days** across a **timeframe ladder up to 1d candles**. Current kernel tops out at 4h / ~5 days — macro-blind. Clean fit: add a `1d` rung; a 64-bar window on 1d = 64 days = `BASIN_DIM`-coherent.
+B1 touches `perceive()` — blast radius is the basin → cell
+classification, `basinDir`, `drift`, regime, `fHealth`. **Not a
+prerequisite for B3** (B3 runs on `bv`).
 
-Out of scope for this (B3) plan.
+**B1-2026-05-21 (shipped):** the off-canon `norm01` *sigmoid* pre-squash
+crushed the momentum band into [0.45,0.55] on the realized log-return
+distribution (BTC+ETH, 1000 candles — |logReturn| p50 0.0022, p90
+0.0085) → near-uniform basin → `|basinDir|` pinned < 0.05, so the
+magnitude gates (M-agent + FAST_ADVERSE_EXIT @ 0.10) never fired.
+Replaced with a linear, expressive, 0.5-neutral `momentumCoord`
+(gain 50 = `trendProxy`'s in-file log-return sensitivity), flag-gated
+`MONKEY_PERCEPTION_EXPRESSIVE_LIVE`. Plus a `structuralVetoMonitor` —
+the kernel observing its own dead gates. `perceive()` already ends in
+canonical `toSimplex`; removing the sigmoid is the fix.
+
+**B1 follow-on — volatility band (specced, not deferred-blind):** the
+volatility band (15..22) is also crushed by `norm01` (pinned ~0.53).
+But it is a *direction-agnostic peer band* feeding `basinDirection`'s
+#880 observer-derived neutral (`8·mean(p[15:31])`). Naïvely steepening
+it as an unsigned magnitude shifts `peerMean` and would **invert the
+basinDir sign** (always-short) — evidenced by the calibration data.
+The correct fix encodes volatility as a *signed deviation from its own
+rolling-typical* (0.5-neutral, like momentum), co-designed with the
+basinDirection neutral and validated against `basinDirection.test.ts`'s
+production-shape tests. That is the next B1 increment.
+
+**B1 follow-on — timeframe / lookback:** operator spec (memory
+`polytrade-perception-timeframe-spec`): perception lookback must reach
+**≥ 64 days** across a **timeframe ladder up to 1d candles**. Current
+kernel tops out at 4h / ~5 days — macro-blind. Add a `1d` rung; a
+64-bar window on 1d = 64 days = `BASIN_DIM`-coherent.
 
 ## 8. Observer-derived calibration — follow-up (no env knobs)
 

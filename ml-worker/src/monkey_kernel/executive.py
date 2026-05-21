@@ -1426,12 +1426,15 @@ def choose_lane(
     return {
         "value": lane,
         "reason": (
-            f"lane={lane}{fallback_note} (tau={tau:.4f}, "
+            # No `tau`: choose_lane is parameter-free since the Δ³
+            # simplex projection replaced the softmax (PR #809). The
+            # reason/derivation referenced a `tau` that no longer
+            # exists — a NameError on every non-stud call. Removed.
+            f"lane={lane}{fallback_note} ("
             f"scalp={probs.get('scalp', 0):.3f} swing={probs.get('swing', 0):.3f} "
             f"trend={probs.get('trend', 0):.3f} observe={probs.get('observe', 0):.3f})"
         ),
         "derivation": {
-            "tau": tau,
             "raw_scores": scores,
             "softmax_probs": probs,
             "phi": s.phi,
