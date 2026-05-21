@@ -144,6 +144,16 @@ function momentumCoord(logRet: number): number {
   return Math.min(1, Math.max(0.02, y));
 }
 
+/**
+ * Noise-floor raw value — dims 39..54 of every `perceive()` basin are
+ * pinned to this constant (Pillar 1 fluctuation reservoir). Because it
+ * is a *known fixed raw value*, the noise band pins the simplex scale
+ * `T`: after `toSimplex`, `p[noise] = NOISE_FLOOR_VALUE / T`, so
+ * `T = NOISE_FLOOR_VALUE / mean(p[39..54])`. `basinDirection` uses this
+ * to recover an EXACT neutral-momentum reference (B1.1).
+ */
+export const NOISE_FLOOR_VALUE = 0.0055;
+
 function clip01(x: number): number {
   if (!Number.isFinite(x)) return 0;
   return Math.min(1, Math.max(0, x));
@@ -256,21 +266,50 @@ export function basinDirection(basin: Basin): number {
     p[i] = Math.max(0, basin[i] ?? 0) / total;
   }
 
-  // Step 1: momentum-band mass and observer-derived neutral.
+  // Step 1: momentum-band mass and neutral reference.
   let momMass = 0;
   for (let i = 7; i <= 14; i++) momMass += p[i]!;
-  // Observer-derived neutral (P1 — no hardcoded knob). The momentum
-  // band's mass when momentum is NEUTRAL equals 8× the per-dim mass of
-  // its direction-agnostic peer bands: volatility (15..22) and volume
-  // (23..30) carry magnitude, not sign. A hardcoded 8/64 holds only for
-  // a uniform basin; perceive()'s 16 noise-floor dims (39..54 @ 0.0055)
-  // sit below uniform and force every other dim's share above uniform,
-  // so momMass exceeds 8/64 even on a flat market. Deriving the neutral
-  // from the basin's own peer bands self-corrects for that.
-  let peerSum = 0;
-  for (let i = 15; i <= 30; i++) peerSum += p[i]!;
-  const peerMean = peerSum / 16;
-  const neutralMomMass = peerMean > EPS ? 8 * peerMean : MOM_NEUTRAL_FALLBACK;
+  // B1.1 — noise-floor-anchored neutral (EXACT; supersedes #880's
+  // `8·peerMean` estimate).
+  //
+  // The momentum band is built by `momentumCoord`, which is 0.5-neutral
+  // by construction (logReturn 0 → 0.5 raw). So a neutral momentum band
+  // weighs 8 × 0.5 = 4 in raw (pre-toSimplex) units. The noise band
+  // (dims 39..54) is a fixed raw NOISE_FLOOR_VALUE per dim — it pins the
+  // simplex scale `T = NOISE_FLOOR_VALUE / noiseMean`, so the neutral
+  // momentum p-share is exact: (8·0.5)/T = 4·noiseMean/NOISE_FLOOR_VALUE.
+  // The sign test then reduces exactly to `mean(momentum dim) ≥ 0.5`.
+  //
+  // #880's `8·peerMean` averaged the volatility+volume bands as a proxy
+  // for "neutral per-dim mass" — but those bands are NOT 0.5-centred
+  // (volume's log(volRatio) runs mostly negative → volume dims ~0.40),
+  // so the neutral skewed low → momMass > neutral even on a flat market
+  // → basinDir sign pinned +1 (confirmed in production telemetry post-B1,
+  // 2026-05-21). The noise anchor removes that skew.
+  //
+  // Gate: MONKEY_PERCEPTION_EXPRESSIVE_LIVE on (momentumCoord active —
+  // the 0.5-neutral guarantee holds) AND the noise band reads as a
+  // genuine sub-uniform floor. A real perceive() noise band is ~0.5% of
+  // the basin (16 × 0.0055 raw out of T ≈ 17); a noiseSum ceiling of
+  // 0.05 (5%) clears that with a ~10× margin and excludes hand-built
+  // uniform test basins, where the "noise" dims sit at ~25% of the
+  // basin. Else fall back to #880's peerMean, then the 8/64 fallback.
+  let neutralMomMass: number;
+  let noiseSum = 0;
+  for (let i = 39; i <= 54; i++) noiseSum += p[i]!;
+  if (
+    process.env.MONKEY_PERCEPTION_EXPRESSIVE_LIVE !== 'false'
+    && noiseSum > EPS
+    && noiseSum < 0.05
+  ) {
+    const noiseMean = noiseSum / 16;
+    neutralMomMass = (8 * 0.5 * noiseMean) / NOISE_FLOOR_VALUE;
+  } else {
+    let peerSum = 0;
+    for (let i = 15; i <= 30; i++) peerSum += p[i]!;
+    const peerMean = peerSum / 16;
+    neutralMomMass = peerMean > EPS ? 8 * peerMean : MOM_NEUTRAL_FALLBACK;
+  }
   const sign = momMass >= neutralMomMass ? 1 : -1;
 
   // Step 2: build the no-momentum antipode.
@@ -455,7 +494,7 @@ export function perceive(inputs: PerceptionInputs): Basin {
   // Python port. A non-zero floor is the Pillar 1 requirement; per-tick
   // variance was decorative. toSimplex normalises so uniform mass still
   // keeps the basin off the boundary.
-  for (let i = 39; i < 55; i++) v[i] = 0.0055;
+  for (let i = 39; i < 55; i++) v[i] = NOISE_FLOOR_VALUE;
 
   // dims 55..63 — Account/coupling (9 dims)
   v[55] = clip01(inputs.equityFraction);
