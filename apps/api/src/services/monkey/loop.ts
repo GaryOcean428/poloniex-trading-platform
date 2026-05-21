@@ -1029,6 +1029,11 @@ export class MonkeyKernel extends EventEmitter {
       this.turtleStates.set(sym, newTurtleState());
     }
 
+    // B3.1 — seed the leaky-Φ integrator from persisted trajectory so Φ
+    // survives process restarts. Awaited before the first tick so the
+    // seed is in place when tick 1 reads `state.phiLeaky`.
+    await this.seedLeakyPhiFromHistory();
+
     // 2026-05-13 MTF Phase 2 — bootstrap per-timeframe basin
     // histories from historical OHLCV so the 4h classifier doesn't
     // need 80 days of live ticks to warm up. Async + fail-soft;
@@ -1379,6 +1384,44 @@ export class MonkeyKernel extends EventEmitter {
   private scheduleMTFBootstrapRetry(symbol: string, delayMs: number): void {
     this.mtfBootstrapRetryAtMs.set(symbol, Date.now() + delayMs);
     this.mtfBootstrapLastDelayMs.set(symbol, delayMs);
+  }
+
+  /**
+   * B3.1 — seed each symbol's leaky-Φ integrator from the last persisted
+   * `monkey_trajectory.phi` so Φ survives process restarts.
+   *
+   * `state.phiLeaky` is in-memory only. Without this seed, every redeploy
+   * re-seeds Φ from the legacy entropy-Φ (~0.22) and Φ then spends its
+   * ~45-min CHAIN→GRAPH convergence ramp re-climbing (leak half-life
+   * ≈ 46 ticks). On a service that redeploys several times a day Φ never
+   * settles into its ~0.58 GRAPH steady state — confirmed in production
+   * telemetry 2026-05-21 (Φ reached 0.51 in a 1 h uninterrupted window,
+   * then reset to 0.22 on the next deploy). The leaky Φ is already
+   * persisted every tick by the monkey_trajectory INSERT — read the
+   * latest value back. Fail-soft: no row / query error → `phiLeaky`
+   * stays undefined and tick 1 falls through to the entropy-Φ seed.
+   */
+  private async seedLeakyPhiFromHistory(): Promise<void> {
+    for (const [symbol, state] of this.symbolStates) {
+      try {
+        const res = await pool.query(
+          `SELECT phi FROM monkey_trajectory
+            WHERE symbol = $1 ORDER BY at DESC LIMIT 1`,
+          [symbol],
+        );
+        const last = res.rows[0]?.phi;
+        if (typeof last === 'number' && Number.isFinite(last)) {
+          state.phiLeaky = last;
+          logger.info('[Monkey] Φ seeded from trajectory history', {
+            instanceId: this.instanceId, symbol, phiLeaky: last.toFixed(3),
+          });
+        }
+      } catch (err) {
+        logger.debug('[Monkey] Φ seed failed (fail-soft to entropy seed)', {
+          symbol, err: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
   }
 
   private newSymbolState(): SymbolState {
