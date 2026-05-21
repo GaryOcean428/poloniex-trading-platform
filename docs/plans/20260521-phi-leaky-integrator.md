@@ -58,6 +58,49 @@ This changes live trading behaviour (§5). The operator's plan doc `docs/plans/2
 
 **Recommendation (CC-C): Option A.** A *bug fix* (contained, tested — #869–875) ships direct; that is the standing authorization, used all session. A *core-metric redefinition* feeding live trade sizing, with a freshly-calibrated constant, warrants a few-hour shadow pass — proportionate, not theatre. But it is the operator's call.
 
-## 7. B1 — separate, downstream (not in this plan)
+## 7. Perception-layer workstream — separate, downstream (not in this plan)
 
-Removing the off-canon `norm01` from `perceive()` (CC-A's finding) is a *separate, larger* change — it alters the basin itself → blast radius is cell classification, `basinDir`, `drift`, regime, `fHealth`. **Not a prerequisite for B3** (B3 runs on `bv`, a live signal regardless of `norm01`). Scoped as its own plan with a symbol-gradient rollout. Out of scope here.
+A separate, larger workstream touching `perceive()` itself — blast radius is the basin → cell classification, `basinDir`, `drift`, regime, `fHealth`. **Not a prerequisite for B3** (B3 runs on `bv`, a live signal regardless). Its own plan, careful/symbol-gradient rollout. Two items belong here:
+
+- **B1** — remove the off-canon `norm01` pre-squash; adopt canonical `to_simplex` (clip-ε + divide-by-sum).
+- **Timeframe / lookback spec** — operator spec (memory `polytrade-perception-timeframe-spec`): perception lookback must reach **≥ 64 days** across a **timeframe ladder up to 1d candles**. Current kernel tops out at 4h / ~5 days — macro-blind. Clean fit: add a `1d` rung; a 64-bar window on 1d = 64 days = `BASIN_DIM`-coherent.
+
+Out of scope for this (B3) plan.
+
+## 8. Observer-derived calibration — follow-up (no env knobs)
+
+Operator directive (P1 / Wu Wei): algorithmic thresholds are **not** env
+vars — they are observer-derived, adapted from the kernel's
+**reward-driven neurochemistry**, **per-(symbol, regime, lane)**. The
+test for any parameter: *does the right value depend on observed
+performance?* — **yes →** observer machinery; **no** (infrastructure /
+safety bound / kill-switch / operator mandate) → an env var is fine.
+
+Pattern already in the codebase: `giveback = 0.30 + 0.20·serotonin`,
+`activation = 0.004 − 0.002·dopamine` (executive.ts) — thresholds with
+no knob. The work below extends that pattern; it does not add knobs.
+
+**8a — `PHI_GAIN`: retire the constant.** B3 v1 shipped `PHI_GAIN` as a
+hardcoded `0.024` ("derived once, then frozen" — a P1 slip). v2: GAIN
+self-derives from the rolling per-symbol `bv` distribution, modulated by
+the reward chemistry. No `PHI_GAIN` env var, ever. Sequenced after B3 v1
+validates.
+
+**8b — bracket-extend threshold: retire the proposed
+`MONKEY_BRACKET_EXTEND_CONV`.** Do NOT add that env var. Replace the
+frozen `0.5` with observer machinery:
+- Telemetry per extend event: `conviction_at_extend`,
+  `pre_extend_unrealized`, `final_realized`, `(symbol, regime, lane)`.
+- Learning rule: sliding window of recent extends per
+  `(symbol, regime, lane)`; pick θ maximising
+  `E[final_realized − pre_extend_unrealized | conviction ≥ θ]`;
+  require a confidence floor (≈20 samples/bucket) before committing;
+  frozen canonical fallback below the floor.
+- Per-site (Pillar 3) — never average across symbols/lanes.
+- Log the derived threshold per tick alongside Φ — observable, not
+  dialable.
+
+**8c — broader `MONKEY_*` calibration-knob audit.** The env vars
+accumulated across this session's shipments are calibration-debt. Their
+own `docs/plans/` artefact, not bundled here: per knob apply the test →
+keep (infra/safety/flag) / migrate (→ observer) / remove (stale).

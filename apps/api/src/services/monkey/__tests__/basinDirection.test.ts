@@ -233,3 +233,45 @@ describe('basinDirection — TS / Python parity', () => {
     expect(d).toBeLessThanOrEqual(1.0);
   });
 });
+
+// --- Production basin shape (only-longs regression, CC2 2026-05-21) ------
+// Every test above uses makeBasin() — uniform-0.5 basins, where 8/64 is
+// coincidentally the correct neutral. The REAL perceive() basin has 16
+// noise-floor dims (39..54) at 0.0055 — sub-uniform — which forces momMass
+// above 8/64 even on a flat market. Comparing to a hardcoded 8/64 then
+// reads "uptrend" on a flat market and can never go negative: the live
+// "only longs" bug. Mirrors test_basin_direction.py:TestBasinDirectionProductionShape.
+
+function makeProductionShapedBasin(momValue: number): Basin {
+  const v = new Float64Array(BASIN_DIM);
+  for (let i = 0; i < 3; i++) v[i] = 1 / 3;          // regime — uniform prior
+  v[3] = 0.01; v[4] = 0.01; v[5] = 0.5; v[6] = 0.0;  // ml posture (K ml-free)
+  for (let i = 7; i <= 14; i++) v[i] = momValue;     // momentum spectrum
+  for (let i = 15; i <= 22; i++) v[i] = 0.5;         // volatility — peer band
+  for (let i = 23; i <= 30; i++) v[i] = 0.5;         // volume — peer band
+  for (let i = 31; i <= 38; i++) v[i] = 0.5;         // price-structure
+  for (let i = 39; i <= 54; i++) v[i] = 0.0055;      // noise floor — the culprit
+  v[55] = 0.3; v[56] = 0.2; v[57] = 0.1; v[58] = 0.1; // account / coupling
+  for (let i = 59; i < 64; i++) v[i] = 0.01;         // reserved
+  return toSimplex(v);
+}
+
+describe('basinDirection — production basin shape (only-longs regression)', () => {
+  it('flat market reads ~ 0 despite the noise floor', () => {
+    // Momentum band at the same 0.5 level as its direction-agnostic peer
+    // bands (volatility, volume) = a flat market → must read ~0.
+    const d = basinDirection(makeProductionShapedBasin(0.5));
+    expect(Math.abs(d)).toBeLessThan(1e-6);
+  });
+
+  it('downtrend reads negative despite the noise floor', () => {
+    // Momentum band below its peer bands = downtrend. Pre-fix: read positive.
+    const d = basinDirection(makeProductionShapedBasin(0.40));
+    expect(d).toBeLessThan(0);
+  });
+
+  it('uptrend still reads positive on the production shape', () => {
+    const d = basinDirection(makeProductionShapedBasin(0.60));
+    expect(d).toBeGreaterThan(0);
+  });
+});

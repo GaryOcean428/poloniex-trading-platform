@@ -179,9 +179,9 @@ class StateReconciliationService {
         const side: 'long' | 'short' = resolveExchangeSide(exPos);
 
         // Check if this exchange symbol+side is already in the DB.
-        // DB side may be 'buy'/'sell' (liveSignal) or 'long'/'short'
-        // (fullyAutonomousTrader) — normalize both sides to long/short
-        // before comparing.
+        // Legacy autonomous_trades rows store side as 'buy'/'sell';
+        // current rows use 'long'/'short' — normalize both sides to
+        // long/short before comparing.
         const matched = dbTrades.some(
           t => t.symbol === symbol && normalizeDbSide(t.side) === side,
         );
@@ -648,8 +648,8 @@ class StateReconciliationService {
    * Run reconciliation for every user who is currently "live" in some sense:
    *
    *   1. Users with an active autonomous_trading_configs row (legacy path).
-   *   2. Users with any open live_signal trade in autonomous_trades (the
-   *      liveSignalEngine path, which doesn't require autonomous_trading_configs).
+   *   2. Users with any open live_signal or monkey trade in
+   *      autonomous_trades (does not require autonomous_trading_configs).
    *
    * Without (2) we get the exact bug from 2026-04-18: 6 DB rows stuck in
    * status='open' for 12h with no exchange position, and the 60s reconciler
@@ -677,11 +677,11 @@ class StateReconciliationService {
         });
       }
 
-      // Source 2: users with an open auto-trader row. This is the
-      // liveSignalEngine's + Monkey's footprint — if phantom rows
-      // accumulate on either, the stacking guard freezes all future
-      // entries until reconciler catches them. Covering this surface is
-      // the whole point of P2. Post-v0.3 Monkey is also a producer of
+      // Source 2: users with an open auto-trader row. This covers
+      // Monkey's footprint (and any residual legacy live_signal rows) —
+      // if phantom rows accumulate, the stacking guard freezes all
+      // future entries until the reconciler catches them. Covering this
+      // surface is the whole point of P2. Monkey is the producer of
       // open rows (reason LIKE 'monkey|%'); omitting her hides any
       // phantoms she leaves behind (observed 2026-04-20 — state-of-bot
       // read 1 DB open vs 2 exchange open because this query excluded

@@ -9,7 +9,6 @@ import {
   setExecutionMode,
   type ExecutionMode,
 } from '../services/executionModeService.js';
-import { fullyAutonomousTrader } from '../services/fullyAutonomousTrader.js';
 import poloniexFuturesService from '../services/poloniexFuturesService.js';
 import { strategyLearningEngine } from '../services/strategyLearningEngine.js';
 import { logger } from '../utils/logger.js';
@@ -24,7 +23,7 @@ function isTableMissingError(error: unknown): boolean {
 
 /**
  * POST /api/agent/start
- * Start the autonomous trading agent (SLE + fullyAutonomousTrader)
+ * Start the autonomous trading agent (SLE strategy-generation loop).
  */
 router.post('/start', authenticateToken, async (req: Request, res: Response) => {
   try {
@@ -51,26 +50,16 @@ router.post('/start', authenticateToken, async (req: Request, res: Response) => 
       });
     }
 
-    const config = req.body;
-
     // Start the strategy learning engine (generates + evaluates strategies)
     await strategyLearningEngine.start();
 
-    // Enable the execution engine in paper-trading mode by default
-    await fullyAutonomousTrader.enableAutonomousTrading(userId, {
-      paperTrading: config?.paperTrading !== undefined ? config.paperTrading : true,
-      ...config
-    });
-
-    const traderStatus = await fullyAutonomousTrader.getStatus(userId);
     const sleStatus = await strategyLearningEngine.getEngineStatus();
 
     res.json({
       success: true,
       session: {
         status: 'running',
-        sle: sleStatus,
-        trader: traderStatus
+        sle: sleStatus
       }
     });
   } catch (error: unknown) {
@@ -78,27 +67,14 @@ router.post('/start', authenticateToken, async (req: Request, res: Response) => 
     const errMsg = error instanceof Error ? error.message : String(error);
 
     if (errMsg.includes('already') || errMsg.includes('Already')) {
-      try {
-        const catchUserId = (req.user?.id || req.user?.userId)?.toString();
-        const existingStatus = catchUserId ? await fullyAutonomousTrader.getStatus(catchUserId) : null;
-        return res.status(409).json({
-          success: false,
-          error: 'An agent session is already active',
-          code: 'ALREADY_RUNNING',
-          existingState: existingStatus?.isRunning ? 'running' : 'unknown',
-          resumeAllowed: false,
-          takeoverAllowed: true
-        });
-      } catch {
-        return res.status(409).json({
-          success: false,
-          error: 'An agent session is already active',
-          code: 'ALREADY_RUNNING',
-          existingState: 'unknown',
-          resumeAllowed: false,
-          takeoverAllowed: true
-        });
-      }
+      return res.status(409).json({
+        success: false,
+        error: 'An agent session is already active',
+        code: 'ALREADY_RUNNING',
+        existingState: 'unknown',
+        resumeAllowed: false,
+        takeoverAllowed: true
+      });
     }
 
     let errorCode = 'UNKNOWN_ERROR';
@@ -125,11 +101,11 @@ router.post('/stop', authenticateToken, async (req: Request, res: Response) => {
     const userId = (req.user?.id || req.user?.userId)?.toString();
     if (!userId) return res.status(401).json({ success: false, error: 'User ID not found in token' });
     // Global halt: flip execution mode to 'pause' so the risk kernel
-    // vetoes every order submission (liveSignalEngine, fullyAutonomousTrader,
-    // paperTradingService all cascade through this one switch).
+    // vetoes every order submission (the Monkey kernel + paperTradingService
+    // all cascade through this one switch).
+    void userId;
     const operator = (req.user?.email || req.user?.id || req.user?.userId || 'header_stop').toString();
     await setExecutionMode('pause', operator, 'Header Stop button');
-    try { await fullyAutonomousTrader.disableAutonomousTrading(userId); } catch { /* may not be enabled */ }
     res.json({ success: true, message: 'Agent stopped successfully', mode: 'pause' });
   } catch (error: unknown) {
     logger.error('Error stopping agent:', error);
@@ -171,35 +147,39 @@ router.get('/status', authenticateToken, async (req: Request, res: Response) => 
     const userId = (req.user?.id || req.user?.userId)?.toString();
     if (!userId) return res.status(401).json({ success: false, error: 'User ID not found in token' });
     const sleStatus = await strategyLearningEngine.getEngineStatus();
-    const traderStatus = await fullyAutonomousTrader.getStatus(userId);
     const execMode = await getExecutionModeRecord();
     // Resolve a single user-facing status. When execution mode is
     // paused, surface that as the dominant state even if the SLE
     // generation loop happens to be mid-tick — this is what the
-    // header Pause/Stop buttons advertise.
-    const running = traderStatus.isRunning || sleStatus.isRunning;
+    // header Pause/Stop buttons advertise. The fullyAutonomousTrader
+    // status feed was removed 2026-05-21; the SLE running flag is the
+    // sole signal now (the Monkey kernel runs independently).
+    const running = sleStatus.isRunning;
     let status: 'running' | 'paused' | 'stopped';
     if (execMode?.mode === 'pause') status = 'paused';
     else if (running) status = 'running';
     else status = 'stopped';
     // 2026-05-11 — flatten the most-asked stats onto status so the
     // frontend AgentStatus interface in AutonomousAgentDashboard
-    // reads them at the top level. Previously nested under
-    // status.trader, so the Dashboard Total P&L card rendered $0.00.
-    // totalPnl is computed live from autonomous_trades because
-    // traderStatus.metrics only tracks equity/drawdown, not P&L.
+    // reads them at the top level. totalPnl / live-trade count / open
+    // positions are all computed live from autonomous_trades (the
+    // Monkey kernel's trade ledger) — there is no separate trader
+    // status object since fullyAutonomousTrader was removed.
     let totalPnl = 0;
     let liveTradesExecuted = 0;
+    let openPositions = 0;
     try {
       const pnlRow = await pool.query(
         `SELECT COALESCE(SUM(pnl), 0) AS total_pnl,
-                COUNT(*) FILTER (WHERE order_id IS NULL OR order_id NOT LIKE 'paper_%') AS live_trades
+                COUNT(*) FILTER (WHERE pnl IS NOT NULL AND (order_id IS NULL OR order_id NOT LIKE 'paper_%')) AS live_trades,
+                COUNT(*) FILTER (WHERE status = 'open' AND deleted_at IS NULL) AS open_positions
            FROM autonomous_trades
-          WHERE user_id = $1 AND pnl IS NOT NULL`,
+          WHERE user_id = $1`,
         [userId],
       );
       totalPnl = parseFloat(pnlRow.rows[0]?.total_pnl ?? '0') || 0;
       liveTradesExecuted = parseInt(pnlRow.rows[0]?.live_trades ?? '0', 10) || 0;
+      openPositions = parseInt(pnlRow.rows[0]?.open_positions ?? '0', 10) || 0;
     } catch { /* fail-soft: leave at 0 */ }
     res.json({
       success: true,
@@ -214,9 +194,8 @@ router.get('/status', authenticateToken, async (req: Request, res: Response) => 
         backtestsCompleted: Number((sleStatus as { backtestsCompleted?: number }).backtestsCompleted ?? 0),
         paperTradesExecuted: 0,
         liveTradesExecuted,
-        openPositions: Number(traderStatus.openPositions ?? 0),
+        openPositions,
         sle: sleStatus,
-        trader: traderStatus,
       },
     });
   } catch (error: unknown) {
@@ -233,16 +212,13 @@ router.get('/health', authenticateToken, async (req: Request, res: Response) => 
     try { await pool.query('SELECT 1'); dbHealthy = true; } catch { /* DB down */ }
     let sleStatus = null;
     try { sleStatus = await strategyLearningEngine.getEngineStatus(); } catch { /* unavailable */ }
-    let traderStatus = null;
-    try { traderStatus = await fullyAutonomousTrader.getStatus(userId); } catch { /* unavailable */ }
-    const agentAvailable = strategyLearningEngine != null && fullyAutonomousTrader != null;
+    const agentAvailable = strategyLearningEngine != null;
     res.json({
       success: true, healthy: dbHealthy && agentAvailable,
       dependencies: {
         database: { healthy: dbHealthy, message: dbHealthy ? 'Connected' : 'Connection failed' },
         agentService: { healthy: agentAvailable, message: agentAvailable ? 'Available' : 'Unavailable' },
-        sle: sleStatus ? { isRunning: sleStatus.isRunning, activeStrategies: sleStatus.activeStrategies } : null,
-        trader: traderStatus ? { enabled: traderStatus.enabled, isRunning: traderStatus.isRunning, paperTrading: traderStatus.paperTrading, openPositions: traderStatus.openPositions } : null
+        sle: sleStatus ? { isRunning: sleStatus.isRunning, activeStrategies: sleStatus.activeStrategies } : null
       },
       timestamp: new Date().toISOString()
     });
@@ -325,8 +301,9 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
       strategyPerformance: [] as Array<{ strategyName: string; pnl: number; trades: number; winRate: number }>,
       symbolPerformance: [] as Array<{ symbol: string; pnl: number; trades: number; winRate: number }>,
     };
-    const traderStatus = await fullyAutonomousTrader.getStatus(userId);
-    if (!traderStatus.enabled && !traderStatus.metrics) return res.json({ success: true, performance: defaultPerformance });
+    // Performance is computed entirely from the autonomous_trades
+    // ledger below. The prior fullyAutonomousTrader.enabled gate was
+    // removed 2026-05-21 with the engine — the ledger is authoritative.
     try {
       const mode = req.query.mode as string | undefined;
       // Per-engine filter uses the `engine_type` column populated by
@@ -506,35 +483,29 @@ router.get('/capabilities', authenticateToken, async (_req: Request, res: Respon
 });
 
 router.get('/circuit-breaker', authenticateToken, async (req: Request, res: Response) => {
-  try {
-    const userId = (req.user?.id || req.user?.userId)?.toString();
-    if (!userId) return res.status(401).json({ success: false, error: 'User ID not found in token' });
-    const cbStatus = await fullyAutonomousTrader.getCircuitBreakerStatus(userId);
-    res.json({ success: true, circuitBreaker: cbStatus });
-  } catch (error: unknown) {
-    logger.error('Error getting circuit breaker status:', error);
-    res.json({ success: true, circuitBreaker: { isTripped: false, consecutiveLosses: 0, dailyLossPercent: 0 }, _fallback: true });
+  // The fullyAutonomousTrader circuit breaker was removed 2026-05-21.
+  // The Monkey kernel is the sole live executor and enforces its own
+  // risk limits (the risk-kernel blast-door); that state is not
+  // surfaced on this route. Return a neutral, never-tripped payload so
+  // the dashboard's circuit-breaker panel renders cleanly.
+  if (!req.user?.id && !req.user?.userId) {
+    return res.status(401).json({ success: false, error: 'User ID not found in token' });
   }
+  res.json({
+    success: true,
+    circuitBreaker: { isTripped: false, consecutiveLosses: 0, dailyLossPercent: 0 },
+  });
 });
 
 router.get('/learnings', authenticateToken, async (_req: Request, res: Response) => {
   res.json({ success: true, learnings: [] });
 });
 
-router.put('/config', authenticateToken, async (req: Request, res: Response) => {
-  try {
-    const userId = (req.user?.id || req.user?.userId)?.toString();
-    if (!userId) return res.status(401).json({ success: false, error: 'User ID not found in token' });
-    const config = req.body;
-    const traderStatus = await fullyAutonomousTrader.getStatus(userId);
-    if (!traderStatus.enabled) return res.status(404).json({ success: false, error: 'No active trading session found' });
-    await fullyAutonomousTrader.enableAutonomousTrading(userId, config);
-    res.json({ success: true, message: 'Configuration updated successfully' });
-  } catch (error: unknown) {
-    logger.error('Error updating config:', error);
-    res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'Failed to update configuration' });
-  }
-});
+// NOTE: `PUT /api/agent/config` was removed 2026-05-21. It only ever
+// configured the fullyAutonomousTrader engine (`enableAutonomousTrading`),
+// which has been deleted. The Monkey kernel — the sole live executor —
+// is configured via the risk_settings table (PUT /api/risk/settings)
+// and observer-derived parameters, not this route.
 
 router.get('/activity/live', authenticateToken, async (_req: Request, res: Response) => {
   res.json({ success: true, activities: [] });

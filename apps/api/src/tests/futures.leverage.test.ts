@@ -1,7 +1,7 @@
 /**
  * Tests for the POST /api/futures/leverage HEDGE-mode posSide plumbing.
  *
- * Background: same root cause as the LiveSignalEngine + Monkey kernel
+ * Background: same HEDGE-mode posSide root cause as the Monkey kernel
  * fixes — Poloniex /v3/position/leverage rejects the call with code=11011
  * ("Position mode and posSide do not match") on a HEDGE account when the
  * body omits posSide. This route is the manual UI path (the dashboard

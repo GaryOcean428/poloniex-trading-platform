@@ -194,8 +194,9 @@ export async function getTodayMonkeyRealizedPnl(): Promise<number> {
 /**
  * Count of currently-open Monkey-owned positions. Cached 60 s; 0 on
  * error. Counts Monkey's own rows only (`reason LIKE 'monkey|%'`) — NOT
- * the account-wide open count, which also includes liveSignalEngine and
- * must never gate Monkey (loop.ts fetchAccountContext 2026-04-21 note).
+ * the account-wide open count, which also includes operator-opened
+ * positions and must never gate Monkey (loop.ts fetchAccountContext
+ * 2026-04-21 note).
  */
 export async function getOpenMonkeyPositionCount(): Promise<number> {
   if (openCountCache && Date.now() - openCountCache.atMs < TTL_MS) return openCountCache.value;

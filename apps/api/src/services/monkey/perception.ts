@@ -180,11 +180,12 @@ export function atr14(
  *
  * The new formulation:
  *   1. Build a "no-momentum antipode" basin: rescale dims 7..14 to
- *      total mass = MOM_NEUTRAL (= 8/64), redistribute the surplus
- *      / deficit uniformly across the 56 non-momentum dims.
+ *      total mass = neutralMomMass (observer-derived — see below),
+ *      redistribute the surplus / deficit uniformly across the 56
+ *      non-momentum dims.
  *   2. Compute the Fisher-Rao geodesic distance between basin and
  *      antipode: ``d = arccos(Σ √(p·q))`` on Δ⁶³.
- *   3. Sign by ``mom_mass - MOM_NEUTRAL``.
+ *   3. Sign by ``mom_mass - neutralMomMass``.
  *   4. Normalise by π/2 (the simplex diameter) so output ∈ [-1, +1]
  *      WITHOUT clipping. Saturation is geometric, not artificial.
  *
@@ -196,9 +197,19 @@ export function atr14(
  * this commit had basinDir computed under the saturating formula.
  * Migration 041 flags those rows so the kernel can avoid re-using
  * stale-coordinate-system bubbles (UCP §11.8).
+ *
+ * BUG FIX (2026-05-21): the neutral was a hardcoded MOM_NEUTRAL = 8/64
+ * — correct only for a uniform basin. perceive()'s sub-uniform noise
+ * floor (dims 39..54 @ 0.0055) made mom_mass exceed 8/64 even on a
+ * flat market → sign pinned +1 → basinDir never went negative (the
+ * live "only longs" bug). Fixed: neutral is derived from the basin's
+ * own direction-agnostic peer bands (volatility 15..22 + volume
+ * 23..30). Observer-derived, no hardcoded knob (P1).
  */
 export function basinDirection(basin: Basin): number {
-  const MOM_NEUTRAL = 8 / BASIN_DIM;  // 0.125
+  // Degenerate-basin fallback ONLY. The live neutral is observer-derived
+  // below (neutralMomMass) — 8/64 is correct only for a uniform basin.
+  const MOM_NEUTRAL_FALLBACK = 8 / BASIN_DIM;  // 0.125
   const FR_DIAMETER = Math.PI / 2;
   const EPS = 1e-12;
 
@@ -211,21 +222,33 @@ export function basinDirection(basin: Basin): number {
     p[i] = Math.max(0, basin[i] ?? 0) / total;
   }
 
-  // Step 1: momentum-band mass and sign.
+  // Step 1: momentum-band mass and observer-derived neutral.
   let momMass = 0;
   for (let i = 7; i <= 14; i++) momMass += p[i]!;
-  const sign = momMass >= MOM_NEUTRAL ? 1 : -1;
+  // Observer-derived neutral (P1 — no hardcoded knob). The momentum
+  // band's mass when momentum is NEUTRAL equals 8× the per-dim mass of
+  // its direction-agnostic peer bands: volatility (15..22) and volume
+  // (23..30) carry magnitude, not sign. A hardcoded 8/64 holds only for
+  // a uniform basin; perceive()'s 16 noise-floor dims (39..54 @ 0.0055)
+  // sit below uniform and force every other dim's share above uniform,
+  // so momMass exceeds 8/64 even on a flat market. Deriving the neutral
+  // from the basin's own peer bands self-corrects for that.
+  let peerSum = 0;
+  for (let i = 15; i <= 30; i++) peerSum += p[i]!;
+  const peerMean = peerSum / 16;
+  const neutralMomMass = peerMean > EPS ? 8 * peerMean : MOM_NEUTRAL_FALLBACK;
+  const sign = momMass >= neutralMomMass ? 1 : -1;
 
   // Step 2: build the no-momentum antipode.
   const antipode: number[] = p.slice();
   const bandN = 8;
   const nonbandN = BASIN_DIM - bandN; // 56
-  const excess = momMass - MOM_NEUTRAL;
+  const excess = momMass - neutralMomMass;
   if (momMass > EPS) {
-    const scale = MOM_NEUTRAL / momMass;
+    const scale = neutralMomMass / momMass;
     for (let i = 7; i <= 14; i++) antipode[i] = p[i]! * scale;
   } else {
-    for (let i = 7; i <= 14; i++) antipode[i] = MOM_NEUTRAL / bandN;
+    for (let i = 7; i <= 14; i++) antipode[i] = neutralMomMass / bandN;
   }
   if (nonbandN > 0) {
     const add = excess / nonbandN;

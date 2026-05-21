@@ -10,14 +10,14 @@
  * (`MONKEY_SHORTS_LIVE=true`). This is the bug class behind #676/#677/
  * #679 and the 2026-05-14 kernel-paralysis incident: after a position
  * was reversed long→short on the exchange, `loop.ts` `fetchAccountContext`
- * and `liveSignalEngine` both read the HEDGE short's positive qty as
- * `long`, so the kernel logged `held long` while it wanted `short` and
- * could neither DCA nor manage the position.
+ * read the HEDGE short's positive qty as `long`, so the kernel logged
+ * `held long` while it wanted `short` and could neither DCA nor manage
+ * the position.
  *
  * Canonical resolution everywhere: posSide first, `Math.sign(qty)`
  * fallback for ONE_WAY. Mirrors `stateReconciliationService`'s
- * `resolveExchangeSide` and `fullyAutonomousTrader`'s side resolution —
- * this is the shared source of truth so the pattern can't drift again.
+ * `resolveExchangeSide` — this is the shared source of truth so the
+ * pattern can't drift again.
  */
 export function resolveExchangePositionSide(
   pos: Record<string, unknown>,

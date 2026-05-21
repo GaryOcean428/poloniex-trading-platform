@@ -23,7 +23,6 @@
     "migrate": "node --loader ts-node/esm src/scripts/runMigration.ts",
     "migrate:005": "node scripts/run-migration-005.js",
     "test:connection": "tsx src/scripts/test_real_connection.ts",
-    "test:paper-cycle": "tsx src/scripts/test_paper_trade_cycle.ts",
     "test:watch": "jest --watch"
   },
   "dependencies": {
