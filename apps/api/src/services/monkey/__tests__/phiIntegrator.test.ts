@@ -80,6 +80,8 @@ describe('phi_integrator — leaky-integrator Φ', () => {
     expect(isPhiLeakyEnabled('false')).toBe(false);
     expect(isPhiLeakyEnabled(' FALSE ')).toBe(false);
     expect(isPhiLeakyEnabled('0')).toBe(false);
+    expect(isPhiLeakyEnabled('no')).toBe(false);
+    expect(isPhiLeakyEnabled('OFF')).toBe(false);
     expect(isPhiLeakyEnabled('true')).toBe(true);
   });
 });

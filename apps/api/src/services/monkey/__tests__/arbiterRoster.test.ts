@@ -32,6 +32,11 @@ describe('arbiterRoster', () => {
     return arbiterRoster();
   }
 
+  async function loopHelpers() {
+    const { isArbiterAgentLabel, plan21002RetryClose } = await import('../loop.js');
+    return { isArbiterAgentLabel, plan21002RetryClose };
+  }
+
   it('defaults to all four agents when MONKEY_ARBITER_AGENTS is unset', async () => {
     expect(await roster()).toEqual(new Set(['K', 'M', 'T', 'L']));
   });
@@ -59,5 +64,28 @@ describe('arbiterRoster', () => {
   it('falls back to the full roster on a blank value', async () => {
     process.env.MONKEY_ARBITER_AGENTS = '   ';
     expect(await roster()).toEqual(new Set(['K', 'M', 'T', 'L']));
+  });
+
+  it('validates arbiter labels through the exported type guard', async () => {
+    const { isArbiterAgentLabel } = await loopHelpers();
+    expect(isArbiterAgentLabel('K')).toBe(true);
+    expect(isArbiterAgentLabel('L')).toBe(true);
+    expect(isArbiterAgentLabel('x')).toBe(false);
+    expect(isArbiterAgentLabel('')).toBe(false);
+  });
+
+  it('plans 21002 retry closes defensively for invalid live quantities', async () => {
+    const { plan21002RetryClose } = await loopHelpers();
+    expect(plan21002RetryClose(NaN, 1)).toEqual({ ok: false, reason: '21002_retry_invalid_live_qty' });
+    expect(plan21002RetryClose(Infinity, 1)).toEqual({ ok: false, reason: '21002_retry_invalid_live_qty' });
+  });
+
+  it('plans 21002 retry closes with the standard 9999-contract chunks', async () => {
+    const { plan21002RetryClose } = await loopHelpers();
+    expect(plan21002RetryClose(25_000, 1)).toEqual({
+      ok: true,
+      freshQty: 25_000,
+      chunkSizes: [9_999, 9_999, 5_002],
+    });
   });
 });

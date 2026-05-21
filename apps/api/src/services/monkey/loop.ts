@@ -719,8 +719,37 @@ export const ADOPTED_POSITION_REASON_PREFIX = 'kernel_adopted|';
 export const OWNED_ADOPTED_POSITION_REASON_PREFIX =
   `monkey|kernel=${ADOPTED_POSITION_OWNER_INSTANCE}|adopted|`;
 
-function isArbiterAgentLabel(value: string): value is ArbiterAgentLabel {
+export function isArbiterAgentLabel(value: string): value is ArbiterAgentLabel {
   return (ARBITER_AGENT_LABELS as readonly string[]).includes(value);
+}
+
+type RetryClosePlan =
+  | { ok: true; freshQty: number; chunkSizes: number[] }
+  | { ok: false; reason: '21002_retry_invalid_live_qty' | '21002_position_already_flat' | '21002_retry_lot_rounding_zero' };
+
+export function plan21002RetryClose(liveQty: unknown, symbolLotSize: number): RetryClosePlan {
+  const freshQtyRaw = Number(liveQty ?? 0);
+  if (!Number.isFinite(freshQtyRaw)) {
+    return { ok: false, reason: '21002_retry_invalid_live_qty' };
+  }
+  const freshQty = Math.abs(freshQtyRaw);
+  if (freshQty <= 0) {
+    return { ok: false, reason: '21002_position_already_flat' };
+  }
+  const freshContracts = symbolLotSize > 0
+    ? Math.floor(freshQty / symbolLotSize)
+    : Math.floor(freshQty);
+  if (freshContracts <= 0) {
+    return { ok: false, reason: '21002_retry_lot_rounding_zero' };
+  }
+  const retryChunks = planCloseChunks(freshContracts, 1).chunks;
+  const chunkSizes = symbolLotSize > 0
+    ? retryChunks.map((contracts) => contracts * symbolLotSize)
+    : retryChunks;
+  if (chunkSizes.length === 0) {
+    return { ok: false, reason: '21002_retry_lot_rounding_zero' };
+  }
+  return { ok: true, freshQty, chunkSizes };
 }
 
 /**
@@ -6609,15 +6638,17 @@ export class MonkeyKernel extends EventEmitter {
                 String(p.side ?? p.posSide ?? '').toUpperCase() ===
                 (heldSide === 'long' ? 'LONG' : 'SHORT')) ?? freshForSymbol[0])
             : freshForSymbol[0];
-          const freshQtyRaw = Number(freshTarget?.qty ?? freshTarget?.size ?? 0);
-          if (!Number.isFinite(freshQtyRaw)) {
+          const retryPlan = plan21002RetryClose(
+            freshTarget?.qty ?? freshTarget?.size ?? 0,
+            symbolLotSize,
+          );
+          if (retryPlan.ok === false && retryPlan.reason === '21002_retry_invalid_live_qty') {
             logger.warn('[Monkey] 21002 retry skipped invalid live quantity', {
               symbol, heldSide, liveQty: freshTarget?.qty ?? freshTarget?.size ?? null,
             });
-            return { executed: false, orderId: null, reason: '21002_retry_invalid_live_qty' };
+            return { executed: false, orderId: null, reason: retryPlan.reason };
           }
-          const freshQty = Math.abs(freshQtyRaw);
-          if (freshQty <= 0) {
+          if (retryPlan.ok === false && retryPlan.reason === '21002_position_already_flat') {
             // Position is already flat — nothing to close. Mark the row.
             await pool.query(
               `UPDATE autonomous_trades SET status='closed', exit_price=$1, exit_time=NOW(),
@@ -6626,22 +6657,14 @@ export class MonkeyKernel extends EventEmitter {
             ).catch(() => { /* non-fatal */ });
             return {
               executed: false, orderId: null,
-              reason: '21002_position_already_flat',
+              reason: retryPlan.reason,
             };
           }
-          // Floor to whole contracts so the retry never re-overshoots, then
-          // reuse the standard close chunker so large live positions still
-          // respect Poloniex's 10k-contract single-order cap.
-          const freshContracts = symbolLotSize > 0
-            ? Math.floor(freshQty / symbolLotSize)
-            : Math.floor(freshQty);
-          if (freshContracts <= 0) {
-            return { executed: false, orderId: null, reason: '21002_retry_lot_rounding_zero' };
+          if (retryPlan.ok === false) {
+            return { executed: false, orderId: null, reason: retryPlan.reason };
           }
-          const retryPlan = planCloseChunks(freshContracts, 1);
           const retryOrderIds: string[] = [];
-          for (const retryContracts of retryPlan.chunks) {
-            const retrySize = symbolLotSize > 0 ? retryContracts * symbolLotSize : retryContracts;
+          for (const retrySize of retryPlan.chunkSizes) {
             const retryOrder = await poloniexFuturesService.placeOrder(credentials, {
               symbol, side: closeSide, type: 'market', size: retrySize, lotSize: symbolLotSize,
               reduceOnly: true,
@@ -6658,7 +6681,7 @@ export class MonkeyKernel extends EventEmitter {
             return { executed: false, orderId: null, reason: '21002_retry_no_orderId' };
           }
           logger.info('[Monkey] close retried at live qty after 21002', {
-            symbol, heldSide, freshQty, chunks: retryPlan.chunks.length, orderIds: retryOrderIds,
+            symbol, heldSide, freshQty: retryPlan.freshQty, chunks: retryPlan.chunkSizes.length, orderIds: retryOrderIds,
           });
           // Success — set orderId and fall through to the settle/accounting
           // block below (closes all open rows for this kernel+symbol).
