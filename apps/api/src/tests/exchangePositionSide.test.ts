@@ -5,8 +5,8 @@
  * 2026-05-14 production incident: after a position was reversed
  * long→short on the exchange, the Monkey kernel logged `held long`
  * while it wanted `short`, could not DCA, and was paralysed. Root
- * cause: `loop.ts` `fetchAccountContext` and `liveSignalEngine` derived
- * side from `qty < 0 ? short : long`. On a HEDGE account (production:
+ * cause: `loop.ts` `fetchAccountContext` derived side from
+ * `qty < 0 ? short : long`. On a HEDGE account (production:
  * MONKEY_SHORTS_LIVE=true) `qty` is a POSITIVE magnitude and the side
  * is in `posSide` — so every HEDGE short was misread as a long.
  */
