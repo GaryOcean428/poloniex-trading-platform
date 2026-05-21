@@ -287,20 +287,21 @@ export function basinDirection(basin: Basin): number {
   // → basinDir sign pinned +1 (confirmed in production telemetry post-B1,
   // 2026-05-21). The noise anchor removes that skew.
   //
-  // Gate: MONKEY_PERCEPTION_EXPRESSIVE_LIVE on (momentumCoord active —
-  // the 0.5-neutral guarantee holds) AND the noise band reads as a
-  // genuine sub-uniform floor. A real perceive() noise band is ~0.5% of
-  // the basin (16 × 0.0055 raw out of T ≈ 17); a noiseSum ceiling of
-  // 0.05 (5%) clears that with a ~10× margin and excludes hand-built
-  // uniform test basins, where the "noise" dims sit at ~25% of the
-  // basin. Else fall back to #880's peerMean, then the 8/64 fallback.
+  // The anchor is EXACT only on a genuine perceive() output (noise dims
+  // at raw NOISE_FLOOR_VALUE). It self-detects that: a real perceive()
+  // noise band is 16 × 0.0055 raw ≈ 0.4–0.9% of the basin (T ≈ 10–20).
+  // The `noiseSum < 0.02` guard (2%) sits ~3× above that and well below
+  // any hand-built uniform-ish basin (whose 16 "noise" dims carry ≥4%)
+  // — so synthetic test fixtures and non-perceive basins fall through
+  // to #880's peerMean, no regression. MONKEY_PERCEPTION_EXPRESSIVE_LIVE
+  // =false reverts the whole B1 path. Final fallback: the 8/64 constant.
   let neutralMomMass: number;
   let noiseSum = 0;
   for (let i = 39; i <= 54; i++) noiseSum += p[i]!;
   if (
     process.env.MONKEY_PERCEPTION_EXPRESSIVE_LIVE !== 'false'
     && noiseSum > EPS
-    && noiseSum < 0.05
+    && noiseSum < 0.02
   ) {
     const noiseMean = noiseSum / 16;
     neutralMomMass = (8 * 0.5 * noiseMean) / NOISE_FLOOR_VALUE;

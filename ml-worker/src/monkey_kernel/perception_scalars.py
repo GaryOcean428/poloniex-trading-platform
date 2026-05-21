@@ -19,6 +19,7 @@ similarity, no Adam-style gradient steps.
 
 from __future__ import annotations
 
+import os
 from typing import Sequence
 
 import numpy as np
@@ -28,6 +29,11 @@ import numpy as np
 # the alternative is a top-level circular import via the kernel
 # barrel module.
 _FR_DIAMETER = float(np.pi / 2.0)  # max Fisher-Rao distance on Δⁿ
+
+# Noise-floor raw value — dims 39..54 of every perceive() basin are
+# pinned here (mirror of perception.ts:NOISE_FLOOR_VALUE). basin_direction
+# uses it as the exact simplex-scale anchor for the neutral reference.
+_NOISE_FLOOR_VALUE = 0.0055
 
 
 def basin_direction(basin: np.ndarray) -> float:
@@ -108,20 +114,39 @@ def basin_direction(basin: np.ndarray) -> float:
 
     mom_mass = float(np.sum(p[7:15]))
 
-    # Observer-derived neutral reference (P1 — no hardcoded knob, per
-    # the perception-workstream §8 directive). The momentum band's mass
-    # when momentum is NEUTRAL equals 8× the per-dim mass of its
-    # direction-agnostic peer bands: volatility (15..22) and volume
-    # (23..30) carry magnitude, not sign. A hardcoded 8/64 holds only
-    # for a uniform basin; perceive()'s 16 noise-floor dims (39..54,
-    # pinned 0.0055) sit below uniform and force every other dim's
-    # share above uniform — so mom_mass exceeds 8/64 even on a flat
-    # market. Deriving the neutral from the basin's own peer bands
-    # self-corrects for whatever the noise floor does.
-    peer_mean = float(np.mean(p[15:31]))  # 16 direction-agnostic dims
-    neutral_mom_mass = (
-        8.0 * peer_mean if peer_mean > EPS else MOM_NEUTRAL_FALLBACK
-    )
+    # B1.1 — noise-floor-anchored neutral (EXACT). Mirror of
+    # perception.ts:basinDirection — see that file for the full
+    # rationale. The momentum band is built 0.5-neutral (momentum_coord /
+    # _momentum_coord), so a neutral momentum band weighs 8×0.5=4 raw.
+    # The noise band (39..54) is a fixed raw _NOISE_FLOOR_VALUE per dim,
+    # which pins the simplex scale T = _NOISE_FLOOR_VALUE / noise_mean —
+    # making the neutral momentum p-share exact:
+    # (8·0.5)·noise_mean / _NOISE_FLOOR_VALUE.
+    #
+    # Supersedes #880's `8·peer_mean`: the volatility+volume peer bands
+    # are NOT 0.5-centred (volume's log(volRatio) runs mostly negative),
+    # so that estimate skewed low → sign pinned +1 even on a flat market
+    # (production telemetry post-B1, 2026-05-21).
+    #
+    # The anchor is EXACT only on a genuine perceive() output (noise
+    # dims at raw _NOISE_FLOOR_VALUE). It self-detects that: a real
+    # perceive() noise band is ~0.4–0.9% of the basin, so the
+    # `noise_sum < 0.02` guard (2%) engages on genuine basins and falls
+    # through to #880's peer_mean for synthetic / non-perceive basins
+    # (no regression). Gated MONKEY_PERCEPTION_EXPRESSIVE_LIVE. Final
+    # fallback: the 8/64 degenerate constant.
+    noise_sum = float(np.sum(p[39:55]))  # 16 noise-floor dims
+    if (
+        os.environ.get("MONKEY_PERCEPTION_EXPRESSIVE_LIVE") != "false"
+        and EPS < noise_sum < 0.02
+    ):
+        noise_mean = noise_sum / 16.0
+        neutral_mom_mass = (8.0 * 0.5 * noise_mean) / _NOISE_FLOOR_VALUE
+    else:
+        peer_mean = float(np.mean(p[15:31]))  # 16 direction-agnostic dims
+        neutral_mom_mass = (
+            8.0 * peer_mean if peer_mean > EPS else MOM_NEUTRAL_FALLBACK
+        )
     sign = 1.0 if mom_mass >= neutral_mom_mass else -1.0
 
     # Build the no-momentum antipode: rescale the momentum band so its
