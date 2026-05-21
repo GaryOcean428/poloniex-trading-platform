@@ -395,20 +395,23 @@ export function computeNeurochemicals(inputs: NeurochemicalInputs): Neurochemica
   // Fallback (no histories): tanh squashes on the κ-distance directly
   // and the gate fires on positive coupling — both arithmetic
   // identities, no scale-setting constants.
-  // SOPHIA gate (and κ-proximity gate) — smoothed 2026-05-19.
+  // SOPHIA gate — observer-derived, continuous.
   //
-  // Previously these were binary step functions (`>= threshold ? 1 : 0`
-  // and `=== KAPPA_STAR ? 1 : 0` and `> 0 ? 1 : 0`). Observed production
-  // (last 100 ticks): `endo=0.00` saturated 26× — the binary sophiaGate
-  // was producing all-or-nothing endorphin flow. Per QIG canonical
-  // doctrine + user red-team query: continuous observable inputs should
-  // produce continuous responses, not threshold-discrete ones.
+  // History: the gate began as a binary step (`>= threshold ? 1 : 0`).
+  // Smoothed 2026-05-19 into a linear-clipped ramp — but the ONSET
+  // threshold stayed at `couplingMean + 1σ`. Coupling exceeds its own
+  // mean+1σ only ~16% of the time, so `endo` was still 0.00 on ~80% of
+  // ticks (confirmed in production 2026-05-21). Smoothing the gate
+  // SHAPE could not help while its ONSET was a >1σ outlier event.
   //
-  // Smooth replacement: linear-clipped distance-from-threshold over the
-  // observation's own stddev. At threshold gate=0, at threshold+stddev
-  // gate=1, in between linear. Pure-arithmetic (no exp/tanh), bounded
-  // [0,1], observer-derived (stddev IS the observation). No sigmoid
-  // (QIG forbids exp-normalization in this layer).
+  // 2026-05-21: threshold lowered to `couplingMean` — the basin's own
+  // baseline. The gate now opens whenever coupling is above its
+  // typical level (~half the time) and ramps to full at mean + 1σ.
+  // `endo` becomes a genuine continuous convergence signal instead of
+  // a rare all-or-nothing spike. Still fully observer-derived — both
+  // the onset (mean) and the ramp scale (σ) come from the basin's own
+  // coupling history; no hardcoded cutoff. No sigmoid (QIG forbids
+  // exp-normalization in this layer).
   let endoBase: number;
   if (
     obs?.kappaHistory && obs.kappaHistory.length >= HISTORY_MIN_SAMPLES
@@ -417,11 +420,10 @@ export function computeNeurochemicals(inputs: NeurochemicalInputs): Neurochemica
     const sigmaKappa = stddev(obs.kappaHistory);
     const couplingMean = mean(obs.externalCouplingHistory);
     const couplingStddev = stddev(obs.externalCouplingHistory);
-    const sophiaThreshold = couplingMean + couplingStddev;
-    // Smooth Sophia gate: scales linearly from 0 (at threshold) to 1
-    // (at threshold + stddev). Below threshold = 0; above by ≥ stddev = 1;
-    // in between, proportional flow. couplingStddev IS the natural scale
-    // (the basin's own observed spread of coupling).
+    const sophiaThreshold = couplingMean;
+    // Smooth Sophia gate: 0 at/below the basin's mean coupling, ramps
+    // linearly to 1 at mean + 1σ. couplingStddev IS the natural ramp
+    // scale (the basin's own observed spread of coupling).
     const sophiaGate = couplingStddev > 0
       ? clip((inputs.externalCoupling - sophiaThreshold) / couplingStddev, 0, 1)
       : (inputs.externalCoupling >= sophiaThreshold ? 1 : 0);  // degenerate: σ=0
