@@ -147,45 +147,27 @@ def basin_direction(basin: np.ndarray) -> float:
         neutral_mom_mass = (
             8.0 * peer_mean if peer_mean > EPS else MOM_NEUTRAL_FALLBACK
         )
-    sign = 1.0 if mom_mass >= neutral_mom_mass else -1.0
-
-    # Build the no-momentum antipode: rescale the momentum band so its
-    # total mass equals ``neutral_mom_mass`` (the observer-derived
-    # no-momentum reference), and redistribute the surplus/deficit
-    # uniformly across the 56 non-momentum dims. The antipode stays on
-    # Δ⁶³ (sum = 1). When the momentum band carries above-neutral mass
-    # — even if internally flat — the antipode differs from the basin,
-    # so the Fisher-Rao distance captures the directional deviation.
-    antipode = p.copy()
-    band_n = 8
-    nonband_n = BASIN_DIM - band_n  # 56
-    excess = mom_mass - neutral_mom_mass
-    if mom_mass > EPS:
-        # Scale momentum band to the observer-derived neutral total.
-        antipode[7:15] = p[7:15] * (neutral_mom_mass / mom_mass)
-    else:
-        # Degenerate basin (zero mass on momentum band) — flatten band.
-        antipode[7:15] = neutral_mom_mass / band_n
-    # Redistribute the excess across the non-momentum dims.
-    if nonband_n > 0:
-        non_mask = np.ones(BASIN_DIM, dtype=bool)
-        non_mask[7:15] = False
-        antipode[non_mask] = p[non_mask] + (excess / nonband_n)
-    # Numerical safety: clip tiny negatives from float subtraction.
-    antipode = np.maximum(antipode, 0.0)
-    s = float(antipode.sum())
-    if s > EPS:
-        antipode = antipode / s
-
-    # Fisher-Rao geodesic on Δ⁶³: d = arccos(Σ √(p·q)).
-    bc = float(np.sum(np.sqrt(np.maximum(p, 0.0) * np.maximum(antipode, 0.0))))
-    bc = float(np.clip(bc, -1.0, 1.0))
-    d_fr = float(np.arccos(bc))
-
-    # Normalise by the simplex diameter (π/2) so the return is in
-    # [-1, +1]. Saturation is geometric, not artificial — the only
-    # way to hit ±1 is to truly span the simplex.
-    return sign * d_fr / _FR_DIAMETER
+    # B1.2 — direction is the momentum-band MARGINAL, in [-1, 1].
+    #
+    # mom_mass / neutral_mom_mass is the band's mass relative to its
+    # 8×0.5 neutral — i.e. raw_mom_mass / 4. Subtract 1 → 0 at neutral
+    # momentum, +1 at a fully-activated band (raw mass 8), −1 at a dead
+    # band.
+    #
+    # Supersedes the Fisher-Rao distance to a no-momentum antipode
+    # (proposal #7). That distance measured an 8-dim signal (dims 7..14)
+    # across the full 64-dim basin: the antipode perturbed only those 8
+    # dims, the other 56 barely moved, so Σ√(p·q) stayed ≈ 1 and arccos
+    # ≈ 0 — a structural ~±0.2 ceiling that kernel_direction's
+    # 0.5·tape_trend term drowned, so the M-agent / FAST_ADVERSE_EXIT
+    # |basin_direction| > 0.10 gates could never fire. The marginal
+    # carries the band's full dynamic range with no dimensional
+    # dilution. QIG purity: a band marginal on Δ⁶³ — no distance, no
+    # cosine, no Euclidean op. Mirrors perception.ts:basinDirection.
+    if neutral_mom_mass <= EPS:
+        return 0.0
+    direction = mom_mass / neutral_mom_mass - 1.0
+    return float(np.clip(direction, -1.0, 1.0))
 
 
 def trend_proxy(closes: Sequence[float], lookback: int = 50) -> float:

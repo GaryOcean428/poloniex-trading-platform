@@ -16,8 +16,6 @@ import { BASIN_DIM, toSimplex, type Basin } from '../basin.js';
  * output in [-1, +1] without clipping.
  */
 
-const MOM_NEUTRAL = 8 / BASIN_DIM;
-
 function makeBasin(setter: (v: Float64Array) => void): Basin {
   const v = new Float64Array(BASIN_DIM);
   for (let i = 0; i < BASIN_DIM; i++) v[i] = 0.5;
@@ -26,32 +24,27 @@ function makeBasin(setter: (v: Float64Array) => void): Basin {
 }
 
 function reflectMomentum(basin: Basin): Basin {
-  // Reflect the momentum band around MOM_NEUTRAL: target = 2*MOM_NEUTRAL - mom
-  let total = 0;
-  for (let i = 0; i < BASIN_DIM; i++) total += basin[i] ?? 0;
-  const p = new Float64Array(BASIN_DIM);
-  for (let i = 0; i < BASIN_DIM; i++) p[i] = (basin[i] ?? 0) / total;
+  // Reflect the momentum band (dims 7..14) around the observer neutral
+  // (8 × peer-band mean), leaving every other dim untouched. B1.2's
+  // marginal `momMass / neutral − 1` is scale-invariant, so
+  // basinDirection's own normalisation absorbs the changed total — no
+  // redistribution is needed, and crucially the peer band (which
+  // defines the neutral) stays fixed, giving exact antisymmetry.
   let mom = 0;
-  for (let i = 7; i <= 14; i++) mom += p[i]!;
-  const target = 2 * MOM_NEUTRAL - mom;
-  const delta = target - mom;
+  for (let i = 7; i <= 14; i++) mom += basin[i] ?? 0;
+  let peerSum = 0;
+  for (let i = 15; i <= 30; i++) peerSum += basin[i] ?? 0;
+  const observerNeutral = 8 * (peerSum / 16);
+  const target = 2 * observerNeutral - mom;
   const out = new Float64Array(BASIN_DIM);
-  for (let i = 0; i < BASIN_DIM; i++) out[i] = p[i]!;
+  for (let i = 0; i < BASIN_DIM; i++) out[i] = basin[i] ?? 0;
   if (mom > 1e-12) {
     const scale = target / mom;
-    for (let i = 7; i <= 14; i++) out[i] = p[i]! * scale;
+    for (let i = 7; i <= 14; i++) out[i] = (basin[i] ?? 0) * scale;
   } else {
     for (let i = 7; i <= 14; i++) out[i] = target / 8;
   }
-  for (let i = 0; i < BASIN_DIM; i++) {
-    if (i < 7 || i > 14) out[i] = p[i]! - delta / 56;
-  }
-  let s = 0;
-  for (let i = 0; i < BASIN_DIM; i++) {
-    out[i] = Math.max(0, out[i]!);
-    s += out[i]!;
-  }
-  for (let i = 0; i < BASIN_DIM; i++) out[i] = out[i]! / s;
+  for (let i = 0; i < BASIN_DIM; i++) out[i] = Math.max(0, out[i]!);
   return out as unknown as Basin;
 }
 
@@ -359,5 +352,48 @@ describe('basinDirection — skewed volume band (B1.1 noise-floor anchor)', () =
         prev = d;
       }
     });
+  });
+});
+
+describe('basinDirection — B1.2 expressive magnitude (dimensional-dilution fix)', () => {
+  // Pre-B1.2 the Fisher-Rao distance capped |basinDir| at ~±0.2, so the
+  // M-agent and FAST_ADVERSE_EXIT |basinDir| > 0.10 gates could never
+  // fire and kernelDirection's 0.5·tape term drowned it. B1.2 returns
+  // the band marginal — for a production-shaped basin direction =
+  // 2·momValue − 1. These lock the expressive range: a regression to
+  // the FR distance (which gave ~±0.05 here) would fail them.
+
+  it('moderate uptrend clears the M-agent 0.10 gate', () => {
+    const d = basinDirection(makeProductionShapedBasin(0.60));
+    expect(d).toBeCloseTo(0.2, 2);
+    expect(d).toBeGreaterThan(0.10);
+  });
+
+  it('strong uptrend clears the 0.30 hasDirection gate', () => {
+    const d = basinDirection(makeProductionShapedBasin(0.70));
+    expect(d).toBeCloseTo(0.4, 2);
+    expect(d).toBeGreaterThan(0.30);
+  });
+
+  it('moderate downtrend clears the FAST_ADVERSE_EXIT −0.10 gate', () => {
+    const d = basinDirection(makeProductionShapedBasin(0.40));
+    expect(d).toBeCloseTo(-0.2, 2);
+    expect(d).toBeLessThan(-0.10);
+  });
+
+  it('a hard trend drives the marginal past ±0.5 (no ~±0.2 ceiling)', () => {
+    expect(basinDirection(makeProductionShapedBasin(0.85))).toBeGreaterThan(0.5);
+    expect(basinDirection(makeProductionShapedBasin(0.15))).toBeLessThan(-0.5);
+  });
+
+  it('flat momentum still reads ~0', () => {
+    expect(Math.abs(basinDirection(makeProductionShapedBasin(0.5)))).toBeLessThan(1e-6);
+  });
+
+  it('saturates at ±1, never beyond', () => {
+    const hi = basinDirection(makeProductionShapedBasin(1.0));
+    expect(hi).toBeGreaterThan(0.9);
+    expect(hi).toBeLessThanOrEqual(1);
+    expect(basinDirection(makeProductionShapedBasin(0.02))).toBeGreaterThanOrEqual(-1);
   });
 });

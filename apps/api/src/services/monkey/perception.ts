@@ -254,7 +254,6 @@ export function basinDirection(basin: Basin): number {
   // Degenerate-basin fallback ONLY. The live neutral is observer-derived
   // below (neutralMomMass) — 8/64 is correct only for a uniform basin.
   const MOM_NEUTRAL_FALLBACK = 8 / BASIN_DIM;  // 0.125
-  const FR_DIAMETER = Math.PI / 2;
   const EPS = 1e-12;
 
   // Step 0: defensive simplex normalization (caller may pass raw basin).
@@ -311,45 +310,24 @@ export function basinDirection(basin: Basin): number {
     const peerMean = peerSum / 16;
     neutralMomMass = peerMean > EPS ? 8 * peerMean : MOM_NEUTRAL_FALLBACK;
   }
-  const sign = momMass >= neutralMomMass ? 1 : -1;
-
-  // Step 2: build the no-momentum antipode.
-  const antipode: number[] = p.slice();
-  const bandN = 8;
-  const nonbandN = BASIN_DIM - bandN; // 56
-  const excess = momMass - neutralMomMass;
-  if (momMass > EPS) {
-    const scale = neutralMomMass / momMass;
-    for (let i = 7; i <= 14; i++) antipode[i] = p[i]! * scale;
-  } else {
-    for (let i = 7; i <= 14; i++) antipode[i] = neutralMomMass / bandN;
-  }
-  if (nonbandN > 0) {
-    const add = excess / nonbandN;
-    for (let i = 0; i < BASIN_DIM; i++) {
-      if (i < 7 || i > 14) antipode[i] = (p[i]! + add);
-    }
-  }
-  // Re-normalize the antipode to guard float drift.
-  let antiSum = 0;
-  for (let i = 0; i < BASIN_DIM; i++) {
-    antipode[i] = Math.max(0, antipode[i]!);
-    antiSum += antipode[i]!;
-  }
-  if (antiSum > EPS) {
-    for (let i = 0; i < BASIN_DIM; i++) antipode[i] = antipode[i]! / antiSum;
-  }
-
-  // Step 3: Fisher-Rao geodesic distance. d = arccos(Σ √(p_i q_i)).
-  let bc = 0;
-  for (let i = 0; i < BASIN_DIM; i++) {
-    bc += Math.sqrt(p[i]! * antipode[i]!);
-  }
-  bc = Math.min(1, Math.max(-1, bc));
-  const dFr = Math.acos(bc);
-
-  // Step 4: signed + normalised.
-  return (sign * dFr) / FR_DIAMETER;
+  // Step 2: B1.2 — direction is the momentum-band MARGINAL, in [-1, 1].
+  //
+  // momMass / neutralMomMass is the band's mass relative to its 8×0.5
+  // neutral — i.e. rawMomMass / 4. Subtract 1 → 0 at neutral momentum,
+  // +1 at a fully-activated band (raw mass 8), −1 at a dead band.
+  //
+  // Supersedes the Fisher-Rao distance to a no-momentum antipode
+  // (proposal #7). That distance measured an 8-dim signal (dims 7..14)
+  // across the full 64-dim basin: the antipode perturbed only those 8
+  // dims, the other 56 barely moved, so Σ√(p·q) stayed ≈ 1 and arccos
+  // ≈ 0 — a structural ~±0.2 ceiling that `kernelDirection`'s
+  // 0.5·tapeTrend term drowned, so the M-agent and FAST_ADVERSE_EXIT
+  // |basinDir| > 0.10 gates could never fire. The marginal carries the
+  // band's full dynamic range with no dimensional dilution. QIG purity:
+  // a band marginal on Δ⁶³ — no distance, no cosine, no Euclidean op.
+  if (neutralMomMass <= EPS) return 0;
+  const direction = momMass / neutralMomMass - 1;
+  return Math.max(-1, Math.min(1, direction));
 }
 
 /**

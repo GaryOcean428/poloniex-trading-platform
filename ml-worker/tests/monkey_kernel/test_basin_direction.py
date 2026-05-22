@@ -45,26 +45,24 @@ def _make_simplex_basin(setter) -> np.ndarray:
 
 
 def _reflect_momentum(basin: np.ndarray) -> np.ndarray:
-    """Reflect the momentum band around the uniform expectation. If the
-    band has mom_mass = MOM_NEUTRAL + d, the reflected band has
-    MOM_NEUTRAL - d, with the difference redistributed uniformly across
-    the non-momentum dims so the result stays on Δ⁶³.
+    """Reflect the momentum band (dims 7..14) around the observer neutral
+    (8 × peer-band mean), leaving every other dim untouched.
+
+    B1.2's marginal ``mom_mass / neutral − 1`` is scale-invariant, so
+    basin_direction's own normalisation absorbs the changed total — no
+    redistribution is needed, and the peer band (which defines the
+    neutral) stays fixed, giving exact antisymmetry.
     """
     p = basin / basin.sum()
     mom_mass = float(p[7:15].sum())
-    target = 2 * MOM_NEUTRAL - mom_mass  # mirror around MOM_NEUTRAL
-    # Scale band to target mass; redistribute delta uniformly.
-    delta = target - mom_mass
+    observer_neutral = 8.0 * float(p[15:31].mean())
+    target = 2 * observer_neutral - mom_mass
     out = p.copy()
     if mom_mass > 1e-12:
         out[7:15] = p[7:15] * (target / mom_mass)
     else:
         out[7:15] = target / 8.0
-    nonband = np.ones(BASIN_DIM, dtype=bool)
-    nonband[7:15] = False
-    out[nonband] = p[nonband] - delta / 56.0
-    out = np.maximum(out, 0.0)
-    return out / out.sum()
+    return np.maximum(out, 0.0)
 
 
 class TestBasinDirectionFisherRao:
@@ -206,12 +204,15 @@ class TestBasinDirectionDoesNotSaturateEasily:
 
     def test_strong_bull_grows_but_not_to_unity(self):
         # All momentum mass concentrated on the band, but spread.
+        # B1.2: the band marginal saturates at +1 by clamp on an extreme
+        # basin like this (momentum band 10× the peer mean) — that is
+        # correct, not a defect. It must never exceed +1.
         v = np.full(BASIN_DIM, 0.05)
         v[7:15] = 0.5
         v = v / v.sum()
         d = basin_direction(v)
         assert d > 0
-        assert d < 1.0  # No clipping
+        assert d <= 1.0
 
     def test_extreme_bull_approaches_but_does_not_clip(self):
         # Nearly pure-momentum (98% mass in band).
