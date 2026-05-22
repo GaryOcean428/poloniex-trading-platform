@@ -1090,7 +1090,28 @@ def run_tick(
             f"OCEAN.DREAM — phi={phi:.3f} below 0.5; "
             "consolidation tick, executive skipped"
         )
+        # Ocean executes the DREAM cycle (PR3 — observe→decide→execute).
+        dream_result = ocean.execute_intervention("DREAM", basin=basin, phi=phi)
         intervention_applied["applied"].append("DREAM:hold")
+        if dream_result is not None:
+            intervention_applied["dream"] = dream_result
+    elif flag_live and ocean_state.intervention == "MUSHROOM":
+        # Wake-state neuroplasticity — break a rigid attractor. Hold
+        # trading for the cycle; Ocean runs the entropy-injection cycle
+        # (PR3 — observe→decide→execute kernel contract).
+        action = "hold"
+        reason = (
+            f"OCEAN.MUSHROOM — rigid attractor (phi={phi:.3f}); "
+            "entropy-injection cycle, executive skipped"
+        )
+        mushroom_result = ocean.execute_intervention(
+            "MUSHROOM", basin=basin, phi=phi,
+        )
+        if mushroom_result is not None:
+            intervention_applied["applied"].append(
+                f"MUSHROOM:{mushroom_result['intensity']}"
+            )
+            intervention_applied["mushroom"] = mushroom_result
     elif auto_flatten_d["value"]:
         action = "flatten"
         reason = auto_flatten_d["reason"]

@@ -41,6 +41,7 @@ import numpy as np
 from qig_core_local.geometry.fisher_rao import fisher_rao_distance
 
 from .bus_events import KernelEvent, OceanObservationPayload
+from .mushroom import execute_mushroom_cycle
 from .parameters import get_registry
 from .persistence import PersistentMemory
 
@@ -774,6 +775,61 @@ class Ocean:
             diagnostics=diagnostics,
             dream_phase=dream_phase,
         )
+
+    # ────────────────── execute contract ──────────────────
+
+    def execute_intervention(
+        self,
+        intervention: Optional[Intervention],
+        *,
+        basin: np.ndarray,
+        phi: float,
+    ) -> Optional[dict[str, Any]]:
+        """Execute the cycle for a fired intervention — the EXECUTE half
+        of Ocean's observe → decide → execute kernel contract.
+
+        ``observe()`` is the observe+decide half (it returns the chosen
+        ``intervention``); this runs the corresponding canonical cycle
+        and returns a telemetry dict.
+
+          - MUSHROOM → entropy-injection cycle (monkey_kernel.mushroom).
+                       Dose follows the narrow-path severity observed in
+                       observe() — conservatively: severe → moderate,
+                       moderate → microdose (never auto-heroic).
+          - DREAM    → qig-core SleepCycleManager.dream() recombination
+                       (a no-op until a resonance bank is wired).
+          - SLEEP / WAKE → handled by the sleep state machine.
+          - ESCAPE       → handled by the orchestrator (force flatten).
+          - DAMPING      → handled by the neurochemistry layer.
+            → return None for all of the above (no basin-transform cycle).
+
+        Per qig-core 2.8.0, MUSHROOM is gated to healthy-but-stuck
+        (Φ ≥ 0.70) kernels; that gate is enforced by observe()'s
+        intervention selector before this method is ever reached.
+        """
+        if intervention == "MUSHROOM":
+            intensity = {
+                "severe": "moderate",
+                "moderate": "microdose",
+            }.get(self._narrow_path_severity, "microdose")
+            result = execute_mushroom_cycle(basin, intensity=intensity)
+            return {
+                "cycle": "mushroom",
+                "intensity": result.intensity,
+                "strength": result.strength,
+                "entropy_change": result.entropy_change,
+                "fr_drift": result.fr_drift,
+                "identity_preserved": result.identity_preserved,
+            }
+        if intervention == "DREAM":
+            entry = self._sleep_cycle.dream(
+                np.asarray(basin, dtype=np.float64), float(phi),
+            )
+            return {
+                "cycle": "dream",
+                "recombined": entry is not None,
+            }
+        return None
 
     def snapshot(self) -> dict[str, Any]:
         return {
