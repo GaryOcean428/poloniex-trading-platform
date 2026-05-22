@@ -9,7 +9,6 @@ import QuickTrade from '../components/dashboard/QuickTrade';
 import RealTimeMarketTicker from '../components/dashboard/RealTimeMarketTicker';
 import TradingInsights from '../components/TradingInsights';
 
-import AutonomousTradingDashboard from '../components/trading/AutonomousTradingDashboard';
 import MLModelPerformance from '../components/ml/MLModelPerformance';
 import AccountBalanceWidget from '../components/dashboard/AccountBalanceWidget';
 import ActivePositionsWidget from '../components/dashboard/ActivePositionsWidget';
@@ -139,8 +138,26 @@ const Dashboard: React.FC = () => {
         <PipelineFunnelWidget />
       </div>
 
+      {/* Autonomous kernel — the legacy embedded AutonomousTradingDashboard
+          panel (a client-side multi-engine simulation that pre-dates the
+          PR #878 single-kernel cutover) was removed. The canonical kernel
+          observation surface is the /autonomous-agent page. */}
       <div className="mb-6 lg:mb-8">
-        <AutonomousTradingDashboard />
+        <Link
+          to="/autonomous-agent"
+          className="flex items-center justify-between gradient-primary rounded-lg p-6 text-text-inverse shadow-elev-2 transition-all duration-200 hover:shadow-elev-3"
+        >
+          <div className="flex items-center gap-4">
+            <Brain className="h-8 w-8" />
+            <div>
+              <h3 className="text-xl font-bold">Autonomous Trading Kernel</h3>
+              <p className="opacity-90 text-sm">
+                Live kernel state, open positions, realized P&amp;L and telemetry
+              </p>
+            </div>
+          </div>
+          <ArrowRight className="h-6 w-6" />
+        </Link>
       </div>
 
       {/* ML Model Performance */}

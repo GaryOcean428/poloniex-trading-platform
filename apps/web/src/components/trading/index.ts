@@ -2,7 +2,6 @@
 // Barrel file for clean imports: import { LiveTradingDashboard, QuickTrade } from '@/components/trading';
 
 export { default as AutomationPanel } from './AutomationPanel';
-export { default as AutonomousTradingDashboard } from './AutonomousTradingDashboard';
 export { DQNTradingPanel } from './DQNTradingPanel';
 export { default as FuturesTradingPanel } from './FuturesTradingPanel';
 export { default as LiveAutonomousTradingDashboard } from './LiveAutonomousTradingDashboard';

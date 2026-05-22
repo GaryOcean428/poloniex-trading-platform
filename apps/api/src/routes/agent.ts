@@ -3,6 +3,10 @@ import express from 'express';
 import { pool } from '../db/connection.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { agentSettingsService } from '../services/agentSettingsService.js';
+import {
+  deriveKernelTradingStatus,
+  engineModeSqlClause,
+} from '../services/agentLedger.js';
 import { apiCredentialsService } from '../services/apiCredentialsService.js';
 import {
   getExecutionModeRecord,
@@ -21,80 +25,13 @@ function isTableMissingError(error: unknown): boolean {
   return msg.includes('does not exist') || msg.includes('relation');
 }
 
-/**
- * POST /api/agent/start
- * Start the autonomous trading agent (SLE strategy-generation loop).
- */
-router.post('/start', authenticateToken, async (req: Request, res: Response) => {
-  try {
-    const userId = (req.user?.id || req.user?.userId)?.toString();
-
-    if (!userId) {
-      return res.status(401).json({
-        success: false,
-        error: 'User ID not found in token',
-        code: 'NO_USER_ID'
-      });
-    }
-
-    // Check for API credentials first
-    const { apiCredentialsService } = await import('../services/apiCredentialsService.js');
-    const hasCredentials = await apiCredentialsService.hasCredentials(userId);
-
-    if (!hasCredentials) {
-      return res.status(400).json({
-        success: false,
-        error: 'No API credentials found. Please add your Poloniex API keys first.',
-        code: 'NO_CREDENTIALS',
-        action: 'redirect_to_api_keys'
-      });
-    }
-
-    // Start the strategy learning engine (generates + evaluates strategies)
-    await strategyLearningEngine.start();
-
-    const sleStatus = await strategyLearningEngine.getEngineStatus();
-
-    res.json({
-      success: true,
-      session: {
-        status: 'running',
-        sle: sleStatus
-      }
-    });
-  } catch (error: unknown) {
-    logger.error('Error starting agent:', error);
-    const errMsg = error instanceof Error ? error.message : String(error);
-
-    if (errMsg.includes('already') || errMsg.includes('Already')) {
-      return res.status(409).json({
-        success: false,
-        error: 'An agent session is already active',
-        code: 'ALREADY_RUNNING',
-        existingState: 'unknown',
-        resumeAllowed: false,
-        takeoverAllowed: true
-      });
-    }
-
-    let errorCode = 'UNKNOWN_ERROR';
-    let statusCode = 500;
-
-    if (errMsg.includes('credentials')) {
-      errorCode = 'CREDENTIALS_ERROR';
-      statusCode = 400;
-    } else if (errMsg.includes('API')) {
-      errorCode = 'API_ERROR';
-      statusCode = 503;
-    }
-
-    res.status(statusCode).json({
-      success: false,
-      error: errMsg,
-      code: errorCode
-    });
-  }
-});
+// NOTE: `POST /api/agent/start` and `POST /api/agent/resume` were removed
+// 2026-05-22 (PR7). They only ever served the autonomous-agent dashboard's
+// start-with-config / resume-session flow, which has been deleted: the
+// Monkey kernel is the sole autonomous trader and runs continuously — it
+// is not "started" by the UI. The SLE strategy-generation loop can still
+// be started via the ML routes (POST /api/ml/learning/start). Resuming
+// from a pause is `PUT /api/agent/execution-mode { mode: 'auto' }`.
 
 router.post('/stop', authenticateToken, async (req: Request, res: Response) => {
   try {
@@ -117,8 +54,9 @@ router.post('/pause', authenticateToken, async (req: Request, res: Response) => 
   try {
     const userId = (req.user?.id || req.user?.userId)?.toString();
     if (!userId) return res.status(401).json({ success: false, error: 'User ID not found in token' });
-    // Global halt — same as /stop but keeps the per-user trader state
-    // alive so it resumes cleanly on /resume.
+    // Global halt — flips the execution mode to 'pause' so the risk
+    // kernel vetoes every order submission. Equivalent to /stop; both
+    // resume via `PUT /api/agent/execution-mode { mode: 'auto' }`.
     const operator = (req.user?.email || req.user?.id || req.user?.userId || 'header_pause').toString();
     await setExecutionMode('pause', operator, 'Header Pause button');
     res.json({ success: true, message: 'Agent paused successfully', mode: 'pause' });
@@ -128,51 +66,43 @@ router.post('/pause', authenticateToken, async (req: Request, res: Response) => 
   }
 });
 
-router.post('/resume', authenticateToken, async (req: Request, res: Response) => {
-  try {
-    const userId = (req.user?.id || req.user?.userId)?.toString();
-    if (!userId) return res.status(401).json({ success: false, error: 'User ID not found in token' });
-    const operator = (req.user?.email || req.user?.id || req.user?.userId || 'header_resume').toString();
-    await setExecutionMode('auto', operator, 'Header Resume button');
-    await strategyLearningEngine.start();
-    res.json({ success: true, message: 'Agent resumed successfully', mode: 'auto' });
-  } catch (error: unknown) {
-    logger.error('Error resuming agent:', error);
-    res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'Failed to resume agent' });
-  }
-});
-
 router.get('/status', authenticateToken, async (req: Request, res: Response) => {
   try {
     const userId = (req.user?.id || req.user?.userId)?.toString();
     if (!userId) return res.status(401).json({ success: false, error: 'User ID not found in token' });
     const sleStatus = await strategyLearningEngine.getEngineStatus();
     const execMode = await getExecutionModeRecord();
-    // Resolve a single user-facing status. When execution mode is
-    // paused, surface that as the dominant state even if the SLE
-    // generation loop happens to be mid-tick — this is what the
-    // header Pause/Stop buttons advertise. The fullyAutonomousTrader
-    // status feed was removed 2026-05-21; the SLE running flag is the
-    // sole signal now (the Monkey kernel runs independently).
-    const running = sleStatus.isRunning;
-    let status: 'running' | 'paused' | 'stopped';
-    if (execMode?.mode === 'pause') status = 'paused';
-    else if (running) status = 'running';
-    else status = 'stopped';
     // 2026-05-11 — flatten the most-asked stats onto status so the
     // frontend AgentStatus interface in AutonomousAgentDashboard
     // reads them at the top level. totalPnl / live-trade count / open
     // positions are all computed live from autonomous_trades (the
     // Monkey kernel's trade ledger) — there is no separate trader
     // status object since fullyAutonomousTrader was removed.
+    //
+    // 2026-05-22 — totalPnl is the LIVE engine's realized PnL only. The
+    // prior unfiltered SUM(pnl) added paper, backtest and deleted-engine
+    // rows across all time, producing a meaningless cumulative figure
+    // (operator report: −$4054). The SUM now uses the same engine_type
+    // filter as /api/agent/performance (shared via engineModeSqlClause)
+    // — applied as an aggregate FILTER so the live-trade / open-position
+    // counts beside it are untouched.
     let totalPnl = 0;
     let liveTradesExecuted = 0;
     let openPositions = 0;
+    // PR6 — the on/off badge must reflect REAL Monkey-kernel trading,
+    // not the SLE strategy-generation loop. openLivePositions counts
+    // open live-engine rows; recentLiveTrades counts live-engine rows
+    // created in the last 15 min. deriveKernelTradingStatus turns those
+    // (+ the execution-mode override) into the badge value.
+    let openLivePositions = 0;
+    let recentLiveTrades = 0;
     try {
       const pnlRow = await pool.query(
-        `SELECT COALESCE(SUM(pnl), 0) AS total_pnl,
+        `SELECT COALESCE(SUM(pnl) FILTER (WHERE pnl IS NOT NULL${engineModeSqlClause('live')}), 0) AS total_pnl,
                 COUNT(*) FILTER (WHERE pnl IS NOT NULL AND (order_id IS NULL OR order_id NOT LIKE 'paper_%')) AS live_trades,
-                COUNT(*) FILTER (WHERE status = 'open' AND deleted_at IS NULL) AS open_positions
+                COUNT(*) FILTER (WHERE status = 'open' AND deleted_at IS NULL) AS open_positions,
+                COUNT(*) FILTER (WHERE status = 'open' AND deleted_at IS NULL${engineModeSqlClause('live')}) AS open_live_positions,
+                COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '15 minutes'${engineModeSqlClause('live')}) AS recent_live_trades
            FROM autonomous_trades
           WHERE user_id = $1`,
         [userId],
@@ -180,13 +110,40 @@ router.get('/status', authenticateToken, async (req: Request, res: Response) => 
       totalPnl = parseFloat(pnlRow.rows[0]?.total_pnl ?? '0') || 0;
       liveTradesExecuted = parseInt(pnlRow.rows[0]?.live_trades ?? '0', 10) || 0;
       openPositions = parseInt(pnlRow.rows[0]?.open_positions ?? '0', 10) || 0;
+      openLivePositions = parseInt(pnlRow.rows[0]?.open_live_positions ?? '0', 10) || 0;
+      recentLiveTrades = parseInt(pnlRow.rows[0]?.recent_live_trades ?? '0', 10) || 0;
     } catch { /* fail-soft: leave at 0 */ }
+    // Resolve the single user-facing badge. 'paused' (execution-mode
+    // override) > 'active' (kernel holds positions or traded recently)
+    // > 'idle' (kernel alive but flat). The legacy mapping read
+    // strategyLearningEngine.isRunning — the strategy-GENERATION loop —
+    // so the badge said "stopped" while the kernel actively traded.
+    const kernelStatus = deriveKernelTradingStatus({
+      executionMode: execMode?.mode ?? null,
+      openLivePositions,
+      recentLiveTrades,
+    });
+    // Map the kernel-trading status onto the legacy
+    // 'running'|'paused'|'stopped' enum the frontend AgentStatus
+    // interface still expects: active→running, idle→stopped, paused
+    // stays paused.
+    const status: 'running' | 'paused' | 'stopped' =
+      kernelStatus === 'paused'
+        ? 'paused'
+        : kernelStatus === 'active'
+          ? 'running'
+          : 'stopped';
     res.json({
       success: true,
       status: {
         id: userId,
         userId,
         status,
+        // PR6 — the precise kernel-trading state ('active'|'idle'|'paused'),
+        // alongside the legacy `status` enum for back-compat. The frontend
+        // badge should prefer this.
+        kernelStatus,
+        openLivePositions,
         executionMode: execMode?.mode ?? null,
         startedAt: null,
         totalPnl,
@@ -314,11 +271,9 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
       // (rows pre-050 with order_ids that didn't match any pattern) is
       // treated as 'unknown' and excluded from per-mode filtered views;
       // mode='all' (or absent) still includes everything.
-      const modeFilter =
-        mode === 'paper'    ? " AND engine_type = 'paper'"
-        : mode === 'live'     ? " AND engine_type = 'live'"
-        : mode === 'backtest' ? " AND engine_type = 'backtest'"
-        :                       '';
+      // Shared with /api/agent/status via engineModeSqlClause so the two
+      // endpoints' engine filters cannot drift apart.
+      const modeFilter = engineModeSqlClause(mode);
       // Range filter — 24h / 7d / 30d / 90d / 1y / all. Previously
       // absent: the UI timeframe selector re-fetched with each value
       // but the backend returned identical data for every range. Now

@@ -278,6 +278,36 @@ export class QIGRAMv2State {
     }
   }
 
+  // ── Consolidation ─────────────────────────────────────────────────
+
+  /** Remove dead-weight entries — the canonical sleep-cycle CONSOLIDATING
+   *  pass. Mirrors qig-core 2.8.0 `SleepCycleManager.consolidate()`, which
+   *  prunes low-mass entries during the sleep cycle.
+   *
+   *  SEPARATE from `decayAll()`: decay reduces weight every tick;
+   *  `consolidate()` REMOVES entries that decay has already driven dead
+   *  (weight ≤ MIN_ACTIVE_WEIGHT — the same line `activeEntries()` draws,
+   *  so the two views never disagree about what is alive). Without this,
+   *  `_entries` grows unboundedly with session uptime: the sovereignty
+   *  denominator (`_entries.size`) — and therefore `baseFrac = Φ ×
+   *  sovereignty × maturity` position sizing — decays toward zero.
+   *
+   *  Eviction is the sleep cycle's job, not a per-tick side-effect — the
+   *  caller gates this on the kernel's sleep/consolidation phase.
+   *
+   *  Returns the number of entries pruned.
+   */
+  consolidate(): number {
+    let pruned = 0;
+    for (const [id, entry] of this._entries) {
+      if (entry.weight <= MIN_ACTIVE_WEIGHT) {
+        this._entries.delete(id);
+        pruned += 1;
+      }
+    }
+    return pruned;
+  }
+
   // ── Recall ────────────────────────────────────────────────────────
 
   /** Find nearest ACTIVE basin by Fisher-Rao distance.

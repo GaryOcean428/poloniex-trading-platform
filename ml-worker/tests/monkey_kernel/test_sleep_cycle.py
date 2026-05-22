@@ -7,6 +7,12 @@ Canonical reference:
 Verifies the canonical AWAKE → DREAMING → CONSOLIDATING → AWAKE
 state-machine transitions are driven purely by geometric metrics
 (Φ, variance, ocean divergence) — no timers, no cycle counters.
+
+As of 2026-05-22 `monkey_kernel.sleep_cycle` re-exports qig-core 2.8.0's
+`SleepCycleManager` (the prior hand-port was retired). qig-core 2.8.0
+wakes from CONSOLIDATING only after `consolidate()` has actually run —
+the old hand-port auto-completed consolidation, so the wake/transition
+tests below now call `consolidate()` explicitly.
 """
 
 from __future__ import annotations
@@ -56,7 +62,7 @@ def test_low_phi_low_variance_triggers_dreaming():
     result = m.evaluate_transition(metrics)
     assert result.transitioned
     assert m.phase == SleepPhase.DREAMING
-    assert "phi=" in result.reason
+    assert "Φ=" in result.reason
 
 
 def test_high_ocean_divergence_triggers_dreaming():
@@ -68,7 +74,7 @@ def test_high_ocean_divergence_triggers_dreaming():
     result = m.evaluate_transition(metrics)
     assert result.transitioned
     assert m.phase == SleepPhase.DREAMING
-    assert "ocean_divergence" in result.reason
+    assert "Ocean divergence" in result.reason
 
 
 def test_high_phi_alone_does_not_trigger_dreaming():
@@ -121,7 +127,9 @@ def test_consolidating_to_awake_when_phi_recovers():
     m.evaluate_transition(SleepMetrics(phi=0.3, phi_variance=0.01))
     m.evaluate_transition(SleepMetrics(phi=0.4, phi_variance=0.005))
     assert m.phase == SleepPhase.CONSOLIDATING
-    # Recover Φ.
+    # qig-core 2.8.0: CONSOLIDATING → AWAKE needs the consolidation pass
+    # to have actually run (sets _consolidation_complete) AND Φ recovered.
+    m.consolidate()
     result = m.evaluate_transition(SleepMetrics(phi=CONSOLIDATION_PHI_WAKE + 0.1, phi_variance=0.005))
     assert result.transitioned
     assert m.phase == SleepPhase.AWAKE
@@ -152,7 +160,7 @@ def test_emergency_wake_from_dreaming():
     result = m.evaluate_transition(storm)
     assert result.transitioned
     assert m.phase == SleepPhase.AWAKE
-    assert "emergency_wake" in result.reason
+    assert "Emergency wake" in result.reason
 
 
 def test_emergency_wake_from_consolidating():
@@ -192,6 +200,8 @@ def test_transition_count_increments():
     assert m.transition_count == 1
     m.evaluate_transition(SleepMetrics(phi=0.4, phi_variance=0.005))
     assert m.transition_count == 2
+    # qig-core 2.8.0: waking from CONSOLIDATING needs consolidate() to run.
+    m.consolidate()
     m.evaluate_transition(SleepMetrics(phi=0.6, phi_variance=0.005))
     assert m.transition_count == 3
 
