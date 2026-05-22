@@ -3,6 +3,7 @@ import express from 'express';
 import { pool } from '../db/connection.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { agentSettingsService } from '../services/agentSettingsService.js';
+import { engineModeSqlClause } from '../services/agentLedger.js';
 import { apiCredentialsService } from '../services/apiCredentialsService.js';
 import {
   getExecutionModeRecord,
@@ -165,12 +166,20 @@ router.get('/status', authenticateToken, async (req: Request, res: Response) => 
     // positions are all computed live from autonomous_trades (the
     // Monkey kernel's trade ledger) — there is no separate trader
     // status object since fullyAutonomousTrader was removed.
+    //
+    // 2026-05-22 — totalPnl is the LIVE engine's realized PnL only. The
+    // prior unfiltered SUM(pnl) added paper, backtest and deleted-engine
+    // rows across all time, producing a meaningless cumulative figure
+    // (operator report: −$4054). The SUM now uses the same engine_type
+    // filter as /api/agent/performance (shared via engineModeSqlClause)
+    // — applied as an aggregate FILTER so the live-trade / open-position
+    // counts beside it are untouched.
     let totalPnl = 0;
     let liveTradesExecuted = 0;
     let openPositions = 0;
     try {
       const pnlRow = await pool.query(
-        `SELECT COALESCE(SUM(pnl), 0) AS total_pnl,
+        `SELECT COALESCE(SUM(pnl) FILTER (WHERE pnl IS NOT NULL${engineModeSqlClause('live')}), 0) AS total_pnl,
                 COUNT(*) FILTER (WHERE pnl IS NOT NULL AND (order_id IS NULL OR order_id NOT LIKE 'paper_%')) AS live_trades,
                 COUNT(*) FILTER (WHERE status = 'open' AND deleted_at IS NULL) AS open_positions
            FROM autonomous_trades
@@ -314,11 +323,9 @@ router.get('/performance', authenticateToken, async (req: Request, res: Response
       // (rows pre-050 with order_ids that didn't match any pattern) is
       // treated as 'unknown' and excluded from per-mode filtered views;
       // mode='all' (or absent) still includes everything.
-      const modeFilter =
-        mode === 'paper'    ? " AND engine_type = 'paper'"
-        : mode === 'live'     ? " AND engine_type = 'live'"
-        : mode === 'backtest' ? " AND engine_type = 'backtest'"
-        :                       '';
+      // Shared with /api/agent/status via engineModeSqlClause so the two
+      // endpoints' engine filters cannot drift apart.
+      const modeFilter = engineModeSqlClause(mode);
       // Range filter — 24h / 7d / 30d / 90d / 1y / all. Previously
       // absent: the UI timeframe selector re-fetched with each value
       // but the backend returned identical data for every range. Now
