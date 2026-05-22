@@ -3,7 +3,10 @@ import express from 'express';
 import { pool } from '../db/connection.js';
 import { authenticateToken } from '../middleware/auth.js';
 import { agentSettingsService } from '../services/agentSettingsService.js';
-import { engineModeSqlClause } from '../services/agentLedger.js';
+import {
+  deriveKernelTradingStatus,
+  engineModeSqlClause,
+} from '../services/agentLedger.js';
 import { apiCredentialsService } from '../services/apiCredentialsService.js';
 import {
   getExecutionModeRecord,
@@ -149,17 +152,6 @@ router.get('/status', authenticateToken, async (req: Request, res: Response) => 
     if (!userId) return res.status(401).json({ success: false, error: 'User ID not found in token' });
     const sleStatus = await strategyLearningEngine.getEngineStatus();
     const execMode = await getExecutionModeRecord();
-    // Resolve a single user-facing status. When execution mode is
-    // paused, surface that as the dominant state even if the SLE
-    // generation loop happens to be mid-tick — this is what the
-    // header Pause/Stop buttons advertise. The fullyAutonomousTrader
-    // status feed was removed 2026-05-21; the SLE running flag is the
-    // sole signal now (the Monkey kernel runs independently).
-    const running = sleStatus.isRunning;
-    let status: 'running' | 'paused' | 'stopped';
-    if (execMode?.mode === 'pause') status = 'paused';
-    else if (running) status = 'running';
-    else status = 'stopped';
     // 2026-05-11 — flatten the most-asked stats onto status so the
     // frontend AgentStatus interface in AutonomousAgentDashboard
     // reads them at the top level. totalPnl / live-trade count / open
@@ -177,11 +169,20 @@ router.get('/status', authenticateToken, async (req: Request, res: Response) => 
     let totalPnl = 0;
     let liveTradesExecuted = 0;
     let openPositions = 0;
+    // PR6 — the on/off badge must reflect REAL Monkey-kernel trading,
+    // not the SLE strategy-generation loop. openLivePositions counts
+    // open live-engine rows; recentLiveTrades counts live-engine rows
+    // created in the last 15 min. deriveKernelTradingStatus turns those
+    // (+ the execution-mode override) into the badge value.
+    let openLivePositions = 0;
+    let recentLiveTrades = 0;
     try {
       const pnlRow = await pool.query(
         `SELECT COALESCE(SUM(pnl) FILTER (WHERE pnl IS NOT NULL${engineModeSqlClause('live')}), 0) AS total_pnl,
                 COUNT(*) FILTER (WHERE pnl IS NOT NULL AND (order_id IS NULL OR order_id NOT LIKE 'paper_%')) AS live_trades,
-                COUNT(*) FILTER (WHERE status = 'open' AND deleted_at IS NULL) AS open_positions
+                COUNT(*) FILTER (WHERE status = 'open' AND deleted_at IS NULL) AS open_positions,
+                COUNT(*) FILTER (WHERE status = 'open' AND deleted_at IS NULL${engineModeSqlClause('live')}) AS open_live_positions,
+                COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '15 minutes'${engineModeSqlClause('live')}) AS recent_live_trades
            FROM autonomous_trades
           WHERE user_id = $1`,
         [userId],
@@ -189,13 +190,40 @@ router.get('/status', authenticateToken, async (req: Request, res: Response) => 
       totalPnl = parseFloat(pnlRow.rows[0]?.total_pnl ?? '0') || 0;
       liveTradesExecuted = parseInt(pnlRow.rows[0]?.live_trades ?? '0', 10) || 0;
       openPositions = parseInt(pnlRow.rows[0]?.open_positions ?? '0', 10) || 0;
+      openLivePositions = parseInt(pnlRow.rows[0]?.open_live_positions ?? '0', 10) || 0;
+      recentLiveTrades = parseInt(pnlRow.rows[0]?.recent_live_trades ?? '0', 10) || 0;
     } catch { /* fail-soft: leave at 0 */ }
+    // Resolve the single user-facing badge. 'paused' (execution-mode
+    // override) > 'active' (kernel holds positions or traded recently)
+    // > 'idle' (kernel alive but flat). The legacy mapping read
+    // strategyLearningEngine.isRunning — the strategy-GENERATION loop —
+    // so the badge said "stopped" while the kernel actively traded.
+    const kernelStatus = deriveKernelTradingStatus({
+      executionMode: execMode?.mode ?? null,
+      openLivePositions,
+      recentLiveTrades,
+    });
+    // Map the kernel-trading status onto the legacy
+    // 'running'|'paused'|'stopped' enum the frontend AgentStatus
+    // interface still expects: active→running, idle→stopped, paused
+    // stays paused.
+    const status: 'running' | 'paused' | 'stopped' =
+      kernelStatus === 'paused'
+        ? 'paused'
+        : kernelStatus === 'active'
+          ? 'running'
+          : 'stopped';
     res.json({
       success: true,
       status: {
         id: userId,
         userId,
         status,
+        // PR6 — the precise kernel-trading state ('active'|'idle'|'paused'),
+        // alongside the legacy `status` enum for back-compat. The frontend
+        // badge should prefer this.
+        kernelStatus,
+        openLivePositions,
         executionMode: execMode?.mode ?? null,
         startedAt: null,
         totalPnl,

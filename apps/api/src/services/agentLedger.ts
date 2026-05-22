@@ -37,3 +37,52 @@ export function engineModeSqlClause(mode: string | undefined | null): string {
       return '';
   }
 }
+
+/** What the /api/agent/status on/off badge surfaces. */
+export type KernelTradingStatus = 'active' | 'idle' | 'paused';
+
+export interface KernelTradingStatusInput {
+  /** The global execution-mode override, or null when unknown. */
+  executionMode: string | null | undefined;
+  /** Count of open LIVE positions in autonomous_trades (status='open'). */
+  openLivePositions: number;
+  /** Count of LIVE trades created within the recent activity window. */
+  recentLiveTrades: number;
+}
+
+/**
+ * Derive the kernel on/off badge from REAL trading activity.
+ *
+ * Background (PR6): /api/agent/status used to derive the badge from
+ * `strategyLearningEngine.isRunning` — the SLE strategy-GENERATION loop —
+ * NOT whether the Monkey kernel (the sole live trader since PR #878) is
+ * actually placing orders. The badge read "stopped" while the kernel
+ * actively traded live capital.
+ *
+ * The kernel is the autonomous trader: it runs continuously and observes
+ * its own parameters. "On/off" is therefore not a process flag but a
+ * question about trading activity, answered from the autonomous_trades
+ * ledger:
+ *
+ *   - 'paused'  — the operator's execution-mode kill/pause override is
+ *                 set; this wins over everything (it is the one genuine
+ *                 operator MANDATE that halts the kernel).
+ *   - 'active'  — the kernel holds open live positions OR placed a live
+ *                 trade within the recent window.
+ *   - 'idle'    — the kernel is alive but currently flat and quiet.
+ *
+ * Counts are clamped to non-negative integers so a malformed query row
+ * (NaN / negative) fails soft to 'idle' rather than throwing.
+ */
+export function deriveKernelTradingStatus(
+  input: KernelTradingStatusInput,
+): KernelTradingStatus {
+  if (input.executionMode === 'pause') return 'paused';
+  const open = Number.isFinite(input.openLivePositions)
+    ? Math.max(0, Math.floor(input.openLivePositions))
+    : 0;
+  const recent = Number.isFinite(input.recentLiveTrades)
+    ? Math.max(0, Math.floor(input.recentLiveTrades))
+    : 0;
+  return open > 0 || recent > 0 ? 'active' : 'idle';
+}
