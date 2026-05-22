@@ -1,6 +1,5 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Link } from 'react-router-dom';
-import { Play, Pause, Square, Activity, Brain, TrendingUp, AlertCircle, Shield, BarChart3, Settings, ChevronDown, ChevronUp } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Activity, Brain, TrendingUp, Shield } from 'lucide-react';
 import axios from 'axios';
 import { getAccessToken } from '@/utils/auth';
 import { usePersistedState } from '@/hooks/usePersistedState';
@@ -8,107 +7,76 @@ import { getBackendUrl } from '@/utils/environment';
 import ActiveStrategiesPanel from './ActiveStrategiesPanel';
 import GovernanceStatusPanel from './GovernanceStatusPanel';
 import LiveTradingActivityFeed from './LiveTradingActivityFeed';
-import MLLiveRecommendations from './MLLiveRecommendations';
 import PerformanceAnalytics from './PerformanceAnalytics';
 import StateOfTheBotCard from './StateOfTheBotCard';
-import StrategyApprovalQueue from './StrategyApprovalQueue';
-import RiskSettings from '@/components/risk/RiskSettings';
 import { safeNum } from '@/utils/safeNum';
 
 const API_BASE_URL = getBackendUrl();
 
-// Risk-appetite presets. The first four fields feed the /api/agent/start
-// payload; takeProfit / dailyLossLimit / maxLeverage extend the preset so
-// it maps cleanly onto the risk_settings table (PUT /api/risk/settings),
-// letting a risk-appetite change apply LIVE without restarting the agent.
-// maxLeverage stays <= 15 — the audited profitable ceiling (the kernel
-// clamps there regardless); "aggressive" raises size/drawdown, not lev.
-const RISK_CONFIGS = {
-  conservative: { maxDrawdown: 8, positionSize: 1, stopLossPercentage: 3, maxConcurrentPositions: 2, takeProfit: 6, dailyLossLimit: 3, maxLeverage: 8 },
-  balanced: { maxDrawdown: 15, positionSize: 2, stopLossPercentage: 5, maxConcurrentPositions: 3, takeProfit: 8, dailyLossLimit: 5, maxLeverage: 15 },
-  aggressive: { maxDrawdown: 25, positionSize: 5, stopLossPercentage: 8, maxConcurrentPositions: 5, takeProfit: 12, dailyLossLimit: 10, maxLeverage: 15 }
-} as const;
-
-const FALLBACK_HEALTH_STATUS = {
-  healthy: false,
-  dependencies: {
-    database: { healthy: false, message: 'Unreachable' },
-    agentService: { healthy: false, message: 'Unreachable' }
-  },
-  timestamp: ''
-};
+/**
+ * AutonomousAgentDashboard — kernel-OBSERVATION panel for /autonomous-agent.
+ *
+ * The Monkey kernel is the sole autonomous trader (the multi-engine
+ * FAT/LiveSignal/Persistent/agentScheduler era was deleted in PR #878).
+ * The operator's objective is fixed — "as profitable, as fast as
+ * possible" — and the kernel observes and sets ALL of its own
+ * parameters per the P1 / observer-pattern principle: there is no
+ * operator risk-appetite, trading-style, leverage or strategy-interval
+ * knob. The kernel trades every lane (scalp/swing/trend) and picks the
+ * best per-trade.
+ *
+ * This page therefore OBSERVES the kernel; it does not configure it.
+ * The only genuine operator-MANDATE control kept is the execution-mode
+ * pause/kill switch. The audited leverage cap is shown READ-ONLY.
+ */
 
 interface AgentStatus {
   id: string;
   userId: string;
+  /** Legacy enum — 'running' ⇔ kernelStatus 'active', 'stopped' ⇔ 'idle'. */
   status: 'running' | 'stopped' | 'paused';
-  startedAt: Date;
-  stoppedAt?: Date;
-  strategiesGenerated: number;
-  backtestsCompleted: number;
-  paperTradesExecuted: number;
+  /** PR6 — precise kernel-trading state. Prefer this for the badge. */
+  kernelStatus?: 'active' | 'idle' | 'paused';
+  openLivePositions?: number;
+  executionMode?: 'auto' | 'paper_only' | 'pause' | null;
   liveTradesExecuted: number;
+  openPositions: number;
   totalPnl: number;
-  config: any;
 }
 
-interface AgentActivity {
+interface AgentEvent {
   id: string;
-  session_id: string;
-  activity_type: string;
+  event_type: string;
+  execution_mode: string;
   description: string;
-  metadata: any;
-  created_at: Date;
+  explanation: string;
+  confidence_score: number;
+  created_at: string;
 }
 
-interface AgentStrategy {
-  id: string;
-  session_id: string;
-  strategy_name: string;
-  status: string;
-  backtest_score: number;
-  paper_trading_score?: number;
-  created_at: Date;
+/** Read-only leverage cap surfaced from the risk_settings table. */
+interface LeverageCap {
+  maxLeverage: number;
+  riskLevel: string;
 }
 
 const AutonomousAgentDashboard: React.FC = () => {
   const [agentStatus, setAgentStatus] = useState<AgentStatus | null>(null);
-  const [activity, setActivity] = useState<AgentActivity[]>([]);
-  const [strategies, setStrategies] = useState<AgentStrategy[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [lastPolled, setLastPolled] = useState<Date | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<'connected' | 'disconnected' | 'polling'>('polling');
-  const [circuitBreaker, setCircuitBreaker] = useState<{
-    isTripped: boolean;
-    reason?: string;
-    consecutiveLosses: number;
-    dailyLossPercent: number;
-    cooldownRemaining?: number;
-  } | null>(null);
-  const [showConfig, setShowConfig] = useState(false);
-  const [existingSession, setExistingSession] = useState<{
-    sessionId: string | null;
-    state: string;
-    startedAt: string | null;
-    resumeAllowed: boolean;
-  } | null>(null);
-  const [healthStatus, setHealthStatus] = useState<{
-    healthy: boolean;
-    dependencies: Record<string, { healthy: boolean; message: string }>;
-    timestamp: string;
-  } | null>(null);
-  const [riskAppetite, setRiskAppetite] = usePersistedState<'conservative' | 'balanced' | 'aggressive'>('agent_risk_appetite', 'balanced');
-  // True while a risk-appetite change is being PUT to /api/risk/settings.
-  const [riskAppetiteUpdating, setRiskAppetiteUpdating] = useState(false);
-  // Execution Mode is a SAFETY OVERRIDE enforced by the server-side risk
-  // kernel. The UI fetches it on mount and pushes updates via PUT; the
-  // cache in localStorage is just an optimistic UI value so the buttons
+  const [agentEvents, setAgentEvents] = useState<AgentEvent[]>([]);
+  const [eventFilter, setEventFilter] = useState<'all' | 'trade_decision' | 'state_change' | 'risk_action' | 'health_alert' | 'error'>('all');
+  const [leverageCap, setLeverageCap] = useState<LeverageCap | null>(null);
+
+  // Execution Mode is the ONLY operator-MANDATE control on this page —
+  // a SAFETY OVERRIDE enforced by the server-side risk kernel. The UI
+  // fetches the authoritative value on mount and pushes updates via PUT;
+  // the localStorage cache is just an optimistic value so the buttons
   // feel responsive before the PUT completes.
   //
-  // 'auto'        — pipeline decides; live trading permitted
+  // 'auto'        — kernel trades live
   // 'paper_only'  — kernel blocks all live orders; paper continues
-  // 'pause'       — kernel blocks ALL new orders at every stage
+  // 'pause'       — kernel blocks ALL new orders (kill switch)
   //
   // Legacy localStorage values ('paper' | 'backtest' | 'live') coerce to
   // the nearest valid server-side mode.
@@ -118,12 +86,11 @@ const AutonomousAgentDashboard: React.FC = () => {
       ? 'paper_only'
       : executionModeRaw === 'pause'
         ? 'pause'
-        : 'auto';  // 'backtest' | 'live' | 'auto' all normalise to 'auto'
+        : 'auto';
   const [executionModeUpdating, setExecutionModeUpdating] = useState(false);
 
   /** PUT the new mode to the server and reflect the returned value. */
   const setExecutionMode = useCallback(async (v: 'auto' | 'paper_only' | 'pause') => {
-    // Optimistic local update so the button highlight is instant.
     setExecutionModeRaw(v);
     setExecutionModeUpdating(true);
     try {
@@ -137,7 +104,6 @@ const AutonomousAgentDashboard: React.FC = () => {
         setExecutionModeRaw(response.data.mode);
       }
     } catch (err) {
-      // Revert the optimistic update if the server rejected.
       console.error('Failed to update execution mode', err);
       // Best-effort refetch of the authoritative value.
       try {
@@ -154,43 +120,6 @@ const AutonomousAgentDashboard: React.FC = () => {
     }
   }, [setExecutionModeRaw]);
 
-  /**
-   * Apply a risk-appetite change LIVE. Writes the preset to the
-   * risk_settings table via PUT /api/risk/settings; the Monkey kernel
-   * reads that table every tick (60s cache), so the new ceilings take
-   * effect without stopping or restarting the agent. The risk-appetite
-   * preset still also feeds the /api/agent/start payload for fresh
-   * starts — this just removes the stop→edit→restart requirement.
-   */
-  const setRiskAppetiteLive = useCallback(async (v: 'conservative' | 'balanced' | 'aggressive') => {
-    // Optimistic local update so the button highlight is instant.
-    setRiskAppetite(v);
-    setRiskAppetiteUpdating(true);
-    try {
-      const token = getAccessToken();
-      const rc = RISK_CONFIGS[v];
-      await axios.put(
-        `${API_BASE_URL}/api/risk/settings`,
-        {
-          maxDrawdown: rc.maxDrawdown,
-          maxPositionSize: rc.positionSize,
-          maxConcurrentPositions: rc.maxConcurrentPositions,
-          stopLoss: rc.stopLossPercentage,
-          takeProfit: rc.takeProfit,
-          dailyLossLimit: rc.dailyLossLimit,
-          maxLeverage: rc.maxLeverage,
-          riskLevel: v,
-        },
-        { headers: { Authorization: `Bearer ${token}` } },
-      );
-    } catch (err) {
-      // The optimistic localStorage value stands; surface the failure.
-      console.error('Failed to apply risk appetite live', err);
-    } finally {
-      setRiskAppetiteUpdating(false);
-    }
-  }, [setRiskAppetite]);
-
   /** Pull server-authoritative mode on mount so UI matches reality. */
   useEffect(() => {
     (async () => {
@@ -200,83 +129,83 @@ const AutonomousAgentDashboard: React.FC = () => {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (response.data?.mode) setExecutionModeRaw(response.data.mode);
-      } catch (err) {
+      } catch {
         // Endpoint may be missing in older backends; keep localStorage value.
       }
     })();
   }, [setExecutionModeRaw]);
-  const [performanceMode, setPerformanceMode] = useState<'all' | 'backtest' | 'paper' | 'live'>('all');
-  const [agentEvents, setAgentEvents] = useState<Array<{
-    id: string;
-    event_type: string;
-    execution_mode: string;
-    description: string;
-    explanation: string;
-    confidence_score: number;
-    created_at: string;
-  }>>([]);
-  const [capabilitySummary, setCapabilitySummary] = useState<{
-    totalStrategies: number;
-    tier1: number;
-    tier2: number;
-    tier3: number;
-    averageCompositeScore: number;
-  } | null>(null);
-  const [eventFilter, setEventFilter] = useState<'all' | 'trade_decision' | 'state_change' | 'risk_action' | 'health_alert' | 'error'>('all');
-  const [lastHeartbeat, setLastHeartbeat] = useState<Date | null>(null);
-  const [config, setConfig] = usePersistedState('agent_dashboard_config', {
-    maxDrawdown: 15,
-    positionSize: 2,
-    maxConcurrentPositions: 3,
-    stopLossPercentage: 5,
-    tradingStyle: 'day_trading',
-    preferredPairs: ['BTC-USDT', 'ETH-USDT'],
-    preferredTimeframes: ['15m', '1h', '4h'],
-    automationLevel: 'fully_autonomous',
-    strategyGenerationInterval: 24,
-    backtestPeriodDays: 365,
-    paperTradingDurationHours: 48,
-    marketType: 'futures' as const,
-    defaultLeverage: 3,
-    marginMode: 'CROSS' as 'CROSS' | 'ISOLATED',
-  });
 
-  const agentStatusRef = useRef(agentStatus?.status);
-  agentStatusRef.current = agentStatus?.status;
+  const getAuthHeaders = useCallback(() => {
+    const token = getAccessToken();
+    return { Authorization: `Bearer ${token}` };
+  }, []);
 
-  // Track consecutive poll errors for backoff
-  const consecutiveErrorsRef = useRef(0);
-  const MAX_CONSECUTIVE_ERRORS = 6;
-  const MAX_BACKOFF_INTERVAL = 120000; // 2 minutes max
+  const fetchAgentStatus = useCallback(async () => {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/api/agent/status`, {
+        headers: getAuthHeaders(),
+      });
+      if (response.data.success) {
+        setAgentStatus(response.data.status);
+      }
+      setLastPolled(new Date());
+    } catch {
+      setLastPolled(new Date());
+    }
+  }, [getAuthHeaders]);
 
-  // Initial data fetch + WebSocket setup (runs once)
+  const fetchEvents = useCallback(async () => {
+    try {
+      const params = new URLSearchParams({ limit: '20' });
+      if (eventFilter !== 'all') params.set('type', eventFilter);
+      const response = await axios.get(`${API_BASE_URL}/api/agent/events?${params.toString()}`, {
+        headers: getAuthHeaders(),
+      });
+      if (response.data.success) {
+        setAgentEvents(response.data.events);
+      }
+    } catch {
+      // Events are non-critical
+    }
+  }, [eventFilter, getAuthHeaders]);
+
+  /**
+   * Read the audited leverage cap from the risk_settings table. This is
+   * the one risk number this page DISPLAYS — read-only. The kernel
+   * clamps to this ceiling regardless; the operator does not soak-and-
+   * dial it from here. Mutating it lives on the dedicated Risk Settings
+   * surface, not this observation panel.
+   */
+  const fetchLeverageCap = useCallback(async () => {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/api/risk/settings`, {
+        headers: getAuthHeaders(),
+      });
+      if (response.data?.success && response.data?.settings) {
+        setLeverageCap({
+          maxLeverage: Number(response.data.settings.maxLeverage) || 0,
+          riskLevel: String(response.data.settings.riskLevel ?? 'moderate'),
+        });
+      }
+    } catch {
+      // Non-critical — leave the cap display hidden.
+    }
+  }, [getAuthHeaders]);
+
+  // Initial fetch + WebSocket setup (runs once).
   useEffect(() => {
     fetchAgentStatus();
-    fetchActivity();
-    fetchStrategies();
-    fetchHealth();
-    fetchCapabilities();
+    fetchEvents();
+    fetchLeverageCap();
 
-    // WebSocket real-time updates
-    let socket: { on: (event: string, cb: (data: any) => void) => void; disconnect: () => void } | null = null;
+    let socket: { on: (event: string, cb: (data: unknown) => void) => void; disconnect: () => void } | null = null;
     import('socket.io-client').then(({ io }) => {
-      socket = io(API_BASE_URL, { transports: ['websocket', 'polling'] });
-      (socket as any).on('connect', () => {
-        setConnectionStatus('connected');
-      });
-      (socket as any).on('disconnect', () => {
-        setConnectionStatus('polling');
-      });
-      socket!.on('agent:activity', (event: { type: string; data?: { sessionId?: string; description?: string }; timestamp: string }) => {
-        setActivity(prev => [{
-          id: `ws-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          session_id: event.data?.sessionId || '',
-          activity_type: event.type,
-          description: event.data?.description || event.type,
-          metadata: event.data,
-          created_at: new Date(event.timestamp)
-        }, ...prev].slice(0, 50));
-        // Refresh agent status counters on any activity
+      const s = io(API_BASE_URL, { transports: ['websocket', 'polling'] });
+      socket = s as unknown as typeof socket;
+      s.on('connect', () => setConnectionStatus('connected'));
+      s.on('disconnect', () => setConnectionStatus('polling'));
+      s.on('agent:activity', () => {
+        // Any kernel activity — refresh the observed status counters.
         fetchAgentStatus();
       });
     }).catch(() => {
@@ -286,826 +215,251 @@ const AutonomousAgentDashboard: React.FC = () => {
     return () => {
       if (socket) socket.disconnect();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Re-fetch timeline events whenever the user changes the filter pill
-  // (All / trade decision / state change / risk action / health alert /
-  // error). Without this the filter only took effect on the next
-  // running-polling tick — so from the user's perspective the buttons
-  // looked dead when the agent was stopped.
+  // Re-fetch the event timeline when the filter pill changes.
   useEffect(() => {
     fetchEvents();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [eventFilter]);
+  }, [fetchEvents]);
 
-  // Polling interval — adjusts based on agent status with exponential backoff on errors
+  // Polling — the kernel runs continuously, so the page polls on a
+  // steady 15s heartbeat regardless of the on/off badge.
   useEffect(() => {
-    const isActive = agentStatus?.status === 'running';
-    const baseInterval = isActive ? 10000 : 60000;
-    // Exponential backoff: double interval per consecutive error, up to max
-    const errorMultiplier = Math.pow(2, Math.min(consecutiveErrorsRef.current, 6));
-    const pollInterval = Math.min(baseInterval * errorMultiplier, MAX_BACKOFF_INTERVAL);
-
     const interval = setInterval(() => {
       fetchAgentStatus();
-      if (agentStatusRef.current === 'running') {
-        fetchActivity();
-        fetchStrategies();
-        fetchCircuitBreaker();
-        fetchHealth();
-        fetchEvents();
-      }
-      fetchCapabilities();
-    }, pollInterval);
-
+      fetchEvents();
+      fetchLeverageCap();
+    }, 15_000);
     return () => clearInterval(interval);
-  }, [agentStatus?.status]);
+  }, [fetchAgentStatus, fetchEvents, fetchLeverageCap]);
 
-  const getAuthHeaders = useCallback(() => {
-    const token = getAccessToken();
-    return { Authorization: `Bearer ${token}` };
-  }, []);
+  // The kernel-trading badge. Prefer the precise kernelStatus; fall back
+  // to the legacy enum for older backends.
+  const kernelStatus: 'active' | 'idle' | 'paused' =
+    agentStatus?.kernelStatus
+      ?? (agentStatus?.status === 'running'
+        ? 'active'
+        : agentStatus?.status === 'paused'
+          ? 'paused'
+          : 'idle');
 
-  const fetchAgentStatus = async () => {
-    try {
-      const response = await axios.get(`${API_BASE_URL}/api/agent/status`, {
-        headers: getAuthHeaders()
-      });
+  const kernelAgentStatus = kernelStatus === 'active' ? 'running' : kernelStatus;
 
-      if (response.data.success) {
-        setAgentStatus(response.data.status);
-        consecutiveErrorsRef.current = 0; // Reset on success
-      }
-      setLastPolled(new Date());
-    } catch (_err: unknown) {
-      consecutiveErrorsRef.current = Math.min(consecutiveErrorsRef.current + 1, MAX_CONSECUTIVE_ERRORS);
-      setLastPolled(new Date());
-    }
+  const badgeStyle: Record<'active' | 'idle' | 'paused', { label: string; dot: string; text: string }> = {
+    active: { label: 'Trading', dot: 'bg-green-500 animate-pulse', text: 'text-green-700' },
+    idle: { label: 'Idle', dot: 'bg-gray-400', text: 'text-gray-600' },
+    paused: { label: 'Paused', dot: 'bg-amber-500', text: 'text-amber-700' },
   };
-
-  const fetchActivity = async () => {
-    try {
-      const response = await axios.get(`${API_BASE_URL}/api/agent/activity?limit=20`, {
-        headers: getAuthHeaders()
-      });
-      
-      if (response.data.success) {
-        setActivity(response.data.activity);
-      }
-    } catch (_err: unknown) {
-      // Silently handle
-    }
-  };
-
-  const fetchStrategies = async () => {
-    try {
-      const response = await axios.get(`${API_BASE_URL}/api/agent/strategies`, {
-        headers: getAuthHeaders()
-      });
-      
-      if (response.data.success) {
-        setStrategies(response.data.strategies);
-      }
-    } catch (_err: unknown) {
-      // Silently handle
-    }
-  };
-
-  const fetchCircuitBreaker = async () => {
-    try {
-      const response = await axios.get(`${API_BASE_URL}/api/agent/circuit-breaker`, {
-        headers: getAuthHeaders()
-      });
-      if (response.data.success) {
-        setCircuitBreaker(response.data.circuitBreaker);
-      }
-    } catch (_err: unknown) {
-      // Silently handle — circuit breaker display is non-critical
-    }
-  };
-
-  const fetchHealth = async () => {
-    try {
-      const response = await axios.get(`${API_BASE_URL}/api/agent/health`, {
-        headers: getAuthHeaders()
-      });
-      if (response.data.success) {
-        setHealthStatus(response.data);
-        setLastHeartbeat(new Date());
-      }
-    } catch {
-      setHealthStatus({
-        ...FALLBACK_HEALTH_STATUS,
-        timestamp: new Date().toISOString()
-      });
-    }
-  };
-
-  const fetchEvents = async () => {
-    try {
-      const params = new URLSearchParams({ limit: '20' });
-      if (eventFilter !== 'all') params.set('type', eventFilter);
-      const response = await axios.get(`${API_BASE_URL}/api/agent/events?${params.toString()}`, {
-        headers: getAuthHeaders()
-      });
-      if (response.data.success) {
-        setAgentEvents(response.data.events);
-      }
-    } catch {
-      // Events are non-critical
-    }
-  };
-
-  const fetchCapabilities = async () => {
-    try {
-      const response = await axios.get(`${API_BASE_URL}/api/agent/capabilities`, {
-        headers: getAuthHeaders()
-      });
-      if (response.data.success) {
-        setCapabilitySummary(response.data.capabilitySummary);
-      }
-    } catch {
-      setCapabilitySummary(null);
-    }
-  };
-
-  const startAgent = async () => {
-    setLoading(true);
-    setError(null);
-    setExistingSession(null);
-    
-    try {
-      const riskConfig = RISK_CONFIGS[riskAppetite];
-
-      const response = await axios.post(
-        `${API_BASE_URL}/api/agent/start`,
-        { ...config, ...riskConfig, paperTrading: executionMode === 'paper_only', executionMode },
-        { headers: getAuthHeaders() }
-      );
-      
-      if (response.data.success) {
-        setAgentStatus(response.data.session);
-        await fetchAgentStatus();
-      }
-    } catch (err: any) {
-      const data = err.response?.data;
-      const code = data?.code;
-      
-      if (code === 'ALREADY_RUNNING') {
-        setExistingSession({
-          sessionId: data.existingSessionId,
-          state: data.existingState,
-          startedAt: data.startedAt,
-          resumeAllowed: data.resumeAllowed
-        });
-        await fetchAgentStatus();
-      } else if (err.response?.status === 503) {
-        setError('Service temporarily unavailable. Some dependencies may be down.');
-        await fetchHealth();
-      } else {
-        setError(data?.error || 'Failed to start agent');
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const resumeAgent = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const response = await axios.post(
-        `${API_BASE_URL}/api/agent/resume`,
-        {},
-        { headers: getAuthHeaders() }
-      );
-      if (response.data.success) {
-        setExistingSession(null);
-        await fetchAgentStatus();
-      }
-    } catch (err: any) {
-      setError(err.response?.data?.error || 'Failed to resume agent');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const stopAgent = async () => {
-    setLoading(true);
-    setError(null);
-    
-    try {
-      const response = await axios.post(
-        `${API_BASE_URL}/api/agent/stop`,
-        {},
-        { headers: getAuthHeaders() }
-      );
-      
-      if (response.data.success) {
-        await fetchAgentStatus();
-      }
-    } catch (err: any) {
-      setError(err.response?.data?.error || 'Failed to stop agent');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const pauseAgent = async () => {
-    setLoading(true);
-    setError(null);
-    
-    try {
-      const response = await axios.post(
-        `${API_BASE_URL}/api/agent/pause`,
-        {},
-        { headers: getAuthHeaders() }
-      );
-      
-      if (response.data.success) {
-        await fetchAgentStatus();
-      }
-    } catch (err: any) {
-      setError(err.response?.data?.error || 'Failed to pause agent');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const getStatusColor = (status?: string) => {
-    switch (status) {
-      case 'running':
-        return 'text-green-600';
-      case 'paused':
-        return 'text-yellow-600';
-      case 'stopped':
-        return 'text-red-600';
-      default:
-        return 'text-gray-600';
-    }
-  };
-
-  const getStrategyStatusColor = (status: string) => {
-    switch (status) {
-      case 'live':
-        return 'bg-green-100 text-green-700';
-      case 'paper_trading':
-        return 'bg-blue-100 text-blue-700';
-      case 'backtested':
-        return 'bg-purple-100 text-purple-700';
-      case 'generated':
-        return 'bg-gray-100 text-gray-700';
-      case 'retired':
-        return 'bg-red-100 text-red-700';
-      default:
-        return 'bg-gray-100 text-gray-700';
-    }
-  };
+  const badge = badgeStyle[kernelStatus];
 
   return (
     <div className="p-6 space-y-6">
-      {/* Gradient Header - Brand Consistent */}
+      {/* Gradient Header — kernel on/off badge lives here. There is no
+          start/stop button: the kernel runs autonomously. The only
+          operator control is the execution-mode pause/kill below. */}
       <div className="bg-gradient-to-r from-cyan-500 to-blue-600 rounded-lg p-8 text-white shadow-lg">
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-3xl font-bold flex items-center gap-3">
               <Brain className="w-8 h-8" />
-              Autonomous Trading Agent
+              Autonomous Trading Kernel
             </h1>
             <p className="mt-2 opacity-90">
-              AI-powered autonomous trading system using Claude Sonnet 4.5
+              The Monkey kernel observes the market and sets all of its own
+              parameters — objective: as profitable, as fast as possible.
             </p>
           </div>
-
-          <div className="flex items-center gap-3">
-            {agentStatus?.status === 'running' ? (
-              <>
-                <button
-                  onClick={pauseAgent}
-                  disabled={loading}
-                  className="px-6 py-3 bg-yellow-500 hover:bg-yellow-600 text-white rounded-lg flex items-center gap-2 transition-all shadow-md hover:shadow-lg disabled:opacity-50 focus:ring-4 focus:ring-yellow-300 focus:outline-none"
-                  aria-label="Pause autonomous trading agent"
-                >
-                  <Pause className="w-5 h-5" />
-                  Pause
-                </button>
-                <button
-                  onClick={stopAgent}
-                  disabled={loading}
-                  className="px-6 py-3 bg-red-500 hover:bg-red-600 text-white rounded-lg flex items-center gap-2 transition-all shadow-md hover:shadow-lg disabled:opacity-50 focus:ring-4 focus:ring-red-300 focus:outline-none"
-                  aria-label="Stop autonomous trading agent"
-                >
-                  <Square className="w-5 h-5" />
-                  Stop
-                </button>
-              </>
-            ) : (
-              <button
-                onClick={startAgent}
-                disabled={loading}
-                className="px-6 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg flex items-center gap-2 transition-all shadow-md hover:shadow-lg disabled:opacity-50 focus:ring-4 focus:ring-green-300 focus:outline-none"
-                aria-label="Start autonomous trading agent"
-              >
-                <Play className="w-5 h-5" />
-                {loading ? 'Starting...' : 'Start Agent'}
-              </button>
-            )}
+          <div
+            className="flex items-center gap-2 bg-white/15 rounded-lg px-4 py-3"
+            role="status"
+            aria-label={`Kernel status: ${badge.label}`}
+          >
+            <span className={`inline-block w-3 h-3 rounded-full ${badge.dot}`} />
+            <span className="font-semibold text-lg">{badge.label}</span>
           </div>
         </div>
       </div>
 
-      {/* Existing Session Banner */}
-      {existingSession && (
-        <div className="bg-amber-50 border border-amber-300 rounded-lg p-4 flex items-start gap-3" role="alert">
-          <AlertCircle className="w-6 h-6 text-amber-600 flex-shrink-0 mt-0.5" />
-          <div className="flex-1">
-            <h3 className="text-amber-800 font-semibold">Agent Session Already Active</h3>
-            <p className="text-amber-700 text-sm mt-1">
-              An agent session is currently {existingSession.state}.
-              {existingSession.startedAt && (
-                <> Started <time dateTime={existingSession.startedAt}>{new Date(existingSession.startedAt).toLocaleString()}</time></>
-              )}
-            </p>
-            <div className="flex gap-3 mt-3">
-              {existingSession.resumeAllowed && (
-                <button onClick={resumeAgent} disabled={loading}
-                  className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50">
-                  Resume Session
-                </button>
-              )}
-              <button onClick={() => { fetchAgentStatus(); setExistingSession(null); }} 
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors">
-                View Current Session
-              </button>
-              <button onClick={stopAgent} disabled={loading}
-                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50">
-                Stop Existing Session
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Health / Degraded State Banner */}
-      {healthStatus && !healthStatus.healthy && (
-        <div className="bg-orange-50 border border-orange-300 rounded-lg p-4" role="alert">
-          <div className="flex items-start gap-3">
-            <AlertCircle className="w-6 h-6 text-orange-600 flex-shrink-0 mt-0.5" />
-            <div className="flex-1">
-              <h3 className="text-orange-800 font-semibold">Service Degraded</h3>
-              <p className="text-orange-700 text-sm mt-1">
-                Some services are unavailable. Historical data and read-only features still work.
-              </p>
-              <div className="mt-2 space-y-1">
-                {healthStatus.dependencies && Object.entries(healthStatus.dependencies).map(([key, dep]) => (
-                  dep && typeof dep === 'object' && 'healthy' in dep && (
-                    <div key={key} className="flex items-center gap-2 text-sm">
-                      <span className={`w-2 h-2 rounded-full ${dep.healthy ? 'bg-green-500' : 'bg-red-500'}`} />
-                      <span className="text-gray-600 capitalize">{key.replace(/([A-Z])/g, ' $1').trim()}</span>
-                      <span className={dep.healthy ? 'text-green-700' : 'text-red-700'}>{dep.message}</span>
-                    </div>
-                  )
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Risk Appetite & Execution Mode */}
+      {/* Execution Mode — the ONLY operator-MANDATE control. A safety
+          override enforced server-side by the risk kernel. */}
       <div className="bg-white rounded-lg shadow-lg p-6">
-        <h3 className="text-lg font-bold text-gray-900 mb-4">Agent Configuration</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Risk Appetite */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Risk Appetite</label>
-            <div className="grid grid-cols-3 gap-2">
-              {([
-                { value: 'conservative', label: 'Conservative', desc: 'Low risk, steady returns', activeClass: 'border-blue-500 bg-blue-50' },
-                { value: 'balanced', label: 'Balanced', desc: 'Moderate risk & reward', activeClass: 'border-cyan-500 bg-cyan-50' },
-                { value: 'aggressive', label: 'Aggressive', desc: 'High risk, high reward', activeClass: 'border-orange-500 bg-orange-50' }
-              ] as const).map(opt => (
-                <button key={opt.value}
-                  onClick={() => setRiskAppetiteLive(opt.value)}
-                  disabled={riskAppetiteUpdating}
-                  className={`p-3 rounded-lg border-2 text-left transition-all disabled:opacity-50 ${
-                    riskAppetite === opt.value
-                      ? opt.activeClass
-                      : 'border-gray-200 hover:border-gray-300'
-                  }`}>
-                  <p className="font-semibold text-sm text-gray-900">{opt.label}</p>
-                  <p className="text-xs text-gray-500 mt-1">{opt.desc}</p>
-                </button>
-              ))}
-            </div>
-          </div>
-          {/* Execution Mode — safety override on the autonomous pipeline.
-              'Auto' runs the full generated→backtest→paper→live pipeline.
-              'Paper-Only' blocks live promotion for debug / trust-building.
-              'Pause' halts all new orders at every stage. */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Execution Mode</label>
-            <div className="grid grid-cols-3 gap-2">
-              {([
-                { value: 'auto', label: 'Auto', desc: 'Pipeline decides (default)', icon: '🤖', bgClass: 'border-green-500 bg-green-50' },
-                { value: 'paper_only', label: 'Paper-Only', desc: 'Block live promotion', icon: '📝', bgClass: 'border-blue-500 bg-blue-50' },
-                { value: 'pause', label: 'Pause', desc: 'No new orders', icon: '⏸️', bgClass: 'border-amber-500 bg-amber-50' }
-              ] as const).map(opt => (
-                <button key={opt.value}
-                  onClick={() => setExecutionMode(opt.value)}
-                  disabled={executionModeUpdating}
-                  className={`p-3 rounded-lg border-2 text-left transition-all disabled:opacity-50 ${
-                    executionMode === opt.value ? opt.bgClass : 'border-gray-200 hover:border-gray-300'
-                  }`}>
-                  <p className="font-semibold text-sm text-gray-900">{opt.icon} {opt.label}</p>
-                  <p className="text-xs text-gray-500 mt-1">{opt.desc}</p>
-                </button>
-              ))}
-            </div>
-            {executionMode === 'auto' && (
-              <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg">
-                <p className="text-red-800 text-sm font-medium">⚠️ Auto Mode — real capital may be used once strategies earn live tier</p>
-                <p className="text-red-600 text-xs mt-1">The pipeline self-promotes strategies from paper to live once they clear the multi-metric gates. Switch to Paper-Only to block live promotion.</p>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Detailed Risk Limits — the granular operator ceilings, kept
-          visually together with Risk Appetite above. Both write the same
-          risk_settings table; the Monkey kernel reads it live (60s cache,
-          no restart). Single home for risk config — RiskSettings was
-          removed from the Settings page so it is not split across two
-          screens. */}
-      <div className="bg-white rounded-lg shadow-lg p-6">
-        <h3 className="text-lg font-bold text-gray-900 mb-1">Detailed Risk Limits</h3>
+        <h3 className="text-lg font-bold text-gray-900 mb-1">Execution Mode</h3>
         <p className="text-sm text-gray-500 mb-4">
-          Applied live by the kernel — no need to stop the agent. Risk
-          Appetite above sets these in one click; adjust individually here.
+          Operator safety override. The kernel decides everything else —
+          this is the one control you hold.
         </p>
-        <RiskSettings />
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          {([
+            { value: 'auto', label: 'Auto', desc: 'Kernel trades live', icon: '🤖', bgClass: 'border-green-500 bg-green-50' },
+            { value: 'paper_only', label: 'Paper-Only', desc: 'Block all live orders', icon: '📝', bgClass: 'border-blue-500 bg-blue-50' },
+            { value: 'pause', label: 'Pause', desc: 'Kill switch — no new orders', icon: '⏸️', bgClass: 'border-amber-500 bg-amber-50' },
+          ] as const).map(opt => (
+            <button
+              key={opt.value}
+              onClick={() => setExecutionMode(opt.value)}
+              disabled={executionModeUpdating}
+              className={`p-3 rounded-lg border-2 text-left transition-all disabled:opacity-50 ${
+                executionMode === opt.value ? opt.bgClass : 'border-gray-200 hover:border-gray-300'
+              }`}
+            >
+              <p className="font-semibold text-sm text-gray-900">{opt.icon} {opt.label}</p>
+              <p className="text-xs text-gray-500 mt-1">{opt.desc}</p>
+            </button>
+          ))}
+        </div>
+        {executionMode === 'auto' && (
+          <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+            <p className="text-red-800 text-sm font-medium">⚠️ Auto Mode — the kernel is placing real-capital orders</p>
+            <p className="text-red-600 text-xs mt-1">Switch to Pause to halt all new orders immediately.</p>
+          </div>
+        )}
+        {/* Audited leverage cap — READ-ONLY. The kernel observes and sets
+            its own per-trade leverage; this is the audited ceiling it
+            clamps to, shown for transparency. Mutating it lives on the
+            dedicated Risk Settings surface, not this observation panel. */}
+        {leverageCap && (
+          <div className="mt-4 flex items-center gap-3 bg-gray-50 border border-gray-200 rounded-lg p-3">
+            <Shield className="w-5 h-5 text-gray-500 flex-shrink-0" />
+            <div className="text-sm">
+              <span className="text-gray-600">Audited leverage cap:</span>{' '}
+              <span className="font-semibold text-gray-900">{leverageCap.maxLeverage}x</span>
+              <span className="text-gray-400"> · risk tier {leverageCap.riskLevel} · read-only</span>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Emergency Stop — visible when live trading is active. "Auto" mode
-          may be running live-promoted strategies; the safe configurations
-          ('paper_only', 'pause') won't reach live. */}
-      {agentStatus?.status === 'running' && executionMode === 'auto' && agentStatus?.config?.executionMode !== 'paper_only' && agentStatus?.config?.executionMode !== 'pause' && (
+      {/* Emergency kill switch — surfaced while the kernel is trading
+          live and the execution mode still permits live orders. */}
+      {kernelStatus === 'active' && executionMode === 'auto' && (
         <div className="bg-red-50 border-2 border-red-300 rounded-lg p-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <Shield className="w-6 h-6 text-red-600" />
             <div>
               <p className="font-semibold text-red-800">Live Trading Active</p>
-              <p className="text-sm text-red-600">Kill switch — immediately stops all live trading</p>
+              <p className="text-sm text-red-600">Kill switch — immediately halts all new live orders</p>
             </div>
           </div>
           <button
-            onClick={stopAgent}
-            className="px-6 py-3 bg-red-600 hover:bg-red-700 text-white rounded-lg font-bold transition-colors shadow-lg hover:shadow-xl animate-pulse"
+            onClick={() => setExecutionMode('pause')}
+            disabled={executionModeUpdating}
+            className="px-6 py-3 bg-red-600 hover:bg-red-700 text-white rounded-lg font-bold transition-colors shadow-lg hover:shadow-xl animate-pulse disabled:opacity-50"
           >
             🛑 KILL SWITCH
           </button>
         </div>
       )}
 
-      {/* Agent Configuration Panel */}
-      <div className="bg-white rounded-lg shadow-lg overflow-hidden">
-        <button
-          onClick={() => setShowConfig(!showConfig)}
-          className="w-full p-4 flex items-center justify-between hover:bg-gray-50 transition-colors"
-          disabled={agentStatus?.status === 'running'}
-        >
-          <div className="flex items-center gap-3">
-            <Settings className="w-5 h-5 text-gray-600" />
-            <div className="text-left">
-              <p className="font-semibold text-gray-900">Agent Configuration</p>
-              <p className="text-sm text-gray-500">
-                {config.tradingStyle.replace('_', ' ')} · {config.preferredPairs.join(', ')} · {config.marginMode} margin
-              </p>
-            </div>
-          </div>
-          {showConfig ? <ChevronUp className="w-5 h-5 text-gray-400" /> : <ChevronDown className="w-5 h-5 text-gray-400" />}
-        </button>
-        {showConfig && (
-          <div className="border-t border-gray-200 p-6 space-y-4">
-            {agentStatus?.status === 'running' && (
-              <p className="text-sm text-amber-600 bg-amber-50 rounded p-2">⚠ These define the agent&apos;s trading universe — stop the agent to change them. Risk limits (above) apply live.</p>
-            )}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {/* Trading Style */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Trading Style</label>
-                <select
-                  value={config.tradingStyle}
-                  onChange={e => setConfig(c => ({ ...c, tradingStyle: e.target.value }))}
-                  disabled={agentStatus?.status === 'running'}
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-cyan-500 disabled:bg-gray-100 disabled:text-gray-500"
-                >
-                  <option value="scalping">Scalping (high frequency, tight stops)</option>
-                  <option value="day_trading">Day Trading (intraday, moderate risk)</option>
-                  <option value="swing_trading">Swing Trading (multi-day, wider stops)</option>
-                </select>
-              </div>
-              {/* Risk limits (max drawdown, position size, stop loss,
-                  max concurrent, leverage) live in the Risk Appetite card
-                  + Detailed Risk Limits panel above — single source, applied
-                  live. They were removed from here to end the duplication
-                  (and were already overridden by the risk-appetite preset
-                  in the /api/agent/start payload). */}
-              {/* Automation Level */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Automation Level</label>
-                <select
-                  value={config.automationLevel}
-                  onChange={e => setConfig(c => ({ ...c, automationLevel: e.target.value }))}
-                  disabled={agentStatus?.status === 'running'}
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-cyan-500 disabled:bg-gray-100 disabled:text-gray-500"
-                >
-                  <option value="fully_autonomous">Fully Autonomous (no approval needed)</option>
-                  <option value="semi_autonomous">Semi-Autonomous (approve before live)</option>
-                  <option value="manual_override">Manual Override (approve all actions)</option>
-                </select>
-              </div>
-              {/* Margin Mode */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Margin Mode</label>
-                <select
-                  value={config.marginMode}
-                  onChange={e => setConfig(c => ({ ...c, marginMode: e.target.value as 'CROSS' | 'ISOLATED' }))}
-                  disabled={agentStatus?.status === 'running'}
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-cyan-500 disabled:bg-gray-100 disabled:text-gray-500"
-                >
-                  <option value="CROSS">Cross Margin (shared collateral)</option>
-                  <option value="ISOLATED">Isolated Margin (per-position)</option>
-                </select>
-              </div>
-            </div>
-            {/* Preferred Pairs */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Preferred Futures Pairs (PERP)</label>
-              <div className="flex flex-wrap gap-2">
-                {['BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'XRP-USDT', 'DOGE-USDT', 'AVAX-USDT', 'BCH-USDT', 'LTC-USDT', 'TRX-USDT', 'BNB-USDT', 'LINK-USDT', 'UNI-USDT'].map(pair => (
-                  <button
-                    key={pair}
-                    onClick={() => setConfig(c => ({
-                      ...c,
-                      preferredPairs: c.preferredPairs.includes(pair)
-                        ? c.preferredPairs.filter(p => p !== pair)
-                        : [...c.preferredPairs, pair]
-                    }))}
-                    disabled={agentStatus?.status === 'running'}
-                    className={`px-3 py-1 rounded-full text-sm font-medium transition-colors disabled:opacity-50 ${
-                      config.preferredPairs.includes(pair)
-                        ? 'bg-cyan-100 text-cyan-700 border border-cyan-300'
-                        : 'bg-gray-100 text-gray-600 border border-gray-200 hover:bg-gray-200'
-                    }`}
-                  >
-                    {pair}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Connection & Heartbeat Status Bar */}
+      {/* Connection & last-poll status bar */}
       <div className="bg-white rounded-lg shadow p-3 flex items-center justify-between text-sm">
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            <span className={`inline-block w-2 h-2 rounded-full ${
-              connectionStatus === 'connected' ? 'bg-green-500 animate-pulse' :
-              connectionStatus === 'polling' ? 'bg-yellow-500' :
-              'bg-red-500'
-            }`} />
-            <span className="text-gray-600">
-              {connectionStatus === 'connected' ? 'Live WebSocket' :
-               connectionStatus === 'polling' ? 'Polling' :
-               'Disconnected'}
-            </span>
-          </div>
-          {agentStatus?.status === 'running' && agentStatus?.startedAt && (
-            <span className="text-gray-500">
-              Running since {new Date(agentStatus.startedAt).toLocaleString()}
-            </span>
-          )}
+        <div className="flex items-center gap-2">
+          <span className={`inline-block w-2 h-2 rounded-full ${
+            connectionStatus === 'connected' ? 'bg-green-500 animate-pulse' :
+            connectionStatus === 'polling' ? 'bg-yellow-500' :
+            'bg-red-500'
+          }`} />
+          <span className="text-gray-600">
+            {connectionStatus === 'connected' ? 'Live WebSocket' :
+             connectionStatus === 'polling' ? 'Polling' :
+             'Disconnected'}
+          </span>
         </div>
         {lastPolled && (
           <span className="text-gray-400 text-xs">
             Last checked: {lastPolled.toLocaleTimeString()}
           </span>
         )}
-        {lastHeartbeat && (() => {
-          const heartbeatAge = Math.round((Date.now() - lastHeartbeat.getTime()) / 1000);
-          return (
-            <span className="text-gray-400 text-xs flex items-center gap-1" aria-label={`Last heartbeat ${heartbeatAge} seconds ago`}>
-              💓 Heartbeat: {heartbeatAge}s ago
-            </span>
-          );
-        })()}
-      </div>
-
-      {/* Error Alert */}
-      {error && (
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3" role="alert">
-          <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
-          <div>
-            <h3 className="text-red-800 font-semibold">Error</h3>
-            <p className="text-red-700 text-sm mt-1">{error}</p>
-          </div>
-        </div>
-      )}
-
-      {/* Circuit Breaker Warning */}
-      {circuitBreaker?.isTripped && (
-        <div className="bg-red-50 border border-red-300 rounded-lg p-4 flex items-start gap-3" role="alert">
-          <Shield className="w-6 h-6 text-red-600 flex-shrink-0 mt-0.5" />
-          <div className="flex-1">
-            <h3 className="text-red-800 font-semibold flex items-center gap-2">
-              Circuit Breaker Active
-              <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-            </h3>
-            <p className="text-red-700 text-sm mt-1">{circuitBreaker.reason}</p>
-            {circuitBreaker.cooldownRemaining != null && circuitBreaker.cooldownRemaining > 0 && (
-              <p className="text-red-600 text-xs mt-2">
-                Auto-reset in {Math.ceil(circuitBreaker.cooldownRemaining / 60000)} min
-              </p>
-            )}
-            <div className="flex gap-4 mt-2 text-xs text-red-600">
-              <span>Consecutive losses: {circuitBreaker.consecutiveLosses}</span>
-              <span>Daily loss: {safeNum(circuitBreaker.dailyLossPercent).toFixed(2)}%</span>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Risk Protection Summary (when agent is running) */}
-      {agentStatus?.status === 'running' && !circuitBreaker?.isTripped && (
-        <div className="bg-green-50 border border-green-200 rounded-lg p-3 flex items-center gap-3 text-sm">
-          <Shield className="w-5 h-5 text-green-600 flex-shrink-0" />
-          <div className="flex-1 flex items-center justify-between">
-            <span className="text-green-800">
-              Risk protection active — circuit breaker, drawdown scaling, trailing stops enabled
-            </span>
-            {circuitBreaker && (
-              <div className="flex gap-3 text-xs text-green-600">
-                <span>Consec. losses: {circuitBreaker.consecutiveLosses}/5</span>
-                <span>Daily loss: {safeNum(circuitBreaker.dailyLossPercent).toFixed(2)}%</span>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Performance Mode Tabs */}
-      <div className="bg-white rounded-lg shadow-lg overflow-hidden">
-        <div className="border-b border-gray-200 px-6 pt-4">
-          <div className="flex gap-1">
-            {(['all', 'backtest', 'paper', 'live'] as const).map(mode => (
-              <button
-                key={mode}
-                onClick={() => setPerformanceMode(mode)}
-                className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${
-                  performanceMode === mode
-                    ? mode === 'live' ? 'bg-red-50 text-red-700 border-b-2 border-red-500'
-                    : mode === 'paper' ? 'bg-blue-50 text-blue-700 border-b-2 border-blue-500'
-                    : mode === 'backtest' ? 'bg-purple-50 text-purple-700 border-b-2 border-purple-500'
-                    : 'bg-gray-50 text-gray-700 border-b-2 border-gray-500'
-                    : 'text-gray-500 hover:text-gray-700'
-                }`}
-              >
-                {mode === 'all' ? 'All Modes' : mode === 'backtest' ? '📊 Backtest' : mode === 'paper' ? '📝 Paper' : '⚡ Live'}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="p-4 text-sm text-gray-500">
-          {performanceMode === 'all'
-            ? 'Showing combined performance across all execution modes'
-            : performanceMode === 'live'
-            ? '⚠️ Showing LIVE trading performance — real capital metrics'
-            : performanceMode === 'paper'
-            ? 'Showing paper trading performance — simulated capital'
-            : 'Showing historical backtest performance'}
-        </div>
       </div>
 
       {/*
-        State-of-the-Bot card: single-source-of-truth "what is the bot
-        doing right now and is it making money?" headline. Replaces the
-        old AgentOverviewPanel + StrategyGenerationDisplay combo which
-        showed placeholder zeros (Stop Loss 0%, Take Profit 0%) and
-        legacy Backtest Results numbers (−733% avg across 704 strategies)
-        that were meaningless for operational visibility.
-
-        The detailed strategy pipeline lives on /backtesting if the user
-        wants it — this dashboard surfaces only live operational state.
+        State-of-the-Bot card: the single-source-of-truth "what is the
+        kernel doing right now and is it making money?" headline —
+        phase, real LIVE realized P&L, open positions, leverage in use,
+        win rate, exchange-vs-DB sync.
       */}
       <StateOfTheBotCard />
 
-      {/* Strategy Approval Queue (Recalibrating Strategies) */}
-      <StrategyApprovalQueue agentStatus={agentStatus?.status} />
-
-      {/* ML Self-Learning Engine — Live Recommendations (one-click confirmation required) */}
-      <MLLiveRecommendations />
-
-      {/* Active Strategies with Performance Metrics */}
-      <ActiveStrategiesPanel agentStatus={agentStatus?.status} />
-
-      {/* Status Overview - White Cards with Shadows */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-        <div 
-          className="bg-white rounded-lg p-6 shadow-lg hover:shadow-xl transition-shadow"
+      {/* Live realized-PnL / position summary cards. totalPnl is the
+          LIVE engine's realized PnL only (engine_type='live' filter). */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div
+          className="bg-white rounded-lg p-6 shadow-lg"
           role="status"
-          aria-label={`Agent status: ${agentStatus?.status || 'Stopped'}`}
+          aria-label={`Kernel status: ${badge.label}`}
         >
           <div className="flex items-center justify-between mb-2">
-            <span className="text-gray-600 text-sm font-medium">Status</span>
-            <Activity className={`w-5 h-5 ${getStatusColor(agentStatus?.status)}`} />
+            <span className="text-gray-600 text-sm font-medium">Kernel</span>
+            <Activity className={`w-5 h-5 ${badge.text}`} />
           </div>
-          <p className={`text-2xl font-bold ${getStatusColor(agentStatus?.status)} capitalize`}>
-            {agentStatus?.status || 'Stopped'}
-          </p>
+          <p className={`text-2xl font-bold ${badge.text}`}>{badge.label}</p>
         </div>
 
-        <div 
-          className="bg-white rounded-lg p-6 shadow-lg hover:shadow-xl transition-shadow"
+        <div
+          className="bg-white rounded-lg p-6 shadow-lg"
           role="status"
-          aria-label={`Strategies generated: ${agentStatus?.strategiesGenerated || 0}`}
+          aria-label={`Open positions: ${agentStatus?.openPositions ?? 0}`}
         >
           <div className="flex items-center justify-between mb-2">
-            <span className="text-gray-600 text-sm font-medium">Strategies Generated</span>
-            <Brain className="w-5 h-5 text-cyan-600" />
-          </div>
-          <p className="text-2xl font-bold text-gray-900">
-            {agentStatus?.strategiesGenerated || 0}
-          </p>
-          <p className="text-xs text-gray-500 mt-1">
-            {strategies.filter(s => s.status === 'live').length} live · {strategies.filter(s => s.status === 'paper_trading').length} paper
-          </p>
-        </div>
-
-        <div 
-          className="bg-white rounded-lg p-6 shadow-lg hover:shadow-xl transition-shadow"
-          role="status"
-          aria-label={`Backtests completed: ${agentStatus?.backtestsCompleted || 0}`}
-        >
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-gray-600 text-sm font-medium">Backtests Completed</span>
-            <BarChart3 className="w-5 h-5 text-purple-600" />
-          </div>
-          <p className="text-2xl font-bold text-gray-900">
-            {agentStatus?.backtestsCompleted || 0}
-          </p>
-          <p className="text-xs text-gray-500 mt-1">
-            {strategies.filter(s => s.status === 'backtested').length} passed
-          </p>
-        </div>
-
-        <div 
-          className="bg-white rounded-lg p-6 shadow-lg hover:shadow-xl transition-shadow"
-          role="status"
-          aria-label={`Paper trades: ${agentStatus?.paperTradesExecuted || 0}`}
-        >
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-gray-600 text-sm font-medium">Paper Trades</span>
+            <span className="text-gray-600 text-sm font-medium">Open Positions</span>
             <Shield className="w-5 h-5 text-blue-600" />
           </div>
-          <p className="text-2xl font-bold text-gray-900">
-            {agentStatus?.paperTradesExecuted || 0}
+          <p className="text-2xl font-bold text-gray-900">{agentStatus?.openPositions ?? 0}</p>
+          <p className="text-xs text-gray-500 mt-1">
+            {agentStatus?.liveTradesExecuted ?? 0} live trades all-time
           </p>
         </div>
 
-        <div 
-          className="bg-white rounded-lg p-6 shadow-lg hover:shadow-xl transition-shadow"
+        <div
+          className="bg-white rounded-lg p-6 shadow-lg"
           role="status"
-          aria-label={`Total profit and loss: $${(agentStatus?.totalPnl || 0).toFixed(2)}`}
+          aria-label={`Live realized P&L: $${safeNum(agentStatus?.totalPnl ?? 0).toFixed(2)}`}
         >
           <div className="flex items-center justify-between mb-2">
-            <span className="text-gray-600 text-sm font-medium">Total P&L</span>
-            <TrendingUp className={`w-5 h-5 ${(agentStatus?.totalPnl || 0) >= 0 ? 'text-green-600' : 'text-red-600'}`} />
+            <span className="text-gray-600 text-sm font-medium">Live Realized P&L</span>
+            <TrendingUp className={`w-5 h-5 ${(agentStatus?.totalPnl ?? 0) >= 0 ? 'text-green-600' : 'text-red-600'}`} />
           </div>
-          <p className={`text-2xl font-bold ${(agentStatus?.totalPnl || 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-            ${(agentStatus?.totalPnl || 0).toFixed(2)}
+          <p className={`text-2xl font-bold ${(agentStatus?.totalPnl ?? 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+            ${safeNum(agentStatus?.totalPnl ?? 0).toFixed(2)}
           </p>
         </div>
       </div>
 
-      {/* Performance Analytics */}
-      <PerformanceAnalytics agentStatus={agentStatus?.status} performanceMode={performanceMode} />
+      {/* Active strategies / lanes the kernel is running. */}
+      <ActiveStrategiesPanel agentStatus={kernelAgentStatus} />
 
-      {/* Agent Activity Timeline */}
+      {/* Performance analytics — live realized performance. */}
+      <PerformanceAnalytics agentStatus={kernelAgentStatus} performanceMode="live" />
+
+      {/* Kernel telemetry — observable-governance distributional drift +
+          forecast-horizon observer state (Φ / regime / amplitude). */}
+      <GovernanceStatusPanel />
+
+      {/*
+        TODO(kernel-telemetry): the /api/governance/k-consciousness and
+        /api/governance/k-parity endpoints expose per-tick Φ / κ / M / Γ
+        / R and TS-vs-Py consensus, and Ocean sleep-state lives under
+        /api/governance/sleep-state/:agent. A dedicated read-only
+        consciousness/Ocean panel that surfaces those would round out
+        this observation page — not built here to avoid scope creep and
+        because no aggregated single-call endpoint exists yet.
+      */}
+
+      {/* Live trading activity feed. */}
+      <LiveTradingActivityFeed agentStatus={kernelAgentStatus} />
+
+      {/* Agent event timeline — kernel decisions, state changes, risk. */}
       <div className="bg-white rounded-lg shadow-lg overflow-hidden">
         <div className="p-6 border-b border-gray-200">
           <div className="flex items-center justify-between">
             <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
               <Activity className="w-5 h-5 text-cyan-600" />
-              Agent Activity Timeline
+              Kernel Event Timeline
             </h2>
             <div className="flex gap-1">
-              {['all', 'trade_decision', 'state_change', 'risk_action', 'health_alert', 'error'].map(filter => (
+              {(['all', 'trade_decision', 'state_change', 'risk_action', 'health_alert', 'error'] as const).map(filter => (
                 <button key={filter}
-                  onClick={() => setEventFilter(filter as typeof eventFilter)}
+                  onClick={() => setEventFilter(filter)}
                   className={`px-3 py-1 text-xs rounded-full transition-colors ${
                     eventFilter === filter
                       ? 'bg-cyan-100 text-cyan-700 font-medium'
@@ -1154,88 +508,13 @@ const AutonomousAgentDashboard: React.FC = () => {
             </div>
           ) : (
             <div className="text-center py-8">
-              <p className="text-gray-500">No agent events yet</p>
-              <p className="text-gray-400 text-sm mt-1">Events will appear here once the agent starts making decisions</p>
+              <p className="text-gray-500">No kernel events yet</p>
+              <p className="text-gray-400 text-sm mt-1">Events appear here as the kernel makes decisions</p>
             </div>
           )}
         </div>
       </div>
 
-      {/*
-        Removed in the 2026-04-19 prune:
-        - <BacktestResultsVisualization /> — displayed unfiltered aggregates
-          across 1,791 NULL-engine_version legacy rows, producing −733%
-          avg / +3813% best / −23581% worst that the user correctly flagged
-          as nonsensical. The detailed per-strategy view on /backtesting
-          now filters by engine_version.
-        - Strategy Pipeline sub-card — the "Start the agent to generate..."
-          copy was stale while the agent was running, and the category
-          counts duplicated info shown better in ActiveStrategiesPanel.
-        - Capability Tiers card — the capabilities endpoint returns
-          hardcoded zeros; the block only ever appeared filled during
-          a brief transition period that's now over.
-
-        Strategy pipeline details live on /backtesting. Sidebar nav
-        handles that transition.
-      */}
-      {/* Capability Tiers card retired — data source returned hardcoded zeros.
-          Block fully removed in favour of a comment so eslint's
-          no-constant-binary-expression rule isn't tripped by `{false && (...)}`. */}
-
-      {/* Governance Status — observable drift + forecast observer state */}
-      <GovernanceStatusPanel />
-
-      {/* Live Trading Activity Feed */}
-      <LiveTradingActivityFeed agentStatus={agentStatus?.status} />
-
-      {/* Activity Log - White Card */}
-      <div className="bg-white rounded-lg shadow-lg overflow-hidden">
-        <div className="p-6 border-b border-gray-200">
-          <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-            <Activity className="w-5 h-5 text-cyan-600" />
-            Recent Activity
-          </h2>
-        </div>
-        <div 
-          className="p-6"
-          role="log"
-          aria-label="Recent agent activity"
-          aria-live="polite"
-        >
-          {activity.length > 0 ? (
-            <div className="space-y-3">
-              {activity.map((item) => (
-                <div 
-                  key={item.id}
-                  className="flex items-start gap-3 p-3 rounded-lg hover:bg-gray-50 transition-colors"
-                >
-                  <div className="flex-shrink-0 w-2 h-2 mt-2 rounded-full bg-cyan-500"></div>
-                  <div className="flex-1">
-                    <p className="text-sm font-medium text-gray-900">{item.description}</p>
-                    <p className="text-xs text-gray-500 mt-1">
-                      {new Date(item.created_at).toLocaleString()}
-                    </p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="text-center py-8">
-              <p className="text-gray-500">No activity yet</p>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Loading Overlay */}
-      {loading && (
-        <div className="fixed inset-0 bg-black/20 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 shadow-xl">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-            <p className="text-gray-700 mt-4 text-center">Processing...</p>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

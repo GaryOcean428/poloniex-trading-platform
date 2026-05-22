@@ -66,30 +66,12 @@ describeIfSupertest('Autonomous Agent API', () => {
     });
   });
 
+  // Agent Lifecycle — POST /api/agent/start and /resume were removed in
+  // PR7 (2026-05-22): the Monkey kernel is the sole autonomous trader
+  // and runs continuously, so the UI does not "start" it. The remaining
+  // lifecycle surface is the read-only /status badge and the
+  // execution-mode pause/stop kill switch.
   describe('Agent Lifecycle', () => {
-    test('should start agent with valid configuration', async () => {
-      const config = {
-        maxDrawdown: 15,
-        positionSize: 2,
-        maxConcurrentPositions: 3,
-        stopLossPercentage: 5,
-        tradingStyle: 'day_trading',
-        preferredPairs: ['BTC-USDT', 'ETH-USDT'],
-        preferredTimeframes: ['15m', '1h', '4h'],
-        automationLevel: 'fully_autonomous'
-      };
-
-      const res = await requestClient(API_URL)
-        .post('/api/agent/start')
-        .set('Authorization', `Bearer ${authToken}`)
-        .send(config);
-
-      expect(res.status).toBe(200);
-      expect(res.body.success).toBe(true);
-      expect(res.body.session).toBeDefined();
-      expect(res.body.session.status).toBe('running');
-    });
-
     test('should get agent status', async () => {
       const res = await requestClient(API_URL)
         .get('/api/agent/status')
@@ -98,6 +80,9 @@ describeIfSupertest('Autonomous Agent API', () => {
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
       expect(res.body.status).toBeDefined();
+      // PR6 — the on/off badge reflects real kernel trading activity.
+      expect(['running', 'paused', 'stopped']).toContain(res.body.status.status);
+      expect(['active', 'idle', 'paused']).toContain(res.body.status.kernelStatus);
     });
 
     test('should pause agent', async () => {
@@ -120,20 +105,7 @@ describeIfSupertest('Autonomous Agent API', () => {
   });
 
   describe('Strategy Generation', () => {
-    test('should generate strategies', async () => {
-      // Start agent first
-      await requestClient(API_URL)
-        .post('/api/agent/start')
-        .set('Authorization', `Bearer ${authToken}`)
-        .send({
-          maxDrawdown: 15,
-          positionSize: 2,
-          preferredPairs: ['BTC-USDT']
-        });
-
-      // Wait for strategies to be generated (mock mode should be fast)
-      await new Promise(resolve => setTimeout(resolve, 3000));
-
+    test('should list strategies', async () => {
       const res = await requestClient(API_URL)
         .get('/api/agent/strategies')
         .set('Authorization', `Bearer ${authToken}`);
@@ -170,46 +142,32 @@ describeIfSupertest('Autonomous Agent API', () => {
     });
   });
 
-  describe('Configuration', () => {
-    test('should update agent configuration', async () => {
-      const newConfig = {
-        maxDrawdown: 20,
-        positionSize: 3
-      };
+  // The 'Configuration' and 'Error Handling' describes were removed in
+  // PR7. They exercised `PUT /api/agent/config` (deleted 2026-05-21 — it
+  // only configured the deleted fullyAutonomousTrader engine) and
+  // `POST /api/agent/start` with knob payloads (route deleted in PR7).
+  // The kernel observes and sets all of its own parameters (P1); there
+  // is no operator config route to validate.
 
+  describe('Execution Mode', () => {
+    test('should read the global execution mode', async () => {
       const res = await requestClient(API_URL)
-        .put('/api/agent/config')
-        .set('Authorization', `Bearer ${authToken}`)
-        .send(newConfig);
+        .get('/api/agent/execution-mode')
+        .set('Authorization', `Bearer ${authToken}`);
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
-    });
-  });
-
-  describe('Error Handling', () => {
-    test('should handle invalid configuration', async () => {
-      const invalidConfig = {
-        maxDrawdown: -10, // Invalid: negative
-        positionSize: 0 // Invalid: zero
-      };
-
-      const res = await requestClient(API_URL)
-        .post('/api/agent/start')
-        .set('Authorization', `Bearer ${authToken}`)
-        .send(invalidConfig);
-
-      // Should either reject or sanitize the config
-      expect([400, 500]).toContain(res.status);
+      expect(['auto', 'paper_only', 'pause']).toContain(res.body.mode);
     });
 
-    test('should handle missing required fields', async () => {
+    test('should reject an invalid execution mode', async () => {
       const res = await requestClient(API_URL)
-        .post('/api/agent/start')
+        .put('/api/agent/execution-mode')
         .set('Authorization', `Bearer ${authToken}`)
-        .send({});
+        .send({ mode: 'turbo' });
 
-      expect([400, 500]).toContain(res.status);
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
     });
   });
 });

@@ -25,80 +25,13 @@ function isTableMissingError(error: unknown): boolean {
   return msg.includes('does not exist') || msg.includes('relation');
 }
 
-/**
- * POST /api/agent/start
- * Start the autonomous trading agent (SLE strategy-generation loop).
- */
-router.post('/start', authenticateToken, async (req: Request, res: Response) => {
-  try {
-    const userId = (req.user?.id || req.user?.userId)?.toString();
-
-    if (!userId) {
-      return res.status(401).json({
-        success: false,
-        error: 'User ID not found in token',
-        code: 'NO_USER_ID'
-      });
-    }
-
-    // Check for API credentials first
-    const { apiCredentialsService } = await import('../services/apiCredentialsService.js');
-    const hasCredentials = await apiCredentialsService.hasCredentials(userId);
-
-    if (!hasCredentials) {
-      return res.status(400).json({
-        success: false,
-        error: 'No API credentials found. Please add your Poloniex API keys first.',
-        code: 'NO_CREDENTIALS',
-        action: 'redirect_to_api_keys'
-      });
-    }
-
-    // Start the strategy learning engine (generates + evaluates strategies)
-    await strategyLearningEngine.start();
-
-    const sleStatus = await strategyLearningEngine.getEngineStatus();
-
-    res.json({
-      success: true,
-      session: {
-        status: 'running',
-        sle: sleStatus
-      }
-    });
-  } catch (error: unknown) {
-    logger.error('Error starting agent:', error);
-    const errMsg = error instanceof Error ? error.message : String(error);
-
-    if (errMsg.includes('already') || errMsg.includes('Already')) {
-      return res.status(409).json({
-        success: false,
-        error: 'An agent session is already active',
-        code: 'ALREADY_RUNNING',
-        existingState: 'unknown',
-        resumeAllowed: false,
-        takeoverAllowed: true
-      });
-    }
-
-    let errorCode = 'UNKNOWN_ERROR';
-    let statusCode = 500;
-
-    if (errMsg.includes('credentials')) {
-      errorCode = 'CREDENTIALS_ERROR';
-      statusCode = 400;
-    } else if (errMsg.includes('API')) {
-      errorCode = 'API_ERROR';
-      statusCode = 503;
-    }
-
-    res.status(statusCode).json({
-      success: false,
-      error: errMsg,
-      code: errorCode
-    });
-  }
-});
+// NOTE: `POST /api/agent/start` and `POST /api/agent/resume` were removed
+// 2026-05-22 (PR7). They only ever served the autonomous-agent dashboard's
+// start-with-config / resume-session flow, which has been deleted: the
+// Monkey kernel is the sole autonomous trader and runs continuously — it
+// is not "started" by the UI. The SLE strategy-generation loop can still
+// be started via the ML routes (POST /api/ml/learning/start). Resuming
+// from a pause is `PUT /api/agent/execution-mode { mode: 'auto' }`.
 
 router.post('/stop', authenticateToken, async (req: Request, res: Response) => {
   try {
@@ -121,28 +54,15 @@ router.post('/pause', authenticateToken, async (req: Request, res: Response) => 
   try {
     const userId = (req.user?.id || req.user?.userId)?.toString();
     if (!userId) return res.status(401).json({ success: false, error: 'User ID not found in token' });
-    // Global halt — same as /stop but keeps the per-user trader state
-    // alive so it resumes cleanly on /resume.
+    // Global halt — flips the execution mode to 'pause' so the risk
+    // kernel vetoes every order submission. Equivalent to /stop; both
+    // resume via `PUT /api/agent/execution-mode { mode: 'auto' }`.
     const operator = (req.user?.email || req.user?.id || req.user?.userId || 'header_pause').toString();
     await setExecutionMode('pause', operator, 'Header Pause button');
     res.json({ success: true, message: 'Agent paused successfully', mode: 'pause' });
   } catch (error: unknown) {
     logger.error('Error pausing agent:', error);
     res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'Failed to pause agent' });
-  }
-});
-
-router.post('/resume', authenticateToken, async (req: Request, res: Response) => {
-  try {
-    const userId = (req.user?.id || req.user?.userId)?.toString();
-    if (!userId) return res.status(401).json({ success: false, error: 'User ID not found in token' });
-    const operator = (req.user?.email || req.user?.id || req.user?.userId || 'header_resume').toString();
-    await setExecutionMode('auto', operator, 'Header Resume button');
-    await strategyLearningEngine.start();
-    res.json({ success: true, message: 'Agent resumed successfully', mode: 'auto' });
-  } catch (error: unknown) {
-    logger.error('Error resuming agent:', error);
-    res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'Failed to resume agent' });
   }
 });
 
