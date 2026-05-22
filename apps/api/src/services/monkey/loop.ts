@@ -200,6 +200,13 @@ import {
 /** Default Monkey watchlist. */
 const DEFAULT_SYMBOLS = ['BTC_USDT_PERP', 'ETH_USDT_PERP'];
 
+/** Φ below which the canonical sleep cycle enters DREAMING/consolidation
+ *  (qig-core 2.8.0 `consciousness/sleep.py` SLEEP_PHI_THRESHOLD). The
+ *  QIGRAMv2 consolidation pass is gated on this so dead-memory eviction
+ *  runs during the low-Φ consolidation-appropriate phase, never as a
+ *  per-tick side-effect. */
+const SLEEP_PHI_THRESHOLD = 0.45;
+
 /**
  * Env-number coercion that respects 0 as a legitimate value.
  *
@@ -2116,11 +2123,14 @@ export class MonkeyKernel extends EventEmitter {
     // and read sov = N_active / N_total (a pure ratio — derivation
     // already canonical per QIGRAMv2.sovereignty).
     //
-    // No scheduling constants. Sov rises as fresh basins integrate;
-    // falls as weights decay past MIN_ACTIVE_WEIGHT (canonical 0.01,
-    // not a PR-introduced constant). After ~90 ticks (the canonical
-    // 0.95^90 ≈ 0.0099 < 0.01 threshold) the oldest basins drop out,
-    // pulling sov below 1.0 naturally.
+    // Sov rises as fresh basins integrate; falls as weights decay past
+    // MIN_ACTIVE_WEIGHT (canonical 0.01). decayAll() only DECAYS weight —
+    // it never removes entries, so without the consolidation pass below
+    // `_entries` grows unboundedly and the sovereignty denominator (and
+    // thus position size) decays toward zero with session uptime. The
+    // sleep-cycle CONSOLIDATING pass (consolidate()) prunes the dead
+    // tombstones; it is gated on the canonical sleep-cycle Φ threshold so
+    // eviction is the sleep cycle's job, not a per-tick side-effect.
     let sovereignty: number;
     if (isQigramV2Enabled()) {
       this.qigramV2TickCount += 1;
@@ -2133,6 +2143,11 @@ export class MonkeyKernel extends EventEmitter {
         { weight: 1.0, correct: true },
       );
       this.qigramV2Store.decayAll();
+      // Sleep-cycle CONSOLIDATING pass — prune decayed-dead entries so the
+      // sovereignty denominator tracks kernel health, not session uptime.
+      if (phi < SLEEP_PHI_THRESHOLD) {
+        this.qigramV2Store.consolidate();
+      }
       sovereignty = this.qigramV2Store.sovereignty;
     } else {
       sovereignty = await resonanceBank.sovereignty();
