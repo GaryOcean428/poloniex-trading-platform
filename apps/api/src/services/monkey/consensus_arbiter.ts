@@ -341,3 +341,49 @@ export function computeAndLogConsensus(inputs: ConsensusInputs): ConsensusDecisi
   });
   return decision;
 }
+
+/** Input/output shape for {@link applyConsensusOverride}. */
+export interface ConsensusOverrideInput {
+  action: string;
+  size_usdt: number;
+  leverage: number;
+}
+
+/** The only actions the consensus arbiter is allowed to override. */
+const CONSENSUS_ENTRY_ACTIONS: ReadonlySet<string> = new Set([
+  'enter_long', 'enter_short', 'pyramid_long', 'pyramid_short',
+]);
+
+/**
+ * Apply a consensus verdict to the kernel's own decision.
+ *
+ * The arbiter governs ENTRY decisions only. Exit and risk-management
+ * actions — stop-loss, take-profit, bracket, `scalp_exit`, `flatten` —
+ * MUST execute untouched: a `hold` verdict means "do not open a new
+ * trade", never "do not close a losing one".
+ *
+ * Regression 2026-05-21: with the Python peer live the arbiter returned
+ * `no-trade-divergence` (action `hold`); the old call site applied that
+ * `hold` to whatever the kernel had decided, including exits, so
+ * stop-losses were suppressed for ~14h. This helper gates the override
+ * to entry actions only — every non-entry action passes through.
+ */
+export function applyConsensusOverride(
+  own: ConsensusOverrideInput,
+  override: ConsensusOverrideInput | null,
+): ConsensusOverrideInput {
+  if (override === null) return own;
+  // Exits / holds / flatten / scalp_exit are never touched by consensus.
+  if (!CONSENSUS_ENTRY_ACTIONS.has(own.action)) return own;
+  if (override.action === 'hold') {
+    return { action: 'hold', size_usdt: 0, leverage: own.leverage };
+  }
+  if (override.action === 'enter_long' || override.action === 'enter_short') {
+    return {
+      action: override.action,
+      size_usdt: override.size_usdt,
+      leverage: override.leverage,
+    };
+  }
+  return own;
+}

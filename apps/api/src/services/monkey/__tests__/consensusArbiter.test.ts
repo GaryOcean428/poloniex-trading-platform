@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { logger } from '../../../utils/logger.js';
 import {
+  applyConsensusOverride,
   computeAndLogConsensus,
   computeConsensus,
   type ConsensusInputs,
@@ -490,5 +491,56 @@ describe('py-live peer path — non-single-kernel verdict regression guard', () 
 
     // Stale peer → arbiter falls back to single-kernel (correct safe default)
     expect(d.verdict).toBe('single-kernel');
+  });
+});
+
+describe('applyConsensusOverride — arbiter governs ENTRIES only, exits sacrosanct', () => {
+  // Regression 2026-05-21: after the Python peer was activated, the arbiter
+  // returned `no-trade-divergence` (action 'hold'). loop.ts applied that
+  // 'hold' to whatever the kernel had decided — including stop-loss and
+  // bracket exits — so losing positions could not be closed. The override
+  // must touch ENTRY decisions only; risk-management exits always execute.
+
+  it('does NOT suppress a stop-loss exit on a hold verdict (the regression)', () => {
+    const own = { action: 'exit', size_usdt: 0, leverage: 11 };
+    const out = applyConsensusOverride(own, { action: 'hold', size_usdt: 0, leverage: 1 });
+    expect(out.action).toBe('exit');
+  });
+
+  it('does NOT suppress scalp_exit / flatten on a hold verdict', () => {
+    for (const exitAction of ['scalp_exit', 'flatten']) {
+      const own = { action: exitAction, size_usdt: 0, leverage: 8 };
+      const out = applyConsensusOverride(own, { action: 'hold', size_usdt: 0, leverage: 1 });
+      expect(out.action).toBe(exitAction);
+    }
+  });
+
+  it('vetoes a proposed ENTRY on a hold verdict', () => {
+    const own = { action: 'enter_long', size_usdt: 30, leverage: 5 };
+    const out = applyConsensusOverride(own, { action: 'hold', size_usdt: 0, leverage: 1 });
+    expect(out).toEqual({ action: 'hold', size_usdt: 0, leverage: 5 });
+  });
+
+  it('vetoes a pyramid add on a hold verdict (pyramids are entries)', () => {
+    const own = { action: 'pyramid_long', size_usdt: 20, leverage: 5 };
+    const out = applyConsensusOverride(own, { action: 'hold', size_usdt: 0, leverage: 1 });
+    expect(out.action).toBe('hold');
+  });
+
+  it('resizes/resides an ENTRY when the verdict is an entry', () => {
+    const own = { action: 'enter_long', size_usdt: 30, leverage: 5 };
+    const out = applyConsensusOverride(own, { action: 'enter_short', size_usdt: 18, leverage: 3 });
+    expect(out).toEqual({ action: 'enter_short', size_usdt: 18, leverage: 3 });
+  });
+
+  it('leaves a plain hold untouched', () => {
+    const own = { action: 'hold', size_usdt: 0, leverage: 1 };
+    const out = applyConsensusOverride(own, { action: 'hold', size_usdt: 0, leverage: 1 });
+    expect(out.action).toBe('hold');
+  });
+
+  it('null override is a no-op', () => {
+    const own = { action: 'exit', size_usdt: 0, leverage: 8 };
+    expect(applyConsensusOverride(own, null)).toEqual(own);
   });
 });

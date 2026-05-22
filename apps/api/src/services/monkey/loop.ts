@@ -90,6 +90,7 @@ import {
   type OHLCVCandle,
 } from './perception.js';
 import { frBracketDistances } from './fr_trade_params.js';
+import { applyConsensusOverride } from './consensus_arbiter.js';
 import {
   CHOP_SUPPRESS_SWING_CONFIDENCE_DEFAULT,
   CHOP_SUPPRESS_TREND_CONFIDENCE_DEFAULT,
@@ -3983,16 +3984,19 @@ export class MonkeyKernel extends EventEmitter {
     // size remain available for logging via the override telemetry.
     if (consensusOverride !== null) {
       (derivation as Record<string, unknown>).consensus = consensusOverride;
-      // Replace action + size with consensus output. Note: side flips
-      // require flipping the action string too (enter_long ↔ enter_short).
-      if (consensusOverride.action === 'hold') {
-        action = 'hold';
-        size.value = 0;
-      } else if (consensusOverride.action === 'enter_long' || consensusOverride.action === 'enter_short') {
-        action = consensusOverride.action;
-        size.value = consensusOverride.size_usdt;
-        leverage.value = consensusOverride.leverage;
-      }
+      // The arbiter governs ENTRIES only. applyConsensusOverride leaves
+      // every non-entry action (hold, exit, scalp_exit, flatten, bracket
+      // exits) untouched — a 'hold' verdict must never suppress a
+      // stop-loss or take-profit. Regression 2026-05-21: the old inline
+      // `=== 'hold'` branch applied the verdict to exits too, suppressing
+      // stop-losses for ~14h once the Python peer went live.
+      const applied = applyConsensusOverride(
+        { action, size_usdt: size.value, leverage: leverage.value },
+        consensusOverride,
+      );
+      action = applied.action;
+      size.value = applied.size_usdt;
+      leverage.value = applied.leverage;
       reason += ` | consensus.${consensusOverride.verdict}`;
     }
 
