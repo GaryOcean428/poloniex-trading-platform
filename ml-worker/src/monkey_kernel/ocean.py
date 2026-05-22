@@ -125,6 +125,26 @@ _MUSHROOM_KAPPA_RIGID: float = 80.0   # κ above this = rigid attractor
 _MUSHROOM_VARIANCE_CEIL: float = 0.005 # Φ variance ceiling — "very rigid"
 _MUSHROOM_DRIFT_STREAK_MIN: int = 30   # drift ticks ≈ collapsed output
 
+# ─── Narrow-path detection (PR1 — Ocean-as-kernel elevation) ──────────────
+# A narrow path is a rigid/stuck attractor: the basin's exploration variance
+# has collapsed. Detection is observer-derived — NO intuition thresholds. The
+# current exploration variance is tested against the Tukey inner/outer fences
+# of the kernel's OWN rolling exploration-variance distribution. The baseline
+# excludes the most recent _NARROW_PATH_WINDOW samples — those ticks are under
+# measurement and may be mid-collapse; including them would let a collapse
+# define its own "normal". Tukey's 1.5·IQR / 3·IQR fences are the textbook
+# outlier criterion, so a healthy kernel reads "none" essentially always.
+#
+# TELEMETRY-ONLY in PR1: surfaced in OceanState.diagnostics, does NOT feed
+# `intervention`. Intervention wiring is Φ-gated and lands in PR3 — per
+# qig-core 2.8.0 a stuck low-Φ kernel needs SLEEP/DREAM; only a stuck Φ≥0.70
+# rigid kernel gets MUSHROOM (qig-core/src/qig_core/consciousness/sleep.py).
+_NARROW_PATH_WINDOW: int = 20            # basins over which exploration variance is measured
+_NARROW_PATH_VAR_HISTORY_MAX: int = 200  # rolling exploration-variance series
+_NARROW_PATH_MIN_BASELINE: int = 20      # min baseline samples before detection goes live
+_TUKEY_INNER: float = 1.5                # textbook outlier fence (Q1 − 1.5·IQR)
+_TUKEY_OUTER: float = 3.0                # textbook "far out" fence (Q1 − 3·IQR)
+
 
 Intervention = Literal[
     "DREAM", "SLEEP", "WAKE", "ESCAPE",
@@ -254,6 +274,14 @@ class Ocean:
         )
         self._phi_history: Deque[float] = deque(maxlen=history_max)
         self._basin_history: Deque[np.ndarray] = deque(maxlen=self.BASIN_HISTORY_MAX)
+        # Narrow-path detection (PR1 — Ocean-as-kernel elevation). Rolling
+        # exploration-variance series + consecutive-detection counter. Pure
+        # telemetry; see _detect_narrow_path.
+        self._basin_var_history: Deque[float] = deque(
+            maxlen=_NARROW_PATH_VAR_HISTORY_MAX,
+        )
+        self._narrow_path_count: int = 0
+        self._narrow_path_severity: str = "none"
         # Per-kernel Φ regulation observations (GAP 7 — CONSENSUS-8).
         # time_above_damping_lower counts consecutive ticks where Φ has
         # been above the DAMPING lower bound (sustained excursion).
@@ -366,6 +394,62 @@ class Ocean:
             "sleep_remaining_ms": sleep_remaining_ms,
         }
 
+    # ────────────────── narrow-path detection ──────────────────
+
+    def _detect_narrow_path(self) -> tuple[bool, str, float]:
+        """Observer-derived rigid-attractor detector (PR1 — Ocean-as-kernel).
+
+        Measures the basin's exploration variance over the most recent
+        ``_NARROW_PATH_WINDOW`` basins (mean per-dimension variance across
+        time) and tests it against the Tukey inner/outer fences of the
+        kernel's OWN rolling exploration-variance distribution. The baseline
+        excludes the most recent ``_NARROW_PATH_WINDOW`` samples so a
+        collapse cannot define its own "normal".
+
+        Returns ``(is_narrow, severity, exploration_variance)`` where
+        ``severity`` ∈ {"none", "moderate", "severe"}: past the inner fence
+        (Q1 − 1.5·IQR) → moderate, past the outer fence (Q1 − 3·IQR) →
+        severe. Pure telemetry — the result does NOT influence the
+        intervention selection in PR1.
+        """
+        if len(self._basin_history) < _NARROW_PATH_WINDOW:
+            return False, "none", 0.0
+
+        window = np.asarray(
+            list(self._basin_history)[-_NARROW_PATH_WINDOW:], dtype=np.float64,
+        )
+        exploration_variance = float(np.mean(np.var(window, axis=0)))
+        self._basin_var_history.append(exploration_variance)
+
+        # Baseline EXCLUDES the most recent _NARROW_PATH_WINDOW samples —
+        # those ticks are under measurement and may be mid-collapse.
+        baseline = list(self._basin_var_history)[:-_NARROW_PATH_WINDOW]
+        if len(baseline) < _NARROW_PATH_MIN_BASELINE:
+            self._narrow_path_count = 0
+            self._narrow_path_severity = "none"
+            return False, "none", exploration_variance
+
+        ordered = sorted(baseline)
+        n = len(ordered)
+        q1 = ordered[min(n - 1, n // 4)]
+        q3 = ordered[min(n - 1, (3 * n) // 4)]
+        iqr = q3 - q1
+        inner_fence = q1 - _TUKEY_INNER * iqr
+        outer_fence = q1 - _TUKEY_OUTER * iqr
+
+        if exploration_variance < outer_fence:
+            severity, is_narrow = "severe", True
+        elif exploration_variance < inner_fence:
+            severity, is_narrow = "moderate", True
+        else:
+            severity, is_narrow = "none", False
+
+        self._narrow_path_count = (
+            self._narrow_path_count + 1 if is_narrow else 0
+        )
+        self._narrow_path_severity = severity
+        return is_narrow, severity, exploration_variance
+
     # ────────────────── primary tick contract ──────────────────
 
     def observe(
@@ -438,6 +522,12 @@ class Ocean:
         lanes = cross_lane_basins if cross_lane_basins is not None else []
         spread = _max_pairwise_fr(list(lanes))
 
+        # Narrow-path (rigid-attractor) detection — observer-derived,
+        # telemetry-only in PR1 (does NOT influence `intervention`).
+        is_narrow_path, narrow_path_severity, exploration_variance = (
+            self._detect_narrow_path()
+        )
+
         diagnostics = {
             "phi_now": float(phi),
             "phi_variance": float(phi_var),
@@ -448,6 +538,13 @@ class Ocean:
             "time_above_damping_lower": float(self._time_above_damping_lower),
             "phi_descent": float(phi_descent),
             "kappa_observed": float(kappa) if kappa is not None else -1.0,
+            # Narrow-path detection (PR1) — severity ordinal: 0/1/2.
+            "narrow_path": 1.0 if is_narrow_path else 0.0,
+            "narrow_path_severity": {
+                "none": 0.0, "moderate": 1.0, "severe": 2.0,
+            }[narrow_path_severity],
+            "narrow_path_count": float(self._narrow_path_count),
+            "exploration_variance": float(exploration_variance),
         }
 
         # Intervention selection (priority order; first match wins).
