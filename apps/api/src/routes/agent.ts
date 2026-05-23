@@ -32,28 +32,26 @@ function isTableMissingError(error: unknown): boolean {
 router.post('/start', authenticateToken, async (req: Request, res: Response) => {
   try {
     const userId = (req.user?.id || req.user?.userId)?.toString();
-    if (!userId) return res.status(401).json({ success: !1, error: 'User ID not found in token' });
-    void userId;
+    if (!userId) return res.status(401).json({ success: false, error: 'User ID not found in token' });
     const operator = (req.user?.email || req.user?.id || req.user?.userId || 'legacy_start').toString();
     await setExecutionMode('auto', operator, 'Legacy /start compatibility wrapper');
     return res.json({ success: true, message: 'Agent execution resumed', mode: 'auto' });
   } catch (error: unknown) {
     logger.error('Error handling /start compatibility route:', error);
-    return res.status(500).json({ success: !1, error: error instanceof Error ? error.message : 'Failed to start agent' });
+    return res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'Failed to start agent' });
   }
 });
 
 router.post('/resume', authenticateToken, async (req: Request, res: Response) => {
   try {
     const userId = (req.user?.id || req.user?.userId)?.toString();
-    if (!userId) return res.status(401).json({ success: !1, error: 'User ID not found in token' });
-    void userId;
+    if (!userId) return res.status(401).json({ success: false, error: 'User ID not found in token' });
     const operator = (req.user?.email || req.user?.id || req.user?.userId || 'legacy_resume').toString();
     await setExecutionMode('auto', operator, 'Legacy /resume compatibility wrapper');
     return res.json({ success: true, message: 'Agent execution resumed', mode: 'auto' });
   } catch (error: unknown) {
     logger.error('Error handling /resume compatibility route:', error);
-    return res.status(500).json({ success: !1, error: error instanceof Error ? error.message : 'Failed to resume agent' });
+    return res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'Failed to resume agent' });
   }
 });
 
