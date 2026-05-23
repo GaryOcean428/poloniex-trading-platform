@@ -189,8 +189,14 @@ class AutonomousTradingAPIService {
   }): Promise<void> {
         try {
                 const api = createAuthenticatedAxios();
-                // POST /api/agent/start with config
-          await api.post('/start', { ...config, enableAIStrategies: true });
+                // The monkey kernel runs continuously; "start" means resume
+                // execution mode to auto. Keep payload for legacy callers.
+          await api.put('/execution-mode', {
+            mode: 'auto',
+            reason: 'legacy_start_system',
+            ...config,
+            enableAIStrategies: true,
+          });
         } catch (error) {
                 this.handleError(error);
         }
