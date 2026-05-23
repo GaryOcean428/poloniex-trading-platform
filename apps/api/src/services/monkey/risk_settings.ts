@@ -12,7 +12,7 @@
  *                                audited 15× ceiling (MONKEY_MAX_LEVERAGE_CAP,
  *                                loop.ts:2349-2362) still binds — the UI
  *                                value can only clamp leverage DOWN.
- *   - max_concurrent_positions → vetoes a K entry once that many
+ *   - max_concurrent_positions → vetoes new Monkey entries once that many
  *                                Monkey-owned positions are already open.
  *   - daily_loss_limit         → halts new entries once today's realised
  *                                Monkey PnL is at/below -limit% of equity.
@@ -160,6 +160,19 @@ const TTL_MS = 60_000;
 let settingsCache: { value: OperatorRiskSettings | null; atMs: number } | null = null;
 let pnlCache: { value: number; atMs: number } | null = null;
 let openCountCache: { value: number; atMs: number } | null = null;
+
+export function adjustTodayMonkeyRealizedPnlCache(delta: number): void {
+  if (!pnlCache || !Number.isFinite(delta) || delta === 0) return;
+  pnlCache = { value: pnlCache.value + delta, atMs: pnlCache.atMs };
+}
+
+export function adjustOpenMonkeyPositionCountCache(delta: number): void {
+  if (!openCountCache || !Number.isFinite(delta) || delta === 0) return;
+  openCountCache = {
+    value: Math.max(0, openCountCache.value + Math.trunc(delta)),
+    atMs: openCountCache.atMs,
+  };
+}
 
 /** Test seam — clears the module caches. */
 export function resetRiskSettingsCache(): void {
