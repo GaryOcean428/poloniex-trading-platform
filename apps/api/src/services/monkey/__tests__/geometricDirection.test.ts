@@ -26,10 +26,15 @@ import type { EmotionState } from '../emotions.js';
 /** Minimal neutral EmotionState (confidence > anxiety so gate passes). */
 function neutralEmotions(): EmotionState {
   return {
-    confidence: 1.0,
-    anxiety:    0.0,
     wonder:     0.0,
+    frustration: 0.0,
+    satisfaction: 0.0,
     confusion:  0.0,
+    clarity: 0.0,
+    anxiety:    0.0,
+    confidence: 1.0,
+    boredom: 0.0,
+    flow: 0.0,
   };
 }
 
@@ -93,10 +98,15 @@ describe('geometricDirection — 2026-05-23 production regression', () => {
     expect(confidence).toBeLessThan(anxiety); // gate fires
 
     const emotions: EmotionState = {
+      wonder: 0,
+      frustration: 0,
+      satisfaction: 0,
+      confusion: 0,
+      clarity: 0,
       confidence,
       anxiety,
-      wonder:    0,
-      confusion: 0,
+      boredom: 0,
+      flow: 0,
     };
     // Confirm the bug: emotion gate collapses the directional signal to flat.
     expect(kernelDirection({ basinDir, tapeTrend: tape, emotions })).toBe('flat');

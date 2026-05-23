@@ -112,7 +112,6 @@ import {
   currentLeverage,
   currentPositionSize,
   geometricDirection,
-  kernelDirection,
   shouldAutoFlatten,
   shouldAggregateBleedExit,
   shouldAggregateHarvest,
