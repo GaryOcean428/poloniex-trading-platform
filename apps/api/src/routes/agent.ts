@@ -25,13 +25,37 @@ function isTableMissingError(error: unknown): boolean {
   return msg.includes('does not exist') || msg.includes('relation');
 }
 
-// NOTE: `POST /api/agent/start` and `POST /api/agent/resume` were removed
-// 2026-05-22 (PR7). They only ever served the autonomous-agent dashboard's
-// start-with-config / resume-session flow, which has been deleted: the
-// Monkey kernel is the sole autonomous trader and runs continuously — it
-// is not "started" by the UI. The SLE strategy-generation loop can still
-// be started via the ML routes (POST /api/ml/learning/start). Resuming
-// from a pause is `PUT /api/agent/execution-mode { mode: 'auto' }`.
+// NOTE: The Monkey kernel is the sole autonomous trader and runs
+// continuously — there is no per-session engine to "start". However older
+// clients still call POST /start and /resume. Keep these as compatibility
+// wrappers that just set execution-mode back to 'auto'.
+router.post('/start', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const userId = (req.user?.id || req.user?.userId)?.toString();
+    if (!userId) return res.status(401).json({ success: !1, error: 'User ID not found in token' });
+    void userId;
+    const operator = (req.user?.email || req.user?.id || req.user?.userId || 'legacy_start').toString();
+    await setExecutionMode('auto', operator, 'Legacy /start compatibility wrapper');
+    return res.json({ success: true, message: 'Agent execution resumed', mode: 'auto' });
+  } catch (error: unknown) {
+    logger.error('Error handling /start compatibility route:', error);
+    return res.status(500).json({ success: !1, error: error instanceof Error ? error.message : 'Failed to start agent' });
+  }
+});
+
+router.post('/resume', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const userId = (req.user?.id || req.user?.userId)?.toString();
+    if (!userId) return res.status(401).json({ success: !1, error: 'User ID not found in token' });
+    void userId;
+    const operator = (req.user?.email || req.user?.id || req.user?.userId || 'legacy_resume').toString();
+    await setExecutionMode('auto', operator, 'Legacy /resume compatibility wrapper');
+    return res.json({ success: true, message: 'Agent execution resumed', mode: 'auto' });
+  } catch (error: unknown) {
+    logger.error('Error handling /resume compatibility route:', error);
+    return res.status(500).json({ success: !1, error: error instanceof Error ? error.message : 'Failed to resume agent' });
+  }
+});
 
 router.post('/stop', authenticateToken, async (req: Request, res: Response) => {
   try {

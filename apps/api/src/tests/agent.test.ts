@@ -66,11 +66,9 @@ describeIfSupertest('Autonomous Agent API', () => {
     });
   });
 
-  // Agent Lifecycle — POST /api/agent/start and /resume were removed in
-  // PR7 (2026-05-22): the Monkey kernel is the sole autonomous trader
-  // and runs continuously, so the UI does not "start" it. The remaining
-  // lifecycle surface is the read-only /status badge and the
-  // execution-mode pause/stop kill switch.
+  // Agent Lifecycle — the Monkey kernel is the sole autonomous trader and
+  // runs continuously. /start and /resume are legacy compatibility wrappers
+  // that flip execution mode back to 'auto'.
   describe('Agent Lifecycle', () => {
     test('should get agent status', async () => {
       const res = await requestClient(API_URL)
@@ -101,6 +99,25 @@ describeIfSupertest('Autonomous Agent API', () => {
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
+    });
+    test('should resume agent via legacy /start wrapper', async () => {
+      const res = await requestClient(API_URL)
+        .post('/api/agent/start')
+        .set('Authorization', 'Bearer ' + authToken);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.mode).toBe('auto');
+    });
+
+    test('should resume agent via legacy /resume wrapper', async () => {
+      const res = await requestClient(API_URL)
+        .post('/api/agent/resume')
+        .set('Authorization', 'Bearer ' + authToken);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.mode).toBe('auto');
     });
   });
 
