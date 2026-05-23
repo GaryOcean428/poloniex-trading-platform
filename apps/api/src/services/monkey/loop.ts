@@ -1941,15 +1941,18 @@ export class MonkeyKernel extends EventEmitter {
       adjustOpenMonkeyPositionCountCache(1);
     };
     const noteProjectedClose = (pnl: number, rowsClosed = 1): void => {
+      const closedRows = Number.isFinite(rowsClosed)
+        ? Math.max(0, Math.trunc(rowsClosed))
+        : 0;
       if (Number.isFinite(pnl)) {
         projectedTodayRealizedPnl += pnl;
         adjustTodayMonkeyRealizedPnlCache(pnl);
       }
       tickRiskProjection.openMonkeyPositions = Math.max(
         0,
-        (tickRiskProjection.openMonkeyPositions ?? openMonkeyPositions) - Math.max(1, rowsClosed),
+        (tickRiskProjection.openMonkeyPositions ?? openMonkeyPositions) - closedRows,
       );
-      adjustOpenMonkeyPositionCountCache(-Math.max(1, rowsClosed));
+      adjustOpenMonkeyPositionCountCache(-closedRows);
     };
     const currentEntryRiskSettingsHalt = (): ReturnType<typeof getEntryRiskSettingsHalt> =>
       getEntryRiskSettingsHalt({
