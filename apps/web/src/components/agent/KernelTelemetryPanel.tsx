@@ -97,7 +97,7 @@ function formatMetric(value: number | null | undefined, digits = 3): string {
 }
 
 function formatTimestamp(value: string | number | null | undefined): string {
-  if (value == null) return '—';
+  if (value === null || value === undefined) return '—';
   const date = new Date(value);
   return Number.isFinite(date.getTime()) ? date.toLocaleString() : '—';
 }
@@ -161,8 +161,8 @@ export default function KernelTelemetryPanel() {
     consciousness.map((row, index) => ({
       index,
       label: new Date(row.symbol_timestamp ?? row.created_at ?? Date.now()).toLocaleTimeString(),
-      ts_c: row.ts_c == null ? null : safeNum(row.ts_c),
-      py_c: row.py_c == null ? null : safeNum(row.py_c),
+      ts_c: row.ts_c === null || row.ts_c === undefined ? null : safeNum(row.ts_c),
+      py_c: row.py_c === null || row.py_c === undefined ? null : safeNum(row.py_c),
     }))
   ), [consciousness]);
 
