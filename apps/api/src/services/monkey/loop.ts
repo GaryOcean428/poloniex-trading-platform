@@ -1943,7 +1943,7 @@ export class MonkeyKernel extends EventEmitter {
     const noteProjectedClose = (pnl: number, rowsClosed = 1): void => {
       const closedRows = Number.isFinite(rowsClosed)
         ? Math.max(0, Math.trunc(rowsClosed))
-        : 0;
+        : 1;
       if (Number.isFinite(pnl)) {
         projectedTodayRealizedPnl += pnl;
         adjustTodayMonkeyRealizedPnlCache(pnl);
@@ -4317,22 +4317,22 @@ export class MonkeyKernel extends EventEmitter {
                 leg: 'reverse_reopen',
               });
             } else {
-              const riskHalt = currentEntryRiskSettingsHalt();
-              if (riskHalt) {
-                reason += ` | closed@${lastPrice.toFixed(2)} pnl=${pnlAtDecision.toFixed(4)} | risk_settings: reverse reopen suppressed (${riskHalt.kind})`;
-                (derivation as Record<string, unknown>).reverseReopenRiskSettingsHalt = riskHalt;
+              const reverseReopenRiskHalt = currentEntryRiskSettingsHalt();
+              if (reverseReopenRiskHalt) {
+                reason += ` | closed@${lastPrice.toFixed(2)} pnl=${pnlAtDecision.toFixed(4)} | risk_settings: reverse reopen suppressed (${reverseReopenRiskHalt.kind})`;
+                (derivation as Record<string, unknown>).reverseReopenRiskSettingsHalt = reverseReopenRiskHalt;
                 logger.warn('[Monkey] reverse reopen suppressed — risk_settings halt', {
                   symbol,
-                  kind: riskHalt.kind,
-                  ...(riskHalt.kind === 'daily_loss_limit'
+                  kind: reverseReopenRiskHalt.kind,
+                  ...(reverseReopenRiskHalt.kind === 'daily_loss_limit'
                     ? {
-                        todayRealizedPnl: riskHalt.todayRealizedPnl,
-                        limitPct: riskHalt.limitPct,
-                        equityUsdt: riskHalt.equityUsdt,
+                        todayRealizedPnl: reverseReopenRiskHalt.todayRealizedPnl,
+                        limitPct: reverseReopenRiskHalt.limitPct,
+                        equityUsdt: reverseReopenRiskHalt.equityUsdt,
                       }
                     : {
-                        openMonkeyPositions: riskHalt.openMonkeyPositions,
-                        cap: riskHalt.cap,
+                        openMonkeyPositions: reverseReopenRiskHalt.openMonkeyPositions,
+                        cap: reverseReopenRiskHalt.cap,
                       }),
                 });
               } else {
