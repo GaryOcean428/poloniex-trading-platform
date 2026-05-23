@@ -8,8 +8,8 @@
  *   1. Constitutive   G = κT, κ* = 63.79 ± 0.90     → Regime-aware fitness
  *   2. Transport       ω ~ J^1.06                     → Correlation-dependent lookback
  *   3. Refraction      n(J) = 0.481 / J^0.976         → Information velocity map
- *   4. Anderson        |⟨ψ₁|ψ₂⟩|² ~ exp(-0.089 N)   → Binary regime switching
- *   5. Bridge          τ_macro = 0.180 × J^0.86       → Convergence budget
+ *   4. Anderson        |⟨ψ₁|ψ₂⟩|² ~ exp(-0.0894 N)  → Binary regime switching
+ *   5. Bridge          τ_macro = 0.180 × J^0.859      → Convergence budget
  *   6. Convergence     N,ω,τ converge at J ≥ 2.5      → Scale-independent optimisation
  */
 
@@ -28,18 +28,18 @@ export const TRANSPORT_EXPONENT = 1.06;
 export const REFRACTION_AMPLITUDE = 0.481;
 export const REFRACTION_EXPONENT = 0.976;
 
-/** Law 4: Anderson orthogonality decay rate γ = 0.089 (EXP-041, R² = 0.9996) */
-export const ANDERSON_DECAY_RATE = 0.089;
+/** Law 4: Anderson orthogonality decay rate γ = 0.0894 (EXP-041, R² = 0.9996) */
+export const ANDERSON_DECAY_RATE = 0.0894;
 
-/** Law 5: Bridge prefactor = 0.180, exponent = 0.86 (EXP-042, 12/12 robust) */
+/** Law 5: Bridge prefactor = 0.180, exponent = 0.859 (EXP-042, 12/12 robust) */
 export const BRIDGE_PREFACTOR = 0.180;
-export const BRIDGE_EXPONENT = 0.86;
+export const BRIDGE_EXPONENT = 0.859;
 
 /** Law 6: Convergence threshold J_c = 2.5 (EXP-045) */
 export const CONVERGENCE_THRESHOLD = 2.5;
 
-/** EXP-004b: Waking-up phase transition h_t ≈ 0.106 */
-export const PHASE_TRANSITION_HT = 0.106;
+/** EXP-004b: Waking-up phase transition h_t = 0.10554 */
+export const PHASE_TRANSITION_HT = 0.10554;
 
 /** EXP-004b: Repulsive regime threshold h_rep ≈ 2.0 */
 export const REPULSIVE_THRESHOLD = 2.0;
@@ -76,7 +76,7 @@ export type QIGRegime = 'disordered' | 'geometric' | 'repulsive';
 /**
  * Classify regime from κ measurement.
  *
- * - κ < h_t (0.106)        → disordered (no coherent structure, no-trade zone)
+ * - κ < h_t (0.10554)      → disordered (no coherent structure, no-trade zone)
  * - h_t ≤ κ ≤ h_rep (2.0)  → geometric  (coherent structure, strategies trusted)
  * - κ > h_rep               → repulsive  (inverted geometry, REVERSE strategies)
  */
@@ -201,7 +201,7 @@ export function signalDelay(coupling: number, baseDelay = 3): number {
 
 /**
  * Compute overlap between two regimes (Anderson orthogonality catastrophe).
- * |⟨ψ(J₁)|ψ(J₂)⟩|² ~ exp(-0.089 N)  (EXP-041, R² = 0.9996)
+ * |⟨ψ(J₁)|ψ(J₂)⟩|² ~ exp(-0.0894 N) (EXP-041, R² = 0.9996)
  *
  * Returns the overlap probability. When this drops below a threshold,
  * old strategies are exponentially irrelevant in the new regime.
@@ -236,7 +236,7 @@ export function shouldResetStrategies(systemSize: number, threshold = 0.1): bool
  * Compute the convergence budget τ — minimum backtest iterations needed
  * before macro-observable (strategy fitness) stabilises.
  *
- * τ_macro = 0.180 × J^0.86  (EXP-042, 12/12 robust)
+ * τ_macro = 0.180 × J^0.859 (EXP-042, 12/12 robust)
  *
  * @param coupling  Average Fisher information coupling J of the portfolio
  * @returns         Number of convergence iterations (normalised)

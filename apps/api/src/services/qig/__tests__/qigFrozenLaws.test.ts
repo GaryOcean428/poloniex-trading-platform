@@ -64,21 +64,21 @@ describe('Frozen Constants', () => {
     expect(REFRACTION_EXPONENT).toBe(0.976);
   });
 
-  it('should have Anderson decay rate γ = 0.089', () => {
-    expect(ANDERSON_DECAY_RATE).toBe(0.089);
+  it('should have Anderson decay rate γ = 0.0894', () => {
+    expect(ANDERSON_DECAY_RATE).toBe(0.0894);
   });
 
-  it('should have bridge prefactor = 0.180, exponent = 0.86', () => {
+  it('should have bridge prefactor = 0.180, exponent = 0.859', () => {
     expect(BRIDGE_PREFACTOR).toBe(0.180);
-    expect(BRIDGE_EXPONENT).toBe(0.86);
+    expect(BRIDGE_EXPONENT).toBe(0.859);
   });
 
   it('should have convergence threshold J_c = 2.5', () => {
     expect(CONVERGENCE_THRESHOLD).toBe(2.5);
   });
 
-  it('should have phase transition h_t ≈ 0.106 and repulsive threshold ≈ 2.0', () => {
-    expect(PHASE_TRANSITION_HT).toBe(0.106);
+  it('should have phase transition h_t = 0.10554 and repulsive threshold ≈ 2.0', () => {
+    expect(PHASE_TRANSITION_HT).toBe(0.10554);
     expect(REPULSIVE_THRESHOLD).toBe(2.0);
   });
 });
@@ -93,7 +93,7 @@ describe('classifyRegime', () => {
   });
 
   it('should classify h_t ≤ κ ≤ 2.0 as geometric', () => {
-    expect(classifyRegime(0.106)).toBe('geometric');
+    expect(classifyRegime(0.10554)).toBe('geometric');
     expect(classifyRegime(1.0)).toBe('geometric');
     expect(classifyRegime(2.0)).toBe('geometric');
   });
@@ -219,13 +219,13 @@ describe('andersonOverlap', () => {
     const o10 = andersonOverlap(10);
     const o20 = andersonOverlap(20);
     expect(o20).toBeLessThan(o10);
-    // Should be approximately squared (exp(-0.089*20) ≈ exp(-0.089*10)^2)
+    // Should be approximately squared (exp(-0.0894*20) ≈ exp(-0.0894*10)^2)
     expect(o20).toBeCloseTo(o10 * o10, 2);
   });
 
-  it('should match exp(-0.089 * N)', () => {
-    expect(andersonOverlap(10)).toBeCloseTo(Math.exp(-0.089 * 10), 5);
-    expect(andersonOverlap(50)).toBeCloseTo(Math.exp(-0.089 * 50), 5);
+  it('should match exp(-0.0894 * N)', () => {
+    expect(andersonOverlap(10)).toBeCloseTo(Math.exp(-0.0894 * 10), 5);
+    expect(andersonOverlap(50)).toBeCloseTo(Math.exp(-0.0894 * 50), 5);
   });
 });
 
@@ -250,7 +250,7 @@ describe('shouldResetStrategies', () => {
 // ─── Law 5: Bridge — Convergence Budget ──────────────────────────────────────
 
 describe('convergenceBudget', () => {
-  it('should match τ = 0.180 × J^0.86', () => {
+  it('should match τ = 0.180 × J^0.859', () => {
     const j = 2;
     const expected = BRIDGE_PREFACTOR * Math.pow(j, BRIDGE_EXPONENT);
     expect(convergenceBudget(j)).toBeCloseTo(expected, 5);
