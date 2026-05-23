@@ -1409,6 +1409,33 @@ export function chooseLane(
 // capital share allocated by the arbiter.
 
 /**
+ * Pure geometric direction — no emotion conviction gate.
+ *
+ * geometric_signal = basinDir + 0.5 * tapeTrend.
+ * Returns 'long' when positive, 'short' when negative, 'flat' when
+ * the signal is exactly zero (vanishingly rare in practice).
+ *
+ * Basin dominates; tape consensus tilts when basin is ambiguous.
+ *
+ * Used by the TS execution path: the Layer 2B emotion conviction gate
+ * (confidence < anxiety) is Python-side only until the full emotion
+ * stack (motivators / sensations / foresight) is ported to TS. When
+ * κ deviates from κ*=64 by more than 1 unit — normal operating range
+ * — transcendence = |κ − κ*| > 1 makes confidence = (1−transcendence)×Φ
+ * negative, which means confidence < anxiety for every tick, collapsing
+ * every entry to 'flat'. Pure geometry is the documented TS contract.
+ */
+export function geometricDirection(args: {
+  basinDir: number;
+  tapeTrend: number;
+}): Direction {
+  const geometricSignal = args.basinDir + 0.5 * args.tapeTrend;
+  if (geometricSignal > 0) return 'long';
+  if (geometricSignal < 0) return 'short';
+  return 'flat';
+}
+
+/**
  * Geometric direction read with emotion conviction gate.
  *
  * geometric_signal = basinDir + 0.5 * tapeTrend.
@@ -1417,6 +1444,12 @@ export function chooseLane(
  * overrides any geometric lean).
  *
  * Basin dominates; tape consensus tilts when basin is ambiguous.
+ *
+ * NOTE: use geometricDirection() in the TS execution path — the
+ * confidence < anxiety gate fires for any κ that deviates from κ*=64
+ * by more than 1 unit, which is the normal operating range. This
+ * function is kept for Python parity (kernel_direction in executive.py)
+ * and for when the full TS emotion stack is ported.
  */
 export function kernelDirection(args: {
   basinDir: number;

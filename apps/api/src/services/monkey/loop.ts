@@ -111,8 +111,7 @@ import {
   currentEntryThreshold,
   currentLeverage,
   currentPositionSize,
-  kernelDirection,
-  kernelShouldEnter,
+  geometricDirection,
   shouldAutoFlatten,
   shouldAggregateBleedExit,
   shouldAggregateHarvest,
@@ -2221,15 +2220,18 @@ export class MonkeyKernel extends EventEmitter {
     // Side candidate (post #ml-separation):
     //   Direction comes from basin geometry + tape consensus. The
     //   previous OVERRIDE_REVERSE quorum + TURNING_SIGNAL paths are
-    //   gone — kernelDirection is the primary read.
+    //   gone — geometricDirection is the primary read.
     //
-    // TS-side does not yet compute Layer 2B emotions (motivators /
-    // sensations / foresight ports pending). Until v0.8.8 Python
-    // cut-over, TS uses neutral emotions so direction reduces to
-    // pure geometry. Entry conviction continues to gate via the
-    // existing ml-strength threshold below — a geometry-only TS
-    // entry would require the full emotion stack ported. This is
-    // the documented "TS counterpart for parity" path.
+    // TS-side uses pure geometry (geometricDirection) without the
+    // Layer 2B emotion conviction gate (confidence < anxiety).
+    // kernelDirection mirrors Python's kernel_direction and applies
+    // that gate, but with κ in [20,120] transcendence = |κ−64| > 1
+    // on most ticks, which drives confidence negative and collapses
+    // EVERY tick to 'flat'. geometricDirection drops the gate so
+    // direction reduces to pure geometry — the documented TS contract
+    // ("TS uses neutral emotions so direction reduces to pure geometry",
+    // see also line 3666 below). kernelDirection is kept for Python
+    // parity and future full-emotion-stack TS porting.
     // B1.1 — basinDir reads market DIRECTION, which lives in the RAW
     // perception. The refracted `basin` is 70% frozen identity + 30%
     // market (Pillar 2) — reading direction off it damps the market
@@ -2439,19 +2441,16 @@ export class MonkeyKernel extends EventEmitter {
     if (state.integrationHistory.length > HISTORY_MAX) {
       state.integrationHistory.shift();
     }
-    const direction: Direction = kernelDirection({
-      basinDir, tapeTrend, emotions,
-    });
+    const direction: Direction = geometricDirection({ basinDir, tapeTrend });
     // sideCandidate must be a concrete long|short. When `direction` is
-    // 'flat' (low conviction — confidence < anxiety — or an exactly-zero
-    // geometric signal) it is NOT hardcoded 'long': that was a
-    // structural long-bias — every low-conviction tick logged, threshold-
-    // indexed and (if it ever entered) traded long, even on a clearly
-    // falling market (basinDir/tape both negative). Instead tiebreak on
-    // the SAME geometric signal kernelDirection uses (basinDir +
-    // 0.5·tapeTrend), so the candidate side reflects the real — if weak —
-    // geometric lean. Symmetric: a flat-but-down tape reads 'short'. The
-    // conviction gate (kernelShouldEnter) still decides whether to act.
+    // 'flat' (an exactly-zero geometric signal — vanishingly rare in
+    // practice) tiebreak on the same signal so the candidate side
+    // reflects the real — if weak — geometric lean.  The 'flat' case
+    // from the old emotion conviction gate (confidence < anxiety) is
+    // gone: geometricDirection does not apply that gate, so 'flat' is
+    // only returned when basinDir + 0.5·tapeTrend == 0 exactly.
+    // The conviction gate (size threshold / sideShortRefused) still
+    // decides whether to act on a geometric lean.
     const sideCandidate: 'long' | 'short' =
       direction !== 'flat'
         ? direction
@@ -3663,11 +3662,11 @@ export class MonkeyKernel extends EventEmitter {
         suppress_reason: suppressionResult.suppressReason,
         chop_size_factor: chopSizeFactor,
       };
-      // sideCandidate from kernelDirection (geometric, post #ml-separation).
+      // sideCandidate from geometricDirection (pure geometry, post #ml-separation).
       // Entry gate is geometric: direction != flat (basinDir + 0.5*tapeTrend
-      // != 0). Conviction gating via Layer 2B emotions is Python-only until
-      // emotions are ported to TS — TS uses neutral emotions which collapse
-      // kernelShouldEnter to false, so we gate on direction here instead.
+      // != 0). The Layer 2B emotion conviction gate (confidence < anxiety) is
+      // Python-only — it would block ALL entries in normal operation because
+      // transcendence = |κ−64| > 1 drives confidence negative most ticks.
       action = sideCandidate === 'long' ? 'enter_long' : 'enter_short';
       reason = `[${mode}] kernel-K geometric: basinDir=${basinDir.toFixed(3)} tape=${tapeTrend.toFixed(3)} → ${sideCandidate}; margin=${size.value.toFixed(2)}`
         + (suppressionResult.suppressed ? `×${chopSizeFactor.toFixed(2)} (chop filter)` : '')

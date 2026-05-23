@@ -99,7 +99,7 @@ router.get('/status', authenticateToken, async (req: Request, res: Response) => 
     try {
       const pnlRow = await pool.query(
         `SELECT COALESCE(SUM(pnl) FILTER (WHERE pnl IS NOT NULL${engineModeSqlClause('live')}), 0) AS total_pnl,
-                COUNT(*) FILTER (WHERE pnl IS NOT NULL AND (order_id IS NULL OR order_id NOT LIKE 'paper_%')) AS live_trades,
+                COUNT(*) FILTER (WHERE pnl IS NOT NULL${engineModeSqlClause('live')}) AS live_trades,
                 COUNT(*) FILTER (WHERE status = 'open' AND deleted_at IS NULL) AS open_positions,
                 COUNT(*) FILTER (WHERE status = 'open' AND deleted_at IS NULL${engineModeSqlClause('live')}) AS open_live_positions,
                 COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '15 minutes'${engineModeSqlClause('live')}) AS recent_live_trades
