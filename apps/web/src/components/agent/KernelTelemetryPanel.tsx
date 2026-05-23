@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 import { Brain, Moon, RefreshCw, Scale } from 'lucide-react';
 import {
@@ -112,11 +112,11 @@ export default function KernelTelemetryPanel() {
   const [paritySummary, setParitySummary] = useState<KParityResponse['summary'] | null>(null);
   const [parityRows, setParityRows] = useState<KParityRow[]>([]);
   const [sleepStates, setSleepStates] = useState<Record<string, SleepStateResponse>>({});
-  const [loading, setLoading] = useState(Boolean(0));
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastFetched, setLastFetched] = useState<Date | null>(null);
 
-  const fetchTelemetry = async () => {
+  const fetchTelemetry = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -147,27 +147,29 @@ export default function KernelTelemetryPanel() {
           : String(err);
       setError(String(message));
     } finally {
-      setLoading(Boolean(0));
+      setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     fetchTelemetry();
     const id = setInterval(fetchTelemetry, POLL_INTERVAL_MS);
     return () => clearInterval(id);
-  }, []);
+  }, [fetchTelemetry]);
 
   const chartData = useMemo(() => (
     consciousness.map((row, index) => ({
       index,
-      label: new Date(row.symbol_timestamp ?? row.created_at ?? Date.now()).toLocaleTimeString(),
+      label: row.symbol_timestamp || row.created_at
+        ? new Date(row.symbol_timestamp ?? row.created_at).toLocaleTimeString()
+        : '—',
       ts_c: row.ts_c === null || row.ts_c === undefined ? null : safeNum(row.ts_c),
       py_c: row.py_c === null || row.py_c === undefined ? null : safeNum(row.py_c),
     }))
   ), [consciousness]);
 
   const latestConsciousness = consciousness[consciousness.length - 1];
-  const disagreementRows = parityRows.filter((row) => row.agree_action === Boolean(0) || row.py_error);
+  const disagreementRows = parityRows.filter((row) => row.agree_action === false || row.py_error);
 
   return (
     <div className="space-y-6">
@@ -239,8 +241,8 @@ export default function KernelTelemetryPanel() {
                     <XAxis dataKey="label" minTickGap={32} tick={{ fontSize: 12 }} />
                     <YAxis domain={['auto', 'auto']} tick={{ fontSize: 12 }} />
                     <Tooltip />
-                    <Line type="monotone" dataKey="ts_c" name="TS C" stroke="#0891b2" strokeWidth={2} dot={Boolean(0)} connectNulls />
-                    <Line type="monotone" dataKey="py_c" name="Py C" stroke="#7c3aed" strokeWidth={2} dot={Boolean(0)} connectNulls />
+                    <Line type="monotone" dataKey="ts_c" name="TS C" stroke="#0891b2" strokeWidth={2} dot={false} connectNulls />
+                    <Line type="monotone" dataKey="py_c" name="Py C" stroke="#7c3aed" strokeWidth={2} dot={false} connectNulls />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
@@ -324,7 +326,7 @@ export default function KernelTelemetryPanel() {
                     <p className="text-xs text-gray-500 font-mono">{key}</p>
                   </div>
                   <span className="px-2 py-1 rounded-full bg-indigo-50 text-indigo-700 text-xs font-medium">
-                    {state?.sleep_state?.phase ?? state?.source ?? 'unknown'}
+                    {state?.sleep_state?.phase ?? 'unknown'}
                   </span>
                 </div>
                 <div className="space-y-2 text-sm">
