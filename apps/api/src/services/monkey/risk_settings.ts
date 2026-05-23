@@ -107,6 +107,54 @@ export function dailyLossHalted(
   return todayRealizedPnl <= -capUsd;
 }
 
+export type EntryRiskSettingsHalt =
+  | {
+      kind: 'daily_loss_limit';
+      todayRealizedPnl: number;
+      limitPct: number;
+      equityUsdt: number;
+    }
+  | {
+      kind: 'max_concurrent_positions';
+      openMonkeyPositions: number;
+      cap: number;
+    };
+
+/**
+ * Pure: resolve whether the operator risk profile blocks a NEW Monkey
+ * entry right now. Exits remain unaffected.
+ */
+export function getEntryRiskSettingsHalt(args: {
+  riskSettings: OperatorRiskSettings | null;
+  todayRealizedPnl: number;
+  equityUsdt: number;
+  openMonkeyPositions: number;
+}): EntryRiskSettingsHalt | null {
+  const {
+    riskSettings,
+    todayRealizedPnl,
+    equityUsdt,
+    openMonkeyPositions,
+  } = args;
+  if (!riskSettings) return null;
+  if (dailyLossHalted(todayRealizedPnl, riskSettings.dailyLossLimit, equityUsdt)) {
+    return {
+      kind: 'daily_loss_limit',
+      todayRealizedPnl,
+      limitPct: riskSettings.dailyLossLimit,
+      equityUsdt,
+    };
+  }
+  if (openMonkeyPositions >= riskSettings.maxConcurrentPositions) {
+    return {
+      kind: 'max_concurrent_positions',
+      openMonkeyPositions,
+      cap: riskSettings.maxConcurrentPositions,
+    };
+  }
+  return null;
+}
+
 const TTL_MS = 60_000;
 
 let settingsCache: { value: OperatorRiskSettings | null; atMs: number } | null = null;
