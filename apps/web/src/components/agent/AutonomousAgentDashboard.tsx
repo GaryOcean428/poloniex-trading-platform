@@ -5,7 +5,7 @@ import { getAccessToken } from '@/utils/auth';
 import { usePersistedState } from '@/hooks/usePersistedState';
 import { getBackendUrl } from '@/utils/environment';
 import ActiveStrategiesPanel from './ActiveStrategiesPanel';
-import GovernanceStatusPanel from './GovernanceStatusPanel';
+import KernelTelemetryPanel from './KernelTelemetryPanel';
 import LiveTradingActivityFeed from './LiveTradingActivityFeed';
 import PerformanceAnalytics from './PerformanceAnalytics';
 import StateOfTheBotCard from './StateOfTheBotCard';
@@ -431,19 +431,7 @@ const AutonomousAgentDashboard: React.FC = () => {
       {/* Performance analytics — live realized performance. */}
       <PerformanceAnalytics agentStatus={kernelAgentStatus} performanceMode="live" />
 
-      {/* Kernel telemetry — observable-governance distributional drift +
-          forecast-horizon observer state (Φ / regime / amplitude). */}
-      <GovernanceStatusPanel />
-
-      {/*
-        TODO(kernel-telemetry): the /api/governance/k-consciousness and
-        /api/governance/k-parity endpoints expose per-tick Φ / κ / M / Γ
-        / R and TS-vs-Py consensus, and Ocean sleep-state lives under
-        /api/governance/sleep-state/:agent. A dedicated read-only
-        consciousness/Ocean panel that surfaces those would round out
-        this observation page — not built here to avoid scope creep and
-        because no aggregated single-call endpoint exists yet.
-      */}
+      <KernelTelemetryPanel />
 
       {/* Live trading activity feed. */}
       <LiveTradingActivityFeed agentStatus={kernelAgentStatus} />
