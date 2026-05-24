@@ -158,7 +158,9 @@ import {
   getOperatorRiskSettings,
   getTodayMonkeyRealizedPnl,
   getOpenMonkeyPositionCount,
-  dailyLossHalted,
+  getEntryRiskSettingsHalt,
+  adjustTodayMonkeyRealizedPnlCache,
+  adjustOpenMonkeyPositionCountCache,
 } from './risk_settings.js';
 import { QIGRAMv2State, isQigramV2Enabled } from './agent_L_qigram_v2.js';
 import {
@@ -198,6 +200,10 @@ import {
 
 /** Default Monkey watchlist. */
 const DEFAULT_SYMBOLS = ['BTC_USDT_PERP', 'ETH_USDT_PERP'];
+
+interface TickRiskProjection {
+  openMonkeyPositions: number | null;
+}
 
 /** Φ below which the canonical sleep cycle enters DREAMING/consolidation
  *  (qig-core 2.8.0 `consciousness/sleep.py` SLEEP_PHI_THRESHOLD). The
@@ -1564,9 +1570,10 @@ export class MonkeyKernel extends EventEmitter {
       // LIMIT_MAKER_STALE_MS (2 min). Errors are non-fatal — the next
       // tick retries cancel.
       try { await this.cancelStaleLimitMakers(); } catch { /* non-fatal */ }
+      const tickRiskProjection: TickRiskProjection = { openMonkeyPositions: null };
       for (const sym of this.symbols) {
         try {
-          await this.processSymbol(sym);
+          await this.processSymbol(sym, tickRiskProjection);
         } catch (err) {
           logger.warn(`[Monkey] ${sym} tick failed`, {
             err: err instanceof Error ? err.message : String(err),
@@ -1752,7 +1759,7 @@ export class MonkeyKernel extends EventEmitter {
    *   5. DECIDE   — propose action (observe-only in v0.1)
    *   6. PERSIST  — write trajectory + decision to DB for audit
    */
-  private async processSymbol(symbol: string): Promise<void> {
+  private async processSymbol(symbol: string, tickRiskProjection: TickRiskProjection): Promise<void> {
     const state = this.symbolStates.get(symbol);
     if (!state) return;
 
@@ -1922,9 +1929,38 @@ export class MonkeyKernel extends EventEmitter {
       getTodayMonkeyRealizedPnl(),
       getOpenMonkeyPositionCount(),
     ]);
-    const dailyLossHalt = riskSettings
-      ? dailyLossHalted(todayRealizedPnl, riskSettings.dailyLossLimit, availableEquity)
-      : false;
+    if (tickRiskProjection.openMonkeyPositions === null) {
+      tickRiskProjection.openMonkeyPositions = openMonkeyPositions;
+    }
+    let projectedTodayRealizedPnl = todayRealizedPnl;
+    const noteProjectedEntry = (): void => {
+      tickRiskProjection.openMonkeyPositions = Math.max(
+        0,
+        (tickRiskProjection.openMonkeyPositions ?? openMonkeyPositions) + 1,
+      );
+      adjustOpenMonkeyPositionCountCache(1);
+    };
+    const noteProjectedClose = (pnl: number, rowsClosed = 1): void => {
+      const closedRows = Number.isFinite(rowsClosed)
+        ? Math.max(0, Math.trunc(rowsClosed))
+        : 1;
+      if (Number.isFinite(pnl)) {
+        projectedTodayRealizedPnl += pnl;
+        adjustTodayMonkeyRealizedPnlCache(pnl);
+      }
+      tickRiskProjection.openMonkeyPositions = Math.max(
+        0,
+        (tickRiskProjection.openMonkeyPositions ?? openMonkeyPositions) - closedRows,
+      );
+      adjustOpenMonkeyPositionCountCache(-closedRows);
+    };
+    const currentEntryRiskSettingsHalt = (): ReturnType<typeof getEntryRiskSettingsHalt> =>
+      getEntryRiskSettingsHalt({
+        riskSettings,
+        todayRealizedPnl: projectedTodayRealizedPnl,
+        equityUsdt: availableEquity,
+        openMonkeyPositions: tickRiskProjection.openMonkeyPositions ?? openMonkeyPositions,
+      });
 
     // 2. PERCEIVE — raw basin then refract through identity.
     // Post #ml-separation: ml fields omitted; perception defaults dims
@@ -4052,33 +4088,26 @@ export class MonkeyKernel extends EventEmitter {
             lSide: lVeto.lSide,
             lSource: 'agentLDecide(state.basinHistory)',
           });
-        } else if (dailyLossHalt) {
-          // risk_settings daily-loss halt — today's realised Monkey PnL
-          // is at/below -dailyLossLimit% of equity. New entries are
-          // suppressed; exits are unaffected so losers can still close.
-          reason += ` | risk_settings: daily loss limit — today ${todayRealizedPnl.toFixed(2)} USDT ≤ -${riskSettings.dailyLossLimit}% of ${availableEquity.toFixed(2)} (entry suppressed; exits unaffected)`;
-          (derivation as Record<string, unknown>).riskSettingsHalt = {
-            kind: 'daily_loss_limit',
-            todayRealizedPnl,
-            limitPct: riskSettings.dailyLossLimit,
-            equityUsdt: availableEquity,
-          };
-          logger.warn(`[Monkey] ${symbol} entry suppressed — risk_settings daily loss limit`, {
-            todayRealizedPnl,
-            limitPct: riskSettings.dailyLossLimit,
-            equityUsdt: availableEquity,
-          });
-        } else if (riskSettings && openMonkeyPositions >= riskSettings.maxConcurrentPositions) {
-          // risk_settings max-concurrent-positions ceiling — counts
-          // Monkey-owned open rows only (never the account-wide total).
-          reason += ` | risk_settings: max concurrent positions (${openMonkeyPositions}/${riskSettings.maxConcurrentPositions})`;
-          (derivation as Record<string, unknown>).riskSettingsHalt = {
-            kind: 'max_concurrent_positions',
-            openMonkeyPositions,
-            cap: riskSettings.maxConcurrentPositions,
-          };
         } else {
-        const isDCA = Boolean(derivation.isDCAAdd);
+          const riskHalt = currentEntryRiskSettingsHalt();
+          if (riskHalt?.kind === 'daily_loss_limit') {
+            // risk_settings daily-loss halt — today's realised Monkey PnL
+            // is at/below -dailyLossLimit% of equity. New entries are
+            // suppressed; exits are unaffected so losers can still close.
+            reason += ` | risk_settings: daily loss limit — today ${riskHalt.todayRealizedPnl.toFixed(2)} USDT ≤ -${riskHalt.limitPct}% of ${riskHalt.equityUsdt.toFixed(2)} (entry suppressed; exits unaffected)`;
+            (derivation as Record<string, unknown>).riskSettingsHalt = riskHalt;
+            logger.warn(`[Monkey] ${symbol} entry suppressed — risk_settings daily loss limit`, {
+              todayRealizedPnl: riskHalt.todayRealizedPnl,
+              limitPct: riskHalt.limitPct,
+              equityUsdt: riskHalt.equityUsdt,
+            });
+          } else if (riskHalt?.kind === 'max_concurrent_positions') {
+            // risk_settings max-concurrent-positions ceiling — counts
+            // Monkey-owned open rows only (never the account-wide total).
+            reason += ` | risk_settings: max concurrent positions (${riskHalt.openMonkeyPositions}/${riskHalt.cap})`;
+            (derivation as Record<string, unknown>).riskSettingsHalt = riskHalt;
+          } else {
+          const isDCA = Boolean(derivation.isDCAAdd);
         // Cap K's margin to its arbiter share. Without this, the existing
         // size formula could exceed K's allocation when M has been
         // accumulating and K's share has shrunk.
@@ -4122,6 +4151,7 @@ export class MonkeyKernel extends EventEmitter {
           if (execResult.reason.startsWith('monkey_paper_mode:')) {
             reason += ` | ${execResult.reason}`;
           }
+          noteProjectedEntry();
           // v0.6.2 bookkeeping
           state.lastEntryAtMs = Date.now();
           if (isDCA) {
@@ -4150,6 +4180,7 @@ export class MonkeyKernel extends EventEmitter {
             state.entryTimeMsByLane[entryLane] = Date.now();
           }
         }
+          }
         }  // close v0.8.7 trading-paused else branch
       } else if (action === 'scalp_exit' && heldSide) {
         const scalpDeriv = derivation.scalp as Record<string, unknown> | undefined;
@@ -4180,6 +4211,7 @@ export class MonkeyKernel extends EventEmitter {
           executed = closeResult.executed;
           monkeyOrderId = closeResult.orderId;
           if (executed) {
+            noteProjectedClose(pnlAtDecision);
             // Clear lane-scoped trade-level state now the lane closed.
             // Other lanes' bookkeeping is preserved (proposal #10).
             state.peakPnlUsdtByLane[scalpLane] = null;
@@ -4234,6 +4266,7 @@ export class MonkeyKernel extends EventEmitter {
             lane: ownOpenRow?.lane ?? 'swing',
           });
           if (closeResult.executed) {
+            noteProjectedClose(pnlAtDecision);
             state.peakPnlUsdt = null;
             state.peakTrackedTradeId = null;
             state.dcaAddCount = 0;
@@ -4284,6 +4317,25 @@ export class MonkeyKernel extends EventEmitter {
                 leg: 'reverse_reopen',
               });
             } else {
+              const reverseReopenRiskHalt = currentEntryRiskSettingsHalt();
+              if (reverseReopenRiskHalt) {
+                reason += ` | closed@${lastPrice.toFixed(2)} pnl=${pnlAtDecision.toFixed(4)} | risk_settings: reverse reopen suppressed (${reverseReopenRiskHalt.kind})`;
+                (derivation as Record<string, unknown>).reverseReopenRiskSettingsHalt = reverseReopenRiskHalt;
+                logger.warn('[Monkey] reverse reopen suppressed — risk_settings halt', {
+                  symbol,
+                  kind: reverseReopenRiskHalt.kind,
+                  ...(reverseReopenRiskHalt.kind === 'daily_loss_limit'
+                    ? {
+                        todayRealizedPnl: reverseReopenRiskHalt.todayRealizedPnl,
+                        limitPct: reverseReopenRiskHalt.limitPct,
+                        equityUsdt: reverseReopenRiskHalt.equityUsdt,
+                      }
+                    : {
+                        openMonkeyPositions: reverseReopenRiskHalt.openMonkeyPositions,
+                        cap: reverseReopenRiskHalt.cap,
+                      }),
+                });
+              } else {
             // Settle delay — give the exchange ~500ms to flatten net.
             await new Promise((resolve) => setTimeout(resolve, 500));
             const execResult = await this.executeEntry({
@@ -4307,6 +4359,7 @@ export class MonkeyKernel extends EventEmitter {
             executed = execResult.executed;
             monkeyOrderId = execResult.orderId;
             if (executed) {
+              noteProjectedEntry();
               state.lastEntryAtMs = Date.now();
               // Re-snapshot rejustification anchors for the new direction.
               state.regimeAtOpenByLane[reversalLane] = mode;
@@ -4321,6 +4374,7 @@ export class MonkeyKernel extends EventEmitter {
             } else {
               reason += ` | flattened ok, new-entry failed: ${execResult.reason}`;
             }
+              }
             }  // close v0.8.7 trading-paused else branch
           } else {
             reason += ` | flatten failed: ${closeResult.reason}; reverse aborted`;
@@ -4491,6 +4545,23 @@ export class MonkeyKernel extends EventEmitter {
           });
           (derivation as Record<string, unknown>).agentMTradingPausedSkipped = true;
         } else {
+          const riskHalt = currentEntryRiskSettingsHalt();
+          if (riskHalt?.kind === 'daily_loss_limit') {
+            (derivation as Record<string, unknown>).agentMRiskSettingsHalt = riskHalt;
+            logger.warn('[AgentM] entry suppressed — risk_settings daily loss limit', {
+              symbol,
+              todayRealizedPnl: riskHalt.todayRealizedPnl,
+              limitPct: riskHalt.limitPct,
+              equityUsdt: riskHalt.equityUsdt,
+            });
+          } else if (riskHalt?.kind === 'max_concurrent_positions') {
+            (derivation as Record<string, unknown>).agentMRiskSettingsHalt = riskHalt;
+            logger.warn('[AgentM] entry suppressed — risk_settings max concurrent positions', {
+              symbol,
+              openMonkeyPositions: riskHalt.openMonkeyPositions,
+              cap: riskHalt.cap,
+            });
+          } else {
         const mResult = await this.executeEntry({
           symbol,
           side: mDecision.action === 'enter_long' ? 'long' : 'short',
@@ -4513,12 +4584,14 @@ export class MonkeyKernel extends EventEmitter {
             symbol, side: mDecision.action, reason: mResult.reason,
           });
         } else {
+          noteProjectedEntry();
           logger.info('[AgentM] entry placed', {
             symbol, side: mDecision.action, orderId: mResult.orderId,
             margin: clampedSize.toFixed(2), leverage: mDecision.leverage,
             headroom: mHeadroom.toFixed(2),
           });
         }
+          }
         }  // close v0.8.7 trading-paused else branch
       }
       }  // close mHeadroom > 0 else branch
@@ -4623,6 +4696,24 @@ export class MonkeyKernel extends EventEmitter {
         // when MONKEY_TRADING_PAUSED=true. Exits below are unaffected.
         && !isTradingPaused()
       ) {
+        const riskHalt = currentEntryRiskSettingsHalt();
+        if (riskHalt) {
+          (derivation as Record<string, unknown>).agentTRiskSettingsHalt = riskHalt;
+          logger.warn('[AgentT] entry suppressed — risk_settings halt', {
+            symbol,
+            kind: riskHalt.kind,
+            ...(riskHalt.kind === 'daily_loss_limit'
+              ? {
+                  todayRealizedPnl: riskHalt.todayRealizedPnl,
+                  limitPct: riskHalt.limitPct,
+                  equityUsdt: riskHalt.equityUsdt,
+                }
+              : {
+                  openMonkeyPositions: riskHalt.openMonkeyPositions,
+                  cap: riskHalt.cap,
+                }),
+          });
+        } else {
         const tSide: 'long' | 'short' =
           tDecision.action === 'enter_long' || tDecision.action === 'pyramid_long'
             ? 'long'
@@ -4652,6 +4743,7 @@ export class MonkeyKernel extends EventEmitter {
         });
         derivation.agentTExecuted = tResult.executed;
         if (tResult.executed) {
+          noteProjectedEntry();
           // Mirror the new unit into TurtleState. Stop, ATR, leverage,
           // margin all derive from the decision; entryPrice is the
           // exchange fill estimate (executeEntry doesn't currently
@@ -4679,6 +4771,7 @@ export class MonkeyKernel extends EventEmitter {
           logger.info('[AgentT] entry rejected', {
             symbol, side: tSide, reason: tResult.reason,
           });
+        }
         }
       } else if (
         (tDecision.action === 'exit_stop' || tDecision.action === 'exit_donchian')
@@ -4731,6 +4824,7 @@ export class MonkeyKernel extends EventEmitter {
               lane: 'trend',
             });
             if (closeResult.executed) {
+              noteProjectedClose(pnlAtDecision, tRows.length);
               this.turtleStates.set(
                 symbol,
                 turtleClearUnits(tState, tDecision.action, Date.now()),
@@ -4980,6 +5074,24 @@ export class MonkeyKernel extends EventEmitter {
           }
           if (lMargin > 0) {
             const lLeverage = leverage.value;
+            const riskHalt = currentEntryRiskSettingsHalt();
+            if (riskHalt) {
+              (derivation as Record<string, unknown>).agentLRiskSettingsHalt = riskHalt;
+              logger.warn('[AgentL] entry suppressed — risk_settings halt', {
+                symbol,
+                kind: riskHalt.kind,
+                ...(riskHalt.kind === 'daily_loss_limit'
+                  ? {
+                      todayRealizedPnl: riskHalt.todayRealizedPnl,
+                      limitPct: riskHalt.limitPct,
+                      equityUsdt: riskHalt.equityUsdt,
+                    }
+                  : {
+                      openMonkeyPositions: riskHalt.openMonkeyPositions,
+                      cap: riskHalt.cap,
+                    }),
+              });
+            } else {
             const lResult = await this.executeEntry({
               symbol,
               side: lDecision.action === 'enter_long' ? 'long' : 'short',
@@ -4999,6 +5111,7 @@ export class MonkeyKernel extends EventEmitter {
             });
             (derivation as Record<string, unknown>).agentLExecuted = lResult.executed;
             if (lResult.executed) {
+              noteProjectedEntry();
               const ld = lDecision.labelDistribution;
               logger.info('[AgentL] entry placed', {
                 symbol, side: lDecision.action, orderId: lResult.orderId,
@@ -5033,6 +5146,7 @@ export class MonkeyKernel extends EventEmitter {
               logger.info('[AgentL] entry rejected', {
                 symbol, side: lDecision.action, reason: lResult.reason,
               });
+            }
             }
           }
         }
