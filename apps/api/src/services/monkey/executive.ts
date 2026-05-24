@@ -1499,6 +1499,7 @@ export function kernelShouldEnter(args: { emotions: EmotionState }): boolean {
  * SL trail gates:
  *   - position is in profit — trailing a stop on a red position is just
  *     a tighter loss; the loss-side safety gates own that
+ *   - profit is meaningful enough to avoid flat sub-dime stop ratchets
  *   - the trailed SL is strictly better (higher for long, lower for
  *     short) than the current SL
  *
@@ -1529,15 +1530,24 @@ export function shouldExtendBracket(args: {
   conviction: number;
   /** Current unrealised ROI as a fraction (e.g. +0.02 = +2%). */
   currentRoiFrac: number;
+  /** Current unrealised PnL in USDT; used to reject sub-meaningful ratchets. */
+  currentPnlUsdt?: number;
 }): BracketRevision {
   const {
     heldSide, entryPrice, markPrice, currentTp, currentSl,
-    freshTpDistance, freshSlDistance, conviction, currentRoiFrac,
+    freshTpDistance, freshSlDistance, conviction, currentRoiFrac, currentPnlUsdt,
   } = args;
 
   const convThreshold =
     Number(process.env.MONKEY_BRACKET_EXTEND_CONV) || 0.5;
   const inProfit = currentRoiFrac > 0;
+  const minTrailRoi =
+    Number(process.env.MONKEY_BRACKET_TRAIL_MIN_ROI) || 0.01;
+  const minTrailProfitUsd =
+    Number(process.env.MONKEY_BRACKET_TRAIL_MIN_PROFIT_USD) || 0.10;
+  const meaningfulProfit =
+    currentRoiFrac >= minTrailRoi
+    && (currentPnlUsdt === undefined || currentPnlUsdt >= minTrailProfitUsd);
   const long = heldSide === 'long';
 
   // ── TP extension ────────────────────────────────────────────────
@@ -1555,7 +1565,7 @@ export function shouldExtendBracket(args: {
   // Trail the stop `freshSlDistance` behind the mark, ratcheting only
   // in the favourable direction.
   let newSl: number | null = null;
-  if (inProfit && currentSl !== null) {
+  if (inProfit && meaningfulProfit && currentSl !== null) {
     const candidateSl = long
       ? markPrice - freshSlDistance
       : markPrice + freshSlDistance;
@@ -1573,6 +1583,6 @@ export function shouldExtendBracket(args: {
         + `${newSl !== null ? `SL->${newSl.toFixed(2)} ` : ''}`
         + `(conv=${conviction.toFixed(2)}, roi=${(currentRoiFrac * 100).toFixed(2)}%)`
       : `bracket_hold: no favourable revision (conv=${conviction.toFixed(2)}, `
-        + `inProfit=${inProfit})`,
+        + `inProfit=${inProfit}, meaningfulProfit=${meaningfulProfit})`,
   };
 }

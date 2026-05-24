@@ -18,6 +18,7 @@ import {
   laneBudgetFraction,
   laneParam,
   shouldDCAAdd,
+  shouldExtendBracket,
   shouldScalpExit,
 } from '../executive.js';
 import { BASIN_DIM } from '../basin.js';
@@ -178,6 +179,47 @@ describe('shouldScalpExit lane envelope (proposal #10)', () => {
     // well inside swing's 15% SL → holds.
     const result = shouldScalpExit(-1.0, 100, bs, MonkeyMode.INVESTIGATION);
     expect(result.value).toBe(false);
+  });
+});
+
+
+describe('shouldExtendBracket meaningful-profit trail gate', () => {
+  it('does not ratchet SL for sub-dime, sub-1% ROI profit', () => {
+    const result = shouldExtendBracket({
+      heldSide: 'long',
+      entryPrice: 100,
+      markPrice: 100.40,
+      currentTp: 102,
+      currentSl: 99,
+      freshTpDistance: 3,
+      freshSlDistance: 0.20,
+      conviction: 0.4,
+      currentRoiFrac: 0.004,
+      currentPnlUsdt: 0.05,
+    });
+
+    expect(result.changed).toBe(false);
+    expect(result.newSl).toBeNull();
+    expect(String(result.reason)).toContain('meaningfulProfit=false');
+  });
+
+  it('ratchets SL once profit clears the meaningful floor', () => {
+    const result = shouldExtendBracket({
+      heldSide: 'long',
+      entryPrice: 100,
+      markPrice: 101.50,
+      currentTp: 102,
+      currentSl: 99,
+      freshTpDistance: 1,
+      freshSlDistance: 0.20,
+      conviction: 0.4,
+      currentRoiFrac: 0.015,
+      currentPnlUsdt: 0.25,
+    });
+
+    expect(result.changed).toBe(true);
+    expect(result.newTp).toBeNull();
+    expect(result.newSl).toBeCloseTo(101.30, 9);
   });
 });
 
