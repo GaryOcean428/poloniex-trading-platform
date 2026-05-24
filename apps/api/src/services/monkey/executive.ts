@@ -1528,10 +1528,10 @@ export function shouldExtendBracket(args: {
   freshSlDistance: number;
   /** Fresh conviction = φ × rConf ∈ [0,1]. */
   conviction: number;
-  /** Current unrealised ROI as a fraction (e.g. +0.02 = +2%). */
+  /** Current unrealized ROI as a fraction (e.g. +0.02 = +2%). */
   currentRoiFrac: number;
-  /** Current unrealised PnL in USDT; used to reject sub-meaningful ratchets. */
-  currentPnlUsdt?: number;
+  /** Current unrealized PnL in USDT; used to reject sub-meaningful ratchets. */
+  currentPnlUsdt: number;
 }): BracketRevision {
   const {
     heldSide, entryPrice, markPrice, currentTp, currentSl,
@@ -1547,7 +1547,7 @@ export function shouldExtendBracket(args: {
     Number(process.env.MONKEY_BRACKET_TRAIL_MIN_PROFIT_USD) || 0.10;
   const meaningfulProfit =
     currentRoiFrac >= minTrailRoi
-    && (currentPnlUsdt === undefined || currentPnlUsdt >= minTrailProfitUsd);
+    && currentPnlUsdt >= minTrailProfitUsd;
   const long = heldSide === 'long';
 
   // ── TP extension ────────────────────────────────────────────────
