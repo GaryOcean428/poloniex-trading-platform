@@ -3567,6 +3567,7 @@ export class MonkeyKernel extends EventEmitter {
             freshSlDistance: state.lastFrBracket.slDistance,
             conviction: phi * regimeReading.confidence,
             currentRoiFrac: currentRoi,
+            currentPnlUsdt: unrealizedPnl,
           });
           derivation.bracketRevision = {
             changed: revision.changed ? 1 : 0,
