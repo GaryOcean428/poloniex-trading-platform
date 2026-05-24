@@ -8,7 +8,65 @@ import {
   parseRiskSettingsRow,
   dailyLossHalted,
   DEFAULT_RISK_SETTINGS,
+  getEntryRiskSettingsHalt,
 } from '../risk_settings.js';
+
+describe('getEntryRiskSettingsHalt', () => {
+  it('returns null when no operator profile is saved', () => {
+    expect(getEntryRiskSettingsHalt({
+      riskSettings: null,
+      todayRealizedPnl: -500,
+      equityUsdt: 1000,
+      openMonkeyPositions: 99,
+    })).toBeNull();
+  });
+
+  it('halts new entries on daily loss before checking concurrency', () => {
+    expect(getEntryRiskSettingsHalt({
+      riskSettings: {
+        ...DEFAULT_RISK_SETTINGS,
+        dailyLossLimit: 5,
+        maxConcurrentPositions: 3,
+      },
+      todayRealizedPnl: -50,
+      equityUsdt: 1000,
+      openMonkeyPositions: 3,
+    })).toEqual({
+      kind: 'daily_loss_limit',
+      todayRealizedPnl: -50,
+      limitPct: 5,
+      equityUsdt: 1000,
+    });
+  });
+
+  it('halts new entries once max concurrent positions is reached', () => {
+    expect(getEntryRiskSettingsHalt({
+      riskSettings: {
+        ...DEFAULT_RISK_SETTINGS,
+        maxConcurrentPositions: 5,
+      },
+      todayRealizedPnl: 25,
+      equityUsdt: 1000,
+      openMonkeyPositions: 5,
+    })).toEqual({
+      kind: 'max_concurrent_positions',
+      openMonkeyPositions: 5,
+      cap: 5,
+    });
+  });
+
+  it('allows entries while both ceilings are still clear', () => {
+    expect(getEntryRiskSettingsHalt({
+      riskSettings: {
+        ...DEFAULT_RISK_SETTINGS,
+        maxConcurrentPositions: 5,
+      },
+      todayRealizedPnl: -10,
+      equityUsdt: 1000,
+      openMonkeyPositions: 4,
+    })).toBeNull();
+  });
+});
 
 describe('parseRiskSettingsRow', () => {
   it('returns defaults for a null/undefined row', () => {
