@@ -8,7 +8,11 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { shouldExtendBracket } from '../services/monkey/executive.js';
 
 const ORIGINAL_ENV = { ...process.env };
-beforeEach(() => { delete process.env.MONKEY_BRACKET_EXTEND_CONV; });
+beforeEach(() => {
+  delete process.env.MONKEY_BRACKET_EXTEND_CONV;
+  delete process.env.MONKEY_BRACKET_TRAIL_MIN_ROI;
+  delete process.env.MONKEY_BRACKET_TRAIL_MIN_PROFIT_USDT;
+});
 afterEach(() => { process.env = { ...ORIGINAL_ENV }; });
 
 describe('shouldExtendBracket — TP extension (LONG)', () => {
@@ -18,7 +22,7 @@ describe('shouldExtendBracket — TP extension (LONG)', () => {
       heldSide: 'long', entryPrice: 100, markPrice: 108,
       currentTp: 110, currentSl: 95,
       freshTpDistance: 20, freshSlDistance: 5, // fresh TP → 120 > 110
-      conviction: 0.8, currentRoiFrac: 0.08,
+      conviction: 0.8, currentRoiFrac: 0.08, currentPnlUsdt: 0,
     });
     expect(r.changed).toBe(true);
     expect(r.newTp).toBeCloseTo(120, 6);
@@ -29,7 +33,7 @@ describe('shouldExtendBracket — TP extension (LONG)', () => {
       heldSide: 'long', entryPrice: 100, markPrice: 108,
       currentTp: 110, currentSl: 95,
       freshTpDistance: 5, freshSlDistance: 5, // fresh TP → 105 < 110
-      conviction: 0.8, currentRoiFrac: 0.08,
+      conviction: 0.8, currentRoiFrac: 0.08, currentPnlUsdt: 0,
     });
     expect(r.newTp).toBeNull();
   });
@@ -39,7 +43,7 @@ describe('shouldExtendBracket — TP extension (LONG)', () => {
       heldSide: 'long', entryPrice: 100, markPrice: 108,
       currentTp: 110, currentSl: 95,
       freshTpDistance: 20, freshSlDistance: 5,
-      conviction: 0.3, currentRoiFrac: 0.08, // conv < 0.5 default
+      conviction: 0.3, currentRoiFrac: 0.08, currentPnlUsdt: 0, // conv < 0.5 default
     });
     expect(r.newTp).toBeNull();
   });
@@ -49,7 +53,7 @@ describe('shouldExtendBracket — TP extension (LONG)', () => {
       heldSide: 'long', entryPrice: 100, markPrice: 96,
       currentTp: 110, currentSl: 95,
       freshTpDistance: 20, freshSlDistance: 5,
-      conviction: 0.9, currentRoiFrac: -0.04, // red
+      conviction: 0.9, currentRoiFrac: -0.04, currentPnlUsdt: -0.4, // red
     });
     expect(r.newTp).toBeNull();
     expect(r.newSl).toBeNull();
@@ -64,7 +68,7 @@ describe('shouldExtendBracket — SL trail (LONG)', () => {
       heldSide: 'long', entryPrice: 100, markPrice: 108,
       currentTp: 110, currentSl: 95,
       freshTpDistance: 5, freshSlDistance: 5,
-      conviction: 0.1, currentRoiFrac: 0.08, // low conv → only SL moves
+      conviction: 0.1, currentRoiFrac: 0.08, currentPnlUsdt: 1, // low conv → only SL moves
     });
     expect(r.newSl).toBeCloseTo(103, 6);
     expect(r.newTp).toBeNull(); // low conviction blocks TP
@@ -76,7 +80,7 @@ describe('shouldExtendBracket — SL trail (LONG)', () => {
       heldSide: 'long', entryPrice: 100, markPrice: 102,
       currentTp: 110, currentSl: 95,
       freshTpDistance: 5, freshSlDistance: 20,
-      conviction: 0.1, currentRoiFrac: 0.02,
+      conviction: 0.1, currentRoiFrac: 0.02, currentPnlUsdt: 1,
     });
     expect(r.newSl).toBeNull();
   });
@@ -89,7 +93,7 @@ describe('shouldExtendBracket — SHORT mirror', () => {
       heldSide: 'short', entryPrice: 100, markPrice: 92,
       currentTp: 90, currentSl: 105,
       freshTpDistance: 20, freshSlDistance: 5,
-      conviction: 0.8, currentRoiFrac: 0.08,
+      conviction: 0.8, currentRoiFrac: 0.08, currentPnlUsdt: 0,
     });
     expect(r.newTp).toBeCloseTo(80, 6);
   });
@@ -100,7 +104,7 @@ describe('shouldExtendBracket — SHORT mirror', () => {
       heldSide: 'short', entryPrice: 100, markPrice: 92,
       currentTp: 90, currentSl: 105,
       freshTpDistance: 5, freshSlDistance: 5,
-      conviction: 0.1, currentRoiFrac: 0.08,
+      conviction: 0.1, currentRoiFrac: 0.08, currentPnlUsdt: 1,
     });
     expect(r.newSl).toBeCloseTo(97, 6);
   });
@@ -113,7 +117,7 @@ describe('shouldExtendBracket — env override + edge cases', () => {
       heldSide: 'long', entryPrice: 100, markPrice: 108,
       currentTp: 110, currentSl: 95,
       freshTpDistance: 20, freshSlDistance: 5,
-      conviction: 0.8, currentRoiFrac: 0.08, // 0.8 < 0.9 → no TP
+      conviction: 0.8, currentRoiFrac: 0.08, currentPnlUsdt: 0, // 0.8 < 0.9 → no TP
     });
     expect(r.newTp).toBeNull();
   });
@@ -123,7 +127,7 @@ describe('shouldExtendBracket — env override + edge cases', () => {
       heldSide: 'long', entryPrice: 100, markPrice: 108,
       currentTp: null, currentSl: 95,
       freshTpDistance: 20, freshSlDistance: 5,
-      conviction: 0.9, currentRoiFrac: 0.08,
+      conviction: 0.9, currentRoiFrac: 0.08, currentPnlUsdt: 1,
     });
     expect(r.newTp).toBeNull();
     expect(r.newSl).not.toBeNull(); // SL side still trails
@@ -134,9 +138,22 @@ describe('shouldExtendBracket — env override + edge cases', () => {
       heldSide: 'long', entryPrice: 100, markPrice: 96,
       currentTp: 110, currentSl: 95,
       freshTpDistance: 5, freshSlDistance: 5,
-      conviction: 0.9, currentRoiFrac: -0.04,
+      conviction: 0.9, currentRoiFrac: -0.04, currentPnlUsdt: -0.4,
     });
     expect(r.changed).toBe(false);
     expect(r.reason).toContain('bracket_hold');
   });
+
+  it('honours zero meaningful-profit trail overrides', () => {
+    process.env.MONKEY_BRACKET_TRAIL_MIN_ROI = '0';
+    process.env.MONKEY_BRACKET_TRAIL_MIN_PROFIT_USDT = '0';
+    const r = shouldExtendBracket({
+      heldSide: 'long', entryPrice: 100, markPrice: 100.01,
+      currentTp: 110, currentSl: 95,
+      freshTpDistance: 5, freshSlDistance: 1,
+      conviction: 0.1, currentRoiFrac: 0.0001, currentPnlUsdt: 0,
+    });
+    expect(r.newSl).toBeCloseTo(99.01, 6);
+  });
+
 });

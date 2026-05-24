@@ -1542,12 +1542,12 @@ export function shouldExtendBracket(args: {
     Number(process.env.MONKEY_BRACKET_EXTEND_CONV) || 0.5;
   const inProfit = currentRoiFrac > 0;
   const minTrailRoi =
-    Number(process.env.MONKEY_BRACKET_TRAIL_MIN_ROI) || 0.01;
-  const minTrailProfitUsd =
-    Number(process.env.MONKEY_BRACKET_TRAIL_MIN_PROFIT_USD) || 0.10;
+    Number(process.env.MONKEY_BRACKET_TRAIL_MIN_ROI ?? 0.01);
+  const minTrailProfitUsdt =
+    Number(process.env.MONKEY_BRACKET_TRAIL_MIN_PROFIT_USDT ?? 0.10);
   const meaningfulProfit =
     currentRoiFrac >= minTrailRoi
-    && currentPnlUsdt >= minTrailProfitUsd;
+    && currentPnlUsdt >= minTrailProfitUsdt;
   const long = heldSide === 'long';
 
   // ── TP extension ────────────────────────────────────────────────
