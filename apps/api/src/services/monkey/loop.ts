@@ -205,13 +205,6 @@ interface TickRiskProjection {
   openMonkeyPositions: number | null;
 }
 
-/** Φ below which the canonical sleep cycle enters DREAMING/consolidation
- *  (qig-core 2.8.0 `consciousness/sleep.py` SLEEP_PHI_THRESHOLD). The
- *  QIGRAMv2 consolidation pass is gated on this so dead-memory eviction
- *  runs during the low-Φ consolidation-appropriate phase, never as a
- *  per-tick side-effect. */
-const SLEEP_PHI_THRESHOLD = 0.45;
-
 /**
  * Env-number coercion that respects 0 as a legitimate value.
  *
@@ -2160,12 +2153,19 @@ export class MonkeyKernel extends EventEmitter {
     //
     // Sov rises as fresh basins integrate; falls as weights decay past
     // MIN_ACTIVE_WEIGHT (canonical 0.01). decayAll() only DECAYS weight —
-    // it never removes entries, so without the consolidation pass below
-    // `_entries` grows unboundedly and the sovereignty denominator (and
-    // thus position size) decays toward zero with session uptime. The
-    // sleep-cycle CONSOLIDATING pass (consolidate()) prunes the dead
-    // tombstones; it is gated on the canonical sleep-cycle Φ threshold so
-    // eviction is the sleep cycle's job, not a per-tick side-effect.
+    // it never removes entries, so without consolidate() below `_entries`
+    // grows unboundedly and the sovereignty denominator (and thus
+    // position size) decays toward zero with session uptime.
+    //
+    // consolidate() is a tombstone reaper: it can only remove entries
+    // that decayAll() has already driven below MIN_ACTIVE_WEIGHT — it
+    // cannot touch a live entry. So it is safe to pair with decayAll()
+    // every tick. The earlier `phi < SLEEP_PHI_THRESHOLD` phase gate
+    // inherited rationale from qig-core 2.8.0's richer SleepCycleManager
+    // (which had destructive ops); the TS port reduced consolidate() to
+    // just the eviction subset, leaving the gate guarding nothing — and
+    // the hardcoded 0.45 sat below this kernel's actual Φ band (0.57+),
+    // so consolidate never fired and sovereignty pinned at ~0.05.
     let sovereignty: number;
     if (isQigramV2Enabled()) {
       this.qigramV2TickCount += 1;
@@ -2178,11 +2178,7 @@ export class MonkeyKernel extends EventEmitter {
         { weight: 1.0, correct: true },
       );
       this.qigramV2Store.decayAll();
-      // Sleep-cycle CONSOLIDATING pass — prune decayed-dead entries so the
-      // sovereignty denominator tracks kernel health, not session uptime.
-      if (phi < SLEEP_PHI_THRESHOLD) {
-        this.qigramV2Store.consolidate();
-      }
+      this.qigramV2Store.consolidate(); // tombstone reaper — safe per-tick
       sovereignty = this.qigramV2Store.sovereignty;
     } else {
       sovereignty = await resonanceBank.sovereignty();

@@ -280,9 +280,9 @@ export class QIGRAMv2State {
 
   // ── Consolidation ─────────────────────────────────────────────────
 
-  /** Remove dead-weight entries — the canonical sleep-cycle CONSOLIDATING
-   *  pass. Mirrors qig-core 2.8.0 `SleepCycleManager.consolidate()`, which
-   *  prunes low-mass entries during the sleep cycle.
+  /** Remove dead-weight entries — a tombstone reaper, NOT a destructive
+   *  op. Mirrors the eviction subset of qig-core 2.8.0
+   *  `SleepCycleManager.consolidate()`.
    *
    *  SEPARATE from `decayAll()`: decay reduces weight every tick;
    *  `consolidate()` REMOVES entries that decay has already driven dead
@@ -292,8 +292,11 @@ export class QIGRAMv2State {
    *  denominator (`_entries.size`) — and therefore `baseFrac = Φ ×
    *  sovereignty × maturity` position sizing — decays toward zero.
    *
-   *  Eviction is the sleep cycle's job, not a per-tick side-effect — the
-   *  caller gates this on the kernel's sleep/consolidation phase.
+   *  Because consolidate() cannot touch a live (above-threshold) entry,
+   *  it is SAFE for the caller to pair it with `decayAll()` on every
+   *  tick. The earlier phase-gating guidance assumed the richer
+   *  destructive semantics of qig-core's SleepCycleManager — it does
+   *  not apply to this reduced TS port.
    *
    *  Returns the number of entries pruned.
    */

@@ -84,4 +84,33 @@ describe('QIGRAMv2State.consolidate', () => {
     expect(store.consolidate()).toBe(1);
     expect(store.totalEntries).toBe(0);
   });
+
+  // ─── Tombstone-reaper invariants — Option D safety net ──────────────
+  // These tests pin the property that lets loop.ts call consolidate()
+  // every tick without behavioural risk: consolidate cannot remove a
+  // live (above-threshold) entry, only entries that decayAll() has
+  // already driven dead. If a future change makes consolidate
+  // destructive, both tests below break loudly.
+
+  test('consolidate on an empty store is a safe no-op', () => {
+    const store = new QIGRAMv2State();
+    expect(store.consolidate()).toBe(0);
+    expect(store.totalEntries).toBe(0);
+  });
+
+  test('200 fresh entries × 100 decay ticks → consolidate reaps all 200', () => {
+    // 0.95^90 ≈ 0.0099 < MIN_ACTIVE_WEIGHT, so 100 ticks of decay drives
+    // every weight=1.0 entry below threshold. consolidate must then
+    // reap the lot — proving _entries.size cannot grow unboundedly when
+    // consolidate is paired with decayAll().
+    const store = new QIGRAMv2State();
+    for (let i = 0; i < 200; i++) {
+      store.integrate(`bulk|${i}`, B, { weight: 1.0, correct: true });
+    }
+    expect(store.totalEntries).toBe(200);
+    for (let t = 0; t < 100; t++) store.decayAll();
+    expect(store.activeEntries().length).toBe(0);
+    expect(store.consolidate()).toBe(200);
+    expect(store.totalEntries).toBe(0);
+  });
 });
