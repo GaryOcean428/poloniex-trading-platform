@@ -7856,24 +7856,31 @@ export class MonkeyKernel extends EventEmitter {
     //     owns loss-side learning; chemistry treats losses as small mood
     //     dips, not punishments).
     //
-    // pnlFrac z-score: normalize against the rolling distribution of
-    // recent pnlFractions. "Above-average win for this kernel" produces
-    // proportionally more dopamine; absolute pnlFrac scale becomes
-    // adaptive to the kernel's observed volatility regime.
+    // pnlFrac normalization: use MAD (Median Absolute Deviation) — a
+    // robust statistic that doesn't blow up under outliers — instead of
+    // stddev. Production evidence 2026-05-25: a single +$78 outlier win
+    // spiked the rolling stddev ~5×, suppressing chemistry response to
+    // every subsequent normal-magnitude close (the kernel couldn't
+    // "feel" -$5 losses as bad because they looked small relative to
+    // the outlier-inflated stddev). MAD is bounded by the median's
+    // breakdown point (50%) — a single outlier can't move it.
+    //
+    // MAD × 1.4826 ≈ stddev under Gaussian assumption; using raw MAD
+    // is fine here because the multiplier would cancel in the
+    // normalization ratio (and we're not making distributional claims).
     const PNL_STDDEV_MIN_SAMPLES = 5;
     let pnlFracNormalized: number = pnlFrac;
     if (this.pendingRewards.length >= PNL_STDDEV_MIN_SAMPLES) {
-      let sum = 0;
-      for (const r of this.pendingRewards) sum += r.pnlFraction;
-      const mean = sum / this.pendingRewards.length;
-      let sq = 0;
-      for (const r of this.pendingRewards) {
-        const d = r.pnlFraction - mean;
-        sq += d * d;
-      }
-      const stddev = Math.sqrt(sq / Math.max(this.pendingRewards.length - 1, 1));
-      if (stddev > 1e-12) {
-        pnlFracNormalized = pnlFrac / stddev;
+      const pnls = this.pendingRewards.map((r) => r.pnlFraction).sort((a, b) => a - b);
+      const median = pnls.length % 2 === 0
+        ? (pnls[pnls.length / 2 - 1]! + pnls[pnls.length / 2]!) / 2
+        : pnls[Math.floor(pnls.length / 2)]!;
+      const deviations = pnls.map((p) => Math.abs(p - median)).sort((a, b) => a - b);
+      const mad = deviations.length % 2 === 0
+        ? (deviations[deviations.length / 2 - 1]! + deviations[deviations.length / 2]!) / 2
+        : deviations[Math.floor(deviations.length / 2)]!;
+      if (mad > 1e-12) {
+        pnlFracNormalized = pnlFrac / mad;
       }
     }
 
@@ -7886,6 +7893,10 @@ export class MonkeyKernel extends EventEmitter {
     // of kappaAtExit values across recent rewards. Replaces the magic
     // `/10` decay width. When stats are insufficient, falls back to a
     // bounded identity on κ-distance (tanh-squashed).
+    // 2026-05-25 — same MAD-based robust normalization. Outlier κ
+    // values (e.g. a single trade that closed at κ=120) would have
+    // inflated stddev under the previous formulation, suppressing the
+    // κ-proximity envelope for everything else.
     let kappaProxim: number;
     if (input.kappaAtExit == null) {
       kappaProxim = 0.5;
@@ -7896,17 +7907,16 @@ export class MonkeyKernel extends EventEmitter {
         if (typeof k === 'number' && Number.isFinite(k)) kappaHistory.push(k);
       }
       if (kappaHistory.length >= PNL_STDDEV_MIN_SAMPLES) {
-        let kSum = 0;
-        for (const k of kappaHistory) kSum += k;
-        const kMean = kSum / kappaHistory.length;
-        let kSq = 0;
-        for (const k of kappaHistory) {
-          const d = k - kMean;
-          kSq += d * d;
-        }
-        const kStddev = Math.sqrt(kSq / Math.max(kappaHistory.length - 1, 1));
-        if (kStddev > 1e-12) {
-          kappaProxim = Math.exp(-Math.abs(input.kappaAtExit - 64) / kStddev);
+        const sorted = [...kappaHistory].sort((a, b) => a - b);
+        const kMedian = sorted.length % 2 === 0
+          ? (sorted[sorted.length / 2 - 1]! + sorted[sorted.length / 2]!) / 2
+          : sorted[Math.floor(sorted.length / 2)]!;
+        const kDevs = sorted.map((k) => Math.abs(k - kMedian)).sort((a, b) => a - b);
+        const kMad = kDevs.length % 2 === 0
+          ? (kDevs[kDevs.length / 2 - 1]! + kDevs[kDevs.length / 2]!) / 2
+          : kDevs[Math.floor(kDevs.length / 2)]!;
+        if (kMad > 1e-12) {
+          kappaProxim = Math.exp(-Math.abs(input.kappaAtExit - 64) / kMad);
         } else {
           kappaProxim = 1 - Math.tanh(Math.abs(input.kappaAtExit - 64));
         }
