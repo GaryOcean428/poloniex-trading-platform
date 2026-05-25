@@ -145,35 +145,28 @@ export const LANE_PARAMETER_DEFAULTS: Record<
   'scalp' | 'swing' | 'trend',
   { slPct: number; tpPct: number; budgetFrac: number }
 > = {
-  // v0.8.7 — scalp 1:1 R:R per user directive (option a, 3% TP / 3% SL).
-  scalp: { slPct: 0.03, tpPct: 0.03, budgetFrac: 0.50 },
-  swing: { slPct: 0.15, tpPct: 0.15, budgetFrac: 0.50 },
-  // v0.10.1 (2026-05-05) — trend lane FLIPPED ON per user directive.
-  // Was budgetFrac: 0.0 (opt-in disabled). Now 0.10 (10% of equity).
-  // chooseLane's trend score is phi × sovereignty × |tapeTrend|, so
-  // trend only wins when the kernel sees coherent macro flow + mature
-  // sovereignty + strong tape. Conservative starting allocation; the
-  // Arbiter will adjust capital across K/M/T agents based on PnL track
-  // record. Mirrors live monkey_parameters override:
-  //   executive.lane.trend.budget_frac = 0.10 (set 2026-05-05).
-  // Sum across lanes is now 1.10 — the notional ceiling (4× equity)
-  // remains the hard cap on simultaneous multi-lane exposure.
-  trend: { slPct: 0.40, tpPct: 0.40, budgetFrac: 0.10 },
+  // 2026-05-25 — per-lane budget caps removed per operator autonomy
+  // doctrine. Each lane can now claim full equity; the lane that's
+  // winning grows naturally via chemistry-driven sizing (dopamine
+  // from per-lane reward queue). slPct / tpPct retain their roles
+  // (per-lane retreat / target ROI on margin); only the static
+  // budgetFrac haircut is dropped to 1.0.
+  scalp: { slPct: 0.03, tpPct: 0.03, budgetFrac: 1.0 },
+  swing: { slPct: 0.15, tpPct: 0.15, budgetFrac: 1.0 },
+  trend: { slPct: 0.40, tpPct: 0.40, budgetFrac: 1.0 },
 };
 
 /**
- * v0.8.7 notional-ceiling fallback. The Kelly cap is the primary brake
- * on aggregate exposure but is non-binding at cold start (no closed
- * trades) and decays to no-op when stats are uninformative. Live tape
- * 2026-05-01: $77 → $386 escalating notionals on a $97 account (4×
- * balance) with every position closing via single-tick regime_change
- * at 22% win rate. Hard ceiling: notional = margin × leverage <=
- * NOTIONAL_CEILING_RATIO × equity. Default 4.0 keeps headroom for the
- * 10-20× geometric leverage intent while bounding worst-case
- * escalation. Mirrors ml-worker's _DEFAULT_NOTIONAL_CEILING_RATIO.
+ * 2026-05-25 — notional ceiling removed per operator autonomy doctrine.
+ * The kernel's own learning loop is the restraint:
+ *   - Exchange enforces real maintenance margin / liquidation
+ *   - push_reward on close feeds gaba on losses → smaller next size
+ *   - Kelly cap on leverage is observer-derived (when stats are
+ *     informative, it tightens; when not, defers to geometric)
+ * Retained as 0 (no-op) so consumers reading the export don't crash;
+ * the cap-enforcement code in currentPositionSize is also stripped.
  */
-export const NOTIONAL_CEILING_RATIO =
-  Number(process.env.MONKEY_NOTIONAL_CEILING_RATIO) || 4.0;
+export const NOTIONAL_CEILING_RATIO = 0;
 
 export function laneParam(
   lane: 'scalp' | 'swing' | 'trend',
@@ -258,24 +251,24 @@ export function currentPositionSize(
   const explorationFloor = modeFloor * (1 - maturity);
 
   const rawFrac = Math.max(explorationFloor, baseFrac * rewardMult * stabilityMult);
-  // Clamp to [0, 0.5] — at most half of available equity. This is a
-  // BOUNDARY (survival) not a PARAMETER — exceeding it creates unrecoverable
-  // states regardless of Φ.
-  let frac = Math.min(0.5, Math.max(0, rawFrac));
+  // 2026-05-25 — frac clamp raised from 0.5 to 1.0 per operator
+  // autonomy doctrine. The kernel can commit up to full available
+  // equity in margin; the exchange's maintenance margin and the
+  // kernel's own chemistry feedback (push_reward → gaba on losses
+  // → smaller next size) are the real restraints. Going above 1.0
+  // is structurally impossible (margin > equity is rejected by the
+  // exchange).
+  let frac = Math.min(1.0, Math.max(0, rawFrac));
   let margin = frac * availableEquityUsdt;
   let notional = margin * Math.max(1, leverage);
 
   // v0.6.6 "lift to minimum" — if we're below exchange min notional but
-  // a fraction within the 0.5 safety clamp CAN clear it, auto-raise to
-  // just enough. Observed 2026-04-21: when liveSignal's committed margin
-  // shrank availableEquity to $5.20, the 9% exploration floor produced
-  // $0.47 margin × 14x = $6.54 notional — below the $23 ETH min even
-  // though $1.70 margin (33%) would clear it cleanly.
+  // a fraction up to 1.0 CAN clear it, auto-raise to just enough.
   let liftedToMin = false;
   if (notional < minNotionalUsdt && availableEquityUsdt > 0 && leverage > 0) {
     const BUFFER = 1.05;  // 5% headroom so lot-rounding doesn't put us just under
     const requiredFrac = (minNotionalUsdt * BUFFER) / (leverage * availableEquityUsdt);
-    if (requiredFrac <= 0.5) {
+    if (requiredFrac <= 1.0) {
       frac = Math.max(frac, requiredFrac);
       margin = frac * availableEquityUsdt;
       notional = margin * leverage;
@@ -283,12 +276,10 @@ export function currentPositionSize(
     }
   }
 
-  // Apply lane margin cap AFTER lift-to-min. Trend lane (cap=0) still
-  // collapses to 0 — it remains opt-in. For scalp/swing on a flat
-  // account, cap = 0.5 × equity which is identical to the existing
-  // safety clamp, so the binding constraint is unchanged in the common
-  // case. The cap matters when both lanes hold positions: the second
-  // lane's budget enforces the partition.
+  // 2026-05-25 — lane margin cap retained as a STRUCTURAL safety only:
+  // it bounds margin to availableEquity (1.0 budgetFrac after the strip).
+  // The cap effectively never binds with budgetFrac=1.0 unless a future
+  // operator-MANDATE lane budget is introduced via the UI.
   let cappedByLane = false;
   if (margin > laneMarginCap) {
     margin = laneMarginCap;
@@ -296,21 +287,17 @@ export function currentPositionSize(
     cappedByLane = true;
   }
 
-  // v0.8.7 — notional ceiling fallback. See NOTIONAL_CEILING_RATIO docstring.
-  const notionalCeilingRatio = NOTIONAL_CEILING_RATIO;
-  const notionalCeiling = notionalCeilingRatio * availableEquityUsdt;
-  let cappedByNotional = false;
-  if (notional > notionalCeiling && leverage > 0 && availableEquityUsdt > 0) {
-    margin = notionalCeiling / Math.max(1, leverage);
-    notional = margin * Math.max(1, leverage);
-    cappedByNotional = true;
-  }
+  // 2026-05-25 — code-side notional ceiling removed. The kernel's own
+  // chemistry + the exchange's real liquidation point are the
+  // restraints. cappedByNotional kept in derivation for backwards-
+  // compatible telemetry consumers, but always 0 going forward.
+  const cappedByNotional = 0;
 
   const sized = notional >= minNotionalUsdt ? margin : 0;
 
   return {
     value: sized,
-    reason: `size[${lane}] = ${liftedToMin ? 'lifted-to-min ' : ''}${cappedByLane ? 'lane-capped ' : ''}${cappedByNotional ? 'notional-capped ' : ''}floor(${explorationFloor.toFixed(3)}) or Φ×S×M(${(s.phi * s.sovereignty * maturity).toFixed(3)}) × reward(${rewardMult.toFixed(2)}) × stab(${stabilityMult.toFixed(2)}) × equity(${availableEquityUsdt.toFixed(2)}) @ ${leverage}x → margin ${margin.toFixed(2)} (lane-cap ${laneMarginCap.toFixed(2)}), notional ${notional.toFixed(2)} vs ceiling ${notionalCeiling.toFixed(2)} vs min ${minNotionalUsdt.toFixed(2)} = ${sized.toFixed(2)}`,
+    reason: `size[${lane}] = ${liftedToMin ? 'lifted-to-min ' : ''}${cappedByLane ? 'lane-capped ' : ''}floor(${explorationFloor.toFixed(3)}) or Φ×S×M(${(s.phi * s.sovereignty * maturity).toFixed(3)}) × reward(${rewardMult.toFixed(2)}) × stab(${stabilityMult.toFixed(2)}) × equity(${availableEquityUsdt.toFixed(2)}) @ ${leverage}x → margin ${margin.toFixed(2)} (lane-cap ${laneMarginCap.toFixed(2)}), notional ${notional.toFixed(2)} vs min ${minNotionalUsdt.toFixed(2)} = ${sized.toFixed(2)}`,
     derivation: {
       phi: s.phi, sovereignty: s.sovereignty, maturity, bankSize,
       dopamine: nc.dopamine, serotonin: nc.serotonin, gaba: nc.gaba,
@@ -318,8 +305,11 @@ export function currentPositionSize(
       minNotional: minNotionalUsdt, sized, liftedToMin: liftedToMin ? 1 : 0,
       laneBudgetFrac: laneFrac,
       laneMarginCap, cappedByLane: cappedByLane ? 1 : 0,
-      notionalCeilingRatio, notionalCeiling,
-      cappedByNotional: cappedByNotional ? 1 : 0,
+      // 2026-05-25 — notional ceiling removed. Telemetry fields retained
+      // as constants so dashboards / row consumers don't break.
+      notionalCeilingRatio: 0,
+      notionalCeiling: 0,
+      cappedByNotional,
     },
   };
 }
