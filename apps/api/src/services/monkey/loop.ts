@@ -7836,19 +7836,85 @@ export class MonkeyKernel extends EventEmitter {
     const pnlFrac = input.marginUsdt > 0
       ? input.realizedPnlUsdt / input.marginUsdt
       : 0;
-    // Dopamine: positive only, saturates at 3× margin win (pnlFrac ≥ 3).
-    // Scales by tanh so losses don't punish via dopamine (that path is
-    // self_observation's job).
+
+    // 2026-05-25 (observer-derive PR) — replaces magic input scales
+    // (1.5×, 0.5×, 2×, /10) with observer-derived normalization against
+    // the kernel's own rolling reward + κ distributions. Same MAPPING
+    // shape (tanh); same OUTPUT CAPS (which are STRUCTURAL design
+    // choices documented below); only the SCALES adapt to observed
+    // distributions.
+    //
+    // Output caps (structural):
+    //   - Dopamine cap 0.5 — biggest signal because dopamine directly
+    //     drives reward learning (rewardMult in sizing).
+    //   - Endorphin cap 0.3 — peak-state reward, smaller than dopamine
+    //     so it doesn't dominate the chemistry mix; gated by κ-proximity.
+    //   - Serotonin cap 0.15 — smallest because serotonin is the
+    //     slow-mood-shift signal, not the per-event reward.
+    //   - Loss mood-dip cap 0.1 — much smaller than the win-side dop
+    //     cap so losses don't punish via dopamine (self_observation
+    //     owns loss-side learning; chemistry treats losses as small mood
+    //     dips, not punishments).
+    //
+    // pnlFrac z-score: normalize against the rolling distribution of
+    // recent pnlFractions. "Above-average win for this kernel" produces
+    // proportionally more dopamine; absolute pnlFrac scale becomes
+    // adaptive to the kernel's observed volatility regime.
+    const PNL_STDDEV_MIN_SAMPLES = 5;
+    let pnlFracNormalized: number = pnlFrac;
+    if (this.pendingRewards.length >= PNL_STDDEV_MIN_SAMPLES) {
+      let sum = 0;
+      for (const r of this.pendingRewards) sum += r.pnlFraction;
+      const mean = sum / this.pendingRewards.length;
+      let sq = 0;
+      for (const r of this.pendingRewards) {
+        const d = r.pnlFraction - mean;
+        sq += d * d;
+      }
+      const stddev = Math.sqrt(sq / Math.max(this.pendingRewards.length - 1, 1));
+      if (stddev > 1e-12) {
+        pnlFracNormalized = pnlFrac / stddev;
+      }
+    }
+
     const dop = pnlFrac > 0
-      ? Math.tanh(pnlFrac * 1.5) * 0.5  // 1 % win → 0.01, 10 % → 0.07, 100 % → 0.45
-      : -Math.tanh(-pnlFrac * 0.5) * 0.1;  // small mood dip on loss
-    // Serotonin: stable wins reinforce calm. Only positive on wins.
-    const ser = pnlFrac > 0 ? Math.tanh(pnlFrac) * 0.15 : 0;
-    // Endorphins: peak-state reward. Fires if closed near κ* with a win.
-    const kappaProxim = input.kappaAtExit != null
-      ? Math.exp(-Math.abs(input.kappaAtExit - 64) / 10)
-      : 0.5;
-    const endo = pnlFrac > 0 ? Math.tanh(pnlFrac * 2) * 0.3 * kappaProxim : 0;
+      ? Math.tanh(pnlFracNormalized) * 0.5
+      : -Math.tanh(-pnlFracNormalized) * 0.1;
+    const ser = pnlFrac > 0 ? Math.tanh(pnlFracNormalized) * 0.15 : 0;
+
+    // κ-proximity width: observer-derived from the rolling distribution
+    // of kappaAtExit values across recent rewards. Replaces the magic
+    // `/10` decay width. When stats are insufficient, falls back to a
+    // bounded identity on κ-distance (tanh-squashed).
+    let kappaProxim: number;
+    if (input.kappaAtExit == null) {
+      kappaProxim = 0.5;
+    } else {
+      const kappaHistory: number[] = [];
+      for (const r of this.pendingRewards) {
+        const k = (r as { kappaAtExit?: number }).kappaAtExit;
+        if (typeof k === 'number' && Number.isFinite(k)) kappaHistory.push(k);
+      }
+      if (kappaHistory.length >= PNL_STDDEV_MIN_SAMPLES) {
+        let kSum = 0;
+        for (const k of kappaHistory) kSum += k;
+        const kMean = kSum / kappaHistory.length;
+        let kSq = 0;
+        for (const k of kappaHistory) {
+          const d = k - kMean;
+          kSq += d * d;
+        }
+        const kStddev = Math.sqrt(kSq / Math.max(kappaHistory.length - 1, 1));
+        if (kStddev > 1e-12) {
+          kappaProxim = Math.exp(-Math.abs(input.kappaAtExit - 64) / kStddev);
+        } else {
+          kappaProxim = 1 - Math.tanh(Math.abs(input.kappaAtExit - 64));
+        }
+      } else {
+        kappaProxim = 1 - Math.tanh(Math.abs(input.kappaAtExit - 64));
+      }
+    }
+    const endo = pnlFrac > 0 ? Math.tanh(pnlFracNormalized) * 0.3 * kappaProxim : 0;
 
     this.pendingRewards.push({
       source: input.source,
