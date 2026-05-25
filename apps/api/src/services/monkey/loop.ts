@@ -5965,7 +5965,7 @@ export class MonkeyKernel extends EventEmitter {
         recentHarvests: recentPnls.length,
       });
 
-      if (isMonkeyPaperMode()) {
+      if (this.shouldRouteOrdersToPaper()) {
         let lPaperRealizedPnl = 0;
         let lPaperRealizedQty = 0;
         try {
@@ -6244,7 +6244,7 @@ export class MonkeyKernel extends EventEmitter {
   }): Promise<{ executed: boolean; orderId: string | null; reason: string }> {
     const { symbol, tradeId, heldSide, markPrice, exitReason, pnlAtDecision } = req;
     const closeLane = req.lane;
-    if (isMonkeyPaperMode()) {
+    if (this.shouldRouteOrdersToPaper()) {
       if (!Number.isFinite(markPrice) || markPrice <= 0) {
         logger.warn('[Monkey] paper mode invalid mark price, skipping close', {
           symbol,
@@ -7224,7 +7224,7 @@ export class MonkeyKernel extends EventEmitter {
       );
       userId = String((userRow.rows[0] as { user_id?: string } | undefined)?.user_id ?? '');
       if (!userId) {
-        if (isMonkeyPaperMode()) {
+        if (this.shouldRouteOrdersToPaper()) {
           // Paper mode — resolve a user_id that satisfies the
           // autonomous_trades.user_id → users(id) foreign key. Prefer
           // any existing user; on a fresh paper/staging DB (empty
@@ -7257,7 +7257,7 @@ export class MonkeyKernel extends EventEmitter {
           return { executed: false, orderId: null, reason: 'no_credentials' };
         }
       }
-      if (isMonkeyPaperMode()) {
+      if (this.shouldRouteOrdersToPaper()) {
         // Paper mode — synthetic risk-kernel state at the paper
         // bankroll, no exchange call. Equity matches what the sizing
         // path (fetchAccountContext) used, so the risk kernel's
@@ -7417,7 +7417,7 @@ export class MonkeyKernel extends EventEmitter {
         ? (req.side === 'long' ? 'LONG' : 'SHORT')
         : undefined;
 
-    if (isMonkeyPaperMode()) {
+    if (this.shouldRouteOrdersToPaper()) {
       if (!Number.isFinite(entryPrice) || entryPrice <= 0) {
         logger.warn('[Monkey] paper mode invalid mark price, skipping entry', {
           symbol,
@@ -7925,6 +7925,20 @@ export class MonkeyKernel extends EventEmitter {
   }
 
   /**
+   * Decide whether placeOrder calls should route to the paper simulator
+   * instead of the real exchange. Two paths reach this:
+   *   1. The global `MONKEY_PAPER_MODE=true` env (back-compat, applies
+   *      to ALL kernels — used historically for whole-kernel dry runs).
+   *   2. This kernel's rotation state has been demoted to 'paper'
+   *      (per-kernel paper rotation, PR #921 scaffold).
+   * Either path routes the same way through `paperPlaceOrder`, so the
+   * downstream code is unchanged.
+   */
+  private shouldRouteOrdersToPaper(): boolean {
+    return isMonkeyPaperMode() || this.rotation.mode === 'paper';
+  }
+
+  /**
    * Sum recent rewards with exponential time-decay. Called each tick by
    * processSymbol to build the NeurochemicalInputs reward deltas.
    * Half-life = REWARD_HALF_LIFE_MS (20 min default). Old rewards decay
@@ -8199,7 +8213,7 @@ export class MonkeyKernel extends EventEmitter {
     // notionals so the kernel can size + place paper trades. The
     // kernel's paper positions live in autonomous_trades (read via
     // findOpenMonkeyTrade), so a null exchange heldSide here is correct.
-    if (isMonkeyPaperMode()) {
+    if (this.shouldRouteOrdersToPaper()) {
       const paperEquity = Number(process.env.MONKEY_PAPER_EQUITY_USDT) || 1000;
       return {
         equityFraction: Math.min(1, paperEquity / 27.15),
