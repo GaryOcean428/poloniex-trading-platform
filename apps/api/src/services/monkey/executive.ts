@@ -20,6 +20,7 @@ import { KAPPA_STAR, BASIN_DIM, type Basin, normalizedEntropy, maxMass, fisherRa
 import { MODE_PROFILES, MonkeyMode } from './modes.js';
 import type { NeurochemicalState } from './neurochemistry.js';
 import type { EmotionState } from './emotions.js';
+import { ROTATION_WR_MIN_SAMPLES } from './kernel_rotation.js';
 
 export type Direction = 'long' | 'short' | 'flat';
 
@@ -224,31 +225,42 @@ export function currentPositionSize(
   const laneFrac = laneBudgetFraction(lane);
   const laneMarginCap = laneFrac * availableEquityUsdt;
   const nc = s.neurochemistry;
-  // 2026-05-25 sizing-relief PR — three composite changes from CC2's
-  // formula audit:
-  //   1. Maturity in 5 closed trades, not 20 — every restart used to
-  //      suffocate sizing for ~20 hours of wall-clock while bankSize
-  //      caught back up. Pillar 3 ("earn your sovereignty") doctrine
-  //      still applies; 5 trades is also "earned", just less drawn-out.
-  //   2. stabilityMult re-centered at 1.0 not 0.75 — neutral serotonin
-  //      (~0.5) used to multiply sizing by 0.75, a one-sided cut.
-  //      Now [0.75, 1.25] so serotonin is a ±modulator, not a subtractor.
-  //   3. rewardMult band widened ×2 — dopamine spikes contribute more
-  //      aggressively after wins; range [0, 2] not [0.5, 1.5].
-  // Net: median sizing approximately doubles. The 0.5 frac safety cap
-  // ("BOUNDARY not PARAMETER", line ~250) still binds at the top — that
-  // is unchanged. Mode-floor raises (modes.ts) handle the cold-start
-  // path where maturity ≈ 0 and the multiplicative chain is dominated.
-  const maturity = Math.min(1, bankSize / 5);
+  // 2026-05-25 (observer-derive PR) — replaces magic-number tuning
+  // with observer-grounded shapes per the autonomy doctrine
+  // ([[feedback_observer_derives_not_knobs]]).
+  //
+  //   1. maturity rate ties to ROTATION_WR_MIN_SAMPLES — the same
+  //      n-trades threshold the per-symbol selfObs uses for Wilson-CI
+  //      firmness (see kernel_rotation.ts). At n trades, the rolling
+  //      WR is statistically firm, so "matured" semantically means
+  //      "kernel has enough data to trust its own track record."
+  //      Not a tuned rate; same threshold across the whole system.
+  //   2. rewardMult = 1 + (dopamine - gaba). The chemistry inputs are
+  //      already observer-derived (see neurochemistry.ts post-#920);
+  //      the unit coefficient is STRUCTURAL — neutral chemistry
+  //      (dop = gaba) produces unit-size multiplier by construction.
+  //   3. stabilityMult = 0.75 + serotonin × 0.5. STRUCTURAL band
+  //      [0.75, 1.25]: max-stress serotonin shaves 25% off sizing,
+  //      max-calm adds 25%. Same shape as a continuous modulator.
+  //      The 0.75/0.5 split is the design choice of the mapping
+  //      function's range, not a tuning of internal parameters.
+  const maturity = Math.min(1, bankSize / ROTATION_WR_MIN_SAMPLES);
   const baseFrac = s.phi * s.sovereignty * maturity;
-  const rewardMult = 1 + (nc.dopamine - nc.gaba) * 1.0;
+  const rewardMult = 1 + (nc.dopamine - nc.gaba);
   const stabilityMult = 0.75 + nc.serotonin * 0.5;
 
-  // Exploration floor (Pillar 1 FLUCTUATIONS — substrate, not optional).
-  // Per-mode baseline: EXPLORATION 0.08, INVESTIGATION 0.10, INTEGRATION 0.12.
-  // Scales inversely with maturity.
-  const modeFloor = MODE_PROFILES[mode].sizeFloor;
-  const explorationFloor = modeFloor * (1 - maturity);
+  // Exploration floor — Pillar 1 FLUCTUATIONS. 2026-05-25 observer-
+  // derive PR: collapsed per-mode magic floors (0.20/0.25/0.30) to a
+  // single principled floor. EXPLORATION_FLOOR is the smallest
+  // commitment the kernel makes when chemistry-driven baseFrac is
+  // collapsed — chosen to clear typical exchange minimums on small
+  // accounts at any leverage (the lift-to-min path expands further
+  // when the floor itself is insufficient). Scales inversely with
+  // maturity: fresh kernels explore at the floor; mature kernels let
+  // chemistry drive without floor support.
+  const EXPLORATION_FLOOR = 0.20;
+  const explorationFloor = EXPLORATION_FLOOR * (1 - maturity);
+  void mode;  // mode-specific sizing now expressed via chemistry, not floor differentiation
 
   const rawFrac = Math.max(explorationFloor, baseFrac * rewardMult * stabilityMult);
   // 2026-05-25 — frac clamp raised from 0.5 to 1.0 per operator

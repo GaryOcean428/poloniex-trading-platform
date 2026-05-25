@@ -60,10 +60,12 @@ describe('MODE_PROFILES sizeFloor — Layer 1 relief', () => {
 });
 
 describe('currentPositionSize cold-start (bankSize=0)', () => {
-  it('INVESTIGATION cold-start uses the 0.25 floor on full equity', () => {
-    // Direct call with availableEquity = $100, no per-kernel/per-lane
-    // reductions baked in here. Pre-PR: explorationFloor = 0.10 × 1
-    // = 0.10 → margin $10. Post-PR: 0.25 × 1 = 0.25 → margin $25.
+  it('cold-start floor is the unified EXPLORATION_FLOOR (0.20) across all modes (was per-mode 0.20/0.25/0.30)', () => {
+    // 2026-05-25 observer-derive PR: per-mode magic floors removed in
+    // favor of a single principled floor. baseFrac = 0.6 × 0.8 × 0
+    // (maturity=0 at bankSize=0) = 0; explorationFloor = 0.20 × 1 = 0.20.
+    // margin = 0.20 × $100 = $20, but the notional ceiling has been
+    // stripped so frac sticks at 0.20.
     const out = currentPositionSize(
       basinState(),
       /* availableEquityUsdt */ 100,
@@ -73,26 +75,34 @@ describe('currentPositionSize cold-start (bankSize=0)', () => {
       MonkeyMode.INVESTIGATION,
       /* lane */ 'swing',
     );
-    expect(out.value).toBeCloseTo(25, 1);
-    expect(out.derivation.explorationFloor).toBeCloseTo(0.25, 6);
+    expect(out.derivation.explorationFloor).toBeCloseTo(0.20, 6);
   });
 
-  it('EXPLORATION cold-start uses the 0.20 floor', () => {
+  it('explorationFloor is identical across modes (no per-mode differentiation)', () => {
+    const exp = currentPositionSize(basinState(), 100, 5, 10, 0, MonkeyMode.EXPLORATION, 'swing');
+    const inv = currentPositionSize(basinState(), 100, 5, 10, 0, MonkeyMode.INVESTIGATION, 'swing');
+    const int_ = currentPositionSize(basinState(), 100, 5, 10, 0, MonkeyMode.INTEGRATION, 'swing');
+    expect(exp.derivation.explorationFloor).toBeCloseTo(0.20, 6);
+    expect(inv.derivation.explorationFloor).toBeCloseTo(0.20, 6);
+    expect(int_.derivation.explorationFloor).toBeCloseTo(0.20, 6);
+  });
+});
+
+describe('currentPositionSize maturity ramp', () => {
+  it('reaches full maturity at bankSize=ROTATION_WR_MIN_SAMPLES=10 (Wilson-CI firmness threshold)', () => {
     const out = currentPositionSize(
       basinState(),
       100,
       5,
       10,
-      0,
-      MonkeyMode.EXPLORATION,
+      /* bankSize */ 10,
+      MonkeyMode.INVESTIGATION,
       'swing',
     );
-    expect(out.derivation.explorationFloor).toBeCloseTo(0.20, 6);
+    expect(out.derivation.maturity).toBe(1);
   });
-});
 
-describe('currentPositionSize maturity ramp', () => {
-  it('reaches full maturity at bankSize=5 (was bankSize=20)', () => {
+  it('maturity is observer-derived (bankSize/10) — bankSize=5 yields 0.5', () => {
     const out = currentPositionSize(
       basinState(),
       100,
@@ -102,20 +112,8 @@ describe('currentPositionSize maturity ramp', () => {
       MonkeyMode.INVESTIGATION,
       'swing',
     );
-    expect(out.derivation.maturity).toBe(1);
-  });
-
-  it('maturity grows 4× faster — bankSize=2 yields 0.4 maturity', () => {
-    const out = currentPositionSize(
-      basinState(),
-      100,
-      5,
-      10,
-      /* bankSize */ 2,
-      MonkeyMode.INVESTIGATION,
-      'swing',
-    );
-    expect(out.derivation.maturity).toBeCloseTo(0.4, 6);
+    // 2026-05-25 observer-derive PR: maturity = bankSize/10 = 0.5
+    expect(out.derivation.maturity).toBeCloseTo(0.5, 6);
   });
 });
 
