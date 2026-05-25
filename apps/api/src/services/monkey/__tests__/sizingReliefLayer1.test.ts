@@ -123,9 +123,11 @@ describe('currentPositionSize stability multiplier re-centered', () => {
   it('neutral serotonin (0.5) yields stabilityMult ≈ 1.0 — was 0.75', () => {
     // Mature kernel, neutral chemistry, full sov, Φ=0.6: baseFrac =
     // 0.6 × 1 × 1 = 0.6, rewardMult = 1.0, stabilityMult = 1.0,
-    // product 0.6 — hits the 0.5 frac safety cap. margin = $50, but
-    // the 4× notional ceiling at 10x lev binds to $40 (notional $400
-    // = 4× $100 equity). Pre-PR same scenario clustered at ~$33.
+    // product 0.6. Post-strip (2026-05-25): frac clamp is 1.0 not 0.5,
+    // lane budgetFrac is 1.0 not 0.5, notional ceiling removed. So
+    // frac = 0.6 directly → margin = $60. The only restraint is the
+    // exchange-enforced margin requirement; the kernel commits 60%
+    // of equity at chemistry-fired sizing.
     const out = currentPositionSize(
       basinState(1.0, 0.6),
       100,
@@ -135,10 +137,8 @@ describe('currentPositionSize stability multiplier re-centered', () => {
       MonkeyMode.INVESTIGATION,
       'swing',
     );
-    expect(out.derivation.frac).toBe(0.5);
-    // Final margin clamped by notional ceiling, not by frac.
-    expect(out.value).toBeCloseTo(40, 1);
-    expect(out.derivation.cappedByNotional).toBe(1);
+    expect(out.derivation.frac).toBeCloseTo(0.6, 6);
+    expect(out.value).toBeCloseTo(60, 1);
   });
 
   it('low serotonin (0.0) still produces 0.75 floor, not 0.5', () => {
@@ -160,12 +160,13 @@ describe('currentPositionSize stability multiplier re-centered', () => {
 
 describe('currentPositionSize reward multiplier widened band', () => {
   it('dopamine spike (dop=1, gaba=0) hits high rewardMult', () => {
-    // rewardMult = 1 + (1 - 0) × 1.0 = 2.0 (was 1.5 pre-PR).
-    // baseFrac × 2.0 saturates the 0.5 cap rapidly.
+    // rewardMult = 1 + (1 - 0) × 1.0 = 2.0. baseFrac × 2.0 × stabilityMult
+    // = 0.6 × 2.0 × 1.0 = 1.2, clamped at 1.0 (post-strip cap). The
+    // kernel commits full equity on peak conviction.
     const state = basinState(1.0, 0.6);
     state.neurochemistry = { ...NEUTRAL_NC, dopamine: 1.0, gaba: 0.0, serotonin: 0.5 };
     const out = currentPositionSize(state, 100, 5, 10, 20, MonkeyMode.INVESTIGATION, 'swing');
-    expect(out.derivation.frac).toBe(0.5);
+    expect(out.derivation.frac).toBe(1.0);
   });
 
   it('gaba spike (dop=0, gaba=1) pulls rewardMult to 0 — formula contributes nothing', () => {

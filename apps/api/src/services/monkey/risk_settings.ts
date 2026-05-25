@@ -41,7 +41,15 @@ export interface OperatorRiskSettings {
 
 /** Mirrors the GET /api/risk/settings route defaults. The non-leverage
  *  fields are retained for compatibility with the RiskSettings table and
- *  any telemetry consumers; the kernel only acts on `maxLeverage`. */
+ *  any telemetry consumers; the kernel only acts on `maxLeverage`.
+ *
+ *  2026-05-25 — `maxLeverage` default raised from 10 to 100 per operator
+ *  autonomy doctrine. The clampNum upper bound is 100, so this is
+ *  effectively no-op: the exchange's per-symbol maxLev becomes the only
+ *  binding ceiling when no profile is saved AND when a saved profile
+ *  has null/missing max_leverage. The operator can still set a real
+ *  ceiling via the UI; that explicit-set value MANDATEs down.
+ */
 export const DEFAULT_RISK_SETTINGS: OperatorRiskSettings = {
   maxDrawdown: 15,
   maxPositionSize: 5,
@@ -49,7 +57,7 @@ export const DEFAULT_RISK_SETTINGS: OperatorRiskSettings = {
   stopLoss: 2,
   takeProfit: 4,
   dailyLossLimit: 5,
-  maxLeverage: 10,
+  maxLeverage: 100,
   riskLevel: 'moderate',
 };
 

@@ -73,14 +73,16 @@ describe('Lane parameter envelope (proposal #10)', () => {
     expect(sl).toBeLessThanOrEqual(0.60);
   });
 
-  it('scalp + swing budgets sum to 1', () => {
-    expect(
-      laneBudgetFraction('scalp') + laneBudgetFraction('swing'),
-    ).toBeCloseTo(1.0, 9);
+  it('scalp budget is 1.0 (2026-05-25: per-lane caps stripped)', () => {
+    expect(laneBudgetFraction('scalp')).toBe(1.0);
   });
 
-  it('trend budget at 0.10 (live since 2026-05-05 — was 0 opt-in)', () => {
-    expect(laneBudgetFraction('trend')).toBe(0.10);
+  it('swing budget is 1.0 (2026-05-25: per-lane caps stripped)', () => {
+    expect(laneBudgetFraction('swing')).toBe(1.0);
+  });
+
+  it('trend budget is 1.0 (2026-05-25: per-lane caps stripped, was 0.10)', () => {
+    expect(laneBudgetFraction('trend')).toBe(1.0);
   });
 
   it('observe budget is 0', () => {
@@ -94,12 +96,12 @@ describe('Lane parameter envelope (proposal #10)', () => {
 
 
 describe('currentPositionSize lane-budget cap (post fix/lane-budget-size-zero-regression)', () => {
-  it('threads lane and lane budget into derivation', () => {
+  it('threads lane and lane budget into derivation (2026-05-25: all lanes now 1.0)', () => {
     const result = currentPositionSize(
       basinState(0.5), 200, 1, 5, 10, MonkeyMode.INVESTIGATION, 'swing',
     );
-    expect(result.derivation.laneBudgetFrac).toBeCloseTo(0.5, 9);
-    expect(result.derivation.laneMarginCap).toBeCloseTo(0.5 * 200, 6);
+    expect(result.derivation.laneBudgetFrac).toBeCloseTo(1.0, 9);
+    expect(result.derivation.laneMarginCap).toBeCloseTo(1.0 * 200, 6);
   });
 
   it('scalp + swing both at default 0.5 produce comparable margins', () => {
@@ -345,21 +347,21 @@ describe('Flat-account sizing regression (fix/lane-budget-size-zero-regression)'
     expect(notional).toBeGreaterThanOrEqual(75.78);
   });
 
-  it('small account ($5 equity) — notional ceiling now blocks below-ceiling-min entry', () => {
-    // Pre-fix (PR #614): equity halved to $2.50 → no lift → size=0.
-    // PR #614 fix: full $5 → required_frac=0.337 → lift fires → size > 0.
-    // v0.8.7: notional ceiling = 4 × $5 = $20 < $22.49 min → size=0
-    // again, but for the right reason. The kernel correctly refuses to
-    // size above 4× balance just to clear exchange min on a haircut
-    // account — live tape ($97 → $386 escalation) confirmed unbounded
-    // lift-to-min was unsafe.
+  it('small account ($5 equity) — lift-to-min now reaches min notional (notional ceiling removed)', () => {
+    // 2026-05-25 strip: notional ceiling removed. On a $5 account
+    // wanting to clear a $22.49 min at 14x lev, requiredFrac = 22.49 ×
+    // 1.05 / (14 × 5) = 0.337. Post-strip the lift-to-min path allows
+    // requiredFrac ≤ 1.0, so the lift fires and the kernel commits
+    // ~$1.69 margin to clear the exchange minimum. Pre-strip this
+    // would have been blocked by the 4× notional ceiling ($20 < $22.49).
     const result = currentPositionSize(
       basinState(0.55, 0.5), 5, 22.49, 14, 0, MonkeyMode.INVESTIGATION, 'swing',
     );
-    expect(result.value).toBe(0);
-    expect((result.derivation as Record<string, unknown>).cappedByNotional).toBe(1);
-    // Lift-to-min still tried; ceiling clamps it back.
+    expect(result.value).toBeGreaterThan(0);
     expect((result.derivation as Record<string, unknown>).liftedToMin).toBe(1);
+    // Verify notional clears the exchange minimum.
+    const notional = result.value * 14;
+    expect(notional).toBeGreaterThanOrEqual(22.49);
   });
 
   it('cold-start (bank=0, sovereignty=0, low phi) still sizes via exploration floor', () => {
@@ -371,24 +373,24 @@ describe('Flat-account sizing regression (fix/lane-budget-size-zero-regression)'
     expect(notional).toBeGreaterThanOrEqual(22.49);
   });
 
-  it('trend lane sizes within its 10% budget cap (live since 2026-05-05)', () => {
-    // Was: budget=0 → collapses to 0 (opt-in promise). Now: budget=0.10
-    // → margin cap is 10% of equity. The structural-zero fallback in
-    // chooseLane no longer triggers for trend.
+  it('trend lane sizes against full equity (2026-05-25 strip)', () => {
+    // Pre-strip: budget=0.10 capped trend at 10% of equity. Post-strip:
+    // budget=1.0 — trend can use full equity like scalp/swing. The
+    // kernel's own chemistry feedback is the differentiator, not a
+    // static lane cap.
     const equity = 1000;
     const result = currentPositionSize(
       basinState(0.55, 0.5), equity, 22.49, 14, 20, MonkeyMode.INVESTIGATION, 'trend',
     );
-    expect(result.derivation.laneMarginCap).toBeCloseTo(equity * 0.10, 6);
+    expect(result.derivation.laneMarginCap).toBeCloseTo(equity * 1.0, 6);
     expect(result.value).toBeGreaterThan(0);
-    expect(result.value).toBeLessThanOrEqual(equity * 0.10 + 1e-6);
   });
 
   it('lane margin cap surfaces in derivation', () => {
     const result = currentPositionSize(
       basinState(0.5), 200, 1, 5, 10, MonkeyMode.INVESTIGATION, 'swing',
     );
-    expect(result.derivation.laneMarginCap).toBeCloseTo(100, 6);
+    expect(result.derivation.laneMarginCap).toBeCloseTo(200, 6);
   });
 
   it('scalp and swing report identical caps when budgets match', () => {

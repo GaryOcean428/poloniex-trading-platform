@@ -2572,27 +2572,21 @@ export class MonkeyKernel extends EventEmitter {
           derivation: { ...entryThrBase.derivation, btcEntryMul, btcBeacon },
         };
     // Leverage ceiling. Exchange max-lev (typically 75× on BTC/ETH perps)
-    // is the absolute boundary, but a 2-week DB audit 2026-05-19 found
-    // higher leverage tiers are net-negative even though the bot can
-    // technically reach them:
-    //   lev=15: 306 trades, +$51.73 net  ← breadwinner
-    //   lev=14: 104 trades, -$17.64 net  (worst -$22.55)
-    //   lev=16: 170 trades, -$9.76  net
-    //   lev=18:   9 trades, -$18.02 net  (worst -$19.29)
-    //   lev=22:   9 trades, -$27.58 net  (worst -$24.49!)
-    // Above lev=15, fat-tail losses dominate the small-win edge — capital
-    // efficiency goes negative. Cap at 15 by default; operator can raise
-    // via MONKEY_MAX_LEVERAGE_CAP if intentional (e.g., scalp lane on
-    // tighter setup). Below cap, leverage choice is observer-driven per
-    // existing continuous-r regime sizing — no behavior change.
+    // 2026-05-25 — operator autonomy doctrine: code-side leverage caps
+    // removed. The kernel's own learning loop (push_reward → chemistry →
+    // size) is the restraint. A 2-week audit 2026-05-19 had found
+    // lev≥16 net-negative in the prior regime, but the kernel was
+    // running with broken sov, an empty Python reward queue, and no
+    // per-symbol bias attribution — all of which have since landed
+    // (#910/#911/#912/#913/#915). The doctrine is to let the kernel
+    // learn from fresh outcomes, not to inherit a stale ceiling. Only
+    // the exchange's per-symbol maxLev (real boundary) and the
+    // operator-set riskSettings.maxLeverage (if a profile is saved
+    // via UI — operator MANDATE) clamp now.
     const exchangeMaxLev = (await getMaxLeverage(symbol)) ?? 10;
-    const operatorMaxLev = Number(process.env.MONKEY_MAX_LEVERAGE_CAP) || 15;
-    // risk_settings.maxLeverage (RiskSettings UI) is a third ceiling when
-    // a profile is saved — it can only clamp leverage DOWN. The audited
-    // operatorMaxLev (15) still binds. No profile saved → unchanged.
     const maxLevBoundary = riskSettings
-      ? Math.min(exchangeMaxLev, operatorMaxLev, riskSettings.maxLeverage)
-      : Math.min(exchangeMaxLev, operatorMaxLev);
+      ? Math.min(exchangeMaxLev, riskSettings.maxLeverage)
+      : exchangeMaxLev;
     const precisions = await getPrecisions(symbol).catch(() => null);
     const lotSize = precisions?.lotSize ?? 0;
     const minNotional = lastPrice * Math.max(lotSize, 1e-9);
@@ -8216,15 +8210,18 @@ export class MonkeyKernel extends EventEmitter {
 //
 // Net: 0.5 × 0.5 × 0.2 = 0.05 × bank — positions ~5% of equity.
 //
-// Defaults bumped to 0.7 per kernel (combined 1.4× when same-direction).
-// CREATOR_CHOP raised in compositional_executive.ts companion change.
-// All env-tunable for operator-driven tuning per [[feedback-standing-env-flip-auth]].
+// 2026-05-25 — per-kernel sizeFraction haircut removed per operator
+// autonomy doctrine. Both kernels see full availableEquity; the
+// exchange's margin requirements + the kernel's own chemistry feedback
+// (push_reward on close → dopamine/gaba modulation) are the only
+// restraints. If both kernels try to size into the same equity, the
+// second one reads a reduced availableEquity naturally because the
+// first's margin is already committed at the broker.
 export const monkeyKernel = new MonkeyKernel({
   instanceId: 'monkey-position',
   timeframe: '15m',
   tickMs: 30_000,
   label: 'Monkey.Position',
-  sizeFraction: Number(process.env.MONKEY_POSITION_SIZE_FRACTION) || 0.7,
 });
 
 export const swingMonkey = new MonkeyKernel({
@@ -8232,7 +8229,6 @@ export const swingMonkey = new MonkeyKernel({
   timeframe: '5m',
   tickMs: 30_000,
   label: 'Monkey.Swing',
-  sizeFraction: Number(process.env.MONKEY_SWING_SIZE_FRACTION) || 0.7,
 });
 
 export const allMonkeyKernels: readonly MonkeyKernel[] = [
