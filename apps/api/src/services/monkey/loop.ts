@@ -67,6 +67,13 @@ import { computeEmotions, type EmotionState } from './emotions.js';
 import { detectMode, MODE_PROFILES, MonkeyMode } from './modes.js';
 import { computeMotivators } from './motivators.js';
 import { computeNeurochemicals, summarizeNC, type NeurochemicalState } from './neurochemistry.js';
+import {
+  makeRotationState,
+  promoteToLive,
+  recordClose as recordRotationClose,
+  rollingWinRate,
+  type RotationState,
+} from './kernel_rotation.js';
 import { isPhiLeakyEnabled, updateLeakyPhi } from './phi_integrator.js';
 import { structuralVetoMonitor } from './structural_veto_monitor.js';
 import { mlAgentDecide } from '../ml_agent/decide.js';
@@ -847,6 +854,20 @@ export class MonkeyKernel extends EventEmitter {
    *  feeds the result to computeNeurochemicals. Pantheon-style — chem
    *  levels are DERIVED, never SET. */
   private pendingRewards: ActivityReward[] = [];
+  /**
+   * Per-kernel live/paper rotation state. Tracks consecutive losses
+   * and rolling PnLs for the kernel-paper-rotation feature (the
+   * pre-cutover allocation mechanism: 5 consec losses → demote;
+   * paper WR within 10% of best live → promote). Auto-promotion +
+   * virtual position tracking land in the follow-up PR; this PR is
+   * observability-only — demotion fires a log + kernel event so the
+   * operator (or a future cross-kernel arbiter) can act on it.
+   *
+   * Doctrinally NOT an auto-halt — the kernel keeps trading after
+   * demotion unless the operator pauses it. Chemistry remains the
+   * primary feedback channel; rotation is a structural signal.
+   */
+  private rotation: RotationState = makeRotationState();
   /**
    * LIMIT_MAKER #793 (Class B #5) — pending post-only scalp orders that
    * have been placed but not yet observed as filled. Key: orderId.
@@ -7851,6 +7872,56 @@ export class MonkeyKernel extends EventEmitter {
       ser: ser.toFixed(3),
       endo: endo.toFixed(3),
     });
+
+    // 2026-05-25 — kernel-rotation tracking. Update rolling PnL window
+    // + consecutive-loss counter; if the close trips the demotion
+    // trigger (default 5 consec losses), log + emit so operator/UI/
+    // arbiter can observe. Does NOT auto-halt the kernel — chemistry
+    // is the per-tick feedback channel; rotation is a structural
+    // signal layered on top.
+    const rotationResult = recordRotationClose(this.rotation, input.realizedPnlUsdt);
+    if (rotationResult.demoted) {
+      logger.warn(`[${this.label}] kernel-rotation DEMOTED to paper`, {
+        instanceId: this.instanceId,
+        reason: rotationResult.reason,
+        rollingWinRate: rollingWinRate(this.rotation),
+        rollingTrades: this.rotation.rollingPnls.length,
+      });
+      this.bus.publish({
+        type: BusEventType.OUTCOME,
+        source: this.instanceId,
+        symbol: input.symbol,
+        payload: {
+          kind: 'kernel_rotation_demotion',
+          mode: this.rotation.mode,
+          reason: rotationResult.reason,
+          rollingWinRate: rollingWinRate(this.rotation),
+        },
+      });
+    }
+  }
+
+  /**
+   * Operator-driven re-promotion of a paper-mode kernel back to live.
+   * Resets the consecutive-loss counter so the kernel doesn't
+   * immediately re-demote on its next close. No-op if already live.
+   * Until the auto-promotion follow-up PR lands, this is the only way
+   * back to live mode.
+   */
+  promoteKernelToLive(reason: string = 'manual operator promotion'): boolean {
+    const result = promoteToLive(this.rotation, reason);
+    if (result.promoted) {
+      logger.info(`[${this.label}] kernel-rotation PROMOTED to live`, {
+        instanceId: this.instanceId,
+        reason: result.reason,
+      });
+    }
+    return result.promoted;
+  }
+
+  /** Read-only snapshot of the rotation state for telemetry / API. */
+  getRotationState(): Readonly<RotationState> {
+    return this.rotation;
   }
 
   /**
