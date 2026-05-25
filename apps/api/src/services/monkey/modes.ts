@@ -47,7 +47,15 @@ export interface ModeProfile {
   slRatio: number;
   /** Multiplier on the derived currentEntryThreshold — <1 enters easier. */
   entryThresholdScale: number;
-  /** Exploration floor override for currentPositionSize (fraction of equity). */
+  /** Exploration floor override for currentPositionSize (fraction of equity).
+   *
+   *  2026-05-25 (observer-derive PR): `currentPositionSize` no longer
+   *  reads per-mode floors — collapsed to a single principled
+   *  EXPLORATION_FLOOR (0.20) inside executive.ts. The field is retained
+   *  on the interface for any telemetry consumer that still reads it,
+   *  but the field is unused by the sizing path. Removing the field
+   *  would break external consumers; ignoring it in the formula is the
+   *  cleaner step. */
   sizeFloor: number;
   /** Newborn sovereignCap floor override for currentLeverage. */
   sovereignCapFloor: number;
