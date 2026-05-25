@@ -717,9 +717,11 @@ export function shouldProfitHarvest(
   // operator expectation: "kernels should take the small wins, fees
   // aren't a factor on this tier".
   //
-  // The default is intentionally tunable via env so the operator can
-  // dial it once the realized-PnL distribution stabilises.
-  const absPeakMinUsd = Number(process.env.MONKEY_HARVEST_ABS_PEAK_USD) || 3.0;
+  // 2026-05-25 strip — abs-USD harvest threshold dropped to 0 per
+  // operator autonomy doctrine. Every peak is considered for harvest;
+  // chemistry decides whether to lock in (peak give-back > threshold)
+  // or let it run. The $3 magic number is gone.
+  const absPeakMinUsd = 0;
   if (
     peakPnlUsdt >= absPeakMinUsd
     && currentFrac > 0
@@ -824,7 +826,10 @@ export function shouldAggregateHarvest(
     };
   }
 
-  const absPeakMinUsd = Number(process.env.MONKEY_HARVEST_AGG_PEAK_USD) || 3.0;
+  // 2026-05-25 strip — MONKEY_HARVEST_AGG_PEAK_USD env + $3 default
+  // removed. Aggregate peak with give-back triggers harvest regardless
+  // of magnitude; chemistry decides whether to act on small wins.
+  const absPeakMinUsd = 0;
 
   // Use the SAME serotonin-scaled giveback as the per-subset path so
   // the discipline is consistent across the two harvest gates.
@@ -942,7 +947,10 @@ export function shouldSlowBleedExit(args: {
   // discipline is symmetric out of the box; tune via env if the
   // realized-PnL distribution argues for it.
   const laneSL = laneParam(lane, 'slPct');
-  const absBleedUsd = Number(process.env.MONKEY_SLOW_BLEED_ABS_USD) || 3.0;
+  // 2026-05-25 strip — MONKEY_SLOW_BLEED_ABS_USD env + $3 default
+  // removed. Any negative USD with adverse tape after 60min qualifies
+  // for the abs arm; chemistry learns the right give-up threshold.
+  const absBleedUsd = 0;
   const pctArm = Math.abs(roiFrac) >= 0.5 * laneSL;
   const absArm = Math.abs(unrealizedPnlUsdt) >= absBleedUsd;
   if (!pctArm && !absArm) {
@@ -1545,10 +1553,12 @@ export function shouldExtendBracket(args: {
   const convThreshold =
     Number(process.env.MONKEY_BRACKET_EXTEND_CONV) || 0.5;
   const inProfit = currentRoiFrac > 0;
-  const minTrailRoi =
-    Number(process.env.MONKEY_BRACKET_TRAIL_MIN_ROI ?? 0.01);
-  const minTrailProfitUsdt =
-    Number(process.env.MONKEY_BRACKET_TRAIL_MIN_PROFIT_USDT ?? 0.10);
+  // 2026-05-25 strip — bracket trail minimums dropped to 0 per
+  // operator autonomy doctrine. Trail activates on any positive
+  // ROI; chemistry learns whether early trailing protects or
+  // over-tightens via push_reward feedback on close outcomes.
+  const minTrailRoi = 0;
+  const minTrailProfitUsdt = 0;
   const meaningfulProfit =
     currentRoiFrac >= minTrailRoi
     && currentPnlUsdt >= minTrailProfitUsdt;

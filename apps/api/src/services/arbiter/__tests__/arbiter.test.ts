@@ -20,15 +20,20 @@ describe('Arbiter', () => {
     expect(alloc.m).toBeCloseTo(50);
   });
 
-  it('floors at 10% even when one agent dominates', () => {
+  it('2026-05-25 strip — no floor, dominant agent can take all', () => {
+    // Pre-strip: ARBITER_MIN_SHARE_FACTOR=1.0 × adaptive 10% kept losers
+    // at 10% minimum. Post-strip: factor=0 by default, losing agent's
+    // share collapses freely. Kernel-paper-rotation feature
+    // (queued separately) will demote losers to paper rather than
+    // keep them on real capital at a floor.
     const a = new Arbiter();
     for (let i = 0; i < 50; i++) {
       a.recordSettled('K', 100);
       a.recordSettled('M', -100);
     }
     const alloc = a.allocate(100);
-    expect(alloc.m).toBeCloseTo(10, 5);
-    expect(alloc.k).toBeCloseTo(90, 5);
+    expect(alloc.k).toBeGreaterThan(50);
+    expect(alloc.m).toBeLessThanOrEqual(50);
     expect(alloc.k + alloc.m).toBeCloseTo(100);
   });
 
@@ -150,10 +155,9 @@ describe('Arbiter N-agent (proposal #6)', () => {
     expect(total).toBeCloseTo(100, 4);
   });
 
-  it('respects min-share floor with N=5', () => {
+  it('2026-05-25 strip — no min-share floor; laggards can drop to 0', () => {
     const a = new Arbiter();
     const labels = ['K', 'M', 'K2', 'K3', 'K4'];
-    // Saturate K with wins; everyone else loses.
     for (let i = 0; i < 50; i++) {
       a.recordSettled('K', 100);
       a.recordSettled('M', -100);
@@ -162,10 +166,9 @@ describe('Arbiter N-agent (proposal #6)', () => {
       a.recordSettled('K4', -100);
     }
     const m = a.allocateMany(100, labels);
-    // Each laggard must be at least the adaptive floor 0.5/5 = 0.10.
-    for (const label of labels.slice(1)) {
-      expect(m[label]).toBeGreaterThanOrEqual(0.10 * 100 - 1e-6);
-    }
+    // Winner gets the dominant share; losers can fall below the
+    // previously-mandated 10% floor. Mass still sums to total.
+    expect(m['K']).toBeGreaterThan(50);
     const total = labels.reduce((s, l) => s + (m[l] ?? 0), 0);
     expect(total).toBeCloseTo(100, 4);
   });
@@ -254,15 +257,13 @@ describe('Arbiter N-agent (proposal #6)', () => {
 });
 
 // ────────────────────────────────────────────────────────────────────────
-// ARBITER_MIN_SHARE_FACTOR env override (2026-05-16, see PR notes).
-// Lets the operator tighten the laggard floor without code change so
-// high-WR agents (L, T) can claim the capital they've earned. opts.minShare
-// STILL wins over env (env is operational tuning, opts is for tests).
+// 2026-05-25 strip — ARBITER_MIN_SHARE_FACTOR removed per operator
+// autonomy doctrine. The pre-cutover allocation pattern was
+// winner-takes-more with losers demoted to paper trading (kernel
+// paper-rotation, queued separately), NOT a laggard floor that keeps
+// losing agents alive on real capital.
 // ────────────────────────────────────────────────────────────────────────
-describe('Arbiter ARBITER_MIN_SHARE_FACTOR env override', () => {
-  // Saturated 4-agent scenario: K wins big, everyone else loses big. With
-  // adaptiveFloor = min(0.10, 0.5/4) = 0.10, factor=1.0 floors laggards
-  // at exactly 10% (10 USDT on 100). Factor scales that linearly.
+describe('Arbiter no-floor behaviour (post-2026-05-25 strip)', () => {
   const LABELS = ['K', 'M', 'T', 'L'];
 
   function seedSaturated(a: Arbiter): void {
@@ -274,182 +275,34 @@ describe('Arbiter ARBITER_MIN_SHARE_FACTOR env override', () => {
     }
   }
 
-  beforeEach(() => {
-    vi.unstubAllEnvs();
+  it('readMinShareFactor returns 0 (stripped)', () => {
+    expect(readMinShareFactor()).toBe(0);
   });
 
-  afterEach(() => {
-    vi.unstubAllEnvs();
-  });
-
-  it('factor unset → treated as 1.0 (behavior identical to today)', () => {
-    // No env stub — readMinShareFactor sees undefined.
-    expect(readMinShareFactor()).toBe(1.0);
-
-    const a = new Arbiter();
-    seedSaturated(a);
-    const m = a.allocateMany(100, LABELS);
-    // Laggards floored at exactly 10% (the existing adaptive floor).
-    for (const lab of ['M', 'T', 'L']) {
-      expect(m[lab]).toBeCloseTo(10, 5);
-    }
-    const total = LABELS.reduce((s, l) => s + (m[l] ?? 0), 0);
-    expect(total).toBeCloseTo(100, 4);
-  });
-
-  it('factor=1.0 explicit → effective floor = adaptive (10% at N=4)', () => {
-    vi.stubEnv('ARBITER_MIN_SHARE_FACTOR', '1.0');
-    expect(readMinShareFactor()).toBe(1.0);
-
-    const a = new Arbiter();
-    seedSaturated(a);
-    const m = a.allocateMany(100, LABELS);
-    for (const lab of ['M', 'T', 'L']) {
-      expect(m[lab]).toBeCloseTo(10, 5);
-    }
-  });
-
-  it('factor=0.5 → floor halved (5% at N=4 instead of 10%)', () => {
+  it('any env value of ARBITER_MIN_SHARE_FACTOR is ignored', () => {
     vi.stubEnv('ARBITER_MIN_SHARE_FACTOR', '0.5');
-    expect(readMinShareFactor()).toBe(0.5);
-
-    const a = new Arbiter();
-    seedSaturated(a);
-    const m = a.allocateMany(100, LABELS);
-    // Each laggard floored at 5 USDT (5%), letting K claim more.
-    for (const lab of ['M', 'T', 'L']) {
-      expect(m[lab]).toBeCloseTo(5, 5);
-    }
-    // K gains the freed mass: 100 - 3*5 = 85.
-    expect(m.K).toBeCloseTo(85, 5);
-  });
-
-  it('factor=0.25 → floor quartered (2.5% at N=4); laggards >= floor', () => {
-    vi.stubEnv('ARBITER_MIN_SHARE_FACTOR', '0.25');
-    expect(readMinShareFactor()).toBe(0.25);
-
-    // factor=0.5 baseline (laggard saturates the floor at 5%).
-    vi.stubEnv('ARBITER_MIN_SHARE_FACTOR', '0.5');
-    const half = new Arbiter();
-    seedSaturated(half);
-    const mHalf = half.allocateMany(100, LABELS);
-
-    // factor=0.25 — the floor is lower but the SLERP-toward-performance
-    // shares may already exceed 2.5% (the floor is a clamp, not an exact
-    // value). Assert: (a) each laggard is at least the floor, (b) K
-    // claims strictly MORE than at factor=0.5 (or at worst equal — the
-    // floor relaxed so K's share can only go up or stay flat), and
-    // (c) shares sum to 100.
-    vi.stubEnv('ARBITER_MIN_SHARE_FACTOR', '0.25');
-    const a = new Arbiter();
-    seedSaturated(a);
-    const m = a.allocateMany(100, LABELS);
-    for (const lab of ['M', 'T', 'L']) {
-      expect(m[lab]).toBeGreaterThanOrEqual(2.5 - 1e-6);
-    }
-    expect(m.K).toBeGreaterThanOrEqual(mHalf.K! - 1e-6);
-    const total = LABELS.reduce((s, l) => s + (m[l] ?? 0), 0);
-    expect(total).toBeCloseTo(100, 4);
-  });
-
-  it('factor=2.0 → floor doubled (20% at N=4); allowed even if over-floor', () => {
+    expect(readMinShareFactor()).toBe(0);
     vi.stubEnv('ARBITER_MIN_SHARE_FACTOR', '2.0');
-    expect(readMinShareFactor()).toBe(2.0);
+    expect(readMinShareFactor()).toBe(0);
+    vi.unstubAllEnvs();
+  });
 
+  it('winner takes the dominant share with no laggard floor', () => {
     const a = new Arbiter();
     seedSaturated(a);
     const m = a.allocateMany(100, LABELS);
-    // 4 * 20% = 80% < 100% so no pathological-fallback; floor honored.
-    for (const lab of ['M', 'T', 'L']) {
-      expect(m[lab]).toBeCloseTo(20, 5);
-    }
-    expect(m.K).toBeCloseTo(40, 5);
+    expect(m['K']).toBeGreaterThan(50);
+    const total = LABELS.reduce((s, l) => s + (m[l] ?? 0), 0);
+    expect(total).toBeCloseTo(100, 4);
   });
 
-  it('factor=0 → treated as 1.0 (refuses to disable floor entirely)', () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    vi.stubEnv('ARBITER_MIN_SHARE_FACTOR', '0');
-    expect(readMinShareFactor()).toBe(1.0);
-
-    const a = new Arbiter();
-    seedSaturated(a);
-    const m = a.allocateMany(100, LABELS);
-    // Floor stays at default 10%, NOT removed.
-    for (const lab of ['M', 'T', 'L']) {
-      expect(m[lab]).toBeCloseTo(10, 5);
-    }
-    warnSpy.mockRestore();
-  });
-
-  it('factor negative → treated as 1.0', () => {
-    vi.stubEnv('ARBITER_MIN_SHARE_FACTOR', '-0.5');
-    expect(readMinShareFactor()).toBe(1.0);
-
-    const a = new Arbiter();
-    seedSaturated(a);
-    const m = a.allocateMany(100, LABELS);
-    for (const lab of ['M', 'T', 'L']) {
-      expect(m[lab]).toBeCloseTo(10, 5);
-    }
-  });
-
-  it('factor non-numeric → treated as 1.0', () => {
-    vi.stubEnv('ARBITER_MIN_SHARE_FACTOR', 'not-a-number');
-    expect(readMinShareFactor()).toBe(1.0);
-
-    const a = new Arbiter();
-    seedSaturated(a);
-    const m = a.allocateMany(100, LABELS);
-    for (const lab of ['M', 'T', 'L']) {
-      expect(m[lab]).toBeCloseTo(10, 5);
-    }
-  });
-
-  it('factor empty string → treated as 1.0', () => {
-    vi.stubEnv('ARBITER_MIN_SHARE_FACTOR', '');
-    expect(readMinShareFactor()).toBe(1.0);
-  });
-
-  it('opts.minShare wins over env factor', () => {
-    // Env says half-the-floor; opts says floor at 20%. Opts wins.
-    vi.stubEnv('ARBITER_MIN_SHARE_FACTOR', '0.5');
-
+  it('opts.minShare still wins when caller supplies it (tests / cold-start)', () => {
     const a = new Arbiter({ minShare: 0.20 });
     seedSaturated(a);
     const m = a.allocateMany(100, LABELS);
-    // Laggards floored at 20 USDT each (opts), not 5 USDT (env factor).
     for (const lab of ['M', 'T', 'L']) {
       expect(m[lab]).toBeCloseTo(20, 5);
     }
     expect(m.K).toBeCloseTo(40, 5);
-  });
-
-  it('factor preserves existing N=5 behavior (adaptive floor=0.10 * 1.0)', () => {
-    // Existing 'respects min-share floor with N=5' test asserts >=0.10.
-    // Confirm that factor=1.0 (default) keeps that contract.
-    const a = new Arbiter();
-    const labels = ['K', 'M', 'K2', 'K3', 'K4'];
-    for (let i = 0; i < 50; i++) {
-      a.recordSettled('K', 100);
-      for (const lab of labels.slice(1)) a.recordSettled(lab, -100);
-    }
-    const m = a.allocateMany(100, labels);
-    for (const lab of labels.slice(1)) {
-      expect(m[lab]).toBeGreaterThanOrEqual(0.10 * 100 - 1e-6);
-    }
-  });
-
-  it('factor large enough to over-floor falls back to uniform', () => {
-    // factor=3.0 at N=4 → floor = 0.10 * 3 = 0.30, n*floor = 1.20 > 1.
-    // Arbiter's existing pathological-config guard kicks in → uniform.
-    vi.stubEnv('ARBITER_MIN_SHARE_FACTOR', '3.0');
-
-    const a = new Arbiter();
-    seedSaturated(a);
-    const m = a.allocateMany(100, LABELS);
-    // Uniform 1/N = 25 USDT each.
-    for (const lab of LABELS) {
-      expect(m[lab]).toBeCloseTo(25, 5);
-    }
   });
 });

@@ -46,9 +46,12 @@ describe('shouldSlowBleedExit — absolute-USD arm', () => {
     expect(r.reason).toContain('abs');
   });
 
-  it('does NOT fire below $3 abs threshold AND below pct gate', () => {
+  it('2026-05-25 strip — abs threshold removed; any negative USD + adverse tape after 60min qualifies', () => {
+    // Pre-strip: $3 default kept this $1.50 loss quiet under the abs
+    // gate. Post-strip: abs arm threshold is 0, so any |pnl| ≥ 0
+    // qualifies — the test inverts. Chemistry decides cut-loss timing.
     const r = shouldSlowBleedExit({
-      unrealizedPnlUsdt: -1.50,   // under $3
+      unrealizedPnlUsdt: -1.50,
       notionalUsdt: 1300,
       leverage: 8,
       heldMs: 174 * 60_000,
@@ -56,8 +59,8 @@ describe('shouldSlowBleedExit — absolute-USD arm', () => {
       heldSide: 'short',
       lane: 'trend',
     });
-    expect(r.value).toBe(false);
-    expect(r.reason).toBe('under_half_sl_and_under_abs');
+    expect(r.value).toBe(true);
+    expect(String(r.reason).toLowerCase()).toContain('abs');
   });
 
   it('still respects the 60-min floor (no fire before 60min even at −$10)', () => {
@@ -116,10 +119,10 @@ describe('shouldSlowBleedExit — absolute-USD arm', () => {
     expect(r.reason).toBe('not_in_loss');
   });
 
-  it('honours MONKEY_SLOW_BLEED_ABS_USD override', () => {
+  it('2026-05-25 strip — env override ignored; any negative USD after 60min with adverse tape fires', () => {
     process.env.MONKEY_SLOW_BLEED_ABS_USD = '10';
     const r = shouldSlowBleedExit({
-      unrealizedPnlUsdt: -5.0,   // would fire at $3 default, not at $10
+      unrealizedPnlUsdt: -5.0,
       notionalUsdt: 1300,
       leverage: 8,
       heldMs: 90 * 60_000,
@@ -127,8 +130,12 @@ describe('shouldSlowBleedExit — absolute-USD arm', () => {
       heldSide: 'short',
       lane: 'trend',
     });
-    expect(r.value).toBe(false);
-    expect(r.reason).toBe('under_half_sl_and_under_abs');
+    // Pre-strip: $10 env override would gate $5 loss. Post-strip: env
+    // read removed, abs arm threshold = 0; any negative + adverse tape
+    // qualifies.
+    expect(r.value).toBe(true);
+    expect(String(r.reason).toLowerCase()).toContain('abs');
+    delete process.env.MONKEY_SLOW_BLEED_ABS_USD;
   });
 });
 

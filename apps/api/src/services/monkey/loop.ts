@@ -3160,17 +3160,16 @@ export class MonkeyKernel extends EventEmitter {
         const feeFloorLive = process.env.MONKEY_FEE_FLOOR_LIVE !== 'false';
         const effectiveCostFrac = !feeFloorLive ? 0 : (() => {
           const n = this.rollingEffectiveCostFrac.length;
-          const coldDefault = envNumber(
-            'MONKEY_FEE_FLOOR_COLD_FRAC',
-            MonkeyKernel.EFFECTIVE_COST_COLD_DEFAULT,
-          );
-          if (n < MonkeyKernel.EFFECTIVE_COST_MIN_SAMPLES) return coldDefault;
+          // 2026-05-25 strip — fee-floor cold default is purely
+          // observer-derived. Cold start (n < min samples) → 0,
+          // letting chemistry learn from any fee losses naturally.
+          if (n < MonkeyKernel.EFFECTIVE_COST_MIN_SAMPLES) return 0;
           // Upper tercile of observed costs — conservatively assumes
           // worst-case slip from the rolling distribution rather than
           // the median (which would underestimate on noisy days).
           const sorted = [...this.rollingEffectiveCostFrac].sort((a, b) => a - b);
           const terciIdx = Math.min(n - 1, Math.floor(n * 0.67));
-          return sorted[terciIdx] ?? coldDefault;
+          return sorted[terciIdx] ?? 0;
         })();
         const baseMinProfitablePnl =
           positionNotional > 0
