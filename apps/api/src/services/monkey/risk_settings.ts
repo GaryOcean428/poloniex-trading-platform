@@ -224,6 +224,15 @@ export async function getOperatorRiskSettings(): Promise<OperatorRiskSettings | 
  * Today's realised PnL for Monkey-owned closed trades (UTC day boundary).
  * Cached 60 s; 0 on error — a DB hiccup must not fabricate a loss halt.
  * Engine filter mirrors kelly_rolling_stats.ts: `reason LIKE 'monkey|%'`.
+ *
+ * Diagnostic breakdown (2026-05-25): on every cache miss we ALSO run a
+ * one-shot breakdown query and log row-counts / wins / losses / nulls /
+ * by-agent / by-reason-prefix. CSV ground-truth showed the SUM was
+ * inflated 27× vs Poloniex's actual close ledger — the breakdown lets
+ * us see which slice (agent, reason-prefix, NULL-pnl rows, gross_loss
+ * vs gross_win asymmetry, time range) is the inflation source without
+ * needing DB-paste from the operator. Logged at WARN so it surfaces in
+ * Railway log search; the cost is one extra small query per minute.
  */
 export async function getTodayMonkeyRealizedPnl(): Promise<number> {
   if (pnlCache && Date.now() - pnlCache.atMs < TTL_MS) return pnlCache.value;
@@ -242,6 +251,8 @@ export async function getTodayMonkeyRealizedPnl(): Promise<number> {
     const pnl = Number((r.rows[0] as { pnl?: unknown } | undefined)?.pnl ?? 0);
     const value = Number.isFinite(pnl) ? pnl : 0;
     pnlCache = { value, atMs: Date.now() };
+    // Fire-and-forget breakdown — never block the cache fill on it.
+    logDailyPnlBreakdown(value).catch(() => { /* diagnostic only */ });
     return value;
   } catch (err) {
     logger.warn('[risk-settings] daily-PnL read failed — assuming 0', {
@@ -249,6 +260,112 @@ export async function getTodayMonkeyRealizedPnl(): Promise<number> {
     });
     pnlCache = { value: 0, atMs: Date.now() };
     return 0;
+  }
+}
+
+/**
+ * One-shot diagnostic breakdown for the today-PnL SUM. Runs alongside
+ * the cached query on cache misses; logs a wide row that exposes the
+ * shape of the rows the SUM is summing.
+ *
+ * Built to localise the 2026-05-25 inflation bug (DB SUM read −$61.65;
+ * Poloniex ledger ground truth −$2.30). The breakdown distinguishes:
+ *   - NULL-pnl rows  → reconciler closes that never wrote a real pnl
+ *   - by-agent       → K/L/T/M split asymmetries
+ *   - reason-prefix  → only `monkey|%` rows count; if wins live under
+ *                      another prefix (e.g. `kernel_adopted|%`) the
+ *                      SUM is loss-biased
+ *   - gross_win / gross_loss → if gross_win ≈ 0 the wins are missing
+ *   - PnL extremes   → a single inflated outlier (e.g. leverage-x'd
+ *                      row) shows up as max/min far from the others
+ *
+ * Logs at WARN (always-on visibility) for the next several minutes;
+ * delete this diagnostic once the bug class is found.
+ */
+async function logDailyPnlBreakdown(observedSum: number): Promise<void> {
+  try {
+    const r = await pool.query<{
+      rows_n: string;
+      wins: string;
+      losses: string;
+      zeros: string;
+      null_pnls: string;
+      gross_wins: string;
+      gross_losses: string;
+      max_pnl: string;
+      min_pnl: string;
+      distinct_agents: string;
+      distinct_reason_prefixes: string;
+      first_exit: string | null;
+      last_exit: string | null;
+    }>(
+      `SELECT COUNT(*) AS rows_n,
+              COUNT(*) FILTER (WHERE pnl > 0) AS wins,
+              COUNT(*) FILTER (WHERE pnl < 0) AS losses,
+              COUNT(*) FILTER (WHERE pnl = 0) AS zeros,
+              COUNT(*) FILTER (WHERE pnl IS NULL) AS null_pnls,
+              COALESCE(SUM(pnl) FILTER (WHERE pnl > 0), 0) AS gross_wins,
+              COALESCE(SUM(pnl) FILTER (WHERE pnl < 0), 0) AS gross_losses,
+              COALESCE(MAX(pnl), 0) AS max_pnl,
+              COALESCE(MIN(pnl), 0) AS min_pnl,
+              COUNT(DISTINCT agent) AS distinct_agents,
+              COUNT(DISTINCT split_part(reason, '|', 1)) AS distinct_reason_prefixes,
+              MIN(exit_time)::text AS first_exit,
+              MAX(exit_time)::text AS last_exit
+         FROM autonomous_trades
+        WHERE status = 'closed'
+          AND reason LIKE 'monkey|%'
+          AND exit_time >= date_trunc('day', NOW() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'`,
+    );
+    const row = r.rows[0];
+    if (!row) return;
+    logger.warn('[risk-settings] daily-PnL breakdown (diagnostic)', {
+      observedSum: Number(observedSum.toFixed(4)),
+      rows: Number(row.rows_n),
+      wins: Number(row.wins),
+      losses: Number(row.losses),
+      zeros: Number(row.zeros),
+      null_pnls: Number(row.null_pnls),
+      gross_wins: Number(Number(row.gross_wins).toFixed(4)),
+      gross_losses: Number(Number(row.gross_losses).toFixed(4)),
+      max_pnl: Number(Number(row.max_pnl).toFixed(4)),
+      min_pnl: Number(Number(row.min_pnl).toFixed(4)),
+      distinct_agents: Number(row.distinct_agents),
+      distinct_reason_prefixes: Number(row.distinct_reason_prefixes),
+      first_exit: row.first_exit,
+      last_exit: row.last_exit,
+    });
+
+    // Per-agent slice — distinguishes K/L/T/M splits going asymmetric.
+    const agentRows = await pool.query<{
+      agent: string | null;
+      n: string;
+      net: string;
+      gross_win: string;
+      gross_loss: string;
+    }>(
+      `SELECT agent, COUNT(*) AS n,
+              COALESCE(SUM(pnl), 0) AS net,
+              COALESCE(SUM(pnl) FILTER (WHERE pnl > 0), 0) AS gross_win,
+              COALESCE(SUM(pnl) FILTER (WHERE pnl < 0), 0) AS gross_loss
+         FROM autonomous_trades
+        WHERE status = 'closed'
+          AND reason LIKE 'monkey|%'
+          AND exit_time >= date_trunc('day', NOW() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+        GROUP BY agent
+        ORDER BY agent NULLS FIRST`,
+    );
+    for (const a of agentRows.rows) {
+      logger.warn('[risk-settings] daily-PnL by agent', {
+        agent: a.agent ?? '<null>',
+        n: Number(a.n),
+        net: Number(Number(a.net).toFixed(4)),
+        gross_win: Number(Number(a.gross_win).toFixed(4)),
+        gross_loss: Number(Number(a.gross_loss).toFixed(4)),
+      });
+    }
+  } catch {
+    /* diagnostic-only; never throw out of a cache-fill */
   }
 }
 
