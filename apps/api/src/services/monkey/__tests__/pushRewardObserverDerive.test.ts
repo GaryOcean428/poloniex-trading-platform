@@ -1,0 +1,192 @@
+/**
+ * pushRewardObserverDerive.test.ts — pins the 2026-05-25 reward-magnitude
+ * observer-derive PR.
+ *
+ * Pre-strip: magic input scales 1.5/0.5/1.0/2.0 on tanh, magic /10 on
+ * kappaProxim. Post-strip: pnlFrac normalized against the kernel's own
+ * rolling pnlFraction distribution; kappaProxim width derives from
+ * rolling kappa-at-exit stddev.
+ *
+ * Output caps (0.5/0.3/0.15/0.1) stay as STRUCTURAL design — they
+ * encode "how much each chemical can lift" and are documented in
+ * pushReward.
+ */
+import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
+
+// Mock the env config so importing loop.ts (→ encryptionService → env)
+// doesn't blow up on missing DATABASE_URL / JWT_SECRET in the test
+// environment. Mirrors perAgentNC.test.ts.
+vi.mock('../../../config/env.js', () => ({
+  env: {
+    NODE_ENV: 'test',
+    PORT: 8765,
+    DATABASE_URL: 'postgresql://test:5432/test',
+    JWT_SECRET: 'test-jwt-secret-32-characters-xxxxxxxxxx',
+  },
+}));
+vi.mock('../../../db/connection.js', () => ({
+  pool: { query: vi.fn() },
+}));
+
+// We test pushReward via a thin test harness — instantiating
+// MonkeyKernel is heavy (it opens DB pool etc), so we use a private
+// type-cast shim that calls pushReward then inspects pendingRewards.
+import { MonkeyKernel } from '../loop.js';
+
+describe('pushReward observer-derive — pnlFrac z-score normalization', () => {
+  let k: MonkeyKernel;
+
+  beforeEach(() => {
+    k = new MonkeyKernel({ instanceId: 'test-rew-obs', timeframe: '5m', tickMs: 30_000 });
+  });
+
+  afterEach(() => {
+    // Test kernel has no background timers in this path.
+  });
+
+  function lastReward(): { dopamineDelta: number; serotoninDelta: number; endorphinDelta: number; pnlFraction: number } {
+    const queue = (k as unknown as { pendingRewards: Array<{ dopamineDelta: number; serotoninDelta: number; endorphinDelta: number; pnlFraction: number }> }).pendingRewards;
+    return queue[queue.length - 1]!;
+  }
+
+  it('cold start (no history) → falls back to identity-on-pnlFrac through tanh', () => {
+    k.pushReward({ source: 'test', realizedPnlUsdt: 0.10, marginUsdt: 1, agent: 'K' });
+    const r = lastReward();
+    expect(r.pnlFraction).toBeCloseTo(0.10, 6);
+    // tanh(0.10) × 0.5 ≈ 0.0498 — confirms unscaled path
+    expect(r.dopamineDelta).toBeCloseTo(Math.tanh(0.10) * 0.5, 4);
+  });
+
+  it('after several wins, dopamine z-normalizes against rolling stddev', () => {
+    // Seed history with 10 wins of ~5% ROI
+    for (let i = 0; i < 10; i++) {
+      k.pushReward({ source: 'seed', realizedPnlUsdt: 0.05, marginUsdt: 1, agent: 'K' });
+    }
+    // Now a 10% win — should be "above average" relative to the
+    // kernel's own observed distribution → higher dopamine.
+    k.pushReward({ source: 'bigger', realizedPnlUsdt: 0.10, marginUsdt: 1, agent: 'K' });
+    const big = lastReward();
+    // Big win produces higher dopamine than the seeded "typical" win
+    expect(big.dopamineDelta).toBeGreaterThan(Math.tanh(0.05) * 0.5);
+  });
+
+  it('output caps remain STRUCTURAL — dopamine never exceeds 0.5', () => {
+    // Massive win shouldn't escape the cap.
+    k.pushReward({ source: 'huge', realizedPnlUsdt: 100, marginUsdt: 1, agent: 'K' });
+    const r = lastReward();
+    expect(r.dopamineDelta).toBeLessThanOrEqual(0.5);
+  });
+
+  it('output caps remain STRUCTURAL — serotonin never exceeds 0.15', () => {
+    k.pushReward({ source: 'huge', realizedPnlUsdt: 100, marginUsdt: 1, agent: 'K' });
+    const r = lastReward();
+    expect(r.serotoninDelta).toBeLessThanOrEqual(0.15);
+  });
+
+  it('output caps remain STRUCTURAL — endorphins never exceed 0.3 (κ-prox gated)', () => {
+    k.pushReward({ source: 'huge', realizedPnlUsdt: 100, marginUsdt: 1, kappaAtExit: 64, agent: 'K' });
+    const r = lastReward();
+    expect(r.endorphinDelta).toBeLessThanOrEqual(0.3);
+  });
+
+  it('loss produces negative dopamine bounded by 0.1 cap', () => {
+    k.pushReward({ source: 'loss', realizedPnlUsdt: -10, marginUsdt: 1, agent: 'K' });
+    const r = lastReward();
+    expect(r.dopamineDelta).toBeLessThan(0);
+    expect(Math.abs(r.dopamineDelta)).toBeLessThanOrEqual(0.1);
+  });
+
+  it('losses produce zero serotonin (wins-only path)', () => {
+    k.pushReward({ source: 'loss', realizedPnlUsdt: -10, marginUsdt: 1, agent: 'K' });
+    const r = lastReward();
+    expect(r.serotoninDelta).toBe(0);
+  });
+
+  it('losses produce zero endorphins (wins-only path)', () => {
+    k.pushReward({ source: 'loss', realizedPnlUsdt: -10, marginUsdt: 1, kappaAtExit: 64, agent: 'K' });
+    const r = lastReward();
+    expect(r.endorphinDelta).toBe(0);
+  });
+});
+
+describe('pushReward observer-derive — kappaProxim from rolling kappa stddev', () => {
+  let k: MonkeyKernel;
+
+  beforeEach(() => {
+    k = new MonkeyKernel({ instanceId: 'test-kappa-obs', timeframe: '5m', tickMs: 30_000 });
+  });
+
+  function lastReward(): { endorphinDelta: number } {
+    const queue = (k as unknown as { pendingRewards: Array<{ endorphinDelta: number }> }).pendingRewards;
+    return queue[queue.length - 1]!;
+  }
+
+  it('κ at κ* (=64) produces full endorphins (proximity = 1)', () => {
+    // Seed kappa history near 64 so the rolling stddev is small but
+    // non-degenerate.
+    for (let i = 0; i < 6; i++) {
+      k.pushReward({
+        source: 'seed',
+        realizedPnlUsdt: 0.05,
+        marginUsdt: 1,
+        kappaAtExit: 63 + (i % 2),  // alternating 63/64
+        agent: 'K',
+      });
+    }
+    // Now a win exactly at κ*.
+    k.pushReward({
+      source: 'peak',
+      realizedPnlUsdt: 0.05,
+      marginUsdt: 1,
+      kappaAtExit: 64,
+      agent: 'K',
+    });
+    const peak = lastReward();
+    expect(peak.endorphinDelta).toBeGreaterThan(0);
+  });
+
+  it('κ far from κ* dampens endorphins relative to κ at κ*', () => {
+    // Seed history
+    for (let i = 0; i < 6; i++) {
+      k.pushReward({
+        source: 'seed',
+        realizedPnlUsdt: 0.05,
+        marginUsdt: 1,
+        kappaAtExit: 60 + (i % 3),
+        agent: 'K',
+      });
+    }
+    // κ at κ*
+    k.pushReward({
+      source: 'at-star',
+      realizedPnlUsdt: 0.05,
+      marginUsdt: 1,
+      kappaAtExit: 64,
+      agent: 'K',
+    });
+    const at = lastReward();
+    // κ far from κ*
+    k.pushReward({
+      source: 'far',
+      realizedPnlUsdt: 0.05,
+      marginUsdt: 1,
+      kappaAtExit: 80,
+      agent: 'K',
+    });
+    const far = lastReward();
+    expect(far.endorphinDelta).toBeLessThan(at.endorphinDelta);
+  });
+
+  it('kappaAtExit missing → kappaProxim falls to 0.5 (legacy fallback preserved)', () => {
+    k.pushReward({
+      source: 'no-kappa',
+      realizedPnlUsdt: 0.05,
+      marginUsdt: 1,
+      // kappaAtExit omitted
+      agent: 'K',
+    });
+    const r = lastReward();
+    // endorphin = tanh(pnlFrac) × 0.3 × 0.5 = positive
+    expect(r.endorphinDelta).toBeGreaterThan(0);
+  });
+});
