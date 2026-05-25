@@ -155,7 +155,7 @@ import {
 import { agentLDecide, type AgentLDecision } from './agent_L_classifier.js';
 import { signalScorer, resolveEntryGate } from './signal_scorer.js';
 import { getOperatorRiskSettings } from './risk_settings.js';
-import { QIGRAMv2State, isQigramV2Enabled } from './agent_L_qigram_v2.js';
+import { QIGRAMv2Partition, isQigramV2Enabled } from './agent_L_qigram_v2.js';
 import {
   newMTFState,
   onTickAppend as mtfOnTickAppend,
@@ -1035,10 +1035,13 @@ export class MonkeyKernel extends EventEmitter {
    * fresh basins are integrated. Only consumed when
    * `L_QIGRAM_V2_ENABLED === 'true'`; otherwise the legacy
    * resonance-bank sovereignty path is preserved (default behavior). */
-  private readonly qigramV2Store: QIGRAMv2State = new QIGRAMv2State();
-  /** Tick counter for QIGRAMv2 store decay scheduling. Decays all
-   *  weights every SOV_DECAY_PERIOD_TICKS calls. */
-  private qigramV2TickCount = 0;
+  private readonly qigramV2Store: QIGRAMv2Partition = new QIGRAMv2Partition();
+  /** Per-symbol tick counter for QIGRAMv2 store id generation. Each
+   *  symbol's partition has its own LRU buffer, so the counter is
+   *  partitioned too — keeps ids unique within a symbol's store and
+   *  prevents BTC ticks from displacing ETH ids in any shared key
+   *  space. */
+  private readonly qigramV2TickCount: Map<string, number> = new Map();
 
   constructor(config?: Partial<MonkeyKernelConfig>) {
     super();
@@ -2117,31 +2120,30 @@ export class MonkeyKernel extends EventEmitter {
     // MIN_ACTIVE_WEIGHT (canonical 0.01). decayAll() only DECAYS weight —
     // it never removes entries, so without consolidate() below `_entries`
     // grows unboundedly and the sovereignty denominator (and thus
-    // position size) decays toward zero with session uptime. PR906 paired
-    // consolidate() with decayAll() per-tick, but consolidate deletes the
-    // same set activeEntries() filters out, so post-prune the two views
-    // are bit-identical and sovereignty pins at 1.0 deterministically —
-    // a different degenerate reading that silently zeroes the sov factor
-    // in baseFrac = Φ × sov × maturity. The current fix bounds _entries
-    // at QIGRAMV2_HISTORY_MAX via LRU eviction inside integrate(), so
-    // storage cannot grow unboundedly without needing per-tick prune,
-    // and sov = active / _entries.size ranges meaningfully — responds to
-    // decay, to recordOutcome(false) zeroing (when that wires), and to
-    // integration pauses. consolidate() remains valid for explicit
-    // sweeps (e.g. pre-persistence).
+    // position size) decays toward zero with session uptime. PR906
+    // paired consolidate() with decayAll() per-tick which made the
+    // active and storage sets bit-identical (sov pinned at 1.0). #912
+    // replaced that with an LRU bound on _entries inside the store.
+    // But a single shared store across DEFAULT_SYMBOLS (BTC + ETH) sees
+    // 2 inserts per tick, so HISTORY_MAX = 100 only covered ~49 ticks
+    // of age — still below the ~90 ticks needed for decay to cross
+    // MIN_ACTIVE_WEIGHT. Sov pinned at 1.0 again via a different
+    // mechanism. This fix partitions the store by symbol: each
+    // symbol's buffer covers ≥ 90-tick decay-to-threshold independently,
+    // and per-symbol sov is a more informative signal than the
+    // conflated aggregate.
     let sovereignty: number;
     if (isQigramV2Enabled()) {
-      this.qigramV2TickCount += 1;
-      // Per-symbol|per-tick key so different symbols' snapshots
-      // coexist; weight=1.0 at storage time (canonical initial), correct
-      // =true (basin counts toward active until decayed below threshold).
+      const nextTick = (this.qigramV2TickCount.get(symbol) ?? 0) + 1;
+      this.qigramV2TickCount.set(symbol, nextTick);
       this.qigramV2Store.integrate(
-        `${symbol}|tick=${this.qigramV2TickCount}`,
+        symbol,
+        `tick=${nextTick}`,
         basin,
         { weight: 1.0, correct: true },
       );
-      this.qigramV2Store.decayAll();
-      sovereignty = this.qigramV2Store.sovereignty;
+      this.qigramV2Store.decayAll(symbol);
+      sovereignty = this.qigramV2Store.sovereignty(symbol);
     } else {
       sovereignty = await resonanceBank.sovereignty();
     }
