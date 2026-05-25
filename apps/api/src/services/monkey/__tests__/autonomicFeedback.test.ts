@@ -184,12 +184,14 @@ describe('autonomic feedback — ser derived from mode-thrash rate (#715)', () =
       },
     }).serotonin;
 
+    // 2026-05-25 — ser formula compressed by ×0.85 to leave reward-delta
+    // headroom; serQuiet was 1.0 pre-strip, is 0.85 post-strip.
     expect(serThrashy).toBeLessThan(serQuiet);
-    expect(serQuiet).toBeGreaterThan(0.9);
+    expect(serQuiet).toBeGreaterThan(0.7);
     expect(serThrashy).toBeLessThanOrEqual(0.5);
   });
 
-  it('cold start (no observables) falls back to inverse-bv legacy formula', () => {
+  it('cold start (no observables) falls back to inverse-bv legacy formula × 0.85', () => {
     const ser = computeNeurochemicals({
       isAwake: true,
       phiDelta: 0,
@@ -199,7 +201,8 @@ describe('autonomic feedback — ser derived from mode-thrash rate (#715)', () =
       kappa: 64,
       externalCoupling: 0.5,
     }).serotonin;
-    expect(ser).toBe(1);
+    // serBase = clip(1/0.05, 0, 1) = 1; ser = 0.85 × 1 = 0.85.
+    expect(ser).toBeCloseTo(0.85, 5);
   });
 });
 
@@ -362,15 +365,19 @@ describe('autonomic feedback — endorphins use basin κ stddev + coupling distr
     const couplingHistory: number[] = [];
     for (let i = 0; i < 50; i++) couplingHistory.push(belowMeanCoupling + 0.10 * (i % 2));
 
-    // Below the basin's mean coupling → gate shut → endo 0.
+    // 2026-05-25 — Sophia gate updated to sigmoid-around-mean (was
+    // clip((c - mean)/σ, 0, 1) which pinned endo at 0 for ~50% of
+    // state-space). Below-mean coupling now produces non-zero endo
+    // proportional to how far below.
     const endoBelowMean = computeNeurochemicals({
       ...baseInputs,
       externalCoupling: belowMeanCoupling,
       observables: { kappaHistory, externalCouplingHistory: couplingHistory },
     }).endorphins;
-    expect(endoBelowMean).toBe(0);
+    expect(endoBelowMean).toBeGreaterThan(0);
+    expect(endoBelowMean).toBeLessThan(0.5);  // below-mean side of sigmoid
 
-    // Above the mean but below mean+1σ: the gate has opened but not saturated.
+    // Above the mean but below mean+1σ: sigmoid > 0.5, climbing toward 1.
     expect(aboveMeanCoupling).toBeGreaterThan(couplingMean);
     expect(aboveMeanCoupling).toBeLessThan(couplingMean + couplingStddev);
     const endoAboveMean = computeNeurochemicals({
@@ -378,9 +385,10 @@ describe('autonomic feedback — endorphins use basin κ stddev + coupling distr
       externalCoupling: aboveMeanCoupling,
       observables: { kappaHistory, externalCouplingHistory: couplingHistory },
     }).endorphins;
-    expect(endoAboveMean).toBeGreaterThan(0);
+    expect(endoAboveMean).toBeGreaterThan(0.5);
+    expect(endoAboveMean).toBeGreaterThan(endoBelowMean);
 
-    // Well above the mean → gate saturates.
+    // Well above the mean → gate asymptotes near 1.
     const endoGateOpen = computeNeurochemicals({
       ...baseInputs,
       externalCoupling: saturatingCoupling,

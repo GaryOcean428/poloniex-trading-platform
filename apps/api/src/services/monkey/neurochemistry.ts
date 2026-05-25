@@ -87,11 +87,17 @@ function stddev(xs: ReadonlyArray<number>): number {
 }
 
 /** Z-score: (x − mean(history)) / stddev(history).
- *  Returns 0 (no signal) when stddev is 0 — the basin has not yet
- *  revealed its own scale. */
+ *  Returns 0 (no signal) when stddev is at or near 0 — the basin has not
+ *  yet revealed its own scale.
+ *
+ *  2026-05-25 — the `sd === 0` check was tightened to `sd < 1e-12` to
+ *  guard against floating-point drift in identical-history series:
+ *  e.g. `[0.1, 0.1, 0.1, ...]` produces sd ≈ 1.5e-17, which the strict
+ *  `=== 0` check missed, yielding spurious z-scores ~1.0 from
+ *  `(x - mean_with_fp_drift) / tiny`. */
 function zScore(x: number, history: ReadonlyArray<number>): number {
   const sd = stddev(history);
-  if (sd === 0) return 0;
+  if (sd < 1e-12) return 0;
   return (x - mean(history)) / sd;
 }
 
@@ -342,25 +348,42 @@ export function computeNeurochemicals(inputs: NeurochemicalInputs): Neurochemica
     // can measure"), not a tuning parameter.
     serBase = clip(1 / Math.max(inputs.basinVelocity, Number.EPSILON), 0, 1);
   }
-  const ser = clip(serBase + (inputs.rewardSerotoninDelta ?? 0), 0, 1);
+  // 2026-05-25 (steady-state-pinning fix): the previous shape
+  // `clip(serBase + rewardDelta, 0, 1)` pinned at exactly 1.0 when
+  // serBase was 1.0 (no recent mode transitions), making
+  // `rewardSerotoninDelta` (max ~0.15 per close, ~1.0 in a winning
+  // burst over the 20-min decay window) invisible. Compressing serBase
+  // by 0.85 leaves 0.15 headroom — matches the per-event max so a
+  // single win can register on top of a steady-mode baseline.
+  // Bursts above 0.15 still saturate at 1.0, but at that point the
+  // signal is "very high recent reward + structurally stable" which
+  // is the right pegged-at-max interpretation.
+  const ser = clip(0.85 * serBase + (inputs.rewardSerotoninDelta ?? 0), 0, 1);
 
   // ─── Norepinephrine ──────────────────────────────────────────────
-  // §29.1: alertness / surprise. 2026-05-16 (ne ext, derivation-only):
-  // ne = clip(z-score(surprise vs surpriseHistory), 0, ∞), squashed
-  // by tanh into [0, 1]. When the current surprise exceeds the basin's
-  // own typical surprise distribution, ne spikes; when it's within
-  // the basin's normal range, ne stays low. No hardcoded gain.
+  // §29.1: alertness / surprise.
   //
-  // Fallback (no observables): `tanh(surprise)` — no externally chosen
-  // scale, just a bounded identity on the input.
+  // 2026-05-25 (steady-state-pinning fix, see
+  // [[feedback_steady_state_pinning_pattern]]): the previous shape
+  // `clip(tanh(max(0, z)), 0, 1)` pinned at exactly 0 whenever current
+  // surprise was at or below the rolling mean — ~50% of state-space
+  // by construction, which is most of the time in stable regimes.
+  // Replaced with `sigmoid(z)`: both tails informative, ~0.5 at mean.
+  //
+  // Consumer audit 2026-05-25: 6 readers, all continuous-magnitude
+  // (no gate-threshold semantics). Behaviour shift: typical ne moves
+  // from 0.0 → 0.5, so `surpriseDiscount = 1 - 0.5*ne` (executive.ts:405)
+  // shifts from 1.0 typical to ~0.75 typical — restores the intended
+  // 25% leverage haircut that was dormant under the old pinning.
+  //
+  // Fallback (no observables): `sigmoid(surprise)` — same shape, no
+  // scale-setting constants.
   let ne: number;
   if (obs?.surpriseHistory && obs.surpriseHistory.length >= HISTORY_MIN_SAMPLES) {
     const z = zScore(inputs.surprise, obs.surpriseHistory);
-    // Positive z only (we don't care about "less surprised than usual" —
-    // that's just calm). tanh squashes z ∈ [0, ∞) into [0, 1).
-    ne = clip(Math.tanh(Math.max(0, z)), 0, 1);
+    ne = clip(sigmoid(z), 0, 1);
   } else {
-    ne = clip(Math.tanh(inputs.surprise), 0, 1);
+    ne = clip(sigmoid(inputs.surprise), 0, 1);
   }
 
   // ─── GABA ─────────────────────────────────────────────────────────
@@ -401,13 +424,18 @@ export function computeNeurochemicals(inputs: NeurochemicalInputs): Neurochemica
     const sigmaKappa = stddev(obs.kappaHistory);
     const couplingMean = mean(obs.externalCouplingHistory);
     const couplingStddev = stddev(obs.externalCouplingHistory);
-    const sophiaThreshold = couplingMean;
-    // Smooth Sophia gate: 0 at/below the basin's mean coupling, ramps
-    // linearly to 1 at mean + 1σ. couplingStddev IS the natural ramp
-    // scale (the basin's own observed spread of coupling).
+    // 2026-05-25 (steady-state-pinning fix): the previous Sophia gate
+    // `clip((coupling - mean) / σ, 0, 1)` zeroed endo whenever
+    // coupling ≤ mean — ~50% of state-space by construction. Since
+    // externalCoupling = phi × (1 - bv) is a continuous magnitude in
+    // [0, 1] (not a binary engaged/disengaged qualifier — audit
+    // 2026-05-25), the right shape is sigmoid around the mean: 0.5
+    // at mean, asymptotes 0 (well below mean) and 1 (well above).
+    // Always non-zero so the κ-proximity envelope always contributes
+    // proportionally to recent coherence.
     const sophiaGate = couplingStddev > 0
-      ? clip((inputs.externalCoupling - sophiaThreshold) / couplingStddev, 0, 1)
-      : (inputs.externalCoupling >= sophiaThreshold ? 1 : 0);  // degenerate: σ=0
+      ? sigmoid((inputs.externalCoupling - couplingMean) / couplingStddev)
+      : (inputs.externalCoupling >= couplingMean ? 1 : 0);  // degenerate: σ=0
     if (sigmaKappa === 0) {
       // Basin's κ has been perfectly flat → no scale to smooth over.
       // Fall back to the indicator (still binary in this degenerate case).
