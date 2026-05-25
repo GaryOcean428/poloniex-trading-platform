@@ -2486,7 +2486,16 @@ export class MonkeyKernel extends EventEmitter {
     // operator directive.
     //
     // Cold start (history length < 2 → stddev undefined → identity 1).
-    const selfObsWinRateBias = this.selfObs?.entryBias[mode]?.[sideCandidate] ?? 1.0;
+    // Compose per-(mode, side) bias with per-(symbol, side) bias. The
+    // symbol axis is orthogonal to mode — closes the 2026-05-25 gap
+    // where ETH long losses pooled with BTC long wins in the
+    // (CREATOR_TREND_UP, long) bucket and never accumulated symbol-
+    // specific evidence. Both biases are Wilson-CI gated and bounded
+    // to [0.7, 1.3], so the composed multiplier is bounded to
+    // [0.49, 1.69] and stays neutral when either lacks evidence.
+    const selfObsModeBias = this.selfObs?.entryBias[mode]?.[sideCandidate] ?? 1.0;
+    const selfObsSymbolBias = this.selfObs?.symbolSideBias[symbol]?.[sideCandidate] ?? 1.0;
+    const selfObsWinRateBias = selfObsModeBias * selfObsSymbolBias;
     let selfObsPressure: number;
     if (state.surpriseHistory.length >= 2) {
       const n = state.surpriseHistory.length;
