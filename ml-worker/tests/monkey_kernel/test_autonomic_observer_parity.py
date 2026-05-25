@@ -82,14 +82,16 @@ def test_ne_three_distinct_surprise_levels_three_distinct_outputs():
 # ─── ser (serotonin) — 0.85 baseline compression parity ─────────────
 
 
-def test_ser_steady_state_with_bv_history_is_about_0_85():
-    """Steady-state bv history → ser_base = 1, ser = 0.85 × 1 = 0.85
-    (parity with TS test that exercised the same path)."""
+def test_ser_steady_state_with_bv_history_is_about_0_425():
+    """Steady-state bv history (current bv at history mean) →
+    ser_base = 0.5 (post-CC2-audit-F2 fix, two-tailed sigmoid)
+    → ser = 0.85 × 0.5 = 0.425. (Pre-fix would have been 0.85 from
+    pinned-at-1 one-sided clamp.)"""
     nc = _ticker(_base_inputs(
         basin_velocity=0.1,
         basin_velocity_history=[0.1] * 6,
     ))
-    assert nc.serotonin == pytest.approx(0.85, abs=0.02)
+    assert nc.serotonin == pytest.approx(0.425, abs=0.02)
 
 
 def test_ser_thrash_via_mode_transitions_drops():
@@ -146,11 +148,11 @@ def test_cold_start_no_observables_produces_finite_chemistry():
 
 def test_zscore_handles_fp_drift_identical_history():
     """Parity with TS zScore fix: identical-history series produce
-    sd ≈ 1.5e-17 from FP drift; the < 1e-12 guard catches it."""
-    # bv = 0.1, history all 0.1 — would produce spurious z ≈ 1 without
-    # the FP guard. ser_base should be exactly 1, ser = 0.85.
+    sd ≈ 1.5e-17 from FP drift; the < 1e-12 guard catches it.
+    Post-CC2-audit-F2: z=0 → sigmoid(0)=0.5 → ser_base=0.5 →
+    ser = 0.85 × 0.5 = 0.425."""
     nc = _ticker(_base_inputs(
         basin_velocity=0.1,
         basin_velocity_history=[0.1] * 6,
     ))
-    assert nc.serotonin == pytest.approx(0.85, abs=0.01)
+    assert nc.serotonin == pytest.approx(0.425, abs=0.01)

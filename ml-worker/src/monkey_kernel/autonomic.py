@@ -339,8 +339,13 @@ class AutonomicKernel:
             transitions_per_tick = len(mode_x) / max(tick_count, 1)
             ser_base = _clip(1.0 - transitions_per_tick, 0.0, 1.0)
         elif bv_history is not None and len(bv_history) >= _HISTORY_MIN_SAMPLES:
+            # 2026-05-25 (CC2 audit F2): the prior shape
+            # `clip(1 - max(0, z), 0, 1)` was the same one-sided-clamp
+            # meta-pattern PR #920 fixed elsewhere. Two-tailed sigmoid
+            # replaces it so both calm-than-typical and faster-than-typical
+            # are informative; ser settles near 0.5 at bv-history mean.
             z = _z_score(inputs.basin_velocity, bv_history)
-            ser_base = _clip(1.0 - max(0.0, z), 0.0, 1.0)
+            ser_base = _clip(1.0 - _sigmoid(z), 0.0, 1.0)
         else:
             ser_base = _clip(1.0 / max(inputs.basin_velocity, 1e-12), 0.0, 1.0)
         ser = _clip(0.85 * ser_base + reward_sums["serotonin"], 0.0, 1.0)

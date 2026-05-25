@@ -336,12 +336,16 @@ export function computeNeurochemicals(inputs: NeurochemicalInputs): Neurochemica
       void thrashRate;
     }
   } else if (obs?.basinVelocityHistory && obs.basinVelocityHistory.length >= HISTORY_MIN_SAMPLES) {
-    // Velocity-based fallback when mode transitions aren't supplied:
-    // ser = 1 - clip(z-score(bv), 0, ∞). Positive z (faster than
-    // basin's own typical) reduces ser; negative z (calmer than
-    // typical) saturates ser at 1.
+    // 2026-05-25 (CC2 audit F2 follow-up): the prior shape
+    // `clip(1 - max(0, z), 0, 1)` was the same one-sided-clamp
+    // meta-pattern PR #920 fixed elsewhere — when bv ≤ rolling mean
+    // (~50% of state-space by construction), z ≤ 0, max(0, z) = 0,
+    // serBase pinned at 1.0. Two-tailed sigmoid replaces it: both
+    // calm-than-typical and faster-than-typical are informative; ser
+    // settles near 0.5 at the bv-history mean, asymptotes 0/1.
+    // See [[feedback_steady_state_pinning_pattern]] for the meta-pattern.
     const z = zScore(inputs.basinVelocity, obs.basinVelocityHistory);
-    serBase = clip(1 - Math.max(0, z), 0, 1);
+    serBase = clip(1 - sigmoid(z), 0, 1);
   } else {
     // Cold-start fallback — legacy 1/max(bv,0.01). The 0.01 here is
     // a divide-by-zero guard (numeric identity for "as small as we

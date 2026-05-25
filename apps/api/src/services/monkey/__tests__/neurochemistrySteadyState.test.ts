@@ -73,20 +73,21 @@ describe('neurochemistry — steady-state variance restoration', () => {
   });
 
   describe('ser (serotonin) — ×0.85 baseline compression lets reward delta register', () => {
-    it('steady state, no reward → ser ≈ 0.85 (was 1.0 pinned)', () => {
+    it('steady state at bv-mean → ser ≈ 0.425 (post-F2 two-tailed sigmoid)', () => {
       const inp = baseInputs();
-      // No modeTransitionTimesMs supplied → falls to bv-z-score fallback
-      // (which produces serBase = 1.0 when bv ≤ rolling mean). With
-      // ×0.85 compression, ser = 0.85.
+      // No modeTransitionTimesMs → falls to bv-z-score fallback.
+      // Post-CC2-audit-F2 fix: serBase = 1 - sigmoid(z). z=0 at mean
+      // → serBase = 0.5 → ser = 0.85 × 0.5 = 0.425. (Pre-fix would
+      // have been 0.85 from the pinned-at-1 one-sided clamp.)
       inp.observables = {
         ...inp.observables!,
-        basinVelocityHistory: [0.1, 0.1, 0.1, 0.1, 0.1, 0.1],  // current bv == rolling mean
+        basinVelocityHistory: [0.1, 0.1, 0.1, 0.1, 0.1, 0.1],
       };
       const nc = computeNeurochemicals(inp);
-      expect(nc.serotonin).toBeCloseTo(0.85, 2);
+      expect(nc.serotonin).toBeCloseTo(0.425, 2);
     });
 
-    it('steady state + 0.15 reward delta → ser reaches 1.0 (delta visible)', () => {
+    it('steady state + 0.15 reward delta → ser ≈ 0.575 (delta visible above mean)', () => {
       const inp = baseInputs();
       inp.observables = {
         ...inp.observables!,
@@ -94,8 +95,8 @@ describe('neurochemistry — steady-state variance restoration', () => {
       };
       inp.rewardSerotoninDelta = 0.15;
       const nc = computeNeurochemicals(inp);
-      // 0.85 + 0.15 = 1.0 — reward delta now registers fully
-      expect(nc.serotonin).toBeCloseTo(1.0, 2);
+      // serBase = 0.5, ser = 0.85 × 0.5 + 0.15 = 0.575
+      expect(nc.serotonin).toBeCloseTo(0.575, 2);
     });
 
     it('thrashing mode (high transition rate) + reward → ser still responds', () => {
