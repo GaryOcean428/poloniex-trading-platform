@@ -63,6 +63,16 @@ export const KAPPA_DRIFT = 0.1;
  *  Matches canonical `if correct and dominance > 0.7`. */
 export const KAPPA_CONFIDENCE_THRESHOLD = 0.7;
 
+/** LRU cap on `_entries`. Matches loop.ts HISTORY_MAX = 100 so this is
+ *  a kernel-wide memory-shape bound (same as phiHistory / basinHistory /
+ *  surpriseHistory), not a new tuning knob. With this cap the
+ *  sovereignty getter ranges meaningfully: active / HISTORY_MAX
+ *  responds to decay over time, to wrong-outcome zeroing via
+ *  `recordOutcome`, and to integration pauses. Without it,
+ *  per-tick consolidate produces sov === 1.0 deterministically
+ *  (active and total are the same set by construction). */
+export const QIGRAMV2_HISTORY_MAX = 100;
+
 /** κ delta on a correct + high-confidence outcome. */
 export const KAPPA_UP_STEP = 2.0;
 
@@ -225,6 +235,7 @@ export class QIGRAMv2State {
       category: opts.category ?? existing?.category ?? '',
       trajectory: opts.trajectory ?? existing?.trajectory ?? {},
     });
+    this.evictOldestIfFull();
   }
 
   /** Store a basin without an outcome (default weight=1.0, correct=null).
@@ -243,6 +254,20 @@ export class QIGRAMv2State {
       category: opts.category ?? existing?.category ?? '',
       trajectory: opts.trajectory ?? existing?.trajectory ?? {},
     });
+    this.evictOldestIfFull();
+  }
+
+  /** LRU eviction by insertion order. Map iteration order is insertion
+   *  order, and Map.set on an existing key preserves that position —
+   *  so re-integrating an existing id does NOT count as a fresh insert
+   *  and does not displace another. Only true new-id inserts that push
+   *  size above QIGRAMV2_HISTORY_MAX trigger eviction of the oldest. */
+  private evictOldestIfFull(): void {
+    while (this._entries.size > QIGRAMV2_HISTORY_MAX) {
+      const oldestKey = this._entries.keys().next().value;
+      if (oldestKey === undefined) return;
+      this._entries.delete(oldestKey);
+    }
   }
 
   /** Attribute an outcome to a previously-stored basin entry.
