@@ -231,11 +231,25 @@ export function currentPositionSize(
   const laneFrac = laneBudgetFraction(lane);
   const laneMarginCap = laneFrac * availableEquityUsdt;
   const nc = s.neurochemistry;
-  // Lived-experience scaling. 0 at birth, 1 after ~20 witnessed trades.
-  const maturity = Math.min(1, bankSize / 20);
+  // 2026-05-25 sizing-relief PR — three composite changes from CC2's
+  // formula audit:
+  //   1. Maturity in 5 closed trades, not 20 — every restart used to
+  //      suffocate sizing for ~20 hours of wall-clock while bankSize
+  //      caught back up. Pillar 3 ("earn your sovereignty") doctrine
+  //      still applies; 5 trades is also "earned", just less drawn-out.
+  //   2. stabilityMult re-centered at 1.0 not 0.75 — neutral serotonin
+  //      (~0.5) used to multiply sizing by 0.75, a one-sided cut.
+  //      Now [0.75, 1.25] so serotonin is a ±modulator, not a subtractor.
+  //   3. rewardMult band widened ×2 — dopamine spikes contribute more
+  //      aggressively after wins; range [0, 2] not [0.5, 1.5].
+  // Net: median sizing approximately doubles. The 0.5 frac safety cap
+  // ("BOUNDARY not PARAMETER", line ~250) still binds at the top — that
+  // is unchanged. Mode-floor raises (modes.ts) handle the cold-start
+  // path where maturity ≈ 0 and the multiplicative chain is dominated.
+  const maturity = Math.min(1, bankSize / 5);
   const baseFrac = s.phi * s.sovereignty * maturity;
-  const rewardMult = 1 + (nc.dopamine - nc.gaba) * 0.5;
-  const stabilityMult = 0.5 + nc.serotonin * 0.5;
+  const rewardMult = 1 + (nc.dopamine - nc.gaba) * 1.0;
+  const stabilityMult = 0.75 + nc.serotonin * 0.5;
 
   // Exploration floor (Pillar 1 FLUCTUATIONS — substrate, not optional).
   // Per-mode baseline: EXPLORATION 0.08, INVESTIGATION 0.10, INTEGRATION 0.12.
