@@ -8,25 +8,32 @@ const router = express.Router();
 
 /**
  * GET /api/risk/settings
- * Get user's risk management settings
+ *
+ * Read-only view of the operator's risk profile. The only field the
+ * kernel still reads is `maxLeverage` (audited 15× safety ceiling,
+ * clamped in loop.ts:~2621). The other fields are returned for backward
+ * compatibility with telemetry consumers that still read them.
+ *
+ * The matching PUT endpoint and the GET /status / GET /alerts endpoints
+ * were removed 2026-05-25 with the operator-halt strip (PR #908) and the
+ * dead UI cleanup. The kernel is autonomous; operator halts that
+ * suppressed entries are gone — losses feed back through the
+ * neurochemistry layer instead. See [[polytrade_autonomy_doctrine]].
  */
 router.get('/settings', authenticateToken, async (req: Request, res: Response) => {
   try {
     const userId = String(req.user.id);
-    
+
     // Try to get from database
     try {
       const result = await pool.query(
         'SELECT * FROM risk_settings WHERE user_id = $1',
-        [userId]
+        [userId],
       );
-      
+
       if (result.rows.length > 0) {
-        // Map snake_case columns → the camelCase shape the RiskSettings
-        // UI expects. Before migration 055 the table did not exist and
-        // this branch never ran (the catch fell through to defaults);
-        // now that it persists, the row must be mapped or the UI reads
-        // undefined for every field.
+        // Map snake_case columns → the camelCase shape the dashboard
+        // expects.
         const row = result.rows[0];
         return res.json({
           success: true,
@@ -40,13 +47,13 @@ router.get('/settings', authenticateToken, async (req: Request, res: Response) =
             dailyLossLimit: Number(row.daily_loss_limit),
             maxLeverage: Number(row.max_leverage),
             riskLevel: row.risk_level,
-          }
+          },
         });
       }
     } catch (dbError) {
       logger.warn('Database error fetching risk settings, using defaults:', dbError);
     }
-    
+
     // Return default settings
     res.json({
       success: true,
@@ -59,161 +66,14 @@ router.get('/settings', authenticateToken, async (req: Request, res: Response) =
         takeProfit: 4,
         dailyLossLimit: 5,
         maxLeverage: 10,
-        riskLevel: 'moderate'
-      }
+        riskLevel: 'moderate',
+      },
     });
-    
   } catch (error: unknown) {
     logger.error('Error fetching risk settings:', error);
     res.status(500).json({
       success: false,
-      error: (error instanceof Error ? error.message : String(error)) || 'Failed to fetch risk settings'
-    });
-  }
-});
-
-/**
- * PUT /api/risk/settings
- * Update user's risk management settings
- */
-router.put('/settings', authenticateToken, async (req: Request, res: Response) => {
-  try {
-    const userId = String(req.user.id);
-    const {
-      maxDrawdown,
-      maxPositionSize,
-      maxConcurrentPositions,
-      stopLoss,
-      takeProfit,
-      dailyLossLimit,
-      maxLeverage,
-      riskLevel
-    } = req.body;
-    
-    // Validate inputs
-    if (maxDrawdown && (maxDrawdown < 0 || maxDrawdown > 100)) {
-      return res.status(400).json({
-        success: false,
-        error: 'Max drawdown must be between 0 and 100'
-      });
-    }
-    
-    const settings = {
-      userId,
-      maxDrawdown: maxDrawdown || 15,
-      maxPositionSize: maxPositionSize || 5,
-      maxConcurrentPositions: maxConcurrentPositions || 3,
-      stopLoss: stopLoss || 2,
-      takeProfit: takeProfit || 4,
-      dailyLossLimit: dailyLossLimit || 5,
-      maxLeverage: maxLeverage || 10,
-      riskLevel: riskLevel || 'moderate'
-    };
-    
-    // Try to save to database
-    try {
-      await pool.query(
-        `INSERT INTO risk_settings (
-          user_id, max_drawdown, max_position_size, max_concurrent_positions,
-          stop_loss, take_profit, daily_loss_limit, max_leverage, risk_level,
-          updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
-        ON CONFLICT (user_id)
-        DO UPDATE SET
-          max_drawdown = EXCLUDED.max_drawdown,
-          max_position_size = EXCLUDED.max_position_size,
-          max_concurrent_positions = EXCLUDED.max_concurrent_positions,
-          stop_loss = EXCLUDED.stop_loss,
-          take_profit = EXCLUDED.take_profit,
-          daily_loss_limit = EXCLUDED.daily_loss_limit,
-          max_leverage = EXCLUDED.max_leverage,
-          risk_level = EXCLUDED.risk_level,
-          updated_at = NOW()`,
-        [
-          userId,
-          settings.maxDrawdown,
-          settings.maxPositionSize,
-          settings.maxConcurrentPositions,
-          settings.stopLoss,
-          settings.takeProfit,
-          settings.dailyLossLimit,
-          settings.maxLeverage,
-          settings.riskLevel
-        ]
-      );
-    } catch (dbError) {
-      logger.warn('Database error saving risk settings:', dbError);
-      // Continue anyway - settings are stored in memory
-    }
-    
-    res.json({
-      success: true,
-      settings,
-      message: 'Risk settings updated'
-    });
-    
-  } catch (error: unknown) {
-    logger.error('Error updating risk settings:', error);
-    res.status(500).json({
-      success: false,
-      error: (error instanceof Error ? error.message : String(error)) || 'Failed to update risk settings'
-    });
-  }
-});
-
-/**
- * GET /api/risk/status
- * Get current risk status
- */
-router.get('/status', authenticateToken, async (req: Request, res: Response) => {
-  try {
-    
-    // Calculate current risk metrics
-    // This would normally query active positions and calculate real-time risk
-    const status = {
-      currentDrawdown: 0,
-      currentPositions: 0,
-      dailyLoss: 0,
-      riskScore: 25, // 0-100, lower is better
-      alerts: []
-    };
-    
-    res.json({
-      success: true,
-      status
-    });
-    
-  } catch (error: unknown) {
-    logger.error('Error fetching risk status:', error);
-    res.status(500).json({
-      success: false,
-      error: (error instanceof Error ? error.message : String(error)) || 'Failed to fetch risk status'
-    });
-  }
-});
-
-/**
- * GET /api/risk/alerts
- * Get risk alerts
- */
-router.get('/alerts', authenticateToken, async (req: Request, res: Response) => {
-  try {
-    
-    // Get risk alerts
-    const alerts = [
-      // Mock alerts for now
-    ];
-    
-    res.json({
-      success: true,
-      alerts
-    });
-    
-  } catch (error: unknown) {
-    logger.error('Error fetching risk alerts:', error);
-    res.status(500).json({
-      success: false,
-      error: (error instanceof Error ? error.message : String(error)) || 'Failed to fetch risk alerts'
+      error: (error instanceof Error ? error.message : String(error)) || 'Failed to fetch risk settings',
     });
   }
 });
