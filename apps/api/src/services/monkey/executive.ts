@@ -152,6 +152,17 @@ export const LANE_PARAMETER_DEFAULTS: Record<
   // from per-lane reward queue). slPct / tpPct retain their roles
   // (per-lane retreat / target ROI on margin); only the static
   // budgetFrac haircut is dropped to 1.0.
+  //
+  // 2026-05-25 (CC2 audit F4 doctrinal note): the prior "trend is
+  // opt-in by operator" doctrine (budgetFrac = 0 for trend) is
+  // explicitly RETIRED with this change. Lanes no longer encode a
+  // sizing-allocation constraint; they encode entry-threshold scale
+  // and exit envelope (slPct / tpPct) only. If a future operator
+  // wants to re-disable a lane as an opt-in, the cleanest mechanism
+  // is a `MONKEY_TREND_LANE_LIVE` env-flag check at the call site
+  // (similar to other operator MANDATEs), NOT restoring per-lane
+  // budgetFrac differentiation — that mixed two concepts (sizing
+  // allocation + behavioral envelope) into one field.
   scalp: { slPct: 0.03, tpPct: 0.03, budgetFrac: 1.0 },
   swing: { slPct: 0.15, tpPct: 0.15, budgetFrac: 1.0 },
   trend: { slPct: 0.40, tpPct: 0.40, budgetFrac: 1.0 },
@@ -249,18 +260,23 @@ export function currentPositionSize(
   const rewardMult = 1 + (nc.dopamine - nc.gaba);
   const stabilityMult = 0.75 + nc.serotonin * 0.5;
 
-  // Exploration floor — Pillar 1 FLUCTUATIONS. 2026-05-25 observer-
-  // derive PR: collapsed per-mode magic floors (0.20/0.25/0.30) to a
-  // single principled floor. EXPLORATION_FLOOR is the smallest
-  // commitment the kernel makes when chemistry-driven baseFrac is
-  // collapsed — chosen to clear typical exchange minimums on small
-  // accounts at any leverage (the lift-to-min path expands further
-  // when the floor itself is insufficient). Scales inversely with
-  // maturity: fresh kernels explore at the floor; mature kernels let
-  // chemistry drive without floor support.
-  const EXPLORATION_FLOOR = 0.20;
-  const explorationFloor = EXPLORATION_FLOOR * (1 - maturity);
-  void mode;  // mode-specific sizing now expressed via chemistry, not floor differentiation
+  // Exploration floor — Pillar 1 FLUCTUATIONS. 2026-05-25 (CC2 audit
+  // F3): the previous `EXPLORATION_FLOOR = 0.20` magic constant is
+  // replaced by the fraction that clears the exchange minimum
+  // notional at current leverage — the SAME observer-derived quantity
+  // that lift-to-min uses. This unifies two paths into one and grounds
+  // the floor in actual exchange state, not a guessed constant.
+  //
+  // Fresh kernels (maturity ≈ 0) explore at exactly the min-clearing
+  // frac; mature kernels let chemistry drive without floor support.
+  // The floor is capped at 0.5 (the survival cap) so a tiny equity
+  // pool combined with a large min-notional doesn't override the
+  // upstream policy bound.
+  const minClearingFrac =
+    availableEquityUsdt > 0 && leverage > 0
+      ? Math.min(0.5, (minNotionalUsdt * 1.05) / (leverage * availableEquityUsdt))
+      : 0;
+  const explorationFloor = minClearingFrac * (1 - maturity);
 
   const rawFrac = Math.max(explorationFloor, baseFrac * rewardMult * stabilityMult);
   // 2026-05-25 — frac clamp at 0.5: BOUNDARY (survival) not PARAMETER.
@@ -333,6 +349,16 @@ export function currentPositionSize(
       notionalCeilingRatio: 0,
       notionalCeiling: 0,
       cappedByNotional,
+      // 2026-05-25 (CC2 audit F5): mode wired into derivation for
+      // telemetry rather than left as a `void mode;` code smell. The
+      // formula itself is mode-agnostic — mode-specific sizing now
+      // expressed via chemistry — but downstream consumers (logs,
+      // dashboards) record which mode was active for the entry.
+      mode: mode === MonkeyMode.EXPLORATION ? 0
+        : mode === MonkeyMode.INVESTIGATION ? 1
+        : mode === MonkeyMode.INTEGRATION ? 2
+        : mode === MonkeyMode.DRIFT ? 3
+        : 4,
     },
   };
 }
