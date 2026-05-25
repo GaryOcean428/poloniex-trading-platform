@@ -12,8 +12,12 @@ import {
   promoteToLive,
   recordClose,
   rollingWinRate,
+  shouldAutoPromote,
   ROTATION_LOSS_STREAK_THRESHOLD,
+  ROTATION_PROMOTION_WR_GAP,
+  ROTATION_WR_MIN_SAMPLES,
   ROTATION_WR_WINDOW,
+  type RotationPeerSnapshot,
 } from '../kernel_rotation.js';
 
 describe('kernel_rotation — state machine', () => {
@@ -112,6 +116,89 @@ describe('kernel_rotation — promotion', () => {
     recordClose(s, -1.0);
     expect(s.consecutiveLosses).toBe(1);
     expect(s.mode).toBe('live');
+  });
+});
+
+describe('kernel_rotation — auto-promotion gate', () => {
+  function paperKernelWithWR(targetWR: number, n: number = ROTATION_WR_MIN_SAMPLES) {
+    const s = makeRotationState();
+    // First demote it: 5 consecutive losses.
+    for (let i = 0; i < ROTATION_LOSS_STREAK_THRESHOLD; i++) recordClose(s, -1);
+    // Clear the losses out of the rolling window by adding `n` more closes
+    // with the desired WR. Demotion already fired; further closes don't
+    // re-demote.
+    s.rollingPnls = [];  // reset window so synthetic stats are clean
+    const wins = Math.round(targetWR * n);
+    for (let i = 0; i < wins; i++) s.rollingPnls.push(+1);
+    for (let i = wins; i < n; i++) s.rollingPnls.push(-1);
+    return s;
+  }
+
+  function liveKernelWithWR(targetWR: number, n: number = ROTATION_WR_MIN_SAMPLES): RotationPeerSnapshot {
+    return {
+      mode: 'live',
+      rollingWinRate: targetWR,
+      rollingSampleCount: n,
+    };
+  }
+
+  it('does NOT promote when candidate is already live (only paper → live)', () => {
+    const live = makeRotationState();
+    for (let i = 0; i < ROTATION_WR_MIN_SAMPLES; i++) recordClose(live, +1);
+    const reason = shouldAutoPromote(live, [liveKernelWithWR(0.50)]);
+    expect(reason).toBeNull();
+  });
+
+  it('does NOT promote when candidate has < ROTATION_WR_MIN_SAMPLES closes', () => {
+    const s = paperKernelWithWR(0.80, ROTATION_WR_MIN_SAMPLES - 1);
+    const reason = shouldAutoPromote(s, [liveKernelWithWR(0.50)]);
+    expect(reason).toBeNull();
+  });
+
+  it('does NOT promote when no live peer has informative stats', () => {
+    const s = paperKernelWithWR(0.90);
+    const reason = shouldAutoPromote(s, [
+      { mode: 'paper', rollingWinRate: 0.50, rollingSampleCount: 50 },  // wrong mode
+      { mode: 'live', rollingWinRate: 0.90, rollingSampleCount: ROTATION_WR_MIN_SAMPLES - 1 },  // not enough samples
+    ]);
+    expect(reason).toBeNull();
+  });
+
+  it('promotes when candidate WR matches the best live WR (gap = 0)', () => {
+    const s = paperKernelWithWR(0.60);
+    const reason = shouldAutoPromote(s, [liveKernelWithWR(0.60)]);
+    expect(reason).not.toBeNull();
+    expect(reason).toContain('60.0%');
+  });
+
+  it('promotes when candidate WR is exactly at the gate (best - gap)', () => {
+    // Best live = 0.50; gate = 0.50 - 0.10 = 0.40. Candidate at 0.40 promotes.
+    const s = paperKernelWithWR(0.40);
+    const reason = shouldAutoPromote(s, [liveKernelWithWR(0.50)]);
+    expect(reason).not.toBeNull();
+  });
+
+  it('does NOT promote when candidate WR is just below the gate', () => {
+    // Best live = 0.60; gate = 0.50. Candidate at 0.45 fails.
+    // Use n=20 to make the 0.45 WR representable.
+    const s = paperKernelWithWR(0.45, 20);
+    const reason = shouldAutoPromote(s, [liveKernelWithWR(0.60, 20)]);
+    expect(reason).toBeNull();
+  });
+
+  it('compares against the BEST live peer, not the average', () => {
+    const s = paperKernelWithWR(0.55);
+    // Best live is 0.80, gap=0.10 → gate at 0.70. Candidate at 0.55 fails
+    // even though one live peer has only 0.40 (lower than candidate).
+    const reason = shouldAutoPromote(s, [
+      liveKernelWithWR(0.80),
+      liveKernelWithWR(0.40),
+    ]);
+    expect(reason).toBeNull();
+  });
+
+  it('ROTATION_PROMOTION_WR_GAP is the documented 10pp', () => {
+    expect(ROTATION_PROMOTION_WR_GAP).toBeCloseTo(0.10, 6);
   });
 });
 

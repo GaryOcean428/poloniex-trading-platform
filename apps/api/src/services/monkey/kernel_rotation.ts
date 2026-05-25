@@ -32,10 +32,18 @@
 /** Default loss streak that triggers demotion. */
 export const ROTATION_LOSS_STREAK_THRESHOLD = 5;
 
-/** Rolling window over which a kernel's WR is tracked. Used by the
- *  follow-up auto-promotion PR; included here so the data is being
- *  accumulated from day one. */
+/** Rolling window over which a kernel's WR is tracked. */
 export const ROTATION_WR_WINDOW = 50;
+
+/** Minimum WR sample count before a kernel's rolling WR is considered
+ *  authoritative — used by the auto-promotion gate so a paper kernel
+ *  can't promote on a single lucky close. */
+export const ROTATION_WR_MIN_SAMPLES = 10;
+
+/** Auto-promotion gap: paper kernel's WR must be within this many
+ *  percentage points of the best live kernel's WR to graduate back
+ *  to live. The operator's pre-cutover spec was "within 10%". */
+export const ROTATION_PROMOTION_WR_GAP = 0.10;
 
 export type KernelOperationalMode = 'live' | 'paper';
 
@@ -139,4 +147,61 @@ export function rollingWinRate(state: RotationState): number {
   let wins = 0;
   for (const pnl of state.rollingPnls) if (pnl > 0) wins += 1;
   return wins / n;
+}
+
+/**
+ * Snapshot of the data a kernel exposes to peers for cross-kernel
+ * auto-promotion. Decoupled from MonkeyKernel so this module stays
+ * pure-state (no circular imports).
+ */
+export interface RotationPeerSnapshot {
+  mode: KernelOperationalMode;
+  rollingWinRate: number;        // NaN if no samples yet
+  rollingSampleCount: number;
+}
+
+/**
+ * Decide whether a paper-mode kernel has earned re-promotion to live.
+ *
+ * The rule (matches the pre-cutover spec the operator described):
+ *
+ *   1. The candidate must be in paper mode.
+ *   2. The candidate must have at least ROTATION_WR_MIN_SAMPLES closes
+ *      in its rolling window (no promotion on a single lucky close).
+ *   3. There must exist at least one peer kernel in 'live' mode with
+ *      a CI-firm rolling WR (≥ ROTATION_WR_MIN_SAMPLES samples). If no
+ *      live peer has stats yet, the gate cannot fire — the system has
+ *      no reference WR to compare against.
+ *   4. The candidate's rolling WR must be within
+ *      ROTATION_PROMOTION_WR_GAP of the BEST live peer's WR.
+ *
+ * Returns the reason string when promotion should fire, null otherwise.
+ */
+export function shouldAutoPromote(
+  candidate: RotationState,
+  peers: ReadonlyArray<RotationPeerSnapshot>,
+): string | null {
+  if (candidate.mode !== 'paper') return null;
+  const myN = candidate.rollingPnls.length;
+  if (myN < ROTATION_WR_MIN_SAMPLES) return null;
+
+  let myWins = 0;
+  for (const p of candidate.rollingPnls) if (p > 0) myWins += 1;
+  const myWR = myWins / myN;
+
+  let bestLiveWR = Number.NaN;
+  for (const peer of peers) {
+    if (peer.mode !== 'live') continue;
+    if (peer.rollingSampleCount < ROTATION_WR_MIN_SAMPLES) continue;
+    if (!Number.isFinite(peer.rollingWinRate)) continue;
+    if (!Number.isFinite(bestLiveWR) || peer.rollingWinRate > bestLiveWR) {
+      bestLiveWR = peer.rollingWinRate;
+    }
+  }
+
+  if (!Number.isFinite(bestLiveWR)) return null;  // no informative live peer
+  if (myWR < bestLiveWR - ROTATION_PROMOTION_WR_GAP) return null;
+
+  return `auto-promotion: rolling WR ${(myWR * 100).toFixed(1)}% >= ` +
+    `best live ${(bestLiveWR * 100).toFixed(1)}% - ${(ROTATION_PROMOTION_WR_GAP * 100).toFixed(0)}pp`;
 }
