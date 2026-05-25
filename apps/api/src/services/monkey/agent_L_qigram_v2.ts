@@ -437,6 +437,126 @@ export class QIGRAMv2State {
   }
 }
 
+// ─── Per-symbol partition ────────────────────────────────────────────
+
+/** Per-symbol partition over QIGRAMv2State. Each MonkeyKernel handles
+ *  DEFAULT_SYMBOLS (currently 2) and integrates one basin per symbol
+ *  per tick. With a single shared QIGRAMv2State, the LRU cap at
+ *  QIGRAMV2_HISTORY_MAX (100) only covers ~100/N_SYMBOLS ticks of
+ *  age before eviction — for N_SYMBOLS = 2 that is ~49 ticks, far
+ *  below the ~90 ticks needed for 0.95^k decay to cross
+ *  MIN_ACTIVE_WEIGHT, so sov pins at 1.0 in steady state.
+ *
+ *  Per-symbol partition isolates each symbol's LRU buffer so
+ *  HISTORY_MAX = 100 covers ≥ 90-tick decay-to-threshold on every
+ *  symbol independently. Bonus: per-symbol sov is a more informative
+ *  signal than the conflated aggregate (mirrors the per-symbol
+ *  SelfObservation asymmetry surfaced by PR #911).
+ *
+ *  Empty partitions return sov=1.0 ("no information yet"); the kernel
+ *  treats that the same as a freshly-warmed legitimate 1.0. */
+export class QIGRAMv2Partition {
+  private readonly stores: Map<string, QIGRAMv2State> = new Map();
+  private readonly totalProblemsPerSymbol: number | null;
+
+  constructor(totalProblemsPerSymbol: number | null = null) {
+    this.totalProblemsPerSymbol = totalProblemsPerSymbol;
+  }
+
+  private storeFor(symbol: string): QIGRAMv2State {
+    let s = this.stores.get(symbol);
+    if (!s) {
+      s = new QIGRAMv2State(this.totalProblemsPerSymbol);
+      this.stores.set(symbol, s);
+    }
+    return s;
+  }
+
+  integrate(
+    symbol: string,
+    id: string,
+    basin: Basin,
+    opts: {
+      weight: number;
+      correct: boolean;
+      category?: string;
+      trajectory?: Record<string, unknown>;
+    },
+  ): void {
+    this.storeFor(symbol).integrate(id, basin, opts);
+  }
+
+  store(
+    symbol: string,
+    id: string,
+    basin: Basin,
+    opts: { category?: string; trajectory?: Record<string, unknown> } = {},
+  ): void {
+    this.storeFor(symbol).store(id, basin, opts);
+  }
+
+  decayAll(symbol: string): void {
+    const s = this.stores.get(symbol);
+    if (s) s.decayAll();
+  }
+
+  /** Explicit cleanup of a symbol's dead-weight entries. Not required
+   *  per-tick under LRU; useful before persistence or after a wrong-
+   *  outcome attribution burst. */
+  consolidate(symbol: string): number {
+    const s = this.stores.get(symbol);
+    return s ? s.consolidate() : 0;
+  }
+
+  recordOutcome(symbol: string, id: string, correct: boolean): boolean {
+    const s = this.stores.get(symbol);
+    return s ? s.recordOutcome(id, correct) : false;
+  }
+
+  recall(symbol: string, query: Basin): RecallResultV2 | null {
+    const s = this.stores.get(symbol);
+    return s ? s.recall(query) : null;
+  }
+
+  recallByCategory(symbol: string, category: string): CategoryRecallResultV2 | null {
+    const s = this.stores.get(symbol);
+    return s ? s.recallByCategory(category) : null;
+  }
+
+  tack(symbol: string, confidence: number, correct: boolean): void {
+    this.storeFor(symbol).tack(confidence, correct);
+  }
+
+  kappa(symbol: string): number {
+    const s = this.stores.get(symbol);
+    return s ? s.kappa : KAPPA_FIXED_POINT;
+  }
+
+  activeEntries(symbol: string): BasinEntryV2[] {
+    const s = this.stores.get(symbol);
+    return s ? s.activeEntries() : [];
+  }
+
+  totalEntries(symbol: string): number {
+    const s = this.stores.get(symbol);
+    return s ? s.totalEntries : 0;
+  }
+
+  /** Sovereignty for a single symbol. Empty partition returns 1.0
+   *  ("no information") so a cold-start symbol does not inject a
+   *  spurious 0 into baseFrac = Φ × sov × maturity. */
+  sovereignty(symbol: string): number {
+    const s = this.stores.get(symbol);
+    if (!s || s.totalEntries === 0) return 1.0;
+    return s.sovereignty;
+  }
+
+  /** All symbols currently tracked. Useful for telemetry. */
+  symbols(): string[] {
+    return Array.from(this.stores.keys());
+  }
+}
+
 // ─── Env-flag helper ─────────────────────────────────────────────────
 
 /** Returns true when the operator has explicitly enabled the v2 layer.
