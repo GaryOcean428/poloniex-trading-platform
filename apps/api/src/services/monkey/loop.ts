@@ -72,6 +72,8 @@ import {
   promoteToLive,
   recordClose as recordRotationClose,
   rollingWinRate,
+  shouldAutoPromote,
+  type RotationPeerSnapshot,
   type RotationState,
 } from './kernel_rotation.js';
 import { isPhiLeakyEnabled, updateLeakyPhi } from './phi_integrator.js';
@@ -7895,6 +7897,53 @@ export class MonkeyKernel extends EventEmitter {
           kind: 'kernel_rotation_demotion',
           mode: this.rotation.mode,
           reason: rotationResult.reason,
+          rollingWinRate: rollingWinRate(this.rotation),
+        },
+      });
+    }
+    // 2026-05-25 — auto-promotion check. If this is a paper-mode kernel
+    // and its rolling WR has caught up to within ROTATION_PROMOTION_WR_GAP
+    // (10pp) of the best live peer, promote back. Idempotent: returns
+    // null for live kernels or paper kernels still under the gate.
+    if (this.rotation.mode === 'paper') {
+      this.tryAutoPromote(input.symbol);
+    }
+  }
+
+  /**
+   * Auto-promotion check called after a virtual close. Walks the peer
+   * registry (allMonkeyKernels) to find the best live WR; if this
+   * kernel's paper-mode WR has reached the gate, promotes.
+   */
+  private tryAutoPromote(symbol: string | undefined): void {
+    const peers: RotationPeerSnapshot[] = [];
+    for (const peer of allMonkeyKernels) {
+      if (peer === this) continue;
+      const r = peer.rotation;
+      peers.push({
+        mode: r.mode,
+        rollingWinRate: rollingWinRate(r),
+        rollingSampleCount: r.rollingPnls.length,
+      });
+    }
+    const reason = shouldAutoPromote(this.rotation, peers);
+    if (!reason) return;
+    const result = promoteToLive(this.rotation, reason);
+    if (result.promoted) {
+      logger.info(`[${this.label}] kernel-rotation AUTO-PROMOTED to live`, {
+        instanceId: this.instanceId,
+        reason: result.reason,
+        rollingWinRate: rollingWinRate(this.rotation),
+        rollingTrades: this.rotation.rollingPnls.length,
+      });
+      this.bus.publish({
+        type: BusEventType.OUTCOME,
+        source: this.instanceId,
+        symbol,
+        payload: {
+          kind: 'kernel_rotation_promotion',
+          mode: this.rotation.mode,
+          reason: result.reason,
           rollingWinRate: rollingWinRate(this.rotation),
         },
       });
