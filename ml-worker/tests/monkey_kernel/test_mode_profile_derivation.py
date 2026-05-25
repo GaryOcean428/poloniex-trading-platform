@@ -169,9 +169,10 @@ class TestSizeFloorDerivation:
             norepinephrine=0.5, equilibrium_weight=0.5,
         )
         assert hi_phi.size_floor > lo_phi.size_floor
-        # anchor=0.10; phi=1.0 mult=1.5 → 0.15; phi=0.0 mult=0.5 → 0.05
-        assert hi_phi.size_floor == pytest.approx(0.15, abs=1e-9)
-        assert lo_phi.size_floor == pytest.approx(0.05, abs=1e-9)
+        # 2026-05-25 strip: anchor INVESTIGATION raised 0.10 → 0.25;
+        # phi=1.0 mult=1.5 → 0.375; phi=0.0 mult=0.5 → 0.125.
+        assert hi_phi.size_floor == pytest.approx(0.375, abs=1e-9)
+        assert lo_phi.size_floor == pytest.approx(0.125, abs=1e-9)
 
 
 # ────────────────────────────────────────────────────────────────

@@ -241,53 +241,33 @@ export function checkSymbolMaxLeverage(
  * a 25% reserve). Out-of-range values fail OPEN (allow trading) so an
  * env typo doesn't silently freeze the kernel.
  */
+// 2026-05-25 strip — all margin-headroom defaults set to 0 per operator
+// autonomy doctrine. The kernel's own chemistry (gaba on
+// margin-starvation pain via push_reward) is the learning restraint;
+// the exchange's maintenance margin is the structural boundary.
+// Functions retained so call sites don't break; all return 0 / null.
 export const DEFAULT_MIN_MARGIN_HEADROOM_PCT = 0.0;
 
 function getMinMarginHeadroomPct(): number {
-  const raw = Number(process.env.MONKEY_MIN_MARGIN_HEADROOM_PCT ?? '');
-  if (!Number.isFinite(raw) || raw < 0 || raw >= 1) return DEFAULT_MIN_MARGIN_HEADROOM_PCT;
-  return raw;
+  return DEFAULT_MIN_MARGIN_HEADROOM_PCT;
 }
 
 /**
- * Operator-explicit headroom override. Returns the parsed reserve when
- * MONKEY_MIN_MARGIN_HEADROOM_PCT is set to a valid value in [0, 1); null
- * when unset / blank / out-of-range (caller falls back to the
- * mode-conditional default).
- *
- * Distinct from getMinMarginHeadroomPct(), which collapses "unset" into
- * the 0.0 disabled default and so cannot be used to tell "operator chose
- * 0" apart from "operator chose nothing". evaluatePreTradeVetoes needs
- * that distinction: an explicit operator value must win over the
- * mode-conditional table (before 2026-05-20 the mode table silently
- * overrode the env var on every live tick — a dead knob).
+ * 2026-05-25 — env-explicit headroom override returns null after strip.
+ * Callers fall through to the mode-conditional path (also null) and
+ * then to the 0.0 default. No code-side reserve.
  */
 export function explicitMinMarginHeadroomPct(): number | null {
-  const raw = process.env.MONKEY_MIN_MARGIN_HEADROOM_PCT;
-  if (raw === undefined || raw === null || raw === '') return null;
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed < 0 || parsed >= 1) return null;
-  return parsed;
+  return null;
 }
 
-/** 2026-05-13 — mode-conditional headroom reserves.
- *
- * EXPLORATION (flat / fast scalp): need MORE headroom because each
- *   scalp cycle reserves and releases margin rapidly; can't get stuck
- *   without room to enter the next opportunity.
- * INTEGRATION (slow trend): need LESS headroom — one big slow
- *   position is fine with most margin committed.
- *
- * Returns null if no monkeyMode supplied (caller falls back to env). */
-export function modeMarginHeadroomPct(mode?: string): number | null {
-  if (!mode) return null;
-  switch (mode) {
-    case 'exploration': return 0.35;
-    case 'investigation': return 0.25;
-    case 'integration': return 0.15;
-    case 'drift': return 0.50;
-    default: return null;
-  }
+/**
+ * 2026-05-25 strip — mode-conditional headroom reserves removed.
+ * Kernel chemistry learns margin-starvation from outcomes; the
+ * mode-conditional 0.35/0.25/0.15/0.50 magic numbers are gone.
+ */
+export function modeMarginHeadroomPct(_mode?: string): number | null {
+  return null;
 }
 
 export function checkMarginHeadroom(

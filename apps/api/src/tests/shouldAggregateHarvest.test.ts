@@ -71,10 +71,13 @@ describe('shouldAggregateHarvest', () => {
       expect(r.reason).toContain('aggregate_harvest');
     });
 
-    it('does NOT fire when aggregate peak below $3 default', () => {
+    it('2026-05-25 strip — $3 aggregate threshold removed; any peak with give-back fires', () => {
+      // Pre-strip: $2.50 peak < $3 default kept aggregate quiet.
+      // Post-strip: threshold is 0, so $2.50 peak with give-back to
+      // $0.80 (32% give-back) triggers. Chemistry decides timing.
       const r = shouldAggregateHarvest(0.8, 2.5, baselineBasin);
-      expect(r.value).toBe(false);
-      expect(r.reason).toContain('aggregate_hold');
+      expect(r.value).toBe(true);
+      expect(r.reason).toContain('aggregate_harvest');
     });
 
     it('does NOT fire when aggregate is still at peak (no giveback)', () => {
@@ -94,20 +97,14 @@ describe('shouldAggregateHarvest', () => {
     });
   });
 
-  describe('env override', () => {
-    it('honours raise of MONKEY_HARVEST_AGG_PEAK_USD', () => {
+  describe('env override (2026-05-25 strip — env read removed)', () => {
+    it('env var is ignored after strip; threshold is always 0', () => {
       process.env.MONKEY_HARVEST_AGG_PEAK_USD = '10';
+      // Pre-strip: $10 override would gate $5 peak. Post-strip: env read
+      // removed, threshold is 0, give-back fires regardless.
       const r = shouldAggregateHarvest(2.0, 5.0, baselineBasin);
-      expect(r.value).toBe(false);
-      expect(r.reason).toContain('aggregate_hold');
-    });
-
-    it('honours lower of MONKEY_HARVEST_AGG_PEAK_USD', () => {
-      process.env.MONKEY_HARVEST_AGG_PEAK_USD = '1';
-      const r = shouldAggregateHarvest(0.4, 1.2, baselineBasin);
-      // peak $1.2 ≥ $1 threshold. floor = $1.2 * 0.6 = $0.72.
-      // current $0.4 < $0.72 → fires.
       expect(r.value).toBe(true);
+      delete process.env.MONKEY_HARVEST_AGG_PEAK_USD;
     });
   });
 

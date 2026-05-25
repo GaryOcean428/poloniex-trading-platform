@@ -84,41 +84,16 @@ export interface ArbiterOptions {
   warmupTrades?: number;
 }
 
-/** Read ``ARBITER_MIN_SHARE_FACTOR`` from the environment with a
- *  defensive parse. The factor multiplies the adaptive min-share floor
- *  computed inside ``allocateMany``:
- *
- *    effectiveFloor = adaptiveFloor * factor
- *
- *  Defaults to 1.0 (no change from today) when:
- *   * the var is unset
- *   * the var is empty / non-numeric (warn-logged so the operator can
- *     see their typo and fix it)
- *   * the parsed value is <= 0 or non-finite (we don't allow disabling
- *     the floor entirely via this knob — tests can still pass
- *     ``opts.minShare: 0`` if they need that)
- *
- *  Exported for tests and so loop.ts can log the effective config on
- *  startup. */
+/** 2026-05-25 strip — ARBITER_MIN_SHARE_FACTOR removed per operator
+ *  autonomy doctrine. The pre-cutover allocation pattern was
+ *  winner-takes-more with losers demoted to paper trading (see
+ *  [[polytrade_kernel_paper_rotation]]), NOT a laggard floor that
+ *  keeps losing agents alive on real capital. The floor is now 0 by
+ *  default; agents earning 0 share simply don't trade until either
+ *  the paper-rotation feature lands or chemistry warms them back up.
+ *  Tests can still pass `opts.minShare > 0` for cold-start scenarios. */
 export function readMinShareFactor(): number {
-  const raw = process.env.ARBITER_MIN_SHARE_FACTOR;
-  if (raw === undefined || raw === null || raw === '') return 1.0;
-  const parsed = parseFloat(raw);
-  if (!Number.isFinite(parsed)) {
-    logger.warn(
-      `arbiter: ARBITER_MIN_SHARE_FACTOR=${JSON.stringify(raw)} is not a ` +
-      'finite number; using factor=1.0 (no change to floor).',
-    );
-    return 1.0;
-  }
-  if (parsed <= 0) {
-    logger.warn(
-      `arbiter: ARBITER_MIN_SHARE_FACTOR=${parsed} is <= 0; using ` +
-      'factor=1.0 (refusing to disable the laggard floor entirely).',
-    );
-    return 1.0;
-  }
-  return parsed;
+  return 0;
 }
 
 export class Arbiter {

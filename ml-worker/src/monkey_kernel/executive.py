@@ -64,7 +64,11 @@ _registry = get_registry()
 # registry, never a code edit.
 _DEFAULT_ENTRY_THR_CLAMP_LOW = 0.1
 _DEFAULT_ENTRY_THR_CLAMP_HIGH = 0.9
-_DEFAULT_SIZE_MAX_FRACTION = 0.5
+# 2026-05-25 strip — code-side caps removed per operator autonomy doctrine.
+# Size frac raised 0.5 → 1.0 (exchange enforces margin > equity reject);
+# notional ceiling removed (kept as constant=0 for backwards-compatible
+# parameter-registry reads that may still query it).
+_DEFAULT_SIZE_MAX_FRACTION = 1.0
 _DEFAULT_SIZE_MIN_NOTIONAL_BUFFER = 1.05
 _DEFAULT_LEVERAGE_MIN_BASELINE = 3.0
 _DEFAULT_LEVERAGE_MAX_SLOPE = 30.0
@@ -72,15 +76,10 @@ _DEFAULT_LEVERAGE_KAPPA_SIGMA = 20.0
 _DEFAULT_SCALP_TP_MIN_FLOOR = 0.003
 _DEFAULT_EXIT_ENTROPY_COLLAPSE = 0.4  # (referenced by should_auto_flatten semantic)
 _DEFAULT_DCA_MAX_ADDS = 1
-# v0.8.7 — notional ceiling fallback. The Kelly cap is the primary
-# brake on aggregate exposure but is non-binding at cold start (no
-# closed trades) and decays to no-op when stats are uninformative.
-# Live tape 2026-05-01 evidence: $77 → $386 escalating notionals on
-# a $97 account (4× balance). This caps a single position's notional
-# at NOTIONAL_CEILING_RATIO × account balance regardless of geometric
-# leverage * margin. Default 4.0 keeps the geometric formula's
-# 10-20× leverage intent while bounding worst-case escalation.
-_DEFAULT_NOTIONAL_CEILING_RATIO = 4.0
+# 2026-05-25 strip — notional ceiling removed. Exchange maintenance
+# margin and chemistry feedback (push_reward → gaba on losses) are the
+# real restraints. Kept as 0 so parameter-registry reads don't crash.
+_DEFAULT_NOTIONAL_CEILING_RATIO = 0.0
 
 # ─── Proposal #10 — lane-isolated position lifecycle defaults ────
 #
@@ -115,15 +114,18 @@ _DEFAULT_NOTIONAL_CEILING_RATIO = 4.0
 # the parameter registry.
 _DEFAULT_LANE_SCALP_SL_PCT = 0.03
 _DEFAULT_LANE_SCALP_TP_PCT = 0.03
-_DEFAULT_LANE_SCALP_BUDGET_FRAC = 0.50
+# 2026-05-25 strip — per-lane budget caps lifted to 1.0 across all
+# position-bearing lanes. Each lane can claim full equity; chemistry-
+# driven sizing differentiates winners from losers naturally.
+_DEFAULT_LANE_SCALP_BUDGET_FRAC = 1.0
 
 _DEFAULT_LANE_SWING_SL_PCT = 0.15
 _DEFAULT_LANE_SWING_TP_PCT = 0.15
-_DEFAULT_LANE_SWING_BUDGET_FRAC = 0.50
+_DEFAULT_LANE_SWING_BUDGET_FRAC = 1.0
 
 _DEFAULT_LANE_TREND_SL_PCT = 0.40
 _DEFAULT_LANE_TREND_TP_PCT = 0.40
-_DEFAULT_LANE_TREND_BUDGET_FRAC = 0.0  # opt-in; bumped via parameter registry
+_DEFAULT_LANE_TREND_BUDGET_FRAC = 1.0
 
 _LANE_PARAMETER_DEFAULTS: dict[str, dict[str, float]] = {
     "scalp": {
@@ -367,10 +369,13 @@ def current_position_size(
     lane_frac = lane_budget_fraction(lane)
     lane_margin_cap = lane_frac * available_equity_usdt
     nc = s.neurochemistry
-    maturity = min(1.0, bank_size / 20.0)
+    # 2026-05-25 sizing-relief (parity with TS PR #915):
+    #   maturity /5 (was /20); rewardMult × 1.0 (was × 0.5);
+    #   stabilityMult re-centered at 0.75 baseline (was 0.5).
+    maturity = min(1.0, bank_size / 5.0)
     base_frac = s.phi * s.sovereignty * maturity
-    reward_mult = 1.0 + (nc.dopamine - nc.gaba) * 0.5
-    stability_mult = 0.5 + nc.serotonin * 0.5
+    reward_mult = 1.0 + (nc.dopamine - nc.gaba) * 1.0
+    stability_mult = 0.75 + nc.serotonin * 0.5
 
     # v0.8.5 — size_floor derives from Φ (anchor × (0.5 + phi))
     mode_floor = effective_profile(
@@ -420,26 +425,14 @@ def current_position_size(
         capped_by_lane = True
 
     # v0.8.7 — notional ceiling fallback. The Kelly cap is intended to
-    # bound aggregate exposure but is non-binding at cold start (no
-    # closed trades yet) and decays to no-op when stats are
-    # uninformative. Live tape 2026-05-01 showed $77 → $386 escalating
-    # notionals on a $97 account (4× balance) with every position
-    # closing via regime_change at 22% win rate. Hard ceiling:
-    # notional = margin × leverage <= NOTIONAL_CEILING_RATIO × equity.
-    # Default ratio 4.0 — preserves enough headroom for the kernel's
-    # geometric leverage formula at typical 10-20x while preventing
-    # unbounded escalation on small accounts.
-    notional_ceiling_ratio = float(_registry.get(
-        "executive.notional_ceiling_ratio",
-        default=_DEFAULT_NOTIONAL_CEILING_RATIO,
-    ))
-    notional_ceiling = notional_ceiling_ratio * available_equity_usdt
+    # 2026-05-25 strip — code-side notional ceiling removed per
+    # operator autonomy doctrine. Exchange maintenance margin and the
+    # kernel's own chemistry (push_reward → gaba on losses) are the
+    # restraints. Telemetry fields retained as 0 so downstream consumers
+    # don't crash.
+    notional_ceiling_ratio = 0.0
+    notional_ceiling = 0.0
     capped_by_notional = False
-    if notional > notional_ceiling and leverage > 0 and available_equity_usdt > 0:
-        # Reduce margin so margin × leverage == notional_ceiling.
-        margin = notional_ceiling / max(1.0, leverage)
-        notional = margin * max(1.0, leverage)
-        capped_by_notional = True
 
     sized = margin if notional >= min_notional_usdt else 0.0
 
