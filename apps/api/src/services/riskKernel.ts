@@ -87,21 +87,18 @@ export type KernelVetoCode =
 export type ExecutionMode = 'auto' | 'paper_only' | 'pause';
 
 // ───────── Thresholds ─────────
-/**
- * Per-symbol gross notional cap as multiple of equity. Notional-based,
- * not margin-based — at high leverage the effective margin commit per
- * unit of notional is small. Poloniex BTC perp's structural min is
- * 0.001 lot × spot-price-USDT per contract. At current prices (~$75k
- * BTC), that's ~$75 per single lot. As equity shrinks, even a 3× cap
- * fails: on $19 equity, 3× = $56.78, below the $75 floor. Raised to
- * 5× ($94.65 here) so 1 BTC lot fits with headroom while still
- * preventing stacked correlated positions. At 16× leverage a single
- * $75 lot commits $4.70 margin (~25 % of equity) — within prudence.
- * TODO: migrate to a margin-based cap when the risk kernel gets its
- * next iteration.
- */
-export const PER_SYMBOL_EXPOSURE_MAX_MULTIPLIER = 5.0;
-export const UNREALIZED_DRAWDOWN_KILL_THRESHOLD = -0.15;         // −15% of equity
+// 2026-05-25 strip — code-side caps removed per operator autonomy
+// doctrine. The exchange's per-symbol maxLeverage (Poloniex enforces)
+// is the structural per-symbol notional cap (notional ≤ equity ×
+// exchangeMaxLev). Auto-drawdown kill is also removed; the kernel's
+// own chemistry feedback (push_reward → gaba on losses) is the
+// learning restraint, and the manual kill switch
+// (/api/agent/execution-mode) is the only operator MANDATE that
+// halts entries.
+// Constants retained as no-op sentinels so callers reading the export
+// don't crash; the check functions return allowed:true unconditionally.
+export const PER_SYMBOL_EXPOSURE_MAX_MULTIPLIER = Number.POSITIVE_INFINITY;
+export const UNREALIZED_DRAWDOWN_KILL_THRESHOLD = Number.NEGATIVE_INFINITY;
 
 function isLong(side: KernelOrder['side']): boolean {
   return side === 'long' || side === 'buy';
@@ -110,21 +107,13 @@ function isLong(side: KernelOrder['side']): boolean {
 // ───────── Check 1: Per-symbol gross exposure ─────────
 
 export function checkPerSymbolExposure(
-  order: KernelOrder,
-  state: KernelAccountState,
+  _order: KernelOrder,
+  _state: KernelAccountState,
 ): KernelDecision {
-  const cap = state.equityUsdt * PER_SYMBOL_EXPOSURE_MAX_MULTIPLIER;
-  const existingNotional = state.openPositions
-    .filter((p) => p.symbol === order.symbol)
-    .reduce((sum, p) => sum + Math.abs(p.notional), 0);
-  const projected = existingNotional + Math.abs(order.notional);
-  if (projected > cap) {
-    return {
-      allowed: false,
-      code: 'per_symbol_exposure_cap',
-      reason: `Per-symbol exposure cap breached: ${projected.toFixed(2)} > ${cap.toFixed(2)} (${PER_SYMBOL_EXPOSURE_MAX_MULTIPLIER}× equity)`,
-    };
-  }
+  // 2026-05-25 strip — 5× per-symbol exposure cap removed. Exchange
+  // enforces the real structural cap (notional ≤ equity ×
+  // exchangeMaxLev). Function retained for the composer call site
+  // and downstream telemetry; always returns allowed:true.
   return { allowed: true };
 }
 
@@ -156,17 +145,14 @@ export function checkSelfMatch(
 // ───────── Check 3: Unrealised-drawdown kill-switch ─────────
 
 export function checkUnrealizedDrawdown(
-  state: KernelAccountState,
+  _state: KernelAccountState,
 ): KernelDecision {
-  if (state.equityUsdt <= 0) return { allowed: true }; // divide-by-zero guard; realised-loss cap owns this case
-  const ratio = state.unrealizedPnlUsdt / state.equityUsdt;
-  if (ratio <= UNREALIZED_DRAWDOWN_KILL_THRESHOLD) {
-    return {
-      allowed: false,
-      code: 'unrealized_drawdown_kill_switch',
-      reason: `Unrealised P&L ${(ratio * 100).toFixed(2)}% of equity ≤ ${(UNREALIZED_DRAWDOWN_KILL_THRESHOLD * 100).toFixed(0)}% — flatten and pause 24h.`,
-    };
-  }
+  // 2026-05-25 strip — auto −15% drawdown kill switch removed per
+  // operator autonomy doctrine. Manual kill switch
+  // (/api/agent/execution-mode) is the only operator MANDATE that
+  // halts entries. Kernel chemistry (push_reward → gaba on losses)
+  // is the learning restraint. Function retained for composer call
+  // site; always returns allowed:true.
   return { allowed: true };
 }
 
