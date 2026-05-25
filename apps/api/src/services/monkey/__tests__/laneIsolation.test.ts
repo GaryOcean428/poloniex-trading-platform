@@ -351,19 +351,18 @@ describe('Flat-account sizing regression (fix/lane-budget-size-zero-regression)'
     expect(notional).toBeGreaterThanOrEqual(75.78);
   });
 
-  it('small account ($5 equity) — lift-to-min now reaches min notional (notional ceiling removed)', () => {
-    // 2026-05-25 strip: notional ceiling removed. On a $5 account
-    // wanting to clear a $22.49 min at 14x lev, requiredFrac = 22.49 ×
-    // 1.05 / (14 × 5) = 0.337. Post-strip the lift-to-min path allows
-    // requiredFrac ≤ 1.0, so the lift fires and the kernel commits
-    // ~$1.69 margin to clear the exchange minimum. Pre-strip this
-    // would have been blocked by the 4× notional ceiling ($20 < $22.49).
+  it('small account ($5 equity) — explorationFloor itself clears min notional (CC2 F3 unification)', () => {
+    // 2026-05-25 (CC2 audit F3): explorationFloor and lift-to-min now
+    // share the same formula. With $5 equity at 14× lev for $22.49 min,
+    // minClearingFrac = 22.49 × 1.05 / (14 × 5) = 0.337. The
+    // explorationFloor at cold-start (maturity=0) is exactly that
+    // 0.337 — no separate lift needed because the floor already
+    // covers the exchange minimum.
     const result = currentPositionSize(
       basinState(0.55, 0.5), 5, 22.49, 14, 0, MonkeyMode.INVESTIGATION, 'swing',
     );
     expect(result.value).toBeGreaterThan(0);
-    expect((result.derivation as Record<string, unknown>).liftedToMin).toBe(1);
-    // Verify notional clears the exchange minimum.
+    // Notional clears the exchange minimum (with 5% buffer).
     const notional = result.value * 14;
     expect(notional).toBeGreaterThanOrEqual(22.49);
   });

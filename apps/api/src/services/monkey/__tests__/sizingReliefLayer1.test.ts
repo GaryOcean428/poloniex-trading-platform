@@ -59,13 +59,13 @@ describe('MODE_PROFILES sizeFloor — Layer 1 relief', () => {
   });
 });
 
-describe('currentPositionSize cold-start (bankSize=0)', () => {
-  it('cold-start floor is the unified EXPLORATION_FLOOR (0.20) across all modes (was per-mode 0.20/0.25/0.30)', () => {
-    // 2026-05-25 observer-derive PR: per-mode magic floors removed in
-    // favor of a single principled floor. baseFrac = 0.6 × 0.8 × 0
-    // (maturity=0 at bankSize=0) = 0; explorationFloor = 0.20 × 1 = 0.20.
-    // margin = 0.20 × $100 = $20, but the notional ceiling has been
-    // stripped so frac sticks at 0.20.
+describe('currentPositionSize cold-start (bankSize=0) — observer-derived floor', () => {
+  it('cold-start floor derives from min-notional-clearing fraction at current leverage', () => {
+    // 2026-05-25 (CC2 audit F3): magic EXPLORATION_FLOOR=0.20 replaced
+    // with observer-derived `minClearingFrac = (min × 1.05) / (lev × equity)`.
+    // With min=$5, lev=10, equity=$100:
+    //   minClearingFrac = (5 × 1.05) / (10 × 100) = 0.00525
+    //   explorationFloor = minClearingFrac × (1 - maturity) = 0.00525 × 1
     const out = currentPositionSize(
       basinState(),
       /* availableEquityUsdt */ 100,
@@ -75,16 +75,31 @@ describe('currentPositionSize cold-start (bankSize=0)', () => {
       MonkeyMode.INVESTIGATION,
       /* lane */ 'swing',
     );
-    expect(out.derivation.explorationFloor).toBeCloseTo(0.20, 6);
+    expect(out.derivation.explorationFloor).toBeCloseTo(0.00525, 6);
   });
 
-  it('explorationFloor is identical across modes (no per-mode differentiation)', () => {
+  it('explorationFloor is mode-independent (chemistry expresses mode differentiation)', () => {
     const exp = currentPositionSize(basinState(), 100, 5, 10, 0, MonkeyMode.EXPLORATION, 'swing');
     const inv = currentPositionSize(basinState(), 100, 5, 10, 0, MonkeyMode.INVESTIGATION, 'swing');
     const int_ = currentPositionSize(basinState(), 100, 5, 10, 0, MonkeyMode.INTEGRATION, 'swing');
-    expect(exp.derivation.explorationFloor).toBeCloseTo(0.20, 6);
-    expect(inv.derivation.explorationFloor).toBeCloseTo(0.20, 6);
-    expect(int_.derivation.explorationFloor).toBeCloseTo(0.20, 6);
+    // Same observer-derived floor across modes — mode-specific sizing
+    // expressed via chemistry response patterns, not floor differentiation.
+    expect(exp.derivation.explorationFloor).toBeCloseTo(inv.derivation.explorationFloor, 6);
+    expect(inv.derivation.explorationFloor).toBeCloseTo(int_.derivation.explorationFloor, 6);
+  });
+
+  it('floor capped at 0.5 survival cap even with large min × low leverage × small equity', () => {
+    // min=$50, lev=1, equity=$10 → raw minClearingFrac = (50 × 1.05) / 10 = 5.25
+    // Clamped to 0.5 by the survival-cap logic.
+    const out = currentPositionSize(basinState(), 10, 50, 1, 0, MonkeyMode.INVESTIGATION, 'swing');
+    expect(out.derivation.explorationFloor).toBeLessThanOrEqual(0.5);
+  });
+
+  it('mode is wired into derivation telemetry (CC2 audit F5)', () => {
+    const inv = currentPositionSize(basinState(), 100, 5, 10, 0, MonkeyMode.INVESTIGATION, 'swing');
+    expect(inv.derivation.mode).toBe(1);  // INVESTIGATION
+    const exp = currentPositionSize(basinState(), 100, 5, 10, 0, MonkeyMode.EXPLORATION, 'swing');
+    expect(exp.derivation.mode).toBe(0);  // EXPLORATION
   });
 });
 
