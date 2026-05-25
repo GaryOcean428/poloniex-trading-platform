@@ -55,7 +55,7 @@ import {
   velocity,
   type Basin,
 } from './basin.js';
-import { callAutonomicTick } from './autonomic_client.js';
+import { callAutonomicTick, callAutonomicReward } from './autonomic_client.js';
 import { aggregatePeakTracker } from './aggregate_peak.js';
 import { wsPositionCache } from './ws_position_cache.js';
 import { marketIntelCache } from './market_intel.js';
@@ -1186,6 +1186,16 @@ export class MonkeyKernel extends EventEmitter {
             agent,
           });
         } catch { /* non-fatal */ }
+        // Mirror the same reward into the Python autonomic kernel so
+        // both neurochemistries see the same outcome stream. Fire-and-
+        // forget — callAutonomicReward already swallows transport errors.
+        void callAutonomicReward({
+          instanceId: this.instanceId,
+          source: `reconciler_recovered:${String(payload.ghostReason ?? 'unknown')}`,
+          symbol: event.symbol,
+          realizedPnlUsdt: pnl,
+          marginUsdt: 5,
+        });
         const ghostReason = String(payload.ghostReason ?? 'unknown');
         logger.info(
           `[Monkey] Agent ${agent} emotion stack updated from recovered ghost close: pnl=${pnl.toFixed(4)} side=${side} reason=${ghostReason}`,
@@ -7758,6 +7768,16 @@ export class MonkeyKernel extends EventEmitter {
           kappaAtExit: symState?.kappa,
           agent: agentKey,
         });
+        // Mirror the close into Python autonomic so both kernels'
+        // neurochemistries share the same outcome stream.
+        void callAutonomicReward({
+          instanceId: this.instanceId,
+          source: `own_close:${agentKey}`,
+          symbol,
+          realizedPnlUsdt: t.pnl,
+          marginUsdt: margin,
+          kappaAtExit: symState?.kappa,
+        });
       }
     } catch { /* non-fatal */ }
   }
@@ -8071,6 +8091,13 @@ export class MonkeyKernel extends EventEmitter {
           realizedPnlUsdt: realizedPnl * 0.5,  // half-weight (witnessed, not her own)
           marginUsdt: 5,
           agent: 'K',
+        });
+        void callAutonomicReward({
+          instanceId: this.instanceId,
+          source: 'witnessed_liveSignal',
+          symbol,
+          realizedPnlUsdt: realizedPnl * 0.5,
+          marginUsdt: 5,
         });
       }
     } catch (err) {
