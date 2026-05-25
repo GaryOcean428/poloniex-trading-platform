@@ -263,24 +263,35 @@ export function currentPositionSize(
   void mode;  // mode-specific sizing now expressed via chemistry, not floor differentiation
 
   const rawFrac = Math.max(explorationFloor, baseFrac * rewardMult * stabilityMult);
-  // 2026-05-25 — frac clamp raised from 0.5 to 1.0 per operator
-  // autonomy doctrine. The kernel can commit up to full available
-  // equity in margin; the exchange's maintenance margin and the
-  // kernel's own chemistry feedback (push_reward → gaba on losses
-  // → smaller next size) are the real restraints. Going above 1.0
-  // is structurally impossible (margin > equity is rejected by the
-  // exchange).
-  let frac = Math.min(1.0, Math.max(0, rawFrac));
+  // 2026-05-25 — frac clamp at 0.5: BOUNDARY (survival) not PARAMETER.
+  //
+  // History: an earlier same-day strip (#916) raised this to 1.0 on
+  // the theory "the exchange rejects margin > equity anyway." CC2
+  // audit + operator (Braden) directive restored it to 0.5. The
+  // earlier strip confused two different boundaries:
+  //   * Exchange margin requirement bounds absolute commitment
+  //     (equity × exchangeMaxLev).
+  //   * THIS survival cap bounds the KERNEL's own self-imposed risk:
+  //     at most half of available equity in any single position so
+  //     an adverse move doesn't create unrecoverable states
+  //     regardless of how strong the Φ signal looked.
+  // Exchange rejection is structurally downstream; this is upstream
+  // policy. They are not substitutes for each other.
+  //
+  // Sizing magnitude relief comes from chemistry variance restoration
+  // (#920/#927), maturity rate (#925, bankSize / ROTATION_WR_MIN_SAMPLES),
+  // and per-lane / cell sizing — NOT from removing this survival cap.
+  let frac = Math.min(0.5, Math.max(0, rawFrac));
   let margin = frac * availableEquityUsdt;
   let notional = margin * Math.max(1, leverage);
 
   // v0.6.6 "lift to minimum" — if we're below exchange min notional but
-  // a fraction up to 1.0 CAN clear it, auto-raise to just enough.
+  // a fraction up to 0.5 CAN clear it, auto-raise to just enough.
   let liftedToMin = false;
   if (notional < minNotionalUsdt && availableEquityUsdt > 0 && leverage > 0) {
     const BUFFER = 1.05;  // 5% headroom so lot-rounding doesn't put us just under
     const requiredFrac = (minNotionalUsdt * BUFFER) / (leverage * availableEquityUsdt);
-    if (requiredFrac <= 1.0) {
+    if (requiredFrac <= 0.5) {
       frac = Math.max(frac, requiredFrac);
       margin = frac * availableEquityUsdt;
       notional = margin * leverage;
