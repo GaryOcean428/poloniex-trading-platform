@@ -158,14 +158,15 @@ export default function KernelTelemetryPanel() {
   }, [fetchTelemetry]);
 
   const chartData = useMemo(() => (
-    consciousness.map((row, index) => ({
-      index,
-      label: row.symbol_timestamp || row.created_at
-        ? new Date(row.symbol_timestamp ?? row.created_at).toLocaleTimeString()
-        : '—',
-      ts_c: row.ts_c === null || row.ts_c === undefined ? null : safeNum(row.ts_c),
-      py_c: row.py_c === null || row.py_c === undefined ? null : safeNum(row.py_c),
-    }))
+    consciousness.map((row, index) => {
+      const ts = row.symbol_timestamp ?? row.created_at;
+      return {
+        index,
+        label: ts ? new Date(ts).toLocaleTimeString() : '—',
+        ts_c: row.ts_c === null || row.ts_c === undefined ? null : safeNum(row.ts_c),
+        py_c: row.py_c === null || row.py_c === undefined ? null : safeNum(row.py_c),
+      };
+    })
   ), [consciousness]);
 
   const latestConsciousness = consciousness[consciousness.length - 1];
