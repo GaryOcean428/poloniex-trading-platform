@@ -67,6 +67,13 @@ const AutonomousAgentDashboard: React.FC = () => {
   const [agentEvents, setAgentEvents] = useState<AgentEvent[]>([]);
   const [eventFilter, setEventFilter] = useState<'all' | 'trade_decision' | 'state_change' | 'risk_action' | 'health_alert' | 'error'>('all');
   const [leverageCap, setLeverageCap] = useState<LeverageCap | null>(null);
+  // 2026-05-25 — surface ground-truth exchange state so the headline
+  // cards don't disagree with the SKIPPING / DIVERGENCE banner. /status
+  // counts raw autonomous_trades rows (phantom-contaminated) and derives
+  // kernelStatus only from openLivePositions; /state-of-bot calls
+  // Poloniex and knows the real picture.
+  const [exchangeOpenPositions, setExchangeOpenPositions] = useState<number | null>(null);
+  const [statePhase, setStatePhase] = useState<'trading' | 'skipping' | 'paused' | 'degraded' | 'evaluating' | null>(null);
 
   // Execution Mode is the ONLY operator-MANDATE control on this page —
   // a SAFETY OVERRIDE enforced by the server-side risk kernel. The UI
@@ -154,6 +161,25 @@ const AutonomousAgentDashboard: React.FC = () => {
     }
   }, [getAuthHeaders]);
 
+  // 2026-05-25 — fetch ground-truth exchange + phase. Same endpoint
+  // StateOfTheBotCard reads, but we lift the two fields the headline
+  // cards need so the page is internally consistent.
+  const fetchStateOfBot = useCallback(async () => {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/api/agent/state-of-bot`, {
+        headers: getAuthHeaders(),
+      });
+      if (response.data?.success) {
+        const ex = Number(response.data?.exchangeOpenPositions);
+        if (Number.isFinite(ex)) setExchangeOpenPositions(ex);
+        const ph = response.data?.phase as typeof statePhase;
+        if (ph) setStatePhase(ph);
+      }
+    } catch {
+      // Non-critical — fall back to /status values.
+    }
+  }, [getAuthHeaders]);
+
   const fetchEvents = useCallback(async () => {
     try {
       const params = new URLSearchParams({ limit: '20' });
@@ -195,6 +221,7 @@ const AutonomousAgentDashboard: React.FC = () => {
   // Initial fetch + WebSocket setup (runs once).
   useEffect(() => {
     fetchAgentStatus();
+    fetchStateOfBot();
     fetchEvents();
     fetchLeverageCap();
 
@@ -207,6 +234,7 @@ const AutonomousAgentDashboard: React.FC = () => {
       s.on('agent:activity', () => {
         // Any kernel activity — refresh the observed status counters.
         fetchAgentStatus();
+        fetchStateOfBot();
       });
     }).catch(() => {
       setConnectionStatus('polling');
@@ -228,27 +256,49 @@ const AutonomousAgentDashboard: React.FC = () => {
   useEffect(() => {
     const interval = setInterval(() => {
       fetchAgentStatus();
+      fetchStateOfBot();
       fetchEvents();
       fetchLeverageCap();
     }, 15_000);
     return () => clearInterval(interval);
-  }, [fetchAgentStatus, fetchEvents, fetchLeverageCap]);
+  }, [fetchAgentStatus, fetchStateOfBot, fetchEvents, fetchLeverageCap]);
 
-  // The kernel-trading badge. Prefer the precise kernelStatus; fall back
-  // to the legacy enum for older backends.
-  const kernelStatus: 'active' | 'idle' | 'paused' =
-    agentStatus?.kernelStatus
+  // 2026-05-25 — derive the badge from state-of-bot phase when
+  // available, else fall through to /status's kernelStatus. /status
+  // sets kernelStatus 'idle' when openLivePositions=0, but the kernel
+  // may still be managing exits via SKIPPING (dbOpenPositions>0). The
+  // phase signal from state-of-bot is the truer answer for the UI badge.
+  const kernelStatus: 'active' | 'idle' | 'paused' = (() => {
+    if (statePhase === 'paused') return 'paused';
+    if (statePhase === 'trading' || statePhase === 'skipping' || statePhase === 'degraded') return 'active';
+    if (statePhase === 'evaluating') return 'idle';
+    // Fallback when state-of-bot hasn't loaded yet.
+    return agentStatus?.kernelStatus
       ?? (agentStatus?.status === 'running'
         ? 'active'
         : agentStatus?.status === 'paused'
           ? 'paused'
           : 'idle');
+  })();
 
   const kernelAgentStatus = kernelStatus === 'active' ? 'running' : kernelStatus;
 
+  // 2026-05-25 — badge label tracks the phase distinction:
+  // 'trading' (firing new orders) vs 'skipping' (holding positions,
+  // managing exits) both map to active but get different labels so
+  // the badge reads "Managing exits" instead of "Trading" when the
+  // kernel is in skipping phase.
   const badgeStyle: Record<'active' | 'idle' | 'paused', { label: string; dot: string; text: string }> = {
-    active: { label: 'Trading', dot: 'bg-green-500 animate-pulse', text: 'text-green-700' },
-    idle: { label: 'Idle', dot: 'bg-gray-400', text: 'text-gray-600' },
+    active: {
+      label: statePhase === 'skipping'
+        ? 'Managing exits'
+        : statePhase === 'degraded'
+          ? 'Degraded'
+          : 'Trading',
+      dot: 'bg-green-500 animate-pulse',
+      text: 'text-green-700',
+    },
+    idle: { label: 'Watching', dot: 'bg-gray-400', text: 'text-gray-600' },
     paused: { label: 'Paused', dot: 'bg-amber-500', text: 'text-amber-700' },
   };
   const badge = badgeStyle[kernelStatus];
@@ -398,13 +448,22 @@ const AutonomousAgentDashboard: React.FC = () => {
         <div
           className="bg-white rounded-lg p-6 shadow-lg"
           role="status"
-          aria-label={`Open positions: ${agentStatus?.openPositions ?? 0}`}
+          aria-label={`Open positions on exchange: ${exchangeOpenPositions ?? agentStatus?.openPositions ?? 0}`}
         >
           <div className="flex items-center justify-between mb-2">
             <span className="text-gray-600 text-sm font-medium">Open Positions</span>
             <Shield className="w-5 h-5 text-blue-600" />
           </div>
-          <p className="text-2xl font-bold text-gray-900">{agentStatus?.openPositions ?? 0}</p>
+          {/*
+            2026-05-25 — show exchange-side ground truth, not the raw
+            autonomous_trades row count (which inflates with phantom
+            rows under stacking-guard scenarios). The DIVERGENCE
+            banner in StateOfTheBotCard already exposes the gap when
+            DB rows ≠ exchange positions.
+          */}
+          <p className="text-2xl font-bold text-gray-900">
+            {exchangeOpenPositions ?? agentStatus?.openPositions ?? 0}
+          </p>
           <p className="text-xs text-gray-500 mt-1">
             {agentStatus?.liveTradesExecuted ?? 0} live trades all-time
           </p>
