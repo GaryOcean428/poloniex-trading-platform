@@ -2117,17 +2117,18 @@ export class MonkeyKernel extends EventEmitter {
     // MIN_ACTIVE_WEIGHT (canonical 0.01). decayAll() only DECAYS weight —
     // it never removes entries, so without consolidate() below `_entries`
     // grows unboundedly and the sovereignty denominator (and thus
-    // position size) decays toward zero with session uptime.
-    //
-    // consolidate() is a tombstone reaper: it can only remove entries
-    // that decayAll() has already driven below MIN_ACTIVE_WEIGHT — it
-    // cannot touch a live entry. So it is safe to pair with decayAll()
-    // every tick. The earlier `phi < SLEEP_PHI_THRESHOLD` phase gate
-    // inherited rationale from qig-core 2.8.0's richer SleepCycleManager
-    // (which had destructive ops); the TS port reduced consolidate() to
-    // just the eviction subset, leaving the gate guarding nothing — and
-    // the hardcoded 0.45 sat below this kernel's actual Φ band (0.57+),
-    // so consolidate never fired and sovereignty pinned at ~0.05.
+    // position size) decays toward zero with session uptime. PR906 paired
+    // consolidate() with decayAll() per-tick, but consolidate deletes the
+    // same set activeEntries() filters out, so post-prune the two views
+    // are bit-identical and sovereignty pins at 1.0 deterministically —
+    // a different degenerate reading that silently zeroes the sov factor
+    // in baseFrac = Φ × sov × maturity. The current fix bounds _entries
+    // at QIGRAMV2_HISTORY_MAX via LRU eviction inside integrate(), so
+    // storage cannot grow unboundedly without needing per-tick prune,
+    // and sov = active / _entries.size ranges meaningfully — responds to
+    // decay, to recordOutcome(false) zeroing (when that wires), and to
+    // integration pauses. consolidate() remains valid for explicit
+    // sweeps (e.g. pre-persistence).
     let sovereignty: number;
     if (isQigramV2Enabled()) {
       this.qigramV2TickCount += 1;
@@ -2140,7 +2141,6 @@ export class MonkeyKernel extends EventEmitter {
         { weight: 1.0, correct: true },
       );
       this.qigramV2Store.decayAll();
-      this.qigramV2Store.consolidate(); // tombstone reaper — safe per-tick
       sovereignty = this.qigramV2Store.sovereignty;
     } else {
       sovereignty = await resonanceBank.sovereignty();
