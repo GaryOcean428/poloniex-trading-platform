@@ -58,23 +58,17 @@ describe('checkPerSymbolExposure', () => {
     expect(checkPerSymbolExposure({ ...btcOrder, notional: 10 }, state).allowed).toBe(true);
   });
 
-  it('blocks an order that would push same-symbol notional over the cap', () => {
-    // equity 100 × 5 = 500 cap; 495 + 10 = 505 > 500 → blocked
+  it('2026-05-25 strip — no longer blocks over the prior 5× cap; exchange enforces structural cap', () => {
     const state: KernelAccountState = {
       ...emptyAccount,
       equityUsdt: 100,
       openPositions: [{ symbol: 'BTC_USDT_PERP', side: 'long', notional: 495 }],
     };
     const decision = checkPerSymbolExposure({ ...btcOrder, notional: 10 }, state);
-    expect(decision.allowed).toBe(false);
-    expect(decision.code).toBe('per_symbol_exposure_cap');
+    expect(decision.allowed).toBe(true);
   });
 
-  it('sums long and short exposure on the same symbol — both add to the cap', () => {
-    // A short position still counts toward gross exposure; the kernel
-    // doesn't net longs against shorts because a -2% candle moves both
-    // against margin (via maintenance-margin stack).
-    // equity 100 × 5 = 500 cap; 300 + 200 + 20 = 520 > 500 → blocked
+  it('2026-05-25 strip — same-symbol long+short exposure no longer summed and capped', () => {
     const state: KernelAccountState = {
       ...emptyAccount,
       equityUsdt: 100,
@@ -83,7 +77,7 @@ describe('checkPerSymbolExposure', () => {
         { symbol: 'BTC_USDT_PERP', side: 'short', notional: 200 },
       ],
     };
-    expect(checkPerSymbolExposure({ ...btcOrder, notional: 20 }, state).allowed).toBe(false);
+    expect(checkPerSymbolExposure({ ...btcOrder, notional: 20 }, state).allowed).toBe(true);
   });
 
   it('ignores positions on a different symbol', () => {
@@ -143,23 +137,22 @@ describe('checkUnrealizedDrawdown', () => {
     expect(checkUnrealizedDrawdown(state).allowed).toBe(true);
   });
 
-  it('blocks when unrealized drawdown breaches -15%', () => {
+  it('2026-05-25 strip — no longer blocks at -15% drawdown; chemistry learns from losses', () => {
     const state: KernelAccountState = {
       ...emptyAccount,
       unrealizedPnlUsdt: -16,
     };
     const decision = checkUnrealizedDrawdown(state);
-    expect(decision.allowed).toBe(false);
-    expect(decision.code).toBe('unrealized_drawdown_kill_switch');
+    expect(decision.allowed).toBe(true);
   });
 
-  it('handles zero equity gracefully (delegates to realised-loss cap)', () => {
+  it('handles zero equity gracefully', () => {
     const state: KernelAccountState = { ...emptyAccount, equityUsdt: 0 };
     expect(checkUnrealizedDrawdown(state).allowed).toBe(true);
   });
 
-  it('threshold constant stays at -15% or tighter', () => {
-    expect(UNREALIZED_DRAWDOWN_KILL_THRESHOLD).toBeLessThanOrEqual(-0.15);
+  it('threshold constant is -Infinity sentinel (auto-kill stripped)', () => {
+    expect(UNREALIZED_DRAWDOWN_KILL_THRESHOLD).toBe(Number.NEGATIVE_INFINITY);
   });
 });
 
@@ -224,7 +217,7 @@ describe('evaluatePreTradeVetoes composition', () => {
     ).toBe(true);
   });
 
-  it('surfaces the unrealised-drawdown veto before any other', () => {
+  it('2026-05-25 strip — unrealised-drawdown veto removed; -20% PnL no longer halts entries', () => {
     const state: KernelAccountState = {
       ...emptyAccount,
       unrealizedPnlUsdt: -20,
@@ -232,8 +225,9 @@ describe('evaluatePreTradeVetoes composition', () => {
       restingOrders: [{ symbol: 'BTC_USDT_PERP', side: 'sell', price: 69_000 }],
     };
     const decision = evaluatePreTradeVetoes({ ...btcOrder, side: 'buy' }, state, autoContext);
-    expect(decision.allowed).toBe(false);
-    expect(decision.code).toBe('unrealized_drawdown_kill_switch');
+    // Drawdown auto-kill stripped; only manual execution-mode pause halts.
+    // Self-match check still applies here — sell at 69k vs buy → veto.
+    expect(decision.code).not.toBe('unrealized_drawdown_kill_switch');
   });
 
   it('execution-mode pause blocks even a clean order', () => {
@@ -330,12 +324,11 @@ describe('2026-05-25 strip — margin_headroom veto neutralised', () => {
   // (15-50% depending on mode). Post-strip: both the env var and the
   // mode table return null/0. Only the per-symbol exposure cap remains;
   // chemistry feedback handles margin discipline.
-  it('exposure cap still fires when over the 5× limit', () => {
+  it('2026-05-25 strip — per-symbol exposure cap no longer fires (also stripped)', () => {
     const state: KernelAccountState = { ...emptyAccount, equityUsdt: 100, usedMarginUsdt: 50 };
     const order: KernelOrder = { ...btcOrder, notional: 600, leverage: 10 };
     const r = evaluatePreTradeVetoes(order, state, autoContext);
-    expect(r.allowed).toBe(false);
-    expect(r.code).toBe('per_symbol_exposure_cap');
+    expect(r.allowed).toBe(true);
   });
 
   it('headroom no longer blocks even when reserve would have been < 25% pre-strip', () => {
