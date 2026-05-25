@@ -109,6 +109,63 @@ describe('pushReward observer-derive — pnlFrac z-score normalization', () => {
   });
 });
 
+describe('pushReward observer-derive — outlier robustness (MAD)', () => {
+  let k: MonkeyKernel;
+
+  beforeEach(() => {
+    k = new MonkeyKernel({ instanceId: 'test-rew-outlier', timeframe: '5m', tickMs: 30_000 });
+  });
+
+  function lastReward(): { dopamineDelta: number; pnlFraction: number } {
+    const queue = (k as unknown as { pendingRewards: Array<{ dopamineDelta: number; pnlFraction: number }> }).pendingRewards;
+    return queue[queue.length - 1]!;
+  }
+
+  it('outlier win does NOT suppress chemistry response to subsequent normal losses', () => {
+    // Production regression 2026-05-25: a single +$78 outlier win
+    // inflated stddev(pnlFraction) ~5×, suppressing chemistry response
+    // to subsequent normal-magnitude losses (kernel couldn't "feel"
+    // -$5 losses as bad). MAD doesn't blow up under outliers.
+    //
+    // Seed 6 typical wins/losses around 1% pnlFrac.
+    for (let i = 0; i < 6; i++) {
+      k.pushReward({
+        source: 'seed',
+        realizedPnlUsdt: i % 2 === 0 ? 0.01 : -0.01,
+        marginUsdt: 1,
+        agent: 'K',
+      });
+    }
+    // Inject a massive outlier win (+50% pnlFrac, like the live +$78).
+    k.pushReward({ source: 'outlier-win', realizedPnlUsdt: 0.5, marginUsdt: 1, agent: 'K' });
+    // Now a normal-magnitude loss (-2% pnlFrac).
+    k.pushReward({ source: 'normal-loss', realizedPnlUsdt: -0.02, marginUsdt: 1, agent: 'K' });
+    const lossDop = lastReward().dopamineDelta;
+    // Loss should produce measurable negative dopamine — NOT crushed to
+    // near-zero by the outlier-inflated normalizer.
+    expect(Math.abs(lossDop)).toBeGreaterThan(0.01);
+  });
+
+  it('MAD normalization keeps chemistry response stable across outlier injection', () => {
+    // Build a baseline: 6 small wins of 1% pnlFrac.
+    for (let i = 0; i < 6; i++) {
+      k.pushReward({ source: 'pre', realizedPnlUsdt: 0.01, marginUsdt: 1, agent: 'K' });
+    }
+    // Record dopamine for a typical 1% win pre-outlier.
+    k.pushReward({ source: 'typical-pre', realizedPnlUsdt: 0.01, marginUsdt: 1, agent: 'K' });
+    const dopPre = lastReward().dopamineDelta;
+    // Inject outlier.
+    k.pushReward({ source: 'outlier', realizedPnlUsdt: 1.0, marginUsdt: 1, agent: 'K' });
+    // Same typical 1% win post-outlier — dopamine should be similar
+    // (MAD didn't move; under stddev it would be much smaller).
+    k.pushReward({ source: 'typical-post', realizedPnlUsdt: 0.01, marginUsdt: 1, agent: 'K' });
+    const dopPost = lastReward().dopamineDelta;
+    // Ratio should be close to 1 — outlier didn't suppress response.
+    // (Under stddev the ratio would be ~5-10×.)
+    expect(dopPost).toBeGreaterThan(dopPre * 0.5);
+  });
+});
+
 describe('pushReward observer-derive — kappaProxim from rolling kappa stddev', () => {
   let k: MonkeyKernel;
 
