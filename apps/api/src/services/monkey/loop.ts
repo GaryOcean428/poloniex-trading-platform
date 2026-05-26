@@ -6258,15 +6258,27 @@ export class MonkeyKernel extends EventEmitter {
       // Horizon: config.horizon × tickMs = 120 × 30s = 60 min.
       // Re-confirmation: each tick where L's decision proposes the
       // same side updates `lLastConfirmedAtMsBySide[side]`.
-      const stopLossPct =
-        Number(process.env.MONKEY_AGENT_L_STOP_LOSS_PCT) || 0.005;
+      // Phase 8 (2026-05-27) — agent-L stop-loss leg removed (P5 alignment
+      // extending Path A #940). MONKEY_AGENT_L_STOP_LOSS_PCT was an
+      // operator-prescribed ROI threshold firing regardless of where
+      // agent-L's own classifier read the position going. Same anti-
+      // pattern Path A killed in the main kernel: externally-imposed
+      // ROI bound prescribing kernel action.
+      //
+      // Adverse exits for agent-L now flow through:
+      //   - isHorizonExpired (agent-L's own forward-horizon clock)
+      //   - isAdverseModeTransition (regime crossings)
+      //   - isMtfHorizonExpired (longest-agreeing-TF stops re-confirming)
+      //   - isContinuousRegimeDrift (r-score drift past threshold)
+      // All four are kernel-internal observables. Win-harvest (upside)
+      // unchanged.
       const horizonTicks =
         Number(process.env.MONKEY_AGENT_L_HORIZON_TICKS) || 120;
       const horizonMs = horizonTicks * this.tickMs;
       const lastConfirmedAt = symState?.lLastConfirmedAtMsBySide?.[sideKey] ?? null;
       const isHorizonExpired =
         lastConfirmedAt !== null && (Date.now() - lastConfirmedAt) > horizonMs;
-      const isStopLossHarvest = pnlPct <= -stopLossPct;
+      const isStopLossHarvest = false;  // Path A doctrine: no code-side SL leg
       const isWinHarvest = pnlPct >= harvestPct;
       // 2026-05-13 — trailing regime stop. Position opened under one
       // cognitive mode must exit if the kernel transitions to a
@@ -6325,7 +6337,7 @@ export class MonkeyKernel extends EventEmitter {
         aggPnl: aggPnl.toFixed(4),
         pnlPct: (pnlPct * 100).toFixed(3),
         threshold: isStopLossHarvest
-          ? `-${(stopLossPct * 100).toFixed(3)} (stop-loss)`
+          ? `path-a-no-sl`  // Phase 8 — leg removed, this branch unreachable
           : isHorizonExpired
             ? `horizon ${horizonTicks}t (${(horizonMs / 60000).toFixed(0)}min)`
             : isAdverseModeTransition
