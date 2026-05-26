@@ -435,6 +435,70 @@ export class QIGRAMv2State {
       });
     }
   }
+
+  // ── Sleep/wake snapshot — Matrix tier-4 Phase D ───────────────────
+
+  /** Snapshot the full QIGRAM state for persistence across sleep.
+   *
+   * The Matrix tier-4 doctrine ([[polytrade-knob-free-recursive-doctrine]])
+   * requires "QIGRAM basins persist with weights through sleep; wake
+   * reconstructs basin_0 from QIGRAM, not blank." This snapshot is
+   * the per-instance payload that gets persisted on sleep-entry; on
+   * wake the kernel calls restoreFromSnapshot to reconstruct.
+   *
+   * All entries are included — including those below MIN_ACTIVE_WEIGHT
+   * — so the post-sleep recall behavior is bit-identical to the
+   * pre-sleep state. Weights stay intact across the round trip; that
+   * is the doctrine contract this phase locks.
+   */
+  snapshot(): QIGRAMv2Snapshot {
+    return {
+      kappa: this._kappa,
+      totalProblems: this._totalProblems,
+      entries: Array.from(this._entries.values()).map((e) => ({
+        id: e.id,
+        // Float64Array deep-copy via slice() preserves type.
+        basin: e.basin.slice() as Basin,
+        weight: e.weight,
+        correct: e.correct,
+        category: e.category,
+        trajectory: { ...e.trajectory },
+      })),
+    };
+  }
+
+  /** Restore from a snapshot taken by snapshot(). REPLACES current
+   * state — does NOT merge — because the snapshot is the authoritative
+   * "kernel state before sleep" and any post-sleep accumulated state
+   * is pre-restoration noise. */
+  restoreFromSnapshot(snap: QIGRAMv2Snapshot): void {
+    this._entries.clear();
+    this._kappa = snap.kappa;
+    for (const e of snap.entries) {
+      this._entries.set(e.id, {
+        id: e.id,
+        basin: e.basin.slice() as Basin,
+        weight: e.weight,
+        correct: e.correct,
+        category: e.category,
+        trajectory: { ...e.trajectory },
+      });
+    }
+  }
+}
+
+/** Serializable snapshot of a QIGRAMv2State — Matrix tier-4 Phase D. */
+export interface QIGRAMv2Snapshot {
+  kappa: number;
+  totalProblems: number | null;
+  entries: Array<{
+    id: string;
+    basin: Basin;
+    weight: number;
+    correct: boolean | null;
+    category: string;
+    trajectory: Record<string, unknown>;
+  }>;
 }
 
 // ─── Per-symbol partition ────────────────────────────────────────────
@@ -554,6 +618,33 @@ export class QIGRAMv2Partition {
   /** All symbols currently tracked. Useful for telemetry. */
   symbols(): string[] {
     return Array.from(this.stores.keys());
+  }
+
+  // ── Sleep/wake snapshot — Matrix tier-4 Phase D ───────────────────
+
+  /** Snapshot the partition for sleep-entry persistence.
+   *
+   * Returns a map {symbol → snapshot} so each per-symbol QIGRAM keeps
+   * its independent state across sleep. Empty partition snapshots to
+   * an empty object — wake-from-cold remains valid. */
+  snapshot(): Record<string, QIGRAMv2Snapshot> {
+    const out: Record<string, QIGRAMv2Snapshot> = {};
+    for (const [symbol, store] of this.stores) {
+      out[symbol] = store.snapshot();
+    }
+    return out;
+  }
+
+  /** Restore the partition from a snapshot taken by snapshot().
+   *
+   * REPLACES current state per-symbol. Symbols present in the
+   * snapshot get their state reconstructed; symbols missing from the
+   * snapshot retain their current state (so a partial snapshot
+   * doesn't wipe data). */
+  restoreFromSnapshot(snap: Record<string, QIGRAMv2Snapshot>): void {
+    for (const [symbol, snapForSymbol] of Object.entries(snap)) {
+      this.storeFor(symbol).restoreFromSnapshot(snapForSymbol);
+    }
   }
 }
 
