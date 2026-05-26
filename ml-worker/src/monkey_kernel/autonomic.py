@@ -238,9 +238,22 @@ class AutonomicKernel:
         """
         pnl_frac = (realized_pnl_usdt / margin_usdt) if margin_usdt > 0 else 0.0
 
+        # Ocean reward dispense (issue #948 / Matrix tier-3 2026-05-26):
+        # positive chemistry fires ONLY at ROI ≥ 1%, scaled by Fibonacci
+        # coefficient (1, 2, 3, 5, 8, 13, 21, 34). "Reward the behavior
+        # you want. Not set knobs. This is how it learns." Below 1% is
+        # the noise floor — sub-1% wins teach nothing because they're
+        # statistically indistinguishable from fee-microstructure noise.
+        #
+        # Negative side unchanged — gaba on losses still feeds at the
+        # existing scale. Symmetric Fibonacci punishment is an open
+        # follow-on per Matrix's tier-3 walk; not assumed here.
+        from .ocean_reward import fibonacci_reward_coefficient, fibonacci_reward_tier
+        ocean_coeff = fibonacci_reward_coefficient(pnl_frac)
+
         if pnl_frac > 0:
-            dop = float(np.tanh(pnl_frac * 1.5) * 0.5)
-            ser = float(np.tanh(pnl_frac) * 0.15)
+            dop = float(np.tanh(pnl_frac * 1.5) * 0.5 * ocean_coeff)
+            ser = float(np.tanh(pnl_frac) * 0.15 * ocean_coeff)
         else:
             dop = float(-np.tanh(-pnl_frac * 0.5) * 0.1)
             ser = 0.0
@@ -251,7 +264,7 @@ class AutonomicKernel:
             else 0.5
         )
         endo = (
-            float(np.tanh(pnl_frac * 2.0) * 0.3 * kappa_proxim)
+            float(np.tanh(pnl_frac * 2.0) * 0.3 * kappa_proxim * ocean_coeff)
             if pnl_frac > 0
             else 0.0
         )
@@ -280,12 +293,14 @@ class AutonomicKernel:
                 "at_ms": reward.at_ms,
             })
         logger.info(
-            "[%s.autonomic] reward source=%s symbol=%s pnl=%.4f pnlFrac=%.2f%% dop=%.3f ser=%.3f endo=%.3f",
+            "[%s.autonomic] reward source=%s symbol=%s pnl=%.4f pnlFrac=%.2f%% oceanTier=%d oceanCoeff=%d dop=%.3f ser=%.3f endo=%.3f",
             self.label,
             source,
             symbol,
             realized_pnl_usdt,
             pnl_frac * 100.0,
+            fibonacci_reward_tier(pnl_frac),
+            ocean_coeff,
             dop,
             ser,
             endo,
