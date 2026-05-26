@@ -109,6 +109,8 @@ import { applyConsensusOverride } from './consensus_arbiter.js';
 import {
   fibonacciRewardCoefficient,
   fibonacciRewardTier,
+  oceanTrailRetracement,
+  oceanTrailTierIndex,
 } from './ocean_reward.js';
 import {
   CHOP_SUPPRESS_SWING_CONFIDENCE_DEFAULT,
@@ -526,6 +528,15 @@ interface SymbolState {
    *  consumes this — trend-flip harvest fires only when streak >= 3
    *  so a single noise tick can't trigger an exit. */
   tapeFlipStreak: number;
+  /** Matrix tier-3 doctrine extension (2026-05-26) — Ocean trail/SL
+   *  tier picker. Counts consecutive ticks where shouldExit returned
+   *  value=false on the currently-held position (i.e. perception and
+   *  strategy_forecast stayed coherent within the kernel's own
+   *  Fisher-Rao threshold). Increments at end-of-tick when held +
+   *  exit.value=false; resets to 0 on (a) any exit firing this tick,
+   *  (b) a fresh entry. Consumed by oceanTrailRetracement() to select
+   *  the SL trail Fibonacci tier from {3%, 5%, 8%, 13%, 21%}. */
+  coherenceStreak: number;
   /** Proposal #10 — per-lane bookkeeping. Each lane independently
    *  tracks its peak unrealized PnL, the trade id it's peak-tracking,
    *  and its tape-flip streak so a swing-long's history never bleeds
@@ -1213,7 +1224,10 @@ export class MonkeyKernel extends EventEmitter {
           src === 'manual_close_recovered' ||
           src.startsWith('reconciler_recovered');
         if (!isRecovered) return;
-        this.applyOutcomeToAgent(event.symbol, agent, side as 'long' | 'short', pnl);
+        // Reconciler-recovered events use marginUsdt=5 to match the
+        // global pushReward path's constant for ghost-close recoveries
+        // (see lines below this subscriber, marginUsdt: 5).
+        this.applyOutcomeToAgent(event.symbol, agent, side as 'long' | 'short', pnl, 5);
         // 2026-05-16 per-agent NC: also feed reconciler-recovered
         // ghost-closes into the agent's chemistry queue. Without this,
         // M/T/L closes that the close-path missed (exchange-side
@@ -1681,6 +1695,7 @@ export class MonkeyKernel extends EventEmitter {
       dcaAddCount: 0,
       slDeferRemainingTicks: 0,
       tapeFlipStreak: 0,
+      coherenceStreak: 0,
       peakPnlUsdtByLane: {},
       peakTrackedTradeIdByLane: {},
       tapeFlipStreakByLane: {},
@@ -3672,6 +3687,17 @@ export class MonkeyKernel extends EventEmitter {
           && state.lastFrBracket !== null
           && currentRoi !== undefined
         ) {
+          // Matrix tier-3 doctrine extension (2026-05-26) — Ocean
+          // sets the trail/SL via coherence-streak → Fibonacci tier.
+          // streak reflects PRIOR ticks' shouldExit coherence on this
+          // position; this tick's shouldExit fires later in the
+          // pipeline (line ~3609) and updates the streak after.
+          const oceanTrailPct = oceanTrailRetracement(state.coherenceStreak);
+          derivation.oceanTrail = {
+            coherenceStreak: state.coherenceStreak,
+            tierIndex: oceanTrailTierIndex(state.coherenceStreak),
+            retracementPct: oceanTrailPct,
+          };
           const revision = shouldExtendBracket({
             heldSide,
             entryPrice: Number(openRow.entry_price),
@@ -3683,6 +3709,7 @@ export class MonkeyKernel extends EventEmitter {
             conviction: phi * regimeReading.confidence,
             currentRoiFrac: currentRoi,
             currentPnlUsdt: unrealizedPnl,
+            oceanTrailRetracementPct: oceanTrailPct,
           });
           derivation.bracketRevision = {
             changed: revision.changed ? 1 : 0,
@@ -3724,6 +3751,17 @@ export class MonkeyKernel extends EventEmitter {
       if (!exitFired) {
         // 3. Loop 2 debate — perception vs identity
         const exit = shouldExit(basin, state.identityBasin, heldSide, basinState);
+        // Matrix tier-3 (2026-05-26): update coherence streak BEFORE
+        // the exit.value branch so the streak reflects this tick's
+        // shouldExit outcome regardless of whether the exit fires.
+        // Streak resets on incoherent exit; advances on coherent hold.
+        // The NEXT tick's shouldExtendBracket reads this streak to pick
+        // the Ocean trail tier.
+        if (exit.value) {
+          state.coherenceStreak = 0;
+        } else {
+          state.coherenceStreak = state.coherenceStreak + 1;
+        }
         if (exit.value) {
           action = 'exit';
           reason = exit.reason;
@@ -4300,6 +4338,11 @@ export class MonkeyKernel extends EventEmitter {
           }
           // v0.6.2 bookkeeping
           state.lastEntryAtMs = Date.now();
+          // Matrix tier-3 (2026-05-26): fresh entry → reset coherence
+          // streak. The new position has no prior coherent-tick history,
+          // so the trail starts at the tightest Fibonacci tier (3%) and
+          // widens as the kernel proves sustained coherence on the trade.
+          state.coherenceStreak = 0;
           if (isDCA) {
             state.dcaAddCount += 1;
           } else {
@@ -5869,15 +5912,26 @@ export class MonkeyKernel extends EventEmitter {
    *  into an emotion + neurochemistry update for the owning agent.
    *  Called from closeHeldPosition after each settled close.
    *
-   *  Issue #948 (2026-05-26): `marginUsdt` threaded through so the
-   *  Ocean reward gate inside applyOutcomeToState can compute the
-   *  Fibonacci tier from ROI fraction (realizedPnl / marginUsdt). */
+   *  Issue #948 (2026-05-26): `marginUsdt` is REQUIRED so the Ocean
+   *  reward gate inside applyOutcomeToState can compute the Fibonacci
+   *  tier from ROI fraction (realizedPnl / marginUsdt). This wrapper
+   *  always computes `roiFrac` (or 0 when margin is zero) and threads
+   *  it into the outcome event — production callers never reach the
+   *  pre-#948 back-compat branch (`outcome.roiFrac === undefined →
+   *  coefficient=1 on wins`) which exists only for direct test
+   *  fixtures of `applyOutcomeToState`. The required signature on
+   *  this wrapper enforces the upstream contract.
+   *
+   *  Margin formula at call sites mirrors `pushPerAgentCloseRewards`:
+   *  `margin = markPrice * qty / 16` (16× implied leverage). For the
+   *  reconciler-recovered path the global reward uses `marginUsdt: 5`;
+   *  the per-agent call mirrors that constant. */
   private applyOutcomeToAgent(
     symbol: string,
     agent: AgentLabel,
     heldSide: 'long' | 'short',
     realizedPnl: number,
-    marginUsdt?: number,
+    marginUsdt: number,
   ): void {
     const state = this.symbolStates.get(symbol);
     if (!state) return;
@@ -5887,10 +5941,7 @@ export class MonkeyKernel extends EventEmitter {
       realizedPnl > 0 ? heldSide
         : realizedPnl < 0 ? (heldSide === 'long' ? 'short' : 'long')
           : 'flat';
-    const roiFrac =
-      marginUsdt !== undefined && marginUsdt > 0
-        ? realizedPnl / marginUsdt
-        : undefined;
+    const roiFrac = marginUsdt > 0 ? realizedPnl / marginUsdt : 0;
     const outcome: AgentOutcomeEvent = {
       agent, symbol, realizedPnl,
       roiFrac,
@@ -6282,7 +6333,8 @@ export class MonkeyKernel extends EventEmitter {
               [lastPrice, 'agent_l_force_harvest', closeOrderId, rowPnl, row.id],
             );
             this.arbiter.recordSettled('L', rowPnl);
-            this.applyOutcomeToAgent(symbol, 'L', sideKey, rowPnl);
+            // Margin formula mirrors pushPerAgentCloseRewards: notional/16.
+            this.applyOutcomeToAgent(symbol, 'L', sideKey, rowPnl, (lastPrice * rowQty) / 16);
             lPaperRealizedPnl += rowPnl;
             lPaperRealizedQty += rowQty;
           }
@@ -6463,7 +6515,7 @@ export class MonkeyKernel extends EventEmitter {
             ? Number(updated.rows[0].pnl)
             : aggPnl * (aggQty > 0 ? rowQty / aggQty : 0);
           this.arbiter.recordSettled('L', rowPnl);
-          this.applyOutcomeToAgent(symbol, 'L', sideKey, rowPnl);
+          this.applyOutcomeToAgent(symbol, 'L', sideKey, rowPnl, (lastPrice * rowQty) / 16);
           lLiveRealizedPnl += rowPnl;
           lLiveRealizedQty += rowQty;
         }
@@ -6611,12 +6663,12 @@ export class MonkeyKernel extends EventEmitter {
           );
           const safePnl = updated.rows[0]?.pnl ? Number(updated.rows[0].pnl) : pnlAtDecision;
           this.arbiter.recordSettled('K', safePnl);
-          this.applyOutcomeToAgent(symbol, 'K', heldSide, safePnl);
+          // Paper-mode single-row fallback: estimate qty from pnl/markPrice
+          // (a tiny floor keeps margin non-zero on near-flat closes).
+          const syntheticQty = Math.max(Math.abs(safePnl) / Math.max(markPrice, 1), 0.01);
+          this.applyOutcomeToAgent(symbol, 'K', heldSide, safePnl, (markPrice * syntheticQty) / 16);
           paperPerAgentTotals.K.pnl += safePnl;
-          // Paper-mode single-row fallback: estimate qty from
-          // pnl/markPrice — only used for margin denominator below;
-          // a tiny floor keeps margin non-zero on near-flat closes.
-          paperPerAgentTotals.K.qty += Math.max(Math.abs(safePnl) / Math.max(markPrice, 1), 0.01);
+          paperPerAgentTotals.K.qty += syntheticQty;
           this.pushPerAgentCloseRewards(symbol, markPrice, paperPerAgentTotals);
           return { executed: true, orderId: null, reason: 'closed_paper' };
         }
@@ -6657,10 +6709,11 @@ export class MonkeyKernel extends EventEmitter {
               : row.agent === 'T' ? 'T'
                 : row.agent === 'L' ? 'L'
                   : 'K';
+          const rowQty = Math.abs(Number(row.quantity) || 0);
           this.arbiter.recordSettled(agentLabel, rowPnl);
-          this.applyOutcomeToAgent(symbol, agentLabel, heldSide, rowPnl);
+          this.applyOutcomeToAgent(symbol, agentLabel, heldSide, rowPnl, (markPrice * rowQty) / 16);
           paperPerAgentTotals[agentLabel].pnl += rowPnl;
-          paperPerAgentTotals[agentLabel].qty += Math.abs(Number(row.quantity) || 0);
+          paperPerAgentTotals[agentLabel].qty += rowQty;
         }
         this.pushPerAgentCloseRewards(symbol, markPrice, paperPerAgentTotals);
 
@@ -7238,9 +7291,10 @@ export class MonkeyKernel extends EventEmitter {
         // v0.8.8 per-agent reactive cognition: feed outcome to K's
         // emotion + neurochemistry stack (dopamine on win, frustration
         // on loss). See per_agent_state.ts.
-        this.applyOutcomeToAgent(symbol, 'K', heldSide, safePnl);
+        const fallbackQty = exchangeQty || 0.01;
+        this.applyOutcomeToAgent(symbol, 'K', heldSide, safePnl, (markPrice * fallbackQty) / 16);
         perAgentTotals.K.pnl += safePnl;
-        perAgentTotals.K.qty += exchangeQty || 0.01;
+        perAgentTotals.K.qty += fallbackQty;
       } else {
         // #931 safe-pnl: compute each row's pnl from its OWN entry_price + qty +
         // side via SAFE_PNL_FROM_ROW, returning the computed value so chemistry +
@@ -7273,7 +7327,7 @@ export class MonkeyKernel extends EventEmitter {
                 : row.agent === 'L' ? 'L'
                   : 'K';
           this.arbiter.recordSettled(agentLabel, rowPnl);
-          this.applyOutcomeToAgent(symbol, agentLabel, heldSide, rowPnl);
+          this.applyOutcomeToAgent(symbol, agentLabel, heldSide, rowPnl, (markPrice * rowQty) / 16);
           perAgentTotals[agentLabel].pnl += rowPnl;
           perAgentTotals[agentLabel].qty += rowQty;
         }

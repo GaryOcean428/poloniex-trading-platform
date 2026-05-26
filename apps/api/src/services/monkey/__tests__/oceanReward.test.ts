@@ -15,6 +15,9 @@ import { describe, it, expect } from 'vitest';
 import {
   fibonacciRewardCoefficient,
   fibonacciRewardTier,
+  oceanTrailRetracement,
+  oceanTrailTierIndex,
+  TRAIL_TIERS,
 } from '../ocean_reward.js';
 
 describe('fibonacciRewardCoefficient — the structural reward shape', () => {
@@ -134,5 +137,104 @@ describe('fibonacciRewardTier — telemetry index', () => {
     expect(fibonacciRewardTier(0.21)).toBe(7);
     expect(fibonacciRewardTier(0.34)).toBe(8);
     expect(fibonacciRewardTier(1.00)).toBe(8);
+  });
+});
+
+describe('oceanTrailRetracement — Matrix tier-3 doctrine extension', () => {
+  // The trail-eligible Fibonacci subset is structurally defined:
+  // - Tier 1 (1%) and tier 2 (2%) excluded as noise-band / too-tight
+  // - Tier 8 (34%) excluded — harvest gate would fire first
+  // - Remaining {3%, 5%, 8%, 13%, 21%} is the operational range
+  it('exposes the trail-eligible Fibonacci subset as the canonical TRAIL_TIERS const', () => {
+    expect(TRAIL_TIERS).toEqual([0.03, 0.05, 0.08, 0.13, 0.21]);
+  });
+
+  describe('coherence-streak → tier mapping (Mechanism B — pure count, no formula)', () => {
+    it('streak=0 → tightest tier (3%) — fresh entry has no coherent-tick history', () => {
+      expect(oceanTrailRetracement(0)).toBe(0.03);
+      expect(oceanTrailTierIndex(0)).toBe(0);
+    });
+
+    it('streak=1 → 5%', () => {
+      expect(oceanTrailRetracement(1)).toBe(0.05);
+      expect(oceanTrailTierIndex(1)).toBe(1);
+    });
+
+    it('streak=2 → 8%', () => {
+      expect(oceanTrailRetracement(2)).toBe(0.08);
+      expect(oceanTrailTierIndex(2)).toBe(2);
+    });
+
+    it('streak=3 → 13%', () => {
+      expect(oceanTrailRetracement(3)).toBe(0.13);
+      expect(oceanTrailTierIndex(3)).toBe(3);
+    });
+
+    it('streak=4 → 21% (loosest tier)', () => {
+      expect(oceanTrailRetracement(4)).toBe(0.21);
+      expect(oceanTrailTierIndex(4)).toBe(4);
+    });
+
+    it('streak ≥ 5 → capped at the loosest tier (21%)', () => {
+      // Sustained coherence beyond 5 ticks doesn't widen further —
+      // the kernel's harvest gate owns the upper bound; trail caps here.
+      expect(oceanTrailRetracement(5)).toBe(0.21);
+      expect(oceanTrailRetracement(100)).toBe(0.21);
+      expect(oceanTrailRetracement(1e9)).toBe(0.21);
+    });
+  });
+
+  describe('defensive input handling — never throws, never returns junk', () => {
+    it('negative streak (defensive — caller should never pass this) → tightest tier', () => {
+      expect(oceanTrailRetracement(-1)).toBe(0.03);
+      expect(oceanTrailRetracement(-100)).toBe(0.03);
+    });
+
+    it('NaN streak → tightest tier (telemetry tier index = 0)', () => {
+      expect(oceanTrailRetracement(NaN)).toBe(0.03);
+      expect(oceanTrailTierIndex(NaN)).toBe(0);
+    });
+
+    it('Infinity streak → tightest tier (defensive — non-finite treated as unknown)', () => {
+      // Conservative default: a non-finite streak means the caller is
+      // in an undefined state. Falling back to the tightest tier (3%)
+      // is safer than the loosest (21%) — over-tight SL gets harvested
+      // quickly via the normal exit path; over-loose SL exposes the
+      // position to a deeper drawdown before the kernel can react.
+      expect(oceanTrailRetracement(Infinity)).toBe(0.03);
+      expect(oceanTrailTierIndex(Infinity)).toBe(0);
+    });
+
+    it('fractional streak rounds down (streak counts whole ticks)', () => {
+      expect(oceanTrailRetracement(1.9)).toBe(0.05);
+      expect(oceanTrailRetracement(3.99)).toBe(0.13);
+    });
+  });
+
+  describe('structural identity — the trail subset is Fibonacci, not arbitrary', () => {
+    it('the five tier values are consecutive Fibonacci numbers expressed as percentages', () => {
+      // F(4)=3, F(5)=5, F(6)=8, F(7)=13, F(8)=21. The trail subset
+      // is Fibonacci indices 4..8 of the canonical sequence, mapped
+      // to percentages. This is the structural identity that makes
+      // "Fibonacci" load-bearing here.
+      const asPercents = TRAIL_TIERS.map((t) => Math.round(t * 100));
+      expect(asPercents).toEqual([3, 5, 8, 13, 21]);
+    });
+
+    it('no in-between values — discrete selection only (no interpolation)', () => {
+      // Matrix tier-3 recommendation: discrete preserves the
+      // "no in-between values" purity from PR #950. Continuous
+      // interpolation would reintroduce a free parameter (the
+      // interpolation function shape) and break the doctrine.
+      const allOutputs = new Set<number>();
+      for (let s = 0; s < 20; s++) {
+        allOutputs.add(oceanTrailRetracement(s));
+      }
+      // Exactly five distinct outputs — one per tier in TRAIL_TIERS.
+      expect(allOutputs.size).toBe(TRAIL_TIERS.length);
+      for (const t of TRAIL_TIERS) {
+        expect(allOutputs.has(t)).toBe(true);
+      }
+    });
   });
 });
