@@ -2585,11 +2585,19 @@ export class MonkeyKernel extends EventEmitter {
     // order-of-magnitude as the existing cross-agent tape-veto (0.20)
     // but tighter — we want STRONG tape signal before overriding.
     //
-    // Env: MONKEY_TAPE_OVERRIDE_LIVE (default true; set false to disable)
-    //      MONKEY_TAPE_OVERRIDE_THRESHOLD (default 0.40)
+    // Env: MONKEY_TAPE_OVERRIDE_LIVE (default true; kill switch only).
+    //
+    // Phase 5 doctrine (2026-05-26): tape-override threshold replaced
+    // by phi-derived. MONKEY_TAPE_OVERRIDE_THRESHOLD (was 0.40) removed.
+    //
+    // The threshold IS phi — basin integration level. When phi is high
+    // (basin is well-organized), the basin's CHOP read is trustworthy
+    // and only very strong tape can override it. When phi is low
+    // (basin disorganized, hasn't integrated), even modest tape signal
+    // qualifies for override. Self-calibrating: as the kernel's
+    // perception strengthens, the bar for tape-override rises.
     const tapeOverrideLive = process.env.MONKEY_TAPE_OVERRIDE_LIVE !== 'false';
-    const tapeOverrideThreshold =
-      Number(process.env.MONKEY_TAPE_OVERRIDE_THRESHOLD) || 0.40;
+    const tapeOverrideThreshold = phi;
     let cellDirection = basinDirection;
     let cellDirectionOverridden = false;
     if (
