@@ -1755,6 +1755,7 @@ export class MonkeyKernel extends EventEmitter {
               `UPDATE autonomous_trades
                   SET status='closed', exit_time=NOW(),
                       exit_reason='maker_cancelled_unfilled',
+                      exit_gate='maker_cancelled_unfilled',
                       exit_order_id=$1, pnl=0
                 WHERE order_id=$1 AND status='open'`,
               [s.orderId],
@@ -4181,6 +4182,16 @@ export class MonkeyKernel extends EventEmitter {
           exitTypeBit === 2 ? 'trailing_harvest' :
           exitTypeBit === 3 ? 'trend_flip_harvest' :
           'scalp_exit';
+        // #931 exit-attribution: extract the inner gate name from the reason
+        // string prefix (e.g. "conviction_failed: conf=...", "bracket_sl: mark...",
+        // "stale_held: position open ..."). The 12+ inner gates that all surface
+        // as 'scalp_exit' need per-gate distinguishability for the rr-asymmetry
+        // audit (Matrix council 2026-05-26). Parses reason up to first ':' for
+        // the gate name; falls back to exitType.
+        const reasonPrefix = reason.split(':')[0]?.trim() ?? '';
+        const exitGate = reasonPrefix && reasonPrefix !== 'closed_paper'
+          ? reasonPrefix
+          : exitType;
         const pnlAtDecision = Number(scalpDeriv?.unrealizedPnl ?? 0);
         const scalpLane = (
           scalpDeriv?.lane === 'scalp' || scalpDeriv?.lane === 'trend'
@@ -4195,6 +4206,7 @@ export class MonkeyKernel extends EventEmitter {
             markPrice: lastPrice,
             exitReason: exitType,
             pnlAtDecision,
+            exitGate,
             lane: scalpLane,
           });
           executed = closeResult.executed;
@@ -6006,7 +6018,8 @@ export class MonkeyKernel extends EventEmitter {
             await pool.query(
               `UPDATE autonomous_trades
                   SET status = 'closed', exit_price = $1, exit_time = NOW(),
-                      exit_reason = $2, exit_order_id = $3, pnl = $4
+                      exit_reason = $2, exit_order_id = $3, pnl = $4,
+                      exit_gate = 'agent_l_force_harvest'
                 WHERE id = $5`,
               [lastPrice, 'agent_l_force_harvest', closeOrderId, rowPnl, row.id],
             );
@@ -6182,7 +6195,8 @@ export class MonkeyKernel extends EventEmitter {
           const updated = await pool.query<{ pnl: string }>(
             `UPDATE autonomous_trades
                 SET status = 'closed', exit_price = $1, exit_time = NOW(),
-                    exit_reason = $2, exit_order_id = $3, ${SAFE_PNL_FROM_ROW}
+                    exit_reason = $2, exit_order_id = $3, exit_gate = 'agent_l_force_harvest',
+                    ${SAFE_PNL_FROM_ROW}
               WHERE id = $4
               RETURNING pnl`,
             [lastPrice, 'agent_l_force_harvest', orderId, row.id],
@@ -6266,6 +6280,14 @@ export class MonkeyKernel extends EventEmitter {
     markPrice: number;
     exitReason: string;
     pnlAtDecision: number;
+    /**
+     * 2026-05-26 (#931 exit-asymmetry audit): which inner gate fired the
+     * close. `exit_reason` is too coarse — 300 closes labelled 'scalp_exit'
+     * span 10+ distinct gates (conviction_failed, bracket_sl, bracket_tp,
+     * stale_bleed, regime_change, etc.). exit_gate captures the gate name
+     * for downstream attribution. Falls back to exitReason when unspecified.
+     */
+    exitGate?: string;
     /** Proposal #10: when provided, close only autonomous_trades rows
      *  matching this lane (and send ``posSide`` on the exchange close
      *  in HEDGE mode so the other lane stays untouched). When omitted,
@@ -6274,6 +6296,9 @@ export class MonkeyKernel extends EventEmitter {
   }): Promise<{ executed: boolean; orderId: string | null; reason: string }> {
     const { symbol, tradeId, heldSide, markPrice, exitReason, pnlAtDecision } = req;
     const closeLane = req.lane;
+    // #931 exit-attribution: gate name (e.g. 'conviction_failed', 'bracket_sl');
+    // defaults to exitReason for back-compat at call-sites we haven't migrated.
+    const exitGate = req.exitGate ?? exitReason;
     if (this.shouldRouteOrdersToPaper()) {
       if (!Number.isFinite(markPrice) || markPrice <= 0) {
         logger.warn('[Monkey] paper mode invalid mark price, skipping close', {
@@ -6321,10 +6346,10 @@ export class MonkeyKernel extends EventEmitter {
           const updated = await pool.query<{ pnl: string }>(
             `UPDATE autonomous_trades
                 SET status = 'closed', exit_price = $1, exit_time = NOW(),
-                    exit_reason = $2, exit_order_id = $3, ${SAFE_PNL_FROM_ROW}
+                    exit_reason = $2, exit_order_id = $3, exit_gate = $5, ${SAFE_PNL_FROM_ROW}
               WHERE id = $4
               RETURNING pnl`,
-            [markPrice, exitReason, null, tradeId],
+            [markPrice, exitReason, null, tradeId, exitGate],
           );
           const safePnl = updated.rows[0]?.pnl ? Number(updated.rows[0].pnl) : pnlAtDecision;
           this.arbiter.recordSettled('K', safePnl);
@@ -6356,17 +6381,17 @@ export class MonkeyKernel extends EventEmitter {
             explicitPnl !== null
               ? `UPDATE autonomous_trades
                     SET status = 'closed', exit_price = $1, exit_time = NOW(),
-                        exit_reason = $2, exit_order_id = $3, pnl = $4
+                        exit_reason = $2, exit_order_id = $3, pnl = $4, exit_gate = $6
                   WHERE id = $5
                   RETURNING pnl`
               : `UPDATE autonomous_trades
                     SET status = 'closed', exit_price = $1, exit_time = NOW(),
-                        exit_reason = $2, exit_order_id = $3, ${SAFE_PNL_FROM_ROW}
+                        exit_reason = $2, exit_order_id = $3, exit_gate = $5, ${SAFE_PNL_FROM_ROW}
                   WHERE id = $4
                   RETURNING pnl`,
             explicitPnl !== null
-              ? [markPrice, exitReason, closeOrderId, explicitPnl, row.id]
-              : [markPrice, exitReason, closeOrderId, row.id],
+              ? [markPrice, exitReason, closeOrderId, explicitPnl, row.id, exitGate]
+              : [markPrice, exitReason, closeOrderId, row.id, exitGate],
           );
           const rowPnl = updated.rows[0]?.pnl ? Number(updated.rows[0].pnl) : (explicitPnl ?? 0);
           const agentLabel: AgentLabel =
@@ -6418,7 +6443,8 @@ export class MonkeyKernel extends EventEmitter {
       // row by tradeId, producing phantom values when multiple rows existed.
       await pool.query(
         `UPDATE autonomous_trades SET status='closed', exit_price=$1, exit_time=NOW(),
-                exit_reason='race_lost_to_sibling', ${SAFE_PNL_FROM_ROW} WHERE id=$2`,
+                exit_reason='race_lost_to_sibling', exit_gate='race_lost_to_sibling',
+                ${SAFE_PNL_FROM_ROW} WHERE id=$2`,
         [markPrice, tradeId],
       ).catch(() => { /* non-fatal */ });
       const reason = acquired.reason === 'recently_closed'
@@ -6495,7 +6521,7 @@ export class MonkeyKernel extends EventEmitter {
       // #931 safe-pnl — see comment at race_lost_to_sibling above.
       await pool.query(
         `UPDATE autonomous_trades SET status='closed', exit_price=$1, exit_time=NOW(),
-                exit_reason=$2, ${SAFE_PNL_FROM_ROW} WHERE id=$3`,
+                exit_reason=$2, exit_gate=$2, ${SAFE_PNL_FROM_ROW} WHERE id=$3`,
         [markPrice, dbExitReason, tradeId],
       ).catch(() => { /* non-fatal */ });
       return { executed: false, orderId: null, reason };
@@ -6799,7 +6825,8 @@ export class MonkeyKernel extends EventEmitter {
           // #931 safe-pnl — see comment at first race_lost_to_sibling block above.
           await pool.query(
             `UPDATE autonomous_trades SET status='closed', exit_price=$1, exit_time=NOW(),
-                    exit_reason='race_lost_to_sibling', ${SAFE_PNL_FROM_ROW} WHERE id=$2`,
+                    exit_reason='race_lost_to_sibling', exit_gate='race_lost_to_sibling',
+                    ${SAFE_PNL_FROM_ROW} WHERE id=$2`,
             [markPrice, tradeId],
           ).catch(() => { /* non-fatal */ });
           return {
@@ -6839,7 +6866,9 @@ export class MonkeyKernel extends EventEmitter {
             // #931 safe-pnl — see comment at first race_lost_to_sibling block above.
             await pool.query(
               `UPDATE autonomous_trades SET status='closed', exit_price=$1, exit_time=NOW(),
-                      exit_reason='exchange_position_vanished', ${SAFE_PNL_FROM_ROW} WHERE id=$2`,
+                      exit_reason='exchange_position_vanished',
+                      exit_gate='exchange_position_vanished',
+                      ${SAFE_PNL_FROM_ROW} WHERE id=$2`,
               [markPrice, tradeId],
             ).catch(() => { /* non-fatal */ });
             return {
@@ -6940,10 +6969,10 @@ export class MonkeyKernel extends EventEmitter {
         const updated = await pool.query<{ pnl: string }>(
           `UPDATE autonomous_trades
               SET status = 'closed', exit_price = $1, exit_time = NOW(),
-                  exit_reason = $2, exit_order_id = $3, ${SAFE_PNL_FROM_ROW}
+                  exit_reason = $2, exit_order_id = $3, exit_gate = $5, ${SAFE_PNL_FROM_ROW}
             WHERE id = $4
             RETURNING pnl`,
-          [markPrice, exitReason, orderId, tradeId],
+          [markPrice, exitReason, orderId, tradeId, exitGate],
         );
         const safePnl = updated.rows[0]?.pnl ? Number(updated.rows[0].pnl) : pnlAtDecision;
         // Single-row fallback: assume Agent K (the established default).
@@ -6966,10 +6995,10 @@ export class MonkeyKernel extends EventEmitter {
           const updated = await pool.query<{ pnl: string }>(
             `UPDATE autonomous_trades
                 SET status = 'closed', exit_price = $1, exit_time = NOW(),
-                    exit_reason = $2, exit_order_id = $3, ${SAFE_PNL_FROM_ROW}
+                    exit_reason = $2, exit_order_id = $3, exit_gate = $5, ${SAFE_PNL_FROM_ROW}
               WHERE id = $4
               RETURNING pnl`,
-            [markPrice, exitReason, orderId, row.id],
+            [markPrice, exitReason, orderId, row.id, exitGate],
           );
           const rowPnl = updated.rows[0]?.pnl
             ? Number(updated.rows[0].pnl)
@@ -7011,7 +7040,8 @@ export class MonkeyKernel extends EventEmitter {
         await pool.query(
           `UPDATE autonomous_trades
               SET status='closed', exit_price=$1, exit_time=NOW(),
-                  exit_reason=$2, exit_order_id=$3, ${SAFE_PNL_FROM_ROW}
+                  exit_reason=$2, exit_order_id=$3, exit_gate='db_recovery',
+                  ${SAFE_PNL_FROM_ROW}
             WHERE id=$4 AND status='open'`,
           [markPrice, `${exitReason}__db_recovery`, orderId, tradeId],
         );
