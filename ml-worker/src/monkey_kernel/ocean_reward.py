@@ -142,10 +142,15 @@ def ocean_trail_retracement(coherence_streak: float) -> float:
     tier 8 (34%) excluded as harvest-cap. Remaining five tiers cover
     "tight enough to capture" through "loose enough to give a trend
     room."
+
+    Fail-closed on non-finite inputs (±Infinity, NaN) — int(float('inf'))
+    raises OverflowError, so non-finite streaks fall back to the tightest
+    tier rather than crashing the kernel. Matches the TS implementation's
+    Number.isFinite() guard.
     """
     if not isinstance(coherence_streak, (int, float)):
         return TRAIL_TIERS[0]
-    if coherence_streak != coherence_streak:  # NaN
+    if not math.isfinite(coherence_streak):  # NaN or ±Infinity
         return TRAIL_TIERS[0]
     if coherence_streak < 0:
         return TRAIL_TIERS[0]
@@ -154,10 +159,14 @@ def ocean_trail_retracement(coherence_streak: float) -> float:
 
 
 def ocean_trail_tier_index(coherence_streak: float) -> int:
-    """Surface the trail tier index (0..4) for telemetry."""
+    """Surface the trail tier index (0..4) for telemetry.
+
+    Fail-closed on non-finite inputs (±Infinity, NaN) — returns 0
+    (tightest-tier index), matching ocean_trail_retracement().
+    """
     if not isinstance(coherence_streak, (int, float)):
         return 0
-    if coherence_streak != coherence_streak:  # NaN
+    if not math.isfinite(coherence_streak):  # NaN or ±Infinity
         return 0
     if coherence_streak < 0:
         return 0

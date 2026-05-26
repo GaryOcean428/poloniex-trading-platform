@@ -5914,10 +5914,13 @@ export class MonkeyKernel extends EventEmitter {
    *
    *  Issue #948 (2026-05-26): `marginUsdt` is REQUIRED so the Ocean
    *  reward gate inside applyOutcomeToState can compute the Fibonacci
-   *  tier from ROI fraction (realizedPnl / marginUsdt). Fail-closed:
-   *  applyOutcomeToState emits zero positive chemistry when roiFrac
-   *  is missing, so a forgotten margin would silently disable per-agent
-   *  learning on that event — the required signature prevents that.
+   *  tier from ROI fraction (realizedPnl / marginUsdt). This wrapper
+   *  always computes `roiFrac` (or 0 when margin is zero) and threads
+   *  it into the outcome event — production callers never reach the
+   *  pre-#948 back-compat branch (`outcome.roiFrac === undefined →
+   *  coefficient=1 on wins`) which exists only for direct test
+   *  fixtures of `applyOutcomeToState`. The required signature on
+   *  this wrapper enforces the upstream contract.
    *
    *  Margin formula at call sites mirrors `pushPerAgentCloseRewards`:
    *  `margin = markPrice * qty / 16` (16× implied leverage). For the

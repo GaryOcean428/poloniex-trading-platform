@@ -163,6 +163,17 @@ class TestOceanTrailRetracement:
         assert ocean_trail_retracement(float("nan")) == 0.03
         assert ocean_trail_tier_index(float("nan")) == 0
 
+    def test_positive_infinity_returns_tightest_fail_closed(self):
+        # Defensive: int(float('inf')) raises OverflowError. Without the
+        # math.isfinite() guard this would crash the kernel. Falling back
+        # to the tightest tier matches the TS implementation.
+        assert ocean_trail_retracement(float("inf")) == 0.03
+        assert ocean_trail_tier_index(float("inf")) == 0
+
+    def test_negative_infinity_returns_tightest_fail_closed(self):
+        assert ocean_trail_retracement(float("-inf")) == 0.03
+        assert ocean_trail_tier_index(float("-inf")) == 0
+
     def test_fractional_streak_rounds_down(self):
         # Streak counts whole ticks; fractional inputs (which shouldn't
         # occur from the kernel but guards against future drift) take
