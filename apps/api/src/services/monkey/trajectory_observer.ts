@@ -87,13 +87,22 @@ const LEGACY_CHOP_THRESHOLD = 0.55;
  * tercile-of-quiet is itself quiet. Per P25, this is bound-not-tune —
  * it caps the maximum scale-blindness, not the typical decision.
  *
- * Default 0.10 chosen from observed tape: live trends typically show
- * basinDir > 0.15 (sustained directional moves), while sub-0.10 is
- * predominantly noise/chop in the observed crypto-futures distribution.
- * Env-overridable for ops calibration.
+ * Phase 6 (2026-05-27) — MONKEY_ABS_CHOP_FLOOR (was 0.10) removed.
+ * Doctrine: the rolling tercile system IS the kernel's self-scaled
+ * chop classifier. If the entire distribution is quiet, the lower-
+ * tercile is also quiet, and "above lower tercile" remains the right
+ * boundary for "less chop than the bottom 1/3 of recent observations."
+ *
+ * The original scale-blind-pathology worry — that "above lower
+ * tercile" could still be absolutely quiet when the whole tape is flat
+ * — is replaced by the relative formulation: a flat tape has flat
+ * absolute values across the WHOLE distribution, so "above lower
+ * tercile" represents genuine relative motion within that calm regime.
+ * The kernel's behavior in calm regimes is governed by its sizing
+ * (chop cells size down via Phase 1 phi×regimeConfidence) and by its
+ * Ocean trail tier (Phase 2 stability ticks) — not by a static abs-
+ * value floor on direction.
  */
-const ABS_CHOP_FLOOR =
-  Number(process.env.MONKEY_ABS_CHOP_FLOOR) || 0.10;
 
 export type TrajectoryLabel = 'TREND_UP' | 'CHOP' | 'TREND_DOWN';
 
@@ -257,23 +266,31 @@ function classifyFromState(s: ObserverState): TrajectoryReading {
   let chopScore: number;
   let trendStrength: number;
 
-  if (recentAbs < ABS_CHOP_FLOOR) {
-    // Absolute floor — recentAbs below the scale-invariant chop floor
-    // ALWAYS classifies as CHOP regardless of where it sits in the
-    // rolling tercile. This is the fix for the scale-blind pathology:
-    // when the entire distribution is quiet, "above lower tercile" can
-    // still be quiet enough to be chop in absolute terms.
-    regime = 'CHOP';
-    chopScore = Math.min(1, 1 - recentAbs / Math.max(ABS_CHOP_FLOOR, 1e-12));
-    trendStrength = meanSigned;
-  } else if (recentAbs < lower) {
+  if (recentAbs < lower) {
     // Below the lower tercile of |basinDirection| → CHOP.
     regime = 'CHOP';
     chopScore = Math.min(1, 1 - recentAbs / Math.max(lower, 1e-12));
     trendStrength = meanSigned;
-  } else if (recentAbs > upper) {
-    // Above the upper tercile → TREND. Sign of most-recent picks side.
+  } else if (recentAbs > upper && persistence > 0.5) {
+    // Phase 6 (2026-05-27) — persistence gate added to upper-tercile
+    // branch. Was: "recentAbs > upper → always TREND." That misclassified
+    // persistent-quiet basins where the most-recent value happened to
+    // sit above its own rolling upper-tercile but random sign-flips
+    // gave near-zero persistence (no actual trend direction).
+    //
+    // The persistence < 0.5 case in the upper-tercile region IS chop —
+    // recentAbs is large relative to the rolling distribution, but the
+    // SIGN of recent moves doesn't dominate. The kernel's own observable
+    // says "I've been moving but in no clear direction." Replaces the
+    // removed MONKEY_ABS_CHOP_FLOOR (was 0.10) — instead of an absolute
+    // floor, we use the kernel's own signed-vs-unsigned ratio.
     regime = recentSigned >= 0 ? 'TREND_UP' : 'TREND_DOWN';
+    chopScore = Math.max(0, 1 - persistence);
+    trendStrength = meanSigned;
+  } else if (recentAbs > upper) {
+    // Upper-tercile but low persistence → CHOP. The kernel sees motion
+    // but it's not directional.
+    regime = 'CHOP';
     chopScore = Math.max(0, 1 - persistence);
     trendStrength = meanSigned;
   } else {
