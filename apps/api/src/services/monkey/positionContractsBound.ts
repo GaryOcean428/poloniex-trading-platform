@@ -25,19 +25,63 @@
  */
 
 /**
- * Default ceiling. 8,000 contracts at BTC's 0.0001 lot size = 0.8 BTC
- * (~ \$80k notional at typical prices); at ETH's 0.01 lot = 80 ETH
- * (~ \$200k). These are large but within typical Poloniex retail
- * tolerances. The 2,000-contract buffer below the exchange's 10,000
- * cap leaves room for one-shot full closes (no chunking needed).
+ * Venue-derived structural ceiling. Poloniex v3 hard-rejects single
+ * orders > 10,000 contracts (code 21010). The 2,000-contract buffer
+ * below that leaves room for one-shot full closes without chunking.
+ * 8,000 = 10,000 venue cap − 2,000 chunker buffer. Both numbers are
+ * structural (venue-fact + chunker-arithmetic), not operator knobs.
  */
-export const MAX_CONTRACTS_PER_POSITION_DEFAULT = 8000;
+export const VENUE_CONTRACTS_CEILING = 8000;
 
-/** Env override: set ``MONKEY_MAX_CONTRACTS_PER_POSITION`` to tune. */
-export function getMaxContractsPerPosition(): number {
-  const raw = Number(process.env.MONKEY_MAX_CONTRACTS_PER_POSITION);
-  if (Number.isFinite(raw) && raw > 0) return raw;
-  return MAX_CONTRACTS_PER_POSITION_DEFAULT;
+/**
+ * Phase 9 (2026-05-27) — kernel-derived per-position contract cap.
+ *
+ * MONKEY_MAX_CONTRACTS_PER_POSITION removed. Operator-prescribed
+ * fractions between the kernel and the venue wall were the anti-
+ * pattern. Now the kernel computes its own cap from observables:
+ *
+ *   risk_fraction = max(0.1, dopamine × phi × (1 - gaba))
+ *   kernel_cap    = floor((equity × risk_fraction × leverage) /
+ *                         (mark_price × contract_size))
+ *   final_cap     = min(VENUE_CONTRACTS_CEILING, kernel_cap)
+ *
+ * Risk-fraction observables:
+ * - dopamine (reward expectation) — high → kernel willing to expose more
+ * - phi (basin integration) — high → kernel trusts its own perception
+ * - (1 - gaba) (inverse inhibition) — low gaba → kernel less anxious
+ *
+ * The 0.1 floor ensures the kernel always retains *some* exposure
+ * envelope even when chemistry is bleak (otherwise stressed kernel
+ * can't trade its way out). 0.1 is the same SAFETY_BOUND floor as
+ * the DISSOLVER cell size multiplier (#946) — same structural rationale.
+ *
+ * The venue ceiling stays as a structural wall (10,000 contracts is
+ * a venue-imposed fact; 2,000 chunker buffer is arithmetic). What's
+ * gone is the operator-imposed fraction between the kernel and the wall.
+ */
+export interface ContractCapObservers {
+  availableEquityUsdt: number;
+  markPrice: number;
+  contractSize: number;
+  leverage: number;
+  dopamine: number;
+  phi: number;
+  gaba: number;
+}
+
+export function kernelDerivedContractCap(o: ContractCapObservers): number {
+  const safeDop = Math.max(0, Math.min(1, o.dopamine));
+  const safePhi = Math.max(0, Math.min(1, o.phi));
+  const safeGaba = Math.max(0, Math.min(1, o.gaba));
+  const riskFraction = Math.max(0.1, safeDop * safePhi * (1 - safeGaba));
+
+  const denom = Math.max(o.markPrice * o.contractSize, 1e-9);
+  const equityHeadroom = Math.max(0, o.availableEquityUsdt);
+  const leverageMultiplier = Math.max(1, o.leverage);
+  const kernelCap = Math.floor(
+    (equityHeadroom * riskFraction * leverageMultiplier) / denom,
+  );
+  return Math.min(VENUE_CONTRACTS_CEILING, Math.max(0, kernelCap));
 }
 
 /**
