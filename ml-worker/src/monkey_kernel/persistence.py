@@ -315,21 +315,51 @@ class PersistentMemory:
     def load_reward_queue(
         self, half_life_ms: float, min_decay: float = 0.01,
     ) -> list[dict[str, Any]]:
-        """Drop entries whose effective decay falls below min_decay."""
+        """Drop entries whose effective decay falls below min_decay.
+
+        Phase 5 (2026-05-26) — phantom-PnL chemistry rollback. Reward
+        events emitted between the SAFE_PNL_FROM_ROW shipping in PR #936
+        (2026-05-26 02:14 UTC) and the phantom-PnL fix shipping in PR
+        #953 (2026-05-26 15:07 UTC) carry inflated dopamine/serotonin/
+        endorphin deltas because the per-row pnl was 100-1000× too large
+        for reconciler-adopted rows. Filtering them out here, on every
+        cold-start load, lets the kernel resume from a clean reward
+        history without needing direct Redis CLI access.
+
+        Filter window: 1748292840000 (02:14 UTC) <= at_ms <= 1748340420000
+        (15:07 UTC). Entries outside this window are kept normally. The
+        filter is idempotent — once the window has rolled out of the
+        half-life decay band naturally, this branch becomes a no-op.
+        """
         raw_list = self._lrange_json(
             f"monkey:ocean:{self.instance_id}:reward_queue", MAX_REWARD_QUEUE,
         )
         if not raw_list:
             return []
+        # Phantom-PnL contamination window (epoch milliseconds).
+        # 2026-05-26 02:14:00 UTC = 1748232840000
+        # 2026-05-26 15:07:00 UTC = 1748278020000
+        PHANTOM_WINDOW_START_MS = 1748232840000.0
+        PHANTOM_WINDOW_END_MS = 1748278020000.0
         now_ms = time.time() * 1000.0
         kept: list[dict[str, Any]] = []
+        phantom_dropped = 0
         for r in raw_list:
             at_ms = float(r.get("at_ms", now_ms))
+            if PHANTOM_WINDOW_START_MS <= at_ms <= PHANTOM_WINDOW_END_MS:
+                phantom_dropped += 1
+                continue
             age_ms = now_ms - at_ms
             decay = 0.5 ** (age_ms / half_life_ms) if half_life_ms > 0 else 0.0
             if decay < min_decay:
                 continue
             kept.append(r)
+        if phantom_dropped > 0:
+            logger.warning(
+                "[PersistentMemory] dropped %d reward_queue entries from "
+                "phantom-PnL window (2026-05-26 02:14-15:07 UTC)",
+                phantom_dropped,
+            )
         return kept
 
     # ── Heart: κ history ─────────────────────────────────────────
