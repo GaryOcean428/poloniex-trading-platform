@@ -48,7 +48,7 @@ type Queryable = {
 
 const BUFFER_MAX = 1000;
 const pending: KernelPredictionSnapshot[] = [];
-let draining = Boolean(0);
+let draining = false;
 
 function finiteOrNull(value: unknown): number | null {
   const n = Number(value);
@@ -161,7 +161,7 @@ async function drain(): Promise<void> {
       }
     }
   } finally {
-    draining = Boolean(0);
+    draining = false;
   }
 }
 
@@ -178,5 +178,5 @@ export function recordKernelPrediction(snapshot: KernelPredictionSnapshot): void
 
 export function _resetKernelPredictionBufferForTests(): void {
   pending.splice(0, pending.length);
-  draining = Boolean(0);
+  draining = false;
 }

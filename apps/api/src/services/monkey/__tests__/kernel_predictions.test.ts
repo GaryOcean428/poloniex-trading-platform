@@ -4,7 +4,7 @@ vi.mock('../../../config/env.js', () => ({
   env: {
     NODE_ENV: 'test',
     PORT: 8765,
-    DATABASE_URL: '******ql://test:5432/test',
+    DATABASE_URL: 'test-db-url',
     JWT_SECRET: 'test-jwt-secret-32-characters-xxxxxxxxxx',
   },
 }));
@@ -73,7 +73,7 @@ describe('kernel prediction corpus capture', () => {
     expect(params.slice(13, 19)).toEqual([0.1, 0.2, 0.3, 0.4, 0.5, 0.6]);
   });
 
-  it('drop-and-logs insert failures without throwing into the caller', async () => {
+  it('drops and logs insert failures without throwing into the caller', async () => {
     const {
       recordKernelPrediction,
       _resetKernelPredictionBufferForTests,
